@@ -43745,6 +43745,66 @@
         "first (R965 audit) -> R966 candidate."
       ]
     },
+    "R966": {
+      "decision_summary": "Visible row/column reset affordance on the data grid + accessible action: a column / row holding any modified cell paints a reset dot (resetcol<col> / resetrow<row>); a click resets that whole column / row, clearing the R965 RPC-verb-only carry. One ResetTarget grammar SSOT decodes the pointer + AT-Click channels; AT Click routes through access_child_invoke (R937.1 action-on-grid). Entry audit falsified the SEED-leaned a11y-valuenow candidate as RPC-invisible (no access-tree RPC method) and pivoted to this visible deliverable.",
+      "changes_bullets": [
+        "col-header reset dot (resetcol<col>) + per-row reset dot (resetrow<row>): a click resets that column / row",
+        "clears the R965 carry: reset_row/reset_col were RPC-verb-only; now a visible, clickable affordance",
+        "ResetTarget enum + parse: one reset-grammar SSOT shared by pointer dispatch_send + a11y access_child_invoke",
+        "AT AccessAction::Click on a reset dot routes to reset_row/reset_col (R937.1 action-on-grid; no button child)",
+        "reset_dot_at(tag,x,y) lift: one dot-box visual SSOT for the cell (R960) + the new col-header + row dots",
+        "cell_value_modified atom + col_modified/row_modified aggregates; cell_modified delegates to the atom",
+        "col_modified.<col> / row_modified.<row> RPC query peers (the 1-D aggregate of modified.<row>.<col>)",
+        "query_cell_path extracted from query to stay under the too_many_lines budget (R959 invoke_send precedent)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: 0 failures, 171 ok groups (5 new R966 tests: decode, predicates, send, query, AT Click)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): exit 0",
+        "r966 demo PASS (~50 assertions): pointer-click the in-viewport Asset-col + row-0 dots, off-screen via RPC peers",
+        "regression: r837 / r960 / r965 / r937 / r914 data-grid demos PASS (paint + reorder + cell-reset unchanged)",
+        "entry audit falsified candidate (a) a11y valuenow as RPC-invisible (no access-tree RPC method); pivoted to (b)",
+        "self-grep: reset_dot_at sole dot builder; ResetTarget sole decoder (both channels); atom feeds 3 modified fns"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "grouped-treegrid path builds gridcells inline (virtual_grid), not the GridCell struct: row/col reset dots are flat-grid only; grouped reset affordance is a follow-up",
+        "per-cell AT reset (Click on a cell dot) not exposed: the R960 cell dot stays pointer + RPC; the AT Click axis is the 1-D row/col bulk reset only",
+        "a11y valuemin/valuemax/valuenow for bounded DCC widgets (R965 carry) still open: needs a contained spinbutton/slider child (gridcell/treeitem are not range roles) AND would need an access-tree RPC method to be demo-visible (audited RPC-invisible this round)",
+        "property-grid slider-leaf a11y (R964/R894 sibling) still open"
+      ],
+      "publishable_decision_summary": "Visible row/column reset affordance on the data grid + accessible action: a column / row holding any modified cell paints a reset dot (resetcol<col> / resetrow<row>); a click resets that whole column / row, clearing the R965 RPC-verb-only carry. One ResetTarget grammar SSOT decodes the pointer + AT-Click channels; AT Click routes through access_child_invoke (R937.1 action-on-grid). Entry audit falsified the SEED-leaned a11y-valuenow candidate as RPC-invisible (no access-tree RPC method) and pivoted to this visible deliverable.",
+      "publishable_changes_bullets": [
+        "col-header reset dot (resetcol<col>) + per-row reset dot (resetrow<row>): a click resets that column / row",
+        "clears the R965 carry: reset_row/reset_col were RPC-verb-only; now a visible, clickable affordance",
+        "ResetTarget enum + parse: one reset-grammar SSOT shared by pointer dispatch_send + a11y access_child_invoke",
+        "AT AccessAction::Click on a reset dot routes to reset_row/reset_col (R937.1 action-on-grid; no button child)",
+        "reset_dot_at(tag,x,y) lift: one dot-box visual SSOT for the cell (R960) + the new col-header + row dots",
+        "cell_value_modified atom + col_modified/row_modified aggregates; cell_modified delegates to the atom",
+        "col_modified.<col> / row_modified.<row> RPC query peers (the 1-D aggregate of modified.<row>.<col>)",
+        "query_cell_path extracted from query to stay under the too_many_lines budget (R959 invoke_send precedent)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: 0 failures, 171 ok groups (5 new R966 tests: decode, predicates, send, query, AT Click)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): exit 0",
+        "r966 demo PASS (~50 assertions): pointer-click the in-viewport Asset-col + row-0 dots, off-screen via RPC peers",
+        "regression: r837 / r960 / r965 / r937 / r914 data-grid demos PASS (paint + reorder + cell-reset unchanged)",
+        "entry audit falsified candidate (a) a11y valuenow as RPC-invisible (no access-tree RPC method); pivoted to (b)",
+        "self-grep: reset_dot_at sole dot builder; ResetTarget sole decoder (both channels); atom feeds 3 modified fns"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "grouped-treegrid path builds gridcells inline (virtual_grid), not the GridCell struct: row/col reset dots are flat-grid only; grouped reset affordance is a follow-up",
+        "per-cell AT reset (Click on a cell dot) not exposed: the R960 cell dot stays pointer + RPC; the AT Click axis is the 1-D row/col bulk reset only",
+        "a11y valuemin/valuemax/valuenow for bounded DCC widgets (R965 carry) still open: needs a contained spinbutton/slider child (gridcell/treeitem are not range roles) AND would need an access-tree RPC method to be demo-visible (audited RPC-invisible this round)",
+        "property-grid slider-leaf a11y (R964/R894 sibling) still open"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

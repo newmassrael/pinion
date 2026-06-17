@@ -458,6 +458,57 @@ fn reset_cell_tag(row: usize, col: usize) -> String {
     format!("{GRID_TAG}#{RESET_PREFIX}{}", GridSendKey::Cell { row, col }.encode())
 }
 
+/// R966 — a column header's "reset this column" dot click target —
+/// `data_grid#resetcol<col>` ([`RESET_PREFIX`] + a `col`-discriminated index).
+/// The `col` / `row` LETTER prefixes never alias the DIGIT-leading `<row>_<col>`
+/// cell form, so one `reset`-prefixed namespace carries all three reset
+/// granularities (cell / row / column) decoded through [`ResetTarget`].
+fn reset_col_tag(col: usize) -> String {
+    format!("{GRID_TAG}#{RESET_PREFIX}col{col}")
+}
+
+/// R966 — a row's "reset this row" dot click target — `data_grid#resetrow<row>`
+/// (the [`reset_col_tag`] row peer).
+fn reset_row_tag(row: usize) -> String {
+    format!("{GRID_TAG}#{RESET_PREFIX}row{row}")
+}
+
+/// R966 — a decoded reset-affordance target: which cells a `reset`-prefixed
+/// pointer send / AT `Click` clears. The one grammar SSOT shared by the pointer
+/// channel ([`DataGridExternal::dispatch_send`]) and the AT channel
+/// ([`DataGridView::access_child_invoke`]) so the two cannot decode the same
+/// `reset<…>` tag differently — a divergence-is-a-bug 2nd-consumer lift, where
+/// the cell case reuses [`GridSendKey::Cell`] rather than re-deriving the
+/// `<row>_<col>` address ([R960](`reset_cell_tag`) `reset`-first ordering).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ResetTarget {
+    /// `reset<row>_<col>` — one cell (R960).
+    Cell { row: usize, col: usize },
+    /// `resetrow<row>` — every modified cell in the row (R966).
+    Row { row: usize },
+    /// `resetcol<col>` — every modified cell in the column (R966).
+    Col { col: usize },
+}
+
+impl ResetTarget {
+    /// Decode the remainder AFTER [`RESET_PREFIX`] is stripped: a `row` / `col`
+    /// letter prefix names a 1-D bulk reset, otherwise the digit-leading
+    /// remainder is a [`GridSendKey::Cell`] `<row>_<col>`. A malformed remainder
+    /// (`"row"` with no index, an unknown shape) decodes to `None` (a no-op).
+    fn parse(rest: &str) -> Option<Self> {
+        if let Some(row) = rest.strip_prefix("row").and_then(|r| r.parse().ok()) {
+            return Some(ResetTarget::Row { row });
+        }
+        if let Some(col) = rest.strip_prefix("col").and_then(|c| c.parse().ok()) {
+            return Some(ResetTarget::Col { col });
+        }
+        match GridSendKey::parse(rest)? {
+            GridSendKey::Cell { row, col } => Some(ResetTarget::Cell { row, col }),
+            _ => None,
+        }
+    }
+}
+
 /// Column-header click target — `data_grid#h<col>` (`GridSendKey::Header`).
 fn col_header_tag(col: usize) -> String {
     format!("{GRID_TAG}#{}", GridSendKey::Header { col }.encode())
@@ -621,6 +672,33 @@ fn col_default(col: usize) -> CellValue {
         // R943 — a fresh `Tint` cell starts at the first preset swatch.
         CellKind::Color => swatch_cell(0),
     }
+}
+
+/// R966 — the pure "does cell `(row, col)` differ from its [`col_default`]" atom
+/// over a model slice. The single source of truth the per-cell reset dot
+/// ([`view_cell`]), the per-column / per-row header reset dots, the
+/// `modified.<row>.<col>` / `col_modified.<col>` / `row_modified.<row>` queries,
+/// and [`DataGridExternal::cell_modified`] all read, so the paint at every
+/// granularity and the wire cannot disagree (a divergence here would be a bug,
+/// not a style choice — the lift criterion). Pure over the slice so the paint
+/// path (which already borrows the model) and the coordinator both call it.
+fn cell_value_modified(model: &[CellValue], row: usize, col: usize) -> bool {
+    col < NCOLS && model.get(idx(row, col)).is_some_and(|v| !v.value_eq(&col_default(col)))
+}
+
+/// R966 — whether ANY cell in column `col` differs from its column default
+/// (drives the column-header reset dot + the `col_modified.<col>` query). Built
+/// on the [`cell_value_modified`] atom over every data row.
+fn col_modified(model: &[CellValue], col: usize) -> bool {
+    let rows = model.len() / NCOLS;
+    (0..rows).any(|row| cell_value_modified(model, row, col))
+}
+
+/// R966 — whether ANY cell in `row` differs from its column default (drives the
+/// per-row reset dot + the `row_modified.<row>` query). Built on the
+/// [`cell_value_modified`] atom across the row's columns.
+fn row_modified(model: &[CellValue], row: usize) -> bool {
+    (0..NCOLS).any(|col| cell_value_modified(model, row, col))
 }
 
 /// First-paint cell values (row-major). Each column's values match
@@ -1634,13 +1712,7 @@ impl DataGridExternal {
     /// predicate the per-cell reset dot, the `modified.<row>.<col>` query, and
     /// `reset_cell` all read, so the paint and the wire cannot disagree.
     fn cell_modified(&self, row: usize, col: usize) -> bool {
-        if col >= NCOLS {
-            return false;
-        }
-        self.model
-            .get()
-            .get(idx(row, col))
-            .is_some_and(|v| !v.value_eq(&col_default(col)))
+        cell_value_modified(&self.model.get(), row, col)
     }
 
     /// R960 — reset cell `(row, col)` to its column default through the
@@ -1737,6 +1809,44 @@ impl DataGridExternal {
                 (0..rows).filter(|&row| !cells[idx(row, col)].value_eq(&def)).count()
             })
             .sum()
+    }
+
+    /// R960 / R966 — the dynamic `value.<row>.<col>` cell read + its modified-
+    /// from-default predicate peers at cell / column / row granularity
+    /// (`modified.<row>.<col>` / `col_modified.<col>` / `row_modified.<row>`).
+    /// Split out of [`query`](ExternalIntrospect::query) so neither overflows
+    /// the `too_many_lines` budget (the R959 `invoke_send` extraction precedent).
+    /// `None` for an unknown path / malformed index; a well-formed out-of-range
+    /// index reads through the underlying predicate (`false` for the aggregates,
+    /// `None` for a missing cell).
+    fn query_cell_path(&self, path: &str) -> Option<IntrospectValue> {
+        if let Some(rest) = path.strip_prefix("value.") {
+            let (row_str, col_str) = rest.split_once('.')?;
+            let row: usize = row_str.parse().ok()?;
+            let col: usize = col_str.parse().ok()?;
+            let model = self.model.get();
+            return model.get(idx(row, col)).map(CellValue::to_introspect);
+        }
+        // R960 — `modified.<row>.<col>` → does the cell differ from its column
+        // default (the `value.<row>.<col>` predicate peer).
+        if let Some(rest) = path.strip_prefix("modified.") {
+            let (row_str, col_str) = rest.split_once('.')?;
+            let row: usize = row_str.parse().ok()?;
+            let col: usize = col_str.parse().ok()?;
+            return Some(IntrospectValue::Bool(self.cell_modified(row, col)));
+        }
+        // R966 — `col_modified.<col>` / `row_modified.<row>` → does ANY cell in
+        // that column / row differ from its column default (the header reset
+        // dot's AI-first read peer, the 1-D aggregate of `modified.<row>.<col>`).
+        if let Some(col_str) = path.strip_prefix("col_modified.") {
+            let col: usize = col_str.parse().ok()?;
+            return Some(IntrospectValue::Bool(col_modified(&self.model.get(), col)));
+        }
+        if let Some(row_str) = path.strip_prefix("row_modified.") {
+            let row: usize = row_str.parse().ok()?;
+            return Some(IntrospectValue::Bool(row_modified(&self.model.get(), row)));
+        }
+        None
     }
 
     /// R914 — arm a numeric cell scrub: a `PointerDown` over an Int / Float
@@ -1914,17 +2024,25 @@ impl DataGridExternal {
             }
             return Ok(IntrospectValue::Null);
         }
-        // R960 — a click on a cell's reset dot (`reset<row>_<col>`) resets that
-        // cell to its column default. Decoded before the shared `GridSendKey`
-        // grammar (a `reset`-prefixed key is data-grid-local, like the `d<row>`
-        // handle above); the `<row>_<col>` remainder reuses `GridSendKey::Cell`
-        // so the cell-address grammar is not re-derived (the property-grid
-        // `reset`-first ordering, the 3rd `reset`-send consumer — decode stays
-        // per-binding, the key arity differs from the 1-D consumers).
+        // R960 cell + R966 row / column — a click on a reset dot resets the
+        // addressed cell / row / column to the column default(s). The
+        // `reset`-prefixed key is data-grid-local (decoded before the shared
+        // `GridSendKey` grammar, like the `d<row>` handle above) through the
+        // shared [`ResetTarget`] grammar (the cell case reuses
+        // `GridSendKey::Cell`, so the `<row>_<col>` address is not re-derived).
         if let Some(rest) = key.strip_prefix(RESET_PREFIX) {
             if event_name == "PointerUp" {
-                if let Some(GridSendKey::Cell { row, col }) = GridSendKey::parse(rest) {
-                    self.reset_cell(row, col);
+                match ResetTarget::parse(rest) {
+                    Some(ResetTarget::Cell { row, col }) => {
+                        self.reset_cell(row, col);
+                    }
+                    Some(ResetTarget::Row { row }) => {
+                        self.reset_row(row);
+                    }
+                    Some(ResetTarget::Col { col }) => {
+                        self.reset_col(col);
+                    }
+                    None => {}
                 }
             }
             return Ok(IntrospectValue::Null);
@@ -2345,6 +2463,10 @@ impl ExternalIntrospect for DataGridExternal {
             // R960 — per-cell modified-from-default + reset-to-default (the
             // editable grid's Unreal / Qt "reset property to default" affordance).
             ("modified.<row>.<col>", "bool"),
+            // R966 — does ANY cell in the column / row differ from default (the
+            // header reset dot's AI-first read peer, the 1-D `modified.<…>`).
+            ("col_modified.<col>", "bool"),
+            ("row_modified.<row>", "bool"),
             ("modified_count", "int"),
             ("reset", "string"),
             ("reset_all", "json"),
@@ -2480,22 +2602,10 @@ impl ExternalIntrospect for DataGridExternal {
                         IntrospectValue::Text(range.map_or_else(|| "none".to_owned(), ColRange::wire))
                     });
                 }
-                if let Some(rest) = path.strip_prefix("value.") {
-                    let (row_str, col_str) = rest.split_once('.')?;
-                    let row: usize = row_str.parse().ok()?;
-                    let col: usize = col_str.parse().ok()?;
-                    let model = self.model.get();
-                    return model.get(idx(row, col)).map(CellValue::to_introspect);
-                }
-                // R960 — `modified.<row>.<col>` → does the cell differ from its
-                // column default (the `value.<row>.<col>` predicate peer).
-                if let Some(rest) = path.strip_prefix("modified.") {
-                    let (row_str, col_str) = rest.split_once('.')?;
-                    let row: usize = row_str.parse().ok()?;
-                    let col: usize = col_str.parse().ok()?;
-                    return Some(IntrospectValue::Bool(self.cell_modified(row, col)));
-                }
-                None
+                // R960 / R966 — the per-cell value read + its modified-from-
+                // default predicate peers (extracted to keep `query` under the
+                // `too_many_lines` budget; SRP, the R959 `invoke_send` precedent).
+                self.query_cell_path(path)
             }
         }
     }
@@ -3260,29 +3370,42 @@ fn view_cell(
     )
 }
 
-/// R960 — the per-cell "modified, click to reset" dot: a small accent square
-/// absolutely positioned at the cell's trailing edge (out of the flex flow, so
-/// the cell content layout is byte-identical to an unmodified cell). Its
-/// presence doubles as the modified indicator; a click routes to
-/// [`reset_cell`](DataGridExternal::reset_cell) via the [`reset_cell_tag`]
-/// target. Inline (not a `pinion_widget_paint` lift): the cell-grid positioning
-/// diverges from the property-grid / inspector trailing-edge arrows, so per
-/// R735.1 only the modified atom (`value_eq`) is the shared SSOT.
-fn reset_dot(row: usize, col: usize, theme: &Theme) -> Scene {
+/// R966 — the shared "modified, click to reset" accent dot: an absolutely-
+/// positioned `RESET_DOT`-square tagged `tag` at `(abs_x, abs_y)` (out of the
+/// flex flow, so the host's content layout is byte-identical without it). The
+/// VISUAL is one SSOT across the per-cell (R960), per-column-header, and per-row
+/// reset dots — the [[three-site-internal-duplication-substrate-lift]] of the
+/// dot box. Only the click-target `tag` + the trailing-edge `(x, y)` diverge
+/// (the cell / header-cell `COL_W` edge vs the handle gutter), so those stay the
+/// caller's args — R960's "positioning diverges → share the atom, not the
+/// layout" applied to the dot box itself. Inline (not a `pinion_widget_paint`
+/// lift): the divergent positioning is per-binding, so per R735.1 only this
+/// box + the `value_eq` modified atom are the shared SSOTs.
+fn reset_dot_at(tag: String, abs_x: u32, abs_y: u32, theme: &Theme) -> Scene {
     Scene::Container(
         ContainerNode::new(Vec::new())
-            .with_tag(reset_cell_tag(row, col))
+            .with_tag(tag)
             .with_style(
                 BoxStyle::filled(theme.resolve(ColorRole::Accent)).with_corner_radius(RESET_DOT / 2),
             )
             .with_layout(
                 LayoutStyle::new()
                     .with_size(Size::px(RESET_DOT, RESET_DOT))
-                    .with_absolute_position(
-                        COL_W[col].saturating_sub(CELL_PAD + RESET_DOT),
-                        (ROW_H - RESET_DOT) / 2,
-                    ),
+                    .with_absolute_position(abs_x, abs_y),
             ),
+    )
+}
+
+/// R960 — the per-cell reset dot at the cell's trailing edge; a click routes to
+/// [`reset_cell`](DataGridExternal::reset_cell) via the [`reset_cell_tag`]
+/// target. Its presence doubles as the per-cell modified indicator. See
+/// [`reset_dot_at`] for the shared visual.
+fn reset_dot(row: usize, col: usize, theme: &Theme) -> Scene {
+    reset_dot_at(
+        reset_cell_tag(row, col),
+        COL_W[col].saturating_sub(CELL_PAD + RESET_DOT),
+        (ROW_H - RESET_DOT) / 2,
+        theme,
     )
 }
 
@@ -3321,8 +3444,8 @@ fn drop_edge_at(gap: Option<usize>, pos: usize, last: usize) -> Option<DropEdge>
 /// target; otherwise it is an untagged blank spacer of the same width, so the
 /// affordance is honest (a grip is shown exactly when a drag would work) while the
 /// data columns never shift.
-fn view_handle_cell(row: usize, enabled: bool, theme: &Theme) -> Scene {
-    let mut node = ContainerNode::new(if enabled {
+fn view_handle_cell(row: usize, enabled: bool, row_modified: bool, theme: &Theme) -> Scene {
+    let mut children = if enabled {
         vec![Scene::Text(TextNode::styled(
             GRIP_GLYPH,
             Rect::default(),
@@ -3330,8 +3453,23 @@ fn view_handle_cell(row: usize, enabled: bool, theme: &Theme) -> Scene {
         ))]
     } else {
         Vec::new()
-    })
-    .with_layout(
+    };
+    // R966 — a row holding any modified cell shows a reset dot in the handle
+    // gutter (the per-cell dot at row granularity); a `resetrow<row>` click
+    // routes to reset_row. Absolutely positioned (out of the grip's centered
+    // flex flow) and carrying its own tag, so a dot click resets the row while a
+    // press on the grip glyph still arms a drag-reorder (the R960 dot-vs-cell
+    // coexistence, here dot-vs-grip). The gutter IS the row-header column the
+    // header's leading blank cell aligns over — the natural row affordance home.
+    if row_modified {
+        children.push(reset_dot_at(
+            reset_row_tag(row),
+            HANDLE_W.saturating_sub(RESET_DOT + 2),
+            (ROW_H - RESET_DOT) / 2,
+            theme,
+        ));
+    }
+    let mut node = ContainerNode::new(children).with_layout(
         LayoutStyle::new()
             .flex(FlexDirection::Row)
             .with_align_items(AlignItems::Center)
@@ -3365,7 +3503,7 @@ fn view_drop_line(edge: DropEdge, theme: &Theme) -> Scene {
     )
 }
 
-fn view_header(theme: &Theme, sort: Option<(usize, bool)>) -> Scene {
+fn view_header(theme: &Theme, sort: Option<(usize, bool)>, model: &[CellValue]) -> Scene {
     // R937 — a leading blank cell aligning the header over the data rows' handle
     // column (the header has no grip — there is no header row to reorder).
     let mut cells: Vec<Scene> = vec![Scene::Container(
@@ -3383,14 +3521,28 @@ fn view_header(theme: &Theme, sort: Option<(usize, bool)>) -> Scene {
             let glyph = pinion_widget_paint::glyph::sort_glyph(col_sort_dir(sort, col))
                 .map(|g| format!(" {g}"))
                 .unwrap_or_default();
+            let mut children = vec![Scene::Text(TextNode::styled(
+                format!("{label}{glyph}"),
+                Rect::default(),
+                TextStyle::new()
+                    .with_size_px(HEADER_PX)
+                    .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+            ))];
+            // R966 — a column holding any modified cell shows a reset dot at the
+            // header cell's trailing edge (the per-cell dot at column
+            // granularity); a `resetcol<col>` click routes to reset_col. The dot
+            // is a child on top of the header's sort target, so a dot click
+            // resets while a click elsewhere on the header still sorts.
+            if col_modified(model, col) {
+                children.push(reset_dot_at(
+                    reset_col_tag(col),
+                    COL_W[col].saturating_sub(CELL_PAD + RESET_DOT),
+                    (ROW_H - RESET_DOT) / 2,
+                    theme,
+                ));
+            }
             Scene::Container(
-                ContainerNode::new(vec![Scene::Text(TextNode::styled(
-                    format!("{label}{glyph}"),
-                    Rect::default(),
-                    TextStyle::new()
-                        .with_size_px(HEADER_PX)
-                        .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
-                ))])
+                ContainerNode::new(children)
                 .with_tag(col_header_tag(col))
                 .with_layout(
                     LayoutStyle::new()
@@ -3449,7 +3601,8 @@ fn view_data_row(
 ) -> Scene {
     let (focused_row, focused_col) = focus;
     // R937 — the leading drag-handle cell, then the data cells.
-    let mut cells: Vec<Scene> = vec![view_handle_cell(row, reorder_enabled, theme)];
+    let mut cells: Vec<Scene> =
+        vec![view_handle_cell(row, reorder_enabled, row_modified(model, row), theme)];
     cells.extend((0..NCOLS).map(|col| {
         let value = &model[idx(row, col)];
         let focused = row == focused_row && col == focused_col;
@@ -3862,7 +4015,7 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
         total_w,
         total_h,
         ROW_H,
-        view_header(&theme, sort),
+        view_header(&theme, sort, &model),
         |view_pos| match vis_rows[view_pos] {
             // R892 — a group header spanning the grid (label + member count +
             // collapse chevron; a click toggles collapse).
@@ -4244,6 +4397,27 @@ impl WidgetA11y for DataGridView {
         sub_tag: &str,
         action: AccessAction,
     ) -> bool {
+        // R966 — AT activation (`Click`) of a row / column reset dot resets that
+        // row / column through the SAME `reset_row` / `reset_col` funnel the
+        // pointer dot + the RPC verb use (the visible affordance's accessible
+        // action). Reorder rides Increment / Decrement, so `Click` is free for
+        // the reset control — and R937.1 keeps a `button` OUT of the grid row,
+        // exposing the action on the grid here instead. Returns whether the
+        // reset cleared anything (a no-op on an already-default row / column).
+        if action == AccessAction::Click {
+            let (verb, index) = match sub_tag.strip_prefix(RESET_PREFIX).and_then(ResetTarget::parse) {
+                Some(ResetTarget::Row { row }) => ("reset_row", row),
+                Some(ResetTarget::Col { col }) => ("reset_col", col),
+                _ => return false,
+            };
+            let Some(intro) = external_mut(scene, GRID_TAG) else {
+                return false;
+            };
+            return matches!(
+                intro.invoke(verb, IntrospectValue::Int(int_of(index))),
+                Ok(IntrospectValue::Int(n)) if n > 0
+            );
+        }
         let delta: isize = match action {
             AccessAction::Increment => 1,
             AccessAction::Decrement => -1,
@@ -4479,6 +4653,122 @@ mod tests {
                 intro.invoke("reset_col", IntrospectValue::Null),
                 Err(InvokeError::TypeMismatch),
             ));
+        });
+    }
+
+    // ─── R966: row / column-header reset affordance + a11y ────────────
+
+    #[test]
+    fn r966_reset_target_decodes_cell_row_and_column() {
+        // The shared decode grammar (the remainder AFTER `RESET_PREFIX`): a
+        // `row` / `col` letter prefix is a 1-D bulk reset; a digit-leading
+        // remainder reuses the `GridSendKey::Cell` `<row>_<col>` address.
+        assert_eq!(ResetTarget::parse("row3"), Some(ResetTarget::Row { row: 3 }));
+        assert_eq!(ResetTarget::parse("col2"), Some(ResetTarget::Col { col: 2 }));
+        assert_eq!(ResetTarget::parse("0_2"), Some(ResetTarget::Cell { row: 0, col: 2 }));
+        // The letter prefixes never alias the digit-leading cell form.
+        assert_eq!(ResetTarget::parse("12_5"), Some(ResetTarget::Cell { row: 12, col: 5 }));
+        // Malformed remainders decode to None (a no-op, never a panic).
+        assert_eq!(ResetTarget::parse("row"), None, "no index");
+        assert_eq!(ResetTarget::parse("colx"), None, "non-numeric index");
+        assert_eq!(ResetTarget::parse("h2"), None, "a header key is not a reset target");
+    }
+
+    #[test]
+    fn r966_col_and_row_modified_predicates() {
+        // A clean model (every cell at its column default) reports no modified
+        // row or column; modifying one cell flips exactly its row + column.
+        let mut model: Vec<CellValue> = (0..NROWS * NCOLS).map(|i| col_default(i % NCOLS)).collect();
+        assert!(!col_modified(&model, 2), "clean column");
+        assert!(!row_modified(&model, 1), "clean row");
+        model[idx(1, 2)] = CellValue::Int(7); // col 2's default is 0
+        assert!(col_modified(&model, 2), "column 2 now holds a modified cell");
+        assert!(row_modified(&model, 1), "row 1 now holds a modified cell");
+        assert!(!col_modified(&model, 0), "an untouched column stays clean");
+        assert!(!row_modified(&model, 0), "an untouched row stays clean");
+        // Out-of-range axes are not modified (graceful, never a panic).
+        assert!(!col_modified(&model, 99));
+        assert!(!row_modified(&model, 99));
+    }
+
+    #[test]
+    fn r966_resetcol_resetrow_pointer_send_resets_the_axis() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            let intro = node.handle.introspect_mut().expect("introspectable");
+            intro.invoke("reset_all", IntrospectValue::Null).unwrap();
+            // Modify the Count column (col 2) in rows 0 + 1, and the Asset cell
+            // (col 0) in row 0 — so a column reset that wrongly cleared a row
+            // (or vice versa) is caught.
+            intro.intervene("value.0.2", IntrospectValue::Int(50)).unwrap();
+            intro.intervene("value.1.2", IntrospectValue::Int(60)).unwrap();
+            intro.intervene("value.0.0", IntrospectValue::Text("x".to_owned())).unwrap();
+            assert_eq!(intro.query("modified_count"), Some(IntrospectValue::Int(3)));
+            // A `resetcol2` pointer send clears the whole Count column, leaving
+            // the Asset cell modified.
+            intro.invoke("send", IntrospectValue::Text("resetcol2:PointerUp".to_owned())).unwrap();
+            assert_eq!(intro.query("col_modified.2"), Some(IntrospectValue::Bool(false)), "column cleared");
+            assert_eq!(intro.query("modified.0.0"), Some(IntrospectValue::Bool(true)), "other column untouched");
+            // A `resetrow0` pointer send clears the remaining row-0 cell.
+            intro.invoke("send", IntrospectValue::Text("resetrow0:PointerUp".to_owned())).unwrap();
+            assert_eq!(intro.query("row_modified.0"), Some(IntrospectValue::Bool(false)), "row cleared");
+            assert_eq!(intro.query("modified_count"), Some(IntrospectValue::Int(0)));
+            // PointerDown is not an activation (only PointerUp resets).
+            intro.intervene("value.0.2", IntrospectValue::Int(9)).unwrap();
+            intro.invoke("send", IntrospectValue::Text("resetcol2:PointerDown".to_owned())).unwrap();
+            assert_eq!(intro.query("col_modified.2"), Some(IntrospectValue::Bool(true)), "PointerDown does not reset");
+        });
+    }
+
+    #[test]
+    fn r966_col_row_modified_query_peers() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            let intro = node.handle.introspect_mut().expect("introspectable");
+            intro.invoke("reset_all", IntrospectValue::Null).unwrap();
+            assert_eq!(intro.query("col_modified.2"), Some(IntrospectValue::Bool(false)));
+            assert_eq!(intro.query("row_modified.0"), Some(IntrospectValue::Bool(false)));
+            intro.intervene("value.0.2", IntrospectValue::Int(5)).unwrap();
+            assert_eq!(intro.query("col_modified.2"), Some(IntrospectValue::Bool(true)), "col 2 now modified");
+            assert_eq!(intro.query("row_modified.0"), Some(IntrospectValue::Bool(true)), "row 0 now modified");
+            assert_eq!(intro.query("col_modified.0"), Some(IntrospectValue::Bool(false)), "col 0 still clean");
+            // Out-of-range axes read false, not None (graceful AI-first read).
+            assert_eq!(intro.query("col_modified.99"), Some(IntrospectValue::Bool(false)));
+            assert_eq!(intro.query("row_modified.99"), Some(IntrospectValue::Bool(false)));
+        });
+    }
+
+    #[test]
+    fn r966_access_click_resets_row_and_column() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            {
+                let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+                let intro = node.handle.introspect_mut().expect("introspectable");
+                intro.invoke("reset_all", IntrospectValue::Null).unwrap();
+                intro.intervene("value.0.2", IntrospectValue::Int(50)).unwrap();
+                intro.intervene("value.1.2", IntrospectValue::Int(60)).unwrap();
+            }
+            // AT `Click` on the column reset dot clears the whole column (the
+            // accessible twin of the pointer dot click) and reports it cleared.
+            assert!(DataGridView::access_child_invoke(&mut scene, GRID_TAG, "resetcol2", AccessAction::Click));
+            assert_eq!(grid_intro(&scene).query("col_modified.2"), Some(IntrospectValue::Bool(false)), "column reset via AT Click");
+            // A Click on an already-clean column clears nothing -> false.
+            assert!(!DataGridView::access_child_invoke(&mut scene, GRID_TAG, "resetcol2", AccessAction::Click), "clean column Click is a false no-op");
+            // AT `Click` on a modified row's reset dot clears that row.
+            {
+                let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+                node.handle.introspect_mut().unwrap().intervene("value.3.0", IntrospectValue::Text("z".to_owned())).unwrap();
+            }
+            assert!(DataGridView::access_child_invoke(&mut scene, GRID_TAG, "resetrow3", AccessAction::Click));
+            assert_eq!(grid_intro(&scene).query("row_modified.3"), Some(IntrospectValue::Bool(false)), "row reset via AT Click");
+            // A Click on a per-CELL reset tag is not a row/col AT action (the
+            // cell dot has its pointer + RPC paths; the AT Click axis is the
+            // 1-D bulk reset), and a Click on a plain cell is not a reset.
+            assert!(!DataGridView::access_child_invoke(&mut scene, GRID_TAG, "reset0_2", AccessAction::Click), "a cell reset is not a row/col AT action");
+            assert!(!DataGridView::access_child_invoke(&mut scene, GRID_TAG, "0_0", AccessAction::Click), "a plain cell Click is not a reset");
         });
     }
 
