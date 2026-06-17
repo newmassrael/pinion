@@ -480,6 +480,11 @@ fn lower_access_node(access: &AccessNode) -> Node {
     if let Some(kind) = access.current {
         node.set_aria_current(kind.to_accesskit());
     }
+    // R985 §5.40 — WAI-ARIA `aria-haspopup` on a popup-owning trigger (the
+    // submenu parent menuitem). `None` omits it (`aria-haspopup="false"`).
+    if let Some(kind) = access.has_popup {
+        node.set_has_popup(kind.to_accesskit());
+    }
 
     add_actions_for_role(&mut node, access.role);
     node

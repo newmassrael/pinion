@@ -314,6 +314,7 @@ impl WidgetA11y for ContextMenuView {
                 checked: None,
                 disabled: false,
                 focused: group_focused && state.active == Some(i),
+                ..MenuItemCell::default()
             })
             .collect();
         menu_item_nodes(<Self as WidgetCore>::tag(), "Context menu", &items)

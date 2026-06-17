@@ -117,6 +117,7 @@ members = [
     "examples/hello-tabs",
     "examples/hello-menu",
     "examples/hello-menu-app",
+    "examples/hello-menu-nested",
     "examples/hello-print",
     "examples/hello-contextmenu",
     "examples/hello-toolbar",

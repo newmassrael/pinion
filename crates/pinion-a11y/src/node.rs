@@ -16,7 +16,7 @@
 use pinion_core::scene::Rect;
 use pinion_core::widgets::interaction::InteractionState;
 
-use crate::role::{AriaCurrent, AriaRole, AutoComplete, SortDirection};
+use crate::role::{AriaCurrent, AriaRole, AutoComplete, HasPopup, SortDirection};
 
 /// Pinion-native a11y descriptor for one widget.
 ///
@@ -266,6 +266,20 @@ pub struct AccessNode {
     /// R717 / R730 / R731 additive-axis convention) so it defaults absent
     /// without forcing every hand-written node literal to enumerate it.
     pub value_text: Option<String>,
+    /// R985 §5.40 — WAI-ARIA 1.2 §6.6.5 `aria-haspopup`. `Some(kind)` marks
+    /// this node as the trigger that opens a popup of the given kind; the tree
+    /// builder lowers it via `accesskit::Node::set_has_popup`, and `None` omits
+    /// the attribute (`aria-haspopup="false"`).
+    ///
+    /// The canonical consumer is the WAI-ARIA §3.16 menubar submenu: a
+    /// [`AriaRole::MenuItem`] that owns a child [`AriaRole::Menu`] carries
+    /// `Some(HasPopup::Menu)` and pairs it with [`Self::expanded`] for the
+    /// open / closed state.
+    ///
+    /// Placed on [`AccessNode`] (the R674 / R693 / R695 / R696 / R714 / R717 /
+    /// R730 / R731 / R739 additive-axis convention) so it defaults absent
+    /// without forcing every hand-written node literal to enumerate it.
+    pub has_popup: Option<HasPopup>,
 }
 
 impl AccessNode {
@@ -296,6 +310,7 @@ impl AccessNode {
             sort: None,
             current: None,
             value_text: None,
+            has_popup: None,
         }
     }
 
@@ -496,6 +511,14 @@ impl AccessNode {
     #[must_use]
     pub fn with_value_text(mut self, text: impl Into<String>) -> Self {
         self.value_text = Some(text.into());
+        self
+    }
+
+    /// R985 §5.40 — set the WAI-ARIA `aria-haspopup` kind (the submenu parent
+    /// item's `HasPopup::Menu`). See [`Self::has_popup`].
+    #[must_use]
+    pub fn with_has_popup(mut self, kind: HasPopup) -> Self {
+        self.has_popup = Some(kind);
         self
     }
 }

@@ -13,7 +13,7 @@
 //! they would in HTML's `role` attribute.
 
 use accesskit::{
-    AriaCurrent as AkAriaCurrent, AutoComplete as AkAutoComplete, Role,
+    AriaCurrent as AkAriaCurrent, AutoComplete as AkAutoComplete, HasPopup as AkHasPopup, Role,
     SortDirection as AkSortDirection,
 };
 
@@ -719,6 +719,61 @@ impl AriaCurrent {
             Self::Date => "date",
             Self::Time => "time",
             Self::True => "true",
+        }
+    }
+}
+
+/// R985 §5.40 — WAI-ARIA 1.2 §6.6.5 `aria-haspopup`: declares that a control
+/// owns a popup the activation opens. The wrapper keeps [`AccessNode`] free of
+/// a direct `accesskit` dependency, exactly as [`AutoComplete`] / [`SortDirection`]
+/// do.
+///
+/// `aria-haspopup="false"` (no popup) is modelled by the *absence* of the value
+/// ([`AccessNode::has_popup`](crate::AccessNode::has_popup) = `None`). The
+/// canonical first consumer is the WAI-ARIA §3.16 menubar submenu: a
+/// [`AriaRole::MenuItem`] that opens a child [`AriaRole::Menu`] carries
+/// [`Self::Menu`], so AT announces "has submenu" and pairs it with the
+/// `aria-expanded` state. The full closed set mirrors `accesskit::HasPopup`
+/// (the fixed WAI-ARIA token list `menu | listbox | tree | grid | dialog`).
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum HasPopup {
+    /// `aria-haspopup="menu"` — opens a menu (the submenu parent item).
+    Menu,
+    /// `aria-haspopup="listbox"` — opens a listbox (combobox popup).
+    Listbox,
+    /// `aria-haspopup="tree"` — opens a tree.
+    Tree,
+    /// `aria-haspopup="grid"` — opens a grid.
+    Grid,
+    /// `aria-haspopup="dialog"` — opens a dialog.
+    Dialog,
+}
+
+impl HasPopup {
+    /// Lower to `accesskit::HasPopup`. The single bridge point so an
+    /// `accesskit` minor bump rewrites only this arm.
+    #[must_use]
+    pub const fn to_accesskit(self) -> AkHasPopup {
+        match self {
+            Self::Menu => AkHasPopup::Menu,
+            Self::Listbox => AkHasPopup::Listbox,
+            Self::Tree => AkHasPopup::Tree,
+            Self::Grid => AkHasPopup::Grid,
+            Self::Dialog => AkHasPopup::Dialog,
+        }
+    }
+
+    /// WAI-ARIA literal as it appears in an HTML `aria-haspopup` attribute,
+    /// so introspect / RPC and AT report identical tokens.
+    #[must_use]
+    pub const fn aria_name(self) -> &'static str {
+        match self {
+            Self::Menu => "menu",
+            Self::Listbox => "listbox",
+            Self::Tree => "tree",
+            Self::Grid => "grid",
+            Self::Dialog => "dialog",
         }
     }
 }

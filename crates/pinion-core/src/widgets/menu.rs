@@ -28,8 +28,15 @@
 //!
 //! - `open: Option<usize>` — the open dropdown's menu index (`None`
 //!   when every menu is closed).
-//! - `active: Option<usize>` — the highlighted item within the open
-//!   menu (the WAI-ARIA active descendant; set by hover or Arrow keys).
+//! - `open_path: Vec<usize>` — R985: the chain of [`MenuItem::Submenu`]
+//!   item indices open *below* the top dropdown, descending. Empty when
+//!   only the top dropdown is open; `[2]` means item 2 of the top menu
+//!   (a submenu) is expanded; `[2, 1]` adds a further nested level. The
+//!   *current* menu (where the keyboard cursor lives) is the deepest one
+//!   reached by following `open` then `open_path`.
+//! - `active: Option<usize>` — the highlighted item within the *current*
+//!   (deepest open) menu (the WAI-ARIA active descendant; set by hover or
+//!   Arrow keys).
 //! - `bar_focus: usize` — the focused top-level title for keyboard
 //!   navigation. Invariant: `open == Some(m)` ⟹ `bar_focus == m`.
 //!
@@ -72,12 +79,25 @@
 //! layer ([`pinion_widget_paint::barrier`]); the binding paints it as a
 //! `<bar>#barrier` composite node behind the open dropdown and the
 //! R51.42 router feeds its `PointerUp` here as `send("barrier:…")`,
-//! which closes the menu. *Focus-loss dismiss* remains an additive axis
-//! once a real consumer surfaces it. Likewise *mouse
-//! hover-follow between top-level titles while a menu is open*,
-//! *`menuitemcheckbox` / `menuitemradio` stateful entries*, *submenus
-//! (nested menus)*, and *accelerator / mnemonic keys* are additive
-//! axes once a real consumer needs them.
+//! which closes the menu (R985 — including any open submenus). *Focus-loss
+//! dismiss* remains an additive axis once a real consumer surfaces it.
+//! Likewise *mouse hover-follow between top-level titles while a menu is
+//! open*, *`menuitemradio` stateful entries*, and *accelerator / mnemonic
+//! keys* are additive axes once a real consumer needs them.
+//!
+//! ## R985 — cascading submenus (WAI-ARIA §3.16)
+//!
+//! A [`MenuItem::Submenu`] opens a nested menu instead of firing a
+//! command. The keyboard model follows the WAI-ARIA menubar pattern:
+//! **Arrow Right** on a submenu parent opens it (focus its first item);
+//! **Arrow Right** on a leaf closes any open submenus and moves to the
+//! next top-level menu; **Arrow Left** / **Escape** in a submenu closes
+//! just that level and returns focus to its parent item; **Arrow Left**
+//! at the top dropdown level moves to the previous top-level menu;
+//! **Enter / Space** on a submenu parent opens it, on a leaf activates it.
+//! A submenu opens on a **discrete event** (click or Arrow Right), never
+//! on a hover timer — hover only *highlights* — so the model stays
+//! deterministic / ZERO-FLAKE; hover-open-on-delay is an additive axis.
 
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
@@ -96,7 +116,12 @@ use crate::widgets::IntentEmitter;
 /// non-checkbox — both nonsensical). `checked` now exists *only* on
 /// [`Self::Checkbox`]; `enabled` only on the interactive variants; a
 /// [`Self::Separator`] carries neither.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+///
+/// R985 — [`Self::Submenu`] adds nested menus (WAI-ARIA §3.16 menubar
+/// cascade). It owns a `Vec<MenuItem>` so the type is recursive, which
+/// drops the `Copy` derive (a `Vec` is not `Copy`); every call site
+/// constructs fresh or matches by reference, so `Clone` suffices.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MenuItem {
     /// A one-shot command (WAI-ARIA `menuitem`): activating it fires the
     /// `"command"` intent and dismisses the menu. `enabled == false`
@@ -117,6 +142,16 @@ pub enum MenuItem {
     /// A non-interactive divider (WAI-ARIA `separator`): never navigable,
     /// never activatable — it only sections the dropdown visually.
     Separator,
+    /// R985 — a nested submenu (WAI-ARIA §3.16 `menuitem` with
+    /// `aria-haspopup="menu"`): activating it does *not* fire `"command"`
+    /// or dismiss; it *opens* the child menu (the cascade descends a
+    /// level). `enabled == false` greys it and makes it inert.
+    Submenu {
+        /// Whether the submenu can be opened.
+        enabled: bool,
+        /// The nested item list shown when this submenu is open.
+        items: Vec<MenuItem>,
+    },
 }
 
 impl MenuItem {
@@ -138,25 +173,51 @@ impl MenuItem {
         Self::Separator
     }
 
+    /// R985 — an enabled submenu carrying the given nested item list.
+    #[must_use]
+    pub fn submenu(items: Vec<MenuItem>) -> Self {
+        Self::Submenu { enabled: true, items }
+    }
+
     /// Builder: mark this item disabled (greyed, skipped, non-activatable).
     /// A [`Self::Separator`] is already inert, so this is a no-op there.
     #[must_use]
-    pub const fn disabled(self) -> Self {
+    pub fn disabled(self) -> Self {
         match self {
             Self::Command { .. } => Self::Command { enabled: false },
             Self::Checkbox { checked, .. } => Self::Checkbox { checked, enabled: false },
             Self::Separator => Self::Separator,
+            Self::Submenu { items, .. } => Self::Submenu { enabled: false, items },
         }
     }
 
     /// Whether keyboard / hover navigation may land on this item, and
-    /// whether activation has any effect: every enabled non-separator.
+    /// whether activation has any effect: every enabled non-separator
+    /// (R985 — an enabled [`Self::Submenu`] is navigable; landing on it
+    /// then activating opens it).
     #[must_use]
     pub const fn is_navigable(&self) -> bool {
         matches!(
             self,
-            Self::Command { enabled: true } | Self::Checkbox { enabled: true, .. }
+            Self::Command { enabled: true }
+                | Self::Checkbox { enabled: true, .. }
+                | Self::Submenu { enabled: true, .. }
         )
+    }
+
+    /// R985 — whether this item opens a nested submenu.
+    #[must_use]
+    pub const fn is_submenu(&self) -> bool {
+        matches!(self, Self::Submenu { .. })
+    }
+
+    /// R985 — the nested item list for a [`Self::Submenu`], else `None`.
+    #[must_use]
+    pub fn submenu_items(&self) -> Option<&[MenuItem]> {
+        match self {
+            Self::Submenu { items, .. } => Some(items),
+            _ => None,
+        }
     }
 
     /// The persistent checked state (`false` for non-checkbox items).
@@ -169,7 +230,9 @@ impl MenuItem {
     #[must_use]
     pub const fn enabled(&self) -> bool {
         match self {
-            Self::Command { enabled } | Self::Checkbox { enabled, .. } => *enabled,
+            Self::Command { enabled }
+            | Self::Checkbox { enabled, .. }
+            | Self::Submenu { enabled, .. } => *enabled,
             Self::Separator => false,
         }
     }
@@ -181,6 +244,7 @@ impl MenuItem {
             Self::Command { .. } => "command",
             Self::Checkbox { .. } => "checkbox",
             Self::Separator => "separator",
+            Self::Submenu { .. } => "submenu",
         }
     }
 }
@@ -194,8 +258,12 @@ pub struct MenuBar {
     menus: Vec<Vec<MenuItem>>,
     /// Open dropdown menu index, or `None` when every menu is closed.
     open: Option<usize>,
-    /// Highlighted item within the open menu (the WAI-ARIA active
-    /// descendant), or `None`.
+    /// R985 — the [`MenuItem::Submenu`] item indices open below the top
+    /// dropdown, descending (empty when only the top dropdown is open).
+    /// See the module-level state model.
+    open_path: Vec<usize>,
+    /// Highlighted item within the *current* (deepest open) menu (the
+    /// WAI-ARIA active descendant), or `None`.
     active: Option<usize>,
     /// Focused top-level title for keyboard navigation. Invariant:
     /// `open == Some(m)` ⟹ `bar_focus == m`.
@@ -212,7 +280,7 @@ impl MenuBar {
             .into_iter()
             .map(|count| vec![MenuItem::command(); count])
             .collect();
-        Self { menus, open: None, active: None, bar_focus: 0 }
+        Self { menus, open: None, open_path: Vec::new(), active: None, bar_focus: 0 }
     }
 
     /// R805 — construct a menubar from explicit per-menu [`MenuItem`]
@@ -220,7 +288,7 @@ impl MenuBar {
     /// closed.
     #[must_use]
     pub fn with_items(menus: Vec<Vec<MenuItem>>) -> Self {
-        Self { menus, open: None, active: None, bar_focus: 0 }
+        Self { menus, open: None, open_path: Vec::new(), active: None, bar_focus: 0 }
     }
 
     /// Number of top-level menus.
@@ -235,11 +303,56 @@ impl MenuBar {
         self.menus.get(menu).map(Vec::len)
     }
 
-    /// R805 — the [`MenuItem`] at `(menu, item)`, or `None` when either
-    /// index is out of range.
+    /// R805 — the [`MenuItem`] at `(menu, item)` of a *top-level* menu, or
+    /// `None` when either index is out of range. R985 — for nested items use
+    /// [`Self::item_at_path`]; this two-index accessor is the original
+    /// top-level convenience (clones since [`MenuItem`] is no longer `Copy`).
     #[must_use]
     pub fn item(&self, menu: usize, item: usize) -> Option<MenuItem> {
-        self.menus.get(menu)?.get(item).copied()
+        self.menus.get(menu)?.get(item).cloned()
+    }
+
+    /// R985 — the item list of the menu reached by `path`: `[m]` is top
+    /// menu `m`; each further index descends into a [`MenuItem::Submenu`].
+    /// `None` when any index is out of range or a non-submenu is descended.
+    #[must_use]
+    pub fn menu_items_at(&self, path: &[usize]) -> Option<&[MenuItem]> {
+        let (&menu, rest) = path.split_first()?;
+        walk_submenus(self.menus.get(menu)?, rest)
+    }
+
+    /// R985 — the [`MenuItem`] at an absolute `path` (`[menu, item, …]`,
+    /// length ≥ 2), or `None` when the path is too short or out of range.
+    #[must_use]
+    pub fn item_at_path(&self, path: &[usize]) -> Option<&MenuItem> {
+        let (&last, parent) = path.split_last()?;
+        self.menu_items_at(parent)?.get(last)
+    }
+
+    /// R985 — mutable [`MenuItem`] at an absolute `path` (`[menu, item, …]`).
+    fn item_at_path_mut(&mut self, path: &[usize]) -> Option<&mut MenuItem> {
+        let (&last, parent) = path.split_last()?;
+        let (&menu, rest) = parent.split_first()?;
+        let mut items: &mut Vec<MenuItem> = self.menus.get_mut(menu)?;
+        for &p in rest {
+            items = match items.get_mut(p)? {
+                MenuItem::Submenu { items: sub, .. } => sub,
+                _ => return None,
+            };
+        }
+        items.get_mut(last)
+    }
+
+    /// R985 — the item slice of the *current* (deepest open) menu, or
+    /// `None` when no menu is open / the open path is inconsistent.
+    fn current_items(&self) -> Option<&[MenuItem]> {
+        self.rel_items_at(&self.open_path)
+    }
+
+    /// R985 — the item slice reached from the open top menu by `rel_prefix`
+    /// (a descent *relative to* the open dropdown, the wire `i<path>` form).
+    fn rel_items_at(&self, rel_prefix: &[usize]) -> Option<&[MenuItem]> {
+        walk_submenus(self.menus.get(self.open?)?, rel_prefix)
     }
 
     /// The open dropdown's menu index, or `None`.
@@ -248,10 +361,33 @@ impl MenuBar {
         self.open
     }
 
-    /// The highlighted item within the open menu, or `None`.
+    /// R985 — the open submenu descent below the top dropdown (empty when
+    /// only the top dropdown is open).
+    #[must_use]
+    pub fn open_path(&self) -> &[usize] {
+        &self.open_path
+    }
+
+    /// R985 — whether the cursor is inside a nested submenu (the open path
+    /// is non-empty).
+    #[must_use]
+    pub fn in_submenu(&self) -> bool {
+        !self.open_path.is_empty()
+    }
+
+    /// The highlighted item within the current (deepest open) menu, or `None`.
     #[must_use]
     pub fn active_item(&self) -> Option<usize> {
         self.active
+    }
+
+    /// R985 — the absolute path of the active item (`[menu, …open_path…,
+    /// active]`), or `None` when nothing is open / highlighted.
+    #[must_use]
+    pub fn active_path(&self) -> Option<Vec<usize>> {
+        let m = self.open?;
+        let a = self.active?;
+        Some(self.abs_path(m, a))
     }
 
     /// The focused top-level title (keyboard cursor).
@@ -260,10 +396,26 @@ impl MenuBar {
         self.bar_focus
     }
 
+    /// R985 — whether the current active item opens a submenu.
+    fn active_is_submenu(&self) -> bool {
+        self.active
+            .and_then(|a| self.current_items()?.get(a))
+            .is_some_and(MenuItem::is_submenu)
+    }
+
+    /// R985 — build the absolute path `[menu, …open_path…, item]`.
+    fn abs_path(&self, menu: usize, item: usize) -> Vec<usize> {
+        let mut p = Vec::with_capacity(self.open_path.len() + 2);
+        p.push(menu);
+        p.extend_from_slice(&self.open_path);
+        p.push(item);
+        p
+    }
+
     /// Mouse: toggle menu `m`. Re-toggling the open menu closes it;
     /// toggling a different (or closed) menu opens `m` with no item
     /// pre-highlighted (pointer ergonomics). Out-of-range `m` is a
-    /// no-op.
+    /// no-op. R985 — opening resets the submenu descent.
     fn toggle_title(&mut self, m: usize) {
         if m >= self.menu_count() {
             return;
@@ -272,46 +424,138 @@ impl MenuBar {
             self.close();
         } else {
             self.open = Some(m);
+            self.open_path.clear();
             self.active = None;
             self.bar_focus = m;
         }
     }
 
-    /// Mouse: highlight item `i` of the open menu (hover). No-op when
-    /// no menu is open, `i` is out of range, or item `i` is a separator /
-    /// disabled (R805 — hover skips non-navigable rows).
-    fn hover_item(&mut self, i: usize) {
-        if let Some(m) = self.open {
-            if self.menus[m].get(i).is_some_and(MenuItem::is_navigable) {
-                self.active = Some(i);
-            }
+    /// R985 — mouse: point at the item reached by `rel_path` (a descent
+    /// relative to the open dropdown). Collapses any deeper-open submenus
+    /// to this level (moving back to a shallower item closes the ones
+    /// below it) and highlights the target if navigable. Inert for an
+    /// unreachable / non-navigable target.
+    fn point_to(&mut self, rel_path: &[usize]) {
+        let Some((&last, prefix)) = rel_path.split_last() else { return };
+        let nav = self
+            .rel_items_at(prefix)
+            .is_some_and(|items| items.get(last).is_some_and(MenuItem::is_navigable));
+        if !nav {
+            return;
         }
+        self.open_path = prefix.to_vec();
+        self.active = Some(last);
     }
 
-    /// Activate item `i` of the open menu: returns `Some((menu, item))`
-    /// and closes the menu when valid, `None` otherwise. A separator /
-    /// disabled item is inert (R805). A [`MenuItem::Checkbox`] flips
-    /// its persistent `checked` state before closing. The caller
-    /// (the [`MenuBarExternal`] adapter) emits the `"command"` intent
-    /// from the returned coordinates.
-    fn activate_item(&mut self, i: usize) -> Option<(usize, usize)> {
+    /// Activate item `i` of the *current* menu. R985 — a [`MenuItem::Submenu`]
+    /// opens (descends a level) and returns `None` (no command); a leaf
+    /// command / checkbox flips its `checked` state, closes the whole menu,
+    /// and returns `Some(absolute_path)` so the caller emits `"command"`.
+    /// A separator / disabled / out-of-range item is inert (`None`).
+    fn activate_item(&mut self, i: usize) -> Option<Vec<usize>> {
         let m = self.open?;
-        let item = self.menus[m].get_mut(i)?;
-        if !item.is_navigable() {
+        let (navigable, is_sub) = {
+            let item = self.current_items()?.get(i)?;
+            (item.is_navigable(), item.is_submenu())
+        };
+        if !navigable {
             return None;
         }
-        if let MenuItem::Checkbox { checked, .. } = item {
+        if is_sub {
+            self.descend_into(i);
+            return None;
+        }
+        let path = self.abs_path(m, i);
+        if let Some(MenuItem::Checkbox { checked, .. }) =
+            self.current_items_mut().and_then(|items| items.get_mut(i))
+        {
             *checked = !*checked;
         }
         self.close();
         self.bar_focus = m;
-        Some((m, i))
+        Some(path)
     }
 
-    /// Close every menu. `bar_focus` is preserved (Escape returns the
-    /// keyboard cursor to the title that was open).
+    /// R985 — mutable item slice of the current (deepest open) menu.
+    fn current_items_mut(&mut self) -> Option<&mut Vec<MenuItem>> {
+        let m = self.open?;
+        let path = self.open_path.clone();
+        let mut items: &mut Vec<MenuItem> = self.menus.get_mut(m)?;
+        for p in path {
+            items = match items.get_mut(p)? {
+                MenuItem::Submenu { items: sub, .. } => sub,
+                _ => return None,
+            };
+        }
+        Some(items)
+    }
+
+    /// R985 — mouse: activate the item reached by `rel_path` (relative to
+    /// the open dropdown). Collapses to the target's level first, then
+    /// activates it (a submenu opens, a leaf fires `"command"`). Returns
+    /// the activated leaf's absolute path, or `None` (submenu / inert).
+    fn activate_rel(&mut self, rel_path: &[usize]) -> Option<Vec<usize>> {
+        let (&last, prefix) = rel_path.split_last()?;
+        // Validate the descent prefix is reachable before collapsing to it.
+        self.rel_items_at(prefix)?;
+        self.open_path = prefix.to_vec();
+        self.activate_item(last)
+    }
+
+    /// R985 — keyboard: activate the current active item (Enter / Space).
+    /// Delegates to [`Self::activate_item`] (a submenu opens, a leaf fires).
+    fn activate_active(&mut self) -> Option<Vec<usize>> {
+        let a = self.active?;
+        self.activate_item(a)
+    }
+
+    /// R985 — open the [`MenuItem::Submenu`] at current-menu index `i`,
+    /// descending a level and highlighting the submenu's first navigable
+    /// item. No-op if `i` is not an enabled submenu.
+    fn descend_into(&mut self, i: usize) {
+        let first = self
+            .current_items()
+            .and_then(|items| items.get(i))
+            .and_then(MenuItem::submenu_items)
+            .and_then(|sub| menu_nav::nav_edge_skip(sub.len(), false, |k| sub[k].is_navigable()));
+        // Only descend when `i` really is a submenu (first computed above
+        // would have read its items; guard via is_submenu for clarity).
+        if self
+            .current_items()
+            .and_then(|items| items.get(i))
+            .is_some_and(MenuItem::is_submenu)
+        {
+            self.open_path.push(i);
+            self.active = first;
+        }
+    }
+
+    /// R985 — keyboard: open the active submenu (Arrow Right on a parent).
+    fn descend_active(&mut self) {
+        if let Some(a) = self.active {
+            if self.active_is_submenu() {
+                self.descend_into(a);
+            }
+        }
+    }
+
+    /// R985 — close the deepest open submenu, returning focus to its parent
+    /// item (Arrow Left / Escape inside a submenu). `true` when a level was
+    /// closed.
+    fn ascend(&mut self) -> bool {
+        if let Some(parent) = self.open_path.pop() {
+            self.active = Some(parent);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Close every menu (and any open submenus). `bar_focus` is preserved
+    /// (Escape returns the keyboard cursor to the title that was open).
     fn close(&mut self) {
         self.open = None;
+        self.open_path.clear();
         self.active = None;
     }
 
@@ -334,12 +578,14 @@ impl MenuBar {
         }
         let m = self.bar_focus;
         self.open = Some(m);
+        self.open_path.clear();
         self.active = self.first_navigable(m);
     }
 
-    /// Keyboard (open): switch to the adjacent menu and open it with
-    /// its first navigable item highlighted (Arrow Right/Left inside an
-    /// open menu — the WAI-ARIA menubar cross-navigation).
+    /// Keyboard (open): switch to the adjacent top-level menu and open it
+    /// with its first navigable item highlighted (Arrow Right/Left at the
+    /// top dropdown level — the WAI-ARIA menubar cross-navigation). R985 —
+    /// closes any open submenus first.
     fn menu_switch(&mut self, forward: bool) {
         let Some(m) = self.open else { return };
         let n = self.menu_count();
@@ -348,36 +594,57 @@ impl MenuBar {
         }
         let next = menu_nav::step(m, forward, n);
         self.open = Some(next);
+        self.open_path.clear();
         self.bar_focus = next;
         self.active = self.first_navigable(next);
     }
 
     /// Keyboard (open): move the active item by one with wrap, skipping
     /// separators / disabled rows (R805). With no active item, Down lands
-    /// on the first navigable item and Up on the last.
+    /// on the first navigable item and Up on the last. R985 — operates on
+    /// the current (deepest open) menu.
     fn move_active(&mut self, forward: bool) {
-        let Some(m) = self.open else { return };
-        let items = &self.menus[m];
-        self.active = menu_nav::nav_move_skip(self.active, items.len(), forward, |i| {
-            items[i].is_navigable()
-        });
+        let next = {
+            let Some(items) = self.current_items() else { return };
+            menu_nav::nav_move_skip(self.active, items.len(), forward, |i| items[i].is_navigable())
+        };
+        self.active = next;
     }
 
     /// Keyboard (open): jump the active item to the first / last
-    /// **navigable** entry (Home / End).
+    /// **navigable** entry of the current menu (Home / End).
     fn active_edge(&mut self, last: bool) {
-        let Some(m) = self.open else { return };
-        let items = &self.menus[m];
-        if let Some(a) = menu_nav::nav_edge_skip(items.len(), last, |i| items[i].is_navigable()) {
+        let edge = {
+            let Some(items) = self.current_items() else { return };
+            menu_nav::nav_edge_skip(items.len(), last, |i| items[i].is_navigable())
+        };
+        if let Some(a) = edge {
             self.active = Some(a);
         }
     }
 
-    /// The first navigable item of menu `m` (skipping leading separators /
-    /// disabled rows), or `None` when the menu has no navigable item.
+    /// The first navigable item of top menu `m` (skipping leading
+    /// separators / disabled rows), or `None` when none is navigable.
     fn first_navigable(&self, m: usize) -> Option<usize> {
         let items = &self.menus[m];
         menu_nav::nav_edge_skip(items.len(), false, |i| items[i].is_navigable())
+    }
+
+    /// R985 — validate a candidate `open_path`: every index must address an
+    /// enabled [`MenuItem::Submenu`] reachable from the open top menu.
+    fn is_valid_open_path(&self, path: &[usize]) -> bool {
+        let Some(m) = self.open else { return false };
+        let mut items: &[MenuItem] = match self.menus.get(m) {
+            Some(i) => i,
+            None => return false,
+        };
+        for &idx in path {
+            match items.get(idx) {
+                Some(MenuItem::Submenu { enabled: true, items: sub }) => items = sub,
+                _ => return false,
+            }
+        }
+        true
     }
 }
 
@@ -428,10 +695,23 @@ impl MenuBarExternal {
         self.em.inner.item_count(menu)
     }
 
+    /// R985 — item count of the menu reached by `path` (`[m]` = top menu,
+    /// further indices descend into submenus), or `None` out of range.
+    #[must_use]
+    pub fn item_count_at(&self, path: &[usize]) -> Option<usize> {
+        self.em.inner.menu_items_at(path).map(<[MenuItem]>::len)
+    }
+
     /// R805 — the [`MenuItem`] at `(menu, item)`, or `None` out of range.
     #[must_use]
     pub fn item(&self, menu: usize, item: usize) -> Option<MenuItem> {
         self.em.inner.item(menu, item)
+    }
+
+    /// R985 — the [`MenuItem`] at an absolute `path` (`[menu, item, …]`).
+    #[must_use]
+    pub fn item_at_path(&self, path: &[usize]) -> Option<&MenuItem> {
+        self.em.inner.item_at_path(path)
     }
 
     /// The open dropdown's menu index, or `None`.
@@ -440,10 +720,22 @@ impl MenuBarExternal {
         self.em.inner.open_menu()
     }
 
-    /// The highlighted item within the open menu, or `None`.
+    /// R985 — the open submenu descent below the top dropdown.
+    #[must_use]
+    pub fn open_path(&self) -> &[usize] {
+        self.em.inner.open_path()
+    }
+
+    /// The highlighted item within the current (deepest open) menu, or `None`.
     #[must_use]
     pub fn active_item(&self) -> Option<usize> {
         self.em.inner.active_item()
+    }
+
+    /// R985 — the absolute path of the active item, or `None`.
+    #[must_use]
+    pub fn active_path(&self) -> Option<Vec<usize>> {
+        self.em.inner.active_path()
     }
 
     /// The focused top-level title (keyboard cursor).
@@ -460,14 +752,17 @@ impl MenuBarExternal {
         }
     }
 
-    /// Drive an item pointer event (`i`, `event`). `PointerEnter`
-    /// highlights; `PointerUp` activates (and emits `"command"`).
-    fn send_item(&mut self, i: usize, event: PointerWireEvent) {
+    /// Drive an item pointer event (`rel_path`, `event`) — R985: `rel_path`
+    /// is the descent relative to the open dropdown (`[i]` for a top item,
+    /// `[i, j]` for item `j` of submenu `i`). `PointerEnter` highlights /
+    /// collapses to that level; `PointerUp` activates (a submenu opens, a
+    /// leaf emits `"command"`).
+    fn send_item(&mut self, rel_path: &[usize], event: PointerWireEvent) {
         match event {
-            PointerWireEvent::Enter => self.em.inner.hover_item(i),
+            PointerWireEvent::Enter => self.em.inner.point_to(rel_path),
             PointerWireEvent::Up => {
-                if let Some((m, item)) = self.em.inner.activate_item(i) {
-                    self.emit_command(m, item);
+                if let Some(path) = self.em.inner.activate_rel(rel_path) {
+                    self.emit_command(&path);
                 }
             }
             PointerWireEvent::Down | PointerWireEvent::Leave | PointerWireEvent::Cancel => {}
@@ -520,24 +815,42 @@ impl MenuBarExternal {
                     self.em.inner.active_edge(true);
                     true
                 }
+                // R985 — Arrow Right opens the active submenu; on a leaf it
+                // closes any submenus and moves to the next top-level menu
+                // (WAI-ARIA §3.16).
                 "ArrowRight" => {
-                    self.em.inner.menu_switch(true);
-                    true
-                }
-                "ArrowLeft" => {
-                    self.em.inner.menu_switch(false);
-                    true
-                }
-                "Enter" | "Space" => {
-                    if let Some(i) = self.em.inner.active_item() {
-                        if let Some((m, item)) = self.em.inner.activate_item(i) {
-                            self.emit_command(m, item);
-                        }
+                    if self.em.inner.active_is_submenu() {
+                        self.em.inner.descend_active();
+                    } else {
+                        self.em.inner.menu_switch(true);
                     }
                     true
                 }
+                // R985 — Arrow Left inside a submenu closes that level
+                // (focus returns to its parent); at the top dropdown level it
+                // moves to the previous top-level menu.
+                "ArrowLeft" => {
+                    if self.em.inner.in_submenu() {
+                        self.em.inner.ascend();
+                    } else {
+                        self.em.inner.menu_switch(false);
+                    }
+                    true
+                }
+                "Enter" | "Space" => {
+                    if let Some(path) = self.em.inner.activate_active() {
+                        self.emit_command(&path);
+                    }
+                    true
+                }
+                // R985 — Escape closes one level: a nested submenu collapses
+                // to its parent; the top dropdown closes entirely.
                 "Escape" => {
-                    self.em.inner.close();
+                    if self.em.inner.in_submenu() {
+                        self.em.inner.ascend();
+                    } else {
+                        self.em.inner.close();
+                    }
                     true
                 }
                 _ => false,
@@ -545,12 +858,11 @@ impl MenuBarExternal {
         }
     }
 
-    /// Push the `"command"` intent for an activated item.
-    fn emit_command(&mut self, menu: usize, item: usize) {
-        self.em.push(Intent::new_static(
-            "command",
-            IntrospectValue::Text(format!("{menu}.{item}")),
-        ));
+    /// Push the `"command"` intent for an activated leaf item, payload the
+    /// dot-joined absolute path (`"<menu>.<item>"`, R985 `"<menu>.<item>.<sub>"`
+    /// for a nested leaf).
+    fn emit_command(&mut self, path: &[usize]) {
+        self.em.push(Intent::new_static("command", IntrospectValue::Text(path_text(path))));
     }
 
     /// Shared parse for the `send` wire payload `"<sub>:<EventName>"`
@@ -577,10 +889,19 @@ impl MenuBarExternal {
         }
         let mut chars = sub.chars();
         let kind = chars.next().ok_or(InvokeError::Rejected)?;
-        let idx: usize = chars.as_str().parse().map_err(|_| InvokeError::Rejected)?;
+        let rest = chars.as_str();
         match kind {
-            't' => self.send_title(idx, event),
-            'i' => self.send_item(idx, event),
+            // Title: a single top-level menu index.
+            't' => {
+                let idx: usize = rest.parse().map_err(|_| InvokeError::Rejected)?;
+                self.send_title(idx, event);
+            }
+            // R985 — item: a dotted descent path relative to the open
+            // dropdown (`i2` top item, `i2.0` item 0 of submenu 2, …).
+            'i' => {
+                let path = parse_path(rest).ok_or(InvokeError::Rejected)?;
+                self.send_item(&path, event);
+            }
             _ => return Err(InvokeError::Rejected),
         }
         Ok(open_value(self.open_menu()))
@@ -597,11 +918,28 @@ fn set_bar_focus(menu: &mut MenuBar, last: bool) {
     menu.bar_focus = if last { n - 1 } else { 0 };
 }
 
-/// R805 — parse a `<menu>.<item>` per-item slot suffix into its two
-/// indices. `None` for a missing dot or a non-numeric component.
-fn parse_menu_item(suffix: &str) -> Option<(usize, usize)> {
-    let (m, i) = suffix.split_once('.')?;
-    Some((m.parse().ok()?, i.parse().ok()?))
+/// R985 — descend a submenu chain: from `start`, follow each `descent`
+/// index into the [`MenuItem::Submenu`] it addresses, returning the item
+/// slice reached. `None` if any index is out of range or a non-submenu is
+/// descended. The shared inner walk behind [`MenuBar::menu_items_at`] /
+/// `rel_items_at` / `current_items` (one home for the cascade descent).
+fn walk_submenus<'a>(start: &'a [MenuItem], descent: &[usize]) -> Option<&'a [MenuItem]> {
+    let mut items = start;
+    for &p in descent {
+        items = items.get(p)?.submenu_items()?;
+    }
+    Some(items)
+}
+
+/// R985 — parse a dotted index path (`"0"`, `"0.2"`, `"0.2.1"`) into its
+/// component indices. `None` for an empty string or a non-numeric component.
+/// Generalises the R805 two-index `parse_menu_item` to arbitrary nesting
+/// depth (a top-level item path is `[menu, item]`).
+fn parse_path(suffix: &str) -> Option<Vec<usize>> {
+    if suffix.is_empty() {
+        return None;
+    }
+    suffix.split('.').map(|p| p.parse::<usize>().ok()).collect()
 }
 
 /// `Some(i)` → `Int(i)`, `None` → `Null` — shared optional-index
@@ -611,6 +949,12 @@ fn open_value(idx: Option<usize>) -> IntrospectValue {
         Some(i) => IntrospectValue::Int(i64::try_from(i).expect("menu index fits in i64")),
         None => IntrospectValue::Null,
     }
+}
+
+/// R985 — lower a dotted-path value (`open_path` / `active_path`) to its
+/// wire `Text` form, joining indices with `.` (empty slice → `""`).
+fn path_text(path: &[usize]) -> String {
+    path.iter().map(usize::to_string).collect::<Vec<_>>().join(".")
 }
 
 impl Default for MenuBarExternal {
@@ -665,12 +1009,18 @@ impl ExternalIntrospect for MenuBarExternal {
         IntrospectSchema::new(&[
             ("menu_count", "int"),
             ("open", "int"),
+            // R985 — the open submenu descent + the full active path (dotted),
+            // so an AI client reads the whole cascade state, not just the top.
+            ("open_path", "string"),
             ("active", "int"),
+            ("active_path", "string"),
             ("bar_focus", "int"),
-            ("item_count.<menu>", "int"),
-            ("item_kind.<menu>.<item>", "string"),
-            ("checked.<menu>.<item>", "bool"),
-            ("enabled.<menu>.<item>", "bool"),
+            // R985 — `<path>` is a dotted index path (`<menu>` top, `<menu>.<item>`,
+            // `<menu>.<item>.<sub>` …), so the same slots address nested items.
+            ("item_count.<path>", "int"),
+            ("item_kind.<path>", "string"),
+            ("checked.<path>", "bool"),
+            ("enabled.<path>", "bool"),
             ("send", "string"),
             ("key", "string"),
         ])
@@ -682,30 +1032,42 @@ impl ExternalIntrospect for MenuBarExternal {
                 i64::try_from(self.menu_count()).expect("menu_count fits in i64"),
             )),
             "open" => Some(open_value(self.open_menu())),
+            // R985 — dotted descent below the top dropdown (empty when none).
+            "open_path" => Some(IntrospectValue::Text(path_text(self.open_path()))),
             "active" => Some(open_value(self.active_item())),
+            // R985 — full absolute active path, or Null when nothing highlighted.
+            "active_path" => Some(match self.active_path() {
+                Some(p) => IntrospectValue::Text(path_text(&p)),
+                None => IntrospectValue::Null,
+            }),
             "bar_focus" => Some(IntrospectValue::Int(
                 i64::try_from(self.bar_focus()).expect("bar_focus fits in i64"),
             )),
             _ => {
+                // R985 — `item_count.<path>` addresses a *menu* (path of length
+                // ≥1: `<menu>` = top, deeper = a submenu's item list).
                 if let Some(suffix) = path.strip_prefix("item_count.") {
-                    let menu: usize = suffix.parse().ok()?;
-                    let count = self.item_count(menu)?;
+                    let p = parse_path(suffix)?;
+                    let count = self.item_count_at(&p)?;
                     return Some(IntrospectValue::Int(
                         i64::try_from(count).expect("item_count fits in i64"),
                     ));
                 }
-                // R805 — per-item stateful slots, keyed `<menu>.<item>`.
+                // R805 / R985 — per-item stateful slots, keyed by an absolute
+                // item `<path>` (length ≥2: `<menu>.<item>[.<sub>…]`).
                 if let Some(suffix) = path.strip_prefix("item_kind.") {
-                    let (m, i) = parse_menu_item(suffix)?;
-                    return Some(IntrospectValue::Text(self.item(m, i)?.kind_name().to_owned()));
+                    let p = parse_path(suffix)?;
+                    return Some(IntrospectValue::Text(
+                        self.item_at_path(&p)?.kind_name().to_owned(),
+                    ));
                 }
                 if let Some(suffix) = path.strip_prefix("checked.") {
-                    let (m, i) = parse_menu_item(suffix)?;
-                    return Some(IntrospectValue::Bool(self.item(m, i)?.checked()));
+                    let p = parse_path(suffix)?;
+                    return Some(IntrospectValue::Bool(self.item_at_path(&p)?.checked()));
                 }
                 if let Some(suffix) = path.strip_prefix("enabled.") {
-                    let (m, i) = parse_menu_item(suffix)?;
-                    return Some(IntrospectValue::Bool(self.item(m, i)?.enabled()));
+                    let p = parse_path(suffix)?;
+                    return Some(IntrospectValue::Bool(self.item_at_path(&p)?.enabled()));
                 }
                 None
             }
@@ -721,6 +1083,8 @@ impl ExternalIntrospect for MenuBarExternal {
                 IntrospectValue::Int(i) => {
                     let m = resolve_index(i, self.menu_count())?;
                     self.em.inner.open = Some(m);
+                    // R985 — opening a top menu resets the submenu descent.
+                    self.em.inner.open_path.clear();
                     self.em.inner.active = None;
                     self.em.inner.bar_focus = m;
                     Ok(())
@@ -731,10 +1095,37 @@ impl ExternalIntrospect for MenuBarExternal {
                 }
                 _ => Err(InterveneError::TypeMismatch),
             },
+            // R985 — programmatic submenu descent (RPC restore / form default;
+            // fires no `"command"` intent). Each index must address an enabled
+            // submenu reachable from the open top menu; `""` collapses to the
+            // top dropdown.
+            "open_path" => match value {
+                IntrospectValue::Text(ref s) => {
+                    if s.is_empty() {
+                        self.em.inner.open_path.clear();
+                        self.em.inner.active = None;
+                        return Ok(());
+                    }
+                    let p = parse_path(s).ok_or(InterveneError::TypeMismatch)?;
+                    if !self.em.inner.is_valid_open_path(&p) {
+                        return Err(InterveneError::OutOfRange);
+                    }
+                    self.em.inner.open_path = p;
+                    self.em.inner.active = None;
+                    Ok(())
+                }
+                _ => Err(InterveneError::TypeMismatch),
+            },
             "active" => match value {
                 IntrospectValue::Int(i) => {
-                    let m = self.open_menu().ok_or(InterveneError::OutOfRange)?;
-                    let item = resolve_index(i, self.em.inner.menus[m].len())?;
+                    // R985 — resolve against the *current* (deepest open) menu.
+                    let len = self
+                        .em
+                        .inner
+                        .current_items()
+                        .ok_or(InterveneError::OutOfRange)?
+                        .len();
+                    let item = resolve_index(i, len)?;
                     self.em.inner.active = Some(item);
                     Ok(())
                 }
@@ -752,22 +1143,20 @@ impl ExternalIntrospect for MenuBarExternal {
                 }
                 _ => Err(InterveneError::TypeMismatch),
             },
-            // R805 — programmatic checkbox toggle `checked.<menu>.<item>`
+            // R805 / R985 — programmatic checkbox toggle `checked.<path>`
             // (RPC restore / form default; fires no `"command"` intent).
             // R805.1 — only a [`MenuItem::Checkbox`] has a writable checked
-            // slot; a command / separator rejects (`ReadOnly`), so the RPC
-            // surface cannot reach the nonsensical "checked command" state.
+            // slot; a command / separator / submenu rejects (`ReadOnly`), so the
+            // RPC surface cannot reach the nonsensical "checked command" state.
             _ => {
                 let suffix = path
                     .strip_prefix("checked.")
                     .ok_or(InterveneError::UnknownPath)?;
-                let (m, i) = parse_menu_item(suffix).ok_or(InterveneError::UnknownPath)?;
+                let p = parse_path(suffix).ok_or(InterveneError::UnknownPath)?;
                 let item = self
                     .em
                     .inner
-                    .menus
-                    .get_mut(m)
-                    .and_then(|menu| menu.get_mut(i))
+                    .item_at_path_mut(&p)
                     .ok_or(InterveneError::OutOfRange)?;
                 match (value, item) {
                     (IntrospectValue::Bool(b), MenuItem::Checkbox { checked, .. }) => {
@@ -861,13 +1250,15 @@ mod tests {
 
     #[test]
     fn hover_item_highlights_only_when_open() {
+        // R985 — hover routes through `point_to` (rel descent within the open
+        // dropdown); `[i]` highlights top item `i`, mirroring the old hover.
         let mut m = bar();
-        m.hover_item(1);
+        m.point_to(&[1]);
         assert_eq!(m.active_item(), None, "no hover effect while closed");
         m.toggle_title(0);
-        m.hover_item(2);
+        m.point_to(&[2]);
         assert_eq!(m.active_item(), Some(2));
-        m.hover_item(9);
+        m.point_to(&[9]);
         assert_eq!(m.active_item(), Some(2), "out-of-range hover ignored");
     }
 
@@ -875,7 +1266,7 @@ mod tests {
     fn activate_item_returns_coords_and_closes() {
         let mut m = bar();
         m.toggle_title(1);
-        assert_eq!(m.activate_item(3), Some((1, 3)));
+        assert_eq!(m.activate_item(3), Some(vec![1, 3]));
         assert_eq!(m.open_menu(), None, "activation dismisses the menu");
         assert_eq!(m.bar_focus(), 1);
     }
@@ -1265,12 +1656,14 @@ mod tests {
             &[
                 ("menu_count", "int"),
                 ("open", "int"),
+                ("open_path", "string"),
                 ("active", "int"),
+                ("active_path", "string"),
                 ("bar_focus", "int"),
-                ("item_count.<menu>", "int"),
-                ("item_kind.<menu>.<item>", "string"),
-                ("checked.<menu>.<item>", "bool"),
-                ("enabled.<menu>.<item>", "bool"),
+                ("item_count.<path>", "int"),
+                ("item_kind.<path>", "string"),
+                ("checked.<path>", "bool"),
+                ("enabled.<path>", "bool"),
                 ("send", "string"),
                 ("key", "string"),
             ]
@@ -1312,14 +1705,14 @@ mod tests {
         let mut m = rich();
         m.toggle_title(0);
         // Activate the unchecked checkbox (item 1) -> toggles on + closes.
-        assert_eq!(m.activate_item(1), Some((0, 1)));
+        assert_eq!(m.activate_item(1), Some(vec![0, 1]));
         assert!(m.item(0, 1).unwrap().checked(), "checkbox toggled on");
         assert_eq!(m.open_menu(), None, "activation closes");
         // Reopen: the checked state survived.
         m.toggle_title(0);
         assert!(m.item(0, 1).unwrap().checked(), "checked persists across reopen");
         // Toggle it back off.
-        assert_eq!(m.activate_item(1), Some((0, 1)));
+        assert_eq!(m.activate_item(1), Some(vec![0, 1]));
         assert!(!m.item(0, 1).unwrap().checked(), "checkbox toggled off");
     }
 
@@ -1331,12 +1724,12 @@ mod tests {
         assert_eq!(m.open_menu(), Some(0), "inert activate leaves menu open");
         assert_eq!(m.activate_item(4), None, "disabled not activatable");
         assert_eq!(m.open_menu(), Some(0));
-        // Hover skips both.
-        m.hover_item(2);
+        // Hover (point_to) skips both.
+        m.point_to(&[2]);
         assert_eq!(m.active_item(), None, "hover ignores separator");
-        m.hover_item(4);
+        m.point_to(&[4]);
         assert_eq!(m.active_item(), None, "hover ignores disabled");
-        m.hover_item(3);
+        m.point_to(&[3]);
         assert_eq!(m.active_item(), Some(3), "hover lands on the checkbox");
     }
 
@@ -1477,5 +1870,224 @@ mod tests {
         assert_eq!(e.open_menu(), Some(0), "dropdown open");
         e.invoke("send", IntrospectValue::Text("barrier:PointerUp:c".into())).unwrap();
         assert_eq!(e.open_menu(), None, "Ctrl+click outside dismisses");
+    }
+
+    // ----- R985: cascading submenus -----
+
+    /// A menubar whose menu 0 ("File") holds:
+    /// `[Command "New", Submenu "Open Recent" [Command, Command], Command "Save"]`
+    /// and a flat menu 1 ("Edit") with 2 commands.
+    fn nested() -> MenuBar {
+        MenuBar::with_items(vec![
+            vec![
+                MenuItem::command(),
+                MenuItem::submenu(vec![MenuItem::command(), MenuItem::command()]),
+                MenuItem::command(),
+            ],
+            vec![MenuItem::command(), MenuItem::command()],
+        ])
+    }
+
+    fn nested_ext() -> MenuBarExternal {
+        MenuBarExternal::with_items(vec![
+            vec![
+                MenuItem::command(),
+                MenuItem::submenu(vec![MenuItem::command(), MenuItem::checkbox(false)]),
+                MenuItem::command(),
+            ],
+            vec![MenuItem::command(), MenuItem::command()],
+        ])
+    }
+
+    #[test]
+    fn r985_submenu_item_taxonomy() {
+        let sub = MenuItem::submenu(vec![MenuItem::command()]);
+        assert!(sub.is_submenu());
+        assert!(sub.is_navigable(), "an enabled submenu parent is navigable");
+        assert_eq!(sub.kind_name(), "submenu");
+        assert_eq!(sub.submenu_items().map(<[_]>::len), Some(1));
+        let disabled = MenuItem::submenu(vec![MenuItem::command()]).disabled();
+        assert!(!disabled.is_navigable(), "a disabled submenu is inert");
+        assert!(!disabled.enabled());
+        assert!(!MenuItem::command().is_submenu());
+        assert_eq!(MenuItem::command().submenu_items(), None);
+    }
+
+    #[test]
+    fn r985_descend_opens_submenu_and_highlights_first() {
+        let mut m = nested();
+        m.toggle_title(0);
+        m.move_active(true); // active -> item 0 (New)
+        m.move_active(true); // active -> item 1 (Open Recent submenu)
+        assert_eq!(m.active_item(), Some(1));
+        assert!(m.active_is_submenu());
+        m.descend_active();
+        assert_eq!(m.open_path(), &[1], "descended into submenu 1");
+        assert_eq!(m.active_item(), Some(0), "submenu highlights its first item");
+        assert!(m.in_submenu());
+    }
+
+    #[test]
+    fn r985_ascend_closes_one_level_returns_to_parent() {
+        let mut m = nested();
+        m.toggle_title(0);
+        m.point_to(&[1]); // highlight the submenu parent
+        m.descend_active();
+        assert_eq!(m.open_path(), &[1]);
+        assert!(m.ascend(), "Arrow Left / Escape closes the submenu level");
+        assert!(m.open_path().is_empty(), "back to the top dropdown");
+        assert_eq!(m.active_item(), Some(1), "focus returns to the parent item");
+        assert_eq!(m.open_menu(), Some(0), "top menu stays open");
+        assert!(!m.ascend(), "no further level to close at the top");
+    }
+
+    #[test]
+    fn r985_descend_then_activate_leaf_emits_full_path() {
+        let mut e = nested_ext();
+        e.invoke("send", IntrospectValue::Text("t0:PointerUp".into())).unwrap();
+        // Open submenu 1 and activate its leaf 0 via the keyboard.
+        e.invoke("key", IntrospectValue::Text("ArrowDown".into())).unwrap(); // active 0
+        e.invoke("key", IntrospectValue::Text("ArrowDown".into())).unwrap(); // active 1 (submenu)
+        e.invoke("key", IntrospectValue::Text("ArrowRight".into())).unwrap(); // descend
+        assert_eq!(e.open_path(), &[1]);
+        assert_eq!(e.active_item(), Some(0));
+        assert!(matches!(
+            e.invoke("key", IntrospectValue::Text("Enter".into())).unwrap(),
+            IntrospectValue::Bool(true)
+        ));
+        assert_eq!(e.open_menu(), None, "activating a nested leaf closes the whole menu");
+        let mut got = Vec::new();
+        e.drain_intents(&mut |i| got.push(i));
+        assert_eq!(got.len(), 1);
+        assert_eq!(
+            got[0].payload,
+            IntrospectValue::Text("0.1.0".into()),
+            "the command payload is the full absolute path",
+        );
+    }
+
+    #[test]
+    fn r985_arrow_right_on_leaf_jumps_to_next_top_menu() {
+        let mut m = nested();
+        m.toggle_title(0);
+        m.point_to(&[0]); // leaf "New"
+        // Arrow Right on a leaf at the top level moves to the next top menu.
+        assert!(!m.active_is_submenu());
+        m.menu_switch(true);
+        assert_eq!(m.open_menu(), Some(1));
+        assert!(m.open_path().is_empty());
+        assert_eq!(m.active_item(), Some(0), "next menu highlights its first item");
+    }
+
+    #[test]
+    fn r985_escape_collapses_one_level_at_a_time() {
+        let mut e = nested_ext();
+        e.invoke("send", IntrospectValue::Text("t0:PointerUp".into())).unwrap();
+        e.invoke("send", IntrospectValue::Text("i1:PointerUp".into())).unwrap(); // open submenu 1
+        assert_eq!(e.open_path(), &[1]);
+        // Escape inside the submenu collapses just that level.
+        e.invoke("key", IntrospectValue::Text("Escape".into())).unwrap();
+        assert!(e.open_path().is_empty(), "submenu collapsed");
+        assert_eq!(e.open_menu(), Some(0), "top dropdown still open");
+        // A second Escape closes the top dropdown.
+        e.invoke("key", IntrospectValue::Text("Escape".into())).unwrap();
+        assert_eq!(e.open_menu(), None);
+    }
+
+    #[test]
+    fn r985_pointer_open_and_collapse_via_send_path() {
+        let mut e = nested_ext();
+        e.invoke("send", IntrospectValue::Text("t0:PointerUp".into())).unwrap();
+        // Click the submenu parent (rel path [1]) opens it.
+        e.invoke("send", IntrospectValue::Text("i1:PointerUp".into())).unwrap();
+        assert_eq!(e.open_path(), &[1], "click opened the submenu");
+        // Hover a nested item (rel path [1, 1]) highlights it, keeping it open.
+        e.invoke("send", IntrospectValue::Text("i1.1:PointerEnter".into())).unwrap();
+        assert_eq!(e.open_path(), &[1]);
+        assert_eq!(e.active_item(), Some(1));
+        // Hover a top-level item (rel path [0]) collapses back to the top.
+        e.invoke("send", IntrospectValue::Text("i0:PointerEnter".into())).unwrap();
+        assert!(e.open_path().is_empty(), "moving to a top item collapsed the submenu");
+        assert_eq!(e.active_item(), Some(0));
+    }
+
+    #[test]
+    fn r985_query_nested_structure() {
+        let e = nested_ext();
+        // Top-level structure.
+        assert_eq!(e.query("item_count.0"), Some(IntrospectValue::Int(3)));
+        assert_eq!(
+            e.query("item_kind.0.1"),
+            Some(IntrospectValue::Text("submenu".into())),
+            "item 1 of menu 0 is a submenu",
+        );
+        // Nested submenu structure (path descends into the submenu).
+        assert_eq!(e.query("item_count.0.1"), Some(IntrospectValue::Int(2)));
+        assert_eq!(e.query("item_kind.0.1.0"), Some(IntrospectValue::Text("command".into())));
+        assert_eq!(e.query("item_kind.0.1.1"), Some(IntrospectValue::Text("checkbox".into())));
+        assert_eq!(e.query("checked.0.1.1"), Some(IntrospectValue::Bool(false)));
+        assert_eq!(e.query("item_kind.0.9"), None, "out-of-range item");
+        assert_eq!(e.query("item_count.0.0"), None, "a non-submenu has no item list");
+    }
+
+    #[test]
+    fn r985_query_open_path_and_active_path() {
+        let mut e = nested_ext();
+        assert_eq!(e.query("open_path"), Some(IntrospectValue::Text(String::new())));
+        assert_eq!(e.query("active_path"), Some(IntrospectValue::Null));
+        e.invoke("send", IntrospectValue::Text("t0:PointerUp".into())).unwrap();
+        e.invoke("send", IntrospectValue::Text("i1:PointerUp".into())).unwrap(); // open submenu 1
+        assert_eq!(e.query("open_path"), Some(IntrospectValue::Text("1".into())));
+        assert_eq!(
+            e.query("active_path"),
+            Some(IntrospectValue::Text("0.1.0".into())),
+            "deepest active = submenu first item",
+        );
+    }
+
+    #[test]
+    fn r985_intervene_open_path_round_trip() {
+        let mut e = nested_ext();
+        e.intervene("open", IntrospectValue::Int(0)).unwrap();
+        e.intervene("open_path", IntrospectValue::Text("1".into())).unwrap();
+        assert_eq!(e.open_path(), &[1]);
+        assert!(!e.is_dirty(), "intervene fires no command intent");
+        // An index that is not a submenu is rejected.
+        assert_eq!(
+            e.intervene("open_path", IntrospectValue::Text("0".into())),
+            Err(InterveneError::OutOfRange),
+            "item 0 is a command, not a submenu",
+        );
+        // Empty string collapses to the top dropdown.
+        e.intervene("open_path", IntrospectValue::Text(String::new())).unwrap();
+        assert!(e.open_path().is_empty());
+    }
+
+    #[test]
+    fn r985_intervene_nested_checkbox() {
+        let mut e = nested_ext();
+        e.intervene("checked.0.1.1", IntrospectValue::Bool(true)).unwrap();
+        assert_eq!(e.query("checked.0.1.1"), Some(IntrospectValue::Bool(true)));
+        // A nested command has no writable checked slot.
+        assert_eq!(
+            e.intervene("checked.0.1.0", IntrospectValue::Bool(true)),
+            Err(InterveneError::ReadOnly),
+        );
+        // A submenu parent has no writable checked slot either.
+        assert_eq!(
+            e.intervene("checked.0.1", IntrospectValue::Bool(true)),
+            Err(InterveneError::ReadOnly),
+        );
+    }
+
+    #[test]
+    fn r985_activating_submenu_parent_opens_not_commands() {
+        let mut e = nested_ext();
+        e.invoke("send", IntrospectValue::Text("t0:PointerUp".into())).unwrap();
+        // PointerUp on the submenu parent opens it and emits NO command.
+        e.invoke("send", IntrospectValue::Text("i1:PointerUp".into())).unwrap();
+        assert_eq!(e.open_path(), &[1]);
+        assert_eq!(e.open_menu(), Some(0), "menu stays open (submenu, not a command)");
+        assert!(!e.is_dirty(), "opening a submenu fires no command");
     }
 }

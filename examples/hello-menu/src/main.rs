@@ -456,6 +456,7 @@ impl WidgetA11y for MenuView {
                         .then(|| state.item_checked(i)),
                     disabled: matches!(items[i], Item::DisabledCommand(..)),
                     focused: group_focused && state.active == Some(i),
+                    ..MenuItemCell::default()
                 })
                 .collect();
             nodes.extend(menu_item_nodes(DROPDOWN_TAG, MENU_TITLES[m], &cells));

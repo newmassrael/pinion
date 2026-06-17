@@ -45097,6 +45097,66 @@
         "grouped rowheader \"Row N\" ordinal crosses groups (pre-existing since R982 + flat-under-sort) - latent, deferred; a follow-up could add group context to the name"
       ]
     },
+    "R985": {
+      "decision_summary": "R985 §5.40 cascading submenus: MenuItem::Submenu recursive model + MenuBar open_path cascade (WAI-ARIA 3.16 keyboard) + i<path> nested wire + aria-haspopup a11y + view_menu_cascade nested-popup paint + hello-menu-nested binding/demo",
+      "changes_bullets": [
+        "MenuItem gains Submenu{enabled,items:Vec} variant (drops Copy, keeps Clone) = recursive cascade model",
+        "MenuBar adds open_path descent + cascade nav: descend/ascend, conditional ArrowRight/Left/Escape (WAI-ARIA 3.16)",
+        "wire: i<path> dotted item send; item_kind/item_count/checked.<path> nested; open_path/active_path slots",
+        "a11y: AccessNode.has_popup (aria-haspopup) + HasPopup wrapper enum + tree lowering + scene/access serialize",
+        "menu_item_nodes: submenu parent emits aria-haspopup=menu + aria-expanded + owns nested menu child",
+        "paint: view_menu_cascade renders top dropdown + nested popups; submenu-row chevron; build_popup SSOT lift",
+        "hello-menu-nested binding (File>Open Recent>Older 2-deep, View>Appearance) + r985 demo",
+        "walk_submenus lift (3 cascade-descent sites to 1 fn); emit_command reuses path_text encode"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace: 7019 passed / 0 failed (menu 93 core + 17 a11y + 22 paint + 3 binding)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 (fixed question_mark + struct_excessive_bools)",
+        "r985_menu_nested.py PASS vs release binary: pointer+keyboard cascade, chevron paint, scene/access haspopup/expanded, intervene",
+        "build-priority incident: ;echo masked a false-green; composite_item_tag repo-wide grep caught 3 flat consumers -> reverted + path variant"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.38",
+        "5.40",
+        "5.50"
+      ],
+      "carry_forward_bullets": [
+        "hover-open-on-delay deferred (ZERO-FLAKE: submenu opens on discrete event; hover only highlights)",
+        "mut submenu-walk (current_items_mut/item_at_path_mut, 2 sites) not lifted: rule-of-three defers to 3rd",
+        "read_state checked bitmap top-level only (demo has no nested checkbox; nested would extend the snapshot)",
+        "tray.rs SubMenu recursion not shared: different enum + string-id addressing (cross-enum over-merge avoided)"
+      ],
+      "publishable_decision_summary": "R985 §5.40 cascading submenus: MenuItem::Submenu recursive model + MenuBar open_path cascade (WAI-ARIA 3.16 keyboard) + i<path> nested wire + aria-haspopup a11y + view_menu_cascade nested-popup paint + hello-menu-nested binding/demo",
+      "publishable_changes_bullets": [
+        "MenuItem gains Submenu{enabled,items:Vec} variant (drops Copy, keeps Clone) = recursive cascade model",
+        "MenuBar adds open_path descent + cascade nav: descend/ascend, conditional ArrowRight/Left/Escape (WAI-ARIA 3.16)",
+        "wire: i<path> dotted item send; item_kind/item_count/checked.<path> nested; open_path/active_path slots",
+        "a11y: AccessNode.has_popup (aria-haspopup) + HasPopup wrapper enum + tree lowering + scene/access serialize",
+        "menu_item_nodes: submenu parent emits aria-haspopup=menu + aria-expanded + owns nested menu child",
+        "paint: view_menu_cascade renders top dropdown + nested popups; submenu-row chevron; build_popup SSOT lift",
+        "hello-menu-nested binding (File>Open Recent>Older 2-deep, View>Appearance) + r985 demo",
+        "walk_submenus lift (3 cascade-descent sites to 1 fn); emit_command reuses path_text encode"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace: 7019 passed / 0 failed (menu 93 core + 17 a11y + 22 paint + 3 binding)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 (fixed question_mark + struct_excessive_bools)",
+        "r985_menu_nested.py PASS vs release binary: pointer+keyboard cascade, chevron paint, scene/access haspopup/expanded, intervene",
+        "build-priority incident: ;echo masked a false-green; composite_item_tag repo-wide grep caught 3 flat consumers -> reverted + path variant"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.38",
+        "5.40",
+        "5.50"
+      ],
+      "publishable_carry_forward_bullets": [
+        "hover-open-on-delay deferred (ZERO-FLAKE: submenu opens on discrete event; hover only highlights)",
+        "mut submenu-walk (current_items_mut/item_at_path_mut, 2 sites) not lifted: rule-of-three defers to 3rd",
+        "read_state checked bitmap top-level only (demo has no nested checkbox; nested would extend the snapshot)",
+        "tray.rs SubMenu recursion not shared: different enum + string-id addressing (cross-enum over-merge avoided)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

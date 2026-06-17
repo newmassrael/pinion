@@ -589,6 +589,7 @@ impl WidgetA11y for AppMenuView {
                     checked: matches!(items[i], Item::Checkbox(..)).then(|| state.item_checked(i)),
                     disabled: false,
                     focused: group_focused && state.active == Some(i),
+                    ..MenuItemCell::default()
                 })
                 .collect();
             nodes.extend(menu_item_nodes(DROPDOWN_TAG, MENU_TITLES[m], &cells));

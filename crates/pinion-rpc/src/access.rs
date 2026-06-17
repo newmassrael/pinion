@@ -115,6 +115,9 @@ fn access_node_to_json(node: &AccessNode) -> Value {
     if let Some(current) = node.current {
         obj.insert("current".to_string(), Value::String(current.aria_name().to_string()));
     }
+    if let Some(has_popup) = node.has_popup {
+        obj.insert("haspopup".to_string(), Value::String(has_popup.aria_name().to_string()));
+    }
     Value::Object(obj)
 }
 

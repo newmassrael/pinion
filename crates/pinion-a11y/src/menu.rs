@@ -29,14 +29,18 @@
 //!
 //! The item role follows [`MenuItemCell::checked`]: `Some(_)` is a
 //! `menuitemcheckbox` carrying `aria-checked`; `None` is a plain
-//! `menuitem`. (`aria-haspopup` / submenu ownership is a future axis — no
-//! consumer nests a submenu yet.)
+//! `menuitem`. R985 — a submenu parent ([`MenuItemCell::has_popup`]) is a
+//! plain `menuitem` that additionally carries `aria-haspopup="menu"`,
+//! `aria-expanded`, and (when open) a child reference to the nested
+//! [`AriaRole::Menu`] it owns. The binding builds each *open* level by
+//! calling [`menu_item_nodes`] once per level and stitching the parent's
+//! `owns` child reference to the nested menu's container tag.
 
 use crate::node::{AccessNode, AccessState};
-use crate::role::AriaRole;
+use crate::role::{AriaRole, HasPopup};
 
 /// One item within a [`menu_item_nodes`] menu.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct MenuItemCell<'a> {
     /// The item's `External` tag (typically a `{primary}#{i}` composite).
     pub tag: &'a str,
@@ -51,6 +55,25 @@ pub struct MenuItemCell<'a> {
     /// `true` when this item is the roving active descendant (the menu owns
     /// focus and this is the active index).
     pub focused: bool,
+    /// R985 — `Some` for a submenu parent (a `menuitem` carrying
+    /// `aria-haspopup="menu"`); `None` for a plain command / checkbox item.
+    /// The [`SubmenuCell`] payload carries the open state + owned child.
+    pub popup: Option<SubmenuCell<'a>>,
+}
+
+/// R985 — the submenu adornment of a [`MenuItemCell`] parent: its open
+/// state (`aria-expanded`) and, when open, the nested [`AriaRole::Menu`] it
+/// owns. Folded into one [`MenuItemCell::popup`] `Option` so the cell does
+/// not carry a loose `has_popup` / `expanded` bool pair (the
+/// `Some` ⟺ "is a submenu parent" invariant is type-level).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SubmenuCell<'a> {
+    /// Whether the nested menu is currently open (`aria-expanded`).
+    pub expanded: bool,
+    /// For an *open* submenu parent, the container tag of the nested
+    /// [`AriaRole::Menu`] this item owns; referenced as a child so the AT
+    /// tree links the parent menuitem to its submenu. `None` when collapsed.
+    pub owns: Option<&'a str>,
 }
 
 /// Build the `menu` container + one `menuitem` / `menuitemcheckbox` per
@@ -94,6 +117,15 @@ pub fn menu_item_nodes(
         if let Some(label) = item.label {
             node = node.with_name(label);
         }
+        // R985 — a submenu parent advertises its popup and open state, and
+        // (when open) references the nested menu it owns as a child so the AT
+        // tree links parent menuitem -> submenu.
+        if let Some(sub) = item.popup {
+            node = node.with_has_popup(HasPopup::Menu).with_expanded(sub.expanded);
+            if let Some(child) = sub.owns {
+                node = node.with_child(child);
+            }
+        }
         nodes.push(node);
     }
     nodes
@@ -105,9 +137,9 @@ mod tests {
 
     fn items() -> [MenuItemCell<'static>; 3] {
         [
-            MenuItemCell { tag: "m#0", label: Some("New"), checked: None, disabled: false, focused: true },
-            MenuItemCell { tag: "m#1", label: None, checked: Some(true), disabled: false, focused: false },
-            MenuItemCell { tag: "m#2", label: Some("Print"), checked: None, disabled: true, focused: false },
+            MenuItemCell { tag: "m#0", label: Some("New"), checked: None, disabled: false, focused: true, ..MenuItemCell::default() },
+            MenuItemCell { tag: "m#1", label: None, checked: Some(true), disabled: false, focused: false, ..MenuItemCell::default() },
+            MenuItemCell { tag: "m#2", label: Some("Print"), checked: None, disabled: true, focused: false, ..MenuItemCell::default() },
         ]
     }
 
@@ -169,5 +201,47 @@ mod tests {
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].role, AriaRole::Menu);
         assert!(nodes[0].children.is_empty());
+    }
+
+    // ----- R985: submenu parent (aria-haspopup / aria-expanded / owns) -----
+
+    #[test]
+    fn r985_submenu_parent_collapsed_haspopup_no_owns() {
+        let cells = [MenuItemCell {
+            tag: "m#1",
+            label: Some("Open Recent"),
+            popup: Some(SubmenuCell { expanded: false, owns: None }),
+            ..MenuItemCell::default()
+        }];
+        let nodes = menu_item_nodes("menu", "File", &cells);
+        let parent = by_tag(&nodes, "m#1");
+        assert_eq!(parent.role, AriaRole::MenuItem, "a submenu parent is a plain menuitem");
+        assert_eq!(parent.has_popup, Some(HasPopup::Menu), "aria-haspopup=menu lowered");
+        assert_eq!(parent.expanded, Some(false), "aria-expanded=false while collapsed");
+        assert!(parent.children.is_empty(), "no owned submenu node while collapsed");
+    }
+
+    #[test]
+    fn r985_submenu_parent_open_owns_child_menu() {
+        let cells = [MenuItemCell {
+            tag: "m#1",
+            label: Some("Open Recent"),
+            popup: Some(SubmenuCell { expanded: true, owns: Some("submenu") }),
+            ..MenuItemCell::default()
+        }];
+        let nodes = menu_item_nodes("menu", "File", &cells);
+        let parent = by_tag(&nodes, "m#1");
+        assert_eq!(parent.expanded, Some(true), "aria-expanded=true while open");
+        assert_eq!(parent.children, vec!["submenu".to_string()], "owns the nested menu node");
+    }
+
+    #[test]
+    fn r985_plain_items_carry_no_haspopup() {
+        let nodes = menu_item_nodes("menu", "File", &items());
+        for n in &nodes {
+            if n.role != AriaRole::Menu {
+                assert_eq!(n.has_popup, None, "a non-submenu item omits aria-haspopup");
+            }
+        }
     }
 }
