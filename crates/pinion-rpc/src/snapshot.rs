@@ -49,7 +49,7 @@ use pinion_core::scene::Rect;
 use pinion_core::style::{BoxStyle, ImageStyle, PathStyle, TextStyle};
 use pinion_core::{
     CellAttrs, CellWidth, ColorTarget, CursorShape, GridBuffer, GridCursor, Palette, Scene,
-    TermColor,
+    ScreenKind, TermColor,
 };
 
 use crate::path::{self, PathError};
@@ -269,6 +269,11 @@ pub struct ImmediateModeSnapshot {
 ///
 /// R975 §5.41 — `cursor` is the grid's [`GridCursorSnapshot`]: a grid has
 /// exactly one cursor (position / shape / visibility), always reported.
+///
+/// R977 §5.41 — `screen` is `"main"` / `"alternate"`: which of the
+/// terminal's two screens this projection represents (a fullscreen app's
+/// alternate screen vs. the main shell surface), so a client reads the
+/// terminal's mode without inferring it from content.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TextGridSnapshot {
@@ -282,6 +287,7 @@ pub struct TextGridSnapshot {
     pub buffer_rows: u16,
     pub grid_rows: Vec<GridRowSnapshot>,
     pub cursor: GridCursorSnapshot,
+    pub screen: &'static str,
 }
 
 /// R973 §5.41 — one row of a [`TextGridSnapshot`] cell projection: the
@@ -493,6 +499,7 @@ fn snapshot_root(scene: &Scene) -> SnapshotNode {
                 buffer_rows: node.cells().rows(),
                 grid_rows: text_grid_rows(node.cells(), &node.palette()),
                 cursor: grid_cursor_snapshot(node.cells().cursor()),
+                screen: screen_wire(node.cells().screen()),
             })
         }
         // `Scene` is non_exhaustive; future variants surface as Unknown
@@ -586,6 +593,15 @@ fn grid_cursor_snapshot(cursor: GridCursor) -> GridCursorSnapshot {
     }
 }
 
+/// R977 §5.41 — the wire string for a grid's [`ScreenKind`] (mirroring how
+/// [`cell_width_wire`] maps a [`CellWidth`]).
+fn screen_wire(screen: ScreenKind) -> &'static str {
+    match screen {
+        ScreenKind::Main => "main",
+        ScreenKind::Alternate => "alternate",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -634,7 +650,24 @@ mod tests {
                 assert_eq!((snap.cursor.col, snap.cursor.row), (0, 0));
                 assert_eq!(snap.cursor.shape, "block");
                 assert!(!snap.cursor.visible);
+                // R977 — and the main screen (the default).
+                assert_eq!(snap.screen, "main");
             }
+            other => panic!("expected TextGrid, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn text_grid_snapshot_reports_the_alternate_screen() {
+        // R977 §5.41 — a producer projecting a fullscreen app's screen sets
+        // the alternate-screen kind, reported verbatim on the wire.
+        use pinion_core::{GridBuffer, ScreenKind};
+        let buf = GridBuffer::new(4, 1).with_screen(ScreenKind::Alternate);
+        let mut node = pinion_core::scene::TextGridNode::new(pinion_core::CellMetric::DEFAULT)
+            .with_cells(buf);
+        node.rect = Rect::new(0, 0, 32, 16); // 4 × 1 @ 8×16
+        match snapshot(&Scene::TextGrid(node), "").unwrap() {
+            SnapshotNode::TextGrid(snap) => assert_eq!(snap.screen, "alternate"),
             other => panic!("expected TextGrid, got {other:?}"),
         }
     }

@@ -98,8 +98,8 @@ pub use style::{
 };
 pub use syntax::{highlight_code, SyntaxPalette};
 pub use term_grid::{
-    CellAttrs, CellWidth, ColorTarget, CursorShape, GridBuffer, GridCursor, Palette, TermCell,
-    TermColor,
+    CellAttrs, CellWidth, ColorTarget, CursorShape, GridBuffer, GridCursor, Palette, ScreenKind,
+    TermCell, TermColor,
 };
 pub use theme::{
     ColorRole, SystemColorScheme, THEME_FADE_SPRING, Theme, ThemeMode, ThemeProvider,

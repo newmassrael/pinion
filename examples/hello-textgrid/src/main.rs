@@ -45,10 +45,16 @@
 //! columns, and the style runs mark `wide` / `trailer` so a client maps
 //! glyphs to columns. The other grids stay all-narrow.
 //!
-//! Cell **alt-screen / damage** and **glyph paint** stay deliberate
-//! follow-up rounds — the grid is still paint-opaque, so the window
-//! renders only its surface background; the deliverable is the cell *data
-//! model*, read as data.
+//! R977 adds a seventh grid, **`htg_alt`**, tagged [`ScreenKind::Alternate`]:
+//! a tiny fullscreen-app projection (a file line + a reverse-video status
+//! bar) with its own block cursor, proving the screen-kind discriminator
+//! travels with the projection and each screen carries its own cursor. The
+//! other grids stay on the main screen.
+//!
+//! **Damage** tracking and **glyph paint** stay deliberate follow-up
+//! rounds — the grid is still paint-opaque, so the window renders only its
+//! surface background; the deliverable is the cell *data model*, read as
+//! data.
 //!
 //! ## The AI-first witness (§2 #7 scene-as-data)
 //!
@@ -66,7 +72,9 @@
 //! grids carry the default hidden cursor). For `htg_wide`, each style run
 //! carries a `width` (`narrow` / `wide` / `trailer`) and the row text
 //! holds each wide glyph once — `tools/demos/r976_textgrid_wide.py`
-//! asserts the head / trailer structure and glyph-to-column mapping.
+//! asserts the head / trailer structure and glyph-to-column mapping. For
+//! `htg_alt`, the grid's `screen` is `alternate` while every other grid is
+//! `main` — `tools/demos/r977_textgrid_altscreen.py` asserts it.
 
 use pinion_a11y::{AccessNode, WidgetA11y};
 use pinion_core::external::{External, StubExternal};
@@ -74,8 +82,8 @@ use pinion_core::scene::{ContainerNode, TextGridNode};
 use pinion_core::style::{BoxStyle, Color, LayoutStyle, Size};
 use pinion_core::theme::{use_theme, ColorRole};
 use pinion_core::{
-    CellAttrs, CellMetric, CursorShape, Frame, GridBuffer, GridCursor, Scene, TermCell, TermColor,
-    WidgetCore,
+    CellAttrs, CellMetric, CursorShape, Frame, GridBuffer, GridCursor, Scene, ScreenKind, TermCell,
+    TermColor, WidgetCore,
 };
 use pinion_shell::{vello_renderer_impl, WidgetView};
 
@@ -270,6 +278,41 @@ fn wide_buffer() -> GridBuffer {
         .with_row(1, [narrow("A"), fw_a.clone(), fw_a.trailer(), narrow("B")])
 }
 
+/// Tag of the R977 alternate-screen grid, and its placement + extent.
+const ALT_TAG: &str = "htg_alt";
+const ALT_POS: (u32, u32) = (400, 740);
+/// `8 × 2` cells at the `8×16` baseline metric → `64 × 32` px.
+const ALT_COLS: u16 = 8;
+const ALT_ROWS: u16 = 2;
+const ALT_SIZE: (u32, u32) = (64, 32);
+/// The app's cursor on the alternate screen — a visible block at home,
+/// distinct from `htg_cursor`'s bar on the main screen (each screen
+/// carries its own cursor, R975).
+const ALT_CURSOR_AT: (u16, u16) = (0, 0);
+
+/// Build the R977 alternate-screen projection: a tiny fullscreen-app view
+/// (a file name line + a reverse-video status bar) tagged
+/// [`ScreenKind::Alternate`], with its own block cursor. A real producer
+/// reports the alternate screen when projecting a fullscreen app (`vim`,
+/// `htop`, a pager); the other grids stay on the main screen.
+fn alt_buffer() -> GridBuffer {
+    let default = |c: char| TermCell::new(c.to_string(), TermColor::Default, TermColor::Default);
+    // The status bar is reverse-video (reusing the R974 SGR attrs).
+    let status = |c: char| default(c).with_attrs(CellAttrs::empty().with_reverse(true));
+    GridBuffer::new(ALT_COLS, ALT_ROWS)
+        // Row 0 — the open file (8 glyphs).
+        .with_row(0, "file.txt".chars().map(default))
+        // Row 1 — a reverse-video status bar (vim-style ruler, 8 glyphs).
+        .with_row(1, " 1,1 Top".chars().map(status))
+        .with_screen(ScreenKind::Alternate)
+        .with_cursor(GridCursor::new(
+            ALT_CURSOR_AT.0,
+            ALT_CURSOR_AT.1,
+            CursorShape::Block,
+            true,
+        ))
+}
+
 /// Build one absolutely-positioned grid: the absolute layout removes it
 /// from flow and gives it exactly its own `Size`, so the layout pass
 /// resolves a deterministic pixel `Rect` and the derived `(cols, rows)`
@@ -349,6 +392,20 @@ fn view(_state: (), _frame: &Frame) -> Scene {
             ),
     );
 
+    // The R977 alternate-screen grid (8×16 baseline): a fullscreen-app
+    // projection tagged ScreenKind::Alternate, with its own block cursor.
+    // Every other grid stays on the main screen (the additive default).
+    let alt = Scene::TextGrid(
+        TextGridNode::new(CellMetric::DEFAULT)
+            .with_tag(ALT_TAG)
+            .with_cells(alt_buffer())
+            .with_layout(
+                LayoutStyle::new()
+                    .with_absolute_position(ALT_POS.0, ALT_POS.1)
+                    .with_size(Size::px(ALT_SIZE.0, ALT_SIZE.1)),
+            ),
+    );
+
     Scene::Container(
         ContainerNode::new(vec![
             grid(DEFAULT_TAG, CellMetric::DEFAULT, DEFAULT_POS, DEFAULT_SIZE),
@@ -357,6 +414,7 @@ fn view(_state: (), _frame: &Frame) -> Scene {
             attrs,
             cursor,
             wide,
+            alt,
         ])
         .with_tag(ROOT_TAG)
         .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface))),
@@ -475,6 +533,31 @@ mod tests {
         assert!(scene.contains_tag(ATTRS_TAG));
         assert!(scene.contains_tag(CURSOR_TAG));
         assert!(scene.contains_tag(WIDE_TAG));
+        assert!(scene.contains_tag(ALT_TAG));
+    }
+
+    #[test]
+    fn alt_buffer_is_the_alternate_screen_with_its_own_cursor() {
+        let b = alt_buffer();
+        assert_eq!((b.cols(), b.rows()), (ALT_COLS, ALT_ROWS));
+        // The headline: this projection is the alternate screen.
+        assert_eq!(b.screen(), ScreenKind::Alternate);
+
+        // It carries its own cursor — a visible block at home, distinct
+        // from htg_cursor's bar on the main screen.
+        let cur = b.cursor();
+        assert_eq!((cur.col, cur.row), ALT_CURSOR_AT);
+        assert_eq!(cur.shape, CursorShape::Block);
+        assert!(cur.visible);
+
+        // Row 0 is the file line; row 1 is a reverse-video status bar.
+        assert_eq!(b.cell(0, 0).unwrap().cluster, "f");
+        assert!(!b.cell(0, 0).unwrap().attrs.reverse); // content not reversed
+        assert!(b.cell(0, 1).unwrap().attrs.reverse); // status bar reversed
+        assert_eq!(b.cell(1, 1).unwrap().cluster, "1");
+
+        // And the default-constructed (main) buffer contrasts.
+        assert_eq!(GridBuffer::new(1, 1).screen(), ScreenKind::Main);
     }
 
     #[test]

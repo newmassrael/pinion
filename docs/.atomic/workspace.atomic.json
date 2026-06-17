@@ -44565,6 +44565,62 @@
         "leading-wide-char-spacer wrap edge = producer-resolved to a blank Narrow cell, not a 4th state"
       ]
     },
+    "R977": {
+      "decision_summary": "R977 §5.41 cell-native TextGrid alternate screen (S5 slice 5): ScreenKind (Main/Alternate) on GridBuffer + snapshot screen field + hello-textgrid htg_alt consumer",
+      "changes_bullets": [
+        "term_grid: ScreenKind enum Main/Alternate = closed set, exhaustive like CursorShape/CellWidth",
+        "GridBuffer.screen field + with_screen()/screen(); default Main; rides projection like cursor",
+        "design: hold active buffer + flag (R969 altitude), NOT alacritty hold-both inactive_grid",
+        "distinct from pinion-tui's own crossterm alternate screen (that = pinion output surface)",
+        "snapshot: TextGridSnapshot.screen (main/alternate); screen_wire mirrors cursor/width wire-string",
+        "dispatch text_grid_snapshot_fields += screen",
+        "hello-textgrid htg_alt grid: alternate screen + block cursor + reverse status bar (vim-like)",
+        "each screen has its own cursor (htg_alt block vs htg_cursor bar); others main; additive field"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 exit 0 (0 fail; new: 2 core + 1 snapshot + 1 example test)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello exit 0 (-D pedantic)",
+        "r977 demo PASS; r972-r976 PASS (additive screen field regression-free)",
+        "mnemosyne validate-workspace T1 reject=0, no new orphan",
+        "3b self-grep: ScreenKind free name; distinct from crossterm EnterAlternateScreen (tui surface)",
+        "design audit: hold-active-only (R969) chosen over alacritty hold-both inactive_grid"
+      ],
+      "impact_refs": [
+        "5.41"
+      ],
+      "carry_forward_bullets": [
+        "remaining S5 slice: damage (incremental update, AI-CLI token streaming, R969 Tier1) = last S5",
+        "damage now cleaner: per-active-buffer diff (alt-screen settled first as planned in R976 carry)",
+        "glyph paint deferred; inactive-buffer introspection is the producer's API if needed (not pinion)"
+      ],
+      "publishable_decision_summary": "R977 §5.41 cell-native TextGrid alternate screen (S5 slice 5): ScreenKind (Main/Alternate) on GridBuffer + snapshot screen field + hello-textgrid htg_alt consumer",
+      "publishable_changes_bullets": [
+        "term_grid: ScreenKind enum Main/Alternate = closed set, exhaustive like CursorShape/CellWidth",
+        "GridBuffer.screen field + with_screen()/screen(); default Main; rides projection like cursor",
+        "design: hold active buffer + flag (R969 altitude), NOT alacritty hold-both inactive_grid",
+        "distinct from pinion-tui's own crossterm alternate screen (that = pinion output surface)",
+        "snapshot: TextGridSnapshot.screen (main/alternate); screen_wire mirrors cursor/width wire-string",
+        "dispatch text_grid_snapshot_fields += screen",
+        "hello-textgrid htg_alt grid: alternate screen + block cursor + reverse status bar (vim-like)",
+        "each screen has its own cursor (htg_alt block vs htg_cursor bar); others main; additive field"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 exit 0 (0 fail; new: 2 core + 1 snapshot + 1 example test)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello exit 0 (-D pedantic)",
+        "r977 demo PASS; r972-r976 PASS (additive screen field regression-free)",
+        "mnemosyne validate-workspace T1 reject=0, no new orphan",
+        "3b self-grep: ScreenKind free name; distinct from crossterm EnterAlternateScreen (tui surface)",
+        "design audit: hold-active-only (R969) chosen over alacritty hold-both inactive_grid"
+      ],
+      "publishable_impact_refs": [
+        "5.41"
+      ],
+      "publishable_carry_forward_bullets": [
+        "remaining S5 slice: damage (incremental update, AI-CLI token streaming, R969 Tier1) = last S5",
+        "damage now cleaner: per-active-buffer diff (alt-screen settled first as planned in R976 carry)",
+        "glyph paint deferred; inactive-buffer introspection is the producer's API if needed (not pinion)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

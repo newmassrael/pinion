@@ -3141,6 +3141,8 @@ fn text_grid_snapshot_fields(obj: &mut serde_json::Map<String, Value>, snap: &Te
     );
     // R975 §5.41 — the grid's single cursor (position / shape / visible).
     obj.insert("cursor".to_string(), grid_cursor_to_json(&snap.cursor));
+    // R977 §5.41 — which screen this projection is (main / alternate).
+    obj.insert("screen".to_string(), Value::String(snap.screen.to_string()));
 }
 
 /// R975 §5.41 — wire form for a [`GridCursorSnapshot`]: `{col, row, shape,

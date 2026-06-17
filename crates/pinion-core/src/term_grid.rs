@@ -31,11 +31,12 @@
 //! The cell's **attributes** ([`CellAttrs`]: bold / dim / italic /
 //! underline / blink / reverse / hidden / strikethrough) land in R974,
 //! the grid **cursor** ([`GridCursor`]: position / shape / visibility) in
-//! R975, and the **wide-char trailer** ([`CellWidth`]: a wide cluster
-//! occupies two columns — a head cell plus a continuation trailer) in
-//! R976. The **alternate-screen** buffer and **damage** tracking are each
-//! a deliberate follow-up S5 slice; these slices prove the data model
-//! with their cell + projection consumer (the
+//! R975, the **wide-char trailer** ([`CellWidth`]: a wide cluster occupies
+//! two columns — a head cell plus a continuation trailer) in R976, and the
+//! **alternate-screen** discriminator ([`ScreenKind`]: whether the
+//! projection is the main shell surface or a fullscreen app's screen) in
+//! R977. **Damage** tracking is the remaining S5 slice; these slices
+//! prove the data model with their cell + projection consumer (the
 //! [`crate::scene::TextGridNode`] cells + the `scene/snapshot` readback),
 //! not pixel paint (glyph rendering stays deferred — the grid is still
 //! paint-opaque this round).
@@ -559,6 +560,36 @@ impl GridCursor {
     }
 }
 
+/// Which of a terminal's two screen buffers a projection represents
+/// (R977 alt-screen): the **main** screen (the scrollback shell surface) or
+/// the **alternate** screen (the cleared, no-scrollback surface a
+/// fullscreen app — `vim`, `htop`, a pager — switches to via DECSET 1049).
+///
+/// A projection holds exactly the screen the producer is currently
+/// *displaying*: pinion does not hold the inactive buffer (the producer
+/// owns both and projects the active one — R969 "producer owns
+/// authoritative state"; this is not the alacritty-style hold-both model).
+/// The discriminator tells an AI client which mode the terminal is in
+/// (fullscreen app vs. shell) without inferring it from content.
+///
+/// Like [`CursorShape`] / [`CellWidth`] this is the *complete, closed* set
+/// (a terminal has exactly these two screens), so `#[non_exhaustive]` is
+/// deliberately **not** applied and callers may match exhaustively.
+///
+/// This is distinct from the OS terminal's alternate screen that the
+/// `pinion-tui` backend itself enters to render — that is pinion's own
+/// output surface; this is the *projected* terminal's screen mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ScreenKind {
+    /// The main screen — the conventional shell surface (with scrollback),
+    /// and the default a fresh projection represents.
+    #[default]
+    Main,
+    /// The alternate screen — the cleared, scrollback-free surface a
+    /// fullscreen application takes over (DECSET 1049).
+    Alternate,
+}
+
 /// A row-major rectangular buffer of [`TermCell`]s — the retained
 /// projection of the producer's terminal buffer (R969). Its own
 /// `(cols, rows)` describe the *snapshot the producer last sent*; the
@@ -570,22 +601,25 @@ impl GridCursor {
 ///
 /// The buffer is assembled by the producer and projected wholesale; it
 /// exposes construction ([`Self::new`] / [`Self::with_row`] /
-/// [`Self::with_cursor`]) and reads ([`Self::cell`] / [`Self::cursor`])
-/// but the *node* that holds it never mutates it per-cell — it swaps the
-/// whole projection. The [`GridCursor`] (R975) rides along with the cells
-/// as part of the same projection.
+/// [`Self::with_cursor`] / [`Self::with_screen`]) and reads ([`Self::cell`]
+/// / [`Self::cursor`] / [`Self::screen`]) but the *node* that holds it
+/// never mutates it per-cell — it swaps the whole projection. The
+/// [`GridCursor`] (R975) and the [`ScreenKind`] (R977) ride along with the
+/// cells as part of the same self-describing screen projection.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct GridBuffer {
     cols: u16,
     rows: u16,
     cells: Vec<TermCell>,
     cursor: GridCursor,
+    screen: ScreenKind,
 }
 
 impl GridBuffer {
-    /// A `cols × rows` buffer filled with [`TermCell::blank`], carrying
-    /// the default ([`GridCursor::default`]: hidden, home, block) cursor
-    /// until the producer sets one via [`Self::with_cursor`].
+    /// A `cols × rows` buffer filled with [`TermCell::blank`], on the
+    /// [`ScreenKind::Main`] screen, carrying the default
+    /// ([`GridCursor::default`]: hidden, home, block) cursor until the
+    /// producer sets one via [`Self::with_cursor`] / [`Self::with_screen`].
     #[must_use]
     pub fn new(cols: u16, rows: u16) -> Self {
         let count = usize::from(cols) * usize::from(rows);
@@ -594,6 +628,7 @@ impl GridBuffer {
             rows,
             cells: vec![TermCell::blank(); count],
             cursor: GridCursor::default(),
+            screen: ScreenKind::Main,
         }
     }
 
@@ -648,6 +683,22 @@ impl GridBuffer {
         self
     }
 
+    /// Which screen ([`ScreenKind`]) this projection represents (R977).
+    /// [`ScreenKind::Main`] for a fresh buffer until the producer reports
+    /// the alternate screen.
+    #[must_use]
+    pub const fn screen(&self) -> ScreenKind {
+        self.screen
+    }
+
+    /// Set the screen kind (builder form). The producer reports
+    /// [`ScreenKind::Alternate`] when projecting a fullscreen app's screen.
+    #[must_use]
+    pub const fn with_screen(mut self, screen: ScreenKind) -> Self {
+        self.screen = screen;
+        self
+    }
+
     /// Write a whole row of cells starting at column 0 (builder form).
     /// Cells beyond the buffer width are ignored; a short row leaves the
     /// trailing cells blank.
@@ -665,8 +716,8 @@ impl GridBuffer {
 #[cfg(test)]
 mod tests {
     use super::{
-        CellAttrs, CellWidth, ColorTarget, CursorShape, GridBuffer, GridCursor, Palette, TermCell,
-        TermColor,
+        CellAttrs, CellWidth, ColorTarget, CursorShape, GridBuffer, GridCursor, Palette,
+        ScreenKind, TermCell, TermColor,
     };
     use crate::style::Color;
 
@@ -905,5 +956,29 @@ mod tests {
         assert_eq!(b.cell(2, 0).unwrap().width, CellWidth::Narrow);
         let row: String = (0..3).map(|c| b.cell(c, 0).unwrap().cluster.clone()).collect();
         assert_eq!(row, format!("{WIDE_CLUSTER}x")); // two glyphs, three columns
+    }
+
+    #[test]
+    fn screen_kind_default_is_main() {
+        // Main is the conventional initial screen; the enum is the complete
+        // closed set (exhaustively matchable, like CursorShape / CellWidth).
+        assert_eq!(ScreenKind::default(), ScreenKind::Main);
+        assert_eq!(GridBuffer::new(2, 1).screen(), ScreenKind::Main);
+        assert_eq!(GridBuffer::default().screen(), ScreenKind::Main);
+    }
+
+    #[test]
+    fn grid_buffer_screen_is_settable_and_independent_of_cells_and_cursor() {
+        let cur = GridCursor::new(0, 0, CursorShape::Block, true);
+        let b = GridBuffer::new(4, 2)
+            .with_screen(ScreenKind::Alternate)
+            .with_cursor(cur);
+        // The screen kind, the cursor, and the cells are independent facts
+        // the producer reports together for one screen projection.
+        assert_eq!(b.screen(), ScreenKind::Alternate);
+        assert_eq!(b.cursor(), cur);
+        assert_eq!(b.cell(0, 0), Some(&TermCell::blank()));
+        // Switching the screen kind leaves the rest intact.
+        assert_eq!(b.with_screen(ScreenKind::Main).screen(), ScreenKind::Main);
     }
 }
