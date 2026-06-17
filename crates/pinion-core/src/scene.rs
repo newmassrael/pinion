@@ -2898,15 +2898,15 @@ impl ImmediateModeNode {
 /// (R969): the producer assembles a [`GridBuffer`] and the node holds it
 /// wholesale (no per-cell mutation — R969 "dual-grid 금지"). Cell
 /// attributes (R974) / cursor (R975) / wide-char trailer (R976) /
-/// alternate-screen kind (R977) ride on the [`GridBuffer`]; **damage**
-/// tracking is the remaining follow-up S5 slice, and **glyph paint stays
-/// deferred** (the grid is still paint-opaque: its [`Scene::paint_hash`]
-/// is the no-op sentinel — the cells are read as scene-as-data (§2 #7) via
-/// `scene/snapshot`, not yet drawn).
+/// alternate-screen kind (R977) / per-row damage generations (R978) ride
+/// on the [`GridBuffer`], completing the S5 data model; **glyph paint
+/// stays deferred** (the grid is still paint-opaque: its
+/// [`Scene::paint_hash`] is the no-op sentinel — the cells are read as
+/// scene-as-data (§2 #7) via `scene/snapshot`, not yet drawn).
 ///
 /// `#[non_exhaustive]` per the R14 forward-compat hedge (like every peer
-/// leaf node): the remaining slice adds fields (damage), and construction
-/// already goes through [`Self::new`] + builders, so the hedge is free.
+/// leaf node): construction already goes through [`Self::new`] + builders,
+/// so the hedge is free.
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct TextGridNode {

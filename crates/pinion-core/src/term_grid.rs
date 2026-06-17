@@ -35,8 +35,10 @@
 //! two columns — a head cell plus a continuation trailer) in R976, and the
 //! **alternate-screen** discriminator ([`ScreenKind`]: whether the
 //! projection is the main shell surface or a fullscreen app's screen) in
-//! R977. **Damage** tracking is the remaining S5 slice; these slices
-//! prove the data model with their cell + projection consumer (the
+//! R977, and **damage** tracking (per-row
+//! [generation](GridBuffer::row_generation) counters for incremental,
+//! streaming reads) in R978 — completing the S5 data model. These slices
+//! prove the model with their cell + projection consumer (the
 //! [`crate::scene::TextGridNode`] cells + the `scene/snapshot` readback),
 //! not pixel paint (glyph rendering stays deferred — the grid is still
 //! paint-opaque this round).
@@ -601,11 +603,24 @@ pub enum ScreenKind {
 ///
 /// The buffer is assembled by the producer and projected wholesale; it
 /// exposes construction ([`Self::new`] / [`Self::with_row`] /
-/// [`Self::with_cursor`] / [`Self::with_screen`]) and reads ([`Self::cell`]
-/// / [`Self::cursor`] / [`Self::screen`]) but the *node* that holds it
-/// never mutates it per-cell — it swaps the whole projection. The
-/// [`GridCursor`] (R975) and the [`ScreenKind`] (R977) ride along with the
-/// cells as part of the same self-describing screen projection.
+/// [`Self::with_cursor`] / [`Self::with_screen`] /
+/// [`Self::with_row_generation`]) and reads ([`Self::cell`] /
+/// [`Self::cursor`] / [`Self::screen`] / [`Self::row_generation`]) but the
+/// *node* that holds it never mutates it per-cell — it swaps the whole
+/// projection. The [`GridCursor`] (R975), the [`ScreenKind`] (R977), and
+/// the per-row damage [generations](Self::row_generation) (R978) ride
+/// along with the cells as part of the same self-describing screen
+/// projection.
+///
+/// **Damage (R978).** Each row carries a monotonic `u64` *generation* the
+/// producer bumps whenever it rewrites that row (a real emulator tracks
+/// dirty lines as it processes PTY output — R969 "producer owns
+/// authoritative state"). A streaming client (an AI agent watching a CLI
+/// emit output) remembers the highest generation it has read and, on its
+/// next `scene/snapshot`, re-reads only the rows whose generation exceeds
+/// that high-water mark — an incremental update that survives an arbitrary
+/// polling cadence (unlike a frame-reset dirty flag). pinion stores and
+/// reports the producer's stamps; it does not diff buffers itself.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct GridBuffer {
     cols: u16,
@@ -613,13 +628,16 @@ pub struct GridBuffer {
     cells: Vec<TermCell>,
     cursor: GridCursor,
     screen: ScreenKind,
+    /// One monotonic damage generation per row (length == `rows`), R978.
+    row_generations: Vec<u64>,
 }
 
 impl GridBuffer {
     /// A `cols × rows` buffer filled with [`TermCell::blank`], on the
     /// [`ScreenKind::Main`] screen, carrying the default
-    /// ([`GridCursor::default`]: hidden, home, block) cursor until the
-    /// producer sets one via [`Self::with_cursor`] / [`Self::with_screen`].
+    /// ([`GridCursor::default`]: hidden, home, block) cursor and every
+    /// row at damage generation `0` until the producer sets them via the
+    /// builders.
     #[must_use]
     pub fn new(cols: u16, rows: u16) -> Self {
         let count = usize::from(cols) * usize::from(rows);
@@ -629,6 +647,7 @@ impl GridBuffer {
             cells: vec![TermCell::blank(); count],
             cursor: GridCursor::default(),
             screen: ScreenKind::Main,
+            row_generations: vec![0; usize::from(rows)],
         }
     }
 
@@ -696,6 +715,27 @@ impl GridBuffer {
     #[must_use]
     pub const fn with_screen(mut self, screen: ScreenKind) -> Self {
         self.screen = screen;
+        self
+    }
+
+    /// The damage generation of `row`, or `None` if the row is out of
+    /// bounds (R978). The monotonic stamp the producer last gave the row; a
+    /// client re-reads rows whose generation exceeds the highest it has
+    /// already seen. `0` for an untouched row. See the type-level docs for
+    /// the streaming-read model.
+    #[must_use]
+    pub fn row_generation(&self, row: u16) -> Option<u64> {
+        self.row_generations.get(usize::from(row)).copied()
+    }
+
+    /// Stamp `row` with damage `generation` (builder form). The producer
+    /// bumps this each time it rewrites the row. An out-of-bounds row is
+    /// ignored (mirroring [`Self::with_row`]).
+    #[must_use]
+    pub fn with_row_generation(mut self, row: u16, generation: u64) -> Self {
+        if let Some(slot) = self.row_generations.get_mut(usize::from(row)) {
+            *slot = generation;
+        }
         self
     }
 
@@ -980,5 +1020,45 @@ mod tests {
         assert_eq!(b.cell(0, 0), Some(&TermCell::blank()));
         // Switching the screen kind leaves the rest intact.
         assert_eq!(b.with_screen(ScreenKind::Main).screen(), ScreenKind::Main);
+    }
+
+    #[test]
+    fn row_generations_default_to_zero_and_are_bounded() {
+        let b = GridBuffer::new(4, 3);
+        // Every row starts at generation 0 (untouched baseline).
+        assert_eq!(b.row_generation(0), Some(0));
+        assert_eq!(b.row_generation(2), Some(0));
+        // Out of bounds is None, not a panic.
+        assert_eq!(b.row_generation(3), None);
+        // A geometry-only buffer has no row generations.
+        assert_eq!(GridBuffer::default().row_generation(0), None);
+    }
+
+    #[test]
+    fn with_row_generation_stamps_one_row_and_enables_a_baseline_diff() {
+        // A streaming terminal: three rows stamped with increasing
+        // generations (row 2 changed most recently).
+        let b = GridBuffer::new(8, 3)
+            .with_row_generation(0, 10)
+            .with_row_generation(1, 20)
+            .with_row_generation(2, 30);
+        assert_eq!(b.row_generation(0), Some(10));
+        assert_eq!(b.row_generation(1), Some(20));
+        assert_eq!(b.row_generation(2), Some(30));
+
+        // A client at baseline 15 re-reads only the rows newer than that.
+        let changed: Vec<u16> = (0..b.rows())
+            .filter(|&r| b.row_generation(r).unwrap_or(0) > 15)
+            .collect();
+        assert_eq!(changed, vec![1, 2]);
+        // At baseline 30 nothing is newer.
+        let none_newer: Vec<u16> = (0..b.rows())
+            .filter(|&r| b.row_generation(r).unwrap_or(0) > 30)
+            .collect();
+        assert!(none_newer.is_empty());
+
+        // An out-of-bounds stamp is ignored, not a panic.
+        let same = b.clone().with_row_generation(9, 99);
+        assert_eq!(same, b);
     }
 }

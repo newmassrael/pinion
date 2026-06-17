@@ -3158,7 +3158,8 @@ fn grid_cursor_to_json(cursor: &GridCursorSnapshot) -> Value {
     Value::Object(obj)
 }
 
-/// R973 §5.41 — wire form for one [`GridRowSnapshot`]: `{text, runs}`.
+/// R973 §5.41 — wire form for one [`GridRowSnapshot`]: `{text, runs,
+/// generation}` (R978 added the per-row damage `generation`).
 fn grid_row_to_json(row: &GridRowSnapshot) -> Value {
     let mut obj = serde_json::Map::new();
     obj.insert("text".to_string(), Value::String(row.text.clone()));
@@ -3166,6 +3167,7 @@ fn grid_row_to_json(row: &GridRowSnapshot) -> Value {
         "runs".to_string(),
         Value::Array(row.runs.iter().map(grid_style_run_to_json).collect()),
     );
+    obj.insert("generation".to_string(), Value::Number(row.generation.into()));
     Value::Object(obj)
 }
 

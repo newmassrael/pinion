@@ -51,10 +51,16 @@
 //! travels with the projection and each screen carries its own cursor. The
 //! other grids stay on the main screen.
 //!
-//! **Damage** tracking and **glyph paint** stay deliberate follow-up
-//! rounds — the grid is still paint-opaque, so the window renders only its
-//! surface background; the deliverable is the cell *data model*, read as
-//! data.
+//! R978 adds an eighth grid, **`htg_damage`**, carrying per-row monotonic
+//! damage [generations](GridBuffer::row_generation): three streamed output
+//! lines, the newest stamped highest. A streaming client re-reads only the
+//! rows whose generation exceeds its last-seen high-water mark — the
+//! incremental-update model that completes the S5 data model. The other
+//! grids leave every row at generation 0.
+//!
+//! **Glyph paint** stays a deliberate follow-up — the grid is still
+//! paint-opaque, so the window renders only its surface background; the
+//! deliverable is the cell *data model*, read as data.
 //!
 //! ## The AI-first witness (§2 #7 scene-as-data)
 //!
@@ -74,7 +80,10 @@
 //! holds each wide glyph once — `tools/demos/r976_textgrid_wide.py`
 //! asserts the head / trailer structure and glyph-to-column mapping. For
 //! `htg_alt`, the grid's `screen` is `alternate` while every other grid is
-//! `main` — `tools/demos/r977_textgrid_altscreen.py` asserts it.
+//! `main` — `tools/demos/r977_textgrid_altscreen.py` asserts it. For
+//! `htg_damage`, each row carries a `generation` and a client computes its
+//! changed-set from a baseline — `tools/demos/r978_textgrid_damage.py`
+//! asserts the incremental-read model.
 
 use pinion_a11y::{AccessNode, WidgetA11y};
 use pinion_core::external::{External, StubExternal};
@@ -313,6 +322,33 @@ fn alt_buffer() -> GridBuffer {
         ))
 }
 
+/// Tag of the R978 damage grid, and its placement + extent.
+const DAMAGE_TAG: &str = "htg_damage";
+const DAMAGE_POS: (u32, u32) = (400, 784);
+/// `8 × 3` cells at the `8×16` baseline metric → `64 × 48` px.
+const DAMAGE_COLS: u16 = 8;
+const DAMAGE_ROWS: u16 = 3;
+const DAMAGE_SIZE: (u32, u32) = (64, 48);
+/// Per-row damage generations: three output lines, the last printed most
+/// recently (the highest monotonic stamp).
+const DAMAGE_GENS: (u64, u64, u64) = (10, 20, 30);
+
+/// Build the R978 damage projection: three streamed output lines, each
+/// stamped with a monotonic row generation (row 2, the newest line, has
+/// the highest). A streaming client re-reads only the rows whose
+/// generation exceeds its last-seen high-water mark — pinion stores the
+/// producer's stamps, the client computes its own incremental delta.
+fn damage_buffer() -> GridBuffer {
+    let default = |c: char| TermCell::new(c.to_string(), TermColor::Default, TermColor::Default);
+    GridBuffer::new(DAMAGE_COLS, DAMAGE_ROWS)
+        .with_row(0, "line 1".chars().map(default))
+        .with_row(1, "line 2".chars().map(default))
+        .with_row(2, "line 3".chars().map(default))
+        .with_row_generation(0, DAMAGE_GENS.0)
+        .with_row_generation(1, DAMAGE_GENS.1)
+        .with_row_generation(2, DAMAGE_GENS.2)
+}
+
 /// Build one absolutely-positioned grid: the absolute layout removes it
 /// from flow and gives it exactly its own `Size`, so the layout pass
 /// resolves a deterministic pixel `Rect` and the derived `(cols, rows)`
@@ -406,6 +442,20 @@ fn view(_state: (), _frame: &Frame) -> Scene {
             ),
     );
 
+    // The R978 damage grid (8×16 baseline): three streamed output lines
+    // carrying per-row monotonic damage generations. The other grids leave
+    // every row at the default generation 0 (additive).
+    let damage = Scene::TextGrid(
+        TextGridNode::new(CellMetric::DEFAULT)
+            .with_tag(DAMAGE_TAG)
+            .with_cells(damage_buffer())
+            .with_layout(
+                LayoutStyle::new()
+                    .with_absolute_position(DAMAGE_POS.0, DAMAGE_POS.1)
+                    .with_size(Size::px(DAMAGE_SIZE.0, DAMAGE_SIZE.1)),
+            ),
+    );
+
     Scene::Container(
         ContainerNode::new(vec![
             grid(DEFAULT_TAG, CellMetric::DEFAULT, DEFAULT_POS, DEFAULT_SIZE),
@@ -415,6 +465,7 @@ fn view(_state: (), _frame: &Frame) -> Scene {
             cursor,
             wide,
             alt,
+            damage,
         ])
         .with_tag(ROOT_TAG)
         .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface))),
@@ -534,6 +585,25 @@ mod tests {
         assert!(scene.contains_tag(CURSOR_TAG));
         assert!(scene.contains_tag(WIDE_TAG));
         assert!(scene.contains_tag(ALT_TAG));
+        assert!(scene.contains_tag(DAMAGE_TAG));
+    }
+
+    #[test]
+    fn damage_buffer_stamps_increasing_row_generations() {
+        let b = damage_buffer();
+        assert_eq!((b.cols(), b.rows()), (DAMAGE_COLS, DAMAGE_ROWS));
+        assert_eq!(b.row_generation(0), Some(DAMAGE_GENS.0));
+        assert_eq!(b.row_generation(1), Some(DAMAGE_GENS.1));
+        assert_eq!(b.row_generation(2), Some(DAMAGE_GENS.2));
+        // The newest output line (row 2) has the highest generation.
+        assert!(b.row_generation(2).unwrap() > b.row_generation(0).unwrap());
+
+        // A client whose high-water mark is row 0's generation re-reads
+        // only the newer rows — the incremental-update model.
+        let changed: Vec<u16> = (0..b.rows())
+            .filter(|&r| b.row_generation(r).unwrap_or(0) > DAMAGE_GENS.0)
+            .collect();
+        assert_eq!(changed, vec![1, 2]);
     }
 
     #[test]

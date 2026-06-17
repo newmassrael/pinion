@@ -294,10 +294,15 @@ pub struct TextGridSnapshot {
 /// row's `text` (cell grapheme clusters joined left→right) plus its
 /// style `runs` (maximal spans of one foreground / background colour —
 /// the terminal-canonical run-length style compression).
+///
+/// R978 §5.41 — `generation` is the row's monotonic damage stamp: a
+/// streaming client re-reads only the rows whose generation exceeds the
+/// highest it has already seen (`0` for an untouched row).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GridRowSnapshot {
     pub text: String,
     pub runs: Vec<GridStyleRun>,
+    pub generation: u64,
 }
 
 /// R973 §5.41 — a maximal run of consecutive cells in a row sharing one
@@ -540,7 +545,13 @@ fn text_grid_rows(buffer: &GridBuffer, palette: &Palette) -> Vec<GridRowSnapshot
                 }
                 prev = Some(style);
             }
-            GridRowSnapshot { text, runs }
+            // R978 — the row's monotonic damage generation (0 if untouched).
+            let generation = buffer.row_generation(row).unwrap_or(0);
+            GridRowSnapshot {
+                text,
+                runs,
+                generation,
+            }
         })
         .collect()
 }
@@ -652,6 +663,37 @@ mod tests {
                 assert!(!snap.cursor.visible);
                 // R977 — and the main screen (the default).
                 assert_eq!(snap.screen, "main");
+            }
+            other => panic!("expected TextGrid, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn text_grid_snapshot_reports_per_row_damage_generations() {
+        // R978 §5.41 — each row's monotonic damage generation is projected,
+        // so a streaming client can re-read only the rows newer than its
+        // last-seen high-water mark.
+        use pinion_core::GridBuffer;
+        let buf = GridBuffer::new(4, 3)
+            .with_row_generation(0, 10)
+            .with_row_generation(1, 20)
+            .with_row_generation(2, 30);
+        let mut node = pinion_core::scene::TextGridNode::new(pinion_core::CellMetric::DEFAULT)
+            .with_cells(buf);
+        node.rect = Rect::new(0, 0, 32, 48); // 4 × 3 @ 8×16
+        match snapshot(&Scene::TextGrid(node), "").unwrap() {
+            SnapshotNode::TextGrid(snap) => {
+                let gens: Vec<u64> = snap.grid_rows.iter().map(|r| r.generation).collect();
+                assert_eq!(gens, vec![10, 20, 30]);
+                // The diff a client at baseline 15 computes: rows 1 and 2.
+                let changed: Vec<usize> = snap
+                    .grid_rows
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, r)| r.generation > 15)
+                    .map(|(i, _)| i)
+                    .collect();
+                assert_eq!(changed, vec![1, 2]);
             }
             other => panic!("expected TextGrid, got {other:?}"),
         }

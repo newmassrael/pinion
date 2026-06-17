@@ -44621,6 +44621,62 @@
         "glyph paint deferred; inactive-buffer introspection is the producer's API if needed (not pinion)"
       ]
     },
+    "R978": {
+      "decision_summary": "R978 §5.41 cell-native TextGrid damage tracking (S5 slice 6, last): per-row monotonic generation on GridBuffer + snapshot row generation field + hello-textgrid htg_damage consumer; S5 data model complete",
+      "changes_bullets": [
+        "term_grid: GridBuffer.row_generations Vec<u64> = per-row monotonic damage stamp (R978)",
+        "with_row_generation(row,gen) builder + row_generation(row)->Option<u64>; default all 0",
+        "producer-reported (R969): emulator tracks dirty lines; pinion stores+reports, no buffer diff",
+        "per-row generation (not frame-reset dirty bool) survives an arbitrary polling cadence",
+        "client re-reads only rows whose generation > its last-seen high-water mark (incremental)",
+        "snapshot: GridRowSnapshot.generation u64; dispatch grid_row_to_json += generation",
+        "hello-textgrid htg_damage grid: 3 streamed lines gens 10/20/30 + baseline-diff demo",
+        "other grids leave rows at generation 0 (additive); S5 data model now complete"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 exit 0 (0 fail; new: 2 core + 1 snapshot + 1 example test)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello exit 0 (-D pedantic)",
+        "r978 demo PASS; r972-r977 PASS (additive generation field regression-free)",
+        "mnemosyne validate-workspace T1 reject=0, no new orphan",
+        "3b self-grep: row_generation free in terminal grid; distinct from reactive-runtime generation",
+        "design audit: producer-reported per-row generation (R969) over pinion-diff-prev-buffer"
+      ],
+      "impact_refs": [
+        "5.41"
+      ],
+      "carry_forward_bullets": [
+        "S5 data model COMPLETE: colour+attrs+cursor+width+screen+damage; cell-native TextGrid model done",
+        "next: glyph paint (Vello cell render) or S6 — grid still paint-opaque; sprag consumes the model",
+        "live cross-frame mutation is the producer's domain; the demo is a snapshot-in-time of streaming"
+      ],
+      "publishable_decision_summary": "R978 §5.41 cell-native TextGrid damage tracking (S5 slice 6, last): per-row monotonic generation on GridBuffer + snapshot row generation field + hello-textgrid htg_damage consumer; S5 data model complete",
+      "publishable_changes_bullets": [
+        "term_grid: GridBuffer.row_generations Vec<u64> = per-row monotonic damage stamp (R978)",
+        "with_row_generation(row,gen) builder + row_generation(row)->Option<u64>; default all 0",
+        "producer-reported (R969): emulator tracks dirty lines; pinion stores+reports, no buffer diff",
+        "per-row generation (not frame-reset dirty bool) survives an arbitrary polling cadence",
+        "client re-reads only rows whose generation > its last-seen high-water mark (incremental)",
+        "snapshot: GridRowSnapshot.generation u64; dispatch grid_row_to_json += generation",
+        "hello-textgrid htg_damage grid: 3 streamed lines gens 10/20/30 + baseline-diff demo",
+        "other grids leave rows at generation 0 (additive); S5 data model now complete"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 exit 0 (0 fail; new: 2 core + 1 snapshot + 1 example test)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello exit 0 (-D pedantic)",
+        "r978 demo PASS; r972-r977 PASS (additive generation field regression-free)",
+        "mnemosyne validate-workspace T1 reject=0, no new orphan",
+        "3b self-grep: row_generation free in terminal grid; distinct from reactive-runtime generation",
+        "design audit: producer-reported per-row generation (R969) over pinion-diff-prev-buffer"
+      ],
+      "publishable_impact_refs": [
+        "5.41"
+      ],
+      "publishable_carry_forward_bullets": [
+        "S5 data model COMPLETE: colour+attrs+cursor+width+screen+damage; cell-native TextGrid model done",
+        "next: glyph paint (Vello cell render) or S6 — grid still paint-opaque; sprag consumes the model",
+        "live cross-frame mutation is the producer's domain; the demo is a snapshot-in-time of streaming"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
