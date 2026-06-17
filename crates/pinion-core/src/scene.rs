@@ -30,6 +30,7 @@ use std::time::Duration;
 use crate::cell_metric::CellMetric;
 use crate::external::ExternalIntrospect;
 use crate::style::{Align, BoxStyle, Color, ImageStyle, LayoutStyle, PathStyle, Size, TextStyle};
+use crate::term_grid::{GridBuffer, Palette};
 use crate::widgets::scroll::ScrollState;
 
 /// Closed scene primitive set (§5.2). Two opaque escape variants
@@ -2880,14 +2881,22 @@ impl ImmediateModeNode {
 /// is the single source of truth: the R969 one-directional `(rows,
 /// cols)` SSOT (layout → dims, never fed back).
 ///
-/// The cell *data model* (R969 cluster / fg / bg / attrs / cursor /
-/// alt-screen / damage) is a deliberate follow-up round; this scaffold
-/// proves the coordinate space alone, exposed as scene-as-data (§2 #7)
-/// through `scene/snapshot` (`cell_w` / `cell_h` / `cols` / `rows`).
+/// The cell **content** (R973: the [`GridBuffer`] projection of cells,
+/// each carrying a grapheme cluster + foreground / background
+/// [`TermColor`](crate::term_grid::TermColor)) and the per-grid
+/// [`Palette`] that resolves indexed / default colours land here. The
+/// grid is a *retained projection* of the producer's terminal buffer
+/// (R969): the producer assembles a [`GridBuffer`] and the node holds it
+/// wholesale (no per-cell mutation — R969 "dual-grid 금지"). Cell
+/// attributes / cursor / wide-char trailer / alternate-screen buffer /
+/// damage tracking are each a deliberate follow-up S5 slice, and **glyph
+/// paint stays deferred** (the grid is still paint-opaque: its
+/// [`Scene::paint_hash`] is the no-op sentinel — the cells are read as
+/// scene-as-data (§2 #7) via `scene/snapshot`, not yet drawn).
 ///
 /// `#[non_exhaustive]` per the R14 forward-compat hedge (like every peer
-/// leaf node): the R969 cell data-model round will add fields
-/// (cluster / fg / bg / attrs / cursor), and construction already goes
+/// leaf node): the follow-up slices add fields (attrs / cursor /
+/// trailer / alt-screen / damage), and construction already goes
 /// through [`Self::new`] + builders, so the hedge is free.
 #[non_exhaustive]
 #[derive(Debug, Clone)]
@@ -2908,12 +2917,23 @@ pub struct TextGridNode {
     /// [`ImmediateModeNode::layout`] / [`ScrollNode::layout`]. The taffy
     /// pass resolves [`Self::rect`] from this.
     pub layout: LayoutStyle,
+    /// R973 — the retained projection of the producer's terminal buffer:
+    /// the cells the grid currently shows. Replaced wholesale each frame
+    /// (the producer owns the authoritative buffer; the node never
+    /// mutates per-cell). Empty (`0×0`) for a geometry-only grid.
+    pub cells: GridBuffer,
+    /// R973 — the per-grid `indexed → rgb` palette that resolves this
+    /// grid's cell [`TermColor`](crate::term_grid::TermColor)s at paint /
+    /// introspection time. Defaults to [`Palette::xterm_default`].
+    pub palette: Palette,
 }
 
 impl TextGridNode {
     /// Construct a grid with the given node-local [`CellMetric`]. The
     /// `rect` starts empty and is filled by the layout pass from
-    /// [`Self::layout`]; chain [`Self::with_layout`] to size it.
+    /// [`Self::layout`]; chain [`Self::with_layout`] to size it. The cell
+    /// projection starts empty (a geometry-only grid) with the default
+    /// xterm [`Palette`]; chain [`Self::with_cells`] / [`Self::with_palette`].
     #[must_use]
     pub fn new(metric: CellMetric) -> Self {
         Self {
@@ -2921,6 +2941,8 @@ impl TextGridNode {
             rect: Rect::default(),
             metric,
             layout: LayoutStyle::new(),
+            cells: GridBuffer::default(),
+            palette: Palette::xterm_default(),
         }
     }
 
@@ -2959,6 +2981,34 @@ impl TextGridNode {
     #[must_use]
     pub fn rows(&self) -> u16 {
         self.metric.rows_for(self.rect.h)
+    }
+
+    /// Set the retained cell projection (builder form). The producer
+    /// hands the node a freshly-assembled [`GridBuffer`]; the node holds
+    /// it wholesale (R969 retained projection — no per-cell mutation).
+    #[must_use]
+    pub fn with_cells(mut self, cells: GridBuffer) -> Self {
+        self.cells = cells;
+        self
+    }
+
+    /// Set the per-grid `indexed → rgb` [`Palette`] (builder form).
+    #[must_use]
+    pub const fn with_palette(mut self, palette: Palette) -> Self {
+        self.palette = palette;
+        self
+    }
+
+    /// The retained cell projection.
+    #[must_use]
+    pub const fn cells(&self) -> &GridBuffer {
+        &self.cells
+    }
+
+    /// The per-grid palette that resolves this grid's cell colours.
+    #[must_use]
+    pub const fn palette(&self) -> Palette {
+        self.palette
     }
 }
 

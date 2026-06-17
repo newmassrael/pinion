@@ -40,6 +40,7 @@ pub mod scene;
 pub mod storage;
 pub mod style;
 pub mod syntax;
+pub mod term_grid;
 pub mod text_scale;
 pub mod theme;
 pub mod topology;
@@ -96,6 +97,7 @@ pub use style::{
     TextOverflow, TextStyle, scale_normalized_to_px,
 };
 pub use syntax::{highlight_code, SyntaxPalette};
+pub use term_grid::{ColorTarget, GridBuffer, GridCell, Palette, TermColor};
 pub use theme::{
     ColorRole, SystemColorScheme, THEME_FADE_SPRING, Theme, ThemeMode, ThemeProvider,
     set_system_color_scheme, system_color_scheme, use_theme,

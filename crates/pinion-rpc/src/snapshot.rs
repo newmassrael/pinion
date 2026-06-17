@@ -47,7 +47,7 @@
 use pinion_core::external::IntrospectValue;
 use pinion_core::scene::Rect;
 use pinion_core::style::{BoxStyle, ImageStyle, PathStyle, TextStyle};
-use pinion_core::Scene;
+use pinion_core::{ColorTarget, GridBuffer, Palette, Scene, TermColor};
 
 use crate::path::{self, PathError};
 
@@ -246,6 +246,13 @@ pub struct ImmediateModeSnapshot {
 /// an AI client read the cell-native coordinate space as data (§2 #7):
 /// the cell↔pixel round-trip is reconstructible from `rect` + metric,
 /// and `(cols, rows)` is the R969 layout-derived `(rows, cols)` SSOT.
+///
+/// R973 §5.41 — `grid_rows` is the cell **content** projection: one
+/// [`GridRowSnapshot`] per row of the [`GridBuffer`](pinion_core::GridBuffer)
+/// the grid currently shows (empty for a geometry-only grid). Cell
+/// colours are resolved through the grid's
+/// [`Palette`](pinion_core::Palette) here — the R969 "resolve at paint
+/// time" contract (a snapshot is a paint-time readback).
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TextGridSnapshot {
@@ -255,6 +262,39 @@ pub struct TextGridSnapshot {
     pub cell_h: u32,
     pub cols: u16,
     pub rows: u16,
+    pub grid_rows: Vec<GridRowSnapshot>,
+}
+
+/// R973 §5.41 — one row of a [`TextGridSnapshot`] cell projection: the
+/// row's `text` (cell grapheme clusters joined left→right) plus its
+/// style `runs` (maximal spans of one foreground / background colour —
+/// the terminal-canonical run-length style compression).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GridRowSnapshot {
+    pub text: String,
+    pub runs: Vec<GridStyleRun>,
+}
+
+/// R973 §5.41 — a maximal run of consecutive cells in a row sharing one
+/// `(fg, bg)` pair, `[start, start + len)` in columns.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GridStyleRun {
+    pub start: u16,
+    pub len: u16,
+    pub fg: TermColorSnapshot,
+    pub bg: TermColorSnapshot,
+}
+
+/// R973 §5.41 — a cell colour in a snapshot. Reports both the *stored*
+/// form (`kind` `"default"` / `"indexed"` / `"rgb"` plus the palette
+/// `index` for indexed) **and** the palette-resolved 24-bit `rgb` hex,
+/// so an AI client reads the cell's semantic colour intent and the
+/// concrete colour a painter would draw — without OCR (§2 #7).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TermColorSnapshot {
+    pub kind: &'static str,
+    pub index: Option<u8>,
+    pub rgb: String,
 }
 
 /// `External` payload of [`SnapshotNode::External`] (R51.198 added
@@ -399,12 +439,63 @@ fn snapshot_root(scene: &Scene) -> SnapshotNode {
                 cell_h: metric.cell_h(),
                 cols: node.cols(),
                 rows: node.rows(),
+                grid_rows: text_grid_rows(node.cells(), &node.palette()),
             })
         }
         // `Scene` is non_exhaustive; future variants surface as Unknown
         // until this dispatcher is updated for them.
         _ => SnapshotNode::Unknown,
     }
+}
+
+/// R973 §5.41 — project a [`GridBuffer`] into per-row snapshots, resolving
+/// each cell's colours through `palette` (the R969 "resolve at paint
+/// time" contract — a snapshot is a paint-time readback). Consecutive
+/// cells with an identical `(fg, bg)` pair collapse into one
+/// [`GridStyleRun`] (run-length style compression). An empty buffer
+/// yields no rows.
+fn text_grid_rows(buffer: &GridBuffer, palette: &Palette) -> Vec<GridRowSnapshot> {
+    (0..buffer.rows())
+        .map(|row| {
+            let mut text = String::new();
+            let mut runs: Vec<GridStyleRun> = Vec::new();
+            let mut prev: Option<(TermColor, TermColor)> = None;
+            for col in 0..buffer.cols() {
+                // Every coordinate in `0..cols × 0..rows` is in bounds.
+                let cell = buffer.cell(col, row).expect("cell within buffer bounds");
+                text.push_str(&cell.cluster);
+                let style = (cell.fg, cell.bg);
+                match runs.last_mut() {
+                    Some(run) if prev == Some(style) => run.len += 1,
+                    _ => runs.push(GridStyleRun {
+                        start: col,
+                        len: 1,
+                        fg: term_color_snapshot(cell.fg, ColorTarget::Foreground, palette),
+                        bg: term_color_snapshot(cell.bg, ColorTarget::Background, palette),
+                    }),
+                }
+                prev = Some(style);
+            }
+            GridRowSnapshot { text, runs }
+        })
+        .collect()
+}
+
+/// R973 §5.41 — capture a cell's stored [`TermColor`] plus its
+/// palette-resolved 24-bit hex. The stored `kind` / `index` preserve the
+/// producer's semantic intent; `rgb` is what a painter would draw.
+fn term_color_snapshot(
+    color: TermColor,
+    target: ColorTarget,
+    palette: &Palette,
+) -> TermColorSnapshot {
+    let rgb = palette.resolve(color, target).to_hex();
+    let (kind, index) = match color {
+        TermColor::Default => ("default", None),
+        TermColor::Indexed(index) => ("indexed", Some(index)),
+        TermColor::Rgb(_) => ("rgb", None),
+    };
+    TermColorSnapshot { kind, index, rgb }
 }
 
 #[cfg(test)]

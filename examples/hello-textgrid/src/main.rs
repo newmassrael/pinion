@@ -10,16 +10,25 @@
 //!     [`CellMetric::new`]`(9, 18)` (the R968 font-derivation hook),
 //!     sized `360×360` → **40 × 20** cells.
 //!
-//! ## What this scaffold proves (and what it defers)
+//! ## What this proves (and what it defers)
 //!
-//! The grid is an **empty geometry scaffold**: it carries a node-local
-//! [`CellMetric`] plus its layout-resolved pixel [`Rect`], and derives
-//! its `(cols, rows)` from that rect via the metric — the R969
+//! The first two grids stay **empty geometry scaffolds**: each carries a
+//! node-local [`CellMetric`] plus its layout-resolved pixel [`Rect`] and
+//! derives its `(cols, rows)` from that rect via the metric — the R969
 //! one-directional `(rows, cols)` SSOT (layout → dims, never fed back).
-//! The cell **data model** (R969 cluster / fg / bg / attrs / cursor /
-//! alt-screen / damage) and **paint** are deliberate follow-up rounds,
-//! so the window renders only its surface background — the deliverable
-//! here is the *coordinate space*, read as data, not pixels.
+//!
+//! R973 adds a third grid, **`htg_content`**, that carries a cell-content
+//! [`GridBuffer`] projection — the first S5 data-model slice: the
+//! terminal colour model ([`TermColor`]: default / indexed / truecolor)
+//! resolved through the grid's [`Palette`](pinion_core::Palette). Its
+//! cells exercise all three colour forms: an ANSI 16-colour bar
+//! (indexed backgrounds), a default-coloured label, a truecolor RGB row,
+//! and a mixed indexed-cube / grayscale-ramp row.
+//!
+//! Cell **attributes / cursor / wide-char trailer / alt-screen / damage**
+//! and **glyph paint** stay deliberate follow-up rounds — the grid is
+//! still paint-opaque, so the window renders only its surface
+//! background; the deliverable is the cell *data model*, read as data.
 //!
 //! ## The AI-first witness (§2 #7 scene-as-data)
 //!
@@ -28,14 +37,17 @@
 //! whole cell↔pixel mapping with no OCR: the winsize round-trip is
 //! `cols == floor(rect.w / cell_w)` (and the pixel extent the cells
 //! span, `cols * cell_w`, fits within `rect.w`). The R972 demo
-//! (`tools/r972_textgrid.py`) asserts this for both metrics.
+//! (`tools/r972_textgrid.py`) asserts this for both metrics. For
+//! `htg_content`, `grid_rows` reports each row's text and its
+//! palette-resolved style runs — `tools/r973_textgrid_cells.py` asserts
+//! every colour form resolves correctly.
 
 use pinion_a11y::{AccessNode, WidgetA11y};
 use pinion_core::external::{External, StubExternal};
 use pinion_core::scene::{ContainerNode, TextGridNode};
-use pinion_core::style::{BoxStyle, LayoutStyle, Size};
+use pinion_core::style::{BoxStyle, Color, LayoutStyle, Size};
 use pinion_core::theme::{use_theme, ColorRole};
-use pinion_core::{CellMetric, Frame, Scene, WidgetCore};
+use pinion_core::{CellMetric, Frame, GridBuffer, GridCell, Scene, TermColor, WidgetCore};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -64,6 +76,62 @@ const MEASURED_SIZE: (u32, u32) = (360, 360); // 40 cols × 20 rows @ 9×18
 /// scaffold first consumes (a real Vello font measurement lands later).
 const MEASURED_CELL: (u32, u32) = (9, 18);
 
+/// Tag of the R973 cell-content grid, and its placement + extent.
+const CONTENT_TAG: &str = "htg_content";
+const CONTENT_POS: (u32, u32) = (400, 440);
+/// `16 × 4` cells at the `8×16` baseline metric → `128 × 64` px. The rect
+/// is sized to derive exactly the projection's dimensions, mirroring a
+/// producer that sized its buffer to the notified winsize.
+const CONTENT_COLS: u16 = 16;
+const CONTENT_ROWS: u16 = 4;
+const CONTENT_SIZE: (u32, u32) = (128, 64);
+
+/// Build the R973 cell-content projection: the producer-assembled
+/// [`GridBuffer`] the `htg_content` grid shows. Exercises every
+/// [`TermColor`] form so the snapshot consumer can witness the palette
+/// resolution (R969 "resolve at paint time").
+fn content_buffer() -> GridBuffer {
+    GridBuffer::new(CONTENT_COLS, CONTENT_ROWS)
+        // Row 0 — the ANSI 16-colour bar: each cell's background is
+        // palette index `i` (`0..16`), foreground left default.
+        .with_row(
+            0,
+            (0..CONTENT_COLS).map(|i| {
+                // `i < 16`, so the cast never truncates the index.
+                let index = u8::try_from(i).unwrap_or(0);
+                GridCell::new(" ", TermColor::Default, TermColor::Indexed(index))
+            }),
+        )
+        // Row 1 — a default-coloured label. The 7 glyphs plus the 9
+        // trailing blanks all carry default fg/bg, so the snapshot
+        // collapses the whole row into a single style run.
+        .with_row(
+            1,
+            "Default"
+                .chars()
+                .map(|c| GridCell::new(c.to_string(), TermColor::Default, TermColor::Default)),
+        )
+        // Row 2 — truecolor: direct 24-bit RGB foregrounds, palette-free.
+        .with_row(
+            2,
+            [
+                GridCell::new("R", TermColor::Rgb(Color::rgb(0xff, 0x00, 0x00)), TermColor::Default),
+                GridCell::new("G", TermColor::Rgb(Color::rgb(0x00, 0xff, 0x00)), TermColor::Default),
+                GridCell::new("B", TermColor::Rgb(Color::rgb(0x00, 0x00, 0xff)), TermColor::Default),
+            ],
+        )
+        // Row 3 — mixed indexed: white-on-blue ANSI, a colour-cube red
+        // foreground, and the darkest grayscale-ramp foreground.
+        .with_row(
+            3,
+            [
+                GridCell::new("#", TermColor::Indexed(15), TermColor::Indexed(4)),
+                GridCell::new("g", TermColor::Indexed(196), TermColor::Default),
+                GridCell::new("y", TermColor::Indexed(232), TermColor::Default),
+            ],
+        )
+}
+
 /// Build one absolutely-positioned grid: the absolute layout removes it
 /// from flow and gives it exactly its own `Size`, so the layout pass
 /// resolves a deterministic pixel `Rect` and the derived `(cols, rows)`
@@ -88,10 +156,24 @@ fn view(_state: (), _frame: &Frame) -> Scene {
     let measured = CellMetric::new(MEASURED_CELL.0, MEASURED_CELL.1)
         .expect("measured monospace metric is non-zero");
 
+    // The R973 content grid: an `8×16` baseline grid carrying the cell
+    // projection. Sized to derive exactly `CONTENT_COLS × CONTENT_ROWS`.
+    let content = Scene::TextGrid(
+        TextGridNode::new(CellMetric::DEFAULT)
+            .with_tag(CONTENT_TAG)
+            .with_cells(content_buffer())
+            .with_layout(
+                LayoutStyle::new()
+                    .with_absolute_position(CONTENT_POS.0, CONTENT_POS.1)
+                    .with_size(Size::px(CONTENT_SIZE.0, CONTENT_SIZE.1)),
+            ),
+    );
+
     Scene::Container(
         ContainerNode::new(vec![
             grid(DEFAULT_TAG, CellMetric::DEFAULT, DEFAULT_POS, DEFAULT_SIZE),
             grid(MEASURED_TAG, measured, MEASURED_POS, MEASURED_SIZE),
+            content,
         ])
         .with_tag(ROOT_TAG)
         .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface))),
@@ -139,10 +221,12 @@ impl WidgetCore for TextGridView {
 }
 
 impl WidgetA11y for TextGridView {
-    /// No a11y nodes yet — an empty geometry grid carries no ARIA
-    /// structure. The accessible cell/grid topology lands with the
-    /// R969 cell data model (the content the a11y tree would convey),
-    /// alongside paint and input. Returning empty is the honest state.
+    /// No a11y nodes yet. R973 lands the cell *colour* data model, read
+    /// via the AI-first `scene/snapshot` path (`grid_rows`); the
+    /// screen-reader a11y tree (a `grid` / `treegrid` role with per-cell
+    /// nodes) lands alongside glyph paint + input in a later S5 slice —
+    /// the content it would convey is still partly deferred (attrs /
+    /// cursor / trailer). Returning empty is the honest state.
     fn access_node(_state: &(), _focused: Option<&str>) -> Vec<AccessNode> {
         Vec::new()
     }
@@ -203,5 +287,45 @@ mod tests {
         assert!(scene.contains_tag(ROOT_TAG));
         assert!(scene.contains_tag(DEFAULT_TAG));
         assert!(scene.contains_tag(MEASURED_TAG));
+        assert!(scene.contains_tag(CONTENT_TAG));
+    }
+
+    #[test]
+    fn content_buffer_is_16x4_with_every_color_form() {
+        let b = content_buffer();
+        assert_eq!((b.cols(), b.rows()), (CONTENT_COLS, CONTENT_ROWS));
+
+        // Row 0 — ANSI 16-colour bar: each cell's bg is its column index.
+        for i in 0..CONTENT_COLS {
+            let idx = u8::try_from(i).expect("< 16");
+            assert_eq!(b.cell(i, 0).unwrap().bg, TermColor::Indexed(idx));
+            assert_eq!(b.cell(i, 0).unwrap().fg, TermColor::Default);
+        }
+
+        // Row 1 — default-coloured label.
+        assert_eq!(b.cell(0, 1).unwrap().cluster, "D");
+        assert_eq!(b.cell(6, 1).unwrap().cluster, "t");
+        assert_eq!(b.cell(0, 1).unwrap().fg, TermColor::Default);
+        assert_eq!(b.cell(7, 1).unwrap(), &GridCell::blank()); // trailing blank
+
+        // Row 2 — truecolor foregrounds.
+        assert_eq!(
+            b.cell(0, 2).unwrap().fg,
+            TermColor::Rgb(Color::rgb(0xff, 0x00, 0x00))
+        );
+        assert_eq!(b.cell(1, 2).unwrap().cluster, "G");
+
+        // Row 3 — mixed indexed.
+        assert_eq!(b.cell(0, 3).unwrap().fg, TermColor::Indexed(15));
+        assert_eq!(b.cell(0, 3).unwrap().bg, TermColor::Indexed(4));
+        assert_eq!(b.cell(2, 3).unwrap().fg, TermColor::Indexed(232));
+    }
+
+    #[test]
+    fn empty_grids_carry_no_cell_projection() {
+        // The two scaffold grids stay empty (geometry-only), so the R972
+        // demo's assertions are regression-free.
+        let g = TextGridNode::new(CellMetric::DEFAULT);
+        assert!(g.cells().is_empty());
     }
 }

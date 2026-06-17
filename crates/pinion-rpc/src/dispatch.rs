@@ -62,7 +62,10 @@ use crate::scroll_state::{
     scroll_state, set_scroll_offset, ScrollStateOutcome, SetScrollOffsetParams,
 };
 use crate::substrate_introspect::{introspect_error_to_data, SubstrateIntrospectError};
-use crate::snapshot::{snapshot, SnapshotError, SnapshotNode, TextGridSnapshot};
+use crate::snapshot::{
+    snapshot, GridRowSnapshot, GridStyleRun, SnapshotError, SnapshotNode, TermColorSnapshot,
+    TextGridSnapshot,
+};
 use crate::text::{text_normalize, NormalizeForm, NormalizeOutcome};
 use crate::text_state::{
     set_caret, set_selection, set_text, text_state, SetCaretParams, SetSelectionParams,
@@ -3124,6 +3127,46 @@ fn text_grid_snapshot_fields(obj: &mut serde_json::Map<String, Value>, snap: &Te
     obj.insert("cell_h".to_string(), Value::Number(snap.cell_h.into()));
     obj.insert("cols".to_string(), Value::Number(snap.cols.into()));
     obj.insert("rows".to_string(), Value::Number(snap.rows.into()));
+    // R973 §5.41 — the cell-content projection: one entry per row, each
+    // with the row text and its palette-resolved style runs.
+    obj.insert(
+        "grid_rows".to_string(),
+        Value::Array(snap.grid_rows.iter().map(grid_row_to_json).collect()),
+    );
+}
+
+/// R973 §5.41 — wire form for one [`GridRowSnapshot`]: `{text, runs}`.
+fn grid_row_to_json(row: &GridRowSnapshot) -> Value {
+    let mut obj = serde_json::Map::new();
+    obj.insert("text".to_string(), Value::String(row.text.clone()));
+    obj.insert(
+        "runs".to_string(),
+        Value::Array(row.runs.iter().map(grid_style_run_to_json).collect()),
+    );
+    Value::Object(obj)
+}
+
+/// R973 §5.41 — wire form for one [`GridStyleRun`]: `{start, len, fg, bg}`.
+fn grid_style_run_to_json(run: &GridStyleRun) -> Value {
+    let mut obj = serde_json::Map::new();
+    obj.insert("start".to_string(), Value::Number(run.start.into()));
+    obj.insert("len".to_string(), Value::Number(run.len.into()));
+    obj.insert("fg".to_string(), term_color_snapshot_to_json(&run.fg));
+    obj.insert("bg".to_string(), term_color_snapshot_to_json(&run.bg));
+    Value::Object(obj)
+}
+
+/// R973 §5.41 — wire form for one [`TermColorSnapshot`]: the stored
+/// `kind` / `index` plus the palette-resolved `rgb` hex.
+fn term_color_snapshot_to_json(color: &TermColorSnapshot) -> Value {
+    let mut obj = serde_json::Map::new();
+    obj.insert("kind".to_string(), Value::String(color.kind.to_string()));
+    obj.insert(
+        "index".to_string(),
+        color.index.map_or(Value::Null, |i| Value::Number(i.into())),
+    );
+    obj.insert("rgb".to_string(), Value::String(color.rgb.clone()));
+    Value::Object(obj)
 }
 
 fn snapshot_tag_to_json(tag: Option<&str>) -> Value {

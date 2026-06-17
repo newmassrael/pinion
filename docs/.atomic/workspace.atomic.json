@@ -44265,6 +44265,72 @@
         "CoordSpace::Cell global promotion trigger = cell-native layout engine (R968 defer held)"
       ]
     },
+    "R973": {
+      "decision_summary": "R973 §5.41 cell-native TextGrid 데이터모델 S5 슬라이스1: 터미널 색모델(TermColor default/indexed/truecolor) + Palette(indexed->rgb SSOT, paint시점 resolve) + GridCell/GridBuffer 셀 투영 + scene/snapshot grid_rows introspection 소비자",
+      "changes_bullets": [
+        "TermColor 원형 색 enum(Default/Indexed(u8)/Rgb(Color)) + ColorTarget(fg/bg) = closed 3-form 터미널 색",
+        "Palette: 16 themeable ANSI + xterm 6x6x6 큐브 + 24-step grayscale 공식; resolve()=indexed->rgb SSOT",
+        "resolve는 paint/introspection 시점만(R969); 저장은 원형 보존(팔레트 swap=전 셀 재염색)",
+        "GridCell{cluster,fg,bg} + GridBuffer{cols,rows,cells} row-major 투영; blank=space+Default",
+        "TextGridNode에 cells:GridBuffer + palette:Palette(retained 투영, wholesale-set, dual-grid 금지)",
+        "paint_hash는 R972.1 sentinel 유지(glyph paint 미구현=관측상 동일->같은 hash 정직)",
+        "TextGridSnapshot.grid_rows: row별 {text,runs} RLE; run fg/bg=stored kind/index + resolved rgb",
+        "snapshot/dispatch JSON wire: grid_rows/runs/fg/bg(kind/index/rgb) = AI-first §2#7 노출",
+        "hello-textgrid: htg_content 3rd grid(16x4) ANSI bar/default label/truecolor/cube+gray 4 row 소비자",
+        "r973_textgrid_cells.py 데모(100+ assert, wait_snap gated); 빈 grid 2개 grid_rows=[] (R972 무회귀)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 exit 0 (172 test-result-ok / 0 FAILED; term_grid 10 + example 3 신규)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello -D warnings exit 0 (0 warn)",
+        "r973_textgrid_cells 데모 PASS + r972_textgrid 데모 PASS(무회귀)",
+        "validate-workspace T1 orphan=0 baseline 유지",
+        "3b self-grep: ANSI/indexed 색 테이블 repo 전무(R969 audit 확인); to_hex 기존 SSOT 재사용",
+        "GridStyleRun vs scene::StyleRun=도메인 발산(column vs byte, TermColor vs TextStyle) no-lift"
+      ],
+      "impact_refs": [
+        "5.41"
+      ],
+      "carry_forward_bullets": [
+        "S5 다음 슬라이스: 셀 attrs(bold/italic/underline/strikethrough/reverse/dim) Cell+snapshot(R974 후보)",
+        "S5 슬라이스: cursor(위치+shape) / wide-char trailer 명시모델 / alt-screen(main vs alt) / damage 증분",
+        "glyph paint(Vello cell + TUI) = 별도 슬라이스; 현재 grid=paint-opaque(데이터는 snapshot으로만)",
+        "스크린리더 a11y 트리(grid/treegrid role + per-cell node) = paint/input 슬라이스와 동반",
+        "생산자 crate(vte/alacritty_terminal) 선정=sprag측; pinion=격자+측면채널 contract만(R969)",
+        "OSC 측면채널(title/52clip/7cwd/9notify/4color)=생산자->§5.15 item7 async(R969 Open)"
+      ],
+      "publishable_decision_summary": "R973 §5.41 cell-native TextGrid 데이터모델 S5 슬라이스1: 터미널 색모델(TermColor default/indexed/truecolor) + Palette(indexed->rgb SSOT, paint시점 resolve) + GridCell/GridBuffer 셀 투영 + scene/snapshot grid_rows introspection 소비자",
+      "publishable_changes_bullets": [
+        "TermColor 원형 색 enum(Default/Indexed(u8)/Rgb(Color)) + ColorTarget(fg/bg) = closed 3-form 터미널 색",
+        "Palette: 16 themeable ANSI + xterm 6x6x6 큐브 + 24-step grayscale 공식; resolve()=indexed->rgb SSOT",
+        "resolve는 paint/introspection 시점만(R969); 저장은 원형 보존(팔레트 swap=전 셀 재염색)",
+        "GridCell{cluster,fg,bg} + GridBuffer{cols,rows,cells} row-major 투영; blank=space+Default",
+        "TextGridNode에 cells:GridBuffer + palette:Palette(retained 투영, wholesale-set, dual-grid 금지)",
+        "paint_hash는 R972.1 sentinel 유지(glyph paint 미구현=관측상 동일->같은 hash 정직)",
+        "TextGridSnapshot.grid_rows: row별 {text,runs} RLE; run fg/bg=stored kind/index + resolved rgb",
+        "snapshot/dispatch JSON wire: grid_rows/runs/fg/bg(kind/index/rgb) = AI-first §2#7 노출",
+        "hello-textgrid: htg_content 3rd grid(16x4) ANSI bar/default label/truecolor/cube+gray 4 row 소비자",
+        "r973_textgrid_cells.py 데모(100+ assert, wait_snap gated); 빈 grid 2개 grid_rows=[] (R972 무회귀)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 exit 0 (172 test-result-ok / 0 FAILED; term_grid 10 + example 3 신규)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello -D warnings exit 0 (0 warn)",
+        "r973_textgrid_cells 데모 PASS + r972_textgrid 데모 PASS(무회귀)",
+        "validate-workspace T1 orphan=0 baseline 유지",
+        "3b self-grep: ANSI/indexed 색 테이블 repo 전무(R969 audit 확인); to_hex 기존 SSOT 재사용",
+        "GridStyleRun vs scene::StyleRun=도메인 발산(column vs byte, TermColor vs TextStyle) no-lift"
+      ],
+      "publishable_impact_refs": [
+        "5.41"
+      ],
+      "publishable_carry_forward_bullets": [
+        "S5 다음 슬라이스: 셀 attrs(bold/italic/underline/strikethrough/reverse/dim) Cell+snapshot(R974 후보)",
+        "S5 슬라이스: cursor(위치+shape) / wide-char trailer 명시모델 / alt-screen(main vs alt) / damage 증분",
+        "glyph paint(Vello cell + TUI) = 별도 슬라이스; 현재 grid=paint-opaque(데이터는 snapshot으로만)",
+        "스크린리더 a11y 트리(grid/treegrid role + per-cell node) = paint/input 슬라이스와 동반",
+        "생산자 crate(vte/alacritty_terminal) 선정=sprag측; pinion=격자+측면채널 contract만(R969)",
+        "OSC 측면채널(title/52clip/7cwd/9notify/4color)=생산자->§5.15 item7 async(R969 Open)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
