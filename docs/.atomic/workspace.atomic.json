@@ -45211,6 +45211,68 @@
         "composite_item_tag(flat usize)/composite_item_path_tag(nested) kept separate: flat avoids a per-item Vec alloc in the paint hot path"
       ]
     },
+    "R986": {
+      "decision_summary": "R986 §5.27 §5.38 §5.53 data-grid column-header context menu: right-click a sortable header opens an own-rendered ContextMenu (Sort Asc/Desc/Clear) scoped to that column; pure composition of R772 ContextMenu + R887 secondary-click + R778 GridSortExternal; lifts read_open_state reader",
+      "changes_bullets": [
+        "new hello-grid-header-menu: right-click a sortable column header opens an own-rendered ContextMenu",
+        "menu items Sort Ascending / Sort Descending / Clear Sort apply to the right-clicked column",
+        "apply_secondary_click maps the press point to a column (geometric header hit-test) + Signal",
+        "the update reducer reads the captured column + item, driving shared GridSortState::set_sort",
+        "ContextMenuExternal is primary (free WAI-ARIA keyboard + R715 barrier); GridSortExternal extra",
+        "a left-click still cycles a header sort; sort / source_at stay RPC-introspectable",
+        "lifted read_open_state(intro) to context_menu.rs (menu peer of read_selected)",
+        "hello-contextmenu refactored to reuse read_open_state",
+        "apply_key uses the R804/R834 forward_key_to_field substrate (no hand-roll)",
+        "pure composition, no framework change; closes the R965.1-deferred header menu control"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace: ok, 0 failed (real cargo exit, not the bg-wrapper grep)",
+        "cargo clippy --workspace --all-targets -D pedantic: 0 warnings",
+        "r986_grid_header_menu.py PASS: 42 assertions (open, activate, sort, keyboard, barrier)",
+        "touched demos r772 + r887 PASS: no regression from read_open_state refactor",
+        "new unit tests: header_col_at, captured-column reducer, a11y grid+menu, read_open_state"
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.38",
+        "5.53"
+      ],
+      "carry_forward_bullets": [
+        "parse_item_sub_tag (i<i> decode) now 2 consumers; a 3rd lifts it by composite_item_tag",
+        "header_col_at geometric header hit-test is the 1st consumer; a 2nd menu would lift it",
+        "apply_secondary_click open-forward now 2 consumers; a 3rd lifts a forward_open_at helper"
+      ],
+      "publishable_decision_summary": "R986 §5.27 §5.38 §5.53 data-grid column-header context menu: right-click a sortable header opens an own-rendered ContextMenu (Sort Asc/Desc/Clear) scoped to that column; pure composition of R772 ContextMenu + R887 secondary-click + R778 GridSortExternal; lifts read_open_state reader",
+      "publishable_changes_bullets": [
+        "new hello-grid-header-menu: right-click a sortable column header opens an own-rendered ContextMenu",
+        "menu items Sort Ascending / Sort Descending / Clear Sort apply to the right-clicked column",
+        "apply_secondary_click maps the press point to a column (geometric header hit-test) + Signal",
+        "the update reducer reads the captured column + item, driving shared GridSortState::set_sort",
+        "ContextMenuExternal is primary (free WAI-ARIA keyboard + R715 barrier); GridSortExternal extra",
+        "a left-click still cycles a header sort; sort / source_at stay RPC-introspectable",
+        "lifted read_open_state(intro) to context_menu.rs (menu peer of read_selected)",
+        "hello-contextmenu refactored to reuse read_open_state",
+        "apply_key uses the R804/R834 forward_key_to_field substrate (no hand-roll)",
+        "pure composition, no framework change; closes the R965.1-deferred header menu control"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace: ok, 0 failed (real cargo exit, not the bg-wrapper grep)",
+        "cargo clippy --workspace --all-targets -D pedantic: 0 warnings",
+        "r986_grid_header_menu.py PASS: 42 assertions (open, activate, sort, keyboard, barrier)",
+        "touched demos r772 + r887 PASS: no regression from read_open_state refactor",
+        "new unit tests: header_col_at, captured-column reducer, a11y grid+menu, read_open_state"
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.38",
+        "5.53"
+      ],
+      "publishable_carry_forward_bullets": [
+        "parse_item_sub_tag (i<i> decode) now 2 consumers; a 3rd lifts it by composite_item_tag",
+        "header_col_at geometric header hit-test is the 1st consumer; a 2nd menu would lift it",
+        "apply_secondary_click open-forward now 2 consumers; a 3rd lifts a forward_open_at helper"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

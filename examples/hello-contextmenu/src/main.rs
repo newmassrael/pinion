@@ -74,13 +74,13 @@ use pinion_a11y::{
 // lifted `menu_item_nodes` builder owns role + state tagging in prod).
 #[cfg(test)]
 use pinion_a11y::AriaRole;
-use pinion_core::external::{External, ExternalIntrospect, IntrospectValue};
+use pinion_core::external::{External, IntrospectValue};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, TextStyle,
 };
 use pinion_core::theme::{use_theme, ColorRole};
-use pinion_core::widgets::context_menu::ContextMenuExternal;
+use pinion_core::widgets::context_menu::{read_open_state, ContextMenuExternal};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::barrier::dismiss_barrier;
@@ -225,10 +225,12 @@ impl WidgetCore for ContextMenuView {
         let Some(intro) = node.handle.introspect() else {
             return out;
         };
-        if matches!(intro.query("open"), Some(IntrospectValue::Bool(true))) {
-            out.open_at = Some((query_f32(intro, "open_x"), query_f32(intro, "open_y")));
-        }
-        out.active = query_index(intro, "active");
+        // R986 §5.53 — the menu open/active projection is the shared
+        // `read_open_state` reader (the menu peer of `read_selected`), so a
+        // host that composes the menu as an extra external reuses it.
+        let (open_at, active) = read_open_state(intro);
+        out.open_at = open_at;
+        out.active = active;
         out
     }
 
@@ -384,28 +386,6 @@ impl WidgetView for ContextMenuView {
             width: WIN_W,
             height: WIN_H,
         }
-    }
-}
-
-/// Read a `Float` introspect slot to `f32`. The slot was lowered from an
-/// `f32` anchor (`f64::from(x)`), so the narrowing back is lossless.
-#[allow(
-    clippy::cast_possible_truncation,
-    reason = "the slot round-trips an f32 anchor, so f64 -> f32 is exact"
-)]
-fn query_f32(intro: &dyn ExternalIntrospect, path: &str) -> f32 {
-    match intro.query(path) {
-        Some(IntrospectValue::Float(v)) => v as f32,
-        _ => 0.0,
-    }
-}
-
-/// Read an optional-index introspect slot (`active`): `Int(i)` →
-/// `Some(i)`, `Null` (or anything else) → `None`.
-fn query_index(intro: &dyn ExternalIntrospect, path: &str) -> Option<usize> {
-    match intro.query(path) {
-        Some(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
-        _ => None,
     }
 }
 

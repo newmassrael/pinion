@@ -41,6 +41,7 @@ members = [
     "examples/hello-grid-filter",
     "examples/hello-grid-hscroll",
     "examples/hello-grid-frozen-col",
+    "examples/hello-grid-header-menu",
     "examples/hello-tree-grid",
     "examples/hello-variable-list",
     "examples/hello-virtual-select",

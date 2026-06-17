@@ -441,6 +441,45 @@ impl ExternalIntrospect for ContextMenuExternal {
     }
 }
 
+/// R986 §5.53 — project a [`ContextMenuExternal`]'s public UI state — the
+/// window-space open anchor and the active (highlighted) item — off its
+/// introspect handle. The canonical reader both the first consumer
+/// (`hello-contextmenu`, where the menu is the *primary* external reached
+/// through `Scene::External`) and a host that composes the menu as an
+/// *extra* external (`hello-grid-header-menu`, reached through
+/// [`Scene::find_external_with_tag`](crate::scene::Scene::find_external_with_tag))
+/// share — the menu peer of
+/// [`read_selected`](super::virtual_select::read_selected). `open` gates
+/// the anchor (a closed menu reports `None`); `active` is the highlight,
+/// `None` when nothing is highlighted.
+#[must_use]
+pub fn read_open_state(intro: &dyn ExternalIntrospect) -> (Option<(f32, f32)>, Option<usize>) {
+    let open_at = if matches!(intro.query("open"), Some(IntrospectValue::Bool(true))) {
+        Some((query_anchor_axis(intro, "open_x"), query_anchor_axis(intro, "open_y")))
+    } else {
+        None
+    };
+    let active = match intro.query("active") {
+        Some(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
+        _ => None,
+    };
+    (open_at, active)
+}
+
+/// Read one window-space anchor axis (`open_x` / `open_y`) back to `f32`.
+/// The slot was lowered from an `f32` anchor (`f64::from(x)` in
+/// [`ContextMenuExternal`]'s `query`), so the narrowing back is lossless.
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "the slot round-trips an f32 anchor, so f64 -> f32 is exact"
+)]
+fn query_anchor_axis(intro: &dyn ExternalIntrospect, path: &str) -> f32 {
+    match intro.query(path) {
+        Some(IntrospectValue::Float(v)) => v as f32,
+        _ => 0.0,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -700,5 +739,19 @@ mod tests {
         let r = e.invoke("open_at", IntrospectValue::Text("42,24".to_string()));
         assert_eq!(r, Ok(IntrospectValue::Bool(true)));
         assert_eq!(e.open_at(), Some((42.0, 24.0)));
+    }
+
+    #[test]
+    fn read_open_state_projects_anchor_and_active() {
+        let mut e = ext();
+        assert_eq!(read_open_state(&e), (None, None), "closed -> no anchor, no active");
+        e.dispatch_open_at("150,90").unwrap();
+        assert_eq!(
+            read_open_state(&e),
+            (Some((150.0, 90.0)), None),
+            "open with no highlight",
+        );
+        e.intervene("active", IntrospectValue::Int(2)).unwrap();
+        assert_eq!(read_open_state(&e), (Some((150.0, 90.0)), Some(2)), "open + active");
     }
 }
