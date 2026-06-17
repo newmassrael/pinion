@@ -44331,6 +44331,64 @@
         "OSC 측면채널(title/52clip/7cwd/9notify/4color)=생산자->§5.15 item7 async(R969 Open)"
       ]
     },
+    "R974": {
+      "decision_summary": "R974 §5.41 cell-native TextGrid SGR 속성 S5 슬라이스2: CellAttrs(8 SGR flag) + TermCell(개명) attrs + snapshot run attrs(RLE 키 fg,bg,attrs); GridCell->TermCell 개명으로 pinion_a11y::GridCell 충돌 선제 청산",
+      "changes_bullets": [
+        "CellAttrs(8 SGR bool: bold/dim/italic/underline/blink/reverse/hidden/strike) = 터미널 속성 vocab",
+        "모델=struct-of-bools(Modifiers/TextDecoration 선례; struct_excessive_bools allow=industry vocab)",
+        "TermCell(전 GridCell)에 attrs 필드 + with_attrs builder; blank/new=empty attrs",
+        "reverse=stored flag만(paint시점 fg/bg swap; glyph paint 미구현이라 swap 미적용=정직)",
+        "GridStyleRun에 attrs + RLE 키 (fg,bg,attrs)로 확장(스타일 변화=새 run); dispatch attrs JSON(8 bool)",
+        "부채청산: GridCell->TermCell 개명 (pinion_a11y::GridCell root export 충돌 선제 청산; R973 unpushed)",
+        "hello-textgrid: htg_attrs 4th grid(8x2) row0=flag/cell row1=combo+reverse; htg_content 무수정",
+        "r974_textgrid_attrs.py 데모(40+ assert, wait_snap gated); htg_content runs attrs all-false 회귀검증"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 exit 0 (172 ok / 0 FAILED; CellAttrs 2 + example attrs 1 신규)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello -D warnings exit 0 (0 warn)",
+        "r974 데모 PASS + r973/r972 데모 PASS(무회귀)",
+        "validate-workspace T1 orphan=0 baseline 유지",
+        "3b self-grep: CellAttrs vs FontWeight(u16)/FontStyle(enum)/TextDecoration(2-bool) 도메인 발산 no-lift",
+        "GridStyleRun 생성 1사이트(RLE) 전부 갱신; cell_attrs_to_json=per-type 직렬화 idiom"
+      ],
+      "impact_refs": [
+        "5.41"
+      ],
+      "carry_forward_bullets": [
+        "S5 남은 슬라이스: cursor(위치+shape) / wide-char trailer 명시모델 / alt-screen(main vs alt) / damage 증분",
+        "reverse swap·underline style(single/double/curly) = glyph paint 슬라이스서(현재 paint-opaque)",
+        "스크린리더 a11y 트리(grid/treegrid + TermCell->AccessNode) = paint/input 슬라이스 동반(이름 충돌 이제 없음)",
+        "생산자 crate(vte/alacritty_terminal) 선정=sprag측; pinion=격자+측면채널 contract만(R969)"
+      ],
+      "publishable_decision_summary": "R974 §5.41 cell-native TextGrid SGR 속성 S5 슬라이스2: CellAttrs(8 SGR flag) + TermCell(개명) attrs + snapshot run attrs(RLE 키 fg,bg,attrs); GridCell->TermCell 개명으로 pinion_a11y::GridCell 충돌 선제 청산",
+      "publishable_changes_bullets": [
+        "CellAttrs(8 SGR bool: bold/dim/italic/underline/blink/reverse/hidden/strike) = 터미널 속성 vocab",
+        "모델=struct-of-bools(Modifiers/TextDecoration 선례; struct_excessive_bools allow=industry vocab)",
+        "TermCell(전 GridCell)에 attrs 필드 + with_attrs builder; blank/new=empty attrs",
+        "reverse=stored flag만(paint시점 fg/bg swap; glyph paint 미구현이라 swap 미적용=정직)",
+        "GridStyleRun에 attrs + RLE 키 (fg,bg,attrs)로 확장(스타일 변화=새 run); dispatch attrs JSON(8 bool)",
+        "부채청산: GridCell->TermCell 개명 (pinion_a11y::GridCell root export 충돌 선제 청산; R973 unpushed)",
+        "hello-textgrid: htg_attrs 4th grid(8x2) row0=flag/cell row1=combo+reverse; htg_content 무수정",
+        "r974_textgrid_attrs.py 데모(40+ assert, wait_snap gated); htg_content runs attrs all-false 회귀검증"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 exit 0 (172 ok / 0 FAILED; CellAttrs 2 + example attrs 1 신규)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello -D warnings exit 0 (0 warn)",
+        "r974 데모 PASS + r973/r972 데모 PASS(무회귀)",
+        "validate-workspace T1 orphan=0 baseline 유지",
+        "3b self-grep: CellAttrs vs FontWeight(u16)/FontStyle(enum)/TextDecoration(2-bool) 도메인 발산 no-lift",
+        "GridStyleRun 생성 1사이트(RLE) 전부 갱신; cell_attrs_to_json=per-type 직렬화 idiom"
+      ],
+      "publishable_impact_refs": [
+        "5.41"
+      ],
+      "publishable_carry_forward_bullets": [
+        "S5 남은 슬라이스: cursor(위치+shape) / wide-char trailer 명시모델 / alt-screen(main vs alt) / damage 증분",
+        "reverse swap·underline style(single/double/curly) = glyph paint 슬라이스서(현재 paint-opaque)",
+        "스크린리더 a11y 트리(grid/treegrid + TermCell->AccessNode) = paint/input 슬라이스 동반(이름 충돌 이제 없음)",
+        "생산자 crate(vte/alacritty_terminal) 선정=sprag측; pinion=격자+측면채널 contract만(R969)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

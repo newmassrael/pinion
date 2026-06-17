@@ -28,10 +28,11 @@
 //!   cube and 24-step grayscale ramp (computed by formula), and the
 //!   terminal's default foreground / background.
 //!
-//! The cell's **attributes** (bold / italic / underline / …), the
-//! **cursor**, **wide-char trailer** cells, the **alternate-screen**
+//! The cell's **attributes** ([`CellAttrs`]: bold / dim / italic /
+//! underline / blink / reverse / hidden / strikethrough) land in R974.
+//! The **cursor**, **wide-char trailer** cells, the **alternate-screen**
 //! buffer, and **damage** tracking are each a deliberate follow-up S5
-//! slice; this slice proves the colour model with its cell + projection
+//! slice; these slices prove the data model with their cell + projection
 //! consumer (the [`crate::scene::TextGridNode`] cells + the
 //! `scene/snapshot` readback), not pixel paint (glyph rendering stays
 //! deferred — the grid is still paint-opaque this round).
@@ -222,55 +223,192 @@ impl Default for Palette {
     }
 }
 
+/// The SGR display attributes a terminal cell carries (R974) — the
+/// standard boolean set every terminal (`xterm` / `vte` / `alacritty`)
+/// and Rust terminal library (`ratatui` `Modifier`, `crossterm`) speaks.
+/// Each flag is an independent SGR toggle, so this is a struct of named
+/// booleans (mirroring [`crate::input::Modifiers`] / [`TextDecoration`]),
+/// not a bifurcating enum.
+///
+/// [`Self::reverse`] is the only attribute that touches the colour model:
+/// at *paint* time a reversed cell swaps its effective foreground /
+/// background. This slice stores and introspects the flag; the swap
+/// itself lands with glyph paint (the grid is still paint-opaque), so a
+/// snapshot reports the *stored* colours plus `reverse` and a renderer
+/// applies the swap.
+///
+/// `struct_excessive_bools` is suppressed for the same reason it is on
+/// [`crate::input::Modifiers`]: the SGR attribute set is a fixed industry
+/// vocabulary, and a bitflag would diverge from the names callers expect.
+///
+/// [`TextDecoration`]: crate::style::TextDecoration
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[allow(clippy::struct_excessive_bools)]
+pub struct CellAttrs {
+    /// SGR 1 — increased intensity / bold weight.
+    pub bold: bool,
+    /// SGR 2 — decreased intensity / faint.
+    pub dim: bool,
+    /// SGR 3 — italic.
+    pub italic: bool,
+    /// SGR 4 — underline.
+    pub underline: bool,
+    /// SGR 5 — blink (slow / rapid are folded into one flag).
+    pub blink: bool,
+    /// SGR 7 — reverse video: swaps effective fg / bg at paint time.
+    pub reverse: bool,
+    /// SGR 8 — conceal / hidden (glyph not drawn).
+    pub hidden: bool,
+    /// SGR 9 — crossed-out / strikethrough.
+    pub strikethrough: bool,
+}
+
+impl CellAttrs {
+    /// All attributes off — the default a blank cell carries.
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self {
+            bold: false,
+            dim: false,
+            italic: false,
+            underline: false,
+            blink: false,
+            reverse: false,
+            hidden: false,
+            strikethrough: false,
+        }
+    }
+
+    /// `true` iff no attribute is set.
+    #[must_use]
+    pub const fn is_empty(self) -> bool {
+        !(self.bold
+            || self.dim
+            || self.italic
+            || self.underline
+            || self.blink
+            || self.reverse
+            || self.hidden
+            || self.strikethrough)
+    }
+
+    /// Builder: set the bold flag.
+    #[must_use]
+    pub const fn with_bold(mut self, on: bool) -> Self {
+        self.bold = on;
+        self
+    }
+
+    /// Builder: set the dim flag.
+    #[must_use]
+    pub const fn with_dim(mut self, on: bool) -> Self {
+        self.dim = on;
+        self
+    }
+
+    /// Builder: set the italic flag.
+    #[must_use]
+    pub const fn with_italic(mut self, on: bool) -> Self {
+        self.italic = on;
+        self
+    }
+
+    /// Builder: set the underline flag.
+    #[must_use]
+    pub const fn with_underline(mut self, on: bool) -> Self {
+        self.underline = on;
+        self
+    }
+
+    /// Builder: set the blink flag.
+    #[must_use]
+    pub const fn with_blink(mut self, on: bool) -> Self {
+        self.blink = on;
+        self
+    }
+
+    /// Builder: set the reverse-video flag.
+    #[must_use]
+    pub const fn with_reverse(mut self, on: bool) -> Self {
+        self.reverse = on;
+        self
+    }
+
+    /// Builder: set the hidden flag.
+    #[must_use]
+    pub const fn with_hidden(mut self, on: bool) -> Self {
+        self.hidden = on;
+        self
+    }
+
+    /// Builder: set the strikethrough flag.
+    #[must_use]
+    pub const fn with_strikethrough(mut self, on: bool) -> Self {
+        self.strikethrough = on;
+        self
+    }
+}
+
 /// One terminal grid cell: the displayed grapheme cluster plus its
-/// foreground / background [`TermColor`]s. Attributes (bold / italic /
-/// underline / …), the wide-char trailer marker, and the cursor are
-/// follow-up S5 slices; this slice carries the colour model.
+/// foreground / background [`TermColor`]s and its [`CellAttrs`] (R974).
+/// The wide-char trailer marker and the cursor are follow-up S5 slices.
 ///
 /// `cluster` is a grapheme cluster string (not a single `char`) so a
 /// base char plus combining marks / a ZWJ emoji sequence occupy one cell
 /// — `Cow<'static, str>` lets a blank cell borrow the static `" "` while
 /// produced cells own their string.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GridCell {
+pub struct TermCell {
     /// The grapheme cluster painted in this cell. `" "` for a blank cell.
     pub cluster: Cow<'static, str>,
     /// Foreground (glyph) colour, resolved via the grid's [`Palette`].
     pub fg: TermColor,
     /// Background colour, resolved via the grid's [`Palette`].
     pub bg: TermColor,
+    /// SGR display attributes (R974). Empty for a blank cell.
+    pub attrs: CellAttrs,
 }
 
-impl GridCell {
-    /// A blank cell: a single space with default foreground / background.
-    /// The fill value a fresh [`GridBuffer`] is initialised with.
+impl TermCell {
+    /// A blank cell: a single space with default foreground / background
+    /// and no attributes. The fill value a fresh [`GridBuffer`] uses.
     #[must_use]
     pub const fn blank() -> Self {
         Self {
             cluster: Cow::Borrowed(" "),
             fg: TermColor::Default,
             bg: TermColor::Default,
+            attrs: CellAttrs::empty(),
         }
     }
 
-    /// A cell carrying `cluster` with the given foreground / background.
+    /// A cell carrying `cluster` with the given foreground / background
+    /// and no attributes. Chain [`Self::with_attrs`] to add SGR styling.
     #[must_use]
     pub fn new(cluster: impl Into<Cow<'static, str>>, fg: TermColor, bg: TermColor) -> Self {
         Self {
             cluster: cluster.into(),
             fg,
             bg,
+            attrs: CellAttrs::empty(),
         }
+    }
+
+    /// Attach SGR display [`CellAttrs`] (builder form).
+    #[must_use]
+    pub fn with_attrs(mut self, attrs: CellAttrs) -> Self {
+        self.attrs = attrs;
+        self
     }
 }
 
-impl Default for GridCell {
+impl Default for TermCell {
     fn default() -> Self {
         Self::blank()
     }
 }
 
-/// A row-major rectangular buffer of [`GridCell`]s — the retained
+/// A row-major rectangular buffer of [`TermCell`]s — the retained
 /// projection of the producer's terminal buffer (R969). Its own
 /// `(cols, rows)` describe the *snapshot the producer last sent*; the
 /// authoritative winsize the producer is *told* to size to is the
@@ -287,18 +425,18 @@ impl Default for GridCell {
 pub struct GridBuffer {
     cols: u16,
     rows: u16,
-    cells: Vec<GridCell>,
+    cells: Vec<TermCell>,
 }
 
 impl GridBuffer {
-    /// A `cols × rows` buffer filled with [`GridCell::blank`].
+    /// A `cols × rows` buffer filled with [`TermCell::blank`].
     #[must_use]
     pub fn new(cols: u16, rows: u16) -> Self {
         let count = usize::from(cols) * usize::from(rows);
         Self {
             cols,
             rows,
-            cells: vec![GridCell::blank(); count],
+            cells: vec![TermCell::blank(); count],
         }
     }
 
@@ -332,14 +470,14 @@ impl GridBuffer {
 
     /// The cell at `(col, row)`, or `None` if out of bounds.
     #[must_use]
-    pub fn cell(&self, col: u16, row: u16) -> Option<&GridCell> {
+    pub fn cell(&self, col: u16, row: u16) -> Option<&TermCell> {
         self.index(col, row).map(|i| &self.cells[i])
     }
 
     /// Place `cell` at `(col, row)` (builder form, for the producer to
     /// assemble a projection). Out-of-bounds coordinates are ignored.
     #[must_use]
-    pub fn with_cell(mut self, col: u16, row: u16, cell: GridCell) -> Self {
+    pub fn with_cell(mut self, col: u16, row: u16, cell: TermCell) -> Self {
         if let Some(i) = self.index(col, row) {
             self.cells[i] = cell;
         }
@@ -350,7 +488,7 @@ impl GridBuffer {
     /// Cells beyond the buffer width are ignored; a short row leaves the
     /// trailing cells blank.
     #[must_use]
-    pub fn with_row(mut self, row: u16, cells: impl IntoIterator<Item = GridCell>) -> Self {
+    pub fn with_row(mut self, row: u16, cells: impl IntoIterator<Item = TermCell>) -> Self {
         for (col, cell) in (0..self.cols).zip(cells) {
             if let Some(i) = self.index(col, row) {
                 self.cells[i] = cell;
@@ -362,7 +500,7 @@ impl GridBuffer {
 
 #[cfg(test)]
 mod tests {
-    use super::{ColorTarget, GridBuffer, GridCell, Palette, TermColor};
+    use super::{CellAttrs, ColorTarget, GridBuffer, TermCell, Palette, TermColor};
     use crate::style::Color;
 
     #[test]
@@ -432,8 +570,8 @@ mod tests {
         let b = GridBuffer::new(3, 2);
         assert_eq!((b.cols(), b.rows()), (3, 2));
         assert!(!b.is_empty());
-        assert_eq!(b.cell(0, 0), Some(&GridCell::blank()));
-        assert_eq!(b.cell(2, 1), Some(&GridCell::blank()));
+        assert_eq!(b.cell(0, 0), Some(&TermCell::blank()));
+        assert_eq!(b.cell(2, 1), Some(&TermCell::blank()));
         // Out of bounds on either axis.
         assert_eq!(b.cell(3, 0), None);
         assert_eq!(b.cell(0, 2), None);
@@ -449,12 +587,12 @@ mod tests {
 
     #[test]
     fn grid_buffer_with_cell_places_row_major() {
-        let red = GridCell::new("X", TermColor::Indexed(1), TermColor::Default);
+        let red = TermCell::new("X", TermColor::Indexed(1), TermColor::Default);
         let b = GridBuffer::new(2, 2).with_cell(1, 1, red.clone());
         assert_eq!(b.cell(1, 1), Some(&red));
         // Neighbours stay blank — confirms row-major `row*cols + col`.
-        assert_eq!(b.cell(0, 1), Some(&GridCell::blank()));
-        assert_eq!(b.cell(1, 0), Some(&GridCell::blank()));
+        assert_eq!(b.cell(0, 1), Some(&TermCell::blank()));
+        assert_eq!(b.cell(1, 0), Some(&TermCell::blank()));
         // Out-of-bounds placement is ignored, not a panic.
         let same = b.clone().with_cell(9, 9, red);
         assert_eq!(same, b);
@@ -463,13 +601,37 @@ mod tests {
     #[test]
     fn grid_buffer_with_row_fills_left_to_right() {
         let cells = [
-            GridCell::new("a", TermColor::Indexed(1), TermColor::Default),
-            GridCell::new("b", TermColor::Indexed(2), TermColor::Default),
+            TermCell::new("a", TermColor::Indexed(1), TermColor::Default),
+            TermCell::new("b", TermColor::Indexed(2), TermColor::Default),
         ];
         let b = GridBuffer::new(3, 1).with_row(0, cells);
         assert_eq!(b.cell(0, 0).unwrap().cluster, "a");
         assert_eq!(b.cell(1, 0).unwrap().cluster, "b");
         // The short row leaves the trailing cell blank.
-        assert_eq!(b.cell(2, 0), Some(&GridCell::blank()));
+        assert_eq!(b.cell(2, 0), Some(&TermCell::blank()));
+    }
+
+    #[test]
+    fn cell_attrs_default_and_empty_are_all_off() {
+        assert_eq!(CellAttrs::default(), CellAttrs::empty());
+        assert!(CellAttrs::empty().is_empty());
+        assert!(!CellAttrs::empty().with_bold(true).is_empty());
+        // Builders set independent, non-interfering flags.
+        let a = CellAttrs::empty().with_bold(true).with_reverse(true);
+        assert!(a.bold && a.reverse);
+        assert!(!a.italic && !a.underline && !a.dim);
+        assert!(!a.is_empty());
+        // A flag can be cleared back off.
+        assert!(a.with_bold(false).with_reverse(false).is_empty());
+    }
+
+    #[test]
+    fn grid_cell_carries_attrs_and_blank_is_empty() {
+        assert!(TermCell::blank().attrs.is_empty());
+        assert!(TermCell::new("x", TermColor::Default, TermColor::Default).attrs.is_empty());
+        let styled = TermCell::new("x", TermColor::Default, TermColor::Default)
+            .with_attrs(CellAttrs::empty().with_italic(true).with_underline(true));
+        assert!(styled.attrs.italic && styled.attrs.underline);
+        assert!(!styled.attrs.bold);
     }
 }

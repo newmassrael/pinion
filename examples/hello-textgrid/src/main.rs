@@ -25,10 +25,16 @@
 //! (indexed backgrounds), a default-coloured label, a truecolor RGB row,
 //! and a mixed indexed-cube / grayscale-ramp row.
 //!
-//! Cell **attributes / cursor / wide-char trailer / alt-screen / damage**
-//! and **glyph paint** stay deliberate follow-up rounds — the grid is
-//! still paint-opaque, so the window renders only its surface
-//! background; the deliverable is the cell *data model*, read as data.
+//! R974 adds a fourth grid, **`htg_attrs`**, carrying SGR display
+//! attributes ([`CellAttrs`]: bold / dim / italic / underline / blink /
+//! reverse / hidden / strikethrough) — one flag per cell, plus
+//! combinations and a `reverse` cell whose stored colours are reported
+//! unswapped (the swap is a paint-time transform, still deferred).
+//!
+//! Cell **cursor / wide-char trailer / alt-screen / damage** and **glyph
+//! paint** stay deliberate follow-up rounds — the grid is still
+//! paint-opaque, so the window renders only its surface background; the
+//! deliverable is the cell *data model*, read as data.
 //!
 //! ## The AI-first witness (§2 #7 scene-as-data)
 //!
@@ -47,7 +53,7 @@ use pinion_core::external::{External, StubExternal};
 use pinion_core::scene::{ContainerNode, TextGridNode};
 use pinion_core::style::{BoxStyle, Color, LayoutStyle, Size};
 use pinion_core::theme::{use_theme, ColorRole};
-use pinion_core::{CellMetric, Frame, GridBuffer, GridCell, Scene, TermColor, WidgetCore};
+use pinion_core::{CellAttrs, CellMetric, Frame, GridBuffer, TermCell, Scene, TermColor, WidgetCore};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -99,7 +105,7 @@ fn content_buffer() -> GridBuffer {
             (0..CONTENT_COLS).map(|i| {
                 // `i < 16`, so the cast never truncates the index.
                 let index = u8::try_from(i).unwrap_or(0);
-                GridCell::new(" ", TermColor::Default, TermColor::Indexed(index))
+                TermCell::new(" ", TermColor::Default, TermColor::Indexed(index))
             }),
         )
         // Row 1 — a default-coloured label. The 7 glyphs plus the 9
@@ -109,15 +115,15 @@ fn content_buffer() -> GridBuffer {
             1,
             "Default"
                 .chars()
-                .map(|c| GridCell::new(c.to_string(), TermColor::Default, TermColor::Default)),
+                .map(|c| TermCell::new(c.to_string(), TermColor::Default, TermColor::Default)),
         )
         // Row 2 — truecolor: direct 24-bit RGB foregrounds, palette-free.
         .with_row(
             2,
             [
-                GridCell::new("R", TermColor::Rgb(Color::rgb(0xff, 0x00, 0x00)), TermColor::Default),
-                GridCell::new("G", TermColor::Rgb(Color::rgb(0x00, 0xff, 0x00)), TermColor::Default),
-                GridCell::new("B", TermColor::Rgb(Color::rgb(0x00, 0x00, 0xff)), TermColor::Default),
+                TermCell::new("R", TermColor::Rgb(Color::rgb(0xff, 0x00, 0x00)), TermColor::Default),
+                TermCell::new("G", TermColor::Rgb(Color::rgb(0x00, 0xff, 0x00)), TermColor::Default),
+                TermCell::new("B", TermColor::Rgb(Color::rgb(0x00, 0x00, 0xff)), TermColor::Default),
             ],
         )
         // Row 3 — mixed indexed: white-on-blue ANSI, a colour-cube red
@@ -125,9 +131,52 @@ fn content_buffer() -> GridBuffer {
         .with_row(
             3,
             [
-                GridCell::new("#", TermColor::Indexed(15), TermColor::Indexed(4)),
-                GridCell::new("g", TermColor::Indexed(196), TermColor::Default),
-                GridCell::new("y", TermColor::Indexed(232), TermColor::Default),
+                TermCell::new("#", TermColor::Indexed(15), TermColor::Indexed(4)),
+                TermCell::new("g", TermColor::Indexed(196), TermColor::Default),
+                TermCell::new("y", TermColor::Indexed(232), TermColor::Default),
+            ],
+        )
+}
+
+/// Tag of the R974 SGR-attribute grid, and its placement + extent.
+const ATTRS_TAG: &str = "htg_attrs";
+const ATTRS_POS: (u32, u32) = (400, 520);
+/// `8 × 2` cells at the `8×16` baseline metric → `64 × 32` px.
+const ATTRS_COLS: u16 = 8;
+const ATTRS_ROWS: u16 = 2;
+const ATTRS_SIZE: (u32, u32) = (64, 32);
+
+/// Build the R974 SGR-attribute projection. Row 0 shows each attribute in
+/// isolation (one flag per cell); row 1 shows combinations and the
+/// `reverse` flag carried alongside stored colours (the swap is applied
+/// at paint time, still deferred).
+fn attrs_buffer() -> GridBuffer {
+    let e = CellAttrs::empty;
+    GridBuffer::new(ATTRS_COLS, ATTRS_ROWS)
+        // Row 0 — one SGR flag per cell, in declaration order.
+        .with_row(
+            0,
+            [
+                TermCell::new("B", TermColor::Default, TermColor::Default).with_attrs(e().with_bold(true)),
+                TermCell::new("D", TermColor::Default, TermColor::Default).with_attrs(e().with_dim(true)),
+                TermCell::new("I", TermColor::Default, TermColor::Default).with_attrs(e().with_italic(true)),
+                TermCell::new("U", TermColor::Default, TermColor::Default).with_attrs(e().with_underline(true)),
+                TermCell::new("K", TermColor::Default, TermColor::Default).with_attrs(e().with_blink(true)),
+                TermCell::new("R", TermColor::Default, TermColor::Default).with_attrs(e().with_reverse(true)),
+                TermCell::new("H", TermColor::Default, TermColor::Default).with_attrs(e().with_hidden(true)),
+                TermCell::new("S", TermColor::Default, TermColor::Default).with_attrs(e().with_strikethrough(true)),
+            ],
+        )
+        // Row 1 — combinations + reverse with stored colours (not swapped).
+        .with_row(
+            1,
+            [
+                TermCell::new("a", TermColor::Default, TermColor::Default)
+                    .with_attrs(e().with_bold(true).with_italic(true)),
+                TermCell::new("b", TermColor::Default, TermColor::Default)
+                    .with_attrs(e().with_underline(true).with_strikethrough(true)),
+                TermCell::new("c", TermColor::Indexed(1), TermColor::Indexed(15))
+                    .with_attrs(e().with_reverse(true)),
             ],
         )
 }
@@ -169,11 +218,26 @@ fn view(_state: (), _frame: &Frame) -> Scene {
             ),
     );
 
+    // The R974 SGR-attribute grid (also 8×16 baseline), carrying the
+    // attribute projection. Isolated from `htg_content` so the R973
+    // colour demo stays regression-free.
+    let attrs = Scene::TextGrid(
+        TextGridNode::new(CellMetric::DEFAULT)
+            .with_tag(ATTRS_TAG)
+            .with_cells(attrs_buffer())
+            .with_layout(
+                LayoutStyle::new()
+                    .with_absolute_position(ATTRS_POS.0, ATTRS_POS.1)
+                    .with_size(Size::px(ATTRS_SIZE.0, ATTRS_SIZE.1)),
+            ),
+    );
+
     Scene::Container(
         ContainerNode::new(vec![
             grid(DEFAULT_TAG, CellMetric::DEFAULT, DEFAULT_POS, DEFAULT_SIZE),
             grid(MEASURED_TAG, measured, MEASURED_POS, MEASURED_SIZE),
             content,
+            attrs,
         ])
         .with_tag(ROOT_TAG)
         .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface))),
@@ -288,6 +352,29 @@ mod tests {
         assert!(scene.contains_tag(DEFAULT_TAG));
         assert!(scene.contains_tag(MEASURED_TAG));
         assert!(scene.contains_tag(CONTENT_TAG));
+        assert!(scene.contains_tag(ATTRS_TAG));
+    }
+
+    #[test]
+    fn attrs_buffer_is_8x2_with_one_flag_per_cell() {
+        let b = attrs_buffer();
+        assert_eq!((b.cols(), b.rows()), (ATTRS_COLS, ATTRS_ROWS));
+
+        // Row 0 — one SGR flag per cell, in declaration order.
+        assert!(b.cell(0, 0).unwrap().attrs.bold);
+        assert!(b.cell(2, 0).unwrap().attrs.italic);
+        assert!(b.cell(5, 0).unwrap().attrs.reverse);
+        assert!(b.cell(7, 0).unwrap().attrs.strikethrough);
+        // Each cell carries exactly one flag (bold cell is not also italic).
+        assert!(!b.cell(0, 0).unwrap().attrs.italic);
+
+        // Row 1 — combinations + reverse with stored (unswapped) colours.
+        let combo = b.cell(0, 1).unwrap();
+        assert!(combo.attrs.bold && combo.attrs.italic);
+        let rev = b.cell(2, 1).unwrap();
+        assert!(rev.attrs.reverse);
+        assert_eq!(rev.fg, TermColor::Indexed(1)); // stored, not swapped
+        assert_eq!(rev.bg, TermColor::Indexed(15));
     }
 
     #[test]
@@ -306,7 +393,7 @@ mod tests {
         assert_eq!(b.cell(0, 1).unwrap().cluster, "D");
         assert_eq!(b.cell(6, 1).unwrap().cluster, "t");
         assert_eq!(b.cell(0, 1).unwrap().fg, TermColor::Default);
-        assert_eq!(b.cell(7, 1).unwrap(), &GridCell::blank()); // trailing blank
+        assert_eq!(b.cell(7, 1).unwrap(), &TermCell::blank()); // trailing blank
 
         // Row 2 — truecolor foregrounds.
         assert_eq!(

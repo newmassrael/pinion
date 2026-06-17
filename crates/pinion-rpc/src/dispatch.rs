@@ -3146,13 +3146,33 @@ fn grid_row_to_json(row: &GridRowSnapshot) -> Value {
     Value::Object(obj)
 }
 
-/// R973 §5.41 — wire form for one [`GridStyleRun`]: `{start, len, fg, bg}`.
+/// R973 §5.41 — wire form for one [`GridStyleRun`]: `{start, len, fg, bg,
+/// attrs}` (R974 adds the SGR `attrs` object).
 fn grid_style_run_to_json(run: &GridStyleRun) -> Value {
     let mut obj = serde_json::Map::new();
     obj.insert("start".to_string(), Value::Number(run.start.into()));
     obj.insert("len".to_string(), Value::Number(run.len.into()));
     obj.insert("fg".to_string(), term_color_snapshot_to_json(&run.fg));
     obj.insert("bg".to_string(), term_color_snapshot_to_json(&run.bg));
+    obj.insert("attrs".to_string(), cell_attrs_to_json(run.attrs));
+    Value::Object(obj)
+}
+
+/// R974 §5.41 — wire form for [`CellAttrs`]: the SGR flags as named
+/// booleans. `reverse` is the cell's stored flag; a renderer swaps the
+/// effective fg / bg for it at paint time.
+///
+/// [`CellAttrs`]: pinion_core::CellAttrs
+fn cell_attrs_to_json(attrs: pinion_core::CellAttrs) -> Value {
+    let mut obj = serde_json::Map::new();
+    obj.insert("bold".to_string(), Value::Bool(attrs.bold));
+    obj.insert("dim".to_string(), Value::Bool(attrs.dim));
+    obj.insert("italic".to_string(), Value::Bool(attrs.italic));
+    obj.insert("underline".to_string(), Value::Bool(attrs.underline));
+    obj.insert("blink".to_string(), Value::Bool(attrs.blink));
+    obj.insert("reverse".to_string(), Value::Bool(attrs.reverse));
+    obj.insert("hidden".to_string(), Value::Bool(attrs.hidden));
+    obj.insert("strikethrough".to_string(), Value::Bool(attrs.strikethrough));
     Value::Object(obj)
 }
 

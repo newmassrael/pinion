@@ -47,7 +47,7 @@
 use pinion_core::external::IntrospectValue;
 use pinion_core::scene::Rect;
 use pinion_core::style::{BoxStyle, ImageStyle, PathStyle, TextStyle};
-use pinion_core::{ColorTarget, GridBuffer, Palette, Scene, TermColor};
+use pinion_core::{CellAttrs, ColorTarget, GridBuffer, Palette, Scene, TermColor};
 
 use crate::path::{self, PathError};
 
@@ -276,13 +276,15 @@ pub struct GridRowSnapshot {
 }
 
 /// R973 §5.41 — a maximal run of consecutive cells in a row sharing one
-/// `(fg, bg)` pair, `[start, start + len)` in columns.
+/// `(fg, bg, attrs)` triple, `[start, start + len)` in columns. R974 adds
+/// `attrs` to the run key so a change in SGR styling starts a new run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GridStyleRun {
     pub start: u16,
     pub len: u16,
     pub fg: TermColorSnapshot,
     pub bg: TermColorSnapshot,
+    pub attrs: CellAttrs,
 }
 
 /// R973 §5.41 — a cell colour in a snapshot. Reports both the *stored*
@@ -459,12 +461,12 @@ fn text_grid_rows(buffer: &GridBuffer, palette: &Palette) -> Vec<GridRowSnapshot
         .map(|row| {
             let mut text = String::new();
             let mut runs: Vec<GridStyleRun> = Vec::new();
-            let mut prev: Option<(TermColor, TermColor)> = None;
+            let mut prev: Option<(TermColor, TermColor, CellAttrs)> = None;
             for col in 0..buffer.cols() {
                 // Every coordinate in `0..cols × 0..rows` is in bounds.
                 let cell = buffer.cell(col, row).expect("cell within buffer bounds");
                 text.push_str(&cell.cluster);
-                let style = (cell.fg, cell.bg);
+                let style = (cell.fg, cell.bg, cell.attrs);
                 match runs.last_mut() {
                     Some(run) if prev == Some(style) => run.len += 1,
                     _ => runs.push(GridStyleRun {
@@ -472,6 +474,7 @@ fn text_grid_rows(buffer: &GridBuffer, palette: &Palette) -> Vec<GridRowSnapshot
                         len: 1,
                         fg: term_color_snapshot(cell.fg, ColorTarget::Foreground, palette),
                         bg: term_color_snapshot(cell.bg, ColorTarget::Background, palette),
+                        attrs: cell.attrs,
                     }),
                 }
                 prev = Some(style);
