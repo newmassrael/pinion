@@ -562,6 +562,32 @@ pub enum AccessValue {
     Text(String),
 }
 
+/// R980 §5.40 — attach a named `button` [`AccessNode`] as a child of an
+/// existing node, the SSOT for an in-widget control affordance (a "reset to
+/// default" / "remove" / "add element" button painted inside a row, cell, or
+/// column header). Pushes `button_tag` onto the `parent_tag` node's children
+/// (so AT announces it under its host) and appends the button node itself
+/// (`role=button`, named). A `button` is a valid child of a `gridcell` /
+/// `columnheader` / `treeitem` host (not of a bare grid `row`), so callers
+/// attach it to a cell-level host.
+///
+/// The button is reachable by AT element navigation and activatable via an
+/// `AccessKit` `Click` even though it is not a tab stop — the widget's
+/// `WidgetView::access_child_invoke` routes the `Click` to the affordance's
+/// action wire (the pointer twin). When `parent_tag` is absent from `nodes`
+/// the child link is skipped, matching the pre-lift per-binding behaviour.
+pub fn attach_child_button(
+    nodes: &mut Vec<AccessNode>,
+    parent_tag: &str,
+    button_tag: String,
+    name: String,
+) {
+    if let Some(parent) = nodes.iter_mut().find(|n| n.tag == parent_tag) {
+        parent.children.push(button_tag.clone());
+    }
+    nodes.push(AccessNode::new(button_tag, AriaRole::Button).with_name(name));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

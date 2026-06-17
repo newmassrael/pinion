@@ -163,9 +163,9 @@ use std::rc::Rc;
 use std::collections::BTreeSet;
 
 use pinion_a11y::{
-    grid_table_nodes, grouped_grid_access_nodes, listbox_option_nodes, AccessAction, AccessFocus,
-    AccessNode, GridCell, GridColumn, GridRow, GroupedGridSelection, GroupedGridSpec,
-    ListOption, SortDirection, WidgetA11y,
+    attach_child_button, grid_table_nodes, grouped_grid_access_nodes, listbox_option_nodes,
+    AccessAction, AccessFocus, AccessNode, GridCell, GridColumn, GridRow, GroupedGridSelection,
+    GroupedGridSpec, ListOption, SortDirection, WidgetA11y,
 };
 use pinion_core::cell_value::{CellKind, CellValue};
 use pinion_core::composite_tag::{split_subindex, GridSendKey};
@@ -4325,6 +4325,35 @@ impl WidgetA11y for DataGridView {
             // valid + actionable. Keyboard Alt+Arrow is the keystroke twin.
             let mut nodes =
                 grid_table_nodes(GRID_TAG, "Asset table", false, "dg_header", &columns, &rows);
+            // R980 §5.40 — AT-reachable reset: each modified cell / column gains a
+            // reset `button` child of its `gridcell` / `columnheader` (the R967.1
+            // carry, now scene/access-verifiable). Gated on the SAME modified
+            // predicate the reset dot paints under (R886.1 one-gate);
+            // `access_child_invoke` routes an AT Click to the reset send funnel
+            // (the pointer twin). The row reset (a handle-gutter dot) needs a
+            // `rowheader` host and is deferred; grouped-treegrid likewise.
+            for &row in &order {
+                for (col, col_name) in COL_NAMES.iter().enumerate() {
+                    if cell_value_modified(&model, row, col) {
+                        attach_child_button(
+                            &mut nodes,
+                            &cell_tag(row, col),
+                            reset_cell_tag(row, col),
+                            format!("Reset {col_name} to default"),
+                        );
+                    }
+                }
+            }
+            for (col, col_name) in COL_NAMES.iter().enumerate() {
+                if col_modified(&model, col) {
+                    attach_child_button(
+                        &mut nodes,
+                        &col_header_tag(col),
+                        reset_col_tag(col),
+                        format!("Reset {col_name} column to default"),
+                    );
+                }
+            }
             // R940 — the flatten is the Data-only order ungrouped (the popup gate
             // indexes the SAME visual sequence the rows paint in).
             let vis: Vec<GroupRow> =
@@ -4409,16 +4438,24 @@ impl WidgetA11y for DataGridView {
         sub_tag: &str,
         action: AccessAction,
     ) -> bool {
-        // R967.1 — the row / column reset is pointer + RPC accessible (the dot's
-        // composite-tag click → `dispatch_send` → reset_row/reset_col, and the
-        // RPC verbs). It is NOT exposed as an AT action here: a session-review
-        // found there is no focusable `resetcol`/`resetrow` AccessNode for AT to
-        // target (`access_node` emits only grid / row / cell nodes), so a Click
-        // reset branch was dead production code. A genuinely AT-reachable reset
-        // needs a focusable reset-control node (a real a11y design — every reset
-        // granularity, cell included, shares this gap) — a documented follow-up,
-        // not faked here. Reorder stays AT-reachable because it rides the focused
-        // cell's existing node via Increment / Decrement.
+        // R980 §5.40 — an AT Click / Default on a `reset…` child routes to the
+        // reset `send` funnel (the pointer twin): the cell / column reset `button`
+        // AccessNode is now emitted (the R967.1 carry cleared), so AT targets it
+        // and this routes the activation through the same `send` wire a reset-dot
+        // pointer click drains. (The row reset awaits a `rowheader` host.)
+        if matches!(action, AccessAction::Click | AccessAction::Default)
+            && sub_tag.starts_with(RESET_PREFIX)
+        {
+            let Some(intro) = external_mut(scene, GRID_TAG) else {
+                return false;
+            };
+            return intro
+                .invoke("send", IntrospectValue::Text(format!("{sub_tag}:PointerUp")))
+                .is_ok();
+        }
+        // R937.1 — the row reorder rides the focused cell's node via Increment /
+        // Decrement (a `button` is not a valid child of a grid `row`); Alt+Arrow
+        // is the keystroke twin.
         let delta: isize = match action {
             AccessAction::Increment => 1,
             AccessAction::Decrement => -1,
@@ -4742,25 +4779,41 @@ mod tests {
     }
 
     #[test]
-    fn r967_1_reset_is_pointer_and_rpc_only_not_an_at_action() {
-        // R967.1 (session-review) — the row / column reset is pointer + RPC
-        // accessible, NOT an AT action. There is no focusable resetcol/resetrow
-        // AccessNode (`access_node` emits only grid / row / cell nodes), so a
-        // Click carrying a reset sub-tag is unhandled (returns false → the shell's
-        // focus chain handles it), exactly like any non-reorder Click. An R966
-        // first cut wired a Click→reset branch here, but it was dead production
-        // code (no node could ever deliver that sub-tag); a genuinely AT-reachable
-        // reset needs a focusable reset-control node (a real a11y design covering
-        // every reset granularity) — a documented follow-up, not faked.
+    fn r980_reset_is_at_reachable_via_access_child_invoke() {
+        // R980 §5.40 — the cell / column reset is now AT-reachable (the R967.1
+        // carry cleared): `access_node` emits a reset `button` child of the
+        // modified gridcell / columnheader (verified over `scene/access`), and an
+        // AT Click routes through the SAME `send` wire the reset-dot pointer click
+        // drains — so AT reset and pointer reset are identical. The closing twin
+        // of `r966_resetcol_resetrow_pointer_send_resets_the_axis`. (The row reset
+        // awaits a `rowheader` host; grouped-treegrid likewise.)
         Owner::new().run(|| {
             let mut scene = boot_scene();
+            // An AT Click on the Asset (col 0) reset button clears the whole column.
             assert!(
-                !DataGridView::access_child_invoke(&mut scene, GRID_TAG, "resetcol2", AccessAction::Click),
-                "column reset is not exposed as an AT Click action",
+                DataGridView::access_child_invoke(&mut scene, GRID_TAG, "resetcol0", AccessAction::Click),
+                "an AT Click on a column reset is handled",
             );
+            // An AT Click on a still-modified cell (0,1) reset clears just that cell.
             assert!(
-                !DataGridView::access_child_invoke(&mut scene, GRID_TAG, "resetrow3", AccessAction::Click),
-                "row reset is not exposed as an AT Click action",
+                DataGridView::access_child_invoke(&mut scene, GRID_TAG, "reset0_1", AccessAction::Click),
+                "an AT Click on a cell reset is handled",
+            );
+            // A non-reset Click still falls through to the focus chain (false).
+            assert!(
+                !DataGridView::access_child_invoke(&mut scene, GRID_TAG, "0_0", AccessAction::Click),
+                "a non-reset Click falls through (no reset prefix)",
+            );
+            let intro = grid_intro(&scene);
+            assert_eq!(
+                intro.query("col_modified.0"),
+                Some(IntrospectValue::Bool(false)),
+                "the AT column reset cleared the Asset column",
+            );
+            assert_eq!(
+                intro.query("modified.0.1"),
+                Some(IntrospectValue::Bool(false)),
+                "the AT cell reset cleared cell (0,1)",
             );
         });
     }
@@ -4926,12 +4979,21 @@ mod tests {
             let _scene = boot_scene();
             use_focused_row().set(2);
             use_focused_col().set(2);
+            let model = use_data_model().get();
             let nodes = DataGridView::access_node(&(TextFieldState::Idle, 0), Some(GRID_TAG));
-            // grid + header row + 5 columnheaders + 4 rows + 20 cells. R937.1 — NO
-            // per-row reorder button (invalid as a `row` child + inert); the AT
-            // reorder is an Increment/Decrement action via `access_child_invoke`,
-            // which adds no nodes, so the grid skeleton is exactly the R837 shape.
-            assert_eq!(nodes.len(), 1 + 1 + NCOLS + NROWS + NROWS * NCOLS);
+            // grid + header row + NCOLS columnheaders + NROWS rows + NROWS*NCOLS
+            // cells (R837), plus R980 — one reset `button` per modified cell + per
+            // modified column (the boot seed differs from the column defaults, so
+            // the grid boots fully modified). R937.1 — still NO per-row reorder
+            // button (invalid as a `row` child + inert; the AT reorder is an
+            // Increment/Decrement action via `access_child_invoke`, adding no node).
+            let modified_cells = (0..NROWS)
+                .flat_map(|r| (0..NCOLS).map(move |c| (r, c)))
+                .filter(|&(r, c)| cell_value_modified(&model, r, c))
+                .count();
+            let modified_cols = (0..NCOLS).filter(|&c| col_modified(&model, c)).count();
+            let skeleton = 1 + 1 + NCOLS + NROWS + NROWS * NCOLS;
+            assert_eq!(nodes.len(), skeleton + modified_cells + modified_cols);
             assert_eq!(nodes[0].role, pinion_a11y::AriaRole::Grid);
             let active = nodes
                 .iter()
@@ -4939,12 +5001,22 @@ mod tests {
                 .expect("focused cell present");
             assert!(active.state.focused, "the focused cell is the active descendant");
             assert_eq!(active.name.as_deref(), Some("Count: 99"));
-            // R937.1 — no `Button`-role node hangs off a row (the invalid-nesting
-            // bug the session-review caught).
-            assert!(
-                nodes.iter().all(|n| n.role != pinion_a11y::AriaRole::Button),
-                "no reorder button is attached to a grid row",
-            );
+            // R937.1 / R980 — a `button` is a valid child of a `gridcell` /
+            // `columnheader` but NOT of a bare grid `row`. R980's reset buttons are
+            // emitted (the grid boots modified) and each hangs off a cell-level
+            // host, never a row (the invalid-nesting bug the session-review caught).
+            let button_tags: Vec<&str> = nodes
+                .iter()
+                .filter(|n| n.role == pinion_a11y::AriaRole::Button)
+                .map(|n| n.tag.as_str())
+                .collect();
+            assert!(!button_tags.is_empty(), "R980 reset buttons are emitted on the modified grid");
+            for row in nodes.iter().filter(|n| n.role == pinion_a11y::AriaRole::Row) {
+                assert!(
+                    row.children.iter().all(|c| !button_tags.contains(&c.as_str())),
+                    "no button is a direct child of a grid row",
+                );
+            }
         });
     }
 

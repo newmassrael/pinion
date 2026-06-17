@@ -106,8 +106,8 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use pinion_a11y::{
-    listbox_option_nodes, tree_access_nodes, tree_row_tag, AccessFocus, AccessNode, AriaRole,
-    ListOption, WidgetA11y,
+    attach_child_button, listbox_option_nodes, tree_access_nodes, tree_row_tag, AccessFocus,
+    AccessNode, AriaRole, ListOption, WidgetA11y,
 };
 use pinion_core::composite_tag::split_send_payload;
 use pinion_core::input::{DragCalibration, DRAG_CLICK_THRESHOLD_PX};
@@ -3723,16 +3723,14 @@ impl WidgetA11y for PropertyGridView {
             if !modified {
                 continue;
             }
-            let reset_tag = format!("{GRID_TAG}#{RESET_PREFIX}{}", r.id);
-            // The row node tag must equal what `tree_access_nodes` emitted — use
+            // The host node tag must equal what `tree_access_nodes` emitted — use
             // its `tree_row_tag` SSOT so they cannot drift (R921.1 use-substrate).
-            let row_tag = tree_row_tag(GRID_TAG, &r.id);
-            if let Some(node) = nodes.iter_mut().find(|n| n.tag == row_tag) {
-                node.children.push(reset_tag.clone());
-            }
-            nodes.push(
-                AccessNode::new(reset_tag, AriaRole::Button)
-                    .with_name(format!("Reset {name} to default")),
+            // R980 — the find+child+emit is the `attach_child_button` SSOT.
+            attach_child_button(
+                &mut nodes,
+                &tree_row_tag(GRID_TAG, &r.id),
+                format!("{GRID_TAG}#{RESET_PREFIX}{}", r.id),
+                format!("Reset {name} to default"),
             );
         }
         // R931 — the dynamic-collection affordances as `button` children: each
@@ -3743,22 +3741,18 @@ impl WidgetA11y for PropertyGridView {
         for r in &rows {
             let row_tag = tree_row_tag(GRID_TAG, &r.id);
             if let Some(ValueRef::Elem(k)) = row_ref(&r.id) {
-                let rm_tag = format!("{GRID_TAG}#{RM_ELEM_PREFIX}{k}");
-                if let Some(node) = nodes.iter_mut().find(|n| n.tag == row_tag) {
-                    node.children.push(rm_tag.clone());
-                }
-                nodes.push(
-                    AccessNode::new(rm_tag, AriaRole::Button)
-                        .with_name(format!("Remove {ARRAY_LABEL} [{k}]")),
+                attach_child_button(
+                    &mut nodes,
+                    &row_tag,
+                    format!("{GRID_TAG}#{RM_ELEM_PREFIX}{k}"),
+                    format!("Remove {ARRAY_LABEL} [{k}]"),
                 );
             } else if r.id.starts_with(ARR_PREFIX) {
-                let add_tag = format!("{GRID_TAG}#{ADD_ELEM_TAG}");
-                if let Some(node) = nodes.iter_mut().find(|n| n.tag == row_tag) {
-                    node.children.push(add_tag.clone());
-                }
-                nodes.push(
-                    AccessNode::new(add_tag, AriaRole::Button)
-                        .with_name(format!("Add {ARRAY_LABEL} element")),
+                attach_child_button(
+                    &mut nodes,
+                    &row_tag,
+                    format!("{GRID_TAG}#{ADD_ELEM_TAG}"),
+                    format!("Add {ARRAY_LABEL} element"),
                 );
             }
         }

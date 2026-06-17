@@ -44789,6 +44789,58 @@
         "scene/access is read-only introspection; AT action drive stays via the existing dispatch_access_action path"
       ]
     },
+    "R980": {
+      "decision_summary": "R980 AT-reachable in-widget reset controls: data-grid cell/column reset is now emitted as named Button AccessNodes (children of gridcell/columnheader) and access_child_invoke routes an AT Click through the same send wire the pointer drains, closing the R967.1 carry for the data grid and verified over the R979 scene/access surface. attach_child_button is lifted to pinion_a11y (property-grid 3 sites + data-grid 2 sites).",
+      "changes_bullets": [
+        "pinion_a11y: lift attach_child_button (find host + push child + emit named Button) SSOT",
+        "property-grid: refactor the 3 reset/remove/add button-attach sites to the helper (behavior-preserving)",
+        "data-grid: emit cell + column reset Button children (modified-gated, R886.1 one-gate) via the helper",
+        "data-grid: access_child_invoke routes an AT Click/Default on a reset sub-tag to the send funnel",
+        "demo r980_access_reset: scene/access shows reset buttons; AT-wire send resets + button vanishes",
+        "tests: r837 access-node count now model-derived (buttons additive); dead-reset test to R980 positive"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 exit 0 (0 failed); new r980 access_child_invoke reset test + a11y lift",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello -D pedantic exit 0",
+        "demos PASS: r980 (new, AT reset over scene/access) + r979/r966/r921/r931/r936 regression-free",
+        "3b self-grep: attach_child_button = property-grid 3 sites + data-grid 2 sites, all migrated; no other site",
+        "validate-workspace T1=0"
+      ],
+      "impact_refs": [
+        "5.40",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "data-grid ROW reset deferred: a button is invalid as a grid row child; needs a rowheader node (WAI-ARIA)",
+        "grouped-treegrid reset emission deferred: the grouped_grid_access_nodes path not yet wired (flat grid done)",
+        "property-grid reset/remove/add are announced but not yet AT-activatable (no access_child_invoke there)"
+      ],
+      "publishable_decision_summary": "R980 AT-reachable in-widget reset controls: data-grid cell/column reset is now emitted as named Button AccessNodes (children of gridcell/columnheader) and access_child_invoke routes an AT Click through the same send wire the pointer drains, closing the R967.1 carry for the data grid and verified over the R979 scene/access surface. attach_child_button is lifted to pinion_a11y (property-grid 3 sites + data-grid 2 sites).",
+      "publishable_changes_bullets": [
+        "pinion_a11y: lift attach_child_button (find host + push child + emit named Button) SSOT",
+        "property-grid: refactor the 3 reset/remove/add button-attach sites to the helper (behavior-preserving)",
+        "data-grid: emit cell + column reset Button children (modified-gated, R886.1 one-gate) via the helper",
+        "data-grid: access_child_invoke routes an AT Click/Default on a reset sub-tag to the send funnel",
+        "demo r980_access_reset: scene/access shows reset buttons; AT-wire send resets + button vanishes",
+        "tests: r837 access-node count now model-derived (buttons additive); dead-reset test to R980 positive"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 exit 0 (0 failed); new r980 access_child_invoke reset test + a11y lift",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello -D pedantic exit 0",
+        "demos PASS: r980 (new, AT reset over scene/access) + r979/r966/r921/r931/r936 regression-free",
+        "3b self-grep: attach_child_button = property-grid 3 sites + data-grid 2 sites, all migrated; no other site",
+        "validate-workspace T1=0"
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "data-grid ROW reset deferred: a button is invalid as a grid row child; needs a rowheader node (WAI-ARIA)",
+        "grouped-treegrid reset emission deferred: the grouped_grid_access_nodes path not yet wired (flat grid done)",
+        "property-grid reset/remove/add are announced but not yet AT-activatable (no access_child_invoke there)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

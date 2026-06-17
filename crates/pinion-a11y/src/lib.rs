@@ -84,7 +84,7 @@ pub use grouped::{
 pub use listbox::{listbox_option_nodes, ListOption};
 pub use menu::{menu_item_nodes, MenuItemCell};
 pub use navigation::{navigation_link_nodes, NavLink};
-pub use node::{AccessNode, AccessState, AccessValue};
+pub use node::{attach_child_button, AccessNode, AccessState, AccessValue};
 pub use radiogroup::{radiogroup_radio_nodes, RadioCell};
 pub use role::{AriaCurrent, AriaRole, AutoComplete, SortDirection};
 pub use scene_label::enrich_names_from_scene;
