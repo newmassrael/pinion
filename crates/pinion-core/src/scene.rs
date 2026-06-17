@@ -27,6 +27,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;
 
+use crate::cell_metric::CellMetric;
 use crate::external::ExternalIntrospect;
 use crate::style::{Align, BoxStyle, Color, ImageStyle, LayoutStyle, PathStyle, Size, TextStyle};
 use crate::widgets::scroll::ScrollState;
@@ -77,6 +78,21 @@ pub enum Scene {
     /// (introspection), R829 (deterministic stepping), R830 (pointer
     /// input), and R831 (fixed-timestep accumulator).
     ImmediateModeNode(ImmediateModeNode),
+    /// R972 §5.41 — cell-native text-grid geometry scaffold (the
+    /// cell-native coordinate sub-axis's first real consumer). Carries
+    /// a node-local [`CellMetric`] (R968 node-local ratify) plus the
+    /// layout-resolved pixel [`Rect`]; its `(cols, rows)` are *derived*
+    /// from that rect via the metric — the R969 one-directional
+    /// `(rows, cols)` SSOT (layout-derived, never fed back).
+    ///
+    /// This is the **empty-grid geometry scaffold**: it proves the
+    /// cell↔pixel coordinate space round-trips through scene-as-data
+    /// introspection (§2 #7). The cell *data model* (R969: cluster /
+    /// fg / bg / attrs / cursor / alt-screen / damage) and paint are
+    /// deliberately follow-up rounds — the retained tree treats this
+    /// node as a paint-opaque geometry leaf (mirrors [`Scene::Effect`]
+    /// for the paint walk) until the data-model round lands.
+    TextGrid(TextGridNode),
 }
 
 impl Scene {
@@ -102,6 +118,7 @@ impl Scene {
             Scene::Effect(_) => Rect::default(),
             Scene::Scroll(n) => n.viewport,
             Scene::ImmediateModeNode(n) => n.viewport,
+            Scene::TextGrid(n) => n.rect,
         }
     }
 
@@ -119,6 +136,7 @@ impl Scene {
             Scene::Effect(_) => None,
             Scene::Scroll(n) => n.tag.as_deref(),
             Scene::ImmediateModeNode(n) => n.tag.as_deref(),
+            Scene::TextGrid(n) => n.tag.as_deref(),
         }
     }
 
@@ -141,6 +159,7 @@ impl Scene {
             Scene::External(n) => n.layout.pointer_transparent,
             Scene::Scroll(n) => n.layout.pointer_transparent,
             Scene::ImmediateModeNode(n) => n.layout.pointer_transparent,
+            Scene::TextGrid(n) => n.layout.pointer_transparent,
             Scene::Effect(_) => false,
         }
     }
@@ -172,7 +191,8 @@ impl Scene {
             | Scene::Image(_)
             | Scene::External(_)
             | Scene::Effect(_)
-            | Scene::ImmediateModeNode(_) => false,
+            | Scene::ImmediateModeNode(_)
+            | Scene::TextGrid(_) => false,
         }
     }
 
@@ -218,7 +238,8 @@ impl Scene {
             | Scene::Path(_)
             | Scene::Image(_)
             | Scene::Effect(_)
-            | Scene::ImmediateModeNode(_) => None,
+            | Scene::ImmediateModeNode(_)
+            | Scene::TextGrid(_) => None,
         }
     }
 
@@ -251,7 +272,8 @@ impl Scene {
             | Scene::Path(_)
             | Scene::Image(_)
             | Scene::Effect(_)
-            | Scene::External(_) => None,
+            | Scene::External(_)
+            | Scene::TextGrid(_) => None,
         }
     }
 
@@ -283,7 +305,8 @@ impl Scene {
             | Scene::Path(_)
             | Scene::Image(_)
             | Scene::Effect(_)
-            | Scene::ImmediateModeNode(_) => None,
+            | Scene::ImmediateModeNode(_)
+            | Scene::TextGrid(_) => None,
         }
     }
 
@@ -338,7 +361,8 @@ impl Scene {
             | Scene::Path(_)
             | Scene::Image(_)
             | Scene::External(_)
-            | Scene::Effect(_) => {}
+            | Scene::Effect(_)
+            | Scene::TextGrid(_) => {}
         }
     }
 
@@ -364,7 +388,8 @@ impl Scene {
             | Scene::Path(_)
             | Scene::Image(_)
             | Scene::External(_)
-            | Scene::Effect(_) => false,
+            | Scene::Effect(_)
+            | Scene::TextGrid(_) => false,
         }
     }
 
@@ -470,6 +495,20 @@ impl Scene {
                 s.content.paint_hash().hash(&mut h);
                 h.finish()
             }
+            // R972 §5.41 — geometry-leaf hash. Paint is a follow-up
+            // round (the scaffold paints nothing yet), but the cache key
+            // already folds the geometry that future cell paint depends
+            // on (rect + node-local metric); the cell data model joins
+            // the hash when it lands.
+            Scene::TextGrid(g) => {
+                let mut h = std::hash::DefaultHasher::new();
+                b"pinion.scene.TextGrid".hash(&mut h);
+                g.rect.hash(&mut h);
+                g.metric.cell_w().hash(&mut h);
+                g.metric.cell_h().hash(&mut h);
+                g.layout.hash(&mut h);
+                h.finish()
+            }
             Scene::Effect(_) => PAINT_HASH_EFFECT_SENTINEL,
             Scene::External(_) | Scene::ImmediateModeNode(_) => PAINT_HASH_UNCACHEABLE,
         }
@@ -505,7 +544,10 @@ impl Scene {
             | Scene::Text(_)
             | Scene::Path(_)
             | Scene::Image(_)
-            | Scene::Effect(_) => true,
+            | Scene::Effect(_)
+            // R972 §5.41 — static geometry scaffold (no dynamic driver),
+            // so its paint fragment is cacheable like any retained leaf.
+            | Scene::TextGrid(_) => true,
             Scene::Container(c) => {
                 c.children.iter().all(Self::is_cacheable_for_paint)
             }
@@ -565,7 +607,8 @@ impl Scene {
             | Scene::Path(_)
             | Scene::Image(_)
             | Scene::Effect(_)
-            | Scene::ImmediateModeNode(_) => None,
+            | Scene::ImmediateModeNode(_)
+            | Scene::TextGrid(_) => None,
         }
     }
 
@@ -597,7 +640,8 @@ impl Scene {
             | Scene::Path(_)
             | Scene::Image(_)
             | Scene::Effect(_)
-            | Scene::ImmediateModeNode(_) => None,
+            | Scene::ImmediateModeNode(_)
+            | Scene::TextGrid(_) => None,
         }
     }
 
@@ -1182,7 +1226,9 @@ fn intrinsic_walk(s: &Scene, max_w: &mut u32, max_h: &mut u32) {
         | Scene::Image(_)
         | Scene::External(_)
         | Scene::Scroll(_)
-        | Scene::ImmediateModeNode(_) => {
+        | Scene::ImmediateModeNode(_)
+        // R972 §5.41 — the grid occupies its layout-resolved rect.
+        | Scene::TextGrid(_) => {
             let r = s.rect();
             *max_w = (*max_w).max(r.x.saturating_add(r.w));
             *max_h = (*max_h).max(r.y.saturating_add(r.h));
@@ -2827,6 +2873,93 @@ impl ImmediateModeNode {
     }
 }
 
+/// R972 §5.41 — the cell-native text-grid geometry scaffold payload of
+/// [`Scene::TextGrid`] (the cell-native coordinate sub-axis's first real
+/// consumer).
+///
+/// Holds a node-local [`CellMetric`] (R968 node-local ratify) and the
+/// layout-resolved pixel [`Rect`]. The grid's `(cols, rows)` are **not**
+/// stored — they are *derived* on demand from `rect` via the metric
+/// ([`Self::cols`] / [`Self::rows`]), so the layout-resolved pixel size
+/// is the single source of truth: the R969 one-directional `(rows,
+/// cols)` SSOT (layout → dims, never fed back).
+///
+/// The cell *data model* (R969 cluster / fg / bg / attrs / cursor /
+/// alt-screen / damage) is a deliberate follow-up round; this scaffold
+/// proves the coordinate space alone, exposed as scene-as-data (§2 #7)
+/// through `scene/snapshot` (`cell_w` / `cell_h` / `cols` / `rows`).
+#[derive(Debug, Clone)]
+pub struct TextGridNode {
+    /// §5.20 intent-system carrier, when the grid participates in
+    /// tag-routed introspection. `None` for an untagged grid.
+    pub tag: Option<Cow<'static, str>>,
+    /// Layout-resolved paint area in logical pixels — written by the
+    /// §5.21 taffy pass from [`Self::layout`] each frame (the
+    /// `pinion_runtime` `assign_rect`). The authoritative input to
+    /// [`Self::cols`] / [`Self::rows`].
+    pub rect: Rect,
+    /// Node-local cell metric (R968): logical pixels one cell spans on
+    /// each axis. Vello sources this from the grid's monospace font; the
+    /// TUI backend uses `1 cell = 1 character cell`.
+    pub metric: CellMetric,
+    /// §5.21 layout sidecar (parent flex / box participation), mirroring
+    /// [`ImmediateModeNode::layout`] / [`ScrollNode::layout`]. The taffy
+    /// pass resolves [`Self::rect`] from this.
+    pub layout: LayoutStyle,
+}
+
+impl TextGridNode {
+    /// Construct a grid with the given node-local [`CellMetric`]. The
+    /// `rect` starts empty and is filled by the layout pass from
+    /// [`Self::layout`]; chain [`Self::with_layout`] to size it.
+    #[must_use]
+    pub fn new(metric: CellMetric) -> Self {
+        Self {
+            tag: None,
+            rect: Rect::default(),
+            metric,
+            layout: LayoutStyle::new(),
+        }
+    }
+
+    /// Attach a §5.20 intent tag (builder form).
+    #[must_use]
+    pub fn with_tag(mut self, tag: impl Into<Cow<'static, str>>) -> Self {
+        self.tag = Some(tag.into());
+        self
+    }
+
+    /// Attach a §5.21 layout style (builder form) — how the grid
+    /// participates in the parent layout that resolves its pixel
+    /// [`Rect`].
+    #[must_use]
+    pub const fn with_layout(mut self, layout: LayoutStyle) -> Self {
+        self.layout = layout;
+        self
+    }
+
+    /// The node-local cell metric.
+    #[must_use]
+    pub const fn cell_metric(&self) -> CellMetric {
+        self.metric
+    }
+
+    /// Whole cell columns the grid holds — derived from the
+    /// layout-resolved [`Rect`] width via [`CellMetric::cols_for`] (the
+    /// R1.4 PTY-winsize authority; a trailing partial cell floors).
+    #[must_use]
+    pub fn cols(&self) -> u16 {
+        self.metric.cols_for(self.rect.w)
+    }
+
+    /// Whole cell rows the grid holds — derived from the layout-resolved
+    /// [`Rect`] height via [`CellMetric::rows_for`].
+    #[must_use]
+    pub fn rows(&self) -> u16 {
+        self.metric.rows_for(self.rect.h)
+    }
+}
+
 /// R681 §2 #4 — paint-inert reference driver. Records every tick's
 /// `dt` and every paint call's viewport into internal counters so
 /// tests can pin the per-frame dispatch contract without a real
@@ -3000,7 +3133,8 @@ mod tests {
             | Scene::Effect(_)
             | Scene::External(_)
             | Scene::Scroll(_)
-            | Scene::ImmediateModeNode(_) => {}
+            | Scene::ImmediateModeNode(_)
+            | Scene::TextGrid(_) => {}
         }
     }
 

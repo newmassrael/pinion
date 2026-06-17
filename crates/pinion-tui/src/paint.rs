@@ -28,13 +28,12 @@
 //! `Scene::TextGrid` supplies its own node-local metric (derived from
 //! its monospace font), at which point this walker reads it per node.
 //!
-//! [`CellMetric::cell_at`] is the unsigned, truncating pixel→cell map.
-//! The local [`pixels_to_cell_floor`] adds the signed/i64 path the
-//! scroll cascade needs — content scrolled past the viewport's left or
-//! top edge lands at negative pixels, so the cell index needs
-//! `div_euclid` flooring toward `-∞` rather than the truncating `/`.
-//! That signed variant stays in this adapter (the Vello backend clips
-//! in pixels and never needs it).
+//! The local [`pixels_to_cell_floor`] is the signed/i64 pixel→cell map
+//! the scroll cascade needs — content scrolled past the viewport's left
+//! or top edge lands at negative pixels, so the cell index needs
+//! `div_euclid` flooring toward `-∞` rather than a truncating `/`. That
+//! signed variant stays in this adapter (the Vello backend clips in
+//! pixels and never needs it).
 //!
 //! ## Grapheme cluster walk
 //!

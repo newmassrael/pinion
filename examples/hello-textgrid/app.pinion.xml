@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R972 §5.41 — pinion-forge renderer manifest for hello-textgrid.
+  Same single-source-of-truth template that emits the other
+  hello-* Vello renderers; only the struct name diverges.
+  backend=vello + default Area antialiasing (R46.2.1).
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloTextGridRenderer"
+        backend="vello"/>

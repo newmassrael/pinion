@@ -62,7 +62,7 @@ use crate::scroll_state::{
     scroll_state, set_scroll_offset, ScrollStateOutcome, SetScrollOffsetParams,
 };
 use crate::substrate_introspect::{introspect_error_to_data, SubstrateIntrospectError};
-use crate::snapshot::{snapshot, SnapshotError, SnapshotNode};
+use crate::snapshot::{snapshot, SnapshotError, SnapshotNode, TextGridSnapshot};
 use crate::text::{text_normalize, NormalizeForm, NormalizeOutcome};
 use crate::text_state::{
     set_caret, set_selection, set_text, text_state, SetCaretParams, SetSelectionParams,
@@ -3006,6 +3006,8 @@ fn snapshot_node_to_json(node: SnapshotNode) -> Value {
         SnapshotNode::Scroll(_) => "Scroll",
         // R681 §2 #4 — `ImmediateModeNode` payload wire shape.
         SnapshotNode::ImmediateModeNode(_) => "ImmediateModeNode",
+        // R972 §5.41 — cell-native text-grid geometry wire shape.
+        SnapshotNode::TextGrid(_) => "TextGrid",
         // `SnapshotNode::Unknown` and future non_exhaustive additions
         // collapse to "Unknown".
         _ => "Unknown",
@@ -3101,10 +3103,27 @@ fn snapshot_node_to_json(node: SnapshotNode) -> Value {
                 Value::Number(snap.last_dt_micros.into()),
             );
         }
+        // R972 §5.41 — text-grid geometry: pixel `rect` + node-local
+        // cell metric + derived winsize `(cols, rows)`. Extracted to a
+        // helper so this dispatcher stays under the pedantic line budget.
+        SnapshotNode::TextGrid(snap) => text_grid_snapshot_fields(&mut obj, &snap),
         _ => {}
     }
 
     Value::Object(obj)
+}
+
+/// R972 §5.41 — wire fields for a [`SnapshotNode::TextGrid`]. An AI
+/// client reconstructs the whole cell↔pixel mapping from `rect` + the
+/// node-local metric (`cell_w` / `cell_h`) + the derived winsize
+/// `(cols, rows)` — the §2 #7 scene-as-data contract, no OCR.
+fn text_grid_snapshot_fields(obj: &mut serde_json::Map<String, Value>, snap: &TextGridSnapshot) {
+    obj.insert("rect".to_string(), snapshot_rect_to_json(snap.rect));
+    obj.insert("tag".to_string(), snapshot_tag_to_json(snap.tag.as_deref()));
+    obj.insert("cell_w".to_string(), Value::Number(snap.cell_w.into()));
+    obj.insert("cell_h".to_string(), Value::Number(snap.cell_h.into()));
+    obj.insert("cols".to_string(), Value::Number(snap.cols.into()));
+    obj.insert("rows".to_string(), Value::Number(snap.rows.into()));
 }
 
 fn snapshot_tag_to_json(tag: Option<&str>) -> Value {

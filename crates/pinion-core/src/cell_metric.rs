@@ -5,28 +5,36 @@
 //! single source of truth for *how many logical pixels one terminal
 //! cell spans* on each axis.
 //!
-//! Per the R968 ratify the metric is **node-local**: a future
-//! `Scene::TextGrid` carries its own [`CellMetric`] (derived from the
-//! grid's monospace font on the Vello backend via [`CellMetric::new`],
-//! or `1 cell = 1 character cell` on the TUI backend), while the shared
-//! [`crate::scene::Rect`] and pointer geometry stay in logical pixels.
-//! Promotion of cells to a global `CoordSpace::Cell` is deferred until a
-//! second cross-cutting consumer appears (YAGNI — a closed-enum global
-//! coordinate space is not added speculatively).
+//! Per the R968 ratify the metric is **node-local**: a
+//! [`Scene::TextGrid`](crate::scene::Scene::TextGrid) carries its own
+//! [`CellMetric`] (derived from the grid's monospace font on the Vello
+//! backend via [`CellMetric::new`], or `1 cell = 1 character cell` on
+//! the TUI backend), while the shared [`crate::scene::Rect`] and pointer
+//! geometry stay in logical pixels. Promotion of cells to a global
+//! `CoordSpace::Cell` is deferred until a second cross-cutting consumer
+//! appears (YAGNI — a closed-enum global coordinate space is not added
+//! speculatively).
 //!
 //! The conversion math lives here, on the metric, so both render
 //! backends reuse one implementation rather than each re-deriving it:
 //!
 //! - [`CellMetric::cell_to_px`] — cell `(col, row)` → logical-pixel
 //!   `(x, y)`. The forward direction shared by the TUI input mapping
-//!   and Vello cell placement.
-//! - [`CellMetric::cell_at`] — logical-pixel `(x, y)` → cell
-//!   `(col, row)`, truncating toward the cell origin.
+//!   and (when cell rendering lands) Vello cell placement.
+//! - [`CellMetric::cols_for`] / [`CellMetric::rows_for`] — the
+//!   authoritative whole-cell `(cols, rows)` a grid of a given
+//!   logical-pixel size holds: the R1.4 PTY-winsize dimensions a
+//!   [`Scene::TextGrid`](crate::scene::Scene::TextGrid) reports from its
+//!   layout-resolved rect.
 //!
 //! The signed, `-∞`-flooring pixel→cell variant the TUI scroll cascade
 //! needs (negative scrolled-out coordinates) stays in the TUI paint
 //! adapter: the Vello backend clips in pixels and never needs it, so
-//! lifting it here would be a single-consumer abstraction.
+//! lifting it here would be a single-consumer abstraction. The unsigned
+//! pixel→cell *hit-test* (R1.8) is likewise deferred to the
+//! pointer-routing round that first consumes it — it is reintroduced
+//! there alongside its consumer rather than carried as unconsumed
+//! surface (the R972 substrate-ahead clearance).
 //!
 //! [`CellMetric::DEFAULT`] is the behaviour-preserving 8×16 bitmap-font
 //! baseline (the exact value the pre-R968 `PIXEL_PER_CELL_*` constants
@@ -49,7 +57,8 @@ impl CellMetric {
     /// The 8×16 bitmap-font baseline — the exact value the pre-R968
     /// `PIXEL_PER_CELL_*` constants carried. Used wherever a real
     /// per-node metric is not yet sourced (the whole TUI backend until
-    /// `Scene::TextGrid` lands), keeping behaviour byte-unchanged.
+    /// `Scene::TextGrid` cell rendering lands), keeping behaviour
+    /// byte-unchanged.
     pub const DEFAULT: Self = Self {
         cell_w: 8,
         cell_h: 16,
@@ -95,57 +104,29 @@ impl CellMetric {
         )
     }
 
-    /// Logical-pixel `(x, y)` → cell `(col, row)`, truncating toward the
-    /// cell origin (a pixel anywhere inside a cell maps to that cell).
-    /// This is the R1.8 pointer hit-test primitive.
-    ///
-    /// Saturates at [`u16::MAX`] so the result always fits a ratatui
-    /// buffer coordinate. The non-zero axis invariant guarantees the
-    /// division never traps.
-    #[must_use]
-    pub fn cell_at(self, px: u32, py: u32) -> (u16, u16) {
-        (self.cells_x(px), self.cells_y(py))
-    }
-
     /// Whole cell columns spanning `width_px` logical pixels — the
     /// authoritative column count for a grid occupying that width (the
     /// R1.4 PTY-winsize authority a terminal host reports via
     /// `TIOCSWINSZ`). A trailing partial cell is not a usable column, so
-    /// the count floors; saturates at [`u16::MAX`].
+    /// the count floors; saturates at [`u16::MAX`]. The non-zero axis
+    /// invariant guarantees the division never traps.
     ///
-    /// No in-tree consumer exists yet — the count is read by the
-    /// forthcoming `Scene::TextGrid` (and, downstream, a terminal host).
-    /// It lands now as sanctioned substrate-first per the R968 cell-native
-    /// ratify, serving the frozen R969 winsize requirement; it is the
-    /// authoritative-dimension half of the cell-native axis, not a
-    /// speculative abstraction.
+    /// Consumed by [`TextGridNode::cols`](crate::scene::TextGridNode::cols):
+    /// a grid derives its `(cols, rows)` from its layout-resolved pixel
+    /// rect — the R969 one-directional `(rows, cols)` SSOT.
     #[must_use]
     pub fn cols_for(self, width_px: u32) -> u16 {
-        self.cells_x(width_px)
+        u16::try_from(width_px / self.cell_w).unwrap_or(u16::MAX)
     }
 
     /// Whole cell rows spanning `height_px` logical pixels — the
     /// authoritative row count (the R1.4 PTY-winsize authority). Floors a
     /// trailing partial cell; saturates at [`u16::MAX`]. See
-    /// [`CellMetric::cols_for`] for the substrate-first rationale.
+    /// [`CellMetric::cols_for`] for the rationale; consumed by
+    /// [`TextGridNode::rows`](crate::scene::TextGridNode::rows).
     #[must_use]
     pub fn rows_for(self, height_px: u32) -> u16 {
-        self.cells_y(height_px)
-    }
-
-    /// Whole cells spanning `px` logical pixels on the x axis (floor,
-    /// saturating at [`u16::MAX`]). Shared by [`Self::cell_at`] (the cell
-    /// index containing a pixel) and [`Self::cols_for`] (a column count) —
-    /// numerically one formula, two distinct public semantics, so the
-    /// division lives in one place rather than as parallel copies.
-    fn cells_x(self, px: u32) -> u16 {
-        u16::try_from(px / self.cell_w).unwrap_or(u16::MAX)
-    }
-
-    /// Whole cells spanning `px` logical pixels on the y axis — the
-    /// y-axis twin of [`Self::cells_x`].
-    fn cells_y(self, px: u32) -> u16 {
-        u16::try_from(px / self.cell_h).unwrap_or(u16::MAX)
+        u16::try_from(height_px / self.cell_h).unwrap_or(u16::MAX)
     }
 }
 
@@ -184,47 +165,10 @@ mod tests {
     }
 
     #[test]
-    fn cell_at_truncates_into_owning_cell() {
-        let m = CellMetric::DEFAULT;
-        // exact origins
-        assert_eq!(m.cell_at(0, 0), (0, 0));
-        assert_eq!(m.cell_at(8, 16), (1, 1));
-        assert_eq!(m.cell_at(24, 32), (3, 2));
-        // a pixel inside a cell floors to that cell's origin
-        assert_eq!(m.cell_at(7, 15), (0, 0));
-        assert_eq!(m.cell_at(15, 31), (1, 1));
-    }
-
-    #[test]
-    fn cell_at_saturates_at_u16_max() {
-        let m = CellMetric::DEFAULT;
-        let (col, row) = m.cell_at(u32::MAX, u32::MAX);
-        assert_eq!((col, row), (u16::MAX, u16::MAX));
-    }
-
-    #[test]
-    fn round_trips_cell_to_px_then_back() {
-        // Font-independent: the metric is injected explicitly, no system
-        // font is consulted. cell_to_px is exact on integer cell origins,
-        // so cell_at recovers the originating cell for every in-range pair.
-        let m = CellMetric::DEFAULT;
-        for col in [0u16, 1, 3, 40, 79] {
-            for row in [0u16, 1, 2, 23, 100] {
-                let px = u32::from(col) * m.cell_w();
-                let py = u32::from(row) * m.cell_h();
-                assert_eq!(m.cell_at(px, py), (col, row));
-            }
-        }
-    }
-
-    #[test]
-    fn round_trips_under_a_non_default_metric() {
-        // The substrate must hold for any sourced metric, not just 8×16.
+    fn cell_to_px_scales_under_a_non_default_metric() {
+        // The forward map must hold for any sourced metric, not just 8×16.
         let m = CellMetric::new(10, 20).expect("non-zero");
-        let (x, y) = m.cell_to_px(5, 4);
-        assert_eq!((x, y), (50.0, 80.0));
-        assert_eq!(m.cell_at(50, 80), (5, 4));
-        assert_eq!(m.cell_at(59, 99), (5, 4)); // interior floors to origin
+        assert_eq!(m.cell_to_px(5, 4), (50.0, 80.0));
     }
 
     #[test]
@@ -241,37 +185,18 @@ mod tests {
     }
 
     #[test]
+    fn cols_and_rows_for_under_a_non_default_metric() {
+        let m = CellMetric::new(10, 20).expect("non-zero");
+        assert_eq!(m.cols_for(100), 10);
+        assert_eq!(m.cols_for(105), 10); // trailing 5px partial floors
+        assert_eq!(m.rows_for(80), 4);
+        assert_eq!(m.rows_for(99), 4); // trailing 19px partial floors
+    }
+
+    #[test]
     fn cols_and_rows_for_saturate_at_u16_max() {
         let m = CellMetric::DEFAULT;
         assert_eq!(m.cols_for(u32::MAX), u16::MAX);
         assert_eq!(m.rows_for(u32::MAX), u16::MAX);
-    }
-
-    #[test]
-    fn hit_test_is_stable_across_each_cell_span() {
-        // R1.8 guarantee: every pixel within a cell's pixel span maps to
-        // that cell (clicking anywhere in a cell hits it), and the cell
-        // origin equals cell_to_px. Proven for several metrics so the
-        // property is not specific to the 8x16 default.
-        for m in [
-            CellMetric::DEFAULT,
-            CellMetric::new(10, 20).expect("non-zero"),
-            CellMetric::new(6, 13).expect("non-zero"),
-        ] {
-            for col in 0u16..8 {
-                for row in 0u16..8 {
-                    let ox = u32::from(col) * m.cell_w();
-                    let oy = u32::from(row) * m.cell_h();
-                    // forward map lands exactly on the integer cell origin
-                    assert_eq!(m.cell_to_px(col, row), (f64::from(ox), f64::from(oy)));
-                    // every pixel inside the cell's span maps back to the cell
-                    for dx in 0..m.cell_w() {
-                        for dy in 0..m.cell_h() {
-                            assert_eq!(m.cell_at(ox + dx, oy + dy), (col, row));
-                        }
-                    }
-                }
-            }
-        }
     }
 }

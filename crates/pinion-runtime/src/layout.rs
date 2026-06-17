@@ -517,6 +517,11 @@ fn layout_style_of(scene: &Scene) -> &LayoutStyle {
         // below, which the per-window paint cycle then hands to the
         // Vello backend bridge as the immediate-mode paint area.
         Scene::ImmediateModeNode(n) => &n.layout,
+        // R972 §5.41 — the text-grid scaffold participates in the §5.21
+        // taffy pass via its layout sidecar; the resolved rect feeds
+        // `TextGridNode::rect` (via `assign_rect`), from which the grid
+        // derives its `(cols, rows)` winsize dimensions.
+        Scene::TextGrid(n) => &n.layout,
         // Effect + future non-exhaustive variants default to identity
         // layout (block, auto sizing). They participate in the flex
         // tree as zero-size leaves until a follow-up slice opts them
@@ -558,6 +563,13 @@ fn assign_rect(scene: &mut Scene, rect: Rect) -> bool {
         // paints into.
         Scene::ImmediateModeNode(n) => {
             n.viewport = rect;
+            true
+        }
+        // R972 §5.41 — the taffy-computed rect lands in
+        // `TextGridNode::rect`; `TextGridNode::cols` / `rows` derive the
+        // grid's winsize `(cols, rows)` from it (R969 layout-derived).
+        Scene::TextGrid(n) => {
+            n.rect = rect;
             true
         }
         _ => false,

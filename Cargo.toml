@@ -64,6 +64,7 @@ members = [
     "examples/hello-commands-tui",
     "examples/hello-textfield",
     "examples/hello-textarea",
+    "examples/hello-textgrid",
     "examples/hello-find-replace",
     "examples/hello-syntax-highlight",
     "examples/hello-code-fold",

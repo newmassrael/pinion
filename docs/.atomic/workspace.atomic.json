@@ -44157,6 +44157,62 @@
         "CoordSpace::Cell 전역 승격 트리거 = 셀-네이티브 레이아웃 엔진 (R968 defer 유지)"
       ]
     },
+    "R972": {
+      "decision_summary": "R972 §5.41 cell-native TextGrid geometry scaffold (S4): Scene::TextGrid node (node-local CellMetric + layout-derived cols/rows) = cell-native axis first real consumer; substrate-ahead cleared = cell_at removed (0 S4 consumers) + cols_for/rows_for/new consumed; scene-as-data winsize round-trip proven; data/paint follow-up",
+      "changes_bullets": [
+        "pinion-core: Scene::TextGrid(TextGridNode{tag,rect,metric,layout}) cell-native geometry leaf",
+        "TextGridNode::cols/rows derive via CellMetric cols_for/rows_for (R969 layout-derived SSOT)",
+        "CellMetric::cell_at removed: R1.8 hit-test had 0 S4 consumers (substrate-ahead clearance)",
+        "cells_x/cells_y inlined into cols_for/rows_for (no longer shared once cell_at gone)",
+        "pinion-runtime layout.rs: TextGrid layout_style_of + assign_rect arms (taffy rect to node.rect)",
+        "pinion-rpc: SnapshotNode::TextGrid + snapshot() arm + snapshot_node_to_json wire (type TextGrid)",
+        "11 pinion-core exhaustive Scene arms handled (paint-opaque leaf; paint_hash geometry, cacheable)",
+        "examples/hello-textgrid: DEFAULT 8x16=80x24 + measured 9x18 via CellMetric::new=40x20"
+      ],
+      "verification_bullets": [
+        "workspace cargo test exit 0 (172 ok summaries, 0 failed); pipe-free direct exit capture",
+        "clippy --workspace --all-targets -D pedantic exit 0; validate-workspace T1=0 (entries=945)",
+        "r972_textgrid demo PASS: 30+ assert = scene-as-data identity + winsize round-trip + metric differs",
+        "cell_metric 6 tests + snapshot text_grid_root test + hello-textgrid 4 example tests green",
+        "substrate-ahead cleared: cols_for/rows_for/new gain production consumers; cell_at removed"
+      ],
+      "impact_refs": [
+        "5.41"
+      ],
+      "carry_forward_bullets": [
+        "S5: TextGrid data model (R969 color circular+palette / alt-screen / wide-char trailer / damage)",
+        "cell_at (R1.8 hit-test) re-added WITH consumer in pointer-to-cell input-routing round",
+        "paint follow-up: Vello cell render (cell_to_px 2nd backend = core-home proof) + TUI cell paint",
+        "CoordSpace::Cell global promotion trigger = cell-native layout engine (R968 defer held)"
+      ],
+      "publishable_decision_summary": "R972 §5.41 cell-native TextGrid geometry scaffold (S4): Scene::TextGrid node (node-local CellMetric + layout-derived cols/rows) = cell-native axis first real consumer; substrate-ahead cleared = cell_at removed (0 S4 consumers) + cols_for/rows_for/new consumed; scene-as-data winsize round-trip proven; data/paint follow-up",
+      "publishable_changes_bullets": [
+        "pinion-core: Scene::TextGrid(TextGridNode{tag,rect,metric,layout}) cell-native geometry leaf",
+        "TextGridNode::cols/rows derive via CellMetric cols_for/rows_for (R969 layout-derived SSOT)",
+        "CellMetric::cell_at removed: R1.8 hit-test had 0 S4 consumers (substrate-ahead clearance)",
+        "cells_x/cells_y inlined into cols_for/rows_for (no longer shared once cell_at gone)",
+        "pinion-runtime layout.rs: TextGrid layout_style_of + assign_rect arms (taffy rect to node.rect)",
+        "pinion-rpc: SnapshotNode::TextGrid + snapshot() arm + snapshot_node_to_json wire (type TextGrid)",
+        "11 pinion-core exhaustive Scene arms handled (paint-opaque leaf; paint_hash geometry, cacheable)",
+        "examples/hello-textgrid: DEFAULT 8x16=80x24 + measured 9x18 via CellMetric::new=40x20"
+      ],
+      "publishable_verification_bullets": [
+        "workspace cargo test exit 0 (172 ok summaries, 0 failed); pipe-free direct exit capture",
+        "clippy --workspace --all-targets -D pedantic exit 0; validate-workspace T1=0 (entries=945)",
+        "r972_textgrid demo PASS: 30+ assert = scene-as-data identity + winsize round-trip + metric differs",
+        "cell_metric 6 tests + snapshot text_grid_root test + hello-textgrid 4 example tests green",
+        "substrate-ahead cleared: cols_for/rows_for/new gain production consumers; cell_at removed"
+      ],
+      "publishable_impact_refs": [
+        "5.41"
+      ],
+      "publishable_carry_forward_bullets": [
+        "S5: TextGrid data model (R969 color circular+palette / alt-screen / wide-char trailer / damage)",
+        "cell_at (R1.8 hit-test) re-added WITH consumer in pointer-to-cell input-routing round",
+        "paint follow-up: Vello cell render (cell_to_px 2nd backend = core-home proof) + TUI cell paint",
+        "CoordSpace::Cell global promotion trigger = cell-native layout engine (R968 defer held)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

@@ -75,6 +75,12 @@ pub enum SnapshotNode {
     /// callers convert back to a [`std::time::Duration`] /
     /// fractional seconds at the boundary).
     ImmediateModeNode(ImmediateModeSnapshot),
+    /// R972 §5.41 — [`Scene::TextGrid`] geometry payload. Exposes the
+    /// pixel `rect`, the node-local cell metric (`cell_w` / `cell_h`),
+    /// and the derived winsize `(cols, rows)` so an AI client reads the
+    /// cell-native coordinate space as data (§2 #7) — the cell↔pixel
+    /// mapping is fully reconstructible from these without OCR.
+    TextGrid(TextGridSnapshot),
     /// Catch-all for `Scene` variants added in a later pinion-core
     /// version that this dispatcher predates.
     Unknown,
@@ -230,6 +236,27 @@ pub struct ImmediateModeSnapshot {
     pub last_dt_micros: u64,
 }
 
+/// R972 §5.41 — `TextGrid` payload of [`SnapshotNode::TextGrid`].
+///
+/// `rect` mirrors `TextGridNode.rect` (the layout-resolved pixel area);
+/// `cell_w` / `cell_h` mirror the node-local `CellMetric`; `cols` /
+/// `rows` are the grid's derived winsize dimensions
+/// ([`TextGridNode::cols`](pinion_core::scene::TextGridNode::cols) /
+/// [`rows`](pinion_core::scene::TextGridNode::rows)). Together they let
+/// an AI client read the cell-native coordinate space as data (§2 #7):
+/// the cell↔pixel round-trip is reconstructible from `rect` + metric,
+/// and `(cols, rows)` is the R969 layout-derived `(rows, cols)` SSOT.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TextGridSnapshot {
+    pub rect: Rect,
+    pub tag: Option<String>,
+    pub cell_w: u32,
+    pub cell_h: u32,
+    pub cols: u16,
+    pub rows: u16,
+}
+
 /// `External` payload of [`SnapshotNode::External`] (R51.198 added
 /// `rect` + `tag`).
 ///
@@ -359,6 +386,21 @@ fn snapshot_root(scene: &Scene) -> SnapshotNode {
                 last_dt_micros: micros,
             })
         }
+        // R972 §5.41 — text-grid geometry as scene-as-data. `cols` /
+        // `rows` are read through the node's derivation (the metric's
+        // winsize floor) so the snapshot reports the authoritative
+        // dimensions, not a re-derived copy.
+        Scene::TextGrid(node) => {
+            let metric = node.cell_metric();
+            SnapshotNode::TextGrid(TextGridSnapshot {
+                rect: node.rect,
+                tag: cow_to_owned(node.tag.as_ref()),
+                cell_w: metric.cell_w(),
+                cell_h: metric.cell_h(),
+                cols: node.cols(),
+                rows: node.rows(),
+            })
+        }
         // `Scene` is non_exhaustive; future variants surface as Unknown
         // until this dispatcher is updated for them.
         _ => SnapshotNode::Unknown,
@@ -385,6 +427,27 @@ mod tests {
                 assert!(snap.tag.is_none());
             }
             other => panic!("expected Box, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn text_grid_root_snapshots_with_layout_derived_dims() {
+        // R972 §5.41 — the snapshot reports the node-local metric and the
+        // winsize `(cols, rows)` derived from the layout-resolved rect.
+        let mut node = pinion_core::scene::TextGridNode::new(pinion_core::CellMetric::DEFAULT);
+        node.rect = Rect::new(0, 0, 640, 384); // 80 × 24 @ 8×16
+        node.tag = Some("grid".into());
+        let scene = Scene::TextGrid(node);
+        match snapshot(&scene, "").unwrap() {
+            SnapshotNode::TextGrid(snap) => {
+                assert_eq!(snap.rect, Rect::new(0, 0, 640, 384));
+                assert_eq!(snap.tag.as_deref(), Some("grid"));
+                assert_eq!(snap.cell_w, 8);
+                assert_eq!(snap.cell_h, 16);
+                assert_eq!(snap.cols, 80);
+                assert_eq!(snap.rows, 24);
+            }
+            other => panic!("expected TextGrid, got {other:?}"),
         }
     }
 
