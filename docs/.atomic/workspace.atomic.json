@@ -43901,6 +43901,150 @@
         "the false-green pipe trap re-bit this session: my in-round R967 'gates green' was a trailing grep|head exit, not cargo's; re-ran every gate pipe-free with the exit captured directly ([[pipe-masks-exit-code-false-green]])"
       ]
     },
+    "R968": {
+      "decision_summary": "R968 §5.41 cell-native 좌표 sub-axis 활성화 비준: node-local cell-metric 채택, CoordSpace::Cell 전역 승격은 2nd consumer까지 defer (TextGrid가 deferred substrate-incompleteness 트리거 발화)",
+      "changes_bullets": [
+        "§5.41 cell-native coord sub-axis: deferred -> active 비준 (트리거=TextGrid 격자정확성 요구)",
+        "fork 해소: cell-metric 권위 = node-local (TextGrid 노드가 cell_w/cell_h 보유)",
+        "공유 Rect/PointerEvent는 logical-px 유지; cell 변환은 TextGrid 노드 경계로 국소화",
+        "PIXEL_PER_CELL 8x16 고정상수 -> 실측 cell-metric 소스로 교체 예정(default 8x16 동작보존)",
+        "metric 소스: Vello=parley advance+line-height, TUI=1cell=1charcell",
+        "CoordSpace::Cell 전역 enum 승격 = defer (2nd cross-cutting consumer까지; YAGNI 닫힌-enum 보호)",
+        "code 0 decision-ratify 라운드; impl=S2 metric substrate ~ S4 consumer 후속"
+      ],
+      "verification_bullets": [
+        "감사: Scene 9-variant enum에 TextGrid 부재 확인 (scene.rs:42-80)",
+        "감사: PIXEL_PER_CELL_X=8/Y=16 placeholder + §5.41 carry 주석 (paint.rs:59-67)",
+        "감사: px<->cell 변환 사이트 전수 (paint.rs forward 2 + input.rs:123 cell_to_pixel 역방향)",
+        "감사: 고정상수 carry 참조 5곳 (paint/input/substrate/shell/widget.rs)",
+        "validate-workspace: baseline T1 orphan=0 sections=65; mutation 후 재검 신규 violation 0"
+      ],
+      "impact_refs": [
+        "5.41",
+        "5.2",
+        "5.13"
+      ],
+      "carry_forward_bullets": [
+        "S2: PIXEL_PER_CELL -> CellMetric 값타입+소스 hook 교체(동작보존 default 8x16); 5 site self-grep",
+        "S3: cell<->px round-trip 항등 + 권위 (rows,cols) getter (R1.4 winsize / R1.8 hit-test 토대)",
+        "S4: TextGrid geometry 스캐폴드(빈 격자)로 cell-native 좌표 실증; 데이터/paint는 후속",
+        "후속: TextGrid 데이터모델 라운드가 이 축 소비 (cluster/fg/bg/attrs/cursor/introspect)",
+        "defer 재방문: cell-space PointerEvent 필요한 2nd consumer 출현 시 CoordSpace::Cell 재검토"
+      ],
+      "publishable_decision_summary": "R968 §5.41 cell-native 좌표 sub-axis 활성화 비준: node-local cell-metric 채택, CoordSpace::Cell 전역 승격은 2nd consumer까지 defer (TextGrid가 deferred substrate-incompleteness 트리거 발화)",
+      "publishable_changes_bullets": [
+        "§5.41 cell-native coord sub-axis: deferred -> active 비준 (트리거=TextGrid 격자정확성 요구)",
+        "fork 해소: cell-metric 권위 = node-local (TextGrid 노드가 cell_w/cell_h 보유)",
+        "공유 Rect/PointerEvent는 logical-px 유지; cell 변환은 TextGrid 노드 경계로 국소화",
+        "PIXEL_PER_CELL 8x16 고정상수 -> 실측 cell-metric 소스로 교체 예정(default 8x16 동작보존)",
+        "metric 소스: Vello=parley advance+line-height, TUI=1cell=1charcell",
+        "CoordSpace::Cell 전역 enum 승격 = defer (2nd cross-cutting consumer까지; YAGNI 닫힌-enum 보호)",
+        "code 0 decision-ratify 라운드; impl=S2 metric substrate ~ S4 consumer 후속"
+      ],
+      "publishable_verification_bullets": [
+        "감사: Scene 9-variant enum에 TextGrid 부재 확인 (scene.rs:42-80)",
+        "감사: PIXEL_PER_CELL_X=8/Y=16 placeholder + §5.41 carry 주석 (paint.rs:59-67)",
+        "감사: px<->cell 변환 사이트 전수 (paint.rs forward 2 + input.rs:123 cell_to_pixel 역방향)",
+        "감사: 고정상수 carry 참조 5곳 (paint/input/substrate/shell/widget.rs)",
+        "validate-workspace: baseline T1 orphan=0 sections=65; mutation 후 재검 신규 violation 0"
+      ],
+      "publishable_impact_refs": [
+        "5.41",
+        "5.2",
+        "5.13"
+      ],
+      "publishable_carry_forward_bullets": [
+        "S2: PIXEL_PER_CELL -> CellMetric 값타입+소스 hook 교체(동작보존 default 8x16); 5 site self-grep",
+        "S3: cell<->px round-trip 항등 + 권위 (rows,cols) getter (R1.4 winsize / R1.8 hit-test 토대)",
+        "S4: TextGrid geometry 스캐폴드(빈 격자)로 cell-native 좌표 실증; 데이터/paint는 후속",
+        "후속: TextGrid 데이터모델 라운드가 이 축 소비 (cluster/fg/bg/attrs/cursor/introspect)",
+        "defer 재방문: cell-space PointerEvent 필요한 2nd consumer 출현 시 CoordSpace::Cell 재검토"
+      ]
+    },
+    "R969": {
+      "decision_summary": "R969 TextGrid 데이터모델 요구 확정: 생산-터미널 충실 superset + 현대기능 전부 열림(codec 비디오만 경계) + 완전 합성가능(singleton-free, 셀-주소 I/O 1급) + AI-CLI 호스팅(damage 증분갱신 필수)",
+      "changes_bullets": [
+        "[Tier1] 색: 셀 색 = 원형(default/indexed/truecolor) 저장; 팔레트=indexed->rgb SSOT; resolve=paint시점만",
+        "[Tier1] alt-screen: main vs alternate 화면 버퍼 (vim/htop/AI-CLI 풀스크린 호스팅 필수)",
+        "[Tier1] wide-char trailer/spacer 셀 명시 모델 (introspection 무모호; 암묵예약 불가)",
+        "[Tier1] (rows,cols) 단방향 SSOT: layout-derived -> PTY winsize 통보 (피드백루프 금지)",
+        "[Tier1] TextGrid = 생산자 버퍼의 retained 투영; 독립 가변 저장소 아님 (dual-grid 금지)",
+        "[Open] 전부 열림: underline 종류+색 / OSC8 링크 / Sixel,Kitty graphics=Scene::Image 합성",
+        "[Open] OSC 측면채널(title/52clip/7cwd/9notify/4color) = 생산자 -> §5.15 item7 async 채널",
+        "[Open] 키 taxonomy = Kitty keyboard protocol급 무모호 + bracketed paste + focus(1004)",
+        "[Open] 생산자=풀 vte(임의 escape); codec 비디오만 §3 경계 (래스터 이미지는 열림)",
+        "[Open] Bidi/RTL = LTR-default + 생산자 RTL run 메타 (non-goal 아님, 열림)",
+        "[Compose] 격자 = singleton-free 완전합성; N개 Scene::Container; 셀-주소 read/inject 1급 + metric 질의",
+        "[Compose] 병합 = 픽셀박스 셀정렬 relayout + 셀-주소 라우팅 (콘텐츠=데이터라 자연; 전역 coord 불요)",
+        "[Compose] CoordSpace::Cell 승격 트리거 = 셀-네이티브 레이아웃 엔진 (멀티플렉서는 트리거 아님)",
+        "[AI-CLI] damage 기반 증분 갱신 = 필수 요구 승격 (스트리밍 토큰출력; '나중 성능' 아님)",
+        "[AI-CLI] claude code/codex/gemini cli = 검증 소비자; AI가 셀-데이터 introspection으로 출력 읽음"
+      ],
+      "verification_bullets": [
+        "근거: Color RGBA-only (style.rs:28 from_argb/from_rgb_function; indexed/default 개념 0) -> 색갭 확정",
+        "근거: alt-screen 매치는 pinion-tui 자신이 TUI client(shell.rs); 격자-레벨 버퍼 개념 0 -> 갭 확정",
+        "근거: wide-char 둘째칸 = paint.rs 암묵예약, 명시 데이터 0 -> trailer 갭 확정",
+        "근거: Scene::Image 기존 존재(scene.rs:48) -> 이미지 합성 경로 확인; §3 codec 경계와 무충돌",
+        "도메인 대조: xterm/kitty/alacritty/wezterm/vte feature set 대비 Tier1-3 분류",
+        "validate-workspace: baseline 유지, mutation 후 재검 신규 violation 0"
+      ],
+      "impact_refs": [
+        "5.41",
+        "5.2",
+        "5.13",
+        "5.15",
+        "3"
+      ],
+      "carry_forward_bullets": [
+        "R968 좌표 결정 유지(supersede 아님); 본 라운드 = TextGrid 데이터모델 요구 확정",
+        "S2(CellMetric substrate) 진입 전 본 요구가 데이터모델 라운드 가드레일",
+        "후속 데이터모델 라운드: 색 원형타입 + 팔레트 SSOT + alt-screen 버퍼 + trailer 셀 구현",
+        "후속: damage diff 증분갱신 = AI-CLI 스트리밍 usability 게이트",
+        "생산자 crate(vte/alacritty_terminal) 선정 = sprag측; pinion=격자+측면채널 contract만",
+        "watch: codec 비디오 = §3 경계 유지 (래스터 프레임 갱신과 구분)"
+      ],
+      "publishable_decision_summary": "R969 TextGrid 데이터모델 요구 확정: 생산-터미널 충실 superset + 현대기능 전부 열림(codec 비디오만 경계) + 완전 합성가능(singleton-free, 셀-주소 I/O 1급) + AI-CLI 호스팅(damage 증분갱신 필수)",
+      "publishable_changes_bullets": [
+        "[Tier1] 색: 셀 색 = 원형(default/indexed/truecolor) 저장; 팔레트=indexed->rgb SSOT; resolve=paint시점만",
+        "[Tier1] alt-screen: main vs alternate 화면 버퍼 (vim/htop/AI-CLI 풀스크린 호스팅 필수)",
+        "[Tier1] wide-char trailer/spacer 셀 명시 모델 (introspection 무모호; 암묵예약 불가)",
+        "[Tier1] (rows,cols) 단방향 SSOT: layout-derived -> PTY winsize 통보 (피드백루프 금지)",
+        "[Tier1] TextGrid = 생산자 버퍼의 retained 투영; 독립 가변 저장소 아님 (dual-grid 금지)",
+        "[Open] 전부 열림: underline 종류+색 / OSC8 링크 / Sixel,Kitty graphics=Scene::Image 합성",
+        "[Open] OSC 측면채널(title/52clip/7cwd/9notify/4color) = 생산자 -> §5.15 item7 async 채널",
+        "[Open] 키 taxonomy = Kitty keyboard protocol급 무모호 + bracketed paste + focus(1004)",
+        "[Open] 생산자=풀 vte(임의 escape); codec 비디오만 §3 경계 (래스터 이미지는 열림)",
+        "[Open] Bidi/RTL = LTR-default + 생산자 RTL run 메타 (non-goal 아님, 열림)",
+        "[Compose] 격자 = singleton-free 완전합성; N개 Scene::Container; 셀-주소 read/inject 1급 + metric 질의",
+        "[Compose] 병합 = 픽셀박스 셀정렬 relayout + 셀-주소 라우팅 (콘텐츠=데이터라 자연; 전역 coord 불요)",
+        "[Compose] CoordSpace::Cell 승격 트리거 = 셀-네이티브 레이아웃 엔진 (멀티플렉서는 트리거 아님)",
+        "[AI-CLI] damage 기반 증분 갱신 = 필수 요구 승격 (스트리밍 토큰출력; '나중 성능' 아님)",
+        "[AI-CLI] claude code/codex/gemini cli = 검증 소비자; AI가 셀-데이터 introspection으로 출력 읽음"
+      ],
+      "publishable_verification_bullets": [
+        "근거: Color RGBA-only (style.rs:28 from_argb/from_rgb_function; indexed/default 개념 0) -> 색갭 확정",
+        "근거: alt-screen 매치는 pinion-tui 자신이 TUI client(shell.rs); 격자-레벨 버퍼 개념 0 -> 갭 확정",
+        "근거: wide-char 둘째칸 = paint.rs 암묵예약, 명시 데이터 0 -> trailer 갭 확정",
+        "근거: Scene::Image 기존 존재(scene.rs:48) -> 이미지 합성 경로 확인; §3 codec 경계와 무충돌",
+        "도메인 대조: xterm/kitty/alacritty/wezterm/vte feature set 대비 Tier1-3 분류",
+        "validate-workspace: baseline 유지, mutation 후 재검 신규 violation 0"
+      ],
+      "publishable_impact_refs": [
+        "5.41",
+        "5.2",
+        "5.13",
+        "5.15",
+        "3"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R968 좌표 결정 유지(supersede 아님); 본 라운드 = TextGrid 데이터모델 요구 확정",
+        "S2(CellMetric substrate) 진입 전 본 요구가 데이터모델 라운드 가드레일",
+        "후속 데이터모델 라운드: 색 원형타입 + 팔레트 SSOT + alt-screen 버퍼 + trailer 셀 구현",
+        "후속: damage diff 증분갱신 = AI-CLI 스트리밍 usability 게이트",
+        "생산자 crate(vte/alacritty_terminal) 선정 = sprag측; pinion=격자+측면채널 contract만",
+        "watch: codec 비디오 = §3 경계 유지 (래스터 프레임 갱신과 구분)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
