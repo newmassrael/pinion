@@ -32,7 +32,7 @@
 //! underline / blink / reverse / hidden / strikethrough) land in R974,
 //! the grid **cursor** ([`GridCursor`]: position / shape / visibility) in
 //! R975, the **wide-char trailer** ([`CellWidth`]: a wide cluster occupies
-//! two columns — a head cell plus a continuation trailer) in R976, and the
+//! two columns — a head cell plus a continuation trailer) in R976, the
 //! **alternate-screen** discriminator ([`ScreenKind`]: whether the
 //! projection is the main shell surface or a fullscreen app's screen) in
 //! R977, and **damage** tracking (per-row
@@ -400,10 +400,10 @@ pub enum CellWidth {
 /// the empty cluster `""`, so a wide cluster contributes its glyph exactly
 /// once to an assembled row even though it occupies two columns.
 ///
-/// `#[non_exhaustive]` per the R974.1 forward-compat hedge: later slices
-/// add fields, and construction routes through [`Self::new`] /
-/// [`Self::blank`] + the builders, so the hedge is free (matching
-/// [`crate::scene::TextGridNode`]).
+/// `#[non_exhaustive]` per the R974.1 forward-compat hedge: later
+/// refinements add fields (e.g. an OSC-8 hyperlink target), and
+/// construction routes through [`Self::new`] / [`Self::blank`] + the
+/// builders, so the hedge is free (matching [`crate::scene::TextGridNode`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct TermCell {
@@ -523,10 +523,12 @@ pub enum CursorShape {
 /// buffer slice lands each buffer simply carries its own.
 ///
 /// The position is the producer's reported `(col, row)` and may briefly
-/// fall outside the buffer's `(cols, rows)` during an in-flight resize
+/// fall outside the buffer's own `(cols, rows)` during an in-flight resize
 /// (the producer clamps it); a client detects that by comparing this
-/// position against the grid's dimensions — both are first-class facts
-/// (R974.1 dual-fact discipline), so no separate in-bounds flag is stored.
+/// position against *the buffer's* dimensions — not the layout-derived
+/// winsize, which diverges from the buffer during the resize — both being
+/// first-class facts (R974.1 dual-fact discipline), so no separate
+/// in-bounds flag is stored.
 ///
 /// `#[non_exhaustive]` per the R974.1 forward-compat hedge (matching
 /// [`TermCell`] / [`CellAttrs`]): later refinements add fields (e.g. a

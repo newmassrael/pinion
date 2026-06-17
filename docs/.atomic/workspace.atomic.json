@@ -44677,6 +44677,62 @@
         "live cross-frame mutation is the producer's domain; the demo is a snapshot-in-time of streaming"
       ]
     },
+    "R978.1": {
+      "decision_summary": "R978.1 §5.41 adversarial session-review clearance of R975-R978 (1 HIGH + 2 MED + 3 LOW; 2 independent reviewers + my grep+read). S5 model otherwise textbook-clean.",
+      "changes_bullets": [
+        "HIGH: cursor in-bounds doc+test compared vs cols/rows (winsize) not buffer_cols/buffer_rows",
+        "the cursor rides on GridBuffer so its coords are buffer-space; the pairs diverge during resize",
+        "fixed GridCursorSnapshot doc, the snapshot test, and the core GridCursor doc to pin to buffer dims",
+        "MED: 4 nested grid DTOs lacked #[non_exhaustive] while every top-level payload has it",
+        "3 of them grew/were created in R975-R978; add the hedge (same-crate construction unaffected)",
+        "MED: GridRowSnapshot.text not column-indexable with wide chars; add caveat + point to runs",
+        "LOW: doubled \"and\" in module doc; TermCell \"slices\"->\"refinements\"; wire-mapper rationale comment",
+        "rejected as clean: paint_hash/cacheable; producer-owns altitude; 4 wire-mappers not a lift"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 exit 0 (0 fail; H1 test now asserts buffer_cols/buffer_rows)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello exit 0 (-D pedantic)",
+        "r972-r978 demos PASS (clearance is doc/attr/test-only; JSON wire form unchanged)",
+        "mnemosyne validate-workspace T1 reject=0",
+        "2 independent adversarial reviewers + my grep+read; over-flags rejected with evidence",
+        "my new doc-links resolve; the -D broken-link errors are pre-existing repo debt (not gated)"
+      ],
+      "impact_refs": [
+        "5.41"
+      ],
+      "carry_forward_bullets": [
+        "S5 data model complete AND session-review-cleared; R979 = direction re-evaluate",
+        "pre-existing repo debt (out of scope): broken_intra_doc_links codebase-wide, not workspace-gated",
+        "in-round self-assessment again imperfect: adversarial review caught 1 HIGH (cursor dual-fact)"
+      ],
+      "publishable_decision_summary": "R978.1 §5.41 adversarial session-review clearance of R975-R978 (1 HIGH + 2 MED + 3 LOW; 2 independent reviewers + my grep+read). S5 model otherwise textbook-clean.",
+      "publishable_changes_bullets": [
+        "HIGH: cursor in-bounds doc+test compared vs cols/rows (winsize) not buffer_cols/buffer_rows",
+        "the cursor rides on GridBuffer so its coords are buffer-space; the pairs diverge during resize",
+        "fixed GridCursorSnapshot doc, the snapshot test, and the core GridCursor doc to pin to buffer dims",
+        "MED: 4 nested grid DTOs lacked #[non_exhaustive] while every top-level payload has it",
+        "3 of them grew/were created in R975-R978; add the hedge (same-crate construction unaffected)",
+        "MED: GridRowSnapshot.text not column-indexable with wide chars; add caveat + point to runs",
+        "LOW: doubled \"and\" in module doc; TermCell \"slices\"->\"refinements\"; wire-mapper rationale comment",
+        "rejected as clean: paint_hash/cacheable; producer-owns altitude; 4 wire-mappers not a lift"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 exit 0 (0 fail; H1 test now asserts buffer_cols/buffer_rows)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello exit 0 (-D pedantic)",
+        "r972-r978 demos PASS (clearance is doc/attr/test-only; JSON wire form unchanged)",
+        "mnemosyne validate-workspace T1 reject=0",
+        "2 independent adversarial reviewers + my grep+read; over-flags rejected with evidence",
+        "my new doc-links resolve; the -D broken-link errors are pre-existing repo debt (not gated)"
+      ],
+      "publishable_impact_refs": [
+        "5.41"
+      ],
+      "publishable_carry_forward_bullets": [
+        "S5 data model complete AND session-review-cleared; R979 = direction re-evaluate",
+        "pre-existing repo debt (out of scope): broken_intra_doc_links codebase-wide, not workspace-gated",
+        "in-round self-assessment again imperfect: adversarial review caught 1 HIGH (cursor dual-fact)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

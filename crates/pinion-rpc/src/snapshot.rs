@@ -291,14 +291,21 @@ pub struct TextGridSnapshot {
 }
 
 /// R973 §5.41 — one row of a [`TextGridSnapshot`] cell projection: the
-/// row's `text` (cell grapheme clusters joined left→right) plus its
+/// row's `text` (the cells' grapheme clusters joined left→right) plus its
 /// style `runs` (maximal spans of one foreground / background colour —
 /// the terminal-canonical run-length style compression).
+///
+/// `text` is **not column-indexable** when the row holds wide cells: a
+/// wide cluster occupies two columns but contributes its glyph once (its
+/// trailer cell carries the empty string), so `text`'s grapheme count is
+/// `≤` the column count and `text[col]` drifts after any wide cell. Use
+/// the `runs` (`start` / `len` / `width`, R976) to address columns.
 ///
 /// R978 §5.41 — `generation` is the row's monotonic damage stamp: a
 /// streaming client re-reads only the rows whose generation exceeds the
 /// highest it has already seen (`0` for an untouched row).
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct GridRowSnapshot {
     pub text: String,
     pub runs: Vec<GridStyleRun>,
@@ -313,6 +320,7 @@ pub struct GridRowSnapshot {
 /// can map glyphs to columns unambiguously even where wide and narrow
 /// cells mix.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct GridStyleRun {
     pub start: u16,
     pub len: u16,
@@ -336,6 +344,7 @@ pub struct GridStyleRun {
 /// snapshot deliberately does NOT pre-apply the swap — that would lose
 /// the stored intent and break the resolve-at-paint-only contract.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct TermColorSnapshot {
     pub kind: &'static str,
     pub index: Option<u8>,
@@ -346,11 +355,19 @@ pub struct TermColorSnapshot {
 /// position, its `shape` (`"block"` / `"bar"` / `"underline"`), and
 /// whether it is `visible`. Always present — a grid has exactly one
 /// cursor; a geometry-only grid (or one whose producer has not set a
-/// cursor) reports the default: hidden, home `(0, 0)`, block. Compare
-/// `(col, row)` against the grid's `(cols, rows)` to tell whether the
-/// cursor sits in bounds — both are first-class facts (R974.1 dual-fact
-/// discipline), so no in-bounds flag is pre-computed.
+/// cursor) reports the default: hidden, home `(0, 0)`, block.
+///
+/// The cursor rides on the producer's [`GridBuffer`](pinion_core::GridBuffer)
+/// projection, so its coordinates are in *that* buffer's space: compare
+/// `(col, row)` against `buffer_cols` / `buffer_rows`
+/// ([`TextGridSnapshot`]) — **not** the layout-derived `cols` / `rows`
+/// winsize — to tell whether the cursor sits in bounds. The two pairs
+/// diverge during an in-flight resize (R974.1 dual-fact discipline: the
+/// requested winsize vs. the buffer last delivered), and the cursor is
+/// bounded by the buffer it lives in. Both are first-class facts, so no
+/// in-bounds flag is pre-computed.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct GridCursorSnapshot {
     pub col: u16,
     pub row: u16,
@@ -555,6 +572,16 @@ fn text_grid_rows(buffer: &GridBuffer, palette: &Palette) -> Vec<GridRowSnapshot
         })
         .collect()
 }
+
+// The TextGrid wire-vocabulary mappers (`cell_width_wire`, `screen_wire`,
+// the inline `CursorShape` match in `grid_cursor_snapshot`) live here as
+// read-only free functions, deliberately NOT as `as_wire_name` /
+// `from_wire_name` inherent pairs on the core enums (the convention for
+// the bidirectional `DragButton` / `ClickButton` RPC vocabularies). The
+// grid is a producer-owned projection with no RPC decode path (§5.41
+// R969), so there is nothing to map back — and the core enums must not
+// carry RPC wire spellings (a layering leak). Each maps a disjoint
+// vocabulary, so they are not a missed SSOT lift.
 
 /// R976 §5.41 — the wire string for a cell's [`CellWidth`] role, used as
 /// the [`GridStyleRun::width`] discriminator (mirroring how
@@ -765,9 +792,10 @@ mod tests {
                 assert_eq!((snap.cursor.col, snap.cursor.row), (2, 1));
                 assert_eq!(snap.cursor.shape, "bar");
                 assert!(snap.cursor.visible);
-                // The cursor (col 2, row 1) sits within the 8×2 grid — a
-                // client derives that from the two first-class facts.
-                assert!(snap.cursor.col < snap.cols && snap.cursor.row < snap.rows);
+                // The cursor (col 2, row 1) sits within the 8×2 buffer it
+                // rides on — bounded by buffer_cols/buffer_rows (the
+                // projection), not the layout-derived cols/rows winsize.
+                assert!(snap.cursor.col < snap.buffer_cols && snap.cursor.row < snap.buffer_rows);
             }
             other => panic!("expected TextGrid, got {other:?}"),
         }
