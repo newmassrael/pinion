@@ -286,10 +286,50 @@ fn r984_dispatch_rpc_scene_access_returns_tree_not_unavailable() {
         response.contains("\"result\""),
         "scene/access must return a success result envelope: {response}",
     );
-    // The envelope shape mirrors the GUI dump: count + nodes (+ focus).
+    // The envelope shape mirrors the GUI dump: count + nodes + focus. The atomic
+    // ButtonFixture's a11y projection is empty, so count is 0 and focus is null
+    // on a fresh substrate — assert the exact honest values, not just key
+    // presence (R984.1 L5: the prior key-presence check could not tell a correct
+    // envelope from one with wrong values).
     assert!(
-        response.contains("\"count\"") && response.contains("\"nodes\""),
-        "the TUI dump carries the GUI's count + nodes shape: {response}",
+        response.contains("\"count\":0"),
+        "an atomic empty-a11y binding reports count 0: {response}",
+    );
+    assert!(
+        response.contains("\"nodes\":[]"),
+        "the empty tree serializes an empty node array: {response}",
+    );
+    assert!(
+        response.contains("\"focus\":null"),
+        "no focus on a fresh substrate -> focus is null: {response}",
+    );
+}
+
+/// R984.1 §5.40 §2 #7 — the TUI access producer's BOUNDS-resolution composition
+/// (the H1 coverage gap: the empty-`ButtonFixture` wiring test above never
+/// resolved a single rect on the TUI). Over a REAL committed TUI paint scene, an
+/// `AccessNode` tagged like a painted widget resolves to that widget's
+/// cell-geometry rect through the same `pinion_runtime::rect_for_tag` the
+/// producer binds — proving the TUI bounds path (not only the GUI's) actually
+/// resolves geometry, the same `resolve_access_bounds` SSOT both shells share.
+#[test]
+fn r984_1_tui_access_bounds_resolve_over_a_real_paint_scene() {
+    use pinion_a11y::{resolve_access_bounds, AccessNode, AriaRole};
+
+    let core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
+    let paint = core.compute_paint_scene();
+
+    // The button externalises through the `test_btn` tag; the view lays it at a
+    // known rect (the same one the click tests hit at (8, 8)).
+    let mut nodes = vec![AccessNode::new("test_btn", AriaRole::Button)];
+    resolve_access_bounds(&mut nodes, |tag| pinion_runtime::rect_for_tag(&paint, tag));
+
+    let bounds = nodes[0]
+        .bounds
+        .expect("the painted widget's rect resolves on the TUI via rect_for_tag");
+    assert!(
+        bounds.w > 0 && bounds.h > 0,
+        "the resolved cell-geometry rect is non-empty: {bounds:?}",
     );
 }
 

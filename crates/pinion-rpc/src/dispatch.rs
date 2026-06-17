@@ -2210,6 +2210,13 @@ fn handle_scene_pacing_state(state: Option<PacingState>) -> Result<Value, RpcErr
 /// wired — a headless fixture without the shell's a11y build) errors with
 /// `AccessTreeUnavailable`, the `PacingStateUnavailable` honesty parity.
 /// Read-only — `HandlerKind::Read` upstream skips the [`SceneRevision`] bump.
+///
+/// R984.1 — that read-only-ness is load-bearing: both shells build the producer
+/// over the **entry** focus sample (`focus_before`), while the live AccessKit
+/// emit samples focus at emit time. They agree only because no focus mutation
+/// can occur within a read dispatch; were this handler ever reachable from a
+/// focus-mutating method, the dump would report stale (entry) focus while the
+/// live emit reports the mutated focus — a dump that lies about focus.
 fn handle_scene_access(
     producer: Option<&mut (dyn FnMut() -> (Vec<AccessNode>, Option<AccessFocus>) + '_)>,
 ) -> Result<Value, RpcError> {

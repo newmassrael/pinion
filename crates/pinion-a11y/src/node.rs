@@ -574,17 +574,27 @@ pub enum AccessValue {
 /// The button is reachable by AT element navigation and activatable via an
 /// `AccessKit` `Click` even though it is not a tab stop — the widget's
 /// `WidgetView::access_child_invoke` routes the `Click` to the affordance's
-/// action wire (the pointer twin). When `parent_tag` is absent from `nodes`
-/// the child link is skipped, matching the pre-lift per-binding behaviour.
+/// action wire (the pointer twin).
+///
+/// **Orphan-free by construction (R984.1):** when `parent_tag` is absent from
+/// `nodes` — e.g. its host row / cell is windowed out of a virtualized
+/// projection — NOTHING is emitted (neither the child link nor the button
+/// node), so a dangling AT node (a `button` no host references) can never
+/// exist. Callers therefore need not pre-filter their affordances to present
+/// hosts; passing an over-broad host set is self-correcting here rather than a
+/// latent orphan. (Pre-R984.1 the node was pushed unconditionally and only the
+/// link was guarded — the orphan the R983 grouped reset avoided by call-site
+/// discipline; this makes the guarantee structural for every consumer.)
 pub fn attach_child_button(
     nodes: &mut Vec<AccessNode>,
     parent_tag: &str,
     button_tag: String,
     name: String,
 ) {
-    if let Some(parent) = nodes.iter_mut().find(|n| n.tag == parent_tag) {
-        parent.children.push(button_tag.clone());
-    }
+    let Some(parent) = nodes.iter_mut().find(|n| n.tag == parent_tag) else {
+        return;
+    };
+    parent.children.push(button_tag.clone());
     nodes.push(AccessNode::new(button_tag, AriaRole::Button).with_name(name));
 }
 
@@ -602,6 +612,32 @@ mod tests {
         let last = AccessNode::new("c", AriaRole::ListBoxOption).with_set_position(2, 3);
         assert_eq!(last.position_in_set, Some(3));
         assert_eq!(last.size_of_set, Some(3));
+    }
+
+    #[test]
+    fn attach_child_button_links_and_emits_under_a_present_host() {
+        let mut nodes = vec![AccessNode::new("cell", AriaRole::GridCell)];
+        attach_child_button(&mut nodes, "cell", "cell#reset".to_owned(), "Reset".to_owned());
+        // The host now references the button, and the button node exists.
+        let host = nodes.iter().find(|n| n.tag == "cell").expect("host present");
+        assert!(host.children.contains(&"cell#reset".to_owned()), "host links the button");
+        let btn = nodes.iter().find(|n| n.tag == "cell#reset").expect("button emitted");
+        assert_eq!(btn.role, AriaRole::Button);
+        assert_eq!(btn.name.as_deref(), Some("Reset"));
+    }
+
+    #[test]
+    fn attach_child_button_emits_nothing_for_an_absent_host() {
+        // R984.1 — orphan-free by construction: an affordance whose host is not
+        // in the tree (windowed out) must leave NO dangling button node behind.
+        let mut nodes = vec![AccessNode::new("other", AriaRole::GridCell)];
+        attach_child_button(&mut nodes, "absent", "absent#reset".to_owned(), "Reset".to_owned());
+        assert_eq!(nodes.len(), 1, "no button node is pushed when the host is absent");
+        assert!(
+            !nodes.iter().any(|n| n.tag == "absent#reset"),
+            "the orphan button must not exist",
+        );
+        assert!(nodes[0].children.is_empty(), "no stray child link either");
     }
 
     #[test]

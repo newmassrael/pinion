@@ -93,6 +93,32 @@ mod tests {
     }
 
     #[test]
+    fn build_enriches_an_unnamed_node_from_the_paint_scene() {
+        // R984.1 — covers `build_access_tree`'s enrich branch (the prior test
+        // passed `None` paint, so name enrichment was never exercised — the H1
+        // gap on the shared SSOT every backend, including the TUI, runs).
+        use pinion_core::scene::{ContainerNode, Rect, TextNode};
+        use pinion_core::Scene;
+        let paint = Scene::Container(
+            ContainerNode::new(vec![Scene::Text(TextNode::new("Save", Rect::new(0, 0, 40, 16)))])
+                .with_tag("btn".to_owned()),
+        );
+        let owner = Owner::new();
+        let (nodes, focus) = build_access_tree(
+            &owner,
+            Some(&paint),
+            || vec![AccessNode::new("btn", AriaRole::Button)],
+            || None,
+        );
+        assert_eq!(
+            nodes[0].name.as_deref(),
+            Some("Save"),
+            "an unnamed node's name is enriched from the paint scene's text",
+        );
+        assert!(focus.is_none());
+    }
+
+    #[test]
     fn resolve_fills_bounds_from_the_resolver_and_unions_fragments() {
         let mut nodes = vec![
             AccessNode::new("solo", AriaRole::Button),

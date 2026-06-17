@@ -3054,12 +3054,14 @@ fn external_mut<'s>(scene: &'s mut Scene, tag: &str) -> Option<&'s mut dyn Exter
 /// `send` branch (the pointer twin) — that routing is mode-independent, so only
 /// the EMISSION (here) differs between the two grid modes (R983). The `rowheader`
 /// is the WAI-ARIA-valid host a `button` needs (invalid as a bare `row` child,
-/// R937.1); its tag is the painted gutter (`handle_tag`). Iterating only the
-/// VISIBLE `sources` (a collapsed group's members are already windowed out of the
-/// grouped flatten) keeps every button hung off a present cell / row node — no
-/// orphan buttons onto an absent node (the dangling-node class). Stays a single
-/// emission site across both modes, so the `rowheader` scaffold needs no lift
-/// (R982's deferral holds).
+/// R937.1); its tag is the painted gutter (`handle_tag`). `sources` is the
+/// VISIBLE data rows by intent — a reset affordance should appear only on rows
+/// the user can see (a collapsed group hides its members from `rows`; the flat
+/// grid shows all). Orphan-freedom is NOT this iteration's job: `attach_child_button`
+/// is orphan-free by construction (R984.1), so even a source whose cell / row
+/// node were absent would emit nothing — the visible-source set is a UX choice,
+/// not a dangling-node guard. Stays a single emission site across both modes, so
+/// the `rowheader` scaffold needs no lift (R982's deferral holds).
 fn emit_reset_affordances(nodes: &mut Vec<AccessNode>, model: &[CellValue], sources: &[usize]) {
     for &row in sources {
         for (col, col_name) in COL_NAMES.iter().enumerate() {
@@ -4429,8 +4431,10 @@ impl WidgetA11y for DataGridView {
         // reset affordances (cell / column / row) the flat grid emits (R980/R982):
         // a painted reset dot is now AT-reachable + activatable in BOTH grid modes.
         // The VISIBLE data sources (group headers hold no cells; a collapsed
-        // group's members are windowed out of `rows`) feed the shared emitter, so
-        // no reset button orphans onto an absent cell / row node.
+        // group's members drop out of `rows`) feed the shared emitter — a UX choice
+        // so collapsed rows show no reset, NOT a dangling-node guard (that is
+        // structural in `attach_child_button` since R984.1). `rows` IS the emitted
+        // window here (the a11y projection passes `count: rows.len()`).
         let visible_sources: Vec<usize> = rows.iter().filter_map(GroupRow::source).collect();
         emit_reset_affordances(&mut nodes, &model, &visible_sources);
         // R940 — the open dropdown's `listbox` nodes (gated on the editing row
@@ -5016,6 +5020,15 @@ mod tests {
                 nodes.iter().any(|n| n.tag == reset_col_tag(0)),
                 "the column reset persists through collapse (model-wide predicate)",
             );
+            // R984.1 — the POSITIVE orphan-freedom invariant (M3): EVERY reset
+            // button node is referenced by exactly one present host's children.
+            // The prior substring-only check would have passed a dangling button
+            // whose tag did not contain a collapsed-source marker; this pins the
+            // actual invariant that `attach_child_button` now guarantees.
+            for btn in nodes.iter().filter(|n| n.role == AriaRole::Button) {
+                let hosts = nodes.iter().filter(|n| n.children.contains(&btn.tag)).count();
+                assert_eq!(hosts, 1, "reset button {} hangs off exactly one present host", btn.tag);
+            }
         });
     }
 

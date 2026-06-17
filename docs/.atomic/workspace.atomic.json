@@ -45049,6 +45049,54 @@
         "pinion-tui stays single-window (DEFAULT_WINDOW); the TUI producer uses access_node (no access_node_for_window peer)"
       ]
     },
+    "R984.1": {
+      "decision_summary": "Session-review clearance for R983+R984 (2 adversarial reviewers + self-grep): make attach_child_button orphan-free by construction (M2/M3 root fix), close the TUI scene/access rich-path coverage gap (H1: build_access_tree enrich + TUI bounds composition tests), correct the false hello-textfield-tui demo claim + the overstated convergence claim, document the read-only soundness of the focus_before capture (L4).",
+      "changes_bullets": [
+        "attach_child_button now orphan-free by construction (M2/M3): emits NOTHING when the host is absent (was: button node pushed unconditionally, only the link guarded) - a dangling AT node is now structurally impossible for every consumer",
+        "R983 docs corrected: the visible-source iteration is a UX choice (collapsed rows show no reset), NOT a dangling-node guard (now structural); stop conflating the collapse axis with the scroll-window axis",
+        "R983 collapse unit test now asserts the POSITIVE orphan-freedom invariant (every reset button referenced by exactly one present host), not just tag-substring absence",
+        "H1 coverage: build_access_tree enrich branch tested (assemble.rs); TUI bounds composition tested over a real TUI paint scene (rect_for_tag resolves test_btn) - the prior empty-ButtonFixture test never resolved a rect",
+        "r984 wiring test strengthened: asserts count:0 / nodes:[] / focus:null exact values, not just key presence",
+        "L4: handle_scene_access doc notes focus_before (entry-focus) agrees with the live emit only because the method is read-only"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: exit 0 (orphan-atom contract change breaks no consumer; property-grid + data-grid a11y unchanged)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): 0 warnings",
+        "new/changed: pinion-a11y assemble enrich + orphan-atom pair; pinion-tui rpc_ingress bounds-composition + strengthened wiring; hello-data-grid r983 positive orphan-freedom",
+        "GUI regression r983/r980 demos PASS; validate-workspace T1=0"
+      ],
+      "impact_refs": [
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "HONESTY: the R984 commit claimed \"a non-trivial tree is exercised by the hello-textfield-tui demo\" - FALSE, no such demo exists; the TUI rich path is covered by the assemble SSOT tests + the new bounds-composition test (a live TUI binary needs a TTY)",
+        "the R984 \"converge on one assembler\" was overstated: the ~4-line build+bounds orchestration is layering-forced per-shell glue (rect_for_tag=pinion-runtime, AccessNode=pinion-a11y meet only at the shell layer); lifting it would need a pinion-runtime->pinion-a11y edge, rejected as worse coupling",
+        "grouped rowheader \"Row N\" ordinal crosses groups (pre-existing since R982 + flat-under-sort) - latent, deferred; a follow-up could add group context to the name"
+      ],
+      "publishable_decision_summary": "Session-review clearance for R983+R984 (2 adversarial reviewers + self-grep): make attach_child_button orphan-free by construction (M2/M3 root fix), close the TUI scene/access rich-path coverage gap (H1: build_access_tree enrich + TUI bounds composition tests), correct the false hello-textfield-tui demo claim + the overstated convergence claim, document the read-only soundness of the focus_before capture (L4).",
+      "publishable_changes_bullets": [
+        "attach_child_button now orphan-free by construction (M2/M3): emits NOTHING when the host is absent (was: button node pushed unconditionally, only the link guarded) - a dangling AT node is now structurally impossible for every consumer",
+        "R983 docs corrected: the visible-source iteration is a UX choice (collapsed rows show no reset), NOT a dangling-node guard (now structural); stop conflating the collapse axis with the scroll-window axis",
+        "R983 collapse unit test now asserts the POSITIVE orphan-freedom invariant (every reset button referenced by exactly one present host), not just tag-substring absence",
+        "H1 coverage: build_access_tree enrich branch tested (assemble.rs); TUI bounds composition tested over a real TUI paint scene (rect_for_tag resolves test_btn) - the prior empty-ButtonFixture test never resolved a rect",
+        "r984 wiring test strengthened: asserts count:0 / nodes:[] / focus:null exact values, not just key presence",
+        "L4: handle_scene_access doc notes focus_before (entry-focus) agrees with the live emit only because the method is read-only"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: exit 0 (orphan-atom contract change breaks no consumer; property-grid + data-grid a11y unchanged)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): 0 warnings",
+        "new/changed: pinion-a11y assemble enrich + orphan-atom pair; pinion-tui rpc_ingress bounds-composition + strengthened wiring; hello-data-grid r983 positive orphan-freedom",
+        "GUI regression r983/r980 demos PASS; validate-workspace T1=0"
+      ],
+      "publishable_impact_refs": [
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "HONESTY: the R984 commit claimed \"a non-trivial tree is exercised by the hello-textfield-tui demo\" - FALSE, no such demo exists; the TUI rich path is covered by the assemble SSOT tests + the new bounds-composition test (a live TUI binary needs a TTY)",
+        "the R984 \"converge on one assembler\" was overstated: the ~4-line build+bounds orchestration is layering-forced per-shell glue (rect_for_tag=pinion-runtime, AccessNode=pinion-a11y meet only at the shell layer); lifting it would need a pinion-runtime->pinion-a11y edge, rejected as worse coupling",
+        "grouped rowheader \"Row N\" ordinal crosses groups (pre-existing since R982 + flat-under-sort) - latent, deferred; a follow-up could add group context to the name"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
