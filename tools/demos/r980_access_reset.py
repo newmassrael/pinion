@@ -16,8 +16,9 @@ data); R980 uses it to close that carry for the data grid:
       reset through that wire twin (`send "<sub>:PointerUp"`) and watches the
       button vanish from the access tree once the cell / column is default.
 
-The row reset (a handle-gutter dot) awaits a `rowheader` host and the grouped
-treegrid path likewise — both honest carries. The button shape (find host +
+The row reset went AT-reachable in R982 (a `rowheader` host — see
+tools/demos/r982_data_grid_row_reset.py); the grouped treegrid path is still an
+honest carry. The button shape (find host +
 push child + emit named button) is the lifted `pinion_a11y::attach_child_button`
 SSOT shared with hello-property-grid.
 

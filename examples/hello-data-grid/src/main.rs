@@ -164,8 +164,8 @@ use std::collections::BTreeSet;
 
 use pinion_a11y::{
     attach_child_button, grid_table_nodes, grouped_grid_access_nodes, listbox_option_nodes,
-    AccessAction, AccessFocus, AccessNode, GridCell, GridColumn, GridRow, GroupedGridSelection,
-    GroupedGridSpec, ListOption, SortDirection, WidgetA11y,
+    AccessAction, AccessFocus, AccessNode, AriaRole, GridCell, GridColumn, GridRow,
+    GroupedGridSelection, GroupedGridSpec, ListOption, SortDirection, WidgetA11y,
 };
 use pinion_core::cell_value::{CellKind, CellValue};
 use pinion_core::composite_tag::{split_subindex, GridSendKey};
@@ -3043,6 +3043,59 @@ fn external_mut<'s>(scene: &'s mut Scene, tag: &str) -> Option<&'s mut dyn Exter
     scene.find_external_with_tag_mut(tag)?.handle.introspect_mut()
 }
 
+/// R980/R982 §5.40 — augment the flat grid's a11y `nodes` with AT-reachable
+/// reset affordances: a reset `button` child for each modified CELL (on its
+/// `gridcell`), each modified COLUMN (on its `columnheader`), and each data ROW
+/// (on a `rowheader` cell prepended as the row's first child). Every button is
+/// gated on the SAME modified predicate the reset dot paints under (R886.1
+/// one-gate), and its Click routes through [`DataGridView::access_child_invoke`]'s
+/// reset-prefix `send` branch (the pointer twin). The `rowheader` is the
+/// WAI-ARIA-valid host a `button` needs (invalid as a bare `row` child, R937.1);
+/// its tag is the painted gutter (`handle_tag`) so bounds resolve in the
+/// reorder-enabled view. Flat grid only — the grouped treegrid path is a carry.
+fn emit_flat_reset_affordances(nodes: &mut Vec<AccessNode>, model: &[CellValue], order: &[usize]) {
+    for &row in order {
+        for (col, col_name) in COL_NAMES.iter().enumerate() {
+            if cell_value_modified(model, row, col) {
+                attach_child_button(
+                    nodes,
+                    &cell_tag(row, col),
+                    reset_cell_tag(row, col),
+                    format!("Reset {col_name} to default"),
+                );
+            }
+        }
+    }
+    for (col, col_name) in COL_NAMES.iter().enumerate() {
+        if col_modified(model, col) {
+            attach_child_button(
+                nodes,
+                &col_header_tag(col),
+                reset_col_tag(col),
+                format!("Reset {col_name} column to default"),
+            );
+        }
+    }
+    for (visual_pos, &row) in order.iter().enumerate() {
+        let rh_tag = handle_tag(row);
+        if let Some(row_node) = nodes.iter_mut().find(|n| n.tag == data_row_tag(row)) {
+            row_node.children.insert(0, rh_tag.clone());
+        }
+        nodes.push(
+            AccessNode::new(rh_tag.clone(), AriaRole::RowHeader)
+                .with_name(format!("Row {}", visual_pos + 1)),
+        );
+        if row_modified(model, row) {
+            attach_child_button(
+                nodes,
+                &rh_tag,
+                reset_row_tag(row),
+                format!("Reset row {} to default", visual_pos + 1),
+            );
+        }
+    }
+}
+
 /// R932 — drive `verb` (`undo` / `redo`) on the [`UndoStackExternal`] at
 /// [`UNDO_TAG`] — the SAME SSOT the RPC path drives, so the keyboard adds no
 /// hand-rolled undo logic to the coordinator (the hello-node-editor `invoke_undo`
@@ -4325,35 +4378,9 @@ impl WidgetA11y for DataGridView {
             // valid + actionable. Keyboard Alt+Arrow is the keystroke twin.
             let mut nodes =
                 grid_table_nodes(GRID_TAG, "Asset table", false, "dg_header", &columns, &rows);
-            // R980 §5.40 — AT-reachable reset: each modified cell / column gains a
-            // reset `button` child of its `gridcell` / `columnheader` (the R967.1
-            // carry, now scene/access-verifiable). Gated on the SAME modified
-            // predicate the reset dot paints under (R886.1 one-gate);
-            // `access_child_invoke` routes an AT Click to the reset send funnel
-            // (the pointer twin). The row reset (a handle-gutter dot) needs a
-            // `rowheader` host and is deferred; grouped-treegrid likewise.
-            for &row in &order {
-                for (col, col_name) in COL_NAMES.iter().enumerate() {
-                    if cell_value_modified(&model, row, col) {
-                        attach_child_button(
-                            &mut nodes,
-                            &cell_tag(row, col),
-                            reset_cell_tag(row, col),
-                            format!("Reset {col_name} to default"),
-                        );
-                    }
-                }
-            }
-            for (col, col_name) in COL_NAMES.iter().enumerate() {
-                if col_modified(&model, col) {
-                    attach_child_button(
-                        &mut nodes,
-                        &col_header_tag(col),
-                        reset_col_tag(col),
-                        format!("Reset {col_name} column to default"),
-                    );
-                }
-            }
+            // R980/R982 §5.40 — augment the flat grid with AT-reachable reset
+            // affordances (cell / column / row), the R967.1 carry.
+            emit_flat_reset_affordances(&mut nodes, &model, &order);
             // R940 — the flatten is the Data-only order ungrouped (the popup gate
             // indexes the SAME visual sequence the rows paint in).
             let vis: Vec<GroupRow> =
@@ -4799,6 +4826,12 @@ mod tests {
                 DataGridView::access_child_invoke(&mut scene, GRID_TAG, "reset0_1", AccessAction::Click),
                 "an AT Click on a cell reset is handled",
             );
+            // R982 — an AT Click on a ROW reset (rowheader-hosted button) clears
+            // the whole row, routed through the same reset-prefix send branch.
+            assert!(
+                DataGridView::access_child_invoke(&mut scene, GRID_TAG, "resetrow2", AccessAction::Click),
+                "an AT Click on a row reset is handled",
+            );
             // A non-reset Click still falls through to the focus chain (false).
             assert!(
                 !DataGridView::access_child_invoke(&mut scene, GRID_TAG, "0_0", AccessAction::Click),
@@ -4814,6 +4847,11 @@ mod tests {
                 intro.query("modified.0.1"),
                 Some(IntrospectValue::Bool(false)),
                 "the AT cell reset cleared cell (0,1)",
+            );
+            assert_eq!(
+                intro.query("row_modified.2"),
+                Some(IntrospectValue::Bool(false)),
+                "the AT row reset cleared row 2",
             );
         });
     }
@@ -4983,17 +5021,22 @@ mod tests {
             let nodes = DataGridView::access_node(&(TextFieldState::Idle, 0), Some(GRID_TAG));
             // grid + header row + NCOLS columnheaders + NROWS rows + NROWS*NCOLS
             // cells (R837), plus R980 — one reset `button` per modified cell + per
-            // modified column (the boot seed differs from the column defaults, so
-            // the grid boots fully modified). R937.1 — still NO per-row reorder
-            // button (invalid as a `row` child + inert; the AT reorder is an
-            // Increment/Decrement action via `access_child_invoke`, adding no node).
+            // modified column, plus R982 — a `rowheader` per data row + one reset
+            // button per modified row (the boot seed differs from the column
+            // defaults, so the grid boots fully modified). R937.1 — still NO
+            // per-row reorder button (the AT reorder is an Increment/Decrement
+            // action via `access_child_invoke`, adding no node).
             let modified_cells = (0..NROWS)
                 .flat_map(|r| (0..NCOLS).map(move |c| (r, c)))
                 .filter(|&(r, c)| cell_value_modified(&model, r, c))
                 .count();
             let modified_cols = (0..NCOLS).filter(|&c| col_modified(&model, c)).count();
+            let modified_rows = (0..NROWS).filter(|&r| row_modified(&model, r)).count();
             let skeleton = 1 + 1 + NCOLS + NROWS + NROWS * NCOLS;
-            assert_eq!(nodes.len(), skeleton + modified_cells + modified_cols);
+            assert_eq!(
+                nodes.len(),
+                skeleton + NROWS + modified_cells + modified_cols + modified_rows,
+            );
             assert_eq!(nodes[0].role, pinion_a11y::AriaRole::Grid);
             let active = nodes
                 .iter()
@@ -5015,6 +5058,22 @@ mod tests {
                 assert!(
                     row.children.iter().all(|c| !button_tags.contains(&c.as_str())),
                     "no button is a direct child of a grid row",
+                );
+            }
+            // R982 — each DATA row leads with a `rowheader` cell (the WAI-ARIA
+            // host for the row reset button); the header row keeps its
+            // columnheaders. A modified row's reset button hangs off that
+            // rowheader, never the row.
+            for row in nodes
+                .iter()
+                .filter(|n| n.role == pinion_a11y::AriaRole::Row && n.tag != "dg_header")
+            {
+                let first = row.children.first().map(String::as_str);
+                let rh = nodes.iter().find(|n| Some(n.tag.as_str()) == first);
+                assert_eq!(
+                    rh.map(|n| n.role),
+                    Some(pinion_a11y::AriaRole::RowHeader),
+                    "each data row leads with a rowheader cell",
                 );
             }
         });

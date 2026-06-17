@@ -19,8 +19,8 @@ accessible action, so a human (not just the AI) can reset a whole row / column:
   (D) the reset is POINTER + RPC accessible (this demo). R980 additionally made
       the cell + column reset AT-reachable (a reset `button` AccessNode child of
       the gridcell / columnheader, an AT Click routed through the same `send`
-      wire) — see tools/demos/r980_access_reset.py; the row reset awaits a
-      `rowheader` host.
+      wire) — see tools/demos/r980_access_reset.py; R982 made the ROW reset
+      AT-reachable too via a `rowheader` host (tools/demos/r982_data_grid_row_reset.py).
 
 The Asset column (col 0, leftmost) header dot + the row-0 dot (in the leading
 gutter) are fully inside the viewport, so they are exercised by POINTER click;

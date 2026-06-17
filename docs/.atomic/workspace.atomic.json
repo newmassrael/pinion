@@ -44893,6 +44893,60 @@
         "covers branch toggle; only the control buttons (reset/remove/add) need the explicit access_child_invoke hook"
       ]
     },
+    "R982": {
+      "decision_summary": "R982 data-grid AT-reachable ROW reset via a rowheader: R980 made cell+column reset AT-reachable but left the row reset paint-only (a button is invalid as a grid row child, R937.1) — a one-gate asymmetry flagged in the R981 review. R982 emits a rowheader cell per data row (the gutter slot, named Row N) as the row's first child and hosts the modified row's reset button there; the Click routes through the existing access_child_invoke reset-prefix branch, so only the emission was needed. Closes the row-granularity one-gate asymmetry.",
+      "changes_bullets": [
+        "data-grid: emit a rowheader cell per data row (first child, named \"Row N\") hosting the reset button",
+        "extract emit_flat_reset_affordances (cell/col/row augmentation) keeping access_node under the line cap",
+        "access_child_invoke already routes resetrow<row> (R980 reset-prefix gate) — emission was the only gap",
+        "demo r982_data_grid_row_reset: rowheader present + named + reset button child + AT-wire row reset",
+        "r837 count + structural test: rowheader per row, button hangs off rowheader not row; r980 test +resetrow"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 exit 0 (0 failed); r837 rowheader structure + r980 resetrow routing",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello -D pedantic exit 0",
+        "demo r982 PASS + r980/r966 regression-free; r980/r966 docstrings updated (row no longer deferred)",
+        "3b self-grep: rowheader emission single production site (emit_flat_reset_affordances); attach_child_button",
+        "reused for the 3rd granularity (cell/col/row); no other RowHeader-emit site",
+        "validate-workspace T1=0"
+      ],
+      "impact_refs": [
+        "5.40",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "grouped-treegrid reset emission still deferred (grouped_grid_access_nodes path; flat grid complete cell/col/row)",
+        "rowheader bounds resolve only in the reorder-enabled view (gutter handle_tag painted then); None otherwise,",
+        "AT tree still navigable — acceptable, the tag follows the painted gutter",
+        "if a 2nd grid needs rowheaders, lift the emission to the grid_table_nodes substrate (deferred substrate path)"
+      ],
+      "publishable_decision_summary": "R982 data-grid AT-reachable ROW reset via a rowheader: R980 made cell+column reset AT-reachable but left the row reset paint-only (a button is invalid as a grid row child, R937.1) — a one-gate asymmetry flagged in the R981 review. R982 emits a rowheader cell per data row (the gutter slot, named Row N) as the row's first child and hosts the modified row's reset button there; the Click routes through the existing access_child_invoke reset-prefix branch, so only the emission was needed. Closes the row-granularity one-gate asymmetry.",
+      "publishable_changes_bullets": [
+        "data-grid: emit a rowheader cell per data row (first child, named \"Row N\") hosting the reset button",
+        "extract emit_flat_reset_affordances (cell/col/row augmentation) keeping access_node under the line cap",
+        "access_child_invoke already routes resetrow<row> (R980 reset-prefix gate) — emission was the only gap",
+        "demo r982_data_grid_row_reset: rowheader present + named + reset button child + AT-wire row reset",
+        "r837 count + structural test: rowheader per row, button hangs off rowheader not row; r980 test +resetrow"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 exit 0 (0 failed); r837 rowheader structure + r980 resetrow routing",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello -D pedantic exit 0",
+        "demo r982 PASS + r980/r966 regression-free; r980/r966 docstrings updated (row no longer deferred)",
+        "3b self-grep: rowheader emission single production site (emit_flat_reset_affordances); attach_child_button",
+        "reused for the 3rd granularity (cell/col/row); no other RowHeader-emit site",
+        "validate-workspace T1=0"
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "grouped-treegrid reset emission still deferred (grouped_grid_access_nodes path; flat grid complete cell/col/row)",
+        "rowheader bounds resolve only in the reorder-enabled view (gutter handle_tag painted then); None otherwise,",
+        "AT tree still navigable — acceptable, the tag follows the painted gutter",
+        "if a 2nd grid needs rowheaders, lift the emission to the grid_table_nodes substrate (deferred substrate path)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
