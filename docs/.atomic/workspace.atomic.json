@@ -46139,6 +46139,62 @@
         "next: Model-View streaming-append, or R1.8 pointer->cell hit-test"
       ]
     },
+    "R996": {
+      "decision_summary": "R996 §5.22 §5.23 §5.27 Model-View streaming-append: hello-streaming-log (runtime-growable count + stateless tail-follow)",
+      "changes_bullets": [
+        "hello-streaming-log: virtualized log whose row count grows at runtime (1st streaming consumer)",
+        "LogSource (RefCell<Vec> + count Signal) reactive holder; Emit button reducer appends one batch",
+        "growable count flows through stateless compute_visible_range / view_virtual_list (no new windowing)",
+        "stateless tail-follow: at_bottom(offset,max) derives follow; reducer pins to new bottom if was at bottom",
+        "reducer set_max+scroll_to pre-empts layout so the autoscroll lands the same frame as the append"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 = 7072 ok 0 failed (9 new streaming-log unit tests)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello = 0",
+        "r996 RPC demo PASS real GPU, deterministic x3 (click=append / scroll=pause-resume, ZERO-FLAKE)",
+        "no premature substrate lift (1st consumer); at_bottom + reducer shape lift at the 2nd consumer",
+        "mnemosyne validate-workspace T1=0 (entries 978)"
+      ],
+      "impact_refs": [
+        "5.22",
+        "5.23",
+        "5.27"
+      ],
+      "carry_forward_bullets": [
+        "Model-View campaign slice ① (streaming-append) landed; remaining slices ②-⑥",
+        "next slice ② = predicate/multi-facet filter; or ①b paged out-of-memory streaming",
+        "①b would add ResourceCache tail-page invalidate (drop the volatile tail page on append)",
+        "tail-follow + at_bottom = the 2nd-consumer lift point into virtual_list.rs",
+        "R995 + R996 both committed locally, NOT pushed (push consent pending)"
+      ],
+      "publishable_decision_summary": "R996 §5.22 §5.23 §5.27 Model-View streaming-append: hello-streaming-log (runtime-growable count + stateless tail-follow)",
+      "publishable_changes_bullets": [
+        "hello-streaming-log: virtualized log whose row count grows at runtime (1st streaming consumer)",
+        "LogSource (RefCell<Vec> + count Signal) reactive holder; Emit button reducer appends one batch",
+        "growable count flows through stateless compute_visible_range / view_virtual_list (no new windowing)",
+        "stateless tail-follow: at_bottom(offset,max) derives follow; reducer pins to new bottom if was at bottom",
+        "reducer set_max+scroll_to pre-empts layout so the autoscroll lands the same frame as the append"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 = 7072 ok 0 failed (9 new streaming-log unit tests)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello = 0",
+        "r996 RPC demo PASS real GPU, deterministic x3 (click=append / scroll=pause-resume, ZERO-FLAKE)",
+        "no premature substrate lift (1st consumer); at_bottom + reducer shape lift at the 2nd consumer",
+        "mnemosyne validate-workspace T1=0 (entries 978)"
+      ],
+      "publishable_impact_refs": [
+        "5.22",
+        "5.23",
+        "5.27"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Model-View campaign slice ① (streaming-append) landed; remaining slices ②-⑥",
+        "next slice ② = predicate/multi-facet filter; or ①b paged out-of-memory streaming",
+        "①b would add ResourceCache tail-page invalidate (drop the volatile tail page on append)",
+        "tail-follow + at_bottom = the 2nd-consumer lift point into virtual_list.rs",
+        "R995 + R996 both committed locally, NOT pushed (push consent pending)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
