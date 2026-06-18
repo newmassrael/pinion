@@ -922,6 +922,8 @@ mod tests {
         const ROWS: u16 = 1;
         const W: u32 = CW * COLS as u32;
         const H: u32 = CH * ROWS as u32;
+        // 한 (U+D55C) — a wide cluster; escaped per the non-ASCII source rule.
+        const HAN: &str = "\u{D55C}";
 
         let white = TermColor::Rgb(Color::rgb(0xff, 0xff, 0xff));
         let black = TermColor::Rgb(Color::rgb(0x00, 0x00, 0x00));
@@ -994,6 +996,28 @@ mod tests {
             thickness += 1;
         }
         assert!(thickness >= 2, "cursor underline is a thick bar (>= 2px), got {thickness}");
+
+        // Block over a WIDE head — the fill spans BOTH columns (matching the
+        // wide glyph and the TUI reversed head). The trailer column thus shows
+        // the cursor colour somewhere; without the 2-column span it would be
+        // the (black) trailer background.
+        let wide_block = {
+            let head = TermCell::new(HAN, white, black).wide();
+            render(
+                GridBuffer::new(2, 1)
+                    .with_row(0, [head.clone(), head.trailer()])
+                    .with_cursor(GridCursor::new(0, 0, CursorShape::Block, true)),
+            )
+        };
+        let mut trailer_filled = false;
+        for y in 2..(CH - 2) {
+            for x in (CW + 2)..(2 * CW - 2) {
+                if red(&wide_block, x, y) > 150 {
+                    trailer_filled = true;
+                }
+            }
+        }
+        assert!(trailer_filled, "block cursor on a wide head must fill the trailer column too");
 
         // Invisible cursor — nothing paints; the cell stays its background.
         let hidden = render(buf(" ", CursorShape::Block, false));

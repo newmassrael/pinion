@@ -77,7 +77,10 @@
 //!   exists; the §5.15 backend taxonomy round lifts it.
 //! - **Cell-native coord substrate**: the typed R968 §5.41
 //!   `CellMetric` (default 8×16) replaced the `PIXEL_PER_CELL_*`
-//!   placeholder; the per-node metric still defers to `Scene::TextGrid`.
+//!   placeholder. R994 landed the `Scene::TextGrid` TUI arm, which maps
+//!   each grid cell 1:1 onto a character cell — a node's per-node *pixel*
+//!   metric sizes Vello glyphs but is irrelevant to a character buffer, so
+//!   no per-node-metric work remains on this path.
 //!
 //! These deferrals stay textbook substrate-incompleteness-signal
 //! ([[substrate-incompleteness-signal]]) — each shell-side path

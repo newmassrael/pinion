@@ -46035,6 +46035,58 @@
         "Vello blink (timing tick) + per-cell a11y tree + R1.8 pointer->cell hit-test deferred"
       ]
     },
+    "R994.1": {
+      "decision_summary": "R994.1 §5.41 §2 #6 session-review clearance (R992+R993+R994; 2 reviewer + self-grep)",
+      "changes_bullets": [
+        "HIGH doc-drift: paint_text_grid doc still called the landed TUI a remaining slice (R974.1 in-session) -> swept",
+        "lift effective_terms (reverse swap) + has_glyph_cluster (trailer+blank) = Vello-local SSOTs (were 2-site divergent)",
+        "wide-head cursor: Block/Underline span both columns (matches glyph + TUI reversed head); r993 wide case added",
+        "TUI: crop loops to rect-derived winsize (n.cols/n.rows) = same logical window as Vello clip (§2 #6 under resize)",
+        "TUI: document producer invariant (cursor on head, never trailer); shell.rs per-node-metric note de-staled"
+      ],
+      "verification_bullets": [
+        "clippy 0 (-D pedantic) / cargo test --workspace 0 fail / r994 TUI ok",
+        "GPU r991+r992+r993 PASS (r993 wide-cursor case added); r993 deterministic x4",
+        "self-grep: effective_terms/has_glyph_cluster each def + 2 sites, 0 leftover inline dup",
+        "rejected over-flags: draw_cell_glyph bold/italic branch (perf clone-avoid, not a behaviour flag)",
+        "rejected: dim alpha-vs-luminance (documented backend-resolved divergence); inverse-glyph font scan (A-presence)",
+        "validate-workspace T1 reject=0, new orphan +0 (entries 975 -> 976)"
+      ],
+      "impact_refs": [
+        "5.41",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "dim model (Vello alpha-toward-bg vs xterm darken-fg) revisit in font/color-policy slice",
+        "DECSCUSR cursor shape in TUI = hardware-cursor Frame-level slice (deferred)",
+        "R995 = Vello.TUI cross-consistency closer (unchanged)"
+      ],
+      "publishable_decision_summary": "R994.1 §5.41 §2 #6 session-review clearance (R992+R993+R994; 2 reviewer + self-grep)",
+      "publishable_changes_bullets": [
+        "HIGH doc-drift: paint_text_grid doc still called the landed TUI a remaining slice (R974.1 in-session) -> swept",
+        "lift effective_terms (reverse swap) + has_glyph_cluster (trailer+blank) = Vello-local SSOTs (were 2-site divergent)",
+        "wide-head cursor: Block/Underline span both columns (matches glyph + TUI reversed head); r993 wide case added",
+        "TUI: crop loops to rect-derived winsize (n.cols/n.rows) = same logical window as Vello clip (§2 #6 under resize)",
+        "TUI: document producer invariant (cursor on head, never trailer); shell.rs per-node-metric note de-staled"
+      ],
+      "publishable_verification_bullets": [
+        "clippy 0 (-D pedantic) / cargo test --workspace 0 fail / r994 TUI ok",
+        "GPU r991+r992+r993 PASS (r993 wide-cursor case added); r993 deterministic x4",
+        "self-grep: effective_terms/has_glyph_cluster each def + 2 sites, 0 leftover inline dup",
+        "rejected over-flags: draw_cell_glyph bold/italic branch (perf clone-avoid, not a behaviour flag)",
+        "rejected: dim alpha-vs-luminance (documented backend-resolved divergence); inverse-glyph font scan (A-presence)",
+        "validate-workspace T1 reject=0, new orphan +0 (entries 975 -> 976)"
+      ],
+      "publishable_impact_refs": [
+        "5.41",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "dim model (Vello alpha-toward-bg vs xterm darken-fg) revisit in font/color-policy slice",
+        "DECSCUSR cursor shape in TUI = hardware-cursor Frame-level slice (deferred)",
+        "R995 = Vello.TUI cross-consistency closer (unchanged)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

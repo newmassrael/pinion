@@ -994,6 +994,31 @@ fn draw_cell_glyph(
     }
 }
 
+/// R994.1 §5.41 — the cell's effective `(fg, bg)` terms after SGR 7 reverse,
+/// the swap applied *before* palette resolution. The renderer owns the swap
+/// (a `scene/snapshot` reports the *stored* flag + colours, leaving it to "a
+/// renderer" per the [`CellAttrs`](pinion_core::term_grid::CellAttrs)
+/// contract), so this is a Vello-local SSOT shared by the cell pass and the
+/// cursor overlay — not a core method.
+fn effective_terms(cell: &TermCell) -> (TermColor, TermColor) {
+    if cell.attrs.reverse {
+        (cell.bg, cell.fg)
+    } else {
+        (cell.fg, cell.bg)
+    }
+}
+
+/// R994.1 §5.41 — whether a cell carries a drawable glyph cluster: a
+/// [`CellWidth::Trailer`] has none (the wide head draws it) and an
+/// all-whitespace cluster inks nothing. The trailer + blank SSOT shared by
+/// the main glyph pass and the block-cursor inverse redraw; SGR 8 `hidden`
+/// is *not* folded in because the two callers suppress it differently (the
+/// main pass `continue`s early to also drop the decorations, the cursor only
+/// skips the glyph redraw).
+fn has_glyph_cluster(cell: &TermCell) -> bool {
+    cell.width != CellWidth::Trailer && !cell.cluster.trim().is_empty()
+}
+
 /// R991 §5.41 §2 #6 — paint one retained [`Scene::TextGrid`] node: the
 /// cell-native terminal projection's GUI (Vello) glyph rasterisation.
 /// This is the deferred second half of the §5.41 cell-native axis —
@@ -1043,10 +1068,11 @@ fn draw_cell_glyph(
 /// buffer): **Block** inverts the cell (a fill in the cursor colour with the
 /// glyph redrawn in the cell background), **Bar** is a thin vertical beam at
 /// the leading edge, and **Underline** is a solid bottom bar drawn thicker
-/// than the SGR underline so the two read distinctly. The cursor colour is
+/// than the SGR underline so the two read distinctly; a block / underline
+/// cursor on a wide head spans both of its columns. The cursor colour is
 /// the cell's effective foreground (a dedicated colour is a deferred
-/// `GridCursor` field). `blink` (SGR 5, a timing attribute) and the TUI
-/// backend are the remaining paint slices.
+/// `GridCursor` field). `blink` (SGR 5, a timing attribute the TUI backend
+/// gets free from the host terminal, R994) is the one remaining Vello slice.
 ///
 /// Font policy: the glyph size is the node metric's cell height and the
 /// family is requested as monospace. A proper `GenericFamily::Monospace`
@@ -1100,11 +1126,7 @@ fn paint_text_grid(
             };
             // SGR 7 reverse: swap the effective fg / bg before palette
             // resolution.
-            let (fg_term, bg_term) = if cell.attrs.reverse {
-                (cell.bg, cell.fg)
-            } else {
-                (cell.fg, cell.bg)
-            };
+            let (fg_term, bg_term) = effective_terms(cell);
             let bg = palette.resolve(bg_term, ColorTarget::Background);
             let (cx, cy) = metric.cell_to_px(col, row);
             // Pass 1 — opaque cell background.
@@ -1129,7 +1151,7 @@ fn paint_text_grid(
             // to ink. SGR 1 bold / SGR 3 italic pick the weight / slant —
             // distinct `Layout` cache entries, so the colour-independent glyph
             // cache stays intact (the brush is still applied at draw time).
-            if cell.width != CellWidth::Trailer && !cell.cluster.trim().is_empty() {
+            if has_glyph_cluster(cell) {
                 let glyph_transform = origin * Affine::translate((cx, cy));
                 draw_cell_glyph(out, cache, &style, cell, glyph_transform, fg_brush);
             }
@@ -1161,24 +1183,26 @@ fn paint_text_grid(
         // is a prominent UI accent, not faint text). A dedicated cursor colour
         // is a deferred `GridCursor` field (R975 forward-compat note). An
         // absent cell (resize) falls back to the palette default fg / bg.
-        let (fg_term, bg_term) = match cur_cell {
-            Some(c) if c.attrs.reverse => (c.bg, c.fg),
-            Some(c) => (c.fg, c.bg),
-            None => (TermColor::Default, TermColor::Default),
-        };
+        let (fg_term, bg_term) =
+            cur_cell.map_or((TermColor::Default, TermColor::Default), effective_terms);
         let cursor_color = to_peniko(palette.resolve(fg_term, ColorTarget::Foreground));
+        // A block / underline cursor on a wide head spans both of its columns,
+        // matching the glyph (and the TUI, where the reversed head renders two
+        // columns wide). The bar stays a single leading-edge beam.
+        let span_w = if matches!(cur_cell, Some(c) if c.width == CellWidth::Wide) {
+            2.0 * cell_w
+        } else {
+            cell_w
+        };
         match cursor.shape {
             CursorShape::Block => {
-                // Inverse block: fill the whole cell in the cursor colour, then
+                // Inverse block: fill the cursor span in the cursor colour, then
                 // redraw the glyph in the cell background so the character reads
                 // through (the conventional terminal block cursor).
-                let rect = KurboRect::new(cx, cy, cx + cell_w, cy + cell_h);
+                let rect = KurboRect::new(cx, cy, cx + span_w, cy + cell_h);
                 out.fill(Fill::NonZero, origin, cursor_color, None, &rect);
                 if let Some(c) = cur_cell {
-                    if c.width != CellWidth::Trailer
-                        && !c.cluster.trim().is_empty()
-                        && !c.attrs.hidden
-                    {
+                    if has_glyph_cluster(c) && !c.attrs.hidden {
                         let bg_brush = to_peniko(palette.resolve(bg_term, ColorTarget::Background));
                         let glyph_transform = origin * Affine::translate((cx, cy));
                         draw_cell_glyph(out, cache, &style, c, glyph_transform, bg_brush);
@@ -1196,7 +1220,7 @@ fn paint_text_grid(
                 // the SGR underline rule so the cursor reads distinctly from an
                 // underlined character.
                 let uc_h = (cell_h / 8.0).max(2.0);
-                let rect = KurboRect::new(cx, cy + cell_h - uc_h, cx + cell_w, cy + cell_h);
+                let rect = KurboRect::new(cx, cy + cell_h - uc_h, cx + span_w, cy + cell_h);
                 out.fill(Fill::NonZero, origin, cursor_color, None, &rect);
             }
         }

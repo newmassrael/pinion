@@ -560,17 +560,26 @@ fn paint_text_grid_inner(
     let screen_row_px = i64::from(n.rect.y) + i64::from(offset_px.1);
     let origin_col = pixels_to_cell_floor(screen_col_px, CELL.cell_w());
     let origin_row = pixels_to_cell_floor(screen_row_px, CELL.cell_h());
-    for row in 0..grid.rows() {
+    // Crop an over-large producer buffer to the node's rect-derived winsize,
+    // matching the Vello adapter's clip-to-`rect` (the buffer dims and the
+    // layout-derived winsize are distinct facts that diverge during an
+    // in-flight resize, R974.1) — so both backends show the same logical
+    // window of cells (§2 #6).
+    let max_rows = grid.rows().min(n.rows());
+    let max_cols = grid.cols().min(n.cols());
+    for row in 0..max_rows {
         let cell_row = origin_row.saturating_add(i32::from(row));
         if cell_row < clip.y0 || cell_row >= clip.y1 {
             continue;
         }
-        for col in 0..grid.cols() {
+        for col in 0..max_cols {
             let Some(cell) = grid.cell(col, row) else {
                 continue;
             };
             // The wide head carries the glyph; the trailer is the terminal's
-            // implicit spill-over cell (left untouched, like wide text).
+            // implicit spill-over cell (left untouched, like wide text). The
+            // producer reports the cursor at the logical (head) column, never a
+            // trailer, so skipping trailers here never drops a cursor.
             if cell.width == CellWidth::Trailer {
                 continue;
             }
@@ -582,6 +591,10 @@ fn paint_text_grid_inner(
                 continue;
             };
             let mut modifier = cell_attrs_to_modifier(cell.attrs);
+            // The cursor inverts its cell (the reversed head renders two columns
+            // wide for a wide glyph, matching the Vello span). A character
+            // buffer has no sub-cell bar / underline shape — the DECSCUSR shape
+            // is a hardware-cursor concern (left to a shell-level slice).
             if cursor.visible && cursor.col == col && cursor.row == row {
                 modifier ^= Modifier::REVERSED;
             }
