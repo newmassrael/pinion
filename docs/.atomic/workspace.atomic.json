@@ -46087,6 +46087,58 @@
         "R995 = Vello.TUI cross-consistency closer (unchanged)"
       ]
     },
+    "R995": {
+      "decision_summary": "R995 §5.41 §2 #6 Vello/TUI TextGrid cross-consistency closer + honest R1.6 glyph-paint residue audit",
+      "changes_bullets": [
+        "test_fixtures: text_grid_consistency_buffer() = one shared 4x3 GridBuffer both backends render",
+        "TextGridCellFacts + expected_text_grid_cell_facts(): model-derived facts (ink/reverse/CellWidth)",
+        "pinion-tui r995 cross_consistency_tui: exact per-cell facts over the shared buffer (normal suite)",
+        "pinion-shell r995 cross_consistency_vello: headless-GPU ink + 2-col wide span vs same model (ignore)",
+        "CellWidth enum reused (no struct_excessive_bools allow); cross-ref docs on both paint fns"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 = 7063 ok 0 failed (TUI cross-consistency + 5 fact unit tests)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello = 0",
+        "r995 Vello GPU PASS real GPU deterministic x4; r991-r993 regression PASS",
+        "color backend-resolved-divergent (palette vs host terminal); cell structure identical",
+        "mnemosyne validate-workspace T1=0 (entries 977)"
+      ],
+      "impact_refs": [
+        "5.41",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "R1.6 residue honest: font policy open Q (monospace + CJK/emoji fallback, Vello side)",
+        "blink Vello-deferred (TUI free from host); Bar/Underline cursor Vello-shaped vs TUI reverse-block",
+        "R1.8 pointer->cell hit-test deferred (input slice, not paint)",
+        "next: Model-View streaming-append, or R1.8 pointer->cell hit-test"
+      ],
+      "publishable_decision_summary": "R995 §5.41 §2 #6 Vello/TUI TextGrid cross-consistency closer + honest R1.6 glyph-paint residue audit",
+      "publishable_changes_bullets": [
+        "test_fixtures: text_grid_consistency_buffer() = one shared 4x3 GridBuffer both backends render",
+        "TextGridCellFacts + expected_text_grid_cell_facts(): model-derived facts (ink/reverse/CellWidth)",
+        "pinion-tui r995 cross_consistency_tui: exact per-cell facts over the shared buffer (normal suite)",
+        "pinion-shell r995 cross_consistency_vello: headless-GPU ink + 2-col wide span vs same model (ignore)",
+        "CellWidth enum reused (no struct_excessive_bools allow); cross-ref docs on both paint fns"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 = 7063 ok 0 failed (TUI cross-consistency + 5 fact unit tests)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello = 0",
+        "r995 Vello GPU PASS real GPU deterministic x4; r991-r993 regression PASS",
+        "color backend-resolved-divergent (palette vs host terminal); cell structure identical",
+        "mnemosyne validate-workspace T1=0 (entries 977)"
+      ],
+      "publishable_impact_refs": [
+        "5.41",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R1.6 residue honest: font policy open Q (monospace + CJK/emoji fallback, Vello side)",
+        "blink Vello-deferred (TUI free from host); Bar/Underline cursor Vello-shaped vs TUI reverse-block",
+        "R1.8 pointer->cell hit-test deferred (input slice, not paint)",
+        "next: Model-View streaming-append, or R1.8 pointer->cell hit-test"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

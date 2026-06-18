@@ -1078,6 +1078,17 @@ fn has_glyph_cluster(cell: &TermCell) -> bool {
 /// family is requested as monospace. A proper `GenericFamily::Monospace`
 /// fallback plus CJK / emoji font fallback are the seed's documented open
 /// questions, deferred to a font-policy slice.
+///
+/// R995 §2 #6 — this Vello arm and the TUI `paint_text_grid_inner` must agree
+/// on cell *structure* (which cell inks a glyph / reads reversed / forms a
+/// wide span; colour stays backend-resolved — pinion palette here vs the host
+/// terminal there). That contract is regression-pinned by the shared
+/// `pinion_core::test_fixtures::text_grid_consistency_buffer` driven through
+/// both backends: the headless-GPU `r995_text_grid_cross_consistency_vello`
+/// (pinion-shell) and the exact-buffer `r995_text_grid_cross_consistency_tui`
+/// (pinion-tui). The `Block` cursor is the one shape both invert identically;
+/// `Bar` / `Underline` render as shaped beams here but as a reverse-block in
+/// the character-cell TUI (R994).
 fn paint_text_grid(
     out: &mut VelloScene,
     n: &TextGridNode,

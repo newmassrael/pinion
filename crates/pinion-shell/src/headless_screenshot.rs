@@ -1024,6 +1024,129 @@ mod tests {
         assert!(red(&hidden, CW / 2, CH / 2) < 60, "an invisible cursor paints nothing");
     }
 
+    /// R995 §5.41 §2 #6 — cross-backend consistency (Vello half). Renders the
+    /// **same** shared [`text_grid_consistency_buffer`] the TUI half drives and
+    /// asserts each cell's *visible-ink* presence agrees with the model
+    /// ([`expected_text_grid_cell_facts`]), so the GUI / TUI dual is pinned
+    /// through one source of truth. Colour is deliberately not asserted across
+    /// backends (Vello palette-resolves, the TUI defers to the host terminal) —
+    /// the contract is cell-structure identity.
+    ///
+    /// The ink probe is colour-independent (a cell inks iff some interior pixel
+    /// differs strongly from its own background corner), so it holds across the
+    /// fixture's varied backgrounds without coupling to specific colours. The
+    /// wide CJK head's ink is *not* probed (its coverage is system-font
+    /// dependent — the [[pinion-text-layout-tests-system-font-debt]]
+    /// discipline); the wide span is proven font-independently by its
+    /// two-column ANSI-blue background instead.
+    ///
+    /// `#[ignore]` for the same wgpu cold-boot reason as the sibling headless
+    /// tests; run with `--ignored`.
+    #[test]
+    #[ignore = "wgpu adapter cold-boot too slow for default test suite; run with --ignored"]
+    fn r995_text_grid_cross_consistency_vello() {
+        use pinion_core::cell_metric::CellMetric;
+        use pinion_core::scene::{Rect, Scene, TextGridNode};
+        use pinion_core::term_grid::CellWidth;
+        use pinion_core::test_fixtures::{
+            expected_text_grid_cell_facts, text_grid_consistency_buffer,
+        };
+        use pinion_runtime::paint_adapter::{FragmentCache, to_vello_cached};
+        use pinion_text::LayoutCache;
+
+        const CW: u32 = 16;
+        const CH: u32 = 24;
+        const COLS: u16 = 4;
+        const ROWS: u16 = 3;
+        const W: u32 = CW * COLS as u32;
+        const H: u32 = CH * ROWS as u32;
+
+        let buffer = text_grid_consistency_buffer();
+        let metric = CellMetric::new(CW, CH).expect("non-zero cell metric");
+        let mut node = TextGridNode::new(metric).with_cells(buffer.clone());
+        node.rect = Rect::new(0, 0, W, H);
+        let scene = Scene::TextGrid(node);
+
+        let mut text_cache = LayoutCache::new();
+        let mut cache = FragmentCache::new();
+        let mut image_cache = pinion_runtime::image_cache::ImageCache::new();
+        let mut vello = VelloScene::new();
+        to_vello_cached(&scene, &|_| None, &mut text_cache, &mut image_cache, &mut cache, &mut vello);
+
+        let mut shot = HeadlessScreenshot::new().expect("headless screenshot bootstrap");
+        let rgba8 = shot.render_to_rgba8(&vello, W, H, vello::peniko::Color::BLACK).expect("render");
+
+        let at = |x: u32, y: u32| -> (i64, i64, i64) {
+            let i = ((y * W + x) * 4) as usize;
+            (i64::from(rgba8[i]), i64::from(rgba8[i + 1]), i64::from(rgba8[i + 2]))
+        };
+        // A cell inks iff some interior pixel differs strongly (channel-sum > 90)
+        // from the cell's own background corner — colour-independent, so it holds
+        // for reversed / cursor / palette-resolved backgrounds alike.
+        let inks = |col: u16, row: u16| -> bool {
+            let (ox, oy) = (u32::from(col) * CW, u32::from(row) * CH);
+            let (br, bg, bb) = at(ox + 1, oy + 1);
+            for y in (oy + 3)..(oy + CH - 3) {
+                for x in (ox + 3)..(ox + CW - 3) {
+                    let (r, g, b) = at(x, y);
+                    if (r - br).abs() + (g - bg).abs() + (b - bb).abs() > 90 {
+                        return true;
+                    }
+                }
+            }
+            false
+        };
+
+        // Every cell except the wide CJK head: visible ink presence must match
+        // the shared model. This is the cross-backend pin — the TUI half asserts
+        // the same `expected_text_grid_cell_facts` over the same buffer.
+        for row in 0..ROWS {
+            for col in 0..COLS {
+                if (col, row) == (0, 1) {
+                    continue; // wide CJK head — font-dependent ink, see below
+                }
+                let f = expected_text_grid_cell_facts(&buffer, col, row);
+                assert_eq!(
+                    inks(col, row),
+                    f.inks_glyph,
+                    "cell ({col},{row}) Vello ink presence must match the model"
+                );
+            }
+        }
+
+        // The wide head + trailer (cols 0..1, row 1) carry a distinct ANSI-blue
+        // (#0000ee) background that must span BOTH columns — the font-independent
+        // proof of the wide span (matching the TUI head-grapheme + spill cell).
+        assert_eq!(
+            expected_text_grid_cell_facts(&buffer, 0, 1).width,
+            CellWidth::Wide,
+            "(0,1) is the wide head"
+        );
+        assert_eq!(
+            expected_text_grid_cell_facts(&buffer, 1, 1).width,
+            CellWidth::Trailer,
+            "(1,1) is the trailer"
+        );
+        let (mut head_blue, mut trailer_blue) = (0u32, 0u32);
+        for y in CH..(2 * CH) {
+            for x in 0..(2 * CW) {
+                let (r, g, b) = at(x, y);
+                let is_blue = b > 180 && r < 50 && g < 50;
+                if is_blue && x < CW {
+                    head_blue += 1;
+                } else if is_blue {
+                    trailer_blue += 1;
+                }
+            }
+        }
+        assert!(head_blue > 20, "wide head ANSI-blue bg missing (head_blue={head_blue})");
+        assert!(
+            trailer_blue > 20,
+            "trailer must carry the wide head's blue bg across both columns \
+             (trailer_blue={trailer_blue})"
+        );
+    }
+
     /// R806 §5.39 §2 #1/#7 — deterministic render-vs-intent guard for the
     /// focus-ring **top-edge stroke thickness**. The scene-as-data carries a
     /// 2px Inside border; this renders the exact overlay-box shape through

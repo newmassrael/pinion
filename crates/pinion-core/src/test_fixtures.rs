@@ -28,6 +28,10 @@ use crate::external::{External, IntrospectValue};
 use crate::intent::Intent;
 use crate::reactive::Owner;
 use crate::scene::{ContainerNode, Rect, Scene, TextNode};
+use crate::style::Color;
+use crate::term_grid::{
+    CellAttrs, CellWidth, CursorShape, GridBuffer, GridCursor, TermCell, TermColor,
+};
 use crate::widget_core::WidgetCore;
 use crate::widgets::aria;
 use crate::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
@@ -543,6 +547,160 @@ impl WidgetCore for EchoButtonFixture {
     }
 }
 
+/// R995 §5.41 §2 #6 — the wide cluster the cross-backend
+/// [`text_grid_consistency_buffer`] places at `(0, 1)`. `\u{D55C}` is the
+/// Hangul syllable "han" (East Asian Wide); kept as an escape per the
+/// non-ASCII-source-literal rule (raw glyphs only in doc strings).
+pub const TEXT_GRID_WIDE_HEAD: &str = "\u{D55C}";
+
+/// R995 §5.41 §2 #6 — the **cross-backend cell-render facts** of one
+/// [`crate::scene::TextGrid`] cell: the backend-neutral structural truths the
+/// Vello ([`paint_text_grid`]) and TUI ([`paint_text_grid_inner`]) painters
+/// must *both* honour for the §2 #6 GUI / TUI dual to stay consistent.
+///
+/// These are derived from the shared [`GridBuffer`] model alone (by
+/// [`expected_text_grid_cell_facts`]) — *not* from either painter's helpers —
+/// so the cross-consistency tests are non-tautological: each backend's
+/// observable output is asserted to agree with the model, and therefore with
+/// the other backend.
+///
+/// Colour is **not** a fact here: it is deliberately backend-resolved (the
+/// Vello backend resolves every [`TermColor`] through pinion's
+/// [`Palette`](crate::term_grid::Palette); the TUI backend hands indexed /
+/// default colours to the host terminal). The cross-consistency contract is
+/// **cell-structure identity, not pixel identity** — which cell inks a glyph,
+/// reads reversed, and forms a wide span.
+///
+/// [`paint_text_grid`]: this is the Vello adapter fn in `pinion-runtime`.
+/// [`paint_text_grid_inner`]: this is the TUI fn in `pinion-tui`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct TextGridCellFacts {
+    /// A **visible** glyph is inked here: a non-[`CellWidth::Trailer`],
+    /// non-whitespace cluster that is not concealed by SGR 8 `hidden`. Vello
+    /// suppresses the glyph paint for a hidden / trailer / blank cell; the TUI
+    /// leaves a trailer as the terminal spill cell and tags a hidden cell with
+    /// `Modifier::HIDDEN` so the terminal conceals it — both render no visible
+    /// ink, observed per backend.
+    pub inks_glyph: bool,
+    /// The cell reads **reversed** (effective): SGR 7 `reverse` XOR a block
+    /// cursor sitting on this cell. The TUI toggles `Modifier::REVERSED`; Vello
+    /// swaps the effective fg / bg (and the block cursor inverts the cell), so a
+    /// reversed cell under the block cursor cancels back to its original
+    /// colours in both.
+    pub reversed: bool,
+    /// The cell's display-width role: [`CellWidth::Narrow`],
+    /// [`CellWidth::Wide`] (a 2-column head), or [`CellWidth::Trailer`] (the
+    /// continuation column with no independent glyph). Both backends span a
+    /// wide head across two columns — Vello via the glyph + a 2-column
+    /// background, the TUI via the head grapheme + the terminal spill cell.
+    pub width: CellWidth,
+}
+
+/// R995 §5.41 §2 #6 — derive the backend-neutral [`TextGridCellFacts`] for
+/// cell `(col, row)` straight from the [`GridBuffer`] model. An out-of-bounds
+/// coordinate yields the all-false default.
+///
+/// This is the single source of truth the Vello and TUI cross-consistency
+/// tests both assert against. It reads only the model (the cell's
+/// `cluster` / `width` / `attrs` and the grid cursor) — it never calls a
+/// painter helper — so it cannot drift into tautology with either backend.
+#[must_use]
+pub fn expected_text_grid_cell_facts(buf: &GridBuffer, col: u16, row: u16) -> TextGridCellFacts {
+    let Some(cell) = buf.cell(col, row) else {
+        return TextGridCellFacts::default();
+    };
+    let cursor = buf.cursor();
+    // Only a BLOCK cursor inverts the whole cell in both backends; Bar /
+    // Underline diverge (Vello draws a shaped beam, the TUI has no sub-cell
+    // shape — a documented R1.6 residue), so the fixture uses a block cursor.
+    let block_cursor_here = cursor.visible
+        && cursor.shape == CursorShape::Block
+        && cursor.col == col
+        && cursor.row == row;
+    let trailer = cell.width == CellWidth::Trailer;
+    TextGridCellFacts {
+        inks_glyph: !trailer && !cell.cluster.trim().is_empty() && !cell.attrs.hidden,
+        reversed: cell.attrs.reverse ^ block_cursor_here,
+        width: cell.width,
+    }
+}
+
+/// R995 §5.41 §2 #6 — the canonical 4×3 [`GridBuffer`] both backends render in
+/// their cross-consistency regression tests (`pinion-tui` exact-buffer, and
+/// `pinion-shell` headless-GPU), so one buffer pins the §2 #6 GUI / TUI dual
+/// instead of two drifting per-backend buffers.
+///
+/// It covers every structural case the §5.41 model carries:
+///
+/// - **SGR attrs** — bold / italic+underline / blink+strikethrough on ASCII
+///   glyphs (row 0), so each backend maps the same [`CellAttrs`] to its own
+///   target (`Modifier` bits vs `FontWeight` / geometric rules).
+/// - **reverse** — `(2, 0)` carries SGR 7 (effective-reversed without a
+///   cursor); `(0, 2)` is reversed by the block cursor instead.
+/// - **wide + trailer** — `(0, 1)` is a wide [`TEXT_GRID_WIDE_HEAD`] head on a
+///   distinct ANSI-blue bg; `(1, 1)` is its trailer (carrying the head bg
+///   across both columns).
+/// - **hidden / blank / whitespace** — `(2, 1)` conceals a white "E";
+///   `(1, 2)` is a lone space; `(3, 1)` / `(3, 2)` are blanks — none ink.
+/// - **cursor** — a visible [`CursorShape::Block`] cursor sits on `(0, 2)`.
+///
+/// `(0, 0)` is a high-contrast white-on-black "A" and `(2, 1)` a concealed
+/// white "E" so the headless-GPU backend has a font-robust ink / no-ink pair
+/// (bright pixels on black) per the [[pinion-text-layout-tests-system-font-
+/// debt]] discipline, while the wide span is proven font-independently by its
+/// two-column blue background.
+#[must_use]
+pub fn text_grid_consistency_buffer() -> GridBuffer {
+    let e = CellAttrs::empty;
+    let white = TermColor::Rgb(Color::rgb(0xff, 0xff, 0xff));
+    let black = TermColor::Rgb(Color::rgb(0x00, 0x00, 0x00));
+    let red = TermColor::Rgb(Color::rgb(0xff, 0x00, 0x00));
+    let teal = TermColor::Rgb(Color::rgb(0x12, 0x34, 0x56));
+    // ANSI blue (#0000ee) — the wide head + trailer bg, distinct from every
+    // neighbour so the GPU backend can prove the two-column span by colour.
+    let blue = TermColor::Indexed(4);
+
+    let head = TermCell::new(TEXT_GRID_WIDE_HEAD, TermColor::Indexed(3), blue).wide();
+
+    GridBuffer::new(4, 3)
+        .with_row(
+            0,
+            [
+                // High-contrast bold "A" — the GPU backend's ink probe.
+                TermCell::new("A", white, black).with_attrs(e().with_bold(true)),
+                TermCell::new("B", red, TermColor::Default)
+                    .with_attrs(e().with_italic(true).with_underline(true)),
+                // SGR reverse, no cursor — effective-reversed on its own.
+                TermCell::new("C", TermColor::Indexed(2), blue)
+                    .with_attrs(e().with_reverse(true)),
+                TermCell::new("D", TermColor::Default, TermColor::Default)
+                    .with_attrs(e().with_blink(true).with_strikethrough(true)),
+            ],
+        )
+        .with_row(
+            1,
+            [
+                head.clone(),
+                head.trailer(),
+                // Hidden white "E" on teal — the GPU backend's no-ink probe.
+                TermCell::new("E", white, teal).with_attrs(e().with_hidden(true)),
+                TermCell::blank(),
+            ],
+        )
+        .with_row(
+            2,
+            [
+                // The block cursor sits here, inverting this otherwise-plain "F".
+                TermCell::new("F", TermColor::Indexed(5), TermColor::Default),
+                // A lone space — present, but inks nothing.
+                TermCell::new(" ", TermColor::Default, TermColor::Indexed(6)),
+                TermCell::new("G", TermColor::Default, TermColor::Default),
+                TermCell::blank(),
+            ],
+        )
+        .with_cursor(GridCursor::new(0, 2, CursorShape::Block, true))
+}
+
 #[cfg(test)]
 mod r55_g22_tests {
     //! R55.G.22 §5.49 — `assert_widget_view_carries_tag` helper
@@ -642,5 +800,68 @@ mod r55_g22_tests {
         // twice in sequence.
         assert_widget_view_carries_tag::<ButtonFixture>(ButtonState::Idle, &Frame::default());
         assert_widget_view_carries_tag::<ButtonFixture>(ButtonState::Hover, &Frame::default());
+    }
+}
+
+#[cfg(test)]
+mod r995_text_grid_facts_tests {
+    //! R995 §5.41 §2 #6 — pin the model-derived [`TextGridCellFacts`] of the
+    //! shared [`text_grid_consistency_buffer`] by hand, so the cross-backend
+    //! Vello / TUI tests assert against a verified truth (not a tautology with
+    //! either painter). Each assertion below is an *independent* read of the
+    //! model — "(2, 0) carries SGR reverse so it reads reversed", etc.
+    use super::{
+        TextGridCellFacts, expected_text_grid_cell_facts, text_grid_consistency_buffer,
+    };
+    use crate::term_grid::CellWidth;
+
+    fn facts(col: u16, row: u16) -> TextGridCellFacts {
+        expected_text_grid_cell_facts(&text_grid_consistency_buffer(), col, row)
+    }
+
+    #[test]
+    fn glyph_bearing_cells_ink_and_blanks_do_not() {
+        // Plain / attributed ASCII glyphs ink; the blank, the lone space, the
+        // trailer, and the concealed cell do not.
+        assert!(facts(0, 0).inks_glyph, "(0,0) 'A' inks");
+        assert!(facts(3, 0).inks_glyph, "(3,0) 'D' inks");
+        assert!(facts(2, 2).inks_glyph, "(2,2) 'G' inks");
+        assert!(!facts(3, 1).inks_glyph, "(3,1) blank does not ink");
+        assert!(!facts(1, 2).inks_glyph, "(1,2) lone space does not ink");
+        // The wide head carries a glyph; its trailer does not.
+        assert!(facts(0, 1).inks_glyph, "(0,1) wide head inks");
+        assert!(!facts(1, 1).inks_glyph, "(1,1) trailer carries no glyph");
+    }
+
+    #[test]
+    fn hidden_cell_inks_nothing_even_though_it_has_a_cluster() {
+        // (2,1) is "E" with SGR 8 hidden — a non-blank cluster, but concealed,
+        // so no *visible* ink (Vello suppresses the glyph; the TUI tags it
+        // HIDDEN and the terminal conceals it).
+        assert!(!facts(2, 1).inks_glyph, "(2,1) hidden 'E' inks nothing visible");
+    }
+
+    #[test]
+    fn reverse_comes_from_sgr_or_the_block_cursor() {
+        // (2,0) carries SGR 7 reverse and no cursor → reversed.
+        assert!(facts(2, 0).reversed, "(2,0) SGR reverse reads reversed");
+        // (0,2) is plain "F" but the block cursor sits on it → reversed.
+        assert!(facts(0, 2).reversed, "(0,2) block cursor inverts the cell");
+        // A plain glyph with neither is not reversed.
+        assert!(!facts(0, 0).reversed, "(0,0) plain 'A' is not reversed");
+        assert!(!facts(2, 2).reversed, "(2,2) plain 'G' is not reversed");
+    }
+
+    #[test]
+    fn wide_head_and_trailer_are_classified() {
+        assert_eq!(facts(0, 1).width, CellWidth::Wide, "(0,1) is the wide head");
+        assert_eq!(facts(1, 1).width, CellWidth::Trailer, "(1,1) is the trailer");
+        assert_eq!(facts(0, 0).width, CellWidth::Narrow, "(0,0) is narrow");
+    }
+
+    #[test]
+    fn out_of_bounds_is_all_false() {
+        assert_eq!(facts(4, 0), TextGridCellFacts::default(), "col past width");
+        assert_eq!(facts(0, 3), TextGridCellFacts::default(), "row past height");
     }
 }

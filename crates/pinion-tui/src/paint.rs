@@ -542,6 +542,13 @@ fn cell_attrs_to_modifier(attrs: CellAttrs) -> Modifier {
 /// the Vello backend (R993) — is a hardware-cursor concern (the host TTY's
 /// own cursor) left to a future shell-level slice; the buffer shows the
 /// universally-available reverse-block.
+///
+/// R995 §2 #6 — the cross-backend cell-structure consistency this arm shares
+/// with the Vello `paint_text_grid` (which cell inks a glyph / reads reversed
+/// / forms a wide span, colour staying backend-resolved) is regression-pinned
+/// by `r995_text_grid_cross_consistency_tui` (below) and its Vello sibling in
+/// `pinion-shell`, both driving the one shared
+/// `pinion_core::test_fixtures::text_grid_consistency_buffer`.
 fn paint_text_grid_inner(
     n: &TextGridNode,
     buf: &mut Buffer,
@@ -1072,5 +1079,97 @@ mod tests {
         // so the cell reverses (the cursor inverts its cell in a buffer).
         assert_eq!(buf[(2, 1)].symbol(), "C");
         assert!(buf[(2, 1)].modifier.contains(Modifier::REVERSED));
+    }
+
+    /// R995 §5.41 §2 #6 — cross-backend consistency (TUI half). Drives the
+    /// shared [`text_grid_consistency_buffer`] through the TUI painter and
+    /// asserts every cell's observable structure agrees with the model-derived
+    /// [`expected_text_grid_cell_facts`]. The Vello half (`pinion-shell`
+    /// headless-GPU) renders the *same* buffer and asserts the same model, so
+    /// the two backends are pinned consistent through one source of truth — the
+    /// ratatui buffer is exact, so this half pins the full structure (the GPU
+    /// half can only observe a font-robust subset).
+    ///
+    /// Colour is deliberately *not* a cross-backend fact (the TUI hands indexed
+    /// / default colours to the host terminal; Vello resolves them through the
+    /// pinion palette) — the contract is cell-structure identity, not pixels.
+    ///
+    /// R1.6 glyph-paint campaign residue (honest, deferred beyond this closer):
+    ///
+    /// - **Font policy** — open question (monospace fallback, CJK / emoji
+    ///   fallback) on the Vello side; the TUI defers glyph shaping to the host
+    ///   terminal entirely.
+    /// - **`blink`** — applied here (the host terminal blinks via
+    ///   `Modifier::SLOW_BLINK`); the Vello backend defers it as a timing slice.
+    /// - **Cursor shape** — `Bar` / `Underline` render as shaped beams in Vello
+    ///   (R993) but as a reverse-block here (a character buffer has no sub-cell
+    ///   shape; DECSCUSR shape is a hardware-cursor concern). Only the `Block`
+    ///   cursor inverts the cell identically in both, so the fixture uses it.
+    /// - **Pointer → cell hit-test** (R1.8) — mapping a pointer position back to
+    ///   a grid `(col, row)` is a later input slice; not part of paint.
+    #[test]
+    fn r995_text_grid_cross_consistency_tui() {
+        use pinion_core::scene::TextGridNode;
+        use pinion_core::test_fixtures::{
+            TEXT_GRID_WIDE_HEAD, expected_text_grid_cell_facts, text_grid_consistency_buffer,
+        };
+        use pinion_core::CellMetric;
+
+        let buffer = text_grid_consistency_buffer();
+        // 8×16 default metric, rect (0,0,32,48) → 4 cols × 3 rows, origin cell
+        // (0,0): grid cell (c,r) lands on buffer cell (c,r).
+        let mut node = TextGridNode::new(CellMetric::DEFAULT).with_cells(buffer.clone());
+        node.rect = Rect::new(0, 0, 32, 48);
+        let scene = Scene::TextGrid(node);
+
+        let mut buf = Buffer::empty(TuiRect::new(0, 0, 40, 10));
+        to_buffer(&scene, &mut buf);
+
+        // Every cell's observable structure must equal the model's facts.
+        for row in 0..3u16 {
+            for col in 0..4u16 {
+                let f = expected_text_grid_cell_facts(&buffer, col, row);
+                let bcell = &buf[(col, row)];
+                // Visible ink: a non-blank symbol the terminal does not conceal.
+                let observed_ink = !bcell.modifier.contains(Modifier::HIDDEN)
+                    && !bcell.symbol().trim().is_empty();
+                assert_eq!(
+                    observed_ink, f.inks_glyph,
+                    "cell ({col},{row}) inks_glyph: symbol {:?} hidden={}",
+                    bcell.symbol(),
+                    bcell.modifier.contains(Modifier::HIDDEN),
+                );
+                assert_eq!(
+                    bcell.modifier.contains(Modifier::REVERSED),
+                    f.reversed,
+                    "cell ({col},{row}) reversed",
+                );
+            }
+        }
+
+        // Wide head shows its grapheme; the trailer is the terminal spill cell
+        // (left as the default space, so the head's glyph occupies both cols).
+        assert_eq!(buf[(0, 1)].symbol(), TEXT_GRID_WIDE_HEAD, "wide head glyph");
+        assert_eq!(buf[(1, 1)].symbol(), " ", "trailer is the spill cell");
+
+        // SGR attrs map straight to ratatui Modifier bits (the host applies
+        // them) — pin the representative set the fixture carries.
+        assert!(buf[(0, 0)].modifier.contains(Modifier::BOLD), "(0,0) bold");
+        assert!(
+            buf[(1, 0)].modifier.contains(Modifier::ITALIC | Modifier::UNDERLINED),
+            "(1,0) italic+underline",
+        );
+        assert!(
+            buf[(3, 0)].modifier.contains(Modifier::SLOW_BLINK | Modifier::CROSSED_OUT),
+            "(3,0) blink+strikethrough",
+        );
+        assert!(buf[(2, 1)].modifier.contains(Modifier::HIDDEN), "(2,1) hidden");
+
+        // Indexed / truecolor / default colours pass through to the host
+        // terminal verbatim (the documented backend divergence — Vello would
+        // palette-resolve these instead).
+        assert_eq!(buf[(2, 0)].fg, TuiColor::Indexed(2), "(2,0) indexed fg");
+        assert_eq!(buf[(1, 0)].fg, TuiColor::Rgb(0xff, 0, 0), "(1,0) truecolor fg");
+        assert_eq!(buf[(3, 0)].fg, TuiColor::Reset, "(3,0) default fg → Reset");
     }
 }
