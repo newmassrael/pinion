@@ -1371,6 +1371,84 @@ mod tests {
         );
     }
 
+    /// R1001 §5.41 — descender-fit regression. Sizing the cell glyph to the
+    /// *full* `cell_h` made parley's ~1.1–1.2× natural line box overflow the
+    /// cell, clipping descenders on the bottom grid row. The
+    /// `fit_font_size_to_cell` policy reduces the font so the line box fits
+    /// `cell_h`; this guards it by rendering a descender glyph ('g') in a single
+    /// cell with a full extra cell of margin BELOW, then asserting the glyph
+    /// inks *within* its cell and spills no ink past the cell's lower edge (a
+    /// buggy full-height font would push the descender below `cell_h`).
+    ///
+    /// Font-robust: it asserts the glyph stays inside its own cell, not any
+    /// absolute glyph shape. `#[ignore]` for the same wgpu cold-boot reason as
+    /// the sibling headless grid tests; run with `--ignored`.
+    #[test]
+    #[ignore = "wgpu adapter cold-boot too slow for default test suite; run with --ignored"]
+    fn r1001_text_grid_descender_fits_within_cell() {
+        use pinion_core::cell_metric::CellMetric;
+        use pinion_core::scene::{Rect, Scene, TextGridNode};
+        use pinion_core::term_grid::{GridBuffer, TermCell, TermColor};
+        use pinion_runtime::paint_adapter::{to_vello_cached, FragmentCache};
+        use pinion_text::LayoutCache;
+
+        const CW: u32 = 16;
+        const CH: u32 = 32;
+        // One cell of content; the node rect leaves a full extra cell of margin
+        // below it, so a descender overflowing the cell would ink in [CH, 2·CH).
+        const W: u32 = CW;
+        const H: u32 = CH * 2;
+
+        let metric = CellMetric::new(CW, CH).expect("non-zero cell metric");
+        let buffer = GridBuffer::new(1, 1).with_row(
+            0,
+            vec![TermCell::new("g", TermColor::Default, TermColor::Default)],
+        );
+        let mut node = TextGridNode::new(metric).with_cells(buffer);
+        node.rect = Rect::new(0, 0, W, H);
+        let scene = Scene::TextGrid(node);
+
+        let mut text_cache = LayoutCache::new();
+        let mut cache = FragmentCache::new();
+        let mut image_cache = pinion_runtime::image_cache::ImageCache::new();
+        let mut vello = VelloScene::new();
+        to_vello_cached(
+            &scene,
+            &|_| None,
+            &mut text_cache,
+            &mut image_cache,
+            &mut cache,
+            &mut vello,
+        );
+        let base = vello::peniko::Color::BLACK;
+        let mut shot = HeadlessScreenshot::new().expect("headless screenshot bootstrap");
+        let rgba8 = shot.render_to_rgba8(&vello, W, H, base).expect("render");
+
+        let bright = |x: u32, y: u32| -> bool {
+            let i = ((y * W + x) * 4) as usize;
+            rgba8[i] > 120 || rgba8[i + 1] > 120 || rgba8[i + 2] > 120
+        };
+
+        // The glyph inks within its own cell [0, CH).
+        let in_cell = (0..CH)
+            .flat_map(|y| (0..CW).map(move |x| (x, y)))
+            .filter(|&(x, y)| bright(x, y))
+            .count();
+        assert!(in_cell > 10, "'g' must ink within its cell (in_cell={in_cell})");
+
+        // ...and nothing spills past the cell's lower edge into [CH, 2·CH): the
+        // descender stays inside the cell. (`<= 1` tolerates a lone boundary AA
+        // pixel; a real overflow is the descender's full width across rows.)
+        let below_cell = (CH..H)
+            .flat_map(|y| (0..CW).map(move |x| (x, y)))
+            .filter(|&(x, y)| bright(x, y))
+            .count();
+        assert!(
+            below_cell <= 1,
+            "the glyph must fit within the cell — no ink below cell_h (below_cell={below_cell})",
+        );
+    }
+
     /// Zero-dimension viewports short-circuit with a typed error
     /// rather than reaching the wgpu validation layer.
     #[test]

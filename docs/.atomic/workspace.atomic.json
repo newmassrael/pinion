@@ -8759,6 +8759,46 @@
         "sprag Round 23 (on_dirty hook) committed-local NOT pushed; per-window RepaintScope deferred to a multi-window 2nd consumer"
       ]
     },
+    "R1001": {
+      "decision_summary": "R1001: §5.41 TextGrid glyph cell-fit - cell-sized font overflowed the cell; fit to the font's natural line box so descenders no longer clip (sprag PR-4)",
+      "changes_bullets": [
+        "paint_text_grid: was font_size = cell_h, so parley's natural line box (~1.1-1.2x em: ascent+descent+leading) overflowed the cell -> descenders clipped on the last grid row, overlapped interior rows",
+        "fix = probe the resolved monospace's natural line box at cell height, then fit_font_size_to_cell reduces font_size so that box fits cell_h (metric-derived, no magic font:cell ratio), and line_height = Px(cell_h) splits the surplus leading top/bottom (vertical centring)",
+        "Vello-only: the TUI grid arm is a char buffer (host terminal sizes glyphs); cursor block-inverse redraw shares the fitted style, so it fits too"
+      ],
+      "verification_bullets": [
+        "3 deterministic unit tests on fit_font_size_to_cell (reduce overflowing box / keep fitting box / guard NaN+zero+extreme) - font-independent policy math",
+        "headless GPU r1001_text_grid_descender_fits_within_cell: a 'g' inks within its cell with zero spill below cell_h (realgpu, deterministic x3); r991/r992/r993/r995 grid GPU regressions intact",
+        "cargo test --workspace exit 0; clippy --workspace --all-targets --features pinion-runtime/vello exit 0; validate T1=0; hello-textgrid builds"
+      ],
+      "impact_refs": [
+        "5.41",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "hello-textgrid htg_default (8x16) + sprag-gui benefit automatically (same paint policy, no per-consumer change)",
+        "R4.2 (measured CellMetric from font metrics, the R968 hook) is optional and NOT needed - R4.1 fit resolves the clip; lift only if true font-derived cell sizing is wanted later"
+      ],
+      "publishable_decision_summary": "R1001: §5.41 TextGrid glyph cell-fit - cell-sized font overflowed the cell; fit to the font's natural line box so descenders no longer clip (sprag PR-4)",
+      "publishable_changes_bullets": [
+        "paint_text_grid: was font_size = cell_h, so parley's natural line box (~1.1-1.2x em: ascent+descent+leading) overflowed the cell -> descenders clipped on the last grid row, overlapped interior rows",
+        "fix = probe the resolved monospace's natural line box at cell height, then fit_font_size_to_cell reduces font_size so that box fits cell_h (metric-derived, no magic font:cell ratio), and line_height = Px(cell_h) splits the surplus leading top/bottom (vertical centring)",
+        "Vello-only: the TUI grid arm is a char buffer (host terminal sizes glyphs); cursor block-inverse redraw shares the fitted style, so it fits too"
+      ],
+      "publishable_verification_bullets": [
+        "3 deterministic unit tests on fit_font_size_to_cell (reduce overflowing box / keep fitting box / guard NaN+zero+extreme) - font-independent policy math",
+        "headless GPU r1001_text_grid_descender_fits_within_cell: a 'g' inks within its cell with zero spill below cell_h (realgpu, deterministic x3); r991/r992/r993/r995 grid GPU regressions intact",
+        "cargo test --workspace exit 0; clippy --workspace --all-targets --features pinion-runtime/vello exit 0; validate T1=0; hello-textgrid builds"
+      ],
+      "publishable_impact_refs": [
+        "5.41",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "hello-textgrid htg_default (8x16) + sprag-gui benefit automatically (same paint policy, no per-consumer change)",
+        "R4.2 (measured CellMetric from font metrics, the R968 hook) is optional and NOT needed - R4.1 fit resolves the clip; lift only if true font-derived cell sizing is wanted later"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

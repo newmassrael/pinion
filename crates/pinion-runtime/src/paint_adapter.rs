@@ -47,7 +47,7 @@ use pinion_core::scene::{
 };
 use pinion_core::style::{
     Border, BorderPlacement, BoxStyle, Color, Fit, FontStyle, FontWeight, Gradient, GradientKind,
-    StrokeCap, TextOverflow, TextStyle,
+    LineHeight, StrokeCap, TextOverflow, TextStyle,
 };
 use pinion_core::term_grid::{CellWidth, ColorTarget, CursorShape, TermCell, TermColor};
 use pinion_text::LayoutCache;
@@ -1089,6 +1089,36 @@ fn has_glyph_cluster(cell: &TermCell) -> bool {
 /// (pinion-tui). The `Block` cursor is the one shape both invert identically;
 /// `Bar` / `Underline` render as shaped beams here but as a reverse-block in
 /// the character-cell TUI (R994).
+/// R1001 §5.41 — the cell-fit monospace font size: the largest integer pixel
+/// size whose natural line box fits within `cell_h`.
+///
+/// `natural_box` is the font's natural line-box height (parley
+/// `block_max_coord − block_min_coord`) **measured at a font size of `cell_h`
+/// px**. Because the line box scales linearly with font size, the size whose
+/// box equals `cell_h` is `cell_h × cell_h / natural_box`; flooring to an
+/// integer leaves the sub-pixel remainder as a clearance margin. Returns
+/// `cell_h` unchanged when the natural box already fits (no reduction needed)
+/// or when `natural_box` is not a usable positive measurement.
+///
+/// Metric-derived — there is no magic font:cell ratio; the result adapts to
+/// whatever monospace family the platform resolves. The motivating bug
+/// ([`paint_text_grid`] sizing the glyph to the *full* `cell_h`) overflowed the
+/// cell by the font's ascent+descent+leading excess (~1.1–1.2×), clipping
+/// descenders on the last grid row and overlapping interior rows.
+fn fit_font_size_to_cell(natural_box: f64, cell_h: u32) -> u32 {
+    let cell = f64::from(cell_h);
+    if !natural_box.is_finite() || natural_box <= cell {
+        return cell_h;
+    }
+    // `box > cell` ⇒ `cell²/box < cell`, so `fitted` lands in `[1, cell_h)`.
+    let fitted = (cell * cell / natural_box).floor().max(1.0);
+    // Bounded `[1, cell_h)` positive ⇒ the truncating cast is exact on the
+    // integer part and never overflows / loses sign.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let fitted = fitted as u32;
+    fitted
+}
+
 fn paint_text_grid(
     out: &mut VelloScene,
     n: &TextGridNode,
@@ -1111,9 +1141,26 @@ fn paint_text_grid(
     // The node metric sizes the glyph; the family is requested monospace
     // (see the font-policy note above).
     let mut style = TextStyle::new().with_font_family("monospace");
-    // `CellMetric` guarantees a non-zero cell height (its constructor rejects
-    // a zero axis), so the glyph size is >= 1 by the type invariant.
+    // R1001 §5.41 — fit the glyph into the cell. `CellMetric` guarantees a
+    // non-zero cell height, but sizing the font to the *full* `cell_h` makes
+    // parley's natural line box (~1.1–1.2× the em: ascent + descent + leading)
+    // overflow the cell, clipping descenders on the last row and overlapping
+    // interior rows. Probe the resolved monospace's natural box at cell height,
+    // reduce the font size so that box fits `cell_h` (metric-derived, no magic
+    // ratio), and pin `line_height` to `cell_h` so the line box IS the cell —
+    // the surplus leading is split top/bottom, vertically centring the glyph.
     style.font_size_px = metric.cell_h();
+    let natural_box = {
+        // Any cluster yields the same line-box metrics (a property of the font,
+        // not the glyph); "x" is universally present.
+        let probe = cache.layout("x", &style, None);
+        probe.lines().next().map_or(cell_h, |line| {
+            let m = line.metrics();
+            f64::from(m.block_max_coord - m.block_min_coord)
+        })
+    };
+    style.font_size_px = fit_font_size_to_cell(natural_box, metric.cell_h());
+    style.line_height = LineHeight::Px(metric.cell_h());
     // R991.1 — clip the cell paint to the node's layout rect. The producer's
     // buffer dims and the node's rect-derived winsize are distinct facts that
     // can diverge during an in-flight resize (see `term_grid`); clipping stops
@@ -3039,5 +3086,39 @@ mod tests {
             run_paint(&scene, &mut cache, &mut text);
             assert_eq!(cache.paint_count(), expected_count);
         }
+    }
+
+    #[test]
+    fn r1001_fit_font_size_to_cell_reduces_overflowing_box() {
+        // A natural line box larger than the cell (the descender-clip cause)
+        // is reduced so the *scaled* box fits — font-independent policy math.
+        let cell_h = 16u32;
+        let natural = 19.2_f64; // 1.2 × 16, a typical monospace line box
+        let fitted = fit_font_size_to_cell(natural, cell_h);
+        assert!(fitted < cell_h, "an overflowing box must shrink the font: {fitted}");
+        // The line box scales linearly with font size, so the fitted box is
+        // `natural × fitted / cell_h` — and it must fit the cell.
+        let fitted_box = natural * f64::from(fitted) / f64::from(cell_h);
+        assert!(
+            fitted_box <= f64::from(cell_h),
+            "fitted box {fitted_box} must fit cell {cell_h}",
+        );
+        assert_eq!(fitted, 13, "floor(16²/19.2) = floor(13.33)");
+    }
+
+    #[test]
+    fn r1001_fit_font_size_to_cell_keeps_fitting_box() {
+        // A box already within the cell needs no reduction.
+        assert_eq!(fit_font_size_to_cell(16.0, 16), 16);
+        assert_eq!(fit_font_size_to_cell(15.0, 16), 16);
+    }
+
+    #[test]
+    fn r1001_fit_font_size_to_cell_guards_degenerate_box() {
+        // Non-finite / zero measurements fall back to the cell height; an
+        // extreme box still clamps to a >= 1 font size (never zero / panic).
+        assert_eq!(fit_font_size_to_cell(f64::NAN, 16), 16);
+        assert_eq!(fit_font_size_to_cell(0.0, 16), 16);
+        assert!(fit_font_size_to_cell(1_000.0, 16) >= 1);
     }
 }
