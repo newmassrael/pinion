@@ -45923,6 +45923,62 @@
         "bold/italic rely on font faces; synthetic fallback + CJK/emoji = font-policy slice (open)"
       ]
     },
+    "R993": {
+      "decision_summary": "R993 §5.41 Vello TextGrid GridCursor paint (block/bar/underline overlay shapes)",
+      "changes_bullets": [
+        "paint_text_grid: GridCursor overlay after cells, inside the clip, when visible+in-bounds",
+        "Block = inverse: fill cell in cursor colour, redraw glyph in cell bg (draw_cell_glyph)",
+        "Bar = thin vertical fill at the leading edge; Underline = thick bottom fill (> SGR rule)",
+        "cursor colour = cell effective (reverse-honoured) fg; absent cell -> palette default",
+        "lift draw_cell_glyph: cell cluster shape + bold/italic + glyph run (main pass + cursor)",
+        "fills (not strokes) keep the cursor pixel-aligned = deterministic; no stroke_vrule needed",
+        "doc sweep: scene.rs / paint_text_grid / example post-R993 (cursor painted; blink+TUI remain)"
+      ],
+      "verification_bullets": [
+        "clippy 0 (-D pedantic --all-targets --features pinion-runtime/vello)",
+        "cargo test --workspace -j2 0 failed (exit 0, 176 binaries ok)",
+        "r993 headless pixel test real-GPU PASS x4 (deterministic, fill-aligned)",
+        "r991 + r992 regression PASS (draw_cell_glyph refactor left their paths intact)",
+        "validate-workspace T1 reject=0, new orphan +0 (entries 973 -> 974)"
+      ],
+      "impact_refs": [
+        "5.41",
+        "5.16",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "blink (SGR 5, timing) = remaining Vello slice (animation tick, deferred)",
+        "TUI ratatui TextGrid arm = R994 (CellAttrs->Modifier; cursor via ratatui set_cursor)",
+        "dedicated GridCursor colour field (now uses cell fg) + per-cell a11y tree = deferred"
+      ],
+      "publishable_decision_summary": "R993 §5.41 Vello TextGrid GridCursor paint (block/bar/underline overlay shapes)",
+      "publishable_changes_bullets": [
+        "paint_text_grid: GridCursor overlay after cells, inside the clip, when visible+in-bounds",
+        "Block = inverse: fill cell in cursor colour, redraw glyph in cell bg (draw_cell_glyph)",
+        "Bar = thin vertical fill at the leading edge; Underline = thick bottom fill (> SGR rule)",
+        "cursor colour = cell effective (reverse-honoured) fg; absent cell -> palette default",
+        "lift draw_cell_glyph: cell cluster shape + bold/italic + glyph run (main pass + cursor)",
+        "fills (not strokes) keep the cursor pixel-aligned = deterministic; no stroke_vrule needed",
+        "doc sweep: scene.rs / paint_text_grid / example post-R993 (cursor painted; blink+TUI remain)"
+      ],
+      "publishable_verification_bullets": [
+        "clippy 0 (-D pedantic --all-targets --features pinion-runtime/vello)",
+        "cargo test --workspace -j2 0 failed (exit 0, 176 binaries ok)",
+        "r993 headless pixel test real-GPU PASS x4 (deterministic, fill-aligned)",
+        "r991 + r992 regression PASS (draw_cell_glyph refactor left their paths intact)",
+        "validate-workspace T1 reject=0, new orphan +0 (entries 973 -> 974)"
+      ],
+      "publishable_impact_refs": [
+        "5.41",
+        "5.16",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "blink (SGR 5, timing) = remaining Vello slice (animation tick, deferred)",
+        "TUI ratatui TextGrid arm = R994 (CellAttrs->Modifier; cursor via ratatui set_cursor)",
+        "dedicated GridCursor colour field (now uses cell fg) + per-cell a11y tree = deferred"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

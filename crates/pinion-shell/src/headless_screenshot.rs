@@ -896,6 +896,110 @@ mod tests {
         assert!(strike_ink(2, 1) > 2000, "cell(2,1) combo strikethrough rule must ink");
     }
 
+    /// R993 §5.41 — deterministic guard for the cell-grid [`GridCursor`]
+    /// overlay. Every shape is a *fill* (block / bar / underline), so the
+    /// assertions are pixel-aligned and font-independent: the block fills the
+    /// cell, the bar inks only the leading edge, the underline is a thick
+    /// bottom bar, and an invisible cursor paints nothing. The block-over-glyph
+    /// case asserts the inverse glyph as *presence* (dark ink inside the
+    /// bright block), never shape — mirroring the R991 / R992 discipline.
+    ///
+    /// `#[ignore]` for the same wgpu cold-boot reason as the sibling headless
+    /// tests; run with `--ignored`.
+    #[test]
+    #[ignore = "wgpu adapter cold-boot too slow for default test suite; run with --ignored"]
+    fn r993_text_grid_paints_cursor_shapes() {
+        use pinion_core::cell_metric::CellMetric;
+        use pinion_core::scene::{Rect, Scene, TextGridNode};
+        use pinion_core::style::Color;
+        use pinion_core::term_grid::{CursorShape, GridBuffer, GridCursor, TermCell, TermColor};
+        use pinion_runtime::paint_adapter::{FragmentCache, to_vello_cached};
+        use pinion_text::LayoutCache;
+
+        const CW: u32 = 16;
+        const CH: u32 = 24;
+        const COLS: u16 = 2;
+        const ROWS: u16 = 1;
+        const W: u32 = CW * COLS as u32;
+        const H: u32 = CH * ROWS as u32;
+
+        let white = TermColor::Rgb(Color::rgb(0xff, 0xff, 0xff));
+        let black = TermColor::Rgb(Color::rgb(0x00, 0x00, 0x00));
+        let metric = CellMetric::new(CW, CH).expect("non-zero");
+
+        // A 2x1 buffer: cell (0,0) carries `glyph`, (1,0) is blank; the cursor
+        // sits on (0,0) with the given shape / visibility.
+        let buf = |glyph: &'static str, shape: CursorShape, visible: bool| -> GridBuffer {
+            GridBuffer::new(COLS, ROWS)
+                .with_row(0, [TermCell::new(glyph, white, black), TermCell::new(" ", white, black)])
+                .with_cursor(GridCursor::new(0, 0, shape, visible))
+        };
+
+        let mut shot = HeadlessScreenshot::new().expect("headless screenshot bootstrap");
+        let mut render = |buffer: GridBuffer| -> Vec<u8> {
+            let mut node = TextGridNode::new(metric).with_cells(buffer);
+            node.rect = Rect::new(0, 0, W, H);
+            let scene = Scene::TextGrid(node);
+            let mut text_cache = LayoutCache::new();
+            let mut cache = FragmentCache::new();
+            let mut image_cache = pinion_runtime::image_cache::ImageCache::new();
+            let mut vello = VelloScene::new();
+            to_vello_cached(
+                &scene,
+                &|_| None,
+                &mut text_cache,
+                &mut image_cache,
+                &mut cache,
+                &mut vello,
+            );
+            shot.render_to_rgba8(&vello, W, H, vello::peniko::Color::BLACK).expect("render")
+        };
+
+        // Red channel at (x, y) (white ink ⇒ r≈g≈b, so red tracks luminance).
+        let red = |img: &[u8], x: u32, y: u32| -> i64 { i64::from(img[((y * W + x) * 4) as usize]) };
+
+        // Block over a blank cell — the whole cell fills with the cursor colour
+        // (white); the neighbour cell stays unlit.
+        let filled = render(buf(" ", CursorShape::Block, true));
+        assert!(red(&filled, CW / 2, CH / 2) > 200, "block cursor fills its cell white");
+        assert!(red(&filled, CW + CW / 2, CH / 2) < 60, "neighbour cell has no cursor");
+
+        // Block over 'A' — the cell still fills (corner is white) and the glyph
+        // reads through inverse (dark pixels appear inside the bright block).
+        let inverse = render(buf("A", CursorShape::Block, true));
+        assert!(red(&inverse, 2, 2) > 200, "block-over-glyph corner is the cursor fill");
+        let mut inverse_glyph = false;
+        for y in 2..(CH - 2) {
+            for x in 2..(CW - 2) {
+                if red(&inverse, x, y) < 80 {
+                    inverse_glyph = true;
+                }
+            }
+        }
+        assert!(inverse_glyph, "block cursor must redraw the glyph inverse (dark ink in the block)");
+
+        // Bar over a blank cell — a vertical beam at the leading edge; the cell
+        // interior stays black.
+        let bar = render(buf(" ", CursorShape::Bar, true));
+        assert!(red(&bar, 0, CH / 2) > 200, "bar cursor inks the leading edge");
+        assert!(red(&bar, CW / 2, CH / 2) < 60, "bar cursor leaves the interior blank");
+
+        // Underline over a blank cell — a solid bottom bar >= 2px thick (so it
+        // reads distinctly from the thin SGR underline); the cell middle blank.
+        let underline = render(buf(" ", CursorShape::Underline, true));
+        assert!(red(&underline, CW / 2, CH - 1) > 200, "underline cursor inks the cell bottom");
+        assert!(red(&underline, CW / 2, CH / 2) < 60, "underline cursor leaves the middle blank");
+        let mut thickness = 0u32;
+        while thickness < CH && red(&underline, CW / 2, CH - 1 - thickness) > 200 {
+            thickness += 1;
+        }
+        assert!(thickness >= 2, "cursor underline is a thick bar (>= 2px), got {thickness}");
+
+        // Invisible cursor — nothing paints; the cell stays its background.
+        let hidden = render(buf(" ", CursorShape::Block, false));
+        assert!(red(&hidden, CW / 2, CH / 2) < 60, "an invisible cursor paints nothing");
+    }
+
     /// R806 §5.39 §2 #1/#7 — deterministic render-vs-intent guard for the
     /// focus-ring **top-edge stroke thickness**. The scene-as-data carries a
     /// 2px Inside border; this renders the exact overlay-box shape through

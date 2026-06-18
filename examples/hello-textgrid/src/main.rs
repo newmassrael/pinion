@@ -67,8 +67,10 @@
 //! terminal. **R992 §5.41** adds the typographic SGR attributes: `bold` /
 //! `italic` set the glyph weight / slant, `dim` faints the foreground, and
 //! `underline` / `strikethrough` stroke a full-cell rule — so the
-//! `htg_attrs` grid now shows each SGR flag. `blink` (a timing attribute)
-//! and the cursor are the remaining paint slices; the cell *data model*
+//! `htg_attrs` grid now shows each SGR flag. **R993 §5.41** paints the
+//! [`GridCursor`] overlay (block / bar / underline shapes), so `htg_cursor`
+//! shows its bar and `htg_alt` its block. `blink` (a timing attribute) and
+//! the TUI backend are the remaining paint slices; the cell *data model*
 //! below remains the AI-first witness, read as data.
 //!
 //! ## The AI-first witness (§2 #7 scene-as-data)
@@ -524,9 +526,8 @@ impl WidgetCore for TextGridView {
 impl WidgetA11y for TextGridView {
     /// No a11y nodes yet. The cell data model is read via the AI-first
     /// `scene/snapshot` path (`grid_rows`); the screen-reader a11y tree (a
-    /// `grid` / `treegrid` role with per-cell nodes) lands with the
-    /// per-cell a11y slice (after the remaining cursor paint slice) —
-    /// returning empty is the honest state.
+    /// `grid` / `treegrid` role with per-cell nodes) is the remaining
+    /// per-cell a11y slice — returning empty is the honest state.
     fn access_node(_state: &(), _focused: Option<&str>) -> Vec<AccessNode> {
         Vec::new()
     }

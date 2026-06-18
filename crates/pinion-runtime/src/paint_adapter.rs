@@ -49,7 +49,7 @@ use pinion_core::style::{
     Border, BorderPlacement, BoxStyle, Color, Fit, FontStyle, FontWeight, Gradient, GradientKind,
     StrokeCap, TextOverflow, TextStyle,
 };
-use pinion_core::term_grid::{CellWidth, ColorTarget};
+use pinion_core::term_grid::{CellWidth, ColorTarget, CursorShape, TermCell, TermColor};
 use pinion_text::LayoutCache;
 use pinion_text::parley::PositionedLayoutItem;
 use vello::Glyph;
@@ -957,6 +957,43 @@ fn stroke_hrule(
     out.stroke(&Stroke::new(width.max(1.0)), transform, brush, None, &line);
 }
 
+/// R993 §5.41 — shape one cell's grapheme `cell.cluster` (with its SGR
+/// bold / italic weight / slant) through the shared `cache` and draw the
+/// glyph run at `glyph_transform` in `brush`. The shared cell-glyph emit
+/// behind the main grid pass ([`paint_text_grid`]) and the block-cursor
+/// inverse redraw — R991's colour-independent cache holds (the brush is
+/// applied at draw time, so one `Layout` per cluster serves any colour, and
+/// bold / italic are distinct keys). The caller guarantees the cluster is
+/// non-empty and not a [`CellWidth::Trailer`].
+fn draw_cell_glyph(
+    out: &mut VelloScene,
+    cache: &mut LayoutCache,
+    base_style: &TextStyle,
+    cell: &TermCell,
+    glyph_transform: Affine,
+    brush: PenikoColor,
+) {
+    let layout = if cell.attrs.bold || cell.attrs.italic {
+        let mut styled = base_style.clone();
+        if cell.attrs.bold {
+            styled.font_weight = FontWeight::BOLD;
+        }
+        if cell.attrs.italic {
+            styled.font_style = FontStyle::Italic;
+        }
+        cache.layout(&cell.cluster, &styled, None)
+    } else {
+        cache.layout(&cell.cluster, base_style, None)
+    };
+    for line in layout.lines() {
+        for item in line.items() {
+            if let PositionedLayoutItem::GlyphRun(run) = item {
+                draw_glyph_run(out, &run, glyph_transform, brush);
+            }
+        }
+    }
+}
+
 /// R991 §5.41 §2 #6 — paint one retained [`Scene::TextGrid`] node: the
 /// cell-native terminal projection's GUI (Vello) glyph rasterisation.
 /// This is the deferred second half of the §5.41 cell-native axis —
@@ -1001,9 +1038,15 @@ fn stroke_hrule(
 ///   decorations ([`paint_decorations`], which span the glyph-run advance
 ///   at the font metric offset).
 ///
-/// `blink` (SGR 5, a timing attribute) and the
-/// [`GridCursor`](pinion_core::term_grid::GridCursor) are the remaining
-/// paint slices.
+/// R993 §5.41 paints the [`GridCursor`](pinion_core::term_grid::GridCursor)
+/// as an overlay on top of the cells (only when `visible` and within the
+/// buffer): **Block** inverts the cell (a fill in the cursor colour with the
+/// glyph redrawn in the cell background), **Bar** is a thin vertical beam at
+/// the leading edge, and **Underline** is a solid bottom bar drawn thicker
+/// than the SGR underline so the two read distinctly. The cursor colour is
+/// the cell's effective foreground (a dedicated colour is a deferred
+/// `GridCursor` field). `blink` (SGR 5, a timing attribute) and the TUI
+/// backend are the remaining paint slices.
 ///
 /// Font policy: the glyph size is the node metric's cell height and the
 /// family is requested as monospace. A proper `GenericFamily::Monospace`
@@ -1088,25 +1131,7 @@ fn paint_text_grid(
             // cache stays intact (the brush is still applied at draw time).
             if cell.width != CellWidth::Trailer && !cell.cluster.trim().is_empty() {
                 let glyph_transform = origin * Affine::translate((cx, cy));
-                let layout = if cell.attrs.bold || cell.attrs.italic {
-                    let mut styled = style.clone();
-                    if cell.attrs.bold {
-                        styled.font_weight = FontWeight::BOLD;
-                    }
-                    if cell.attrs.italic {
-                        styled.font_style = FontStyle::Italic;
-                    }
-                    cache.layout(&cell.cluster, &styled, None)
-                } else {
-                    cache.layout(&cell.cluster, &style, None)
-                };
-                for line in layout.lines() {
-                    for item in line.items() {
-                        if let PositionedLayoutItem::GlyphRun(run) = item {
-                            draw_glyph_run(out, &run, glyph_transform, fg_brush);
-                        }
-                    }
-                }
+                draw_cell_glyph(out, cache, &style, cell, glyph_transform, fg_brush);
             }
             // Pass 3 — underline / strikethrough rules spanning the full cell
             // (so adjacent attributed cells, and a wide head + trailer, form
@@ -1120,6 +1145,59 @@ fn paint_text_grid(
             if cell.attrs.strikethrough {
                 let y = cy + cell_h * 0.5;
                 stroke_hrule(out, origin, fg_brush, cx, cx + cell_w, y, rule_w);
+            }
+        }
+    }
+    // Cursor overlay (R993) — drawn after the cells so it sits on top, and
+    // inside the same clip layer. The producer reports the effective cursor
+    // (R975); only a visible cursor whose cell falls within the buffer paints
+    // (a position outside the buffer is a transient resize artefact, skipped).
+    let cursor = grid.cursor();
+    if cursor.visible && cursor.col < grid.cols() && cursor.row < grid.rows() {
+        let (cx, cy) = metric.cell_to_px(cursor.col, cursor.row);
+        let cur_cell = grid.cell(cursor.col, cursor.row);
+        // The cursor colour is the cell's effective (reverse-honoured)
+        // foreground — its ink colour — at full intensity (no dim: the cursor
+        // is a prominent UI accent, not faint text). A dedicated cursor colour
+        // is a deferred `GridCursor` field (R975 forward-compat note). An
+        // absent cell (resize) falls back to the palette default fg / bg.
+        let (fg_term, bg_term) = match cur_cell {
+            Some(c) if c.attrs.reverse => (c.bg, c.fg),
+            Some(c) => (c.fg, c.bg),
+            None => (TermColor::Default, TermColor::Default),
+        };
+        let cursor_color = to_peniko(palette.resolve(fg_term, ColorTarget::Foreground));
+        match cursor.shape {
+            CursorShape::Block => {
+                // Inverse block: fill the whole cell in the cursor colour, then
+                // redraw the glyph in the cell background so the character reads
+                // through (the conventional terminal block cursor).
+                let rect = KurboRect::new(cx, cy, cx + cell_w, cy + cell_h);
+                out.fill(Fill::NonZero, origin, cursor_color, None, &rect);
+                if let Some(c) = cur_cell {
+                    if c.width != CellWidth::Trailer
+                        && !c.cluster.trim().is_empty()
+                        && !c.attrs.hidden
+                    {
+                        let bg_brush = to_peniko(palette.resolve(bg_term, ColorTarget::Background));
+                        let glyph_transform = origin * Affine::translate((cx, cy));
+                        draw_cell_glyph(out, cache, &style, c, glyph_transform, bg_brush);
+                    }
+                }
+            }
+            CursorShape::Bar => {
+                // A thin vertical beam at the cell's leading edge.
+                let bar_w = (cell_w / 8.0).max(1.0);
+                let rect = KurboRect::new(cx, cy, cx + bar_w, cy + cell_h);
+                out.fill(Fill::NonZero, origin, cursor_color, None, &rect);
+            }
+            CursorShape::Underline => {
+                // A solid bar along the cell bottom — deliberately thicker than
+                // the SGR underline rule so the cursor reads distinctly from an
+                // underlined character.
+                let uc_h = (cell_h / 8.0).max(2.0);
+                let rect = KurboRect::new(cx, cy + cell_h - uc_h, cx + cell_w, cy + cell_h);
+                out.fill(Fill::NonZero, origin, cursor_color, None, &rect);
             }
         }
     }
