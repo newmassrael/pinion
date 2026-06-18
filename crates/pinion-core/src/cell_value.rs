@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::external::{InterveneError, IntrospectValue};
 use crate::style::Color;
+use crate::widgets::grid_sort::FilterOp;
 
 /// A typed editable-cell value. `Signal<T>` requires `Serialize +
 /// DeserializeOwned` (the R36 §5.31 hot-reload bound), so the model derives
@@ -196,6 +197,37 @@ impl CellValue {
             CellValue::Text(s) => s == value,
             CellValue::Choice { selected, options } => selected_label(*selected, options) == value,
             CellValue::Color(c) => Color::from_hex(value.trim()).is_some_and(|v| v == *c),
+        }
+    }
+
+    /// R997 §5.40 — whether this cell satisfies the [`FilterOp`] facet
+    /// `self op value`: the typed-grid peer of the at-scale `GridSortState`'s
+    /// text-based [`FilterOp::matches`](crate::widgets::grid_sort::FilterOp::matches).
+    /// The wire VOCAB (the op + value string) is shared across grids; the
+    /// COMPARISON is this typed consumer's policy (the same R778-family ruling
+    /// [`matches_filter`](Self::matches_filter) / [`sort_cmp`](Self::sort_cmp)
+    /// follow): `Eq` / `Ne` reuse the type-aware `matches_filter` (so `"024"`
+    /// still matches `Int(24)`); the ordered ops (`Lt`..`Ge`) parse `value`
+    /// into this cell's own kind via [`CellKind::parse`] and compare through
+    /// the typed `sort_cmp` (a numeric / text column orders by number / text).
+    /// A kind [`CellKind::parse`] never text-parses (a `Bool` toggles, a
+    /// `Choice` popup-selects), or any unparseable numeric operand, matches
+    /// nothing for an ordered op — the honest result; such columns filter by
+    /// `Eq`, not `<`. `Contains` is a substring test over the
+    /// [`display`](Self::display) label — the one op that is inherently textual.
+    #[must_use]
+    pub fn matches_facet(&self, op: FilterOp, value: &str) -> bool {
+        match op {
+            FilterOp::Eq => self.matches_filter(value),
+            FilterOp::Ne => !self.matches_filter(value),
+            FilterOp::Contains => self.display().contains(value),
+            FilterOp::Lt | FilterOp::Le | FilterOp::Gt | FilterOp::Ge => {
+                // The typed comparator (sort_cmp against a same-kind operand);
+                // the op-vs-Ordering truth table is shared with the text path.
+                self.kind()
+                    .parse(value)
+                    .is_some_and(|other| op.ordering_matches(self.sort_cmp(&other)))
+            }
         }
     }
 
@@ -652,5 +684,32 @@ mod tests {
         let color = CellValue::Color(Color::rgb(255, 128, 0));
         assert!(color.matches_filter("#FF8000"), "hex parse folds case");
         assert!(!color.matches_filter("#000000"));
+    }
+
+    #[test]
+    fn r997_matches_facet_honors_op_typed() {
+        // Eq / Ne reuse the type-aware equality (so "024" still matches Int 24).
+        assert!(CellValue::Int(24).matches_facet(FilterOp::Eq, " 024 "));
+        assert!(CellValue::Int(24).matches_facet(FilterOp::Ne, "25"));
+        assert!(!CellValue::Int(24).matches_facet(FilterOp::Ne, "24"));
+        // Ordered ops compare through the TYPED sort_cmp, not lexicographic
+        // text (a Float 9 is < 12, where "9" > "12" by string order).
+        assert!(CellValue::Float(9.0).matches_facet(FilterOp::Lt, "12"));
+        assert!(!CellValue::Float(12.0).matches_facet(FilterOp::Lt, "9"));
+        assert!(CellValue::Int(20).matches_facet(FilterOp::Ge, "20"));
+        assert!(CellValue::Int(30).matches_facet(FilterOp::Ge, "20"));
+        assert!(!CellValue::Int(9).matches_facet(FilterOp::Ge, "20"));
+        assert!(CellValue::Int(5).matches_facet(FilterOp::Le, "5"));
+        assert!(CellValue::Int(30).matches_facet(FilterOp::Gt, "20"));
+        // An ordered op parses the operand into the cell's kind; a Bool is
+        // never text-parsed (it toggles), so `<` on a Bool matches nothing —
+        // bools filter by Eq ("flag = true"), not by `<`.
+        assert!(!CellValue::Bool(false).matches_facet(FilterOp::Lt, "true"));
+        assert!(CellValue::Bool(false).matches_facet(FilterOp::Eq, "false"));
+        // An ordered op with an unparseable numeric operand matches nothing.
+        assert!(!CellValue::Int(24).matches_facet(FilterOp::Gt, "abc"));
+        // Contains is a substring over the display label (the one textual op).
+        assert!(CellValue::Text("mesh_lod0".into()).matches_facet(FilterOp::Contains, "lod"));
+        assert!(!CellValue::Text("mesh".into()).matches_facet(FilterOp::Contains, "xyz"));
     }
 }

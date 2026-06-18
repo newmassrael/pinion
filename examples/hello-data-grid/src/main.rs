@@ -149,9 +149,11 @@
 //! ## Known gaps (honest carry, shared with R836)
 //!
 //! - Native checkbox / textbox cell roles (per-cell a11y role) — additive.
-//! - Multi-facet / substring column filter — one fixed-string column facet
-//!   here (the cross-grid `GridFilter` shape); multi-facet is a later
-//!   additive axis, exactly as the read-only `GridSortState` filter defers it.
+//! - R997 — the cross-grid `GridFilter` is now a multi-facet conjunction with
+//!   per-facet ops (`=`/`!=`/`~`/`<`/`<=`/`>`/`>=`); this typed grid honours
+//!   every op against its TYPED cells via `CellValue::matches_facet` (the
+//!   wire vocab is shared, the comparison is the consumer's policy). The
+//!   reference multi-facet UI is `hello-grid-multifilter` (the at-scale grid).
 //! - Frozen panes on the *editable* grid are a no-op at this size (the columns
 //!   fit the window, so there is no horizontal scroll to pin against) —
 //!   deferred until a wide editable grid needs it.
@@ -571,7 +573,15 @@ fn current_order(
         |col, a, b| model[idx(a, col)].sort_cmp(&model[idx(b, col)]),
         |row| {
             filter.is_none_or(|f| {
-                model.get(idx(row, f.col)).is_some_and(|c| c.matches_filter(&f.value))
+                // R997 — every facet in the conjunction must hold, each
+                // evaluated against this TYPED cell via the op-aware
+                // `matches_facet` (the typed-grid policy; the at-scale
+                // `GridSortState` evaluates the same wire facets as text).
+                f.facets.iter().all(|facet| {
+                    model
+                        .get(idx(row, facet.col))
+                        .is_some_and(|c| c.matches_facet(facet.op, &facet.value))
+                })
             })
         },
     )
@@ -1400,12 +1410,13 @@ impl DataGridExternal {
     }
 
     /// R891 — apply a column filter (`None` clears) and re-anchor the cursor
-    /// into the resulting view. An out-of-range column clamps to unfiltered
-    /// (mirrors [`GridSortState::set_filter`]). Returns the resulting
+    /// into the resulting view. R997 — facets on an out-of-range column are
+    /// dropped, and a conjunction left empty clamps to unfiltered (mirrors
+    /// [`GridSortState::set_filter`]). Returns the resulting
     /// [`view_len`](Self::view_len). The one mutation path the wire's
     /// `intervene "filter"` and `invoke "set_filter"` share.
     fn set_filter(&self, filter: Option<GridFilter>) -> usize {
-        let filter = filter.filter(|f| f.col < NCOLS);
+        let filter = filter.and_then(|f| f.clamped_to_col_count(NCOLS));
         let prior_vis = self.cursor_prior_vis();
         self.filter.set(filter);
         self.reanchor(prior_vis);

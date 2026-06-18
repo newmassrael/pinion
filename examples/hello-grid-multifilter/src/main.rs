@@ -1,48 +1,50 @@
-//! `hello-grid-filter` — R783 §5.40 **data-grid filter at scale**.
+//! `hello-grid-multifilter` — R997 §5.40 **multi-facet predicate filter at scale**.
 //!
-//! R778 (`hello-grid-sort`) lands clickable numeric-aware **sort** over a
-//! 10 000-row virtualized data-grid. The 1-D `hello-virtual-sort` pairs its
-//! sort with a **filter** facet; the grid's `GridSortState` doc flagged the
-//! same filter axis as the additive follow-up. This binding closes it: an
-//! AI-first **column filter** (`invoke "set_filter" "<col>=<value>"`) that
-//! shrinks the view to the matching rows, composing orthogonally with the
-//! clickable sort headers and the data-indexed selection:
+//! R783 (`hello-grid-filter`) lands a **single** exact-match column filter over
+//! a 10 000-row virtualized data-grid (`set_filter "2=Active"`). A
+//! Wireshark / dlt-class viewer needs more: a **conjunction** of column
+//! predicates with comparison operators — *Name contains "Alpha" AND Score ≥
+//! 500 AND Status = Active*. This binding closes that Model/View-at-scale
+//! campaign slice: the R783 `GridFilter` is now a list of
+//! [`ColumnFacet`]s (col + [`FilterOp`] + value) combined with logical AND, and the
+//! AI-first wire carries the whole conjunction in one string —
+//! `set_filter "0~Alpha&1>=500&2=Active"`:
 //!
-//! * **filter** — the R783 [`GridSortState`] filter axis (a single-facet
-//!   column filter, the grid peer of `ViewOrderState`'s category facet). It
-//!   keeps only rows whose Status column equals the active value; `view_len`
-//!   shrinks. Filter is driven by the AI-first `invoke "set_filter"` (no
-//!   clickable chip — exactly as `hello-virtual-sort` drives its filter).
+//! * **filter** — the R997 [`GridSortState`] filter axis, now multi-facet. A
+//!   row passes iff it satisfies *every* facet; the ordered ops (`<`..`>=`) are
+//!   numeric-aware (the same `cell_cmp` SSOT the sort uses, so `500 ≤ 999` is a
+//!   number comparison, not `"500" ≤ "999"` text). `view_len` shrinks to the
+//!   survivors. Filter is RPC-driven (no clickable chip — exactly as
+//!   `hello-grid-filter`); the headers stay clickable for sort.
 //! * **sort** — the R778 [`GridSortExternal`]; a clicked column header
 //!   (`vsort#h<col>`) cycles that column's sort over the **filtered** rows
-//!   (filter-then-sort composes).
-//! * **selection** — the R746 [`VirtualSelectExternal`], a **source**
-//!   data-row index; a cell click selects that row, and it stays selected
-//!   even when a filter scrolls it out of the view (selection ⊥ filter ⊥
-//!   ordering, all three data-indexed — the Model/View separation).
+//!   (filter-then-sort composes, unchanged from R783).
+//! * **selection** — the R746 [`VirtualSelectExternal`], a **source** data-row
+//!   index; selection ⊥ filter ⊥ ordering, all three data-indexed (the
+//!   Model/View separation), so a selected row stays selected even when the
+//!   conjunction scrolls it out of the view.
 //!
-//! The round adds no new windowing substrate: the body windows over the
-//! shared `order` permutation, which is now `filter`-then-`sort`.
+//! The round adds no new windowing substrate: the body windows over the shared
+//! `order` permutation, which is now `multi-facet-filter`-then-`sort`.
 //!
 //! ## The AI-first witness (§2 #7 scene-as-data)
 //!
-//! `scene/invoke` `set_filter("2=Active")` returns the new `view_len`
-//! (~3 333 of 10 000); `query("view_len")` confirms it; the rendered window
-//! holds only Status=Active rows; and `cycle_sort(1)` then orders those
-//! survivors by numeric Score. Clearing the filter (`set_filter` Null)
-//! restores the full 10 000. Pure data, no pixels (see
-//! `tools/r783_grid_filter.py`).
+//! `scene/invoke` `set_filter("0~Alpha&1>=500&2=Active")` returns the new
+//! `view_len`; `query("view_len")` confirms it; every rendered row's Name
+//! contains "Alpha", Score ≥ 500, and Status = Active. Relaxing a facet
+//! (`set_filter "0~Alpha&2=Active"`) grows the view; clearing it
+//! (`set_filter` Null) restores the full 10 000. Pure data, no pixels (see
+//! `tools/demos/r997_grid_multifilter.py`).
 //!
 //! ## a11y
 //!
-//! WAI-ARIA virtualized `grid` over the *current filtered + sorted order*:
-//! one `row` per windowed visual position with `aria-posinset` = visual
-//! position and `aria-selected = (source == selected)`, a `gridcell` per
-//! column tagged by **source** id, under a frozen header row whose active
-//! column carries `aria-sort`. The filter + sort permutation breaks the
-//! identity mapping the lifted `windowed_grid_nodes_selected` assumes, so the
-//! tree is built inline (R776's view-order-permutation carve-out, shared with
-//! `hello-grid-sort`).
+//! WAI-ARIA virtualized `grid` over the *current filtered + sorted order*: one
+//! `row` per windowed visual position with `aria-posinset` = visual position
+//! and `aria-selected = (source == selected)`, a `gridcell` per column tagged
+//! by **source** id, under a frozen header row whose active column carries
+//! `aria-sort`. The conjunction + sort permutation breaks the identity mapping
+//! the lifted `windowed_grid_nodes_sorted` assumes, so the tree is built inline
+//! (the view-order-permutation carve-out shared with `hello-grid-filter`).
 
 use pinion_a11y::{windowed_grid_nodes_sorted, AccessNode, WidgetA11y};
 use pinion_core::external::External;
@@ -64,7 +66,7 @@ use pinion_widget_paint::table::{view_virtual_table, GridScroll, TableStyle, Vir
 use std::rc::Rc;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
-vello_renderer_impl!(HelloGridFilterRenderer, HelloGridFilterRendererError);
+vello_renderer_impl!(HelloGridMultiFilterRenderer, HelloGridMultiFilterRendererError);
 
 /// Initial window size — freely resizable; the grid body re-windows on every
 /// `Resized` event. Wide enough that `NCOLS × COL_W` fits.
@@ -85,8 +87,13 @@ const OVERSCAN: usize = 3;
 const STATUS_H: u32 = 40;
 /// Column header labels.
 const HEADERS: [&str; NCOLS] = ["Name", "Score", "Status"];
-/// The Status column index — the categorical column the filter facet matches
-/// (the filter is RPC-driven, so this is referenced only by the unit tests).
+/// The Name column index — the `~` (substring) facet column.
+#[cfg(test)]
+const NAME_COL: usize = 0;
+/// The Score column index — the numeric `>=` facet column.
+#[cfg(test)]
+const SCORE_COL: usize = 1;
+/// The Status column index — the `=` (exact category) facet column.
 #[cfg(test)]
 const STATUS_COL: usize = 2;
 /// Paint-root + a11y `grid` tag, and the [`VirtualSelectExternal`] anchor
@@ -94,11 +101,11 @@ const STATUS_COL: usize = 2;
 const GRID_TAG: &str = "vtbl";
 /// The [`GridSortExternal`] anchor + the `use_grid_sort` cache key: clicked
 /// column headers (`vsort#h<col>`) route here, and `invoke "set_filter"`
-/// drives the filter facet.
+/// drives the multi-facet conjunction.
 const SORT_TAG: &str = "vsort";
 const SCROLL_KEY: &str = "vtbl_scroll";
-/// R784 — outer horizontal scroll `ScrollState` cache key (columns fit
-/// the window here, so `max_x` stays 0 — wiring present for parity).
+/// Outer horizontal scroll `ScrollState` cache key (columns fit the window
+/// here, so `max_x` stays 0 — wiring present for parity).
 const H_SCROLL_KEY: &str = "vtbl_hscroll";
 const STATUS_TAG: &str = "vtbl_status";
 
@@ -118,15 +125,17 @@ fn table_style() -> TableStyle {
 }
 
 /// The Score column value for data row `id`: a non-monotonic pseudo-random
-/// number with varying digit-length, so a numeric-aware sort over the filtered
-/// survivors visibly differs from a lexicographic one.
+/// number in `0..1000`, so a numeric `>=` facet keeps a non-trivial subset and
+/// a numeric-aware sort over the survivors visibly differs from a lexicographic
+/// one.
 fn score(id: usize) -> usize {
-    (id * 7919) % 997
+    (id * 7919) % 1000
 }
 
-/// Synthetic cell texts for a data row. Column 0 (Name) is unique; column 1
-/// (Score) is numeric; column 2 (Status) is a cyclic category — the filter
-/// facet (each of Idle / Active / Done covers ~`N / 3` rows).
+/// Synthetic cell texts for a data row. Column 0 (Name) is `<Category><id>`
+/// (so a `~` substring facet on the category name keeps that category); column
+/// 1 (Score) is numeric (the `>=` facet column); column 2 (Status) is a cyclic
+/// category (the `=` facet column).
 fn row_cells(id: usize) -> Vec<String> {
     vec![
         format!("{}{id:04}", CATEGORIES[id % CATEGORIES.len()]),
@@ -144,8 +153,8 @@ fn use_grid_data() -> Rc<GridSortState> {
 }
 
 /// Status bar above the grid: a literal scene-as-data readout of the active
-/// filter, sort, and the resulting view size — `filter 2=Active · showing
-/// 3334 of 10000` after filtering, proving the view shrank.
+/// multi-facet filter, sort, and the resulting view size — e.g.
+/// `filter 0~Alpha&1>=500&2=Active · sort none · showing 432 of 10000`.
 fn status_bar(
     theme: &Theme,
     sort: Option<(usize, bool)>,
@@ -223,9 +232,9 @@ fn view(selected: Option<usize>, _frame: &Frame) -> Scene {
     )
 }
 
-struct GridFilterView;
+struct GridMultiFilterView;
 
-impl WidgetCore for GridFilterView {
+impl WidgetCore for GridMultiFilterView {
     /// The widget's projected state is the selected **source** index. Sort +
     /// filter are auxiliary reactive axes in the shared [`GridSortState`] —
     /// read in the view, not projected here (they repaint through their
@@ -241,8 +250,8 @@ impl WidgetCore for GridFilterView {
 
     /// Extra: the sort/filter proxy (a thin adapter over the **same** shared
     /// [`GridSortState`] the view reads via [`use_grid_data`]). Column-header
-    /// clicks cycle its sort; `invoke "set_filter"` drives its filter facet
-    /// (sort ⊥ filter ⊥ selection).
+    /// clicks cycle its sort; `invoke "set_filter"` drives its multi-facet
+    /// conjunction (sort ⊥ filter ⊥ selection).
     fn create_extra_externals() -> Vec<ExtraExternal> {
         vec![ExtraExternal::new(SORT_TAG, Box::new(GridSortExternal::new(use_grid_data())))]
     }
@@ -277,7 +286,7 @@ impl WidgetCore for GridFilterView {
     }
 
     fn title() -> &'static str {
-        "pinion hello-grid-filter (R783 §5.40 data-grid filter at scale)"
+        "pinion hello-grid-multifilter (R997 §5.40 multi-facet predicate filter)"
     }
 
     fn fmt_state_log(state: &Option<usize>) -> String {
@@ -288,10 +297,10 @@ impl WidgetCore for GridFilterView {
     }
 }
 
-impl WidgetA11y for GridFilterView {
+impl WidgetA11y for GridMultiFilterView {
     /// WAI-ARIA virtualized `grid` over the current `(filter, sort)` order via
-    /// the R783-lifted [`windowed_grid_nodes_sorted`] (the permuted-grid peer,
-    /// shared with `hello-grid-sort`): the filter + sort permutation makes
+    /// the [`windowed_grid_nodes_sorted`] permuted-grid peer (shared with
+    /// `hello-grid-filter`): the conjunction + sort permutation makes
     /// `posinset` the visual position and tags/selects rows by source id, and
     /// the grid `aria-setsize` is the filtered view length.
     fn access_node(selected: &Option<usize>, _focused: Option<&str>) -> Vec<AccessNode> {
@@ -303,7 +312,7 @@ impl WidgetA11y for GridFilterView {
         let window = compute_visible_range(scroll.offset_y(), measured_h, order.len(), ROW_H, OVERSCAN);
         windowed_grid_nodes_sorted(
             GRID_TAG,
-            "Filterable data grid",
+            "Multi-facet filterable data grid",
             &HEADERS,
             order.as_slice(),
             sort,
@@ -313,8 +322,8 @@ impl WidgetA11y for GridFilterView {
     }
 }
 
-impl WidgetView for GridFilterView {
-    type Renderer = HelloGridFilterRenderer;
+impl WidgetView for GridMultiFilterView {
+    type Renderer = HelloGridMultiFilterRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
         pinion_shell::SizeStrategy::Fixed {
@@ -325,46 +334,83 @@ impl WidgetView for GridFilterView {
 }
 
 fn main() {
-    pinion_shell::run::<GridFilterView>();
+    pinion_shell::run::<GridMultiFilterView>();
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_core::widgets::grid_sort::{ColumnFacet, FilterOp};
     use pinion_core::Owner;
 
-    // The filter transition + filter-then-sort composition + RPC are
-    // unit-tested in `pinion_core::widgets::grid_sort`; these cover the binding
-    // wiring (filtered body windows over the view-len, a11y setsize tracks the
-    // filtered count). End-to-end RPC drive is covered by
-    // `tools/r783_grid_filter.py`.
+    // The facet ops, conjunction, and wire round-trip are unit-tested in
+    // `pinion_core::widgets::grid_sort`; these cover the binding's data model
+    // (the synthetic rows satisfy the conjunction the way the painted window
+    // and the a11y setsize report). End-to-end RPC drive is covered by
+    // `tools/demos/r997_grid_multifilter.py`.
 
-    fn active_rows_in_view(order: &[usize]) -> bool {
-        order.iter().all(|&id| row_cells(id)[STATUS_COL] == "Active")
+    /// The demo conjunction: Name contains "Alpha" AND Score >= 500 AND
+    /// Status == Active.
+    fn demo_filter() -> GridFilter {
+        GridFilter::all(vec![
+            ColumnFacet::new(NAME_COL, FilterOp::Contains, "Alpha"),
+            ColumnFacet::new(SCORE_COL, FilterOp::Ge, "500"),
+            ColumnFacet::new(STATUS_COL, FilterOp::Eq, "Active"),
+        ])
+    }
+
+    /// Whether data row `id` satisfies the demo conjunction, computed
+    /// independently of the proxy (the test oracle).
+    fn satisfies_demo(id: usize) -> bool {
+        let cells = row_cells(id);
+        cells[NAME_COL].contains("Alpha") && score(id) >= 500 && cells[STATUS_COL] == "Active"
     }
 
     #[test]
-    fn filter_shrinks_the_view_to_matching_status() {
+    fn multi_facet_filter_keeps_only_rows_satisfying_all_facets() {
         Owner::new().run(|| {
             let grid = use_grid_data();
             assert_eq!(grid.view_len(), N, "unfiltered view is the full dataset");
-            let kept =
-                grid.set_filter(Some(GridFilter::eq(STATUS_COL, "Active")));
-            assert!(kept > 0 && kept < N, "filter keeps a strict subset, got {kept}");
+            let kept = grid.set_filter(Some(demo_filter()));
+            assert!(kept > 0 && kept < N, "the conjunction keeps a strict subset, got {kept}");
             let order = grid.order();
             assert_eq!(order.len(), kept, "view len equals the order length");
-            assert!(active_rows_in_view(&order), "every row in the view is Status=Active");
+            for &id in order.iter() {
+                assert!(satisfies_demo(id), "row {id} satisfies every facet");
+            }
+            // The survivor count equals the independently-computed oracle.
+            let oracle = (0..N).filter(|&id| satisfies_demo(id)).count();
+            assert_eq!(kept, oracle, "every satisfying row is kept, no extras");
         });
     }
 
     #[test]
-    fn filter_then_sort_orders_only_the_survivors() {
+    fn relaxing_a_facet_grows_the_view() {
         Owner::new().run(|| {
             let grid = use_grid_data();
-            grid.set_filter(Some(GridFilter::eq(STATUS_COL, "Active")));
-            grid.set_sort(Some((1, true))); // Score ascending over the filtered rows
+            let strict = grid.set_filter(Some(demo_filter()));
+            // Drop the numeric `Score >= 500` facet: a superset survives.
+            let relaxed = grid.set_filter(Some(GridFilter::all(vec![
+                ColumnFacet::new(NAME_COL, FilterOp::Contains, "Alpha"),
+                ColumnFacet::new(STATUS_COL, FilterOp::Eq, "Active"),
+            ])));
+            assert!(relaxed > strict, "relaxing a facet grows the view: {relaxed} > {strict}");
+            // A back-compat single Eq facet ("2=Active") is the widest of the three.
+            let single = grid.set_filter(Some(GridFilter::eq(STATUS_COL, "Active")));
+            assert!(single >= relaxed, "fewer facets keep at least as many rows");
+        });
+    }
+
+    #[test]
+    fn multi_facet_filter_composes_with_sort() {
+        Owner::new().run(|| {
+            let grid = use_grid_data();
+            grid.set_filter(Some(demo_filter()));
+            grid.set_sort(Some((SCORE_COL, true))); // numeric Score ascending over survivors
             let order = grid.order();
-            assert!(active_rows_in_view(&order), "survivors are still all Active after sort");
+            for &id in order.iter() {
+                assert!(satisfies_demo(id), "survivors still satisfy the conjunction after sort");
+            }
             for pair in order.windows(2) {
                 assert!(
                     score(pair[0]) <= score(pair[1]),
@@ -383,9 +429,9 @@ mod tests {
             let scroll = use_scroll_state(SCROLL_KEY);
             scroll.set_measured_viewport(WIN_W, 384);
             scroll.scroll_to(0, 0);
-            let full = GridFilterView::access_node(&None, None)[0].size_of_set;
-            grid.set_filter(Some(GridFilter::eq(STATUS_COL, "Active")));
-            let filtered = GridFilterView::access_node(&None, None)[0].size_of_set;
+            let full = GridMultiFilterView::access_node(&None, None)[0].size_of_set;
+            grid.set_filter(Some(demo_filter()));
+            let filtered = GridMultiFilterView::access_node(&None, None)[0].size_of_set;
             (full, filtered)
         });
         assert_eq!(full, Some(u32::try_from(N).unwrap()), "unfiltered grid setsize = N");

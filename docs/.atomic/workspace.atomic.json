@@ -46247,6 +46247,102 @@
         "max_scroll_offset is now the scroll-bound SSOT; future bound writers use it, not inline arithmetic"
       ]
     },
+    "R997": {
+      "decision_summary": "Model-View at-scale campaign slice 2: generalize the data-grid GridFilter from a single exact-match facet to a multi-facet conjunction (AND) of per-column predicates with ops (Eq/Ne/Contains/Lt/Le/Gt/Ge), numeric-aware via the cell_cmp/sort_cmp SSOTs. The op-vs-Ordering truth table (FilterOp::ordering_matches) and the column-count clamp (GridFilter::clamped_to_col_count) are lifted SSOTs shared by the at-scale text proxy (GridSortState) and the typed editable grid (CellValue::matches_facet) - the wire vocab is shared, the comparison is the consumer's policy (R778 ruling). New hello-grid-multifilter reference example + RPC demo.",
+      "changes_bullets": [
+        "grid_sort.rs: GridFilter generalized from a single exact-match facet",
+        "({col,value}) to a conjunction (Vec<ColumnFacet>) ANDed together. New",
+        "FilterOp{Eq,Ne,Contains,Lt,Le,Gt,Ge} (ordered ops numeric-aware via the",
+        "cell_cmp SSOT); ColumnFacet{col,op,value} with to_wire/from_wire; wire form",
+        "<col><op><value> joined by '&' (back-compat: \"2=Active\" = one Eq facet).",
+        "GridFilter::eq/single/all constructors + matches(|col| &str). passes_filter",
+        "+ set_filter (drops phantom-col facets) updated; grid_filter_str/_from_str",
+        "generalized.",
+        "cell_value.rs: CellValue::matches_facet(op,value) — the typed-grid op-aware",
+        "peer of matches_filter (Eq/Ne reuse type equality; ordered ops parse the",
+        "operand via CellKind::parse + compare through sort_cmp; Contains is a",
+        "substring over display()). The wire vocab is shared, the comparison is the",
+        "consumer's policy (R778 ruling).",
+        "hello-data-grid + hello-grid-filter migrated to GridFilter::eq /",
+        "matches_facet; behaviour identical for existing Eq-only flows.",
+        "New hello-grid-multifilter example (10k-row grid, AI-first multi-facet",
+        "conjunction over RPC) + tools/demos/r997_grid_multifilter.py (multi-facet",
+        "shrink, relax-a-facet superset, numeric-aware >=, ~ substring, filter-then-",
+        "sort, selection-survives-filter, phantom-facet drop)."
+      ],
+      "verification_bullets": [
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): 0 warnings.",
+        "cargo test --workspace -j2: 7081 passed / 0 failed (grid_sort filter 24 ok incl",
+        "filter_op truth-table + multi-facet conjunction + wire round-trip + phantom-facet",
+        "drop; cell_value matches_facet typed-op ok; hello-grid-multifilter 4 ok).",
+        "tools/demos/r997_grid_multifilter.py: PASS deterministic (52 assertions; multi-facet",
+        "shrink, relax-a-facet superset, numeric-aware >= partition, ~ substring, filter-then-",
+        "sort, selection-survives-filter, phantom-facet drop, all-phantom clamp).",
+        "Migrated demos PASS unchanged: r783_grid_filter.py, r891_grid_filter_editable.py.",
+        "mnemosyne validate-workspace: T1 reject=0 (baseline entries=979 -> 980, no new orphan)."
+      ],
+      "impact_refs": [
+        "5.40",
+        "5.38",
+        "5.27"
+      ],
+      "carry_forward_bullets": [
+        "1-D ViewOrderState (view_order.rs) keeps its single Option<usize> category",
+        "facet; multi-facet predicate over the list proxy is a smaller follow-up",
+        "(its data model holds one key + one category column, not a cell grid, so",
+        "the grid is the natural home for the conjunction). Campaign slice, not debt.",
+        "hello-data-grid typed Contains matches over display() (the visible label);",
+        "ordered ops on Bool/Choice match nothing (those kinds never text-parse =",
+        "filter by Eq). Documented in CellValue::matches_facet."
+      ],
+      "publishable_decision_summary": "Model-View at-scale campaign slice 2: generalize the data-grid GridFilter from a single exact-match facet to a multi-facet conjunction (AND) of per-column predicates with ops (Eq/Ne/Contains/Lt/Le/Gt/Ge), numeric-aware via the cell_cmp/sort_cmp SSOTs. The op-vs-Ordering truth table (FilterOp::ordering_matches) and the column-count clamp (GridFilter::clamped_to_col_count) are lifted SSOTs shared by the at-scale text proxy (GridSortState) and the typed editable grid (CellValue::matches_facet) - the wire vocab is shared, the comparison is the consumer's policy (R778 ruling). New hello-grid-multifilter reference example + RPC demo.",
+      "publishable_changes_bullets": [
+        "grid_sort.rs: GridFilter generalized from a single exact-match facet",
+        "({col,value}) to a conjunction (Vec<ColumnFacet>) ANDed together. New",
+        "FilterOp{Eq,Ne,Contains,Lt,Le,Gt,Ge} (ordered ops numeric-aware via the",
+        "cell_cmp SSOT); ColumnFacet{col,op,value} with to_wire/from_wire; wire form",
+        "<col><op><value> joined by '&' (back-compat: \"2=Active\" = one Eq facet).",
+        "GridFilter::eq/single/all constructors + matches(|col| &str). passes_filter",
+        "+ set_filter (drops phantom-col facets) updated; grid_filter_str/_from_str",
+        "generalized.",
+        "cell_value.rs: CellValue::matches_facet(op,value) — the typed-grid op-aware",
+        "peer of matches_filter (Eq/Ne reuse type equality; ordered ops parse the",
+        "operand via CellKind::parse + compare through sort_cmp; Contains is a",
+        "substring over display()). The wire vocab is shared, the comparison is the",
+        "consumer's policy (R778 ruling).",
+        "hello-data-grid + hello-grid-filter migrated to GridFilter::eq /",
+        "matches_facet; behaviour identical for existing Eq-only flows.",
+        "New hello-grid-multifilter example (10k-row grid, AI-first multi-facet",
+        "conjunction over RPC) + tools/demos/r997_grid_multifilter.py (multi-facet",
+        "shrink, relax-a-facet superset, numeric-aware >=, ~ substring, filter-then-",
+        "sort, selection-survives-filter, phantom-facet drop)."
+      ],
+      "publishable_verification_bullets": [
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): 0 warnings.",
+        "cargo test --workspace -j2: 7081 passed / 0 failed (grid_sort filter 24 ok incl",
+        "filter_op truth-table + multi-facet conjunction + wire round-trip + phantom-facet",
+        "drop; cell_value matches_facet typed-op ok; hello-grid-multifilter 4 ok).",
+        "tools/demos/r997_grid_multifilter.py: PASS deterministic (52 assertions; multi-facet",
+        "shrink, relax-a-facet superset, numeric-aware >= partition, ~ substring, filter-then-",
+        "sort, selection-survives-filter, phantom-facet drop, all-phantom clamp).",
+        "Migrated demos PASS unchanged: r783_grid_filter.py, r891_grid_filter_editable.py.",
+        "mnemosyne validate-workspace: T1 reject=0 (baseline entries=979 -> 980, no new orphan)."
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "5.38",
+        "5.27"
+      ],
+      "publishable_carry_forward_bullets": [
+        "1-D ViewOrderState (view_order.rs) keeps its single Option<usize> category",
+        "facet; multi-facet predicate over the list proxy is a smaller follow-up",
+        "(its data model holds one key + one category column, not a cell grid, so",
+        "the grid is the natural home for the conjunction). Campaign slice, not debt.",
+        "hello-data-grid typed Contains matches over display() (the visible label);",
+        "ordered ops on Bool/Choice match nothing (those kinds never text-parse =",
+        "filter by Eq). Documented in CellValue::matches_facet."
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
