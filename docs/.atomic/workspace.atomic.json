@@ -8721,6 +8721,44 @@
         "per-window RepaintScope payload on ExternalRepaint still deferred to a multi-window live-data 2nd consumer (abstraction-needs-second-consumer)"
       ]
     },
+    "R1000.1": {
+      "decision_summary": "R1000.1: R999+R1000 session-review clearance (2 adversarial reviewers + self-grep) — stale AppEvent producer doc de-staled at root + pr3 as-built deltas",
+      "changes_bullets": [
+        "pinion-shell/lib.rs AppEvent doc: dropped the brittle enum-level producer enumeration (twice-stale — WindowsDirty R683, ExternalRepaint R999) and pointed to the per-variant docs as SSOT (root-cause de-stale, not a re-sync that resets the clock)",
+        "docs/pr3-external-data-seam.md: Status DRAFT->IMPLEMENTED + new section 0 as-built deltas (trait home = pinion-core not runtime; no RepaintScope, deferred; verification = core tests + data-path demo; ExternalRepaint->request_redraw handler arm is a one-liner not separately unit-tested)"
+      ],
+      "verification_bullets": [
+        "2 independent adversarial reviewers + self-grep: HIGH stale-AppEvent-producer-doc + MODERATE pr3 as-built divergence cleared; over-flags rejected with evidence (ProxyRepaintSink/IntentSink ISP split correct not a lift; paint/a11y one-frame desync = pre-existing R923 pattern not this round; changelogs + demo docstring honest)",
+        "no code/logic defects found (doc-only clearance); clippy --workspace --all-targets --features pinion-runtime/vello exit 0; validate-workspace T1=0",
+        "process note: review ran post-push (R999/R1000 already pushed) — clearance should precede push even when push is authorized"
+      ],
+      "impact_refs": [
+        "5.23",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "full windowed-host WidgetView binding in sprag = the genuine remaining feature (per-request-scene vs retained-WidgetView reconcile; hello-live-data is the template)",
+        "sprag Round 23 (on_dirty hook) committed-local NOT pushed; per-window RepaintScope deferred to a multi-window 2nd consumer"
+      ],
+      "publishable_decision_summary": "R1000.1: R999+R1000 session-review clearance (2 adversarial reviewers + self-grep) — stale AppEvent producer doc de-staled at root + pr3 as-built deltas",
+      "publishable_changes_bullets": [
+        "pinion-shell/lib.rs AppEvent doc: dropped the brittle enum-level producer enumeration (twice-stale — WindowsDirty R683, ExternalRepaint R999) and pointed to the per-variant docs as SSOT (root-cause de-stale, not a re-sync that resets the clock)",
+        "docs/pr3-external-data-seam.md: Status DRAFT->IMPLEMENTED + new section 0 as-built deltas (trait home = pinion-core not runtime; no RepaintScope, deferred; verification = core tests + data-path demo; ExternalRepaint->request_redraw handler arm is a one-liner not separately unit-tested)"
+      ],
+      "publishable_verification_bullets": [
+        "2 independent adversarial reviewers + self-grep: HIGH stale-AppEvent-producer-doc + MODERATE pr3 as-built divergence cleared; over-flags rejected with evidence (ProxyRepaintSink/IntentSink ISP split correct not a lift; paint/a11y one-frame desync = pre-existing R923 pattern not this round; changelogs + demo docstring honest)",
+        "no code/logic defects found (doc-only clearance); clippy --workspace --all-targets --features pinion-runtime/vello exit 0; validate-workspace T1=0",
+        "process note: review ran post-push (R999/R1000 already pushed) — clearance should precede push even when push is authorized"
+      ],
+      "publishable_impact_refs": [
+        "5.23",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "full windowed-host WidgetView binding in sprag = the genuine remaining feature (per-request-scene vs retained-WidgetView reconcile; hello-live-data is the template)",
+        "sprag Round 23 (on_dirty hook) committed-local NOT pushed; per-window RepaintScope deferred to a multi-window 2nd consumer"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

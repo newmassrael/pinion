@@ -85,11 +85,12 @@ pub use substrate::{AccessEmitDecision, FragmentCacheStats, ShellCore};
 
 /// Winit user-event variants that reach the UI thread out-of-band.
 ///
-/// The shell's [`AppShell::user_event`] handler is the sole consumer;
-/// producers are the stdin reader thread ([`AppEvent::RpcRequest`]),
-/// the `accesskit_winit` adapter ([`AppEvent::AccessKit`], R51.62
-/// §5.40 wiring), and the [`ProxyIntentSink`] backing the §5.23
-/// `CommandExecutor` ([`AppEvent::IntentArrived`], R51.159 wiring).
+/// The shell's [`AppShell::user_event`] handler is the sole consumer. Each
+/// variant's own doc below names its producer — those per-variant docs are the
+/// SSOT. An enum-level producer enumeration is intentionally NOT kept here: it
+/// twice went stale as variants were added (`WindowsDirty` R683,
+/// `ExternalRepaint` R999) against the per-variant docs that already name each
+/// producer, so the duplicated list was dropped rather than re-synced.
 ///
 /// `Clone` is intentionally absent: `accesskit_winit::Event` is not
 /// `Clone`, and the shell never duplicates a user event in-flight.

@@ -1,9 +1,11 @@
 # PR-3 spec round — pinion-shell external-async-data → repaint seam
 
-> **Status: DRAFT proposal for ratification.** Spec-level change to
-> `pinion-shell` + a new `pinion-runtime` boundary trait. Per pinion's hard
-> invariants this is a *"STOP and propose a new spec round"* item, not ad-hoc
-> implementation. Seeded by the sprag→pinion handoff's PR-3 (2026-06-18).
+> **Status: IMPLEMENTED — R999 (`af1f91d`) + R1000 (`23ca567`), pushed.** This
+> began as a DRAFT proposal (§3–§5 below describe the proposed shape); it was
+> ratified and built. **§0 records the as-built deltas from the proposal — read
+> §0 first; where §3–§5 disagree with §0, §0 (and the R999/R1000 changelog) is
+> authoritative.** Spec-level change to `pinion-shell` + a new boundary trait.
+> Seeded by the sprag→pinion handoff's PR-3 (2026-06-18).
 >
 > **Revision note (post adversarial audit).** An earlier draft of this doc
 > proposed `run_with_external` + `use_boot`/`BootData` + a raw
@@ -11,6 +13,44 @@
 > textbook/SSOT grounds** — see §A. The design below extends pinion's existing
 > §6.3 async boundary substrate by exactly one edge instead of building a
 > parallel seam.
+
+## 0. As-built (R999 `af1f91d` + R1000 `23ca567`) — deltas from the proposal
+
+Three places where what shipped intentionally diverges from §3–§5 (so a reader
+treating this as the spec-of-record is not misled):
+
+1. **Trait home: `pinion-core/src/reactive/repaint.rs`, not `pinion-runtime/src/command/sink.rs`.**
+   §3.1/§5 Q3 guessed the `IntentSink` neighbourhood. During implementation the
+   dependency layering decided it: examples + bindings depend on `pinion-core`
+   (not `pinion-runtime`), and `use_repaint_sink` belongs beside its sibling
+   `use_local_task_pump` in the reactive layer. `RepaintSink` therefore lives in
+   `pinion-core`; the shell's `ProxyRepaintSink` impl stays in
+   `pinion-shell/src/executor.rs` (next to `ProxyIntentSink`).
+
+2. **No `RepaintScope` — `fn request_repaint(&self)` and payload-free `AppEvent::ExternalRepaint`.**
+   §3.1 proposed `request_repaint(&self, scope: RepaintScope)` +
+   `ExternalRepaint(Option<window-id>)`. Shipped: no scope, no payload — the
+   handler arms a binding-wide `request_redraw`. Per-window scope is deferred to
+   a multi-window live-data 2nd consumer (`abstraction-needs-second-consumer` /
+   YAGNI), an additive change when one appears.
+
+3. **Verification (replaces §6's unchecked criteria + its "deterministic write→repaint test").**
+   - `RepaintSink` mechanism: 5 deterministic `pinion-core` tests
+     (`reactive/repaint.rs`), incl. a real cross-thread `request_repaint` via
+     `std::thread::spawn` + `join`.
+   - End-to-end data path: R1000 `hello-live-data` (8 unit tests incl. a
+     cross-thread tick→append) + `tools/demos/r1000_live_data.py` under
+     `PINION_HIDDEN_WINDOW` (deterministic ×3). The demo proves the data edge
+     (off-thread write → shared buffer → painted scene); a `scene/snapshot`
+     re-renders, so it cannot isolate the autonomous wake.
+   - The `AppEvent::ExternalRepaint => request_redraw` handler arm is a
+     one-liner that is NOT separately unit-tested (a live `winit::EventLoop` is
+     impractical headless — the same reason `executor.rs` skips the
+     `ProxyIntentSink` smoke); it is exercised transitively by the demo.
+
+   Companion sprag wiring landed local (sprag `Round 23` `61d47f6`): the
+   `sprag-terminal` reader `on_dirty` hook. The full windowed-host `WidgetView`
+   binding (the §7 companion item) remains the genuine open feature.
 
 ## 1. Audit conclusion (verified against `27bc84a`)
 
