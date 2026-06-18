@@ -68,8 +68,8 @@ use pinion_core::{Color, CompositionEvent, Scene, WidgetStateName};
 use crate::coord::saturating_f32_to_u32;
 use pinion_text::{
     byte_offset_for_line_boundary, byte_offset_for_line_move, byte_offset_for_point,
-    caret_rect_for_byte_offset, selection_rects_for_range, visual_line_metrics, CaretRect,
-    LayoutCache, VisualLineMetric,
+    caret_rect_for_byte_offset, logical_line_span, selection_rects_for_range, visual_line_metrics,
+    CaretRect, LayoutCache, VisualLineMetric,
 };
 
 /// (R657 §5.16) Owner-cache key for the shared
@@ -678,7 +678,15 @@ pub fn view_field(
     } else {
         None
     };
-    let (caret_pixel_rect, selection_pixel, find_pixel, bracket_pixel, preedit_pixel, content_h) = {
+    let (
+        caret_pixel_rect,
+        selection_pixel,
+        find_pixel,
+        bracket_pixel,
+        preedit_pixel,
+        content_h,
+        current_line_band,
+    ) = {
         let mut cache = layout_cache.borrow_mut();
         let layout = cache.layout_with_runs(effective_text.as_str(), &text_style, &runs, max_width);
         #[allow(
@@ -745,6 +753,18 @@ pub fn view_field(
             let pre_h = saturating_f32_to_u32(start_rect.height).max(style.font_size_px);
             (start_x, pre_y, end_x.saturating_sub(start_x), pre_h)
         });
+        // R987 §5.22 §5.36 — when the current-line band is enabled, span the
+        // whole LOGICAL line: a soft-wrapped line's band covers every visual
+        // row (the VS Code / IntelliJ behaviour), not just the caret's. `None`
+        // keeps the paint gated; a metrics miss falls back to the caret's own
+        // row box (`caret.1` / `caret.2`). Computed here where `layout` + the
+        // caret `rect` are live, so the band shares the caret's shaping pass.
+        let current_line_band = (style.multi_line && style.current_line_alpha > 0).then(|| {
+            let metrics = visual_line_metrics(layout);
+            logical_line_span(&metrics, rect.y).map_or((caret.1, caret.2), |(top, height)| {
+                (saturating_f32_to_u32(top), saturating_f32_to_u32(height))
+            })
+        });
         (
             caret,
             selection,
@@ -752,6 +772,7 @@ pub fn view_field(
             bracket,
             preedit_p,
             saturating_f32_to_u32(layout.height()),
+            current_line_band,
         )
     };
     let (caret_layout_x, caret_layout_y, caret_box_height) = caret_pixel_rect;
@@ -858,15 +879,15 @@ pub fn view_field(
     // is one row, and an unset alpha keeps every existing field
     // byte-identical. The band spans the inner content width
     // (`field_w - 2 * field_pad`, the multi-line viewport the content
-    // Scroll clips to) at the caret's *visual* line: `caret_layout_y` /
-    // `caret_box_height` are the caret rect's own row box, so the band
-    // tracks the caret across soft-wrapped rows without a second shaping
-    // pass. Tagged via `current_line_band_tag` so the rendered rect is
-    // introspectable from a snapshot (the AI side reads which row is
-    // active).
-    if style.multi_line && style.current_line_alpha > 0 {
+    // Scroll clips to) across the caret's whole **logical** line (R987):
+    // `current_line_band` is the [`logical_line_span`] of the soft-wrapped
+    // line — every visual row, not just the caret's — so a wrapped line
+    // highlights fully (the VS Code / IntelliJ behaviour). Tagged via
+    // `current_line_band_tag` so the rendered rect is introspectable from a
+    // snapshot (the AI side reads which logical line is active).
+    if let Some((line_top, line_height)) = current_line_band {
         let inner_w = style.field_w.saturating_sub(2 * style.field_pad);
-        let band_top = inner_pad.saturating_add(caret_layout_y);
+        let band_top = inner_pad.saturating_add(line_top);
         field_children.push(Scene::Box(
             BoxNode::new(
                 Rect::default(),
@@ -875,7 +896,7 @@ pub fn view_field(
             .with_tag(current_line_band_tag(tag))
             .with_layout(
                 LayoutStyle::new()
-                    .with_size(Size::px(inner_w, caret_box_height))
+                    .with_size(Size::px(inner_w, line_height))
                     .with_absolute_position(inner_pad, band_top)
                     // R965.1 — the band is a passive decoration: `pointer_transparent`
                     // so a click on the current line falls through to the field's
@@ -1785,6 +1806,37 @@ mod tests {
             assert!(
                 find_box_by_tag(&scene, &current_line_band_tag(tag)).is_none(),
                 "a single-line field never paints the row band",
+            );
+        });
+    }
+
+    #[test]
+    fn r987_current_line_band_spans_the_whole_wrapped_logical_line() {
+        with_owner(|| {
+            let theme = Theme::light();
+            let tag = "ta_wrap_band";
+            // One long logical line (no `\n`) that soft-wraps into several rows.
+            use_text_edit_state(tag).set_text(
+                "this is one long logical line with no newline that soft wraps across several rows"
+                    .to_owned(),
+            );
+            let style = current_line_style(); // m3_multiline(4): soft_wrap + opt-in alpha
+            let metrics = field_visual_lines(tag, TextFieldState::Focused, 0, &theme, &style);
+            assert!(metrics.len() >= 2, "the long line soft-wraps into multiple rows");
+            // No `\n`, so every visual row is one logical line: the band spans
+            // from the first row's top to the last row's bottom — computed from
+            // the same `field_visual_lines` substrate, so it is font-robust.
+            let first = metrics[0];
+            let last = *metrics.last().unwrap();
+            let full_h = saturating_f32_to_u32(last.y + last.height - first.y);
+            let one_row_h = saturating_f32_to_u32(first.height);
+            assert!(full_h > one_row_h, "the wrapped band is taller than a single row");
+            let scene = view_field(tag, TextFieldState::Focused, 0, &theme, &style, "code");
+            let band = find_box_by_tag(&scene, &current_line_band_tag(tag)).unwrap();
+            assert_eq!(
+                band.layout.size.height,
+                SizeValue::Px(full_h),
+                "the band spans the whole wrapped logical line, not just the caret's row",
             );
         });
     }

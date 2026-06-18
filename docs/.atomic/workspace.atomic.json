@@ -45273,6 +45273,54 @@
         "apply_secondary_click open-forward now 2 consumers; a 3rd lifts a forward_open_at helper"
       ]
     },
+    "R987": {
+      "decision_summary": "R987 §5.22 §5.36 current-line band spans the whole logical line: a soft-wrapped line's current-line highlight covers every visual row (the VS Code behaviour) via new pinion_text::logical_line_span; the body and gutter bands are aligned",
+      "changes_bullets": [
+        "new pinion_text::logical_line_span(metrics, caret_y): the caret's logical line's visual-row span",
+        "view_field current-line band spans the whole logical line, not the caret's row alone (R962)",
+        "gutter band (hello-textarea) also spans the logical line via logical_line_span (2nd use)",
+        "both bands now align on a soft-wrapped line (the VS Code behaviour)",
+        "computed in-block where layout + caret rect are live (no 2nd lookup); None keeps paint gated",
+        "non-wrapped lines unchanged (span = one row); a hard newline ends the span"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace: ok, 0 failed (5 logical_line_span + wrapped-band + 24 field tests)",
+        "cargo clippy --workspace --all-targets -D pedantic: 0 warnings",
+        "r987_textarea_logical_line.py PASS: 30+ asserts (wrap span, band stays as caret moves in line)",
+        "regression demos r962 / r765 / r957 / r956 PASS (no current-line-band regression)"
+      ],
+      "impact_refs": [
+        "5.22",
+        "5.36"
+      ],
+      "carry_forward_bullets": [
+        "logical_line_span now 2 consumers (view_field band + hello-textarea gutter); lift justified",
+        "the gutter-vs-body current-line misalignment from R962->R987 is cleared this round"
+      ],
+      "publishable_decision_summary": "R987 §5.22 §5.36 current-line band spans the whole logical line: a soft-wrapped line's current-line highlight covers every visual row (the VS Code behaviour) via new pinion_text::logical_line_span; the body and gutter bands are aligned",
+      "publishable_changes_bullets": [
+        "new pinion_text::logical_line_span(metrics, caret_y): the caret's logical line's visual-row span",
+        "view_field current-line band spans the whole logical line, not the caret's row alone (R962)",
+        "gutter band (hello-textarea) also spans the logical line via logical_line_span (2nd use)",
+        "both bands now align on a soft-wrapped line (the VS Code behaviour)",
+        "computed in-block where layout + caret rect are live (no 2nd lookup); None keeps paint gated",
+        "non-wrapped lines unchanged (span = one row); a hard newline ends the span"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace: ok, 0 failed (5 logical_line_span + wrapped-band + 24 field tests)",
+        "cargo clippy --workspace --all-targets -D pedantic: 0 warnings",
+        "r987_textarea_logical_line.py PASS: 30+ asserts (wrap span, band stays as caret moves in line)",
+        "regression demos r962 / r765 / r957 / r956 PASS (no current-line-band regression)"
+      ],
+      "publishable_impact_refs": [
+        "5.22",
+        "5.36"
+      ],
+      "publishable_carry_forward_bullets": [
+        "logical_line_span now 2 consumers (view_field band + hello-textarea gutter); lift justified",
+        "the gutter-vs-body current-line misalignment from R962->R987 is cleared this round"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

@@ -32,8 +32,8 @@ mod layout;
 pub use cache::LayoutCache;
 pub use caret::{
     byte_offset_for_line_boundary, byte_offset_for_line_move, byte_offset_for_point,
-    caret_rect_for_byte_offset, selection_rects_for_range, visual_line_metrics, CaretRect,
-    VisualLineMetric,
+    caret_rect_for_byte_offset, logical_line_span, selection_rects_for_range, visual_line_metrics,
+    CaretRect, VisualLineMetric,
 };
 pub use layout::Layout;
 

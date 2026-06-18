@@ -152,7 +152,7 @@ use pinion_core::widgets::toolbar::{ToolItem, ToolbarExternal};
 use pinion_core::{intent_tag, Command, Frame, Scene, WidgetCore, WidgetStateName};
 use pinion_platform_clipboard::use_app_clipboard;
 use pinion_shell::{vello_renderer_impl, WidgetView};
-use pinion_text::{CaretRect, VisualLineMetric};
+use pinion_text::{logical_line_span, CaretRect, VisualLineMetric};
 use pinion_widget_paint::coord::saturating_f32_to_u32;
 use pinion_widget_paint::text_field as tf_paint;
 use pinion_widget_paint::toolbar::composite_item_tag;
@@ -494,15 +494,23 @@ fn gutter(
         let is_current = logical_n as usize - 1 == caret_line;
         if is_current {
             // The band paints BEFORE the number (so the glyph sits on top),
-            // spanning the gutter inner width at this row's y. Tagged so the
-            // AI side reads which line is active from the rendered frame.
+            // spanning the gutter inner width. R987 — it covers the caret's
+            // whole LOGICAL line (every soft-wrapped row, via the shared
+            // `logical_line_span`), aligned with the body's current-line band
+            // rather than just the number's first row; the number itself stays
+            // on the first row (`top` / `row_h`). Tagged so the AI side reads
+            // which line is active from the rendered frame.
+            let (band_top, band_h) = logical_line_span(lines, m.y)
+                .map_or((top, row_h), |(t, h)| {
+                    (saturating_f32_to_u32(t), saturating_f32_to_u32(h))
+                });
             numbers.push(Scene::Box(
                 BoxNode::new(Rect::default(), BoxStyle::filled(current_band_fill))
                     .with_tag(GUTTER_CURRENT_TAG.to_owned())
                     .with_layout(
                         LayoutStyle::new()
-                            .with_size(Size::px(inner_w, row_h))
-                            .with_absolute_position(0, top),
+                            .with_size(Size::px(inner_w, band_h))
+                            .with_absolute_position(0, band_top),
                     ),
             ));
         }

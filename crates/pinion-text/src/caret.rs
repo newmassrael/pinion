@@ -438,6 +438,41 @@ pub fn visual_line_metrics(layout: &Layout) -> Vec<VisualLineMetric> {
     out
 }
 
+/// R987 §5.22 §5.36 — the vertical span `(top_y, height)` of the **logical**
+/// line the caret sits on: every visual row of a soft-wrapped line, in the
+/// same layout-space frame as [`visual_line_metrics`]. A current-line
+/// highlight reads this so a band covers the whole wrapped line (the VS Code
+/// / `IntelliJ` behaviour) instead of only the caret's visual row.
+///
+/// `caret_y` is the caret rect's `y` ([`caret_rect_for_byte_offset`]); the
+/// matching visual row is the one whose `[y, y + height)` contains it. From
+/// there the span grows back to the row that
+/// [`starts_logical_line`](VisualLineMetric::starts_logical_line) and forward
+/// to the row before the next logical-line start, so soft-wrap (`Regular`)
+/// and long-word (`Emergency`) continuation rows are included while a hard
+/// `\n` ends the span. A non-wrapped logical line is a single row, so the
+/// span equals that row's box (the pre-R987 behaviour).
+///
+/// Returns `None` when `metrics` is empty or no row contains `caret_y` (the
+/// caller falls back to the caret's own row box).
+#[must_use]
+pub fn logical_line_span(metrics: &[VisualLineMetric], caret_y: f32) -> Option<(f32, f32)> {
+    let idx = metrics
+        .iter()
+        .position(|m| caret_y >= m.y && caret_y < m.y + m.height)?;
+    let mut start = idx;
+    while start > 0 && !metrics[start].starts_logical_line {
+        start -= 1;
+    }
+    let mut end = idx;
+    while end + 1 < metrics.len() && !metrics[end + 1].starts_logical_line {
+        end += 1;
+    }
+    let top = metrics[start].y;
+    let bottom = metrics[end].y + metrics[end].height;
+    Some((top, bottom - top))
+}
+
 #[cfg(test)]
 mod tests {
     //! R56.1.b.2 §5.36 §5.38 — `caret_rect_for_byte_offset` regression
@@ -447,7 +482,8 @@ mod tests {
 
     use super::{
         byte_offset_for_line_boundary, byte_offset_for_line_move, byte_offset_for_point,
-        caret_rect_for_byte_offset, selection_rects_for_range, visual_line_metrics, CaretRect,
+        caret_rect_for_byte_offset, logical_line_span, selection_rects_for_range,
+        visual_line_metrics, CaretRect, VisualLineMetric,
     };
     use crate::LayoutCache;
     use pinion_core::style::TextStyle;
@@ -739,6 +775,63 @@ mod tests {
         let first = lines[0];
         let copy = first; // Copy
         assert_eq!(first, copy);
+    }
+
+    // R987 — logical-line span (hand-built metrics: deterministic, no font
+    // dependency). Each row is a 10px box; only a row that starts a logical
+    // line carries `starts_logical_line`.
+    fn rows(spec: &[bool]) -> Vec<VisualLineMetric> {
+        spec.iter()
+            .enumerate()
+            .map(|(i, &starts)| VisualLineMetric {
+                #[allow(clippy::cast_precision_loss, reason = "small test indices are exact as f32")]
+                y: (i as f32) * 10.0,
+                height: 10.0,
+                starts_logical_line: starts,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn r987_logical_line_span_wrapped_line_covers_all_rows() {
+        // One logical line wrapped into three visual rows (only row 0 starts).
+        let m = rows(&[true, false, false]);
+        for caret_y in [5.0, 15.0, 25.0] {
+            assert_eq!(
+                logical_line_span(&m, caret_y),
+                Some((0.0, 30.0)),
+                "caret on any wrapped row spans the whole 0..30 logical line",
+            );
+        }
+    }
+
+    #[test]
+    fn r987_logical_line_span_isolates_each_hard_line() {
+        // Two logical lines, each a single visual row.
+        let m = rows(&[true, true]);
+        assert_eq!(logical_line_span(&m, 5.0), Some((0.0, 10.0)), "caret on line 0");
+        assert_eq!(logical_line_span(&m, 15.0), Some((10.0, 10.0)), "caret on line 1");
+    }
+
+    #[test]
+    fn r987_logical_line_span_groups_only_the_caret_line() {
+        // Logical line 0 wraps rows 0..1; logical line 1 is row 2.
+        let m = rows(&[true, false, true]);
+        assert_eq!(logical_line_span(&m, 15.0), Some((0.0, 20.0)), "wrapped line 0 = rows 0..1");
+        assert_eq!(logical_line_span(&m, 25.0), Some((20.0, 10.0)), "line 1 = row 2 only");
+    }
+
+    #[test]
+    fn r987_logical_line_span_boundary_belongs_to_lower_row() {
+        // A caret_y exactly at a row boundary lands on the lower row.
+        let m = rows(&[true, true]);
+        assert_eq!(logical_line_span(&m, 10.0), Some((10.0, 10.0)), "y=10 is row 1's top");
+    }
+
+    #[test]
+    fn r987_logical_line_span_empty_or_miss_is_none() {
+        assert_eq!(logical_line_span(&[], 5.0), None, "no rows");
+        assert_eq!(logical_line_span(&rows(&[true]), 50.0), None, "caret below all rows");
     }
 
     #[test]
