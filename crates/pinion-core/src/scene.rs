@@ -86,13 +86,14 @@ pub enum Scene {
     /// from that rect via the metric — the R969 one-directional
     /// `(rows, cols)` SSOT (layout-derived, never fed back).
     ///
-    /// This is the **empty-grid geometry scaffold**: it proves the
-    /// cell↔pixel coordinate space round-trips through scene-as-data
-    /// introspection (§2 #7). The cell *data model* (R969: cluster /
-    /// fg / bg / attrs / cursor / alt-screen / damage) and paint are
-    /// deliberately follow-up rounds — the retained tree treats this
-    /// node as a paint-opaque geometry leaf (mirrors [`Scene::Effect`]
-    /// for the paint walk) until the data-model round lands.
+    /// It carries the producer's terminal [`GridBuffer`] projection
+    /// (R973–R978 data model: cluster / fg / bg / attrs / cursor /
+    /// alt-screen / damage), proven both as scene-as-data via
+    /// `scene/snapshot` (§2 #7) and, since **R991**, painted on the Vello
+    /// backend (per-cell bg fill + cluster glyph; reverse / hidden / wide
+    /// honoured). It is uncacheable — the projection is replaced wholesale
+    /// each frame. Typographic attrs, the cursor, and the TUI backend are
+    /// follow-up paint slices.
     TextGrid(TextGridNode),
 }
 
@@ -497,18 +498,16 @@ impl Scene {
                 h.finish()
             }
             Scene::Effect(_) => PAINT_HASH_EFFECT_SENTINEL,
-            // R974.1 §5.41 — the TextGrid paints NOTHING yet (it falls
-            // through the paint walker's no-op `_` arm). But unlike
-            // `Effect` (an empty-FOREVER §3 escape, safe to cache) its
-            // cells WILL paint a future slice, so it joins `External` /
-            // `ImmediateModeNode` as UNCACHEABLE — a content-bearing node
-            // "one paint-impl PR away from live" must never let a parent
-            // container cache a stale fragment keyed off a content-blind
-            // hash (`is_cacheable_for_paint` returns `false` for it, so
-            // the hash value is moot). The real geometry+content hash
-            // lands in the round that makes paint observable. R972.1's
-            // first cut grouped it with the cacheable `Effect` sentinel —
-            // correct hash today, latent stale-frame fuse tomorrow.
+            // R974.1/R991 §5.41 — TextGrid joins `External` /
+            // `ImmediateModeNode` as UNCACHEABLE: R991 paints its cells
+            // (the glyph grid) and the projection is replaced wholesale
+            // each frame, so it must never let a parent container cache a
+            // fragment keyed off this content-blind hash
+            // (`is_cacheable_for_paint` returns `false`, so the hash value
+            // is moot). Folding per-cell content into the hash to enable
+            // caching is a deferred perf slice. R972.1's first cut grouped
+            // it with the cacheable `Effect` sentinel — a latent
+            // stale-frame fuse, corrected in R974.1.
             Scene::TextGrid(_) | Scene::External(_) | Scene::ImmediateModeNode(_) => {
                 PAINT_HASH_UNCACHEABLE
             }
@@ -531,10 +530,12 @@ impl Scene {
     /// - [`Scene::ImmediateModeNode`] — driver state per-tick.
     /// - [`Scene::External`] — opaque §3 escape; even a no-op paint
     ///   today is one new-paint-impl PR away from being live.
-    /// - [`Scene::TextGrid`] — paints nothing yet, but its cells are
-    ///   content one paint-impl PR away from live (R974.1); caching it
-    ///   off the content-blind no-op hash would serve stale frames the
-    ///   moment glyph paint lands, so it paints fresh like `External`.
+    /// - [`Scene::TextGrid`] — a terminal projection painted since R991
+    ///   and replaced wholesale each frame (high-churn producer content),
+    ///   like [`Scene::ImmediateModeNode`]; caching it off a content-blind
+    ///   hash would serve a stale frame, so it paints fresh. (Folding
+    ///   per-cell content into `paint_hash` to enable caching is a
+    ///   deferred perf slice.)
     ///
     /// Cacheable leaves: [`Scene::Box`], [`Scene::Text`],
     /// [`Scene::Path`], [`Scene::Image`], [`Scene::Effect`] (no-op
@@ -554,10 +555,10 @@ impl Scene {
                 c.children.iter().all(Self::is_cacheable_for_paint)
             }
             Scene::Scroll(s) => s.content.is_cacheable_for_paint(),
-            // R974.1 §5.41 — TextGrid joins the uncacheable set (see the
-            // doc above): its cells are content one paint-impl PR from
-            // live, so a parent container re-encodes it fresh rather than
-            // serving a stale cached fragment once glyph paint lands.
+            // R974.1/R991 §5.41 — TextGrid is uncacheable (see the doc
+            // above): a terminal projection is replaced wholesale each
+            // frame, so a parent container re-encodes it fresh rather than
+            // serving a stale cached fragment.
             Scene::External(_) | Scene::ImmediateModeNode(_) | Scene::TextGrid(_) => false,
         }
     }
@@ -2899,10 +2900,12 @@ impl ImmediateModeNode {
 /// wholesale (no per-cell mutation — R969 "dual-grid 금지"). Cell
 /// attributes (R974) / cursor (R975) / wide-char trailer (R976) /
 /// alternate-screen kind (R977) / per-row damage generations (R978) ride
-/// on the [`GridBuffer`], completing the S5 data model; **glyph paint
-/// stays deferred** (the grid is still paint-opaque: its
-/// [`Scene::paint_hash`] is the no-op sentinel — the cells are read as
-/// scene-as-data (§2 #7) via `scene/snapshot`, not yet drawn).
+/// on the [`GridBuffer`], completing the S5 data model. **R991** paints the
+/// grid on the Vello backend (per-cell bg + cluster glyph; reverse / hidden
+/// / wide); it is uncacheable (the projection is replaced wholesale each
+/// frame). Typographic attrs / cursor / the TUI backend are follow-up paint
+/// slices; the cells stay readable as scene-as-data (§2 #7) via
+/// `scene/snapshot`.
 ///
 /// `#[non_exhaustive]` per the R14 forward-compat hedge (like every peer
 /// leaf node): construction already goes through [`Self::new`] + builders,
@@ -5442,13 +5445,11 @@ mod tests {
 
     #[test]
     fn r974_1_text_grid_is_uncacheable_like_external() {
-        // R974.1 — the grid paints nothing yet, but its cells are content
-        // one paint-impl PR away from live, so it is UNCACHEABLE (joins
-        // `External`), NOT grouped with the cacheable `Effect` sentinel
-        // (R972.1's first cut). This removes the stale-frame fuse: a
-        // parent container holding a TextGrid re-encodes fresh, so when
-        // glyph paint lands a content-blind hash can never serve a stale
-        // cached fragment for changed cell content.
+        // R974.1/R991 — TextGrid is UNCACHEABLE (joins `External`), NOT the
+        // cacheable `Effect` sentinel (R972.1's first cut). R991 paints the
+        // grid and the projection is replaced wholesale each frame, so a
+        // parent container re-encodes it fresh — a content-blind cached
+        // fragment could otherwise serve a stale frame.
         let mut node = TextGridNode::new(CellMetric::DEFAULT);
         node.rect = Rect::new(0, 0, 640, 384);
         let grid = Scene::TextGrid(node);

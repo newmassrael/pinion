@@ -61,8 +61,9 @@
 //! **Glyph paint** (R991 §5.41 §2 #6) renders these grids on the Vello
 //! backend: each cell's palette-resolved background fills its rect and the
 //! grapheme cluster paints in the resolved foreground, with `reverse`
-//! (fg<->bg swap), `hidden` (glyph suppressed), and wide clusters (head
-//! glyph spanning two columns) honoured — the window now shows the
+//! (fg<->bg swap), `hidden` (glyph suppressed), and wide clusters (the
+//! head's background spans both columns; the glyph is drawn once at the
+//! head, suppressed on the trailer) honoured — the window now shows the
 //! terminal. The typographic attributes (bold / dim / italic / underline /
 //! strikethrough) and the cursor are follow-up paint slices; the cell
 //! *data model* below remains the AI-first witness, read as data.
@@ -483,9 +484,9 @@ impl WidgetCore for TextGridView {
     type State = ();
     type Event = ();
 
-    /// Display-only geometry scaffold: the only addressable anchor is the
-    /// no-op [`StubExternal`] at [`ROOT_TAG`]. The grids are paint-opaque
-    /// geometry leaves (no interaction until the data-model round).
+    /// Display-only: the only addressable anchor is the no-op
+    /// [`StubExternal`] at [`ROOT_TAG`]. The grids paint on Vello (R991);
+    /// there is no interaction yet (no input routing into the grid).
     fn create_external() -> Box<dyn External> {
         Box::new(StubExternal::new())
     }
@@ -518,12 +519,12 @@ impl WidgetCore for TextGridView {
 }
 
 impl WidgetA11y for TextGridView {
-    /// No a11y nodes yet. R973 lands the cell *colour* data model, read
-    /// via the AI-first `scene/snapshot` path (`grid_rows`); the
-    /// screen-reader a11y tree (a `grid` / `treegrid` role with per-cell
-    /// nodes) lands alongside glyph paint + input in a later S5 slice —
-    /// the content it would convey is still partly deferred (attrs /
-    /// cursor / trailer). Returning empty is the honest state.
+    /// No a11y nodes yet. The cell data model is read via the AI-first
+    /// `scene/snapshot` path (`grid_rows`); the screen-reader a11y tree (a
+    /// `grid` / `treegrid` role with per-cell nodes) lands with the
+    /// per-cell a11y slice (after the attr + cursor paint slices) — the
+    /// content it would convey is still partly deferred (typographic attrs
+    /// / cursor). Returning empty is the honest state.
     fn access_node(_state: &(), _focused: Option<&str>) -> Vec<AccessNode> {
         Vec::new()
     }

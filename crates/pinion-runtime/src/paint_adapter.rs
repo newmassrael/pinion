@@ -907,6 +907,32 @@ pub fn to_peniko(c: Color) -> PenikoColor {
     PenikoColor::from_rgba8(c.r, c.g, c.b, c.a)
 }
 
+/// R991.1 §5.16 — emit one parley [`GlyphRun`](pinion_text::parley::GlyphRun)'s
+/// positioned glyphs into the Vello scene at `transform` in `brush`. The
+/// shared glyph-run emit extracted from [`paint_text`] (per-run styled brush +
+/// decorations) and [`paint_text_grid`] (per-cell solid brush) — decorations
+/// stay in the caller since only styled text draws them.
+fn draw_glyph_run(
+    out: &mut VelloScene,
+    run: &pinion_text::parley::GlyphRun<'_, Color>,
+    transform: Affine,
+    brush: PenikoColor,
+) {
+    let parley_run = run.run();
+    out.draw_glyphs(parley_run.font())
+        .transform(transform)
+        .font_size(parley_run.font_size())
+        .brush(brush)
+        .draw(
+            Fill::NonZero,
+            run.positioned_glyphs().map(|g| Glyph {
+                id: g.id,
+                x: g.x,
+                y: g.y,
+            }),
+        );
+}
+
 /// R991 §5.41 §2 #6 — paint one retained [`Scene::TextGrid`] node: the
 /// cell-native terminal projection's GUI (Vello) glyph rasterisation.
 /// This is the deferred second half of the §5.41 cell-native axis —
@@ -962,7 +988,21 @@ fn paint_text_grid(
     // The node metric sizes the glyph; the family is requested monospace
     // (see the font-policy note above).
     let mut style = TextStyle::new().with_font_family("monospace");
-    style.font_size_px = metric.cell_h().max(1);
+    // `CellMetric` guarantees a non-zero cell height (its constructor rejects
+    // a zero axis), so the glyph size is >= 1 by the type invariant.
+    style.font_size_px = metric.cell_h();
+    // R991.1 — clip the cell paint to the node's layout rect. The producer's
+    // buffer dims and the node's rect-derived winsize are distinct facts that
+    // can diverge during an in-flight resize (see `term_grid`); clipping stops
+    // an over-large buffer from overdrawing past `rect`, mirroring
+    // `paint_text`'s overflow clip.
+    let clip_rect = KurboRect::new(
+        f64::from(n.rect.x),
+        f64::from(n.rect.y),
+        f64::from(n.rect.x.saturating_add(n.rect.w)),
+        f64::from(n.rect.y.saturating_add(n.rect.h)),
+    );
+    out.push_clip_layer(Fill::NonZero, transform, &clip_rect);
     for row in 0..grid.rows() {
         for col in 0..grid.cols() {
             let Some(cell) = grid.cell(col, row) else {
@@ -994,28 +1034,14 @@ fn paint_text_grid(
             let layout = cache.layout(&cell.cluster, &style, None);
             for line in layout.lines() {
                 for item in line.items() {
-                    let PositionedLayoutItem::GlyphRun(run) = item else {
-                        continue;
-                    };
-                    let parley_run = run.run();
-                    let font = parley_run.font();
-                    let font_size = parley_run.font_size();
-                    out.draw_glyphs(font)
-                        .transform(glyph_transform)
-                        .font_size(font_size)
-                        .brush(to_peniko(fg))
-                        .draw(
-                            Fill::NonZero,
-                            run.positioned_glyphs().map(|g| Glyph {
-                                id: g.id,
-                                x: g.x,
-                                y: g.y,
-                            }),
-                        );
+                    if let PositionedLayoutItem::GlyphRun(run) = item {
+                        draw_glyph_run(out, &run, glyph_transform, to_peniko(fg));
+                    }
                 }
             }
         }
     }
+    out.pop_layer();
 }
 
 /// Emit one Vello filled-rectangle path for a pinion (`Rect`, `Color`,
@@ -1436,22 +1462,7 @@ fn paint_text(
     for line in layout.lines() {
         for item in line.items() {
             let PositionedLayoutItem::GlyphRun(run) = item else { continue };
-            let parley_run = run.run();
-            let font = parley_run.font();
-            let font_size = parley_run.font_size();
-            let brush = to_peniko(run.style().brush);
-            out.draw_glyphs(font)
-                .transform(transform)
-                .font_size(font_size)
-                .brush(brush)
-                .draw(
-                    Fill::NonZero,
-                    run.positioned_glyphs().map(|g| Glyph {
-                        id: g.id,
-                        x: g.x,
-                        y: g.y,
-                    }),
-                );
+            draw_glyph_run(out, &run, transform, to_peniko(run.style().brush));
             // R47.6 — decoration strokes. parley emits `Some(Decoration)`
             // on `style().underline / strikethrough` whenever the source
             // TextStyle enabled them (see `LayoutCache::shape`'s

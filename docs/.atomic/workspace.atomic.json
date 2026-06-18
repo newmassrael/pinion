@@ -45809,6 +45809,60 @@
         "glyph-emit lift: draw_glyphs run-emit now 2 consumers (paint_text + paint_text_grid); 3rd triggers draw_glyph_run"
       ]
     },
+    "R991.1": {
+      "decision_summary": "R991.1 session-review clearance of R991 (2 adversarial reviewers + self-grep): the in-round self-assessment again missed a HIGH defect cluster (stale docs); cleared the real defects and rejected over-flags with evidence.",
+      "changes_bullets": [
+        "doc sweep: scene.rs x6 + term_grid x2 + example x2 stale 'paint-opaque/nothing/Effect/sentinel' -> post-R991 truth (R974.1 self-applied)",
+        "draw_glyph_run helper lifted: paint_text + paint_text_grid share the parley->draw_glyphs run emit (2-site, brush param)",
+        "clip the grid paint to node.rect (buffer-vs-rect divergence guard during resize, mirrors paint_text overflow clip)",
+        "headless test: dropped the Hangul ink assert (system-font ZERO-FLAKE risk); 'wide' proven font-independently by the 2-col bg span",
+        "corrected 'glyph spans two columns' overclaim -> 'bg spans both columns; glyph drawn once at head, suppressed on trailer'",
+        "removed redundant .max(1) on font size (CellMetric constructor guarantees a non-zero axis)"
+      ],
+      "verification_bullets": [
+        "clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic)",
+        "cargo test --workspace --features pinion-runtime/vello: 7056 passed, 0 failed",
+        "r991 headless pixel test re-passes on real GPU after the clip + draw_glyph_run lift (--ignored)",
+        "2 adversarial reviewers + self-grep; real defects cleared, over-flags rejected with evidence",
+        "validate-workspace: T1 orphan total=0"
+      ],
+      "impact_refs": [
+        "5.41",
+        "2",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "font policy (seed open question): node-carried font identity + GenericFamily::Monospace fallback + CJK/emoji fontique fallback",
+        "vertical glyph centering / metric-from-font reconciliation = the same deferred font-policy slice",
+        "R992 typographic SGR attrs; R993 cursor render; R994 TUI Scene::TextGrid arm"
+      ],
+      "publishable_decision_summary": "R991.1 session-review clearance of R991 (2 adversarial reviewers + self-grep): the in-round self-assessment again missed a HIGH defect cluster (stale docs); cleared the real defects and rejected over-flags with evidence.",
+      "publishable_changes_bullets": [
+        "doc sweep: scene.rs x6 + term_grid x2 + example x2 stale 'paint-opaque/nothing/Effect/sentinel' -> post-R991 truth (R974.1 self-applied)",
+        "draw_glyph_run helper lifted: paint_text + paint_text_grid share the parley->draw_glyphs run emit (2-site, brush param)",
+        "clip the grid paint to node.rect (buffer-vs-rect divergence guard during resize, mirrors paint_text overflow clip)",
+        "headless test: dropped the Hangul ink assert (system-font ZERO-FLAKE risk); 'wide' proven font-independently by the 2-col bg span",
+        "corrected 'glyph spans two columns' overclaim -> 'bg spans both columns; glyph drawn once at head, suppressed on trailer'",
+        "removed redundant .max(1) on font size (CellMetric constructor guarantees a non-zero axis)"
+      ],
+      "publishable_verification_bullets": [
+        "clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic)",
+        "cargo test --workspace --features pinion-runtime/vello: 7056 passed, 0 failed",
+        "r991 headless pixel test re-passes on real GPU after the clip + draw_glyph_run lift (--ignored)",
+        "2 adversarial reviewers + self-grep; real defects cleared, over-flags rejected with evidence",
+        "validate-workspace: T1 orphan total=0"
+      ],
+      "publishable_impact_refs": [
+        "5.41",
+        "2",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "font policy (seed open question): node-carried font identity + GenericFamily::Monospace fallback + CJK/emoji fontique fallback",
+        "vertical glyph centering / metric-from-font reconciliation = the same deferred font-policy slice",
+        "R992 typographic SGR attrs; R993 cursor render; R994 TUI Scene::TextGrid arm"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

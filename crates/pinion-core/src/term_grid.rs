@@ -40,8 +40,7 @@
 //! streaming reads) in R978 — completing the S5 data model. These slices
 //! prove the model with their cell + projection consumer (the
 //! [`crate::scene::TextGridNode`] cells + the `scene/snapshot` readback),
-//! not pixel paint (glyph rendering stays deferred — the grid is still
-//! paint-opaque this round).
+//! not pixel paint (glyph paint landed later, in R991).
 
 use crate::style::Color;
 use std::borrow::Cow;
@@ -231,9 +230,10 @@ impl Default for Palette {
 /// resolution: at *paint* time a reversed cell swaps its effective
 /// foreground / background. (`dim` / `bold` may also shift the rendered
 /// intensity depending on the renderer.) This slice stores and
-/// introspects the flags; the transforms themselves land with glyph
-/// paint (the grid is still paint-opaque), so a snapshot reports the
-/// *stored* colours plus the flags and a renderer applies them.
+/// introspects the flags; the reverse swap is applied in R991 paint, the
+/// intensity transforms (`dim` / `bold`) land with the R992 attr slice, so
+/// a snapshot reports the *stored* colours plus the flags and a renderer
+/// applies them.
 ///
 /// `struct_excessive_bools` is suppressed for the same reason it is on
 /// [`crate::input::Modifiers`]: the SGR attribute set is a fixed industry
