@@ -906,6 +906,7 @@ impl WidgetA11y for TextAreaView {
                     FMT_ITALIC => Some(italic_active),
                     _ => None, // colour swatch / clear = one-shot command
                 },
+                disabled: false, // formatting controls are always operable (R989)
             })
             .collect();
         nodes.extend(toolbar_button_nodes(FMT_TAG, "Formatting toolbar", &controls, None));

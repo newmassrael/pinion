@@ -141,10 +141,15 @@ pub fn composite_item_tag(bar_tag: &str, index: usize) -> String {
 /// left-to-right. `labels.len()` should match `pressed.len()`; extra
 /// `pressed` entries are ignored and missing ones default to unpressed.
 #[must_use]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each control axis (labels / pressed / disabled / roving focus) is an orthogonal paint input"
+)]
 pub fn view_toolbar(
     tag: &'static str,
     labels: &[&str],
     pressed: &[bool],
+    disabled: &[bool],
     focus: usize,
     group_focused: bool,
     theme: &Theme,
@@ -153,8 +158,15 @@ pub fn view_toolbar(
     let mut controls: Vec<Scene> = Vec::with_capacity(labels.len());
     for (i, label) in labels.iter().enumerate() {
         let is_pressed = pressed.get(i).copied().unwrap_or(false);
+        // A short / empty `disabled` slice leaves the missing indices enabled,
+        // mirroring how `pressed` defaults to `false` (R989 reflective disabled
+        // axis — the caller recomputes the mask each frame, e.g. a contextual
+        // selection toolbar that greys "Delete" while nothing is selected).
+        let is_disabled = disabled.get(i).copied().unwrap_or(false);
         let is_focused = group_focused && focus == i;
-        controls.push(build_control(tag, i, label, is_pressed, is_focused, theme, style));
+        controls.push(build_control(
+            tag, i, label, is_pressed, is_disabled, is_focused, theme, style,
+        ));
     }
     Scene::Container(
         ContainerNode::new(controls)
@@ -178,17 +190,26 @@ pub fn view_toolbar(
 }
 
 /// Compose one control: a centered label, tonal-filled when pressed,
-/// focus-ringed when it is the roving cursor under group focus.
+/// focus-ringed when it is the roving cursor under group focus. A
+/// `is_disabled` control greys its label ([`ColorRole::OnSurfaceMuted`])
+/// and shows no pressed fill — it stays focusable (the roving cursor may
+/// rest on it) but its activation is a no-op the binding's reducer gates
+/// (R989 focusable-but-not-operable model; see the `toolbar` module docs).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "control identity + the three reflective state bits + theme/style are distinct inputs"
+)]
 fn build_control(
     bar_tag: &str,
     index: usize,
     label: &str,
     is_pressed: bool,
+    is_disabled: bool,
     is_focused: bool,
     theme: &Theme,
     style: &ToolbarStyle,
 ) -> Scene {
-    let fill = if is_pressed {
+    let fill = if is_pressed && !is_disabled {
         theme
             .resolve(ColorRole::Surface)
             .lerp(theme.resolve(ColorRole::Accent), PRESSED_STATE_LAYER)
@@ -200,12 +221,17 @@ fn build_control(
         box_style =
             box_style.with_border(Border::new(theme.resolve(ColorRole::Accent), style.focus_ring_width));
     }
+    let label_role = if is_disabled {
+        ColorRole::OnSurfaceMuted
+    } else {
+        ColorRole::OnSurface
+    };
     let label_node = Scene::Text(TextNode::styled(
         label,
         Rect::default(),
         TextStyle::new()
             .with_size_px(style.item_font_px)
-            .with_fg(theme.resolve(ColorRole::OnSurface)),
+            .with_fg(theme.resolve(label_role)),
     ));
     Scene::Container(
         ContainerNode::new(vec![label_node])
@@ -296,6 +322,80 @@ mod tests {
         None
     }
 
+    /// Foreground colour of the label `TextNode` inside the control tagged
+    /// `tag` (R989 disabled-dimming check).
+    fn tag_label_fg(scene: &Scene, tag: &str) -> Option<Color> {
+        fn text_fg(scene: &Scene) -> Option<Color> {
+            match scene {
+                Scene::Text(t) => Some(t.style.fg_color),
+                Scene::Container(c) => c.children.iter().find_map(text_fg),
+                _ => None,
+            }
+        }
+        if let Scene::Container(c) = scene {
+            if c.tag.as_deref() == Some(tag) {
+                return text_fg(scene);
+            }
+            for child in &c.children {
+                if let Some(f) = tag_label_fg(child, tag) {
+                    return Some(f);
+                }
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn r989_disabled_control_greys_label_and_drops_fill() {
+        let t = theme();
+        // Control 0 disabled (and would-be pressed), control 1 enabled +
+        // pressed: the disabled one greys its label and shows no fill even
+        // though its pressed bit is set; the enabled one fills normally.
+        let pressed = [true, true, false, false, false];
+        let disabled = [true, false, false, false, false];
+        let scene = view_toolbar(
+            "toolbar", &LABELS, &pressed, &disabled, 0, false, &t, &ToolbarStyle::m3_default(),
+        );
+        assert_eq!(
+            tag_label_fg(&scene, "toolbar#0"),
+            Some(t.resolve(ColorRole::OnSurfaceMuted)),
+            "disabled control greys its label"
+        );
+        assert_eq!(
+            tag_fill(&scene, "toolbar#0"),
+            Some(Color::TRANSPARENT),
+            "disabled control shows no pressed fill"
+        );
+        assert_eq!(
+            tag_label_fg(&scene, "toolbar#1"),
+            Some(t.resolve(ColorRole::OnSurface)),
+            "enabled control keeps the normal label colour"
+        );
+        let pressed_fill = t
+            .resolve(ColorRole::Surface)
+            .lerp(t.resolve(ColorRole::Accent), PRESSED_STATE_LAYER);
+        assert_eq!(
+            tag_fill(&scene, "toolbar#1"),
+            Some(pressed_fill),
+            "enabled pressed control fills normally"
+        );
+    }
+
+    #[test]
+    fn r989_empty_disabled_slice_leaves_all_enabled() {
+        let t = theme();
+        let pressed = [false; 5];
+        let scene =
+            view_toolbar("toolbar", &LABELS, &pressed, &[], 0, false, &t, &ToolbarStyle::m3_default());
+        for i in 0..LABELS.len() {
+            assert_eq!(
+                tag_label_fg(&scene, &composite_item_tag("toolbar", i)),
+                Some(t.resolve(ColorRole::OnSurface)),
+                "an empty disabled slice leaves every control enabled"
+            );
+        }
+    }
+
     #[test]
     fn r692_toolbar_style_m3_default_constants() {
         let s = ToolbarStyle::m3_default();
@@ -318,7 +418,7 @@ mod tests {
     #[test]
     fn r692_toolbar_tags_and_labels() {
         let pressed = [false; 5];
-        let scene = view_toolbar("toolbar", &LABELS, &pressed, 0, false, &theme(), &ToolbarStyle::m3_default());
+        let scene = view_toolbar("toolbar", &LABELS, &pressed, &[],0, false, &theme(), &ToolbarStyle::m3_default());
         assert_eq!(
             collect_tags(&scene),
             vec![
@@ -337,7 +437,7 @@ mod tests {
     fn r692_pressed_toggle_filled_others_transparent() {
         let t = theme();
         let pressed = [true, false, true, false, false];
-        let scene = view_toolbar("toolbar", &LABELS, &pressed, 0, false, &t, &ToolbarStyle::m3_default());
+        let scene = view_toolbar("toolbar", &LABELS, &pressed, &[],0, false, &t, &ToolbarStyle::m3_default());
         let expected = t
             .resolve(ColorRole::Surface)
             .lerp(t.resolve(ColorRole::Accent), PRESSED_STATE_LAYER);
@@ -352,7 +452,7 @@ mod tests {
         let t = theme();
         let pressed = [false; 5];
         // Focus index 2, group focused → only control 2 has the ring.
-        let scene = view_toolbar("toolbar", &LABELS, &pressed, 2, true, &t, &ToolbarStyle::m3_default());
+        let scene = view_toolbar("toolbar", &LABELS, &pressed, &[],2, true, &t, &ToolbarStyle::m3_default());
         assert_eq!(
             tag_border(&scene, "toolbar#2"),
             Some(Border::new(t.resolve(ColorRole::Accent), 2)),
@@ -365,7 +465,7 @@ mod tests {
     #[test]
     fn r692_no_focus_ring_when_group_unfocused() {
         let pressed = [false; 5];
-        let scene = view_toolbar("toolbar", &LABELS, &pressed, 2, false, &theme(), &ToolbarStyle::m3_default());
+        let scene = view_toolbar("toolbar", &LABELS, &pressed, &[],2, false, &theme(), &ToolbarStyle::m3_default());
         assert_eq!(
             tag_border(&scene, "toolbar#2"),
             None,
@@ -377,7 +477,7 @@ mod tests {
     fn r692_focused_and_pressed_shows_both_fill_and_ring() {
         let t = theme();
         let pressed = [true, false, false, false, false];
-        let scene = view_toolbar("toolbar", &LABELS, &pressed, 0, true, &t, &ToolbarStyle::m3_default());
+        let scene = view_toolbar("toolbar", &LABELS, &pressed, &[],0, true, &t, &ToolbarStyle::m3_default());
         let expected_fill = t
             .resolve(ColorRole::Surface)
             .lerp(t.resolve(ColorRole::Accent), PRESSED_STATE_LAYER);

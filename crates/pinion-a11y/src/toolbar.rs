@@ -48,6 +48,13 @@ pub struct ToolbarControl<'a> {
     /// one-shot command. For a *reflective* formatting toggle this is read
     /// from the document (the selection's style), not an owned bit.
     pub checked: Option<bool>,
+    /// `aria-disabled` — `true` for a control that is currently inoperable
+    /// (R989). Like [`checked`](Self::checked) this is *reflective*: a
+    /// contextual selection toolbar recomputes it each frame from the
+    /// selection (e.g. "Delete" is disabled while nothing is selected). A
+    /// disabled control stays in the tree (AT announces it as unavailable);
+    /// its activation is a no-op the binding's reducer gates.
+    pub disabled: bool,
 }
 
 /// Build the `toolbar` parent + one `button` per control.
@@ -80,6 +87,7 @@ pub fn toolbar_button_nodes(
             .with_state(AccessState {
                 focused: focused_control == Some(i),
                 checked: c.checked,
+                disabled: c.disabled,
                 ..AccessState::default()
             })
             .with_set_position(i, controls.len());
@@ -97,10 +105,10 @@ mod tests {
 
     fn controls() -> [ToolbarControl<'static>; 4] {
         [
-            ToolbarControl { tag: "bar#0", name: Some("Bold"), checked: Some(true) },
-            ToolbarControl { tag: "bar#1", name: Some("Italic"), checked: Some(false) },
-            ToolbarControl { tag: "bar#2", name: Some("Red"), checked: None },
-            ToolbarControl { tag: "bar#3", name: None, checked: None },
+            ToolbarControl { tag: "bar#0", name: Some("Bold"), checked: Some(true), disabled: false },
+            ToolbarControl { tag: "bar#1", name: Some("Italic"), checked: Some(false), disabled: false },
+            ToolbarControl { tag: "bar#2", name: Some("Red"), checked: None, disabled: false },
+            ToolbarControl { tag: "bar#3", name: None, checked: None, disabled: false },
         ]
     }
 
@@ -149,5 +157,23 @@ mod tests {
         for node in &nodes[1..] {
             assert!(!node.state.focused, "a non-focusable strip rings no control");
         }
+    }
+
+    #[test]
+    fn r989_disabled_control_lowers_aria_disabled() {
+        // Controls 0 and 2 disabled, 1 and 3 operable.
+        let c = [
+            ToolbarControl { tag: "a#0", name: Some("Delete"), checked: None, disabled: true },
+            ToolbarControl { tag: "a#1", name: Some("Clear"), checked: None, disabled: false },
+            ToolbarControl { tag: "a#2", name: Some("Tag"), checked: None, disabled: true },
+            ToolbarControl { tag: "a#3", name: Some("Select all"), checked: None, disabled: false },
+        ];
+        let nodes = toolbar_button_nodes("a", "Selection actions", &c, None);
+        assert!(nodes[1].state.disabled, "Delete lowers aria-disabled");
+        assert!(!nodes[2].state.disabled, "Clear stays operable");
+        assert!(nodes[3].state.disabled, "Tag lowers aria-disabled");
+        assert!(!nodes[4].state.disabled, "Select all stays operable");
+        // A disabled control stays in the tree (AT announces it as unavailable).
+        assert_eq!(nodes.len(), c.len() + 1, "disabled controls are not pruned");
     }
 }

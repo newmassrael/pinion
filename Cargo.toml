@@ -122,6 +122,7 @@ members = [
     "examples/hello-print",
     "examples/hello-contextmenu",
     "examples/hello-toolbar",
+    "examples/hello-selection-toolbar",
     "examples/hello-dialog",
     "examples/hello-file-open-dialog",
     "examples/hello-file-save-dialog",

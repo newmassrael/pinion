@@ -148,6 +148,7 @@ fn view(state: ToolbarState, _frame: &Frame) -> Scene {
         TOOLBAR_TAG,
         &LABELS,
         &state.pressed,
+        &[], // no disabled controls — this is a static format toolbar (R989)
         state.focus,
         state.group_focused,
         &theme,
@@ -292,6 +293,7 @@ impl WidgetA11y for ToolbarView {
                     ToolItem::Toggle => Some(state.pressed[i]),
                     ToolItem::Command => None,
                 },
+                disabled: false, // static format toolbar — every control operable (R989)
             })
             .collect();
         toolbar_button_nodes(

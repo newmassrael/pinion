@@ -45427,6 +45427,112 @@
         "hit-test (frozen header + h-scroll + variable widths); the no-scroll geometry cannot transfer"
       ]
     },
+    "R989": {
+      "decision_summary": "R989 §5.38 §5.40 contextual selection-action toolbar: complete the toolbar reflective disabled axis at its first consumer + hello-selection-toolbar",
+      "changes_bullets": [
+        "Complete the toolbar's documented-but-unimplemented disabled axis at its first",
+        "consumer: reflective + focusable-but-not-operable (the aria-pressed story).",
+        "view_toolbar gains a `disabled: &[bool]` param (short/empty slice = all enabled):",
+        "a disabled control greys its label (OnSurfaceMuted) and shows no pressed fill.",
+        "ToolbarControl gains a `disabled` field -> AccessState.disabled (aria-disabled);",
+        "a disabled control stays in the tree (AT announces it unavailable).",
+        "toolbar module doc: replace the \"Future axes / skipped-by-roving\" guess with a",
+        "Disabled-controls section (reflective mask; activation gated in the reducer).",
+        "New hello-selection-toolbar example: a multi-select list (SelRowExternal) over a",
+        "shared Signal<Vec<SelItem>> holder + an action ToolbarExternal (Delete / Clear /",
+        "Select all). The view recomputes the disabled mask from the selection each frame",
+        "(action_disabled); the reducer gates bulk actions on the same mask (one barrier).",
+        "SelRowExternal: composite-tag row toggle over the holder + roving keyboard via the",
+        "shared clamp_nav SSOT (R777), not a hand-rolled clamp (self-grep catch).",
+        "Updated the 3 existing ToolbarControl consumers (hello-toolbar / hello-textarea /",
+        "hello-node-editor) + hello-toolbar's view_toolbar call (disabled: false / &[])."
+      ],
+      "verification_bullets": [
+        "workspace test 0 failed (175 ok); clippy 0 (-D pedantic, --all-targets); validate T1=0.",
+        "r989 demo PASS (42 assert): boot count readout + Delete/Clear aria-disabled; row",
+        "toggle; second/deselect; Select all -> Select-all disabled; Clear; Delete shrinks",
+        "the collection (survivors keep stable ids); disabled action is a no-op when clicked;",
+        "keyboard list rove + Space toggle; keyboard toolbar Enter activates; scene/access",
+        "cross-check of aria-disabled + aria-selected.",
+        "substrate unit tests: paint disabled-dimming + empty-slice-all-enabled; a11y",
+        "aria-disabled lowering. Example unit tests: disabled mask, reducer gate + bulk",
+        "effects, row external send/keyboard, focus-clamp-after-delete, a11y forest.",
+        "3b self-grep: clamp_nav reuse (was hand-rolled); view_toolbar disabled / ToolbarControl",
+        "disabled = mine the only real consumer; status_bar/data_line per-example divergent",
+        "(no lift); composite-tag toggle externals domain-specific (no lift)."
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.38",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "LESSON: fmt_state_log runs OUTSIDE an Owner scope (the boot eprintln at",
+        "substrate.rs:504) -> it must use only the projected `state`, never a reactive hook",
+        "(use_items panicked at boot). Log callbacks are not owner-wrapped like view/access_node.",
+        "LESSON: scene/access nests interaction flags under node[\"state\"] (disabled / focused /",
+        "hovered / pressed / checked), while selected / multiselectable / level are top-level;",
+        "a demo reading aria-disabled must use node[\"state\"][\"disabled\"] (absent == enabled).",
+        "LESSON: Signal<T> stored type needs serde derive (introspection bound, R988 precedent).",
+        "disabled model = reflective + focusable-but-not-operable; a roving-SKIP variant (the",
+        "old doc guess) is a later additive policy if a consumer needs it.",
+        "SelRowExternal is the 1st DYNAMIC (shrinking) multi-select list (existing",
+        "ListBoxExternal / VirtualSelectExternal are fixed-N); if a 2nd dynamic-multi-select",
+        "consumer appears, consider a reusable substrate (abstraction-needs-second-consumer)."
+      ],
+      "publishable_decision_summary": "R989 §5.38 §5.40 contextual selection-action toolbar: complete the toolbar reflective disabled axis at its first consumer + hello-selection-toolbar",
+      "publishable_changes_bullets": [
+        "Complete the toolbar's documented-but-unimplemented disabled axis at its first",
+        "consumer: reflective + focusable-but-not-operable (the aria-pressed story).",
+        "view_toolbar gains a `disabled: &[bool]` param (short/empty slice = all enabled):",
+        "a disabled control greys its label (OnSurfaceMuted) and shows no pressed fill.",
+        "ToolbarControl gains a `disabled` field -> AccessState.disabled (aria-disabled);",
+        "a disabled control stays in the tree (AT announces it unavailable).",
+        "toolbar module doc: replace the \"Future axes / skipped-by-roving\" guess with a",
+        "Disabled-controls section (reflective mask; activation gated in the reducer).",
+        "New hello-selection-toolbar example: a multi-select list (SelRowExternal) over a",
+        "shared Signal<Vec<SelItem>> holder + an action ToolbarExternal (Delete / Clear /",
+        "Select all). The view recomputes the disabled mask from the selection each frame",
+        "(action_disabled); the reducer gates bulk actions on the same mask (one barrier).",
+        "SelRowExternal: composite-tag row toggle over the holder + roving keyboard via the",
+        "shared clamp_nav SSOT (R777), not a hand-rolled clamp (self-grep catch).",
+        "Updated the 3 existing ToolbarControl consumers (hello-toolbar / hello-textarea /",
+        "hello-node-editor) + hello-toolbar's view_toolbar call (disabled: false / &[])."
+      ],
+      "publishable_verification_bullets": [
+        "workspace test 0 failed (175 ok); clippy 0 (-D pedantic, --all-targets); validate T1=0.",
+        "r989 demo PASS (42 assert): boot count readout + Delete/Clear aria-disabled; row",
+        "toggle; second/deselect; Select all -> Select-all disabled; Clear; Delete shrinks",
+        "the collection (survivors keep stable ids); disabled action is a no-op when clicked;",
+        "keyboard list rove + Space toggle; keyboard toolbar Enter activates; scene/access",
+        "cross-check of aria-disabled + aria-selected.",
+        "substrate unit tests: paint disabled-dimming + empty-slice-all-enabled; a11y",
+        "aria-disabled lowering. Example unit tests: disabled mask, reducer gate + bulk",
+        "effects, row external send/keyboard, focus-clamp-after-delete, a11y forest.",
+        "3b self-grep: clamp_nav reuse (was hand-rolled); view_toolbar disabled / ToolbarControl",
+        "disabled = mine the only real consumer; status_bar/data_line per-example divergent",
+        "(no lift); composite-tag toggle externals domain-specific (no lift)."
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.38",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "LESSON: fmt_state_log runs OUTSIDE an Owner scope (the boot eprintln at",
+        "substrate.rs:504) -> it must use only the projected `state`, never a reactive hook",
+        "(use_items panicked at boot). Log callbacks are not owner-wrapped like view/access_node.",
+        "LESSON: scene/access nests interaction flags under node[\"state\"] (disabled / focused /",
+        "hovered / pressed / checked), while selected / multiselectable / level are top-level;",
+        "a demo reading aria-disabled must use node[\"state\"][\"disabled\"] (absent == enabled).",
+        "LESSON: Signal<T> stored type needs serde derive (introspection bound, R988 precedent).",
+        "disabled model = reflective + focusable-but-not-operable; a roving-SKIP variant (the",
+        "old doc guess) is a later additive policy if a consumer needs it.",
+        "SelRowExternal is the 1st DYNAMIC (shrinking) multi-select list (existing",
+        "ListBoxExternal / VirtualSelectExternal are fixed-N); if a 2nd dynamic-multi-select",
+        "consumer appears, consider a reusable substrate (abstraction-needs-second-consumer)."
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

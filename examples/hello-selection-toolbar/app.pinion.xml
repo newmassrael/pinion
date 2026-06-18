@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R989 §5.16 §5.38 §5.40 contextual selection-action toolbar:
+  pinion-forge renderer manifest for hello-selection-toolbar. Same
+  single-source-of-truth template as the other hello-* renderers; only
+  the struct name diverges. backend=vello + default Area antialiasing
+  (R46.2.1).
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloSelectionToolbarRenderer"
+        backend="vello"/>

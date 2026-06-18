@@ -1,0 +1,31 @@
+[package]
+name = "hello-selection-toolbar"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R989 §5.16 §5.38 §5.40 contextual selection-action toolbar: a multi-select list over a shared holder plus an action toolbar whose Delete / Clear commands grey out (aria-disabled) while nothing is selected and whose Select all greys out when everything is. The first consumer of the toolbar's reflective disabled axis; bulk actions mutate the holder through the reducer."
+publish = false
+
+[[bin]]
+name = "hello-selection-toolbar"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+vello = { workspace = true }
+# `ids_selected` exposes the selected ids as a JSON array for AI clients.
+serde_json = { workspace = true }
+# The selection holder lives in a reactive `Signal`, whose RPC introspection
+# bound requires serde on the stored `SelItem` (R988 precedent).
+serde = { workspace = true, features = ["derive"] }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

@@ -4758,7 +4758,12 @@ impl WidgetA11y for NodeEditorView {
         let controls: Vec<ToolbarControl> = palette_tags
             .iter()
             .zip(&palette_names)
-            .map(|(tag, name)| ToolbarControl { tag: tag.as_str(), name: Some(name.as_str()), checked: None })
+            .map(|(tag, name)| ToolbarControl {
+                tag: tag.as_str(),
+                name: Some(name.as_str()),
+                checked: None,
+                disabled: false, // every palette entry is always operable (R989)
+            })
             .collect();
         let mut out = vec![root];
         out.extend(toolbar_button_nodes(PALETTE_TAG, "Add node", &controls, None));

@@ -2698,6 +2698,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-selection-toolbar"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-shell",
+ "pinion-widget-paint",
+ "serde",
+ "serde_json",
+ "vello",
+]
+
+[[package]]
 name = "hello-slider"
 version = "0.0.1"
 dependencies = [

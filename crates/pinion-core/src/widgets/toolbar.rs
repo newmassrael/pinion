@@ -65,13 +65,35 @@
 //!   (`<pressed>` is `true` / `false`) — a toggle flipped to that
 //!   state.
 //!
+//! ## Disabled controls (R989 — reflective, focusable-but-not-operable)
+//!
+//! A control can be **disabled** (greyed, `aria-disabled`) — the canonical
+//! contextual-toolbar gate, e.g. a selection action bar that disables
+//! "Delete" while nothing is selected. Disabled is **reflective**, mirroring
+//! the `aria-pressed` story above: the toolbar does *not* own a disabled bit.
+//! The binding recomputes the mask each frame from whatever state drives it
+//! (the selection, the document, …) and passes it to the paint
+//! (`pinion_widget_paint::toolbar::view_toolbar`'s `disabled` slice) and the
+//! a11y tree (`pinion_a11y::ToolbarControl::disabled`). Because the bit is not
+//! owned, the toolbar itself stays state-light and the mask can never drift
+//! out of sync with its source.
+//!
+//! A disabled control follows the WAI-ARIA *focusable-but-not-operable*
+//! model (the APG menu/menubar convention): it stays in the tree and the
+//! roving cursor may rest on it (AT announces it as unavailable), but
+//! activating it is a **no-op the binding's reducer gates** — the toolbar
+//! emits its `"command"` / `"toggle"` intent regardless (it cannot see the
+//! reflective mask), and the reducer drops the action when the source state
+//! says it is unavailable. This keeps the operable barrier in one place (the
+//! reducer that already owns the action's effect) rather than splitting it
+//! across the toolbar's keyboard model.
+//!
 //! ## Future axes (per [[abstraction-needs-second-consumer]])
 //!
 //! *Separators / section groups*, *overflow menu* (controls that
-//! collapse into a `…` dropdown when the strip is narrow), *vertical
+//! collapse into a `…` dropdown when the strip is narrow), and *vertical
 //! orientation* (`aria-orientation=vertical` swaps Arrow Left/Right for
-//! Up/Down), and *disabled controls* (skipped by the roving cursor) are
-//! additive axes once a consumer needs them.
+//! Up/Down) are additive axes once a consumer needs them.
 
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
