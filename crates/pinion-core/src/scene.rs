@@ -91,9 +91,10 @@ pub enum Scene {
     /// alt-screen / damage), proven both as scene-as-data via
     /// `scene/snapshot` (§2 #7) and, since **R991**, painted on the Vello
     /// backend (per-cell bg fill + cluster glyph; reverse / hidden / wide
-    /// honoured). It is uncacheable — the projection is replaced wholesale
-    /// each frame. Typographic attrs, the cursor, and the TUI backend are
-    /// follow-up paint slices.
+    /// honoured) — extended in **R992** with the typographic SGR attributes
+    /// (bold / italic / dim / underline / strikethrough). It is uncacheable
+    /// — the projection is replaced wholesale each frame. `blink` (timing),
+    /// the cursor, and the TUI backend are the remaining paint slices.
     TextGrid(TextGridNode),
 }
 

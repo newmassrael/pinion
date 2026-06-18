@@ -45863,6 +45863,66 @@
         "R992 typographic SGR attrs; R993 cursor render; R994 TUI Scene::TextGrid arm"
       ]
     },
+    "R992": {
+      "decision_summary": "R992 §5.41 Vello TextGrid typographic SGR attrs (bold/italic/dim/underline/strikethrough) paint",
+      "changes_bullets": [
+        "paint_text_grid: bold/italic select FontWeight/FontStyle per-cell (clone only on attr)",
+        "glyph cache stays colour-independent (brush at draw time); bold/italic are distinct keys",
+        "dim (SGR 2) halves the effective fg alpha at draw time so ink blends toward the bg",
+        "underline/strikethrough stroke a full-cell-width rule so adjacent cells form one line",
+        "a blank or trailer cell still inks its rule (terminal convention); hidden suppresses both",
+        "reverse-swapped fg drives glyph and rules alike; hidden cell paints only its bg",
+        "lift stroke_hrule: 4 horizontal-rule sites (paint_decorations 2 + grid 2) share one helper",
+        "doc sweep: scene.rs / paint_text_grid / draw_glyph_run / example reflect attrs now painted"
+      ],
+      "verification_bullets": [
+        "clippy 0 (-D pedantic --all-targets --features pinion-runtime/vello)",
+        "cargo test --workspace -j2 0 failed (exit 0)",
+        "r992 headless pixel test real-GPU PASS x4 (deterministic); band-ink integral metric",
+        "band-ink is antialiasing-alignment-invariant (peak was alignment-flaky) = ZERO-FLAKE",
+        "r991 grid test PASS (reverse/hidden/wide regression-free after loop restructure)",
+        "validate-workspace T1 reject=0, new orphan +0 (entries 972 -> 973)"
+      ],
+      "impact_refs": [
+        "5.41",
+        "5.16",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "blink (SGR 5, timing) + GridCursor paint = remaining slices (R993 cursor per roadmap)",
+        "TUI ratatui TextGrid arm = R994: 2nd CellAttrs->style consumer (Modifier target, lift then)",
+        "bold/italic rely on font faces; synthetic fallback + CJK/emoji = font-policy slice (open)"
+      ],
+      "publishable_decision_summary": "R992 §5.41 Vello TextGrid typographic SGR attrs (bold/italic/dim/underline/strikethrough) paint",
+      "publishable_changes_bullets": [
+        "paint_text_grid: bold/italic select FontWeight/FontStyle per-cell (clone only on attr)",
+        "glyph cache stays colour-independent (brush at draw time); bold/italic are distinct keys",
+        "dim (SGR 2) halves the effective fg alpha at draw time so ink blends toward the bg",
+        "underline/strikethrough stroke a full-cell-width rule so adjacent cells form one line",
+        "a blank or trailer cell still inks its rule (terminal convention); hidden suppresses both",
+        "reverse-swapped fg drives glyph and rules alike; hidden cell paints only its bg",
+        "lift stroke_hrule: 4 horizontal-rule sites (paint_decorations 2 + grid 2) share one helper",
+        "doc sweep: scene.rs / paint_text_grid / draw_glyph_run / example reflect attrs now painted"
+      ],
+      "publishable_verification_bullets": [
+        "clippy 0 (-D pedantic --all-targets --features pinion-runtime/vello)",
+        "cargo test --workspace -j2 0 failed (exit 0)",
+        "r992 headless pixel test real-GPU PASS x4 (deterministic); band-ink integral metric",
+        "band-ink is antialiasing-alignment-invariant (peak was alignment-flaky) = ZERO-FLAKE",
+        "r991 grid test PASS (reverse/hidden/wide regression-free after loop restructure)",
+        "validate-workspace T1 reject=0, new orphan +0 (entries 972 -> 973)"
+      ],
+      "publishable_impact_refs": [
+        "5.41",
+        "5.16",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "blink (SGR 5, timing) + GridCursor paint = remaining slices (R993 cursor per roadmap)",
+        "TUI ratatui TextGrid arm = R994: 2nd CellAttrs->style consumer (Modifier target, lift then)",
+        "bold/italic rely on font faces; synthetic fallback + CJK/emoji = font-policy slice (open)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

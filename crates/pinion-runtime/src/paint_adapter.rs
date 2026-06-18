@@ -46,8 +46,8 @@ use pinion_core::scene::{
     Rect, TextGridNode, TextNode,
 };
 use pinion_core::style::{
-    Border, BorderPlacement, BoxStyle, Color, Fit, Gradient, GradientKind, StrokeCap, TextOverflow,
-    TextStyle,
+    Border, BorderPlacement, BoxStyle, Color, Fit, FontStyle, FontWeight, Gradient, GradientKind,
+    StrokeCap, TextOverflow, TextStyle,
 };
 use pinion_core::term_grid::{CellWidth, ColorTarget};
 use pinion_text::LayoutCache;
@@ -910,8 +910,12 @@ pub fn to_peniko(c: Color) -> PenikoColor {
 /// R991.1 §5.16 — emit one parley [`GlyphRun`](pinion_text::parley::GlyphRun)'s
 /// positioned glyphs into the Vello scene at `transform` in `brush`. The
 /// shared glyph-run emit extracted from [`paint_text`] (per-run styled brush +
-/// decorations) and [`paint_text_grid`] (per-cell solid brush) — decorations
-/// stay in the caller since only styled text draws them.
+/// decorations) and [`paint_text_grid`] (per-cell solid brush). Decorations
+/// stay in the caller because the two callers derive them differently:
+/// [`paint_text`] reads parley's per-run font-metric underline / strikethrough
+/// (spanning the glyph-run advance), while [`paint_text_grid`] paints SGR
+/// rules spanning the full cell at cell-geometry offsets — both through the
+/// shared [`stroke_hrule`] primitive.
 fn draw_glyph_run(
     out: &mut VelloScene,
     run: &pinion_text::parley::GlyphRun<'_, Color>,
@@ -931,6 +935,26 @@ fn draw_glyph_run(
                 y: g.y,
             }),
         );
+}
+
+/// R992 §5.41 §5.16 — stroke one horizontal rule from (`x0`, `y`) to
+/// (`x1`, `y`) with pen width `max(width, 1)` in `brush`, under `transform`.
+/// The shared primitive behind styled-text decorations ([`paint_decorations`]:
+/// the font-metric underline / strikethrough spanning a glyph-run advance) and
+/// the cell grid's SGR underline / strikethrough ([`paint_text_grid`]: spanning
+/// the full cell width). A zero-or-sub-pixel `width` clamps to a 1.0-px hairline
+/// so a thin font metric never produces an invisible rule.
+fn stroke_hrule(
+    out: &mut VelloScene,
+    transform: Affine,
+    brush: PenikoColor,
+    x0: f64,
+    x1: f64,
+    y: f64,
+    width: f64,
+) {
+    let line = Line::new((x0, y), (x1, y));
+    out.stroke(&Stroke::new(width.max(1.0)), transform, brush, None, &line);
 }
 
 /// R991 §5.41 §2 #6 — paint one retained [`Scene::TextGrid`] node: the
@@ -956,11 +980,30 @@ fn draw_glyph_run(
 ///    distinct cluster, reused across colours).
 ///
 /// `reverse` (SGR 7) swaps the effective fg / bg before resolution;
-/// `hidden` (SGR 8) and a [`CellWidth::Trailer`] (no independent glyph)
-/// suppress the glyph pass — the background still paints. The remaining
-/// typographic attributes (bold / dim / italic / underline / strikethrough)
-/// and the [`GridCursor`](pinion_core::term_grid::GridCursor) are follow-up
-/// slices; this round lands the colour-faithful glyph grid.
+/// `hidden` (SGR 8, conceal) shows only the background — no glyph, no
+/// decoration; a [`CellWidth::Trailer`] carries no independent glyph but
+/// still paints its (head-inherited) background and decorations.
+///
+/// R992 §5.41 paints the typographic SGR attributes onto the same effective
+/// foreground:
+///
+/// * **bold** (SGR 1) / **italic** (SGR 3) select the glyph weight / slant
+///   ([`FontWeight::BOLD`] / [`FontStyle::Italic`]) for shaping — distinct
+///   `Layout` cache entries, so the colour-independent glyph cache is
+///   preserved (the brush is still applied at draw time).
+/// * **dim** (SGR 2, faint) attenuates the foreground alpha so the ink
+///   blends toward the background (the common terminal "half intensity").
+/// * **underline** (SGR 4) / **strikethrough** (SGR 9) stroke a horizontal
+///   rule spanning the **full cell** at a cell-geometry offset via
+///   [`stroke_hrule`] — the terminal convention, so adjacent attributed
+///   cells (and a wide head + its trailer) form one continuous rule, and a
+///   blank cell still shows its rule. This differs from styled-text
+///   decorations ([`paint_decorations`], which span the glyph-run advance
+///   at the font metric offset).
+///
+/// `blink` (SGR 5, a timing attribute) and the
+/// [`GridCursor`](pinion_core::term_grid::GridCursor) are the remaining
+/// paint slices.
 ///
 /// Font policy: the glyph size is the node metric's cell height and the
 /// family is requested as monospace. A proper `GenericFamily::Monospace`
@@ -1002,6 +1045,10 @@ fn paint_text_grid(
         f64::from(n.rect.x.saturating_add(n.rect.w)),
         f64::from(n.rect.y.saturating_add(n.rect.h)),
     );
+    // SGR 4 underline / SGR 9 strikethrough are rules of this pen width.
+    // Cell height is loop-invariant so the width is hoisted; the per-cell Y
+    // offsets depend on the cell origin and are computed inside.
+    let rule_w = (cell_h / 16.0).max(1.0);
     out.push_clip_layer(Fill::NonZero, transform, &clip_rect);
     for row in 0..grid.rows() {
         for col in 0..grid.cols() {
@@ -1020,24 +1067,59 @@ fn paint_text_grid(
             // Pass 1 — opaque cell background.
             let rect = KurboRect::new(cx, cy, cx + cell_w, cy + cell_h);
             out.fill(Fill::NonZero, origin, to_peniko(bg), None, &rect);
-            // Pass 2 — glyph, unless suppressed. A Trailer carries no
-            // independent glyph (R976); SGR 8 hidden conceals it; an
-            // all-whitespace cluster has nothing to ink.
-            if cell.width == CellWidth::Trailer
-                || cell.attrs.hidden
-                || cell.cluster.trim().is_empty()
-            {
+            // SGR 8 hidden (conceal): the cell shows only its background —
+            // no glyph, no decoration.
+            if cell.attrs.hidden {
                 continue;
             }
-            let fg = palette.resolve(fg_term, ColorTarget::Foreground);
-            let glyph_transform = origin * Affine::translate((cx, cy));
-            let layout = cache.layout(&cell.cluster, &style, None);
-            for line in layout.lines() {
-                for item in line.items() {
-                    if let PositionedLayoutItem::GlyphRun(run) = item {
-                        draw_glyph_run(out, &run, glyph_transform, to_peniko(fg));
+            // The effective foreground for this cell's ink (glyph +
+            // decorations): palette-resolved, then SGR 2 dim attenuates the
+            // alpha so the ink blends toward the background.
+            let mut fg = palette.resolve(fg_term, ColorTarget::Foreground);
+            if cell.attrs.dim {
+                // Half the alpha ~ the common terminal "faint" intensity.
+                fg = fg.with_alpha(fg.a / 2);
+            }
+            let fg_brush = to_peniko(fg);
+            // Pass 2 — glyph, unless suppressed. A Trailer carries no
+            // independent glyph (R976); an all-whitespace cluster has nothing
+            // to ink. SGR 1 bold / SGR 3 italic pick the weight / slant —
+            // distinct `Layout` cache entries, so the colour-independent glyph
+            // cache stays intact (the brush is still applied at draw time).
+            if cell.width != CellWidth::Trailer && !cell.cluster.trim().is_empty() {
+                let glyph_transform = origin * Affine::translate((cx, cy));
+                let layout = if cell.attrs.bold || cell.attrs.italic {
+                    let mut styled = style.clone();
+                    if cell.attrs.bold {
+                        styled.font_weight = FontWeight::BOLD;
+                    }
+                    if cell.attrs.italic {
+                        styled.font_style = FontStyle::Italic;
+                    }
+                    cache.layout(&cell.cluster, &styled, None)
+                } else {
+                    cache.layout(&cell.cluster, &style, None)
+                };
+                for line in layout.lines() {
+                    for item in line.items() {
+                        if let PositionedLayoutItem::GlyphRun(run) = item {
+                            draw_glyph_run(out, &run, glyph_transform, fg_brush);
+                        }
                     }
                 }
+            }
+            // Pass 3 — underline / strikethrough rules spanning the full cell
+            // (so adjacent attributed cells, and a wide head + trailer, form
+            // one continuous rule; a blank cell still shows its rule), in the
+            // effective foreground.
+            if cell.attrs.underline {
+                // Sit the rule just above the cell's bottom edge.
+                let y = cy + cell_h - rule_w;
+                stroke_hrule(out, origin, fg_brush, cx, cx + cell_w, y, rule_w);
+            }
+            if cell.attrs.strikethrough {
+                let y = cy + cell_h * 0.5;
+                stroke_hrule(out, origin, fg_brush, cx, cx + cell_w, y, rule_w);
             }
         }
     }
@@ -1501,27 +1583,13 @@ fn paint_decorations(
         // baseline, so subtract. The Y advances downward in our coord
         // system, hence the `- offset`.
         let y = f64::from(baseline - offset);
-        let line = Line::new((start, y), (end, y));
-        out.stroke(
-            &Stroke::new(f64::from(size).max(1.0)),
-            transform,
-            to_peniko(deco.brush),
-            None,
-            &line,
-        );
+        stroke_hrule(out, transform, to_peniko(deco.brush), start, end, y, f64::from(size));
     }
     if let Some(deco) = run.style().strikethrough.as_ref() {
         let offset = deco.offset.unwrap_or(metrics.strikethrough_offset);
         let size = deco.size.unwrap_or(metrics.strikethrough_size);
         let y = f64::from(baseline - offset);
-        let line = Line::new((start, y), (end, y));
-        out.stroke(
-            &Stroke::new(f64::from(size).max(1.0)),
-            transform,
-            to_peniko(deco.brush),
-            None,
-            &line,
-        );
+        stroke_hrule(out, transform, to_peniko(deco.brush), start, end, y, f64::from(size));
     }
 }
 

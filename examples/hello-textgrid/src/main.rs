@@ -64,9 +64,12 @@
 //! (fg<->bg swap), `hidden` (glyph suppressed), and wide clusters (the
 //! head's background spans both columns; the glyph is drawn once at the
 //! head, suppressed on the trailer) honoured — the window now shows the
-//! terminal. The typographic attributes (bold / dim / italic / underline /
-//! strikethrough) and the cursor are follow-up paint slices; the cell
-//! *data model* below remains the AI-first witness, read as data.
+//! terminal. **R992 §5.41** adds the typographic SGR attributes: `bold` /
+//! `italic` set the glyph weight / slant, `dim` faints the foreground, and
+//! `underline` / `strikethrough` stroke a full-cell rule — so the
+//! `htg_attrs` grid now shows each SGR flag. `blink` (a timing attribute)
+//! and the cursor are the remaining paint slices; the cell *data model*
+//! below remains the AI-first witness, read as data.
 //!
 //! ## The AI-first witness (§2 #7 scene-as-data)
 //!
@@ -522,9 +525,8 @@ impl WidgetA11y for TextGridView {
     /// No a11y nodes yet. The cell data model is read via the AI-first
     /// `scene/snapshot` path (`grid_rows`); the screen-reader a11y tree (a
     /// `grid` / `treegrid` role with per-cell nodes) lands with the
-    /// per-cell a11y slice (after the attr + cursor paint slices) — the
-    /// content it would convey is still partly deferred (typographic attrs
-    /// / cursor). Returning empty is the honest state.
+    /// per-cell a11y slice (after the remaining cursor paint slice) —
+    /// returning empty is the honest state.
     fn access_node(_state: &(), _focused: Option<&str>) -> Vec<AccessNode> {
         Vec::new()
     }

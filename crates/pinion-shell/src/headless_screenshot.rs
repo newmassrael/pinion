@@ -754,6 +754,148 @@ mod tests {
         // font-independently by the two-column background span (head + trailer).
     }
 
+    /// R992 §5.41 §5.16 — deterministic guard for the cell-grid typographic
+    /// SGR attributes. The `underline` / `strikethrough` / `dim` paths are
+    /// **geometric** (full-cell rules + an alpha factor), so they are asserted
+    /// font-independently: a blank white-on-black cell shows only its rule, and
+    /// `dim` halves the rule's intensity. `bold` / `italic` only change glyph
+    /// shape (font-dependent), so they are asserted as glyph *presence*, never
+    /// shape — mirroring the R991 guard's font-robust discipline.
+    ///
+    /// `#[ignore]` for the same wgpu cold-boot reason as the sibling headless
+    /// tests; run with `--ignored`.
+    #[test]
+    #[ignore = "wgpu adapter cold-boot too slow for default test suite; run with --ignored"]
+    #[allow(clippy::too_many_lines)]
+    fn r992_text_grid_paints_sgr_typographic_attrs() {
+        use pinion_core::cell_metric::CellMetric;
+        use pinion_core::scene::{Rect, Scene, TextGridNode};
+        use pinion_core::style::Color;
+        use pinion_core::term_grid::{CellAttrs, GridBuffer, TermCell, TermColor};
+        use pinion_runtime::paint_adapter::{FragmentCache, to_vello_cached};
+        use pinion_text::LayoutCache;
+
+        const CW: u32 = 16;
+        const CH: u32 = 24;
+        const COLS: u16 = 3;
+        const ROWS: u16 = 2;
+        const W: u32 = CW * COLS as u32;
+        const H: u32 = CH * ROWS as u32;
+
+        // White ink on a black background, so every rule / glyph is a bright
+        // pixel on a deterministic black field (palette-independent).
+        let white = TermColor::Rgb(Color::rgb(0xff, 0xff, 0xff));
+        let black = TermColor::Rgb(Color::rgb(0x00, 0x00, 0x00));
+        let cell = |attrs: CellAttrs| TermCell::new(" ", white, black).with_attrs(attrs);
+        let glyph = |attrs: CellAttrs| TermCell::new("A", white, black).with_attrs(attrs);
+        let e = CellAttrs::empty;
+
+        // Row 0 — geometric attrs on blank cells (only the rule inks):
+        //   (0,0) underline, (1,0) strikethrough, (2,0) underline + dim.
+        let row0 = vec![
+            cell(e().with_underline(true)),
+            cell(e().with_strikethrough(true)),
+            cell(e().with_underline(true).with_dim(true)),
+        ];
+        // Row 1 — (0,1) bold 'A', (1,1) italic 'A' (glyph presence), and
+        //   (2,1) underline + strikethrough together on a blank cell.
+        let row1 = vec![
+            glyph(e().with_bold(true)),
+            glyph(e().with_italic(true)),
+            cell(e().with_underline(true).with_strikethrough(true)),
+        ];
+
+        let buffer = GridBuffer::new(COLS, ROWS).with_row(0, row0).with_row(1, row1);
+        let mut node = TextGridNode::new(CellMetric::new(CW, CH).expect("non-zero")).with_cells(buffer);
+        node.rect = Rect::new(0, 0, W, H);
+        let scene = Scene::TextGrid(node);
+
+        let mut text_cache = LayoutCache::new();
+        let mut cache = FragmentCache::new();
+        let mut image_cache = pinion_runtime::image_cache::ImageCache::new();
+        let mut vello = VelloScene::new();
+        to_vello_cached(
+            &scene,
+            &|_| None,
+            &mut text_cache,
+            &mut image_cache,
+            &mut cache,
+            &mut vello,
+        );
+        let base = vello::peniko::Color::BLACK;
+        let mut shot = HeadlessScreenshot::new().expect("headless screenshot bootstrap");
+        let rgba8 = shot.render_to_rgba8(&vello, W, H, base).expect("render");
+
+        // Peak luminance (white ink ⇒ r≈g≈b, so the red channel tracks it)
+        // over the rectangle [x0,x1) x [y0,y1).
+        let peak = |x0: u32, x1: u32, y0: u32, y1: u32| -> i64 {
+            let mut m = 0i64;
+            for y in y0..y1 {
+                for x in x0..x1 {
+                    let i = ((y * W + x) * 4) as usize;
+                    m = m.max(i64::from(rgba8[i]));
+                }
+            }
+            m
+        };
+
+        // Per-cell band ink (the SUM of the red channel over the band) — a
+        // thin rule's *peak* depends on sub-pixel alignment (antialiasing can
+        // split a 1.5-px rule across two rows at ~0.75 each), but its area
+        // integral is alignment-invariant, so summing over a band that fully
+        // contains the rule's vertical extent is the ZERO-FLAKE metric. The
+        // interior x-range dodges edge antialiasing. The underline band hugs
+        // the cell bottom; the strikethrough band straddles mid-cell.
+        let interior = |c: u32| (c * CW + 2, c * CW + CW - 2);
+        let band_ink = |c: u32, y0: u32, y1: u32| -> i64 {
+            let (x0, x1) = interior(c);
+            let mut sum = 0i64;
+            for y in y0..y1 {
+                for x in x0..x1 {
+                    let i = ((y * W + x) * 4) as usize;
+                    sum += i64::from(rgba8[i]);
+                }
+            }
+            sum
+        };
+        let underline_ink = |c: u32, r: u32| band_ink(c, r * CH + CH - 4, r * CH + CH);
+        let strike_ink = |c: u32, r: u32| band_ink(c, r * CH + CH / 2 - 3, r * CH + CH / 2 + 3);
+        let glyph_peak = |c: u32, r: u32| -> i64 {
+            let (x0, x1) = interior(c);
+            peak(x0, x1, r * CH, r * CH + CH)
+        };
+
+        // (0,0) underline — an inked rule near the cell bottom and nothing at
+        // mid-cell (blank cell, so the rule is the only ink). The full-alpha
+        // 1.5-px white rule over a ~12-px interior integrates to ~4.5k.
+        let full_underline = underline_ink(0, 0);
+        assert!(full_underline > 2000, "cell(0,0) underline rule must ink, sum={full_underline}");
+        assert!(strike_ink(0, 0) < 500, "cell(0,0) underline must not ink mid-cell");
+
+        // (1,0) strikethrough — an inked rule at mid-cell, nothing at the bottom.
+        assert!(strike_ink(1, 0) > 2000, "cell(1,0) strikethrough rule must ink");
+        assert!(underline_ink(1, 0) < 500, "cell(1,0) strikethrough must not ink the bottom");
+
+        // (2,0) underline + dim — the bottom rule still inks but at ~half the
+        // area (SGR 2 halves the foreground alpha over the black bg). A ratio
+        // check cancels the antialiasing common to both cells.
+        let dim_underline = underline_ink(2, 0);
+        assert!(
+            dim_underline > full_underline / 4 && dim_underline * 10 < full_underline * 7,
+            "cell(2,0) dim underline must ink but at clearly less area than the \
+             full-intensity underline: dim={dim_underline}, full={full_underline}"
+        );
+
+        // (0,1) bold 'A' / (1,1) italic 'A' — the glyph still paints (presence,
+        // not shape: bold / italic change the glyph outline font-dependently).
+        assert!(glyph_peak(0, 1) > 120, "cell(0,1) bold 'A' glyph must paint");
+        assert!(glyph_peak(1, 1) > 120, "cell(1,1) italic 'A' glyph must paint");
+
+        // (2,1) underline + strikethrough — both rules ink on the one cell.
+        assert!(underline_ink(2, 1) > 2000, "cell(2,1) combo underline rule must ink");
+        assert!(strike_ink(2, 1) > 2000, "cell(2,1) combo strikethrough rule must ink");
+    }
+
     /// R806 §5.39 §2 #1/#7 — deterministic render-vs-intent guard for the
     /// focus-ring **top-edge stroke thickness**. The scene-as-data carries a
     /// 2px Inside border; this renders the exact overlay-box shape through
