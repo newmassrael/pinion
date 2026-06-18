@@ -46195,6 +46195,58 @@
         "R995 + R996 both committed locally, NOT pushed (push consent pending)"
       ]
     },
+    "R996.1": {
+      "decision_summary": "R996.1 §5.45 §5.40 §5.27 session-review clearance (R996; 2 reviewer + self-grep): SSOT lift + use-substrate + a11y live region",
+      "changes_bullets": [
+        "max_scroll_offset SSOT in scroll.rs (content-viewport, clamped i32); layout pass + reducer share it",
+        "tail-follow scroll now uses substrate reveal_row(count-1), not hand-rolled scroll_to(bottom)",
+        "role=status a11y live region for count + follow state (doc claimed it; access_node now emits it)",
+        "honest in-memory-scope note (slice 1a; out-of-memory paged tail-evict = 1b, not done)",
+        "tighten window-bound test; const-vs-measured viewport equivalence documented"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 = 7072 ok 0 failed (layout SSOT test intact: max_y = content - viewport)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello = 0",
+        "r996 RPC demo PASS real GPU deterministic x3 (reveal_row lands the same offset as before)",
+        "rejected over-flags: set_max app-side is API-sanctioned; count vs len() = necessary reactivity denorm",
+        "mnemosyne validate-workspace T1=0 (entries 979)"
+      ],
+      "impact_refs": [
+        "5.45",
+        "5.40",
+        "5.27"
+      ],
+      "carry_forward_bullets": [
+        "R995 + R996 + R996.1 committed locally, NOT pushed (push consent pending)",
+        "next R997: campaign slice 2 multi-facet filter, or 1b paged streaming, or R1.8 hit-test",
+        "max_scroll_offset is now the scroll-bound SSOT; future bound writers use it, not inline arithmetic"
+      ],
+      "publishable_decision_summary": "R996.1 §5.45 §5.40 §5.27 session-review clearance (R996; 2 reviewer + self-grep): SSOT lift + use-substrate + a11y live region",
+      "publishable_changes_bullets": [
+        "max_scroll_offset SSOT in scroll.rs (content-viewport, clamped i32); layout pass + reducer share it",
+        "tail-follow scroll now uses substrate reveal_row(count-1), not hand-rolled scroll_to(bottom)",
+        "role=status a11y live region for count + follow state (doc claimed it; access_node now emits it)",
+        "honest in-memory-scope note (slice 1a; out-of-memory paged tail-evict = 1b, not done)",
+        "tighten window-bound test; const-vs-measured viewport equivalence documented"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 = 7072 ok 0 failed (layout SSOT test intact: max_y = content - viewport)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello = 0",
+        "r996 RPC demo PASS real GPU deterministic x3 (reveal_row lands the same offset as before)",
+        "rejected over-flags: set_max app-side is API-sanctioned; count vs len() = necessary reactivity denorm",
+        "mnemosyne validate-workspace T1=0 (entries 979)"
+      ],
+      "publishable_impact_refs": [
+        "5.45",
+        "5.40",
+        "5.27"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R995 + R996 + R996.1 committed locally, NOT pushed (push consent pending)",
+        "next R997: campaign slice 2 multi-facet filter, or 1b paged streaming, or R1.8 hit-test",
+        "max_scroll_offset is now the scroll-bound SSOT; future bound writers use it, not inline arithmetic"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

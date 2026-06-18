@@ -371,6 +371,25 @@ impl Default for ScrollState {
     }
 }
 
+/// R996 §5.45 §5.27 — the maximum scroll offset for a content extent inside a
+/// viewport: `content.saturating_sub(viewport)` clamped into `i32`
+/// (`i32::MAX` for an extent that overflows the axis). A content smaller than
+/// the viewport has no scrollable range, so the bound is `0`.
+///
+/// This is the single source of truth for the "how far can this axis scroll"
+/// arithmetic. The runtime layout pass writes both
+/// [`ScrollState`] bounds through it from the laid-out content rect (the
+/// authoritative per-frame bound), and any application code that must know the
+/// bound *before* the next layout pass — e.g. a streaming view that appends
+/// rows and pins the viewport to the new tail in the same frame — computes the
+/// identical value through it, so the two never diverge (the layout pass then
+/// re-affirms the same number, and [`ScrollState::set_max`]'s Signal
+/// equality-skip makes that a no-op).
+#[must_use]
+pub fn max_scroll_offset(content: u32, viewport: u32) -> i32 {
+    i32::try_from(content.saturating_sub(viewport)).unwrap_or(i32::MAX)
+}
+
 /// R55.B §5.45 — Resolve (or lazily initialize) the
 /// [`ScrollState`] for the current view scope.
 ///

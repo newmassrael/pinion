@@ -375,8 +375,6 @@ fn update_scroll_state_bounds(scene: &Scene) -> bool {
                 // Content rect is scroll-local (origin at (0, 0)),
                 // so `rect.w/h` already encode the intrinsic content
                 // size — no `+ rect.x/y` accumulation needed.
-                let max_x = content_rect.w.saturating_sub(s.viewport.w);
-                let max_y = content_rect.h.saturating_sub(s.viewport.h);
                 // R57.X.scrollbar §5.45 — `set_max` returns whether
                 // either max bound actually mutated (post-Signal
                 // equality-skip). On the very first paint of an
@@ -387,9 +385,15 @@ fn update_scroll_state_bounds(scene: &Scene) -> bool {
                 // pass on the same frame so the scrollbar widget
                 // paints with the freshly-written max instead of a
                 // full-track thumb.
+                //
+                // R996 §5.27 — each axis bound goes through the
+                // `max_scroll_offset` SSOT (content extent − viewport,
+                // clamped i32), shared with app-side pre-layout bound
+                // writers (e.g. a streaming view that pins the viewport
+                // to a freshly-appended tail in the same frame).
                 dirty = state.set_max(
-                    i32::try_from(max_x).unwrap_or(i32::MAX),
-                    i32::try_from(max_y).unwrap_or(i32::MAX),
+                    pinion_core::widgets::scroll::max_scroll_offset(content_rect.w, s.viewport.w),
+                    pinion_core::widgets::scroll::max_scroll_offset(content_rect.h, s.viewport.h),
                 );
                 // R774 §5.27 — AutoSizer feedback. `apply` wrote the
                 // flex-computed clip-window rect into `s.viewport`
