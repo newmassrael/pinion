@@ -586,6 +586,175 @@ mod tests {
         );
     }
 
+    /// R991 §5.41 §2 #6 — deterministic glyph-paint guard for the
+    /// cell-native [`Scene::TextGrid`]. Builds a 3x3 retained grid that
+    /// exercises every R991 paint path — palette-resolved fg/bg (`Rgb` /
+    /// `Indexed` / `Default`), `reverse` (fg<->bg swap), `hidden` (glyph
+    /// suppressed, bg still painted), and a wide cluster head + `Trailer`
+    /// whose background spans both columns — rasterises it through the
+    /// SAME `to_vello_cached` the live shell uses, and reads the pixels
+    /// back. Assertions are font-robust: they check background fills
+    /// (deterministic) and glyph presence/absence (a cell region is or is
+    /// not its background colour), never exact glyph shape — so the guard
+    /// does not depend on which monospace font fontique resolves.
+    ///
+    /// `#[ignore]` for the same wgpu cold-boot reason as the sibling
+    /// headless tests; run with `--ignored`.
+    #[test]
+    #[ignore = "wgpu adapter cold-boot too slow for default test suite; run with --ignored"]
+    #[allow(clippy::too_many_lines)]
+    fn r991_text_grid_paints_cells_colours_attrs_wide() {
+        use pinion_core::cell_metric::CellMetric;
+        use pinion_core::scene::{Rect, Scene, TextGridNode};
+        use pinion_core::style::Color;
+        use pinion_core::term_grid::{CellAttrs, GridBuffer, TermCell, TermColor};
+        use pinion_runtime::paint_adapter::{FragmentCache, to_vello_cached};
+        use pinion_text::LayoutCache;
+
+        // U+D55C (Hangul "han") — a wide cluster; named + escaped per the
+        // non-ASCII source-literal rule (raw glyph only in doc strings).
+        const WIDE: &str = "\u{D55C}";
+        const CW: u32 = 16;
+        const CH: u32 = 24;
+        const COLS: u16 = 3;
+        const ROWS: u16 = 3;
+        const W: u32 = CW * COLS as u32;
+        const H: u32 = CH * ROWS as u32;
+
+        let metric = CellMetric::new(CW, CH).expect("non-zero cell metric");
+        let red = TermColor::Rgb(Color::rgb(0xff, 0x00, 0x00));
+        let teal = TermColor::Rgb(Color::rgb(0x12, 0x34, 0x56));
+        let green = TermColor::Rgb(Color::rgb(0x00, 0xff, 0x00));
+        let magenta = TermColor::Rgb(Color::rgb(0xaa, 0x00, 0xaa));
+        let white = TermColor::Rgb(Color::rgb(0xff, 0xff, 0xff));
+
+        // Row 0 — fg/bg palette resolution: Rgb red bg, Indexed(4) ANSI
+        // blue bg, and a default-on-default "A" glyph.
+        let row0 = vec![
+            TermCell::new(" ", TermColor::Default, red),
+            TermCell::new(" ", TermColor::Default, TermColor::Indexed(4)),
+            TermCell::new("A", TermColor::Default, TermColor::Default),
+        ];
+        // Row 1 — attributes: reverse (effective bg becomes the green fg),
+        // hidden (the white "X" glyph suppressed, teal bg still paints).
+        let row1 = vec![
+            TermCell::new(" ", green, TermColor::Default)
+                .with_attrs(CellAttrs::empty().with_reverse(true)),
+            TermCell::new("X", white, teal).with_attrs(CellAttrs::empty().with_hidden(true)),
+            TermCell::blank(),
+        ];
+        // Row 2 — wide head + trailer: the magenta bg spans both columns.
+        let head = TermCell::new(WIDE, TermColor::Default, magenta).wide();
+        let trail = head.trailer();
+        let row2 = vec![head, trail, TermCell::blank()];
+
+        let buffer = GridBuffer::new(COLS, ROWS)
+            .with_row(0, row0)
+            .with_row(1, row1)
+            .with_row(2, row2);
+        let mut node = TextGridNode::new(metric).with_cells(buffer);
+        node.rect = Rect::new(0, 0, W, H);
+        let scene = Scene::TextGrid(node);
+
+        let mut text_cache = LayoutCache::new();
+        let mut cache = FragmentCache::new();
+        let mut image_cache = pinion_runtime::image_cache::ImageCache::new();
+        let mut vello = VelloScene::new();
+        to_vello_cached(
+            &scene,
+            &|_| None,
+            &mut text_cache,
+            &mut image_cache,
+            &mut cache,
+            &mut vello,
+        );
+        let base = vello::peniko::Color::BLACK;
+        let mut shot = HeadlessScreenshot::new().expect("headless screenshot bootstrap");
+        let rgba8 = shot.render_to_rgba8(&vello, W, H, base).expect("render");
+
+        let at = |x: u32, y: u32| -> (i64, i64, i64) {
+            let i = ((y * W + x) * 4) as usize;
+            (
+                i64::from(rgba8[i]),
+                i64::from(rgba8[i + 1]),
+                i64::from(rgba8[i + 2]),
+            )
+        };
+
+        // (0,0) Rgb red background — sample two interior points (not the
+        // centre alone) inset from the cell edges to dodge antialiasing.
+        for &(x, y) in &[(CW / 2, CH / 2), (5, 6)] {
+            let (r, g, b) = at(x, y);
+            assert!(r > 200 && g < 50 && b < 50, "cell(0,0) Rgb red bg, got ({r},{g},{b})");
+        }
+        // (1,0) Indexed(4) = ANSI blue (#0000ee).
+        for &(x, y) in &[(CW + CW / 2, CH / 2), (CW + 5, 6)] {
+            let (r, g, b) = at(x, y);
+            assert!(b > 180 && r < 50 && g < 50, "cell(1,0) Indexed(4) blue bg, got ({r},{g},{b})");
+        }
+        // (2,0) "A" glyph present: bright pixels on the black default bg.
+        let mut a_glyph = false;
+        for y in 0..CH {
+            for x in (2 * CW)..(3 * CW) {
+                if at(x, y).0 > 120 {
+                    a_glyph = true;
+                }
+            }
+        }
+        assert!(a_glyph, "cell(2,0) 'A' glyph must paint bright pixels on black");
+
+        // (0,1) reverse — the effective background is the green foreground.
+        for &(x, y) in &[(CW / 2, CH + CH / 2), (5, CH + 6)] {
+            let (r, g, b) = at(x, y);
+            assert!(g > 200 && r < 50 && b < 50, "cell(0,1) reverse swaps fg->bg green, got ({r},{g},{b})");
+        }
+        // (1,1) hidden — the teal bg paints; the white "X" glyph does not.
+        let (r, g, b) = at(CW + CW / 2, CH + CH / 2);
+        assert!(
+            (r - 18).abs() < 30 && (g - 52).abs() < 30 && (b - 86).abs() < 40,
+            "cell(1,1) hidden keeps the teal bg, got ({r},{g},{b})"
+        );
+        let mut hidden_glyph = false;
+        for y in CH..(2 * CH) {
+            for x in CW..(2 * CW) {
+                let (r, g, b) = at(x, y);
+                if r > 200 && g > 200 && b > 200 {
+                    hidden_glyph = true;
+                }
+            }
+        }
+        assert!(!hidden_glyph, "cell(1,1) hidden must suppress the white 'X' glyph");
+
+        // (cols 0..1, row 2) wide head + Trailer — the magenta bg must span
+        // BOTH columns (the trailer carries the head's colours), and the
+        // wide glyph must paint somewhere across the span.
+        let mut head_magenta = 0u32;
+        let mut trailer_magenta = 0u32;
+        let mut wide_glyph = false;
+        for y in (2 * CH)..(3 * CH) {
+            for x in 0..(2 * CW) {
+                let (r, g, b) = at(x, y);
+                let is_magenta = r > 120 && g < 60 && b > 120;
+                if is_magenta && x < CW {
+                    head_magenta += 1;
+                } else if is_magenta {
+                    trailer_magenta += 1;
+                }
+                // default-fg light grey glyph: every channel bright.
+                if r > 120 && g > 120 && b > 120 {
+                    wide_glyph = true;
+                }
+            }
+        }
+        assert!(head_magenta > 20, "wide head bg magenta missing (head_magenta={head_magenta})");
+        assert!(
+            trailer_magenta > 20,
+            "Trailer cell must carry the wide head's magenta bg across both columns \
+             (trailer_magenta={trailer_magenta})"
+        );
+        assert!(wide_glyph, "wide '{WIDE}' glyph must paint across the head+trailer span");
+    }
+
     /// R806 §5.39 §2 #1/#7 — deterministic render-vs-intent guard for the
     /// focus-ring **top-edge stroke thickness**. The scene-as-data carries a
     /// 2px Inside border; this renders the exact overlay-box shape through

@@ -43,11 +43,13 @@ use crate::paint_cache_stats::FragmentCacheStats;
 use pinion_core::Scene;
 use pinion_core::scene::{
     BoxNode, ImageNode, ImmediateModeNode, ImmediatePainter, PathCommand, PathNode, PathPoint,
-    Rect, TextNode,
+    Rect, TextGridNode, TextNode,
 };
 use pinion_core::style::{
     Border, BorderPlacement, BoxStyle, Color, Fit, Gradient, GradientKind, StrokeCap, TextOverflow,
+    TextStyle,
 };
+use pinion_core::term_grid::{CellWidth, ColorTarget};
 use pinion_text::LayoutCache;
 use pinion_text::parley::PositionedLayoutItem;
 use vello::Glyph;
@@ -189,6 +191,10 @@ fn to_vello_inner<F>(
         Scene::Path(p) => paint_path(out, p, transform),
         // R740 §5.16 — raster image paint (decode-once via `image_cache`).
         Scene::Image(i) => paint_image(out, i, image_cache, transform),
+        // R991 §5.41 §2 #6 — cell-native terminal grid glyph paint (the
+        // deferred half of the §5.41 axis: R972–R978 shipped the data
+        // model, this arm rasterises it).
+        Scene::TextGrid(n) => paint_text_grid(out, n, text_cache, transform),
         // External / Effect: no-op (no rasterizable contribution here).
         _ => {}
     }
@@ -699,6 +705,10 @@ fn to_vello_cached_inner<F>(
         // R682 cache key already folds `ImageNode::source`, so a cached
         // fragment re-uses the decoded image and a source change misses).
         Scene::Image(i) => paint_image(&mut sub, i, image_cache, transform),
+        // R991 §5.41 §2 #6 — TextGrid glyph paint into the fresh sub-scene
+        // (uncacheable per `Scene::is_cacheable_for_paint`, so it is always
+        // re-encoded; mirrors the External/ImmediateMode treatment).
+        Scene::TextGrid(n) => paint_text_grid(&mut sub, n, text_cache, transform),
         // External / Effect: no-op (matches to_vello_inner's `_ => {}` arm).
         _ => {}
     }
@@ -895,6 +905,117 @@ pub fn root_background(scene: &Scene) -> PenikoColor {
 #[must_use]
 pub fn to_peniko(c: Color) -> PenikoColor {
     PenikoColor::from_rgba8(c.r, c.g, c.b, c.a)
+}
+
+/// R991 §5.41 §2 #6 — paint one retained [`Scene::TextGrid`] node: the
+/// cell-native terminal projection's GUI (Vello) glyph rasterisation.
+/// This is the deferred second half of the §5.41 cell-native axis —
+/// R972–R978 shipped the cell data model + `scene/snapshot` introspection
+/// while the grid stayed paint-opaque; this arm makes it visible.
+///
+/// Each cell is painted within its own rect, placed by the node-local
+/// [`CellMetric`](pinion_core::cell_metric::CellMetric) (R968 ratify):
+///
+/// 1. **Background** — the cell's `bg` [`TermColor`](pinion_core::term_grid::TermColor),
+///    resolved through the node [`Palette`](pinion_core::term_grid::Palette)
+///    ([`ColorTarget::Background`]), fills the whole cell. A
+///    [`CellWidth::Trailer`] carries the wide head's colours (R976), so
+///    filling every cell's own `bg` paints the head background across both
+///    columns with no special case.
+/// 2. **Glyph** — the grapheme `cluster` is shaped through the shared
+///    [`LayoutCache`] (the same parley → [`vello::Scene::draw_glyphs`] path
+///    [`paint_text`] uses — no bespoke rasteriser) and drawn in the
+///    resolved `fg` colour at the cell origin. The brush is applied at draw
+///    time so the cache key stays colour-independent (one `Layout` per
+///    distinct cluster, reused across colours).
+///
+/// `reverse` (SGR 7) swaps the effective fg / bg before resolution;
+/// `hidden` (SGR 8) and a [`CellWidth::Trailer`] (no independent glyph)
+/// suppress the glyph pass — the background still paints. The remaining
+/// typographic attributes (bold / dim / italic / underline / strikethrough)
+/// and the [`GridCursor`](pinion_core::term_grid::GridCursor) are follow-up
+/// slices; this round lands the colour-faithful glyph grid.
+///
+/// Font policy: the glyph size is the node metric's cell height and the
+/// family is requested as monospace. A proper `GenericFamily::Monospace`
+/// fallback plus CJK / emoji font fallback are the seed's documented open
+/// questions, deferred to a font-policy slice.
+fn paint_text_grid(
+    out: &mut VelloScene,
+    n: &TextGridNode,
+    cache: &mut LayoutCache,
+    transform: Affine,
+) {
+    let grid = n.cells();
+    if grid.is_empty() {
+        return;
+    }
+    let palette = n.palette();
+    let metric = n.cell_metric();
+    let cell_w = f64::from(metric.cell_w());
+    let cell_h = f64::from(metric.cell_h());
+    // Glyphs paint in the grid-local frame translated to the node's
+    // layout-resolved origin, composed with the inherited transform (e.g.
+    // a parent `Scene::Scroll`'s shifted child transform) — exactly like
+    // [`paint_text`].
+    let origin = transform * Affine::translate((f64::from(n.rect.x), f64::from(n.rect.y)));
+    // The node metric sizes the glyph; the family is requested monospace
+    // (see the font-policy note above).
+    let mut style = TextStyle::new().with_font_family("monospace");
+    style.font_size_px = metric.cell_h().max(1);
+    for row in 0..grid.rows() {
+        for col in 0..grid.cols() {
+            let Some(cell) = grid.cell(col, row) else {
+                continue;
+            };
+            // SGR 7 reverse: swap the effective fg / bg before palette
+            // resolution.
+            let (fg_term, bg_term) = if cell.attrs.reverse {
+                (cell.bg, cell.fg)
+            } else {
+                (cell.fg, cell.bg)
+            };
+            let bg = palette.resolve(bg_term, ColorTarget::Background);
+            let (cx, cy) = metric.cell_to_px(col, row);
+            // Pass 1 — opaque cell background.
+            let rect = KurboRect::new(cx, cy, cx + cell_w, cy + cell_h);
+            out.fill(Fill::NonZero, origin, to_peniko(bg), None, &rect);
+            // Pass 2 — glyph, unless suppressed. A Trailer carries no
+            // independent glyph (R976); SGR 8 hidden conceals it; an
+            // all-whitespace cluster has nothing to ink.
+            if cell.width == CellWidth::Trailer
+                || cell.attrs.hidden
+                || cell.cluster.trim().is_empty()
+            {
+                continue;
+            }
+            let fg = palette.resolve(fg_term, ColorTarget::Foreground);
+            let glyph_transform = origin * Affine::translate((cx, cy));
+            let layout = cache.layout(&cell.cluster, &style, None);
+            for line in layout.lines() {
+                for item in line.items() {
+                    let PositionedLayoutItem::GlyphRun(run) = item else {
+                        continue;
+                    };
+                    let parley_run = run.run();
+                    let font = parley_run.font();
+                    let font_size = parley_run.font_size();
+                    out.draw_glyphs(font)
+                        .transform(glyph_transform)
+                        .font_size(font_size)
+                        .brush(to_peniko(fg))
+                        .draw(
+                            Fill::NonZero,
+                            run.positioned_glyphs().map(|g| Glyph {
+                                id: g.id,
+                                x: g.x,
+                                y: g.y,
+                            }),
+                        );
+                }
+            }
+        }
+    }
 }
 
 /// Emit one Vello filled-rectangle path for a pinion (`Rect`, `Color`,

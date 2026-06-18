@@ -45751,6 +45751,64 @@
         "it for free."
       ]
     },
+    "R991": {
+      "decision_summary": "R991 §5.41 §2#6 — Vello glyph paint for Scene::TextGrid (the deferred half of the cell-native axis): per-cell palette-resolved bg fill plus the grapheme cluster via the shared pinion-text glyph stack, with reverse / hidden / wide honoured. The retained terminal projection (R972-R978 data model) is now visible on the GUI backend.",
+      "changes_bullets": [
+        "paint_text_grid() in paint_adapter.rs: per-cell bg fill + cluster glyph (pinion-text reuse)",
+        "wired Scene::TextGrid arm into to_vello_inner + to_vello_cached_inner (both Vello walkers)",
+        "colour via Palette::resolve then to_peniko; glyph brush at draw time so cache stays colour-independent",
+        "reverse swaps fg/bg; hidden + CellWidth::Trailer suppress the glyph; wide head glyph spans two columns",
+        "glyph size = node CellMetric cell_h, family requested monospace (R968 node-local metric)",
+        "hello-textgrid doc updated: the grids now paint on Vello (was paint-opaque); headless pixel regression added"
+      ],
+      "verification_bullets": [
+        "clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic)",
+        "cargo test --workspace --features pinion-runtime/vello: 7056 passed, 0 failed",
+        "headless r991_text_grid_paints_cells_colours_attrs_wide: PASS on real GPU (run with --ignored)",
+        "font-robust pixel asserts: Rgb/Indexed bg, reverse green bg, hidden suppresses glyph yet keeps bg",
+        "wide head+trailer magenta bg spans both columns; A and wide glyph presence verified",
+        "validate-workspace: T1 orphan total=0"
+      ],
+      "impact_refs": [
+        "5.41",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "R992: typographic SGR attrs (bold/dim/italic via font variant+alpha, underline/strikethrough strokes)",
+        "R993: cursor render (GridCursor position/shape/visibility) on Vello",
+        "R994: TUI (ratatui) Scene::TextGrid paint arm (cluster + fg/bg + wide + cursor via Modifier)",
+        "font policy (seed open question): GenericFamily::Monospace fallback + CJK/emoji fontique fallback",
+        "glyph-emit lift: draw_glyphs run-emit now 2 consumers (paint_text + paint_text_grid); 3rd triggers draw_glyph_run"
+      ],
+      "publishable_decision_summary": "R991 §5.41 §2#6 — Vello glyph paint for Scene::TextGrid (the deferred half of the cell-native axis): per-cell palette-resolved bg fill plus the grapheme cluster via the shared pinion-text glyph stack, with reverse / hidden / wide honoured. The retained terminal projection (R972-R978 data model) is now visible on the GUI backend.",
+      "publishable_changes_bullets": [
+        "paint_text_grid() in paint_adapter.rs: per-cell bg fill + cluster glyph (pinion-text reuse)",
+        "wired Scene::TextGrid arm into to_vello_inner + to_vello_cached_inner (both Vello walkers)",
+        "colour via Palette::resolve then to_peniko; glyph brush at draw time so cache stays colour-independent",
+        "reverse swaps fg/bg; hidden + CellWidth::Trailer suppress the glyph; wide head glyph spans two columns",
+        "glyph size = node CellMetric cell_h, family requested monospace (R968 node-local metric)",
+        "hello-textgrid doc updated: the grids now paint on Vello (was paint-opaque); headless pixel regression added"
+      ],
+      "publishable_verification_bullets": [
+        "clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic)",
+        "cargo test --workspace --features pinion-runtime/vello: 7056 passed, 0 failed",
+        "headless r991_text_grid_paints_cells_colours_attrs_wide: PASS on real GPU (run with --ignored)",
+        "font-robust pixel asserts: Rgb/Indexed bg, reverse green bg, hidden suppresses glyph yet keeps bg",
+        "wide head+trailer magenta bg spans both columns; A and wide glyph presence verified",
+        "validate-workspace: T1 orphan total=0"
+      ],
+      "publishable_impact_refs": [
+        "5.41",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R992: typographic SGR attrs (bold/dim/italic via font variant+alpha, underline/strikethrough strokes)",
+        "R993: cursor render (GridCursor position/shape/visibility) on Vello",
+        "R994: TUI (ratatui) Scene::TextGrid paint arm (cluster + fg/bg + wide + cursor via Modifier)",
+        "font policy (seed open question): GenericFamily::Monospace fallback + CJK/emoji fontique fallback",
+        "glyph-emit lift: draw_glyphs run-emit now 2 consumers (paint_text + paint_text_grid); 3rd triggers draw_glyph_run"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

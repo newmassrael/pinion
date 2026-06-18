@@ -58,9 +58,14 @@
 //! incremental-update model that completes the S5 data model. The other
 //! grids leave every row at generation 0.
 //!
-//! **Glyph paint** stays a deliberate follow-up — the grid is still
-//! paint-opaque, so the window renders only its surface background; the
-//! deliverable is the cell *data model*, read as data.
+//! **Glyph paint** (R991 §5.41 §2 #6) renders these grids on the Vello
+//! backend: each cell's palette-resolved background fills its rect and the
+//! grapheme cluster paints in the resolved foreground, with `reverse`
+//! (fg<->bg swap), `hidden` (glyph suppressed), and wide clusters (head
+//! glyph spanning two columns) honoured — the window now shows the
+//! terminal. The typographic attributes (bold / dim / italic / underline /
+//! strikethrough) and the cursor are follow-up paint slices; the cell
+//! *data model* below remains the AI-first witness, read as data.
 //!
 //! ## The AI-first witness (§2 #7 scene-as-data)
 //!
