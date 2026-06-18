@@ -237,6 +237,21 @@ pub fn composite_item_tag(bar_tag: &str, index: usize) -> String {
     format!("{bar_tag}#i{index}")
 }
 
+/// R988.1 §5.16 — the decode peer of [`composite_item_tag`]: parse a flat item
+/// **sub-tag** (`i{index}`, the part after `#` the `InputRouter` splits off)
+/// back to its index, or `None` for an unknown kind or a non-numeric index.
+/// Kept adjacent to the encode so the `i<index>` wire form has one home
+/// ([[wire-form-read-write-symmetry]]); the context-menu bindings reach for it
+/// instead of re-rolling the parse.
+#[must_use]
+pub fn parse_item_sub_tag(sub_tag: &str) -> Option<usize> {
+    let mut chars = sub_tag.chars();
+    if chars.next()? != 'i' {
+        return None;
+    }
+    chars.as_str().parse().ok()
+}
+
 /// R985 §5.16 §5.40 — compose a *nested* dropdown item's composite tag from
 /// its descent path *relative to the open dropdown* (`[i]` = top item `i` →
 /// `{bar}#i{i}`, identical to [`composite_item_tag`]; `[2, 0]` = item 0 of
@@ -679,6 +694,20 @@ mod tests {
 
     fn theme() -> Theme {
         Theme::light()
+    }
+
+    #[test]
+    fn r988_1_parse_item_sub_tag_inverts_composite_item_tag() {
+        // The decoder is the inverse of the `i<index>` sub-tag the encoder emits.
+        for index in [0_usize, 1, 7, 42] {
+            let tag = composite_item_tag("ctx", index);
+            let (_bar, sub) = tag.split_once('#').expect("composite tag carries a '#'");
+            assert_eq!(parse_item_sub_tag(sub), Some(index), "round-trips item {index}");
+        }
+        // Rejects a non-item sub-tag, a non-numeric index, and the empty string.
+        assert_eq!(parse_item_sub_tag("barrier"), None, "non-item sub-tag");
+        assert_eq!(parse_item_sub_tag("ix"), None, "non-numeric index");
+        assert_eq!(parse_item_sub_tag(""), None, "empty sub-tag");
     }
 
     const TITLES: [&str; 3] = ["File", "Edit", "View"];

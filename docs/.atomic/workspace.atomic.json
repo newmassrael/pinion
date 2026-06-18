@@ -45373,6 +45373,60 @@
         "ContextMenu dynamic labels = 1st consumer; a 2nd would lift a context-label helper"
       ]
     },
+    "R988.1": {
+      "decision_summary": "R988.1 session-review clearance of R986/R987/R988 (2 adversarial reviewers + self-grep): HIGH grid_target_at omitted block_pad so it mis-resolved the column within 8px of every boundary (now fixed via the TableStyle SSOT + boundary tests) + MED parse_item_sub_tag lifted to the menu module as composite_item_tag's decode peer + MED SortCommand enum unifies the (label, action) order",
+      "changes_bullets": [
+        "HIGH: grid_target_at omitted the table block_pad (8px) inset, mis-resolving the column within 8px",
+        "of every boundary (masked by center-only clicks); now reads the block_pad the paint uses",
+        "a boundary-aware unit test + an RPC demo guard (click near a column edge, not just the center)",
+        "MED: lifted parse_item_sub_tag to pinion_widget_paint::menu (decode peer of composite_item_tag)",
+        "both context-menu examples reuse it; 2 local copies removed (wire read/write symmetry)",
+        "MED: SortCommand enum = one (order, label, action) source, killing the view-vs-update index split",
+        "documented the no-scroll invariant (geometry fits -> ScrollState clamps offsets to 0)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace: ok, 0 failed (boundary grid_target_at + menu round-trip + 7 example tests)",
+        "cargo clippy --workspace --all-targets -D pedantic: 0 warnings",
+        "r988 demo PASS (+ col-0 right-edge boundary guard) / r986 / r772 / r887 PASS (no lift regression)",
+        "2 adversarial reviewers + self-grep; over-flags rejected with evidence (read_open_state clean)"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.27",
+        "5.38",
+        "5.53"
+      ],
+      "carry_forward_bullets": [
+        "the editable hello-data-grid cell menu (reset, R966/L1786) still needs the monster's harder cell",
+        "hit-test (frozen header + h-scroll + variable widths); the no-scroll geometry cannot transfer"
+      ],
+      "publishable_decision_summary": "R988.1 session-review clearance of R986/R987/R988 (2 adversarial reviewers + self-grep): HIGH grid_target_at omitted block_pad so it mis-resolved the column within 8px of every boundary (now fixed via the TableStyle SSOT + boundary tests) + MED parse_item_sub_tag lifted to the menu module as composite_item_tag's decode peer + MED SortCommand enum unifies the (label, action) order",
+      "publishable_changes_bullets": [
+        "HIGH: grid_target_at omitted the table block_pad (8px) inset, mis-resolving the column within 8px",
+        "of every boundary (masked by center-only clicks); now reads the block_pad the paint uses",
+        "a boundary-aware unit test + an RPC demo guard (click near a column edge, not just the center)",
+        "MED: lifted parse_item_sub_tag to pinion_widget_paint::menu (decode peer of composite_item_tag)",
+        "both context-menu examples reuse it; 2 local copies removed (wire read/write symmetry)",
+        "MED: SortCommand enum = one (order, label, action) source, killing the view-vs-update index split",
+        "documented the no-scroll invariant (geometry fits -> ScrollState clamps offsets to 0)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace: ok, 0 failed (boundary grid_target_at + menu round-trip + 7 example tests)",
+        "cargo clippy --workspace --all-targets -D pedantic: 0 warnings",
+        "r988 demo PASS (+ col-0 right-edge boundary guard) / r986 / r772 / r887 PASS (no lift regression)",
+        "2 adversarial reviewers + self-grep; over-flags rejected with evidence (read_open_state clean)"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.27",
+        "5.38",
+        "5.53"
+      ],
+      "publishable_carry_forward_bullets": [
+        "the editable hello-data-grid cell menu (reset, R966/L1786) still needs the monster's harder cell",
+        "hit-test (frozen header + h-scroll + variable widths); the no-scroll geometry cannot transfer"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

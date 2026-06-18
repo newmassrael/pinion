@@ -73,7 +73,9 @@ use pinion_core::{Command, Frame, Scene, WidgetCore};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::barrier::dismiss_barrier;
 use pinion_widget_paint::coord::saturating_f32_to_u32;
-use pinion_widget_paint::menu::{composite_item_tag, view_context_menu, ContextMenuPlacement, MenuStyle};
+use pinion_widget_paint::menu::{
+    composite_item_tag, parse_item_sub_tag, view_context_menu, ContextMenuPlacement, MenuStyle,
+};
 use pinion_widget_paint::table::{view_virtual_table, GridScroll, TableStyle, VirtualTableData};
 use std::rc::Rc;
 
@@ -114,11 +116,9 @@ const SORT_TAG: &str = "gsort";
 const MENU_TAG: &str = "colmenu";
 /// R715 §5.16 — the transparent click-outside dismiss barrier composite.
 const BARRIER_TAG: &str = "colmenu#barrier";
-/// The popup command item count. Index 0/1/2 maps to ascending / descending /
-/// clear in [`update`](GridHeaderMenuView::update); R988 — the labels are
-/// computed per-open from the right-clicked column, so the menu names the
-/// column it acts on ("Sort by Score ascending").
-const MENU_ITEM_COUNT: usize = 3;
+/// The popup command count — derived from [`SORT_COMMANDS`] so the item count,
+/// labels, and actions share one source.
+const MENU_ITEM_COUNT: usize = SORT_COMMANDS.len();
 /// The `"command"` intent the [`ContextMenuExternal`] emits on activation,
 /// dotted with this primary external's scope tag (R51.173 §5.23). Built via
 /// `pinion_core::intent_tag!`; the literal must match [`MENU_TAG`].
@@ -186,29 +186,75 @@ fn use_menu_target() -> Rc<Signal<Option<MenuTarget>>> {
     owner.cache(HEADER_CTX_KEY, || Signal::new(None))
 }
 
-/// R986 §5.53 / R988 — map a window-space secondary-click point to the grid
-/// column it landed on (a header cell OR a data cell), or `None` when the click
-/// is outside the grid's columns/rows.
+/// R988.1 — the single source for the menu's items: each variant owns BOTH its
+/// label (named for the right-clicked column) AND its sort action, so the label
+/// order (the view) and the action order (the reducer) cannot silently desync.
+/// The items paint and dispatch in [`SORT_COMMANDS`] order, and
+/// [`MENU_ITEM_COUNT`] derives from it.
+#[derive(Copy, Clone)]
+enum SortCommand {
+    Ascending,
+    Descending,
+    Clear,
+}
+
+/// The menu's items, in paint / dispatch order.
+const SORT_COMMANDS: [SortCommand; 3] =
+    [SortCommand::Ascending, SortCommand::Descending, SortCommand::Clear];
+
+impl SortCommand {
+    /// The popup label for this command, naming the right-clicked column.
+    fn label(self, col_name: &str) -> String {
+        match self {
+            SortCommand::Ascending => format!("Sort by {col_name} ascending"),
+            SortCommand::Descending => format!("Sort by {col_name} descending"),
+            SortCommand::Clear => "Clear Sort".to_string(),
+        }
+    }
+
+    /// Apply this command's sort to `col` on the shared [`GridSortState`].
+    fn apply(self, grid_sort: &GridSortState, col: usize) {
+        match self {
+            SortCommand::Ascending => grid_sort.set_sort(Some((col, true))),
+            SortCommand::Descending => grid_sort.set_sort(Some((col, false))),
+            SortCommand::Clear => grid_sort.set_sort(None),
+        }
+    }
+}
+
+/// R986 §5.53 / R988 / R988.1 — map a window-space secondary-click point to the
+/// grid column it landed on (a header cell OR a data cell), or `None` when the
+/// click is outside the grid's columns/rows.
 ///
 /// The geometric hit-test (Qt's `QHeaderView::logicalIndexAt`, extended to the
-/// body): the frozen header band occupies `[STATUS_H, STATUS_H + header_height)`
-/// and the `N` data rows follow, each `ROW_H` tall; the uniform `COL_W` columns
-/// start at window x-origin 0 (no h-scroll, guaranteed by `NCOLS * COL_W <
-/// WIN_W`). A header click resolves only its column (`row = None`); a body click
-/// also resolves its row. The RPC demo validates this against the painted rects.
+/// body). `view_virtual_table` insets its content by `block_pad` (the
+/// `TableStyle` SSOT the paint reads), so in window coords the columns start at
+/// `x = block_pad` and the frozen header band at `y = STATUS_H + block_pad`,
+/// with the `N` data rows (`ROW_H` each) below it. **R988.1** fixes the original
+/// hit-test, which omitted `block_pad` and mis-resolved the column within 8 px
+/// of every boundary; it now reads the same `block_pad` the paint uses. The
+/// uniform `COL_W` columns and the fixed `N`-row body fit the window
+/// (`NCOLS * COL_W < WIN_W`, grid height < `WIN_H`), so both `ScrollState`s
+/// clamp to offset 0 and the hit-test needs no scroll term — a scrolling grid
+/// would subtract the offsets (the editable-grid follow-up). A header click
+/// resolves only its column (`row = None`); a body click also resolves its row.
+/// The RPC demo validates the boundaries (not just centers) against the rects.
 fn grid_target_at(x: f32, y: f32) -> Option<MenuTarget> {
     let xi = saturating_f32_to_u32(x);
     let yi = saturating_f32_to_u32(y);
-    let header_bottom = STATUS_H + table_style().header_height;
+    let pad = table_style().block_pad;
+    let header_top = STATUS_H + pad;
+    let header_bottom = header_top + table_style().header_height;
     let rows_h = u32::try_from(N).unwrap_or(u32::MAX).saturating_mul(ROW_H);
-    if yi < STATUS_H || yi >= header_bottom.saturating_add(rows_h) {
+    // Left of the columns, in the pad gap above the header, or below the last row.
+    if xi < pad || yi < header_top || yi >= header_bottom.saturating_add(rows_h) {
         return None;
     }
-    let col = (xi / COL_W) as usize;
+    let col = ((xi - pad) / COL_W) as usize;
     if col >= NCOLS {
         return None;
     }
-    // `row` is `Some` only below the header band; the y-range above bounds it < N.
+    // `row` is `Some` only below the (frozen) header band; the y-range bounds it < N.
     let row = (yi >= header_bottom).then(|| ((yi - header_bottom) / ROW_H) as usize);
     Some(MenuTarget { col, row })
 }
@@ -287,15 +333,11 @@ fn view(state: HeaderMenuState, _frame: &Frame) -> Scene {
     let mut children = vec![status_bar(&theme, sort, target), grid];
     if let Some(anchor) = state.open_at {
         // R988 — the labels name the right-clicked column ("Sort by Score
-        // ascending"), so the menu reflects what it acts on (Excel / DCC).
+        // ascending"), so the menu reflects what it acts on (Excel / DCC). R988.1
+        // — built from the `SORT_COMMANDS` SSOT, the same order the reducer reads.
         let col_name = target.map_or("column", |t| HEADERS[t.col]);
-        let labels = [
-            format!("Sort by {col_name} ascending"),
-            format!("Sort by {col_name} descending"),
-            "Clear Sort".to_string(),
-        ];
-        let label_refs: [&str; MENU_ITEM_COUNT] =
-            [labels[0].as_str(), labels[1].as_str(), labels[2].as_str()];
+        let labels = SORT_COMMANDS.map(|cmd| cmd.label(col_name));
+        let label_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
         children.push(dismiss_barrier(BARRIER_TAG, (0, 0), (WIN_W, WIN_H)));
         children.push(view_context_menu(
             MENU_TAG,
@@ -450,13 +492,10 @@ impl WidgetCore for GridHeaderMenuView {
         if intent.tag.as_ref() == COMMAND_INTENT_TAG_FULL {
             if let IntrospectValue::Text(idx) = &intent.payload {
                 if let (Ok(item), Some(target)) = (idx.parse::<usize>(), use_menu_target().get()) {
-                    let grid_sort = use_grid_data();
-                    let col = target.col;
-                    match item {
-                        0 => grid_sort.set_sort(Some((col, true))),
-                        1 => grid_sort.set_sort(Some((col, false))),
-                        2 => grid_sort.set_sort(None),
-                        _ => {}
+                    // R988.1 — index the `SORT_COMMANDS` SSOT, the same order the
+                    // view labels paint, so label and action cannot desync.
+                    if let Some(cmd) = SORT_COMMANDS.get(item) {
+                        cmd.apply(&use_grid_data(), target.col);
                     }
                 }
             }
@@ -574,18 +613,6 @@ impl WidgetView for GridHeaderMenuView {
     }
 }
 
-/// Parse a composite item sub-tag (`i<i>`) into its index. Returns `None` for
-/// an unknown kind or a non-numeric index (the `composite_item_tag` decode; no
-/// substrate decoder exists yet — a 3rd consumer would lift it next to the
-/// encode in `pinion_widget_paint::menu`).
-fn parse_item_sub_tag(sub_tag: &str) -> Option<usize> {
-    let mut chars = sub_tag.chars();
-    if chars.next()? != 'i' {
-        return None;
-    }
-    chars.as_str().parse().ok()
-}
-
 fn main() {
     pinion_shell::run::<GridHeaderMenuView>();
 }
@@ -610,28 +637,40 @@ mod tests {
         reason = "the small layout consts are exact as f32 for the test points"
     )]
     fn grid_target_at_maps_band_to_column() {
-        let band_y = (STATUS_H + 5) as f32; // header band
-        let body_y = (STATUS_H + table_style().header_height + ROW_H + 2) as f32; // body row 1
-        // Header click: the column, no row.
+        let pad = table_style().block_pad; // R988.1 — content inset the paint uses
+        let hh = table_style().header_height;
+        let band_y = (STATUS_H + pad + 5) as f32; // inside the header band
+        let body_y = (STATUS_H + pad + hh + ROW_H + 2) as f32; // body row 1
+        // Header click resolves the column, no row.
         assert_eq!(
-            grid_target_at(10.0, band_y),
+            grid_target_at((pad + 1) as f32, band_y),
             Some(MenuTarget { col: 0, row: None }),
-            "header col 0",
+            "header col 0 near its left edge",
+        );
+        // R988.1 boundary guard: just inside col 0's right edge stays col 0; the
+        // next pixel (col 1's left edge) flips to col 1. The pre-R988.1 hit-test
+        // (no `block_pad`) mis-resolved both by one column.
+        assert_eq!(
+            grid_target_at((pad + COL_W - 1) as f32, band_y),
+            Some(MenuTarget { col: 0, row: None }),
+            "header col 0 right edge",
         );
         assert_eq!(
-            grid_target_at((COL_W + 10) as f32, band_y),
+            grid_target_at((pad + COL_W) as f32, band_y),
             Some(MenuTarget { col: 1, row: None }),
-            "header col 1",
+            "header col 1 left edge",
         );
-        // Body cell click: the column AND its row.
+        // Body cell click resolves the column AND its row.
         assert_eq!(
-            grid_target_at((2 * COL_W + 10) as f32, body_y),
+            grid_target_at((pad + 2 * COL_W + 10) as f32, body_y),
             Some(MenuTarget { col: 2, row: Some(1) }),
             "body cell col 2, row 1",
         );
         // Outside the grid.
-        assert_eq!(grid_target_at((3 * COL_W + 10) as f32, band_y), None, "x past the last column");
-        assert_eq!(grid_target_at(10.0, (STATUS_H - 1) as f32), None, "y above the grid");
+        assert_eq!(grid_target_at((pad - 1) as f32, band_y), None, "x left of the first column");
+        assert_eq!(grid_target_at((pad + 3 * COL_W + 1) as f32, band_y), None, "x past the last column");
+        assert_eq!(grid_target_at(10.0, (STATUS_H + pad - 1) as f32), None, "y in the pad gap above the header");
+        assert_eq!(grid_target_at(10.0, (STATUS_H - 1) as f32), None, "y in the status bar");
         assert_eq!(grid_target_at(10.0, 10_000.0), None, "y far below the last row");
     }
 

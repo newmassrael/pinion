@@ -85,7 +85,7 @@ use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::barrier::dismiss_barrier;
 use pinion_widget_paint::menu::{
-    composite_item_tag, view_context_menu, ContextMenuPlacement, MenuStyle,
+    composite_item_tag, parse_item_sub_tag, view_context_menu, ContextMenuPlacement, MenuStyle,
 };
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -387,16 +387,6 @@ impl WidgetView for ContextMenuView {
             height: WIN_H,
         }
     }
-}
-
-/// Parse a composite item sub-tag (`i<i>`) into its index. Returns `None`
-/// for an unknown kind or a non-numeric index.
-fn parse_item_sub_tag(sub_tag: &str) -> Option<usize> {
-    let mut chars = sub_tag.chars();
-    if chars.next()? != 'i' {
-        return None;
-    }
-    chars.as_str().parse().ok()
 }
 
 fn main() {

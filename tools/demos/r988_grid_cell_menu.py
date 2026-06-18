@@ -129,6 +129,27 @@ def body() -> None:
         assert_eq(tf.query("/gsort/external/sort"), "none", "boot: unsorted")           # 3
         assert_eq(_source_at(tf, 0), 0, "unsorted: visual 0 == source 0")               # 4
 
+        # ── (A2) R988.1 boundary guard ───────────────────────────────
+        # A right-click near col 0's RIGHT edge must resolve col 0 (Name), not
+        # col 1. The pre-R988.1 hit-test omitted the 8px block_pad content inset
+        # and mis-resolved the column within 8px of every boundary; this clicks
+        # 3px inside the painted col-0 cell (where the old math returned col 1).
+        snap = _wait_paint(tf, lambda s: "grid_ch0" in abs_rects_of(s), "col-0 header paints")
+        c0x, c0y, c0w, c0h = abs_rects_of(snap)["grid_ch0"]
+        tf.click(at=(float(c0x + c0w - 3), float(c0y + c0h // 2)), button="right")
+        wait_query(tf, "/external/open", True, desc="right-click near col-0 right edge opens")  # 5
+        snap = _wait_paint(tf, lambda s: find_by_tag(s, "colmenu") is not None, "popup paints")  # 6
+        boundary_menu = _menu_text(snap)
+        assert "Sort by Name" in boundary_menu, (
+            f"col-0 right edge resolves Name (block_pad-correct); got {boundary_menu!r}"
+        )                                                                                # 7
+        assert "Sort by Score" not in boundary_menu, (
+            f"not mis-resolved to col 1 (the pre-R988.1 bug); got {boundary_menu!r}"
+        )                                                                                # 8
+        tf.intervene("/external/open", False)
+        wait_query(tf, "/external/open", False, desc="dismiss the boundary-guard popup")  # 9
+        tf.pointer_leave()
+
         # ── (B) right-click a data CELL in the Score column (col 1) ──
         cx, cy = _cell_point(tf, 1)
         tf.click(at=(cx, cy), button="right")
