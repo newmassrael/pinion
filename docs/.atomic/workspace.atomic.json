@@ -45533,6 +45533,108 @@
         "consumer appears, consider a reusable substrate (abstraction-needs-second-consumer)."
       ]
     },
+    "R990": {
+      "decision_summary": "R990 §5.27 §5.38 §5.40 data-grid column hide/show: hello-column-visibility column chooser (reflective toolbar disabled axis 2nd consumer) + binding-level visible-column projection into view_table",
+      "changes_bullets": [
+        "New hello-column-visibility example: data-grid column hide / show, the column",
+        "chooser every data grid / asset browser / inspector ships.",
+        "Model: a shared Signal<Vec<bool>> (use_visibility), one bit per source column;",
+        "the chooser, the view, and the reducer all read it.",
+        "Chooser: the R692 ToolbarExternal (primary), one control per column. aria-pressed",
+        "AND disabled are both reflective (read from the model each frame): pressed[i] =",
+        "visible[i]; the sole remaining visible column's control is disabled (cannot hide",
+        "every column) — the 2nd consumer of the R989 reflective toolbar disabled axis.",
+        "Grid: the binding projects the visible columns (filtered headers + per-row cells)",
+        "into the existing view_table paint; grid_table_nodes announces only the visible",
+        "columns (aria-colcount drops as columns hide). No grid-paint change — the",
+        "visual<->source column mapping lives in the binding (a 2nd consumer would lift it).",
+        "Reducer: a chooser command toggles that column's visibility, gated on the same",
+        "reflective col_disabled mask (the sole-visible column cannot be hidden however",
+        "the toggle is driven). Keyboard via the shared forward_key_to_field."
+      ],
+      "verification_bullets": [
+        "workspace test 0 failed; clippy 0 (-D pedantic, --all-targets); validate T1=0.",
+        "r990 demo PASS (35 assert): boot 5 columnheaders + all controls pressed; hide a",
+        "column drops it (painted grid_ch tags + aria-colcount + count text); the chooser",
+        "control reflects pressed=false; hide to one -> sole-visible control aria-disabled;",
+        "disabled control is a no-op when clicked; show a hidden column clears the disabled;",
+        "keyboard Home/ArrowRight/Enter toggles; scene/access columnheader + gridcell counts.",
+        "example unit tests: disabled-only-sole-visible mask, reducer toggle + last-column",
+        "gate, a11y grid columnheader count tracks visibility, toolbar reflective",
+        "pressed/disabled.",
+        "3b self-grep: reflective disabled axis now has 2 real consumers (R989 + R990) =",
+        "substrate validated, mask computation domain-specific (no lift); column projection",
+        "= genuine 1st consumer (binding-level, lift on 2nd); Vec<ToolbarControl> sites are",
+        "domain-specific glue (no lift); forward_key_to_field reused (not hand-rolled)."
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.38",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "column visibility is a binding-level projection for now (visual<->source column",
+        "mapping in the example); a 2nd column-visibility consumer triggers lifting a",
+        "substrate (a column `order`/visibility analog of the row `order`, or a paint-side",
+        "visible_cols param) — abstraction-needs-second-consumer.",
+        "frozen-column + column-hide is deferred (the visible_cols projection here assumes",
+        "a simple uniform grid; combining with frozen panes / h-scroll is a later additive).",
+        "header-right-click \"Hide column\" (composing the R986/R988 context menu + grid hit",
+        "-test) is a natural follow-up UI on top of this model.",
+        "R989 reflective disabled axis confirmed reusable by a 2nd, independent consumer",
+        "(column chooser) without change — the substrate is sound."
+      ],
+      "publishable_decision_summary": "R990 §5.27 §5.38 §5.40 data-grid column hide/show: hello-column-visibility column chooser (reflective toolbar disabled axis 2nd consumer) + binding-level visible-column projection into view_table",
+      "publishable_changes_bullets": [
+        "New hello-column-visibility example: data-grid column hide / show, the column",
+        "chooser every data grid / asset browser / inspector ships.",
+        "Model: a shared Signal<Vec<bool>> (use_visibility), one bit per source column;",
+        "the chooser, the view, and the reducer all read it.",
+        "Chooser: the R692 ToolbarExternal (primary), one control per column. aria-pressed",
+        "AND disabled are both reflective (read from the model each frame): pressed[i] =",
+        "visible[i]; the sole remaining visible column's control is disabled (cannot hide",
+        "every column) — the 2nd consumer of the R989 reflective toolbar disabled axis.",
+        "Grid: the binding projects the visible columns (filtered headers + per-row cells)",
+        "into the existing view_table paint; grid_table_nodes announces only the visible",
+        "columns (aria-colcount drops as columns hide). No grid-paint change — the",
+        "visual<->source column mapping lives in the binding (a 2nd consumer would lift it).",
+        "Reducer: a chooser command toggles that column's visibility, gated on the same",
+        "reflective col_disabled mask (the sole-visible column cannot be hidden however",
+        "the toggle is driven). Keyboard via the shared forward_key_to_field."
+      ],
+      "publishable_verification_bullets": [
+        "workspace test 0 failed; clippy 0 (-D pedantic, --all-targets); validate T1=0.",
+        "r990 demo PASS (35 assert): boot 5 columnheaders + all controls pressed; hide a",
+        "column drops it (painted grid_ch tags + aria-colcount + count text); the chooser",
+        "control reflects pressed=false; hide to one -> sole-visible control aria-disabled;",
+        "disabled control is a no-op when clicked; show a hidden column clears the disabled;",
+        "keyboard Home/ArrowRight/Enter toggles; scene/access columnheader + gridcell counts.",
+        "example unit tests: disabled-only-sole-visible mask, reducer toggle + last-column",
+        "gate, a11y grid columnheader count tracks visibility, toolbar reflective",
+        "pressed/disabled.",
+        "3b self-grep: reflective disabled axis now has 2 real consumers (R989 + R990) =",
+        "substrate validated, mask computation domain-specific (no lift); column projection",
+        "= genuine 1st consumer (binding-level, lift on 2nd); Vec<ToolbarControl> sites are",
+        "domain-specific glue (no lift); forward_key_to_field reused (not hand-rolled)."
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.38",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "column visibility is a binding-level projection for now (visual<->source column",
+        "mapping in the example); a 2nd column-visibility consumer triggers lifting a",
+        "substrate (a column `order`/visibility analog of the row `order`, or a paint-side",
+        "visible_cols param) — abstraction-needs-second-consumer.",
+        "frozen-column + column-hide is deferred (the visible_cols projection here assumes",
+        "a simple uniform grid; combining with frozen panes / h-scroll is a later additive).",
+        "header-right-click \"Hide column\" (composing the R986/R988 context menu + grid hit",
+        "-test) is a natural follow-up UI on top of this model.",
+        "R989 reflective disabled axis confirmed reusable by a 2nd, independent consumer",
+        "(column chooser) without change — the substrate is sound."
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

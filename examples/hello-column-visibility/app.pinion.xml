@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R990 §5.27 §5.38 §5.40 data-grid column hide/show: pinion-forge renderer
+  manifest for hello-column-visibility. Same single-source-of-truth template
+  as the other hello-* renderers; only the struct name diverges. backend=vello
+  + default Area antialiasing (R46.2.1).
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloColumnVisibilityRenderer"
+        backend="vello"/>
