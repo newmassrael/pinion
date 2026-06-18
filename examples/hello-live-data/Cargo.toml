@@ -1,0 +1,28 @@
+[package]
+name = "hello-live-data"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1000 §5.23 live external-async-data reference consumer — a background OS thread (the sprag PR-3 PTY-reader analog) writes a Send shared log buffer and calls RepaintSink::request_repaint via use_repaint_sink; the view reads the producer-authoritative buffer each frame, so PTY-style output repaints the window with no animation-loop polling"
+publish = false
+
+[[bin]]
+name = "hello-live-data"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# R51.64 §5.40 — AccessKit substrate for `WidgetA11y::access_node`.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R727 §5.49 — button paint SSOT (`button_scene` / `read_button_state`).
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+vello = { workspace = true }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

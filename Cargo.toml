@@ -30,6 +30,7 @@ members = [
     "examples/hello-virtual-list",
     "examples/hello-lazy-list",
     "examples/hello-streaming-log",
+    "examples/hello-live-data",
     "examples/hello-lazy-tree",
     "examples/hello-million-row",
     "examples/hello-asset-browser",

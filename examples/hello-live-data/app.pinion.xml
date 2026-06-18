@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R1000 §5.23 live external-async-data: pinion-forge renderer manifest for
+  hello-live-data. Emits `HelloLiveDataRenderer` (Vello-backed). Same manifest
+  shape as hello-async-data — only the struct name diverges; the scene
+  structure lives entirely in the binding's view fn.
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloLiveDataRenderer"
+        backend="vello"/>

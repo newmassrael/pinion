@@ -8679,6 +8679,48 @@
         "Phase 2+ lifetime canonical = pinion 자체 text engine (§5.16 R11 thin RHI 정합)"
       ]
     },
+    "R1000": {
+      "decision_summary": "R1000: hello-live-data reference consumer proves the R999 RepaintSink off-thread external-async-data -> repaint seam end-to-end (sprag PR-3)",
+      "changes_bullets": [
+        "examples/hello-live-data: first RepaintSink consumer — a background std::thread (PTY-reader analog) owns Arc<Mutex<Vec<String>>>, poked via mpsc; on each poke it appends a line and calls use_repaint_sink().request_repaint()",
+        "view reads the producer-authoritative buffer each frame; producer spawned in create_extra_externals (not the pure view); use_repaint_sink pre-resolved before the Owner::cache factory (R666 nested-factory guard); reducer only pokes the channel",
+        "registered as a workspace member; renderer-manifest forge codegen (HelloLiveDataRenderer); WidgetCore/WidgetView/WidgetA11y mirror hello-async-data"
+      ],
+      "verification_bullets": [
+        "8 example unit tests: producer_line SSOT, status singular/plural, empty placeholder, buffered-lines render, MAX_LINES window, cross-thread tick->append (bounded poll), a11y list/status/button, focusable",
+        "r1000_live_data.py RPC demo: boot empty -> Tick -> [001] line -> Tick -> [002]; real release binary under PINION_HIDDEN_WINDOW, deterministic x3",
+        "cargo test --workspace exit 0; clippy --workspace --all-targets --features pinion-runtime/vello exit 0; validate-workspace T1=0"
+      ],
+      "impact_refs": [
+        "5.23",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "sprag-side wiring next (sprag repo, path-dep so consumes R999 locally): sprag-host windowed entry filling rect via pinion_runtime::compute_layout; sprag-terminal reader on_dirty -> RepaintSink::request_repaint",
+        "RPC demo proves the off-thread DATA path (producer write -> shared buffer -> paint scene); autonomous wake-drives-repaint is Rust-test-proven (ExternalRepaint handler -> request_redraw + cross-thread RepaintSink tests)",
+        "per-window RepaintScope payload on ExternalRepaint still deferred to a multi-window live-data 2nd consumer (abstraction-needs-second-consumer)"
+      ],
+      "publishable_decision_summary": "R1000: hello-live-data reference consumer proves the R999 RepaintSink off-thread external-async-data -> repaint seam end-to-end (sprag PR-3)",
+      "publishable_changes_bullets": [
+        "examples/hello-live-data: first RepaintSink consumer — a background std::thread (PTY-reader analog) owns Arc<Mutex<Vec<String>>>, poked via mpsc; on each poke it appends a line and calls use_repaint_sink().request_repaint()",
+        "view reads the producer-authoritative buffer each frame; producer spawned in create_extra_externals (not the pure view); use_repaint_sink pre-resolved before the Owner::cache factory (R666 nested-factory guard); reducer only pokes the channel",
+        "registered as a workspace member; renderer-manifest forge codegen (HelloLiveDataRenderer); WidgetCore/WidgetView/WidgetA11y mirror hello-async-data"
+      ],
+      "publishable_verification_bullets": [
+        "8 example unit tests: producer_line SSOT, status singular/plural, empty placeholder, buffered-lines render, MAX_LINES window, cross-thread tick->append (bounded poll), a11y list/status/button, focusable",
+        "r1000_live_data.py RPC demo: boot empty -> Tick -> [001] line -> Tick -> [002]; real release binary under PINION_HIDDEN_WINDOW, deterministic x3",
+        "cargo test --workspace exit 0; clippy --workspace --all-targets --features pinion-runtime/vello exit 0; validate-workspace T1=0"
+      ],
+      "publishable_impact_refs": [
+        "5.23",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "sprag-side wiring next (sprag repo, path-dep so consumes R999 locally): sprag-host windowed entry filling rect via pinion_runtime::compute_layout; sprag-terminal reader on_dirty -> RepaintSink::request_repaint",
+        "RPC demo proves the off-thread DATA path (producer write -> shared buffer -> paint scene); autonomous wake-drives-repaint is Rust-test-proven (ExternalRepaint handler -> request_redraw + cross-thread RepaintSink tests)",
+        "per-window RepaintScope payload on ExternalRepaint still deferred to a multi-window live-data 2nd consumer (abstraction-needs-second-consumer)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
