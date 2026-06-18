@@ -65,7 +65,7 @@ use pinion_core::style::{
 use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::listbox_item::ListboxItemState;
-use pinion_core::widgets::toolbar::{ToolItem, ToolbarExternal};
+use pinion_core::widgets::toolbar::{read_roving_focus, ToolItem, ToolbarExternal};
 use pinion_core::widgets::virtual_select::clamp_nav;
 use pinion_core::{Color, Command, Frame, Modifiers, Scene, WidgetCore};
 use pinion_shell::{vello_renderer_impl, WidgetView};
@@ -365,7 +365,36 @@ impl ExternalIntrospect for SelRowExternal {
                 }
                 _ => Err(InterveneError::TypeMismatch),
             },
-            _ => Err(InterveneError::UnknownPath),
+            // R990.1 — absolute per-row set, the write mirror of the
+            // `selected.<i>` read ([[wire-form-read-write-symmetry]]): an AI
+            // client sets a row's membership idempotently rather than having to
+            // read-then-relative-toggle through the `send` wire (the
+            // `ListBoxExternal` multi-select admin path).
+            _ => {
+                let Some(s) = path.strip_prefix("selected.") else {
+                    return Err(InterveneError::UnknownPath);
+                };
+                let idx: usize = s.parse().map_err(|_| InterveneError::UnknownPath)?;
+                let IntrospectValue::Bool(want) = value else {
+                    return Err(InterveneError::TypeMismatch);
+                };
+                if idx >= self.count() {
+                    return Err(InterveneError::OutOfRange);
+                }
+                self.items.set_with(|prev| {
+                    prev.iter()
+                        .enumerate()
+                        .map(|(i, it)| {
+                            if i == idx {
+                                SelItem { selected: want, ..it.clone() }
+                            } else {
+                                it.clone()
+                            }
+                        })
+                        .collect()
+                });
+                Ok(())
+            }
         }
     }
 
@@ -509,9 +538,11 @@ fn view(state: SelState, _frame: &Frame) -> Scene {
         &theme,
         STATUS_TAG,
         format!(
-            "selected={selected}/{total} {DOT} ids=[{}] {DOT} delete_disabled={} {DOT} list_focus={focus_pos}",
+            "selected={selected}/{total} {DOT} ids=[{}] {DOT} disabled=[del:{} clr:{} all:{}] {DOT} list_focus={focus_pos}",
             ids.join(","),
             disabled[ACTION_DELETE],
+            disabled[ACTION_CLEAR],
+            disabled[ACTION_SELECT_ALL],
         ),
         12,
         ColorRole::OnSurfaceMuted,
@@ -570,17 +601,14 @@ impl WidgetCore for SelectionToolbarView {
     /// tag because the scene is a `Container([sel_list, actions])`).
     fn read_state(scene: &Scene) -> SelState {
         let mut out = SelState::default();
+        // R990.1 — both roving externals decode through the lifted
+        // `read_roving_focus` reader (the list mirrors the same focus/focused
+        // slots as the toolbar, so the one reader serves both).
         if let Some(intro) = scene.find_external_with_tag(LIST_TAG).and_then(|n| n.handle.introspect()) {
-            if let Some(IntrospectValue::Int(f)) = intro.query("focus") {
-                out.row_focus = usize::try_from(f).unwrap_or(0);
-            }
-            out.list_focused = matches!(intro.query("focused"), Some(IntrospectValue::Bool(true)));
+            (out.row_focus, out.list_focused) = read_roving_focus(intro);
         }
         if let Some(intro) = scene.find_external_with_tag(ACTIONS_TAG).and_then(|n| n.handle.introspect()) {
-            if let Some(IntrospectValue::Int(f)) = intro.query("focus") {
-                out.actions_focus = usize::try_from(f).unwrap_or(0);
-            }
-            out.actions_focused = matches!(intro.query("focused"), Some(IntrospectValue::Bool(true)));
+            (out.actions_focus, out.actions_focused) = read_roving_focus(intro);
         }
         out
     }
@@ -844,6 +872,24 @@ mod tests {
             assert_eq!(ext.query("selected_count"), Some(IntrospectValue::Int(0)));
             // A stale id is a no-op reported as Bool(false).
             assert_eq!(ext.invoke("send", IntrospectValue::Text("999:PointerUp".into())), Ok(IntrospectValue::Bool(false)));
+        });
+    }
+
+    #[test]
+    fn r990_1_selected_intervene_is_an_absolute_idempotent_set() {
+        Owner::new().run(|| {
+            let mut ext = SelRowExternal::new(use_items());
+            // Absolute set (the write mirror of the `selected.<i>` read).
+            ext.intervene("selected.1", IntrospectValue::Bool(true)).unwrap();
+            assert_eq!(ext.query("selected.1"), Some(IntrospectValue::Bool(true)), "read mirrors write");
+            // Idempotent: setting true again leaves it set (not a toggle).
+            ext.intervene("selected.1", IntrospectValue::Bool(true)).unwrap();
+            assert_eq!(ext.query("selected_count"), Some(IntrospectValue::Int(1)), "set is not a toggle");
+            ext.intervene("selected.1", IntrospectValue::Bool(false)).unwrap();
+            assert_eq!(ext.query("selected_count"), Some(IntrospectValue::Int(0)));
+            // Out-of-range / type errors are reported, not silently dropped.
+            assert_eq!(ext.intervene("selected.99", IntrospectValue::Bool(true)), Err(InterveneError::OutOfRange));
+            assert_eq!(ext.intervene("selected.0", IntrospectValue::Int(1)), Err(InterveneError::TypeMismatch));
         });
     }
 

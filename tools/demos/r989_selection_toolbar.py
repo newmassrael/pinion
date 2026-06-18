@@ -149,6 +149,17 @@ def body() -> None:
         _wait_count(tf, 1, "Space toggles the focused row")                                # 35
         assert_eq(tf.query("/external/selected.2"), True, "the focused row is selected")   # 36
 
+        # ── (H2) R990.1 — absolute selected.<i> write (wire symmetry) ─
+        # The write mirror of the selected.<i> read: an idempotent absolute set,
+        # not a relative toggle (unlike the `send` wire).
+        tf.intervene("/external/selected.0", True)
+        _wait_count(tf, 2, "intervene selected.0=true adds row 0 (absolute set)")          # 37
+        assert_eq(tf.query("/external/selected.0"), True, "read mirrors the write")        # 38
+        tf.intervene("/external/selected.0", True)  # idempotent: set, not toggle
+        assert_eq(tf.query("/external/selected_count"), 2, "absolute set is idempotent")   # 39
+        tf.intervene("/external/selected.0", False)
+        _wait_count(tf, 1, "intervene selected.0=false removes it (back to the kbd row)")   # 40
+
         # ── (I) keyboard toolbar: focus + Enter activates Delete ─────
         tf.request("focus/set", {"tag": "actions"})
         wait_until(lambda: tf.request("focus/get").result.get("focused") == "actions",

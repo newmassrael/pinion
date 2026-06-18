@@ -78,15 +78,27 @@
 //! owned, the toolbar itself stays state-light and the mask can never drift
 //! out of sync with its source.
 //!
-//! A disabled control follows the WAI-ARIA *focusable-but-not-operable*
-//! model (the APG menu/menubar convention): it stays in the tree and the
-//! roving cursor may rest on it (AT announces it as unavailable), but
-//! activating it is a **no-op the binding's reducer gates** — the toolbar
-//! emits its `"command"` / `"toggle"` intent regardless (it cannot see the
-//! reflective mask), and the reducer drops the action when the source state
-//! says it is unavailable. This keeps the operable barrier in one place (the
-//! reducer that already owns the action's effect) rather than splitting it
-//! across the toolbar's keyboard model.
+//! A disabled control follows the W3C **`aria-disabled`** discipline (as
+//! distinct from the HTML `disabled` *attribute*): it stays focusable and in
+//! the tree — the roving cursor may rest on it and AT announces it as
+//! unavailable (the WAI-ARIA APG *toolbar* allowance for keeping disabled
+//! items discoverable) — but it is **not operable**, and per the
+//! `aria-disabled` contract *the author* prevents the action. Concretely the
+//! toolbar still emits its `"command"` / `"toggle"` intent (it cannot see the
+//! reflective mask), and the binding's reducer drops it. This is a deliberate,
+//! principled divergence from the *owned*-disabled widgets in this catalogue —
+//! [`button`](crate::widgets::button) (the statechart has no activate
+//! transition from `Disabled`, so it absorbs the event and emits nothing) and
+//! [`menu`](crate::widgets::menu) (a disabled item is skipped by the roving
+//! cursor and `activate_item` is inert): those own their disabled bit, so the
+//! HTML-`disabled` *suppress-at-the-widget* model fits. A *contextual* toolbar's
+//! disabled state is **derived** from external state (the selection, the
+//! document), not owned; threading that derived mask into the External would
+//! force a per-frame cross-external sync, whereas `aria-disabled` keeps the
+//! operable barrier in the one place that already owns the action's effect (the
+//! reducer). The cost is a no-op intent on the wire for a disabled control —
+//! benign because the disabled state is itself introspectable (`aria-disabled`
+//! via `scene/access`), so an AI client checks before invoking.
 //!
 //! ## Future axes (per [[abstraction-needs-second-consumer]])
 //!
@@ -388,6 +400,26 @@ impl ToolbarExternal {
 /// Lower a roving-cursor index to `Int`.
 fn focus_value(idx: usize) -> IntrospectValue {
     IntrospectValue::Int(i64::try_from(idx).expect("toolbar focus fits in i64"))
+}
+
+/// Decode a roving widget's `(focus, focused)` introspect posture — the roving
+/// cursor index (`query("focus")`, an `Int`, default `0`) and whether the
+/// widget owns the shell focus (`query("focused")`, a `Bool`). This is the
+/// **toolbar peer** of [`read_selected`](crate::widgets::virtual_select::read_selected)
+/// and [`read_open_state`](crate::widgets::context_menu::read_open_state): a
+/// `WidgetCore::read_state` body projecting a `ToolbarExternal` (or any external
+/// mirroring the same `focus` / `focused` slots — e.g. a binding-local
+/// multi-select list) calls this instead of hand-decoding the two slots, so a
+/// slot rename cannot silently break the (R990.1 — then three) binding
+/// hand-decoders the way a hand-rolled `match query(...)` would.
+#[must_use]
+pub fn read_roving_focus(intro: &dyn ExternalIntrospect) -> (usize, bool) {
+    let focus = match intro.query("focus") {
+        Some(IntrospectValue::Int(i)) => usize::try_from(i).unwrap_or(0),
+        _ => 0,
+    };
+    let focused = matches!(intro.query("focused"), Some(IntrospectValue::Bool(true)));
+    (focus, focused)
 }
 
 impl Default for ToolbarExternal {
@@ -910,5 +942,18 @@ mod tests {
         );
         e.on_focus_change(false);
         assert_eq!(e.query("focused"), Some(IntrospectValue::Bool(false)));
+    }
+
+    #[test]
+    fn r990_1_read_roving_focus_decodes_both_slots() {
+        use crate::external::External;
+        let mut e = ext();
+        // Boot: cursor at 0, not group-focused.
+        assert_eq!(read_roving_focus(&e), (0, false));
+        e.em.inner.set_focus(2);
+        e.on_focus_change(true);
+        assert_eq!(read_roving_focus(&e), (2, true), "decodes the moved cursor + group focus");
+        e.on_focus_change(false);
+        assert_eq!(read_roving_focus(&e), (2, false));
     }
 }

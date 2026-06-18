@@ -50,7 +50,7 @@ use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{BoxStyle, FlexDirection, LayoutStyle, TextStyle};
 use pinion_core::theme::{use_theme, ColorRole};
 use pinion_core::widgets::radio::RadioState;
-use pinion_core::widgets::toolbar::{ToolItem, ToolbarExternal};
+use pinion_core::widgets::toolbar::{read_roving_focus, ToolItem, ToolbarExternal};
 use pinion_core::{Command, Frame, Modifiers, Scene, WidgetCore};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::table::{view_table, TableData, TableSelection, TableStyle};
@@ -229,11 +229,10 @@ impl WidgetCore for ColumnVisibilityView {
     /// primary external.
     fn read_state(scene: &Scene) -> ColsState {
         let mut out = ColsState::default();
+        // R990.1 — the chooser's roving cursor + group focus via the lifted
+        // `read_roving_focus` reader (the toolbar peer of `read_selected`).
         if let Some(intro) = scene.find_external_with_tag(COLS_TAG).and_then(|n| n.handle.introspect()) {
-            if let Some(IntrospectValue::Int(f)) = intro.query("focus") {
-                out.cols_focus = usize::try_from(f).unwrap_or(0);
-            }
-            out.cols_focused = matches!(intro.query("focused"), Some(IntrospectValue::Bool(true)));
+            (out.cols_focus, out.cols_focused) = read_roving_focus(intro);
         }
         out
     }

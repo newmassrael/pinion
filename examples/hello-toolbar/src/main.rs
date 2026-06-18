@@ -79,7 +79,7 @@ use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, TextStyle,
 };
 use pinion_core::theme::{use_theme, ColorRole};
-use pinion_core::widgets::toolbar::{ToolItem, ToolbarExternal};
+use pinion_core::widgets::toolbar::{read_roving_focus, ToolItem, ToolbarExternal};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::toolbar::{composite_item_tag, view_toolbar, ToolbarStyle};
@@ -220,16 +220,12 @@ impl WidgetCore for ToolbarView {
         let Some(intro) = node.handle.introspect() else {
             return out;
         };
-        out.focus = match intro.query("focus") {
-            Some(IntrospectValue::Int(i)) => usize::try_from(i).unwrap_or(0),
-            _ => 0,
-        };
+        // R990.1 — the roving cursor + group-focus posture via the lifted
+        // `read_roving_focus` reader (the toolbar peer of `read_selected`).
+        (out.focus, out.group_focused) = read_roving_focus(intro);
         for (i, slot) in out.pressed.iter_mut().enumerate() {
             *slot = matches!(intro.query(&format!("pressed.{i}")), Some(IntrospectValue::Bool(true)));
         }
-        // R694 §5.39 — whether the strip owns shell focus, for the ring gate.
-        out.group_focused =
-            matches!(intro.query("focused"), Some(IntrospectValue::Bool(true)));
         out
     }
 
