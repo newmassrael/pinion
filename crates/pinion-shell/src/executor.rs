@@ -178,6 +178,56 @@ pub fn build_executor_and_sink(
     Ok((executor, sink))
 }
 
+/// R999 §5.23 — winit-[`EventLoopProxy`]-backed [`RepaintSink`] impl.
+///
+/// The single winit-aware part of the external-async-data → repaint seam: an
+/// off-thread producer (e.g. a PTY reader) obtains this through
+/// [`use_repaint_sink`](pinion_core::use_repaint_sink) and calls
+/// [`request_repaint`](RepaintSink::request_repaint) after writing fresh data
+/// into the shared handle the binding's `view` reads. It forwards through
+/// [`AppEvent::ExternalRepaint`], whose `user_event` arm arms a redraw; winit
+/// coalesces multiple requests into one `RedrawRequested` per frame.
+///
+/// Sibling of [`ProxyIntentSink`] — the §6.3 boundary-trait pattern: the
+/// runtime-agnostic [`RepaintSink`] lives in `pinion-core`, this concrete
+/// `EventLoopProxy` impl lives at the window-system boundary.
+///
+/// ## `Send + Sync`
+///
+/// `EventLoopProxy<AppEvent>` is `Send + Sync` per winit's contract, so the
+/// [`RepaintSink`] supertrait bound holds and the handle clones into the
+/// producer thread.
+///
+/// ## Error absorption
+///
+/// A closed event loop is the only `send_event` failure mode and means the app
+/// is shutting down — dropping the wake is correct (matches [`ProxyIntentSink`]
+/// and `spawn_stdin_rpc_reader`).
+pub struct ProxyRepaintSink {
+    proxy: EventLoopProxy<AppEvent>,
+}
+
+impl ProxyRepaintSink {
+    /// Wrap the supplied [`EventLoopProxy`].
+    #[must_use]
+    pub fn new(proxy: EventLoopProxy<AppEvent>) -> Self {
+        Self { proxy }
+    }
+}
+
+impl pinion_core::RepaintSink for ProxyRepaintSink {
+    fn request_repaint(&self) {
+        // Closed event loop = app shutting down; drop the wake.
+        let _ = self.proxy.send_event(AppEvent::ExternalRepaint);
+    }
+}
+
+impl core::fmt::Debug for ProxyRepaintSink {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ProxyRepaintSink").finish_non_exhaustive()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

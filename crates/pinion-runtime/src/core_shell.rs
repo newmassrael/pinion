@@ -444,7 +444,26 @@ impl<V: WidgetCore> CoreShell<V> {
     /// the hit-test snapshot before the first pointer event arrives.
     #[must_use]
     pub fn new() -> Self {
+        Self::new_with_repaint_sink(std::sync::Arc::new(pinion_core::NullRepaintSink))
+    }
+
+    /// R999 §5.23 — [`Self::new`] with the shell's
+    /// [`RepaintSink`](pinion_core::RepaintSink) seeded into the root
+    /// [`Owner`] **before** the binding factories
+    /// ([`WidgetCore::create_external`] / `create_extra_externals`) run, so a
+    /// binding's `create_extra_externals` can capture the live sink via
+    /// [`use_repaint_sink`](pinion_core::use_repaint_sink) for its off-thread
+    /// producer. The plain [`Self::new`] seeds a
+    /// [`NullRepaintSink`](pinion_core::NullRepaintSink) — correct for headless
+    /// / test construction with no event loop to wake.
+    #[must_use]
+    pub fn new_with_repaint_sink(
+        repaint_sink: std::sync::Arc<dyn pinion_core::RepaintSink>,
+    ) -> Self {
         let root_owner = Owner::new();
+        // R999 §5.23 — seed the repaint sink first, before `create_external` /
+        // `create_extra_externals` resolve `use_repaint_sink()`.
+        root_owner.provide_repaint_sink(repaint_sink);
         // (R55.D.5 §5.45) Compose the state-scene root.
         //
         // Default (single-External binding, the entire example

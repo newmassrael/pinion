@@ -494,7 +494,28 @@ impl<V: WidgetView> ShellCore<V> {
     /// preview ledger, parley `LayoutCache`).
     #[must_use]
     pub fn new() -> Self {
-        let core = CoreShell::<V>::new();
+        Self::with_core(CoreShell::<V>::new())
+    }
+
+    /// R999 §5.23 — [`Self::new`] with the shell's
+    /// [`RepaintSink`](pinion_core::RepaintSink) seeded into the binding's root
+    /// [`Owner`](pinion_core::Owner) before its factories run, so a binding can
+    /// capture the live sink via
+    /// [`use_repaint_sink`](pinion_core::use_repaint_sink) for an off-thread
+    /// producer. Delegates the seed to
+    /// [`CoreShell::new_with_repaint_sink`](pinion_runtime::CoreShell::new_with_repaint_sink).
+    #[must_use]
+    pub fn new_with_repaint_sink(
+        repaint_sink: std::sync::Arc<dyn pinion_core::RepaintSink>,
+    ) -> Self {
+        Self::with_core(CoreShell::<V>::new_with_repaint_sink(repaint_sink))
+    }
+
+    /// Shared constructor body — focus seeding + Vello-side substrate fields —
+    /// over an already-built [`CoreShell`](pinion_runtime::CoreShell), so
+    /// [`Self::new`] (Null sink) and [`Self::new_with_repaint_sink`] (live
+    /// sink) differ only in how `core` was constructed.
+    fn with_core(core: CoreShell<V>) -> Self {
         // Log the initial state read through the §5.15 introspect
         // channel — same trace line shape AppShell relied on
         // pre-R51.123 so the dogfood eprintln + RPC-side observer

@@ -79,7 +79,7 @@ pub mod typeahead;
 pub mod test_fixtures;
 
 pub use app::{run, run_with_handlers, AppShell};
-pub use executor::{build_executor_and_sink, ProxyIntentSink, TokioExecutor};
+pub use executor::{build_executor_and_sink, ProxyIntentSink, ProxyRepaintSink, TokioExecutor};
 pub use headless_screenshot::{HeadlessScreenshot, HeadlessScreenshotError};
 pub use substrate::{AccessEmitDecision, FragmentCacheStats, ShellCore};
 
@@ -130,6 +130,17 @@ pub enum AppEvent {
     /// [`ActiveEventLoop`](winit::event_loop::ActiveEventLoop) +
     /// `&mut self` are available.
     WindowsDirty,
+    /// R999 §5.23 — an off-thread producer (PTY reader, network/process
+    /// monitor) wrote fresh data into the shared handle a binding's `view`
+    /// reads and is requesting a repaint, delivered through
+    /// [`ProxyRepaintSink`](crate::ProxyRepaintSink) /
+    /// [`pinion_core::RepaintSink`]. The [`AppShell::user_event`] arm arms a
+    /// binding-wide redraw; the next frame re-runs `view`, which re-reads the
+    /// shared handle. Distinct from [`AppEvent::WindowsDirty`] (window
+    /// topology) and [`AppEvent::IntentArrived`] (a reducer event) — a
+    /// content-free repaint poke, not state. Carries no payload: the data
+    /// lives in the producer-authoritative shared handle, not the event.
+    ExternalRepaint,
 }
 
 impl From<accesskit_winit::Event> for AppEvent {

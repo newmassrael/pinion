@@ -8,6 +8,7 @@ pub mod computed;
 pub mod effect;
 pub mod introspect;
 pub mod owner;
+pub mod repaint;
 pub mod resource;
 pub mod resource_cache;
 pub mod signal;
@@ -17,6 +18,7 @@ pub use computed::Computed;
 pub use effect::Effect;
 pub use introspect::{IntoIntrospectValue, JsonValue, SignalExternal};
 pub use owner::{Owner, OwnerSnapshot, SnapshotRestoreError, SnapshotableSignal, batch};
+pub use repaint::{use_repaint_sink, NullRepaintSink, RepaintSink};
 pub use resource::{
     use_local_task_pump, DeferredReady, FetchToken, LocalSpawner, LocalTaskPump, Resource,
     ResourceState,

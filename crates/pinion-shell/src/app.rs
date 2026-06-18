@@ -313,8 +313,14 @@ impl<V: WidgetView> AppShell<V> {
     /// `accesskit_winit::Adapter` on `resumed` (R51.62 §5.40).
     #[must_use]
     pub fn new(proxy: EventLoopProxy<AppEvent>) -> Self {
+        // R999 §5.23 — seed the binding's root Owner with the live
+        // `EventLoopProxy`-backed RepaintSink before `ShellCore::new_with_repaint_sink`
+        // runs the binding factories, so a binding's `create_extra_externals`
+        // can capture it via `use_repaint_sink()` for an off-thread producer.
+        let repaint_sink: std::sync::Arc<dyn pinion_core::RepaintSink> =
+            std::sync::Arc::new(crate::ProxyRepaintSink::new(proxy.clone()));
         Self {
-            core: ShellCore::new(),
+            core: ShellCore::new_with_repaint_sink(repaint_sink),
             windows: HashMap::new(),
             spec_id_to_window_id: HashMap::new(),
             primary_window_id: None,
@@ -1718,6 +1724,12 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
             // Idempotent on identical re-emits (Vec PartialEq
             // short-circuit inside `reconcile_windows`).
             AppEvent::WindowsDirty => self.reconcile_windows(event_loop),
+            // R999 §5.23 — an off-thread producer wrote fresh data into a
+            // shared handle the binding's `view` reads. Arm a binding-wide
+            // redraw; the `drain_redraw_to_winit` tail below collapses it (and
+            // any other wakes this iteration) into one `Window::request_redraw`,
+            // and the next frame re-runs `view` which re-reads the handle.
+            AppEvent::ExternalRepaint => self.core.request_redraw(),
         }
         self.drain_redraw_to_winit();
     }

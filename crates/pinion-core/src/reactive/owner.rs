@@ -1079,6 +1079,46 @@ impl Owner {
         )
     }
 
+    /// R999 §5.23 — the owner-scoped [`RepaintSink`](super::repaint::RepaintSink),
+    /// the off-thread "request a repaint" edge.
+    ///
+    /// Returns whatever the shell seeded via [`Self::provide_repaint_sink`] at
+    /// boot, or a [`NullRepaintSink`](super::repaint::NullRepaintSink) when none
+    /// was provided (headless screenshot / RPC tests / unit tests off the live
+    /// event loop). The inner `Arc` is the `Send` handle a binding clones into
+    /// its producer thread; the `Rc<RepaintSinkHolder>` cache wrapper stays on
+    /// the UI thread. Same private-key + lazy-default shape as
+    /// [`Self::local_task_pump`].
+    #[must_use]
+    pub fn repaint_sink(&self) -> std::sync::Arc<dyn super::repaint::RepaintSink> {
+        self.cache::<super::repaint::RepaintSinkHolder, _>(super::repaint::REPAINT_SINK_KEY, || {
+            super::repaint::RepaintSinkHolder(std::sync::Arc::new(super::repaint::NullRepaintSink))
+        })
+        .0
+        .clone()
+    }
+
+    /// R999 §5.23 — seed the owner-scoped
+    /// [`RepaintSink`](super::repaint::RepaintSink). The shell calls this once
+    /// at boot **before** the binding factories
+    /// ([`WidgetCore::create_external`](crate::WidgetCore::create_external) /
+    /// `create_extra_externals`) run, so the first
+    /// [`Self::repaint_sink`] / [`use_repaint_sink`](super::repaint::use_repaint_sink)
+    /// read inside those factories resolves to the real sink rather than the
+    /// Null default.
+    ///
+    /// Idempotent-by-first-write: like every [`Self::cache`] slot the first
+    /// call wins; a later call is a no-op (the supplied sink is dropped). The
+    /// shell seeds exactly once, before any read, so this is never observed.
+    pub fn provide_repaint_sink(&self, sink: std::sync::Arc<dyn super::repaint::RepaintSink>) {
+        // `cache`'s factory is `FnOnce` and only runs when the slot is empty, so
+        // a plain move closure seeds on the first call; a later call drops its
+        // `sink` unused (first-write-wins), no panic path.
+        self.cache::<super::repaint::RepaintSinkHolder, _>(super::repaint::REPAINT_SINK_KEY, move || {
+            super::repaint::RepaintSinkHolder(sink)
+        });
+    }
+
     /// R51.150 §5.22 — `true` when (`V`, `key`) has been populated by
     /// a previous [`Owner::cache::<V>`](Self::cache) call on this
     /// owner.

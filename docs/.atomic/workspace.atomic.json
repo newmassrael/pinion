@@ -46513,6 +46513,52 @@
         "exhaustive completeness, not dead)."
       ]
     },
+    "R999": {
+      "decision_summary": "R999: RepaintSink off-thread external-async-data -> repaint seam (new §5.23 boundary trait, sibling of Executor/IntentSink; sprag PR-3)",
+      "changes_bullets": [
+        "pinion-core: RepaintSink boundary trait + NullRepaintSink + use_repaint_sink hook (reactive/repaint.rs); Owner::provide_repaint_sink/repaint_sink via owner-cache holder",
+        "pinion-shell: ProxyRepaintSink (EventLoopProxy impl, sibling of ProxyIntentSink) + AppEvent::ExternalRepaint variant + user_event arm arming a binding-wide redraw",
+        "CoreShell/ShellCore::new_with_repaint_sink seed the root Owner BEFORE the binding factories run; AppShell::new wires the proxy-backed sink for run + run_with_handlers"
+      ],
+      "verification_bullets": [
+        "pinion-core 5 deterministic repaint tests: provide/get, null no-op default, first-write-wins, use_repaint_sink in Owner scope, cross-thread request_repaint via std::thread + join",
+        "Full gate: cargo test --workspace exit 0; clippy --workspace --all-targets --features pinion-runtime/vello exit 0; validate-workspace T1=0",
+        "GUI reference binding (hello-live-data) + RPC demo deliberately NOT landed this round; new mechanism is the cross-thread wake, which the core tests verify more directly than a snapshot-polling RPC demo could"
+      ],
+      "impact_refs": [
+        "5.23",
+        "5.22",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "hello-live-data reference binding + ZERO-FLAKE RPC demo exercising background-thread write + wake -> paint (immediate follow-up; real consumer is sprag terminal, out of scope per handoff)",
+        "per-window RepaintScope payload on ExternalRepaint deferred until a multi-window live-data consumer (abstraction-needs-second-consumer)",
+        "view reading the shared handle directly is fine now; per-frame reactive mirror (R978 generation-gated) only if a 2nd consumer (an Effect) needs grid-change reactivity",
+        "companion sprag work (sprag-host compute_layout rect fill; sprag-terminal reader -> RepaintSink::request_repaint) is out of scope (sprag repo)"
+      ],
+      "publishable_decision_summary": "R999: RepaintSink off-thread external-async-data -> repaint seam (new §5.23 boundary trait, sibling of Executor/IntentSink; sprag PR-3)",
+      "publishable_changes_bullets": [
+        "pinion-core: RepaintSink boundary trait + NullRepaintSink + use_repaint_sink hook (reactive/repaint.rs); Owner::provide_repaint_sink/repaint_sink via owner-cache holder",
+        "pinion-shell: ProxyRepaintSink (EventLoopProxy impl, sibling of ProxyIntentSink) + AppEvent::ExternalRepaint variant + user_event arm arming a binding-wide redraw",
+        "CoreShell/ShellCore::new_with_repaint_sink seed the root Owner BEFORE the binding factories run; AppShell::new wires the proxy-backed sink for run + run_with_handlers"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-core 5 deterministic repaint tests: provide/get, null no-op default, first-write-wins, use_repaint_sink in Owner scope, cross-thread request_repaint via std::thread + join",
+        "Full gate: cargo test --workspace exit 0; clippy --workspace --all-targets --features pinion-runtime/vello exit 0; validate-workspace T1=0",
+        "GUI reference binding (hello-live-data) + RPC demo deliberately NOT landed this round; new mechanism is the cross-thread wake, which the core tests verify more directly than a snapshot-polling RPC demo could"
+      ],
+      "publishable_impact_refs": [
+        "5.23",
+        "5.22",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "hello-live-data reference binding + ZERO-FLAKE RPC demo exercising background-thread write + wake -> paint (immediate follow-up; real consumer is sprag terminal, out of scope per handoff)",
+        "per-window RepaintScope payload on ExternalRepaint deferred until a multi-window live-data consumer (abstraction-needs-second-consumer)",
+        "view reading the shared handle directly is fine now; per-frame reactive mirror (R978 generation-gated) only if a 2nd consumer (an Effect) needs grid-change reactivity",
+        "companion sprag work (sprag-host compute_layout rect fill; sprag-terminal reader -> RepaintSink::request_repaint) is out of scope (sprag repo)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
