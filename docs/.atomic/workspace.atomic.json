@@ -46343,6 +46343,100 @@
         "filter by Eq). Documented in CellValue::matches_facet."
       ]
     },
+    "R998": {
+      "decision_summary": "Model-View at-scale campaign slice 3: a declarative per-row style-rule engine (Wireshark/dlt-class row coloring). A rule is a GridFilter predicate -> a RowTint{bg,fg}; rows paint by the first matching rule (Wireshark precedence). The match half REUSES the R997 GridFilter conjunction, so coloring and filtering share the wire vocab. The rule list lives in a reactive RowStyleState (use_row_style SSOT); RowStyleExternal is the AI-first RPC surface (rule mgmt + per-row match.<row>/tint.<row> introspection without pixels). The paint integrates via an additive VirtualTableData.row_style resolver, resolved per source row (coloring survives re-sort), precedence selection > rule > zebra. New hello-grid-row-style reference example + RPC demo.",
+      "changes_bullets": [
+        "New pinion-core widgets::row_style: RowStyleRule{filter: GridFilter, tint:",
+        "RowTint{bg,fg}} + reactive RowStyleState (rule list Signal) with resolve /",
+        "match_index (first-match precedence, reusing R997 GridFilter::matches) +",
+        "use_row_style. The rule predicate IS the R997 GridFilter conjunction, so",
+        "coloring and filtering share the wire vocab.",
+        "RowStyleExternal: AI-first RPC surface — rule_count / rule.<i> / rules",
+        "(query + restore) / add_rule / clear, plus per-row match.<row> / tint.<row>",
+        "/ matched_rows via an attached cell source (introspect the coloring without",
+        "pixels). Wire: rule \"<filter>;<bg-hex>;<fg-hex>\", list joined by \"|\".",
+        "pinion-widget-paint table: additive VirtualTableData.row_style resolver",
+        "(Option<&dyn Fn(usize)->Option<(Color,Color)>>); row_inputs precedence",
+        "selection > rule > zebra; per-SOURCE row so coloring survives a re-sort.",
+        "Hand-written Debug (the &dyn Fn is Copy, not Debug). 14 existing literals",
+        "pass row_style: None (byte-identical).",
+        "New hello-grid-row-style example (10k-row grid, seeded Done->red /",
+        "Score>=900->green rules, RPC-driven) + tools/demos/r998_grid_row_style.py",
+        "(39 assertions)."
+      ],
+      "verification_bullets": [
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): 0 warnings.",
+        "cargo test --workspace -j2: 7089 passed / 0 failed (row_style 5 ok: wire round-trips,",
+        "resolve first-match precedence, External rule mgmt + match introspection;",
+        "hello-grid-row-style 3 ok: resolver matches seed rules, Done precedes high-Score, clear reverts).",
+        "tools/demos/r998_grid_row_style.py: PASS (39 assertions; rule wires, per-row match/tint",
+        "scene-as-data, matched_rows oracle, first-match precedence, selection/sort orthogonality,",
+        "clear/add_rule/restore dynamics, malformed-rule rejection).",
+        "Inert-field regression: r783_grid_filter.py + r997_grid_multifilter.py PASS from fresh",
+        "release binaries (the additive VirtualTableData.row_style None is byte-identical).",
+        "mnemosyne validate-workspace: T1 reject=0 (entries 980 -> 981, no new orphan)."
+      ],
+      "impact_refs": [
+        "5.40",
+        "5.27",
+        "5.45"
+      ],
+      "carry_forward_bullets": [
+        "Coloring resolves per row each paint (rule-Vec clone per visible row);",
+        "rule lists are tiny so no memo yet — a rule-revision memo is the lift point",
+        "if a consumer carries hundreds of rules.",
+        "matched_rows iterates all rows per query (O(N) cell-source allocs); fine for",
+        "an RPC introspection call, not a per-frame path.",
+        "Row-style a11y (announcing a row's coloring semantics) deferred — coloring is",
+        "a presentation overlay, orthogonal to the grid a11y structure this round."
+      ],
+      "publishable_decision_summary": "Model-View at-scale campaign slice 3: a declarative per-row style-rule engine (Wireshark/dlt-class row coloring). A rule is a GridFilter predicate -> a RowTint{bg,fg}; rows paint by the first matching rule (Wireshark precedence). The match half REUSES the R997 GridFilter conjunction, so coloring and filtering share the wire vocab. The rule list lives in a reactive RowStyleState (use_row_style SSOT); RowStyleExternal is the AI-first RPC surface (rule mgmt + per-row match.<row>/tint.<row> introspection without pixels). The paint integrates via an additive VirtualTableData.row_style resolver, resolved per source row (coloring survives re-sort), precedence selection > rule > zebra. New hello-grid-row-style reference example + RPC demo.",
+      "publishable_changes_bullets": [
+        "New pinion-core widgets::row_style: RowStyleRule{filter: GridFilter, tint:",
+        "RowTint{bg,fg}} + reactive RowStyleState (rule list Signal) with resolve /",
+        "match_index (first-match precedence, reusing R997 GridFilter::matches) +",
+        "use_row_style. The rule predicate IS the R997 GridFilter conjunction, so",
+        "coloring and filtering share the wire vocab.",
+        "RowStyleExternal: AI-first RPC surface — rule_count / rule.<i> / rules",
+        "(query + restore) / add_rule / clear, plus per-row match.<row> / tint.<row>",
+        "/ matched_rows via an attached cell source (introspect the coloring without",
+        "pixels). Wire: rule \"<filter>;<bg-hex>;<fg-hex>\", list joined by \"|\".",
+        "pinion-widget-paint table: additive VirtualTableData.row_style resolver",
+        "(Option<&dyn Fn(usize)->Option<(Color,Color)>>); row_inputs precedence",
+        "selection > rule > zebra; per-SOURCE row so coloring survives a re-sort.",
+        "Hand-written Debug (the &dyn Fn is Copy, not Debug). 14 existing literals",
+        "pass row_style: None (byte-identical).",
+        "New hello-grid-row-style example (10k-row grid, seeded Done->red /",
+        "Score>=900->green rules, RPC-driven) + tools/demos/r998_grid_row_style.py",
+        "(39 assertions)."
+      ],
+      "publishable_verification_bullets": [
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): 0 warnings.",
+        "cargo test --workspace -j2: 7089 passed / 0 failed (row_style 5 ok: wire round-trips,",
+        "resolve first-match precedence, External rule mgmt + match introspection;",
+        "hello-grid-row-style 3 ok: resolver matches seed rules, Done precedes high-Score, clear reverts).",
+        "tools/demos/r998_grid_row_style.py: PASS (39 assertions; rule wires, per-row match/tint",
+        "scene-as-data, matched_rows oracle, first-match precedence, selection/sort orthogonality,",
+        "clear/add_rule/restore dynamics, malformed-rule rejection).",
+        "Inert-field regression: r783_grid_filter.py + r997_grid_multifilter.py PASS from fresh",
+        "release binaries (the additive VirtualTableData.row_style None is byte-identical).",
+        "mnemosyne validate-workspace: T1 reject=0 (entries 980 -> 981, no new orphan)."
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "5.27",
+        "5.45"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Coloring resolves per row each paint (rule-Vec clone per visible row);",
+        "rule lists are tiny so no memo yet — a rule-revision memo is the lift point",
+        "if a consumer carries hundreds of rules.",
+        "matched_rows iterates all rows per query (O(N) cell-source allocs); fine for",
+        "an RPC introspection call, not a per-frame path.",
+        "Row-style a11y (announcing a row's coloring semantics) deferred — coloring is",
+        "a presentation overlay, orthogonal to the grid a11y structure this round."
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

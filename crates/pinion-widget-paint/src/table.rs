@@ -672,7 +672,9 @@ pub fn view_table(
 /// column + dataset descriptors keeps the assembly fn under the argument
 /// budget; the per-row cell text comes from the `build_cells` closure
 /// (only the windowed rows are built).
-#[derive(Clone, Copy, Debug)]
+// `Debug` is hand-written (below) because the R998 `row_style` resolver is a
+// `&dyn Fn`, which is `Copy` but not `Debug`.
+#[derive(Clone, Copy)]
 pub struct VirtualTableData<'a> {
     /// Column header labels; `headers.len()` is the column count.
     pub headers: &'a [&'a str],
@@ -732,6 +734,33 @@ pub struct VirtualTableData<'a> {
     /// least one column must remain scrollable for the freeze to mean
     /// anything).
     pub frozen_cols: usize,
+    /// R998 §5.40 — an optional per-row coloring resolver: `row_style(source)`
+    /// returns `Some((bg, fg))` to paint that **source** data row with a
+    /// declarative style rule's tint (Wireshark / dlt-class row coloring), or
+    /// `None` to keep the default zebra fill. The binding wires it from a
+    /// [`RowStyleState`](pinion_core::widgets::row_style::RowStyleState):
+    /// `Some(&|src| rules.resolve(|c| cells(src)[c]).map(|t| (t.bg, t.fg)))`.
+    /// Resolved **per source row**, so a coloured row stays coloured across a
+    /// re-sort; selection still wins the highlight (precedence: selection >
+    /// rule > zebra). `None` (every pre-R998 caller) renders byte-identically.
+    pub row_style: Option<&'a dyn Fn(usize) -> Option<(Color, Color)>>,
+}
+
+impl core::fmt::Debug for VirtualTableData<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("VirtualTableData")
+            .field("headers", &self.headers)
+            .field("item_count", &self.item_count)
+            .field("overscan", &self.overscan)
+            .field("sort", &self.sort)
+            .field("sort_tag", &self.sort_tag)
+            .field("order", &self.order)
+            .field("col_widths", &self.col_widths)
+            .field("resizable", &self.resizable)
+            .field("frozen_cols", &self.frozen_cols)
+            .field("row_style", &self.row_style.map(|_| "<fn>"))
+            .finish()
+    }
 }
 
 /// R784 §5.45 — the two single-axis [`ScrollState`]s a virtualized
@@ -1040,6 +1069,15 @@ impl GridRender<'_> {
     /// three slot closures cannot disagree on the fill / fg derivation.
     fn row_inputs(&self, view_pos: usize, is_selected: &impl Fn(usize) -> bool) -> (usize, Color, Color) {
         let source = self.source_of(view_pos);
+        // R998 — precedence: selection highlight > matched coloring rule >
+        // zebra stripe. A selected row keeps the accent fill so the selection
+        // stays visible over any rule tint; otherwise a row-style rule (per
+        // SOURCE row, so it survives a re-sort) overrides the zebra default.
+        if !is_selected(source) {
+            if let Some((bg, fg)) = self.data.row_style.and_then(|resolve| resolve(source)) {
+                return (source, bg, fg);
+            }
+        }
         let fill = row_fill(self.theme, RadioState::Idle, is_selected(source), view_pos);
         let fg = row_fg(self.theme, RadioState::Idle);
         (source, fill, fg)
@@ -1440,7 +1478,7 @@ mod tests {
                     col_widths: None,
                     resizable: false,
                     frozen_cols: 0,
-                },
+                    row_style: None,                },
                 &theme,
                 &style,
                 |_| false,
@@ -1518,7 +1556,7 @@ mod tests {
                     col_widths: None,
                     resizable: false,
                     frozen_cols,
-                },
+                    row_style: None,                },
                 &theme,
                 &style,
                 |_| false,
@@ -1719,7 +1757,7 @@ mod tests {
                     col_widths: Some(&widths),
                     resizable: false,
                     frozen_cols: 0,
-                },
+                    row_style: None,                },
                 &light(),
                 &TableStyle::m3(),
                 |_| false,
@@ -1759,7 +1797,7 @@ mod tests {
                     col_widths: Some(widths),
                     resizable,
                     frozen_cols: 0,
-                },
+                    row_style: None,                },
                 &light(),
                 &TableStyle::m3(),
                 |_| false,
@@ -1881,7 +1919,7 @@ mod tests {
                     col_widths: None,
                     resizable: false,
                     frozen_cols: 0,
-                },
+                    row_style: None,                },
                 &theme,
                 &style,
                 |_| false,

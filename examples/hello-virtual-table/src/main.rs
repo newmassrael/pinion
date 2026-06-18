@@ -126,7 +126,7 @@ fn view(_state: (), _frame: &Frame) -> Scene {
             col_widths: None,
             resizable: false,
             frozen_cols: 0,
-        },
+            row_style: None,        },
         &theme,
         &style,
         |_| false, // display-only grid: no selection

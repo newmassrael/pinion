@@ -223,7 +223,7 @@ fn view(selection: &MultiSelection, _frame: &Frame) -> Scene {
             col_widths: None,
             resizable: false,
             frozen_cols: 0,
-        },
+            row_style: None,        },
         &theme,
         &style,
         |id| selection.is_selected(id),

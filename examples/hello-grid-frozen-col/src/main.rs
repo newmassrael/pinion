@@ -158,7 +158,7 @@ fn view(_state: (), _frame: &Frame) -> Scene {
             // R859 — freeze the first two (identity) columns; columns 2..
             // scroll horizontally under the shared `h_scroll`.
             frozen_cols: FROZEN_COLS,
-        },
+            row_style: None,        },
         &theme,
         &style,
         |_| false, // display-only grid: no selection

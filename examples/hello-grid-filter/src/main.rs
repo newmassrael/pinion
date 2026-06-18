@@ -209,7 +209,7 @@ fn view(selected: Option<usize>, _frame: &Frame) -> Scene {
             col_widths: None,
             resizable: false,
             frozen_cols: 0,
-        },
+            row_style: None,        },
         &theme,
         &style,
         |id| selected == Some(id),
