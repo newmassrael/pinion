@@ -46437,6 +46437,82 @@
         "a presentation overlay, orthogonal to the grid a11y structure this round."
       ]
     },
+    "R998.1": {
+      "decision_summary": "Adversarial session-review clearance of R997 + R998 (2 independent reviewers + self-grep). Cleared real defects, rejected over-flags with evidence. HIGH: the grid_sort.rs '## Scope (honest boundaries)' block still said 'Sort only' / 'No undo' though R783/R779/R997 added filter+undo+multi-facet in the same file (the recurring stale-doc failure mode). MED: filter field doc said single-facet; matched_rows did O(N) Signal-clone per row — lifted a pure match_index_in SSOT so matched_rows + the paint resolver read the rule Signal once (the order() read-once pattern). LOW: row_inputs double is_selected, 14-site formatting damage from the R998 perl, |-separator wire doc, clear schema int.",
+      "changes_bullets": [
+        "grid_sort.rs HIGH: module \"## Scope (honest boundaries)\" said \"Sort only\" +",
+        "\"No undo\" — both false (R783 filter, R779 undo, R997 multi-facet). Rewrote to",
+        "truth (sort + multi-facet conjunction filter; undoable sort, filter off the",
+        "stack). MED: `filter` field doc \"single-facet\" -> multi-facet.",
+        "row_style.rs MED: matched_rows did O(N) Signal::get() rule-Vec clones (one per",
+        "row). Lifted a pure `match_index_in(&[RowStyleRule], cell)` SSOT (the per-row",
+        "matcher); matched_rows + the example paint resolver now read the rule Signal",
+        "ONCE per sweep/frame (the GridSortState::order read-once pattern). LOW: schema",
+        "(\"clear\",\"int\") (was \"string\"); documented the \"|\" rule-list separator",
+        "reservation (mirrors the \"&\" facet-separator note).",
+        "table.rs LOW: row_inputs bound is_selected(source) once (was called twice);",
+        "reformatted 14 VirtualTableData literals (the R998 perl's \\s*$ ate the newline,",
+        "cramming `row_style: None,   },` onto one line) across table.rs + 9 examples."
+      ],
+      "verification_bullets": [
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): 0.",
+        "cargo test --workspace -j2: 7089 passed / 0 failed (row_style 5 ok incl match_index_in path).",
+        "tools/demos/r998_grid_row_style.py: PASS from fresh release binary (39 assertions;",
+        "matched_rows + match/tint introspection intact after the read-once refactor).",
+        "mnemosyne validate-workspace: T1 reject=0 (entries 981 -> 982, no new orphan)."
+      ],
+      "impact_refs": [
+        "5.40",
+        "5.27",
+        "5.45"
+      ],
+      "carry_forward_bullets": [
+        "Over-flags rejected with evidence: a `GridFilter::matches_by` conjunction-fold",
+        "lift (the `.iter().all()` is a std idiom, the per-facet evaluator correctly",
+        "differs text-vs-typed, and the claimed out-of-range divergence is unreachable",
+        "— both consumers clamp via clamped_to_col_count before matching); order()",
+        "filter double-clone (pre-existing at bd5d974); §5.40 spec-tag drift",
+        "(pre-existing project-wide); ordering_matches Eq/Ne/Contains arms (correct",
+        "exhaustive completeness, not dead)."
+      ],
+      "publishable_decision_summary": "Adversarial session-review clearance of R997 + R998 (2 independent reviewers + self-grep). Cleared real defects, rejected over-flags with evidence. HIGH: the grid_sort.rs '## Scope (honest boundaries)' block still said 'Sort only' / 'No undo' though R783/R779/R997 added filter+undo+multi-facet in the same file (the recurring stale-doc failure mode). MED: filter field doc said single-facet; matched_rows did O(N) Signal-clone per row — lifted a pure match_index_in SSOT so matched_rows + the paint resolver read the rule Signal once (the order() read-once pattern). LOW: row_inputs double is_selected, 14-site formatting damage from the R998 perl, |-separator wire doc, clear schema int.",
+      "publishable_changes_bullets": [
+        "grid_sort.rs HIGH: module \"## Scope (honest boundaries)\" said \"Sort only\" +",
+        "\"No undo\" — both false (R783 filter, R779 undo, R997 multi-facet). Rewrote to",
+        "truth (sort + multi-facet conjunction filter; undoable sort, filter off the",
+        "stack). MED: `filter` field doc \"single-facet\" -> multi-facet.",
+        "row_style.rs MED: matched_rows did O(N) Signal::get() rule-Vec clones (one per",
+        "row). Lifted a pure `match_index_in(&[RowStyleRule], cell)` SSOT (the per-row",
+        "matcher); matched_rows + the example paint resolver now read the rule Signal",
+        "ONCE per sweep/frame (the GridSortState::order read-once pattern). LOW: schema",
+        "(\"clear\",\"int\") (was \"string\"); documented the \"|\" rule-list separator",
+        "reservation (mirrors the \"&\" facet-separator note).",
+        "table.rs LOW: row_inputs bound is_selected(source) once (was called twice);",
+        "reformatted 14 VirtualTableData literals (the R998 perl's \\s*$ ate the newline,",
+        "cramming `row_style: None,   },` onto one line) across table.rs + 9 examples."
+      ],
+      "publishable_verification_bullets": [
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): 0.",
+        "cargo test --workspace -j2: 7089 passed / 0 failed (row_style 5 ok incl match_index_in path).",
+        "tools/demos/r998_grid_row_style.py: PASS from fresh release binary (39 assertions;",
+        "matched_rows + match/tint introspection intact after the read-once refactor).",
+        "mnemosyne validate-workspace: T1 reject=0 (entries 981 -> 982, no new orphan)."
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "5.27",
+        "5.45"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Over-flags rejected with evidence: a `GridFilter::matches_by` conjunction-fold",
+        "lift (the `.iter().all()` is a std idiom, the per-facet evaluator correctly",
+        "differs text-vs-typed, and the claimed out-of-range divergence is unreachable",
+        "— both consumers clamp via clamped_to_col_count before matching); order()",
+        "filter double-clone (pre-existing at bd5d974); §5.40 spec-tag drift",
+        "(pre-existing project-wide); ordering_matches Eq/Ne/Contains arms (correct",
+        "exhaustive completeness, not dead)."
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

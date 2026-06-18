@@ -1069,16 +1069,17 @@ impl GridRender<'_> {
     /// three slot closures cannot disagree on the fill / fg derivation.
     fn row_inputs(&self, view_pos: usize, is_selected: &impl Fn(usize) -> bool) -> (usize, Color, Color) {
         let source = self.source_of(view_pos);
+        let selected = is_selected(source);
         // R998 — precedence: selection highlight > matched coloring rule >
         // zebra stripe. A selected row keeps the accent fill so the selection
         // stays visible over any rule tint; otherwise a row-style rule (per
         // SOURCE row, so it survives a re-sort) overrides the zebra default.
-        if !is_selected(source) {
+        if !selected {
             if let Some((bg, fg)) = self.data.row_style.and_then(|resolve| resolve(source)) {
                 return (source, bg, fg);
             }
         }
-        let fill = row_fill(self.theme, RadioState::Idle, is_selected(source), view_pos);
+        let fill = row_fill(self.theme, RadioState::Idle, selected, view_pos);
         let fg = row_fg(self.theme, RadioState::Idle);
         (source, fill, fg)
     }
@@ -1478,7 +1479,8 @@ mod tests {
                     col_widths: None,
                     resizable: false,
                     frozen_cols: 0,
-                    row_style: None,                },
+                    row_style: None,
+                },
                 &theme,
                 &style,
                 |_| false,
@@ -1556,7 +1558,8 @@ mod tests {
                     col_widths: None,
                     resizable: false,
                     frozen_cols,
-                    row_style: None,                },
+                    row_style: None,
+                },
                 &theme,
                 &style,
                 |_| false,
@@ -1757,7 +1760,8 @@ mod tests {
                     col_widths: Some(&widths),
                     resizable: false,
                     frozen_cols: 0,
-                    row_style: None,                },
+                    row_style: None,
+                },
                 &light(),
                 &TableStyle::m3(),
                 |_| false,
@@ -1797,7 +1801,8 @@ mod tests {
                     col_widths: Some(widths),
                     resizable,
                     frozen_cols: 0,
-                    row_style: None,                },
+                    row_style: None,
+                },
                 &light(),
                 &TableStyle::m3(),
                 |_| false,
@@ -1919,7 +1924,8 @@ mod tests {
                     col_widths: None,
                     resizable: false,
                     frozen_cols: 0,
-                    row_style: None,                },
+                    row_style: None,
+                },
                 &theme,
                 &style,
                 |_| false,

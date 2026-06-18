@@ -186,17 +186,34 @@ impl RowStyleState {
 
     /// The index of the **first** rule a row matches, or `None` — Wireshark's
     /// first-match precedence. `cell` yields the text of the row's column
-    /// `col`. Subscribes to the rule `Signal`.
+    /// `col`. Subscribes to the rule `Signal` (reads it once per call).
     #[must_use]
     pub fn match_index<'a, F: Fn(usize) -> &'a str>(&self, cell: F) -> Option<usize> {
-        self.rules.get().iter().position(|r| r.filter.matches(&cell))
+        Self::match_index_in(&self.rules.get(), cell)
     }
 
     /// The tint of the first rule a row matches, or `None` (no rule → default
-    /// fill). The row builder's resolver: `resolve(|c| cells[c])`.
+    /// fill). The single-row convenience: `resolve(|c| cells[c])`.
     #[must_use]
     pub fn resolve<'a, F: Fn(usize) -> &'a str>(&self, cell: F) -> Option<RowTint> {
-        self.rules.get().iter().find(|r| r.filter.matches(&cell)).map(|r| r.tint)
+        let rules = self.rules.get();
+        Self::match_index_in(&rules, cell).map(|i| rules[i].tint)
+    }
+
+    /// R998.1 — the **pure** first-match over a rule snapshot (no `Signal`
+    /// read): the index of the first rule in `rules` a row matches, or `None`.
+    /// A loop over many rows reads the `Signal` **once** (via [`rules`](Self::rules))
+    /// then calls this per row — the [`GridSortState::order`](crate::widgets::grid_sort::GridSortState::order)
+    /// read-once pattern, so coloring at scale never clones the rule list per
+    /// row. The per-row matcher SSOT shared by the paint resolver, the
+    /// instance [`match_index`](Self::match_index) / [`resolve`](Self::resolve),
+    /// and the external's `matched_rows`.
+    #[must_use]
+    pub fn match_index_in<'a, F: Fn(usize) -> &'a str>(
+        rules: &[RowStyleRule],
+        cell: F,
+    ) -> Option<usize> {
+        rules.iter().position(|r| r.filter.matches(&cell))
     }
 }
 
@@ -278,7 +295,13 @@ impl RowStyleExternal {
     }
 
     /// Render the whole rule list as the wire form (rules joined by `"|"`),
-    /// or `"none"` when empty — the `rules` query / restore payload.
+    /// or `"none"` when empty — the `rules` query / restore payload. The rule
+    /// separator `"|"` (like the facet separator `"&"`) is reserved: a facet
+    /// value must not contain `"|"` or `"&"`, else [`parse_rules_wire`](Self::parse_rules_wire)
+    /// mis-splits it (a single rule round-trips through
+    /// [`RowStyleRule::from_wire`] regardless of `";"` in the value, but the
+    /// list layer has no escaping — coloring-rule values are identifiers /
+    /// numbers in practice).
     fn rules_wire(&self) -> String {
         let rules = self.state.rules();
         if rules.is_empty() {
@@ -301,9 +324,21 @@ impl RowStyleExternal {
         self.state.match_index(|c| cells.get(c).map_or("", String::as_str))
     }
 
-    /// The number of rows matching any rule (0 without a source).
+    /// The number of rows matching any rule (0 without a source). Reads the
+    /// rule `Signal` **once** for the whole sweep (the `GridSortState::order`
+    /// read-once pattern — never one clone of the rule list per row).
     fn matched_rows(&self) -> usize {
-        (0..self.row_count).filter(|&r| self.match_index(r).is_some()).count()
+        let Some(source) = self.source.as_ref() else {
+            return 0;
+        };
+        let rules = self.state.rules();
+        (0..self.row_count)
+            .filter(|&r| {
+                let cells = source(r);
+                RowStyleState::match_index_in(&rules, |c| cells.get(c).map_or("", String::as_str))
+                    .is_some()
+            })
+            .count()
     }
 }
 
@@ -330,7 +365,7 @@ impl ExternalIntrospect for RowStyleExternal {
             ("match", "int"),
             ("tint", "string"),
             ("add_rule", "string"),
-            ("clear", "string"),
+            ("clear", "int"),
         ])
     }
 

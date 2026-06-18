@@ -43,16 +43,18 @@
 //!
 //! ## Scope (honest boundaries)
 //!
-//! - **Sort only.** Filtering at scale is the 1-D proxy's `filter` axis; the
-//!   grid gains it additively when a consumer needs it (a follow-up, like the
-//!   list's R747 sort → later filter arc).
-//! - **No undo.** The list proxy records a reversible `SortFilterEdit`
-//!   (R748); the grid's reversible sort is the immediate follow-up, kept out
-//!   of this slice so the sort core lands clean first (mirroring R730 table
-//!   sort → R748 undoable list sort).
+//! - **Sort + multi-facet filter.** The grid carries both a multi-column sort
+//!   and a **conjunction filter** ([`GridFilter`] — an AND of per-column
+//!   [`ColumnFacet`] predicates; R783 landed the single exact-match facet,
+//!   R997 generalized it to multi-facet with comparison ops), composed
+//!   filter-then-sort in [`order`](GridSortState::order).
+//! - **Undoable sort; filter is not.** A sort change is reversible via
+//!   [`GridSortEdit`] + [`with_undo`](GridSortExternal::with_undo) (R779); the
+//!   filter is deliberately kept off the undo stack — the same optionally-
+//!   undoable-mutation axis the 1-D proxy defers (R779.1).
 //! - **Materialized cells.** The proxy holds the source cell grid (it must,
-//!   to sort by any column) — the dataset, not rendered rows; identical to
-//!   [`ViewOrderState`](crate::widgets::view_order::ViewOrderState)
+//!   to sort / filter by any column) — the dataset, not rendered rows;
+//!   identical to [`ViewOrderState`](crate::widgets::view_order::ViewOrderState)
 //!   materializing its key column.
 
 use core::cmp::Ordering;
@@ -373,8 +375,9 @@ pub struct GridSortState {
     cells: Vec<Vec<String>>,
     col_count: usize,
     sort: Signal<Option<(usize, bool)>>,
-    /// R783 §5.40 — active single-facet column filter (`None` = unfiltered).
-    /// Subscribed views repaint on a filter change exactly as on a sort change.
+    /// R783 §5.40 — active multi-facet column filter (R997: an AND-conjunction
+    /// of [`ColumnFacet`] predicates; `None` = unfiltered). Subscribed views
+    /// repaint on a filter change exactly as on a sort change.
     filter: Signal<Option<GridFilter>>,
     /// Memoized visual→source permutation, recomputed only when the
     /// [`GridOrderKey`] (`(sort, filter)`) changes — the shared [`OrderMemo`]

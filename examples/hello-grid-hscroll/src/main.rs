@@ -153,7 +153,8 @@ fn view(_state: (), _frame: &Frame) -> Scene {
             resizable: true,
             // R859 — no frozen columns here (this is the live h-scroll demo).
             frozen_cols: 0,
-            row_style: None,        },
+            row_style: None,
+        },
         &theme,
         &style,
         |_| false, // display-only grid: no selection

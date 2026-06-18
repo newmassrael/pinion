@@ -171,12 +171,17 @@ fn view(selected: Option<usize>, _frame: &Frame) -> Scene {
     let rules = use_rules();
     let sort = grid.sort();
     let order = grid.order();
+    // R998.1 — snapshot the rule list ONCE per frame (subscribes → repaints on
+    // a rule change), the `grid.order()` read-once pattern, so the per-row
+    // resolver never clones the rule `Signal` per windowed row.
+    let rule_list = rules.rules();
 
     // R998 — the per-source-row coloring resolver: the first rule whose
-    // GridFilter predicate the row's cells satisfy yields its tint. Reads the
-    // rule `Signal` (subscribes → repaints on a rule change) and the grid cells.
+    // GridFilter predicate the row's cells satisfy yields its tint, matched
+    // against the frame's rule snapshot via the shared `match_index_in` SSOT.
     let resolve = |source: usize| {
-        rules.resolve(|col| grid.cell(source, col)).map(|tint| (tint.bg, tint.fg))
+        RowStyleState::match_index_in(&rule_list, |col| grid.cell(source, col))
+            .map(|i| (rule_list[i].tint.bg, rule_list[i].tint.fg))
     };
 
     let table = view_virtual_table(
@@ -201,7 +206,7 @@ fn view(selected: Option<usize>, _frame: &Frame) -> Scene {
     );
 
     Scene::Container(
-        ContainerNode::new(vec![status_bar(&theme, sort, rules.rule_count()), table])
+        ContainerNode::new(vec![status_bar(&theme, sort, rule_list.len()), table])
             .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
             .with_layout(LayoutStyle::new().flex(FlexDirection::Column)),
     )
