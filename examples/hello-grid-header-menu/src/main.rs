@@ -8,12 +8,14 @@
 //!
 //! ## Why this binding exists
 //!
-//! Phase B DCC-widget axis: the editor / IDE / spreadsheet column header
-//! every data grid ships, where a **right-click on a column header** opens a
-//! command popup scoped to that column (Sort Ascending / Sort Descending /
-//! Clear Sort). R965.1 deferred exactly this ("a header / context-menu
-//! control") as a follow-up; this binding lands it as **pure composition** of
-//! the substrates already in tree — no framework change:
+//! Phase B DCC-widget axis: the editor / IDE / spreadsheet column menu every
+//! data grid ships, where a **right-click on a column header — or, R988, any
+//! data cell in that column** — opens a command popup scoped to the column
+//! (Sort Ascending / Sort Descending / Clear Sort). R988 also names the column
+//! in the labels ("Sort by Score ascending"), so the menu reflects what it
+//! acts on. R965.1 deferred exactly this ("a header / context-menu control") as
+//! a follow-up; this binding lands it as **pure composition** of the
+//! substrates already in tree — no framework change:
 //!
 //! * **the popup** — the R772 [`ContextMenuExternal`] (the *primary* external
 //!   here, so the WAI-ARIA §3.5 keyboard model and the R715 click-outside
@@ -23,7 +25,7 @@
 //!   ([`WidgetCore::apply_secondary_click`]); a human right-click and
 //!   `scene/click {button: "right"}` reach the same override (§2 invariant
 //!   #2). The override maps the press point to a column via the header
-//!   geometry ([`header_col_at`] — Qt's `QHeaderView::logicalIndexAt`), records
+//!   geometry ([`grid_target_at`] — Qt's `QHeaderView::logicalIndexAt`), records
 //!   the target column, and anchors the popup.
 //! * **the sort** — the R778 [`GridSortExternal`] over a shared
 //!   [`GridSortState`] (an *extra* external): a left-click on a header still
@@ -37,7 +39,7 @@
 //! A real header menu acts on the column the cursor landed on, captured at
 //! open time (Qt's `QMenu::exec` / the web `contextmenu` `event.target`). So
 //! the popup itself stays target-agnostic; the binding stores the right-clicked
-//! column in a reactive [`Signal`] ([`use_header_ctx`]) at
+//! column in a reactive [`Signal`] ([`use_menu_target`]) at
 //! `apply_secondary_click` time and reads it back in [`update`](GridHeaderMenuView)
 //! when the `"command"` intent fires. The status bar surfaces the captured
 //! column as scene-as-data (§2 invariant #7) so an AI client sees the menu's
@@ -88,7 +90,7 @@ const N: usize = 8;
 /// Column count (matches `HEADERS.len()`).
 const NCOLS: usize = 3;
 /// Uniform column width; `NCOLS * COL_W = 450 < WIN_W` so the columns start at
-/// window x-origin 0 with no horizontal scroll (the [`header_col_at`] mapping
+/// window x-origin 0 with no horizontal scroll (the [`grid_target_at`] mapping
 /// relies on this).
 const COL_W: u32 = 150;
 /// Data-row height.
@@ -112,9 +114,11 @@ const SORT_TAG: &str = "gsort";
 const MENU_TAG: &str = "colmenu";
 /// R715 §5.16 — the transparent click-outside dismiss barrier composite.
 const BARRIER_TAG: &str = "colmenu#barrier";
-/// The popup command items. Index 0/1/2 maps to ascending / descending / clear
-/// in [`update`](GridHeaderMenuView::update).
-const MENU_ITEMS: [&str; 3] = ["Sort Ascending", "Sort Descending", "Clear Sort"];
+/// The popup command item count. Index 0/1/2 maps to ascending / descending /
+/// clear in [`update`](GridHeaderMenuView::update); R988 — the labels are
+/// computed per-open from the right-clicked column, so the menu names the
+/// column it acts on ("Sort by Score ascending").
+const MENU_ITEM_COUNT: usize = 3;
 /// The `"command"` intent the [`ContextMenuExternal`] emits on activation,
 /// dotted with this primary external's scope tag (R51.173 §5.23). Built via
 /// `pinion_core::intent_tag!`; the literal must match [`MENU_TAG`].
@@ -123,7 +127,7 @@ const SCROLL_KEY: &str = "grid_scroll";
 const H_SCROLL_KEY: &str = "grid_hscroll";
 const STATUS_TAG: &str = "grid_status";
 /// The reactive holder cache key for the captured header column (the
-/// [`use_header_ctx`] hook).
+/// [`use_menu_target`] hook).
 const HEADER_CTX_KEY: &str = "grid_header_menu.target_col";
 
 const CATEGORIES: [&str; 5] = ["Alpha", "Bravo", "Charlie", "Delta", "Echo"];
@@ -161,44 +165,68 @@ fn use_grid_data() -> Rc<GridSortState> {
     use_grid_sort(SORT_TAG, || (NCOLS, (0..N).map(row_cells).collect()))
 }
 
-/// The captured header column the context menu acts on, set at right-click time
-/// in [`GridHeaderMenuView::apply_secondary_click`] and read back in
-/// [`GridHeaderMenuView::update`] when an item activates. A reactive holder
-/// (not projected widget state) because the secondary-click override mutates it
-/// outside the dispatch reducer; the view subscribes to surface it as
-/// scene-as-data in the status bar.
-fn use_header_ctx() -> Rc<Signal<Option<usize>>> {
-    let owner = Owner::current().expect("use_header_ctx requires an active Owner scope");
+/// R988 — the grid position the context menu was opened on: the column it
+/// sorts, plus the row when the click landed on a body cell (`None` for a
+/// header click). Captured at right-click time and read back in the view
+/// (dynamic labels + status) and the reducer (the sort).
+#[derive(Copy, Clone, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+struct MenuTarget {
+    /// The column the menu sorts (resolved from the click x, header or cell).
+    col: usize,
+    /// The body row when the click hit a data cell; `None` for a header click.
+    row: Option<usize>,
+}
+
+/// The captured [`MenuTarget`] — a reactive holder (not projected widget state)
+/// because the secondary-click override mutates it outside the dispatch
+/// reducer; the view subscribes to surface it as scene-as-data in the status
+/// bar and to name the column in the menu labels.
+fn use_menu_target() -> Rc<Signal<Option<MenuTarget>>> {
+    let owner = Owner::current().expect("use_menu_target requires an active Owner scope");
     owner.cache(HEADER_CTX_KEY, || Signal::new(None))
 }
 
-/// R986 §5.53 — map a window-space secondary-click point to the column header
-/// it landed on, or `None` when the click is not over the header band.
+/// R986 §5.53 / R988 — map a window-space secondary-click point to the grid
+/// column it landed on (a header cell OR a data cell), or `None` when the click
+/// is outside the grid's columns/rows.
 ///
-/// The geometric header hit-test (Qt's `QHeaderView::logicalIndexAt`): the
-/// frozen header band occupies `[STATUS_H, STATUS_H + header_height)` below the
-/// status bar, and the uniform `COL_W` columns start at window x-origin 0 (no
-/// h-scroll, guaranteed by `NCOLS * COL_W < WIN_W`). The RPC demo validates
-/// this end-to-end by right-clicking each header's painted rect and asserting
-/// the resulting sort targets that column.
-fn header_col_at(x: f32, y: f32) -> Option<usize> {
+/// The geometric hit-test (Qt's `QHeaderView::logicalIndexAt`, extended to the
+/// body): the frozen header band occupies `[STATUS_H, STATUS_H + header_height)`
+/// and the `N` data rows follow, each `ROW_H` tall; the uniform `COL_W` columns
+/// start at window x-origin 0 (no h-scroll, guaranteed by `NCOLS * COL_W <
+/// WIN_W`). A header click resolves only its column (`row = None`); a body click
+/// also resolves its row. The RPC demo validates this against the painted rects.
+fn grid_target_at(x: f32, y: f32) -> Option<MenuTarget> {
     let xi = saturating_f32_to_u32(x);
     let yi = saturating_f32_to_u32(y);
-    if yi < STATUS_H || yi >= STATUS_H + table_style().header_height {
+    let header_bottom = STATUS_H + table_style().header_height;
+    let rows_h = u32::try_from(N).unwrap_or(u32::MAX).saturating_mul(ROW_H);
+    if yi < STATUS_H || yi >= header_bottom.saturating_add(rows_h) {
         return None;
     }
     let col = (xi / COL_W) as usize;
-    (col < NCOLS).then_some(col)
+    if col >= NCOLS {
+        return None;
+    }
+    // `row` is `Some` only below the header band; the y-range above bounds it < N.
+    let row = (yi >= header_bottom).then(|| ((yi - header_bottom) / ROW_H) as usize);
+    Some(MenuTarget { col, row })
 }
 
 /// Status bar above the grid: a literal scene-as-data readout of the active
 /// sort + the captured header-menu target column (so an AI client sees which
 /// column the menu will act on before activating an item).
-fn status_bar(theme: &Theme, sort: Option<(usize, bool)>, target_col: Option<usize>) -> Scene {
-    let tgt = target_col.map_or_else(|| "none".to_string(), |c| c.to_string());
+fn status_bar(theme: &Theme, sort: Option<(usize, bool)>, target: Option<MenuTarget>) -> Scene {
+    let tgt = target.map_or_else(
+        || "none".to_string(),
+        |t| match t.row {
+            Some(r) => format!("{} (cell row {r})", HEADERS[t.col]),
+            None => format!("{} (header)", HEADERS[t.col]),
+        },
+    );
     let text = Scene::Text(
         TextNode::styled(
-            format!("sort {} \u{00B7} header menu target col {tgt}", grid_sort_str(sort)),
+            format!("sort {} \u{00B7} menu target {tgt}", grid_sort_str(sort)),
             Rect::default(),
             TextStyle::new()
                 .with_size_px(13)
@@ -234,7 +262,7 @@ fn view(state: HeaderMenuState, _frame: &Frame) -> Scene {
     let grid_sort = use_grid_data();
     let sort = grid_sort.sort();
     let order = grid_sort.order();
-    let target_col = use_header_ctx().get();
+    let target = use_menu_target().get();
 
     let grid = view_virtual_table(
         GRID_TAG,
@@ -256,13 +284,23 @@ fn view(state: HeaderMenuState, _frame: &Frame) -> Scene {
         row_cells,
     );
 
-    let mut children = vec![status_bar(&theme, sort, target_col), grid];
+    let mut children = vec![status_bar(&theme, sort, target), grid];
     if let Some(anchor) = state.open_at {
+        // R988 — the labels name the right-clicked column ("Sort by Score
+        // ascending"), so the menu reflects what it acts on (Excel / DCC).
+        let col_name = target.map_or("column", |t| HEADERS[t.col]);
+        let labels = [
+            format!("Sort by {col_name} ascending"),
+            format!("Sort by {col_name} descending"),
+            "Clear Sort".to_string(),
+        ];
+        let label_refs: [&str; MENU_ITEM_COUNT] =
+            [labels[0].as_str(), labels[1].as_str(), labels[2].as_str()];
         children.push(dismiss_barrier(BARRIER_TAG, (0, 0), (WIN_W, WIN_H)));
         children.push(view_context_menu(
             MENU_TAG,
             MENU_TAG,
-            &MENU_ITEMS,
+            &label_refs,
             state.active,
             ContextMenuPlacement {
                 anchor,
@@ -305,7 +343,7 @@ impl WidgetCore for GridHeaderMenuView {
     /// keyboard model + the dismiss barrier resolve through the proven
     /// `hello-contextmenu` focus path (the menu is the single tab stop).
     fn create_external() -> Box<dyn External> {
-        Box::new(ContextMenuExternal::new(MENU_ITEMS.len()))
+        Box::new(ContextMenuExternal::new(MENU_ITEM_COUNT))
     }
 
     /// Extra = the sort proxy over the shared [`GridSortState`] the view reads
@@ -363,14 +401,15 @@ impl WidgetCore for GridHeaderMenuView {
         None
     }
 
-    /// R887 §5.53 — a right-click over a column header opens (or re-anchors) the
-    /// popup at the press point and records the captured column. A right-click
-    /// off the header band is ignored (this is a *header* context menu).
+    /// R887 §5.53 / R988 — a right-click over a column header OR a data cell
+    /// opens (or re-anchors) the popup at the press point and records the
+    /// clicked column (and row, for a cell). A right-click outside the grid is
+    /// ignored.
     fn apply_secondary_click(scene: &mut Scene, x: f32, y: f32) -> bool {
-        let Some(col) = header_col_at(x, y) else {
+        let Some(target) = grid_target_at(x, y) else {
             return false;
         };
-        use_header_ctx().set(Some(col));
+        use_menu_target().set(Some(target));
         let Some(node) = scene.find_external_with_tag_mut(MENU_TAG) else {
             return false;
         };
@@ -410,8 +449,9 @@ impl WidgetCore for GridHeaderMenuView {
     fn update(_state: HeaderMenuState, intent: &Intent) -> Vec<Command> {
         if intent.tag.as_ref() == COMMAND_INTENT_TAG_FULL {
             if let IntrospectValue::Text(idx) = &intent.payload {
-                if let (Ok(item), Some(col)) = (idx.parse::<usize>(), use_header_ctx().get()) {
+                if let (Ok(item), Some(target)) = (idx.parse::<usize>(), use_menu_target().get()) {
                     let grid_sort = use_grid_data();
+                    let col = target.col;
                     match item {
                         0 => grid_sort.set_sort(Some((col, true))),
                         1 => grid_sort.set_sort(Some((col, false))),
@@ -458,8 +498,8 @@ impl WidgetA11y for GridHeaderMenuView {
         if state.open_at.is_some() {
             let group_focused = focused == Some(MENU_TAG);
             let tags: Vec<String> =
-                (0..MENU_ITEMS.len()).map(|i| composite_item_tag(MENU_TAG, i)).collect();
-            let items: Vec<MenuItemCell<'_>> = (0..MENU_ITEMS.len())
+                (0..MENU_ITEM_COUNT).map(|i| composite_item_tag(MENU_TAG, i)).collect();
+            let items: Vec<MenuItemCell<'_>> = (0..MENU_ITEM_COUNT)
                 .map(|i| MenuItemCell {
                     tag: &tags[i],
                     label: None,
@@ -569,22 +609,30 @@ mod tests {
         clippy::cast_precision_loss,
         reason = "the small layout consts are exact as f32 for the test points"
     )]
-    fn header_col_at_maps_band_to_column() {
-        let band_y = (STATUS_H + 5) as f32;
-        assert_eq!(header_col_at(10.0, band_y), Some(0), "x in col 0");
-        assert_eq!(header_col_at((COL_W + 10) as f32, band_y), Some(1), "x in col 1");
-        assert_eq!(header_col_at((2 * COL_W + 10) as f32, band_y), Some(2), "x in col 2");
+    fn grid_target_at_maps_band_to_column() {
+        let band_y = (STATUS_H + 5) as f32; // header band
+        let body_y = (STATUS_H + table_style().header_height + ROW_H + 2) as f32; // body row 1
+        // Header click: the column, no row.
         assert_eq!(
-            header_col_at((3 * COL_W + 10) as f32, band_y),
-            None,
-            "x past the last column",
+            grid_target_at(10.0, band_y),
+            Some(MenuTarget { col: 0, row: None }),
+            "header col 0",
         );
-        assert_eq!(header_col_at(10.0, (STATUS_H - 1) as f32), None, "y above the header band");
         assert_eq!(
-            header_col_at(10.0, (STATUS_H + table_style().header_height) as f32),
-            None,
-            "y in the body, below the header band",
+            grid_target_at((COL_W + 10) as f32, band_y),
+            Some(MenuTarget { col: 1, row: None }),
+            "header col 1",
         );
+        // Body cell click: the column AND its row.
+        assert_eq!(
+            grid_target_at((2 * COL_W + 10) as f32, body_y),
+            Some(MenuTarget { col: 2, row: Some(1) }),
+            "body cell col 2, row 1",
+        );
+        // Outside the grid.
+        assert_eq!(grid_target_at((3 * COL_W + 10) as f32, band_y), None, "x past the last column");
+        assert_eq!(grid_target_at(10.0, (STATUS_H - 1) as f32), None, "y above the grid");
+        assert_eq!(grid_target_at(10.0, 10_000.0), None, "y far below the last row");
     }
 
     // ----- the captured-column reducer -----
@@ -592,8 +640,8 @@ mod tests {
     #[test]
     fn menu_command_sorts_the_captured_column() {
         Owner::new().run(|| {
-            // Capture column 1 (Score), then activate each item.
-            use_header_ctx().set(Some(1));
+            // Capture column 1 (Score) via a header click, then activate each item.
+            use_menu_target().set(Some(MenuTarget { col: 1, row: None }));
             let _ = GridHeaderMenuView::update(
                 open(None),
                 &Intent::new_static("colmenu.command", IntrospectValue::Text("0".to_string())),
@@ -627,14 +675,14 @@ mod tests {
     #[test]
     fn captured_column_is_per_right_click() {
         Owner::new().run(|| {
-            use_header_ctx().set(Some(0));
+            use_menu_target().set(Some(MenuTarget { col: 0, row: None }));
             let _ = GridHeaderMenuView::update(
                 open(None),
                 &Intent::new_static("colmenu.command", IntrospectValue::Text("0".to_string())),
             );
             assert_eq!(use_grid_data().sort(), Some((0, true)), "first capture sorts col 0");
-            // A later right-click on a different header re-captures the column.
-            use_header_ctx().set(Some(2));
+            // A later right-click on a different column's data cell re-captures it.
+            use_menu_target().set(Some(MenuTarget { col: 2, row: Some(3) }));
             let _ = GridHeaderMenuView::update(
                 open(None),
                 &Intent::new_static("colmenu.command", IntrospectValue::Text("1".to_string())),
@@ -674,7 +722,7 @@ mod tests {
             .find(|n| n.role == AriaRole::Menu)
             .expect("open menu contributes a Menu node");
         assert_eq!(menu.tag, MENU_TAG);
-        assert_eq!(menu.children.len(), MENU_ITEMS.len(), "one menuitem per command");
+        assert_eq!(menu.children.len(), MENU_ITEM_COUNT, "one menuitem per command");
         let item1 = nodes
             .iter()
             .find(|n| n.tag == "colmenu#i1")

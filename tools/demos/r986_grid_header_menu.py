@@ -54,7 +54,9 @@ from rpc_verify import (  # noqa: E402
 
 VIEWPORT = (520, 460)
 N = 8
-MENU_ITEMS = ["Sort Ascending", "Sort Descending", "Clear Sort"]
+# R988 — the labels name the right-clicked column; section (B) right-clicks
+# the Score header, so the items read "Sort by Score ...".
+MENU_ITEMS = ["Sort by Score ascending", "Sort by Score descending", "Clear Sort"]
 # Cursor target for keyboard injection: top-left, over the barrier, clear
 # of any popup item (mirrors r772's KEY_AT).
 KEY_AT = (5.0, 5.0)
@@ -146,7 +148,7 @@ def body() -> None:
         for item in MENU_ITEMS:
             assert item in panel_text, f"menu item {item!r} renders; got {panel_text!r}"  # 14,15,16
         # The captured column is scene-as-data on the status bar.
-        assert "target col 1" in _status_text(snap), (
+        assert "target Score (header)" in _status_text(snap), (
             f"status surfaces captured column; got {_status_text(snap)!r}"
         )                                                                               # 17
 
@@ -177,7 +179,7 @@ def body() -> None:
         # ── (F) a DIFFERENT column (Name, col 0) sorts independently ────
         _open_menu_on_header(tf, 0)
         snap = _paint(tf)
-        assert "target col 0" in _status_text(snap), (
+        assert "target Name (header)" in _status_text(snap), (
             f"re-targeted to col 0; got {_status_text(snap)!r}"
         )                                                                               # 26
         _activate(tf, 0)
@@ -191,13 +193,15 @@ def body() -> None:
         _activate(tf, 2)
         wait_query(tf, "/gsort/external/sort", "none", desc="reset before keyboard")    # 30
 
-        # ── (G) right-click OFF the header band opens nothing ───────────
-        tf.click(at=(100.0, 200.0), button="right")  # well below the header
+        # ── (G) right-click OUTSIDE the grid opens nothing ──────────────
+        # R988 — a right-click on a data cell now opens the menu too, so the
+        # "opens nothing" case targets the status bar (above the grid).
+        tf.click(at=(100.0, 12.0), button="right")  # the status bar, above the header
         # No state edge to await; the press-edge one-shot is synchronous on
         # the dispatch the rejecting override returns false for, so a direct
         # read is race-free (no repaint was scheduled).
         assert_eq(tf.query("/external/open"), False,
-                  "right-click in the grid body (not a header) opens no menu")          # 31
+                  "right-click outside the grid (status bar) opens no menu")            # 31
         tf.pointer_leave()
 
         # ── (H) WAI-ARIA §3.5 keyboard model on the opened popup ────────

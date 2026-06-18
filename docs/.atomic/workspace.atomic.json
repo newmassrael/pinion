@@ -45321,6 +45321,58 @@
         "the gutter-vs-body current-line misalignment from R962->R987 is cleared this round"
       ]
     },
+    "R988": {
+      "decision_summary": "R988 §5.27 §5.38 §5.53 data-cell context menu + column-naming labels: right-click any data cell (not just the header) opens the sort menu scoped to that cell's column, with labels naming the column; generalizes the geometric hit-test to header+cell via MenuTarget",
+      "changes_bullets": [
+        "grid_target_at generalizes the R986 header hit-test to resolve a header OR a data cell (col + row)",
+        "right-click any data cell opens the sort menu scoped to that cell's column (Excel / DCC)",
+        "the menu labels name the right-clicked column (\"Sort by Score ascending\"), computed per-open",
+        "MenuTarget {col, row} captured + shown in the status bar (column name + cell row) as scene-as-data",
+        "pure composition: reuses R986 ContextMenu + secondary-click + sort proxy; no framework change"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace: ok, 0 failed (7 example tests: grid_target_at header+cell, reducer, a11y)",
+        "cargo clippy --workspace --all-targets -D pedantic: 0 warnings",
+        "r988_grid_cell_menu.py PASS: 32 asserts (cell open, status col+row, labels, sort, keys)",
+        "r986 demo updated PASS (dynamic labels + status format); no regression"
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.38",
+        "5.53"
+      ],
+      "carry_forward_bullets": [
+        "grid_target_at cell hit-test is example-local geometry (uniform, no scroll); the editable",
+        "hello-data-grid cell menu (reset cell/row/col, R966/L1786 carry) needs the harder monster",
+        "cell hit-test (frozen header + h-scroll + variable widths) = deferred",
+        "ContextMenu dynamic labels = 1st consumer; a 2nd would lift a context-label helper"
+      ],
+      "publishable_decision_summary": "R988 §5.27 §5.38 §5.53 data-cell context menu + column-naming labels: right-click any data cell (not just the header) opens the sort menu scoped to that cell's column, with labels naming the column; generalizes the geometric hit-test to header+cell via MenuTarget",
+      "publishable_changes_bullets": [
+        "grid_target_at generalizes the R986 header hit-test to resolve a header OR a data cell (col + row)",
+        "right-click any data cell opens the sort menu scoped to that cell's column (Excel / DCC)",
+        "the menu labels name the right-clicked column (\"Sort by Score ascending\"), computed per-open",
+        "MenuTarget {col, row} captured + shown in the status bar (column name + cell row) as scene-as-data",
+        "pure composition: reuses R986 ContextMenu + secondary-click + sort proxy; no framework change"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace: ok, 0 failed (7 example tests: grid_target_at header+cell, reducer, a11y)",
+        "cargo clippy --workspace --all-targets -D pedantic: 0 warnings",
+        "r988_grid_cell_menu.py PASS: 32 asserts (cell open, status col+row, labels, sort, keys)",
+        "r986 demo updated PASS (dynamic labels + status format); no regression"
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.38",
+        "5.53"
+      ],
+      "publishable_carry_forward_bullets": [
+        "grid_target_at cell hit-test is example-local geometry (uniform, no scroll); the editable",
+        "hello-data-grid cell menu (reset cell/row/col, R966/L1786 carry) needs the harder monster",
+        "cell hit-test (frozen header + h-scroll + variable widths) = deferred",
+        "ContextMenu dynamic labels = 1st consumer; a 2nd would lift a context-label helper"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

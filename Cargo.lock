@@ -2194,6 +2194,7 @@ dependencies = [
  "pinion-forge",
  "pinion-shell",
  "pinion-widget-paint",
+ "serde",
  "vello",
 ]
 
