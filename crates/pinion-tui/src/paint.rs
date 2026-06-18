@@ -24,9 +24,11 @@
 //! goes through [`CellMetric`] (the R968 §5.41 cell-native metric).
 //! This adapter renders against [`CellMetric::DEFAULT`] — the 8×16
 //! bitmap font baseline — so behaviour is byte-unchanged from the
-//! pre-R968 `PIXEL_PER_CELL_*` constants it replaced. A future
-//! `Scene::TextGrid` supplies its own node-local metric (derived from
-//! its monospace font), at which point this walker reads it per node.
+//! pre-R968 `PIXEL_PER_CELL_*` constants it replaced. A
+//! [`Scene::TextGrid`](pinion_core::Scene::TextGrid) (R994) maps each of
+//! its cells 1:1 onto a character cell — its own node-local pixel metric
+//! sizes Vello glyphs, but a character buffer has no sub-cell resolution, so
+//! only the grid's `rect` origin is mapped (through [`CELL`]).
 //!
 //! The local [`pixels_to_cell_floor`] is the signed/i64 pixel→cell map
 //! the scroll cascade needs — content scrolled past the viewport's left
@@ -45,21 +47,23 @@
 //! The column cursor advances by the cluster width so wide graphemes
 //! reserve their second cell implicitly.
 
-use pinion_core::scene::{BoxNode, ContainerNode, Rect, Scene, TextNode};
+use pinion_core::scene::{BoxNode, ContainerNode, Rect, Scene, TextGridNode, TextNode};
 use pinion_core::style::{BoxStyle, Color};
+use pinion_core::term_grid::{CellAttrs, CellWidth, TermColor};
 use pinion_core::CellMetric;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect as TuiRect;
-use ratatui::style::Color as TuiColor;
+use ratatui::style::{Color as TuiColor, Modifier, Style};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 /// R968 §5.41 — the cell-native metric this TUI paint adapter renders
 /// against. Sourced from [`CellMetric::DEFAULT`] (the behaviour-preserving
-/// 8×16 baseline the pre-R968 `PIXEL_PER_CELL_*` constants carried); a
-/// future `Scene::TextGrid` supplies its own node-local [`CellMetric`]
-/// derived from its monospace font, with the shared `Rect` geometry
-/// staying in logical pixels per the R968 ratify.
+/// 8×16 baseline the pre-R968 `PIXEL_PER_CELL_*` constants carried). It
+/// positions every node — including a `Scene::TextGrid`, whose own node-local
+/// metric sizes Vello glyphs but is irrelevant to a character buffer (R994
+/// maps grid cells 1:1) — with the shared `Rect` geometry staying in logical
+/// pixels per the R968 ratify.
 const CELL: CellMetric = CellMetric::DEFAULT;
 
 // R51.130 §5.41 — Unicode light box-drawing set (U+2500..U+2518).
@@ -232,6 +236,10 @@ fn to_buffer_inner(scene: &Scene, buf: &mut Buffer, clip: CellClip, offset_px: (
             let child_offset = (clamp_to_i32(cx), clamp_to_i32(cy));
             to_buffer_inner(&s.content, buf, new_clip, child_offset);
         }
+        // R994 §5.41 §2 #6 — the cell-native grid's TUI sibling of the
+        // Vello glyph paint (R991-R993): each grid cell maps 1:1 onto a
+        // ratatui character cell.
+        Scene::TextGrid(n) => paint_text_grid_inner(n, buf, clip, offset_px),
         // R51.115 — `Path` / `Image` still skipped (unicode-art
         // mapping carries on the substrate-incompleteness-signal
         // trigger once a binding actually needs them — every
@@ -453,6 +461,144 @@ fn paint_text_inner(t: &TextNode, buf: &mut Buffer, clip: CellClip, offset_px: (
             buf[(bx, by)].set_symbol(grapheme);
         }
         col = col.saturating_add(g_width);
+    }
+}
+
+/// R994 §5.41 — map a terminal [`TermColor`] to a ratatui [`TuiColor`]. The
+/// TUI delegates `Default` and `Indexed` to the **host terminal's** own
+/// palette (the natural terminal behaviour — the user's theme applies),
+/// unlike the Vello backend which has no terminal and resolves every colour
+/// through pinion's [`Palette`](pinion_core::term_grid::Palette). Truecolor
+/// passes through verbatim. This is a deliberate, documented backend
+/// divergence: both render the same SGR colour *model*, each at the right
+/// altitude.
+fn term_color_to_tui(c: TermColor) -> TuiColor {
+    match c {
+        TermColor::Default => TuiColor::Reset,
+        TermColor::Indexed(i) => TuiColor::Indexed(i),
+        // Truecolor reuses the `Color` -> `TuiColor::Rgb` SSOT.
+        TermColor::Rgb(rgb) => color_to_tui(rgb),
+    }
+}
+
+/// R994 §5.41 — map the SGR [`CellAttrs`] flags onto ratatui [`Modifier`]
+/// bits. The host terminal applies reverse / dim / blink itself, so every
+/// flag (including `blink`, which the Vello backend defers as a timing
+/// concern) maps straight through — the TUI sibling is simpler than the
+/// Vello paint precisely because the terminal does the work. This reads the
+/// same [`CellAttrs`] the Vello path does, but the *target* diverges
+/// (`Modifier` bits vs `FontWeight` / manual swap), so only the bool reads
+/// are shared — no abstraction to lift.
+fn cell_attrs_to_modifier(attrs: CellAttrs) -> Modifier {
+    let mut m = Modifier::empty();
+    if attrs.bold {
+        m |= Modifier::BOLD;
+    }
+    if attrs.dim {
+        m |= Modifier::DIM;
+    }
+    if attrs.italic {
+        m |= Modifier::ITALIC;
+    }
+    if attrs.underline {
+        m |= Modifier::UNDERLINED;
+    }
+    if attrs.blink {
+        m |= Modifier::SLOW_BLINK;
+    }
+    if attrs.reverse {
+        m |= Modifier::REVERSED;
+    }
+    if attrs.hidden {
+        m |= Modifier::HIDDEN;
+    }
+    if attrs.strikethrough {
+        m |= Modifier::CROSSED_OUT;
+    }
+    m
+}
+
+/// R994 §5.41 §2 #6 — paint one retained [`Scene::TextGrid`] into the
+/// ratatui [`Buffer`]: the cell-native projection's TUI sibling of the Vello
+/// glyph paint (R991-R993), completing the §2 #6 GUI / TUI dual for the grid.
+///
+/// Each grid cell maps **1:1** onto one ratatui character cell — a terminal
+/// projection is already a character grid, so the node's GUI pixel
+/// [`CellMetric`] is irrelevant here (it sizes Vello glyphs). The grid's
+/// `rect` only positions its origin, mapped through the buffer's [`CELL`]
+/// metric exactly like [`paint_text_inner`]; the scroll cascade's `clip` /
+/// `offset_px` carry through unchanged.
+///
+/// Per cell: the grapheme `cluster` is the symbol, `fg` / `bg` map through
+/// [`term_color_to_tui`] (the host terminal resolves indexed / default), and
+/// the SGR attrs become [`Modifier`] bits via [`cell_attrs_to_modifier`]
+/// (the terminal applies reverse / dim / blink). A [`CellWidth::Trailer`] is
+/// skipped — the wide head's symbol spans two columns in the terminal, just
+/// as [`paint_text_inner`] leaves the spill-over cell for the wide grapheme.
+///
+/// The cursor inverts its cell (toggling [`Modifier::REVERSED`], so an
+/// already-reversed cell still reads distinct). A character buffer has no
+/// sub-cell bar / underline geometry, so the DECSCUSR *shape* — honoured by
+/// the Vello backend (R993) — is a hardware-cursor concern (the host TTY's
+/// own cursor) left to a future shell-level slice; the buffer shows the
+/// universally-available reverse-block.
+fn paint_text_grid_inner(
+    n: &TextGridNode,
+    buf: &mut Buffer,
+    clip: CellClip,
+    offset_px: (i32, i32),
+) {
+    let grid = n.cells();
+    if grid.is_empty() {
+        return;
+    }
+    let buf_area = buf.area;
+    let cursor = grid.cursor();
+    // The grid's top-left in screen cells (the buffer's own metric). Each
+    // grid cell then occupies one buffer character cell.
+    let screen_col_px = i64::from(n.rect.x) + i64::from(offset_px.0);
+    let screen_row_px = i64::from(n.rect.y) + i64::from(offset_px.1);
+    let origin_col = pixels_to_cell_floor(screen_col_px, CELL.cell_w());
+    let origin_row = pixels_to_cell_floor(screen_row_px, CELL.cell_h());
+    for row in 0..grid.rows() {
+        let cell_row = origin_row.saturating_add(i32::from(row));
+        if cell_row < clip.y0 || cell_row >= clip.y1 {
+            continue;
+        }
+        for col in 0..grid.cols() {
+            let Some(cell) = grid.cell(col, row) else {
+                continue;
+            };
+            // The wide head carries the glyph; the trailer is the terminal's
+            // implicit spill-over cell (left untouched, like wide text).
+            if cell.width == CellWidth::Trailer {
+                continue;
+            }
+            let cell_col = origin_col.saturating_add(i32::from(col));
+            if cell_col < clip.x0 || cell_col >= clip.x1 {
+                continue;
+            }
+            let Some((bx, by)) = cell_to_buf_xy(cell_col, cell_row, buf_area) else {
+                continue;
+            };
+            let mut modifier = cell_attrs_to_modifier(cell.attrs);
+            if cursor.visible && cursor.col == col && cursor.row == row {
+                modifier ^= Modifier::REVERSED;
+            }
+            // A blank cell still carries its colours; render it as a space.
+            let symbol = if cell.cluster.is_empty() {
+                " "
+            } else {
+                cell.cluster.as_ref()
+            };
+            let style = Style::default()
+                .fg(term_color_to_tui(cell.fg))
+                .bg(term_color_to_tui(cell.bg))
+                .add_modifier(modifier);
+            let bcell = &mut buf[(bx, by)];
+            bcell.set_symbol(symbol);
+            bcell.set_style(style);
+        }
     }
 }
 
@@ -835,5 +981,83 @@ mod tests {
         to_buffer(&scene, &mut buf);
         assert_eq!(buf[(0, 0)].bg, ratatui::style::Color::Reset);
         assert_eq!(buf[(9, 4)].bg, ratatui::style::Color::Reset);
+    }
+
+    /// R994 §5.41 §2 #6 — the `Scene::TextGrid` TUI arm: each cell maps 1:1
+    /// onto a ratatui cell with its symbol, host-resolved colours, SGR
+    /// modifiers, wide-char spill-over, and a reverse-block cursor.
+    #[test]
+    fn r994_text_grid_paints_cells_attrs_wide_cursor() {
+        use pinion_core::scene::TextGridNode;
+        use pinion_core::style::Color;
+        use pinion_core::term_grid::{CursorShape, GridBuffer, GridCursor, TermCell, TermColor};
+        use pinion_core::CellMetric;
+
+        // 한 (U+D55C) — a wide cluster; escaped per the non-ASCII source rule.
+        const HAN: &str = "\u{D55C}";
+        let e = CellAttrs::empty;
+        // A 4x2 grid at pixel origin (0,0) → buffer origin cell (0,0) at the
+        // 8x16 default metric, so grid cell (c,r) lands on buffer cell (c,r).
+        let head = TermCell::new(HAN, TermColor::Indexed(2), TermColor::Default).wide();
+        let buffer = GridBuffer::new(4, 2)
+            .with_row(
+                0,
+                [
+                    TermCell::new("A", TermColor::Indexed(1), TermColor::Indexed(0))
+                        .with_attrs(e().with_bold(true)),
+                    TermCell::new("B", TermColor::Rgb(Color::rgb(0xff, 0, 0)), TermColor::Default)
+                        .with_attrs(e().with_italic(true).with_underline(true)),
+                    TermCell::new(" ", TermColor::Default, TermColor::Default)
+                        .with_attrs(e().with_reverse(true)),
+                    TermCell::new("D", TermColor::Default, TermColor::Default)
+                        .with_attrs(e().with_blink(true)),
+                ],
+            )
+            .with_row(
+                1,
+                [
+                    head.clone(),
+                    head.trailer(),
+                    TermCell::new("C", TermColor::Default, TermColor::Default),
+                    TermCell::blank(),
+                ],
+            )
+            .with_cursor(GridCursor::new(2, 1, CursorShape::Block, true));
+        let mut node = TextGridNode::new(CellMetric::DEFAULT).with_cells(buffer);
+        node.rect = Rect::new(0, 0, 32, 32);
+        let scene = Scene::TextGrid(node);
+
+        let mut buf = Buffer::empty(TuiRect::new(0, 0, 40, 10));
+        to_buffer(&scene, &mut buf);
+
+        // (0,0) bold 'A'; indexed fg/bg pass through to the host palette.
+        assert_eq!(buf[(0, 0)].symbol(), "A");
+        assert!(buf[(0, 0)].modifier.contains(Modifier::BOLD));
+        assert_eq!(buf[(0, 0)].fg, TuiColor::Indexed(1));
+        assert_eq!(buf[(0, 0)].bg, TuiColor::Indexed(0));
+
+        // (1,0) italic + underline 'B'; truecolor fg passes through; the
+        // default bg maps to the terminal's Reset (its own default).
+        assert_eq!(buf[(1, 0)].symbol(), "B");
+        assert!(buf[(1, 0)].modifier.contains(Modifier::ITALIC | Modifier::UNDERLINED));
+        assert_eq!(buf[(1, 0)].fg, TuiColor::Rgb(0xff, 0, 0));
+        assert_eq!(buf[(1, 0)].bg, TuiColor::Reset);
+
+        // (2,0) SGR reverse -> REVERSED (no cursor here).
+        assert!(buf[(2, 0)].modifier.contains(Modifier::REVERSED));
+
+        // (3,0) blink -> SLOW_BLINK (the host terminal blinks; Vello defers it).
+        assert!(buf[(3, 0)].modifier.contains(Modifier::SLOW_BLINK));
+
+        // (0,1) wide head carries the glyph; the trailer (1,1) is left as the
+        // terminal's spill-over cell (the default space).
+        assert_eq!(buf[(0, 1)].symbol(), HAN);
+        assert_eq!(buf[(0, 1)].fg, TuiColor::Indexed(2));
+        assert_eq!(buf[(1, 1)].symbol(), " ");
+
+        // (2,1) 'C' carries no SGR reverse, but the visible cursor sits here,
+        // so the cell reverses (the cursor inverts its cell in a buffer).
+        assert_eq!(buf[(2, 1)].symbol(), "C");
+        assert!(buf[(2, 1)].modifier.contains(Modifier::REVERSED));
     }
 }

@@ -69,9 +69,11 @@
 //! `underline` / `strikethrough` stroke a full-cell rule — so the
 //! `htg_attrs` grid now shows each SGR flag. **R993 §5.41** paints the
 //! [`GridCursor`] overlay (block / bar / underline shapes), so `htg_cursor`
-//! shows its bar and `htg_alt` its block. `blink` (a timing attribute) and
-//! the TUI backend are the remaining paint slices; the cell *data model*
-//! below remains the AI-first witness, read as data.
+//! shows its bar and `htg_alt` its block. **R994 §5.41** adds the ratatui
+//! TUI arm (§2 #6 GUI / TUI dual), so these grids also render in the
+//! terminal backend. Only the Vello `blink` slice (the TUI gets it free from
+//! the host terminal) remains; the cell *data model* below remains the
+//! AI-first witness, read as data.
 //!
 //! ## The AI-first witness (§2 #7 scene-as-data)
 //!

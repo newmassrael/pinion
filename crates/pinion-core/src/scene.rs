@@ -93,9 +93,11 @@ pub enum Scene {
     /// backend (per-cell bg fill + cluster glyph; reverse / hidden / wide
     /// honoured) — extended in **R992** with the typographic SGR attributes
     /// (bold / italic / dim / underline / strikethrough) and in **R993** with
-    /// the [`GridCursor`] overlay (block / bar / underline shapes). It is
-    /// uncacheable — the projection is replaced wholesale each frame. `blink`
-    /// (timing) and the TUI backend are the remaining paint slices.
+    /// the [`GridCursor`] overlay (block / bar / underline shapes). **R994**
+    /// added the ratatui TUI arm, so both backends now paint it — the §2 #6
+    /// GUI / TUI dual holds for the grid. It is uncacheable — the projection
+    /// is replaced wholesale each frame. The Vello `blink` slice (a timing
+    /// attribute the TUI gets free from the host terminal) remains.
     TextGrid(TextGridNode),
 }
 

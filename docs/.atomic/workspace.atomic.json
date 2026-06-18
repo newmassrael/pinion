@@ -45979,6 +45979,62 @@
         "dedicated GridCursor colour field (now uses cell fg) + per-cell a11y tree = deferred"
       ]
     },
+    "R994": {
+      "decision_summary": "R994 §5.41 §2 #6 TUI (ratatui) Scene::TextGrid paint arm = GUI/TUI dual complete",
+      "changes_bullets": [
+        "to_buffer_inner: Scene::TextGrid arm replaces the _=>{} stub (§2 #6 GUI/TUI dual complete)",
+        "paint_text_grid_inner: each grid cell maps 1:1 to a ratatui Cell (symbol + style)",
+        "term_color_to_tui: Default->Reset, Indexed->Indexed, Rgb->color_to_tui (host palette)",
+        "cell_attrs_to_modifier: SGR bools -> Modifier (BOLD/DIM/ITALIC/UNDERLINED/BLINK/REVERSED/...)",
+        "TUI delegates reverse/dim/blink to the host terminal (blink free; Vello defers it)",
+        "wide head writes the glyph, trailer skipped (terminal spill-over, like wide text)",
+        "cursor toggles Modifier::REVERSED on its cell (char buffer has no sub-cell shape)",
+        "color_to_tui reused for the Rgb arm = single Color->TuiColor::Rgb SSOT (3 sites)"
+      ],
+      "verification_bullets": [
+        "clippy 0 (-D pedantic --all-targets --features pinion-runtime/vello)",
+        "cargo test --workspace -j2 0 failed (exit 0); pinion-tui 89+18 ok",
+        "r994 TUI test asserts symbol/fg/bg/modifier per cell + wide + cursor (normal suite, no GPU)",
+        "existing TUI paint tests (text/box/scroll) regression-free",
+        "validate-workspace T1 reject=0, new orphan +0 (entries 974 -> 975)"
+      ],
+      "impact_refs": [
+        "5.41",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "DECSCUSR cursor shape (bar/underline) = hardware-cursor at Frame level (shell slice); buffer shows reverse-block",
+        "R995 = Vello.TUI cross-consistency regression: same cells/symbols/attrs, colours backend-resolved",
+        "Vello blink (timing tick) + per-cell a11y tree + R1.8 pointer->cell hit-test deferred"
+      ],
+      "publishable_decision_summary": "R994 §5.41 §2 #6 TUI (ratatui) Scene::TextGrid paint arm = GUI/TUI dual complete",
+      "publishable_changes_bullets": [
+        "to_buffer_inner: Scene::TextGrid arm replaces the _=>{} stub (§2 #6 GUI/TUI dual complete)",
+        "paint_text_grid_inner: each grid cell maps 1:1 to a ratatui Cell (symbol + style)",
+        "term_color_to_tui: Default->Reset, Indexed->Indexed, Rgb->color_to_tui (host palette)",
+        "cell_attrs_to_modifier: SGR bools -> Modifier (BOLD/DIM/ITALIC/UNDERLINED/BLINK/REVERSED/...)",
+        "TUI delegates reverse/dim/blink to the host terminal (blink free; Vello defers it)",
+        "wide head writes the glyph, trailer skipped (terminal spill-over, like wide text)",
+        "cursor toggles Modifier::REVERSED on its cell (char buffer has no sub-cell shape)",
+        "color_to_tui reused for the Rgb arm = single Color->TuiColor::Rgb SSOT (3 sites)"
+      ],
+      "publishable_verification_bullets": [
+        "clippy 0 (-D pedantic --all-targets --features pinion-runtime/vello)",
+        "cargo test --workspace -j2 0 failed (exit 0); pinion-tui 89+18 ok",
+        "r994 TUI test asserts symbol/fg/bg/modifier per cell + wide + cursor (normal suite, no GPU)",
+        "existing TUI paint tests (text/box/scroll) regression-free",
+        "validate-workspace T1 reject=0, new orphan +0 (entries 974 -> 975)"
+      ],
+      "publishable_impact_refs": [
+        "5.41",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "DECSCUSR cursor shape (bar/underline) = hardware-cursor at Frame level (shell slice); buffer shows reverse-block",
+        "R995 = Vello.TUI cross-consistency regression: same cells/symbols/attrs, colours backend-resolved",
+        "Vello blink (timing tick) + per-cell a11y tree + R1.8 pointer->cell hit-test deferred"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
