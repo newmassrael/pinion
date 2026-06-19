@@ -337,6 +337,69 @@ pub fn reveal_row(scroll: &crate::widgets::scroll::ScrollState, index: usize, ro
     scroll.scroll_to(0, offset);
 }
 
+/// R996/R1005 §5.27 — whether the viewport sits at the newest row (the bottom)
+/// of a growable virtualized list. **Tail-follow is derived, not stored:** "if
+/// you were at the bottom, stay at the bottom as rows append" — `tail -f` /
+/// a terminal's autoscroll. Read *before* a count grows (the was-following
+/// decision) and by the view (Following / Paused status) — one predicate, no
+/// `following` flag to keep consistent. The degenerate empty list (`0`/`0`) is
+/// at its bottom.
+///
+/// R1005 lift (the [`follow_tail`] reducer's pure half), on the 2nd streaming
+/// consumer (`hello-streaming-log` in-memory + `hello-paged-stream` paged):
+/// R996 left it local as the 1st consumer; the paged view is the 2nd, so the
+/// predicate lives here once next to the windowing geometry it reads.
+///
+/// Distinct from the RPC `ScrollEdges::at_bottom` wire field (`pinion-rpc`,
+/// `offset == max`): that is a §5.12 wire-introspection edge in a W3C-style
+/// four-edge set; this is the windowing reducer's tail-follow predicate (`>=`,
+/// robust to an over-clamped offset). Different layers, **not** one SSOT —
+/// `pinion-core` cannot depend on `pinion-rpc`.
+#[must_use]
+pub fn at_bottom(offset_y: i32, max_y: i32) -> bool {
+    offset_y >= max_y
+}
+
+/// R996/R1005 §5.27 — the **tail-follow reducer shape** for a growable
+/// virtualized list: after the row `count` has grown, grow the scroll bound to
+/// the new content extent and, when the viewport `was_following` the tail, pin
+/// it to the new bottom.
+///
+/// [`ScrollState::scroll_to`](crate::widgets::scroll::ScrollState::scroll_to)
+/// clamps to the *current* `max_y`, which the layout pass only grows on the
+/// *next* frame — so this grows the bound itself (through the
+/// [`max_scroll_offset`](crate::widgets::scroll::max_scroll_offset) /
+/// [`content_height`] SSOTs the layout pass also uses; it re-affirms the
+/// identical value next frame, Signal-equality-skipped) *before* pinning to the
+/// new bottom, so the autoscroll lands on the same frame as the append. When
+/// not following, the bound still grows (the scrollbar extent tracks the log)
+/// but the paused viewport stays put.
+///
+/// The bound and the pin use the **same** `viewport_h`: when following, the new
+/// tail is below the window, so the pin target *is* the just-computed bottom
+/// bound. (It deliberately does not route through
+/// [`reveal_row`](self::reveal_row), which would re-derive a viewport height
+/// from `measured_viewport` — that can differ from `viewport_h` before the
+/// first layout pass, growing the bound while silently not pinning.)
+///
+/// The caller captures `was_following` via [`at_bottom`] **before** the count
+/// grows, performs its domain-specific append (an in-memory `Vec` push, or a
+/// paged source's count bump + tail-page [`invalidate`](crate::reactive::ResourceCache::invalidate)),
+/// then calls this. R1005 lift on the 2nd streaming consumer.
+pub fn follow_tail(
+    scroll: &crate::widgets::scroll::ScrollState,
+    count: usize,
+    row_pitch: u32,
+    viewport_h: u32,
+    was_following: bool,
+) {
+    let bottom = crate::widgets::scroll::max_scroll_offset(content_height(count, row_pitch), viewport_h);
+    scroll.set_max(0, bottom);
+    if was_following && count > 0 {
+        scroll.scroll_to(0, bottom);
+    }
+}
+
 /// R745 §5.27 — a prefix-sum offset table over **explicit per-row
 /// heights**, enabling O(log n) windowing for a variable-height
 /// virtualized list.
@@ -531,6 +594,36 @@ mod tests {
         assert!(s.offset_y() > 300_000, "deep row revealed, offset {}", s.offset_y());
         reveal_row(&s, 0, 32);
         assert_eq!(s.offset_y(), 0, "row 0 reveals at the top");
+    }
+
+    #[test]
+    fn at_bottom_is_inclusive_and_handles_the_empty_extent() {
+        assert!(at_bottom(864, 864), "exactly at the bottom follows");
+        assert!(at_bottom(900, 864), "past the bottom (clamped) follows");
+        assert!(!at_bottom(863, 864), "one px above the bottom is paused");
+        assert!(at_bottom(0, 0), "an empty list is at its bottom");
+    }
+
+    #[test]
+    fn follow_tail_grows_the_bound_and_pins_only_when_following() {
+        use crate::widgets::scroll::{max_scroll_offset, ScrollState};
+        const PITCH: u32 = 24;
+        const VH: u32 = 14 * PITCH; // 336
+        // Following: a freshly-grown 50-row list pins to the new bottom.
+        let s = ScrollState::new();
+        s.set_measured_viewport(400, VH);
+        let bottom = max_scroll_offset(content_height(50, PITCH), VH);
+        follow_tail(&s, 50, PITCH, VH, true);
+        assert_eq!(s.max().1, bottom, "bound grew to the new extent");
+        assert!(bottom > 0, "50 rows exceed the 14-row viewport");
+        assert_eq!(s.offset_y(), bottom, "followed to the new bottom");
+        // Paused: the bound still grows, but the viewport stays put.
+        let s2 = ScrollState::new();
+        s2.set_measured_viewport(400, VH);
+        s2.scroll_to(0, 0);
+        follow_tail(&s2, 50, PITCH, VH, false);
+        assert_eq!(s2.max().1, bottom, "bound grows even when paused (scrollbar tracks)");
+        assert_eq!(s2.offset_y(), 0, "paused viewport is not pinned");
     }
 
     #[test]

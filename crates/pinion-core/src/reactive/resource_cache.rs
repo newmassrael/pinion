@@ -211,6 +211,27 @@ where
         resource.fetch_with(spawner, make_future());
     }
 
+    /// Drop the cached entry for `key` so the next [`ensure`](Self::ensure)
+    /// re-fetches it from scratch — the **streaming-tail-page** primitive
+    /// (§5.22 R1005). A paged source whose row count *grows at runtime* has a
+    /// partial last page: when the stream appends rows onto it, that page's
+    /// cached slice is stale. The producer calls `invalidate(tail_page)` then
+    /// bumps the count `Signal`, and the next render's [`ensure`](Self::ensure)
+    /// fetches the now-larger page. Idempotent on an absent key (an evicted or
+    /// never-fetched page already re-fetches on the next `ensure`), so the
+    /// producer can invalidate the tail unconditionally.
+    ///
+    /// Dropping the entry's `Rc<Resource>` is **fetch-safe** exactly as LRU
+    /// eviction is: an in-flight fetch holds its own `Rc` and completes onto the
+    /// now-detached carrier, while the re-`ensure` starts a fresh fetch on a new
+    /// carrier — a stale completion can never overwrite the fresh page because
+    /// they target different `Resource`s (the module's *Eviction is fetch-safe*
+    /// note). Re-keying by an embedded version instead would leak a dead carrier
+    /// per append; in-place invalidation re-fetches the *same* key.
+    pub fn invalidate(&self, key: &K) {
+        self.entries.borrow_mut().pop(key);
+    }
+
     /// Current [`ResourceState`] of `key`, or `None` if it has never been
     /// fetched. Reading a present entry **subscribes** the active reactive
     /// scope to it (so its resolution re-renders the reader) and **promotes**
@@ -521,5 +542,40 @@ mod tests {
         assert_eq!(cache.state(&0), Some(ResourceState::Loading), "re-fetch starts loading");
         drain(&pump);
         assert_eq!(cache.state(&0), Some(ResourceState::Ready(42)), "re-fetched value lands");
+    }
+
+    #[test]
+    fn invalidate_forces_a_refetch_with_grown_data() {
+        // The streaming-tail-page path (R1005): a partial page is re-fetched
+        // when the stream appends to it, picking up the larger content.
+        let pump = LocalTaskPump::new();
+        let cache = Cache::new();
+        // First fetch: the tail page holds value 1 (e.g. 1 line so far).
+        cache.ensure(9, &pump, || DeferredReady::new(0, Ok::<i32, String>(1)));
+        drain(&pump);
+        assert_eq!(cache.state(&9), Some(ResourceState::Ready(1)));
+        // The stream appends: invalidate the stale tail page.
+        cache.invalidate(&9);
+        assert!(!cache.contains(&9), "invalidated page is gone");
+        // The next ensure re-fetches it with the grown content (value 2).
+        cache.ensure(9, &pump, || DeferredReady::new(1, Ok::<i32, String>(2)));
+        assert_eq!(cache.state(&9), Some(ResourceState::Loading), "re-fetch starts loading");
+        drain(&pump);
+        assert_eq!(cache.state(&9), Some(ResourceState::Ready(2)), "grown page lands");
+    }
+
+    #[test]
+    fn invalidate_is_a_noop_on_an_absent_key_and_leaves_others() {
+        let pump = LocalTaskPump::new();
+        let cache = Cache::new();
+        cache.ensure(0, &pump, || DeferredReady::new(0, Ok::<i32, String>(100)));
+        drain(&pump);
+        // Absent key: no panic, no effect (the producer invalidates the tail
+        // unconditionally, even when it was never fetched / already evicted).
+        cache.invalidate(&999);
+        assert_eq!(cache.len(), 1, "absent invalidate left the cache untouched");
+        // Other keys are undisturbed.
+        cache.invalidate(&999);
+        assert_eq!(cache.state(&0), Some(ResourceState::Ready(100)), "key 0 intact");
     }
 }

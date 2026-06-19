@@ -18,40 +18,35 @@
 //! ## Tail-follow is STATELESS (`tail -f`)
 //!
 //! A terminal autoscrolls to the newest line while you watch — unless you have
-//! scrolled up to read history. That is modelled here without any `following`
-//! flag or Effect: tail-follow is **derived from the scroll position**. The
-//! emit reducer reads "is the viewport at the bottom *now*" ([`at_bottom`])
-//! *before* appending; if it was, it pins the offset to the new bottom after
-//! the count grows. Scroll up and the next batch appends silently below
-//! (paused); scroll back to the bottom and follow resumes — no stored state to
-//! keep consistent. The view shows the derived "Following" / "Paused" status
-//! from the same predicate. This is the first streaming consumer, so the
-//! tail-follow logic stays local ([[abstraction-needs-second-consumer]]); the
-//! pure [`at_bottom`] + the reducer shape are what the 2nd consumer (a paged,
-//! out-of-memory streaming view) will lift into the windowing substrate.
+//! scrolled up to read history. That is modelled without any `following` flag or
+//! Effect: tail-follow is **derived from the scroll position**. The emit reducer
+//! reads "is the viewport at the bottom *now*" ([`at_bottom`]) *before*
+//! appending; the shared [`follow_tail`] reducer shape then grows the scroll
+//! bound to the new extent and, if it was following, pins to the new bottom.
+//! Scroll up and the next batch appends silently below (paused); scroll back and
+//! follow resumes — no stored state. The view shows the derived
+//! "Following" / "Paused" status from the same predicate.
 //!
-//! ## Why the reducer sets the scroll bound itself
+//! [`at_bottom`] + [`follow_tail`] are the **windowing substrate** (R1005 lift):
+//! R996 wrote them here as the 1st streaming consumer; the paged out-of-memory
+//! view (`hello-paged-stream`) is the 2nd ([[abstraction-needs-second-consumer]]),
+//! so they moved into `pinion_core::widgets::virtual_list` and both consumers
+//! share them. They grow the bound themselves because [`ScrollState::scroll_to`]
+//! clamps to the *current* `max_y`, which the layout pass only grows next frame
+//! — so the autoscroll lands on the same frame as the append, deterministically.
 //!
-//! [`ScrollState::scroll_to`] clamps to the *current* `max_y`, which the layout
-//! pass only grows on the *next* frame. So the emit reducer computes the new
-//! bound from the grown count ([`content_height`] − the measured viewport, the
-//! same inputs layout uses) and [`set_max`](ScrollState::set_max)s it *before*
-//! scrolling to the bottom — the layout pass then re-affirms the identical
-//! bound (Signal equality-skip, no churn). This is what makes the autoscroll
-//! land on the same frame as the append, deterministically.
-//!
-//! ## Scope (honest boundary)
+//! ## Scope
 //!
 //! This is the **in-memory** streaming slice (①a): the producer's lines live in
 //! an unbounded `Vec` and the row count is a `Signal`. That covers a bounded
 //! scrollback (a terminal, a capped log). The **out-of-memory** case — millions
-//! of streaming rows that must be paged + tail-evicted (a Wireshark capture, a
-//! GB DLT log) — is slice ①b: it would grow the [`ResourceCache`] with a
-//! tail-page invalidation (the volatile last page re-fetches as rows append),
-//! and is *not* demonstrated here. The tail-follow + windowing structure proven
-//! here is the shared part both slices use.
+//! of streaming rows paged behind an LRU cache with a tail-page re-fetch (a GB
+//! DLT log, a Wireshark capture) — is slice ①b, demonstrated in
+//! `hello-paged-stream` (R1005) via [`ResourceCache::invalidate`]. The
+//! tail-follow + windowing structure here is the shared part both slices use.
 //!
-//! [`ResourceCache`]: pinion_core::reactive::ResourceCache
+//! [`follow_tail`]: pinion_core::widgets::virtual_list::follow_tail
+//! [`ResourceCache::invalidate`]: pinion_core::reactive::ResourceCache::invalidate
 //!
 //! ## AI-first witness (§2 #7)
 //!
@@ -72,9 +67,9 @@ use pinion_core::style::{
 use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
-use pinion_core::widgets::scroll::{max_scroll_offset, use_scroll_state, ScrollState};
+use pinion_core::widgets::scroll::{use_scroll_state, ScrollState};
 use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
-use pinion_core::widgets::virtual_list::{compute_visible_range, content_height, reveal_row};
+use pinion_core::widgets::virtual_list::{at_bottom, compute_visible_range, follow_tail};
 use pinion_core::{Command, Frame, Scene, WidgetCore, WidgetStateName};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::scrollbar::{view_vertical_scrollbar, VerticalScrollbarStyle};
@@ -167,41 +162,23 @@ fn use_source() -> Rc<LogSource> {
 
 // ─── tail-follow (stateless) ───────────────────────────────────────────────
 
-/// Whether the viewport sits at the newest row (the bottom). Tail-follow is
-/// derived, not stored: "if you were at the bottom, stay at the bottom as rows
-/// append" — exactly `tail -f` / a terminal's autoscroll. Read by the emit
-/// reducer (the was-following decision) and the view (Following / Paused
-/// status) — one predicate, no `following` Signal to keep consistent.
-fn at_bottom(offset_y: i32, max_y: i32) -> bool {
-    offset_y >= max_y
-}
-
 /// Append one batch and apply stateless tail-follow. Extracted from the reducer
 /// so the streaming behaviour is unit-testable without constructing an Intent.
+/// The was-following decision ([`at_bottom`]) + the grow-bound-then-pin reducer
+/// shape ([`follow_tail`]) are the shared windowing substrate (R1005 lift);
+/// only the domain-specific `emit` (an in-memory `Vec` push) lives here.
 fn apply_emit(src: &LogSource, scroll: &ScrollState) {
     // The measured viewport (layout-written); fall back to the const before the
     // first layout pass has run (e.g. an emit before first paint, or a unit
     // test that has not measured). The const == the measured height for this
-    // fixed-size window, which is load-bearing: the reducer's bound below must
+    // fixed-size window, which is load-bearing: `follow_tail`'s bound below must
     // equal the bound the layout pass will write from `s.viewport.h`.
     let measured_h = scroll.measured_viewport().1;
     let viewport_h = if measured_h == 0 { VIEWPORT_H } else { measured_h };
     // Decide BEFORE appending: was the viewport already at the newest line?
     let was_following = at_bottom(scroll.offset_y(), scroll.max().1);
     src.emit(BATCH);
-    let count = src.count.get();
-    // Grow the bound to the new content extent through the `max_scroll_offset`
-    // SSOT shared with the layout pass (which re-affirms the identical value
-    // next frame, Signal-equality-skipped) so the reveal below is not clamped
-    // to the stale bound.
-    scroll.set_max(0, max_scroll_offset(content_height(count, ROW_PITCH), viewport_h));
-    if was_following && count > 0 {
-        // Pin the newest line to the viewport bottom via the substrate
-        // scroll-into-view idiom. When following, the freshly-appended tail is
-        // below the window, so `reveal_row` lands at the absolute bottom
-        // (== the bound just set) — no hand-rolled scroll target.
-        reveal_row(scroll, count - 1, ROW_PITCH);
-    }
+    follow_tail(scroll, src.count.get(), ROW_PITCH, viewport_h, was_following);
 }
 
 // ─── view ──────────────────────────────────────────────────────────────────
@@ -511,6 +488,10 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // The expected-bottom math the tests assert against (the same SSOTs
+    // `follow_tail` uses internally), now that the reducer delegates the lift.
+    use pinion_core::widgets::scroll::max_scroll_offset;
+    use pinion_core::widgets::virtual_list::content_height;
 
     /// Boot the cache slots + measure the viewport (the layout pass does this
     /// in the real shell; a direct `view()` / reducer call skips layout).
@@ -565,15 +546,6 @@ mod tests {
             Scene::Text(t) => Some(t.content.clone()),
             _ => None,
         })
-    }
-
-    #[test]
-    fn at_bottom_is_inclusive_of_the_exact_bottom() {
-        assert!(at_bottom(864, 864), "exactly at the bottom follows");
-        assert!(at_bottom(900, 864), "past the bottom (clamped) follows");
-        assert!(!at_bottom(863, 864), "one px above the bottom is paused");
-        // The empty-log degenerate case: offset 0, max 0 → at the bottom.
-        assert!(at_bottom(0, 0), "an empty log is at its bottom");
     }
 
     #[test]
