@@ -9413,6 +9413,58 @@
         "Standing carry unchanged from R1006.1: real sprag-gui consumer out of scope (sprag repo); per-window viewport signal deferred (primary-only, secondary reads primary); TUI path does not publish; WindowEvent::Resized request_redraw nit (app.rs)."
       ]
     },
+    "R1007": {
+      "decision_summary": "R1007 Model-View slice 4: master-detail row dissection. New dissect_row substrate transduces a row's serde_json::Value payload into a DissectNode tree (Wireshark packet-detail); RowDissectionState re-derives it on selection; RowDissectionExternal introspects every visible node. hello-row-dissect reference + RPC demo.",
+      "changes_bullets": [
+        "Add pinion-core widgets::row_dissect: dissect_row transducer (serde_json::Value -> DissectNode field tree)",
+        "DissectKind / DissectNode(TreeNode) / DissectRow + dissect_flat; RowDissectionState(rows + selected + retained tree)",
+        "use_row_dissection hook + RowDissectionExternal RPC: selected/node_count + name|value|kind|depth|path.<i>; select/toggle/expand/collapse/clear",
+        "New example hello-row-dissect: master list + detail tree, two TreeRowClickExternal routers (select/toggle), a11y group+listbox+tree",
+        "New demo tools/demos/r1007_row_dissect.py: RPC scene-as-data witness, deterministic",
+        "dissect_row is the peer of scene_to_tree_item for the Model/View data domain; tree paint/nav/collapse reused verbatim"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: 7170 passed 0 failed",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0",
+        "cargo doc -p pinion-core: 0 new broken links from row_dissect (217 pre-existing crate-wide unchanged)",
+        "r1007_row_dissect.py PASS deterministic x4 (boot / dissection-witness / collapse / re-dissect / edges + pixels)",
+        "12 row_dissect unit tests + 4 example unit tests; dissect_flat == flat_visible visibility pinned"
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "Master list is fixed 5 rows; virtualizing to millions reuses proven R923/R934 windowing (orthogonal axis)",
+        "AT-activation wired via access_child_invoke but not demo-asserted; pointer + RPC are the tested drive paths",
+        "217 pre-existing pinion-core broken intra-doc links (cargo-doc not in commit gate) = separate cleanup round"
+      ],
+      "publishable_decision_summary": "R1007 Model-View slice 4: master-detail row dissection. New dissect_row substrate transduces a row's serde_json::Value payload into a DissectNode tree (Wireshark packet-detail); RowDissectionState re-derives it on selection; RowDissectionExternal introspects every visible node. hello-row-dissect reference + RPC demo.",
+      "publishable_changes_bullets": [
+        "Add pinion-core widgets::row_dissect: dissect_row transducer (serde_json::Value -> DissectNode field tree)",
+        "DissectKind / DissectNode(TreeNode) / DissectRow + dissect_flat; RowDissectionState(rows + selected + retained tree)",
+        "use_row_dissection hook + RowDissectionExternal RPC: selected/node_count + name|value|kind|depth|path.<i>; select/toggle/expand/collapse/clear",
+        "New example hello-row-dissect: master list + detail tree, two TreeRowClickExternal routers (select/toggle), a11y group+listbox+tree",
+        "New demo tools/demos/r1007_row_dissect.py: RPC scene-as-data witness, deterministic",
+        "dissect_row is the peer of scene_to_tree_item for the Model/View data domain; tree paint/nav/collapse reused verbatim"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: 7170 passed 0 failed",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0",
+        "cargo doc -p pinion-core: 0 new broken links from row_dissect (217 pre-existing crate-wide unchanged)",
+        "r1007_row_dissect.py PASS deterministic x4 (boot / dissection-witness / collapse / re-dissect / edges + pixels)",
+        "12 row_dissect unit tests + 4 example unit tests; dissect_flat == flat_visible visibility pinned"
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Master list is fixed 5 rows; virtualizing to millions reuses proven R923/R934 windowing (orthogonal axis)",
+        "AT-activation wired via access_child_invoke but not demo-asserted; pointer + RPC are the tested drive paths",
+        "217 pre-existing pinion-core broken intra-doc links (cargo-doc not in commit gate) = separate cleanup round"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

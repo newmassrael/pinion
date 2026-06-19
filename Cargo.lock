@@ -2747,6 +2747,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-row-dissect"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-shell",
+ "pinion-widget-paint",
+ "serde_json",
+ "vello",
+]
+
+[[package]]
 name = "hello-segmented-button"
 version = "0.0.1"
 dependencies = [
