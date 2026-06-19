@@ -2454,6 +2454,28 @@ impl<V: WidgetView> ShellCore<V> {
             });
             compute_layout(&mut paint_scene, &mut self.text_cache, w, h);
         }
+        // R1012 §5.23 §5.22 — per-pane viewport publish. The freshly laid-out
+        // `paint_scene` carries each pane Container's measured pixel rect;
+        // publish each registered pane tag's (w, h) so a per-pane reflow Effect
+        // (a PTY winsize ioctl) reacts. This is the post-layout sibling of the
+        // pre-view `set_viewport_size` publish above: a pane size is
+        // layout-derived (known only here, after layout), so — like the
+        // scroll-dirty bit (R774) — the publish returns a dirty bit and we
+        // re-run `view` + `compute_layout` once when it fires, so the re-run
+        // reads the post-reflow producer state on this same paint. Idempotent on
+        // steady-state frames (Signal equality-skip floors `pane_dirty` at
+        // `false`). Primary-window only and the side-effect-free mirror
+        // (`compute_paint_scene_pure_internal`) never reaches this fn, so an
+        // introspection paint never publishes (the R1006 contract, inherited).
+        if window_key == pinion_runtime::DEFAULT_WINDOW
+            && self.core.publish_pane_viewports(&paint_scene)
+        {
+            paint_scene = self.core.root_owner().run(|| match window_id {
+                Some(id) => V::view_for_window(id, cached_state, &frame),
+                None => V::view(cached_state, &frame),
+            });
+            compute_layout(&mut paint_scene, &mut self.text_cache, w, h);
+        }
         // R681 §2 #4 atomic 1 / R831 — per-window immediate-mode tick.
         // The paint scene the view fn just produced may contain one or
         // more [`Scene::ImmediateModeNode`]s; each driver advances its

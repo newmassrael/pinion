@@ -9,6 +9,7 @@ pub mod effect;
 pub mod font_metrics;
 pub mod introspect;
 pub mod owner;
+pub mod pane_viewport;
 pub mod repaint;
 pub mod resource;
 pub mod resource_cache;
@@ -21,6 +22,7 @@ pub use effect::Effect;
 pub use font_metrics::{measured_monospace_cell, MonospaceMetrics, NullMonospaceMetrics};
 pub use introspect::{IntoIntrospectValue, JsonValue, SignalExternal};
 pub use owner::{Owner, OwnerSnapshot, SnapshotRestoreError, SnapshotableSignal, batch};
+pub use pane_viewport::use_pane_viewport_size;
 pub use repaint::{use_repaint_sink, NullRepaintSink, RepaintSink};
 pub use resource::{
     use_local_task_pump, DeferredReady, FetchToken, LocalSpawner, LocalTaskPump, Resource,

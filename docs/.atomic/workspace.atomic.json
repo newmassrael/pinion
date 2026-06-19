@@ -9725,6 +9725,60 @@
         "Sequencing: if sprag reports a fresh forcing case it preempts (stop-report -> spec-seed -> impl, like PR-2/PR-7); else continue to the Model-View epub slice after R1012."
       ]
     },
+    "R1012.1": {
+      "decision_summary": "R1012.1 §5.23 §5.22 §6.3 §5.16: implement the per-pane viewport seam — pinion-core use_pane_viewport_size tag-keyed registry + CoreShell::publish_pane_viewports post-layout publish folded into the scroll-dirty same-frame re-pass; an end-to-end 2-pane forcing-consumer test; 11 deterministic tests",
+      "changes_bullets": [
+        "pinion-core reactive/pane_viewport.rs: use_pane_viewport_size(tag) hook (strict Owner::current().expect, mirror of use_viewport_size) over a tag-keyed PaneViewportRegistry (Rc<RefCell<BTreeMap<tag, Signal<(u32,u32)>>>>) lazily seeded (0,0)=\"pane unmeasured\"; entries() snapshots the pairs before the shell set()s so a synchronous reflow Effect may re-enter the hook without a RefCell double-borrow. Module doc encodes the R1012 contract.",
+        "pinion-core Owner: pane_viewport_registry + pane_viewport_signal (both pub(crate), internal plumbing) + pane_viewport_entries (pub, public-typed snapshot the shell publishes from); crate-root re-export of use_pane_viewport_size beside use_viewport_size.",
+        "pinion-runtime CoreShell::publish_pane_viewports(&Scene)->bool: resolves each registered tag's measured rect via Scene::rect_for_tag_absolute, sets (w,h) inside root_owner.run (R1006 blocker B), returns the pane-dirty bit; a tag absent from the scene (torn-off pane) is skipped and retains its last size.",
+        "pinion-shell substrate compute_paint_scene_internal: after the final layout, primary-window-gated publish that folds pane_dirty into the existing scroll-dirty same-frame re-pass (re-view + re-layout once) so the paint reflects post-reflow producer state; the side-effect-free mirror (compute_paint_scene_pure_internal) never reaches this fn, so introspection never publishes (the R1006 contract, inherited).",
+        "R1012 contract encoded as the design ratified: post-layout sibling of the R1006 pre-view window publish (a pane size is layout-derived); (0,0) sentinel; primary-gate; blocker B; first-paint same-frame re-pass. use_viewport_size unchanged (the two seams stay distinct).",
+        "Forcing consumer crates/pinion-shell/tests/pane_viewport_seam.rs: a 2-pane 3:5 horizontal split where the root fills the window via R1006 use_viewport_size and each pane reflows a mock PTY via R1012 use_pane_viewport_size, driven end-to-end through ShellCore::compute_paint_scene (the live publish path). Runnable GUI example deferred: the seam is live-paint-only (not RPC/headlessly verifiable in this env, like R1006's sprag consumer) so the end-to-end test is the verifiable forcing consumer."
+      ],
+      "verification_bullets": [
+        "11 new deterministic tests, all passing: 7 pane_viewport module (lazy (0,0) sentinel, shared-handle get-or-insert, distinct-tag independence, use-hook resolves inside Owner::run, reflow Effect re-fires on set, re-entrant read without double-borrow, equality-skip inert) + 1 CoreShell publish (per-pane reflow to ITS rect, dirty-bit return, equality-skip republish, per-pane independence [move only left -> only left re-fires], absent-tag skip) + 3 end-to-end via compute_paint_scene.",
+        "End-to-end witnesses the per-pane differentiator (the value R1006's window seam alone cannot give): at a 640px window the 3:5 split reflows left=30x24 and right=50x24 (different), and the painted grids carry those dims on the SAME paint (the pane-dirty re-pass), not one frame late; a resize to 800px re-divides to 37x24 / 62x24 and re-fires each pane once; an unchanged repaint is inert (no re-fire, no re-pass loop).",
+        "cargo test --workspace = 7201 ok 0 fail (real exit 0, captured to a log not a pipe; R1011 was 7190, +11). cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0. RUSTDOCFLAGS=-D warnings cargo doc (core+runtime+shell) = 0 new R1012 breaks (217 pre-existing pinion-core doc debt is a separate carry).",
+        "R666 no-nested-cache rule observed: the consumer's reflow Effect (whose body calls the use_pane_viewport_size hook = an Owner::cache resolve) is created at view scope guarded by cache_contains, NOT inside an Owner::cache factory — exactly as R1006's window reflow Effect is created in create_extra_externals."
+      ],
+      "impact_refs": [
+        "5.23",
+        "5.22",
+        "6.3",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "Session-review clearance (R1012.2): an adversarial 2-reviewer + grep audit of R1012.1 before any push, per the standing discipline.",
+        "Standing carry: real sprag-gui multi-pane terminal consumer out of scope (sprag repo); per-window viewport signal still deferred (panes are primary-window); the TUI path does not publish; a runnable GUI example is deferred as non-headlessly-verifiable (the publish is live-paint-only, like R1006's sprag consumer) — the end-to-end test is the verifiable forcing consumer.",
+        "Sequencing: if sprag reports a fresh forcing case it preempts (stop-report -> spec-seed -> impl); else continue to the Model-View epub slice after R1012."
+      ],
+      "publishable_decision_summary": "R1012.1 §5.23 §5.22 §6.3 §5.16: implement the per-pane viewport seam — pinion-core use_pane_viewport_size tag-keyed registry + CoreShell::publish_pane_viewports post-layout publish folded into the scroll-dirty same-frame re-pass; an end-to-end 2-pane forcing-consumer test; 11 deterministic tests",
+      "publishable_changes_bullets": [
+        "pinion-core reactive/pane_viewport.rs: use_pane_viewport_size(tag) hook (strict Owner::current().expect, mirror of use_viewport_size) over a tag-keyed PaneViewportRegistry (Rc<RefCell<BTreeMap<tag, Signal<(u32,u32)>>>>) lazily seeded (0,0)=\"pane unmeasured\"; entries() snapshots the pairs before the shell set()s so a synchronous reflow Effect may re-enter the hook without a RefCell double-borrow. Module doc encodes the R1012 contract.",
+        "pinion-core Owner: pane_viewport_registry + pane_viewport_signal (both pub(crate), internal plumbing) + pane_viewport_entries (pub, public-typed snapshot the shell publishes from); crate-root re-export of use_pane_viewport_size beside use_viewport_size.",
+        "pinion-runtime CoreShell::publish_pane_viewports(&Scene)->bool: resolves each registered tag's measured rect via Scene::rect_for_tag_absolute, sets (w,h) inside root_owner.run (R1006 blocker B), returns the pane-dirty bit; a tag absent from the scene (torn-off pane) is skipped and retains its last size.",
+        "pinion-shell substrate compute_paint_scene_internal: after the final layout, primary-window-gated publish that folds pane_dirty into the existing scroll-dirty same-frame re-pass (re-view + re-layout once) so the paint reflects post-reflow producer state; the side-effect-free mirror (compute_paint_scene_pure_internal) never reaches this fn, so introspection never publishes (the R1006 contract, inherited).",
+        "R1012 contract encoded as the design ratified: post-layout sibling of the R1006 pre-view window publish (a pane size is layout-derived); (0,0) sentinel; primary-gate; blocker B; first-paint same-frame re-pass. use_viewport_size unchanged (the two seams stay distinct).",
+        "Forcing consumer crates/pinion-shell/tests/pane_viewport_seam.rs: a 2-pane 3:5 horizontal split where the root fills the window via R1006 use_viewport_size and each pane reflows a mock PTY via R1012 use_pane_viewport_size, driven end-to-end through ShellCore::compute_paint_scene (the live publish path). Runnable GUI example deferred: the seam is live-paint-only (not RPC/headlessly verifiable in this env, like R1006's sprag consumer) so the end-to-end test is the verifiable forcing consumer."
+      ],
+      "publishable_verification_bullets": [
+        "11 new deterministic tests, all passing: 7 pane_viewport module (lazy (0,0) sentinel, shared-handle get-or-insert, distinct-tag independence, use-hook resolves inside Owner::run, reflow Effect re-fires on set, re-entrant read without double-borrow, equality-skip inert) + 1 CoreShell publish (per-pane reflow to ITS rect, dirty-bit return, equality-skip republish, per-pane independence [move only left -> only left re-fires], absent-tag skip) + 3 end-to-end via compute_paint_scene.",
+        "End-to-end witnesses the per-pane differentiator (the value R1006's window seam alone cannot give): at a 640px window the 3:5 split reflows left=30x24 and right=50x24 (different), and the painted grids carry those dims on the SAME paint (the pane-dirty re-pass), not one frame late; a resize to 800px re-divides to 37x24 / 62x24 and re-fires each pane once; an unchanged repaint is inert (no re-fire, no re-pass loop).",
+        "cargo test --workspace = 7201 ok 0 fail (real exit 0, captured to a log not a pipe; R1011 was 7190, +11). cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0. RUSTDOCFLAGS=-D warnings cargo doc (core+runtime+shell) = 0 new R1012 breaks (217 pre-existing pinion-core doc debt is a separate carry).",
+        "R666 no-nested-cache rule observed: the consumer's reflow Effect (whose body calls the use_pane_viewport_size hook = an Owner::cache resolve) is created at view scope guarded by cache_contains, NOT inside an Owner::cache factory — exactly as R1006's window reflow Effect is created in create_extra_externals."
+      ],
+      "publishable_impact_refs": [
+        "5.23",
+        "5.22",
+        "6.3",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Session-review clearance (R1012.2): an adversarial 2-reviewer + grep audit of R1012.1 before any push, per the standing discipline.",
+        "Standing carry: real sprag-gui multi-pane terminal consumer out of scope (sprag repo); per-window viewport signal still deferred (panes are primary-window); the TUI path does not publish; a runnable GUI example is deferred as non-headlessly-verifiable (the publish is live-paint-only, like R1006's sprag consumer) — the end-to-end test is the verifiable forcing consumer.",
+        "Sequencing: if sprag reports a fresh forcing case it preempts (stop-report -> spec-seed -> impl); else continue to the Model-View epub slice after R1012."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

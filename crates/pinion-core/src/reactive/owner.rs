@@ -1196,6 +1196,61 @@ impl Owner {
         );
     }
 
+    /// R1012 §5.23 §5.22 — the owner-scoped per-pane viewport registry: the
+    /// tag-keyed map of pane → measured-size
+    /// [`Signal`](super::signal::Signal) backing
+    /// [`use_pane_viewport_size`](super::pane_viewport::use_pane_viewport_size).
+    ///
+    /// Lazily created (empty) on first access; the consumer's `use_*` read and
+    /// the shell's post-layout publish both resolve this same root-owner slot,
+    /// so they share one signal per pane tag. Same private-key + owner-cache
+    /// shape as [`Self::viewport_size_signal`]; the registry is itself an `Rc`
+    /// handle so the returned clone is cheap. Internal: consumers read via
+    /// [`use_pane_viewport_size`](super::pane_viewport::use_pane_viewport_size)
+    /// and the shell publishes via [`Self::pane_viewport_entries`].
+    #[must_use]
+    pub(crate) fn pane_viewport_registry(&self) -> super::pane_viewport::PaneViewportRegistry {
+        self.cache::<super::pane_viewport::PaneViewportRegistryHolder, _>(
+            super::pane_viewport::PANE_VIEWPORT_REGISTRY_KEY,
+            || {
+                super::pane_viewport::PaneViewportRegistryHolder(
+                    super::pane_viewport::PaneViewportRegistry::new(),
+                )
+            },
+        )
+        .0
+        .clone()
+    }
+
+    /// R1012 §5.23 §5.22 — snapshot every registered pane `(tag, signal)` pair
+    /// for the shell's post-layout publish
+    /// ([`CoreShell::publish_pane_viewports`](../../../pinion_runtime/struct.CoreShell.html)).
+    ///
+    /// Returns an owned `Vec` (the registry borrow is dropped before the shell
+    /// `set`s any signal) so the synchronous reflow Effect each `set` fires may
+    /// re-enter
+    /// [`use_pane_viewport_size`](super::pane_viewport::use_pane_viewport_size)
+    /// without a `RefCell` double-borrow. Exposes only public types
+    /// ([`Signal`](super::signal::Signal) / `Cow`), keeping the registry handle
+    /// itself crate-private.
+    #[must_use]
+    pub fn pane_viewport_entries(&self) -> Vec<super::pane_viewport::PaneViewportEntry> {
+        self.pane_viewport_registry().entries()
+    }
+
+    /// R1012 §5.23 §5.22 — get-or-insert the measured-size
+    /// [`Signal`](super::signal::Signal) for the pane tagged `tag`, registering
+    /// it in [`Self::pane_viewport_registry`] on first call (lazy `(0, 0)`).
+    /// Internal: consumers reach it through
+    /// [`use_pane_viewport_size`](super::pane_viewport::use_pane_viewport_size).
+    #[must_use]
+    pub(crate) fn pane_viewport_signal(
+        &self,
+        tag: Cow<'static, str>,
+    ) -> super::signal::Signal<(u32, u32)> {
+        self.pane_viewport_registry().signal_for(tag)
+    }
+
     /// R51.150 §5.22 — `true` when (`V`, `key`) has been populated by
     /// a previous [`Owner::cache::<V>`](Self::cache) call on this
     /// owner.

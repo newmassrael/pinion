@@ -1295,6 +1295,47 @@ impl<V: WidgetCore> CoreShell<V> {
             .run(|| self.viewport_signal.set((width, height)));
     }
 
+    /// R1012 §5.23 §5.22 — publish each registered pane's measured pixel rect
+    /// into its per-pane viewport
+    /// [`Signal`](pinion_core::Signal), so a per-pane reflow Effect reading
+    /// [`use_pane_viewport_size`](pinion_core::reactive::use_pane_viewport_size)
+    /// reacts (PTY `TIOCSWINSZ`). Called by the paint substrate **after** the
+    /// final layout, so `scene` carries each pane Container's laid-out rect — the
+    /// post-layout sibling of [`Self::set_viewport_size`]'s pre-view window
+    /// publish (a pane size is layout-derived, only known here).
+    ///
+    /// Returns `true` when any pane signal actually changed past its
+    /// equality-skip; the substrate ORs this into the same first-paint
+    /// same-frame re-pass the scroll-dirty bit drives (R774), so the re-run
+    /// `view` reads the post-reflow producer state on this paint. A pane tag
+    /// absent from `scene` (a torn-off pane) is skipped — it retains its last
+    /// measured size rather than collapsing to `(0, 0)`.
+    ///
+    /// The writes run inside [`Self::root_owner`]'s scope (R1006 blocker B): a
+    /// [`Signal::set`](pinion_core::Signal) re-runs the reflow Effect
+    /// synchronously, and that body resolves
+    /// [`Owner::current`](pinion_core::Owner) — which needs the owner-handle
+    /// stack `root_owner.run` pushes. The `(tag, signal)` set is snapshotted
+    /// first (registry borrow dropped) so the re-run may re-enter
+    /// `use_pane_viewport_size` without a `RefCell` double-borrow.
+    pub fn publish_pane_viewports(&self, scene: &Scene) -> bool {
+        let panes = self.root_owner.pane_viewport_entries();
+        if panes.is_empty() {
+            return false;
+        }
+        let mut any_changed = false;
+        self.root_owner.run(|| {
+            for (tag, sig) in &panes {
+                if let Some(rect) = scene.rect_for_tag_absolute(tag.as_ref()) {
+                    let before = sig.revision();
+                    sig.set((rect.w, rect.h));
+                    any_changed |= sig.revision() != before;
+                }
+            }
+        });
+        any_changed
+    }
+
     /// R51.147 §5.28 — `true` when any animation registered on this
     /// binding's [`root_owner`](Self::root_owner) (or transitively on
     /// a child scope) is still moving above `epsilon`.
@@ -2360,6 +2401,73 @@ mod tests {
             &[(0, 0), (800, 600), (1024, 768)],
             "reflow Effect re-fires once per distinct size, never panics"
         );
+    }
+
+    #[test]
+    fn publish_pane_viewports_drives_per_pane_reflow_through_root_owner() {
+        // R1012 §5.23 §5.22 — the per-pane publish wire: each registered pane
+        // tag's reflow Effect re-fires with ITS measured rect (per-pane, not the
+        // window size), inside root_owner.run (blocker B). Covers the dirty-bit
+        // return, equality-skip on an unchanged republish, per-pane
+        // independence, and the skip-absent-tag (torn-off pane) contract.
+        use pinion_core::scene::{ContainerNode, Rect};
+        use pinion_core::{use_pane_viewport_size, Effect, Owner, Scene};
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        // Two panes tagged + at distinct laid-out rects (height fixed at 384).
+        fn panes_scene(left_w: u32, right_w: u32) -> Scene {
+            let mut left = ContainerNode::new(vec![]).with_tag("pane.left");
+            left.rect = Rect::new(0, 0, left_w, 384);
+            let mut right = ContainerNode::new(vec![]).with_tag("pane.right");
+            right.rect = Rect::new(left_w, 0, right_w, 384);
+            Scene::Container(ContainerNode::new(vec![
+                Scene::Container(left),
+                Scene::Container(right),
+            ]))
+        }
+
+        let core: CoreShell<TestButton> = CoreShell::new();
+
+        let left_seen = Rc::new(RefCell::new(Vec::new()));
+        let right_seen = Rc::new(RefCell::new(Vec::new()));
+        let (l, r) = (Rc::clone(&left_seen), Rc::clone(&right_seen));
+        let (_le, _re) = core.root_owner().run(|| {
+            let le = Effect::new(&Owner::current().expect("root scope"), move || {
+                l.borrow_mut().push(use_pane_viewport_size("pane.left"));
+            });
+            let re = Effect::new(&Owner::current().expect("root scope"), move || {
+                r.borrow_mut().push(use_pane_viewport_size("pane.right"));
+            });
+            (le, re)
+        });
+        // Eager runs see the (0, 0) "pane unmeasured" sentinel.
+        assert_eq!(left_seen.borrow().as_slice(), &[(0, 0)]);
+        assert_eq!(right_seen.borrow().as_slice(), &[(0, 0)]);
+
+        // First publish: each pane reflows to ITS rect; the dirty-bit is true.
+        assert!(core.publish_pane_viewports(&panes_scene(240, 400)));
+        assert_eq!(left_seen.borrow().as_slice(), &[(0, 0), (240, 384)]);
+        assert_eq!(right_seen.borrow().as_slice(), &[(0, 0), (400, 384)]);
+
+        // Republish the same rects: equality-skip => no re-fire, dirty-bit false.
+        assert!(!core.publish_pane_viewports(&panes_scene(240, 400)));
+        assert_eq!(left_seen.borrow().len(), 2);
+        assert_eq!(right_seen.borrow().len(), 2);
+
+        // Move only the left pane: only its Effect re-fires (per-pane).
+        assert!(core.publish_pane_viewports(&panes_scene(200, 400)));
+        assert_eq!(
+            left_seen.borrow().as_slice(),
+            &[(0, 0), (240, 384), (200, 384)]
+        );
+        assert_eq!(right_seen.borrow().len(), 2, "right unchanged: no re-fire");
+
+        // A scene missing both pane tags (torn-off): skip, retain, dirty-bit
+        // false.
+        assert!(!core.publish_pane_viewports(&Scene::Container(ContainerNode::new(vec![]))));
+        assert_eq!(left_seen.borrow().len(), 3);
+        assert_eq!(right_seen.borrow().len(), 2);
     }
 
     #[test]
