@@ -9465,6 +9465,54 @@
         "217 pre-existing pinion-core broken intra-doc links (cargo-doc not in commit gate) = separate cleanup round"
       ]
     },
+    "R1008": {
+      "decision_summary": "R1008 pointer-to-cell hit-test (R1.8): CellMetric::px_to_cell floors a grid-relative pixel into its (col,row) cell, the unsigned inverse of cell_to_px sharing the whole_cells SSOT. hello-grid-pointer forcing consumer: a full-window TextGrid whose capturing pointer external resolves a click to its cell through the router. The pinion half of sprag-gui mouse support.",
+      "changes_bullets": [
+        "Add CellMetric::px_to_cell(x_px,y_px)->(col,row): the floor inverse of cell_to_px, same whole_cells SSOT as the winsize cols_for/rows_for",
+        "New example hello-grid-pointer: a full-window Scene::TextGrid + GridPointerExternal (wants_pointer_capture + R51.35 click-to-position)",
+        "A real click resolves the (col,row) cell via px_to_cell over the grid rect; cell/cell_col/cell_row + a pure cell_at oracle RPC",
+        "New demo tools/demos/r1008_grid_pointer.py: exhaustive px-to-cell oracle + real-click router path + ruler pixels",
+        "Activates the R1.8 slot cell_metric.rs reserved for its first pointer-routing consumer; unblocks sprag/Wireshark terminal mouse reporting"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: 7181 passed 0 failed",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0",
+        "cargo doc -p pinion-core: 0 new broken links (217 pre-existing crate-wide unchanged)",
+        "r1008_grid_pointer.py PASS deterministic x3 (oracle + click path + pixels)",
+        "4 cell_metric unit tests + 7 example unit tests"
+      ],
+      "impact_refs": [
+        "5.41",
+        "5.49"
+      ],
+      "carry_forward_bullets": [
+        "Live cell resolution fires under capture (R51.35 click-to-position); a bare hover with no press does not resolve a cell",
+        "Multi-pane mouse + the per-pane viewport seam (R1009) remain; the mouse-report byte encoding is sprag-owned"
+      ],
+      "publishable_decision_summary": "R1008 pointer-to-cell hit-test (R1.8): CellMetric::px_to_cell floors a grid-relative pixel into its (col,row) cell, the unsigned inverse of cell_to_px sharing the whole_cells SSOT. hello-grid-pointer forcing consumer: a full-window TextGrid whose capturing pointer external resolves a click to its cell through the router. The pinion half of sprag-gui mouse support.",
+      "publishable_changes_bullets": [
+        "Add CellMetric::px_to_cell(x_px,y_px)->(col,row): the floor inverse of cell_to_px, same whole_cells SSOT as the winsize cols_for/rows_for",
+        "New example hello-grid-pointer: a full-window Scene::TextGrid + GridPointerExternal (wants_pointer_capture + R51.35 click-to-position)",
+        "A real click resolves the (col,row) cell via px_to_cell over the grid rect; cell/cell_col/cell_row + a pure cell_at oracle RPC",
+        "New demo tools/demos/r1008_grid_pointer.py: exhaustive px-to-cell oracle + real-click router path + ruler pixels",
+        "Activates the R1.8 slot cell_metric.rs reserved for its first pointer-routing consumer; unblocks sprag/Wireshark terminal mouse reporting"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: 7181 passed 0 failed",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0",
+        "cargo doc -p pinion-core: 0 new broken links (217 pre-existing crate-wide unchanged)",
+        "r1008_grid_pointer.py PASS deterministic x3 (oracle + click path + pixels)",
+        "4 cell_metric unit tests + 7 example unit tests"
+      ],
+      "publishable_impact_refs": [
+        "5.41",
+        "5.49"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Live cell resolution fires under capture (R51.35 click-to-position); a bare hover with no press does not resolve a cell",
+        "Multi-pane mouse + the per-pane viewport seam (R1009) remain; the mouse-report byte encoding is sprag-owned"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

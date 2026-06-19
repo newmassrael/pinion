@@ -1,0 +1,25 @@
+[package]
+name = "hello-grid-pointer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1008 §5.41 §5.49 pointer-to-cell hit-test (R1.8): a full-window Scene::TextGrid whose pointer external resolves the cursor's logical-pixel position into the (col,row) cell via the new CellMetric::px_to_cell. The cell-under-pointer is RPC-introspectable (cell/cell_col/cell_row) and a deterministic px-to-cell oracle (invoke cell_at). The geometry an xterm mouse-reporting terminal (sprag pane) needs to forward a click to its PTY."
+publish = false
+
+[[bin]]
+name = "hello-grid-pointer"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+vello = { workspace = true }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

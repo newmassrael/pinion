@@ -104,6 +104,33 @@ impl CellMetric {
         )
     }
 
+    /// Grid-relative logical-pixel `(x_px, y_px)` → the cell `(col, row)`
+    /// that pixel falls in — the **unsigned pixel→cell hit-test** (R1.8),
+    /// the inverse of [`cell_to_px`](Self::cell_to_px). A pixel in
+    /// `0..cell_w` is column 0, `cell_w..2·cell_w` column 1, and so on
+    /// (floor); both axes saturate at [`u16::MAX`]. This is the geometry an
+    /// xterm mouse-reporting terminal needs: a pointer click inside a
+    /// [`Scene::TextGrid`](crate::scene::Scene::TextGrid) maps to the
+    /// `(row, col)` cell the host forwards to the PTY. The caller passes
+    /// **grid-relative** pixels (it subtracts the grid's
+    /// [`Rect`](crate::scene::Rect) origin first); the router delivers a
+    /// `(x_rel, y_rel)` fraction, so the caller reconstructs `x_rel ·
+    /// width_px` before calling.
+    ///
+    /// The result is **unbounded** by design, mirroring
+    /// [`cell_to_px`](Self::cell_to_px) (which maps an out-of-range cell
+    /// past the rect): a pixel past the grid's right/bottom edge returns an
+    /// index `>=` [`cols_for`](Self::cols_for) / [`rows_for`](Self::rows_for).
+    /// A caller wanting a strictly in-grid hit clamps the result to the
+    /// grid's `(cols, rows)` — the geometry primitive stays pure (the floor
+    /// is the same `whole_cells` SSOT the [`cols_for`](Self::cols_for) /
+    /// [`rows_for`](Self::rows_for) counts use, so a hit and the winsize count
+    /// can never round differently).
+    #[must_use]
+    pub fn px_to_cell(self, x_px: u32, y_px: u32) -> (u16, u16) {
+        (Self::whole_cells(x_px, self.cell_w), Self::whole_cells(y_px, self.cell_h))
+    }
+
     /// Whole cell columns spanning `width_px` logical pixels — the
     /// authoritative column count for a grid occupying that width (the
     /// R1.4 PTY-winsize authority a terminal host reports via
@@ -211,5 +238,48 @@ mod tests {
         let m = CellMetric::DEFAULT;
         assert_eq!(m.cols_for(u32::MAX), u16::MAX);
         assert_eq!(m.rows_for(u32::MAX), u16::MAX);
+    }
+
+    #[test]
+    fn px_to_cell_floors_pixel_into_its_cell() {
+        let m = CellMetric::DEFAULT; // 8x16
+        assert_eq!(m.px_to_cell(0, 0), (0, 0));
+        assert_eq!(m.px_to_cell(7, 15), (0, 0), "any pixel inside cell (0,0) maps to it");
+        assert_eq!(m.px_to_cell(8, 16), (1, 1), "the first pixel of the next cell");
+        assert_eq!(m.px_to_cell(24, 32), (3, 2)); // inverse of cell_to_px(3, 2) = (24, 32)
+        assert_eq!(m.px_to_cell(31, 47), (3, 2), "trailing pixels still inside cell (3,2)");
+    }
+
+    #[test]
+    fn px_to_cell_is_the_inverse_of_cell_to_px() {
+        // For every cell, its top-left pixel and any interior pixel map back to it.
+        let m = CellMetric::new(10, 20).expect("non-zero");
+        for col in 0..8u16 {
+            for row in 0..8u16 {
+                let (x, y) = m.cell_to_px(col, row);
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                let (x0, y0) = (x as u32, y as u32);
+                assert_eq!(m.px_to_cell(x0, y0), (col, row), "top-left of cell ({col},{row})");
+                // The last pixel still inside the cell (origin + size - 1).
+                assert_eq!(m.px_to_cell(x0 + 9, y0 + 19), (col, row), "interior of ({col},{row})");
+            }
+        }
+    }
+
+    #[test]
+    fn px_to_cell_saturates_at_u16_max() {
+        let m = CellMetric::DEFAULT;
+        assert_eq!(m.px_to_cell(u32::MAX, u32::MAX), (u16::MAX, u16::MAX));
+    }
+
+    #[test]
+    fn px_to_cell_past_the_grid_edge_is_unbounded() {
+        // A pixel past a 80x24 (640x384) grid's edge returns an index >= the
+        // winsize count; the caller clamps to (cols, rows) for a strict hit.
+        let m = CellMetric::DEFAULT;
+        let (cols, rows) = (m.cols_for(640), m.rows_for(384)); // 80, 24
+        let (c, r) = m.px_to_cell(640, 384); // exactly one cell past each edge
+        assert_eq!((c, r), (80, 24));
+        assert!(c >= cols && r >= rows, "off-grid pixel exceeds the cell counts");
     }
 }
