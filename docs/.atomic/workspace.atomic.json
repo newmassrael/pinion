@@ -9241,6 +9241,68 @@
         "alone would not re-fetch through ensure."
       ]
     },
+    "R1006": {
+      "decision_summary": "R1006 §5.23 §5.22 §6.3 §5.16: view-time viewport-size seam (window resize -> producer reflow) — SPEC SEED only (design ratified + 3 source-verified review corrections, no code this round); sprag PR-6 intake, view-time provider family sibling of R999 RepaintSink / R1003 MonospaceMetrics",
+      "changes_bullets": [
+        "SPEC SEED only — no code landed this round; records the requirement + ratified design + 3 source-verified review corrections for a future implementing round (design-only shape like spec-phase round-14/15, not R999's land-the-core shape). sprag PR-6 intake.",
+        "Requirement: a binding must read the current layout viewport (w,h) at view/effect-time (no run() fork, no paint-time hook) to re-derive (cols,rows)=viewport/cell and drive a producer reflow (PTY TIOCSWINSZ) — the winsize SSOT producer-adoption leg.",
+        "Gap confirmed in source: Frame carries only dt (frame.rs:21-25); boot seeds repaint_sink + monospace_metrics but no viewport provider (core_shell.rs:466,472); compute_paint_scene_internal holds (w,h) but routes it to compute_layout only, never to the view (substrate.rs:2328,2402-2407); ImmediatePainter::viewport_size() is paint-time only (scene.rs:2702).",
+        "Ratified design: Signal<(u32,u32)> (a changing value — NOT a Frame field, NOT a capability trait like repaint/metrics) seeded on root Owner; Owner::provide_viewport_size + use_viewport_size() (tracked get, strict Owner::current().expect mirror of use_repaint_sink); CoreShell.viewport_signal seeded (0,0) at boot; set_viewport_size(w,h) set INSIDE root_owner.run, called every primary-window paint, DEFAULT_WINDOW-gated.",
+        "Coordinate space = layout viewport (the exact (w,h) compute_layout consumes), defined by reference to layout's input so it auto-follows when HiDPI logical-px layout lands; HiDPI is a separate prior gap, out of scope here.",
+        "5 sprag-side workarounds rejected as smell: view-side resize (purity break); empty ImmediateMode probe (PR-3 WindowsDirty-hijack isomorph); winit inner_size/scale recompute (SSOT dup); renderer.resize intercept (layer break); post-layout rect in read_state (nonexistent)."
+      ],
+      "verification_bullets": [
+        "Blocker (B) verified in source: Effect::rerun runs the body via run_with_node (effect.rs:152) which pushes only CURRENT_OWNER, not CURRENT_OWNER_HANDLE (owner.rs:1326-1329) — so Owner::current() inside a synchronous effect re-run resolves to the lexical owner at set()-time; set_viewport_size MUST set inside root_owner.run or the first resize panics on use_viewport_size()'s expect. The frame_signal driver survives only because its body is signal.get() (never calls Owner::current).",
+        "CORRECTION to acceptance R6.2: the inert-during-snapshot/AT protection is NOT the is_simulating() gate. SimulationGuard::enter is called ONLY in pinion-rpc simulate.rs:165/208 + dry_run.rs:98; plain scene/snapshot and AT paint run with is_simulating()=false. Their protection is Signal equality-skip (signal.rs:83), which holds ONLY because introspection paints at the live viewport. An off-live-size snapshot capability would resize the real PTY (a world-perturbation) unless it enters a SimulationGuard. The contract must state BOTH mechanisms.",
+        "CORRECTION (boot eager-run): the reflow Effect runs eagerly once at create_extra_externals with the (0,0) boot seed, so grid_dims floors to 1x1 and a spurious 1x1 PTY resize fires at boot unless the consumer guards on the (0,0)=viewport-unknown sentinel. The contract must mandate (0,0) => skip explicitly (the eager (0,0)!=boot-dims case does not satisfy plain unchanged-skip).",
+        "CORRECTION (multi-window): a single root-seeded shared signal makes a secondary window's view read the PRIMARY's size (view fns all run on root, substrate.rs:2365-2405; the DEFAULT_WINDOW gate stops secondary writes clobbering primary but gives secondary no value of its own). Single-window sprag-gui unaffected; per-window signal is a deferred carry (RepaintScope precedent).",
+        "Acceptance mechanisms confirmed in source: equality-skip = no notify on same value (signal.rs:83-85); is_simulating() gate in Effect::mark_dirty (effect.rs:178) suppresses dry_run/simulate; provider first-write-wins via Owner::cache (owner.rs:1113-1161). Crate home pinion-core/src/reactive/viewport.rs mirrors repaint.rs/font_metrics.rs.",
+        "Design-only round: no cargo build/test run (no code). impact_refs cite only existing sections (5.23/5.22/6.3/5.16) so no new cross-ref orphan is introduced; validate-workspace confirmed post-append."
+      ],
+      "impact_refs": [
+        "5.23",
+        "5.22",
+        "6.3",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "Implementing round (future): pinion-core/src/reactive/viewport.rs (ViewportSizeHolder(Signal<(u32,u32)>) + VIEWPORT_SIZE_KEY + use_viewport_size); Owner::provide_viewport_size + viewport_size_signal; CoreShell viewport_signal field + (0,0) boot seed + set_viewport_size(w,h) inside root_owner.run called on primary-window paint in compute_paint_scene_internal (DEFAULT_WINDOW-gated).",
+        "Contract MUST encode the 3 corrections: (1) snapshot/AT protected by equality-skip + introspection-paints-live-size, NOT is_simulating — off-live-size snapshot must SimulationGuard; (2) consumer reflow Effect skips on the (0,0) sentinel to avoid a boot 1x1 resize; (3) primary-only — secondary window reads primary's size until a per-window signal lands.",
+        "Open questions: API shape Signal<(u32,u32)> standalone vs future Frame.scale_factor surface-geometry bundle (recommend standalone — YAGNI until HiDPI); per-window viewport signal (deferred); HiDPI logical-px layout is a separate prior gap the seam auto-follows.",
+        "Separate nit (out of scope): WindowEvent::Resized arm (app.rs:1681-1690) calls renderer.resize only, no request_redraw — reflow may lag to next input where the compositor does not auto-send RedrawRequested; fold a request_redraw into the implementing round.",
+        "sprag-side companion (out of scope, sprag repo): TerminalSession::resize &mut->&self (emulator as dimensions SSOT); pure grid_dims(viewport,cell) helper; reflow Effect in create_extra_externals reading use_viewport_size()."
+      ],
+      "publishable_decision_summary": "R1006 §5.23 §5.22 §6.3 §5.16: view-time viewport-size seam (window resize -> producer reflow) — SPEC SEED only (design ratified + 3 source-verified review corrections, no code this round); sprag PR-6 intake, view-time provider family sibling of R999 RepaintSink / R1003 MonospaceMetrics",
+      "publishable_changes_bullets": [
+        "SPEC SEED only — no code landed this round; records the requirement + ratified design + 3 source-verified review corrections for a future implementing round (design-only shape like spec-phase round-14/15, not R999's land-the-core shape). sprag PR-6 intake.",
+        "Requirement: a binding must read the current layout viewport (w,h) at view/effect-time (no run() fork, no paint-time hook) to re-derive (cols,rows)=viewport/cell and drive a producer reflow (PTY TIOCSWINSZ) — the winsize SSOT producer-adoption leg.",
+        "Gap confirmed in source: Frame carries only dt (frame.rs:21-25); boot seeds repaint_sink + monospace_metrics but no viewport provider (core_shell.rs:466,472); compute_paint_scene_internal holds (w,h) but routes it to compute_layout only, never to the view (substrate.rs:2328,2402-2407); ImmediatePainter::viewport_size() is paint-time only (scene.rs:2702).",
+        "Ratified design: Signal<(u32,u32)> (a changing value — NOT a Frame field, NOT a capability trait like repaint/metrics) seeded on root Owner; Owner::provide_viewport_size + use_viewport_size() (tracked get, strict Owner::current().expect mirror of use_repaint_sink); CoreShell.viewport_signal seeded (0,0) at boot; set_viewport_size(w,h) set INSIDE root_owner.run, called every primary-window paint, DEFAULT_WINDOW-gated.",
+        "Coordinate space = layout viewport (the exact (w,h) compute_layout consumes), defined by reference to layout's input so it auto-follows when HiDPI logical-px layout lands; HiDPI is a separate prior gap, out of scope here.",
+        "5 sprag-side workarounds rejected as smell: view-side resize (purity break); empty ImmediateMode probe (PR-3 WindowsDirty-hijack isomorph); winit inner_size/scale recompute (SSOT dup); renderer.resize intercept (layer break); post-layout rect in read_state (nonexistent)."
+      ],
+      "publishable_verification_bullets": [
+        "Blocker (B) verified in source: Effect::rerun runs the body via run_with_node (effect.rs:152) which pushes only CURRENT_OWNER, not CURRENT_OWNER_HANDLE (owner.rs:1326-1329) — so Owner::current() inside a synchronous effect re-run resolves to the lexical owner at set()-time; set_viewport_size MUST set inside root_owner.run or the first resize panics on use_viewport_size()'s expect. The frame_signal driver survives only because its body is signal.get() (never calls Owner::current).",
+        "CORRECTION to acceptance R6.2: the inert-during-snapshot/AT protection is NOT the is_simulating() gate. SimulationGuard::enter is called ONLY in pinion-rpc simulate.rs:165/208 + dry_run.rs:98; plain scene/snapshot and AT paint run with is_simulating()=false. Their protection is Signal equality-skip (signal.rs:83), which holds ONLY because introspection paints at the live viewport. An off-live-size snapshot capability would resize the real PTY (a world-perturbation) unless it enters a SimulationGuard. The contract must state BOTH mechanisms.",
+        "CORRECTION (boot eager-run): the reflow Effect runs eagerly once at create_extra_externals with the (0,0) boot seed, so grid_dims floors to 1x1 and a spurious 1x1 PTY resize fires at boot unless the consumer guards on the (0,0)=viewport-unknown sentinel. The contract must mandate (0,0) => skip explicitly (the eager (0,0)!=boot-dims case does not satisfy plain unchanged-skip).",
+        "CORRECTION (multi-window): a single root-seeded shared signal makes a secondary window's view read the PRIMARY's size (view fns all run on root, substrate.rs:2365-2405; the DEFAULT_WINDOW gate stops secondary writes clobbering primary but gives secondary no value of its own). Single-window sprag-gui unaffected; per-window signal is a deferred carry (RepaintScope precedent).",
+        "Acceptance mechanisms confirmed in source: equality-skip = no notify on same value (signal.rs:83-85); is_simulating() gate in Effect::mark_dirty (effect.rs:178) suppresses dry_run/simulate; provider first-write-wins via Owner::cache (owner.rs:1113-1161). Crate home pinion-core/src/reactive/viewport.rs mirrors repaint.rs/font_metrics.rs.",
+        "Design-only round: no cargo build/test run (no code). impact_refs cite only existing sections (5.23/5.22/6.3/5.16) so no new cross-ref orphan is introduced; validate-workspace confirmed post-append."
+      ],
+      "publishable_impact_refs": [
+        "5.23",
+        "5.22",
+        "6.3",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Implementing round (future): pinion-core/src/reactive/viewport.rs (ViewportSizeHolder(Signal<(u32,u32)>) + VIEWPORT_SIZE_KEY + use_viewport_size); Owner::provide_viewport_size + viewport_size_signal; CoreShell viewport_signal field + (0,0) boot seed + set_viewport_size(w,h) inside root_owner.run called on primary-window paint in compute_paint_scene_internal (DEFAULT_WINDOW-gated).",
+        "Contract MUST encode the 3 corrections: (1) snapshot/AT protected by equality-skip + introspection-paints-live-size, NOT is_simulating — off-live-size snapshot must SimulationGuard; (2) consumer reflow Effect skips on the (0,0) sentinel to avoid a boot 1x1 resize; (3) primary-only — secondary window reads primary's size until a per-window signal lands.",
+        "Open questions: API shape Signal<(u32,u32)> standalone vs future Frame.scale_factor surface-geometry bundle (recommend standalone — YAGNI until HiDPI); per-window viewport signal (deferred); HiDPI logical-px layout is a separate prior gap the seam auto-follows.",
+        "Separate nit (out of scope): WindowEvent::Resized arm (app.rs:1681-1690) calls renderer.resize only, no request_redraw — reflow may lag to next input where the compositor does not auto-send RedrawRequested; fold a request_redraw into the implementing round.",
+        "sprag-side companion (out of scope, sprag repo): TerminalSession::resize &mut->&self (emulator as dimensions SSOT); pure grid_dims(viewport,cell) helper; reflow Effect in create_extra_externals reading use_viewport_size()."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
