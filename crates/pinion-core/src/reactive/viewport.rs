@@ -48,13 +48,16 @@
 //!    window is `resumed`. A consumer's reflow Effect runs eagerly once at
 //!    registration with this value, so it MUST skip on `(0, 0)` (distinct from
 //!    a plain unchanged-skip) to avoid a spurious `1 x 1` reflow at boot.
-//! 3. **Introspection paint is not protected by `is_simulating`.** A reflow
-//!    side-effect stays inert during `scene/snapshot` / AccessKit paint only
-//!    because [`Signal::set`] equality-skips and those paths paint at the
-//!    *live* viewport (so the value is unchanged). `is_simulating()` covers
-//!    only `dry_run` / `simulate`. An introspection paint at an off-live size
-//!    would fire the real side-effect unless it enters a
-//!    [`SimulationGuard`](super::simulation::SimulationGuard).
+//! 3. **Introspection paint does not publish.** The RPC `scene/snapshot` and
+//!    AccessKit producers run their own `view` + layout pass and never call the
+//!    shell's publish — only the gated live paint
+//!    (`compute_paint_scene_internal`) does. So an introspection paint, even at
+//!    an off-live size, cannot fire the reflow side-effect: there is no `set`,
+//!    hence nothing to gate. Equality-skip is the *live* path's own secondary
+//!    defense (a same-size re-paint does not re-fire), and `is_simulating()`
+//!    additionally suppresses `dry_run` / `simulate`. Only a future
+//!    introspection path that *did* publish at an off-live size would need a
+//!    [`SimulationGuard`](super::simulation::SimulationGuard) — none does today.
 //!
 //! [`compute_layout`]: ../../../pinion_runtime/fn.compute_layout.html
 //! [`Signal`]: super::signal::Signal
@@ -87,6 +90,16 @@ pub(crate) const VIEWPORT_SIZE_KEY: &str = "__pinion.reactive.viewport_size";
 /// (same strict shape as [`use_repaint_sink`](super::repaint::use_repaint_sink)).
 /// A missing *provider* is graceful (`(0, 0)`); a missing *scope* is a
 /// programming error.
+///
+/// Strict on purpose, unlike the graceful
+/// [`measured_monospace_cell`](super::font_metrics::measured_monospace_cell):
+/// that one is read in a pure `view` fn (so a bare view-fn unit test must not
+/// panic), whereas this is read in a reflow [`Effect`](super::effect::Effect)
+/// that always runs in a scope. Strict makes contract (1) above fail loud — a
+/// shell that mistakenly `set`s outside its `root_owner` scope panics here
+/// rather than silently returning `(0, 0)` and reflowing to `1 x 1`. (A
+/// production `view` fn may also read this — views run inside the owner scope —
+/// but a standalone view-fn unit test must wrap in `Owner::run`.)
 #[must_use]
 pub fn use_viewport_size() -> (u32, u32) {
     super::owner::Owner::current()
@@ -116,7 +129,7 @@ mod tests {
     fn provided_signal_is_the_shared_handle() {
         let owner = Owner::new();
         let sig = Signal::new((640_u32, 480_u32));
-        owner.provide_viewport_size(sig.clone());
+        owner.provide_viewport_size_signal(sig.clone());
         assert_eq!(owner.viewport_size_signal().get(), (640, 480));
         // Same underlying cell: a later shell write is observed through the seam.
         sig.set((800, 600));
@@ -128,8 +141,8 @@ mod tests {
         let owner = Owner::new();
         let first = Signal::new((1_u32, 1_u32));
         let second = Signal::new((2_u32, 2_u32));
-        owner.provide_viewport_size(first.clone());
-        owner.provide_viewport_size(second.clone());
+        owner.provide_viewport_size_signal(first.clone());
+        owner.provide_viewport_size_signal(second.clone());
         // The first stays installed; the second is dropped (cache first-write-wins).
         assert_eq!(owner.viewport_size_signal().get(), (1, 1));
     }
@@ -138,7 +151,7 @@ mod tests {
     fn use_viewport_size_resolves_inside_owner_run() {
         let owner = Owner::new();
         let sig = Signal::new((320_u32, 200_u32));
-        owner.provide_viewport_size(sig);
+        owner.provide_viewport_size_signal(sig);
         let got = owner.run(use_viewport_size);
         assert_eq!(got, (320, 200));
     }
@@ -150,7 +163,7 @@ mod tests {
         // observe the new viewport.
         let owner = Owner::new();
         let sig = Signal::new((0_u32, 0_u32));
-        owner.provide_viewport_size(sig.clone());
+        owner.provide_viewport_size_signal(sig.clone());
         let seen = Rc::new(RefCell::new(Vec::new()));
         let seen_c = Rc::clone(&seen);
         let _eff = owner.run(|| {
@@ -172,7 +185,7 @@ mod tests {
         // the shell's set_viewport_size wraps the set in root_owner.run.
         let owner = Owner::new();
         let sig = Signal::new((0_u32, 0_u32));
-        owner.provide_viewport_size(sig.clone());
+        owner.provide_viewport_size_signal(sig.clone());
         let _eff = owner.run(|| {
             Effect::new(&Owner::current().expect("inside run"), || {
                 let _ = use_viewport_size();
@@ -188,7 +201,7 @@ mod tests {
         // re-fires normally.
         let owner = Owner::new();
         let sig = Signal::new((0_u32, 0_u32));
-        owner.provide_viewport_size(sig.clone());
+        owner.provide_viewport_size_signal(sig.clone());
         let count = Rc::new(Cell::new(0_u32));
         let count_c = Rc::clone(&count);
         let _eff = owner.run(|| {
@@ -214,7 +227,7 @@ mod tests {
         // viewport.
         let owner = Owner::new();
         let sig = Signal::new((10_u32, 20_u32));
-        owner.provide_viewport_size(sig.clone());
+        owner.provide_viewport_size_signal(sig.clone());
         let count = Rc::new(Cell::new(0_u32));
         let count_c = Rc::clone(&count);
         let _eff = owner.run(|| {

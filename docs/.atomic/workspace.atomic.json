@@ -9359,6 +9359,60 @@
         "HiDPI logical-px layout is a separate prior gap; the seam publishes the layout viewport so it auto-follows when that lands."
       ]
     },
+    "R1006.2": {
+      "decision_summary": "R1006.2 §5.23 §5.22 §6.3 §5.16: session-review clearance of R1006.1 (2 independent reviewers + self-audit) — fixed 4 grounded smells + closed the substrate-gate test gap; rejected the graceful-hook over-flag with blocker-B evidence; architect verdict SOUND",
+      "changes_bullets": [
+        "doc accuracy (HIGH): viewport.rs correction-3 claimed snapshot/AT stays inert via Signal equality-skip + paints-live-size; the implemented reality is stronger — the RPC scene/snapshot + AccessKit producers run their own view+layout and never publish (only the gated live compute_paint_scene_internal does), so introspection cannot fire the reflow side-effect (there is no set). Rewrote the contract to the accurate reason; equality-skip is the live path's secondary defense.",
+        "YAGNI: deleted CoreShell::viewport_size() value accessor (zero non-test callers; the seam read path is use_viewport_size, or root_owner().viewport_size_signal().get() for a non-reactive peek). Its runtime test now reads through the owner.",
+        "naming symmetry: Owner::provide_viewport_size -> provide_viewport_size_signal (sibling rule provide_ + getter-noun, mirroring repaint_sink/provide_repaint_sink); getter stays viewport_size_signal.",
+        "strict-hook rationale documented: use_viewport_size stays strict (panics outside a scope) unlike the graceful measured_monospace_cell; documented WHY — strict makes blocker B fail loud (a mis-scoped set panics rather than silently reflowing to 1x1). Rejected the reviewer make-it-graceful suggestion on this ground.",
+        "test gap closed: new pinion-shell substrate forcing test (r1006_viewport_seam_tests) paints the primary via both the None and explicit \"main\" paths and asserts a secondary-window paint does NOT clobber the primary's published viewport — locks the spec_id == \"main\" == DEFAULT_WINDOW gate the publish rests on."
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: 7154 passed / 0 failed / 38 ignored, real cargo exit 0 (captured without a pipe; an earlier tail-piped run had masked cargo's exit per the R934 false-green lesson).",
+        "pinion-shell new r1006_viewport_seam test green: primary publishes (None + explicit \"main\"), secondary \"inspector\" paint does not clobber, use_viewport_size resolves the published value.",
+        "pinion-core 8 + pinion-runtime 1 seam tests green after the provide_viewport_size_signal rename.",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): 0.",
+        "mnemosyne validate-workspace clean: impact_refs cite only existing sections (5.23/5.22/6.3/5.16), no new cross-ref orphan."
+      ],
+      "impact_refs": [
+        "5.23",
+        "5.22",
+        "6.3",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "Architect verdict SOUND: layering clean (no backend leak into pinion-core), SSOT definitionally tied to compute_layout's input (same (w,h) param, no re-derivation), north-star on-path (editor/game viewports), extends to per-window (Owner::new_child child scopes already exist) + HiDPI without an undo. No structural change made.",
+        "Rejected over-flags with evidence: make use_viewport_size graceful (would undermine blocker-B fail-loud — a mis-scoped set would silently reflow to 1x1 instead of panicking); Signal<(u32,u32)> -> named struct (tuple is the repo-wide viewport vocabulary: Painter::viewport_size, compute_layout, initial_size); (0,0) sentinel -> Option (sibling convention, (0,0) is an impossible real viewport, documented consumer skip).",
+        "Standing carry unchanged from R1006.1: real sprag-gui consumer out of scope (sprag repo); per-window viewport signal deferred (primary-only, secondary reads primary); TUI path does not publish; WindowEvent::Resized request_redraw nit (app.rs)."
+      ],
+      "publishable_decision_summary": "R1006.2 §5.23 §5.22 §6.3 §5.16: session-review clearance of R1006.1 (2 independent reviewers + self-audit) — fixed 4 grounded smells + closed the substrate-gate test gap; rejected the graceful-hook over-flag with blocker-B evidence; architect verdict SOUND",
+      "publishable_changes_bullets": [
+        "doc accuracy (HIGH): viewport.rs correction-3 claimed snapshot/AT stays inert via Signal equality-skip + paints-live-size; the implemented reality is stronger — the RPC scene/snapshot + AccessKit producers run their own view+layout and never publish (only the gated live compute_paint_scene_internal does), so introspection cannot fire the reflow side-effect (there is no set). Rewrote the contract to the accurate reason; equality-skip is the live path's secondary defense.",
+        "YAGNI: deleted CoreShell::viewport_size() value accessor (zero non-test callers; the seam read path is use_viewport_size, or root_owner().viewport_size_signal().get() for a non-reactive peek). Its runtime test now reads through the owner.",
+        "naming symmetry: Owner::provide_viewport_size -> provide_viewport_size_signal (sibling rule provide_ + getter-noun, mirroring repaint_sink/provide_repaint_sink); getter stays viewport_size_signal.",
+        "strict-hook rationale documented: use_viewport_size stays strict (panics outside a scope) unlike the graceful measured_monospace_cell; documented WHY — strict makes blocker B fail loud (a mis-scoped set panics rather than silently reflowing to 1x1). Rejected the reviewer make-it-graceful suggestion on this ground.",
+        "test gap closed: new pinion-shell substrate forcing test (r1006_viewport_seam_tests) paints the primary via both the None and explicit \"main\" paths and asserts a secondary-window paint does NOT clobber the primary's published viewport — locks the spec_id == \"main\" == DEFAULT_WINDOW gate the publish rests on."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: 7154 passed / 0 failed / 38 ignored, real cargo exit 0 (captured without a pipe; an earlier tail-piped run had masked cargo's exit per the R934 false-green lesson).",
+        "pinion-shell new r1006_viewport_seam test green: primary publishes (None + explicit \"main\"), secondary \"inspector\" paint does not clobber, use_viewport_size resolves the published value.",
+        "pinion-core 8 + pinion-runtime 1 seam tests green after the provide_viewport_size_signal rename.",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): 0.",
+        "mnemosyne validate-workspace clean: impact_refs cite only existing sections (5.23/5.22/6.3/5.16), no new cross-ref orphan."
+      ],
+      "publishable_impact_refs": [
+        "5.23",
+        "5.22",
+        "6.3",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Architect verdict SOUND: layering clean (no backend leak into pinion-core), SSOT definitionally tied to compute_layout's input (same (w,h) param, no re-derivation), north-star on-path (editor/game viewports), extends to per-window (Owner::new_child child scopes already exist) + HiDPI without an undo. No structural change made.",
+        "Rejected over-flags with evidence: make use_viewport_size graceful (would undermine blocker-B fail-loud — a mis-scoped set would silently reflow to 1x1 instead of panicking); Signal<(u32,u32)> -> named struct (tuple is the repo-wide viewport vocabulary: Painter::viewport_size, compute_layout, initial_size); (0,0) sentinel -> Option (sibling convention, (0,0) is an impossible real viewport, documented consumer skip).",
+        "Standing carry unchanged from R1006.1: real sprag-gui consumer out of scope (sprag repo); per-window viewport signal deferred (primary-only, secondary reads primary); TUI path does not publish; WindowEvent::Resized request_redraw nit (app.rs)."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

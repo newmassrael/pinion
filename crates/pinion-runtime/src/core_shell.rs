@@ -495,7 +495,7 @@ impl<V: WidgetCore> CoreShell<V> {
         // so its size is unknown; `set_viewport_size` writes the real size on
         // the first paint.
         let viewport_signal = Signal::new((0_u32, 0_u32));
-        root_owner.provide_viewport_size(viewport_signal.clone());
+        root_owner.provide_viewport_size_signal(viewport_signal.clone());
         // (R55.D.5 §5.45) Compose the state-scene root.
         //
         // Default (single-External binding, the entire example
@@ -1293,15 +1293,6 @@ impl<V: WidgetCore> CoreShell<V> {
     pub fn set_viewport_size(&self, width: u32, height: u32) {
         self.root_owner
             .run(|| self.viewport_signal.set((width, height)));
-    }
-
-    /// R1006 §5.23 §5.22 — current published layout viewport
-    /// `(width, height)`; `(0, 0)` before the first paint ("viewport
-    /// unknown"). Read accessor for backends / tests; bindings read it
-    /// reactively via [`use_viewport_size`](pinion_core::use_viewport_size).
-    #[must_use]
-    pub fn viewport_size(&self) -> (u32, u32) {
-        self.viewport_signal.get()
     }
 
     /// R51.147 §5.28 — `true` when any animation registered on this
@@ -2344,7 +2335,11 @@ mod tests {
         use std::rc::Rc;
 
         let core: CoreShell<TestButton> = CoreShell::new();
-        assert_eq!(core.viewport_size(), (0, 0), "boot seed is viewport-unknown");
+        assert_eq!(
+            core.root_owner().viewport_size_signal().get(),
+            (0, 0),
+            "boot seed is viewport-unknown"
+        );
 
         let seen = Rc::new(RefCell::new(Vec::new()));
         let seen_c = Rc::clone(&seen);
@@ -2359,7 +2354,7 @@ mod tests {
         core.set_viewport_size(800, 600); // same size -> equality-skip, no re-fire
         core.set_viewport_size(1024, 768);
 
-        assert_eq!(core.viewport_size(), (1024, 768));
+        assert_eq!(core.root_owner().viewport_size_signal().get(), (1024, 768));
         assert_eq!(
             seen.borrow().as_slice(),
             &[(0, 0), (800, 600), (1024, 768)],

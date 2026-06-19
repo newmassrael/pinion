@@ -4045,6 +4045,49 @@ fn build_access_tree<V: WidgetView>(
 }
 
 #[cfg(test)]
+mod r1006_viewport_seam_tests {
+    use super::ShellCore;
+    use pinion_core::test_fixtures::EchoButtonFixture;
+
+    /// R1006.1 — the substrate publish wire: a primary-window paint
+    /// (`window_key == DEFAULT_WINDOW`) publishes the layout `(w, h)` so a
+    /// binding's `use_viewport_size` resolves it, and a secondary-window paint
+    /// must NOT clobber the primary's published size. Guards the
+    /// `spec_id == "main" == DEFAULT_WINDOW` assumption the gate rests on — a
+    /// rename of either would break this without touching the seam unit tests.
+    #[test]
+    fn primary_paint_publishes_viewport_secondary_does_not_clobber() {
+        let mut sc = ShellCore::<EchoButtonFixture>::new();
+        // The shell field and the owner-cache slot are one Rc cell, so reading
+        // the owner's handle observes the shell's `set_viewport_size` writes.
+        let sig = sc.core.root_owner().viewport_size_signal();
+        assert_eq!(sig.get(), (0, 0), "boot: viewport unknown");
+
+        // Primary path (`window_id == None` -> window_key == DEFAULT_WINDOW).
+        let _ = sc.compute_paint_scene(640, 480);
+        assert_eq!(sig.get(), (640, 480), "primary paint publishes the viewport");
+
+        // The live winit path uses the explicit primary id; same gate fires.
+        let _ = sc.compute_paint_scene_for_window(pinion_runtime::DEFAULT_WINDOW, 800, 600);
+        assert_eq!(sig.get(), (800, 600));
+
+        // A secondary-window paint must NOT overwrite the primary's value.
+        let _ = sc.compute_paint_scene_for_window("inspector", 100, 100);
+        assert_eq!(
+            sig.get(),
+            (800, 600),
+            "secondary-window paint must not clobber the primary viewport"
+        );
+
+        // The binding-facing read resolves the same published value.
+        assert_eq!(
+            sc.core.root_owner().run(pinion_core::use_viewport_size),
+            (800, 600),
+        );
+    }
+}
+
+#[cfg(test)]
 mod r863_bounds_union_tests {
     use super::{compute_layout, rect_for_tag, resolve_access_bounds, AccessNode, LayoutCache, Scene};
     use pinion_a11y::AriaRole;

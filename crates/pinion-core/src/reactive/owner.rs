@@ -1164,8 +1164,8 @@ impl Owner {
     /// [`Signal`](super::signal::Signal): the view/effect-time "current layout
     /// viewport `(width, height)`" carrier.
     ///
-    /// Returns whatever the shell seeded via [`Self::provide_viewport_size`] at
-    /// boot, or a lazy default `Signal::new((0, 0))` ("viewport unknown") when
+    /// Returns whatever the shell seeded via [`Self::provide_viewport_size_signal`]
+    /// at boot, or a lazy default `Signal::new((0, 0))` ("viewport unknown") when
     /// none was provided (headless / RPC / unit tests). Read in `view` / an
     /// [`Effect`](super::effect::Effect) via
     /// [`use_viewport_size`](super::viewport::use_viewport_size); the tracked
@@ -1189,7 +1189,7 @@ impl Owner {
     /// [`use_viewport_size`](super::viewport::use_viewport_size) read resolves
     /// the shell's signal rather than the lazy `(0, 0)` default.
     /// Idempotent-by-first-write (like every [`Self::cache`] slot).
-    pub fn provide_viewport_size(&self, signal: super::signal::Signal<(u32, u32)>) {
+    pub fn provide_viewport_size_signal(&self, signal: super::signal::Signal<(u32, u32)>) {
         self.cache::<super::viewport::ViewportSizeHolder, _>(
             super::viewport::VIEWPORT_SIZE_KEY,
             move || super::viewport::ViewportSizeHolder(signal),
