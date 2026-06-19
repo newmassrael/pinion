@@ -1147,6 +1147,100 @@ mod tests {
         );
     }
 
+    /// R1013 §5.41 §2 #6 — a [`CellWidth::Wide`] head glyph that overflows its
+    /// own column must survive into the trailer column; the trailer's own
+    /// background fill must NOT erase it.
+    ///
+    /// The bug ([`paint_text_grid`] before R1013): the main pass interleaved
+    /// each cell's opaque background fill with its glyph in one loop, so a wide
+    /// head's glyph — drawn at its natural ~1em advance, overflowing into the
+    /// trailer column — was overpainted by the *next* cell (the trailer),
+    /// whose background fill is emitted after the head glyph. The head glyph's
+    /// overflowing portion was erased, reading as a horizontally "compressed"
+    /// CJK character. The TUI backend never showed this because it skips
+    /// trailers entirely (the terminal renders the wide head across two
+    /// columns); the defect was Vello-only. R1013 splits the pass: all
+    /// backgrounds first, then all glyphs + decorations, so the head glyph
+    /// lands on top of the trailer background.
+    ///
+    /// Font-independent by construction (per the [[pinion-text-layout-tests-
+    /// system-font-debt]] discipline — CJK fallback faces are not guaranteed on
+    /// CI hosts): the head is a guaranteed-present Latin "W" *marked wide* and
+    /// forced to overflow by pinning a font size (40px) far larger than the
+    /// narrow cell width (12px). The glyph identity is irrelevant — the bug is
+    /// the draw-order overpaint of any overflowing wide head, so a deterministic
+    /// monospace glyph is the robust witness. White ink on an all-black base
+    /// makes the ink probe a pure brightness test.
+    ///
+    /// `#[ignore]` for the same wgpu cold-boot reason as the sibling headless
+    /// tests; run with `--ignored`.
+    #[test]
+    #[ignore = "wgpu adapter cold-boot too slow for default test suite; run with --ignored"]
+    fn r1013_text_grid_wide_head_glyph_survives_trailer_bg() {
+        use pinion_core::cell_metric::CellMetric;
+        use pinion_core::scene::{Rect, Scene, TextGridNode};
+        use pinion_core::term_grid::{GridBuffer, TermCell, TermColor};
+        use pinion_runtime::paint_adapter::{FragmentCache, to_vello_cached};
+        use pinion_text::LayoutCache;
+        use pinion_core::style::Color as PinColor;
+
+        const CW: u32 = 12;
+        const CH: u32 = 44;
+        const FONT: u32 = 40;
+        const W: u32 = CW * 2;
+        const H: u32 = CH;
+
+        let white = TermColor::Rgb(PinColor::rgb(0xff, 0xff, 0xff));
+        let black = TermColor::Rgb(PinColor::rgb(0x00, 0x00, 0x00));
+        // A guaranteed-present monospace glyph, marked wide; the pinned 40px
+        // font over the 12px cell forces the glyph to overflow well past
+        // `cell_w` into the trailer column.
+        let head = TermCell::new("W", white, black).wide();
+        let buffer = GridBuffer::new(2, 1).with_row(0, [head.clone(), head.trailer()]);
+        let metric = CellMetric::new(CW, CH).expect("non-zero cell metric");
+        let mut node = TextGridNode::new(metric).with_cells(buffer).with_font_size_px(FONT);
+        node.rect = Rect::new(0, 0, W, H);
+        let scene = Scene::TextGrid(node);
+
+        let mut text_cache = LayoutCache::new();
+        let mut cache = FragmentCache::new();
+        let mut image_cache = pinion_runtime::image_cache::ImageCache::new();
+        let mut vello = VelloScene::new();
+        to_vello_cached(&scene, &|_| None, &mut text_cache, &mut image_cache, &mut cache, &mut vello);
+
+        let mut shot = HeadlessScreenshot::new().expect("headless screenshot bootstrap");
+        let rgba8 = shot.render_to_rgba8(&vello, W, H, vello::peniko::Color::BLACK).expect("render");
+
+        // White glyph ink on an all-black base: any bright pixel is glyph ink.
+        let has_ink = |x0: u32, x1: u32| -> bool {
+            for y in 6..(H - 6) {
+                for x in x0..x1 {
+                    let i = ((y * W + x) * 4) as usize;
+                    let sum = u32::from(rgba8[i]) + u32::from(rgba8[i + 1]) + u32::from(rgba8[i + 2]);
+                    if sum > 150 {
+                        return true;
+                    }
+                }
+            }
+            false
+        };
+
+        // Sanity: the head column inks — the glyph renders at all (guards
+        // against a font-absence false negative on the witness below).
+        assert!(
+            has_ink(2, CW - 1),
+            "wide head glyph absent in its own column — font/render setup broken"
+        );
+        // Witness: the overflowing glyph must reach the trailer column. Before
+        // R1013 the trailer background (drawn after the head glyph) erased this,
+        // leaving the trailer column pure black.
+        assert!(
+            has_ink(CW + 1, W - 1),
+            "wide head glyph erased in the trailer column — trailer background \
+             overpainted the overflowing head glyph (R1013 draw-order bug)"
+        );
+    }
+
     /// R806 §5.39 §2 #1/#7 — deterministic render-vs-intent guard for the
     /// focus-ring **top-edge stroke thickness**. The scene-as-data carries a
     /// 2px Inside border; this renders the exact overlay-box shape through

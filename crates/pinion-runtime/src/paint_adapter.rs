@@ -1025,8 +1025,9 @@ fn has_glyph_cluster(cell: &TermCell) -> bool {
 /// R972–R978 shipped the cell data model + `scene/snapshot` introspection
 /// while the grid stayed paint-opaque; this arm makes it visible.
 ///
-/// Each cell is painted within its own rect, placed by the node-local
-/// [`CellMetric`](pinion_core::cell_metric::CellMetric) (R968 ratify):
+/// Cells are placed by the node-local
+/// [`CellMetric`](pinion_core::cell_metric::CellMetric) (R968 ratify) and
+/// painted in **two grid-wide passes** — all backgrounds, then all glyphs:
 ///
 /// 1. **Background** — the cell's `bg` [`TermColor`](pinion_core::term_grid::TermColor),
 ///    resolved through the node [`Palette`](pinion_core::term_grid::Palette)
@@ -1040,6 +1041,16 @@ fn has_glyph_cluster(cell: &TermCell) -> bool {
 ///    resolved `fg` colour at the cell origin. The brush is applied at draw
 ///    time so the cache key stays colour-independent (one `Layout` per
 ///    distinct cluster, reused across colours).
+///
+/// R1013 §5.41 — the two passes are *grid-wide*, not interleaved per cell.
+/// A wide head's glyph renders at its natural ~1em advance and overflows into
+/// its trailer column; interleaving (fill bg, draw glyph, fill next bg, …)
+/// let the trailer's background fill — emitted right after the head glyph —
+/// erase that overflow, so CJK / full-width characters read as horizontally
+/// "compressed" (their right portion clipped). Completing the whole
+/// background layer before any glyph keeps the overflowing head glyph on top
+/// of the trailer background. (The TUI backend never showed this: it skips
+/// trailers and the terminal renders the wide head across two columns.)
 ///
 /// `reverse` (SGR 7) swaps the effective fg / bg before resolution;
 /// `hidden` (SGR 8, conceal) shows only the background — no glyph, no
@@ -1082,8 +1093,14 @@ fn has_glyph_cluster(cell: &TermCell) -> bool {
 /// [`fit_font_size_to_cell`]); a producer that wants `cell_w` to equal the
 /// monospace advance sources its [`CellMetric`] from
 /// [`pinion_text::LayoutCache::measure_monospace_cell`] (the R968
-/// font-derivation hook). CJK / emoji font fallback remains a documented
-/// open question deferred to a later font-policy slice.
+/// font-derivation hook). R1013 fixed the draw-order overpaint that made a
+/// wide head's overflowing glyph read as "compressed"; what remains a
+/// documented open question for a later font-policy slice is a CJK / emoji
+/// fallback face whose em is *metric-matched* to the Latin half-width so a
+/// wide glyph exactly fills its 2-column span (the current fallback's em is
+/// not pinned to `2 * cell_w`, so it may under-fill — but it is no longer
+/// clipped). Horizontal scaling / centring the glyph to force-fill the span
+/// is rejected (R1002: it distorts letterforms / breaks box-drawing edges).
 ///
 /// R995 §2 #6 — this Vello arm and the TUI `paint_text_grid_inner` must agree
 /// on cell *structure* (which cell inks a glyph / reads reversed / forms a
@@ -1206,45 +1223,64 @@ fn paint_text_grid(
     // offsets depend on the cell origin and are computed inside.
     let rule_w = (cell_h / 16.0).max(1.0);
     out.push_clip_layer(Fill::NonZero, transform, &clip_rect);
+    // Pass 1 — every cell's opaque background. R1013 §5.41: backgrounds are
+    // laid down for the whole grid *before* any glyph, so a wide head glyph
+    // that overflows its column into the trailer (drawn in pass 2) is not
+    // erased by the trailer's own background fill. SGR 7 reverse swaps the
+    // effective fg / bg before resolution; a [`CellWidth::Trailer`] carries
+    // the wide head's colours (R976), so filling each cell's own `bg` paints
+    // the head background across both columns with no special case.
     for row in 0..grid.rows() {
         for col in 0..grid.cols() {
             let Some(cell) = grid.cell(col, row) else {
                 continue;
             };
-            // SGR 7 reverse: swap the effective fg / bg before palette
-            // resolution.
-            let (fg_term, bg_term) = effective_terms(cell);
+            let (_, bg_term) = effective_terms(cell);
             let bg = palette.resolve(bg_term, ColorTarget::Background);
             let (cx, cy) = metric.cell_to_px(col, row);
-            // Pass 1 — opaque cell background.
             let rect = KurboRect::new(cx, cy, cx + cell_w, cy + cell_h);
             out.fill(Fill::NonZero, origin, to_peniko(bg), None, &rect);
+        }
+    }
+    // Pass 2 — every cell's glyph + SGR decorations, painted on top of the
+    // completed background layer. This is the draw-order that keeps an
+    // overflowing wide head glyph (its natural ~1em advance spilling into the
+    // trailer column) visible: it now lands over the trailer background
+    // instead of under it.
+    for row in 0..grid.rows() {
+        for col in 0..grid.cols() {
+            let Some(cell) = grid.cell(col, row) else {
+                continue;
+            };
             // SGR 8 hidden (conceal): the cell shows only its background —
             // no glyph, no decoration.
             if cell.attrs.hidden {
                 continue;
             }
-            // The effective foreground for this cell's ink (glyph +
-            // decorations): palette-resolved, then SGR 2 dim attenuates the
+            // SGR 7 reverse: swap the effective fg / bg before palette
+            // resolution. The effective foreground for this cell's ink (glyph
+            // + decorations): palette-resolved, then SGR 2 dim attenuates the
             // alpha so the ink blends toward the background.
+            let (fg_term, _) = effective_terms(cell);
             let mut fg = palette.resolve(fg_term, ColorTarget::Foreground);
             if cell.attrs.dim {
                 // Half the alpha ~ the common terminal "faint" intensity.
                 fg = fg.with_alpha(fg.a / 2);
             }
             let fg_brush = to_peniko(fg);
-            // Pass 2 — glyph, unless suppressed. A Trailer carries no
-            // independent glyph (R976); an all-whitespace cluster has nothing
-            // to ink. SGR 1 bold / SGR 3 italic pick the weight / slant —
-            // distinct `Layout` cache entries, so the colour-independent glyph
-            // cache stays intact (the brush is still applied at draw time).
+            let (cx, cy) = metric.cell_to_px(col, row);
+            // Glyph, unless suppressed. A Trailer carries no independent glyph
+            // (R976); an all-whitespace cluster has nothing to ink. SGR 1 bold
+            // / SGR 3 italic pick the weight / slant — distinct `Layout` cache
+            // entries, so the colour-independent glyph cache stays intact (the
+            // brush is still applied at draw time).
             if has_glyph_cluster(cell) {
                 let glyph_transform = origin * Affine::translate((cx, cy));
                 draw_cell_glyph(out, cache, &style, cell, glyph_transform, fg_brush);
             }
-            // Pass 3 — underline / strikethrough rules spanning the full cell
-            // (so adjacent attributed cells, and a wide head + trailer, form
-            // one continuous rule; a blank cell still shows its rule), in the
+            // Underline / strikethrough rules spanning the full cell (so
+            // adjacent attributed cells, and a wide head + trailer, form one
+            // continuous rule; a blank cell still shows its rule), in the
             // effective foreground.
             if cell.attrs.underline {
                 // Sit the rule just above the cell's bottom edge.

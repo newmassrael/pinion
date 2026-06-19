@@ -9895,6 +9895,44 @@
         "Next: if sprag reports a fresh forcing case it preempts; else the Model-View epub slice. R1012 is now textbook-cleared across two adversarial passes (R1012.2 quality/correctness + R1012.3 architecture/SSOT); PUSH PENDING explicit user consent."
       ]
     },
+    "R1013": {
+      "decision_summary": "R1013 §5.41: wide TextGrid head glyph survives the trailer background — two-pass paint (all cell backgrounds, then all glyphs) fixes the draw-order overpaint that clipped overflowing CJK/full-width glyphs (the 'compression' symptom), not a font mis-size",
+      "changes_bullets": [
+        "pinion-runtime paint_adapter::paint_text_grid split into two grid-wide passes: pass 1 fills every cell background, pass 2 draws every glyph + SGR decoration on top (was one interleaved per-cell loop)",
+        "Root cause was draw-order overpaint, not font mis-size: a wide head glyph renders at its natural ~1em advance, overflows into the trailer column, and the trailer's opaque bg fill (emitted next in the old loop) erased that overflow, reading as horizontal \"compression\"",
+        "Docstring + font-policy note corrected: overpaint (the visible \"compression\") fixed; a metric-matched CJK fallback (em == 2*cell_w exact span fill) stays a separate open question; glyph horizontal scale/centre remains rejected (R1002 distortion). TUI unchanged (skips trailers; terminal renders the wide head across two columns)"
+      ],
+      "verification_bullets": [
+        "New pinion-shell headless-GPU witness r1013_text_grid_wide_head_glyph_survives_trailer_bg: font-independent (\"W\" marked wide + pinned 40px over a 12px cell forces overflow, white-on-black ink probe) — FAILS pre-fix on the trailer column, PASSES post-fix",
+        "All 13 headless-GPU pixel tests pass incl r995 cross-consistency + r991/r992/r993 wide/SGR/cursor (no regression)",
+        "cargo test pinion-runtime 2495 / pinion-tui 357 / pinion-core 108 = 0 failed; clippy --workspace --all-targets --features pinion-runtime/vello = 0; validate-workspace T1=0"
+      ],
+      "impact_refs": [
+        "5.41"
+      ],
+      "carry_forward_bullets": [
+        "Metric-matched CJK/emoji fallback face (em pinned to 2*cell_w) so a wide glyph exactly FILLS its 2-cell span — post-R1013 it renders un-clipped but may under-fill; exact fill needs a paired font (per-cell uniform up-sizing risks cell_h overflow), a font-asset/policy slice not a paint bug",
+        "Two-pass also protects any other overflowing glyph (italic overhang, emoji) from a neighbour cell's bg overpaint — no further paint action needed"
+      ],
+      "publishable_decision_summary": "R1013 §5.41: wide TextGrid head glyph survives the trailer background — two-pass paint (all cell backgrounds, then all glyphs) fixes the draw-order overpaint that clipped overflowing CJK/full-width glyphs (the 'compression' symptom), not a font mis-size",
+      "publishable_changes_bullets": [
+        "pinion-runtime paint_adapter::paint_text_grid split into two grid-wide passes: pass 1 fills every cell background, pass 2 draws every glyph + SGR decoration on top (was one interleaved per-cell loop)",
+        "Root cause was draw-order overpaint, not font mis-size: a wide head glyph renders at its natural ~1em advance, overflows into the trailer column, and the trailer's opaque bg fill (emitted next in the old loop) erased that overflow, reading as horizontal \"compression\"",
+        "Docstring + font-policy note corrected: overpaint (the visible \"compression\") fixed; a metric-matched CJK fallback (em == 2*cell_w exact span fill) stays a separate open question; glyph horizontal scale/centre remains rejected (R1002 distortion). TUI unchanged (skips trailers; terminal renders the wide head across two columns)"
+      ],
+      "publishable_verification_bullets": [
+        "New pinion-shell headless-GPU witness r1013_text_grid_wide_head_glyph_survives_trailer_bg: font-independent (\"W\" marked wide + pinned 40px over a 12px cell forces overflow, white-on-black ink probe) — FAILS pre-fix on the trailer column, PASSES post-fix",
+        "All 13 headless-GPU pixel tests pass incl r995 cross-consistency + r991/r992/r993 wide/SGR/cursor (no regression)",
+        "cargo test pinion-runtime 2495 / pinion-tui 357 / pinion-core 108 = 0 failed; clippy --workspace --all-targets --features pinion-runtime/vello = 0; validate-workspace T1=0"
+      ],
+      "publishable_impact_refs": [
+        "5.41"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Metric-matched CJK/emoji fallback face (em pinned to 2*cell_w) so a wide glyph exactly FILLS its 2-cell span — post-R1013 it renders un-clipped but may under-fill; exact fill needs a paired font (per-cell uniform up-sizing risks cell_h overflow), a font-asset/policy slice not a paint bug",
+        "Two-pass also protects any other overflowing glyph (italic overhang, emoji) from a neighbour cell's bg overpaint — no further paint action needed"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
