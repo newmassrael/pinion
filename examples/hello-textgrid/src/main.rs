@@ -6,9 +6,12 @@
 //!
 //!   * **`htg_default`** — the behaviour-preserving 8×16 bitmap baseline
 //!     ([`CellMetric::DEFAULT`]), sized `640×384` → **80 × 24** cells;
-//!   * **`htg_measured`** — a *measured* monospace metric sourced via
-//!     [`CellMetric::new`]`(9, 18)` (the R968 font-derivation hook),
-//!     sized `360×360` → **40 × 20** cells.
+//!   * **`htg_measured`** — a *font-derived* grid (R1003): `view` measures the
+//!     real monospace cell at `MEASURED_FONT_PX` through the view-time
+//!     [`measured_monospace_cell`](pinion_core::measured_monospace_cell) seam
+//!     (seeded by the shell) and pins that size, so the glyph is snug
+//!     (`cell_w == advance`). Headless (no provider) it falls back to a
+//!     producer-picked `(9, 18)` on the fit path.
 //!
 //! ## What this proves (and what it defers)
 //!
@@ -130,19 +133,19 @@ const DEFAULT_SIZE: (u32, u32) = (640, 384); // 80 cols × 24 rows @ 8×16
 const MEASURED_TAG: &str = "htg_measured";
 const MEASURED_POS: (u32, u32) = (16, 432);
 const MEASURED_SIZE: (u32, u32) = (360, 360); // 40 cols × 20 rows @ 9×18
-/// Illustrative monospace cell metric for the demo grid. A fixed constant
-/// keeps this geometry demo's golden screenshots deterministic — but a
-/// *hardcoded* `cell_w` does NOT match the platform monospace advance, so on
-/// the fit path (no explicit font size) this grid renders slightly loose
-/// (R1002 finding: only `cell_w == advance` is snug; a mismatched cell is
-/// loose by design). The snug *production* path is the R968 font-derivation
-/// hook, now real as
-/// `pinion_text::LayoutCache::measure_monospace_cell(font_size_px)` paired
-/// with [`TextGridNode::with_font_size_px`]: a host (e.g. sprag) measures the
-/// resolved monospace once at boot and hands the `(CellMetric, font_size)` to
-/// the grid. That needs a boot-time `FontContext`, so it cannot run in the
-/// sync view fn here — wiring framework font metrics into the pure view is a
-/// separate seam. The R1002 forcing tests exercise the snug measured path.
+/// Font size the measured-metric grid renders at (R1003). When the shell has
+/// seeded the font-metrics seam (windowed run), `view` measures the real
+/// monospace cell at this size via
+/// [`measured_monospace_cell`](pinion_core::measured_monospace_cell) and pins
+/// it with [`TextGridNode::with_font_size_px`] → snug (`cell_w == advance`).
+const MEASURED_FONT_PX: u32 = 18;
+
+/// Headless fallback cell for the measured-metric grid: used only when no font
+/// provider is seeded (the unit tests, RPC snapshot) and
+/// `measured_monospace_cell` returns `None`. A hardcoded `cell_w` does NOT
+/// match the platform advance, so this fallback renders on the fit path (R1002
+/// finding: only the measured `cell_w == advance` is snug). The windowed run
+/// uses the seam above instead.
 const MEASURED_CELL: (u32, u32) = (9, 18);
 
 /// Tag of the R973 cell-content grid, and its placement + extent.
@@ -375,17 +378,25 @@ fn damage_buffer() -> GridBuffer {
 /// Build one absolutely-positioned grid: the absolute layout removes it
 /// from flow and gives it exactly its own `Size`, so the layout pass
 /// resolves a deterministic pixel `Rect` and the derived `(cols, rows)`
-/// are stable regardless of window chrome.
-fn grid(tag: &'static str, metric: CellMetric, pos: (u32, u32), size: (u32, u32)) -> Scene {
-    Scene::TextGrid(
-        TextGridNode::new(metric)
-            .with_tag(tag)
-            .with_layout(
-                LayoutStyle::new()
-                    .with_absolute_position(pos.0, pos.1)
-                    .with_size(Size::px(size.0, size.1)),
-            ),
-    )
+/// are stable regardless of window chrome. `font_px` pins the Vello glyph
+/// size for a font-derived (measured) grid (R1002 SSOT) — `None` leaves the
+/// paint adapter to fit a font into the cell.
+fn grid(
+    tag: &'static str,
+    metric: CellMetric,
+    pos: (u32, u32),
+    size: (u32, u32),
+    font_px: Option<u32>,
+) -> Scene {
+    let mut node = TextGridNode::new(metric).with_tag(tag).with_layout(
+        LayoutStyle::new()
+            .with_absolute_position(pos.0, pos.1)
+            .with_size(Size::px(size.0, size.1)),
+    );
+    if let Some(px) = font_px {
+        node = node.with_font_size_px(px);
+    }
+    Scene::TextGrid(node)
 }
 
 /// view-fn (§6.3): pure sync `() -> Scene`. A plain surface-filled root
@@ -393,8 +404,20 @@ fn grid(tag: &'static str, metric: CellMetric, pos: (u32, u32), size: (u32, u32)
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(_state: (), _frame: &Frame) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
-    let measured = CellMetric::new(MEASURED_CELL.0, MEASURED_CELL.1)
-        .expect("measured monospace metric is non-zero");
+    // R1003 §5.36 — the measured-metric grid consumes the view-time font seam:
+    // when the shell has seeded a provider (windowed run), measure the real
+    // monospace cell at `MEASURED_FONT_PX` and pin that size so the grid is
+    // snug (cell_w == advance). Headless (no provider — the unit tests, RPC),
+    // `measured_monospace_cell` returns None and we fall back to the
+    // producer-picked `MEASURED_CELL` on the fit path.
+    let (measured, measured_font) = match pinion_core::measured_monospace_cell(MEASURED_FONT_PX) {
+        Some(cell) => (cell, Some(MEASURED_FONT_PX)),
+        None => (
+            CellMetric::new(MEASURED_CELL.0, MEASURED_CELL.1)
+                .expect("fallback monospace metric is non-zero"),
+            None,
+        ),
+    };
 
     // The R973 content grid: an `8×16` baseline grid carrying the cell
     // projection. Sized to derive exactly `CONTENT_COLS × CONTENT_ROWS`.
@@ -481,8 +504,8 @@ fn view(_state: (), _frame: &Frame) -> Scene {
 
     Scene::Container(
         ContainerNode::new(vec![
-            grid(DEFAULT_TAG, CellMetric::DEFAULT, DEFAULT_POS, DEFAULT_SIZE),
-            grid(MEASURED_TAG, measured, MEASURED_POS, MEASURED_SIZE),
+            grid(DEFAULT_TAG, CellMetric::DEFAULT, DEFAULT_POS, DEFAULT_SIZE, None),
+            grid(MEASURED_TAG, measured, MEASURED_POS, MEASURED_SIZE, measured_font),
             content,
             attrs,
             cursor,
@@ -593,6 +616,53 @@ mod tests {
         // winsize is strictly layout-derived (no speculative default).
         let g = TextGridNode::new(CellMetric::DEFAULT);
         assert_eq!((g.cols(), g.rows()), (0, 0));
+    }
+
+    /// Read the `htg_measured` grid's pinned Vello font size out of a built
+    /// scene — `Some` on the R1003 seam path (a provider measured the cell),
+    /// `None` on the headless fallback (fit path).
+    fn measured_grid_font_size(scene: &Scene) -> Option<u32> {
+        let Scene::Container(root) = scene else {
+            panic!("view root is a Container");
+        };
+        root.children.iter().find_map(|child| match child {
+            Scene::TextGrid(n) if n.tag.as_deref() == Some(MEASURED_TAG) => n.font_size_px(),
+            _ => None,
+        })
+    }
+
+    /// R1003 §5.36 — when a font-metrics provider is seeded on the scope (the
+    /// windowed shell), `view` takes the seam path: it measures the real cell
+    /// and pins `MEASURED_FONT_PX`, so the grid is snug (`cell_w == advance`).
+    /// The example's forcing consumer of the seam.
+    #[test]
+    fn measured_grid_takes_seam_path_when_provider_present() {
+        use pinion_core::{CellMetric, MonospaceMetrics, Owner};
+        // A minimal stand-in provider (no pinion-text dep needed): any
+        // non-None measurement drives `view` onto the seam path.
+        struct FakeMetrics;
+        impl MonospaceMetrics for FakeMetrics {
+            fn monospace_cell(&self, font_size_px: u32) -> Option<CellMetric> {
+                CellMetric::new(font_size_px / 2, font_size_px)
+            }
+        }
+        let owner = Owner::new();
+        owner.provide_monospace_metrics(std::rc::Rc::new(FakeMetrics));
+        let scene = owner.run(|| view((), &Frame::new()));
+        assert_eq!(
+            measured_grid_font_size(&scene),
+            Some(MEASURED_FONT_PX),
+            "seam path must pin the measured font size",
+        );
+    }
+
+    /// R1003 §5.36 — with no provider (headless / RPC / this unit test),
+    /// `measured_monospace_cell` returns None and `view` falls back to the
+    /// producer-picked `MEASURED_CELL` on the fit path (no pinned font size).
+    #[test]
+    fn measured_grid_falls_back_without_provider() {
+        let scene = pinion_core::Owner::new().run(|| view((), &Frame::new()));
+        assert_eq!(measured_grid_font_size(&scene), None, "fallback is the fit path");
     }
 
     #[test]

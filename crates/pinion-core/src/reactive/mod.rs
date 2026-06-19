@@ -6,6 +6,7 @@
 
 pub mod computed;
 pub mod effect;
+pub mod font_metrics;
 pub mod introspect;
 pub mod owner;
 pub mod repaint;
@@ -16,6 +17,7 @@ pub mod simulation;
 
 pub use computed::Computed;
 pub use effect::Effect;
+pub use font_metrics::{measured_monospace_cell, MonospaceMetrics, NullMonospaceMetrics};
 pub use introspect::{IntoIntrospectValue, JsonValue, SignalExternal};
 pub use owner::{Owner, OwnerSnapshot, SnapshotRestoreError, SnapshotableSignal, batch};
 pub use repaint::{use_repaint_sink, NullRepaintSink, RepaintSink};

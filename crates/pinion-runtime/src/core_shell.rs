@@ -464,6 +464,14 @@ impl<V: WidgetCore> CoreShell<V> {
         // R999 §5.23 — seed the repaint sink first, before `create_external` /
         // `create_extra_externals` resolve `use_repaint_sink()`.
         root_owner.provide_repaint_sink(repaint_sink);
+        // R1003 §5.36 — seed the monospace measurement provider before the
+        // factories / first `view`, so `measured_monospace_cell()` in a view fn
+        // resolves a real font-correct `CellMetric` (a `Scene::TextGrid`
+        // producer pairs it with `with_font_size_px`). Pure pinion-text (no
+        // winit), so the runtime owns it directly — no shell hand-in needed.
+        root_owner.provide_monospace_metrics(std::rc::Rc::new(
+            pinion_text::LayoutCacheMonospaceMetrics::new(),
+        ));
         // (R55.D.5 §5.45) Compose the state-scene root.
         //
         // Default (single-External binding, the entire example

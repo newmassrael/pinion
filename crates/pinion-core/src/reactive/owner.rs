@@ -1119,6 +1119,47 @@ impl Owner {
         });
     }
 
+    /// R1003 §5.36 — the owner-scoped
+    /// [`MonospaceMetrics`](super::font_metrics::MonospaceMetrics): the
+    /// view-time "measure the resolved monospace cell" capability.
+    ///
+    /// Returns whatever the shell seeded via [`Self::provide_monospace_metrics`]
+    /// at boot, or a [`NullMonospaceMetrics`](super::font_metrics::NullMonospaceMetrics)
+    /// (measures `None`) when none was provided (headless / RPC / unit tests).
+    /// Same private-key + lazy-default shape as [`Self::repaint_sink`]; the
+    /// metrics provider stays on the UI thread, so it rides an `Rc` (no
+    /// `Send + Sync`). Read in `view` via
+    /// [`measured_monospace_cell`](super::font_metrics::measured_monospace_cell).
+    #[must_use]
+    pub fn monospace_metrics(&self) -> std::rc::Rc<dyn super::font_metrics::MonospaceMetrics> {
+        self.cache::<super::font_metrics::MonospaceMetricsHolder, _>(
+            super::font_metrics::MONOSPACE_METRICS_KEY,
+            || {
+                super::font_metrics::MonospaceMetricsHolder(std::rc::Rc::new(
+                    super::font_metrics::NullMonospaceMetrics,
+                ))
+            },
+        )
+        .0
+        .clone()
+    }
+
+    /// R1003 §5.36 — seed the owner-scoped
+    /// [`MonospaceMetrics`](super::font_metrics::MonospaceMetrics). The shell
+    /// calls this once at boot **before** the binding factories / first `view`
+    /// run, so the first [`measured_monospace_cell`](super::font_metrics::measured_monospace_cell)
+    /// read resolves to the real provider rather than the Null default.
+    /// Idempotent-by-first-write (like every [`Self::cache`] slot).
+    pub fn provide_monospace_metrics(
+        &self,
+        metrics: std::rc::Rc<dyn super::font_metrics::MonospaceMetrics>,
+    ) {
+        self.cache::<super::font_metrics::MonospaceMetricsHolder, _>(
+            super::font_metrics::MONOSPACE_METRICS_KEY,
+            move || super::font_metrics::MonospaceMetricsHolder(metrics),
+        );
+    }
+
     /// R51.150 §5.22 — `true` when (`V`, `key`) has been populated by
     /// a previous [`Owner::cache::<V>`](Self::cache) call on this
     /// owner.

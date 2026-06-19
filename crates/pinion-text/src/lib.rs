@@ -27,9 +27,11 @@
 
 mod cache;
 mod caret;
+mod font_metrics;
 mod layout;
 
 pub use cache::LayoutCache;
+pub use font_metrics::LayoutCacheMonospaceMetrics;
 pub use caret::{
     byte_offset_for_line_boundary, byte_offset_for_line_move, byte_offset_for_point,
     caret_rect_for_byte_offset, logical_line_span, selection_rects_for_range, visual_line_metrics,

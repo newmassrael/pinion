@@ -81,10 +81,11 @@ pub use input::{
 };
 pub use intent::{Intent, IntentTag};
 pub use reactive::{
-    is_simulating, use_local_task_pump, use_repaint_sink, Computed, DeferredReady, Effect,
-    FetchToken, IntoIntrospectValue, JsonValue, LocalSpawner, LocalTaskPump, NullRepaintSink,
-    Owner, OwnerSnapshot, RepaintSink, Resource, ResourceCache, ResourceState, Signal,
-    SignalExternal, SimulationGuard, SnapshotRestoreError, SnapshotableSignal, batch,
+    is_simulating, measured_monospace_cell, use_local_task_pump, use_repaint_sink, Computed,
+    DeferredReady, Effect, FetchToken, IntoIntrospectValue, JsonValue, LocalSpawner, LocalTaskPump,
+    MonospaceMetrics, NullMonospaceMetrics, Owner, OwnerSnapshot, NullRepaintSink, RepaintSink,
+    Resource, ResourceCache, ResourceState, Signal, SignalExternal, SimulationGuard,
+    SnapshotRestoreError, SnapshotableSignal, batch,
 };
 pub use revision::SceneRevision;
 pub use scene::{HitPath, Scene};
