@@ -317,8 +317,12 @@ mod tests {
             // Delta rows are 3, 8, 13, ... (stride 5).
             assert_eq!(search.next_match(), Some(8));
             assert_eq!(search.next_match(), Some(13));
-            // The dataset never shrinks — every row is still addressable.
-            assert_eq!(search.count(), N, "search keeps all rows (unlike a filter)");
+            // The real search != filter witness: a non-match row is ABSENT from
+            // the match set yet still fully addressable (a filter would have
+            // removed it from the view; search keeps every row).
+            assert_eq!(search.count(), N, "the dataset never shrinks");
+            assert!(!search.matches().contains(&0), "row 0 (Alpha) is not a match");
+            assert_eq!(search.cell(0, 0), "Alpha0000", "yet row 0 is still addressable");
         });
     }
 

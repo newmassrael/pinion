@@ -20,8 +20,8 @@
 //!   over a *mutable* source (the R821 tree filter borrows the consumer's live
 //!   tree) instead needs a reactive [`Computed`](crate::reactive::Computed)
 //!   that tracks the source too, not this config-keyed memo.
-//! - [`source_at_value`] — the `source_at.<pos>` introspect projection both
-//!   sort proxy externals expose (out-of-range → `Null`, never absence).
+//! - [`source_at_value`] — the `source_at.<pos>` introspect projection the
+//!   proxy externals expose (out-of-range → `Null`, never absence).
 
 use std::rc::Rc;
 
@@ -59,7 +59,7 @@ impl<K: PartialEq> OrderMemo<K> {
     }
 }
 
-/// The `source_at.<pos>` introspect projection shared by both proxy externals:
+/// The `source_at.<pos>` introspect projection shared by the proxy externals:
 /// resolve a visual position (`rest`, the part after `"source_at."`) to its
 /// source data index via `lookup` (the state's `source_at`). An out-of-range
 /// or unparseable position reports [`IntrospectValue::Null`] (present-but-empty),

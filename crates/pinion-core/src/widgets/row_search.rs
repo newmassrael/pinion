@@ -95,10 +95,11 @@ pub fn search_matches<'a>(
 /// Holds the source cells (materialized once — the immutable source that makes
 /// the value-keyed [`OrderMemo`] sound), the active `query` as a reactive
 /// [`Signal`], a `cursor` [`Signal`] (an index into the match list), and the
-/// derived match list (memoized on the query). The `ScrollState` of the search
-/// axis: created once via [`use_row_search`], it is shared by the
-/// [`RowSearchExternal`] (which mutates it) and the view / a11y tree (which
-/// read it) through the same `Rc`. Reading [`query`](Self::query) /
+/// derived match list (memoized on the query). It holds **no** scroll — the
+/// reveal-into-view lives on the external, not here (see the module note).
+/// Created once via [`use_row_search`] and shared — the same `Rc` — by the
+/// [`RowSearchExternal`] (which mutates the query / cursor) and the view (which
+/// reads them). Reading [`query`](Self::query) /
 /// [`current_row`](Self::current_row) inside a view-fn auto-subscribes, so a
 /// search or a cursor move repaints exactly like a scroll-offset change.
 pub struct RowSearchState {
@@ -213,12 +214,12 @@ impl RowSearchState {
     /// `None` when nothing matches) — the textbook "type a search, jump to the
     /// first hit" behavior. Returns the resulting [`match_count`](Self::match_count).
     ///
-    /// The two `Signal` writes are deliberately **not** wrapped in
-    /// [`batch`](crate::reactive::batch): the new cursor is derived by reading
-    /// `matches()` *after* the query write (the memo recomputes once against
-    /// the new query), and a `batch` would defer the query value the read
-    /// needs. A pull-based view-fn marks dirty on either write and repaints
-    /// once regardless, so the un-batched pair costs no extra paint.
+    /// The two `Signal` writes need no [`batch`](crate::reactive::batch): a
+    /// pull-based view-fn marks dirty on either write and repaints once
+    /// regardless, so coalescing the dispatch would buy nothing. `matches()`
+    /// is read *after* the query write to derive the new cursor; `Signal::set`
+    /// writes the cell eagerly even inside a batch, so that read sees the new
+    /// query either way (the memo recomputes once against it).
     pub fn set_query(&self, query: Option<GridFilter>) -> usize {
         self.query.set(query);
         let n = self.match_count();

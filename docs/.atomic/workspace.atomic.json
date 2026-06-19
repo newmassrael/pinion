@@ -9003,6 +9003,106 @@
         "the example is RPC-driven (the AI-first path), mirroring hello-grid-row-style."
       ]
     },
+    "R1004.1": {
+      "decision_summary": "Adversarial session-review clearance of R1004 (2 independent reviewers + self-grep). Cleared real defects, rejected over-flags with evidence. HIGH: the RowSearchState struct doc was a near-verbatim paste from GridSortState claiming the state is 'the ScrollState of the search axis ... shared by the external and the view / a11y tree' -- false for search (the state holds no scroll, the reveal lives on the external, the a11y tree does not read the search state) and self-contradicting the module's own purity note (the recurring falsified-paste failure mode). MED: the set_query doc gave a false batch rationale ('a batch would defer the query value the read needs' -- Signal::set writes eagerly inside a batch, only the notification cascade is deferred); clamped_to_col_count said 'the two consumers' though R1004 made it three; source_at_value said 'both proxy externals' though search is a new non-sort consumer; the example 'keeps all rows' test asserted count()==N (query-independent = tautological) instead of a real search != filter oracle. Also corrected the R1004 changelog's 'OrderMemo (7th)' to the third instantiating consumer.",
+      "changes_bullets": [
+        "row_search.rs HIGH: rewrote the RowSearchState struct doc -- dropped the false",
+        "\"the ScrollState of the search axis ... shared by the external and the view /",
+        "a11y tree\" paste (a near-verbatim copy from GridSortState): the state holds NO",
+        "scroll (reveal is the external's job) and the a11y tree does not read it; it is",
+        "shared via use_row_search by the external (mutates) + the view (reads). Fixes a",
+        "self-contradiction with the module's own purity note (falsified-paste mode).",
+        "row_search.rs MED: set_query batch note corrected -- a batch is unneeded (a",
+        "pull-based view repaints once), and Signal::set writes the cell eagerly even",
+        "inside a batch, so the post-write matches() read sees the new query regardless",
+        "(the old note falsely claimed \"a batch would defer the query value the read",
+        "needs\").",
+        "grid_sort.rs MED: clamped_to_col_count doc \"the two consumers\" -> \"these",
+        "consumers\" (the at-scale GridSortState, a typed editable grid, and the R1004",
+        "search cursor -- R1004 made it three).",
+        "order_memo.rs MED: source_at_value doc \"both (sort) proxy externals\" -> \"the",
+        "proxy externals\" (R1004 search reuses it for match.<i>, a non-sort consumer).",
+        "examples/hello-grid-search MED: strengthened next_walks_matches_and_keeps_all_",
+        "rows -- now asserts a non-match row (Alpha0000) is ABSENT from matches() yet",
+        "still addressable via cell(), the real search != filter oracle (count()==N",
+        "alone is query-independent = tautological)."
+      ],
+      "verification_bullets": [
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): 0",
+        "(the new intra-doc link crate::widgets::row_search resolves).",
+        "cargo test -p pinion-core widgets::row_search: 13 ok; cargo test -p hello-grid-search:",
+        "4 ok (incl. the strengthened non-match-addressable assertion).",
+        "Changes are doc-only + one test; no production logic path changed, so the r1004 demo",
+        "(release binary unchanged) stays valid (PASS deterministic x3 at R1004).",
+        "mnemosyne validate-workspace: T1 reject=0 (entries 989 -> 990, no new orphan)."
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.40",
+        "5.45"
+      ],
+      "carry_forward_bullets": [
+        "Rejected over-flags (evidence): grid_sort/view_order \"the ScrollState of the X",
+        "axis\" metaphor is correct THERE (a sort proxy has no real scroll, and its a11y",
+        "tree DOES read the order) -- only the search paste was wrong (a real ScrollState",
+        "exists for the reveal + the a11y tree ignores search state). schema \"string\" for",
+        "next/prev/clear matches the view_order cycle_sort no-arg-invoke convention.",
+        "rustdoc private-item link matches the sibling pattern (rustdoc is not gated).",
+        "ragged-row blank-cell tolerance mirrors GridSortState's own untested nicety.",
+        "R1004 changelog said \"OrderMemo (7th)\"; the actual instantiating consumers are",
+        "three (grid_sort, view_order, row_search) -- the other files only mention it in",
+        "prose. reveal_row (5th consumer) was correct."
+      ],
+      "publishable_decision_summary": "Adversarial session-review clearance of R1004 (2 independent reviewers + self-grep). Cleared real defects, rejected over-flags with evidence. HIGH: the RowSearchState struct doc was a near-verbatim paste from GridSortState claiming the state is 'the ScrollState of the search axis ... shared by the external and the view / a11y tree' -- false for search (the state holds no scroll, the reveal lives on the external, the a11y tree does not read the search state) and self-contradicting the module's own purity note (the recurring falsified-paste failure mode). MED: the set_query doc gave a false batch rationale ('a batch would defer the query value the read needs' -- Signal::set writes eagerly inside a batch, only the notification cascade is deferred); clamped_to_col_count said 'the two consumers' though R1004 made it three; source_at_value said 'both proxy externals' though search is a new non-sort consumer; the example 'keeps all rows' test asserted count()==N (query-independent = tautological) instead of a real search != filter oracle. Also corrected the R1004 changelog's 'OrderMemo (7th)' to the third instantiating consumer.",
+      "publishable_changes_bullets": [
+        "row_search.rs HIGH: rewrote the RowSearchState struct doc -- dropped the false",
+        "\"the ScrollState of the search axis ... shared by the external and the view /",
+        "a11y tree\" paste (a near-verbatim copy from GridSortState): the state holds NO",
+        "scroll (reveal is the external's job) and the a11y tree does not read it; it is",
+        "shared via use_row_search by the external (mutates) + the view (reads). Fixes a",
+        "self-contradiction with the module's own purity note (falsified-paste mode).",
+        "row_search.rs MED: set_query batch note corrected -- a batch is unneeded (a",
+        "pull-based view repaints once), and Signal::set writes the cell eagerly even",
+        "inside a batch, so the post-write matches() read sees the new query regardless",
+        "(the old note falsely claimed \"a batch would defer the query value the read",
+        "needs\").",
+        "grid_sort.rs MED: clamped_to_col_count doc \"the two consumers\" -> \"these",
+        "consumers\" (the at-scale GridSortState, a typed editable grid, and the R1004",
+        "search cursor -- R1004 made it three).",
+        "order_memo.rs MED: source_at_value doc \"both (sort) proxy externals\" -> \"the",
+        "proxy externals\" (R1004 search reuses it for match.<i>, a non-sort consumer).",
+        "examples/hello-grid-search MED: strengthened next_walks_matches_and_keeps_all_",
+        "rows -- now asserts a non-match row (Alpha0000) is ABSENT from matches() yet",
+        "still addressable via cell(), the real search != filter oracle (count()==N",
+        "alone is query-independent = tautological)."
+      ],
+      "publishable_verification_bullets": [
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): 0",
+        "(the new intra-doc link crate::widgets::row_search resolves).",
+        "cargo test -p pinion-core widgets::row_search: 13 ok; cargo test -p hello-grid-search:",
+        "4 ok (incl. the strengthened non-match-addressable assertion).",
+        "Changes are doc-only + one test; no production logic path changed, so the r1004 demo",
+        "(release binary unchanged) stays valid (PASS deterministic x3 at R1004).",
+        "mnemosyne validate-workspace: T1 reject=0 (entries 989 -> 990, no new orphan)."
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.40",
+        "5.45"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Rejected over-flags (evidence): grid_sort/view_order \"the ScrollState of the X",
+        "axis\" metaphor is correct THERE (a sort proxy has no real scroll, and its a11y",
+        "tree DOES read the order) -- only the search paste was wrong (a real ScrollState",
+        "exists for the reveal + the a11y tree ignores search state). schema \"string\" for",
+        "next/prev/clear matches the view_order cycle_sort no-arg-invoke convention.",
+        "rustdoc private-item link matches the sibling pattern (rustdoc is not gated).",
+        "ragged-row blank-cell tolerance mirrors GridSortState's own untested nicety.",
+        "R1004 changelog said \"OrderMemo (7th)\"; the actual instantiating consumers are",
+        "three (grid_sort, view_order, row_search) -- the other files only mention it in",
+        "prose. reveal_row (5th consumer) was correct."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

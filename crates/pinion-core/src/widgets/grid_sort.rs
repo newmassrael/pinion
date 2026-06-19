@@ -311,12 +311,13 @@ impl GridFilter {
 
     /// Drop any facet whose column is out of range for a `col_count`-wide grid;
     /// `None` when none survive (an all-phantom or empty conjunction =
-    /// unfiltered). The SSOT both the at-scale [`GridSortState::set_filter`]
-    /// and a typed editable grid use to clamp a restored / wire-parsed filter
-    /// against their column count, so a malformed restore never filters on a
-    /// column that does not exist (generalizes the R783 single-phantom-column
-    /// clamp — a divergence between the two consumers would be a bug, so it
-    /// lives here once).
+    /// unfiltered). The SSOT the at-scale [`GridSortState::set_filter`], a typed
+    /// editable grid, and the R1004 search cursor
+    /// ([`row_search`](crate::widgets::row_search)) use to clamp a restored /
+    /// wire-parsed filter against their column count, so a malformed restore
+    /// never filters on a column that does not exist (generalizes the R783
+    /// single-phantom-column clamp — a divergence between these consumers would
+    /// be a bug, so it lives here once).
     #[must_use]
     pub fn clamped_to_col_count(mut self, col_count: usize) -> Option<Self> {
         self.facets.retain(|f| f.col < col_count);
