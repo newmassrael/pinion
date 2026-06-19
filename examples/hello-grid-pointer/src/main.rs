@@ -106,11 +106,16 @@ impl GridPointerExternal {
     /// clamped one short of the extent so the last fraction lands in the last
     /// cell rather than one past it.
     fn frac_to_px(frac: f32, extent_px: u32) -> u32 {
-        let clamped = f64::from(frac.clamp(0.0, 1.0)) * f64::from(extent_px);
-        // `clamped ∈ [0, extent_px]`, non-negative and within u32 — the cast is
-        // exact after the `min`. Stay one pixel inside the extent.
+        // The router delivers a LOSSY f32 fraction (`normalize_cursor` casts
+        // `(cursor_px / extent)` to f32), so a cell's leading-edge pixel comes
+        // back a hair under its true value. Reconstruct in f64 and **round** to
+        // recover the integer cursor pixel — truncating instead would floor a
+        // boundary pixel into the previous cell, a hit-vs-paint divergence at
+        // 30+ of the 80 column edges (the painter places cells with
+        // `cell_to_px`, the exact inverse `px_to_cell` undoes).
+        let reconstructed = f64::from(frac.clamp(0.0, 1.0)) * f64::from(extent_px);
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let px = clamped as u32;
+        let px = reconstructed.round() as u32;
         px.min(extent_px.saturating_sub(1))
     }
 
@@ -441,6 +446,31 @@ mod tests {
         // The origin.
         e.pointer_move(0.0, 0.0);
         assert_eq!(e.cell, Some((0, 0)));
+    }
+
+    #[test]
+    fn pointer_move_resolves_every_cell_boundary_pixel() {
+        // R1011 — mirror the router: a click at integer pixel `px` arrives as
+        // the f32 fraction `normalize_cursor` computes. Reconstructing the pixel
+        // from that lossy f32 and flooring mis-resolves a cell's leading-edge
+        // pixel (the fraction rounds just under, flooring into the PREVIOUS
+        // cell). The painter places the cell with `cell_to_px`, so the reported
+        // cell must equal the painted one at every boundary pixel.
+        let mut e = ext();
+        for col in 0..COLS {
+            let px = u32::from(col) * 8; // leading-edge pixel of column `col`
+            #[allow(clippy::cast_possible_truncation)]
+            let frac = (f64::from(px) / f64::from(WIN_W)) as f32;
+            e.pointer_move(frac, 0.0);
+            assert_eq!(e.cell, Some((col, 0)), "column {col} leading pixel {px}");
+        }
+        for row in 0..ROWS {
+            let py = u32::from(row) * 16; // leading-edge pixel of row `row`
+            #[allow(clippy::cast_possible_truncation)]
+            let frac = (f64::from(py) / f64::from(WIN_H)) as f32;
+            e.pointer_move(0.0, frac);
+            assert_eq!(e.cell, Some((0, row)), "row {row} leading pixel {py}");
+        }
     }
 
     #[test]

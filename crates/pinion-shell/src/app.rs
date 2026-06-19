@@ -1884,6 +1884,14 @@ fn instant_delta_us(start: Instant, end: Instant) -> u64 {
 /// [`AppShell::handle_key_press`] offer them to the focused widget first), so
 /// they intentionally return `None` here.
 ///
+/// The TUI backend's peer bridge `pinion_tui::input::key_str_from_event`
+/// (crossterm `KeyCode` → the same W3C strings) must surface the same
+/// content-surface vocabulary. The two map different platform enums, so the
+/// tables are **not** folded (the R773 pin-don't-fold rule); their shared canon
+/// is the W3C `KeyboardEvent.key` spec — keep both pinned to it. R1009 widened
+/// this winit table to the editing + function coverage the TUI peer already had
+/// (the drift that absence proved).
+///
 /// R51.92.1 §5.40 — module-local helper (sole caller is
 /// [`AppShell::handle_key_press`] above).
 fn named_key_str(named: NamedKey) -> Option<&'static str> {

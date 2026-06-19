@@ -9613,6 +9613,56 @@
         "Multi-pane per-pane viewport seam (R1006 extension, spec-level) + Model-View epub slice remain"
       ]
     },
+    "R1011": {
+      "decision_summary": "R1011 session-review clearance (R1007-R1010): user 'textbook/SSOT/north-star?' audit = 2 independent adversarial reviewers + grep. Cleared 1 HIGH + 3 MED + 2 LOW, zero over-flags. HIGH: hello-grid-pointer frac_to_px floored the lossy f32 router fraction, mis-resolving 30+/80 column-boundary pixels into the previous cell (hit != paint, the introspection-from-paint failure); fix = round to recover the integer cursor pixel, with a boundary-sweep test that reproduced it first.",
+      "changes_bullets": [
+        "HIGH: hello-grid-pointer frac_to_px rounds the lossy f32 router fraction (was floor -> 30+/80 boundary pixels mis-resolved into the previous cell, hit != paint); + boundary-sweep test",
+        "MED: cell_metric module doc said px_to_cell still deferred (R1008 landed it) -> truthed; dissect_flat==flat_visible test now collapses a branch (its descend guard was untested)",
+        "MED: named_key_str doc pins the TUI peer key_str_from_event to the shared W3C canon (R773 pin-don't-fold; the absence R1009 fixed proved the drift)",
+        "LOW: hello-row-dissect AT-vs-RPC flatten consistency test; dissect_row recursion-depth contract note"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: 7190 passed 0 failed",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0",
+        "cargo doc -p pinion-core: 0 new broken links (217 pre-existing unchanged)",
+        "boundary test reproduced the HIGH bug (col 7 px 56 -> col 6) then passed after the round fix",
+        "all 4 demos PASS (r1008 regression with the fix); 2 reviewers cleared focus-ring SSOT / px_to_cell placement / dissect_row peer / paint-AT-RPC sync / disclosure"
+      ],
+      "impact_refs": [
+        "5.41",
+        "5.27",
+        "5.13"
+      ],
+      "carry_forward_bullets": [
+        "dissect_row recursion is JSON-nesting bounded (serde_json parse limit 128); a depth-cap transducer is a follow-up for the first untrusted-deep source",
+        "a cross-crate named_key_str <-> key_str_from_event parity test has no shared test home (different platform enums); pinned via the W3C-canon doc cross-reference instead",
+        "Multi-pane per-pane viewport seam (R1006 extension, spec-level) + Model-View epub slice remain"
+      ],
+      "publishable_decision_summary": "R1011 session-review clearance (R1007-R1010): user 'textbook/SSOT/north-star?' audit = 2 independent adversarial reviewers + grep. Cleared 1 HIGH + 3 MED + 2 LOW, zero over-flags. HIGH: hello-grid-pointer frac_to_px floored the lossy f32 router fraction, mis-resolving 30+/80 column-boundary pixels into the previous cell (hit != paint, the introspection-from-paint failure); fix = round to recover the integer cursor pixel, with a boundary-sweep test that reproduced it first.",
+      "publishable_changes_bullets": [
+        "HIGH: hello-grid-pointer frac_to_px rounds the lossy f32 router fraction (was floor -> 30+/80 boundary pixels mis-resolved into the previous cell, hit != paint); + boundary-sweep test",
+        "MED: cell_metric module doc said px_to_cell still deferred (R1008 landed it) -> truthed; dissect_flat==flat_visible test now collapses a branch (its descend guard was untested)",
+        "MED: named_key_str doc pins the TUI peer key_str_from_event to the shared W3C canon (R773 pin-don't-fold; the absence R1009 fixed proved the drift)",
+        "LOW: hello-row-dissect AT-vs-RPC flatten consistency test; dissect_row recursion-depth contract note"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: 7190 passed 0 failed",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0",
+        "cargo doc -p pinion-core: 0 new broken links (217 pre-existing unchanged)",
+        "boundary test reproduced the HIGH bug (col 7 px 56 -> col 6) then passed after the round fix",
+        "all 4 demos PASS (r1008 regression with the fix); 2 reviewers cleared focus-ring SSOT / px_to_cell placement / dissect_row peer / paint-AT-RPC sync / disclosure"
+      ],
+      "publishable_impact_refs": [
+        "5.41",
+        "5.27",
+        "5.13"
+      ],
+      "publishable_carry_forward_bullets": [
+        "dissect_row recursion is JSON-nesting bounded (serde_json parse limit 128); a depth-cap transducer is a follow-up for the first untrusted-deep source",
+        "a cross-crate named_key_str <-> key_str_from_event parity test has no shared test home (different platform enums); pinned via the W3C-canon doc cross-reference instead",
+        "Multi-pane per-pane viewport seam (R1006 extension, spec-level) + Model-View epub slice remain"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

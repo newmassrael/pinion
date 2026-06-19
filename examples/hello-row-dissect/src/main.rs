@@ -512,6 +512,34 @@ mod tests {
     }
 
     #[test]
+    fn at_tree_flatten_matches_the_rpc_node_list() {
+        // R1011 — two flatteners feed introspection: the a11y `tree` flattens
+        // `to_tree_items(...)` (DissectNode → TreeItem), the RPC node list
+        // flattens the DissectNodes directly. They must report the SAME visible
+        // rows or the AT announces a different structure than `scene/query`. A
+        // bug in `to_tree_items` (e.g. dropping `expanded` on a branch) would
+        // desync them with no other failing test.
+        Owner::new().run(|| {
+            let state = use_dissection();
+            state.select(Some(0));
+            let tree = state.tree();
+            let at = flat_visible(&to_tree_items(&tree)); // the a11y path
+            let rpc = state.flat(); // the scene/query path
+            assert_eq!(at.len(), rpc.len(), "AT rows == RPC rows");
+            for (a, r) in at.iter().zip(rpc.iter()) {
+                assert_eq!(a.id, r.path, "AT tag == RPC path");
+                assert_eq!(a.depth, r.depth, "same depth");
+                assert_eq!(a.has_children, r.has_children, "same branch-ness");
+                assert_eq!(a.expanded, r.expanded, "same expand state");
+            }
+            // Collapse a branch and re-check (the descend path differs).
+            state.toggle_path("headers");
+            let at2 = flat_visible(&to_tree_items(&state.tree()));
+            assert_eq!(at2.len(), state.flat().len(), "AT == RPC after a collapse");
+        });
+    }
+
+    #[test]
     fn row_summary_reads_method_url_status() {
         assert_eq!(row_summary(&rows()[1]), "POST /api/login  \u{2192} 401");
     }

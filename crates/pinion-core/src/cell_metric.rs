@@ -31,10 +31,11 @@
 //! needs (negative scrolled-out coordinates) stays in the TUI paint
 //! adapter: the Vello backend clips in pixels and never needs it, so
 //! lifting it here would be a single-consumer abstraction. The unsigned
-//! pixel→cell *hit-test* (R1.8) is likewise deferred to the
-//! pointer-routing round that first consumes it — it is reintroduced
-//! there alongside its consumer rather than carried as unconsumed
-//! surface (the R972 substrate-ahead clearance).
+//! pixel→cell *hit-test* ([`CellMetric::px_to_cell`], R1.8) **landed in
+//! R1008** when its forcing consumer arrived — `hello-grid-pointer`'s
+//! pointer coordinator resolving a click to its `(col, row)` cell — sharing
+//! the `whole_cells` floor SSOT with the winsize `cols_for` / `rows_for` so
+//! a hit and the PTY dimensions can never round differently.
 //!
 //! [`CellMetric::DEFAULT`] is the behaviour-preserving 8×16 bitmap-font
 //! baseline (the exact value the pre-R968 `PIXEL_PER_CELL_*` constants

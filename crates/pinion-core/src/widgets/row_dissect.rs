@@ -238,6 +238,12 @@ fn dissect_node(name: &str, value: &Value, path: &str, depth: u32) -> DissectNod
 /// composite-tag / `path.<i>` wire. The peer of
 /// `pinion_widget_paint::devtools::scene_to_tree_item` for the Model/View data
 /// domain — that transduces a `Scene`, this a `serde_json::Value`.
+///
+/// Recursion depth follows the value's JSON nesting. `serde_json`'s parser caps
+/// nesting at its own `RECURSION_LIMIT` (128) for *parsed* input, so a `Value`
+/// from `from_str` is bounded; a consumer that programmatically builds a far
+/// deeper `Value` (well past any real packet/message detail) should pre-cap it
+/// — a depth-bounded transducer is a follow-up for the first such source.
 #[must_use]
 pub fn dissect_row(value: &Value) -> Vec<DissectNode> {
     match value {
@@ -731,17 +737,32 @@ mod tests {
     fn dissect_flat_agrees_with_flat_visible() {
         // The dissection's richer flatten must walk the same visible rows as
         // the generic tree-nav flatten (divergence would desync paint vs RPC).
-        let nodes = dissect_row(&request_row());
-        let rich = dissect_flat(&nodes);
-        let generic = flat_visible(&nodes);
-        assert_eq!(rich.len(), generic.len(), "same visible row count");
-        for (r, g) in rich.iter().zip(generic.iter()) {
-            assert_eq!(r.path, g.id, "path == id");
-            assert_eq!(r.name, g.label, "name == label");
-            assert_eq!(r.depth, g.depth);
-            assert_eq!(r.has_children, g.has_children);
-            assert_eq!(r.expanded, g.expanded);
+        // Checked both fully expanded AND with a branch collapsed, so the
+        // `&& n.expanded` descend guard in walk_flat is actually exercised — a
+        // fixture with only expanded branches would pass even if that guard were
+        // dropped.
+        fn assert_agrees(nodes: &[DissectNode]) {
+            let rich = dissect_flat(nodes);
+            let generic = flat_visible(nodes);
+            assert_eq!(rich.len(), generic.len(), "same visible row count");
+            for (r, g) in rich.iter().zip(generic.iter()) {
+                assert_eq!(r.path, g.id, "path == id");
+                assert_eq!(r.name, g.label, "name == label");
+                assert_eq!(r.depth, g.depth);
+                assert_eq!(r.has_children, g.has_children);
+                assert_eq!(r.expanded, g.expanded);
+            }
         }
+        let mut nodes = dissect_row(&request_row());
+        let full = dissect_flat(&nodes).len();
+        assert_agrees(&nodes);
+        // Collapse the headers branch and re-check: both flattens must drop its
+        // two children (the collapsed-descend path), and still agree.
+        let headers = nodes.iter_mut().find(|n| n.name == "headers").expect("headers branch");
+        assert!(headers.expanded && !headers.children.is_empty(), "headers is an expanded branch");
+        headers.set_expanded(false);
+        assert_eq!(dissect_flat(&nodes).len(), full - 2, "collapsing headers drops its 2 children");
+        assert_agrees(&nodes);
     }
 
     #[test]
