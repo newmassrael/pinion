@@ -1160,6 +1160,42 @@ impl Owner {
         );
     }
 
+    /// R1006 §5.23 §5.22 — the owner-scoped viewport-size
+    /// [`Signal`](super::signal::Signal): the view/effect-time "current layout
+    /// viewport `(width, height)`" carrier.
+    ///
+    /// Returns whatever the shell seeded via [`Self::provide_viewport_size`] at
+    /// boot, or a lazy default `Signal::new((0, 0))` ("viewport unknown") when
+    /// none was provided (headless / RPC / unit tests). Read in `view` / an
+    /// [`Effect`](super::effect::Effect) via
+    /// [`use_viewport_size`](super::viewport::use_viewport_size); the tracked
+    /// `get` re-fires a reflow Effect on size change. Same private-key +
+    /// lazy-default shape as [`Self::repaint_sink`]; unlike the repaint /
+    /// metrics capability slots this carries a *changing value*, so it is a
+    /// [`Signal`](super::signal::Signal) rather than a trait object.
+    #[must_use]
+    pub fn viewport_size_signal(&self) -> super::signal::Signal<(u32, u32)> {
+        self.cache::<super::viewport::ViewportSizeHolder, _>(
+            super::viewport::VIEWPORT_SIZE_KEY,
+            || super::viewport::ViewportSizeHolder(super::signal::Signal::new((0_u32, 0_u32))),
+        )
+        .0
+        .clone()
+    }
+
+    /// R1006 §5.23 §5.22 — seed the owner-scoped viewport-size
+    /// [`Signal`](super::signal::Signal). The shell calls this once at boot
+    /// **before** the binding factories / first `view` run, so the first
+    /// [`use_viewport_size`](super::viewport::use_viewport_size) read resolves
+    /// the shell's signal rather than the lazy `(0, 0)` default.
+    /// Idempotent-by-first-write (like every [`Self::cache`] slot).
+    pub fn provide_viewport_size(&self, signal: super::signal::Signal<(u32, u32)>) {
+        self.cache::<super::viewport::ViewportSizeHolder, _>(
+            super::viewport::VIEWPORT_SIZE_KEY,
+            move || super::viewport::ViewportSizeHolder(signal),
+        );
+    }
+
     /// R51.150 §5.22 — `true` when (`V`, `key`) has been populated by
     /// a previous [`Owner::cache::<V>`](Self::cache) call on this
     /// owner.

@@ -2360,6 +2360,18 @@ impl<V: WidgetView> ShellCore<V> {
         // R670.B 9-round honest carry on multi-window animation
         // compound is closed structurally here.
         self.core.tick_animations_for_window(window_key, dt);
+        // R1006 §5.23 §5.22 — publish the layout viewport to the binding
+        // BEFORE the view runs, so a reflow Effect (e.g. a PTY winsize ioctl)
+        // reacts and the view reads the post-reflow producer state on this same
+        // paint. Primary window only: the single root-seeded signal is shared,
+        // so a secondary paint must not overwrite the primary's size (R1006
+        // carry — per-window signal deferred). `set_viewport_size` wraps the
+        // write in `root_owner.run` (blocker B) and equality-skips a same-size
+        // repaint, so calling it every paint is cheap. The side-effect-free
+        // paint mirror (`_pure_internal`) deliberately omits this publish.
+        if window_key == pinion_runtime::DEFAULT_WINDOW {
+            self.core.set_viewport_size(w, h);
+        }
         let frame = Frame::with_dt(dt);
         let cached_state = *self.core.cached_state();
         // R51.146 §5.22 §5.16 — wrap the view fn in `root_owner.run(...)`.

@@ -14,6 +14,7 @@ pub mod resource;
 pub mod resource_cache;
 pub mod signal;
 pub mod simulation;
+pub mod viewport;
 
 pub use computed::Computed;
 pub use effect::Effect;
@@ -28,3 +29,4 @@ pub use resource::{
 pub use resource_cache::ResourceCache;
 pub use signal::Signal;
 pub use simulation::{is_simulating, SimulationGuard};
+pub use viewport::use_viewport_size;

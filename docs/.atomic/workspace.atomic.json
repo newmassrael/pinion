@@ -9303,6 +9303,62 @@
         "sprag-side companion (out of scope, sprag repo): TerminalSession::resize &mut->&self (emulator as dimensions SSOT); pure grid_dims(viewport,cell) helper; reflow Effect in create_extra_externals reading use_viewport_size()."
       ]
     },
+    "R1006.1": {
+      "decision_summary": "R1006.1 §5.23 §5.22 §6.3 §5.16: implement the R1006 view-time viewport-size seam — pinion-core use_viewport_size Signal seam + CoreShell (0,0)-seed/set_viewport_size + primary-gated paint publish; the 3 R1006 corrections encoded as the contract; 9 deterministic tests",
+      "changes_bullets": [
+        "pinion-core reactive/viewport.rs: use_viewport_size() hook (strict Owner::current().expect, mirror of use_repaint_sink) reading a root-seeded Signal<(u32,u32)>; ViewportSizeHolder owner-cache holder + VIEWPORT_SIZE_KEY; module doc encodes the 3 R1006 corrections.",
+        "Owner::provide_viewport_size + viewport_size_signal (owner-cache first-write-wins, lazy (0,0) default); reactive/mod.rs + lib.rs re-export use_viewport_size.",
+        "CoreShell: viewport_signal field seeded (0,0) at boot in new_with_repaint_sink (before factories, beside repaint/metrics); set_viewport_size(w,h) writes INSIDE root_owner.run (blocker B); viewport_size() read accessor.",
+        "pinion-shell substrate compute_paint_scene_internal: publish set_viewport_size(w,h) BEFORE the view runs, DEFAULT_WINDOW-gated (secondary paint must not clobber primary); the side-effect-free _pure_internal mirror omits it."
+      ],
+      "verification_bullets": [
+        "pinion-core 8 deterministic seam tests: default (0,0); provided/shared handle; first-write-wins; use_viewport_size in Owner scope; Effect re-fires on set inside owner scope; set-outside-owner-scope panics (blocker B, should_panic); set-during-SimulationGuard does not re-fire (correction 3); same-size set inert (equality-skip).",
+        "pinion-runtime 1 wire test: CoreShell boot (0,0) -> set_viewport_size drives a use_viewport_size reflow Effect through root_owner (no panic), equality-skip on a duplicate size, two distinct sizes -> two re-fires.",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): 0 (fixed one HiDPI doc-backtick).",
+        "cargo test --workspace -j2: 7153 passed / 0 failed / 38 ignored, real cargo exit 0 (re-run without a pipe after an initial tail-masked false-green per the R934 lesson).",
+        "mnemosyne validate-workspace clean: impact_refs cite only existing sections (5.23/5.22/6.3/5.16), no new cross-ref orphan introduced."
+      ],
+      "impact_refs": [
+        "5.23",
+        "5.22",
+        "6.3",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "Real consumer (sprag-gui resize -> PTY winsize reflow Effect reading use_viewport_size) stays out of scope (sprag repo); the pinion seam is now delivered.",
+        "Per-window viewport signal deferred: the single root-seeded signal is primary-only, a secondary window reads the primary's size (RepaintScope precedent) until a multi-window viewport consumer.",
+        "TUI paint path does not publish; use_viewport_size returns (0,0) there. Wire pinion-tui when a TUI viewport consumer appears.",
+        "Open nit: WindowEvent::Resized arm calls renderer.resize only, no request_redraw (app.rs:1681-1690) -> reflow may lag a frame on compositors that do not auto-send RedrawRequested.",
+        "HiDPI logical-px layout is a separate prior gap; the seam publishes the layout viewport so it auto-follows when that lands."
+      ],
+      "publishable_decision_summary": "R1006.1 §5.23 §5.22 §6.3 §5.16: implement the R1006 view-time viewport-size seam — pinion-core use_viewport_size Signal seam + CoreShell (0,0)-seed/set_viewport_size + primary-gated paint publish; the 3 R1006 corrections encoded as the contract; 9 deterministic tests",
+      "publishable_changes_bullets": [
+        "pinion-core reactive/viewport.rs: use_viewport_size() hook (strict Owner::current().expect, mirror of use_repaint_sink) reading a root-seeded Signal<(u32,u32)>; ViewportSizeHolder owner-cache holder + VIEWPORT_SIZE_KEY; module doc encodes the 3 R1006 corrections.",
+        "Owner::provide_viewport_size + viewport_size_signal (owner-cache first-write-wins, lazy (0,0) default); reactive/mod.rs + lib.rs re-export use_viewport_size.",
+        "CoreShell: viewport_signal field seeded (0,0) at boot in new_with_repaint_sink (before factories, beside repaint/metrics); set_viewport_size(w,h) writes INSIDE root_owner.run (blocker B); viewport_size() read accessor.",
+        "pinion-shell substrate compute_paint_scene_internal: publish set_viewport_size(w,h) BEFORE the view runs, DEFAULT_WINDOW-gated (secondary paint must not clobber primary); the side-effect-free _pure_internal mirror omits it."
+      ],
+      "publishable_verification_bullets": [
+        "pinion-core 8 deterministic seam tests: default (0,0); provided/shared handle; first-write-wins; use_viewport_size in Owner scope; Effect re-fires on set inside owner scope; set-outside-owner-scope panics (blocker B, should_panic); set-during-SimulationGuard does not re-fire (correction 3); same-size set inert (equality-skip).",
+        "pinion-runtime 1 wire test: CoreShell boot (0,0) -> set_viewport_size drives a use_viewport_size reflow Effect through root_owner (no panic), equality-skip on a duplicate size, two distinct sizes -> two re-fires.",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): 0 (fixed one HiDPI doc-backtick).",
+        "cargo test --workspace -j2: 7153 passed / 0 failed / 38 ignored, real cargo exit 0 (re-run without a pipe after an initial tail-masked false-green per the R934 lesson).",
+        "mnemosyne validate-workspace clean: impact_refs cite only existing sections (5.23/5.22/6.3/5.16), no new cross-ref orphan introduced."
+      ],
+      "publishable_impact_refs": [
+        "5.23",
+        "5.22",
+        "6.3",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Real consumer (sprag-gui resize -> PTY winsize reflow Effect reading use_viewport_size) stays out of scope (sprag repo); the pinion seam is now delivered.",
+        "Per-window viewport signal deferred: the single root-seeded signal is primary-only, a secondary window reads the primary's size (RepaintScope precedent) until a multi-window viewport consumer.",
+        "TUI paint path does not publish; use_viewport_size returns (0,0) there. Wire pinion-tui when a TUI viewport consumer appears.",
+        "Open nit: WindowEvent::Resized arm calls renderer.resize only, no request_redraw (app.rs:1681-1690) -> reflow may lag a frame on compositors that do not auto-send RedrawRequested.",
+        "HiDPI logical-px layout is a separate prior gap; the seam publishes the layout viewport so it auto-follows when that lands."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

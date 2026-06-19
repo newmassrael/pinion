@@ -194,6 +194,22 @@ pub struct CoreShell<V: WidgetCore> {
     /// [`Self::frame_signal`] (read side) for application observers.
     frame_signal: Signal<u64>,
 
+    /// R1006 §5.23 §5.22 — the layout viewport `(width, height)` carrier
+    /// seeded onto [`Self::root_owner`] so a binding can read it at
+    /// view/effect-time via
+    /// [`use_viewport_size`](pinion_core::use_viewport_size). The shell
+    /// writes it every primary-window paint
+    /// ([`Self::set_viewport_size`], called from the paint substrate),
+    /// gated to the primary window; secondary windows read the primary's
+    /// value until a per-window signal lands (R1006 carry).
+    ///
+    /// Seeded `(0, 0)` at boot — the honest "viewport unknown" value
+    /// before the window is `resumed`. A reflow consumer skips on
+    /// `(0, 0)` to avoid a spurious `1 x 1` reflow on its eager first
+    /// run. The write goes through `root_owner.run` (R1006 blocker B) so
+    /// a synchronous reflow-Effect re-run resolves `Owner::current`.
+    viewport_signal: Signal<(u32, u32)>,
+
     /// R51.149 §5.28 — most-recent `dt` value (seconds) captured
     /// before [`Self::frame_signal`] is bumped. The
     /// [`Self::_animation_driver`] Effect reads this inside its
@@ -472,6 +488,14 @@ impl<V: WidgetCore> CoreShell<V> {
         root_owner.provide_monospace_metrics(std::rc::Rc::new(
             pinion_text::LayoutCacheMonospaceMetrics::new(),
         ));
+        // R1006 §5.23 §5.22 — seed the viewport-size Signal before the
+        // factories / first `view`, so the first `use_viewport_size()` read
+        // resolves the shell's signal rather than the lazy `(0, 0)` default.
+        // `(0, 0)` is the honest boot value: the window is not yet `resumed`,
+        // so its size is unknown; `set_viewport_size` writes the real size on
+        // the first paint.
+        let viewport_signal = Signal::new((0_u32, 0_u32));
+        root_owner.provide_viewport_size(viewport_signal.clone());
         // (R55.D.5 §5.45) Compose the state-scene root.
         //
         // Default (single-External binding, the entire example
@@ -575,6 +599,7 @@ impl<V: WidgetCore> CoreShell<V> {
             intent_queue: IntentQueue::new(),
             root_owner,
             frame_signal,
+            viewport_signal,
             last_dt,
             next_frame_count: Cell::new(1_u64),
             _animation_driver: animation_driver,
@@ -1246,6 +1271,37 @@ impl<V: WidgetCore> CoreShell<V> {
     #[must_use]
     pub fn frame_signal(&self) -> &Signal<u64> {
         &self.frame_signal
+    }
+
+    /// R1006 §5.23 §5.22 — publish the current layout viewport
+    /// `(width, height)` so a binding reading
+    /// [`use_viewport_size`](pinion_core::use_viewport_size) re-derives
+    /// `(cols, rows) = viewport / cell` and a reflow
+    /// [`Effect`](pinion_core::Effect) fires. The paint substrate calls
+    /// this every primary-window paint with the same `(w, h)` it feeds
+    /// `compute_layout`.
+    ///
+    /// The write runs **inside [`Self::root_owner`]'s scope** (R1006
+    /// blocker B): a [`Signal::set`](pinion_core::Signal) synchronously
+    /// re-runs subscribed Effects, and a reflow Effect body resolves
+    /// [`Owner::current`](pinion_core::Owner::current) — which reads the
+    /// owner-handle stack the subscriber-stack re-run does not push.
+    /// Setting outside the scope would panic the first resize in
+    /// `use_viewport_size`'s `expect`. [`Signal::set`]'s equality-skip
+    /// makes a same-size repaint inert (no Effect re-fire), so calling
+    /// this every paint is cheap.
+    pub fn set_viewport_size(&self, width: u32, height: u32) {
+        self.root_owner
+            .run(|| self.viewport_signal.set((width, height)));
+    }
+
+    /// R1006 §5.23 §5.22 — current published layout viewport
+    /// `(width, height)`; `(0, 0)` before the first paint ("viewport
+    /// unknown"). Read accessor for backends / tests; bindings read it
+    /// reactively via [`use_viewport_size`](pinion_core::use_viewport_size).
+    #[must_use]
+    pub fn viewport_size(&self) -> (u32, u32) {
+        self.viewport_signal.get()
     }
 
     /// R51.147 §5.28 — `true` when any animation registered on this
@@ -2273,6 +2329,42 @@ mod tests {
         let a: CoreShell<TestButton> = CoreShell::default();
         let b: CoreShell<TestButton> = CoreShell::new();
         assert_eq!(a.cached_state(), b.cached_state());
+    }
+
+    #[test]
+    fn set_viewport_size_drives_reflow_effect_through_root_owner() {
+        // R1006 §5.23 §5.22 — the runtime wire end-to-end: the shell seeds
+        // the viewport signal at boot, and `set_viewport_size` (wrapping the
+        // write in `root_owner.run`, blocker B) re-fires a reflow Effect that
+        // reads `use_viewport_size` with no `Owner::current` panic. Also
+        // covers equality-skip (a same-size publish is inert) and the boot
+        // "viewport unknown" `(0, 0)` seed.
+        use pinion_core::{use_viewport_size, Effect, Owner};
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        let core: CoreShell<TestButton> = CoreShell::new();
+        assert_eq!(core.viewport_size(), (0, 0), "boot seed is viewport-unknown");
+
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let seen_c = Rc::clone(&seen);
+        let _eff = core.root_owner().run(|| {
+            Effect::new(&Owner::current().expect("root scope"), move || {
+                seen_c.borrow_mut().push(use_viewport_size());
+            })
+        });
+        assert_eq!(seen.borrow().as_slice(), &[(0, 0)], "eager run sees the seed");
+
+        core.set_viewport_size(800, 600);
+        core.set_viewport_size(800, 600); // same size -> equality-skip, no re-fire
+        core.set_viewport_size(1024, 768);
+
+        assert_eq!(core.viewport_size(), (1024, 768));
+        assert_eq!(
+            seen.borrow().as_slice(),
+            &[(0, 0), (800, 600), (1024, 768)],
+            "reflow Effect re-fires once per distinct size, never panics"
+        );
     }
 
     #[test]
