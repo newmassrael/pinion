@@ -72,6 +72,10 @@ struct GridPointerExternal {
     rows: u16,
     /// The cell under the pointer, or `None` before the first move.
     cell: Option<(u16, u16)>,
+    /// The last key the binding's `apply_key` forwarded (R1009): the W3C
+    /// `KeyboardEvent.key` string a terminal pane would encode for its PTY.
+    /// `None` before any key.
+    last_key: Option<String>,
 }
 
 impl GridPointerExternal {
@@ -83,6 +87,7 @@ impl GridPointerExternal {
             cols: metric.cols_for(width_px),
             rows: metric.rows_for(height_px),
             cell: None,
+            last_key: None,
         }
     }
 
@@ -114,6 +119,10 @@ impl GridPointerExternal {
             Some((c, r)) => IntrospectValue::Text(format!("{c},{r}")),
             None => IntrospectValue::Text("none".to_owned()),
         }
+    }
+
+    fn last_key_text(&self) -> IntrospectValue {
+        IntrospectValue::Text(self.last_key.clone().unwrap_or_else(|| "none".to_owned()))
     }
 }
 
@@ -166,6 +175,10 @@ impl ExternalIntrospect for GridPointerExternal {
             ("cols", "int"),
             ("rows", "int"),
             ("cell_at", "string"),
+            // R1009 — the last key apply_key forwarded (read) + the record
+            // channel apply_key writes through (invoke).
+            ("last_key", "string"),
+            ("key", "string"),
         ])
     }
 
@@ -182,13 +195,16 @@ impl ExternalIntrospect for GridPointerExternal {
             ),
             "cols" => Some(IntrospectValue::Int(i64::from(self.cols))),
             "rows" => Some(IntrospectValue::Int(i64::from(self.rows))),
+            "last_key" => Some(self.last_key_text()),
             _ => None,
         }
     }
 
     fn intervene(&mut self, path: &str, _value: IntrospectValue) -> Result<(), InterveneError> {
         match path {
-            "cell" | "cell_col" | "cell_row" | "cols" | "rows" => Err(InterveneError::ReadOnly),
+            "cell" | "cell_col" | "cell_row" | "cols" | "rows" | "last_key" => {
+                Err(InterveneError::ReadOnly)
+            }
             _ => Err(InterveneError::UnknownPath),
         }
     }
@@ -203,6 +219,16 @@ impl ExternalIntrospect for GridPointerExternal {
                     let (px_x, px_y) = parse_xy(s).ok_or(InvokeError::TypeMismatch)?;
                     let (col, row) = self.cell_at_px(px_x, px_y);
                     Ok(IntrospectValue::Text(format!("{col},{row}")))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            // R1009 — the apply_key record channel: the binding forwards every
+            // key it receives here, so an AI client reads the last key (and the
+            // winit→named_key_str path now delivers Backspace/Delete/F1-F12).
+            "key" => match args {
+                IntrospectValue::Text(k) => {
+                    self.last_key = Some(k.clone());
+                    Ok(IntrospectValue::Text(k))
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
@@ -301,8 +327,33 @@ impl WidgetCore for GridPointerView {
         "__internal__"
     }
 
+    /// R1009 §5.13 — a content-surface terminal pane: while focused it consumes
+    /// every key the shell forwards (a real terminal hands them all to its
+    /// child), recording the W3C string a sprag pane would encode for its PTY.
+    /// The R1009 `named_key_str` widening is what makes Backspace / Delete /
+    /// Insert / F1-F12 reach here on the winit path (the RPC path always did).
+    fn apply_key(
+        scene: &mut Scene,
+        focused: Option<&str>,
+        key: &str,
+        _modifiers: pinion_core::Modifiers,
+    ) -> bool {
+        if focused != Some(ROOT_TAG) {
+            return false;
+        }
+        let Scene::External(node) = scene else {
+            return false;
+        };
+        let Some(intro) = node.handle.introspect_mut() else {
+            return false;
+        };
+        let _ = intro.invoke("key", IntrospectValue::Text(key.to_owned()));
+        true
+    }
+
+    /// The pane is a single focus stop so the shell routes keys to it.
     fn focusable_tags() -> Vec<&'static str> {
-        Vec::new()
+        vec![ROOT_TAG]
     }
 
     fn title() -> &'static str {
@@ -414,6 +465,20 @@ mod tests {
     fn intervene_guards_readonly() {
         let mut e = ext();
         assert_eq!(e.intervene("cell", IntrospectValue::Text("1,1".into())), Err(InterveneError::ReadOnly));
+        assert_eq!(e.intervene("last_key", IntrospectValue::Text("x".into())), Err(InterveneError::ReadOnly));
         assert_eq!(e.intervene("nope", IntrospectValue::Null), Err(InterveneError::UnknownPath));
+    }
+
+    #[test]
+    fn key_invoke_records_the_last_forwarded_key() {
+        let mut e = ext();
+        assert_eq!(e.query("last_key"), Some(IntrospectValue::Text("none".into())), "no key yet");
+        // The editing + function keys R1009 added to named_key_str arrive here
+        // as their W3C strings (the binding's apply_key forwards them).
+        e.invoke("key", IntrospectValue::Text("Backspace".into())).unwrap();
+        assert_eq!(e.query("last_key"), Some(IntrospectValue::Text("Backspace".into())));
+        e.invoke("key", IntrospectValue::Text("F5".into())).unwrap();
+        assert_eq!(e.query("last_key"), Some(IntrospectValue::Text("F5".into())));
+        assert_eq!(e.invoke("key", IntrospectValue::Int(3)), Err(InvokeError::TypeMismatch));
     }
 }

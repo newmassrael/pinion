@@ -9513,6 +9513,58 @@
         "Multi-pane mouse + the per-pane viewport seam (R1009) remain; the mouse-report byte encoding is sprag-owned"
       ]
     },
+    "R1009": {
+      "decision_summary": "R1009 PR-2 augment: content-surface named-key vocabulary. named_key_str (winit NamedKey -> W3C KeyboardEvent.key bridge) widens from ~10 keys to include the editing (Backspace/Delete/Insert) + function (F1-F12) keys a terminal forwards to its PTY; device/media keys stay None. Fixes the winit-path drop that blocked sprag-gui R27 interactive terminal editing.",
+      "changes_bullets": [
+        "Widen pinion-shell named_key_str: add Backspace/Delete/Insert + F1-F12 (W3C KeyboardEvent.key names)",
+        "Device/media/browser keys stay None (no widget meaning); Escape/Tab still filtered upstream (offer-first arms)",
+        "Fix misattributed named_key_str doc (sat above instant_delta_us) + de-link private crate::named_key_str in substrate.rs",
+        "Extend hello-grid-pointer into a focusable terminal pane: apply_key records the forwarded key (last_key RPC)",
+        "New demo tools/demos/r1009_named_keys.py: focus + editing/function/nav keys reach apply_key",
+        "Decision: option (a) curated-expansion of the editing+function vocab, not an opt-in hint"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: 7187 passed 0 failed",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0",
+        "cargo doc -p pinion-shell: 0 new broken links from R1009 (fixed 1 pre-existing; 72 pre-existing remain)",
+        "r1009 demo PASS deterministic x3 + r1008 regression PASS",
+        "5 named_key_str winit-bridge unit tests + 8 example unit tests"
+      ],
+      "impact_refs": [
+        "5.13",
+        "5.35"
+      ],
+      "carry_forward_bullets": [
+        "RPC scene/key bypasses named_key_str (routes to handle_named_key) so the winit-path fix is unit-tested, the demo covers the apply_key consumer half",
+        "F13-F24 / keypad / IME-range keys deferred until a consumer needs them (sprag covers F1-F12)",
+        "PR-7 focus-ring opt-out (the now-focusable pane draws a ring) + multi-pane viewport seam (R1006 per-pane) remain"
+      ],
+      "publishable_decision_summary": "R1009 PR-2 augment: content-surface named-key vocabulary. named_key_str (winit NamedKey -> W3C KeyboardEvent.key bridge) widens from ~10 keys to include the editing (Backspace/Delete/Insert) + function (F1-F12) keys a terminal forwards to its PTY; device/media keys stay None. Fixes the winit-path drop that blocked sprag-gui R27 interactive terminal editing.",
+      "publishable_changes_bullets": [
+        "Widen pinion-shell named_key_str: add Backspace/Delete/Insert + F1-F12 (W3C KeyboardEvent.key names)",
+        "Device/media/browser keys stay None (no widget meaning); Escape/Tab still filtered upstream (offer-first arms)",
+        "Fix misattributed named_key_str doc (sat above instant_delta_us) + de-link private crate::named_key_str in substrate.rs",
+        "Extend hello-grid-pointer into a focusable terminal pane: apply_key records the forwarded key (last_key RPC)",
+        "New demo tools/demos/r1009_named_keys.py: focus + editing/function/nav keys reach apply_key",
+        "Decision: option (a) curated-expansion of the editing+function vocab, not an opt-in hint"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: 7187 passed 0 failed",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0",
+        "cargo doc -p pinion-shell: 0 new broken links from R1009 (fixed 1 pre-existing; 72 pre-existing remain)",
+        "r1009 demo PASS deterministic x3 + r1008 regression PASS",
+        "5 named_key_str winit-bridge unit tests + 8 example unit tests"
+      ],
+      "publishable_impact_refs": [
+        "5.13",
+        "5.35"
+      ],
+      "publishable_carry_forward_bullets": [
+        "RPC scene/key bypasses named_key_str (routes to handle_named_key) so the winit-path fix is unit-tested, the demo covers the apply_key consumer half",
+        "F13-F24 / keypad / IME-range keys deferred until a consumer needs them (sprag covers F1-F12)",
+        "PR-7 focus-ring opt-out (the now-focusable pane draws a ring) + multi-pane viewport seam (R1006 per-pane) remain"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

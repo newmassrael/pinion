@@ -1414,8 +1414,8 @@ impl<V: WidgetView> ShellCore<V> {
     ///
     /// `AppShell::handle_key_press` (winit-side) maps the winit
     /// `NamedKey` enum to the W3C `KeyboardEvent.key` string via
-    /// [`crate::named_key_str`] and forwards the resulting
-    /// `&'static str` here. The substrate routes through
+    /// the module-private `named_key_str` bridge and forwards the
+    /// resulting `&'static str` here. The substrate routes through
     /// [`Self::apply_key`]; widgets match on the W3C string in their
     /// `apply_key` impls.
     ///

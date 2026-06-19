@@ -1854,20 +1854,6 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
 }
 
 
-/// R51.37 §5.35 — bridge from winit's [`NamedKey`] enum to the
-/// W3C-aligned `KeyboardEvent.key` strings the
-/// [`WidgetView::apply_key`] contract speaks. Only the keys with
-/// established cross-platform widget meanings are surfaced;
-/// `NamedKey::Escape` is filtered upstream (shell-reserved quit),
-/// `NamedKey::Tab` is filtered upstream (R51.53 §5.39 `FocusManager`
-/// swallow), and unmapped variants return `None` so the shell stays
-/// silent on keys no widget cares about. The ASCII / W3C names match
-/// the strings Material / `SwiftUI` / Qt / W3C ARIA Slider authoring
-/// patterns specify, so a widget implementation can match against
-/// the same identifiers a browser-side application would consume.
-///
-/// R51.92.1 §5.40 — module-local helper (sole caller is
-/// [`AppShell::handle_key_press`] above).
 /// R907 §5.16 §5.7 — microseconds elapsed between two `Instant`s for
 /// the frame-timing profiler, saturating to `u64::MAX`.
 /// `saturating_duration_since` guards the (monotonic-clock-impossible)
@@ -1878,6 +1864,28 @@ fn instant_delta_us(start: Instant, end: Instant) -> u64 {
     u64::try_from(end.saturating_duration_since(start).as_micros()).unwrap_or(u64::MAX)
 }
 
+/// R51.37 §5.35 R1009 §5.13 — bridge from winit's [`NamedKey`] enum to the
+/// W3C-aligned `KeyboardEvent.key` strings the
+/// [`WidgetView::apply_key`](crate::WidgetView) contract speaks.
+///
+/// Surfaces the keys with an established cross-platform **widget** meaning:
+/// navigation (arrows / Home / End / Page), activation (Enter / Space), the
+/// **editing** keys (Backspace / Delete / Insert) and the **function** row
+/// (F1–F12). R1009 added the editing + function keys for the content-surface
+/// consumer — a terminal / code-editor / canvas forwards every one of them to
+/// its child (sprag's PTY pane is the forcing case); the earlier curation
+/// dropped them as "no widget cares", which is true only of the device-control
+/// keys (`Browser*` / `Media*` / `Launch*` / `Audio*`). Those stay `None`: no
+/// widget interprets them, and one that did would key off `apply_key` returning
+/// `false` either way, so surfacing them buys nothing.
+///
+/// `NamedKey::Escape` / `NamedKey::Tab` are filtered **upstream** of this
+/// bridge (the shell-reserved quit / `FocusManager` traverse arms in
+/// [`AppShell::handle_key_press`] offer them to the focused widget first), so
+/// they intentionally return `None` here.
+///
+/// R51.92.1 §5.40 — module-local helper (sole caller is
+/// [`AppShell::handle_key_press`] above).
 fn named_key_str(named: NamedKey) -> Option<&'static str> {
     match named {
         NamedKey::ArrowLeft => Some("ArrowLeft"),
@@ -1890,6 +1898,25 @@ fn named_key_str(named: NamedKey) -> Option<&'static str> {
         NamedKey::PageDown => Some("PageDown"),
         NamedKey::Enter => Some("Enter"),
         NamedKey::Space => Some("Space"),
+        // R1009 §5.13 — editing keys: a content-surface widget forwards these to
+        // its child (Backspace = 0x7f, Delete = ESC[3~ in a PTY).
+        NamedKey::Backspace => Some("Backspace"),
+        NamedKey::Delete => Some("Delete"),
+        NamedKey::Insert => Some("Insert"),
+        // R1009 §5.13 — the function row F1–F12 (each an xterm escape). winit
+        // also exposes F13–F35, left out until a consumer needs them.
+        NamedKey::F1 => Some("F1"),
+        NamedKey::F2 => Some("F2"),
+        NamedKey::F3 => Some("F3"),
+        NamedKey::F4 => Some("F4"),
+        NamedKey::F5 => Some("F5"),
+        NamedKey::F6 => Some("F6"),
+        NamedKey::F7 => Some("F7"),
+        NamedKey::F8 => Some("F8"),
+        NamedKey::F9 => Some("F9"),
+        NamedKey::F10 => Some("F10"),
+        NamedKey::F11 => Some("F11"),
+        NamedKey::F12 => Some("F12"),
         _ => None,
     }
 }
@@ -2295,6 +2322,75 @@ mod r56_2_a_winit_ime_mapping_tests {
             ],
         );
         assert!(!state);
+    }
+}
+
+#[cfg(test)]
+mod r1009_named_key_str_tests {
+    //! R1009 §5.13 — `named_key_str` content-surface vocabulary regression.
+    //! The winit `NamedKey` → W3C `KeyboardEvent.key` bridge is a pure table
+    //! (no `EventLoop` needed, the `winit_ime_to_composition` precedent), so the
+    //! editing + function keys a terminal forwards to its PTY are pinned here
+    //! directly — the winit-path half the RPC `scene/key` plane bypasses.
+
+    use super::named_key_str;
+    use winit::keyboard::NamedKey;
+
+    #[test]
+    fn editing_keys_surface_their_w3c_names() {
+        // R1009 — the forcing case: a content-surface widget (sprag's PTY pane)
+        // must receive these; before R1009 they were dropped at the shell.
+        assert_eq!(named_key_str(NamedKey::Backspace), Some("Backspace"));
+        assert_eq!(named_key_str(NamedKey::Delete), Some("Delete"));
+        assert_eq!(named_key_str(NamedKey::Insert), Some("Insert"));
+    }
+
+    #[test]
+    fn function_row_f1_to_f12_surfaces() {
+        let row = [
+            (NamedKey::F1, "F1"),
+            (NamedKey::F2, "F2"),
+            (NamedKey::F3, "F3"),
+            (NamedKey::F4, "F4"),
+            (NamedKey::F5, "F5"),
+            (NamedKey::F6, "F6"),
+            (NamedKey::F7, "F7"),
+            (NamedKey::F8, "F8"),
+            (NamedKey::F9, "F9"),
+            (NamedKey::F10, "F10"),
+            (NamedKey::F11, "F11"),
+            (NamedKey::F12, "F12"),
+        ];
+        for (key, name) in row {
+            assert_eq!(named_key_str(key), Some(name), "{name} surfaces");
+        }
+    }
+
+    #[test]
+    fn navigation_and_activation_baseline_unchanged() {
+        // The R51.37 baseline is byte-identical for existing widgets.
+        assert_eq!(named_key_str(NamedKey::ArrowDown), Some("ArrowDown"));
+        assert_eq!(named_key_str(NamedKey::Home), Some("Home"));
+        assert_eq!(named_key_str(NamedKey::PageUp), Some("PageUp"));
+        assert_eq!(named_key_str(NamedKey::Enter), Some("Enter"));
+        assert_eq!(named_key_str(NamedKey::Space), Some("Space"));
+    }
+
+    #[test]
+    fn escape_and_tab_stay_none_filtered_upstream() {
+        // Escape / Tab are offered to the focused widget by the dedicated arms
+        // in handle_key_press, so the bridge deliberately does NOT surface them.
+        assert_eq!(named_key_str(NamedKey::Escape), None);
+        assert_eq!(named_key_str(NamedKey::Tab), None);
+    }
+
+    #[test]
+    fn device_control_keys_stay_none() {
+        // The curation boundary: media / browser / launch keys have no widget
+        // meaning, so they stay unsurfaced (the doc's premise, correct here).
+        assert_eq!(named_key_str(NamedKey::MediaPlayPause), None);
+        assert_eq!(named_key_str(NamedKey::BrowserBack), None);
+        assert_eq!(named_key_str(NamedKey::AudioVolumeUp), None);
     }
 }
 
