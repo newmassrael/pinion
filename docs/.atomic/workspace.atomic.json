@@ -9663,6 +9663,68 @@
         "Multi-pane per-pane viewport seam (R1006 extension, spec-level) + Model-View epub slice remain"
       ]
     },
+    "R1012": {
+      "decision_summary": "R1012 §5.23 §5.22 §6.3 §5.16: per-pane viewport seam (splitter-sized pane -> producer reflow) — SPEC SEED only (design ratified + source-verified, no code); extends the R1006 window seam to N tagged Container panes; post-layout sibling using the R774 measured-viewport same-frame re-pass",
+      "changes_bullets": [
+        "SPEC SEED only — no code this round; records the requirement + ratified design + source-verified gaps for a future implementing round (design-only shape like R1006 / spec-phase round-14/15). Extends the R1006 window seam to per-pane. sprag multi-pane intake.",
+        "Requirement: each pane (a tagged Scene::Container holding a TextGrid) must read its OWN measured pixel rect at view/effect-time to derive (cols,rows)=rect/cell and drive a per-pane producer reflow (PTY TIOCSWINSZ) that changes on splitter drag — the per-pane leg of the winsize SSOT producer-adoption.",
+        "Key asymmetry vs R1006: a window size is OS-known PRE-view (R1006 publishes before V::view at substrate.rs:2388), but a pane rect is layout-derived POST-view (known only after compute_layout). So the per-pane publish is post-layout — architecturally the R774 ScrollState::measured_viewport AutoSizer leg (scroll.rs:79-104), NOT the R1006 pre-view publish.",
+        "Ratified design: a tag-keyed owner-cache registry (PaneViewportRegistry holder = RefCell<BTreeMap<Cow<'static,str>, Signal<(u32,u32)>>>, mirror of ViewportSizeHolder) + use_pane_viewport_size(tag) (get-or-insert the pane's Signal, tracked get, strict Owner::current like use_viewport_size) + a shell publish that, after the final layout, resolves each registered tag's rect via Scene::rect_for_tag_absolute (scene.rs:820) and sets (w,h).",
+        "First-paint chicken-and-egg: the publish returns a pane-dirty bit reusing the existing scroll-dirty same-frame re-pass (substrate.rs:2450) so the re-run view reads post-reflow producer state on the same paint — if scroll_dirty || pane_dirty { re-view + re-layout }, idempotent via Signal equality-skip; absent tag (torn-off pane) => skip (retain last), only measured rects publish.",
+        "Contract inherited from R1006: set INSIDE root_owner.run (blocker B); (0,0)=pane-unknown sentinel => consumer skips a spurious 1x1 reflow; primary-window gate (DEFAULT_WINDOW — panes live in the primary window); introspection paint (_pure_internal / RPC produce) does NOT publish.",
+        "Sibling-not-unified: R1006 (window / pre-view / 1 global signal) and R1012 (pane / post-layout / N tag-keyed signals) stay distinct primitives — different timing + cardinality; folding window into post-layout would regress R1006's same-paint pre-reflow. use_viewport_size stays unchanged.",
+        "Forcing consumer (impl round): extend hello-dock-panels with TextGrid panes whose winsize tracks the splitter ratio (Splitter + ExtraExternal + Owner::cache ratio reuse); real consumer = sprag-gui multi-pane terminals (sprag repo, out of scope here)."
+      ],
+      "verification_bullets": [
+        "Verified pre-view vs post-layout split in source: R1006 set_viewport_size runs before V::view (substrate.rs:2388 then 2430); R774 ScrollState::measured_viewport is written by the layout pass post-view and read back via Signal with the scroll-dirty re-pass (scroll.rs:79-104, substrate.rs:2434-2456) — confirms per-pane is the post-layout leg, not a parametrized R1006.",
+        "Verified the readback exists: Scene::rect_for_tag_absolute(&str)->Option<Rect> (scene.rs:820) returns the post-layout resolved rect of a tagged node, and ContainerNode.tag + with_tag carry the pane id (scene.rs:1870-1940). Only w/h is consumed, so the absolute offset is irrelevant for winsize.",
+        "Verified the consumer math is reusable: CellMetric::cols_for / rows_for (cell_metric.rs:146,156) already derive (cols,rows) from a pixel extent with the same whole_cells floor SSOT as px_to_cell (R1008, cell_metric.rs:131) — the rect->winsize step is unchanged.",
+        "Verified genuinely-new substrate: no per-Container reactive size slot exists today — only window-level use_viewport_size (R1006) and ScrollState-bound measured_viewport (R774); the tag-keyed registry is new, not a duplicate (grep of crates/pinion-core/src/reactive + widgets).",
+        "Verified blocker-B (R1006) applies unchanged: the per-pane reflow Effect reads use_pane_viewport_size in an Effect; Signal::set re-runs it synchronously, so the publish must set inside root_owner.run or Owner::current().expect panics (effect.rs run_with_node pushes CURRENT_OWNER only) — same failure mode the R1006 module doc encodes.",
+        "SPEC SEED gate: no code landed; validate-workspace T1=0 expected (entries 999->1000, one new changelog row, no new orphan ref); cargo build/test/clippy unaffected (no source touched)."
+      ],
+      "impact_refs": [
+        "5.23",
+        "5.22",
+        "6.3",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "Impl round (R1012.1): pinion-core reactive/pane_viewport.rs (PaneViewportRegistry holder + use_pane_viewport_size) + Owner provide/registry accessor + shell post-layout publish + pane-dirty fold into the scroll-dirty re-pass + hello-dock-panels TextGrid-pane forcing consumer + deterministic tests; then session-review clearance.",
+        "Standing carry: real sprag-gui multi-pane consumer out of scope (sprag repo); per-window viewport signal still deferred (panes are primary-window); TUI path does not publish (1 process = 1 alternate-screen).",
+        "Sequencing: if sprag reports a fresh forcing case it preempts (stop-report -> spec-seed -> impl, like PR-2/PR-7); else continue to the Model-View epub slice after R1012."
+      ],
+      "publishable_decision_summary": "R1012 §5.23 §5.22 §6.3 §5.16: per-pane viewport seam (splitter-sized pane -> producer reflow) — SPEC SEED only (design ratified + source-verified, no code); extends the R1006 window seam to N tagged Container panes; post-layout sibling using the R774 measured-viewport same-frame re-pass",
+      "publishable_changes_bullets": [
+        "SPEC SEED only — no code this round; records the requirement + ratified design + source-verified gaps for a future implementing round (design-only shape like R1006 / spec-phase round-14/15). Extends the R1006 window seam to per-pane. sprag multi-pane intake.",
+        "Requirement: each pane (a tagged Scene::Container holding a TextGrid) must read its OWN measured pixel rect at view/effect-time to derive (cols,rows)=rect/cell and drive a per-pane producer reflow (PTY TIOCSWINSZ) that changes on splitter drag — the per-pane leg of the winsize SSOT producer-adoption.",
+        "Key asymmetry vs R1006: a window size is OS-known PRE-view (R1006 publishes before V::view at substrate.rs:2388), but a pane rect is layout-derived POST-view (known only after compute_layout). So the per-pane publish is post-layout — architecturally the R774 ScrollState::measured_viewport AutoSizer leg (scroll.rs:79-104), NOT the R1006 pre-view publish.",
+        "Ratified design: a tag-keyed owner-cache registry (PaneViewportRegistry holder = RefCell<BTreeMap<Cow<'static,str>, Signal<(u32,u32)>>>, mirror of ViewportSizeHolder) + use_pane_viewport_size(tag) (get-or-insert the pane's Signal, tracked get, strict Owner::current like use_viewport_size) + a shell publish that, after the final layout, resolves each registered tag's rect via Scene::rect_for_tag_absolute (scene.rs:820) and sets (w,h).",
+        "First-paint chicken-and-egg: the publish returns a pane-dirty bit reusing the existing scroll-dirty same-frame re-pass (substrate.rs:2450) so the re-run view reads post-reflow producer state on the same paint — if scroll_dirty || pane_dirty { re-view + re-layout }, idempotent via Signal equality-skip; absent tag (torn-off pane) => skip (retain last), only measured rects publish.",
+        "Contract inherited from R1006: set INSIDE root_owner.run (blocker B); (0,0)=pane-unknown sentinel => consumer skips a spurious 1x1 reflow; primary-window gate (DEFAULT_WINDOW — panes live in the primary window); introspection paint (_pure_internal / RPC produce) does NOT publish.",
+        "Sibling-not-unified: R1006 (window / pre-view / 1 global signal) and R1012 (pane / post-layout / N tag-keyed signals) stay distinct primitives — different timing + cardinality; folding window into post-layout would regress R1006's same-paint pre-reflow. use_viewport_size stays unchanged.",
+        "Forcing consumer (impl round): extend hello-dock-panels with TextGrid panes whose winsize tracks the splitter ratio (Splitter + ExtraExternal + Owner::cache ratio reuse); real consumer = sprag-gui multi-pane terminals (sprag repo, out of scope here)."
+      ],
+      "publishable_verification_bullets": [
+        "Verified pre-view vs post-layout split in source: R1006 set_viewport_size runs before V::view (substrate.rs:2388 then 2430); R774 ScrollState::measured_viewport is written by the layout pass post-view and read back via Signal with the scroll-dirty re-pass (scroll.rs:79-104, substrate.rs:2434-2456) — confirms per-pane is the post-layout leg, not a parametrized R1006.",
+        "Verified the readback exists: Scene::rect_for_tag_absolute(&str)->Option<Rect> (scene.rs:820) returns the post-layout resolved rect of a tagged node, and ContainerNode.tag + with_tag carry the pane id (scene.rs:1870-1940). Only w/h is consumed, so the absolute offset is irrelevant for winsize.",
+        "Verified the consumer math is reusable: CellMetric::cols_for / rows_for (cell_metric.rs:146,156) already derive (cols,rows) from a pixel extent with the same whole_cells floor SSOT as px_to_cell (R1008, cell_metric.rs:131) — the rect->winsize step is unchanged.",
+        "Verified genuinely-new substrate: no per-Container reactive size slot exists today — only window-level use_viewport_size (R1006) and ScrollState-bound measured_viewport (R774); the tag-keyed registry is new, not a duplicate (grep of crates/pinion-core/src/reactive + widgets).",
+        "Verified blocker-B (R1006) applies unchanged: the per-pane reflow Effect reads use_pane_viewport_size in an Effect; Signal::set re-runs it synchronously, so the publish must set inside root_owner.run or Owner::current().expect panics (effect.rs run_with_node pushes CURRENT_OWNER only) — same failure mode the R1006 module doc encodes.",
+        "SPEC SEED gate: no code landed; validate-workspace T1=0 expected (entries 999->1000, one new changelog row, no new orphan ref); cargo build/test/clippy unaffected (no source touched)."
+      ],
+      "publishable_impact_refs": [
+        "5.23",
+        "5.22",
+        "6.3",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Impl round (R1012.1): pinion-core reactive/pane_viewport.rs (PaneViewportRegistry holder + use_pane_viewport_size) + Owner provide/registry accessor + shell post-layout publish + pane-dirty fold into the scroll-dirty re-pass + hello-dock-panels TextGrid-pane forcing consumer + deterministic tests; then session-review clearance.",
+        "Standing carry: real sprag-gui multi-pane consumer out of scope (sprag repo); per-window viewport signal still deferred (panes are primary-window); TUI path does not publish (1 process = 1 alternate-screen).",
+        "Sequencing: if sprag reports a fresh forcing case it preempts (stop-report -> spec-seed -> impl, like PR-2/PR-7); else continue to the Model-View epub slice after R1012."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
