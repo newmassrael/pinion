@@ -1830,6 +1830,153 @@ pub enum TextOverflow {
     Ellipsis,
 }
 
+/// CSS generic font *class* (R1002 §5.36) — a font family selected by
+/// category, not by installed name. Mirrors the CSS `font-family` generic
+/// keywords (and `fontique::GenericFamily`); `pinion-text` maps each variant
+/// to the parley generic at the shape wire, keeping `pinion-core` free of a
+/// parley dependency. A generic always resolves to *some* face of its class,
+/// so it never renders "tofu".
+///
+/// Deliberately *not* `#[non_exhaustive]`: this mirrors the fixed CSS generic
+/// set 1:1, and an exhaustive cross-crate `match` is what lets the compiler
+/// enforce the `pinion-text` parley bridge (`map_generic_family`) stays
+/// complete if a variant is ever added.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
+pub enum GenericFontFamily {
+    /// Proportional serifed (`serif`).
+    Serif,
+    /// Proportional sans-serif (`sans-serif`).
+    SansSerif,
+    /// Fixed-pitch (`monospace`) — the terminal / code face.
+    Monospace,
+    /// Joined / handwriting (`cursive`).
+    Cursive,
+    /// Decorative (`fantasy`).
+    Fantasy,
+    /// Platform UI default (`system-ui`).
+    SystemUi,
+    /// Platform UI serif (`ui-serif`).
+    UiSerif,
+    /// Platform UI sans-serif (`ui-sans-serif`).
+    UiSansSerif,
+    /// Platform UI monospace (`ui-monospace`).
+    UiMonospace,
+    /// Platform UI rounded (`ui-rounded`).
+    UiRounded,
+    /// Emoji face (`emoji`).
+    Emoji,
+    /// Math face (`math`).
+    Math,
+    /// `FangSong` CJK face (`fangsong`).
+    FangSong,
+}
+
+impl GenericFontFamily {
+    /// Classify a CSS `font-family` keyword (`"monospace"` → `Monospace`),
+    /// `None` for a non-generic (a named family like `"Inter"`). The single
+    /// home of the keyword↔variant table — shared by [`FontFamily`]'s wire
+    /// classification and serde.
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s.trim() {
+            "serif" => Self::Serif,
+            "sans-serif" => Self::SansSerif,
+            "monospace" => Self::Monospace,
+            "cursive" => Self::Cursive,
+            "fantasy" => Self::Fantasy,
+            "system-ui" => Self::SystemUi,
+            "ui-serif" => Self::UiSerif,
+            "ui-sans-serif" => Self::UiSansSerif,
+            "ui-monospace" => Self::UiMonospace,
+            "ui-rounded" => Self::UiRounded,
+            "emoji" => Self::Emoji,
+            "math" => Self::Math,
+            "fangsong" => Self::FangSong,
+            _ => return None,
+        })
+    }
+
+    /// The canonical CSS keyword for this generic (the inverse of
+    /// [`Self::parse`]) — the wire / serialization form.
+    #[must_use]
+    pub const fn as_keyword(self) -> &'static str {
+        match self {
+            Self::Serif => "serif",
+            Self::SansSerif => "sans-serif",
+            Self::Monospace => "monospace",
+            Self::Cursive => "cursive",
+            Self::Fantasy => "fantasy",
+            Self::SystemUi => "system-ui",
+            Self::UiSerif => "ui-serif",
+            Self::UiSansSerif => "ui-sans-serif",
+            Self::UiMonospace => "ui-monospace",
+            Self::UiRounded => "ui-rounded",
+            Self::Emoji => "emoji",
+            Self::Math => "math",
+            Self::FangSong => "fangsong",
+        }
+    }
+}
+
+/// A `font-family` selection (R1002 §5.36): either a *named* installed family
+/// (`"Inter"`) or a CSS *generic* class ([`GenericFontFamily`]). Modelling the
+/// distinction in the type — rather than a bare string disambiguated at every
+/// shape pass — is the SSOT: the named-vs-generic decision is made once, at
+/// construction (or once at the untyped wire boundary via [`Self::parse_css`]),
+/// and `pinion-text` consumes the typed value directly.
+///
+/// A single family, not a fallback *stack*: an ordered fallback list
+/// (CSS `font-family: "Inter", sans-serif`) is deferred until a consumer needs
+/// it (no speculative surface). The named→sans-serif tofu fallback the shaper
+/// applies is a render policy in `pinion-text`, not user data.
+///
+/// Serializes as a plain string (the generic keyword, or the family name) so
+/// the JSON wire stays CSS-faithful and unchanged across this typing.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum FontFamily {
+    /// An installed family selected by exact name (e.g. `"Inter"`).
+    Named(std::borrow::Cow<'static, str>),
+    /// A CSS generic class (e.g. [`GenericFontFamily::Monospace`]).
+    Generic(GenericFontFamily),
+}
+
+impl FontFamily {
+    /// Classify an untyped CSS `font-family` string: a generic keyword maps to
+    /// [`FontFamily::Generic`], anything else to [`FontFamily::Named`]. The
+    /// boundary coercion for wire ingest (RPC / deserialization) — typed code
+    /// constructs [`FontFamily::Named`] / [`FontFamily::Generic`] directly.
+    #[must_use]
+    pub fn parse_css(s: impl Into<std::borrow::Cow<'static, str>>) -> Self {
+        let s = s.into();
+        GenericFontFamily::parse(&s).map_or(Self::Named(s), Self::Generic)
+    }
+
+    /// The CSS-string wire form: the generic keyword, or the family name.
+    /// The inverse of [`Self::parse_css`] for a string round-trip.
+    #[must_use]
+    pub fn as_wire(&self) -> std::borrow::Cow<'_, str> {
+        match self {
+            Self::Named(name) => std::borrow::Cow::Borrowed(name.as_ref()),
+            Self::Generic(g) => std::borrow::Cow::Borrowed(g.as_keyword()),
+        }
+    }
+}
+
+impl serde::Serialize for FontFamily {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.as_wire())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for FontFamily {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::parse_css(s))
+    }
+}
+
 /// Sidecar style for [`TextNode`](crate::scene::TextNode) per §5.3 R20.
 ///
 /// R47.5 §5.36 Figma-fidelity expansion: `font_weight`, `font_style`,
@@ -1847,7 +1994,9 @@ pub enum TextOverflow {
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct TextStyle {
-    pub font_family: Option<std::borrow::Cow<'static, str>>,
+    /// Pinned family (R1002 typed): a named installed family or a CSS generic
+    /// class ([`FontFamily`]). `None` keeps parley's default font stack.
+    pub font_family: Option<FontFamily>,
     pub font_size_px: u32,
     pub fg_color: Color,
     /// CSS `font-weight` (R47.5). Default = [`FontWeight::NORMAL`] (400).
@@ -1929,13 +2078,25 @@ impl TextStyle {
         self
     }
 
-    /// Builder: pin a font family (static or owned string).
+    /// Builder: pin a *named* installed font family (e.g. `"Inter"`). For a
+    /// CSS generic class use [`Self::with_generic_family`]; this builder always
+    /// produces [`FontFamily::Named`] (it does NOT classify generic keywords —
+    /// that is the wire boundary's job, [`FontFamily::parse_css`]).
     #[must_use]
     pub fn with_font_family(
         mut self,
         family: impl Into<std::borrow::Cow<'static, str>>,
     ) -> Self {
-        self.font_family = Some(family.into());
+        self.font_family = Some(FontFamily::Named(family.into()));
+        self
+    }
+
+    /// Builder: pin a CSS generic font class (e.g.
+    /// [`GenericFontFamily::Monospace`] for a terminal / code grid). Resolves
+    /// to a real face of that class via `pinion-text`'s parley generic mapping.
+    #[must_use]
+    pub fn with_generic_family(mut self, family: GenericFontFamily) -> Self {
+        self.font_family = Some(FontFamily::Generic(family));
         self
     }
 
@@ -3347,9 +3508,32 @@ mod tests {
     }
 
     #[test]
-    fn text_style_with_font_family_accepts_static_str() {
+    fn text_style_with_font_family_is_named() {
         let s = TextStyle::new().with_font_family("Inter");
-        assert_eq!(s.font_family.as_deref(), Some("Inter"));
+        assert_eq!(s.font_family, Some(FontFamily::Named("Inter".into())));
+    }
+
+    #[test]
+    fn text_style_with_generic_family_is_generic() {
+        let s = TextStyle::new().with_generic_family(GenericFontFamily::Monospace);
+        assert_eq!(s.font_family, Some(FontFamily::Generic(GenericFontFamily::Monospace)));
+    }
+
+    /// The untyped wire boundary classifies CSS keywords; typed builders do
+    /// not. `parse_css` round-trips through the string wire form.
+    #[test]
+    fn font_family_parse_css_classifies_keywords_and_round_trips() {
+        assert_eq!(
+            FontFamily::parse_css("monospace"),
+            FontFamily::Generic(GenericFontFamily::Monospace),
+        );
+        assert_eq!(FontFamily::parse_css("Inter"), FontFamily::Named("Inter".into()));
+        for f in [
+            FontFamily::Generic(GenericFontFamily::Monospace),
+            FontFamily::Named("Inter".into()),
+        ] {
+            assert_eq!(FontFamily::parse_css(f.as_wire().into_owned()), f);
+        }
     }
 
     #[test]

@@ -92,9 +92,9 @@ pub use directory::{DirEntry, Directory, InMemoryDirectory};
 pub use storage::{InMemoryStorage, Storage};
 pub use style::{
     Align, AlignItems, Border, BoxStyle, Color, ColorStop, Display, Extend, Fit, FlexDirection,
-    FontStyle, FontWeight, Gradient, GradientKind, ImageStyle, JustifyContent, LayoutStyle,
-    LineHeight, PathStyle, Size, SizeValue, Stroke, StrokeCap, TextAlign, TextDecoration,
-    TextOverflow, TextStyle, scale_normalized_to_px,
+    FontFamily, FontStyle, FontWeight, GenericFontFamily, Gradient, GradientKind, ImageStyle,
+    JustifyContent, LayoutStyle, LineHeight, PathStyle, Size, SizeValue, Stroke, StrokeCap,
+    TextAlign, TextDecoration, TextOverflow, TextStyle, scale_normalized_to_px,
 };
 pub use syntax::{highlight_code, SyntaxPalette};
 pub use term_grid::{

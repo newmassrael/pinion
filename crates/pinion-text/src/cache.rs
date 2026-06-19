@@ -20,7 +20,10 @@ use parley::{
     LayoutContext, LineHeight as ParleyLineHeight, StyleProperty,
 };
 use pinion_core::scene::StyleRun;
-use pinion_core::style::{Color, FontStyle, LineHeight, TextAlign, TextStyle};
+use pinion_core::style::{
+    Color, FontFamily as PinFontFamily, FontStyle, GenericFontFamily, LineHeight, TextAlign,
+    TextStyle,
+};
 use std::borrow::Cow;
 use std::num::NonZeroUsize;
 
@@ -196,6 +199,77 @@ impl LayoutCache {
         self.inner.is_empty()
     }
 
+    /// R1002 §5.41 — measure the resolved monospace cell at `font_size_px`.
+    ///
+    /// This is the real Vello font measurement the R968 `CellMetric::new`
+    /// font-derivation hook documented as deferred ("a real Vello font
+    /// measurement lands later"). It shapes a probe glyph in the generic
+    /// `monospace` family at `font_size_px` and reads two facts off the
+    /// resolved fixed-pitch face:
+    ///
+    /// - **cell width** = the glyph pen advance ([`Layout::width`] of a
+    ///   single monospace glyph). A `Scene::TextGrid` whose `cell_w` is this
+    ///   advance has no horizontal looseness — the glyph fills its column —
+    ///   instead of the gap a guessed width leaves to the left-aligned glyph.
+    /// - **cell height** = `ceil` of the font's natural line box
+    ///   (`block_max_coord − block_min_coord`). Rounding *up* guarantees the
+    ///   cell contains the whole line box, so painting glyphs at `font_size_px`
+    ///   (the SSOT path below) never clips a descender.
+    ///
+    /// The result is the `CellMetric` a producer (a terminal host such as
+    /// sprag) hands to [`pinion_core::scene::TextGridNode::new`] so its grid
+    /// matches the rendered monospace face on both axes. The producer pairs it
+    /// with [`pinion_core::scene::TextGridNode::with_font_size_px`]`(font_size_px)`
+    /// so the paint adapter renders at exactly this size — then `cell_w` equals
+    /// the painted advance by construction (`font_size_px` is the single
+    /// font-size SSOT), not by a fit re-derivation. The measurement needs a
+    /// [`FontContext`] (it shapes), so it lives here on the cache and runs once
+    /// at host boot, not in the sync view fn.
+    ///
+    /// Returns `None` only if the probe produces a degenerate (zero) axis
+    /// after rounding — never in practice for a real monospace face;
+    /// callers fall back to [`pinion_core::CellMetric::DEFAULT`]. Relies on
+    /// the R1002 generic-keyword routing above: without it `"monospace"`
+    /// would resolve to a proportional fallback and the advance would not be
+    /// a true cell width.
+    #[must_use]
+    pub fn measure_monospace_cell(
+        &mut self,
+        font_size_px: u32,
+    ) -> Option<pinion_core::CellMetric> {
+        let mut style = TextStyle::new().with_generic_family(GenericFontFamily::Monospace);
+        style.font_size_px = font_size_px;
+        // line_height stays `Normal` so the measured line box is the font's
+        // natural box (parley `MetricsRelative(1.0)`), matching the paint
+        // adapter's R1001 natural-box probe.
+        let layout = self.layout("M", &style, None);
+        // The single-glyph content width is the monospace pen advance.
+        let advance = f64::from(layout.width());
+        let line = layout.lines().next()?;
+        let m = line.metrics();
+        let line_box = f64::from(m.block_max_coord - m.block_min_coord);
+        // The grid coordinate space is integral and `CellMetric` rejects a zero
+        // axis. Width rounds to nearest (the conventional monospace cell width;
+        // the glyph's side bearing absorbs the sub-pixel remainder). Height
+        // rounds *up* (ceil) so the cell always contains the natural line box —
+        // painting at `font_size_px` then never clips a descender. Both are
+        // small positive px well inside u32, so the casts are exact on the
+        // integer part.
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "advance / line box are small positive px; round/ceil then bound by CellMetric::new"
+        )]
+        let cell_w = advance.round().max(0.0) as u32;
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "advance / line box are small positive px; round/ceil then bound by CellMetric::new"
+        )]
+        let cell_h = line_box.ceil().max(0.0) as u32;
+        pinion_core::CellMetric::new(cell_w, cell_h)
+    }
+
     fn shape(
         &mut self,
         text: &str,
@@ -279,19 +353,47 @@ fn style_properties(style: &TextStyle) -> Vec<StyleProperty<'static, Color>> {
         StyleProperty::Underline(style.decoration.underline),
         StyleProperty::Strikethrough(style.decoration.strikethrough),
     ];
-    // R47.6 — pinned font family override; `None` keeps parley's
-    // default font stack (system fallback). When `Some`, route the
-    // requested family through `FontFamily::Named` and append the
-    // GenericFamily::SansSerif fallback so a missing name does not
-    // produce a "tofu" run.
-    if let Some(family) = style.font_family.as_deref() {
-        let families: Vec<FontFamilyName<'static>> = vec![
-            FontFamilyName::Named(Cow::Owned(family.to_owned())),
-            FontFamilyName::Generic(GenericFamily::SansSerif),
-        ];
+    // R47.6 — pinned font family override; `None` keeps parley's default font
+    // stack (system fallback). R1002 §5.36 — the family is a typed
+    // [`PinFontFamily`]: a CSS *generic* class routes through
+    // `FontFamilyName::Generic` (a generic resolves to a real face of its
+    // class — `monospace` → a fixed-pitch font — and needs no extra fallback),
+    // while a *named* family is matched by name with a `SansSerif` generic
+    // fallback so a missing name does not render a "tofu" run. The named-vs-
+    // generic decision is carried by the type (decided once at construction /
+    // wire ingest), not re-parsed from a string here each shape pass.
+    if let Some(family) = style.font_family.as_ref() {
+        let families: Vec<FontFamilyName<'static>> = match family {
+            PinFontFamily::Generic(g) => vec![FontFamilyName::Generic(map_generic_family(*g))],
+            PinFontFamily::Named(name) => vec![
+                FontFamilyName::Named(Cow::Owned(name.as_ref().to_owned())),
+                FontFamilyName::Generic(GenericFamily::SansSerif),
+            ],
+        };
         props.push(StyleProperty::FontFamily(FontFamily::List(Cow::Owned(families))));
     }
     props
+}
+
+/// R1002 §5.36 — pinion [`GenericFontFamily`] → parley [`GenericFamily`]. The
+/// one place the two parallel generic enums are bridged (pinion-core stays
+/// parley-free; pinion-text owns the wiring). The variants correspond 1:1.
+fn map_generic_family(g: GenericFontFamily) -> GenericFamily {
+    match g {
+        GenericFontFamily::Serif => GenericFamily::Serif,
+        GenericFontFamily::SansSerif => GenericFamily::SansSerif,
+        GenericFontFamily::Monospace => GenericFamily::Monospace,
+        GenericFontFamily::Cursive => GenericFamily::Cursive,
+        GenericFontFamily::Fantasy => GenericFamily::Fantasy,
+        GenericFontFamily::SystemUi => GenericFamily::SystemUi,
+        GenericFontFamily::UiSerif => GenericFamily::UiSerif,
+        GenericFontFamily::UiSansSerif => GenericFamily::UiSansSerif,
+        GenericFontFamily::UiMonospace => GenericFamily::UiMonospace,
+        GenericFontFamily::UiRounded => GenericFamily::UiRounded,
+        GenericFontFamily::Emoji => GenericFamily::Emoji,
+        GenericFontFamily::Math => GenericFamily::Math,
+        GenericFontFamily::FangSong => GenericFamily::FangSong,
+    }
 }
 
 /// R47.6 — pinion `FontStyle` → parley `FontStyle`. `Oblique` widens
@@ -511,5 +613,75 @@ mod tests {
         }
         assert!(brushes.contains(&red.fg_color), "red run brush present: {brushes:?}");
         assert!(brushes.contains(&base.fg_color), "base brush present: {brushes:?}");
+    }
+
+    /// Width of the single shaped glyph in `text` at `size` px in the CSS
+    /// family keyword `family` (classified via [`PinFontFamily::parse_css`], so
+    /// `"monospace"` resolves to the generic) — the glyph pen advance. A test
+    /// helper for the monospace / proportional advance assertions below.
+    fn glyph_advance(cache: &mut LayoutCache, text: &str, family: &'static str, size: u32) -> f64 {
+        let mut s = TextStyle::new();
+        s.font_family = Some(PinFontFamily::parse_css(family));
+        s.font_size_px = size;
+        f64::from(cache.layout(text, &s, None).width())
+    }
+
+    /// R1002 §5.41 — the generic `monospace` keyword resolves to a real
+    /// fixed-pitch face: every glyph shares one advance. Pre-R1002 the
+    /// keyword went out as a `Named("monospace")` lookup that fell back to
+    /// the proportional sans-serif generic, where a narrow `i` and a wide
+    /// `W` have visibly different advances — so this assertion failed and
+    /// the `Scene::TextGrid` rendered in a proportional font. Guards the
+    /// generic-keyword routing in `style_properties`.
+    #[test]
+    fn r1002_generic_monospace_keyword_is_fixed_pitch() {
+        let mut cache = LayoutCache::new();
+        let i = glyph_advance(&mut cache, "i", "monospace", 32);
+        let m = glyph_advance(&mut cache, "M", "monospace", 32);
+        let w = glyph_advance(&mut cache, "W", "monospace", 32);
+        assert!(i > 0.0 && m > 0.0 && w > 0.0, "advances are positive: i={i} M={m} W={w}");
+        // Fixed pitch ⇒ equal advances. Allow a sub-pixel tolerance for any
+        // hinting / rounding in the shaper; a proportional font's i-vs-W gap
+        // is several px, far outside this.
+        assert!(
+            (i - w).abs() <= 0.5 && (i - m).abs() <= 0.5,
+            "monospace advances must match across glyphs: i={i} M={m} W={w}",
+        );
+        // Discrimination: the explicit proportional generic is NOT fixed
+        // pitch on this platform — `i` is visibly narrower than `W`. This
+        // proves the box has a proportional face (so the equal-advance
+        // result above is a real monospace resolution, not every font
+        // happening to be monospace) and that the prior `Named("monospace")`
+        // + sans-serif fallback would have rendered the grid proportionally.
+        let prop_i = glyph_advance(&mut cache, "i", "sans-serif", 32);
+        let prop_w = glyph_advance(&mut cache, "W", "sans-serif", 32);
+        assert!(
+            prop_w - prop_i > 2.0,
+            "sans-serif must be proportional (W wider than i): i={prop_i} W={prop_w}",
+        );
+    }
+
+    /// R1002 §5.41 — [`LayoutCache::measure_monospace_cell`] yields a usable
+    /// `CellMetric`: positive axes, a taller-than-wide cell (the monospace
+    /// advance is narrower than the line box), and a height that scales
+    /// linearly with the requested font size. This is the R968
+    /// font-derivation hook a `Scene::TextGrid` producer consumes.
+    #[test]
+    fn r1002_measure_monospace_cell_is_usable() {
+        let mut cache = LayoutCache::new();
+        let m16 = cache.measure_monospace_cell(16).expect("16px monospace measures");
+        let m32 = cache.measure_monospace_cell(32).expect("32px monospace measures");
+        assert!(m16.cell_w() > 0 && m16.cell_h() > 0, "positive axes: {m16:?}");
+        assert!(
+            m16.cell_w() < m16.cell_h(),
+            "a monospace cell is taller than wide: {m16:?}",
+        );
+        // The line box scales linearly with font size, so doubling the size
+        // ~doubles the height (allow generous rounding slack on small px).
+        let ratio = f64::from(m32.cell_h()) / f64::from(m16.cell_h());
+        assert!(
+            (1.8..=2.2).contains(&ratio),
+            "cell height should scale ~2x from 16→32 px (got {ratio:.3}: {m32:?} / {m16:?})",
+        );
     }
 }

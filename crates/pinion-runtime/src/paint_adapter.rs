@@ -46,8 +46,8 @@ use pinion_core::scene::{
     Rect, TextGridNode, TextNode,
 };
 use pinion_core::style::{
-    Border, BorderPlacement, BoxStyle, Color, Fit, FontStyle, FontWeight, Gradient, GradientKind,
-    LineHeight, StrokeCap, TextOverflow, TextStyle,
+    Border, BorderPlacement, BoxStyle, Color, Fit, FontStyle, FontWeight, GenericFontFamily,
+    Gradient, GradientKind, LineHeight, StrokeCap, TextOverflow, TextStyle,
 };
 use pinion_core::term_grid::{CellWidth, ColorTarget, CursorShape, TermCell, TermColor};
 use pinion_text::LayoutCache;
@@ -1074,10 +1074,16 @@ fn has_glyph_cluster(cell: &TermCell) -> bool {
 /// `GridCursor` field). `blink` (SGR 5, a timing attribute the TUI backend
 /// gets free from the host terminal, R994) is the one remaining Vello slice.
 ///
-/// Font policy: the glyph size is the node metric's cell height and the
-/// family is requested as monospace. A proper `GenericFamily::Monospace`
-/// fallback plus CJK / emoji font fallback are the seed's documented open
-/// questions, deferred to a font-policy slice.
+/// Font policy: the family is requested as the generic `monospace`
+/// keyword, which R1002 routes through `FontFamilyName::Generic` so it
+/// resolves to a real fixed-pitch face (pre-R1002 it fell back to the
+/// proportional sans-serif generic — the looseness / descender root). The
+/// glyph size is fit into the cell at paint time (R1001
+/// [`fit_font_size_to_cell`]); a producer that wants `cell_w` to equal the
+/// monospace advance sources its [`CellMetric`] from
+/// [`pinion_text::LayoutCache::measure_monospace_cell`] (the R968
+/// font-derivation hook). CJK / emoji font fallback remains a documented
+/// open question deferred to a later font-policy slice.
 ///
 /// R995 §2 #6 — this Vello arm and the TUI `paint_text_grid_inner` must agree
 /// on cell *structure* (which cell inks a glyph / reads reversed / forms a
@@ -1119,6 +1125,44 @@ fn fit_font_size_to_cell(natural_box: f64, cell_h: u32) -> u32 {
     fitted
 }
 
+/// R1002 §5.41 — the glyph font size (logical px) for a [`TextGridNode`].
+///
+/// Font-size source of truth: a font-derived grid carries the exact size its
+/// cells were measured from ([`TextGridNode::font_size_px`], via
+/// `measure_monospace_cell`); paint uses it directly so the rendered advance
+/// equals `cell_w` (`== advance(size)`) **by construction** — no re-derivation.
+///
+/// A producer-picked cell with no font basis (the TUI 8×16 default, or a grid
+/// that chose only dimensions) has `None`: fit a font into the cell (R1001).
+/// Sizing the font to the *full* `cell_h` overflows parley's natural line box
+/// (~1.1–1.2× the em), clipping descenders / overlapping rows; so probe the
+/// resolved monospace's natural box at cell height (`probe_style` carries the
+/// monospace family) and reduce the font size so that box fits `cell_h`
+/// (metric-derived, no magic ratio). `probe_style.font_size_px` is left at the
+/// trial cell height; the caller overwrites it with the returned size.
+fn grid_glyph_font_size(
+    n: &TextGridNode,
+    cache: &mut LayoutCache,
+    probe_style: &mut TextStyle,
+) -> u32 {
+    if let Some(size) = n.font_size_px() {
+        return size.max(1);
+    }
+    let cell_h_u = n.cell_metric().cell_h();
+    let cell_h = f64::from(cell_h_u);
+    // The probe needs the trial size set first; "x" yields the same line-box
+    // metrics as any cluster (a font property, not the glyph's).
+    probe_style.font_size_px = cell_h_u;
+    let natural_box = {
+        let probe = cache.layout("x", probe_style, None);
+        probe.lines().next().map_or(cell_h, |line| {
+            let m = line.metrics();
+            f64::from(m.block_max_coord - m.block_min_coord)
+        })
+    };
+    fit_font_size_to_cell(natural_box, cell_h_u)
+}
+
 fn paint_text_grid(
     out: &mut VelloScene,
     n: &TextGridNode,
@@ -1138,28 +1182,13 @@ fn paint_text_grid(
     // a parent `Scene::Scroll`'s shifted child transform) — exactly like
     // [`paint_text`].
     let origin = transform * Affine::translate((f64::from(n.rect.x), f64::from(n.rect.y)));
-    // The node metric sizes the glyph; the family is requested monospace
-    // (see the font-policy note above).
-    let mut style = TextStyle::new().with_font_family("monospace");
-    // R1001 §5.41 — fit the glyph into the cell. `CellMetric` guarantees a
-    // non-zero cell height, but sizing the font to the *full* `cell_h` makes
-    // parley's natural line box (~1.1–1.2× the em: ascent + descent + leading)
-    // overflow the cell, clipping descenders on the last row and overlapping
-    // interior rows. Probe the resolved monospace's natural box at cell height,
-    // reduce the font size so that box fits `cell_h` (metric-derived, no magic
-    // ratio), and pin `line_height` to `cell_h` so the line box IS the cell —
-    // the surplus leading is split top/bottom, vertically centring the glyph.
-    style.font_size_px = metric.cell_h();
-    let natural_box = {
-        // Any cluster yields the same line-box metrics (a property of the font,
-        // not the glyph); "x" is universally present.
-        let probe = cache.layout("x", &style, None);
-        probe.lines().next().map_or(cell_h, |line| {
-            let m = line.metrics();
-            f64::from(m.block_max_coord - m.block_min_coord)
-        })
-    };
-    style.font_size_px = fit_font_size_to_cell(natural_box, metric.cell_h());
+    // The family is the generic monospace class (R1002 typed
+    // `with_generic_family` — resolves to a real fixed-pitch face; see the
+    // font-policy note above). [`grid_glyph_font_size`] resolves the size
+    // (measured SSOT vs cell-fit); `line_height = cell_h` pins the line box to
+    // the cell so the glyph centres vertically without clipping a descender.
+    let mut style = TextStyle::new().with_generic_family(GenericFontFamily::Monospace);
+    style.font_size_px = grid_glyph_font_size(n, cache, &mut style);
     style.line_height = LineHeight::Px(metric.cell_h());
     // R991.1 — clip the cell paint to the node's layout rect. The producer's
     // buffer dims and the node's rect-derived winsize are distinct facts that

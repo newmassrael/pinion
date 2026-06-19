@@ -130,9 +130,19 @@ const DEFAULT_SIZE: (u32, u32) = (640, 384); // 80 cols × 24 rows @ 8×16
 const MEASURED_TAG: &str = "htg_measured";
 const MEASURED_POS: (u32, u32) = (16, 432);
 const MEASURED_SIZE: (u32, u32) = (360, 360); // 40 cols × 20 rows @ 9×18
-/// Measured monospace cell metric (advance width × line height). Sourced
-/// through [`CellMetric::new`] — the R968 font-derivation hook this
-/// scaffold first consumes (a real Vello font measurement lands later).
+/// Illustrative monospace cell metric for the demo grid. A fixed constant
+/// keeps this geometry demo's golden screenshots deterministic — but a
+/// *hardcoded* `cell_w` does NOT match the platform monospace advance, so on
+/// the fit path (no explicit font size) this grid renders slightly loose
+/// (R1002 finding: only `cell_w == advance` is snug; a mismatched cell is
+/// loose by design). The snug *production* path is the R968 font-derivation
+/// hook, now real as
+/// `pinion_text::LayoutCache::measure_monospace_cell(font_size_px)` paired
+/// with [`TextGridNode::with_font_size_px`]: a host (e.g. sprag) measures the
+/// resolved monospace once at boot and hands the `(CellMetric, font_size)` to
+/// the grid. That needs a boot-time `FontContext`, so it cannot run in the
+/// sync view fn here — wiring framework font metrics into the pure view is a
+/// separate seam. The R1002 forcing tests exercise the snug measured path.
 const MEASURED_CELL: (u32, u32) = (9, 18);
 
 /// Tag of the R973 cell-content grid, and its placement + extent.

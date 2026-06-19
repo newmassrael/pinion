@@ -2516,7 +2516,11 @@ fn style_to_value(style: Option<TextStyle>) -> IntrospectValue {
 pub fn json_to_text_style(obj: &serde_json::Map<String, serde_json::Value>) -> TextStyle {
     let mut s = TextStyle::new();
     if let Some(v) = obj.get("font_family") {
-        s.font_family = v.as_str().map(|f| std::borrow::Cow::Owned(f.to_string()));
+        // Untyped wire string → typed family (R1002): a CSS generic keyword
+        // classifies to `Generic`, anything else to `Named`.
+        s.font_family = v
+            .as_str()
+            .map(|f| crate::style::FontFamily::parse_css(f.to_string()));
     }
     if let Some(px) = obj.get("font_size_px").and_then(serde_json::Value::as_u64) {
         if let Ok(px) = u32::try_from(px) {

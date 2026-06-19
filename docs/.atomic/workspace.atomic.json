@@ -8799,6 +8799,56 @@
         "R4.2 (measured CellMetric from font metrics, the R968 hook) is optional and NOT needed - R4.1 fit resolves the clip; lift only if true font-derived cell sizing is wanted later"
       ]
     },
+    "R1002": {
+      "decision_summary": "R1002 TextGrid monospace fidelity: generic-keyword font resolution + measured CellMetric hook + font-size SSOT + typed FontFamily (sprag PR-5)",
+      "changes_bullets": [
+        "pinion-text: generic font keyword -> FontFamilyName::Generic (was Named+SansSerif proportional)",
+        "pinion-text: measure_monospace_cell hook -> CellMetric (cell_w=advance, cell_h=ceil linebox); R968",
+        "pinion-core: typed FontFamily{Named|Generic} string serde wire + with_generic_family builder",
+        "pinion-core: TextGridNode.font_size_px + with_font_size_px (font-size SSOT for measured grid)",
+        "pinion-runtime: paint uses node font_size when set (advance==cell_w), else fits R1001",
+        "pinion-rpc/text_field: font_family wire via FontFamily as_wire/parse_css (CSS string wire unchanged)"
+      ],
+      "verification_bullets": [
+        "pinion-text: monospace fixed-pitch (i==M==W) + sans-serif proportional discrimination guard",
+        "pinion-text: measure_monospace_cell usable (taller-than-wide, ~2x height scaling 16->32)",
+        "shell headless: measured 'M' fills+centred; mismatched fit cell loose (proves measured needed)",
+        "regressions intact R991/R995/R1001; cargo test --workspace + clippy all-targets vello exit 0"
+      ],
+      "impact_refs": [
+        "5.36",
+        "5.41"
+      ],
+      "carry_forward_bullets": [
+        "Looseness fixed only by measured metric (cell_w==advance); producer-picked cell loose by design",
+        "View-time font-metrics seam to feed measured metric into sync view fn (example/sprag) deferred",
+        "FontFamily fallback stack deferred (no consumer, YAGNI); CJK/emoji font fallback still deferred"
+      ],
+      "publishable_decision_summary": "R1002 TextGrid monospace fidelity: generic-keyword font resolution + measured CellMetric hook + font-size SSOT + typed FontFamily (sprag PR-5)",
+      "publishable_changes_bullets": [
+        "pinion-text: generic font keyword -> FontFamilyName::Generic (was Named+SansSerif proportional)",
+        "pinion-text: measure_monospace_cell hook -> CellMetric (cell_w=advance, cell_h=ceil linebox); R968",
+        "pinion-core: typed FontFamily{Named|Generic} string serde wire + with_generic_family builder",
+        "pinion-core: TextGridNode.font_size_px + with_font_size_px (font-size SSOT for measured grid)",
+        "pinion-runtime: paint uses node font_size when set (advance==cell_w), else fits R1001",
+        "pinion-rpc/text_field: font_family wire via FontFamily as_wire/parse_css (CSS string wire unchanged)"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-text: monospace fixed-pitch (i==M==W) + sans-serif proportional discrimination guard",
+        "pinion-text: measure_monospace_cell usable (taller-than-wide, ~2x height scaling 16->32)",
+        "shell headless: measured 'M' fills+centred; mismatched fit cell loose (proves measured needed)",
+        "regressions intact R991/R995/R1001; cargo test --workspace + clippy all-targets vello exit 0"
+      ],
+      "publishable_impact_refs": [
+        "5.36",
+        "5.41"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Looseness fixed only by measured metric (cell_w==advance); producer-picked cell loose by design",
+        "View-time font-metrics seam to feed measured metric into sync view fn (example/sprag) deferred",
+        "FontFamily fallback stack deferred (no consumer, YAGNI); CJK/emoji font fallback still deferred"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

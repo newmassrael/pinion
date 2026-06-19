@@ -1007,13 +1007,18 @@ fn r770_1_text_style_json_decode_is_inverse_of_encode() {
     b.text_align = TextAlign::Center;
     b.decoration = TextDecoration::none().with_underline(true).with_strikethrough(true);
     b.overflow = TextOverflow::Ellipsis;
-    b.font_family = Some(std::borrow::Cow::Borrowed("Inter"));
+    b.font_family = Some(pinion_core::style::FontFamily::Named("Inter".into()));
 
     let mut c = TextStyle::new();
     c.line_height = LineHeight::MultiplierX100(150);
     c.font_style = FontStyle::Oblique(None);
     c.text_align = TextAlign::Justify;
     c.overflow = TextOverflow::Clip;
+    // Generic-family wire round-trip (R1002): the keyword survives the
+    // string wire and re-classifies to `Generic`, not `Named`.
+    c.font_family = Some(pinion_core::style::FontFamily::Generic(
+        pinion_core::style::GenericFontFamily::Monospace,
+    ));
 
     for sample in [TextStyle::new(), a, b, c] {
         let encoded = text_style_to_json(&sample);

@@ -3694,7 +3694,7 @@ fn text_style_to_json(style: &pinion_core::style::TextStyle) -> Value {
         style
             .font_family
             .as_ref()
-            .map_or(Value::Null, |f| Value::String(f.as_ref().to_string())),
+            .map_or(Value::Null, |f| Value::String(f.as_wire().into_owned())),
     );
     obj.insert(
         "font_size_px".to_string(),
@@ -5317,7 +5317,9 @@ fn parse_text_style(v: Option<&Value>) -> Result<pinion_core::style::TextStyle, 
         style.fg_color = Color::from_argb(n);
     }
     if let Some(family) = obj.get("font_family").and_then(Value::as_str) {
-        style.font_family = Some(std::borrow::Cow::Owned(family.to_owned()));
+        // Untyped wire string → typed family: a CSS generic keyword classifies
+        // to `Generic`, anything else to `Named` (R1002).
+        style.font_family = Some(pinion_core::style::FontFamily::parse_css(family.to_owned()));
     }
     Ok(style)
 }

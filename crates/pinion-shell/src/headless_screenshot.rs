@@ -1449,6 +1449,124 @@ mod tests {
         );
     }
 
+    /// Render a 1×1 `Scene::TextGrid` of `glyph` at `metric` (optionally
+    /// pinning the Vello font size, the R1002 SSOT path) through the SAME
+    /// `to_vello_cached` the live shell uses, and read back RGBA8 sized to the
+    /// cell. Shared by the two R1002 horizontal-fit guards.
+    fn render_single_glyph_cell(
+        metric: pinion_core::cell_metric::CellMetric,
+        font_size_px: Option<u32>,
+        glyph: &str,
+    ) -> (Vec<u8>, u32, u32) {
+        use pinion_core::scene::{Rect, Scene, TextGridNode};
+        use pinion_core::term_grid::{GridBuffer, TermCell, TermColor};
+        use pinion_runtime::paint_adapter::{to_vello_cached, FragmentCache};
+        use pinion_text::LayoutCache;
+
+        let cw = metric.cell_w();
+        let ch = metric.cell_h();
+        let buffer = GridBuffer::new(1, 1).with_row(
+            0,
+            vec![TermCell::new(glyph.to_owned(), TermColor::Default, TermColor::Default)],
+        );
+        let mut node = TextGridNode::new(metric).with_cells(buffer);
+        if let Some(s) = font_size_px {
+            node = node.with_font_size_px(s);
+        }
+        node.rect = Rect::new(0, 0, cw, ch);
+        let scene = Scene::TextGrid(node);
+
+        let mut text_cache = LayoutCache::new();
+        let mut cache = FragmentCache::new();
+        let mut image_cache = pinion_runtime::image_cache::ImageCache::new();
+        let mut vello = VelloScene::new();
+        to_vello_cached(
+            &scene,
+            &|_| None,
+            &mut text_cache,
+            &mut image_cache,
+            &mut cache,
+            &mut vello,
+        );
+        let base = vello::peniko::Color::BLACK;
+        let mut shot = HeadlessScreenshot::new().expect("headless screenshot bootstrap");
+        let rgba8 = shot.render_to_rgba8(&vello, cw, ch, base).expect("render");
+        (rgba8, cw, ch)
+    }
+
+    /// Measure a single rendered glyph's horizontal ink within its cell:
+    /// `(left_gutter, right_gutter, ink_span)` in px. A blank cell panics
+    /// (the glyph must ink). Shared by the snugness guard and the looseness
+    /// characterization below — one measurement, two interpretations.
+    fn glyph_gutters(rgba8: &[u8], cw: u32, ch: u32) -> (u32, u32, u32) {
+        let bright = |x: u32, y: u32| -> bool {
+            let i = ((y * cw + x) * 4) as usize;
+            rgba8[i] > 120 || rgba8[i + 1] > 120 || rgba8[i + 2] > 120
+        };
+        let col_inked = |x: u32| -> bool { (0..ch).any(|y| bright(x, y)) };
+        let first = (0..cw).find(|&x| col_inked(x));
+        let last = (0..cw).rev().find(|&x| col_inked(x));
+        let (Some(first), Some(last)) = (first, last) else {
+            panic!("glyph must ink at least one column within its cell");
+        };
+        (first, cw - 1 - last, last - first + 1)
+    }
+
+    /// R1002 §5.41 — horizontal cell-fit, **measured / SSOT path** (the PR-5
+    /// looseness sibling of the R1001 descender test). The cell comes from
+    /// [`pinion_text::LayoutCache::measure_monospace_cell`] (`cell_w` = the
+    /// monospace advance) paired with the matching pinned font size, so the
+    /// painted advance equals `cell_w` by construction. The 'M' fills its
+    /// column and sits roughly centred — guarding the measured metric, the
+    /// explicit-font-size paint path, and the R1002 monospace resolution.
+    /// This is the path that genuinely eliminates the looseness.
+    #[test]
+    #[ignore = "wgpu adapter cold-boot too slow for default test suite; run with --ignored"]
+    fn r1002_text_grid_measured_path_fills_cell_horizontally() {
+        use pinion_text::LayoutCache;
+        const FONT_PX: u32 = 32;
+        let mut measure_cache = LayoutCache::new();
+        let metric = measure_cache
+            .measure_monospace_cell(FONT_PX)
+            .expect("32px monospace measures a non-zero cell");
+        let (rgba8, cw, ch) = render_single_glyph_cell(metric, Some(FONT_PX), "M");
+        let (left, right, span) = glyph_gutters(&rgba8, cw, ch);
+        // Wide ink (>= 40% of cell_w) and near-balanced gutters (no left-jam).
+        // (× 10 keeps the comparisons integral.)
+        assert!(span * 10 >= cw * 4, "measured: 'M' ink must span >= 40% of cell_w: span={span} cw={cw}");
+        assert!(
+            left.abs_diff(right) * 10 <= cw * 3,
+            "measured: 'M' must sit roughly centred, not left-jammed: left={left} right={right} cw={cw}",
+        );
+    }
+
+    /// R1002 §5.41 — **characterization**: WHY the measured metric is the only
+    /// looseness fix. Layer 1 (a real fixed-pitch face) alone does NOT make an
+    /// arbitrary producer-picked `cell_w` snug — with a cell whose width does
+    /// not match the font advance, the fit path leaves the glyph left-jammed
+    /// against a wide right gutter (the PR-5 looseness signature). Here 16×32
+    /// (no explicit font size) is over-wide for the resolved monospace's
+    /// advance at the fit size, so the right gutter clearly exceeds the left.
+    /// This pins the design contract: a monospace grid's `cell_w` MUST equal
+    /// the advance ([`measure_monospace_cell`]); a mismatched cell is loose by
+    /// design, not a bug to paper over with centering/scaling.
+    #[test]
+    #[ignore = "wgpu adapter cold-boot too slow for default test suite; run with --ignored"]
+    fn r1002_text_grid_fit_path_is_loose_for_mismatched_cell() {
+        use pinion_core::cell_metric::CellMetric;
+        let metric = CellMetric::new(16, 32).expect("non-zero cell metric");
+        let (rgba8, cw, ch) = render_single_glyph_cell(metric, None, "M");
+        let (left, right, _span) = glyph_gutters(&rgba8, cw, ch);
+        // Left-jammed: the right gutter is clearly larger than the left (the +2
+        // margin keeps it above AA noise). Demonstrates the necessity of the
+        // measured metric — not a defect in the fit path.
+        assert!(
+            right >= left + 2,
+            "fit path with an over-wide cell must be left-jammed (loose), proving \
+             the measured metric is required: left={left} right={right} cw={cw}",
+        );
+    }
+
     /// Zero-dimension viewports short-circuit with a typed error
     /// rather than reaching the wgpu validation layer.
     #[test]

@@ -2942,6 +2942,20 @@ pub struct TextGridNode {
     /// grid's cell [`TermColor`](crate::term_grid::TermColor)s at paint /
     /// introspection time. Defaults to [`Palette::xterm_default`].
     pub palette: Palette,
+    /// R1002 §5.41 — explicit Vello glyph font size in logical px, when the
+    /// grid is font-derived. `Some(s)` means the cells were sized from a
+    /// monospace face of `s` px (see
+    /// `pinion_text::LayoutCache::measure_monospace_cell`): the paint adapter
+    /// renders glyphs at exactly `s` instead of re-deriving a size from
+    /// `cell_h`, so the rendered advance matches `metric.cell_w`
+    /// (`== advance(s)`) **by construction** — `s` is the single font-size
+    /// source of truth. `None` is a producer-picked cell with no font basis
+    /// (the TUI 8×16 default, or a Vello producer that chose only cell
+    /// dimensions): the paint adapter fits a font into `cell_h` (R1001).
+    /// Backend-agnostic cell geometry stays on [`metric`](Self::metric); this
+    /// Vello-only render size is deliberately separate — the TUI
+    /// character-cell backend has no font size.
+    pub font_size_px: Option<u32>,
 }
 
 impl TextGridNode {
@@ -2959,6 +2973,7 @@ impl TextGridNode {
             layout: LayoutStyle::new(),
             cells: GridBuffer::default(),
             palette: Palette::xterm_default(),
+            font_size_px: None,
         }
     }
 
@@ -2982,6 +2997,25 @@ impl TextGridNode {
     #[must_use]
     pub const fn cell_metric(&self) -> CellMetric {
         self.metric
+    }
+
+    /// Pin the Vello glyph font size in logical px (builder form) — the size
+    /// the grid's cells were measured from. Set this to the same size passed
+    /// to `pinion_text::LayoutCache::measure_monospace_cell` so the painted
+    /// advance matches `cell_w` by construction (R1002 font-size SSOT). Leave
+    /// unset for a producer-picked cell with no font basis (the paint adapter
+    /// then fits a font into `cell_h`).
+    #[must_use]
+    pub const fn with_font_size_px(mut self, font_size_px: u32) -> Self {
+        self.font_size_px = Some(font_size_px);
+        self
+    }
+
+    /// The explicit Vello glyph font size, if the grid is font-derived
+    /// (R1002). `None` ⇒ the paint adapter fits a font into `cell_h`.
+    #[must_use]
+    pub const fn font_size_px(&self) -> Option<u32> {
+        self.font_size_px
     }
 
     /// Whole cell columns the grid holds — derived from the
