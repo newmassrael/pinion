@@ -117,6 +117,27 @@ mnemosyne.toml          workspace config (schema, locale, validators, ledgers)
 - RPC and IO are **async via tokio** (boundary at `pinion-rpc` server entry per §6.3)
 - Commit message style: include section refs (e.g. `impl §5.2 + §5.11 scene primitive enum`)
 
+## Cross-repo discipline (NEVER edit other repositories directly)
+
+**Hard rule (user directive, 2026-06-19):** from a pinion session, NEVER directly
+modify any repository other than pinion itself. In particular **`sprag`**
+(`/home/coin/sprag`, a separate consumer repo that path-deps pinion) is
+off-limits: do not edit its source, run its build / `cargo` / `git` /
+`mnemosyne-cli`, commit there, or mutate its store. This applies even when the
+user says "continue sprag work" — that does NOT authorise editing the sprag tree
+from here.
+
+- **What pinion sessions DO for sprag:** deliver pinion-side seams *here* (the
+  consumer-forced seam rounds — R1007–R1011 pattern), and hand off requirements /
+  status as docs (e.g. `sprag/claudedocs/PINION-REQUIREMENTS.md`, or a
+  `claudedocs/HANDOFF-*.md`). Writing such a handoff doc into the other repo's
+  gitignored `claudedocs/` is the only permitted cross-repo write, and only when
+  the user explicitly asks for it.
+- **The sprag-side consumer rounds** (editing sprag crates, sprag commits, sprag
+  Mnemosyne) are done in a **sprag-native session**, never from pinion.
+- If a task seems to require editing another repo, STOP and produce a handoff
+  instead; do not work around this.
+
 ## Pre-commit / pre-push hooks
 
 `.githooks/pre-commit` runs:
