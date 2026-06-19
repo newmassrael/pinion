@@ -101,7 +101,10 @@ fn install_reflow(tag: &'static str) {
         }
         let reflowed = (CELL.cols_for(w), CELL.rows_for(h));
         dims.set(reflowed);
-        PTY_LOG.lock().unwrap().push((tag.to_owned(), reflowed));
+        PTY_LOG
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push((tag.to_owned(), reflowed));
     });
     owner.cache(reflow_key(tag), move || ReflowMarker { _effect: effect });
 }
@@ -216,8 +219,8 @@ fn painted_grid_dims(scene: &Scene, tag: &str) -> Option<(u16, u16)> {
 
 #[test]
 fn each_pane_reflows_to_its_own_measured_rect() {
-    let _g = TEST_LOCK.lock().unwrap();
-    PTY_LOG.lock().unwrap().clear();
+    let _g = TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    PTY_LOG.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clear();
 
     let mut core = ShellCore::<PaneView>::new();
     // A 640×384 window: the 3:5 split is 240px : 400px wide, both 384px tall =>
@@ -238,7 +241,9 @@ fn each_pane_reflows_to_its_own_measured_rect() {
     assert_eq!(painted_grid_dims(&scene, RIGHT_GRID_TAG), Some((50, 24)));
 
     // The reflow log holds exactly one reflow per pane for this first paint.
-    let log = PTY_LOG.lock().unwrap();
+    // Snapshot to a local Vec so the guard is not held across an assert (a
+    // panic mid-assert must not poison the mutex for the sibling tests).
+    let log = PTY_LOG.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
     assert!(log.contains(&(LEFT_TAG.to_owned(), (30, 24))));
     assert!(log.contains(&(RIGHT_TAG.to_owned(), (50, 24))));
     assert_eq!(log.len(), 2, "one reflow per pane, no spurious (0,0) reflow");
@@ -246,12 +251,12 @@ fn each_pane_reflows_to_its_own_measured_rect() {
 
 #[test]
 fn resize_redivides_and_refires_each_pane() {
-    let _g = TEST_LOCK.lock().unwrap();
-    PTY_LOG.lock().unwrap().clear();
+    let _g = TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    PTY_LOG.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clear();
 
     let mut core = ShellCore::<PaneView>::new();
     core.compute_paint_scene(640, 384);
-    PTY_LOG.lock().unwrap().clear(); // drop the first-paint reflows
+    PTY_LOG.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clear(); // drop the first-paint reflows
 
     // Resize to 800×384: 3:5 of 800 = 300px : 500px => 37×24 and 62×24 cells
     // (300/8 = 37.5 floors to 37; 500/8 = 62.5 floors to 62).
@@ -263,7 +268,9 @@ fn resize_redivides_and_refires_each_pane() {
     assert_eq!(painted_grid_dims(&scene, LEFT_GRID_TAG), Some((37, 24)));
     assert_eq!(painted_grid_dims(&scene, RIGHT_GRID_TAG), Some((62, 24)));
 
-    let log = PTY_LOG.lock().unwrap();
+    // Snapshot to a local Vec so the guard is not held across an assert (a
+    // panic mid-assert must not poison the mutex for the sibling tests).
+    let log = PTY_LOG.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
     assert!(log.contains(&(LEFT_TAG.to_owned(), (37, 24))));
     assert!(log.contains(&(RIGHT_TAG.to_owned(), (62, 24))));
     assert_eq!(log.len(), 2, "each pane re-fires exactly once on the resize");
@@ -271,19 +278,45 @@ fn resize_redivides_and_refires_each_pane() {
 
 #[test]
 fn unchanged_repaint_is_inert() {
-    let _g = TEST_LOCK.lock().unwrap();
-    PTY_LOG.lock().unwrap().clear();
+    let _g = TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    PTY_LOG.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clear();
 
     let mut core = ShellCore::<PaneView>::new();
     core.compute_paint_scene(640, 384);
-    PTY_LOG.lock().unwrap().clear(); // drop the first-paint reflows
+    PTY_LOG.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clear(); // drop the first-paint reflows
 
     // Two more paints at the SAME size: the pane signals equality-skip, so no
-    // reflow Effect re-fires and the pane-dirty re-pass never triggers.
+    // reflow Effect re-fires and the pane-dirty bit floors to false (the single
+    // re-pass `if` is then skipped — there is no loop to guard, only an
+    // idempotent steady state).
     core.compute_paint_scene(640, 384);
     core.compute_paint_scene(640, 384);
+    let reflowed = PTY_LOG.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
     assert!(
-        PTY_LOG.lock().unwrap().is_empty(),
-        "an unchanged repaint publishes the same pane rects (no re-fire, no loop)"
+        reflowed.is_empty(),
+        "an unchanged repaint publishes the same pane rects (no re-fire)"
     );
+}
+
+#[test]
+fn nondivisible_width_floors_each_pane_independently() {
+    // R1012.2 (clearance) — the happy-path 640/800 widths are exact multiples of
+    // the 3:5 split AND the 8px cell, so neither the flex rounding nor the
+    // cols_for floor ever bites (R988.1: a "clean" size hides off-by-one). 638
+    // is not 8-divisible after the split: 3:5 of 638 lays out to 239px : 399px,
+    // and cols_for floors a partial trailing cell => 29 and 49 cols (not 30/50).
+    // This pins the flex-round x winsize-floor interaction at a boundary width.
+    let _g = TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    PTY_LOG.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clear();
+
+    let mut core = ShellCore::<PaneView>::new();
+    let scene = core.compute_paint_scene(638, 384);
+    let left = core.root_owner().run(|| pty_dims(LEFT_TAG).get());
+    let right = core.root_owner().run(|| pty_dims(RIGHT_TAG).get());
+    assert_eq!(left, (29, 24), "239px / 8 floors the partial cell");
+    assert_eq!(right, (49, 24), "399px / 8 floors the partial cell");
+    // The painted grid floors identically (publish + paint read the same rect),
+    // so a non-cell-aligned pane never diverges hit-vs-paint.
+    assert_eq!(painted_grid_dims(&scene, LEFT_GRID_TAG), Some((29, 24)));
+    assert_eq!(painted_grid_dims(&scene, RIGHT_GRID_TAG), Some((49, 24)));
 }

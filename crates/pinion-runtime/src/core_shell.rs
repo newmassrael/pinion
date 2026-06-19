@@ -1307,9 +1307,15 @@ impl<V: WidgetCore> CoreShell<V> {
     /// Returns `true` when any pane signal actually changed past its
     /// equality-skip; the substrate ORs this into the same first-paint
     /// same-frame re-pass the scroll-dirty bit drives (R774), so the re-run
-    /// `view` reads the post-reflow producer state on this paint. A pane tag
-    /// absent from `scene` (a torn-off pane) is skipped — it retains its last
-    /// measured size rather than collapsing to `(0, 0)`.
+    /// `view` reads the post-reflow producer state on this paint.
+    ///
+    /// A pane whose rect [`Scene::rect_for_tag_absolute`] cannot resolve is
+    /// **skipped** (retains its last measured size, not reset to `(0, 0)`). That
+    /// covers both a tag *absent* from `scene` (a torn-off pane) and a tag
+    /// present but *collapsed to a zero-extent rect* (a splitter dragged fully
+    /// shut — `rect_for_tag_absolute` returns `None` for an empty rect): a
+    /// degenerate 0-column reflow is never published, distinct from the `(0, 0)`
+    /// "unmeasured" boot sentinel a consumer's reflow Effect skips.
     ///
     /// The writes run inside [`Self::root_owner`]'s scope (R1006 blocker B): a
     /// [`Signal::set`](pinion_core::Signal) re-runs the reflow Effect
@@ -2467,6 +2473,20 @@ mod tests {
         // false.
         assert!(!core.publish_pane_viewports(&Scene::Container(ContainerNode::new(vec![]))));
         assert_eq!(left_seen.borrow().len(), 3);
+        assert_eq!(right_seen.borrow().len(), 2);
+
+        // A pane collapsed to 0px width (a splitter dragged fully shut):
+        // rect_for_tag_absolute returns None for a zero-extent rect, so the
+        // publish skips it and the pane RETAINS its last measured size rather
+        // than reflowing a degenerate 0-column PTY — distinct from the (0, 0)
+        // "unmeasured" boot sentinel. (The right pane's rect is unchanged, so it
+        // equality-skips.)
+        assert!(!core.publish_pane_viewports(&panes_scene(0, 400)));
+        assert_eq!(
+            left_seen.borrow().len(),
+            3,
+            "collapsed (0px) pane is skipped — retains its last size"
+        );
         assert_eq!(right_seen.borrow().len(), 2);
     }
 

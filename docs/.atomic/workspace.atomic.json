@@ -9779,6 +9779,60 @@
         "Sequencing: if sprag reports a fresh forcing case it preempts (stop-report -> spec-seed -> impl); else continue to the Model-View epub slice after R1012."
       ]
     },
+    "R1012.2": {
+      "decision_summary": "R1012.2 §5.23 §5.22 §6.3 §5.16: session-review clearance of R1012.1 (2 independent adversarial reviewers + grep audit) — fixed 1 HIGH (test-mutex poison cascade) + 4 MED (boundary off-by-one coverage, collapsed-pane, convergence-invariant doc, registry-bound doc) + 2 LOW; rejected 3 over-scope items with documented reasons",
+      "changes_bullets": [
+        "HIGH (ZERO-FLAKE): the forcing-consumer test's TEST_LOCK/PTY_LOG lock().unwrap() poisoned on a failing assert held across the guard, cascading one real failure into confusing PoisonErrors across the file's tests; de-poisoned every access (unwrap_or_else(PoisonError::into_inner)) + snapshot-clone the log before asserting so no guard is held across an assert.",
+        "MED (R988.1 off-by-one class): the 640/800 happy-path widths are exact multiples of both the 3:5 split AND the 8px cell, so neither flex-rounding nor the cols_for floor ever bit; added a non-divisible 638px boundary test (lays out 239px:399px -> 29:49 cols, empirically pinned) so a flex-round x winsize-floor regression cannot hide.",
+        "MED: a pane collapsed to 0px (splitter dragged shut) makes rect_for_tag_absolute return None, so the publish skips it and the pane retains its last size (no degenerate 0-col reflow) — added the CoreShell test case + documented it distinct from the (0,0) \"unmeasured\" boot sentinel.",
+        "MED: documented the single-publish convergence invariant (one re-pass converges only for layout-derived, content-independent pane rects — the splitter model) and softened the module doc's R774 parity claim (R1012 re-walks the laid-out scene via rect_for_tag_absolute rather than fusing the write into the layout pass as set_measured_viewport does; the fused harvest is a deferred optimisation).",
+        "MED: documented the registry as insert-only (bounded by distinct tags ever seen, fits the fixed-dock consumer; a release_pane eviction for dynamic tear-off at scale is deferred until a real such consumer needs it) — no longer framing the skip-retain as an unqualified feature.",
+        "LOW: added the negative blocker-B test (set outside an owner scope panics in use_pane_viewport_size, mirror of viewport.rs) + the inherited is_simulating() secondary-defense line to module-doc item 3 + softened the \"no re-pass loop\" wording (the re-pass is a single if, not a loop — equality-skip floors the dirty bit)."
+      ],
+      "verification_bullets": [
+        "2 new tests (638px boundary + negative blocker-B #[should_panic]) + 1 new assertion (collapsed-0-width retain); 13 R1012 tests total. cargo test --workspace = 7203 ok 0 fail (real exit 0, captured to a log not a pipe; R1012.1 was 7201, +2). cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0. RUSTDOCFLAGS=-D warnings cargo doc (core+runtime+shell) = 0 new R1012 breaks (217 pre-existing pinion-core doc debt is a separate carry).",
+        "The 638px boundary value was empirically pinned, not assumed: taffy lays out the 3:5 split of 638 to 239px:399px and cols_for floors the trailing partial cell to 29:49 cols (the test asserts both the producer dims and the painted-grid dims, proving publish + paint read the same rect so a non-cell-aligned pane never diverges hit-vs-paint).",
+        "Both independent adversarial reviewers (refactoring-expert + quality-engineer) confirmed clean WITH traced evidence: the entries()-snapshot re-entrancy (load-bearing, drops the borrow before set so the reflow Effect re-enters without a RefCell double-borrow), the R666 no-nested-cache install (Effect created at view scope guarded by cache_contains, NOT inside a cache factory), contract inheritance (primary-window gate + pure-mirror exclusion + blocker-B root_owner.run wrap), the pub/pub(crate) surface, the revision-based dirty bit, and that the integration re-pass assertion is load-bearing (no Scroll node so only pane_dirty drives the re-pass; deleting it makes the painted grids stay 1x1 and the assert fails).",
+        "Applied verify-seed-claims to the reviewers too: the 0-width None path and the taffy 638px values were traced in source / pinned empirically before accepting, and 3 reviewer suggestions were rejected as over-scope (see carry)."
+      ],
+      "impact_refs": [
+        "5.23",
+        "5.22",
+        "6.3",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "Deferred with reason (rejected as over-scope, not defects): fuse the pane-rect harvest into the layout pass (a perf optimisation, premature without a measured cost or a 2nd consumer); a release_pane registry eviction (no dynamic-tear-off-at-scale consumer yet — YAGNI / abstraction-needs-2nd-consumer); factoring the 3x view+layout re-pass blocks in compute_paint_scene_internal (an established 7x file idiom — a repo-wide cleanup, out of a feature round's scope).",
+        "Standing carry: real sprag-gui multi-pane terminal consumer out of scope (sprag repo); per-window viewport signal deferred (panes are primary-window); the TUI path does not publish; a runnable GUI example deferred as non-headlessly-verifiable (the publish is live-paint-only, like R1006's sprag consumer) — the end-to-end test is the verifiable forcing consumer.",
+        "Next: if sprag reports a fresh forcing case it preempts; else the Model-View epub slice. R1012 (spec-seed + impl + clearance) is review-cleared but PUSH PENDING explicit user consent."
+      ],
+      "publishable_decision_summary": "R1012.2 §5.23 §5.22 §6.3 §5.16: session-review clearance of R1012.1 (2 independent adversarial reviewers + grep audit) — fixed 1 HIGH (test-mutex poison cascade) + 4 MED (boundary off-by-one coverage, collapsed-pane, convergence-invariant doc, registry-bound doc) + 2 LOW; rejected 3 over-scope items with documented reasons",
+      "publishable_changes_bullets": [
+        "HIGH (ZERO-FLAKE): the forcing-consumer test's TEST_LOCK/PTY_LOG lock().unwrap() poisoned on a failing assert held across the guard, cascading one real failure into confusing PoisonErrors across the file's tests; de-poisoned every access (unwrap_or_else(PoisonError::into_inner)) + snapshot-clone the log before asserting so no guard is held across an assert.",
+        "MED (R988.1 off-by-one class): the 640/800 happy-path widths are exact multiples of both the 3:5 split AND the 8px cell, so neither flex-rounding nor the cols_for floor ever bit; added a non-divisible 638px boundary test (lays out 239px:399px -> 29:49 cols, empirically pinned) so a flex-round x winsize-floor regression cannot hide.",
+        "MED: a pane collapsed to 0px (splitter dragged shut) makes rect_for_tag_absolute return None, so the publish skips it and the pane retains its last size (no degenerate 0-col reflow) — added the CoreShell test case + documented it distinct from the (0,0) \"unmeasured\" boot sentinel.",
+        "MED: documented the single-publish convergence invariant (one re-pass converges only for layout-derived, content-independent pane rects — the splitter model) and softened the module doc's R774 parity claim (R1012 re-walks the laid-out scene via rect_for_tag_absolute rather than fusing the write into the layout pass as set_measured_viewport does; the fused harvest is a deferred optimisation).",
+        "MED: documented the registry as insert-only (bounded by distinct tags ever seen, fits the fixed-dock consumer; a release_pane eviction for dynamic tear-off at scale is deferred until a real such consumer needs it) — no longer framing the skip-retain as an unqualified feature.",
+        "LOW: added the negative blocker-B test (set outside an owner scope panics in use_pane_viewport_size, mirror of viewport.rs) + the inherited is_simulating() secondary-defense line to module-doc item 3 + softened the \"no re-pass loop\" wording (the re-pass is a single if, not a loop — equality-skip floors the dirty bit)."
+      ],
+      "publishable_verification_bullets": [
+        "2 new tests (638px boundary + negative blocker-B #[should_panic]) + 1 new assertion (collapsed-0-width retain); 13 R1012 tests total. cargo test --workspace = 7203 ok 0 fail (real exit 0, captured to a log not a pipe; R1012.1 was 7201, +2). cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0. RUSTDOCFLAGS=-D warnings cargo doc (core+runtime+shell) = 0 new R1012 breaks (217 pre-existing pinion-core doc debt is a separate carry).",
+        "The 638px boundary value was empirically pinned, not assumed: taffy lays out the 3:5 split of 638 to 239px:399px and cols_for floors the trailing partial cell to 29:49 cols (the test asserts both the producer dims and the painted-grid dims, proving publish + paint read the same rect so a non-cell-aligned pane never diverges hit-vs-paint).",
+        "Both independent adversarial reviewers (refactoring-expert + quality-engineer) confirmed clean WITH traced evidence: the entries()-snapshot re-entrancy (load-bearing, drops the borrow before set so the reflow Effect re-enters without a RefCell double-borrow), the R666 no-nested-cache install (Effect created at view scope guarded by cache_contains, NOT inside a cache factory), contract inheritance (primary-window gate + pure-mirror exclusion + blocker-B root_owner.run wrap), the pub/pub(crate) surface, the revision-based dirty bit, and that the integration re-pass assertion is load-bearing (no Scroll node so only pane_dirty drives the re-pass; deleting it makes the painted grids stay 1x1 and the assert fails).",
+        "Applied verify-seed-claims to the reviewers too: the 0-width None path and the taffy 638px values were traced in source / pinned empirically before accepting, and 3 reviewer suggestions were rejected as over-scope (see carry)."
+      ],
+      "publishable_impact_refs": [
+        "5.23",
+        "5.22",
+        "6.3",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Deferred with reason (rejected as over-scope, not defects): fuse the pane-rect harvest into the layout pass (a perf optimisation, premature without a measured cost or a 2nd consumer); a release_pane registry eviction (no dynamic-tear-off-at-scale consumer yet — YAGNI / abstraction-needs-2nd-consumer); factoring the 3x view+layout re-pass blocks in compute_paint_scene_internal (an established 7x file idiom — a repo-wide cleanup, out of a feature round's scope).",
+        "Standing carry: real sprag-gui multi-pane terminal consumer out of scope (sprag repo); per-window viewport signal deferred (panes are primary-window); the TUI path does not publish; a runnable GUI example deferred as non-headlessly-verifiable (the publish is live-paint-only, like R1006's sprag consumer) — the end-to-end test is the verifiable forcing consumer.",
+        "Next: if sprag reports a fresh forcing case it preempts; else the Model-View epub slice. R1012 (spec-seed + impl + clearance) is review-cleared but PUSH PENDING explicit user consent."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

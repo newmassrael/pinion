@@ -19,16 +19,34 @@
 //! paint's `view` reads the post-reflow producer state.
 //!
 //! A *pane* rect has no such pre-view source: it is only known **after**
-//! `compute_layout` resolves the splitter geometry. So this seam is the
+//! `compute_layout` resolves the splitter geometry. So this seam reuses the
+//! *shape* of
 //! [`ScrollState::measured_viewport`](crate::widgets::scroll::ScrollState::measured_viewport)
-//! `AutoSizer` leg (R774): the shell publishes each pane's measured rect *after*
-//! layout, and the first-paint chicken-and-egg (the reflow Effect must still run
-//! on the paint the size is first measured) is resolved by the same scroll-dirty
-//! same-frame re-pass — the publish returns a dirty bit the shell ORs into that
-//! re-pass. R1012 is therefore a **sibling** of R1006, not a generalisation:
-//! different timing (post-layout vs pre-view) and cardinality (N tag-keyed
-//! signals vs one window signal); folding the window seam into the post-layout
-//! path would regress its same-paint pre-reflow.
+//! (R774's `AutoSizer` leg): a post-layout measured-rect readback whose
+//! first-paint chicken-and-egg (the reflow Effect must still run on the paint
+//! the size is first measured) is resolved by the same scroll-dirty same-frame
+//! re-pass — the publish returns a dirty bit the shell ORs into that re-pass.
+//! The *mechanism* differs: R774 fuses the `set_measured_viewport` write into
+//! the layout pass, whereas this seam publishes by re-walking the laid-out scene
+//! for each registered pane tag via
+//! [`Scene::rect_for_tag_absolute`](crate::scene::Scene::rect_for_tag_absolute).
+//! (Harvesting pane rects during the single layout walk is a deferred
+//! optimisation — premature without a measured cost or a second consumer.)
+//!
+//! R1012 is therefore a **sibling** of R1006, not a generalisation: different
+//! timing (post-layout vs pre-view) and cardinality (N tag-keyed signals vs one
+//! window signal); folding the window seam into the post-layout path would
+//! regress its same-paint pre-reflow.
+//!
+//! ## Convergence invariant
+//!
+//! The single post-layout publish + one re-pass converges only when a pane's
+//! rect is layout-derived and **independent of its own content** — the
+//! dock/splitter model, where a pane's width is its splitter share, not its grid
+//! glyphs' intrinsic size. A pane sized by its content would have a rect in the
+//! re-pass layout differing from the one just published, so its viewport would
+//! lag one frame. That is out of scope for this seam (the terminal/canvas panes
+//! it serves fill their splitter share).
 //!
 //! # Contract (inherited from R1006 — load-bearing)
 //!
@@ -46,7 +64,10 @@
 //!    live, primary-window paint (`compute_paint_scene_internal`); the
 //!    side-effect-free mirror (`compute_paint_scene_pure_internal`) and the RPC
 //!    produce path never reach it. So an introspection paint cannot fire a pane
-//!    reflow — there is no `set`, hence nothing to gate.
+//!    reflow — there is no `set`, hence nothing to gate. (Under `dry_run` /
+//!    `simulate` the inherited [`is_simulating`](super::is_simulating) gate in
+//!    [`Effect`](super::effect::Effect) is the secondary defense, exactly as for
+//!    the R1006 window seam.)
 //!
 //! # Re-entrancy
 //!
@@ -74,6 +95,13 @@ type PaneViewportMap = BTreeMap<Cow<'static, str>, Signal<(u32, u32)>>;
 /// [`Signal`]. A cheaply-clonable `Rc` handle: the consumer's
 /// [`use_pane_viewport_size`] read and the shell's publish both resolve the same
 /// root-owner registry, so they share one signal per pane tag.
+///
+/// **Insert-only.** A tag is registered on first read and never evicted, so the
+/// registry is bounded by the number of *distinct pane tags ever seen*. That
+/// fits the current consumers (a fixed dock layout's small stable tag set). A
+/// per-pane eviction (`release_pane`) for a host that creates and destroys many
+/// panes dynamically (dock tear-off at scale) is a deferred additive axis —
+/// added when a real such consumer needs it, not speculatively.
 #[derive(Clone)]
 pub(crate) struct PaneViewportRegistry {
     inner: Rc<RefCell<PaneViewportMap>>,
@@ -238,6 +266,24 @@ mod tests {
             }
         });
         assert_eq!(*last.borrow(), (200, 60));
+    }
+
+    #[test]
+    #[should_panic(expected = "use_pane_viewport_size requires an active Owner scope")]
+    fn set_outside_owner_scope_panics_blocker_b() {
+        // R1012.2 — blocker B negative path (mirror of viewport.rs): a publish
+        // that set()s a pane signal with no active owner scope leaves the handle
+        // stack empty, so the synchronous reflow re-run's use_pane_viewport_size()
+        // -> Owner::current().expect() panics. This is why
+        // CoreShell::publish_pane_viewports wraps the set in root_owner.run.
+        let owner = Owner::new();
+        let sig = owner.pane_viewport_signal(Cow::Borrowed("pane.a"));
+        let _eff = owner.run(|| {
+            Effect::new(&Owner::current().expect("inside run"), || {
+                let _ = use_pane_viewport_size("pane.a");
+            })
+        });
+        sig.set((120, 40)); // no owner.run wrap -> panics during the re-run
     }
 
     #[test]
