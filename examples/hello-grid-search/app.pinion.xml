@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R1004 §5.27 §5.40 search-and-jump cursor at scale: pinion-forge renderer
+  manifest for hello-grid-search. Same single-source-of-truth template as the
+  other hello-* renderers; only the struct name diverges. backend=vello +
+  default Area antialiasing (R46.2.1).
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloGridSearchRenderer"
+        backend="vello"/>

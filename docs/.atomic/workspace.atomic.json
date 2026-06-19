@@ -8897,6 +8897,112 @@
         "sprag windowed host: seed its own LayoutCacheMonospaceMetrics or reuse CoreShell default"
       ]
     },
+    "R1004": {
+      "decision_summary": "Model-View at-scale campaign slice 5: a search-and-jump cursor over a large data set. A GridFilter query drives a match CURSOR (next/prev/jump, wrapping) that scrolls each match into view via reveal_row, while EVERY row stays visible -- the inverse of the filter axis, which removes non-matching rows. Search is the THIRD consumer of the R997 GridFilter match vocabulary (the filter axis removes, R998 coloring tints, search navigates), so a query reads in the same wire form. New pinion-core widgets::row_search: a pure RowSearchState cursor + match set memoized via the shared OrderMemo, and a RowSearchExternal RPC adapter that optionally reveals the match through an attached ScrollState (the nav_select_key reveal idiom -- reveal is the adapter's job, the state stays pure). New hello-grid-search reference example (highlights matches via the R998 row_style hook, no new paint substrate) + RPC demo.",
+      "changes_bullets": [
+        "New pinion-core widgets::row_search: search_matches free fn (the source rows a",
+        "GridFilter accepts, ascending) + reactive RowSearchState (query + cursor Signals;",
+        "the match set memoized on the query via the shared OrderMemo, sound because the",
+        "source is materialized + immutable). match_count / current_index / current_row /",
+        "match_at; set_query lands the cursor on the first match; next_match / prev_match",
+        "wrap; jump_to is range-guarded (an out-of-range jump is a no-op, never a panic).",
+        "RowSearchExternal: the AI-first RPC adapter (query / match_count / current /",
+        "current_row / count / match.<i> query; set_query / next / prev / jump / clear",
+        "invoke; query intervene). source_at_value (R780) projects match.<i>. Optionally",
+        "carries a ScrollState (with_reveal) so every cursor move scrolls the match into",
+        "view via reveal_row -- the nav_select_key reveal idiom, keeping the state pure",
+        "(reveal is the adapter's job, as VirtualSelectExternal leaves it to the glue).",
+        "Search REUSES the R997 GridFilter::matches (the THIRD consumer of the match",
+        "vocab: the filter axis removes, R998 coloring tints, search navigates), the",
+        "grid_filter_str / grid_filter_from_str wire + clamped_to_col_count (a phantom-",
+        "column query collapses to no search), reveal_row (5th consumer), and OrderMemo",
+        "(7th) -- no new windowing or match substrate, only the row-match cursor.",
+        "New hello-grid-search example (10k-row grid, seed query Name~Delta; the current",
+        "match paints a strong strip + the other matches a wash via the R998",
+        "VirtualTableData.row_style hook, no new paint substrate; ALL rows stay visible,",
+        "unlike the filter axis) + tools/demos/r1004_grid_search.py."
+      ],
+      "verification_bullets": [
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): 0 warnings.",
+        "cargo test --workspace -j2: 7134 passed / 0 failed (row_search 13 ok: free-fn match",
+        "set, cursor land/walk/wrap, range-guarded jump, numeric-facet reuse, query/intervene/",
+        "invoke round-trips, match.<i> Null pad, phantom-column clamp, with_reveal scrolls;",
+        "hello-grid-search 4 ok: seed-query membership, next walk keeps all rows, numeric reuse).",
+        "tools/demos/r1004_grid_search.py: PASS deterministic x3 (seed query + first-match land,",
+        "match.<i> oracle sweep + Null pad, next/prev/jump with wrap, jump scrolls the match into",
+        "the painted window, window keeps non-match neighbours [search != filter], numeric >=",
+        "reuse, clear/restore/intervene, phantom-column clamp, out-of-range jump no-op).",
+        "mnemosyne validate-workspace: T1 reject=0 (entries 988 -> 989, no new orphan)."
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.40",
+        "5.45"
+      ],
+      "carry_forward_bullets": [
+        "Search runs over the un-reordered source, so a match's source index == its view",
+        "position; composing search with a sort/filter proxy that permutes rows needs a",
+        "source->view map before reveal_row (additive, when a consumer combines them).",
+        "RowSearchState materializes its own cells (like GridSortState); a consumer",
+        "carrying BOTH a sort proxy and a search over the same data duplicates the",
+        "materialized source -- sharing it needs a common source type, the Model trait",
+        "the project deliberately omits (lift on a real dual consumer, not before).",
+        "Keyboard search nav (Enter / F3 next, Shift+F3 prev) is a binding-glue follow-up;",
+        "the example is RPC-driven (the AI-first path), mirroring hello-grid-row-style."
+      ],
+      "publishable_decision_summary": "Model-View at-scale campaign slice 5: a search-and-jump cursor over a large data set. A GridFilter query drives a match CURSOR (next/prev/jump, wrapping) that scrolls each match into view via reveal_row, while EVERY row stays visible -- the inverse of the filter axis, which removes non-matching rows. Search is the THIRD consumer of the R997 GridFilter match vocabulary (the filter axis removes, R998 coloring tints, search navigates), so a query reads in the same wire form. New pinion-core widgets::row_search: a pure RowSearchState cursor + match set memoized via the shared OrderMemo, and a RowSearchExternal RPC adapter that optionally reveals the match through an attached ScrollState (the nav_select_key reveal idiom -- reveal is the adapter's job, the state stays pure). New hello-grid-search reference example (highlights matches via the R998 row_style hook, no new paint substrate) + RPC demo.",
+      "publishable_changes_bullets": [
+        "New pinion-core widgets::row_search: search_matches free fn (the source rows a",
+        "GridFilter accepts, ascending) + reactive RowSearchState (query + cursor Signals;",
+        "the match set memoized on the query via the shared OrderMemo, sound because the",
+        "source is materialized + immutable). match_count / current_index / current_row /",
+        "match_at; set_query lands the cursor on the first match; next_match / prev_match",
+        "wrap; jump_to is range-guarded (an out-of-range jump is a no-op, never a panic).",
+        "RowSearchExternal: the AI-first RPC adapter (query / match_count / current /",
+        "current_row / count / match.<i> query; set_query / next / prev / jump / clear",
+        "invoke; query intervene). source_at_value (R780) projects match.<i>. Optionally",
+        "carries a ScrollState (with_reveal) so every cursor move scrolls the match into",
+        "view via reveal_row -- the nav_select_key reveal idiom, keeping the state pure",
+        "(reveal is the adapter's job, as VirtualSelectExternal leaves it to the glue).",
+        "Search REUSES the R997 GridFilter::matches (the THIRD consumer of the match",
+        "vocab: the filter axis removes, R998 coloring tints, search navigates), the",
+        "grid_filter_str / grid_filter_from_str wire + clamped_to_col_count (a phantom-",
+        "column query collapses to no search), reveal_row (5th consumer), and OrderMemo",
+        "(7th) -- no new windowing or match substrate, only the row-match cursor.",
+        "New hello-grid-search example (10k-row grid, seed query Name~Delta; the current",
+        "match paints a strong strip + the other matches a wash via the R998",
+        "VirtualTableData.row_style hook, no new paint substrate; ALL rows stay visible,",
+        "unlike the filter axis) + tools/demos/r1004_grid_search.py."
+      ],
+      "publishable_verification_bullets": [
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): 0 warnings.",
+        "cargo test --workspace -j2: 7134 passed / 0 failed (row_search 13 ok: free-fn match",
+        "set, cursor land/walk/wrap, range-guarded jump, numeric-facet reuse, query/intervene/",
+        "invoke round-trips, match.<i> Null pad, phantom-column clamp, with_reveal scrolls;",
+        "hello-grid-search 4 ok: seed-query membership, next walk keeps all rows, numeric reuse).",
+        "tools/demos/r1004_grid_search.py: PASS deterministic x3 (seed query + first-match land,",
+        "match.<i> oracle sweep + Null pad, next/prev/jump with wrap, jump scrolls the match into",
+        "the painted window, window keeps non-match neighbours [search != filter], numeric >=",
+        "reuse, clear/restore/intervene, phantom-column clamp, out-of-range jump no-op).",
+        "mnemosyne validate-workspace: T1 reject=0 (entries 988 -> 989, no new orphan)."
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.40",
+        "5.45"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Search runs over the un-reordered source, so a match's source index == its view",
+        "position; composing search with a sort/filter proxy that permutes rows needs a",
+        "source->view map before reveal_row (additive, when a consumer combines them).",
+        "RowSearchState materializes its own cells (like GridSortState); a consumer",
+        "carrying BOTH a sort proxy and a search over the same data duplicates the",
+        "materialized source -- sharing it needs a common source type, the Model trait",
+        "the project deliberately omits (lift on a real dual consumer, not before).",
+        "Keyboard search nav (Enter / F3 next, Shift+F3 prev) is a binding-glue follow-up;",
+        "the example is RPC-driven (the AI-first path), mirroring hello-grid-row-style."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
