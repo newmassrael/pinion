@@ -202,6 +202,10 @@ pub use pinion_core::WidgetRenderer;
 // — pinion-runtime is the canonical home of the layout walker —
 // the re-export just shortens the consumer-side surface.
 pub use pinion_runtime::rect_for_tag;
+// R1010 §5.39 §5.40 — re-export the focus-ring style so a
+// [`WidgetView::focus_ring_style`] impl can return a custom ring (or import the
+// type to read its builder) without a direct `pinion-overlay` dep.
+pub use pinion_overlay::FocusRingStyle;
 
 // R791.1 §5.13 §5.38 — the per-binding `WidgetView::ime_caret_rect` body
 // (focus-guard + `rect_for_tag` walk + `tf_paint::ime_caret_rect_for`) is
@@ -549,6 +553,30 @@ pub trait WidgetView: pinion_a11y::WidgetA11y {
         _focused: Option<&str>,
     ) -> Option<pinion_text::CaretRect> {
         None
+    }
+
+    /// R1010 §5.39 §5.40 — binding-controlled focus ring. The shell draws a
+    /// framework focus ring (a `pinion_overlay` outset box, tagged
+    /// `ai-overlay/focus-ring`) around the focused widget; this hook lets a
+    /// binding restyle or suppress it for the tag the shell is about to ring.
+    ///
+    /// - `Some(style)` (the default, `Some(FocusRingStyle::default())`) — draw
+    ///   the ring with `style`. A binding that does not override is
+    ///   byte-unchanged.
+    /// - `None` — draw **no** ring. The content-surface opt-out: a terminal /
+    ///   code-editor / canvas that owns its own focus indicator (the terminal's
+    ///   text cursor) suppresses the framework ring while still taking focus for
+    ///   `apply_key`. A binding that opts out then owns its own visible
+    ///   keyboard-focus indicator (the WCAG 2.4.7 affordance the framework ring
+    ///   otherwise provides) — the shell rings nothing in its place.
+    ///
+    /// `focused_tag` is the tag the shell resolved to ring (a roving widget's
+    /// active descendant, or the focused widget itself), so a binding with
+    /// several focusable surfaces can suppress the ring on its content surface
+    /// while keeping it on its chrome.
+    #[must_use]
+    fn focus_ring_style(_focused_tag: &str) -> Option<pinion_overlay::FocusRingStyle> {
+        Some(pinion_overlay::FocusRingStyle::default())
     }
 
     /// R762 §5.36 §5.38 / R763 §5.22 — pointer-driven caret + selection

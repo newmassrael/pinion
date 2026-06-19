@@ -613,6 +613,22 @@ fn resolve_focus_ring_tag<V: WidgetView>(
         .unwrap_or_else(|| focused.to_owned())
 }
 
+/// R1010 §5.39 §5.40 — inject the framework focus ring around `ring_tag`, styled
+/// (or suppressed) by the binding's [`WidgetView::focus_ring_style`]. The single
+/// home shared by the winit paint path ([`ShellCore::apply_focus_ring`]) and the
+/// RPC produce path: `None` from the hook draws no ring (the content-surface
+/// opt-out), `Some(style)` draws it; a `None` `ring_tag` (no focus) is also a
+/// no-op.
+fn inject_styled_focus_ring<V: WidgetView>(scene: Scene, ring_tag: Option<&str>) -> Scene {
+    match ring_tag {
+        Some(tag) => match V::focus_ring_style(tag) {
+            Some(style) => pinion_overlay::inject_focus_ring(scene, Some(tag), style),
+            None => scene,
+        },
+        None => scene,
+    }
+}
+
 impl<V: WidgetView> ShellCore<V> {
 
     /// R51.76 §5.40 — borrow the cached state projection. Tests
@@ -2624,11 +2640,9 @@ impl<V: WidgetView> ShellCore<V> {
         // its active cell rather than wrapping the container.
         let ring_tag =
             resolve_focus_ring_tag::<V>(self.core.cached_state(), focused, self.core.root_owner());
-        pinion_overlay::inject_focus_ring(
-            scene,
-            Some(&ring_tag),
-            pinion_overlay::FocusRingStyle::default(),
-        )
+        // R1010 §5.39 §5.40 — the binding owns the ring style for the rung tag
+        // (None suppresses it; the default draws the framework ring).
+        inject_styled_focus_ring::<V>(scene, Some(&ring_tag))
     }
 
     /// R670.B §5.16 — per-window paint scene producer. Same pipeline
@@ -3221,11 +3235,9 @@ impl<V: WidgetView> ShellCore<V> {
                 // flushed when the produce closure runs for path
                 // resolution, so the ring reflects entry focus — which
                 // matches what the AI client addressed.
-                pinion_overlay::inject_focus_ring(
-                    paint,
-                    ring_tag_for_paint.as_deref(),
-                    pinion_overlay::FocusRingStyle::default(),
-                )
+                // R1010 §5.39 §5.40 — same binding-controlled ring as the winit
+                // paint path (None = no ring), through the shared SSOT.
+                inject_styled_focus_ring::<V>(paint, ring_tag_for_paint.as_deref())
             };
             // R979 §5.40 §2 #7 — `scene/access` producer (the `build_access_tree`
             // SSOT the live AccessKit emit also runs; entry-focus `focus_before`).

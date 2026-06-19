@@ -381,6 +381,14 @@ impl WidgetView for GridPointerView {
     fn initial_size_strategy() -> SizeStrategy {
         SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
     }
+
+    /// R1010 §5.39 — a terminal pane owns its focus indicator (the text cursor),
+    /// so it suppresses the framework focus ring while still taking focus for
+    /// `apply_key` (R1009). Without this the whole viewport would carry a blue
+    /// ring that fights the terminal's own cursor.
+    fn focus_ring_style(_focused_tag: &str) -> Option<pinion_shell::FocusRingStyle> {
+        None
+    }
 }
 
 fn main() {
@@ -467,6 +475,13 @@ mod tests {
         assert_eq!(e.intervene("cell", IntrospectValue::Text("1,1".into())), Err(InterveneError::ReadOnly));
         assert_eq!(e.intervene("last_key", IntrospectValue::Text("x".into())), Err(InterveneError::ReadOnly));
         assert_eq!(e.intervene("nope", IntrospectValue::Null), Err(InterveneError::UnknownPath));
+    }
+
+    #[test]
+    fn terminal_pane_suppresses_the_focus_ring() {
+        // R1010 — the content-surface opt-out: the pane owns its cursor, so no
+        // framework ring (the default would be Some(FocusRingStyle::default())).
+        assert!(GridPointerView::focus_ring_style(ROOT_TAG).is_none());
     }
 
     #[test]

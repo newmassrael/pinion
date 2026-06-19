@@ -9565,6 +9565,54 @@
         "PR-7 focus-ring opt-out (the now-focusable pane draws a ring) + multi-pane viewport seam (R1006 per-pane) remain"
       ]
     },
+    "R1010": {
+      "decision_summary": "R1010 PR-7: binding-controlled focus ring. New WidgetView::focus_ring_style(focused_tag)->Option<FocusRingStyle> hook (default Some(default()) = byte-unchanged, None = no ring) read at both inject_focus_ring sites via a new inject_styled_focus_ring SSOT. hello-grid-pointer (the now-focusable terminal pane) returns None: it owns its text cursor as the focus indicator. The pinion half of the sprag-gui content-surface focus-ring opt-out.",
+      "changes_bullets": [
+        "Add WidgetView::focus_ring_style(focused_tag)->Option<FocusRingStyle> (default Some(default()); None=no ring)",
+        "Both inject_focus_ring sites (winit paint + RPC produce) route through a new inject_styled_focus_ring::<V> SSOT",
+        "Re-export pinion_overlay::FocusRingStyle from pinion-shell for binding-side custom styles",
+        "hello-grid-pointer terminal pane overrides -> None (owns its text cursor as the focus indicator)",
+        "New demo tools/demos/r1010_focus_ring.py: the pane suppresses the ring; a default-ring control proves the contrast"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: 7188 passed 0 failed",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0",
+        "cargo doc -p pinion-shell: 0 new broken links (72 pre-existing unchanged)",
+        "r1010 demo PASS deterministic x3 + r1008/r1009 regression PASS",
+        "example focus_ring_style unit test; hello-cell-select control rings, the pane suppresses"
+      ],
+      "impact_refs": [
+        "5.39",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "a11y: a content-surface opting out owns its own visible focus indicator (terminal cursor); WCAG 2.4.7 responsibility shifts to the binding (documented on the hook)",
+        "Multi-pane per-pane viewport seam (R1006 extension, spec-level) + Model-View epub slice remain"
+      ],
+      "publishable_decision_summary": "R1010 PR-7: binding-controlled focus ring. New WidgetView::focus_ring_style(focused_tag)->Option<FocusRingStyle> hook (default Some(default()) = byte-unchanged, None = no ring) read at both inject_focus_ring sites via a new inject_styled_focus_ring SSOT. hello-grid-pointer (the now-focusable terminal pane) returns None: it owns its text cursor as the focus indicator. The pinion half of the sprag-gui content-surface focus-ring opt-out.",
+      "publishable_changes_bullets": [
+        "Add WidgetView::focus_ring_style(focused_tag)->Option<FocusRingStyle> (default Some(default()); None=no ring)",
+        "Both inject_focus_ring sites (winit paint + RPC produce) route through a new inject_styled_focus_ring::<V> SSOT",
+        "Re-export pinion_overlay::FocusRingStyle from pinion-shell for binding-side custom styles",
+        "hello-grid-pointer terminal pane overrides -> None (owns its text cursor as the focus indicator)",
+        "New demo tools/demos/r1010_focus_ring.py: the pane suppresses the ring; a default-ring control proves the contrast"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: 7188 passed 0 failed",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0",
+        "cargo doc -p pinion-shell: 0 new broken links (72 pre-existing unchanged)",
+        "r1010 demo PASS deterministic x3 + r1008/r1009 regression PASS",
+        "example focus_ring_style unit test; hello-cell-select control rings, the pane suppresses"
+      ],
+      "publishable_impact_refs": [
+        "5.39",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "a11y: a content-surface opting out owns its own visible focus indicator (terminal cursor); WCAG 2.4.7 responsibility shifts to the binding (documented on the hook)",
+        "Multi-pane per-pane viewport seam (R1006 extension, spec-level) + Model-View epub slice remain"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
