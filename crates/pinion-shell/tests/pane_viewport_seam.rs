@@ -73,7 +73,7 @@ fn reflow_key(tag: &'static str) -> &'static str {
     match tag {
         LEFT_TAG => "pane.left.reflow",
         RIGHT_TAG => "pane.right.reflow",
-        _ => "pane.reflow",
+        other => unreachable!("only the two pane tags are paneled, got {other:?}"),
     }
 }
 

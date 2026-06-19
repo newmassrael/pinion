@@ -26,12 +26,21 @@
 //! first-paint chicken-and-egg (the reflow Effect must still run on the paint
 //! the size is first measured) is resolved by the same scroll-dirty same-frame
 //! re-pass — the publish returns a dirty bit the shell ORs into that re-pass.
-//! The *mechanism* differs: R774 fuses the `set_measured_viewport` write into
-//! the layout pass, whereas this seam publishes by re-walking the laid-out scene
-//! for each registered pane tag via
+//! The *mechanism* differs, and the difference is forced by **where the state
+//! lives**. R774's harvest (`update_scroll_state_bounds`) runs as a post-layout
+//! walk *inside* `compute_layout` because a `ScrollNode` carries its
+//! `ScrollState` in the scene tree (`ScrollNode.state`), so the walk is pure
+//! scene data. A pane's viewport `Signal` is **not** scene-carried — a
+//! `Container` carries only a `tag`, and the tag → signal registry lives in the
+//! owner-cache (panes are sparse + tag-addressed; a per-`Container` viewport
+//! field would tax the commonest scene node for a rare feature). So the pane
+//! harvest lives in the **shell** (`CoreShell::publish_pane_viewports`) — the one
+//! layer holding both the laid-out scene *and* the owner — resolving each
+//! registered tag's rect via the established scroll-aware
 //! [`Scene::rect_for_tag_absolute`](crate::scene::Scene::rect_for_tag_absolute).
-//! (Harvesting pane rects during the single layout walk is a deferred
-//! optimisation — premature without a measured cost or a second consumer.)
+//! Folding the harvest into `compute_layout` would couple the layout pass to the
+//! reactive owner (a coupling the scene-carried scroll path does not have), so
+//! the shell-side harvest is the correct layering, not a deferred optimisation.
 //!
 //! R1012 is therefore a **sibling** of R1006, not a generalisation: different
 //! timing (post-layout vs pre-view) and cardinality (N tag-keyed signals vs one
@@ -171,7 +180,8 @@ pub(crate) const PANE_VIEWPORT_REGISTRY_KEY: &str = "__pinion.reactive.pane_view
 pub fn use_pane_viewport_size(tag: impl Into<Cow<'static, str>>) -> (u32, u32) {
     super::owner::Owner::current()
         .expect("use_pane_viewport_size requires an active Owner scope")
-        .pane_viewport_signal(tag.into())
+        .pane_viewport_registry()
+        .signal_for(tag.into())
         .get()
 }
 
@@ -277,7 +287,7 @@ mod tests {
         // -> Owner::current().expect() panics. This is why
         // CoreShell::publish_pane_viewports wraps the set in root_owner.run.
         let owner = Owner::new();
-        let sig = owner.pane_viewport_signal(Cow::Borrowed("pane.a"));
+        let sig = owner.pane_viewport_registry().signal_for(Cow::Borrowed("pane.a"));
         let _eff = owner.run(|| {
             Effect::new(&Owner::current().expect("inside run"), || {
                 let _ = use_pane_viewport_size("pane.a");

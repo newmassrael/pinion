@@ -9833,6 +9833,68 @@
         "Next: if sprag reports a fresh forcing case it preempts; else the Model-View epub slice. R1012 (spec-seed + impl + clearance) is review-cleared but PUSH PENDING explicit user consent."
       ]
     },
+    "R1012.3": {
+      "decision_summary": "R1012.3 §5.23 §5.22 §6.3 §5.16: user session-review clearance under a cost-no-object textbook bar (2 fresh adversarial reviewers [system-architect + refactoring-expert] + grep audit) — fixed 6 real items (doc-link warts, redundant accessor, R774-mischaracterization doc, scroll-clip doc, dead arm, 3x re-pass dedup); rejected 5 over-reach/artifact findings with traced evidence",
+      "changes_bullets": [
+        "M1 (doc): removed 3 redundant/misleading explicit doc-link targets in the publish_pane_viewports / set_viewport_size docs ([`Signal`] / [`Signal::set`] now bare intra-doc; the explicit (pinion_core::Signal) was redundant for Signal and misleading for ::set, pointing at the type). cargo doc is not in the commit gate so they slipped through R1012.1/.2.",
+        "M2 (API-surface SSOT): dropped the redundant Owner::pane_viewport_signal one-line delegator; use_pane_viewport_size + the unit tests now reach the signal through the single pane_viewport_registry().signal_for path (mirrors R1006's single-accessor surface; the prior two paths could drift).",
+        "HIGH-1 (doc accuracy): rewrote the module doc that mischaracterized R774. R774's update_scroll_state_bounds harvests INSIDE compute_layout because a ScrollNode carries its ScrollState in the SCENE (ScrollNode.state); a pane's viewport Signal is owner-cache-keyed (a Container carries only a tag, panes are sparse), so the harvest correctly lives in the SHELL (the one layer holding both scene + owner), not as a deferred optimisation. Folding it into compute_layout would couple the layout pass to the reactive owner -- a coupling the scene-carried scroll path lacks.",
+        "L1 (doc): noted rect_for_tag_absolute -> None also covers a scroll-clipped pane, which the seam's top-level-splitter-pane model scopes out.",
+        "L2: replaced the dead `_ => \"pane.reflow\"` arm in the test fixture with unreachable!().",
+        "MED-4 (dedup): factored the 3x identical V::view / view_for_window dispatch in compute_paint_scene_internal into one block-scoped closure capturing only &self.core (disjoint from the &mut self.text_cache the layouts borrow). View-only -- NOT view+layout (which would double-lay-out the first pass) -- consistent with dispatch_rpc's existing text_cache-ptr closure."
+      ],
+      "verification_bullets": [
+        "cargo test --workspace = 7203 ok 0 fail (real exit 0; unchanged count -- doc/dedup/accessor edits add no tests). clippy --workspace --all-targets --features pinion-runtime/vello = 0. RUSTDOCFLAGS=-D warnings cargo doc: 0 new R1012 breaks AND my 3 M1 warts cleared (the remaining core_shell.rs:1280 [`Effect`] redundant-link is pre-existing R1006 debt, left under scope-discipline).",
+        "The dedup closure compiles via edition-2024 disjoint capture (&self.core shared inside the closure coexists with &mut self.text_cache in the layout calls); it is block-scoped so its borrow drops before the later &mut self paint-loop work; behavior is byte-identical (the 8 module + 1 runtime + 4 integration R1012 tests still pass, incl. the same-frame re-pass and resize cases).",
+        "Self-corrected mid-review (verify-seed-claims on my own edit): a bare [`use_viewport_size`] edit on a pre-existing R1006 line produced an unresolved-link error (use_viewport_size is not imported in core_shell), so I reverted it -- only my own R1012 doc was touched.",
+        "REJECTED findings, traced (verify-seed-claims applied to the two reviewers): HIGH-0 uncommitted-non-compiling-substrate = a PARALLEL-REVIEW RACE ARTIFACT (I ran two tree-mutating review agents concurrently; one saw the other's in-flight compile experiment). Committed HEAD + working tree are clean and compile. Process lesson: never run tree-mutating review agents in parallel.",
+        "HIGH-1 structural (fuse into compute_layout): rejected -- ScrollState is scene-carried (ScrollNode.state, verified scene.rs:2287) so the scroll harvest needs no owner; the pane registry is owner-cache, so fusing would add a layout->reactive-owner coupling scroll lacks. rect_for_tag_absolute is reuse of an established scroll-aware primitive; SSOT not violated (it READS Container.rect, never re-derives); perf negligible at realistic pane counts.",
+        "MED-1 (unify window+pane registry, window=reserved key): rejected -- pre-view(window) vs post-layout(pane) are genuinely different publish mechanisms (the reviewer concedes the timing asymmetry is load-bearing); unifying forces reserved-key magic and reworks shipped+reviewed R1006 for marginal dedup; the parallel test suites exercise different timing, not duplicated logic.",
+        "MED-2/3 (eviction + per-window homing): a valid FUTURE axis, deferred not on cost but because the correct policy needs a real tear-off consumer -- evict-on-scene-absence is unsafe transiently (a pane absent one paint loses its size), safe only once homed per-window (R680 cascade-drop). Registry is bounded by distinct tags for current fixed-dock consumers.",
+        "MED-5 (introspection): the pane RECT is already AI-introspectable (tagged Container -> scene/bbox) and a TextGrid pane exposes cols/rows from its rect; an External producer's derived PTY dims are that producer's introspection surface, not this seam's. Out of scope."
+      ],
+      "impact_refs": [
+        "5.23",
+        "5.22",
+        "6.3",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "Standing carry unchanged: real sprag-gui multi-pane consumer out of repo; per-window viewport signal deferred; TUI no-publish; runnable GUI example deferred (live-paint-only seam, not headlessly verifiable).",
+        "Named future axis (not speculative): a per-window-homed, self-pruning pane-viewport registry when a dynamic dock-tear-off consumer lands -- evict tags absent from the window's scene, homed via R680 window_owner cascade-drop (the MED-2/3 reviewer approach, recorded for that round).",
+        "Next: if sprag reports a fresh forcing case it preempts; else the Model-View epub slice. R1012 is now textbook-cleared across two adversarial passes (R1012.2 quality/correctness + R1012.3 architecture/SSOT); PUSH PENDING explicit user consent."
+      ],
+      "publishable_decision_summary": "R1012.3 §5.23 §5.22 §6.3 §5.16: user session-review clearance under a cost-no-object textbook bar (2 fresh adversarial reviewers [system-architect + refactoring-expert] + grep audit) — fixed 6 real items (doc-link warts, redundant accessor, R774-mischaracterization doc, scroll-clip doc, dead arm, 3x re-pass dedup); rejected 5 over-reach/artifact findings with traced evidence",
+      "publishable_changes_bullets": [
+        "M1 (doc): removed 3 redundant/misleading explicit doc-link targets in the publish_pane_viewports / set_viewport_size docs ([`Signal`] / [`Signal::set`] now bare intra-doc; the explicit (pinion_core::Signal) was redundant for Signal and misleading for ::set, pointing at the type). cargo doc is not in the commit gate so they slipped through R1012.1/.2.",
+        "M2 (API-surface SSOT): dropped the redundant Owner::pane_viewport_signal one-line delegator; use_pane_viewport_size + the unit tests now reach the signal through the single pane_viewport_registry().signal_for path (mirrors R1006's single-accessor surface; the prior two paths could drift).",
+        "HIGH-1 (doc accuracy): rewrote the module doc that mischaracterized R774. R774's update_scroll_state_bounds harvests INSIDE compute_layout because a ScrollNode carries its ScrollState in the SCENE (ScrollNode.state); a pane's viewport Signal is owner-cache-keyed (a Container carries only a tag, panes are sparse), so the harvest correctly lives in the SHELL (the one layer holding both scene + owner), not as a deferred optimisation. Folding it into compute_layout would couple the layout pass to the reactive owner -- a coupling the scene-carried scroll path lacks.",
+        "L1 (doc): noted rect_for_tag_absolute -> None also covers a scroll-clipped pane, which the seam's top-level-splitter-pane model scopes out.",
+        "L2: replaced the dead `_ => \"pane.reflow\"` arm in the test fixture with unreachable!().",
+        "MED-4 (dedup): factored the 3x identical V::view / view_for_window dispatch in compute_paint_scene_internal into one block-scoped closure capturing only &self.core (disjoint from the &mut self.text_cache the layouts borrow). View-only -- NOT view+layout (which would double-lay-out the first pass) -- consistent with dispatch_rpc's existing text_cache-ptr closure."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace = 7203 ok 0 fail (real exit 0; unchanged count -- doc/dedup/accessor edits add no tests). clippy --workspace --all-targets --features pinion-runtime/vello = 0. RUSTDOCFLAGS=-D warnings cargo doc: 0 new R1012 breaks AND my 3 M1 warts cleared (the remaining core_shell.rs:1280 [`Effect`] redundant-link is pre-existing R1006 debt, left under scope-discipline).",
+        "The dedup closure compiles via edition-2024 disjoint capture (&self.core shared inside the closure coexists with &mut self.text_cache in the layout calls); it is block-scoped so its borrow drops before the later &mut self paint-loop work; behavior is byte-identical (the 8 module + 1 runtime + 4 integration R1012 tests still pass, incl. the same-frame re-pass and resize cases).",
+        "Self-corrected mid-review (verify-seed-claims on my own edit): a bare [`use_viewport_size`] edit on a pre-existing R1006 line produced an unresolved-link error (use_viewport_size is not imported in core_shell), so I reverted it -- only my own R1012 doc was touched.",
+        "REJECTED findings, traced (verify-seed-claims applied to the two reviewers): HIGH-0 uncommitted-non-compiling-substrate = a PARALLEL-REVIEW RACE ARTIFACT (I ran two tree-mutating review agents concurrently; one saw the other's in-flight compile experiment). Committed HEAD + working tree are clean and compile. Process lesson: never run tree-mutating review agents in parallel.",
+        "HIGH-1 structural (fuse into compute_layout): rejected -- ScrollState is scene-carried (ScrollNode.state, verified scene.rs:2287) so the scroll harvest needs no owner; the pane registry is owner-cache, so fusing would add a layout->reactive-owner coupling scroll lacks. rect_for_tag_absolute is reuse of an established scroll-aware primitive; SSOT not violated (it READS Container.rect, never re-derives); perf negligible at realistic pane counts.",
+        "MED-1 (unify window+pane registry, window=reserved key): rejected -- pre-view(window) vs post-layout(pane) are genuinely different publish mechanisms (the reviewer concedes the timing asymmetry is load-bearing); unifying forces reserved-key magic and reworks shipped+reviewed R1006 for marginal dedup; the parallel test suites exercise different timing, not duplicated logic.",
+        "MED-2/3 (eviction + per-window homing): a valid FUTURE axis, deferred not on cost but because the correct policy needs a real tear-off consumer -- evict-on-scene-absence is unsafe transiently (a pane absent one paint loses its size), safe only once homed per-window (R680 cascade-drop). Registry is bounded by distinct tags for current fixed-dock consumers.",
+        "MED-5 (introspection): the pane RECT is already AI-introspectable (tagged Container -> scene/bbox) and a TextGrid pane exposes cols/rows from its rect; an External producer's derived PTY dims are that producer's introspection surface, not this seam's. Out of scope."
+      ],
+      "publishable_impact_refs": [
+        "5.23",
+        "5.22",
+        "6.3",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Standing carry unchanged: real sprag-gui multi-pane consumer out of repo; per-window viewport signal deferred; TUI no-publish; runnable GUI example deferred (live-paint-only seam, not headlessly verifiable).",
+        "Named future axis (not speculative): a per-window-homed, self-pruning pane-viewport registry when a dynamic dock-tear-off consumer lands -- evict tags absent from the window's scene, homed via R680 window_owner cascade-drop (the MED-2/3 reviewer approach, recorded for that round).",
+        "Next: if sprag reports a fresh forcing case it preempts; else the Model-View epub slice. R1012 is now textbook-cleared across two adversarial passes (R1012.2 quality/correctness + R1012.3 architecture/SSOT); PUSH PENDING explicit user consent."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

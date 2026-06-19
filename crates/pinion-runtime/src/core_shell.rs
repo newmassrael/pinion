@@ -1282,7 +1282,7 @@ impl<V: WidgetCore> CoreShell<V> {
     /// `compute_layout`.
     ///
     /// The write runs **inside [`Self::root_owner`]'s scope** (R1006
-    /// blocker B): a [`Signal::set`](pinion_core::Signal) synchronously
+    /// blocker B): a [`Signal::set`] synchronously
     /// re-runs subscribed Effects, and a reflow Effect body resolves
     /// [`Owner::current`](pinion_core::Owner::current) — which reads the
     /// owner-handle stack the subscriber-stack re-run does not push.
@@ -1297,7 +1297,7 @@ impl<V: WidgetCore> CoreShell<V> {
 
     /// R1012 §5.23 §5.22 — publish each registered pane's measured pixel rect
     /// into its per-pane viewport
-    /// [`Signal`](pinion_core::Signal), so a per-pane reflow Effect reading
+    /// [`Signal`], so a per-pane reflow Effect reading
     /// [`use_pane_viewport_size`](pinion_core::reactive::use_pane_viewport_size)
     /// reacts (PTY `TIOCSWINSZ`). Called by the paint substrate **after** the
     /// final layout, so `scene` carries each pane Container's laid-out rect — the
@@ -1310,15 +1310,17 @@ impl<V: WidgetCore> CoreShell<V> {
     /// `view` reads the post-reflow producer state on this paint.
     ///
     /// A pane whose rect [`Scene::rect_for_tag_absolute`] cannot resolve is
-    /// **skipped** (retains its last measured size, not reset to `(0, 0)`). That
-    /// covers both a tag *absent* from `scene` (a torn-off pane) and a tag
-    /// present but *collapsed to a zero-extent rect* (a splitter dragged fully
-    /// shut — `rect_for_tag_absolute` returns `None` for an empty rect): a
-    /// degenerate 0-column reflow is never published, distinct from the `(0, 0)`
-    /// "unmeasured" boot sentinel a consumer's reflow Effect skips.
+    /// **skipped** (retains its last measured size, not reset to `(0, 0)`):
+    /// a degenerate 0-column reflow is never published, distinct from the
+    /// `(0, 0)` "unmeasured" boot sentinel a consumer's reflow Effect skips.
+    /// `None` arises for a tag *absent* from `scene` (a torn-off pane) or a tag
+    /// *collapsed to a zero-extent rect* (a splitter dragged fully shut). It
+    /// would also arise for a pane fully clipped inside an enclosing `Scroll`,
+    /// but this seam's model is top-level splitter panes (a pane fills its
+    /// splitter share, it is not scroll-nested), so that case does not occur.
     ///
     /// The writes run inside [`Self::root_owner`]'s scope (R1006 blocker B): a
-    /// [`Signal::set`](pinion_core::Signal) re-runs the reflow Effect
+    /// [`Signal::set`] re-runs the reflow Effect
     /// synchronously, and that body resolves
     /// [`Owner::current`](pinion_core::Owner) — which needs the owner-handle
     /// stack `root_owner.run` pushes. The `(tag, signal)` set is snapshotted

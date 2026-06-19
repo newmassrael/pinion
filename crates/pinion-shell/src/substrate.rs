@@ -2427,55 +2427,66 @@ impl<V: WidgetView> ShellCore<V> {
         // walk is a no-op for root-registered animations, so
         // animations advance once per primary paint regardless of
         // how many secondary paints fire in the same turn.
-        let mut paint_scene = self.core.root_owner().run(|| match window_id {
-            Some(id) => V::view_for_window(id, cached_state, &frame),
-            None => V::view(cached_state, &frame),
-        });
-        let scroll_dirty =
-            compute_layout_with_scroll_dirty(&mut paint_scene, &mut self.text_cache, w, h);
-        // R57.X.scrollbar §5.45 — first-paint chicken-and-egg fix.
-        // The layout pass writes the post-layout
-        // [`ScrollState::set_max`] *after* `V::view` has already
-        // produced the scene. The scrollbar widget reads `max` inside
-        // `V::view` and renders thumb size as
-        // `f(viewport, viewport + max)` — on the very first paint of
-        // the application's lifetime `max == 0` resolves to "content
-        // fits viewport" and paints a full-track thumb the user sees
-        // as "scrollbar maxed out at startup". Re-running `V::view` +
-        // `compute_layout` once when the layout pass actually moved
-        // a bound lets the scrollbar widget pick up the freshly-
-        // written max on the same paint cycle. Idempotent on
-        // steady-state frames — Signal equality-skip floors
-        // `scroll_dirty` at `false` and the guard short-circuits.
-        if scroll_dirty {
-            paint_scene = self.core.root_owner().run(|| match window_id {
-                Some(id) => V::view_for_window(id, cached_state, &frame),
-                None => V::view(cached_state, &frame),
-            });
-            compute_layout(&mut paint_scene, &mut self.text_cache, w, h);
-        }
-        // R1012 §5.23 §5.22 — per-pane viewport publish. The freshly laid-out
-        // `paint_scene` carries each pane Container's measured pixel rect;
-        // publish each registered pane tag's (w, h) so a per-pane reflow Effect
-        // (a PTY winsize ioctl) reacts. This is the post-layout sibling of the
-        // pre-view `set_viewport_size` publish above: a pane size is
-        // layout-derived (known only here, after layout), so — like the
-        // scroll-dirty bit (R774) — the publish returns a dirty bit and we
-        // re-run `view` + `compute_layout` once when it fires, so the re-run
-        // reads the post-reflow producer state on this same paint. Idempotent on
-        // steady-state frames (Signal equality-skip floors `pane_dirty` at
-        // `false`). Primary-window only and the side-effect-free mirror
-        // (`compute_paint_scene_pure_internal`) never reaches this fn, so an
-        // introspection paint never publishes (the R1006 contract, inherited).
-        if window_key == pinion_runtime::DEFAULT_WINDOW
-            && self.core.publish_pane_viewports(&paint_scene)
-        {
-            paint_scene = self.core.root_owner().run(|| match window_id {
-                Some(id) => V::view_for_window(id, cached_state, &frame),
-                None => V::view(cached_state, &frame),
-            });
-            compute_layout(&mut paint_scene, &mut self.text_cache, w, h);
-        }
+        // The view + its two post-layout re-passes (scroll-dirty, pane-dirty)
+        // all re-run the SAME `V::view` / `V::view_for_window` dispatch; factor
+        // it into one closure so the dispatch lives in exactly one place. The
+        // closure captures only `&self.core` (disjoint from the `&mut
+        // self.text_cache` the `compute_layout`s borrow) and is scoped to this
+        // block so its `&self.core` borrow drops before the later `&mut self`
+        // paint-loop work. NOTE: only the dispatch is shared — the first pass
+        // lays out via `compute_layout_with_scroll_dirty` (to read the dirty
+        // bit), the re-passes via plain `compute_layout`; folding the layout in
+        // too would double-lay-out the first pass.
+        let mut paint_scene = {
+            let core = &self.core;
+            let run_view = || {
+                core.root_owner().run(|| match window_id {
+                    Some(id) => V::view_for_window(id, cached_state, &frame),
+                    None => V::view(cached_state, &frame),
+                })
+            };
+            let mut scene = run_view();
+            let scroll_dirty =
+                compute_layout_with_scroll_dirty(&mut scene, &mut self.text_cache, w, h);
+            // R57.X.scrollbar §5.45 — first-paint chicken-and-egg fix.
+            // The layout pass writes the post-layout
+            // [`ScrollState::set_max`] *after* `V::view` has already
+            // produced the scene. The scrollbar widget reads `max` inside
+            // `V::view` and renders thumb size as
+            // `f(viewport, viewport + max)` — on the very first paint of
+            // the application's lifetime `max == 0` resolves to "content
+            // fits viewport" and paints a full-track thumb the user sees
+            // as "scrollbar maxed out at startup". Re-running `V::view` +
+            // `compute_layout` once when the layout pass actually moved
+            // a bound lets the scrollbar widget pick up the freshly-
+            // written max on the same paint cycle. Idempotent on
+            // steady-state frames — Signal equality-skip floors
+            // `scroll_dirty` at `false` and the guard short-circuits.
+            if scroll_dirty {
+                scene = run_view();
+                compute_layout(&mut scene, &mut self.text_cache, w, h);
+            }
+            // R1012 §5.23 §5.22 — per-pane viewport publish. The freshly laid-out
+            // scene carries each pane Container's measured pixel rect; publish
+            // each registered pane tag's (w, h) so a per-pane reflow Effect (a
+            // PTY winsize ioctl) reacts. This is the post-layout sibling of the
+            // pre-view `set_viewport_size` publish above: a pane size is
+            // layout-derived (known only here, after layout), so — like the
+            // scroll-dirty bit (R774) — the publish returns a dirty bit and we
+            // re-run `view` + `compute_layout` once when it fires, so the re-run
+            // reads the post-reflow producer state on this same paint. Idempotent
+            // on steady-state frames (Signal equality-skip floors `pane_dirty` at
+            // `false`). Primary-window only and the side-effect-free mirror
+            // (`compute_paint_scene_pure_internal`) never reaches this fn, so an
+            // introspection paint never publishes (the R1006 contract, inherited).
+            if window_key == pinion_runtime::DEFAULT_WINDOW
+                && self.core.publish_pane_viewports(&scene)
+            {
+                scene = run_view();
+                compute_layout(&mut scene, &mut self.text_cache, w, h);
+            }
+            scene
+        };
         // R681 §2 #4 atomic 1 / R831 — per-window immediate-mode tick.
         // The paint scene the view fn just produced may contain one or
         // more [`Scene::ImmediateModeNode`]s; each driver advances its

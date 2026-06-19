@@ -1238,19 +1238,6 @@ impl Owner {
         self.pane_viewport_registry().entries()
     }
 
-    /// R1012 §5.23 §5.22 — get-or-insert the measured-size
-    /// [`Signal`](super::signal::Signal) for the pane tagged `tag`, registering
-    /// it in [`Self::pane_viewport_registry`] on first call (lazy `(0, 0)`).
-    /// Internal: consumers reach it through
-    /// [`use_pane_viewport_size`](super::pane_viewport::use_pane_viewport_size).
-    #[must_use]
-    pub(crate) fn pane_viewport_signal(
-        &self,
-        tag: Cow<'static, str>,
-    ) -> super::signal::Signal<(u32, u32)> {
-        self.pane_viewport_registry().signal_for(tag)
-    }
-
     /// R51.150 §5.22 — `true` when (`V`, `key`) has been populated by
     /// a previous [`Owner::cache::<V>`](Self::cache) call on this
     /// owner.
