@@ -9989,6 +9989,48 @@
         "CJK 2칸 정확 fill canonical = 5.37 자체 엔진이 render 까지 성장 (현재 R50.1.x parser, 휴면) — 나눔고딕으로 결정적 렌더"
       ]
     },
+    "R1014": {
+      "decision_summary": "R1014 audit-only — Model-View 명명 캠페인 slice ⑥(text-reflow visual-line 가상화) audit-first: 기존 substrate(폭-reflow/멀티라인 caret·선택/styled-run/행-윈도잉)와 다른 진짜 새 축이나 실 forcing consumer(epub/document) 부재(sprag=터미널) → 투기적 빌드 안 함, consumer-gate. 캠페인을 가치 전달한 slice ①–⑤에서 종결, Model-View 재집계 ~68%→~85%",
+      "changes_bullets": [
+        "audit 결과: 폭-reflow(pinion-text/cache.rs:316 break_all_lines) + 멀티라인 caret/char-선택(caret.rs:226-250 selection_rects_for_range, :292-319 vertical nav, :421 visual_line_metrics) + styled-run(cache.rs:168 layout_with_runs) + 고정/가변 행-윈도잉(virtual_list.rs compute_visible_range[_variable]/RowOffsets) 전부 존재; 없는 것 = 가변 height visual-line(폭-reflow 파생) 윈도잉 (visual_line_metrics 는 출력만, windowing 코드 0)",
+        "결정: slice 6 는 진짜 새 축이나 실 forcing consumer 0 (epub repo/example/skeleton 부재, sprag=PTY 터미널 reflow) -> abstraction-needs-second-consumer 가 needed-feature-test-as-forcing-consumer 압도(6=후순위, critical-path 아님, 북극성=AAA+에디터에 주변부) -> consumer-gate",
+        "캠페인 종결: slice 1-5 (R996-R1007: streaming/paged, multi-facet filter, row-style, dissection, search)가 실 consumer(Wireshark/dlt/sprag) 가치 전달 完; slice 6 만 미착수 gated. Model-View 재집계 ~68% -> ~85% (soft, +-5)",
+        "코드 변경 0 (audit-only 라운드)"
+      ],
+      "verification_bullets": [
+        "substrate 전수 audit (Explore agent + 전 repo grep): reflow / caret / 선택 / styled-run / 행-윈도잉 file:line 확인; visual-line 윈도잉 코드 0건, epub/reader/document example/widget 0건",
+        "sprag(유일 sibling consumer)=sprag-gui/reflow.rs PTY 터미널 reflow (문서 reflow 아님) -> slice 6 forcing consumer 부재 확정",
+        "validate-workspace T1=0; 코드 미변경 (audit/decision-only round, clippy/test 무관)"
+      ],
+      "impact_refs": [
+        "5.36"
+      ],
+      "carry_forward_bullets": [
+        "slice 6 RESUME (실 epub/document consumer 등장 OR hello-reflow-virtual forcing example 우선 시): 신규 substrate = 가변 visual-line 윈도잉. 난점 = paragraph 를 shape 해야 line count/height 를 앎(chicken-egg) -> paragraph-chunking + estimated/progressive 측정(실 epub reader 방식). seam = visual_line_metrics(caret.rs:421) 출력 + virtual_list RowOffsets 윈도잉 결합 + paragraph 경계 추정. 상세 = model-view-scale-campaign 메모리",
+        "CLAUDE.md Phase B 'Model/View 18%x68%' 는 slices 1-5(R996-R1007) 이전 수치라 stale; 다음 Phase B 재집계 시 ~85% + 캠페인 close 반영 (aggregate cascade 는 별도 재집계 라운드)",
+        "Model-View 명명 캠페인 종결 -> 다음 라운드 방향 open (GATED 는 §7 API 만; sprag forcing case OR Phase B 타 축)"
+      ],
+      "publishable_decision_summary": "R1014 audit-only — Model-View 명명 캠페인 slice ⑥(text-reflow visual-line 가상화) audit-first: 기존 substrate(폭-reflow/멀티라인 caret·선택/styled-run/행-윈도잉)와 다른 진짜 새 축이나 실 forcing consumer(epub/document) 부재(sprag=터미널) → 투기적 빌드 안 함, consumer-gate. 캠페인을 가치 전달한 slice ①–⑤에서 종결, Model-View 재집계 ~68%→~85%",
+      "publishable_changes_bullets": [
+        "audit 결과: 폭-reflow(pinion-text/cache.rs:316 break_all_lines) + 멀티라인 caret/char-선택(caret.rs:226-250 selection_rects_for_range, :292-319 vertical nav, :421 visual_line_metrics) + styled-run(cache.rs:168 layout_with_runs) + 고정/가변 행-윈도잉(virtual_list.rs compute_visible_range[_variable]/RowOffsets) 전부 존재; 없는 것 = 가변 height visual-line(폭-reflow 파생) 윈도잉 (visual_line_metrics 는 출력만, windowing 코드 0)",
+        "결정: slice 6 는 진짜 새 축이나 실 forcing consumer 0 (epub repo/example/skeleton 부재, sprag=PTY 터미널 reflow) -> abstraction-needs-second-consumer 가 needed-feature-test-as-forcing-consumer 압도(6=후순위, critical-path 아님, 북극성=AAA+에디터에 주변부) -> consumer-gate",
+        "캠페인 종결: slice 1-5 (R996-R1007: streaming/paged, multi-facet filter, row-style, dissection, search)가 실 consumer(Wireshark/dlt/sprag) 가치 전달 完; slice 6 만 미착수 gated. Model-View 재집계 ~68% -> ~85% (soft, +-5)",
+        "코드 변경 0 (audit-only 라운드)"
+      ],
+      "publishable_verification_bullets": [
+        "substrate 전수 audit (Explore agent + 전 repo grep): reflow / caret / 선택 / styled-run / 행-윈도잉 file:line 확인; visual-line 윈도잉 코드 0건, epub/reader/document example/widget 0건",
+        "sprag(유일 sibling consumer)=sprag-gui/reflow.rs PTY 터미널 reflow (문서 reflow 아님) -> slice 6 forcing consumer 부재 확정",
+        "validate-workspace T1=0; 코드 미변경 (audit/decision-only round, clippy/test 무관)"
+      ],
+      "publishable_impact_refs": [
+        "5.36"
+      ],
+      "publishable_carry_forward_bullets": [
+        "slice 6 RESUME (실 epub/document consumer 등장 OR hello-reflow-virtual forcing example 우선 시): 신규 substrate = 가변 visual-line 윈도잉. 난점 = paragraph 를 shape 해야 line count/height 를 앎(chicken-egg) -> paragraph-chunking + estimated/progressive 측정(실 epub reader 방식). seam = visual_line_metrics(caret.rs:421) 출력 + virtual_list RowOffsets 윈도잉 결합 + paragraph 경계 추정. 상세 = model-view-scale-campaign 메모리",
+        "CLAUDE.md Phase B 'Model/View 18%x68%' 는 slices 1-5(R996-R1007) 이전 수치라 stale; 다음 Phase B 재집계 시 ~85% + 캠페인 close 반영 (aggregate cascade 는 별도 재집계 라운드)",
+        "Model-View 명명 캠페인 종결 -> 다음 라운드 방향 open (GATED 는 §7 API 만; sprag forcing case OR Phase B 타 축)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
