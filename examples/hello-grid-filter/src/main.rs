@@ -270,13 +270,6 @@ impl WidgetCore for GridFilterView {
         "__internal__"
     }
 
-    /// Pointer / RPC sort + filter + selection this slice; neither rows nor
-    /// headers are keyboard tab stops (sorted/filtered-grid roving by *visual*
-    /// position is a later axis). Empty so Tab never lands.
-    fn focusable_tags() -> Vec<&'static str> {
-        Vec::new()
-    }
-
     fn title() -> &'static str {
         "pinion hello-grid-filter (R783 §5.40 data-grid filter at scale)"
     }

@@ -528,7 +528,7 @@ fn view(_state: ButtonState, _frame: &Frame) -> Scene {
     let invisible_root = Scene::Container(
         ContainerNode::new(Vec::new())
             .with_tag(ROOT_TAG)
-            .with_layout(LayoutStyle::new().with_size(Size::px(0, 0))),
+            .with_layout(LayoutStyle::new().with_size(Size::px(0, 0)).with_focusable(true)),
     );
 
     Scene::Container(
@@ -613,14 +613,6 @@ impl WidgetCore for SceneGraphFilter {
             use_tree_state().focused_id.set(Some(id.clone()));
         }
         Vec::new()
-    }
-
-    /// The tree is a single keyboard tab stop (WAI-ARIA tree convention: one
-    /// tab stop + `aria-activedescendant` roving). The focusable element is
-    /// the [`ROOT_TAG`] tree root; keys then type-to-filter or move the cursor
-    /// via [`apply_key_impl`].
-    fn focusable_tags() -> Vec<&'static str> {
-        vec![ROOT_TAG]
     }
 
     /// WAI-ARIA tree keyboard: type-to-filter + vertical roving over the

@@ -438,12 +438,6 @@ impl WidgetCore for MillionRowView {
         "__internal__"
     }
 
-    /// Display-only list: nothing is a keyboard tab stop (the scrollbar is
-    /// pointer / RPC driven).
-    fn focusable_tags() -> Vec<&'static str> {
-        Vec::new()
-    }
-
     fn title() -> &'static str {
         "pinion hello-million-row (R934 §5.22 §5.23 §5.27)"
     }

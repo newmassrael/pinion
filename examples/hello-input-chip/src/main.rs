@@ -264,10 +264,15 @@ fn chip(item: &InputChip, close_state: ButtonState, theme: &Theme) -> Scene {
                 close_state,
                 theme,
             ))
+            // R1020 §5.39 — each present chip's `×` close affordance is a Tab
+            // stop; opt its tag-carrying Container into the scene-derived
+            // enumeration. Painted in chip-vector (id) order, so the derived
+            // order matches the seeded CLOSE_TAGS; a deleted chip simply drops
+            // out of both the paint walk and the live enumeration.
             .with_layout(chip::chip_layout(
                 Size::px(CLOSE_HIT, CLOSE_HIT),
                 None,
-            )),
+            ).with_focusable(true)),
     );
 
     // Outlined chip container — `OnSurface`-tinted `Outline` border, no fill
@@ -583,13 +588,6 @@ impl WidgetCore for InputChipView {
         "pinion hello-input-chip (R756 §5.38 Material 3 input chips)"
     }
 
-    /// Each chip's `×` is its own Tab stop. The tags are derived from the
-    /// *seeded* ids `1..=N`; a deleted chip's tag simply never resolves to a
-    /// painted node, so `Tab` skips it (the focus manager hit-tests against
-    /// the live scene).
-    fn focusable_tags() -> Vec<&'static str> {
-        CLOSE_TAGS.to_vec()
-    }
 
     /// WAI-ARIA: `Enter` / `Space` / `Delete` / `Backspace` on a focused `×`
     /// removes that chip. The focused tag is `chip_delete#<id>`; parse the id
@@ -637,18 +635,6 @@ impl WidgetCore for InputChipView {
     }
 }
 
-/// Per-chip `×` Tab-stop tags, `1..=N`. `&'static str` because
-/// [`WidgetCore::focusable_tags`] returns `Vec<&'static str>` (the seeded ids
-/// are known at compile time; deleted chips' tags simply do not resolve in the
-/// live scene).
-const CLOSE_TAGS: [&str; N] = [
-    "chip_delete#1",
-    "chip_delete#2",
-    "chip_delete#3",
-    "chip_delete#4",
-    "chip_delete#5",
-];
-
 impl WidgetA11y for InputChipView {
     /// One [`AriaRole::Group`] parent (`"Recipients"`) + one node per *present*
     /// chip, each with a nested [`AriaRole::Button`] `×` named
@@ -695,6 +681,17 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Per-chip `×` Tab-stop tags for the seeded ids `1..=N`; the paint
+    /// scene's focus stops should collect these in tree order (deleted
+    /// chips simply do not resolve in the live scene).
+    const CLOSE_TAGS: [&str; N] = [
+        "chip_delete#1",
+        "chip_delete#2",
+        "chip_delete#3",
+        "chip_delete#4",
+        "chip_delete#5",
+    ];
 
     fn with_owner<R>(f: impl FnOnce() -> R) -> R {
         Owner::new().run(f)
@@ -861,7 +858,12 @@ mod tests {
 
     #[test]
     fn every_close_affordance_is_a_tab_stop() {
-        assert_eq!(InputChipView::focusable_tags(), CLOSE_TAGS.to_vec());
+        // §5.39: tree order IS tab order — collected from the paint scene.
+        let scene = with_owner(|| view(ChipRowState::idle(), &Frame::new()));
+        assert_eq!(
+            scene.collect_focusable_tags(),
+            CLOSE_TAGS.iter().map(|t| (*t).to_owned()).collect::<Vec<_>>(),
+        );
     }
 
     #[test]

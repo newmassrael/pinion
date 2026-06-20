@@ -81,6 +81,14 @@ pub struct TableStyle {
     /// are wired); a non-resizable grid renders the full-width header exactly as
     /// before.
     pub resize_handle_w: u32,
+    /// (R1020 §5.39) Keyboard focus stop. When `true`, [`view_table`] /
+    /// [`view_virtual_table`] mark the table's tag-carrying outer Container
+    /// `.with_focusable(true)` so the scene-derived §5.39 enumeration collects
+    /// its tag as a Tab stop. Default `false` (opt-in): a grid binding sets this
+    /// true to make the table a Tab stop; a decorative or modal-scoped table
+    /// leaves it false. Mirrors
+    /// [`ButtonStyle::focusable`](crate::button::ButtonStyle::focusable).
+    pub focusable: bool,
 }
 
 /// R786 §5.27 — visible divider line width inside the resize grabber, in
@@ -103,7 +111,17 @@ impl TableStyle {
             block_pad: 8,
             corner_radius: 12,
             resize_handle_w: 8,
+            focusable: false,
         }
+    }
+
+    /// (R1020 §5.39) Mark this table a keyboard focus stop (default `false`).
+    /// A grid binding sets this true; a decorative / modal-scoped table leaves
+    /// it false. See [`Self::focusable`].
+    #[must_use]
+    pub const fn with_focusable(mut self, focusable: bool) -> Self {
+        self.focusable = focusable;
+        self
     }
 }
 
@@ -657,6 +675,10 @@ pub fn view_table(
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Column)
+                    // (R1020 §5.39) Carry the binding's focus-stop opt-in onto
+                    // the tag-carrying outer block so the scene-derived
+                    // enumeration collects this table's tag as a Tab stop.
+                    .with_focusable(style.focusable)
                     .with_padding(Rect::new(
                         style.block_pad,
                         style.block_pad,
@@ -910,6 +932,10 @@ pub fn view_virtual_table(
                 LayoutStyle::new()
                     .flex(FlexDirection::Column)
                     .with_flex_grow(1.0)
+                    // (R1020 §5.39) Carry the binding's focus-stop opt-in onto
+                    // the tag-carrying outer block so the scene-derived
+                    // enumeration collects this grid's tag as a Tab stop.
+                    .with_focusable(style.focusable)
                     .with_padding(Rect::new(
                         style.block_pad,
                         style.block_pad,

@@ -259,6 +259,10 @@ impl WidgetCore for ButtonFixture {
             rect: Rect::new(0, 0, 32, 48),
             tag: Some(Cow::Borrowed("test_btn")),
             children: vec![Scene::Text(TextNode::default())],
+            // (R1020 §5.39) Single keyboard focus stop — the scene-derived
+            // enumeration collects "test_btn" (the pre-R1020 `focusable_tags()`
+            // default `vec![tag()]` is retired).
+            layout: crate::style::LayoutStyle::new().with_focusable(true),
             ..Default::default()
         })
     }

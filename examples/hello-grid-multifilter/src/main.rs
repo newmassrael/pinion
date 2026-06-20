@@ -279,13 +279,6 @@ impl WidgetCore for GridMultiFilterView {
         "__internal__"
     }
 
-    /// Pointer / RPC sort + filter + selection this slice; neither rows nor
-    /// headers are keyboard tab stops (sorted/filtered-grid roving by *visual*
-    /// position is a later axis). Empty so Tab never lands.
-    fn focusable_tags() -> Vec<&'static str> {
-        Vec::new()
-    }
-
     fn title() -> &'static str {
         "pinion hello-grid-multifilter (R997 §5.40 multi-facet predicate filter)"
     }

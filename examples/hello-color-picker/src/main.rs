@@ -229,7 +229,9 @@ fn view(state: PickerState, _frame: &Frame) -> Scene {
         // Base = the fully-saturated, full-value hue; the overlays
         // carve saturation (white) and value (black) out of it.
         .with_style(BoxStyle::filled(pure_hue))
-        .with_layout(LayoutStyle::new().with_size(Size::px(SV_SIZE, SV_SIZE))),
+        // R1020 §5.39 — the SV pad is a Tab stop (painted before the hue bar,
+        // matching the [SV_TAG, HUE_TAG] order); opt it into the enumeration.
+        .with_layout(LayoutStyle::new().with_focusable(true).with_size(Size::px(SV_SIZE, SV_SIZE))),
     );
 
     // ── Hue bar: rainbow gradient track + leading thumb ─────────────
@@ -254,7 +256,9 @@ fn view(state: PickerState, _frame: &Frame) -> Scene {
             .with_style(
                 BoxStyle::filled(Color::rgb(0x00, 0x00, 0x00)).with_gradient(hue_bar_gradient()),
             )
-            .with_layout(LayoutStyle::new().with_size(Size::px(HUE_W, HUE_H))),
+            // R1020 §5.39 — the hue bar is a Tab stop; opt it into the
+            // scene-derived enumeration.
+            .with_layout(LayoutStyle::new().with_focusable(true).with_size(Size::px(HUE_W, HUE_H))),
     );
 
     let controls = Scene::Container(
@@ -414,12 +418,6 @@ impl WidgetCore for ColorPickerView {
 
     fn title() -> &'static str {
         "pinion hello-color-picker (R709 §5.38 ColorArea + gradient)"
-    }
-
-    /// Both controls are static Tab stops (no dynamic-focusable / modal
-    /// scope here, unlike hello-dialog). Tab cycles SV pad → hue bar.
-    fn focusable_tags() -> Vec<&'static str> {
-        vec![SV_TAG, HUE_TAG]
     }
 
     /// W3C/ARIA slider keyboard support. On the SV pad the arrows nudge

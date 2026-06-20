@@ -523,7 +523,8 @@ fn view(state: TabsState) -> Scene {
                     .with_align_items(AlignItems::Stretch)
                     .with_justify(JustifyContent::Start)
                     .with_gap(style.tab_gap)
-                    .with_size(Size::px(STRIP_W, style.tab_height)),
+                    .with_size(Size::px(STRIP_W, style.tab_height))
+                    .with_focusable(true),
             ),
     );
 
@@ -619,10 +620,6 @@ impl WidgetCore for TabReorderView {
 
     fn keybinding(_key: &str) -> Option<()> {
         None
-    }
-
-    fn focusable_tags() -> Vec<&'static str> {
-        vec![TAG]
     }
 
     /// WAI-ARIA tabs + APG keyboard-drag, modifier-free. The TabList is a

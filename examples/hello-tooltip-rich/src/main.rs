@@ -155,7 +155,8 @@ fn trigger_scene(posture: AnchorState, theme: &Theme) -> Scene {
                 .with_align_items(AlignItems::Center)
                 .with_justify(JustifyContent::Center)
                 .with_absolute_position(TRIGGER_RECT.x, TRIGGER_RECT.y)
-                .with_size(Size::px(TRIGGER_RECT.w, TRIGGER_RECT.h)),
+                .with_size(Size::px(TRIGGER_RECT.w, TRIGGER_RECT.h))
+                .with_focusable(true),
         ),
     )
 }
@@ -284,12 +285,6 @@ impl WidgetCore for RichTooltipView {
 
     fn keybinding(_key: &str) -> Option<()> {
         None
-    }
-
-    /// The trigger is a static Tab stop; focusing it shows the tooltip
-    /// (via `on_focus_change`).
-    fn focusable_tags() -> Vec<&'static str> {
-        vec![TRIGGER_TAG]
     }
 
     /// R695 §5.35 — `Escape` dismisses the shown tooltip without moving

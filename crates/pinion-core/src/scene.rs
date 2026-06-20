@@ -170,6 +170,28 @@ impl Scene {
         }
     }
 
+    /// (R1020 §5.39) Keyboard focus-stop flag — reads the node's
+    /// [`crate::style::LayoutStyle::focusable`] marker.
+    /// [`Self::collect_focusable_tags`] enumerates the tags of nodes
+    /// for which this returns `true`, in depth-first tree order, to
+    /// feed the §5.39 `FocusManager`. [`Scene::Effect`] carries no
+    /// layout sidecar and is never focusable.
+    #[must_use]
+    pub fn is_focusable(&self) -> bool {
+        match self {
+            Scene::Box(n) => n.layout.focusable,
+            Scene::Text(n) => n.layout.focusable,
+            Scene::Path(n) => n.layout.focusable,
+            Scene::Image(n) => n.layout.focusable,
+            Scene::Container(n) => n.layout.focusable,
+            Scene::External(n) => n.layout.focusable,
+            Scene::Scroll(n) => n.layout.focusable,
+            Scene::ImmediateModeNode(n) => n.layout.focusable,
+            Scene::TextGrid(n) => n.layout.focusable,
+            Scene::Effect(_) => false,
+        }
+    }
+
     /// (R55.G.19 §5.49) Returns `true` when this scene tree contains
     /// at least one node tagged `target`. Walks depth-first matching
     /// [`Self::tag`] before descending into `Container.children` and
@@ -199,6 +221,63 @@ impl Scene {
             | Scene::Effect(_)
             | Scene::ImmediateModeNode(_)
             | Scene::TextGrid(_) => false,
+        }
+    }
+
+    /// (R1020 §5.39) Depth-first enumeration of keyboard focus-stop
+    /// tags in tree order — the ratified §5.39 focus model. The shell
+    /// re-runs this over the freshly produced PAINT scene every frame
+    /// and feeds the result to
+    /// [`FocusManager::update_focusable_tags`](../pinion_runtime/struct.FocusManager.html#method.update_focusable_tags),
+    /// so a node that appears / disappears across frames (a dynamic
+    /// pane, a conditionally-painted inline editor) joins / leaves the
+    /// Tab order automatically — there is no binding-side list to keep
+    /// in sync. This replaces the pre-R1020
+    /// `WidgetCore::focusable_tags()` flat list, which was an unratified
+    /// drift from this spec.
+    ///
+    /// Walks the same branches as [`Self::contains_tag`]:
+    /// `Container.children` in declaration order, then `Scroll.content`.
+    /// [`Scene::External`] is a tag-bearing leaf — a focusable External
+    /// contributes its own tag but the walk does not descend into its
+    /// opaque content, so a composite widget like `RadioGroup` is a
+    /// single Tab stop whose internal roving lives inside the External
+    /// (§5.39 composite single-stop).
+    ///
+    /// A focusable node with no [`tag`](Self::tag) cannot be a focus
+    /// target (focus is tag-keyed) and is skipped; the convention is
+    /// that a focusable-marked node (set via
+    /// `.with_layout(LayoutStyle::new().with_focusable(true))`) also
+    /// carries the `.with_tag(...)` the view fn pins for hit-test / RPC
+    /// `focus/set` routing (the R55.G.17 `contains_tag` invariant).
+    #[must_use]
+    pub fn collect_focusable_tags(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        self.collect_focusable_tags_into(&mut out);
+        out
+    }
+
+    fn collect_focusable_tags_into(&self, out: &mut Vec<String>) {
+        if self.is_focusable() {
+            if let Some(tag) = self.tag() {
+                out.push(tag.to_owned());
+            }
+        }
+        match self {
+            Scene::Container(n) => {
+                for child in &n.children {
+                    child.collect_focusable_tags_into(out);
+                }
+            }
+            Scene::Scroll(n) => n.content.collect_focusable_tags_into(out),
+            Scene::Box(_)
+            | Scene::Text(_)
+            | Scene::Path(_)
+            | Scene::Image(_)
+            | Scene::External(_)
+            | Scene::Effect(_)
+            | Scene::ImmediateModeNode(_)
+            | Scene::TextGrid(_) => {}
         }
     }
 

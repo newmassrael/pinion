@@ -238,7 +238,12 @@ fn view(selection: &MultiSelection, _frame: &Frame) -> Scene {
     let band = Scene::Container(
         ContainerNode::new(vec![list, scrollbar_visual])
             .with_tag(LIST_TAG)
-            .with_layout(LayoutStyle::new().flex(FlexDirection::Row).with_flex_grow(1.0)),
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Row)
+                    .with_flex_grow(1.0)
+                    .with_focusable(true),
+            ),
     );
 
     Scene::Container(
@@ -290,14 +295,6 @@ impl WidgetCore for MultiSelectView {
 
     fn event_name(_event: ()) -> &'static str {
         "__internal__"
-    }
-
-    /// The list is a single keyboard tab stop (roving by data index, the
-    /// WAI-ARIA listbox convention). Tab lands on the list; Arrow / Home /
-    /// End / Page / Shift / Ctrl then drive the multi-select via
-    /// [`apply_key`].
-    fn focusable_tags() -> Vec<&'static str> {
-        vec![LIST_TAG]
     }
 
     /// R780 §5.40 — keyboard multi-select over the windowed list, delegated

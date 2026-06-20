@@ -182,6 +182,7 @@ fn close_dialog(accepted: bool) {
 type DialogViewState = (ButtonState, ButtonState, ButtonState, [bool; 3]);
 
 /// Render one button via the [`pinion_widget_paint::button`] substrate.
+#[allow(clippy::too_many_arguments)] // R1020: one arg per paint axis + focusable opt-in
 fn button_scene(
     tag: &'static str,
     label: &str,
@@ -190,6 +191,7 @@ fn button_scene(
     hover_key: &'static str,
     size: Size,
     theme: &pinion_core::theme::Theme,
+    focusable: bool,
 ) -> Scene {
     // R727 — opinionated default (filled-tonal + 16 px) stays local
     // (2-consumer with hello-drawer, R703-deferred); the mechanical
@@ -202,7 +204,8 @@ fn button_scene(
         &ButtonColors::filled_tonal(theme),
         &ButtonStyle::m3_default(tag)
             .with_size(size)
-            .with_label_font_size_px(16),
+            .with_label_font_size_px(16)
+            .with_focusable(focusable),
     )
 }
 
@@ -226,6 +229,7 @@ fn view(state: DialogViewState, _frame: &Frame) -> Scene {
         TRIGGER_HOVER_KEY,
         Size::px(TRIGGER_W, TRIGGER_H),
         &theme,
+        true,
     );
     let status_label = match result {
         None => "No action taken yet.",
@@ -262,6 +266,7 @@ fn view(state: DialogViewState, _frame: &Frame) -> Scene {
             CANCEL_HOVER_KEY,
             Size::px(ACTION_W, ACTION_H),
             &theme,
+            false,
         );
         let ok = button_scene(
             OK_TAG,
@@ -271,6 +276,7 @@ fn view(state: DialogViewState, _frame: &Frame) -> Scene {
             OK_HOVER_KEY,
             Size::px(ACTION_W, ACTION_H),
             &theme,
+            false,
         );
         children.push(view_dialog(
             SCRIM_TAG,
@@ -353,13 +359,6 @@ impl WidgetCore for DialogView {
         None
     }
 
-    /// Only the trigger is a *static* tab stop. The dialog's action
-    /// buttons become focusable solely while the modal scope is up
-    /// (`dialog_members()`), which is the dynamic-focusable case the
-    /// static enumeration cannot express — see the module docs.
-    fn focusable_tags() -> Vec<&'static str> {
-        vec![TRIGGER_TAG]
-    }
 
     /// R693 §5.39 — Escape dismisses the open dialog (the shell routes
     /// Escape here only while the trap is active). Enter / Space on a
@@ -660,7 +659,9 @@ mod tests {
 
     #[test]
     fn r693_focusable_tags_lists_only_trigger() {
-        assert_eq!(DialogView::focusable_tags(), vec![TRIGGER_TAG]);
+        // §5.39: collected from the paint scene.
+        let scene = Owner::new().run(|| view(idle(), &Frame::new()));
+        assert_eq!(scene.collect_focusable_tags(), vec![TRIGGER_TAG.to_owned()]);
     }
 
     #[test]

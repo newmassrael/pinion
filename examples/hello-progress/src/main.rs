@@ -263,14 +263,6 @@ impl WidgetCore for ProgressView {
         None
     }
 
-    /// A progress bar is **passive** — it never receives focus (its
-    /// a11y node carries zero AT actions). Override the default
-    /// `vec![Self::tag()]` to an empty set so Tab never lands on it,
-    /// matching the WAI-ARIA `progressbar` role (read-only status, not
-    /// an operable control).
-    fn focusable_tags() -> Vec<&'static str> {
-        Vec::new()
-    }
 
     fn fmt_state_log(state: &(f32, bool)) -> String {
         if state.1 {
@@ -415,8 +407,9 @@ mod a11y_tests {
     #[test]
     fn progress_bar_is_not_focusable() {
         // Descriptive widget: no focusable tags (default), so Tab never
-        // lands on it.
-        assert!(ProgressView::focusable_tags().is_empty());
+        // lands on it. §5.39: collected from the paint scene.
+        let scene = pinion_core::Owner::new().run(|| view((BOOT_VALUE, false), &Frame::new()));
+        assert!(scene.collect_focusable_tags().is_empty());
     }
 
     #[test]

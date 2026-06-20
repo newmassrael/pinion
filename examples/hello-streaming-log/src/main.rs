@@ -261,7 +261,8 @@ fn emit_button(state: ButtonState, theme: &Theme) -> Scene {
                 .flex(FlexDirection::Row)
                 .with_justify(JustifyContent::Center)
                 .with_align_items(AlignItems::Center)
-                .with_size(Size::px(160, 36)),
+                .with_size(Size::px(160, 36))
+                .with_focusable(true),
         ),
     )
 }
@@ -417,12 +418,6 @@ impl WidgetCore for StreamingLogView {
         _modifiers: pinion_core::Modifiers,
     ) -> bool {
         pinion_core::widgets::aria::apply_aria_activate(scene, focused, key, Self::tag())
-    }
-
-    /// Only the Emit button is a tab stop; the list + scrollbar are pointer /
-    /// RPC driven.
-    fn focusable_tags() -> Vec<&'static str> {
-        vec![EMIT_TAG]
     }
 
     fn title() -> &'static str {

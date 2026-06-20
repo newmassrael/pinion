@@ -1017,7 +1017,7 @@ fn view(_state: (), _frame: &Frame) -> Scene {
     let invisible_root = Scene::Container(
         ContainerNode::new(Vec::new())
             .with_tag(ROOT_TAG)
-            .with_layout(LayoutStyle::new().with_size(Size::px(0, 0))),
+            .with_layout(LayoutStyle::new().with_size(Size::px(0, 0)).with_focusable(true)),
     );
 
     Scene::Container(
@@ -1122,14 +1122,6 @@ impl WidgetCore for TreeGridView {
             }
         }
         Vec::new()
-    }
-
-    /// R864 — the outliner is a single keyboard tab stop (the WAI-ARIA tree
-    /// convention: one tab stop + `aria-activedescendant` roving). The
-    /// focusable element is the [`ROOT_TAG`] treegrid root; arrow keys then
-    /// move the cursor via [`apply_key`].
-    fn focusable_tags() -> Vec<&'static str> {
-        vec![ROOT_TAG]
     }
 
     /// R864 §5.27 §5.50 — WAI-ARIA APG tree keyboard over the windowed rows:

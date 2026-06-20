@@ -290,7 +290,8 @@ fn view(_state: (), _frame: &Frame) -> Scene {
             .with_layout(
                 LayoutStyle::new()
                     .with_absolute_position(0, 0)
-                    .with_size(Size::px(WIN_W, WIN_H)),
+                    .with_size(Size::px(WIN_W, WIN_H))
+                    .with_focusable(true),
             ),
     );
     Scene::Container(
@@ -354,11 +355,6 @@ impl WidgetCore for GridPointerView {
         };
         let _ = intro.invoke("key", IntrospectValue::Text(key.to_owned()));
         true
-    }
-
-    /// The pane is a single focus stop so the shell routes keys to it.
-    fn focusable_tags() -> Vec<&'static str> {
-        vec![ROOT_TAG]
     }
 
     fn title() -> &'static str {

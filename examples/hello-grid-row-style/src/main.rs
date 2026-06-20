@@ -263,10 +263,6 @@ impl WidgetCore for GridRowStyleView {
         "__internal__"
     }
 
-    fn focusable_tags() -> Vec<&'static str> {
-        Vec::new()
-    }
-
     fn title() -> &'static str {
         "pinion hello-grid-row-style (R998 §5.40 per-row coloring rules)"
     }

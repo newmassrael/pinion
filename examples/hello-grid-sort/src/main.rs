@@ -275,14 +275,6 @@ impl WidgetCore for GridSortView {
         "__internal__"
     }
 
-    /// Pointer / RPC sort + selection this slice; neither the rows nor the
-    /// headers are keyboard tab stops (sorted-grid roving by *visual* position
-    /// is a later axis — R777's `nav_select_key` roves by source index, which
-    /// the sort permutation reorders). Empty so Tab never lands.
-    fn focusable_tags() -> Vec<&'static str> {
-        Vec::new()
-    }
-
     fn title() -> &'static str {
         "pinion hello-grid-sort (R778 §5.27 §5.40 data-grid sort at scale)"
     }

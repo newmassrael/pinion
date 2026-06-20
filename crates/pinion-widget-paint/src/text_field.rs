@@ -1039,6 +1039,13 @@ pub fn view_field(
             .with_style(BoxStyle::filled(field_fill).with_corner_radius(style.field_corner))
             .with_layout(
                 LayoutStyle::new()
+                    // (R1020 §5.39) A text field is always a keyboard focus
+                    // stop — the field's tagged root carries the focusable
+                    // marker the scene-derived §5.39 enumeration collects, so
+                    // every `view_field` consumer is a Tab stop when painted
+                    // (a conditionally-painted inline editor enters / leaves the
+                    // Tab order with its paint, no binding-side list).
+                    .with_focusable(true)
                     .flex(FlexDirection::Row)
                     .with_justify(JustifyContent::Start)
                     // R764 §5.22 — single-line centres the content in the

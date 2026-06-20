@@ -258,12 +258,6 @@ impl WidgetCore for FlexVirtualListView {
         "__internal__"
     }
 
-    /// Display-only list: nothing here is a keyboard tab stop (the
-    /// scrollbar is pointer / RPC driven).
-    fn focusable_tags() -> Vec<&'static str> {
-        Vec::new()
-    }
-
     fn title() -> &'static str {
         "pinion hello-flex-virtual-list (R774 §5.27 AutoSizer virtualization)"
     }

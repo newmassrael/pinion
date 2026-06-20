@@ -232,7 +232,9 @@ fn set_row(intro: &mut dyn pinion_core::external::ExternalIntrospect, row: usize
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: &TableMultiState, _frame: &Frame) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
-    let style = TableStyle::m3();
+    // R1020 §5.39 — the grid is a single Tab stop; opt the table into the
+    // scene-derived focus enumeration so its PRIMARY_TAG is collected.
+    let style = TableStyle::m3().with_focusable(true);
     let rows: Vec<&[&str]> = ROWS.iter().map(|r| &r[..]).collect();
     let table = view_table(
         PRIMARY_TAG,
@@ -327,13 +329,6 @@ impl WidgetCore for TableMultiView {
 
     fn title() -> &'static str {
         "pinion hello-table-multi (R735 §5.38 multi-select data grid)"
-    }
-
-    /// WAI-ARIA APG data-grid focus model: the grid is a **single Tab
-    /// stop** ([`PRIMARY_TAG`]), the focused cell tracked as an internal
-    /// 2-D roving *active descendant* (the same model `hello-table` uses).
-    fn focusable_tags() -> Vec<&'static str> {
-        vec![PRIMARY_TAG]
     }
 
     /// WAI-ARIA APG data-grid keyboard model. All keys route only when

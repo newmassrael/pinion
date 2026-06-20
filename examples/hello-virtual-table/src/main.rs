@@ -169,10 +169,6 @@ impl WidgetCore for VirtualTableView {
         "__internal__"
     }
 
-    fn focusable_tags() -> Vec<&'static str> {
-        Vec::new()
-    }
-
     fn title() -> &'static str {
         "pinion hello-virtual-table (R775 §5.27 virtualized data-grid)"
     }

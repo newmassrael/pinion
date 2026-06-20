@@ -131,6 +131,25 @@ pub struct FileBrowserMetrics {
     pub row_pitch: u32,
     /// Rows rendered beyond the viewport each side (windowing overscan).
     pub overscan: usize,
+    /// (R1020 §5.39) Keyboard focus stop. When `true`, [`file_browser_pane`]
+    /// marks the `dir_tag` list-region Container `.with_focusable(true)` so
+    /// the scene-derived §5.39 enumeration collects the list as a Tab stop
+    /// (the file-manager's standalone Files pane). Default `false` (opt-in):
+    /// a dialog's file list is focusable only inside its modal trap, not a
+    /// base Tab stop, and a display-only browser exposes no stops — they
+    /// leave this `false`. Mirrors
+    /// [`ButtonStyle::focusable`](crate::button::ButtonStyle::focusable).
+    pub focusable: bool,
+}
+
+impl FileBrowserMetrics {
+    /// (R1020 §5.39) Mark the file list a keyboard focus stop (default
+    /// `false`). See [`Self::focusable`].
+    #[must_use]
+    pub const fn with_focusable(mut self, focusable: bool) -> Self {
+        self.focusable = focusable;
+        self
+    }
 }
 
 /// R791 — an in-place editing-row override for [`file_browser_pane`]: the
@@ -182,7 +201,7 @@ pub fn file_browser_pane(
     let sel_idx = dir.selected_index();
     // R794 — the live drag drop target (subscribes: a `drag_to` repaints).
     let drop = dir.drop_target();
-    let FileBrowserMetrics { list_width, list_height, row_pitch, overscan } = metrics;
+    let FileBrowserMetrics { list_width, list_height, row_pitch, overscan, focusable } = metrics;
 
     // Breadcrumb: the clickable `../` parent affordance + the cwd path. R794 —
     // the `../` affordance is itself a drop target (drag an entry onto it to
@@ -257,7 +276,11 @@ pub fn file_browser_pane(
     let list_region = Scene::Container(
         ContainerNode::new(vec![list])
             .with_tag(dir_tag.to_string())
-            .with_layout(LayoutStyle::new().with_size(Size::px(list_width, list_height))),
+            .with_layout(
+                LayoutStyle::new()
+                    .with_size(Size::px(list_width, list_height))
+                    .with_focusable(focusable),
+            ),
     );
 
     Scene::Container(
@@ -344,7 +367,7 @@ mod tests {
                 &dir,
                 &scroll,
                 &Theme::light(),
-                FileBrowserMetrics { list_width: 300, list_height: 200, row_pitch: 32, overscan: 2 },
+                FileBrowserMetrics { list_width: 300, list_height: 200, row_pitch: 32, overscan: 2, focusable: false },
                 None,
             );
             assert!(pane.contains_tag("fb#up"), "pane carries the parent affordance");
@@ -377,7 +400,7 @@ mod tests {
                 &dir,
                 &scroll,
                 &Theme::light(),
-                FileBrowserMetrics { list_width: 300, list_height: 200, row_pitch: 32, overscan: 2 },
+                FileBrowserMetrics { list_width: 300, list_height: 200, row_pitch: 32, overscan: 2, focusable: false },
                 Some(EditingRow { index: 1, build: &build }),
             );
             assert!(pane.contains_tag("fb#0"), "row 0 stays a plain file_row");
@@ -415,7 +438,7 @@ mod tests {
             let dir = DirectoryState::new(Rc::new(d), "/p");
             let scroll = use_scroll_state("pane_drop_scroll");
             let metrics =
-                FileBrowserMetrics { list_width: 300, list_height: 200, row_pitch: 32, overscan: 2 };
+                FileBrowserMetrics { list_width: 300, list_height: 200, row_pitch: 32, overscan: 2, focusable: false };
             let theme = Theme::light();
             let accent = theme.resolve(ColorRole::Accent);
 

@@ -545,10 +545,6 @@ impl WidgetCore for TextGridView {
         "__internal__"
     }
 
-    fn focusable_tags() -> Vec<&'static str> {
-        Vec::new()
-    }
-
     fn title() -> &'static str {
         "pinion hello-textgrid (R972 §5.41 cell-native TextGrid scaffold)"
     }

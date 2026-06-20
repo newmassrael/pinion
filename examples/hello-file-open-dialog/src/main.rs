@@ -249,7 +249,7 @@ fn browser_pane(
         dir,
         scroll,
         theme,
-        FileBrowserMetrics { list_width: LIST_W, list_height: LIST_H, row_pitch: ROW_PITCH, overscan: OVERSCAN },
+        FileBrowserMetrics { list_width: LIST_W, list_height: LIST_H, row_pitch: ROW_PITCH, overscan: OVERSCAN, focusable: false },
         None,
     )
 }
@@ -301,7 +301,8 @@ fn view(state: FileOpenViewState, _frame: &Frame) -> Scene {
         &ButtonColors::filled_tonal(&theme),
         &ButtonStyle::m3_default(TRIGGER_TAG)
             .with_size(Size::px(TRIGGER_W, TRIGGER_H))
-            .with_label_font_size_px(16),
+            .with_label_font_size_px(16)
+            .with_focusable(true),
     );
     let chosen = use_chosen().get();
     let status = Scene::Text(TextNode::styled(
@@ -430,11 +431,6 @@ impl WidgetCore for FileOpenView {
         None
     }
 
-    /// Only the trigger is a *static* tab stop. The action buttons become
-    /// focusable solely while the modal scope is up (`dialog_members()`).
-    fn focusable_tags() -> Vec<&'static str> {
-        vec![TRIGGER_TAG]
-    }
 
     /// R788 §5.39 — Escape dismisses the open dialog as a cancel (the shell
     /// routes Escape here only while the trap is active). Enter / Space on a
@@ -705,7 +701,9 @@ mod tests {
 
     #[test]
     fn r788_focusable_tags_lists_only_trigger() {
-        assert_eq!(FileOpenView::focusable_tags(), vec![TRIGGER_TAG]);
+        // §5.39: collected from the paint scene.
+        let scene = Owner::new().run(|| view(idle(), &Frame::new()));
+        assert_eq!(scene.collect_focusable_tags(), vec![TRIGGER_TAG.to_owned()]);
     }
 
     // ----- view / paint -----

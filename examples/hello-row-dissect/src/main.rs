@@ -354,10 +354,6 @@ impl WidgetCore for RowDissectView {
         Vec::new()
     }
 
-    fn focusable_tags() -> Vec<&'static str> {
-        Vec::new()
-    }
-
     fn title() -> &'static str {
         "pinion hello-row-dissect (R1007 §5.27 master-detail row dissection)"
     }

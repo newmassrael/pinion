@@ -284,7 +284,8 @@ fn view(state: LiveDataViewState, _frame: &Frame) -> Scene {
         &ButtonColors::filled_tonal(&theme),
         &ButtonStyle::m3_default(TICK_TAG)
             .with_size(Size::px(140, 40))
-            .with_label_font_size_px(15),
+            .with_label_font_size_px(15)
+            .with_focusable(true),
     );
 
     Scene::Container(
@@ -344,10 +345,6 @@ impl WidgetCore for LiveDataView {
 
     fn keybinding(_key: &str) -> Option<()> {
         None
-    }
-
-    fn focusable_tags() -> Vec<&'static str> {
-        vec![TICK_TAG]
     }
 
     fn apply_key(
@@ -575,6 +572,8 @@ mod tests {
 
     #[test]
     fn tick_button_is_focusable() {
-        assert_eq!(LiveDataView::focusable_tags(), vec![TICK_TAG]);
+        // §5.39: collected from the paint scene.
+        let scene = Owner::new().run(|| view(idle(), &Frame::new()));
+        assert_eq!(scene.collect_focusable_tags(), vec![TICK_TAG.to_owned()]);
     }
 }

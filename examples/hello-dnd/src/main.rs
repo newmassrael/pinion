@@ -330,7 +330,8 @@ fn view(state: ListState) -> Scene {
                     .flex(FlexDirection::Column)
                     .with_align_items(AlignItems::Center)
                     .with_gap(GAP)
-                    .with_size(Size::px(ROW_W, LIST_H)),
+                    .with_size(Size::px(ROW_W, LIST_H))
+                    .with_focusable(true),
             ),
     );
     Scene::Container(
@@ -464,14 +465,6 @@ impl WidgetCore for DndView {
 
     fn keybinding(_key: &str) -> Option<()> {
         None
-    }
-
-    /// The list is a single Tab stop with roving focus (the WAI-ARIA
-    /// active-descendant model): `Arrow` keys move the cursor among rows,
-    /// `Ctrl+Arrow` reorders the row under it. Keyboard, pointer
-    /// (`scene/drag`), and AT all reach reorder.
-    fn focusable_tags() -> Vec<&'static str> {
-        vec![TAG]
     }
 
     /// Keyboard reorder — the APG "keyboard drag" model (one tab stop

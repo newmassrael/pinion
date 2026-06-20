@@ -106,6 +106,7 @@ fn undo_count() -> Rc<Signal<u32>> {
 }
 
 /// Render one button via the [`pinion_widget_paint::button`] substrate.
+#[allow(clippy::too_many_arguments)] // R1020: one arg per paint axis + focusable opt-in
 fn button_scene(
     tag: &'static str,
     label: &str,
@@ -114,6 +115,7 @@ fn button_scene(
     hover_key: &'static str,
     colors: &ButtonColors,
     size: Size,
+    focusable: bool,
 ) -> Scene {
     // R727 — delegates to the lifted SSOT core; the snackbar supplies
     // its own action tone (`colors`) + 15 px font.
@@ -125,7 +127,8 @@ fn button_scene(
         colors,
         &ButtonStyle::m3_default(tag)
             .with_size(size)
-            .with_label_font_size_px(15),
+            .with_label_font_size_px(15)
+            .with_focusable(focusable),
     )
 }
 
@@ -169,6 +172,7 @@ fn snackbar_overlay(
         UNDO_HOVER_KEY,
         &snackbar_action_colors(theme),
         Size::px(72, 32),
+        false,
     );
     let left = (WIN_W - SNACK_W) / 2;
     let top = WIN_H - SNACK_H - SNACK_PAD;
@@ -212,6 +216,7 @@ fn view(state: SnackbarViewState, _frame: &Frame) -> Scene {
         SHOW_HOVER_KEY,
         &ButtonColors::filled_tonal(&theme),
         Size::px(160, 40),
+        true,
     );
     let status = Scene::Text(TextNode::styled(
         format!("Undone {undos} time(s)"),
@@ -299,13 +304,6 @@ impl WidgetCore for SnackbarView {
 
     fn keybinding(_key: &str) -> Option<()> {
         None
-    }
-
-    /// Only the Show button is a static Tab stop. The UNDO action is
-    /// reachable by pointer / RPC / AT `Click`; non-modal dynamic
-    /// keyboard-focus for the transient action is deferred (carry).
-    fn focusable_tags() -> Vec<&'static str> {
-        vec![SHOW_TAG]
     }
 
     fn apply_key(

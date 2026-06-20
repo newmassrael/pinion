@@ -105,10 +105,14 @@ fn button_scene(
         focused,
         hover_key,
         colors,
+        // (R1020 §5.39) All four buttons are Tab stops — `focusable_tags`
+        // enumerates `[INC_TAG, DEC_TAG, UNDO_TAG, REDO_TAG]`; tree order
+        // (DEC painted before INC) becomes the tab order by §5.39 design.
         &ButtonStyle::m3_default(tag)
             .with_size(Size::px(72, 40))
             .with_corner_radius(20)
-            .with_label_font_size_px(15),
+            .with_label_font_size_px(15)
+            .with_focusable(true),
     )
 }
 
@@ -262,12 +266,6 @@ impl WidgetCore for UndoView {
 
     fn keybinding(_key: &str) -> Option<()> {
         None
-    }
-
-    /// All four buttons are Tab stops; the focused one activates on
-    /// Space / Enter.
-    fn focusable_tags() -> Vec<&'static str> {
-        vec![INC_TAG, DEC_TAG, UNDO_TAG, REDO_TAG]
     }
 
     fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, _modifiers: Modifiers) -> bool {

@@ -180,6 +180,12 @@ pub struct MenuStyle {
     /// Material elevation level the dropdown casts its drop-shadow at
     /// (R711 §5.50; MD3 menu = Level 2). `0` = flat.
     pub elevation: u8,
+    /// (R1020 §5.39) Keyboard focus stop for [`view_context_menu`]. When
+    /// `true`, the context-menu panel Container is marked
+    /// `.with_focusable(true)` so the scene-derived §5.39 enumeration collects
+    /// its tag as a Tab stop while the menu is open. Default `false` (opt-in);
+    /// mirrors [`ButtonStyle::focusable`](crate::button::ButtonStyle::focusable).
+    pub focusable: bool,
 }
 
 impl MenuStyle {
@@ -199,7 +205,16 @@ impl MenuStyle {
             dropdown_v_padding: 8,
             dropdown_radius: 4,
             elevation: crate::elevation::MENU_LEVEL,
+            focusable: false,
         }
+    }
+
+    /// (R1020 §5.39) Mark the [`view_context_menu`] panel a keyboard focus stop
+    /// (default `false`). See [`Self::focusable`].
+    #[must_use]
+    pub const fn with_focusable(mut self, focusable: bool) -> Self {
+        self.focusable = focusable;
+        self
     }
 
     /// Total painted height of a dropdown with `item_count` items —
@@ -563,6 +578,10 @@ pub fn view_context_menu(
                     .with_justify(JustifyContent::Start)
                     .with_absolute_position(x, y)
                     .with_size(Size::px(width, height))
+                    // (R1020 §5.39) Carry the binding's focus-stop opt-in onto
+                    // the tag-carrying panel so the scene-derived enumeration
+                    // collects the open context-menu's tag as a Tab stop.
+                    .with_focusable(style.focusable)
                     .with_padding(Rect::new(0, style.dropdown_v_padding, 0, style.dropdown_v_padding)),
             ),
     )

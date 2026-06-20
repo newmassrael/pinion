@@ -143,8 +143,9 @@ pub struct ShellCore<V: WidgetView> {
     /// happens through the substrate dispatch methods only.
     revision: SceneRevision,
     /// R51.53 §5.39 framework-side focus state owner. Tab/Shift+Tab
-    /// traverses [`FocusManager::tab_order`] (seeded from
-    /// `V::focusable_tags()` at boot); click on a tagged widget
+    /// traverses [`FocusManager::tab_order`] (R1020: re-derived from the
+    /// paint scene every frame via `Scene::collect_focusable_tags`); click
+    /// on a tagged widget
     /// aliases [`FocusManager::focus_set`]; click on background
     /// aliases [`FocusManager::focus_clear`]. The shell consults the
     /// manager on every key dispatch so `apply_key` runs only when
@@ -524,23 +525,11 @@ impl<V: WidgetView> ShellCore<V> {
             "shell: initial state = {}",
             V::fmt_state_log(core.cached_state()),
         );
-        // R51.53 §5.39 — seed FocusManager with the binding's
-        // `focusable_tags()` enumeration. The default impl returns
-        // `vec![V::tag()]` (single tab stop), which is the right
-        // shape for every single-widget example; composite widgets
-        // (`RadioGroup`, multi-widget views) override to enumerate
-        // sub-tags or sibling widget tags.
-        let mut focus = FocusManager::new();
-        let tags: Vec<String> = V::focusable_tags()
-            .into_iter()
-            .map(str::to_owned)
-            .collect();
-        focus.update_focusable_tags(tags);
-        Self {
+        let mut shell = Self {
             core,
             previews: PreviewLedger::default(),
             revision: SceneRevision::default(),
-            focus,
+            focus: FocusManager::new(),
             modifiers: Modifiers::empty(),
             text_cache: LayoutCache::new(),
             last_access_tag_map: HashMap::new(),
@@ -557,7 +546,14 @@ impl<V: WidgetView> ShellCore<V> {
             fragment_cache_stats_per_window: HashMap::new(),
             frame_timings_per_window: HashMap::new(),
             text_select_drag: None,
-        }
+        };
+        // (R1020 §5.39) Seed the focus enumeration from the binding's first
+        // view — the scene-derived source the per-frame paint refresh uses —
+        // so an RPC `focus/set` or the first Tab resolves a current
+        // enumeration before the first live paint. (Replaces the pre-R1020
+        // `V::focusable_tags()` boot seed; the method is retired.)
+        shell.refresh_focusable_from_view();
+        shell
     }
 
     /// R51.76 §5.40 — borrow the focus manager. Both tests and the
@@ -1386,7 +1382,7 @@ impl<V: WidgetView> ShellCore<V> {
     /// `Key::Named(NamedKey::Tab) + modifiers.shift_key()` into a
     /// boolean `shift` flag and forwards here. The substrate then
     /// invokes [`FocusManager::focus_next`] / [`FocusManager::focus_prev`]
-    /// against the seeded `focusable_tags` order and requests a
+    /// against the scene-derived `tab_order` and requests a
     /// redraw when the focused tag actually changed (avoiding
     /// no-op repaints when Tab cycles back to a one-tag list).
     ///
@@ -2487,6 +2483,22 @@ impl<V: WidgetView> ShellCore<V> {
             }
             scene
         };
+        // (R1020 §5.39) Re-derive the keyboard focus enumeration from the
+        // freshly produced paint scene — the ratified scene-derived focus
+        // model (`collect_focusable_tags` reads each node's `tag` +
+        // `LayoutStyle::focusable`, both view-fn-assigned, so the post-layout
+        // tree carries them unchanged). A node marked `.with_focusable(true)`
+        // joins the Tab order by being painted; a conditionally-painted node
+        // (a dynamic pane, an inline editor) joins / leaves automatically with
+        // no binding-side list. Primary window only — the single FocusManager
+        // is binding-wide (the R1006 viewport-publish precedent); a secondary
+        // window's enumeration must not clobber it. `update_focusable_tags`
+        // already drops stale focus and is modal-guarded (§5.39). A binding
+        // with no focus stops paints no focusable node, so the enumeration is
+        // correctly empty.
+        if window_key == pinion_runtime::DEFAULT_WINDOW {
+            self.focus.update_focusable_tags(paint_scene.collect_focusable_tags());
+        }
         // R681 §2 #4 atomic 1 / R831 — per-window immediate-mode tick.
         // The paint scene the view fn just produced may contain one or
         // more [`Scene::ImmediateModeNode`]s; each driver advances its
@@ -2959,8 +2971,8 @@ impl<V: WidgetView> ShellCore<V> {
     /// `TouchPhase::Started`). Mirrors the W3C HTML convention:
     /// pressing on a tagged focusable widget focuses it; pressing
     /// on background blurs the focused widget. Non-focusable tagged
-    /// widgets (decoration regions that respond to hover but aren't
-    /// `focusable_tags()` members) leave focus unchanged — the
+    /// widgets (decoration regions that respond to hover but carry no
+    /// `LayoutStyle::focusable` marker) leave focus unchanged — the
     /// [`FocusManager::focus_set`] guard rejects unknown tags so
     /// the no-op falls out naturally.
     ///
@@ -3689,15 +3701,51 @@ impl<V: WidgetView> ShellCore<V> {
         };
         let focus_before = self.focus.focused().map(str::to_owned);
         if !self.focus.focus_set(&tag) {
-            // Unknown / non-focusable tag — silent no-op (matches
-            // the `click_to_focus` rejection arm). The widget body
-            // requested focus on a tag the binding never enumerated
-            // in `focusable_tags()` or the focus is already there.
-            return;
+            // (R1020 §5.39) The requested tag is not in the current focus
+            // enumeration. Under scene-derived focus the enumeration is
+            // refreshed inside the paint pass, which has NOT run since this
+            // dispatch mutated reactive state — so a node painted only as a
+            // RESULT of this dispatch (a conditionally-painted inline editor
+            // whose reducer set `editing_id` then requested focus) is not yet
+            // enumerated. Re-derive the enumeration from a fresh
+            // side-effect-free view of the post-dispatch state and retry once,
+            // so "focus a widget on the frame it appears" works (the pre-R1020
+            // boot-seeded superset accepted such a request unconditionally).
+            self.refresh_focusable_from_view();
+            if !self.focus.focus_set(&tag) {
+                // Still unknown / non-focusable — silent no-op (matches the
+                // `click_to_focus` rejection arm): the requested tag is on no
+                // painted focusable node, or focus is already there.
+                return;
+            }
         }
         self.notify_focus_change(focus_before.as_deref());
         self.revision.bump();
         self.request_redraw();
+    }
+
+    /// (R1020 §5.39) Re-derive the keyboard focus enumeration from a fresh,
+    /// side-effect-free run of [`WidgetCore::view`] over the current cached
+    /// state, feeding [`FocusManager::update_focusable_tags`]. Used by
+    /// [`Self::drain_focus_request`] to enumerate a node that this dispatch
+    /// just made paintable BEFORE the next paint pass runs the per-frame
+    /// refresh.
+    ///
+    /// No layout / viewport size is needed: [`Scene::collect_focusable_tags`]
+    /// reads only each node's `tag` + `LayoutStyle::focusable`, both assigned
+    /// by the view fn itself (layout resolves rects, never the focus markers).
+    /// The view runs under `root_owner.run(...)` so `Owner::cache` hooks
+    /// resolve to the same reactive state the live paint will read; it is pure
+    /// (§6.3) so this extra invocation has no observable effect beyond the
+    /// enumeration it produces.
+    fn refresh_focusable_from_view(&mut self) {
+        let cached_state = *self.core.cached_state();
+        let frame = Frame::with_dt(0.0);
+        let scene = {
+            let core = &self.core;
+            core.root_owner().run(|| V::view(cached_state, &frame))
+        };
+        self.focus.update_focusable_tags(scene.collect_focusable_tags());
     }
 
     /// R51.159 §5.23 — install or replace the

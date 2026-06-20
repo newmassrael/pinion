@@ -247,6 +247,16 @@ pub struct ButtonStyle {
     /// shadow ramp behind the surface — the M3 FAB's resting / raised
     /// lift. This is the "elevation" axis the type doc anticipated.
     pub elevation_level: u8,
+    /// (R1020 §5.39) Keyboard focus stop. When `true`, `button_scene`
+    /// marks the button's outer Container `.with_focusable(true)` so the
+    /// scene-derived §5.39 enumeration collects its tag as a Tab stop.
+    ///
+    /// Default `false` (opt-in): most buttons are standalone Tab stops
+    /// and set this true, but a button painted as a modal-dialog member
+    /// (focusable only via `push_modal_scope` while the dialog is open)
+    /// or a non-interactive decorative affordance leaves it false so it
+    /// stays out of the base Tab order.
+    pub focusable: bool,
 }
 
 impl ButtonStyle {
@@ -261,7 +271,17 @@ impl ButtonStyle {
             size: None,
             label_font_size_px: 14,
             elevation_level: 0,
+            focusable: false,
         }
+    }
+
+    /// (R1020 §5.39) Mark this button a keyboard focus stop (default
+    /// `false`). Standalone buttons set this true; modal-dialog members
+    /// and decorative affordances leave it false. See [`Self::focusable`].
+    #[must_use]
+    pub const fn with_focusable(mut self, focusable: bool) -> Self {
+        self.focusable = focusable;
+        self
     }
 
     /// Override the corner radius (≥ half-height ⇒ M3 pill).
@@ -347,6 +367,9 @@ pub fn view_button(
     if let Some(size) = style.size {
         layout = layout.with_size(size);
     }
+    // (R1020 §5.39) Carry the binding's focus-stop opt-in onto the outer
+    // Container so the scene-derived enumeration collects this button's tag.
+    layout = layout.with_focusable(style.focusable);
     let mut box_style = BoxStyle::filled(fill).with_corner_radius(style.corner_radius);
     if focused {
         box_style = box_style.with_border(Border::new(colors.focus_ring, FOCUS_RING_WIDTH));

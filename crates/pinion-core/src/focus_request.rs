@@ -118,8 +118,8 @@ pub fn drain() -> Option<String> {
 /// ([[abstraction-needs-second-consumer]] — the divergence-is-a-bug
 /// class, lifted at the 3rd identical copy per the R727/R732 self-grep
 /// mandate). `tags` carries `&'static str` because [`request`]'s focus
-/// targets are the same `'static` widget-tag literals the bindings'
-/// `focusable_tags` enumerate.
+/// targets are the same `'static` widget-tag literals the bindings mark
+/// `.with_focusable(true)` for the R1020 §5.39 scene-derived enumeration.
 ///
 /// This is the **per-item-tab-stop** roving axis (each sibling is its
 /// own document tab stop; the Arrow keys move *shell focus* between

@@ -28,8 +28,8 @@
 //! `focused_index` roving state: WAI-ARIA APG accordion keyboard
 //! navigation gives each header its own Tab stop (arrow keys move
 //! focus *without* expanding — distinct from radio where arrows
-//! activate). That focus model stays in the binding's
-//! `focusable_tags` + `focus_request` plumbing (the R697 accordion
+//! activate). That focus model stays in the binding's scene-derived
+//! `.with_focusable(true)` marks + `focus_request` plumbing (R697 accordion
 //! pattern); the coordinator owns only expand-exclusion.
 //!
 //! Visual scene placement is the application's responsibility (same

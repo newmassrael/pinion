@@ -214,6 +214,9 @@ fn view_card(i: usize, state: ButtonState, theme: &Theme) -> Scene {
                     .with_justify(JustifyContent::Start)
                     .with_align_items(AlignItems::Start)
                     .with_gap(8)
+                    // R1020 §5.39 — each card is a Tab stop; opt its
+                    // tag-carrying Container into the scene-derived enumeration.
+                    .with_focusable(true)
                     .with_size(Size::px(CARD_W, CARD_H))
                     .with_padding(Rect::new(CARD_PAD, CARD_PAD, CARD_PAD, CARD_PAD)),
             ),
@@ -297,13 +300,6 @@ impl WidgetCore for CardView {
 
     fn title() -> &'static str {
         "pinion hello-card (R757 §5.38 Material 3 cards — elevated / filled / outlined)"
-    }
-
-    /// Each card is its own Tab stop (a clickable card is a `button` in
-    /// the document focus order), unlike a `RadioGroup`'s single-tab-stop
-    /// roving model.
-    fn focusable_tags() -> Vec<&'static str> {
-        CARD_TAGS.to_vec()
     }
 
     /// Card keyboard model, gated on the focused card (roving-tabindex
@@ -491,7 +487,12 @@ mod tests {
 
     #[test]
     fn every_card_is_a_tab_stop() {
-        assert_eq!(CardView::focusable_tags(), CARD_TAGS.to_vec());
+        // §5.39: tree order IS tab order — collected from the paint scene.
+        let scene = pinion_core::Owner::new().run(|| view(&idle(), &Frame::new()));
+        assert_eq!(
+            scene.collect_focusable_tags(),
+            CARD_TAGS.iter().map(|t| (*t).to_owned()).collect::<Vec<_>>(),
+        );
     }
 
     #[test]

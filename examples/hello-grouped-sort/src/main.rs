@@ -301,13 +301,6 @@ impl WidgetCore for GroupedSortView {
         "__internal__"
     }
 
-    /// Pointer / RPC drive this slice; windowed-list roving is a later axis
-    /// (as in `hello-virtual-sort` / `hello-grouped-list`). Empty so Tab never
-    /// lands.
-    fn focusable_tags() -> Vec<&'static str> {
-        Vec::new()
-    }
-
     fn title() -> &'static str {
         "pinion hello-grouped-sort (R844 §5.27 §5.40 filter->sort->group stack)"
     }

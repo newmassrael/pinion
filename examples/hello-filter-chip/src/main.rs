@@ -184,7 +184,9 @@ fn chip(index: usize, state: ToggleState, on: bool, theme: &Theme) -> Scene {
         ContainerNode::new(children)
             .with_tag(CHIP_TAGS[index])
             .with_style(style)
-            .with_layout(chip::chip_layout(Size::px(CHIP_W, CHIP_HEIGHT), None)),
+            // R1020 §5.39 — each chip is a Tab stop; opt its tag-carrying
+            // Container into the scene-derived focus enumeration.
+            .with_layout(chip::chip_layout(Size::px(CHIP_W, CHIP_HEIGHT), None).with_focusable(true)),
     )
 }
 
@@ -271,11 +273,6 @@ impl WidgetCore for FilterChipView {
         "pinion hello-filter-chip (R753 §5.38 Material 3 filter chips)"
     }
 
-    /// Each chip is its own Tab stop (WAI-ARIA toggle-button group: every
-    /// toggle button is in the document focus order).
-    fn focusable_tags() -> Vec<&'static str> {
-        CHIP_TAGS.to_vec()
-    }
 
     /// WAI-ARIA toggle-button-group keyboard model — delegated wholesale to
     /// the shared [`toggle_group::apply_key`] substrate.
@@ -413,7 +410,13 @@ mod tests {
 
     #[test]
     fn every_chip_is_a_tab_stop() {
-        assert_eq!(FilterChipView::focusable_tags(), CHIP_TAGS.to_vec());
+        // §5.39: tree order IS tab order — collected from the paint scene.
+        let scene =
+            pinion_core::Owner::new().run(|| view(state_with(BOOT_ON), &Frame::new()));
+        assert_eq!(
+            scene.collect_focusable_tags(),
+            CHIP_TAGS.iter().map(|t| (*t).to_owned()).collect::<Vec<_>>(),
+        );
     }
 
     #[test]

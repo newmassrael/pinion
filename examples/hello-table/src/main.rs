@@ -274,7 +274,9 @@ fn set_col(intro: &mut dyn pinion_core::external::ExternalIntrospect, col: usize
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: &TableState, _frame: &Frame) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
-    let style = TableStyle::m3();
+    // R1020 §5.39 — the grid is a single Tab stop; opt the table into the
+    // scene-derived focus enumeration so its PRIMARY_TAG is collected.
+    let style = TableStyle::m3().with_focusable(true);
     // R730 §5.40 — paint rows in the coordinator's sorted (visual) order;
     // `row_ids` carries each visual row's data index so cells tag by data
     // id and the data-indexed selection / state stay correct.
@@ -389,16 +391,6 @@ impl WidgetCore for TableView {
 
     fn title() -> &'static str {
         "pinion hello-table (R707 §5.38 interactive data grid)"
-    }
-
-    /// WAI-ARIA APG data-grid focus model: the grid is a **single Tab
-    /// stop** ([`PRIMARY_TAG`]), with the focused cell tracked as an
-    /// internal 2-D roving *active descendant* (the coordinator's
-    /// `focused_row` / `focused_col` slots) — the same single-tab-stop +
-    /// active-descendant model `hello-datepicker` uses. The one tag is
-    /// static, so the boot-seeded `focusable_tags` enumeration is stable.
-    fn focusable_tags() -> Vec<&'static str> {
-        vec![PRIMARY_TAG]
     }
 
     /// WAI-ARIA APG data-grid keyboard model. All keys route only when

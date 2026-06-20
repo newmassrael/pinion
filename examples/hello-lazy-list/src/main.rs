@@ -392,12 +392,6 @@ impl WidgetCore for LazyListView {
         "__internal__"
     }
 
-    /// Display-only list: nothing is a keyboard tab stop (the scrollbar is
-    /// pointer / RPC driven).
-    fn focusable_tags() -> Vec<&'static str> {
-        Vec::new()
-    }
-
     fn title() -> &'static str {
         "pinion hello-lazy-list (R924 §5.22 §5.23 §5.27)"
     }

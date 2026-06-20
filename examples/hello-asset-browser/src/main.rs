@@ -560,7 +560,10 @@ fn toolbar_button(
         &ButtonColors::filled_tonal(theme),
         &ButtonStyle::m3_default(tag)
             .with_size(Size::px(160, 38))
-            .with_label_font_size_px(14),
+            .with_label_font_size_px(14)
+            // R1020 §5.39 — each toolbar button is a Tab stop; opt it into the
+            // scene-derived enumeration (SORT then FILTER in paint order).
+            .with_focusable(true),
     )
 }
 
@@ -731,10 +734,6 @@ impl WidgetCore for AssetBrowserView {
         None
     }
 
-    /// The Sort + Filter buttons are static Tab stops.
-    fn focusable_tags() -> Vec<&'static str> {
-        vec![SORT_TAG, FILTER_TAG]
-    }
 
     fn apply_key(
         scene: &mut Scene,
@@ -1106,7 +1105,12 @@ mod tests {
 
     #[test]
     fn r927_two_toolbar_buttons_are_focusable() {
-        assert_eq!(AssetBrowserView::focusable_tags(), vec![SORT_TAG, FILTER_TAG]);
+        // §5.39: tree order IS tab order — collected from the paint scene.
+        let scene = Owner::new().run(|| view(idle(), &Frame::default()));
+        assert_eq!(
+            scene.collect_focusable_tags(),
+            vec![SORT_TAG.to_owned(), FILTER_TAG.to_owned()],
+        );
     }
 
     #[test]

@@ -1337,7 +1337,8 @@ fn build_filter_row(
                 LayoutStyle::new()
                     .flex(FlexDirection::Row)
                     .with_align_items(AlignItems::Center)
-                    .with_gap(FILTER_BUTTON_GAP),
+                    .with_gap(FILTER_BUTTON_GAP)
+                    .with_focusable(true),
             ),
     )
 }
@@ -2221,23 +2222,6 @@ impl WidgetCore for TodoMvcView {
         "pinion todomvc (R655 §5.16) — first composed app"
     }
 
-    /// (R664 §5.16) Three tab stops — `TF_TAG`, `EDIT_TF_TAG`,
-    /// `FILTER_TAG`. Per-focus `apply_key` arm picks the matching
-    /// keymap. `EDIT_TF_TAG` is enumerated unconditionally so the
-    /// programmatic [`pinion_core::focus_request`] dispatched from
-    /// the [`TodoEditExternal`] activation arm succeeds — the
-    /// inline editor is only painted while
-    /// [`use_editing_id`]`().get().is_some()`, so the focus is
-    /// effectively a "phantom" tab stop when no row is in edit mode.
-    /// The user-visible cost is one ghost Tab cycle through an
-    /// invisible target; the alternative (refresh `focusable_tags`
-    /// per paint, which the substrate does not do today) is a
-    /// framework-tier change deferred until a 2nd consumer of
-    /// dynamic-focusable-tags surfaces per
-    /// [[abstraction-needs-second-consumer]].
-    fn focusable_tags() -> Vec<&'static str> {
-        vec![TF_TAG, EDIT_TF_TAG, FILTER_TAG]
-    }
 
     /// R660 reducer — bridge `RadioGroupExternal`'s `"selected"` intent
     /// into `Signal<FilterMode>` so the view-fn `.get()` subscription
@@ -4947,8 +4931,39 @@ mod tests {
     /// main field + editor + filter group give exactly 3 tab stops.
     #[test]
     fn r664_focusable_tags_includes_editor_slot() {
-        let tags = <TodoMvcView as super::WidgetCore>::focusable_tags();
-        assert_eq!(tags, vec![TF_TAG, EDIT_TF_TAG, FILTER_TAG]);
+        // §5.39: tree order IS tab order — collected from the paint scene.
+        // The inline editor (EDIT_TF_TAG) is only painted while a row is in
+        // edit mode, so put one row into edit mode before painting.
+        with_owner(|| {
+            let id = super::allocate_todo_id();
+            use_todos().set_with(|prev| {
+                let mut next = prev.clone();
+                next.push(TodoItem {
+                    id,
+                    text: "edit me".to_owned(),
+                    completed: false,
+                });
+                next
+            });
+            super::use_editing_id().set(Some(id));
+            let scene = view(
+                (
+                    TextFieldState::Idle,
+                    0,
+                    FilterRadioStates::default(),
+                    TextFieldState::Idle,
+                    0,
+                ),
+                &super::Frame::default(),
+            );
+            // Order is the paint-scene tree order (§5.39): the filter row
+            // paints above the scrolled todo list, so FILTER_TAG precedes the
+            // in-list EDIT_TF_TAG editor.
+            assert_eq!(
+                scene.collect_focusable_tags(),
+                vec![TF_TAG.to_owned(), FILTER_TAG.to_owned(), EDIT_TF_TAG.to_owned()],
+            );
+        });
     }
 
     /// (R664) Completed rows render their text label with

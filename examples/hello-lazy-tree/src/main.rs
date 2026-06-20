@@ -707,7 +707,12 @@ fn view(_state: (), _frame: &Frame) -> Scene {
     let band = Scene::Container(
         ContainerNode::new(vec![tree, scrollbar_visual])
             .with_tag(ROOT_TAG)
-            .with_layout(LayoutStyle::new().flex(FlexDirection::Row).with_flex_grow(1.0)),
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Row)
+                    .with_flex_grow(1.0)
+                    .with_focusable(true),
+            ),
     );
 
     Scene::Container(
@@ -913,14 +918,6 @@ impl WidgetCore for LazyTreeView {
             return false;
         }
         apply_key_impl(key)
-    }
-
-    /// Single tab stop: the tree root [`ROOT_TAG`] holds keyboard focus and the
-    /// cursor roves among rows internally (conveyed as `aria-activedescendant`,
-    /// not a tab stop per row). The default would already return `Self::tag()`;
-    /// this is spelled out to mark the deliberate single-stop tree model.
-    fn focusable_tags() -> Vec<&'static str> {
-        vec![ROOT_TAG]
     }
 
     fn fmt_state_log(_state: &()) -> String {

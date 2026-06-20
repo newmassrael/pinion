@@ -515,13 +515,6 @@ impl WidgetCore for ComboView {
         None
     }
 
-    /// The editable combobox is a single Tab stop — only the input is
-    /// focusable. The filtered options are the input's roving active
-    /// descendants (never their own Tab stops); the barrier is a click
-    /// target only.
-    fn focusable_tags() -> Vec<&'static str> {
-        vec![INPUT_TAG]
-    }
 
     /// WAI-ARIA §4.5 editable-combobox keyboard model. Only ArrowDown /
     /// ArrowUp / Enter / Escape are combobox-reserved; every other key
@@ -863,7 +856,9 @@ mod tests {
 
     #[test]
     fn r717_focusable_tags_lists_only_input() {
-        assert_eq!(ComboView::focusable_tags(), vec![INPUT_TAG]);
+        // §5.39: collected from the paint scene.
+        let scene = Owner::new().run(|| view(&idle(), &Frame::new()));
+        assert_eq!(scene.collect_focusable_tags(), vec![INPUT_TAG.to_owned()]);
     }
 
     // ----- a11y -----

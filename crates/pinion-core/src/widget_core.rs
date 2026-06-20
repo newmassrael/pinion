@@ -499,20 +499,21 @@ pub trait WidgetCore: 'static {
         false
     }
 
-    /// Focusable tag enumeration in Tab order. Returned tags must
-    /// match either [`Self::tag`] (the top-level widget) or a sub-tag
-    /// the view fn paints inside the widget (composite widgets like
-    /// `RadioGroup` register the group's `tag()` as a single tab
-    /// stop and roving-tabindex among its children internally).
-    ///
-    /// Default returns a single-entry list containing `Self::tag()`,
-    /// which is the right shape for every single-widget example.
-    /// Composite widget bindings or multi-widget views override to
-    /// enumerate all focusable children.
-    #[must_use]
-    fn focusable_tags() -> Vec<&'static str> {
-        vec![Self::tag()]
-    }
+    // (R1020 §5.39) `focusable_tags()` was REMOVED. Keyboard focus
+    // enumeration is no longer a hand-maintained binding-side list; it is
+    // DERIVED from the paint scene by
+    // [`Scene::collect_focusable_tags`](crate::Scene::collect_focusable_tags),
+    // a depth-first walk collecting the tags of nodes marked
+    // `.with_layout(LayoutStyle::new().with_focusable(true))`. The shell
+    // re-runs that walk over the freshly produced paint scene every frame,
+    // so a node that appears / disappears (a dynamic pane, a
+    // conditionally-painted inline editor) joins / leaves the Tab order
+    // automatically. This restores the ratified §5.39 design (the spec
+    // always specified "depth-first traversal of the focusable tagged
+    // subset" and rejected manual tabindex); the pre-R1020 flat list was an
+    // unratified drift. A widget declares a focus stop where it paints the
+    // node, via the node's `with_layout` builder — exactly as it declares
+    // `pointer_transparent`.
 
     /// Format the cached state for stderr logging on the transition
     /// path (`from -> to`) and the final-state line. Default falls

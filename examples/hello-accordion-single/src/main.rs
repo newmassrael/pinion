@@ -147,7 +147,10 @@ fn focused_section(focused: Option<&str>) -> Option<usize> {
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: &AccordionState, _frame: &Frame) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
-    let style = DisclosureStyle::m3();
+    // (R1020 §5.39) Each header is its own Tab stop — `focusable_tags`
+    // enumerates all of `ROW_TAGS`, so the shared header style opts into
+    // the scene-derived focus enumeration.
+    let style = DisclosureStyle::m3().with_focusable(true);
     let sections: Vec<Scene> = (0..N)
         .map(|i| {
             let (interaction, expanded) = state[i];
@@ -256,13 +259,6 @@ impl WidgetCore for AccordionSingleView {
         "pinion hello-accordion-single (R701 §5.38 single-open APG accordion)"
     }
 
-    /// Each section header is its own Tab stop (WAI-ARIA APG: an
-    /// accordion header is a `button` in the document focus order),
-    /// listed as the composite sub-tags so click-to-focus / `focus/set`
-    /// land focus on the header itself.
-    fn focusable_tags() -> Vec<&'static str> {
-        ROW_TAGS.to_vec()
-    }
 
     /// WAI-ARIA APG accordion keyboard model, gated on the focused
     /// header (roving-tabindex `apply_key` discipline — keys route only
@@ -469,7 +465,12 @@ mod tests {
 
     #[test]
     fn every_header_is_a_tab_stop() {
-        assert_eq!(AccordionSingleView::focusable_tags(), ROW_TAGS.to_vec());
+        // §5.39: tree order IS tab order — collected from the paint scene.
+        let scene = pinion_core::Owner::new().run(|| view(&idle(), &Frame::new()));
+        assert_eq!(
+            scene.collect_focusable_tags(),
+            ROW_TAGS.iter().map(|t| (*t).to_owned()).collect::<Vec<_>>(),
+        );
     }
 
     #[test]

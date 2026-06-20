@@ -295,7 +295,11 @@ impl WidgetCore for TestView {
                 Color::rgb(0x00, 0x00, 0x00),
             ))])
             .with_tag("test")
-            .with_style(BoxStyle::filled(Color::rgb(0x00, 0x00, 0x00))),
+            .with_style(BoxStyle::filled(Color::rgb(0x00, 0x00, 0x00)))
+            // (R1020 §5.39) Mark the single focus stop so the scene-derived
+            // enumeration collects "test" (the pre-R1020 `focusable_tags()`
+            // default `vec![tag()]` is retired).
+            .with_layout(pinion_core::style::LayoutStyle::new().with_focusable(true)),
         )
     }
 

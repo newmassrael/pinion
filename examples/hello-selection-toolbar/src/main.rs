@@ -499,7 +499,9 @@ fn view(state: SelState, _frame: &Frame) -> Scene {
         state.actions_focus,
         state.actions_focused,
         &theme,
-        &ToolbarStyle::m3_default(),
+        // R1020 §5.39 — the action toolbar is a single Tab stop (roving
+        // tabindex internally); opt it into the scene-derived enumeration.
+        &ToolbarStyle::m3_default().with_focusable(true),
     );
 
     // The selection count readout.
@@ -528,6 +530,10 @@ fn view(state: SelState, _frame: &Frame) -> Scene {
                     .flex(FlexDirection::Column)
                     .with_gap(2)
                     .with_flex_grow(1.0)
+                    // R1020 §5.39 — the list is a single Tab stop (rows rove
+                    // internally); opt its tag-carrying Container into the
+                    // scene-derived enumeration.
+                    .with_focusable(true)
                     .with_padding(Rect::new(6, 6, 6, 6)),
             ),
     );
@@ -619,12 +625,6 @@ impl WidgetCore for SelectionToolbarView {
 
     fn event_name(_event: ()) -> &'static str {
         "__internal__"
-    }
-
-    /// Two tab stops: the list, then the action toolbar (Tab cycles, each a
-    /// single stop with an internal roving cursor).
-    fn focusable_tags() -> Vec<&'static str> {
-        vec![LIST_TAG, ACTIONS_TAG]
     }
 
     fn title() -> &'static str {

@@ -120,7 +120,7 @@ fn view(_state: (), _frame: &Frame) -> Scene {
         &dir,
         &scroll,
         &theme,
-        FileBrowserMetrics { list_width: LIST_W, list_height: LIST_H, row_pitch: ROW_PITCH, overscan: OVERSCAN },
+        FileBrowserMetrics { list_width: LIST_W, list_height: LIST_H, row_pitch: ROW_PITCH, overscan: OVERSCAN, focusable: false },
         None,
     );
 
@@ -182,10 +182,6 @@ impl WidgetCore for FileBrowserView {
 
     fn event_name(_event: ()) -> &'static str {
         "__internal__"
-    }
-
-    fn focusable_tags() -> Vec<&'static str> {
-        Vec::new()
     }
 
     fn title() -> &'static str {

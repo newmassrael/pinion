@@ -213,12 +213,6 @@ impl WidgetCore for VirtualSelectView {
         "__internal__"
     }
 
-    /// Pointer / RPC selection this slice; rows are not keyboard tab stops
-    /// (windowed-list roving is a later axis). Empty so Tab never lands.
-    fn focusable_tags() -> Vec<&'static str> {
-        Vec::new()
-    }
-
     fn title() -> &'static str {
         "pinion hello-virtual-select (R746 §5.27 selectable virtualization)"
     }

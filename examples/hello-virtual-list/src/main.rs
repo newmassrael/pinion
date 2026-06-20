@@ -239,12 +239,6 @@ impl WidgetCore for VirtualListView {
         "__internal__"
     }
 
-    /// Display-only list: nothing here is a keyboard tab stop (the
-    /// scrollbar is pointer / RPC driven). Empty so Tab never lands.
-    fn focusable_tags() -> Vec<&'static str> {
-        Vec::new()
-    }
-
     fn title() -> &'static str {
         "pinion hello-virtual-list (R744 §5.27 Model/View virtualization)"
     }

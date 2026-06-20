@@ -4515,7 +4515,7 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
             .with_tag(GRAPH_TAG)
             .with_aria_label("Node graph")
             .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
-            .with_layout(LayoutStyle::new().with_size(Size::px(WIN_W, WIN_H))),
+            .with_layout(LayoutStyle::new().with_size(Size::px(WIN_W, WIN_H)).with_focusable(true)),
     );
     // R849 — palette sidebar beside the canvas. R916 — Details panel sidebar on
     // the right. The canvas keeps its `WIN_W × WIN_H` coordinate system (its rect
@@ -4618,19 +4618,6 @@ impl WidgetCore for NodeEditorView {
 
     fn keybinding(_key: &str) -> Option<()> {
         None
-    }
-
-    /// The canvas is the single keyboard tab stop; the R878 / R901 inline
-    /// edit field is focusable so the focus-request mailbox can hand it focus
-    /// while an edit is in flight (the data-grid `EDIT_TF` precedent). R850 — the
-    /// add-node palette is **not** yet a tab stop: it is mouse/RPC-driven
-    /// (the `add_node` verb and `scene/click` reach it), and its a11y
-    /// `toolbar` is emitted with `focused_control: None` (the
-    /// `hello-textarea` NoFocus-toolbar shape). Keyboard roving over the
-    /// palette (a second tab stop with arrow/Enter) is a documented carry,
-    /// not a silent gap.
-    fn focusable_tags() -> Vec<&'static str> {
-        vec![GRAPH_TAG, EDIT_TF_TAG]
     }
 
     fn apply_key(

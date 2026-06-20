@@ -177,24 +177,22 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     /// to a separate writer.
     #[must_use]
     pub fn new() -> Self {
-        // R670 §5.41 §5.39 — seed FocusManager with the binding's
-        // `focusable_tags()` enumeration so RPC-driven `focus/set`
-        // succeeds on the default tab stop even before the TUI Tab
-        // arm lands. Mirrors `pinion_shell::ShellCore::new` exactly.
-        let mut focus = FocusManager::new();
-        let tags: Vec<String> = V::focusable_tags()
-            .into_iter()
-            .map(str::to_owned)
-            .collect();
-        focus.update_focusable_tags(tags);
-        Self {
+        // (R1020 §5.41 §5.39) Seed the focus enumeration from the binding's
+        // first view — scene-derived, the same source the per-paint refresh
+        // (`update_paint_scene`) uses — so RPC-driven `focus/set` resolves a
+        // current enumeration before the first paint. Mirrors
+        // `pinion_shell::ShellCore::new`. (Replaces the pre-R1020
+        // `V::focusable_tags()` boot seed; the method is retired.)
+        let mut shell = Self {
             core: CoreShell::new(),
             previews: PreviewLedger::default(),
             revision: SceneRevision::default(),
-            focus,
+            focus: FocusManager::new(),
             log_sink: None,
             last_paint_instant: Cell::new(None),
-        }
+        };
+        shell.refresh_focusable_from_view();
+        shell
     }
 
     /// R670 §5.41 §5.34 — current §5.34 R40.4 OCC revision counter
@@ -337,6 +335,16 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     /// layout. Surface calls this after every successful paint
     /// commit (initial + post-state-change + resize repaint).
     pub fn update_paint_scene(&mut self, paint_scene: Scene) {
+        // (R1020 §5.39) Re-derive the keyboard focus enumeration from the
+        // freshly painted scene — the ratified scene-derived focus model, the
+        // TUI peer of the Vello `compute_paint_scene_internal` refresh. This is
+        // the per-frame `&mut self` paint-commit hook (`compute_paint_scene` is
+        // `&self`), called after every paint, so a focusable node appearing /
+        // disappearing across frames tracks the Tab order automatically.
+        //
+        // A binding with no focus stops paints no focusable node, so the
+        // enumeration is correctly empty.
+        self.focus.update_focusable_tags(paint_scene.collect_focusable_tags());
         self.core.update_paint_scene(paint_scene);
     }
 
@@ -807,16 +815,38 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         };
         let focus_before = self.focus.focused().map(str::to_owned);
         if !self.focus.focus_set(&tag) {
-            // Unknown / non-focusable tag — silent no-op (matches the
-            // pinion-shell `click_to_focus` rejection arm). The
-            // widget body requested focus on a tag the binding never
-            // enumerated in `focusable_tags()` or the focus is
-            // already there.
-            return false;
+            // (R1020 §5.39) Re-derive the enumeration from a fresh view of the
+            // post-dispatch state and retry once — a node this dispatch just
+            // made paintable (a conditionally-painted inline editor) is not yet
+            // enumerated (the paint refresh has not run). Mirror of the
+            // pinion-shell `drain_focus_request` re-derive-on-miss.
+            self.refresh_focusable_from_view();
+            if !self.focus.focus_set(&tag) {
+                // Still unknown / non-focusable — silent no-op (matches the
+                // pinion-shell `click_to_focus` rejection arm).
+                return false;
+            }
         }
         self.notify_focus_change(focus_before.as_deref());
         self.revision.bump();
         true
+    }
+
+    /// (R1020 §5.39) Re-derive the keyboard focus enumeration from a fresh,
+    /// side-effect-free run of [`pinion_core::WidgetCore::view`] over the
+    /// current cached state. Mirror of `pinion_shell::ShellCore`'s helper:
+    /// [`pinion_core::Scene::collect_focusable_tags`] reads only `tag` +
+    /// `LayoutStyle::focusable` (view-fn-assigned, not layout-derived), so no
+    /// viewport size is needed; the view runs under `root_owner.run(...)` and
+    /// is pure (§6.3).
+    fn refresh_focusable_from_view(&mut self) {
+        let cached_state = *self.core.cached_state();
+        let frame = Frame::with_dt(0.0);
+        let scene = self
+            .core
+            .root_owner()
+            .run(|| V::view(cached_state, &frame));
+        self.focus.update_focusable_tags(scene.collect_focusable_tags());
     }
 
     /// R693 §5.39 — pop one pending

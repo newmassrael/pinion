@@ -230,7 +230,7 @@ fn view(selected: Option<usize>, _frame: &Frame) -> Scene {
     let list_root = Scene::Container(
         ContainerNode::new(vec![list_row])
             .with_tag(LIST_TAG)
-            .with_layout(LayoutStyle::new().flex(FlexDirection::Column)),
+            .with_layout(LayoutStyle::new().flex(FlexDirection::Column).with_focusable(true)),
     );
 
     Scene::Container(
@@ -300,13 +300,6 @@ impl WidgetCore for GroupedListView {
 
     fn event_name(_event: ()) -> &'static str {
         "__internal__"
-    }
-
-    /// R848 — the list is a single keyboard tab stop (roving by visual row over
-    /// the flattened group rows); the windowed-list roving axis `hello-grouped-
-    /// list` deferred at R843 lands here.
-    fn focusable_tags() -> Vec<&'static str> {
-        vec![LIST_TAG]
     }
 
     /// R848 §5.27 — keyboard navigation over the grouped list, delegated to the

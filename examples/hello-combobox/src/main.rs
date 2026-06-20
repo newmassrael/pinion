@@ -275,7 +275,8 @@ fn trigger_scene(state: &ComboViewState, open: bool, theme: &Theme) -> Scene {
                     .flex(FlexDirection::Row)
                     .with_align_items(AlignItems::Center)
                     .with_justify(JustifyContent::SpaceBetween)
-                    .with_padding(Rect::new(14, 0, 12, 0)),
+                    .with_padding(Rect::new(14, 0, 12, 0))
+                    .with_focusable(true),
             ),
     )
 }
@@ -476,13 +477,6 @@ impl WidgetCore for ComboView {
         None
     }
 
-    /// The combobox is a single Tab stop — only the trigger is
-    /// focusable. The options are the trigger's roving active
-    /// descendants (WAI-ARIA combobox / RadioGroup / datepicker model),
-    /// never their own Tab stops. The barrier is a click target only.
-    fn focusable_tags() -> Vec<&'static str> {
-        vec![TRIGGER_TAG]
-    }
 
     /// WAI-ARIA §4.5 select-only combobox keyboard model. All keys route
     /// only while the trigger owns shell focus (single Tab stop):
@@ -774,7 +768,9 @@ mod tests {
 
     #[test]
     fn r714_focusable_tags_lists_only_trigger() {
-        assert_eq!(ComboView::focusable_tags(), vec![TRIGGER_TAG]);
+        // §5.39: collected from the paint scene.
+        let scene = Owner::new().run(|| view(&idle(), &Frame::new()));
+        assert_eq!(scene.collect_focusable_tags(), vec![TRIGGER_TAG.to_owned()]);
     }
 
     // ----- a11y -----

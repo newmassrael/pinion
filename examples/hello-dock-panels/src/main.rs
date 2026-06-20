@@ -567,7 +567,13 @@ fn view_viewport_raw(state: ButtonState, theme: &Theme) -> Scene {
                 .flex(FlexDirection::Row)
                 .with_justify(JustifyContent::Center)
                 .with_align_items(AlignItems::Center)
-                .with_size(Size::px(180, 48)),
+                .with_size(Size::px(180, 48))
+                // (R1020 §5.39) The viewport button is a Tab stop —
+                // `focusable_tags` enumerates it alongside the inspector
+                // tree. This binding hand-rolls the button Container (not
+                // `ButtonStyle`/`button_scene`), so the focus-stop opt-in
+                // is the direct-node marker on its `LayoutStyle`.
+                .with_focusable(true),
         ),
     );
     Scene::Container(
@@ -638,7 +644,10 @@ fn view_inspector_content(state: ButtonState, theme: &Theme) -> Scene {
         INSPECTOR_TREE_TAG,
         &tree_items,
         theme,
-        &TreeViewStyle::m3_default(),
+        // (R1020 §5.39) The inspector tree is a Tab stop —
+        // `focusable_tags` enumerates it alongside the viewport button —
+        // so its `TreeViewStyle` opts into the scene-derived enumeration.
+        &TreeViewStyle::m3_default().with_focusable(true),
         &focus,
     )
 }
@@ -991,16 +1000,6 @@ impl WidgetCore for DockPanelsView {
             _ => {}
         }
         Vec::new()
-    }
-
-    /// R811 §5.16 §5.27 — make the inspector tree a focusable single tab
-    /// stop alongside the viewport button, so keyboard focus can land on
-    /// it ([`apply_key`](Self::apply_key) gates inspector navigation on
-    /// it). Per WAI-ARIA, a tree is one tab stop with an
-    /// `aria-activedescendant` cursor — here the cursor is the shared
-    /// [`use_selected_path`] row, not per-row focus.
-    fn focusable_tags() -> Vec<&'static str> {
-        vec![VIEWPORT_BTN_TAG, INSPECTOR_TREE_TAG]
     }
 
     /// R811 §5.16 §5.27 §5.50 — WAI-ARIA APG 6.13 Tree keyboard

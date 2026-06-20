@@ -98,6 +98,18 @@ pub struct DatePickerStyle {
     /// Outer block corner radius in logical pixels (default 12 = M3
     /// large shape token).
     pub corner_radius: u32,
+    /// (R1020 §5.39) Keyboard focus stop. When `true`, [`view_datepicker`]
+    /// marks both the outer block Container (the picker root, `PRIMARY`
+    /// tag) and each nav-button Container (`prev` / `next`)
+    /// `.with_focusable(true)` so the scene-derived §5.39 enumeration
+    /// collects their tags as Tab stops.
+    ///
+    /// Default `false` (opt-in), mirroring
+    /// [`ButtonStyle::focusable`](crate::button::ButtonStyle::focusable):
+    /// a stand-alone picker sets this true, while a picker embedded as a
+    /// modal-popup member leaves it false so it stays out of the base Tab
+    /// order until the popup opens.
+    pub focusable: bool,
 }
 
 impl DatePickerStyle {
@@ -113,7 +125,17 @@ impl DatePickerStyle {
             nav_size: 32,
             block_pad: 12,
             corner_radius: 12,
+            focusable: false,
         }
+    }
+
+    /// (R1020 §5.39) Mark this date-picker a keyboard focus stop (default
+    /// `false`). The picker root + both nav buttons become Tab stops when
+    /// opted in. See [`Self::focusable`].
+    #[must_use]
+    pub const fn with_focusable(mut self, focusable: bool) -> Self {
+        self.focusable = focusable;
+        self
     }
 }
 
@@ -234,7 +256,8 @@ fn nav_button(tag: &str, glyph: &str, theme: &Theme, style: &DatePickerStyle) ->
                 .flex(FlexDirection::Row)
                 .with_justify(JustifyContent::Center)
                 .with_align_items(AlignItems::Center)
-                .with_size(Size::px(style.nav_size, style.nav_size)),
+                .with_size(Size::px(style.nav_size, style.nav_size))
+                .with_focusable(style.focusable),
         ),
     )
 }
@@ -428,7 +451,8 @@ pub fn view_datepicker(
                         style.block_pad,
                         style.block_pad,
                         style.block_pad,
-                    )),
+                    ))
+                    .with_focusable(style.focusable),
             ),
     )
 }

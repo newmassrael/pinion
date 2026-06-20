@@ -86,6 +86,14 @@ pub struct ToolbarStyle {
     pub item_radius: u32,
     /// Focus-ring border thickness for the roving cursor control.
     pub focus_ring_width: u32,
+    /// (R1020 §5.39) Keyboard focus stop. When `true`, `view_toolbar`
+    /// marks the strip Container `.with_focusable(true)` so the
+    /// scene-derived §5.39 enumeration collects the strip as a single Tab
+    /// stop (the controls rove internally). Default `false` (opt-in): a
+    /// toolbar used as a non-interactive affordance strip — e.g. a text
+    /// editor's formatting bar, whose focus belongs to the text field —
+    /// leaves it false so the strip stays out of the Tab order.
+    pub focusable: bool,
 }
 
 impl ToolbarStyle {
@@ -102,7 +110,16 @@ impl ToolbarStyle {
             bar_padding: 6,
             item_radius: 8,
             focus_ring_width: 2,
+            focusable: false,
         }
+    }
+
+    /// (R1020 §5.39) Mark the toolbar a single keyboard focus stop
+    /// (default `false`). See [`Self::focusable`].
+    #[must_use]
+    pub const fn with_focusable(mut self, focusable: bool) -> Self {
+        self.focusable = focusable;
+        self
     }
 }
 
@@ -174,6 +191,11 @@ pub fn view_toolbar(
             .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
             .with_layout(
                 LayoutStyle::new()
+                    // (R1020 §5.39) When the binding opts in, the toolbar is a
+                    // single keyboard focus stop (WAI-ARIA roving tabindex — the
+                    // strip is the Tab stop, the controls rove internally); a
+                    // non-interactive affordance strip leaves it out.
+                    .with_focusable(style.focusable)
                     .flex(FlexDirection::Row)
                     .with_align_items(AlignItems::Center)
                     .with_justify(JustifyContent::Start)

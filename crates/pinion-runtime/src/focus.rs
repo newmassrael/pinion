@@ -14,8 +14,13 @@
 //! (§5.35). The shell consults the manager on every winit key event
 //! before forwarding to `WidgetView::apply_key` (R51.53 wiring). The
 //! `tab_order` enumeration is refreshed by the shell every render via
-//! [`update_focusable_tags`] (depth-first paint-scene traversal of
-//! focusable tags supplied by `WidgetView::focusable_tags`).
+//! [`update_focusable_tags`], fed the depth-first
+//! [`Scene::collect_focusable_tags`](../../pinion_core/enum.Scene.html#method.collect_focusable_tags)
+//! walk over the freshly produced paint scene — the ratified §5.39
+//! scene-derived focus model (R1020). A node is a Tab stop when the view
+//! fn paints it with `LayoutStyle::focusable`; there is no binding-side
+//! list (the pre-R1020 `WidgetView::focusable_tags()` flat enumeration
+//! was an unratified drift from this spec and is retired).
 //!
 //! ## Wrap semantics
 //!
@@ -87,9 +92,10 @@ struct ModalScope {
 ///
 /// - `focused`: currently focused widget tag, `None` between Tab
 ///   traversal boundaries or when no focusable widget exists.
-/// - `tab_order`: focusable enumeration in paint-scene order, refilled
-///   every render by [`update_focusable_tags`]; Tab advances forward,
-///   Shift+Tab backward, both wrap.
+/// - `tab_order`: focusable enumeration in paint-scene tree order,
+///   refilled every render by [`update_focusable_tags`] from the §5.39
+///   scene-derived [`Scene::collect_focusable_tags`](../../pinion_core/enum.Scene.html#method.collect_focusable_tags)
+///   walk (R1020); Tab advances forward, Shift+Tab backward, both wrap.
 /// - `saved`: snapshot for window blur / refocus restore.
 #[derive(Debug, Default, Clone)]
 pub struct FocusManager {

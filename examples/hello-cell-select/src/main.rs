@@ -236,7 +236,9 @@ fn nav_target(
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: &CellSelectState, _frame: &Frame) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
-    let style = TableStyle::m3();
+    // R1020 §5.39 — the grid is a single Tab stop; opt the table into the
+    // scene-derived focus enumeration so its PRIMARY_TAG is collected.
+    let style = TableStyle::m3().with_focusable(true);
     let rows: Vec<&[&str]> = ROWS.iter().map(|r| &r[..]).collect();
     // SelectItems grid: no row is washed (the cell rectangle is the only
     // selection), so the per-row bitmap is all-false and the cells carry the
@@ -321,15 +323,6 @@ impl WidgetCore for CellSelectView {
 
     fn title() -> &'static str {
         "pinion hello-cell-select (R953 §5.38 cell range selection)"
-    }
-
-    /// WAI-ARIA APG data-grid focus model: the grid is a **single Tab stop**
-    /// ([`PRIMARY_TAG`]), with the focused cell tracked as an internal 2-D
-    /// roving *active descendant* (the coordinator's `focused_row` /
-    /// `focused_col` slots). The one tag is static, so the boot-seeded
-    /// `focusable_tags` enumeration is stable.
-    fn focusable_tags() -> Vec<&'static str> {
-        vec![PRIMARY_TAG]
     }
 
     /// R953 §5.38 — the cell-range keyboard model. While the grid owns shell

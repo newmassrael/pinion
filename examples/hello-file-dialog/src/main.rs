@@ -211,7 +211,8 @@ fn button_scene(
         &ButtonColors::filled_tonal(theme),
         &ButtonStyle::m3_default(tag)
             .with_size(Size::px(124, 40))
-            .with_label_font_size_px(15),
+            .with_label_font_size_px(15)
+            .with_focusable(true),
     )
 }
 
@@ -330,10 +331,6 @@ impl WidgetCore for FileDialogView {
         None
     }
 
-    /// All three buttons are static Tab stops.
-    fn focusable_tags() -> Vec<&'static str> {
-        vec![OPEN_TAG, SAVE_TAG, PICK_TAG]
-    }
 
     fn apply_key(
         scene: &mut Scene,
@@ -520,9 +517,11 @@ mod tests {
 
     #[test]
     fn r761_three_buttons_are_focusable() {
+        // §5.39: tree order IS tab order — collected from the paint scene.
+        let scene = Owner::new().run(|| view(idle(), &Frame::new()));
         assert_eq!(
-            FileDialogView::focusable_tags(),
-            vec![OPEN_TAG, SAVE_TAG, PICK_TAG],
+            scene.collect_focusable_tags(),
+            vec![OPEN_TAG.to_owned(), SAVE_TAG.to_owned(), PICK_TAG.to_owned()],
         );
     }
 

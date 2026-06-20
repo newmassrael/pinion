@@ -198,6 +198,10 @@ fn control_scene(
                 .with_align_items(AlignItems::Center)
                 .with_justify(JustifyContent::Center)
                 .with_absolute_position(rect.x, rect.y)
+                // R1020 §5.39 — each control is a Tab stop; opt its tag-carrying
+                // Container into the scene-derived enumeration. Painted
+                // autosave-then-offline, matching [AUTOSAVE_TAG, OFFLINE_TAG].
+                .with_focusable(true)
                 .with_size(Size::px(rect.w, rect.h)),
         ),
     )
@@ -317,13 +321,6 @@ impl WidgetCore for TooltipView {
 
     fn keybinding(_key: &str) -> Option<()> {
         None
-    }
-
-    /// Both controls are static Tab stops, so Tab moves focus between
-    /// them and (via `on_focus_change`) shows the focused control's
-    /// tooltip.
-    fn focusable_tags() -> Vec<&'static str> {
-        vec![AUTOSAVE_TAG, OFFLINE_TAG]
     }
 
     /// R695 §5.35 — `Escape` dismisses any shown tooltip without moving

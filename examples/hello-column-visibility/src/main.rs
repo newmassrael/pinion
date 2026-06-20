@@ -152,7 +152,7 @@ fn view(state: ColsState, _frame: &Frame) -> Scene {
         state.cols_focus,
         state.cols_focused,
         &theme,
-        &ToolbarStyle::m3_default(),
+        &ToolbarStyle::m3_default().with_focusable(true),
     );
 
     let count = Scene::Text(
@@ -243,11 +243,6 @@ impl WidgetCore for ColumnVisibilityView {
 
     fn event_name(_event: ()) -> &'static str {
         "__internal__"
-    }
-
-    /// One tab stop: the column chooser (a single roving toolbar).
-    fn focusable_tags() -> Vec<&'static str> {
-        vec![COLS_TAG]
     }
 
     fn title() -> &'static str {

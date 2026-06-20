@@ -240,7 +240,7 @@ fn toolbar_button(
         focused,
         hover_key,
         &ButtonColors::filled_tonal(theme),
-        &ButtonStyle::m3_default(tag).with_size(Size::px(BTN_W, BTN_H)).with_label_font_size_px(14),
+        &ButtonStyle::m3_default(tag).with_size(Size::px(BTN_W, BTN_H)).with_label_font_size_px(14).with_focusable(true),
     )
 }
 
@@ -303,7 +303,7 @@ fn view(state: FmViewState, _frame: &Frame) -> Scene {
         &dir,
         &scroll,
         &theme,
-        FileBrowserMetrics { list_width: LIST_W, list_height: LIST_H, row_pitch: ROW_PITCH, overscan: OVERSCAN },
+        FileBrowserMetrics { list_width: LIST_W, list_height: LIST_H, row_pitch: ROW_PITCH, overscan: OVERSCAN, focusable: true },
         editing,
     );
 
@@ -395,12 +395,6 @@ impl WidgetCore for FileManagerView {
 
     fn keybinding(_key: &str) -> Option<()> {
         None
-    }
-
-    fn focusable_tags() -> Vec<&'static str> {
-        // R792 — the file list (`DIR_TAG`) is a single tab stop with an
-        // internal roving cursor (the listbox / Files keyboard model).
-        vec![NEWDIR_TAG, NEWFILE_TAG, RENAME_TAG, DELETE_TAG, DIR_TAG, RENAME_TF_TAG]
     }
 
     /// R791 §5.38 — `F2` (with a selection, not already editing) starts an

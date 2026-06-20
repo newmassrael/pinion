@@ -223,6 +223,9 @@ fn segment(index: usize, state: ToggleState, on: bool, theme: &Theme) -> Scene {
                     .with_justify(JustifyContent::Center)
                     .with_align_items(AlignItems::Center)
                     .with_gap(CHECK_GAP)
+                    // R1020 §5.39 — each segment is a Tab stop; opt its
+                    // tag-carrying Container into the scene-derived enumeration.
+                    .with_focusable(true)
                     .with_size(Size::px(SEG_W, SEG_H)),
             ),
     )
@@ -306,12 +309,6 @@ impl WidgetCore for SegmentedMultiView {
         "pinion hello-segmented-multi (R733 §5.38 multi-select segmented)"
     }
 
-    /// Each segment is its own Tab stop (WAI-ARIA toggle-button group:
-    /// every toggle button is in the document focus order), unlike the
-    /// single-select segmented control's single-tab-stop roving model.
-    fn focusable_tags() -> Vec<&'static str> {
-        SEGMENT_TAGS.to_vec()
-    }
 
     /// WAI-ARIA toggle-button-group keyboard model — delegated wholesale to
     /// the shared [`toggle_group::apply_key`] substrate (Space / Enter
@@ -441,7 +438,13 @@ mod tests {
 
     #[test]
     fn every_segment_is_a_tab_stop() {
-        assert_eq!(SegmentedMultiView::focusable_tags(), SEGMENT_TAGS.to_vec());
+        // §5.39: tree order IS tab order — collected from the paint scene.
+        let scene =
+            pinion_core::Owner::new().run(|| view(state_with(BOOT_ON), &Frame::new()));
+        assert_eq!(
+            scene.collect_focusable_tags(),
+            SEGMENT_TAGS.iter().map(|t| (*t).to_owned()).collect::<Vec<_>>(),
+        );
     }
 
     #[test]

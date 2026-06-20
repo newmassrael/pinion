@@ -257,12 +257,6 @@ impl WidgetCore for VariableListView {
         "__internal__"
     }
 
-    /// Display-only list: nothing is a keyboard tab stop (the scrollbar is
-    /// pointer / RPC driven). Empty so Tab never lands.
-    fn focusable_tags() -> Vec<&'static str> {
-        Vec::new()
-    }
-
     fn title() -> &'static str {
         "pinion hello-variable-list (R745 §5.27 variable-height virtualization)"
     }

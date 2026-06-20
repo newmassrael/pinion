@@ -265,7 +265,7 @@ fn view(selected: Option<usize>, _frame: &Frame) -> Scene {
     let grid_root = Scene::Container(
         ContainerNode::new(vec![header, list_row])
             .with_tag(GRID_TAG)
-            .with_layout(LayoutStyle::new().flex(FlexDirection::Column)),
+            .with_layout(LayoutStyle::new().flex(FlexDirection::Column).with_focusable(true)),
     );
 
     Scene::Container(
@@ -321,12 +321,6 @@ impl WidgetCore for GroupedGridView {
 
     fn event_name(_event: ()) -> &'static str {
         "__internal__"
-    }
-
-    /// R848 — the grid is a single keyboard tab stop (roving by visual row over
-    /// the flattened group rows).
-    fn focusable_tags() -> Vec<&'static str> {
-        vec![GRID_TAG]
     }
 
     /// R848 §5.27 — keyboard navigation over the grouped grid, delegated to the

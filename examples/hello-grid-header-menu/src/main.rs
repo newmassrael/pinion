@@ -303,7 +303,7 @@ fn view(state: HeaderMenuState, _frame: &Frame) -> Scene {
     let h_scroll = use_scroll_state(H_SCROLL_KEY);
     let theme = use_theme(THEME_TAG).theme_animated();
     let tstyle = table_style();
-    let mstyle = MenuStyle::m3_default();
+    let mstyle = MenuStyle::m3_default().with_focusable(true);
 
     let grid_sort = use_grid_data();
     let sort = grid_sort.sort();
@@ -426,12 +426,6 @@ impl WidgetCore for GridHeaderMenuView {
 
     fn event_name(_event: ()) -> &'static str {
         "__internal__"
-    }
-
-    /// Only the menu is a tab/focus stop; the grid headers are pointer-driven
-    /// (left-click sort / right-click menu), mirroring `hello-grid-sort`.
-    fn focusable_tags() -> Vec<&'static str> {
-        vec![MENU_TAG]
     }
 
     fn title() -> &'static str {

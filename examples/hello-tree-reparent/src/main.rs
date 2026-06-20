@@ -624,7 +624,8 @@ fn view(_state: (), _frame: &Frame) -> Scene {
                 LayoutStyle::new()
                     .flex(FlexDirection::Column)
                     .with_align_items(AlignItems::Stretch)
-                    .with_size(Size::px(WIN_W - 24, LIST_H)),
+                    .with_size(Size::px(WIN_W - 24, LIST_H))
+                    .with_focusable(true),
             ),
     );
 
@@ -684,10 +685,6 @@ impl WidgetCore for TreeReparentView {
 
     fn keybinding(_key: &str) -> Option<()> {
         None
-    }
-
-    fn focusable_tags() -> Vec<&'static str> {
-        vec![TAG]
     }
 
     /// Keyboard navigation: the WAI-ARIA tree cursor (Arrow Up/Down move,

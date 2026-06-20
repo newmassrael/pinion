@@ -218,7 +218,7 @@ fn active_day(state: &PickerState) -> u8 {
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: &PickerState, _frame: &Frame) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
-    let style = DatePickerStyle::m3();
+    let style = DatePickerStyle::m3().with_focusable(true);
     // The keyboard-focus ring is the shell's job: R694 `paint_focus_ring`
     // strokes it around the tag this binding reports focused — the roving
     // active-descendant day cell, resolved through `access_focus_target`
@@ -332,17 +332,6 @@ impl WidgetCore for DatePickerView {
         "pinion hello-datepicker (R704 §5.38 inline month calendar)"
     }
 
-    /// WAI-ARIA APG date grid focus model: the grid is a **single Tab
-    /// stop** (`PRIMARY_TAG`), with the focused day tracked as an internal
-    /// roving *active descendant* (the coordinator's `focused_day` slot) —
-    /// the same single-tab-stop + active-descendant model
-    /// `hello-radio-group` uses, and the correct WAI-ARIA grid pattern.
-    /// The two month-nav buttons are their own Tab stops. All three tags
-    /// are static, so the boot-seeded `focusable_tags` enumeration is
-    /// stable across month changes (no phantom per-day Tab stops).
-    fn focusable_tags() -> Vec<&'static str> {
-        vec![PRIMARY_TAG, PREV_TAG, NEXT_TAG]
-    }
 
     /// WAI-ARIA APG date-grid keyboard model. Routing depends on which Tab
     /// stop owns shell focus:
@@ -701,9 +690,16 @@ mod tests {
 
     #[test]
     fn focusable_tags_lists_grid_and_nav() {
+        // §5.39: tree order IS tab order — collected from the paint scene.
+        let state = PickerState::idle(INITIAL_YEAR, INITIAL_MONTH);
+        let scene = pinion_core::Owner::new().run(|| view(&state, &Frame::new()));
         assert_eq!(
-            DatePickerView::focusable_tags(),
-            vec![PRIMARY_TAG, PREV_TAG, NEXT_TAG],
+            scene.collect_focusable_tags(),
+            vec![
+                PRIMARY_TAG.to_owned(),
+                PREV_TAG.to_owned(),
+                NEXT_TAG.to_owned(),
+            ],
         );
     }
 

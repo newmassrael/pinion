@@ -131,6 +131,9 @@ fn view_fab(i: usize, state: ButtonState, focused: bool, theme: &Theme) -> Scene
         .with_corner_radius(RADII[i])
         .with_size(fab_size(i))
         .with_label_font_size_px(FONTS[i])
+        // R1020 §5.39 — each FAB is a Tab stop; opt it into the
+        // scene-derived focus enumeration.
+        .with_focusable(true)
         .with_elevation(fab_level(state));
     let label = if i == EXTENDED { EXTENDED_LABEL } else { ICON };
     view_button(label, state, hover_progress, focused, &colors, &style)
@@ -229,10 +232,6 @@ impl WidgetCore for FabView {
         "pinion hello-fab (R760 §5.38 Material 3 FAB — small / standard / large / extended)"
     }
 
-    /// Each FAB is its own Tab stop (a list of independent buttons).
-    fn focusable_tags() -> Vec<&'static str> {
-        FAB_TAGS.to_vec()
-    }
 
     /// R760 §5.39 — `Space` / `Enter` activates the focused FAB; the Arrow
     /// / `Home` / `End` keys rove between them — the shared
@@ -391,7 +390,12 @@ mod tests {
 
     #[test]
     fn every_fab_is_a_tab_stop() {
-        assert_eq!(FabView::focusable_tags(), FAB_TAGS.to_vec());
+        // §5.39: tree order IS tab order — collected from the paint scene.
+        let scene = pinion_core::Owner::new().run(|| view(&idle(), &Frame::new()));
+        assert_eq!(
+            scene.collect_focusable_tags(),
+            FAB_TAGS.iter().map(|t| (*t).to_owned()).collect::<Vec<_>>(),
+        );
     }
 
     #[test]

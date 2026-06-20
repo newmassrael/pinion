@@ -2634,6 +2634,28 @@ pub struct LayoutStyle {
     /// exactly as before — additive, bit-identical for existing
     /// bindings.
     pub pointer_transparent: bool,
+    /// (R1020 §5.39) Keyboard focus stop. When `true`, this node's
+    /// [`tag`](crate::Scene::tag) is enumerated as a Tab stop by the
+    /// §5.39 [`Scene::collect_focusable_tags`](crate::Scene::collect_focusable_tags)
+    /// depth-first traversal the shell re-runs over the paint scene
+    /// every frame to feed
+    /// [`FocusManager::update_focusable_tags`](../pinion_runtime/struct.FocusManager.html#method.update_focusable_tags).
+    ///
+    /// This is the ratified §5.39 design — focusability is a property
+    /// of the painted node, NOT a hand-maintained binding-side list
+    /// (the pre-R1020 `WidgetCore::focusable_tags()` was an unratified
+    /// drift from the spec's "depth-first traversal" enumeration). The
+    /// spec explicitly rejects manual tabindex ordering; tab order is
+    /// the tree order of focusable-marked nodes. Set it with
+    /// [`Self::with_focusable`], attached to a node through its
+    /// `with_layout` builder — exactly as [`Self::pointer_transparent`]
+    /// is set (no node-level shortcut; the layout sidecar is the one
+    /// home for interaction flags).
+    ///
+    /// `false` (the default) keeps every non-interactive node out of
+    /// the focus enumeration — additive, bit-identical for existing
+    /// bindings.
+    pub focusable: bool,
 }
 
 impl LayoutStyle {
@@ -2660,6 +2682,8 @@ impl LayoutStyle {
             flex_basis: None,
             // (R705 §5.39) `false` = hit-testable, the pre-R705 default.
             pointer_transparent: false,
+            // (R1020 §5.39) `false` = not a Tab stop, the pre-R1020 default.
+            focusable: false,
         }
     }
 
@@ -2691,6 +2715,16 @@ impl LayoutStyle {
     #[must_use]
     pub const fn with_pointer_transparent(mut self, transparent: bool) -> Self {
         self.pointer_transparent = transparent;
+        self
+    }
+
+    /// (R1020 §5.39) Builder: mark this node a keyboard focus stop.
+    /// Its [`tag`](crate::Scene::tag) is then enumerated in Tab order
+    /// by [`Scene::collect_focusable_tags`](crate::Scene::collect_focusable_tags).
+    /// See [`Self::focusable`] for the scene-derived focus rationale.
+    #[must_use]
+    pub const fn with_focusable(mut self, focusable: bool) -> Self {
+        self.focusable = focusable;
         self
     }
 
@@ -2804,6 +2838,9 @@ impl core::hash::Hash for LayoutStyle {
         // (R705 §5.39) `bool` hashes as a single byte; `false` default
         // keeps the byte image bit-identical to pre-R705 cache keys.
         self.pointer_transparent.hash(hasher);
+        // (R1020 §5.39) Same single-byte `false`-default invariant —
+        // pre-R1020 cache keys stay bit-identical.
+        self.focusable.hash(hasher);
     }
 }
 

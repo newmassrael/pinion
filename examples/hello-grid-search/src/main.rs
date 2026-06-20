@@ -242,10 +242,6 @@ impl WidgetCore for GridSearchView {
         "__internal__"
     }
 
-    fn focusable_tags() -> Vec<&'static str> {
-        Vec::new()
-    }
-
     fn title() -> &'static str {
         "pinion hello-grid-search (R1004 §5.27 search-and-jump cursor)"
     }

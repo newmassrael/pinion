@@ -340,12 +340,6 @@ impl WidgetCore for FoldView {
         "pinion hello-code-fold (R933 §5.22 §5.36)"
     }
 
-    /// R955 §5.22 §5.36 — the viewer is a single Tab stop so the keyboard
-    /// fold navigation reaches it.
-    fn focusable_tags() -> Vec<&'static str> {
-        vec![TF_TAG]
-    }
-
     /// R955 §5.22 §5.36 — keyboard fold navigation. While the viewer owns
     /// shell focus: `ArrowUp` / `ArrowDown` move the cursor to the previous /
     /// next **visible** logical line (stepping over a collapsed block, not

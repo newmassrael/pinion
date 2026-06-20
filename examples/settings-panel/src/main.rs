@@ -714,7 +714,8 @@ fn view_nav_rail(theme: &Theme, nav: &NavRadioStates) -> Scene {
                     .with_align_items(AlignItems::Center)
                     .with_padding(Rect::new(NAV_GAP, NAV_GAP, NAV_GAP, NAV_GAP))
                     .with_gap(NAV_GAP)
-                    .with_size(Size::px(NAV_W, WIN_H)),
+                    .with_size(Size::px(NAV_W, WIN_H))
+                    .with_focusable(true),
             ),
     )
 }
@@ -1365,10 +1366,6 @@ impl WidgetCore for SettingsPanelView {
 
     fn title() -> &'static str {
         "pinion settings-panel (R667 §5.16) — 2nd composed app / Phase A close"
-    }
-
-    fn focusable_tags() -> Vec<&'static str> {
-        vec![PROFILE_TF_TAG, NAV_TAG]
     }
 
     fn update(_state: RootState, intent: &Intent) -> Vec<Command> {

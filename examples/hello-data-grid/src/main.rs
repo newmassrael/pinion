@@ -4150,7 +4150,8 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Column)
-                    .with_size(Size::px(GRID_VIEWPORT_W, GRID_VIEWPORT_H)),
+                    .with_size(Size::px(GRID_VIEWPORT_W, GRID_VIEWPORT_H))
+                    .with_focusable(true),
             ),
     );
 
@@ -4270,10 +4271,6 @@ impl WidgetCore for DataGridView {
 
     fn keybinding(_key: &str) -> Option<()> {
         None
-    }
-
-    fn focusable_tags() -> Vec<&'static str> {
-        vec![GRID_TAG, EDIT_TF_TAG]
     }
 
     /// R793 §5.38 — commit-on-blur: the inline editor lost focus (a click

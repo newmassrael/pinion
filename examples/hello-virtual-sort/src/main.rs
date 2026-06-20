@@ -318,13 +318,6 @@ impl WidgetCore for VirtualSortView {
         "__internal__"
     }
 
-    /// Pointer / RPC selection + sort this slice; neither the rows nor the
-    /// sort header are keyboard tab stops (windowed-list roving is a later
-    /// axis). Empty so Tab never lands.
-    fn focusable_tags() -> Vec<&'static str> {
-        Vec::new()
-    }
-
     fn title() -> &'static str {
         "pinion hello-virtual-sort (R747 §5.27 §5.40 sort/filter virtualization)"
     }

@@ -436,12 +436,6 @@ impl WidgetCore for NumberView {
         None
     }
 
-    /// The number input is a single Tab stop — only the field is focusable.
-    /// The steppers are click targets only (the spinbutton owns the
-    /// Increment / Decrement AT actions).
-    fn focusable_tags() -> Vec<&'static str> {
-        vec![INPUT_TAG]
-    }
 
     /// WAI-ARIA editable-spinbutton keyboard model. Up/Down step, Page
     /// keys page-step, Enter normalises the typed text; caret / edit keys
@@ -733,7 +727,9 @@ mod tests {
 
     #[test]
     fn r736_focusable_tags_lists_only_input() {
-        assert_eq!(NumberView::focusable_tags(), vec![INPUT_TAG]);
+        // §5.39: collected from the paint scene.
+        let scene = Owner::new().run(|| view(&idle(), &Frame::new()));
+        assert_eq!(scene.collect_focusable_tags(), vec![INPUT_TAG.to_owned()]);
     }
 
     // ----- a11y -----

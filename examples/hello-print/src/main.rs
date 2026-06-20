@@ -292,7 +292,8 @@ fn button(label: &str, tag: &'static str, state: ButtonState, colors: &ButtonCol
     let style = ButtonStyle::m3_default(tag)
         .with_corner_radius(8)
         .with_padding(Rect::new(14, 8, 14, 8))
-        .with_label_font_size_px(BODY_FONT_PX);
+        .with_label_font_size_px(BODY_FONT_PX)
+        .with_focusable(true);
     view_button(label, state, 0.0, false, colors, &style)
 }
 
@@ -449,14 +450,6 @@ impl WidgetCore for PrintView {
 
     fn title() -> &'static str {
         "pinion hello-print (R833 own-rendered print dialog)"
-    }
-
-    /// R834 — all four buttons are keyboard-focusable (the default would
-    /// expose only the primary `print` tag, leaving cycle/copies
-    /// unreachable by Tab — a BLOCKER the R833 demo missed by clicking
-    /// only with the mouse).
-    fn focusable_tags() -> Vec<&'static str> {
-        BUTTON_TAGS.to_vec()
     }
 
     fn keybinding(_key: &str) -> Option<()> {

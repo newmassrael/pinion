@@ -419,10 +419,6 @@ impl WidgetCore for GroupedGridSortView {
         "__internal__"
     }
 
-    fn focusable_tags() -> Vec<&'static str> {
-        Vec::new()
-    }
-
     fn title() -> &'static str {
         "pinion hello-grouped-grid-sort (R846 §5.27 §5.40 sortable grouped grid)"
     }

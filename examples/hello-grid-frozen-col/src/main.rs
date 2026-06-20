@@ -201,10 +201,6 @@ impl WidgetCore for GridFrozenColView {
         "__internal__"
     }
 
-    fn focusable_tags() -> Vec<&'static str> {
-        Vec::new()
-    }
-
     fn title() -> &'static str {
         "pinion hello-grid-frozen-col (R859 §5.27 frozen-left-column)"
     }

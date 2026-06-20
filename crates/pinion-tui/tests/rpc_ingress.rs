@@ -180,11 +180,11 @@ fn r670_dispatch_rpc_scene_invoke_send_disable_flips_state() {
 }
 
 /// R670 §5.41 §5.39 — `focus/get` reads the substrate's
-/// `FocusManager`. Default `ButtonFixture` binding's
-/// `focusable_tags()` returns the single button tag — but
-/// `focus/get` reports `None` until something focuses it (the
-/// `FocusManager` seeds the tab order but does not auto-focus the
-/// first tag).
+/// `FocusManager`. The `ButtonFixture` binding paints a single
+/// `.with_focusable(true)` node, so the R1020 scene-derived enumeration
+/// seeds the tab order with the button tag — but `focus/get` reports
+/// `None` until something focuses it (the `FocusManager` seeds the tab
+/// order but does not auto-focus the first tag).
 #[test]
 fn r670_dispatch_rpc_focus_get_returns_none_on_fresh_substrate() {
     let mut core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();

@@ -300,7 +300,7 @@ fn view(_state: ButtonState, _frame: &Frame) -> Scene {
     let invisible_root = Scene::Container(
         ContainerNode::new(Vec::new())
             .with_tag(ROOT_TAG)
-            .with_layout(LayoutStyle::new().with_size(Size::px(0, 0))),
+            .with_layout(LayoutStyle::new().with_size(Size::px(0, 0)).with_focusable(true)),
     );
 
     Scene::Container(
@@ -391,14 +391,6 @@ impl WidgetCore for VirtualTreeView {
             toggle_expanded(&tree_state.nodes, id);
         }
         Vec::new()
-    }
-
-    /// R820 — the windowed tree is a single keyboard tab stop (the
-    /// WAI-ARIA tree convention: one tab stop + `aria-activedescendant`
-    /// roving). The focusable element is the [`ROOT_TAG`] tree root; arrow
-    /// keys then move the cursor via [`apply_key`].
-    fn focusable_tags() -> Vec<&'static str> {
-        vec![ROOT_TAG]
     }
 
     /// R820 §5.27 §5.50 — WAI-ARIA APG 6.13 tree keyboard over the windowed

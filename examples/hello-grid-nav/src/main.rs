@@ -104,6 +104,9 @@ fn table_style() -> TableStyle {
     TableStyle {
         col_width: COL_W,
         row_height: ROW_H,
+        // R1020 §5.39 — the grid is a single Tab stop; opt the table into the
+        // scene-derived focus enumeration so its TABLE_TAG is collected.
+        focusable: true,
         ..TableStyle::m3()
     }
 }
@@ -228,11 +231,6 @@ impl WidgetCore for GridNavView {
 
     fn event_name(_event: ()) -> &'static str {
         "__internal__"
-    }
-
-    /// The grid is a single keyboard tab stop (roving by data-row index).
-    fn focusable_tags() -> Vec<&'static str> {
-        vec![TABLE_TAG]
     }
 
     /// R777 §5.27 — keyboard navigation over the windowed grid, delegated

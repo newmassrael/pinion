@@ -188,6 +188,10 @@ fn thumb(value: f32, tag: &'static str, theme: &Theme, interaction: SliderState)
         .with_layout(
             LayoutStyle::new()
                 .with_absolute_position(x, 0)
+                // R1020 §5.39 — each thumb is a Tab stop; opt its tag-carrying
+                // Box node into the scene-derived focus enumeration. Painted
+                // low-then-high, matching the [LOW_TAG, HIGH_TAG] order.
+                .with_focusable(true)
                 .with_size(Size::px(THUMB_SIZE, THUMB_SIZE)),
         ),
     )
@@ -296,14 +300,6 @@ impl WidgetCore for RangeView {
         TAG
     }
 
-    /// Two Tab stops — one per thumb (WAI-ARIA Multi-Thumb). The
-    /// composite tags route pointer events to the single external while
-    /// each is an independent keyboard focus target (clicking a thumb
-    /// focuses it; the drag normalizes against the track via
-    /// `capture_normalize` returning `CaptureNormalize::Primary`).
-    fn focusable_tags() -> Vec<&'static str> {
-        vec![LOW_TAG, HIGH_TAG]
-    }
 
     fn read_state(scene: &Scene) -> RangeState {
         read_range(scene)
@@ -454,7 +450,12 @@ mod tests {
 
     #[test]
     fn two_focusable_tab_stops() {
-        assert_eq!(RangeView::focusable_tags(), vec![LOW_TAG, HIGH_TAG]);
+        // §5.39: tree order IS tab order — collected from the paint scene.
+        let scene = pinion_core::Owner::new().run(|| view(&RangeState::boot(), &Frame::new()));
+        assert_eq!(
+            scene.collect_focusable_tags(),
+            vec![LOW_TAG.to_owned(), HIGH_TAG.to_owned()],
+        );
     }
 
     #[test]

@@ -110,6 +110,17 @@ pub struct TreeViewStyle {
     /// Matches [`crate::checkbox::CheckboxStyle::row_gap`] so rows
     /// with a checkbox prefix line up visually.
     pub glyph_label_gap: u32,
+    /// (R1020 §5.39) Keyboard focus stop. When `true`,
+    /// [`view_tree_focused`] marks the tree's outer (tag-carrying)
+    /// Container `.with_focusable(true)` so the scene-derived §5.39
+    /// enumeration collects the tree's tag as a Tab stop.
+    ///
+    /// Default `false` (opt-in), mirroring
+    /// [`crate::button::ButtonStyle::focusable`]: a tree that is a
+    /// standalone Tab stop (file-tree / inspector / scene outliner) sets
+    /// this true; a tree painted as a modal-scoped or decorative member
+    /// leaves it false so it stays out of the base Tab order.
+    pub focusable: bool,
 }
 
 impl TreeViewStyle {
@@ -127,7 +138,19 @@ impl TreeViewStyle {
             font_size_px: 16,
             row_padding: 12,
             glyph_label_gap: 10,
+            focusable: false,
         }
+    }
+
+    /// (R1020 §5.39) Mark this tree a keyboard focus stop (default
+    /// `false`). Standalone trees (file-tree / inspector / scene
+    /// outliner) set this true; modal-scoped or decorative trees leave
+    /// it false. Mirrors [`crate::button::ButtonStyle::with_focusable`].
+    /// See [`Self::focusable`].
+    #[must_use]
+    pub const fn with_focusable(mut self, focusable: bool) -> Self {
+        self.focusable = focusable;
+        self
     }
 }
 
@@ -330,7 +353,12 @@ pub fn view_tree_focused(
                     // outer container's default align_items pushed
                     // rows to their content width, centering visually
                     // and hiding the depth-indent column on the left.
-                    .with_align_items(AlignItems::Stretch),
+                    .with_align_items(AlignItems::Stretch)
+                    // (R1020 §5.39) Carry the binding's focus-stop opt-in
+                    // onto the outer (tag-carrying) Container so the
+                    // scene-derived enumeration collects the tree's tag as
+                    // a Tab stop.
+                    .with_focusable(style.focusable),
             ),
     )
 }

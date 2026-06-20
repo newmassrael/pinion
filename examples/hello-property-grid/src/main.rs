@@ -3441,7 +3441,8 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
                 LayoutStyle::new()
                     .flex(FlexDirection::Column)
                     .with_align_items(AlignItems::Start)
-                    .with_gap(ROW_GAP),
+                    .with_gap(ROW_GAP)
+                    .with_focusable(true),
             ),
     );
 
@@ -3576,13 +3577,6 @@ impl WidgetCore for PropertyGridView {
 
     fn keybinding(_key: &str) -> Option<()> {
         None
-    }
-
-    /// The grid is one Tab stop; the inline editor is the second (focusable
-    /// only while painted — entered through `focus_request`, the todomvc
-    /// dynamic-editor shape).
-    fn focusable_tags() -> Vec<&'static str> {
-        vec![GRID_TAG, EDIT_TF_TAG, SEARCH_TF_TAG]
     }
 
     /// R793 §5.38 — commit-on-blur: the inline editor lost focus (a click

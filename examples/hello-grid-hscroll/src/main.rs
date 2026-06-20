@@ -220,10 +220,6 @@ impl WidgetCore for GridHscrollView {
         "__internal__"
     }
 
-    fn focusable_tags() -> Vec<&'static str> {
-        Vec::new()
-    }
-
     fn title() -> &'static str {
         "pinion hello-grid-hscroll (R784 §5.45 horizontal scroll + frozen header)"
     }

@@ -314,7 +314,7 @@ fn browser_pane(
         dir,
         scroll,
         theme,
-        FileBrowserMetrics { list_width: LIST_W, list_height: LIST_H, row_pitch: ROW_PITCH, overscan: OVERSCAN },
+        FileBrowserMetrics { list_width: LIST_W, list_height: LIST_H, row_pitch: ROW_PITCH, overscan: OVERSCAN, focusable: false },
         None,
     )
 }
@@ -392,7 +392,8 @@ fn view(state: FileSaveViewState, _frame: &Frame) -> Scene {
         &ButtonColors::filled_tonal(&theme),
         &ButtonStyle::m3_default(TRIGGER_TAG)
             .with_size(Size::px(TRIGGER_W, TRIGGER_H))
-            .with_label_font_size_px(16),
+            .with_label_font_size_px(16)
+            .with_focusable(true),
     );
     let saved = use_saved().get();
     let status = Scene::Text(TextNode::styled(
@@ -545,12 +546,6 @@ impl WidgetCore for FileSaveView {
         None
     }
 
-    /// Only the trigger is a *static* tab stop. The filename field + the
-    /// action buttons become focusable solely while the modal scope is up
-    /// (`dialog_members()`).
-    fn focusable_tags() -> Vec<&'static str> {
-        vec![TRIGGER_TAG]
-    }
 
     /// R790 §5.38 §5.39 — Escape dismisses the open dialog as a cancel.
     /// `Enter` in the filename field commits the Save (the dialog's
@@ -970,7 +965,9 @@ mod tests {
 
     #[test]
     fn r790_focusable_tags_lists_only_trigger() {
-        assert_eq!(FileSaveView::focusable_tags(), vec![TRIGGER_TAG]);
+        // §5.39: collected from the paint scene.
+        let scene = Owner::new().run(|| view(idle(), &Frame::new()));
+        assert_eq!(scene.collect_focusable_tags(), vec![TRIGGER_TAG.to_owned()]);
     }
 
     // ----- view / paint -----

@@ -361,14 +361,6 @@ impl WidgetCore for BadgeView {
         "pinion hello-badge (R759 §5.38 count / dot badge)"
     }
 
-    /// A badge is **passive** — it never receives focus (its a11y node is
-    /// a read-only `status` live region with zero AT actions). The
-    /// default `focusable_tags` would include the primary tag, so
-    /// override it to empty so Tab never lands on a badge (the
-    /// hello-progress descriptive-widget rule).
-    fn focusable_tags() -> Vec<&'static str> {
-        Vec::new()
-    }
 
     fn fmt_state_log(state: &BadgeStates) -> String {
         let b0 = badge_of(state[COUNT]);
@@ -587,6 +579,9 @@ mod a11y_tests {
 
     #[test]
     fn badge_is_not_focusable() {
-        assert!(BadgeView::focusable_tags().is_empty());
+        // §5.39: collected from the paint scene — a badge marks no focus stop.
+        let scene = pinion_core::Owner::new()
+            .run(|| view(&[count_data(BOOT_COUNT), dot_data()], &Frame::new()));
+        assert!(scene.collect_focusable_tags().is_empty());
     }
 }

@@ -201,6 +201,7 @@ struct DrawerViewState {
 }
 
 /// Render one button via the [`pinion_widget_paint::button`] substrate.
+#[allow(clippy::too_many_arguments)] // R1020: one arg per paint axis + focusable opt-in
 fn button_scene(
     tag: &'static str,
     label: &str,
@@ -209,6 +210,7 @@ fn button_scene(
     hover_key: &'static str,
     size: Size,
     theme: &pinion_core::theme::Theme,
+    focusable: bool,
 ) -> Scene {
     // R727 — opinionated default (filled-tonal + 16 px) stays local
     // (2-consumer with hello-dialog, R703-deferred); the mechanical
@@ -221,7 +223,8 @@ fn button_scene(
         &ButtonColors::filled_tonal(theme),
         &ButtonStyle::m3_default(tag)
             .with_size(size)
-            .with_label_font_size_px(16),
+            .with_label_font_size_px(16)
+            .with_focusable(focusable),
     )
 }
 
@@ -243,6 +246,7 @@ fn view(state: &DrawerViewState, _frame: &Frame) -> Scene {
         TRIGGER_HOVER_KEY,
         Size::px(TRIGGER_W, TRIGGER_H),
         &theme,
+        true,
     );
     let status = Scene::Text(
         TextNode::styled(
@@ -280,6 +284,7 @@ fn view(state: &DrawerViewState, _frame: &Frame) -> Scene {
                     ITEM_HOVER_KEYS[i],
                     Size::px(DrawerStyle::m3_default().panel_width - 24, ITEM_H),
                     &theme,
+                    false,
                 )
             })
             .collect();
@@ -365,12 +370,6 @@ impl WidgetCore for DrawerView {
         None
     }
 
-    /// Only the trigger is a *static* tab stop. The nav items become
-    /// focusable solely while the modal scope is up (`nav_members()`),
-    /// the dynamic-focusable case the static enumeration cannot express.
-    fn focusable_tags() -> Vec<&'static str> {
-        vec![TRIGGER_TAG]
-    }
 
     /// R702 §5.39 — Escape dismisses the open drawer (the shell routes
     /// Escape here only while the trap is active). Enter / Space on a
@@ -606,7 +605,9 @@ mod tests {
 
     #[test]
     fn r702_focusable_tags_lists_only_trigger() {
-        assert_eq!(DrawerView::focusable_tags(), vec![TRIGGER_TAG]);
+        // §5.39: collected from the paint scene.
+        let scene = Owner::new().run(|| view(&idle(), &Frame::new()));
+        assert_eq!(scene.collect_focusable_tags(), vec![TRIGGER_TAG.to_owned()]);
     }
 
     // ----- a11y -----

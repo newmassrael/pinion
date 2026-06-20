@@ -79,6 +79,16 @@ pub struct DisclosureStyle {
     /// Header + panel corner radius in logical pixels (default 8 = M3
     /// medium shape token).
     pub corner_radius: u32,
+    /// (R1020 §5.39) Keyboard focus stop. When `true`, [`view_disclosure`]
+    /// marks the disclosure's header Container `.with_focusable(true)` so
+    /// the scene-derived §5.39 enumeration collects its tag as a Tab stop.
+    ///
+    /// Default `false` (opt-in), mirroring
+    /// [`crate::button::ButtonStyle::focusable`]: a disclosure header that
+    /// is a standalone Tab stop sets this true; a decorative or
+    /// modal-scoped section leaves it false so it stays out of the base
+    /// Tab order.
+    pub focusable: bool,
 }
 
 impl DisclosureStyle {
@@ -94,7 +104,19 @@ impl DisclosureStyle {
             chevron_gap: 12,
             content_pad: 16,
             corner_radius: 8,
+            focusable: false,
         }
+    }
+
+    /// (R1020 §5.39) Mark this disclosure header a keyboard focus stop
+    /// (default `false`). Standalone disclosure headers set this true;
+    /// modal-scoped or decorative sections leave it false. Mirrors
+    /// [`crate::button::ButtonStyle::with_focusable`]. See
+    /// [`Self::focusable`].
+    #[must_use]
+    pub const fn with_focusable(mut self, focusable: bool) -> Self {
+        self.focusable = focusable;
+        self
     }
 }
 
@@ -187,7 +209,12 @@ pub fn view_disclosure(
                     .with_align_items(AlignItems::Center)
                     .with_gap(style.chevron_gap)
                     .with_padding(Rect::new(style.header_pad_x, 0, style.header_pad_x, 0))
-                    .with_size(Size::px(style.width, style.header_height)),
+                    .with_size(Size::px(style.width, style.header_height))
+                    // (R1020 §5.39) Carry the binding's focus-stop opt-in
+                    // onto the header (the tag carrier) so the
+                    // scene-derived enumeration collects this disclosure's
+                    // tag as a Tab stop.
+                    .with_focusable(style.focusable),
             ),
     );
     let mut children = vec![header];
