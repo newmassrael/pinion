@@ -23,7 +23,7 @@
 //!
 //! The buffer carries a 2-column stride slack + a 1px outline margin so an
 //! edge's right-carry deposit can never spill into the next row, and edge
-//! anti-aliasing at the glyph bbox border is never clipped.
+//! anti-aliasing at the outline bounds is never clipped.
 //!
 //! # Scope (R50.8)
 //!
@@ -58,9 +58,12 @@ impl Point {
 /// edge anti-aliasing is never clipped and right-carry deposits stay in-row.
 const MARGIN: f32 = 1.0;
 
-/// Pathological-size guard (px) per bitmap axis. A single glyph never needs
-/// thousands of pixels; this caps `vec` allocation and prevents `usize`
-/// saturation / `stride` overflow on absurd `px_per_em`. Beyond it → empty.
+/// Pathological-size guard (px) per bitmap axis. 4096px/axis is a generous
+/// ceiling for a single glyph (e.g. ~256pt at 600 DPI ≈ 2133px); beyond it a
+/// `px_per_em` is almost certainly a caller bug. The cap bounds `vec`
+/// allocation and prevents `usize` saturation / `stride` overflow; exceeding it
+/// is reported as [`RasterError::SizeExceeded`] (fail-loud), never silently
+/// dropped.
 const MAX_DIM: f32 = 4096.0;
 
 /// Grayscale anti-aliased coverage bitmap.
@@ -123,6 +126,9 @@ pub enum RasterError {
     GlyphNotFound(u16),
     /// Composite glyph — rasterization deferred to a later sub-round (R50.8.x).
     CompositeUnsupported(u16),
+    /// The requested size would exceed the per-axis pixel cap — a pathological
+    /// `px_per_em`. Reported (not silently dropped) so the caller sees the bug.
+    SizeExceeded { width: u32, height: u32 },
 }
 
 impl fmt::Display for RasterError {
@@ -132,6 +138,9 @@ impl fmt::Display for RasterError {
             Self::CompositeUnsupported(gid) => {
                 write!(f, "glyph id {gid} is composite (rasterization not yet supported)")
             }
+            Self::SizeExceeded { width, height } => {
+                write!(f, "rasterized size {width}x{height}px exceeds the {MAX_DIM} px limit")
+            }
         }
     }
 }
@@ -140,71 +149,79 @@ impl core::error::Error for RasterError {}
 
 /// Rasterize a simple glyph outline to an AA coverage bitmap at `px_per_em`.
 ///
-/// The bitmap is sized to the **measured outline bounds**, not the glyph header
-/// bbox — the OpenType per-glyph bbox is advisory and may be stale/loose, so
-/// trusting it for buffer sizing would let an out-of-bbox point index out of
-/// range. Deriving bounds from the flattened edges guarantees every point lands
-/// inside `[MARGIN, dim-MARGIN]`, so `Raster::line`'s deposits are in-bounds by
-/// construction.
+/// The bitmap is sized to the **measured outline bounds** (two deterministic
+/// flatten passes: one to measure, one to deposit), not the glyph header bbox —
+/// the OpenType per-glyph bbox is advisory and may be stale/loose, so trusting
+/// it for buffer sizing would let an out-of-bbox point index out of range.
+/// Measured bounds guarantee every point lands inside `[MARGIN, dim - MARGIN]`,
+/// so `Raster::line`'s deposits are in-bounds by construction.
 ///
-/// Returns an empty [`Coverage`] for degenerate input (zero `units_per_em`,
-/// non-positive / non-finite size, a zero-area / empty outline, or a
-/// pathological size exceeding [`MAX_DIM`]).
+/// Returns `Ok(Coverage::empty())` when there is nothing to ink (zero
+/// `units_per_em`, non-positive / non-finite size, no contours, or a zero-extent
+/// outline), and `Err(RasterError::SizeExceeded)` for a pathological size beyond
+/// [`MAX_DIM`] — fail-loud, rather than silently dropping a giant glyph.
 pub(crate) fn rasterize_simple(
     glyph: &SimpleGlyph,
     units_per_em: u16,
     px_per_em: f32,
-) -> Coverage {
+) -> Result<Coverage, RasterError> {
     if units_per_em == 0 || !px_per_em.is_finite() || px_per_em <= 0.0 {
-        return Coverage::empty();
+        return Ok(Coverage::empty());
     }
     let scale = px_per_em / f32::from(units_per_em);
 
-    // Pass 1: flatten into pen-origin device space (scale only, no offset) and
-    // measure the actual outline bounds.
-    let pen_xf = DeviceTransform { scale, left: 0.0, top: 0.0 };
-    let mut edges: Vec<(Point, Point)> = Vec::new();
+    // Pass 1: flatten in pen-origin device space (zero offset) to MEASURE the
+    // outline bounds. `DeviceTransform` is the single home of the affine map: the
+    // measure pass uses a zero offset, the deposit pass (below) the real one.
+    let measure_xf = DeviceTransform { scale, left: 0.0, top: 0.0 };
     let (mut min_x, mut min_y) = (f32::INFINITY, f32::INFINITY);
     let (mut max_x, mut max_y) = (f32::NEG_INFINITY, f32::NEG_INFINITY);
-    for_each_edge(glyph, &pen_xf, |p0, p1| {
+    let mut any_edge = false;
+    for_each_edge(glyph, &measure_xf, |p0, p1| {
+        any_edge = true;
         for p in [p0, p1] {
             min_x = min_x.min(p.x);
             min_y = min_y.min(p.y);
             max_x = max_x.max(p.x);
             max_y = max_y.max(p.y);
         }
-        edges.push((p0, p1));
     });
-    if edges.is_empty() || !min_x.is_finite() {
-        return Coverage::empty(); // no contours / no inkable geometry.
+    // Nothing to ink: no contours, a non-finite transform (overflowed scale), or
+    // a zero-extent outline (all points colinear → zero area).
+    if !any_edge
+        || ![min_x, min_y, max_x, max_y].iter().all(|v| v.is_finite())
+        || max_x <= min_x
+        || max_y <= min_y
+    {
+        return Ok(Coverage::empty());
     }
 
-    // Pass 2: buffer bounds = measured outline ± MARGIN. floor/ceil ± integer
-    // margin keep these integer-valued, so the `as usize` widths are exact.
+    // Buffer bounds = measured outline ± MARGIN. floor/ceil ± integer margin keep
+    // these integer-valued, so the `as usize` widths are exact. With a positive
+    // extent, `w_f`/`h_f` are >= 3, so only the upper MAX_DIM bound can trip.
     let left_f = min_x.floor() - MARGIN;
     let top_f = min_y.floor() - MARGIN;
-    let right_f = max_x.ceil() + MARGIN;
-    let bottom_f = max_y.ceil() + MARGIN;
-    let w_f = right_f - left_f;
-    let h_f = bottom_f - top_f;
-    if !(1.0..=MAX_DIM).contains(&w_f) || !(1.0..=MAX_DIM).contains(&h_f) {
-        return Coverage::empty(); // degenerate or pathological size.
+    let w_f = (max_x.ceil() + MARGIN) - left_f;
+    let h_f = (max_y.ceil() + MARGIN) - top_f;
+    if w_f > MAX_DIM || h_f > MAX_DIM {
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        // positive floats; the cast only builds the diagnostic payload.
+        return Err(RasterError::SizeExceeded { width: w_f as u32, height: h_f as u32 });
     }
 
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    // w_f / h_f are positive integer-valued floats in 1..=MAX_DIM (cast exact).
+    // w_f / h_f are positive integer-valued floats in 3..=MAX_DIM (cast exact).
     let (w, height) = (w_f as usize, h_f as usize);
 
+    // Pass 2: re-flatten with the real offset and deposit. Re-running the same
+    // deterministic flatten (vs caching pass-1 edges) keeps `DeviceTransform` the
+    // sole, honest home of the transform and avoids an intermediate edge buffer.
+    let deposit_xf = DeviceTransform { scale, left: left_f, top: top_f };
     let mut raster = Raster::new(w, height);
-    for (p0, p1) in edges {
-        raster.line(
-            Point { x: p0.x - left_f, y: p0.y - top_f },
-            Point { x: p1.x - left_f, y: p1.y - top_f },
-        );
-    }
+    for_each_edge(glyph, &deposit_xf, |p0, p1| raster.line(p0, p1));
 
     #[allow(clippy::cast_possible_truncation)] // left_f / top_f are small integers.
-    raster.into_coverage(left_f as i32, top_f as i32)
+    Ok(raster.into_coverage(left_f as i32, top_f as i32))
 }
 
 /// Signed-area accumulation buffer.
@@ -329,6 +346,11 @@ mod tests {
     use super::*;
     use crate::tables::glyf::{GlyphHeader, GlyphPoint};
 
+    /// Rasterize, expecting success (within the size limit).
+    fn raster(g: &SimpleGlyph, units_per_em: u16, px_per_em: f32) -> Coverage {
+        rasterize_simple(g, units_per_em, px_per_em).expect("rasterizes within size limit")
+    }
+
     /// Build an axis-aligned rectangle contour (clockwise in font y-up).
     fn rect_glyph(x_min: i16, y_min: i16, x_max: i16, y_max: i16) -> SimpleGlyph {
         SimpleGlyph {
@@ -351,7 +373,7 @@ mod tests {
         // AA is EXACT: a 5×10 integer-aligned rect fills exactly 50 pixels at 255
         // with zero partial pixels, inside a 7×12 (5×10 + 1px margin) bitmap.
         let g = rect_glyph(0, 0, 5, 10);
-        let cov = rasterize_simple(&g, 100, 100.0);
+        let cov = raster(&g, 100, 100.0);
         assert_eq!((cov.width, cov.height), (7, 12), "measured bounds + 1px margin");
         let full = cov.alpha.iter().filter(|&&a| a == 255).count();
         assert_eq!(full, 50, "exactly 5×10 fully-opaque pixels, got {full}");
@@ -374,7 +396,7 @@ mod tests {
         // Right edge at design x=250 → device x=2.5 at 10px/em: the column
         // straddling 2.5 gets ≈ 50 % coverage (analytic AA on a vertical edge).
         let g = rect_glyph(0, 0, 250, 1000);
-        let cov = rasterize_simple(&g, 1000, 10.0);
+        let cov = raster(&g, 1000, 10.0);
         // Find a fully-interior row and inspect its rightmost inked column.
         let mid_row = cov.height / 2;
         let mut last_partial = None;
@@ -393,7 +415,7 @@ mod tests {
         // Analytic-area sanity on a sloped edge: a right triangle covering half
         // of a square should accumulate ≈ half the ink of the full square.
         let square = rect_glyph(0, 0, 1000, 1000);
-        let sq_cov = rasterize_simple(&square, 1000, 40.0);
+        let sq_cov = raster(&square, 1000, 40.0);
 
         // Right triangle (0,0)-(1000,0)-(1000,1000): half the square.
         let tri = SimpleGlyph {
@@ -406,7 +428,7 @@ mod tests {
                 GlyphPoint { x: 1000, y: 1000, on_curve: true },
             ],
         };
-        let tri_cov = rasterize_simple(&tri, 1000, 40.0);
+        let tri_cov = raster(&tri, 1000, 40.0);
 
         #[allow(clippy::cast_precision_loss)] // ink sums are small, well under 2^52.
         let ratio = tri_cov.ink_sum() as f64 / sq_cov.ink_sum() as f64;
@@ -434,7 +456,7 @@ mod tests {
                 GlyphPoint { x: 300, y: 700, on_curve: true },
             ],
         };
-        let cov = rasterize_simple(&g, 1000, 40.0);
+        let cov = raster(&g, 1000, 40.0);
         // Centre of the hole (device ~20,20 from a 40px em) is transparent.
         let cx = cov.width / 2;
         let cy = cov.height / 2;
@@ -473,14 +495,22 @@ mod tests {
             ],
             ..curved.clone()
         };
-        let curved_ink = rasterize_simple(&curved, 1000, 64.0).ink_sum();
-        let straight_ink = rasterize_simple(&straight, 1000, 64.0).ink_sum();
+        let curved_ink = raster(&curved, 1000, 64.0).ink_sum();
+        let straight_ink = raster(&straight, 1000, 64.0).ink_sum();
         assert!(curved_ink > 0, "curve must ink");
         // curved/straight ≈ 0.667 < 0.8 with comfortable AA margin.
         assert!(
             curved_ink * 5 < straight_ink * 4,
             "quad {curved_ink} must ink << triangle {straight_ink} (curve bulges inside chord)",
         );
+        // Closed-form pin: analytic coverage means ink_sum == 255·area(px²). The
+        // enclosed quadratic-segment area is ∫x dy = 4e6/12 ≈ 333_333 design²;
+        // at scale 64/1000 that is 333_333·(64/1000)² px². If de Casteljau
+        // flattening reproduced the curve, curved_ink must match within a few %
+        // (a wrong subdivision/midpoint would shift the area measurably).
+        #[allow(clippy::cast_precision_loss)] // ink sum well under 2^52.
+        let ratio = curved_ink as f64 / (333_333.0 * (64.0_f64 / 1000.0).powi(2) * 255.0);
+        assert!((0.95..=1.05).contains(&ratio), "quad area ratio {ratio} off closed form");
     }
 
     #[test]
@@ -507,7 +537,7 @@ mod tests {
                 GlyphPoint { x: 700, y: 300, on_curve: true },
             ],
         };
-        let cov = rasterize_simple(&same, 1000, 40.0);
+        let cov = raster(&same, 1000, 40.0);
         let (cx, cy) = (cov.width / 2, cov.height / 2);
         assert!(
             cov.at(cx, cy) > 0,
@@ -519,9 +549,68 @@ mod tests {
     #[test]
     fn degenerate_input_yields_empty_coverage() {
         let g = rect_glyph(0, 0, 500, 1000);
-        assert!(rasterize_simple(&g, 0, 10.0).is_empty(), "zero upem");
-        assert!(rasterize_simple(&g, 1000, 0.0).is_empty(), "zero size");
-        assert!(rasterize_simple(&g, 1000, f32::NAN).is_empty(), "NaN size");
-        assert!(rasterize_simple(&g, 1000, -5.0).is_empty(), "negative size");
+        for (upem, px, label) in [
+            (0u16, 10.0f32, "zero upem"),
+            (1000, 0.0, "zero size"),
+            (1000, f32::NAN, "NaN size"),
+            (1000, -5.0, "negative size"),
+        ] {
+            assert!(raster(&g, upem, px).is_empty(), "{label}");
+        }
+        // A zero-extent outline (all points colinear → zero area) inks nothing.
+        let line = SimpleGlyph {
+            header: GlyphHeader { x_min: 0, y_min: 0, x_max: 1000, y_max: 0 },
+            end_pts_of_contours: vec![1],
+            instructions: vec![],
+            points: vec![
+                GlyphPoint { x: 0, y: 0, on_curve: true },
+                GlyphPoint { x: 1000, y: 0, on_curve: true },
+            ],
+        };
+        assert!(raster(&line, 1000, 40.0).is_empty(), "horizontal line");
+    }
+
+    #[test]
+    fn oversize_reports_size_exceeded() {
+        // A glyph at an absurd px_per_em exceeds MAX_DIM → fail-loud, not silent
+        // empty (a giant glyph silently vanishing would be a debugging trap).
+        let g = rect_glyph(0, 0, 1000, 1000);
+        let err = rasterize_simple(&g, 1000, 100_000.0).unwrap_err();
+        assert!(matches!(err, RasterError::SizeExceeded { .. }), "got {err:?}");
+    }
+
+    #[test]
+    fn shallow_edge_exercises_multi_column_ramp() {
+        // A wide, short right triangle (0,0)-(200,0)-(0,40): its hypotenuse has a
+        // shallow slope (Δx/Δy = 5), so within one scanline it crosses ~5 columns.
+        // This is the ONLY geometry that drives Raster::line's multi-column area
+        // ramp (the x1i >= x0i+3 branch with the a1/a2 loop) — the exact-coverage
+        // rect/edge tests only hit the single-column path. A correct ramp lays a
+        // strictly-monotonic AA gradient across ≥3 columns; a mis-distributed ramp
+        // (wrong a1/a2 coefficient) would break monotonicity or collapse it.
+        let tri = SimpleGlyph {
+            header: GlyphHeader { x_min: 0, y_min: 0, x_max: 200, y_max: 40 },
+            end_pts_of_contours: vec![2],
+            instructions: vec![],
+            points: vec![
+                GlyphPoint { x: 0, y: 0, on_curve: true },
+                GlyphPoint { x: 200, y: 0, on_curve: true },
+                GlyphPoint { x: 0, y: 40, on_curve: true },
+            ],
+        };
+        let cov = raster(&tri, 200, 200.0);
+        let row = cov.height / 2;
+        let partials: Vec<u8> = (0..cov.width)
+            .map(|x| cov.at(x, row))
+            .filter(|&a| a > 0 && a < 255)
+            .collect();
+        assert!(
+            partials.len() >= 3,
+            "shallow edge must spread AA over >=3 columns, got {partials:?}",
+        );
+        assert!(
+            partials.windows(2).all(|w| w[0] >= w[1]),
+            "multi-column ramp must be monotonic, got {partials:?}",
+        );
     }
 }

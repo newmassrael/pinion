@@ -4341,20 +4341,21 @@
       "inputs_bullets": [
         "§5.37.1 SimpleGlyph (end_pts_of_contours + on/off-curve GlyphPoint) outline",
         "units_per_em (§5.37.1 head) + target px_per_em → scale = px / upem",
-        "y-flip (font y-up → bitmap y-down) + glyph bbox(header) → pixel extent + 1px margin",
+        "측정 outline bounds(2-pass flatten, header bbox 미사용) + y-flip → pixel extent + 1px margin",
         "(deferred) §5.37.1 CompositeGlyph components + transform — R50.8.x 후속"
       ],
       "outputs_bullets": [
         "Coverage struct — width/height + pen-origin offset(left/top) + Vec<u8> alpha 0..=255",
         "Font::rasterize_glyph(glyph_id, px_per_em) -> Result<Coverage, RasterError>",
-        "RasterError — GlyphNotFound / CompositeUnsupported (R50.8.x 까지 한시)",
+        "RasterError — GlyphNotFound / CompositeUnsupported(R50.8.x) / SizeExceeded(fail-loud)",
         "empty glyph(space) → empty Coverage(Ok); ink_sum / at(x,y) introspect helper"
       ],
       "caveats_bullets": [
         "R50.8 scope = simple + empty glyph; composite = R50.8.x 후속(현재 CompositeUnsupported)",
         "hinting / GPU atlas / SDF / paint-path wiring = §5.37 후속 layer, R50.8 미포함",
         "production paint 는 여전히 §5.36 swash; raster 는 test 로만 검증, paint wiring 은 shape+layout 후",
-        "1px outline margin + stride+2 = right-carry deposit cross-row 방지 + edge AA 비클리핑"
+        "1px outline margin + stride+2 = right-carry deposit cross-row 방지 + edge AA 비클리핑",
+        "buffer sizing = 측정 outline bounds, NOT advisory header bbox — out-of-bbox OOB 방지 (R1015.3)"
       ],
       "alternatives_rejected": [
         {
@@ -10292,6 +10293,46 @@
         "composite raster = R50.8.x; paint-wiring = shape+layout 후; production paint 아직 §5.36 swash",
         "lesson: 글리프 버퍼 sizing 은 advisory header bbox 신뢰 금지 — 측정 outline bounds 가 lifetime-canonical(loose bbox 우아 처리 + OOB 안전)",
         "lesson: in-session green-gate 가 HIGH(safety+vacuous test) 놓침 → 2 독립 적대 reviewer 가 적발(R1011 재확증)"
+      ]
+    },
+    "R1015.3": {
+      "decision_summary": "R1015.3 §5.37.8 세션리뷰 clearance (사용자 'hack/smell 없이 교과서적? 비용 무관 장기구조? SSOT? 북극성?') — 2 fresh 적대 reviewer(refactoring-expert 코드smell + system-architect SSOT, read-only 병렬) + grep. R1015.2 clearance 가 미리뷰였고 2 real 결함 도입 적발(SSOT drift + DeviceTransform/Vec 누수) → 청산 + test pin 추가.",
+      "changes_bullets": [
+        "SSOT drift(HIGH) 청산: §5.37.8 inputs 가 R1015.2 가 제거한 'glyph bbox(header)→pixel extent' 잔존(changelog 는 header-bbox-신뢰=fixed defect 기록, 섹션은 design 으로 설교=모순) → '측정 outline bounds' 정정 + caveat + outputs(SizeExceeded) + module-doc 'bbox border' sweep",
+        "DeviceTransform 누수(HIGH) 청산: R1015.2 의 Vec<edges> 2-pass 가 DeviceTransform.left/top 을 dead(항상 0)로 만들고 offset 손수처리 → re-flatten 2-pass(measure xf offset=0 / deposit xf offset=real), Vec 제거, DeviceTransform=affine 단일 정직 home(composite seam 청결)",
+        "fail-loud: oversize→RasterError::SizeExceeded(silent empty 아님) + zero-extent→empty(doc 정직) + 전 bound finite check(min_x-only 비대칭 제거) + MAX_DIM 도출 doc; test pin: multi-column ramp monotonic + closed-form quad area ±5% + oversize"
+      ],
+      "verification_bullets": [
+        "test 7219 ok 0 fail (raster 16: 9 unit + 7 integration; +oversize SizeExceeded, +shallow-edge multi-column ramp monotonic, +closed-form quad-area ±5% pin)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello = 0 (private-intra-doc MAX_DIM unlink) + cargo doc raster 0 warn; validate-workspace T1 orphan=0, sections=66",
+        "2 fresh 적대 reviewer(refactoring-expert + system-architect, read-only 병렬) = R1015.2(미리뷰 clearance)가 도입한 2 HIGH(SSOT drift + abstraction 누수) 적발 → 리뷰 자체도 audit 대상"
+      ],
+      "impact_refs": [
+        "5.37.8",
+        "5.37.1"
+      ],
+      "carry_forward_bullets": [
+        "composite raster=R50.8.x; paint-wiring=shape(§5.37.6)+linebreak(§5.37.7)+atlas 후; production paint 아직 §5.36 swash",
+        "lesson: clearance commit(리뷰 수정)도 미리뷰 코드 — R1015.2 가 SSOT drift + abstraction 누수를 도입, 다음 적대 review 가 적발. 수정 그 자체를 재감사해야 [[remediation-plan-is-audit-subject]]"
+      ],
+      "publishable_decision_summary": "R1015.3 §5.37.8 세션리뷰 clearance (사용자 'hack/smell 없이 교과서적? 비용 무관 장기구조? SSOT? 북극성?') — 2 fresh 적대 reviewer(refactoring-expert 코드smell + system-architect SSOT, read-only 병렬) + grep. R1015.2 clearance 가 미리뷰였고 2 real 결함 도입 적발(SSOT drift + DeviceTransform/Vec 누수) → 청산 + test pin 추가.",
+      "publishable_changes_bullets": [
+        "SSOT drift(HIGH) 청산: §5.37.8 inputs 가 R1015.2 가 제거한 'glyph bbox(header)→pixel extent' 잔존(changelog 는 header-bbox-신뢰=fixed defect 기록, 섹션은 design 으로 설교=모순) → '측정 outline bounds' 정정 + caveat + outputs(SizeExceeded) + module-doc 'bbox border' sweep",
+        "DeviceTransform 누수(HIGH) 청산: R1015.2 의 Vec<edges> 2-pass 가 DeviceTransform.left/top 을 dead(항상 0)로 만들고 offset 손수처리 → re-flatten 2-pass(measure xf offset=0 / deposit xf offset=real), Vec 제거, DeviceTransform=affine 단일 정직 home(composite seam 청결)",
+        "fail-loud: oversize→RasterError::SizeExceeded(silent empty 아님) + zero-extent→empty(doc 정직) + 전 bound finite check(min_x-only 비대칭 제거) + MAX_DIM 도출 doc; test pin: multi-column ramp monotonic + closed-form quad area ±5% + oversize"
+      ],
+      "publishable_verification_bullets": [
+        "test 7219 ok 0 fail (raster 16: 9 unit + 7 integration; +oversize SizeExceeded, +shallow-edge multi-column ramp monotonic, +closed-form quad-area ±5% pin)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello = 0 (private-intra-doc MAX_DIM unlink) + cargo doc raster 0 warn; validate-workspace T1 orphan=0, sections=66",
+        "2 fresh 적대 reviewer(refactoring-expert + system-architect, read-only 병렬) = R1015.2(미리뷰 clearance)가 도입한 2 HIGH(SSOT drift + abstraction 누수) 적발 → 리뷰 자체도 audit 대상"
+      ],
+      "publishable_impact_refs": [
+        "5.37.8",
+        "5.37.1"
+      ],
+      "publishable_carry_forward_bullets": [
+        "composite raster=R50.8.x; paint-wiring=shape(§5.37.6)+linebreak(§5.37.7)+atlas 후; production paint 아직 §5.36 swash",
+        "lesson: clearance commit(리뷰 수정)도 미리뷰 코드 — R1015.2 가 SSOT drift + abstraction 누수를 도입, 다음 적대 review 가 적발. 수정 그 자체를 재감사해야 [[remediation-plan-is-audit-subject]]"
       ]
     },
     "R232": {

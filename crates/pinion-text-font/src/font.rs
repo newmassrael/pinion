@@ -175,6 +175,8 @@ impl Font {
     /// * [`RasterError::CompositeUnsupported`] — composite glyph; rasterization
     ///   is a later sub-round (R50.8.x), mirroring the parser's simple/composite
     ///   split.
+    /// * [`RasterError::SizeExceeded`] — `px_per_em` would produce a bitmap
+    ///   larger than the per-axis limit (pathological size).
     pub fn rasterize_glyph(
         &self,
         glyph_id: u16,
@@ -183,7 +185,7 @@ impl Font {
         match self.glyf.glyph(glyph_id) {
             None => Err(RasterError::GlyphNotFound(glyph_id)),
             Some(Glyph::Empty) => Ok(Coverage::empty()),
-            Some(Glyph::Simple(s)) => Ok(rasterize_simple(s, self.units_per_em(), px_per_em)),
+            Some(Glyph::Simple(s)) => rasterize_simple(s, self.units_per_em(), px_per_em),
             Some(Glyph::Composite(_)) => Err(RasterError::CompositeUnsupported(glyph_id)),
         }
     }
