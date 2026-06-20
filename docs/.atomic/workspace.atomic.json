@@ -4307,11 +4307,95 @@
       "intent": "§5.37.5 script analysis sub-layer placeholder — UCD Script property 기반 segmentation. shape engine input (run splitting). ratify 는 multi-session carry, BIDI 이후 자연 순서"
     },
     "5.37.6": {
-      "title": "Shape (OpenType GSUB/GPOS execution) — carry placeholder",
+      "title": "Shape — text-run positioning (cmap+hmtx baseline, integer-snap); GSUB/GPOS = R50.6.x",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5.37",
       "decision_status": "active",
-      "intent": "§5.37.6 shape sub-layer placeholder — OpenType GSUB/GPOS execution (glyph substitution + positioning). parley/swash 대체. R51.1 line_count semantic forward-reference. ratify 는 multi-session carry"
+      "intent": "§5.37's shaping/positioning layer — map a Unicode string to positioned glyphs (cmap + hmtx advance, integer-snapped pen) and composite them into one AA coverage; first string→pixels render.",
+      "rationale_bullets": [
+        "raster(§5.37.8) 위 첫 string→pixels layer — glyph 1개가 아니라 run 전체 render",
+        "cmap codepoint→glyph + hmtx advance = GSUB/GPOS 없는 baseline shaping (1:1 advance-only)",
+        "integer-snap pen = §5.37 'sub-pixel 비결정 제거' 정합 — deterministic raster grid",
+        "run coverage 합성(same-color alpha-over a+b−ab) = atlas/paint downstream 공통 입력",
+        "PR-8 CJK render 의 자연 수렴처 — §5.36 swash 대체 경로의 shaping 단"
+      ],
+      "inputs_bullets": [
+        "Unicode &str — char_indices codepoint 순회 (grapheme cluster = R50.6.x)",
+        "§5.37.1 cmap (glyph_id_for); unmapped codepoint → 0 .notdef (OpenType 규약)",
+        "§5.37.1 hmtx advance_width + §5.37.1 head units_per_em → scale = px/upem",
+        "§5.37.8 Font::rasterize_glyph — per-glyph AA coverage (composite 포함)",
+        "target px_per_em — positioning + raster 공통 scale"
+      ],
+      "outputs_bullets": [
+        "PositionedGlyph { glyph_id, x: f32 baseline-rel pen px, cluster: byte offset }",
+        "ShapedRun { glyphs: Vec<PositionedGlyph>, advance: f32 total pen px }",
+        "Font::shape_run(text, px) -> ShapedRun — exact f32 positions",
+        "Font::render_run(text, px) -> Result<Coverage, RasterError> — integer-snap 합성",
+        "empty str → empty Coverage; space(empty glyph) → advance 만, ink 0"
+      ],
+      "caveats_bullets": [
+        "R50.6 scope = baseline 1:1 advance-only positioning; GSUB substitution = R50.6.x 후속",
+        "GPOS (kerning / mark / cursive) = R50.6.x; baseline 은 hmtx advance width 만",
+        "script segmentation(§5.37.5) + BIDI reorder(§5.37.4) 미적용 — single visual run 전제",
+        "grapheme cluster / 결합문자 미처리 — codepoint 단위(char_indices); cluster = R50.6.x",
+        "linebreak(§5.37.7) 없음 — 단일 행 run 전제; multi-line 은 후속 layer",
+        "production paint 는 여전히 §5.36 swash — render_run 은 test forcing-consumer, paint-wiring = atlas 후",
+        "render_run 합성 = same-color alpha-over(a+b−ab) + integer pen snap; 겹침 AA fringe 비-double-darken",
+        "combined bitmap 크기 미상한 — 호출자가 viewport clip 책임 (per-glyph 는 MAX_DIM guard)"
+      ],
+      "alternatives_rejected": [
+        {
+          "alternative": "HarfBuzz shaping FFI",
+          "reason": "§5.37 self-hosted 정신 위반, C 의존 + black-box cluster"
+        },
+        {
+          "alternative": "GSUB/GPOS 즉시 동시 구현",
+          "reason": "별도 큰 table-exec 관심사; advance baseline 먼저(simple→composite 선례)"
+        },
+        {
+          "alternative": "swash shape_run 위임",
+          "reason": "§5.37 shaping self-host 이탈, 비결정 wrap heuristic 잔존"
+        },
+        {
+          "alternative": "f32 sub-pixel pen 무-snap raster",
+          "reason": "§5.37 '비결정 제거' 위반; integer-snap 이 deterministic"
+        },
+        {
+          "alternative": "per-glyph Coverage 따로 반환(합성 안 함)",
+          "reason": "'string→pixels render' milestone 미달"
+        }
+      ],
+      "bindings": [
+        {
+          "file": "crates/pinion-text-font/src/shape.rs",
+          "symbol": "shape_run",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-text-font/src/shape.rs",
+          "symbol": "render_run",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-text-font/src/shape.rs",
+          "symbol": "ShapedRun",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-text-font/src/shape.rs",
+          "symbol": "PositionedGlyph",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-text-font/src/font.rs",
+          "symbol": "Font::render_run",
+          "kind": "references"
+        },
+        {
+          "file": "crates/pinion-text-font/tests/shape.rs",
+          "kind": "references"
+        }
+      ]
     },
     "5.37.7": {
       "title": "Line break (UAX #14) — carry placeholder",
@@ -10347,6 +10431,60 @@
       "publishable_carry_forward_bullets": [
         "composite raster=R50.8.x; paint-wiring=shape(§5.37.6)+linebreak(§5.37.7)+atlas 후; production paint 아직 §5.36 swash",
         "lesson: clearance commit(리뷰 수정)도 미리뷰 코드 — R1015.2 가 SSOT drift + abstraction 누수를 도입, 다음 적대 review 가 적발. 수정 그 자체를 재감사해야 [[remediation-plan-is-audit-subject]]"
+      ]
+    },
+    "R1017": {
+      "decision_summary": "R1017 §5.37.6 baseline text-run shaping — shape_run maps a Unicode str to positioned glyphs (cmap glyph_id + hmtx advance, integer-snapped pen); render_run composites them into one AA coverage via same-color alpha-over. First string-to-pixels render in the self-hosted engine. GSUB/GPOS + script-seg(§5.37.5) + BIDI-reorder + grapheme-cluster + linebreak(§5.37.7) deferred R50.6.x (mirrors R50.8 to R50.8.x simple-to-composite). Production paint still §5.36 swash; render_run is a test forcing-consumer until atlas + paint-wiring.",
+      "changes_bullets": [
+        "shape.rs new module — PositionedGlyph/ShapedRun + shape_run (cmap glyph_id + hmtx advance pen) + render_run (per-glyph rasterize → union-box composite via same-color alpha-over) + over() helper",
+        "font.rs — Font::shape_run / Font::render_run delegators (+ ShapedRun import)",
+        "lib.rs — pub mod shape + re-export PositionedGlyph/ShapedRun",
+        "tests/shape.rs — 8 real-font integration tests (Noto Latin + Nanum 한글)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace = 7239 passed / 0 failed (R1016 7229 + 10: 8 shape integration + 2 over unit)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0",
+        "cargo doc pinion-text-font = 0 NEW dangling (2 pre-existing: cmap best_subtable / int16[4], separate docs round)",
+        "validate-workspace T1=0 (entries 1012→1013)"
+      ],
+      "impact_refs": [
+        "5.37.6",
+        "5.37",
+        "5.37.8"
+      ],
+      "carry_forward_bullets": [
+        "GSUB substitution + GPOS positioning (kerning/marks/cursive) = R50.6.x",
+        "script segmentation §5.37.5 + BIDI reorder application §5.37.4",
+        "grapheme clustering / combining marks (codepoint→cluster) = R50.6.x",
+        "linebreak §5.37.7 (multi-line run) = later layer",
+        "GPU atlas + paint-wiring (swash 대체) — render_run still test forcing-consumer",
+        "2 pre-existing cargo doc dangling (cmap best_subtable / int16[4]) = separate docs round"
+      ],
+      "publishable_decision_summary": "R1017 §5.37.6 baseline text-run shaping — shape_run maps a Unicode str to positioned glyphs (cmap glyph_id + hmtx advance, integer-snapped pen); render_run composites them into one AA coverage via same-color alpha-over. First string-to-pixels render in the self-hosted engine. GSUB/GPOS + script-seg(§5.37.5) + BIDI-reorder + grapheme-cluster + linebreak(§5.37.7) deferred R50.6.x (mirrors R50.8 to R50.8.x simple-to-composite). Production paint still §5.36 swash; render_run is a test forcing-consumer until atlas + paint-wiring.",
+      "publishable_changes_bullets": [
+        "shape.rs new module — PositionedGlyph/ShapedRun + shape_run (cmap glyph_id + hmtx advance pen) + render_run (per-glyph rasterize → union-box composite via same-color alpha-over) + over() helper",
+        "font.rs — Font::shape_run / Font::render_run delegators (+ ShapedRun import)",
+        "lib.rs — pub mod shape + re-export PositionedGlyph/ShapedRun",
+        "tests/shape.rs — 8 real-font integration tests (Noto Latin + Nanum 한글)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace = 7239 passed / 0 failed (R1016 7229 + 10: 8 shape integration + 2 over unit)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0",
+        "cargo doc pinion-text-font = 0 NEW dangling (2 pre-existing: cmap best_subtable / int16[4], separate docs round)",
+        "validate-workspace T1=0 (entries 1012→1013)"
+      ],
+      "publishable_impact_refs": [
+        "5.37.6",
+        "5.37",
+        "5.37.8"
+      ],
+      "publishable_carry_forward_bullets": [
+        "GSUB substitution + GPOS positioning (kerning/marks/cursive) = R50.6.x",
+        "script segmentation §5.37.5 + BIDI reorder application §5.37.4",
+        "grapheme clustering / combining marks (codepoint→cluster) = R50.6.x",
+        "linebreak §5.37.7 (multi-line run) = later layer",
+        "GPU atlas + paint-wiring (swash 대체) — render_run still test forcing-consumer",
+        "2 pre-existing cargo doc dangling (cmap best_subtable / int16[4]) = separate docs round"
       ]
     },
     "R232": {
