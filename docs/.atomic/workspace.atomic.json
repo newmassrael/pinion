@@ -4358,7 +4358,8 @@
         "buffer sizing = 측정 outline bounds, NOT advisory header bbox — out-of-bbox OOB 방지 (R1015.3)",
         "R50.8.x composite: 컴포넌트를 affine(F2DOT14 2x2 + XY-offset)로 단일 buffer 에 recursive 합성",
         "composite cycle = parser 가 traversal 에 위임 → ancestor-set 검출 + MAX_COMPOSITE_DEPTH=8 backstop",
-        "PointMatch(XY_VALUES=0) + SCALED_COMPONENT_OFFSET = R50.8.x defer, fail-loud(PointMatchUnsupported)"
+        "PointMatch(XY_VALUES=0) + SCALED_COMPONENT_OFFSET = R50.8.x defer, fail-loud(PointMatchUnsupported)",
+        "R1016: 위 '현재 CompositeUnsupported' caveat = R50.8 시점 기록 — R50.8.x 가 composite landed (supersede)"
       ],
       "alternatives_rejected": [
         {
@@ -4378,8 +4379,8 @@
           "reason": "glyph coverage 를 RHI 에 위임 = §5.37 raster self-host 이탈"
         },
         {
-          "alternative": "composite 동시 구현",
-          "reason": "scope creep; parser R50.1.4.1/.2 simple/composite 분리 선례"
+          "alternative": "composite PointMatch 동시 구현",
+          "reason": "assembled-point 추적 별도 관심사; XY-offset 우선"
         }
       ],
       "impact_scope": [
@@ -4389,11 +4390,6 @@
         "5.16"
       ],
       "bindings": [
-        {
-          "file": "crates/pinion-text-font/src/raster/mod.rs",
-          "symbol": "rasterize_simple",
-          "kind": "implements"
-        },
         {
           "file": "crates/pinion-text-font/src/raster/mod.rs",
           "symbol": "Coverage",
@@ -4417,6 +4413,21 @@
         {
           "file": "crates/pinion-text-font/tests/raster.rs",
           "kind": "references"
+        },
+        {
+          "file": "crates/pinion-text-font/src/raster/mod.rs",
+          "symbol": "rasterize_glyph_outline",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-text-font/src/raster/mod.rs",
+          "symbol": "walk_edges",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-text-font/src/raster/outline.rs",
+          "symbol": "Affine",
+          "kind": "implements"
         }
       ]
     },

@@ -342,9 +342,12 @@ impl Raster {
     /// winding direction) is distributed across the spanned columns by the area
     /// to the right of the segment, with the remainder carried rightward.
     ///
-    /// Precondition (held by `rasterize_simple`): points lie within
-    /// `[MARGIN, dim - MARGIN]` because the buffer is sized to the measured
-    /// outline bounds. Hence `x0i >= 0` (the `cast_sign_loss` allow is sound)
+    /// Precondition (held by `rasterize_with`'s measured-bounds sizing): points
+    /// lie within `[MARGIN, dim - MARGIN]` because the buffer is sized to the
+    /// measured outline bounds — and the deposit pass re-walks the *same*
+    /// edges the measure pass saw (identical transform modulo a uniform buffer
+    /// translation), so a composite component cannot land a point out of range.
+    /// Hence `x0i >= 0` (the `cast_sign_loss` allow is sound)
     /// and every deposit index stays within the `w + 2` stride — no clamp,
     /// no cross-row spill. `y` is additionally clamped to `[0, h)` below.
     #[allow(
@@ -772,6 +775,51 @@ mod tests {
         let ratio = pair.ink_sum() as f64 / single.ink_sum() as f64;
         assert!((1.9..=2.1).contains(&ratio), "two copies ink ~2x, got {ratio}");
         assert!(pair.width > single.width, "the offset copy widens the bitmap");
+        // Sign oracle: a copy at +x offset sits to the RIGHT of the pen origin,
+        // so its bitmap `left` exceeds the unoffset copy's — a -x offset would
+        // make it smaller. Pins offset direction, not just magnitude.
+        let right = vec![
+            Glyph::Simple(rect_glyph(0, 0, 500, 1000)),
+            composite(vec![xy_component(0, 800, 0, ComponentTransform::Identity)]),
+        ];
+        let shifted = raster_composite(&right, 1, 1000, 100.0).unwrap();
+        assert!(
+            shifted.left > single.left,
+            "positive x offset shifts the bitmap right: {} vs {}",
+            shifted.left,
+            single.left,
+        );
+    }
+
+    #[test]
+    #[allow(clippy::cast_precision_loss)] // ink sums small, well under 2^52.
+    fn composite_two_by_two_shear_skews_horizontally() {
+        // A horizontal shear (x' = x + 0.5·y) via the off-diagonal yx term
+        // (Matrix{xx:1, xy:0, yx:0.5, yy:1}). Unit determinant → area (ink)
+        // preserved, but the bounding box WIDENS (the top edge slides right of
+        // the bottom) while height is unchanged. A b<->c transpose in
+        // `from_component` would shear VERTICALLY instead (taller, same width),
+        // so this pins the off-diagonal mapping the symmetric flip test cannot.
+        let rect = Glyph::Simple(rect_glyph(0, 0, 600, 600));
+        let plain = composite(vec![xy_component(0, 0, 0, ComponentTransform::Identity)]);
+        let sheared = composite(vec![xy_component(
+            0,
+            0,
+            0,
+            ComponentTransform::Matrix { xx: 16384, xy: 0, yx: 8192, yy: 16384 }, // 1,0,0.5,1
+        )]);
+        let glyphs = vec![rect, plain, sheared];
+        let a = raster_composite(&glyphs, 1, 1000, 64.0).unwrap();
+        let b = raster_composite(&glyphs, 2, 1000, 64.0).unwrap();
+        let ratio = b.ink_sum() as f64 / a.ink_sum() as f64;
+        assert!((0.9..=1.1).contains(&ratio), "unit-det shear preserves area, got {ratio}");
+        assert!(b.width > a.width, "horizontal shear widens: {} vs {}", b.width, a.width);
+        assert!(
+            b.height <= a.height + 1,
+            "horizontal shear keeps height ~equal: {} vs {}",
+            b.height,
+            a.height,
+        );
     }
 
     #[test]

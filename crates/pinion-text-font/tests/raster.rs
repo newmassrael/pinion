@@ -93,9 +93,8 @@ fn nanum_composite_glyph_rasterizes() {
     // §5.37 canonical goal). Find the first composite and require it to ink
     // (tolerating a point-matched one as the deferred sub-round).
     let font = load("tests/fonts/NanumGothic-Regular.ttf");
-    let Some(gid) = find_glyph(&font, |g| matches!(g, Glyph::Composite(_))) else {
-        return; // no composites in this fixture → nothing to assert
-    };
+    let gid = find_glyph(&font, |g| matches!(g, Glyph::Composite(_)))
+        .expect("Nanum Gothic composes 한글 syllables as composite glyphs");
     match font.rasterize_glyph(gid, 48.0) {
         Ok(cov) => assert!(cov.ink_sum() > 0, "composite 한글 glyph {gid} inks"),
         Err(RasterError::PointMatchUnsupported(_)) => {} // deferred sub-round
