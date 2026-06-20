@@ -4404,14 +4404,85 @@
       ]
     },
     "5.37.7": {
-      "title": "Line break (UAX #14) — carry placeholder",
+      "title": "Line-break property substrate (UAX #14 Line_Break) — R50.7 sub-scope",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5.37",
       "decision_status": "active",
-      "intent": "§5.37.7 line break sub-layer placeholder — UAX #14 algorithm. R51.1 §5.12 forward-reference 정합용. self-hosted text engine 의 line breaking step, ratify 는 multi-session carry",
+      "intent": "§5.37 line-break layer: LineBreak enum (48 UAX #14 Line_Break values) + codepoint-to-class lookup over a UCD 16.0 range table; the substrate every LB rule reads (break algorithm = R50.7.x).",
+      "rationale_bullets": [
+        "§5.37 의 'run 이 어디서 wrap 가능한가' 결정층 — shaping(§5.37.6) 위, paint 아래",
+        "BidiClass table(§5.37.4)이 UAX #9 rule 에 선행하듯 LB class lookup 이 LB1-LB31 에 선행",
+        "모든 LB rule 이 인접 문자 Line_Break class 로 표현 → class lookup = 기약 foundation",
+        "property substrate 단독 land = 매 라운드 UCD-conformant 완결 artifact (반쪽 알고리즘 회피)",
+        "외부 dep 0 (std only) — §5.37.3 NFC / §5.37.4 BIDI self-host 정책 정합"
+      ],
+      "inputs_bullets": [
+        "ucd/LineBreak.txt (UCD 16.0.0) — 'RANGE ; CLASS' rows, single @missing 0000..10FFFF; XX",
+        "build.rs parse_line_break — comment-strip + ';' split → sorted (start,end,class_idx)",
+        "lb_class_index codegen — 48 short-name → u8 idx, alphabetical (enum discriminant 정합 SSOT)",
+        "char codepoint (Rust char) — surrogate SG 구조적 도달불가"
+      ],
+      "outputs_bullets": [
+        "LineBreak enum — 48 Line_Break values, #[repr(u8)] AI=0..ZWJ=47, from_index/ucd_name",
+        "line_break_class(char) -> LineBreak — RANGES binary-search, 미등재 codepoint = XX default",
+        "LINE_BREAK_CLASS_RANGES — codegen'd sorted (start,end,class_idx), linebreak_tables.rs",
+        "lib.rs re-export LineBreak / line_break_class — downstream LB 알고리즘 + 외부 consumer"
+      ],
       "caveats_bullets": [
         "Carry placeholder — ratify TBD, §5.37.4 BIDI / §5.37.6 shape 이후 자연 순서",
-        "decision_status 변경 primitive 부재 — 진짜 정정 = mnemosyne MCP RFC carry"
+        "decision_status 변경 primitive 부재 — 진짜 정정 = mnemosyne MCP RFC carry",
+        "R50.7 scope = property lookup; pair-table 알고리즘 LB1-LB31 = R50.7.x 후속",
+        "LineBreakTest.txt conformance + shape_run break-opportunity wiring = R50.7.x",
+        "XX/AI/SG/SA/CJ resolution(LB1) = 알고리즘 layer; 이 층은 raw property 보고",
+        "SG(surrogate) = Rust char 도달불가, property set 완전성 위해서만 존재",
+        "range-lookup = 2nd (start,end,idx) site(bidi_class peer); 3rd property 가 helper lift 트리거",
+        "production paint 여전히 §5.36 swash; line-break 는 test forcing-consumer 로만 검증",
+        "R1019: 위 'ratify TBD/Carry placeholder' = R51.1 기록, supersede — R50.7 property substrate landed"
+      ],
+      "alternatives_rejected": [
+        {
+          "alternative": "unicode-linebreak / xi-unicode crate",
+          "reason": "§5.37 self-host 정신 위반, black-box 의존"
+        },
+        {
+          "alternative": "extracted/DerivedLineBreak.txt",
+          "reason": "LineBreak.txt = primary source, 단일 @missing 로 충분"
+        },
+        {
+          "alternative": "알고리즘 동시 land",
+          "reason": "LineBreakTest 100% 미달 위험 = ZERO-FLAKE 충돌; scaffold 우선(bidi 선례)"
+        },
+        {
+          "alternative": "@missing XX 를 explicit range materialize",
+          "reason": "단일 universal default, miss-fallback 가 정직"
+        }
+      ],
+      "impact_scope": [
+        "5.37",
+        "5.37.4",
+        "5.37.6"
+      ],
+      "bindings": [
+        {
+          "file": "crates/pinion-text-unicode/src/linebreak.rs",
+          "symbol": "LineBreak",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-text-unicode/src/linebreak.rs",
+          "symbol": "line_break_class",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-text-unicode/build.rs",
+          "symbol": "parse_line_break",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-text-unicode/build.rs",
+          "symbol": "emit_line_break_tables",
+          "kind": "implements"
+        }
       ]
     },
     "5.37.8": {
@@ -10625,6 +10696,56 @@
         "SDF / MSDF atlas variant = later layer",
         "cache eviction (LRU) = R50.9.x, 4th-consumer gate (now unbounded growth)",
         "2 pre-existing cargo doc dangling (cmap best_subtable / int16[4]) = separate docs round"
+      ]
+    },
+    "R1019": {
+      "decision_summary": "R1019 §5.37.7 line-break property substrate — LineBreak enum (48 UAX #14 Line_Break values) + line_break_class(cp) lookup over a build.rs codegen'd range table parsed from UCD 16.0 LineBreak.txt. Landed first as the substrate every LB rule reads, mirroring how the BidiClass table (§5.37.4) precedes the UAX #9 rules; unlisted codepoints default to XX per the single @missing directive, SG unreachable via Rust char. Pair-table break algorithm (LB1-LB31), LineBreakTest.txt conformance, and shape_run break-opportunity wiring deferred to R50.7.x.",
+      "changes_bullets": [
+        "Vendor crates/pinion-text-unicode/ucd/LineBreak.txt (UCD 16.0.0)",
+        "build.rs: parse_line_break + lb_class_index + emit_line_break_tables → LINE_BREAK_CLASS_RANGES",
+        "linebreak.rs: LineBreak enum (48) + from_index/ucd_name + line_break_class binary-search, XX default",
+        "lib.rs: pub mod linebreak + re-export LineBreak / line_break_class"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 = 7252 passed / 0 failed (4 new linebreak unit tests)",
+        "tests: enum roundtrip closed+distinct / 47 UCD-sourced spot-checks / XX default / table sorted+nonoverlap+inbounds",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0",
+        "cargo doc: linebreak.rs 0 new dangling; bidi.rs:252/1369 pre-existing carried"
+      ],
+      "impact_refs": [
+        "5.37.7",
+        "5.37",
+        "5.37.6",
+        "5.37.4"
+      ],
+      "carry_forward_bullets": [
+        "R50.7.x: UAX #14 pair-table algorithm (LB1-LB31) + LineBreakTest.txt conformance + shape_run wiring",
+        "range-lookup 2nd (start,end,idx) site; 3rd property (§5.37.5 Script/EAW) triggers shared-helper lift",
+        "doc-link debt: bidi.rs:252/1369 dangling intra-doc links join cmap/int16 for separate docs round"
+      ],
+      "publishable_decision_summary": "R1019 §5.37.7 line-break property substrate — LineBreak enum (48 UAX #14 Line_Break values) + line_break_class(cp) lookup over a build.rs codegen'd range table parsed from UCD 16.0 LineBreak.txt. Landed first as the substrate every LB rule reads, mirroring how the BidiClass table (§5.37.4) precedes the UAX #9 rules; unlisted codepoints default to XX per the single @missing directive, SG unreachable via Rust char. Pair-table break algorithm (LB1-LB31), LineBreakTest.txt conformance, and shape_run break-opportunity wiring deferred to R50.7.x.",
+      "publishable_changes_bullets": [
+        "Vendor crates/pinion-text-unicode/ucd/LineBreak.txt (UCD 16.0.0)",
+        "build.rs: parse_line_break + lb_class_index + emit_line_break_tables → LINE_BREAK_CLASS_RANGES",
+        "linebreak.rs: LineBreak enum (48) + from_index/ucd_name + line_break_class binary-search, XX default",
+        "lib.rs: pub mod linebreak + re-export LineBreak / line_break_class"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 = 7252 passed / 0 failed (4 new linebreak unit tests)",
+        "tests: enum roundtrip closed+distinct / 47 UCD-sourced spot-checks / XX default / table sorted+nonoverlap+inbounds",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0",
+        "cargo doc: linebreak.rs 0 new dangling; bidi.rs:252/1369 pre-existing carried"
+      ],
+      "publishable_impact_refs": [
+        "5.37.7",
+        "5.37",
+        "5.37.6",
+        "5.37.4"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R50.7.x: UAX #14 pair-table algorithm (LB1-LB31) + LineBreakTest.txt conformance + shape_run wiring",
+        "range-lookup 2nd (start,end,idx) site; 3rd property (§5.37.5 Script/EAW) triggers shared-helper lift",
+        "doc-link debt: bidi.rs:252/1369 dangling intra-doc links join cmap/int16 for separate docs round"
       ]
     },
     "R232": {
