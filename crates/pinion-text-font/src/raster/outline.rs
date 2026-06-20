@@ -14,7 +14,7 @@
 //! on-curve), so the flattened polyline stays within the glyph's bounding box.
 
 use super::Point;
-use crate::tables::glyf::{GlyphPoint, SimpleGlyph};
+use crate::tables::glyf::{ComponentTransform, GlyphPoint, SimpleGlyph};
 
 /// Max deviation (device px) of a flattened segment from the true quadratic.
 /// 0.2px keeps curves visually smooth at text sizes while bounding depth.
@@ -24,23 +24,86 @@ const FLATTEN_TOLERANCE_PX: f32 = 0.2;
 /// on pathological (near-degenerate) control points.
 const MAX_QUAD_DEPTH: u8 = 16;
 
-/// Affine map from design (font) units to rasterization-buffer pixels.
+/// Affine map from a glyph's design (font) units to rasterization-buffer pixels
+/// (y-down). A point `(x, y)` maps to `(a·x + c·y + e, b·x + d·y + f)` — the
+/// CSS `matrix(a, b, c, d, e, f)` field convention.
 ///
-/// `scale = px_per_em / units_per_em`; the y-axis is flipped (font y-up →
-/// buffer y-down) and the buffer's top-left origin is subtracted.
-pub(super) struct DeviceTransform {
-    pub scale: f32,
-    /// buffer x = `x * scale - left`.
-    pub left: f32,
-    /// buffer y = `-(y * scale) - top`.
-    pub top: f32,
+/// The base map for a top-level glyph (no composite component) is the y-flip
+/// scale `a = scale, d = -scale, b = c = 0` (font y-up → buffer y-down), with
+/// the buffer origin folded into `e`/`f` by [`Affine::translated`]. A composite
+/// component contributes a design-space affine ([`Affine::from_component`]) that
+/// is composed on the *inside* via [`Affine::concat`], so a leaf simple glyph is
+/// flattened by the single fused transform: points first by the component chain
+/// (design space), then by the base scale-flip-and-offset (device space).
+#[derive(Clone, Copy)]
+pub(super) struct Affine {
+    pub(super) a: f32,
+    pub(super) b: f32,
+    pub(super) c: f32,
+    pub(super) d: f32,
+    pub(super) e: f32,
+    pub(super) f: f32,
 }
 
-impl DeviceTransform {
+impl Affine {
+    /// The base design→device map at `scale = px_per_em / units_per_em`: scale
+    /// plus the y-flip, with a zero buffer offset (folded in by `translated`).
+    pub(super) fn scale_flip(scale: f32) -> Self {
+        Self { a: scale, b: 0.0, c: 0.0, d: -scale, e: 0.0, f: 0.0 }
+    }
+
+    /// Post-translate in device space (fold the buffer origin into the map):
+    /// `translate(dx, dy) ∘ self`.
+    pub(super) fn translated(self, dx: f32, dy: f32) -> Self {
+        Self { e: self.e + dx, f: self.f + dy, ..self }
+    }
+
+    /// Compose `self ∘ inner` — `inner` (a child component's design-space affine)
+    /// applies first, then `self` (the accumulated parent→device map).
+    pub(super) fn concat(&self, inner: &Self) -> Self {
+        Self {
+            a: self.a * inner.a + self.c * inner.b,
+            b: self.b * inner.a + self.d * inner.b,
+            c: self.a * inner.c + self.c * inner.d,
+            d: self.b * inner.c + self.d * inner.d,
+            e: self.a * inner.e + self.c * inner.f + self.e,
+            f: self.b * inner.e + self.d * inner.f + self.f,
+        }
+    }
+
+    /// A composite component's design-space affine: the F2DOT14 2×2 transform
+    /// (`raw / 16384`, identity by default) plus the XY placement offset (font
+    /// units). The offset is applied *unscaled* (the Microsoft default; honoring
+    /// `SCALED_COMPONENT_OFFSET` is a later sub-round — accented composites use
+    /// identity transforms where scaled vs unscaled is moot).
+    pub(super) fn from_component(transform: ComponentTransform, dx: f32, dy: f32) -> Self {
+        const F2DOT14: f32 = 1.0 / 16384.0;
+        // spec 2×2 form: (x', y') = (x·xx + y·yx, x·xy + y·yy) →
+        // a = xx (coeff of x in x'), c = yx (coeff of y in x'),
+        // b = xy (coeff of x in y'), d = yy (coeff of y in y').
+        let (a, b, c, d) = match transform {
+            ComponentTransform::Identity => (1.0, 0.0, 0.0, 1.0),
+            ComponentTransform::Scale { scale } => {
+                let s = f32::from(scale) * F2DOT14;
+                (s, 0.0, 0.0, s)
+            }
+            ComponentTransform::XYScale { x, y } => {
+                (f32::from(x) * F2DOT14, 0.0, 0.0, f32::from(y) * F2DOT14)
+            }
+            ComponentTransform::Matrix { xx, xy, yx, yy } => (
+                f32::from(xx) * F2DOT14,
+                f32::from(xy) * F2DOT14,
+                f32::from(yx) * F2DOT14,
+                f32::from(yy) * F2DOT14,
+            ),
+        };
+        Self { a, b, c, d, e: dx, f: dy }
+    }
+
     fn map(&self, p: GlyphPoint) -> Point {
         Point {
-            x: f32::from(p.x) * self.scale - self.left,
-            y: -(f32::from(p.y) * self.scale) - self.top,
+            x: self.a * f32::from(p.x) + self.c * f32::from(p.y) + self.e,
+            y: self.b * f32::from(p.x) + self.d * f32::from(p.y) + self.f,
         }
     }
 }
@@ -49,7 +112,7 @@ impl DeviceTransform {
 /// passing each directed edge `(p0, p1)` to `emit`.
 pub(super) fn for_each_edge<F: FnMut(Point, Point)>(
     glyph: &SimpleGlyph,
-    xf: &DeviceTransform,
+    xf: &Affine,
     mut emit: F,
 ) {
     let mut start = 0usize;
@@ -67,7 +130,7 @@ pub(super) fn for_each_edge<F: FnMut(Point, Point)>(
 /// Flatten one contour (a closed cycle of on/off-curve points).
 fn flatten_contour<F: FnMut(Point, Point)>(
     pts: &[GlyphPoint],
-    xf: &DeviceTransform,
+    xf: &Affine,
     emit: &mut F,
 ) {
     let n = pts.len();

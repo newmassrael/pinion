@@ -6,7 +6,7 @@
 //! 같은 패턴으로 field 추가.
 
 use crate::error::ParseError;
-use crate::raster::{Coverage, RasterError, rasterize_simple};
+use crate::raster::{Coverage, RasterError, rasterize_glyph_outline};
 use crate::sfnt::{OffsetTable, TableRecord, find_table, parse_sfnt};
 use crate::tables::cmap::Cmap;
 use crate::tables::glyf::{Glyf, Glyph};
@@ -166,15 +166,19 @@ impl Font {
     }
 
     /// Rasterize a glyph to a grayscale anti-aliased coverage bitmap at
-    /// `px_per_em` pixels per em (R50.8 §5.37.8). `Empty` glyphs (e.g. space)
-    /// yield an empty [`Coverage`].
+    /// `px_per_em` pixels per em (§5.37.8). Simple, empty, and composite glyphs
+    /// are all supported — a composite's component subglyphs are resolved and
+    /// composed into one bitmap. `Empty` glyphs (e.g. space) yield an empty
+    /// [`Coverage`].
     ///
     /// # Errors
     ///
-    /// * [`RasterError::GlyphNotFound`] — `glyph_id >= num_glyphs`.
-    /// * [`RasterError::CompositeUnsupported`] — composite glyph; rasterization
-    ///   is a later sub-round (R50.8.x), mirroring the parser's simple/composite
-    ///   split.
+    /// * [`RasterError::GlyphNotFound`] — `glyph_id` (or a composite component)
+    ///   `>= num_glyphs`.
+    /// * [`RasterError::CompositeCycle`] — a composite component chain forms a
+    ///   reference cycle or nests past the depth cap.
+    /// * [`RasterError::PointMatchUnsupported`] — a composite uses point-matched
+    ///   component placement (a later sub-round).
     /// * [`RasterError::SizeExceeded`] — `px_per_em` would produce a bitmap
     ///   larger than the per-axis limit (pathological size).
     pub fn rasterize_glyph(
@@ -182,12 +186,16 @@ impl Font {
         glyph_id: u16,
         px_per_em: f32,
     ) -> Result<Coverage, RasterError> {
-        match self.glyf.glyph(glyph_id) {
-            None => Err(RasterError::GlyphNotFound(glyph_id)),
-            Some(Glyph::Empty) => Ok(Coverage::empty()),
-            Some(Glyph::Simple(s)) => rasterize_simple(s, self.units_per_em(), px_per_em),
-            Some(Glyph::Composite(_)) => Err(RasterError::CompositeUnsupported(glyph_id)),
-        }
+        let Some(glyph) = self.glyf.glyph(glyph_id) else {
+            return Err(RasterError::GlyphNotFound(glyph_id));
+        };
+        rasterize_glyph_outline(
+            glyph_id,
+            glyph,
+            &|gid| self.glyf.glyph(gid),
+            self.units_per_em(),
+            px_per_em,
+        )
     }
 
     /// Font family name (nameID = 1, Windows Unicode BMP en-US 우선).

@@ -25,18 +25,23 @@
 //! edge's right-carry deposit can never spill into the next row, and edge
 //! anti-aliasing at the outline bounds is never clipped.
 //!
-//! # Scope (R50.8)
+//! # Scope
 //!
-//! Simple + empty glyphs. Composite-glyph rasterization (§5.37.1
-//! `CompositeGlyph`: component references + transforms) is a separate
-//! sub-round — mirrors the parser's `R50.1.4.1` simple / `R50.1.4.2` composite
-//! split — and currently returns [`RasterError::CompositeUnsupported`].
+//! Simple + empty glyphs (R50.8) and composite glyphs (R50.8.x): a composite's
+//! component subglyphs (§5.37.1 `CompositeGlyph`) are resolved recursively and
+//! their outlines composed into one accumulation buffer via per-component affine
+//! transforms (`Affine`). The parser leaves cycle detection to this
+//! traversal layer, so component recursion is guarded by an ancestor set
+//! ([`RasterError::CompositeCycle`]). Point-matched component placement
+//! (`ARGS_ARE_XY_VALUES = 0`) and the `SCALED_COMPONENT_OFFSET` flag are a later
+//! sub-round — a point-match component is reported fail-loud as
+//! [`RasterError::PointMatchUnsupported`].
 
 mod outline;
 
-use crate::tables::glyf::SimpleGlyph;
+use crate::tables::glyf::{ComponentArgs, Glyph};
 use core::fmt;
-use outline::{DeviceTransform, for_each_edge};
+use outline::{Affine, for_each_edge};
 
 /// A device-space point (rasterization-buffer pixels, y-down).
 #[derive(Clone, Copy, Debug)]
@@ -122,10 +127,17 @@ impl Coverage {
 /// Error from [`crate::Font::rasterize_glyph`].
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum RasterError {
-    /// `glyph_id >= num_glyphs`.
+    /// `glyph_id >= num_glyphs` — either the top-level id or a composite
+    /// component that references a non-existent subglyph.
     GlyphNotFound(u16),
-    /// Composite glyph — rasterization deferred to a later sub-round (R50.8.x).
-    CompositeUnsupported(u16),
+    /// A composite component places its subglyph by point-matching
+    /// (`ARGS_ARE_XY_VALUES = 0`) rather than an XY offset; assembled-point
+    /// alignment is a later sub-round. Payload = the composite glyph id.
+    PointMatchUnsupported(u16),
+    /// A composite component chain revisits an ancestor glyph (reference cycle)
+    /// or nests past the depth cap — a malformed / runaway font. Payload = the
+    /// glyph id at which the cycle / limit was detected.
+    CompositeCycle(u16),
     /// The requested size would exceed the per-axis pixel cap — a pathological
     /// `px_per_em`. Reported (not silently dropped) so the caller sees the bug.
     SizeExceeded { width: u32, height: u32 },
@@ -135,8 +147,11 @@ impl fmt::Display for RasterError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::GlyphNotFound(gid) => write!(f, "glyph id {gid} out of range"),
-            Self::CompositeUnsupported(gid) => {
-                write!(f, "glyph id {gid} is composite (rasterization not yet supported)")
+            Self::PointMatchUnsupported(gid) => {
+                write!(f, "composite glyph id {gid} uses point-matched components (unsupported)")
+            }
+            Self::CompositeCycle(gid) => {
+                write!(f, "composite glyph id {gid} forms a component reference cycle")
             }
             Self::SizeExceeded { width, height } => {
                 write!(f, "rasterized size {width}x{height}px exceeds the {MAX_DIM} px limit")
@@ -147,37 +162,67 @@ impl fmt::Display for RasterError {
 
 impl core::error::Error for RasterError {}
 
-/// Rasterize a simple glyph outline to an AA coverage bitmap at `px_per_em`.
+/// Maximum composite nesting depth — a backstop beyond the ancestor-set cycle
+/// check for a pathologically deep (acyclic) component chain. Real composites
+/// nest one or two levels; 8 is generous.
+const MAX_COMPOSITE_DEPTH: usize = 8;
+
+/// Rasterize a glyph (empty, simple, or composite) to an AA coverage bitmap at
+/// `px_per_em`. `glyph` is the parsed outline for `glyph_id`; `resolve` fetches a
+/// composite component's subglyph by id (the recursion that composes a composite
+/// from its parts).
 ///
 /// The bitmap is sized to the **measured outline bounds** (two deterministic
-/// flatten passes: one to measure, one to deposit), not the glyph header bbox —
-/// the OpenType per-glyph bbox is advisory and may be stale/loose, so trusting
-/// it for buffer sizing would let an out-of-bbox point index out of range.
-/// Measured bounds guarantee every point lands inside `[MARGIN, dim - MARGIN]`,
-/// so `Raster::line`'s deposits are in-bounds by construction.
+/// flatten passes over all contours / components: one to measure, one to
+/// deposit), not the glyph header bbox — the OpenType per-glyph bbox is advisory
+/// and may be stale/loose, so trusting it for buffer sizing would let an
+/// out-of-bbox point index out of range. Measured bounds guarantee every point
+/// lands inside `[MARGIN, dim - MARGIN]`, so `Raster::line`'s deposits are
+/// in-bounds by construction.
 ///
 /// Returns `Ok(Coverage::empty())` when there is nothing to ink (zero
 /// `units_per_em`, non-positive / non-finite size, no contours, or a zero-extent
-/// outline), and `Err(RasterError::SizeExceeded)` for a pathological size beyond
-/// [`MAX_DIM`] — fail-loud, rather than silently dropping a giant glyph.
-pub(crate) fn rasterize_simple(
-    glyph: &SimpleGlyph,
+/// outline); `Err(RasterError::SizeExceeded)` for a pathological size beyond
+/// [`MAX_DIM`]; `Err(RasterError::CompositeCycle)` / `PointMatchUnsupported` /
+/// `GlyphNotFound` for a malformed or not-yet-supported composite.
+pub(crate) fn rasterize_glyph_outline<'f>(
+    glyph_id: u16,
+    glyph: &'f Glyph,
+    resolve: &dyn Fn(u16) -> Option<&'f Glyph>,
     units_per_em: u16,
     px_per_em: f32,
+) -> Result<Coverage, RasterError> {
+    rasterize_with(units_per_em, px_per_em, |xf, emit| {
+        // A fresh ancestor chain per pass — the measure and deposit walks are
+        // independent traversals of the same component tree.
+        let mut ancestors = vec![glyph_id];
+        walk_edges(glyph_id, glyph, resolve, xf, &mut ancestors, emit)
+    })
+}
+
+/// Shared 2-pass rasterization core: a measure pass to size the bitmap to the
+/// outline bounds, then a deposit pass. `walk` emits the glyph's device-space
+/// edges under a given affine — the base scale-flip for the measure pass, plus
+/// the buffer origin for the deposit pass — and may fail (composite cycle /
+/// point-match / a component referencing a missing glyph).
+fn rasterize_with(
+    units_per_em: u16,
+    px_per_em: f32,
+    walk: impl Fn(&Affine, &mut dyn FnMut(Point, Point)) -> Result<(), RasterError>,
 ) -> Result<Coverage, RasterError> {
     if units_per_em == 0 || !px_per_em.is_finite() || px_per_em <= 0.0 {
         return Ok(Coverage::empty());
     }
     let scale = px_per_em / f32::from(units_per_em);
 
-    // Pass 1: flatten in pen-origin device space (zero offset) to MEASURE the
-    // outline bounds. `DeviceTransform` is the single home of the affine map: the
-    // measure pass uses a zero offset, the deposit pass (below) the real one.
-    let measure_xf = DeviceTransform { scale, left: 0.0, top: 0.0 };
+    // Pass 1: flatten in pen-origin device space (zero buffer offset) to MEASURE
+    // the outline bounds. `Affine::scale_flip` is the base map; the deposit pass
+    // (below) folds in the real buffer origin via `translated`.
+    let measure_xf = Affine::scale_flip(scale);
     let (mut min_x, mut min_y) = (f32::INFINITY, f32::INFINITY);
     let (mut max_x, mut max_y) = (f32::NEG_INFINITY, f32::NEG_INFINITY);
     let mut any_edge = false;
-    for_each_edge(glyph, &measure_xf, |p0, p1| {
+    walk(&measure_xf, &mut |p0, p1| {
         any_edge = true;
         for p in [p0, p1] {
             min_x = min_x.min(p.x);
@@ -185,7 +230,7 @@ pub(crate) fn rasterize_simple(
             max_x = max_x.max(p.x);
             max_y = max_y.max(p.y);
         }
-    });
+    })?;
     // Nothing to ink: no contours, a non-finite transform (overflowed scale), or
     // a zero-extent outline (all points colinear → zero area).
     if !any_edge
@@ -213,15 +258,62 @@ pub(crate) fn rasterize_simple(
     // w_f / h_f are positive integer-valued floats in 3..=MAX_DIM (cast exact).
     let (w, height) = (w_f as usize, h_f as usize);
 
-    // Pass 2: re-flatten with the real offset and deposit. Re-running the same
-    // deterministic flatten (vs caching pass-1 edges) keeps `DeviceTransform` the
+    // Pass 2: re-walk with the buffer origin folded in and deposit. Re-running the
+    // same deterministic flatten (vs caching pass-1 edges) keeps `Affine` the
     // sole, honest home of the transform and avoids an intermediate edge buffer.
-    let deposit_xf = DeviceTransform { scale, left: left_f, top: top_f };
+    let deposit_xf = measure_xf.translated(-left_f, -top_f);
     let mut raster = Raster::new(w, height);
-    for_each_edge(glyph, &deposit_xf, |p0, p1| raster.line(p0, p1));
+    walk(&deposit_xf, &mut |p0, p1| raster.line(p0, p1))?;
 
     #[allow(clippy::cast_possible_truncation)] // left_f / top_f are small integers.
     Ok(raster.into_coverage(left_f as i32, top_f as i32))
+}
+
+/// Emit every leaf edge of `glyph` under the accumulated design→device affine
+/// `xf`, recursing into composite components. `ancestors` is the chain of glyph
+/// ids from the root to `glyph` (inclusive); a component referencing any of them
+/// is a reference cycle (the parser leaves cycle detection to this layer).
+fn walk_edges<'f>(
+    glyph_id: u16,
+    glyph: &'f Glyph,
+    resolve: &dyn Fn(u16) -> Option<&'f Glyph>,
+    xf: &Affine,
+    ancestors: &mut Vec<u16>,
+    emit: &mut dyn FnMut(Point, Point),
+) -> Result<(), RasterError> {
+    match glyph {
+        Glyph::Empty => Ok(()),
+        Glyph::Simple(s) => {
+            for_each_edge(s, xf, &mut *emit);
+            Ok(())
+        }
+        Glyph::Composite(c) => {
+            if ancestors.len() > MAX_COMPOSITE_DEPTH {
+                return Err(RasterError::CompositeCycle(glyph_id));
+            }
+            for comp in &c.components {
+                let (dx, dy) = match comp.args {
+                    #[allow(clippy::cast_precision_loss)] // small font-unit offsets.
+                    ComponentArgs::Offset { x, y } => (x as f32, y as f32),
+                    ComponentArgs::PointMatch { .. } => {
+                        return Err(RasterError::PointMatchUnsupported(glyph_id));
+                    }
+                };
+                let child_id = comp.glyph_index;
+                if ancestors.contains(&child_id) {
+                    return Err(RasterError::CompositeCycle(child_id));
+                }
+                let Some(child) = resolve(child_id) else {
+                    return Err(RasterError::GlyphNotFound(child_id));
+                };
+                let child_xf = xf.concat(&Affine::from_component(comp.transform, dx, dy));
+                ancestors.push(child_id);
+                walk_edges(child_id, child, resolve, &child_xf, ancestors, &mut *emit)?;
+                ancestors.pop();
+            }
+            Ok(())
+        }
+    }
 }
 
 /// Signed-area accumulation buffer.
@@ -344,11 +436,59 @@ impl Raster {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tables::glyf::{GlyphHeader, GlyphPoint};
+    use crate::tables::glyf::{
+        Component, ComponentTransform, CompositeGlyph, GlyphHeader, GlyphPoint, SimpleGlyph,
+    };
 
-    /// Rasterize, expecting success (within the size limit).
+    /// Rasterize a single simple glyph (a one-entry glyph table) through the
+    /// unified entry, expecting success (within the size limit).
     fn raster(g: &SimpleGlyph, units_per_em: u16, px_per_em: f32) -> Coverage {
-        rasterize_simple(g, units_per_em, px_per_em).expect("rasterizes within size limit")
+        raster_try(g, units_per_em, px_per_em).expect("rasterizes within size limit")
+    }
+
+    /// Fallible single-simple-glyph rasterization (for the size-limit assertion).
+    fn raster_try(g: &SimpleGlyph, units_per_em: u16, px_per_em: f32) -> Result<Coverage, RasterError> {
+        let glyphs = [Glyph::Simple(g.clone())];
+        rasterize_glyph_outline(0, &glyphs[0], &|gid| glyphs.get(usize::from(gid)), units_per_em, px_per_em)
+    }
+
+    /// Rasterize glyph `top` from a synthetic glyph table (composite recursion
+    /// resolves component ids against the slice).
+    fn raster_composite(
+        glyphs: &[Glyph],
+        top: u16,
+        units_per_em: u16,
+        px_per_em: f32,
+    ) -> Result<Coverage, RasterError> {
+        rasterize_glyph_outline(
+            top,
+            &glyphs[usize::from(top)],
+            &|gid| glyphs.get(usize::from(gid)),
+            units_per_em,
+            px_per_em,
+        )
+    }
+
+    /// A composite glyph wrapping the given components (header bbox is advisory
+    /// and unused — the rasterizer measures bounds).
+    fn composite(components: Vec<Component>) -> Glyph {
+        Glyph::Composite(CompositeGlyph {
+            header: GlyphHeader { x_min: 0, y_min: 0, x_max: 0, y_max: 0 },
+            raw_body: Vec::new(),
+            components,
+            instructions: Vec::new(),
+        })
+    }
+
+    /// An XY-offset component referencing `glyph_index` (flags unused by the
+    /// rasterizer — `args`/`transform` drive placement).
+    fn xy_component(glyph_index: u16, x: i32, y: i32, transform: ComponentTransform) -> Component {
+        Component {
+            flags: 0,
+            glyph_index,
+            args: ComponentArgs::Offset { x, y },
+            transform,
+        }
     }
 
     /// Build an axis-aligned rectangle contour (clockwise in font y-up).
@@ -575,7 +715,7 @@ mod tests {
         // A glyph at an absurd px_per_em exceeds MAX_DIM → fail-loud, not silent
         // empty (a giant glyph silently vanishing would be a debugging trap).
         let g = rect_glyph(0, 0, 1000, 1000);
-        let err = rasterize_simple(&g, 1000, 100_000.0).unwrap_err();
+        let err = raster_try(&g, 1000, 100_000.0).unwrap_err();
         assert!(matches!(err, RasterError::SizeExceeded { .. }), "got {err:?}");
     }
 
@@ -611,6 +751,137 @@ mod tests {
         assert!(
             partials.windows(2).all(|w| w[0] >= w[1]),
             "multi-column ramp must be monotonic, got {partials:?}",
+        );
+    }
+
+    #[test]
+    #[allow(clippy::cast_precision_loss)] // ink sums small, well under 2^52.
+    fn composite_offset_places_each_component() {
+        // A composite of two non-overlapping copies of one rect: total ink is
+        // ~2x a single copy, and the bitmap spans wider than one copy. Proves a
+        // component's XY offset actually displaces its subglyph in the assembly.
+        let rect = Glyph::Simple(rect_glyph(0, 0, 500, 1000)); // 50x100px at 0.1 scale
+        let one = composite(vec![xy_component(0, 0, 0, ComponentTransform::Identity)]);
+        let two = composite(vec![
+            xy_component(0, 0, 0, ComponentTransform::Identity),
+            xy_component(0, 800, 0, ComponentTransform::Identity), // +80px → gap, no overlap
+        ]);
+        let glyphs = vec![rect, one, two];
+        let single = raster_composite(&glyphs, 1, 1000, 100.0).unwrap();
+        let pair = raster_composite(&glyphs, 2, 1000, 100.0).unwrap();
+        let ratio = pair.ink_sum() as f64 / single.ink_sum() as f64;
+        assert!((1.9..=2.1).contains(&ratio), "two copies ink ~2x, got {ratio}");
+        assert!(pair.width > single.width, "the offset copy widens the bitmap");
+    }
+
+    #[test]
+    #[allow(clippy::cast_precision_loss)] // ink sums small, well under 2^52.
+    fn composite_scale_transform_enlarges_subglyph() {
+        // A 1.5x-scaled component covers 1.5^2 = 2.25x the area → ~2.25x the ink,
+        // and a larger bitmap. Exercises the F2DOT14 scale-transform path.
+        let rect = Glyph::Simple(rect_glyph(0, 0, 500, 500));
+        let plain = composite(vec![xy_component(0, 0, 0, ComponentTransform::Identity)]);
+        let scaled = composite(vec![xy_component(
+            0,
+            0,
+            0,
+            ComponentTransform::Scale { scale: 0x6000 }, // 24576 / 16384 = 1.5
+        )]);
+        let glyphs = vec![rect, plain, scaled];
+        let a = raster_composite(&glyphs, 1, 1000, 80.0).unwrap();
+        let b = raster_composite(&glyphs, 2, 1000, 80.0).unwrap();
+        let ratio = b.ink_sum() as f64 / a.ink_sum() as f64;
+        assert!((2.05..=2.45).contains(&ratio), "1.5x scale → ~2.25x ink, got {ratio}");
+        assert!(b.width > a.width && b.height > a.height, "scaled bitmap is larger");
+    }
+
+    #[test]
+    #[allow(clippy::cast_precision_loss)] // ink sums small, well under 2^52.
+    fn composite_two_by_two_flip_preserves_area() {
+        // A horizontal flip (2x2 matrix [-1 0; 0 1]) reverses contour winding;
+        // the nonzero-winding `abs` keeps the fill, so ink is preserved. Drives
+        // the full Matrix path AND a negative-determinant component.
+        let rect = Glyph::Simple(rect_glyph(0, 0, 500, 700));
+        let plain = composite(vec![xy_component(0, 0, 0, ComponentTransform::Identity)]);
+        let flipped = composite(vec![xy_component(
+            0,
+            0,
+            0,
+            ComponentTransform::Matrix { xx: -16384, xy: 0, yx: 0, yy: 16384 }, // -1,0,0,1
+        )]);
+        let glyphs = vec![rect, plain, flipped];
+        let a = raster_composite(&glyphs, 1, 1000, 64.0).unwrap();
+        let b = raster_composite(&glyphs, 2, 1000, 64.0).unwrap();
+        assert!(b.ink_sum() > 0, "flipped component still inks (nonzero winding)");
+        let ratio = b.ink_sum() as f64 / a.ink_sum() as f64;
+        assert!((0.95..=1.05).contains(&ratio), "flip preserves area, got {ratio}");
+    }
+
+    #[test]
+    fn composite_nested_component_resolves() {
+        // glyph 2 (composite) → glyph 1 (composite) → glyph 0 (simple rect):
+        // two levels of recursion still produce ink.
+        let rect = Glyph::Simple(rect_glyph(0, 0, 400, 800));
+        let inner = composite(vec![xy_component(0, 100, 0, ComponentTransform::Identity)]);
+        let outer = composite(vec![xy_component(1, 0, 200, ComponentTransform::Identity)]);
+        let glyphs = vec![rect, inner, outer];
+        let cov = raster_composite(&glyphs, 2, 1000, 64.0).unwrap();
+        assert!(cov.ink_sum() > 0, "nested composite resolves to ink");
+    }
+
+    #[test]
+    fn composite_self_reference_is_a_cycle() {
+        // glyph 0 references itself → detected at the top of the chain.
+        let glyphs = vec![composite(vec![xy_component(0, 0, 0, ComponentTransform::Identity)])];
+        assert_eq!(
+            raster_composite(&glyphs, 0, 1000, 32.0),
+            Err(RasterError::CompositeCycle(0)),
+        );
+    }
+
+    #[test]
+    fn composite_mutual_reference_is_a_cycle() {
+        // 0 → 1 → 0: the back-reference to ancestor 0 is the cycle.
+        let glyphs = vec![
+            composite(vec![xy_component(1, 0, 0, ComponentTransform::Identity)]),
+            composite(vec![xy_component(0, 0, 0, ComponentTransform::Identity)]),
+        ];
+        assert_eq!(
+            raster_composite(&glyphs, 0, 1000, 32.0),
+            Err(RasterError::CompositeCycle(0)),
+        );
+    }
+
+    #[test]
+    fn composite_point_match_is_unsupported() {
+        // ARGS_ARE_XY_VALUES = 0 (point-matched placement) → fail-loud, not a
+        // silently-misplaced subglyph.
+        let rect = Glyph::Simple(rect_glyph(0, 0, 500, 500));
+        let pm = Glyph::Composite(CompositeGlyph {
+            header: GlyphHeader { x_min: 0, y_min: 0, x_max: 0, y_max: 0 },
+            raw_body: Vec::new(),
+            components: vec![Component {
+                flags: 0,
+                glyph_index: 0,
+                args: ComponentArgs::PointMatch { parent: 0, child: 0 },
+                transform: ComponentTransform::Identity,
+            }],
+            instructions: Vec::new(),
+        });
+        let glyphs = vec![rect, pm];
+        assert_eq!(
+            raster_composite(&glyphs, 1, 1000, 32.0),
+            Err(RasterError::PointMatchUnsupported(1)),
+        );
+    }
+
+    #[test]
+    fn composite_missing_component_reports_not_found() {
+        // A component referencing a non-existent subglyph id is fail-loud.
+        let glyphs = vec![composite(vec![xy_component(5, 0, 0, ComponentTransform::Identity)])];
+        assert_eq!(
+            raster_composite(&glyphs, 0, 1000, 32.0),
+            Err(RasterError::GlyphNotFound(5)),
         );
     }
 }

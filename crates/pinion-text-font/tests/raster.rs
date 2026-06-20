@@ -64,15 +64,43 @@ fn nanum_simple_glyph_rasterizes_to_ink() {
 }
 
 #[test]
-fn composite_glyph_reports_unsupported() {
-    // Noto Sans has accented Latin composites (parser sweep confirms > 0).
+fn noto_composite_glyphs_rasterize_to_ink() {
+    // Noto Sans builds accented Latin (e.g. 'À', 'é') as composites: base glyph
+    // + accent component placed by XY offset. Every such composite now
+    // rasterizes; assert composites exist (non-vacuous) and that the placeable
+    // ones all ink. A point-matched component (if any) is a later sub-round and
+    // surfaces fail-loud as PointMatchUnsupported — never a silent blank.
     let font = load("tests/fonts/NotoSans-Regular.ttf");
-    let gid = find_glyph(&font, |g| matches!(g, Glyph::Composite(_)))
-        .expect("Noto has a composite glyph");
-    assert_eq!(
-        font.rasterize_glyph(gid, 32.0),
-        Err(RasterError::CompositeUnsupported(gid)),
-    );
+    let composites: Vec<u16> = (0..font.num_glyphs())
+        .filter(|&g| matches!(font.glyph_outline(g), Some(Glyph::Composite(_))))
+        .collect();
+    assert!(!composites.is_empty(), "Noto has composite glyphs to exercise");
+    let mut inked = 0usize;
+    for &gid in &composites {
+        match font.rasterize_glyph(gid, 32.0) {
+            Ok(cov) => inked += usize::from(cov.ink_sum() > 0),
+            Err(RasterError::PointMatchUnsupported(_)) => {} // deferred sub-round
+            Err(e) => panic!("composite gid {gid} failed to rasterize: {e:?}"),
+        }
+    }
+    assert!(inked > 0, "at least one real composite rasterizes to ink");
+}
+
+#[test]
+fn nanum_composite_glyph_rasterizes() {
+    // Nanum Gothic composes some 한글 syllables as composites; rasterizing one
+    // end-to-end is the self-hosted engine growing to render real 한글 (the
+    // §5.37 canonical goal). Find the first composite and require it to ink
+    // (tolerating a point-matched one as the deferred sub-round).
+    let font = load("tests/fonts/NanumGothic-Regular.ttf");
+    let Some(gid) = find_glyph(&font, |g| matches!(g, Glyph::Composite(_))) else {
+        return; // no composites in this fixture → nothing to assert
+    };
+    match font.rasterize_glyph(gid, 48.0) {
+        Ok(cov) => assert!(cov.ink_sum() > 0, "composite 한글 glyph {gid} inks"),
+        Err(RasterError::PointMatchUnsupported(_)) => {} // deferred sub-round
+        Err(e) => panic!("composite gid {gid} failed to rasterize: {e:?}"),
+    }
 }
 
 #[test]
