@@ -2043,8 +2043,8 @@ fn build_todos_list(
         // hosting the `×` glyph centred inside the 24×24 hit-target.
         // No [`External`] per-item — the singleton
         // [`TodoDeleteExternal`] resolves the sub-index off the
-        // composite tag at dispatch time. The button is NOT listed
-        // in [`focusable_tags`] so a mouse click does not steal
+        // composite tag at dispatch time. The button is NOT marked
+        // `.with_focusable(true)` so a mouse click does not steal
         // focus from the text field (the user can press Enter
         // again immediately to add the next todo without a manual
         // refocus hop).

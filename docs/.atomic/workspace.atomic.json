@@ -5262,7 +5262,8 @@
         "R1020: focus is scene-derived; view fn marks nodes LayoutStyle::focusable (.with_focusable)",
         "R1020: shell re-runs Scene::collect_focusable_tags over the paint scene every frame",
         "R1020: WidgetCore::focusable_tags() flat list removed (unratified §5.39 drift)",
-        "R1020: tab order = tree order; focus_request re-derives pre-drain for just-painted nodes"
+        "R1020: tab order = tree order; focus_request re-derives pre-drain for just-painted nodes",
+        "R1020: §5.39 inputs' WidgetView::focusable_tags(&Scene) never built; realized as marker+walk"
       ],
       "alternatives_rejected": [
         {
@@ -10804,6 +10805,46 @@
         "Adversarial 2-reviewer clearance (SSOT + code) pending before any push — user 교과서적/SSOT/북극성 gate",
         "Tree-order tab changes accepted per §5.39 (tree order = tab order): hello-undo DEC<->INC, hello-selection-toolbar, hello-datepicker",
         "grid-header-menu MENU_TAG now focusable only while the popup is open — the pre-R1020 phantom tab stop is fixed"
+      ]
+    },
+    "R1020.1": {
+      "decision_summary": "R1020.1 §5.39 clearance — adversarial 2-reviewer review confirmed the scene-derived focus design is textbook / SSOT / north-star-sound with no correctness, invariant, purity, modal, or loop defect and trustworthy marks; this clears the cleanliness + honesty findings (dangling doc-links, an over-stated cargo-doc claim, two untested behaviors).",
+      "changes_bullets": [
+        "Fixed ~17 dangling rustdoc intra-doc links to the removed WidgetCore::focusable_tags across examples + pinion-a11y (reworded to .with_focusable(true) / scene-derived prose); cargo doc no longer errors on focusable_tags",
+        "Added a focus-on-appear forcing test (drain_focus_request re-derive, the round's trickiest path) + a hello-undo tree-order test (pins the deliberate DEC<->INC tab change); documented the cache-guarded-effects invariant on refresh_focusable_from_view",
+        "§5.39 caveats: input-shape-superseded note + this CORRECTION of R1020's over-stated 'cargo doc clean on touched crates' (those crates carry pre-existing exit-101 doc debt unrelated to R1020, and R1020 had added the now-fixed dangling links)"
+      ],
+      "verification_bullets": [
+        "2 independent read-only reviewers (system-architect SSOT/north-star + quality-engineer code/marks) + grep: verdict textbook + SSOT + north-star-aligned, marks trustworthy (no mis-placed / under-marked), no architectural change required",
+        "cargo test --workspace exit 0 (189 suites, 0 fail); clippy --workspace --all-targets --features pinion-runtime/vello exit 0; focus_scene_derived 4/4 (added re-derive case) + hello-undo order test pass; cargo doc clean of focusable_tags across 19 examples + pinion-a11y",
+        "Pre-existing UNRELATED cargo-doc debt remains (pinion-forge vello::Aa*, animation.rs Animation::tick, ThemeProvider, ...) — NOT regressed by R1020 (cargo doc is not in the commit/push gate), carried for a future docs round"
+      ],
+      "impact_refs": [
+        "5.39"
+      ],
+      "carry_forward_bullets": [
+        "Guard tests for the remaining reviewer-verified single/two-stop bindings (hello-color-picker etc.) — low-risk follow-up",
+        "Pre-existing cargo-doc debt (pinion-forge vello, animation.rs, ThemeProvider...) deserves a docs-only round since cargo doc is not gated",
+        "Adversarial review complete; round is push-ready pending explicit user consent (nothing pushed)"
+      ],
+      "publishable_decision_summary": "R1020.1 §5.39 clearance — adversarial 2-reviewer review confirmed the scene-derived focus design is textbook / SSOT / north-star-sound with no correctness, invariant, purity, modal, or loop defect and trustworthy marks; this clears the cleanliness + honesty findings (dangling doc-links, an over-stated cargo-doc claim, two untested behaviors).",
+      "publishable_changes_bullets": [
+        "Fixed ~17 dangling rustdoc intra-doc links to the removed WidgetCore::focusable_tags across examples + pinion-a11y (reworded to .with_focusable(true) / scene-derived prose); cargo doc no longer errors on focusable_tags",
+        "Added a focus-on-appear forcing test (drain_focus_request re-derive, the round's trickiest path) + a hello-undo tree-order test (pins the deliberate DEC<->INC tab change); documented the cache-guarded-effects invariant on refresh_focusable_from_view",
+        "§5.39 caveats: input-shape-superseded note + this CORRECTION of R1020's over-stated 'cargo doc clean on touched crates' (those crates carry pre-existing exit-101 doc debt unrelated to R1020, and R1020 had added the now-fixed dangling links)"
+      ],
+      "publishable_verification_bullets": [
+        "2 independent read-only reviewers (system-architect SSOT/north-star + quality-engineer code/marks) + grep: verdict textbook + SSOT + north-star-aligned, marks trustworthy (no mis-placed / under-marked), no architectural change required",
+        "cargo test --workspace exit 0 (189 suites, 0 fail); clippy --workspace --all-targets --features pinion-runtime/vello exit 0; focus_scene_derived 4/4 (added re-derive case) + hello-undo order test pass; cargo doc clean of focusable_tags across 19 examples + pinion-a11y",
+        "Pre-existing UNRELATED cargo-doc debt remains (pinion-forge vello::Aa*, animation.rs Animation::tick, ThemeProvider, ...) — NOT regressed by R1020 (cargo doc is not in the commit/push gate), carried for a future docs round"
+      ],
+      "publishable_impact_refs": [
+        "5.39"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Guard tests for the remaining reviewer-verified single/two-stop bindings (hello-color-picker etc.) — low-risk follow-up",
+        "Pre-existing cargo-doc debt (pinion-forge vello, animation.rs, ThemeProvider...) deserves a docs-only round since cargo doc is not gated",
+        "Adversarial review complete; round is push-ready pending explicit user consent (nothing pushed)"
       ]
     },
     "R232": {

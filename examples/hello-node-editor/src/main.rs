@@ -4736,7 +4736,8 @@ impl WidgetA11y for NodeEditorView {
         // R850 — the palette `toolbar` + `button`s come from the
         // `toolbar_button_nodes` SSOT (gaining aria-posinset/setsize), not a
         // hand-rolled equivalent. `focused_control: None` because the palette is
-        // not yet a keyboard tab stop (`focusable_tags` is canvas-only) — a
+        // not yet a keyboard tab stop (only the canvas is marked
+        // `.with_focusable(true)`) — a
         // mouse/RPC-driven toolbar, the `hello-textarea` NoFocus-toolbar
         // precedent. Keyboard roving over the palette is a documented carry.
         let palette_tags: Vec<String> =

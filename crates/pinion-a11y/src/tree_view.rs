@@ -71,7 +71,7 @@ pub fn tree_row_tag(row_prefix: &str, id: &str) -> String {
 /// # Arguments
 ///
 /// - `tree_tag` — the `role=tree` root node's tag: the focusable element
-///   (the tab stop a binding lists in `focusable_tags`). AccessKit's
+///   (the tab stop a binding marks `.with_focusable(true)`). AccessKit's
 ///   `TreeUpdate::focus` lands here while `aria-activedescendant` names the
 ///   cursor row.
 /// - `row_prefix` — the per-row composite-tag namespace; each row becomes

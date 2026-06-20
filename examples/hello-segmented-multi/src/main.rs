@@ -57,7 +57,8 @@
 //!
 //! Keyboard ([`toggle_group::apply_key`], WAI-ARIA APG toggle-button group,
 //! mirroring the accordion): each segment is its **own Tab stop**
-//! ([`focusable_tags`] enumerates all three), so `Tab` / `Shift+Tab` move
+//! (all three are marked `.with_focusable(true)` — the scene-derived §5.39
+//! Tab stops), so `Tab` / `Shift+Tab` move
 //! between segments; `Space` / `Enter` toggle the focused segment;
 //! `ArrowRight` / `ArrowLeft` (and `ArrowDown` / `ArrowUp`) move focus one
 //! step with wrap, `Home` / `End` jump to first / last — the focus moves
@@ -91,8 +92,9 @@ const THEME_TAG: &str = "app";
 const N: usize = 3;
 
 /// Per-segment dispatch tags. `&'static str` (not `format!`) because
-/// [`WidgetCore::focusable_tags`] returns `Vec<&'static str>` — the same
-/// fixed-cluster convention `hello-accordion` uses. Each tag lands on one
+/// each tag is marked `.with_focusable(true)` in the view fn (the
+/// scene-derived §5.39 Tab stops) — the same fixed-cluster convention
+/// `hello-accordion` uses. Each tag lands on one
 /// segment pill, so the input router hit-tests a click on segment `i`
 /// straight to that segment's `ToggleExternal`.
 const SEGMENT_TAGS: [&str; N] = ["seg_multi_0", "seg_multi_1", "seg_multi_2"];

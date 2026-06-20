@@ -21,8 +21,9 @@
 //! disclosures toggle independently with zero new substrate.
 //!
 //! Keyboard model (WAI-ARIA APG accordion):
-//! - each header is its **own Tab stop** ([`focusable_tags`] enumerates
-//!   all three — unlike a `RadioGroup`, which is a single tab stop with
+//! - each header is its **own Tab stop** (all three are marked
+//!   `.with_focusable(true)` — the scene-derived §5.39 Tab stops — unlike
+//!   a `RadioGroup`, which is a single tab stop with
 //!   internal roving), so `Tab` / `Shift+Tab` move between sections;
 //! - `Space` / `Enter` toggle the focused section (the disclosure
 //!   keyboard model — both keys, not just `Space`);
@@ -65,7 +66,8 @@ const THEME_TAG: &str = "app";
 const N: usize = 3;
 
 /// Per-section header dispatch tags. `&'static str` (not `format!`)
-/// because [`WidgetCore::focusable_tags`] returns `Vec<&'static str>`
+/// because each tag is marked `.with_focusable(true)` in the view fn
+/// (the scene-derived §5.39 Tab stops)
 /// — the same fixed-cluster convention as `settings-panel`'s
 /// `NOTIF_INSTANCE_TAGS`. Each tag lands on one section header via
 /// [`view_disclosure`], so the input router hit-tests a click on
@@ -104,8 +106,8 @@ type AccordionState = [(DisclosureState, bool); N];
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: &AccordionState, _frame: &Frame) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
-    // (R1020 §5.39) Each header is its own Tab stop — `focusable_tags`
-    // enumerates all of `SECTION_TAGS`, so the shared header style opts
+    // (R1020 §5.39) Each header is its own Tab stop — `.with_focusable(true)`
+    // marks all of `SECTION_TAGS`, so the shared header style opts
     // into the scene-derived focus enumeration.
     let style = DisclosureStyle::m3().with_focusable(true);
     let sections: Vec<Scene> = (0..N)

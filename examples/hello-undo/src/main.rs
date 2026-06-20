@@ -105,9 +105,11 @@ fn button_scene(
         focused,
         hover_key,
         colors,
-        // (R1020 §5.39) All four buttons are Tab stops — `focusable_tags`
-        // enumerates `[INC_TAG, DEC_TAG, UNDO_TAG, REDO_TAG]`; tree order
-        // (DEC painted before INC) becomes the tab order by §5.39 design.
+        // (R1020 §5.39) All four buttons are Tab stops — each marked
+        // `.with_focusable(true)`. The paint-tree order is DEC, INC, UNDO, REDO
+        // (DEC is painted before INC), which becomes the tab order by §5.39
+        // design (tree order = tab order). This differs from the pre-R1020
+        // flat list that put INC first because `tag() == INC_TAG`.
         &ButtonStyle::m3_default(tag)
             .with_size(Size::px(72, 40))
             .with_corner_radius(20)
@@ -379,5 +381,25 @@ mod tests {
     #[test]
     fn undo_at_bottom_is_a_noop() {
         assert_eq!(drive(&["undo.click", "undo.click"]), (0, 0, 0));
+    }
+
+    /// R1020 §5.39 — the scene-derived focus enumeration is the paint-tree
+    /// order of the `.with_focusable(true)` buttons: DEC, INC, UNDO, REDO. This
+    /// pins the deliberate tab-order change (the pre-R1020 flat list put INC
+    /// first because `tag() == INC_TAG`; tree order = tab order now).
+    #[test]
+    fn r1020_focusable_enumeration_is_tree_order() {
+        let scene = Owner::new().run(|| {
+            UndoView::view(([ButtonState::Idle; 4], [false; 4]), &Frame::with_dt(0.0))
+        });
+        assert_eq!(
+            scene.collect_focusable_tags(),
+            vec![
+                DEC_TAG.to_owned(),
+                INC_TAG.to_owned(),
+                UNDO_TAG.to_owned(),
+                REDO_TAG.to_owned(),
+            ],
+        );
     }
 }

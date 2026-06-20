@@ -118,7 +118,8 @@ const VARIANTS: [CardVariant; N] =
     [CardVariant::Elevated, CardVariant::Filled, CardVariant::Outlined];
 
 /// Per-card surface dispatch tags. `&'static str` (not `format!`)
-/// because [`WidgetCore::focusable_tags`] returns `Vec<&'static str>`.
+/// because each card's outer container marks its tag `.with_focusable(true)`
+/// (the scene-derived §5.39 Tab stops, collected by `Scene::collect_focusable_tags`).
 /// Each tag lands on one card's outer container, so a click hit-tests
 /// straight to that card's `ButtonExternal`.
 const CARD_TAGS: [&str; N] = ["card_elevated", "card_filled", "card_outlined"];

@@ -33,12 +33,13 @@
 //!
 //! ## Keyboard model (WAI-ARIA APG accordion)
 //!
-//! Each header is its **own Tab stop** — [`focusable_tags`] enumerates
-//! all N composite sub-tags (`"accordion_single#0..2"`), unlike a
+//! Each header is its **own Tab stop** — all N composite sub-tags
+//! (`"accordion_single#0..2"`) are marked `.with_focusable(true)` (the
+//! scene-derived §5.39 Tab stops), unlike a
 //! `RadioGroup`, which is a single tab stop with internal active-
 //! descendant roving. So:
 //! - `Tab` / `Shift+Tab` move between section headers (the shell's
-//!   focus traversal over `focusable_tags`);
+//!   focus traversal over the `.with_focusable(true)` tags);
 //! - `Space` / `Enter` toggle the focused section (the disclosure
 //!   keyboard model — both keys), routed through the coordinator's
 //!   `"<i>:KeyboardActivate"` wire format so single-open exclusion
@@ -96,9 +97,9 @@ const N: usize = 3;
 const PRIMARY_TAG: &str = "accordion_single";
 
 /// Per-section header dispatch tags — the composite sub-tag form
-/// `"accordion_single#<i>"`. `&'static str` (not `format!`) because
-/// [`WidgetCore::focusable_tags`] returns `Vec<&'static str>` and each
-/// header is its own Tab stop (so all N are listed). Each lands on one
+/// `"accordion_single#<i>"`. `&'static str` (not `format!`) because each
+/// header is marked `.with_focusable(true)` in the view fn (the
+/// scene-derived §5.39 Tab stops, so all N are stops). Each lands on one
 /// section header via [`view_disclosure`], and the input router
 /// hit-tests a click on header `i` straight to this composite tag.
 const ROW_TAGS: [&str; N] =
@@ -147,8 +148,8 @@ fn focused_section(focused: Option<&str>) -> Option<usize> {
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: &AccordionState, _frame: &Frame) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
-    // (R1020 §5.39) Each header is its own Tab stop — `focusable_tags`
-    // enumerates all of `ROW_TAGS`, so the shared header style opts into
+    // (R1020 §5.39) Each header is its own Tab stop — `.with_focusable(true)`
+    // marks all of `ROW_TAGS`, so the shared header style opts into
     // the scene-derived focus enumeration.
     let style = DisclosureStyle::m3().with_focusable(true);
     let sections: Vec<Scene> = (0..N)

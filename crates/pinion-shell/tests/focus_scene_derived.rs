@@ -38,6 +38,18 @@ const ROOT_TAG: &str = "panes_root";
 /// The runtime pane-tag pool. The binding slices `[..count]` — a varying
 /// cardinality of `&'static str` tags, which is exactly sprag's R36 shape.
 const PANE_TAGS: [&str; 4] = ["pane#0", "pane#1", "pane#2", "pane#3"];
+/// A conditionally-painted inline-editor stop (focus-on-appear case).
+const EDITOR_TAG: &str = "inline_editor";
+
+/// Whether the conditionally-painted inline editor is currently painted —
+/// the reactive flag a reducer flips when an inline editor opens.
+fn editor_visible() -> Signal<bool> {
+    Owner::current()
+        .expect("editor_visible requires an active Owner scope")
+        .cache("editor_visible", || Signal::new(false))
+        .as_ref()
+        .clone()
+}
 
 /// Serialises the file's tests: the pane-count Signal is reached through the
 /// per-`ShellCore` root owner, but the process-global focus-request mailbox and
@@ -95,7 +107,7 @@ impl WidgetCore for PaneFocusView {
     // (the method is retired).
     fn view(_state: (), _frame: &Frame) -> Scene {
         let n = pane_count().get().min(PANE_TAGS.len());
-        let panes: Vec<Scene> = (0..n)
+        let mut children: Vec<Scene> = (0..n)
             .map(|i| {
                 Scene::Container(
                     ContainerNode::new(Vec::new())
@@ -104,7 +116,17 @@ impl WidgetCore for PaneFocusView {
                 )
             })
             .collect();
-        Scene::Container(ContainerNode::new(panes).with_tag(ROOT_TAG))
+        // (R1020 §5.39) A conditionally-painted focus stop — present only while
+        // `editor_visible` is set (the inline-editor model). Exercises the
+        // focus-on-appear re-derive.
+        if editor_visible().get() {
+            children.push(Scene::Container(
+                ContainerNode::new(Vec::new())
+                    .with_tag(EDITOR_TAG)
+                    .with_layout(LayoutStyle::new().with_focusable(true)),
+            ));
+        }
+        Scene::Container(ContainerNode::new(children).with_tag(ROOT_TAG))
     }
 
     fn event_name(_event: ()) -> &'static str {
@@ -195,5 +217,35 @@ fn removing_the_focused_pane_drops_focus_safely() {
     assert!(
         !core.focus().tab_order().iter().any(|t| t == "pane#2"),
         "the closed pane is no longer a focus target",
+    );
+}
+
+#[test]
+fn focus_request_to_a_just_painted_node_re_derives() {
+    let _g = TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut core = ShellCore::<PaneFocusView>::new();
+    let scene = core.compute_paint_scene(640, 384);
+    assert!(
+        !core.focus().tab_order().iter().any(|t| t == EDITOR_TAG),
+        "the inline editor is hidden (unpainted) at boot, so it is not enumerated",
+    );
+
+    // Reproduce the inline-editor race: make the editor paintable AND request
+    // focus to it with NO intervening paint — exactly what a reducer that opens
+    // an inline editor does (set the visibility signal + focus_request in one
+    // dispatch).
+    core.root_owner().run(|| editor_visible().set(true));
+    pinion_core::focus_request::request(EDITOR_TAG);
+
+    // Drive the dispatch tail (handle_tail -> drain_focus_request). The current
+    // enumeration (from the pre-signal paint) lacks EDITOR_TAG, so focus_set
+    // misses; the R1020 re-derive re-runs the view (the editor now paints),
+    // enumerates it, and the retry lands focus. Pre-R1020 this request would be
+    // silently dropped (focus-on-appear broken).
+    core.finalize_frame(scene);
+    assert_eq!(
+        core.focus().focused(),
+        Some(EDITOR_TAG),
+        "focus landed on the just-painted editor via the drain-time re-derive",
     );
 }

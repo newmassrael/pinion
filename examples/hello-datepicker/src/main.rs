@@ -27,12 +27,13 @@
 //!
 //! ## Keyboard model (WAI-ARIA APG date grid)
 //!
-//! The grid is a **single Tab stop** ([`focusable_tags`] returns the grid
-//! root + the two nav buttons), and the focused day is an internal roving
+//! The grid is a **single Tab stop** (the grid root + the two nav buttons
+//! are marked `.with_focusable(true)` — the scene-derived §5.39 Tab stops),
+//! and the focused day is an internal roving
 //! *active descendant* — the coordinator's `focused_day` slot — not a
 //! shell-focus tag. This is the WAI-ARIA grid pattern (single tab stop +
 //! `aria-activedescendant`), the same model `hello-radio-group` uses, and
-//! it keeps the boot-seeded `focusable_tags` enumeration stable across
+//! it keeps the `.with_focusable(true)` Tab-stop set stable across
 //! month changes (no month-varying per-day Tab stops). While the grid root
 //! owns shell focus:
 //! - `ArrowLeft` / `ArrowRight` move the active descendant `∓1` / `±1`,

@@ -28,8 +28,9 @@
 //!
 //! ## Selection model — cell range (anchor + extent)
 //!
-//! The grid is a **single Tab stop** ([`focusable_tags`] returns only the
-//! grid root) with an internal 2-D roving *active descendant* (the
+//! The grid is a **single Tab stop** (only the grid root is marked
+//! `.with_focusable(true)` — the scene-derived §5.39 Tab stop) with an
+//! internal 2-D roving *active descendant* (the
 //! coordinator's `focused_row` / `focused_col` slots), reported as the
 //! `aria-activedescendant` — the WAI-ARIA grid pattern. While the grid owns
 //! shell focus the keyboard drives the **cell range** selection (the

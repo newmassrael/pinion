@@ -569,7 +569,7 @@ fn view_viewport_raw(state: ButtonState, theme: &Theme) -> Scene {
                 .with_align_items(AlignItems::Center)
                 .with_size(Size::px(180, 48))
                 // (R1020 §5.39) The viewport button is a Tab stop —
-                // `focusable_tags` enumerates it alongside the inspector
+                // `.with_focusable(true)` marks it alongside the inspector
                 // tree. This binding hand-rolls the button Container (not
                 // `ButtonStyle`/`button_scene`), so the focus-stop opt-in
                 // is the direct-node marker on its `LayoutStyle`.
@@ -645,7 +645,7 @@ fn view_inspector_content(state: ButtonState, theme: &Theme) -> Scene {
         &tree_items,
         theme,
         // (R1020 §5.39) The inspector tree is a Tab stop —
-        // `focusable_tags` enumerates it alongside the viewport button —
+        // `.with_focusable(true)` marks it alongside the viewport button —
         // so its `TreeViewStyle` opts into the scene-derived enumeration.
         &TreeViewStyle::m3_default().with_focusable(true),
         &focus,

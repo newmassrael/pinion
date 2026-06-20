@@ -69,7 +69,8 @@ const THEME_TAG: &str = "app";
 const N: usize = 4;
 
 /// Per-chip dispatch tags. `&'static str` (not `format!`) because
-/// [`WidgetCore::focusable_tags`] returns `Vec<&'static str>`. Each tag
+/// each tag is marked `.with_focusable(true)` in the view fn (the
+/// scene-derived §5.39 Tab stops). Each tag
 /// lands on one chip, so the input router hit-tests a click on chip `i`
 /// straight to that chip's `ToggleExternal`.
 const CHIP_TAGS: [&str; N] = ["chip_0", "chip_1", "chip_2", "chip_3"];

@@ -41,10 +41,11 @@
 //! safe default for a destructive prompt), Tab / Shift+Tab are confined
 //! to `[dialog_cancel, dialog_ok]` (the trigger behind the scrim is
 //! unreachable), and closing restores focus to the trigger. The action
-//! tags are *not* in [`focusable_tags`](DialogView) — they are focusable
-//! only while the modal is up, the dynamic-focusable case the static
-//! enumeration cannot express (todomvc's R664 phantom-tab-stop note);
-//! the modal scope *is* the dynamic enumeration for the dialog's life.
+//! tags are *not* marked `.with_focusable(true)` in the base view — they
+//! are focusable only while the modal is up, the dynamic-focusable case a
+//! scene that is always present cannot express (todomvc's R664
+//! phantom-tab-stop note); the modal scope *is* the dynamic Tab-stop set
+//! for the dialog's life.
 //!
 //! The scrim (`dialog_scrim`) is a full-window backdrop placed last in
 //! the scene, so it hit-tests above the background and blocks pointer

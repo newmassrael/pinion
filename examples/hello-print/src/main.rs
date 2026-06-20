@@ -65,7 +65,7 @@ const INC_TAG: &str = "inc";
 const JOB_TAG: &str = "job";
 
 /// The focusable / rovable buttons, in keyboard-roving order (R834: the
-/// `focusable_tags` + `activate_or_rove` keyboard model).
+/// `.with_focusable(true)` Tab-stop + `activate_or_rove` keyboard model).
 const BUTTON_TAGS: [&str; 4] = [CYCLE_TAG, DEC_TAG, INC_TAG, PRINT_TAG];
 
 const PRINT_CLICK: &str = intent_tag!("print", "click");

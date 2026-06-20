@@ -33,8 +33,8 @@
 //! `ScrimExternal`) is the disciplined choice per
 //! `[[abstraction-needs-second-consumer]]`: it already emits the
 //! activation intent, and the scrim's non-button concerns are handled
-//! by the binding (omitted from the a11y tree, painted flat, never in
-//! `focusable_tags`). Dialog keeps the WAI-ARIA modal default (Esc
+//! by the binding (omitted from the a11y tree, painted flat, never
+//! marked `.with_focusable(true)`). Dialog keeps the WAI-ARIA modal default (Esc
 //! only) by *not* binding an External to its scrim; the mechanism is
 //! now available, opt-in per widget.
 //!

@@ -22,8 +22,8 @@
 //! sequence. The two thumbs paint with the composite hit/focus tags
 //! `range#low` / `range#high` (the R51.42 §5.35 composite protocol routes
 //! their pointer events to the single `Scene::External("range")`), and
-//! [`focusable_tags`](WidgetCore::focusable_tags) seeds both as Tab stops,
-//! so **clicking a thumb focuses it**. `ArrowRight`/`ArrowUp` raise the
+//! both thumbs are marked `.with_focusable(true)` (the scene-derived §5.39
+//! Tab stops), so **clicking a thumb focuses it**. `ArrowRight`/`ArrowUp` raise the
 //! focused thumb by [`KEY_STEP`], `ArrowLeft`/`ArrowDown` lower it,
 //! `Home`/`End` jump to the thumb's min/max — every key writes through
 //! the same `intervene("low"|"high")` channel the drag + RPC use, so the
@@ -152,7 +152,7 @@ fn read_range(scene: &Scene) -> RangeState {
 
 /// A thumb box at normalised position `value`, tagged with its composite
 /// hit/focus tag (`range#low` / `range#high`) so a click **focuses** it
-/// (the tag is a [`focusable_tags`](WidgetCore::focusable_tags) member)
+/// (the tag is marked `.with_focusable(true)` — a scene-derived §5.39 Tab stop)
 /// and the press routes to the shared `range` external (R51.42 §5.35
 /// composite protocol). Takes the resolved `theme` (mirrors
 /// `hello-slider-discrete`'s `tick`) rather than re-resolving `use_theme`

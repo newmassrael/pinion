@@ -3738,6 +3738,13 @@ impl<V: WidgetView> ShellCore<V> {
     /// resolve to the same reactive state the live paint will read; it is pure
     /// (§6.3) so this extra invocation has no observable effect beyond the
     /// enumeration it produces.
+    ///
+    /// "No observable effect" rests on the §6.3 view-fn discipline that any
+    /// `Effect::new` a view fn creates lives inside an [`Owner::cache`](crate::reactive::Owner::cache)
+    /// factory (run once per owner+key), not bare in the view body. A bare
+    /// `Effect::new` would fire eagerly on this extra view run and double-
+    /// execute — no current binding does that, but it is the invariant this
+    /// re-derive (and the boot-seed run) depends on.
     fn refresh_focusable_from_view(&mut self) {
         let cached_state = *self.core.cached_state();
         let frame = Frame::with_dt(0.0);

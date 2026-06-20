@@ -26,8 +26,9 @@
 //!
 //! ## Keyboard model (WAI-ARIA APG data grid)
 //!
-//! The grid is a **single Tab stop** ([`focusable_tags`] returns only the
-//! grid root); the focused cell is an internal 2-D roving *active
+//! The grid is a **single Tab stop** (only the grid root is marked
+//! `.with_focusable(true)` — the scene-derived §5.39 Tab stop); the
+//! focused cell is an internal 2-D roving *active
 //! descendant* (the coordinator's `focused_row` / `focused_col` slots).
 //! While the grid root owns shell focus:
 //! - `ArrowLeft` / `ArrowRight` move the active descendant column `∓1` /

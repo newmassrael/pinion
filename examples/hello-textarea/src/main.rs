@@ -98,7 +98,8 @@
 //! `apply_style_run` / `clear_style_runs` op on the live selection. Two
 //! framework axes compose to give the editor's canonical behaviour with no
 //! new substrate: *routing* (the `InputRouter`, by composite tag) applies
-//! the format, while *focus* (the `focusable_tags()` enumeration) leaves
+//! the format, while *focus* (the scene-derived `.with_focusable(true)`
+//! Tab-stop set) leaves
 //! the strip out, so the W3C / Qt-`NoFocus` rule the shell encodes means a
 //! control click never steals the field's focus — the selection survives.
 //! The B / I "pressed" state is reflective: the cell paints a tonal fill
@@ -209,7 +210,7 @@ const INK_BLUE: Rgb = (0x26, 0x4C, 0xD8);
 // External — which emits a `"command"` intent the reducer maps to a format
 // op on the live selection. The old manual `hit_tag` / `try_toolbar_press`
 // rect-scan (an application re-implementing the router) is gone. Because
-// the strip is *not* a `focusable_tags()` member, clicking a control
+// the strip is *not* marked `.with_focusable(true)`, clicking a control
 // applies formatting without stealing the field's focus — the W3C / Qt
 // `NoFocus` rule the shell already encodes (only focusable tags focus on
 // press) supplies the no-focus-steal the decoration used to need by
@@ -699,8 +700,9 @@ impl WidgetCore for TextAreaView {
     /// paints the controls with the matching `fmt_toolbar#<i>` composite
     /// tags so the `InputRouter` dispatches a click here, and [`Self::update`]
     /// maps the emitted `"command"` intent to a format op. The strip is
-    /// absent from [`WidgetView::focusable_tags`] (the textarea declares
-    /// none), so clicking a control never steals the field's focus.
+    /// not marked `.with_focusable(true)` (the textarea is the only
+    /// scene-derived §5.39 Tab stop), so clicking a control never steals
+    /// the field's focus.
     fn create_extra_externals() -> Vec<ExtraExternal> {
         vec![ExtraExternal::new(
             FMT_TAG,

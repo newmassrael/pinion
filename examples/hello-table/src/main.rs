@@ -28,8 +28,9 @@
 //!
 //! ## Keyboard model (WAI-ARIA APG data grid)
 //!
-//! The grid is a **single Tab stop** ([`focusable_tags`] returns only the
-//! grid root), and the focused cell is an internal 2-D roving *active
+//! The grid is a **single Tab stop** (only the grid root is marked
+//! `.with_focusable(true)` — the scene-derived §5.39 Tab stop), and the
+//! focused cell is an internal 2-D roving *active
 //! descendant* — the coordinator's `focused_row` / `focused_col` slots —
 //! not a shell-focus tag. This is the WAI-ARIA grid pattern (single tab
 //! stop + `aria-activedescendant`), the same model `hello-datepicker`
