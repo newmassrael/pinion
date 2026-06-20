@@ -1094,13 +1094,18 @@ fn has_glyph_cluster(cell: &TermCell) -> bool {
 /// monospace advance sources its [`CellMetric`] from
 /// [`pinion_text::LayoutCache::measure_monospace_cell`] (the R968
 /// font-derivation hook). R1013 fixed the draw-order overpaint that made a
-/// wide head's overflowing glyph read as "compressed"; what remains a
-/// documented open question for a later font-policy slice is a CJK / emoji
-/// fallback face whose em is *metric-matched* to the Latin half-width so a
-/// wide glyph exactly fills its 2-column span (the current fallback's em is
-/// not pinned to `2 * cell_w`, so it may under-fill — but it is no longer
-/// clipped). Horizontal scaling / centring the glyph to force-fill the span
-/// is rejected (R1002: it distorts letterforms / breaks box-drawing edges).
+/// wide head's overflowing glyph read as "compressed". The residual is that
+/// this §5.36 parley bridge shapes through `FontContext::new()` (system
+/// fallback), whose CJK face is not metric-matched to the Latin half-width,
+/// so a wide glyph under-fills its 2-column span (R1013.1 measured ~70.8%,
+/// left-aligned) — and it is already at the cell-`h`-maximal size, so it
+/// cannot be enlarged without overflowing the cell; horizontal scale /
+/// centring to force-fill is rejected (R1002 distortion). This is NOT an
+/// open renderer question: the grid font policy is **decided in §5.37**
+/// (self-hosted text engine; bundled Nanum Gothic / Noto Sans, OFL — see
+/// `pinion-text-font`), which supersedes this §5.36 bridge and resolves the
+/// under-fill by font design once it grows to render. Do not add a font
+/// stopgap inside this §5.36 bridge — it invests in a superseded layer.
 ///
 /// R995 §2 #6 — this Vello arm and the TUI `paint_text_grid_inner` must agree
 /// on cell *structure* (which cell inks a glyph / reads reversed / forms a

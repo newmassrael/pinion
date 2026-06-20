@@ -3450,6 +3450,11 @@
           "file": "crates/pinion-text/src/caret.rs",
           "symbol": "CaretRect",
           "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-runtime/src/paint_adapter.rs",
+          "symbol": "paint_text_grid",
+          "kind": "references"
         }
       ]
     },
@@ -5772,7 +5777,9 @@
         "R51.124 — pinion-tui::ShellCoreTui wraps CoreShell<V> + refresh_state 제거 (auto-tail, 4-round #3)",
         "R51.125 (dispatch_rpc trait) defer — cycle 0 / 1 impl / 2nd RPC consumer 없음 (TUI carry)",
         "R51.140 — clippy lint family 사전-audit 회복 (R51.137-139 reactive 10건 누적) [[clippy-pre-audit-recovery]]",
-        "test_fixtures doc: rust,no_run + # hidden imports (Rust canonical); compile-check 보존 (R588)."
+        "test_fixtures doc: rust,no_run + # hidden imports (Rust canonical); compile-check 보존 (R588).",
+        "R1013.1: GUI grid font policy decided in 5.37 (self-hosted, Nanum/Noto OFL), not an open question",
+        "R1013.1: 5.36 system-fallback under-fills CJK ~70.8%; no 5.36 stopgap, resolves in 5.37"
       ],
       "alternatives_rejected": [
         {
@@ -6167,6 +6174,11 @@
         {
           "file": "crates/pinion-tui/src/paint.rs",
           "symbol": "cell_to_buf_xy",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-runtime/src/paint_adapter.rs",
+          "symbol": "paint_text_grid",
           "kind": "implements"
         }
       ]
@@ -9931,6 +9943,50 @@
       "publishable_carry_forward_bullets": [
         "Metric-matched CJK/emoji fallback face (em pinned to 2*cell_w) so a wide glyph exactly FILLS its 2-cell span — post-R1013 it renders un-clipped but may under-fill; exact fill needs a paired font (per-cell uniform up-sizing risks cell_h overflow), a font-asset/policy slice not a paint bug",
         "Two-pass also protects any other overflowing glyph (italic overhang, emoji) from a neighbour cell's bg overpaint — no further paint action needed"
+      ]
+    },
+    "R1013.1": {
+      "decision_summary": "R1013.1 §5.41 §5.36/§5.37 corrective — grid CJK 'font-policy' 코드 주석이 §5.37(자체 엔진 + 나눔고딕) 결정과 모순되는 낡은 SSOT 복제본이었음; 주석을 §5.37로 라우팅 + paint_text_grid binding 결손 보강. 근본 구조: 코드 주석 = 미동기 2차 복사본을 binding/T1-T4 가 지배 섹션과 대조하지 않음",
+      "changes_bullets": [
+        "paint_adapter.rs paint_text_grid 폰트 주석 정정: \"CJK fallback = open question deferred to a later font-policy slice\" -> 5.37(자체 엔진, 나눔고딕/Noto OFL 번들, pinion-text-font) 인용; 5.36 system-fallback under-fill (R1013.1 실측 70.8% 좌측정렬, cell_h-maximal -> 왜곡 없는 paint fix 불가), 5.36-side stopgap 금지",
+        "binding 결손 보강: paint_text_grid -> 5.41 (implements) + 5.36 (references); Vello grid paint 가 어느 섹션에도 unbound 였음 = 진단한 code->section 링크 부재의 실물",
+        "5.41 caveat 2건: GUI grid font policy=5.37 (not an open question) + 5.36 system-fallback under-fill ~70.8% / no 5.36 stopgap"
+      ],
+      "verification_bullets": [
+        "SSOT 확인: 나눔고딕(Naver, OFL) 결정은 5.37.1/5.37.2 caveats/inputs + changelog Round 452-463 에 이미 등록 — drift 는 코드 주석(미동기 2차 복사본)에서 발생",
+        "구조 진단: 5.36 caveat='5.37 supersede' 존재하나 paint_text_grid 가 5.36/5.41 어디에도 unbound; T1-T4(prose cross-ref/frozen/style) 가 code-comment <-> section-status 모순 미검사 (validator 공백)",
+        "코드 동작 불변(doc/주석/binding only); clippy --workspace --all-targets --features pinion-runtime/vello = 0; validate-workspace T1=0"
+      ],
+      "impact_refs": [
+        "5.41",
+        "5.36",
+        "5.37"
+      ],
+      "carry_forward_bullets": [
+        "validator 규칙 후보: \"deferred/open/TODO\" 코드 주석은 소유 섹션 인용 필수 + 그 섹션 status=open 이어야 함(active면 reject) — stale-doc drift 게이트화 (Mnemosyne 자체 확장, 별도 라운드)",
+        "subsystem->sections 인덱스 / binding 조회 시 supersede 체인 반환 — 휴면 상시결정(5.37) 작업지점 surfacing (별도 라운드)",
+        "CJK 2칸 정확 fill canonical = 5.37 자체 엔진이 render 까지 성장 (현재 R50.1.x parser, 휴면) — 나눔고딕으로 결정적 렌더"
+      ],
+      "publishable_decision_summary": "R1013.1 §5.41 §5.36/§5.37 corrective — grid CJK 'font-policy' 코드 주석이 §5.37(자체 엔진 + 나눔고딕) 결정과 모순되는 낡은 SSOT 복제본이었음; 주석을 §5.37로 라우팅 + paint_text_grid binding 결손 보강. 근본 구조: 코드 주석 = 미동기 2차 복사본을 binding/T1-T4 가 지배 섹션과 대조하지 않음",
+      "publishable_changes_bullets": [
+        "paint_adapter.rs paint_text_grid 폰트 주석 정정: \"CJK fallback = open question deferred to a later font-policy slice\" -> 5.37(자체 엔진, 나눔고딕/Noto OFL 번들, pinion-text-font) 인용; 5.36 system-fallback under-fill (R1013.1 실측 70.8% 좌측정렬, cell_h-maximal -> 왜곡 없는 paint fix 불가), 5.36-side stopgap 금지",
+        "binding 결손 보강: paint_text_grid -> 5.41 (implements) + 5.36 (references); Vello grid paint 가 어느 섹션에도 unbound 였음 = 진단한 code->section 링크 부재의 실물",
+        "5.41 caveat 2건: GUI grid font policy=5.37 (not an open question) + 5.36 system-fallback under-fill ~70.8% / no 5.36 stopgap"
+      ],
+      "publishable_verification_bullets": [
+        "SSOT 확인: 나눔고딕(Naver, OFL) 결정은 5.37.1/5.37.2 caveats/inputs + changelog Round 452-463 에 이미 등록 — drift 는 코드 주석(미동기 2차 복사본)에서 발생",
+        "구조 진단: 5.36 caveat='5.37 supersede' 존재하나 paint_text_grid 가 5.36/5.41 어디에도 unbound; T1-T4(prose cross-ref/frozen/style) 가 code-comment <-> section-status 모순 미검사 (validator 공백)",
+        "코드 동작 불변(doc/주석/binding only); clippy --workspace --all-targets --features pinion-runtime/vello = 0; validate-workspace T1=0"
+      ],
+      "publishable_impact_refs": [
+        "5.41",
+        "5.36",
+        "5.37"
+      ],
+      "publishable_carry_forward_bullets": [
+        "validator 규칙 후보: \"deferred/open/TODO\" 코드 주석은 소유 섹션 인용 필수 + 그 섹션 status=open 이어야 함(active면 reject) — stale-doc drift 게이트화 (Mnemosyne 자체 확장, 별도 라운드)",
+        "subsystem->sections 인덱스 / binding 조회 시 supersede 체인 반환 — 휴면 상시결정(5.37) 작업지점 surfacing (별도 라운드)",
+        "CJK 2칸 정확 fill canonical = 5.37 자체 엔진이 render 까지 성장 (현재 R50.1.x parser, 휴면) — 나눔고딕으로 결정적 렌더"
       ]
     },
     "R232": {
