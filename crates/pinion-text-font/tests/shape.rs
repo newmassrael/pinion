@@ -125,6 +125,20 @@ fn render_run_aligns_mixed_height_glyphs_on_one_baseline() {
 }
 
 #[test]
+fn render_run_single_glyph_is_byte_identical_to_raster() {
+    // render_run of one glyph == that glyph's coverage, byte-for-byte. Proves the
+    // atlas round-trip inside render_run (rasterize → pack → blit sub-rect) is
+    // lossless with no off-by-one in the packed-sub-rect read.
+    let font = load(NOTO);
+    let h = font.glyph_id_for(0x0048).expect("'H' mapped");
+    let direct = font.rasterize_glyph(h, 48.0).expect("rasterizes");
+    let rendered = font.render_run("H", 48.0).expect("renders");
+    assert_eq!((rendered.width, rendered.height), (direct.width, direct.height), "same size");
+    assert_eq!((rendered.left, rendered.top), (direct.left, direct.top), "same pen offset");
+    assert_eq!(rendered.alpha, direct.alpha, "render_run('H') is byte-identical to the raster");
+}
+
+#[test]
 fn render_run_blank_run_is_empty() {
     // A space is an empty outline: it advances the pen but inks nothing, so a
     // run of only spaces (and the empty string) composites to an empty bitmap.

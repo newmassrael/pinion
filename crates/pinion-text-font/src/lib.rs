@@ -19,6 +19,7 @@
 //! R50.0 §5.37 self-hosted text engine ratify → §5.37.1 OpenType
 //! parser sub-scope → R50.1.1 sfnt foundation.
 
+pub mod atlas;
 mod error;
 mod font;
 pub mod raster;
@@ -27,6 +28,7 @@ mod sfnt;
 pub mod shape;
 pub mod tables;
 
+pub use atlas::{AtlasGlyph, GlyphAtlas};
 pub use error::{FieldValue, ParseError};
 pub use font::Font;
 pub use raster::{Coverage, RasterError};

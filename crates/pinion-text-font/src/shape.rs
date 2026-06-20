@@ -31,7 +31,13 @@
 //! deterministic, never a fractional-coordinate AA shimmer.
 
 use crate::Font;
+use crate::atlas::{AtlasGlyph, GlyphAtlas};
 use crate::raster::{Coverage, RasterError};
+
+/// Shelf-wrap width of the per-run glyph atlas. Output is independent of it (the
+/// composite is sized from each glyph's pen offset, not the atlas layout); it
+/// only bounds how wide a packing row grows before wrapping.
+const ATLAS_WIDTH: usize = 256;
 
 /// One glyph in a shaped run, placed on the horizontal baseline.
 ///
@@ -92,7 +98,8 @@ pub fn shape_run(font: &Font, text: &str, px_per_em: f32) -> ShapedRun {
 /// Shape `text` and composite every glyph's AA coverage into one bitmap, each at
 /// its integer-snapped pen position — the first time §5.37 turns a string into
 /// pixels. Returns [`Coverage::empty`] for an empty or all-blank run (e.g. only
-/// spaces).
+/// spaces). Glyphs are rasterized once through a per-run [`GlyphAtlas`]
+/// (§5.37.9), so a repeated glyph is a cache hit rather than a re-rasterization.
 ///
 /// Glyph coverages are combined by **same-color alpha-over** (`a + b - a·b`), the
 /// correct union for masks that will be filled with one text color:
@@ -106,19 +113,21 @@ pub fn shape_run(font: &Font, text: &str, px_per_em: f32) -> ShapedRun {
 pub fn render_run(font: &Font, text: &str, px_per_em: f32) -> Result<Coverage, RasterError> {
     let run = shape_run(font, text, px_per_em);
 
-    // Rasterize each non-blank glyph, remembering its integer-snapped pen x.
-    // Blank glyphs (space) advance the pen but contribute no ink.
-    let mut placed: Vec<(i32, Coverage)> = Vec::new();
+    // Rasterize each glyph at most once through a per-run atlas (a repeated glyph
+    // is a cache hit), remembering its integer-snapped pen x. Blank glyphs (space)
+    // advance the pen but pack nothing (width 0).
+    let mut atlas = GlyphAtlas::new(ATLAS_WIDTH);
+    let mut placed: Vec<(i32, AtlasGlyph)> = Vec::new();
     for glyph in &run.glyphs {
-        let cov = font.rasterize_glyph(glyph.glyph_id, px_per_em)?;
-        if cov.is_empty() {
+        let entry = atlas.get_or_insert(font, glyph.glyph_id, px_per_em)?;
+        if entry.width == 0 {
             continue;
         }
         #[allow(clippy::cast_possible_truncation)]
         // pen x is a finite advance accumulation; round() snaps onto the raster
         // grid for deterministic placement.
         let pen_x = glyph.x.round() as i32;
-        placed.push((pen_x, cov));
+        placed.push((pen_x, entry));
     }
     if placed.is_empty() {
         return Ok(Coverage::empty());
@@ -132,14 +141,13 @@ pub fn render_run(font: &Font, text: &str, px_per_em: f32) -> Result<Coverage, R
     // each glyph width/height <= MAX_DIM (4096), exact in i32.
     let (min_x, min_y, max_x, max_y) = placed.iter().fold(
         (i32::MAX, i32::MAX, i32::MIN, i32::MIN),
-        |(min_x, min_y, max_x, max_y), (pen_x, cov)| {
-            let gx = pen_x + cov.left;
-            let gy = cov.top;
+        |(min_x, min_y, max_x, max_y), (pen_x, g)| {
+            let gx = pen_x + g.left;
             (
                 min_x.min(gx),
-                min_y.min(gy),
-                max_x.max(gx + cov.width as i32),
-                max_y.max(gy + cov.height as i32),
+                min_y.min(g.top),
+                max_x.max(gx + g.width as i32),
+                max_y.max(g.top + g.height as i32),
             )
         },
     );
@@ -147,14 +155,15 @@ pub fn render_run(font: &Font, text: &str, px_per_em: f32) -> Result<Coverage, R
     #[allow(clippy::cast_sign_loss)] // max_* > min_* (each placed glyph adds positive extent).
     let (width, height) = ((max_x - min_x) as usize, (max_y - min_y) as usize);
     let mut alpha = vec![0u8; width * height];
-    for (pen_x, cov) in &placed {
+    let (atlas_w, atlas_alpha) = (atlas.width(), atlas.alpha());
+    for (pen_x, g) in &placed {
         #[allow(clippy::cast_sign_loss)] // pen_x + left >= min_x, top >= min_y by the fold above.
-        let (off_x, off_y) = ((pen_x + cov.left - min_x) as usize, (cov.top - min_y) as usize);
-        for gy in 0..cov.height {
+        let (off_x, off_y) = ((pen_x + g.left - min_x) as usize, (g.top - min_y) as usize);
+        for gy in 0..g.height {
             let dst_row = (off_y + gy) * width + off_x;
-            let src_row = gy * cov.width;
-            for gx in 0..cov.width {
-                let src = cov.alpha[src_row + gx];
+            let src_row = (g.y + gy) * atlas_w + g.x;
+            for gx in 0..g.width {
+                let src = atlas_alpha[src_row + gx];
                 if src != 0 {
                     let dst = &mut alpha[dst_row + gx];
                     *dst = over(*dst, src);
