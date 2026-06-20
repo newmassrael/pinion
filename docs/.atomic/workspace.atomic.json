@@ -4341,7 +4341,8 @@
         "linebreak(§5.37.7) 없음 — 단일 행 run 전제; multi-line 은 후속 layer",
         "production paint 는 여전히 §5.36 swash — render_run 은 test forcing-consumer, paint-wiring = atlas 후",
         "render_run 합성 = same-color alpha-over(a+b−ab) + integer pen snap; 겹침 AA fringe 비-double-darken",
-        "combined bitmap 크기 미상한 — 호출자가 viewport clip 책임 (per-glyph 는 MAX_DIM guard)"
+        "combined bitmap 크기 미상한 — 호출자가 viewport clip 책임 (per-glyph 는 MAX_DIM guard)",
+        "R1018: render_run 은 글리프를 §5.37.9 GlyphAtlas 경유로 rasterize-once(run 내 dedup); 출력 픽셀 불변"
       ],
       "alternatives_rejected": [
         {
@@ -4517,6 +4518,86 @@
           "file": "crates/pinion-text-font/src/raster/outline.rs",
           "symbol": "Affine",
           "kind": "implements"
+        }
+      ]
+    },
+    "5.37.9": {
+      "title": "Glyph atlas — CPU rasterize-once + shelf-pack (R50.9 sub-scope)",
+      "parent_doc": "docs/GENERATED.md",
+      "parent_section": "5.37",
+      "decision_status": "active",
+      "intent": "§5.37's cache between rasterizer and GPU paint — rasterize each (glyph, size) once and shelf-pack its coverage into one shared grayscale bitmap with sub-rect + pen offset; the GPU-upload-ready image.",
+      "rationale_bullets": [
+        "raster(§5.37.8) ↔ paint 사이 캐시 — (glyph,size) 1회 rasterize, 반복은 cache hit",
+        "shelf-pack 단일 grayscale bitmap = GPU 1회 upload + glyph quad 마다 sample",
+        "§5.37 로드맵 'GPU atlas' 단 — paint-wiring(swash 대체) 직전 마지막 self-host layer",
+        "on-demand grow(wider/taller) = caller-side size 상한 불요, OOB·silent-drop 없음",
+        "render_run 첫 consumer — run 내 반복 글리프 dedup(픽셀-동일 검증)"
+      ],
+      "inputs_bullets": [
+        "§5.37.8 Font::rasterize_glyph(glyph_id, px) → Coverage (cache miss 마다)",
+        "(glyph_id, px.to_bits()) cache key — 동일 size 반복 = 1 entry",
+        "atlas width — shelf-wrap 목표(초과 글리프는 on-demand grow)"
+      ],
+      "outputs_bullets": [
+        "AtlasGlyph { x, y, width, height (atlas sub-rect), left, top (pen offset) }",
+        "GlyphAtlas::get_or_insert(font, gid, px) -> Result<AtlasGlyph, RasterError>",
+        "alpha()/width()/height()/len()/is_empty() — packed bitmap + cache introspect",
+        "blank glyph(space) → width/height 0 cached(재-rasterize 안 함)"
+      ],
+      "caveats_bullets": [
+        "R50.9 scope = CPU pack + cache; GPU upload / SDF·MSDF = 후속 layer",
+        "eviction 없음 — cache 무한 성장(단일 run / 유한 UI glyph set 엔 무방, R50.9.x)",
+        "size key = px.to_bits() 정확 bit-identity — float noise 다른 size 는 미병합",
+        "atlas grow(ensure_width row-rewrite / ensure_height append)는 logical (x,y) 보존 → 기존 entry sub-rect 유효",
+        "production paint 는 여전히 §5.36 swash — render_run(첫 consumer) + test 로만 검증, paint-wiring=후속"
+      ],
+      "alternatives_rejected": [
+        {
+          "alternative": "vello draw_glyphs 에 glyph id 위임",
+          "reason": "vello 가 GPU raster = §5.37 self-host raster 이탈"
+        },
+        {
+          "alternative": "skyline / MaxRects bin-pack",
+          "reason": "캐시(monotonic-grow)엔 shelf 로 충분; 복잡도 YAGNI"
+        },
+        {
+          "alternative": "per-glyph 개별 GPU texture",
+          "reason": "upload/bind 과다; 단일 atlas 1회 upload 가 표준"
+        },
+        {
+          "alternative": "size 미양자화 f32 key",
+          "reason": "NaN/noise 비결정; bit-identity key 가 deterministic"
+        },
+        {
+          "alternative": "eviction(LRU) 즉시 구현",
+          "reason": "4번째 consumer gate 전 투기; 무한-grow 가 현 scope 충분"
+        }
+      ],
+      "bindings": [
+        {
+          "file": "crates/pinion-text-font/src/atlas.rs",
+          "symbol": "GlyphAtlas",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-text-font/src/atlas.rs",
+          "symbol": "AtlasGlyph",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-text-font/src/atlas.rs",
+          "symbol": "GlyphAtlas::get_or_insert",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-text-font/src/shape.rs",
+          "symbol": "render_run",
+          "kind": "references"
+        },
+        {
+          "file": "crates/pinion-text-font/tests/atlas.rs",
+          "kind": "references"
         }
       ]
     },
@@ -10489,6 +10570,60 @@
         "grapheme clustering / combining marks (codepoint→cluster) = R50.6.x",
         "linebreak §5.37.7 (multi-line run) = later layer",
         "GPU atlas + paint-wiring (swash 대체) — render_run still test forcing-consumer",
+        "2 pre-existing cargo doc dangling (cmap best_subtable / int16[4]) = separate docs round"
+      ]
+    },
+    "R1018": {
+      "decision_summary": "R1018 §5.37.9 glyph atlas — GlyphAtlas rasterizes each (glyph,size) once and shelf-packs its coverage into one grayscale bitmap with sub-rect + pen offset (AtlasGlyph); the GPU-upload-ready image, the last self-hosted layer before paint-wiring replaces the §5.36 swash bridge. render_run refactored to source glyphs through a per-run atlas (rasterize-once dedup), output pixels byte-identical (regression test). GPU upload + SDF/MSDF + eviction deferred R50.9.x; production paint still §5.36 swash.",
+      "changes_bullets": [
+        "atlas.rs new module — GlyphAtlas (shelf-pack + cache, on-demand grow) + AtlasGlyph + get_or_insert",
+        "lib.rs — pub mod atlas + re-export GlyphAtlas/AtlasGlyph",
+        "shape.rs — render_run sources glyphs through a per-run GlyphAtlas (rasterize-once), pixels unchanged",
+        "tests/atlas.rs — 5 integration tests (cache hit / lossless subrect / non-overlap pack / shelf wrap / blank)",
+        "tests/shape.rs — render_run('H') byte-identical to rasterize_glyph regression"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace = 7247 passed / 0 failed (R1017 7240 + 7: 5 atlas integration + 1 atlas unit + 1 render_run lossless)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0",
+        "cargo doc pinion-text-font = 0 NEW dangling (2 pre-existing: cmap best_subtable / int16[4])",
+        "validate-workspace T1=0 (sections 66->67, entries 1013->1014)"
+      ],
+      "impact_refs": [
+        "5.37.9",
+        "5.37",
+        "5.37.6",
+        "5.37.8"
+      ],
+      "carry_forward_bullets": [
+        "GPU texture upload + sample = paint-wiring (swash replace) = R50.9.x / next rung",
+        "SDF / MSDF atlas variant = later layer",
+        "cache eviction (LRU) = R50.9.x, 4th-consumer gate (now unbounded growth)",
+        "2 pre-existing cargo doc dangling (cmap best_subtable / int16[4]) = separate docs round"
+      ],
+      "publishable_decision_summary": "R1018 §5.37.9 glyph atlas — GlyphAtlas rasterizes each (glyph,size) once and shelf-packs its coverage into one grayscale bitmap with sub-rect + pen offset (AtlasGlyph); the GPU-upload-ready image, the last self-hosted layer before paint-wiring replaces the §5.36 swash bridge. render_run refactored to source glyphs through a per-run atlas (rasterize-once dedup), output pixels byte-identical (regression test). GPU upload + SDF/MSDF + eviction deferred R50.9.x; production paint still §5.36 swash.",
+      "publishable_changes_bullets": [
+        "atlas.rs new module — GlyphAtlas (shelf-pack + cache, on-demand grow) + AtlasGlyph + get_or_insert",
+        "lib.rs — pub mod atlas + re-export GlyphAtlas/AtlasGlyph",
+        "shape.rs — render_run sources glyphs through a per-run GlyphAtlas (rasterize-once), pixels unchanged",
+        "tests/atlas.rs — 5 integration tests (cache hit / lossless subrect / non-overlap pack / shelf wrap / blank)",
+        "tests/shape.rs — render_run('H') byte-identical to rasterize_glyph regression"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace = 7247 passed / 0 failed (R1017 7240 + 7: 5 atlas integration + 1 atlas unit + 1 render_run lossless)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0",
+        "cargo doc pinion-text-font = 0 NEW dangling (2 pre-existing: cmap best_subtable / int16[4])",
+        "validate-workspace T1=0 (sections 66->67, entries 1013->1014)"
+      ],
+      "publishable_impact_refs": [
+        "5.37.9",
+        "5.37",
+        "5.37.6",
+        "5.37.8"
+      ],
+      "publishable_carry_forward_bullets": [
+        "GPU texture upload + sample = paint-wiring (swash replace) = R50.9.x / next rung",
+        "SDF / MSDF atlas variant = later layer",
+        "cache eviction (LRU) = R50.9.x, 4th-consumer gate (now unbounded growth)",
         "2 pre-existing cargo doc dangling (cmap best_subtable / int16[4]) = separate docs round"
       ]
     },
