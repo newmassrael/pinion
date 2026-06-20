@@ -7,6 +7,7 @@
 
 use crate::error::ParseError;
 use crate::raster::{Coverage, RasterError, rasterize_glyph_outline};
+use crate::shape::ShapedRun;
 use crate::sfnt::{OffsetTable, TableRecord, find_table, parse_sfnt};
 use crate::tables::cmap::Cmap;
 use crate::tables::glyf::{Glyf, Glyph};
@@ -196,6 +197,26 @@ impl Font {
             self.units_per_em(),
             px_per_em,
         )
+    }
+
+    /// Shape `text` into a positioned glyph run at `px_per_em` (§5.37.6
+    /// baseline: cmap codepoint → glyph + hmtx advance, no GSUB/GPOS). See
+    /// [`crate::shape::shape_run`] for the scope and determinism contract.
+    #[must_use]
+    pub fn shape_run(&self, text: &str, px_per_em: f32) -> ShapedRun {
+        crate::shape::shape_run(self, text, px_per_em)
+    }
+
+    /// Render `text` to one composited AA coverage bitmap at `px_per_em`
+    /// (§5.37.6) — the first time the engine turns a string into pixels. See
+    /// [`crate::shape::render_run`].
+    ///
+    /// # Errors
+    ///
+    /// Propagates a [`RasterError`] from any glyph's rasterization (pathological
+    /// size or a not-yet-supported composite).
+    pub fn render_run(&self, text: &str, px_per_em: f32) -> Result<Coverage, RasterError> {
+        crate::shape::render_run(self, text, px_per_em)
     }
 
     /// Font family name (nameID = 1, Windows Unicode BMP en-US 우선).

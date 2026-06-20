@@ -24,11 +24,13 @@ mod font;
 pub mod raster;
 mod reader;
 mod sfnt;
+pub mod shape;
 pub mod tables;
 
 pub use error::{FieldValue, ParseError};
 pub use font::Font;
 pub use raster::{Coverage, RasterError};
+pub use shape::{PositionedGlyph, ShapedRun};
 pub use sfnt::{Flavor as SfntFlavor, OffsetTable, TableRecord, find_table, parse_sfnt};
 pub use tables::glyf::{
     Component, ComponentArgs, ComponentTransform, CompositeGlyph, Glyf, Glyph, GlyphHeader,
