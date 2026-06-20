@@ -15,8 +15,9 @@
 //! (R50.6.x), mirroring the simple → composite raster split (R50.8 → R50.8.x).
 //!
 //! Deliberately NOT yet handled (each is honest deferral, not a silent gap):
-//! GSUB/GPOS execution, script segmentation (§5.37.5), BIDI reorder (§5.37.4 is
-//! parsed but not applied here — a single visual run is assumed), grapheme
+//! GSUB/GPOS execution, script segmentation (§5.37.5), BIDI reorder (§5.37.4
+//! lives in a separate crate, not yet wired in here — a single visual run is
+//! assumed), grapheme
 //! clustering / combining marks (iteration is per codepoint), and line breaking
 //! (§5.37.7 — a single line is assumed). Production paint is still §5.36 swash;
 //! [`render_run`] is a test forcing-consumer until the GPU atlas + paint wiring
@@ -191,14 +192,17 @@ mod tests {
 
     #[test]
     fn over_is_monotone_and_bounded() {
-        // Non-overlapping (one side near-zero) ≈ sum; overlapping never overshoots
-        // 255 and never drops below either operand (union semantics).
+        // Union semantics: >= each operand, never overshoots d+s, AND
+        // non-decreasing in the source (more coverage never lowers the result).
         for d in (0u16..=255).step_by(17) {
-            for s in (0u16..=255).step_by(17) {
+            let mut prev = 0u8;
+            for s in 0u16..=255 {
                 #[allow(clippy::cast_possible_truncation)]
                 let o = over(d as u8, s as u8);
                 assert!(u16::from(o) >= d && u16::from(o) >= s, "over >= each operand");
                 assert!(u16::from(o) <= d + s, "over <= d + s (no overshoot)");
+                assert!(o >= prev, "over(d, ·) non-decreasing in s: {o} < {prev}");
+                prev = o;
             }
         }
     }

@@ -4394,6 +4394,11 @@
         {
           "file": "crates/pinion-text-font/tests/shape.rs",
           "kind": "references"
+        },
+        {
+          "file": "crates/pinion-text-font/src/font.rs",
+          "symbol": "Font::shape_run",
+          "kind": "references"
         }
       ]
     },

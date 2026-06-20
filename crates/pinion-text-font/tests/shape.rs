@@ -87,6 +87,15 @@ fn render_run_positions_two_latin_glyphs_side_by_side() {
         two.ink_sum(),
         one.ink_sum(),
     );
+    // Exact positioning oracle: "HH" is one 'H' bitmap plus a second copy shifted
+    // right by exactly the integer-snapped advance, so the composite width is
+    // round(advance) + one-'H' width. A partial-advance bug (glyph 2 at a
+    // fraction of the advance) changes this width — the ink-thirds check below
+    // alone would not catch it.
+    let advance_px = font.shape_run("HH", px).glyphs[1].x;
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let expected_w = advance_px.round() as usize + one.width;
+    assert_eq!(two.width, expected_w, "second 'H' placed at exactly the advance");
     let third = two.width / 3;
     let ink_in = |xs: std::ops::Range<usize>| {
         (0..two.height).any(|y| xs.clone().any(|x| two.at(x, y) > 0))
@@ -96,14 +105,33 @@ fn render_run_positions_two_latin_glyphs_side_by_side() {
 }
 
 #[test]
+fn render_run_aligns_mixed_height_glyphs_on_one_baseline() {
+    // 'H' (cap height) is taller than 'x' (x-height): they ink above the baseline
+    // with different `top`. The composite must place both on the shared baseline
+    // (min_y = the topmost glyph's top, each blitted at top − min_y), so 'H' ink
+    // reaches a higher row (smaller y) than 'x' ink. A min_y bug (max instead of
+    // min, or per-glyph y offset dropped) would misalign them — same-height runs
+    // like "HH" cannot detect that.
+    let font = load(NOTO);
+    let px = 48.0;
+    let hx = font.render_run("Hx", px).expect("renders");
+    let third = hx.width / 3;
+    let top_row = |xs: std::ops::Range<usize>| {
+        (0..hx.height).find(|&y| xs.clone().any(|x| hx.at(x, y) > 0))
+    };
+    let h_top = top_row(0..third).expect("'H' inks in the left third");
+    let x_top = top_row(hx.width - third..hx.width).expect("'x' inks in the right third");
+    assert!(h_top < x_top, "cap 'H' rises above x-height 'x' on the baseline: H@{h_top} x@{x_top}");
+}
+
+#[test]
 fn render_run_blank_run_is_empty() {
     // A space is an empty outline: it advances the pen but inks nothing, so a
     // run of only spaces (and the empty string) composites to an empty bitmap.
     let font = load(NOTO);
     assert!(font.render_run("", 32.0).expect("renders").is_empty(), "empty string");
-    if font.glyph_id_for(0x0020).is_some() {
-        assert!(font.render_run("   ", 32.0).expect("renders").is_empty(), "all spaces");
-    }
+    assert!(font.glyph_id_for(0x0020).is_some(), "Noto maps U+0020 space");
+    assert!(font.render_run("   ", 32.0).expect("renders").is_empty(), "all spaces ink nothing");
 }
 
 #[test]
@@ -111,9 +139,7 @@ fn render_run_space_widens_the_run() {
     // "H H" must be wider than "HH": the interior space advances the pen, opening
     // a gap between the two inked glyphs even though it leaves no ink itself.
     let font = load(NOTO);
-    if font.glyph_id_for(0x0020).is_none() {
-        return; // fixture without a space glyph — nothing to assert.
-    }
+    assert!(font.glyph_id_for(0x0020).is_some(), "Noto maps U+0020 space");
     let px = 48.0;
     let tight = font.render_run("HH", px).expect("renders");
     let spaced = font.render_run("H H", px).expect("renders");
