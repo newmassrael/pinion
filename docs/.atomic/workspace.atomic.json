@@ -4342,12 +4342,12 @@
         "§5.37.1 SimpleGlyph (end_pts_of_contours + on/off-curve GlyphPoint) outline",
         "units_per_em (§5.37.1 head) + target px_per_em → scale = px / upem",
         "측정 outline bounds(2-pass flatten, header bbox 미사용) + y-flip → pixel extent + 1px margin",
-        "(deferred) §5.37.1 CompositeGlyph components + transform — R50.8.x 후속"
+        "§5.37.1 CompositeGlyph components + per-component F2DOT14 transform (R50.8.x)"
       ],
       "outputs_bullets": [
         "Coverage struct — width/height + pen-origin offset(left/top) + Vec<u8> alpha 0..=255",
         "Font::rasterize_glyph(glyph_id, px_per_em) -> Result<Coverage, RasterError>",
-        "RasterError — GlyphNotFound / CompositeUnsupported(R50.8.x) / SizeExceeded(fail-loud)",
+        "RasterError — GlyphNotFound / CompositeCycle / PointMatchUnsupported / SizeExceeded",
         "empty glyph(space) → empty Coverage(Ok); ink_sum / at(x,y) introspect helper"
       ],
       "caveats_bullets": [
@@ -4355,7 +4355,10 @@
         "hinting / GPU atlas / SDF / paint-path wiring = §5.37 후속 layer, R50.8 미포함",
         "production paint 는 여전히 §5.36 swash; raster 는 test 로만 검증, paint wiring 은 shape+layout 후",
         "1px outline margin + stride+2 = right-carry deposit cross-row 방지 + edge AA 비클리핑",
-        "buffer sizing = 측정 outline bounds, NOT advisory header bbox — out-of-bbox OOB 방지 (R1015.3)"
+        "buffer sizing = 측정 outline bounds, NOT advisory header bbox — out-of-bbox OOB 방지 (R1015.3)",
+        "R50.8.x composite: 컴포넌트를 affine(F2DOT14 2x2 + XY-offset)로 단일 buffer 에 recursive 합성",
+        "composite cycle = parser 가 traversal 에 위임 → ancestor-set 검출 + MAX_COMPOSITE_DEPTH=8 backstop",
+        "PointMatch(XY_VALUES=0) + SCALED_COMPONENT_OFFSET = R50.8.x defer, fail-loud(PointMatchUnsupported)"
       ],
       "alternatives_rejected": [
         {
@@ -48359,6 +48362,54 @@
         "§5.19 canonical DSL detail axis open (after SCE Forge feature ratified)",
         "§5.20 codegen target list axis open (build matrix decision)",
         "pinion-render-tiny (tiny-skia CPU) for CI/headless: future Tier 2 axis"
+      ]
+    },
+    "Round 1016": {
+      "decision_summary": "Round 1016: §5.37.8 composite glyph rasterization (R50.8.x) — component compose + cycle guard",
+      "changes_bullets": [
+        "§5.37.8 composite raster: Font::rasterize_glyph resolves component subglyphs recursively",
+        "outline::Affine = full 2x3 design→device map; per-component transform composed via concat",
+        "walk_edges: F2DOT14 scale/xy/2x2 + XY-offset components into one accumulation buffer",
+        "ancestor-set cycle guard + MAX_COMPOSITE_DEPTH=8; PointMatch + scaled-offset fail-loud defer",
+        "RasterError: CompositeUnsupported removed; CompositeCycle + PointMatchUnsupported added"
+      ],
+      "verification_bullets": [
+        "test 7228 ok 0 fail (8 composite unit + Noto/Nanum composite integration rasterize to ink)",
+        "real Noto accented-Latin + Nanum 한글 composite glyphs now rasterize (were CompositeUnsupported)",
+        "clippy --workspace --all-targets --features vello 0; cargo doc raster/font 0 new dangling link",
+        "validate-workspace T1=0 (entries 1011); offset/scale/2x2-flip/nested/cycle/point-match pinned"
+      ],
+      "impact_refs": [
+        "5.37.8",
+        "5.37.1"
+      ],
+      "carry_forward_bullets": [
+        "§5.37.8 후속: composite PointMatch placement + SCALED_COMPONENT_OFFSET flag (assembled-point)",
+        "§5.37 render 후속: GPU atlas / shape(§5.37.6) / linebreak(§5.37.7) / paint-wiring(swash 대체)",
+        "cargo doc 2 pre-existing dangling link (cmap best_subtable / int16[4]) = 별도 docs 정리 round"
+      ],
+      "publishable_decision_summary": "Round 1016: §5.37.8 composite glyph rasterization (R50.8.x) — component compose + cycle guard",
+      "publishable_changes_bullets": [
+        "§5.37.8 composite raster: Font::rasterize_glyph resolves component subglyphs recursively",
+        "outline::Affine = full 2x3 design→device map; per-component transform composed via concat",
+        "walk_edges: F2DOT14 scale/xy/2x2 + XY-offset components into one accumulation buffer",
+        "ancestor-set cycle guard + MAX_COMPOSITE_DEPTH=8; PointMatch + scaled-offset fail-loud defer",
+        "RasterError: CompositeUnsupported removed; CompositeCycle + PointMatchUnsupported added"
+      ],
+      "publishable_verification_bullets": [
+        "test 7228 ok 0 fail (8 composite unit + Noto/Nanum composite integration rasterize to ink)",
+        "real Noto accented-Latin + Nanum 한글 composite glyphs now rasterize (were CompositeUnsupported)",
+        "clippy --workspace --all-targets --features vello 0; cargo doc raster/font 0 new dangling link",
+        "validate-workspace T1=0 (entries 1011); offset/scale/2x2-flip/nested/cycle/point-match pinned"
+      ],
+      "publishable_impact_refs": [
+        "5.37.8",
+        "5.37.1"
+      ],
+      "publishable_carry_forward_bullets": [
+        "§5.37.8 후속: composite PointMatch placement + SCALED_COMPONENT_OFFSET flag (assembled-point)",
+        "§5.37 render 후속: GPU atlas / shape(§5.37.6) / linebreak(§5.37.7) / paint-wiring(swash 대체)",
+        "cargo doc 2 pre-existing dangling link (cmap best_subtable / int16[4]) = 별도 docs 정리 round"
       ]
     },
     "Round 11": {
