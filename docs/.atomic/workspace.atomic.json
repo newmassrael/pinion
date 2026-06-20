@@ -4383,6 +4383,37 @@
         "5.37.1",
         "5.36",
         "5.16"
+      ],
+      "bindings": [
+        {
+          "file": "crates/pinion-text-font/src/raster/mod.rs",
+          "symbol": "rasterize_simple",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-text-font/src/raster/mod.rs",
+          "symbol": "Coverage",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-text-font/src/raster/mod.rs",
+          "symbol": "RasterError",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-text-font/src/raster/outline.rs",
+          "symbol": "for_each_edge",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-text-font/src/font.rs",
+          "symbol": "rasterize_glyph",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-text-font/tests/raster.rs",
+          "kind": "references"
+        }
       ]
     },
     "5.38": {
@@ -10177,6 +10208,48 @@
       "publishable_carry_forward_bullets": [
         "R1015.1 = raster impl: pinion-text-font/src/raster/{mod,outline}.rs + Font::rasterize_glyph + 13 test",
         "composite glyph raster = R50.8.x; paint-path wiring = shape+layout(§5.37.6/.7) 완성 후, production paint 는 여전히 §5.36 swash"
+      ]
+    },
+    "R1015.1": {
+      "decision_summary": "R1015.1 §5.37.8 impl — self-hosted glyph rasterizer: TrueType simple-glyph outline → AA coverage bitmap via signed-area accumulation(nonzero winding). pinion-text-font/src/raster/{mod,outline}.rs + Font::rasterize_glyph. 외부 raster dep 0. composite=CompositeUnsupported(R50.8.x).",
+      "changes_bullets": [
+        "raster/outline.rs: TrueType contour 평탄화(quadratic de Casteljau 재귀 + implied on-curve midpoint, FLATTEN_TOLERANCE 0.2px) + DeviceTransform(scale=px/upem, y-flip, bbox+1px margin)",
+        "raster/mod.rs: signed-area accumulator(Raster::line=font-rs deposition, per-row prefix-sum+abs=nonzero winding) + Coverage(width/height/left/top/alpha 0..=255) + RasterError + rasterize_simple; stride+2 = right-carry cross-row 방지",
+        "font.rs Font::rasterize_glyph(gid,px_per_em)->Result<Coverage,RasterError>: Empty→empty / Simple→raster / Composite→CompositeUnsupported / OOB→GlyphNotFound; lib.rs pub mod raster + re-export Coverage/RasterError"
+      ],
+      "verification_bullets": [
+        "test 7216 ok 0 fail (pinion-text-font +13: 6 unit exact-coverage[interior=255 / fractional edge≈127 / triangle area=0.5×square / nonzero-winding hole hollow / quad off-curve flatten / degenerate guards] + 7 real-font[Noto·Nanum simple ink / composite=CompositeUnsupported / OOB=GlyphNotFound / space=empty / 2× size ~4× ink])",
+        "clippy --workspace --all-targets --features pinion-runtime/vello = 0 warn; cargo doc raster 0 warn(pre-existing hhea/cmap doc debt 別, cargo doc 게이트 외)",
+        "validate-workspace T1 orphan=0, sections=66, entries 1008→1009; §5.37.8 bindings 6(5 implements + 1 references)"
+      ],
+      "impact_refs": [
+        "5.37",
+        "5.37.1"
+      ],
+      "carry_forward_bullets": [
+        "composite glyph raster = R50.8.x 후속(component+transform 해소 + cycle guard, parser R50.1.4.2 데이터 재사용)",
+        "paint-path wiring(swash 대체) = shape(§5.37.6)+linebreak(§5.37.7)+GPU atlas 완성 후; production paint 아직 §5.36 swash; hinting bytecode 미착수",
+        "다음 §5.37 render slice 후보: composite raster(R50.8.x) → GPU atlas 업로드 → shape"
+      ],
+      "publishable_decision_summary": "R1015.1 §5.37.8 impl — self-hosted glyph rasterizer: TrueType simple-glyph outline → AA coverage bitmap via signed-area accumulation(nonzero winding). pinion-text-font/src/raster/{mod,outline}.rs + Font::rasterize_glyph. 외부 raster dep 0. composite=CompositeUnsupported(R50.8.x).",
+      "publishable_changes_bullets": [
+        "raster/outline.rs: TrueType contour 평탄화(quadratic de Casteljau 재귀 + implied on-curve midpoint, FLATTEN_TOLERANCE 0.2px) + DeviceTransform(scale=px/upem, y-flip, bbox+1px margin)",
+        "raster/mod.rs: signed-area accumulator(Raster::line=font-rs deposition, per-row prefix-sum+abs=nonzero winding) + Coverage(width/height/left/top/alpha 0..=255) + RasterError + rasterize_simple; stride+2 = right-carry cross-row 방지",
+        "font.rs Font::rasterize_glyph(gid,px_per_em)->Result<Coverage,RasterError>: Empty→empty / Simple→raster / Composite→CompositeUnsupported / OOB→GlyphNotFound; lib.rs pub mod raster + re-export Coverage/RasterError"
+      ],
+      "publishable_verification_bullets": [
+        "test 7216 ok 0 fail (pinion-text-font +13: 6 unit exact-coverage[interior=255 / fractional edge≈127 / triangle area=0.5×square / nonzero-winding hole hollow / quad off-curve flatten / degenerate guards] + 7 real-font[Noto·Nanum simple ink / composite=CompositeUnsupported / OOB=GlyphNotFound / space=empty / 2× size ~4× ink])",
+        "clippy --workspace --all-targets --features pinion-runtime/vello = 0 warn; cargo doc raster 0 warn(pre-existing hhea/cmap doc debt 別, cargo doc 게이트 외)",
+        "validate-workspace T1 orphan=0, sections=66, entries 1008→1009; §5.37.8 bindings 6(5 implements + 1 references)"
+      ],
+      "publishable_impact_refs": [
+        "5.37",
+        "5.37.1"
+      ],
+      "publishable_carry_forward_bullets": [
+        "composite glyph raster = R50.8.x 후속(component+transform 해소 + cycle guard, parser R50.1.4.2 데이터 재사용)",
+        "paint-path wiring(swash 대체) = shape(§5.37.6)+linebreak(§5.37.7)+GPU atlas 완성 후; production paint 아직 §5.36 swash; hinting bytecode 미착수",
+        "다음 §5.37 render slice 후보: composite raster(R50.8.x) → GPU atlas 업로드 → shape"
       ]
     },
     "R232": {

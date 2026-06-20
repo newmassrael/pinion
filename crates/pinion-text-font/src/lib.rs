@@ -12,6 +12,8 @@
 //!     * R50.1.4.1 — loca short/long + glyf simple (this commit).
 //!     * R50.1.4.2 — glyf composite (subglyph + transform + cycle detection).
 //! * R50.1.5 — name table parser (family / style / postscript).
+//! * R50.8 §5.37.8 — glyph rasterizer (`raster`): simple-glyph outline → AA
+//!   coverage bitmap via signed-area accumulation. First pixel-producing layer.
 //!
 //! Lineage: §5.36 (parley + swash + fontique) Phase 1 bridge →
 //! R50.0 §5.37 self-hosted text engine ratify → §5.37.1 OpenType
@@ -19,12 +21,14 @@
 
 mod error;
 mod font;
+pub mod raster;
 mod reader;
 mod sfnt;
 pub mod tables;
 
 pub use error::{FieldValue, ParseError};
 pub use font::Font;
+pub use raster::{Coverage, RasterError};
 pub use sfnt::{Flavor as SfntFlavor, OffsetTable, TableRecord, find_table, parse_sfnt};
 pub use tables::glyf::{
     Component, ComponentArgs, ComponentTransform, CompositeGlyph, Glyf, Glyph, GlyphHeader,
