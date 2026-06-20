@@ -90,9 +90,54 @@ fn atlas_wraps_to_a_new_shelf() {
     let mut atlas = GlyphAtlas::new(h_w); // width == one 'H' → any 2nd glyph wraps
     let a = atlas.get_or_insert(&font, h, 48.0).expect("rasterizes");
     let b = atlas.get_or_insert(&font, n, 48.0).expect("rasterizes");
+    assert!(b.width > 0, "the wrapping glyph must have ink (else the wrap is vacuous)");
     assert_eq!(a.y, 0, "first glyph on shelf 0");
     assert_eq!(b.x, 0, "wrapped glyph starts a fresh shelf at x=0");
-    assert!(b.y >= a.height, "wrapped glyph sits below shelf 0: y={} >= {}", b.y, a.height);
+    assert_eq!(b.y, a.height, "wrapped glyph sits exactly one shelf below: y={}", b.y);
+}
+
+#[test]
+fn atlas_grow_preserves_prior_subrect_and_packs_new_shelf() {
+    // Force `ensure_width` to widen a POPULATED row: a narrow 'i' fills shelf 0 in
+    // an atlas exactly its width, then a wider 'M' wraps to shelf 1 AND grows the
+    // atlas width — rewriting row 0's stride. Both glyphs' packed sub-rects must
+    // read back byte-identical to standalone rasters: the growth-preservation
+    // invariant (prior 'i' survives the rewrite) and a `g.y != 0` sub-rect read
+    // (new 'M' on shelf 1). No same-shelf-only test exercises either path.
+    let font = load(NOTO);
+    let i = font.glyph_id_for(0x0069).expect("'i' mapped");
+    let m = font.glyph_id_for(0x004D).expect("'M' mapped");
+    let i_raw = font.rasterize_glyph(i, 48.0).expect("rasterizes");
+    let m_raw = font.rasterize_glyph(m, 48.0).expect("rasterizes");
+    assert!(m_raw.width > i_raw.width, "'M' must be wider than 'i' to force a widen");
+
+    let mut atlas = GlyphAtlas::new(i_raw.width); // exactly one 'i' wide
+    let i_e = atlas.get_or_insert(&font, i, 48.0).expect("rasterizes");
+    let m_e = atlas.get_or_insert(&font, m, 48.0).expect("rasterizes"); // wraps + widens
+    assert!(atlas.width() >= m_raw.width, "atlas widened to fit the wider glyph");
+    assert!(m_e.y >= i_e.height && m_e.y > 0, "wider glyph on a new shelf (g.y != 0)");
+
+    let aw = atlas.width();
+    // 'i' sub-rect survived the row-stride rewrite byte-for-byte.
+    for y in 0..i_e.height {
+        for x in 0..i_e.width {
+            assert_eq!(
+                atlas.alpha()[(i_e.y + y) * aw + i_e.x + x],
+                i_raw.alpha[y * i_raw.width + x],
+                "'i' byte ({x},{y}) corrupted by the widen",
+            );
+        }
+    }
+    // 'M' sub-rect on shelf 1 (g.y != 0) reads back byte-for-byte.
+    for y in 0..m_e.height {
+        for x in 0..m_e.width {
+            assert_eq!(
+                atlas.alpha()[(m_e.y + y) * aw + m_e.x + x],
+                m_raw.alpha[y * m_raw.width + x],
+                "'M' byte ({x},{y}) on shelf 1 mismatched",
+            );
+        }
+    }
 }
 
 #[test]
