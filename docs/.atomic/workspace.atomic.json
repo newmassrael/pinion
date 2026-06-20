@@ -5258,7 +5258,11 @@
         "focusable enumeration = paint scene tagged subset, interactive widget 만 (decoration 제외)",
         "key priority = Tab/Shift+Tab swallow by FocusManager, 이후 apply_key 로 forward",
         "Space/Enter widget-specific 의미 = apply_key 위임 (Button click, Checkbox toggle 등)",
-        "apply_key breaking change = R51.53 land 시 모든 기존 example 동시 update (substrate-first)"
+        "apply_key breaking change = R51.53 land 시 모든 기존 example 동시 update (substrate-first)",
+        "R1020: focus is scene-derived; view fn marks nodes LayoutStyle::focusable (.with_focusable)",
+        "R1020: shell re-runs Scene::collect_focusable_tags over the paint scene every frame",
+        "R1020: WidgetCore::focusable_tags() flat list removed (unratified §5.39 drift)",
+        "R1020: tab order = tree order; focus_request re-derives pre-drain for just-painted nodes"
       ],
       "alternatives_rejected": [
         {
@@ -5324,11 +5328,6 @@
         {
           "file": "crates/pinion-runtime/src/focus.rs",
           "symbol": "FocusManager::restore",
-          "kind": "implements"
-        },
-        {
-          "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "WidgetView::focusable_tags",
           "kind": "implements"
         },
         {
@@ -5430,6 +5429,21 @@
           "file": "crates/pinion-shell/src/lib.rs",
           "symbol": "AppShell window_event WindowEvent::Focused",
           "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-core/src/scene.rs",
+          "symbol": "Scene::collect_focusable_tags",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-core/src/style.rs",
+          "symbol": "LayoutStyle::focusable",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-shell/src/substrate.rs",
+          "symbol": "ShellCore::refresh_focusable_from_view",
+          "kind": "references"
         }
       ]
     },
@@ -10746,6 +10760,50 @@
         "R50.7.x: UAX #14 pair-table algorithm (LB1-LB31) + LineBreakTest.txt conformance + shape_run wiring",
         "range-lookup 2nd (start,end,idx) site; 3rd property (§5.37.5 Script/EAW) triggers shared-helper lift",
         "doc-link debt: bidi.rs:252/1369 dangling intra-doc links join cmap/int16 for separate docs round"
+      ]
+    },
+    "R1020": {
+      "decision_summary": "R1020 §5.39 scene-derived focus — keyboard focus enumeration is DERIVED from the paint scene (Scene::collect_focusable_tags over nodes marked LayoutStyle::focusable, refreshed every frame), retiring the WidgetCore::focusable_tags() flat list (an unratified drift from the ratified §5.39 depth-first-traversal design) so dynamic panes and conditionally-painted inline editors track the Tab order automatically.",
+      "changes_bullets": [
+        "pinion-core: LayoutStyle::focusable + with_focusable (mirrors pointer_transparent, in hash); Scene::is_focusable + Scene::collect_focusable_tags depth-first paint-scene traversal",
+        "pinion-shell/pinion-tui: per-frame update_focusable_tags from the paint scene's collect_focusable_tags; boot-seed + drain_focus_request re-derive-on-miss via refresh_focusable_from_view (focus-on-appear for conditionally-painted inline editors)",
+        "Removed WidgetCore::focusable_tags() + all 78 example overrides; focusable opt-ins on ButtonStyle/ToolbarStyle/TableStyle/MenuStyle/DisclosureStyle/TreeViewStyle/DatePickerStyle/FileBrowserMetrics + view_field always-on; ~51 bindings + ButtonFixture/TestView fixtures marked .with_focusable(true)"
+      ],
+      "verification_bullets": [
+        "New tests/focus_scene_derived.rs forcing consumer (dynamic pane grow/shrink/focus-reachable, 3/3); 23 example focus tests converted from focusable_tags() to collect_focusable_tags(view) — all pass, ZERO set mismatch (verifies marks reproduce each old list)",
+        "cargo test --workspace exit 0 (60 suites, 0 fail); cargo check --workspace clean; clippy --workspace --all-targets --features pinion-runtime/vello exit 0 (zero warnings)",
+        "cargo doc clean on the touched crates (core/runtime/shell/tui/widget-paint); pre-existing pinion-forge vello::Aa* link errors are unrelated and untouched"
+      ],
+      "impact_refs": [
+        "5.39",
+        "5.41",
+        "5.21"
+      ],
+      "carry_forward_bullets": [
+        "Adversarial 2-reviewer clearance (SSOT + code) pending before any push — user 교과서적/SSOT/북극성 gate",
+        "Tree-order tab changes accepted per §5.39 (tree order = tab order): hello-undo DEC<->INC, hello-selection-toolbar, hello-datepicker",
+        "grid-header-menu MENU_TAG now focusable only while the popup is open — the pre-R1020 phantom tab stop is fixed"
+      ],
+      "publishable_decision_summary": "R1020 §5.39 scene-derived focus — keyboard focus enumeration is DERIVED from the paint scene (Scene::collect_focusable_tags over nodes marked LayoutStyle::focusable, refreshed every frame), retiring the WidgetCore::focusable_tags() flat list (an unratified drift from the ratified §5.39 depth-first-traversal design) so dynamic panes and conditionally-painted inline editors track the Tab order automatically.",
+      "publishable_changes_bullets": [
+        "pinion-core: LayoutStyle::focusable + with_focusable (mirrors pointer_transparent, in hash); Scene::is_focusable + Scene::collect_focusable_tags depth-first paint-scene traversal",
+        "pinion-shell/pinion-tui: per-frame update_focusable_tags from the paint scene's collect_focusable_tags; boot-seed + drain_focus_request re-derive-on-miss via refresh_focusable_from_view (focus-on-appear for conditionally-painted inline editors)",
+        "Removed WidgetCore::focusable_tags() + all 78 example overrides; focusable opt-ins on ButtonStyle/ToolbarStyle/TableStyle/MenuStyle/DisclosureStyle/TreeViewStyle/DatePickerStyle/FileBrowserMetrics + view_field always-on; ~51 bindings + ButtonFixture/TestView fixtures marked .with_focusable(true)"
+      ],
+      "publishable_verification_bullets": [
+        "New tests/focus_scene_derived.rs forcing consumer (dynamic pane grow/shrink/focus-reachable, 3/3); 23 example focus tests converted from focusable_tags() to collect_focusable_tags(view) — all pass, ZERO set mismatch (verifies marks reproduce each old list)",
+        "cargo test --workspace exit 0 (60 suites, 0 fail); cargo check --workspace clean; clippy --workspace --all-targets --features pinion-runtime/vello exit 0 (zero warnings)",
+        "cargo doc clean on the touched crates (core/runtime/shell/tui/widget-paint); pre-existing pinion-forge vello::Aa* link errors are unrelated and untouched"
+      ],
+      "publishable_impact_refs": [
+        "5.39",
+        "5.41",
+        "5.21"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Adversarial 2-reviewer clearance (SSOT + code) pending before any push — user 교과서적/SSOT/북극성 gate",
+        "Tree-order tab changes accepted per §5.39 (tree order = tab order): hello-undo DEC<->INC, hello-selection-toolbar, hello-datepicker",
+        "grid-header-menu MENU_TAG now focusable only while the popup is open — the pre-R1020 phantom tab stop is fixed"
       ]
     },
     "R232": {
