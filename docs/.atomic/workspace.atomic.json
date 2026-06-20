@@ -10252,6 +10252,48 @@
         "다음 §5.37 render slice 후보: composite raster(R50.8.x) → GPU atlas 업로드 → shape"
       ]
     },
+    "R1015.2": {
+      "decision_summary": "R1015.2 §5.37.8 clearance — 2 독립 적대 reviewer(quality-engineer 코드 + system-architect SSOT, read-only) + grep. 1 HIGH(safety: header-bbox 신뢰) + 1 HIGH(vacuous curve test) + 4 MED + 1 LOW 청산; SSOT overclaim 0 확인(system-architect = textbook-correct/scope-right/composite-honest/introspection-serves-north-star 확증).",
+      "changes_bullets": [
+        "H1(safety) 청산: 버퍼 sizing 을 header bbox(advisory·loose 가능)→측정된 outline bounds 로 전환 — out-of-bbox point 가 OOB index/cross-row 오염시키던 public-API panic 제거(MARGIN invariant 가 in-bounds 보장)",
+        "H2(vacuous test) 청산: quadratic 테스트가 curve bulge 미검증(off-curve=straight-vertex 버그도 통과)→curved vs straight-vertex triangle ink 비교(quad⊂triangle ratio≈0.667<0.8)로 flatten oracle 화",
+        "M2 nonzero≠even-odd 격리(same-wound nested winding-2=solid 테스트) + M3/M4 vacuous-skip fail-loud(variant assert + exercised>0) + M5 MAX_DIM 4096 size guard + L1 interior exact화(==50/0 partial) + M1 cast_sign_loss allow 정당화"
+      ],
+      "verification_bullets": [
+        "test 7217 ok 0 fail (pinion-text-font raster 14: 7 unit + 7 integration; +1 same-winding nonzero-isolation, H2 chord-compare oracle, exact interior ==50/0-partial)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello = 0 warn(naive_bytecount allow = §5.37 0-dep 정당); cargo doc raster 0 warn",
+        "validate-workspace T1 orphan=0; in-session green-gate 가 놓친 HIGH(safety + vacuous test) 를 2 독립 적대 reviewer 가 적발(R1011 교훈 재확증)"
+      ],
+      "impact_refs": [
+        "5.37.8",
+        "5.37.1"
+      ],
+      "carry_forward_bullets": [
+        "composite raster = R50.8.x; paint-wiring = shape+layout 후; production paint 아직 §5.36 swash",
+        "lesson: 글리프 버퍼 sizing 은 advisory header bbox 신뢰 금지 — 측정 outline bounds 가 lifetime-canonical(loose bbox 우아 처리 + OOB 안전)",
+        "lesson: in-session green-gate 가 HIGH(safety+vacuous test) 놓침 → 2 독립 적대 reviewer 가 적발(R1011 재확증)"
+      ],
+      "publishable_decision_summary": "R1015.2 §5.37.8 clearance — 2 독립 적대 reviewer(quality-engineer 코드 + system-architect SSOT, read-only) + grep. 1 HIGH(safety: header-bbox 신뢰) + 1 HIGH(vacuous curve test) + 4 MED + 1 LOW 청산; SSOT overclaim 0 확인(system-architect = textbook-correct/scope-right/composite-honest/introspection-serves-north-star 확증).",
+      "publishable_changes_bullets": [
+        "H1(safety) 청산: 버퍼 sizing 을 header bbox(advisory·loose 가능)→측정된 outline bounds 로 전환 — out-of-bbox point 가 OOB index/cross-row 오염시키던 public-API panic 제거(MARGIN invariant 가 in-bounds 보장)",
+        "H2(vacuous test) 청산: quadratic 테스트가 curve bulge 미검증(off-curve=straight-vertex 버그도 통과)→curved vs straight-vertex triangle ink 비교(quad⊂triangle ratio≈0.667<0.8)로 flatten oracle 화",
+        "M2 nonzero≠even-odd 격리(same-wound nested winding-2=solid 테스트) + M3/M4 vacuous-skip fail-loud(variant assert + exercised>0) + M5 MAX_DIM 4096 size guard + L1 interior exact화(==50/0 partial) + M1 cast_sign_loss allow 정당화"
+      ],
+      "publishable_verification_bullets": [
+        "test 7217 ok 0 fail (pinion-text-font raster 14: 7 unit + 7 integration; +1 same-winding nonzero-isolation, H2 chord-compare oracle, exact interior ==50/0-partial)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello = 0 warn(naive_bytecount allow = §5.37 0-dep 정당); cargo doc raster 0 warn",
+        "validate-workspace T1 orphan=0; in-session green-gate 가 놓친 HIGH(safety + vacuous test) 를 2 독립 적대 reviewer 가 적발(R1011 교훈 재확증)"
+      ],
+      "publishable_impact_refs": [
+        "5.37.8",
+        "5.37.1"
+      ],
+      "publishable_carry_forward_bullets": [
+        "composite raster = R50.8.x; paint-wiring = shape+layout 후; production paint 아직 §5.36 swash",
+        "lesson: 글리프 버퍼 sizing 은 advisory header bbox 신뢰 금지 — 측정 outline bounds 가 lifetime-canonical(loose bbox 우아 처리 + OOB 안전)",
+        "lesson: in-session green-gate 가 HIGH(safety+vacuous test) 놓침 → 2 독립 적대 reviewer 가 적발(R1011 재확증)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

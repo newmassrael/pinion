@@ -54,9 +54,14 @@ impl Point {
     }
 }
 
-/// Outline margin (px) added on every side of the glyph bbox so edge
-/// anti-aliasing is never clipped and right-carry deposits stay in-row.
+/// Outline margin (px) added on every side of the *measured outline* bounds so
+/// edge anti-aliasing is never clipped and right-carry deposits stay in-row.
 const MARGIN: f32 = 1.0;
+
+/// Pathological-size guard (px) per bitmap axis. A single glyph never needs
+/// thousands of pixels; this caps `vec` allocation and prevents `usize`
+/// saturation / `stride` overflow on absurd `px_per_em`. Beyond it → empty.
+const MAX_DIM: f32 = 4096.0;
 
 /// Grayscale anti-aliased coverage bitmap.
 ///
@@ -135,8 +140,16 @@ impl core::error::Error for RasterError {}
 
 /// Rasterize a simple glyph outline to an AA coverage bitmap at `px_per_em`.
 ///
+/// The bitmap is sized to the **measured outline bounds**, not the glyph header
+/// bbox — the OpenType per-glyph bbox is advisory and may be stale/loose, so
+/// trusting it for buffer sizing would let an out-of-bbox point index out of
+/// range. Deriving bounds from the flattened edges guarantees every point lands
+/// inside `[MARGIN, dim-MARGIN]`, so `Raster::line`'s deposits are in-bounds by
+/// construction.
+///
 /// Returns an empty [`Coverage`] for degenerate input (zero `units_per_em`,
-/// non-positive / non-finite size, or a zero-area outline).
+/// non-positive / non-finite size, a zero-area / empty outline, or a
+/// pathological size exceeding [`MAX_DIM`]).
 pub(crate) fn rasterize_simple(
     glyph: &SimpleGlyph,
     units_per_em: u16,
@@ -146,32 +159,49 @@ pub(crate) fn rasterize_simple(
         return Coverage::empty();
     }
     let scale = px_per_em / f32::from(units_per_em);
-    let h = glyph.header;
-    let x_min_d = f32::from(h.x_min) * scale;
-    let x_max_d = f32::from(h.x_max) * scale;
-    let y_min_d = f32::from(h.y_min) * scale;
-    let y_max_d = f32::from(h.y_max) * scale;
 
-    // Device-space bbox (y-down) padded by MARGIN; floor/ceil ± integer margin
-    // keep these integer-valued, so the `as usize` widths are exact.
-    let left_f = x_min_d.floor() - MARGIN;
-    let top_f = (-y_max_d).floor() - MARGIN;
-    let right_f = x_max_d.ceil() + MARGIN;
-    let bottom_f = (-y_min_d).ceil() + MARGIN;
-
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    // right_f - left_f / bottom_f - top_f are positive integer-valued floats.
-    let (w, height) = (
-        (right_f - left_f) as usize,
-        (bottom_f - top_f) as usize,
-    );
-    if w == 0 || height == 0 {
-        return Coverage::empty();
+    // Pass 1: flatten into pen-origin device space (scale only, no offset) and
+    // measure the actual outline bounds.
+    let pen_xf = DeviceTransform { scale, left: 0.0, top: 0.0 };
+    let mut edges: Vec<(Point, Point)> = Vec::new();
+    let (mut min_x, mut min_y) = (f32::INFINITY, f32::INFINITY);
+    let (mut max_x, mut max_y) = (f32::NEG_INFINITY, f32::NEG_INFINITY);
+    for_each_edge(glyph, &pen_xf, |p0, p1| {
+        for p in [p0, p1] {
+            min_x = min_x.min(p.x);
+            min_y = min_y.min(p.y);
+            max_x = max_x.max(p.x);
+            max_y = max_y.max(p.y);
+        }
+        edges.push((p0, p1));
+    });
+    if edges.is_empty() || !min_x.is_finite() {
+        return Coverage::empty(); // no contours / no inkable geometry.
     }
 
-    let xf = DeviceTransform { scale, left: left_f, top: top_f };
+    // Pass 2: buffer bounds = measured outline ± MARGIN. floor/ceil ± integer
+    // margin keep these integer-valued, so the `as usize` widths are exact.
+    let left_f = min_x.floor() - MARGIN;
+    let top_f = min_y.floor() - MARGIN;
+    let right_f = max_x.ceil() + MARGIN;
+    let bottom_f = max_y.ceil() + MARGIN;
+    let w_f = right_f - left_f;
+    let h_f = bottom_f - top_f;
+    if !(1.0..=MAX_DIM).contains(&w_f) || !(1.0..=MAX_DIM).contains(&h_f) {
+        return Coverage::empty(); // degenerate or pathological size.
+    }
+
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    // w_f / h_f are positive integer-valued floats in 1..=MAX_DIM (cast exact).
+    let (w, height) = (w_f as usize, h_f as usize);
+
     let mut raster = Raster::new(w, height);
-    for_each_edge(glyph, &xf, |p0, p1| raster.line(p0, p1));
+    for (p0, p1) in edges {
+        raster.line(
+            Point { x: p0.x - left_f, y: p0.y - top_f },
+            Point { x: p1.x - left_f, y: p1.y - top_f },
+        );
+    }
 
     #[allow(clippy::cast_possible_truncation)] // left_f / top_f are small integers.
     raster.into_coverage(left_f as i32, top_f as i32)
@@ -202,6 +232,12 @@ impl Raster {
     /// scanline by scanline; within each row the covered height `dy` (signed by
     /// winding direction) is distributed across the spanned columns by the area
     /// to the right of the segment, with the remainder carried rightward.
+    ///
+    /// Precondition (held by `rasterize_simple`): points lie within
+    /// `[MARGIN, dim - MARGIN]` because the buffer is sized to the measured
+    /// outline bounds. Hence `x0i >= 0` (the `cast_sign_loss` allow is sound)
+    /// and every deposit index stays within the `w + 2` stride — no clamp,
+    /// no cross-row spill. `y` is additionally clamped to `[0, h)` below.
     #[allow(
         clippy::many_single_char_names,
         clippy::similar_names,
@@ -309,26 +345,27 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::naive_bytecount)] // §5.37 = 0 external deps; no bytecount crate.
     fn rect_interior_opaque_border_transparent() {
-        // 1000 upem, rect (0,0)-(500,1000), 10px/em → device 5×10 px ink.
-        let g = rect_glyph(0, 0, 500, 1000);
-        let cov = rasterize_simple(&g, 1000, 10.0);
-        assert!(!cov.is_empty());
-        // Interior pixels (well inside the 5×10 ink block) are fully opaque.
-        let mut found_full = 0;
-        for y in 0..cov.height {
-            for x in 0..cov.width {
-                if cov.at(x, y) == 255 {
-                    found_full += 1;
-                }
-            }
-        }
-        // 5×10 = 50 interior pixels at integer-aligned edges → all 255.
-        assert!(found_full >= 40, "expected a solid opaque block, got {found_full}");
-        // The 1px transparent margin: every border pixel is 0.
+        // scale 1.0 (px == upem) maps design units to exact device pixels, so the
+        // AA is EXACT: a 5×10 integer-aligned rect fills exactly 50 pixels at 255
+        // with zero partial pixels, inside a 7×12 (5×10 + 1px margin) bitmap.
+        let g = rect_glyph(0, 0, 5, 10);
+        let cov = rasterize_simple(&g, 100, 100.0);
+        assert_eq!((cov.width, cov.height), (7, 12), "measured bounds + 1px margin");
+        let full = cov.alpha.iter().filter(|&&a| a == 255).count();
+        assert_eq!(full, 50, "exactly 5×10 fully-opaque pixels, got {full}");
+        let partial = cov.alpha.iter().filter(|&&a| a > 0 && a < 255).count();
+        assert_eq!(partial, 0, "integer-aligned edges → no partial pixels");
+        assert_eq!(cov.at(3, 5), 255, "interior opaque");
+        // The 1px margin ring is fully transparent on all four sides.
         for x in 0..cov.width {
-            assert_eq!(cov.at(x, 0), 0, "top border ({x},0) not transparent");
-            assert_eq!(cov.at(x, cov.height - 1), 0, "bottom border not transparent");
+            assert_eq!(cov.at(x, 0), 0, "top margin");
+            assert_eq!(cov.at(x, cov.height - 1), 0, "bottom margin");
+        }
+        for y in 0..cov.height {
+            assert_eq!(cov.at(0, y), 0, "left margin");
+            assert_eq!(cov.at(cov.width - 1, y), 0, "right margin");
         }
     }
 
@@ -409,25 +446,74 @@ mod tests {
     }
 
     #[test]
-    fn quadratic_off_curve_point_produces_curved_ink() {
-        // A triangle whose hypotenuse is a quadratic bulging outward: the
-        // off-curve control adds ink beyond the straight chord.
+    fn quadratic_off_curve_bulges_inside_straight_chord() {
+        // Region bounded on the left by x=0 and on the right by a quadratic
+        // (0,0) → control (1000,1000) → (0,1000). A quadratic lies in the convex
+        // hull of its 3 points, peaking at x=500 (B(0.5)), so it encloses
+        // STRICTLY LESS area than the triangle (0,0)-(1000,1000)-(0,1000) you get
+        // by treating the control as a straight on-curve vertex. Closed-form:
+        // quad area 1/12·4e6 ≈ 333k vs triangle 500k (ratio ≈ 0.667). This is the
+        // oracle that de Casteljau flattening truly curves — a straight-vertex
+        // fallback bug would make the two ink masses equal.
         let curved = SimpleGlyph {
             header: GlyphHeader { x_min: 0, y_min: 0, x_max: 1000, y_max: 1000 },
             end_pts_of_contours: vec![2],
             instructions: vec![],
             points: vec![
                 GlyphPoint { x: 0, y: 0, on_curve: true },
-                GlyphPoint { x: 1000, y: 1000, on_curve: false }, // bulge control
+                GlyphPoint { x: 1000, y: 1000, on_curve: false }, // quadratic control
                 GlyphPoint { x: 0, y: 1000, on_curve: true },
             ],
         };
-        let cov = rasterize_simple(&curved, 1000, 40.0);
-        assert!(!cov.is_empty());
-        assert!(cov.ink_sum() > 0, "curved contour should ink");
-        // Bitmap height/width track the bbox (40px em ± margins).
-        assert!((40..=44).contains(&cov.width), "width {} off bbox", cov.width);
-        assert!((40..=44).contains(&cov.height), "height {} off bbox", cov.height);
+        let straight = SimpleGlyph {
+            points: vec![
+                GlyphPoint { x: 0, y: 0, on_curve: true },
+                GlyphPoint { x: 1000, y: 1000, on_curve: true }, // straight vertex
+                GlyphPoint { x: 0, y: 1000, on_curve: true },
+            ],
+            ..curved.clone()
+        };
+        let curved_ink = rasterize_simple(&curved, 1000, 64.0).ink_sum();
+        let straight_ink = rasterize_simple(&straight, 1000, 64.0).ink_sum();
+        assert!(curved_ink > 0, "curve must ink");
+        // curved/straight ≈ 0.667 < 0.8 with comfortable AA margin.
+        assert!(
+            curved_ink * 5 < straight_ink * 4,
+            "quad {curved_ink} must ink << triangle {straight_ink} (curve bulges inside chord)",
+        );
+    }
+
+    #[test]
+    fn same_winding_nested_fills_solid_under_nonzero() {
+        // Two SAME-wound nested rects: the inner region has winding number 2.
+        // Nonzero rule → filled (this rasterizer, via abs of accumulated
+        // winding); even-odd rule → hole. An inked centre therefore proves the
+        // fill rule is NONZERO, not even-odd — which the opposite-wound hole
+        // test alone cannot distinguish (nested opposite rects hole under both).
+        let same = SimpleGlyph {
+            header: GlyphHeader { x_min: 0, y_min: 0, x_max: 1000, y_max: 1000 },
+            end_pts_of_contours: vec![3, 7],
+            instructions: vec![],
+            points: vec![
+                // outer (clockwise in y-up)
+                GlyphPoint { x: 0, y: 0, on_curve: true },
+                GlyphPoint { x: 0, y: 1000, on_curve: true },
+                GlyphPoint { x: 1000, y: 1000, on_curve: true },
+                GlyphPoint { x: 1000, y: 0, on_curve: true },
+                // inner — SAME traversal direction → same winding
+                GlyphPoint { x: 300, y: 300, on_curve: true },
+                GlyphPoint { x: 300, y: 700, on_curve: true },
+                GlyphPoint { x: 700, y: 700, on_curve: true },
+                GlyphPoint { x: 700, y: 300, on_curve: true },
+            ],
+        };
+        let cov = rasterize_simple(&same, 1000, 40.0);
+        let (cx, cy) = (cov.width / 2, cov.height / 2);
+        assert!(
+            cov.at(cx, cy) > 0,
+            "winding-2 centre must be inked (nonzero), got {}",
+            cov.at(cx, cy),
+        );
     }
 
     #[test]

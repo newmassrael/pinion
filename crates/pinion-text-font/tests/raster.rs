@@ -31,24 +31,28 @@ fn noto_simple_glyph_rasterizes_to_ink() {
 
 #[test]
 fn noto_capital_h_rasterizes() {
-    // 'H' (U+0048) is a simple glyph (straight stems) in Noto Sans.
+    // 'H' (U+0048) is a straight-stem simple glyph in Noto Sans. Assert that
+    // up front so a fixture change can't silently skip the body (vacuous pass).
     let font = load("tests/fonts/NotoSans-Regular.ttf");
     let gid = font.glyph_id_for(0x0048).expect("'H' mapped");
-    if let Some(Glyph::Simple(_)) = font.glyph_outline(gid) {
-        let cov = font.rasterize_glyph(gid, 48.0).expect("rasterizes");
-        assert!(cov.ink_sum() > 0, "'H' inks");
-        // The bitmap is at most a couple px wider/taller than the 48px em.
-        assert!(cov.width <= 64 && cov.height <= 64, "plausible bitmap size");
-        // A cap-height glyph sits above the baseline → top row is above it.
-        assert!(cov.top <= 0, "glyph top is at/above baseline, got {}", cov.top);
-    }
+    assert!(
+        matches!(font.glyph_outline(gid), Some(Glyph::Simple(_))),
+        "'H' expected to be a simple glyph in Noto Sans",
+    );
+    let cov = font.rasterize_glyph(gid, 48.0).expect("rasterizes");
+    assert!(cov.ink_sum() > 0, "'H' inks");
+    // The bitmap is at most a couple px wider/taller than the 48px em.
+    assert!(cov.width <= 64 && cov.height <= 64, "plausible bitmap size");
+    // A cap-height glyph sits above the baseline → top row is above it.
+    assert!(cov.top <= 0, "glyph top is at/above baseline, got {}", cov.top);
 }
 
 #[test]
-fn nanum_simple_hangul_rasterizes_to_ink() {
+fn nanum_simple_glyph_rasterizes_to_ink() {
     let font = load("tests/fonts/NanumGothic-Regular.ttf");
-    // '가' (U+AC00) — if it is a simple outline, rasterize; otherwise fall back
-    // to any simple glyph so the 한글 fixture exercises the raster path.
+    // Prefer 한글 '가' (U+AC00) when it is a simple outline; otherwise any simple
+    // glyph, so the 한글 fixture exercises the raster path regardless of how the
+    // font composes its syllables (composite hangul is a R50.8.x concern).
     let gid = font.glyph_id_for(0xAC00).filter(|&g| {
         matches!(font.glyph_outline(g), Some(Glyph::Simple(s)) if !s.points.is_empty())
     });
@@ -56,7 +60,7 @@ fn nanum_simple_hangul_rasterizes_to_ink() {
         .or_else(|| find_glyph(&font, |g| matches!(g, Glyph::Simple(s) if !s.points.is_empty())))
         .expect("Nanum has a simple glyph");
     let cov = font.rasterize_glyph(gid, 64.0).expect("rasterizes");
-    assert!(cov.ink_sum() > 0, "한글 glyph inks");
+    assert!(cov.ink_sum() > 0, "glyph inks");
 }
 
 #[test]
@@ -83,7 +87,10 @@ fn out_of_range_glyph_reports_not_found() {
 
 #[test]
 fn empty_glyph_rasterizes_to_empty_coverage() {
-    // The space glyph (U+0020) is an empty outline (loca range 0) in both fonts.
+    // The space glyph (U+0020) is an empty outline (loca range 0). Require that
+    // at least one fixture actually exercises the Empty path — otherwise a
+    // fixture change could turn this into a silent no-op (vacuous pass).
+    let mut exercised = 0;
     for path in [
         "tests/fonts/NotoSans-Regular.ttf",
         "tests/fonts/NanumGothic-Regular.ttf",
@@ -94,9 +101,11 @@ fn empty_glyph_rasterizes_to_empty_coverage() {
                 let cov = font.rasterize_glyph(gid, 32.0).expect("empty rasterizes");
                 assert!(cov.is_empty(), "{path}: space → empty coverage");
                 assert_eq!(cov.ink_sum(), 0);
+                exercised += 1;
             }
         }
     }
+    assert!(exercised > 0, "no fixture exercised the empty-glyph path");
 }
 
 #[test]
