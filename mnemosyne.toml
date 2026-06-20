@@ -45,6 +45,16 @@ severity_binding = "info"
 # (the one exempt section, §5.53, has no bindings), so this only blocks
 # future misclassification.
 severity_classification = "reject"
+# Mnemosyne R576-R581 — prose-fact SSOT gate: prose (code comments + section
+# prose) that restates a *structural* fact about a §section (supersede /
+# decided in / ratified in / deferred to / open question) instead of pointing
+# at it. The fact must live once in the store; prose only projects it. Warn
+# during baseline measurement, then prune the backlog and promote to "reject"
+# (same rollout as severity_missing above). The known live backlog is the
+# benign "ratified in §5.7/§5.8" module headers (dispatch.rs / dry_run.rs) and
+# the paint_adapter.rs "supersedes §5.36" roadmap note already hedged by the
+# R1014.1 corrective.
+severity_prose_fact_assertion = "warn"
 # Numeric form `<PREFIX> <doc-number> §<id>`. R379 added `#N` doc-numbers
 # (UAX #9) and multi-word prefixes matched as a token-boundary suffix
 # (CSS Color matches "W3C CSS Color 4 §8.1").
