@@ -1102,8 +1102,15 @@ mod tests {
         // the same `expected_text_grid_cell_facts` over the same buffer.
         for row in 0..ROWS {
             for col in 0..COLS {
-                if (col, row) == (0, 1) {
-                    continue; // wide CJK head — font-dependent ink, see below
+                if (col, row) == (0, 1) || (col, row) == (1, 1) {
+                    // (0,1) wide CJK head AND (1,1) its trailer: both carry
+                    // font-dependent ink. R1014.1 — post-R1013 the two-pass
+                    // preserves the head glyph's overflow INTO the trailer
+                    // column, so the trailer's no-ink fact is no longer
+                    // font-independent (a wide-enough CJK face would ink the
+                    // trailer interior). The wide span is still proven
+                    // font-independently by the two-column blue bg below.
+                    continue;
                 }
                 let f = expected_text_grid_cell_facts(&buffer, col, row);
                 assert_eq!(

@@ -1100,12 +1100,16 @@ fn has_glyph_cluster(cell: &TermCell) -> bool {
 /// so a wide glyph under-fills its 2-column span (R1013.1 measured ~70.8%,
 /// left-aligned) — and it is already at the cell-`h`-maximal size, so it
 /// cannot be enlarged without overflowing the cell; horizontal scale /
-/// centring to force-fill is rejected (R1002 distortion). This is NOT an
-/// open renderer question: the grid font policy is **decided in §5.37**
-/// (self-hosted text engine; bundled Nanum Gothic / Noto Sans, OFL — see
-/// `pinion-text-font`), which supersedes this §5.36 bridge and resolves the
-/// under-fill by font design once it grows to render. Do not add a font
-/// stopgap inside this §5.36 bridge — it invests in a superseded layer.
+/// centring to force-fill is rejected (R1002 distortion). The CJK-fill
+/// resolution belongs to the §5.37 self-hosted text engine, which supersedes
+/// this §5.36 parley bridge — but §5.37 is currently only an OpenType parser
+/// (R50.1.x) and has NOT yet decided a fallback-face / metric-matching policy
+/// (Nanum Gothic / Noto Sans are §5.37.1 parser *test fixtures*, not yet a
+/// decided render font). So this under-fill is a tracked item for the §5.37
+/// engine, not an open question to stopgap in this §5.36 bridge — a stopgap
+/// would invest
+/// in a superseded layer (R1014.1 corrective: the earlier note overclaimed
+/// "decided in §5.37").
 ///
 /// R995 §2 #6 — this Vello arm and the TUI `paint_text_grid_inner` must agree
 /// on cell *structure* (which cell inks a glyph / reads reversed / forms a

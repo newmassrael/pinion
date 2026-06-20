@@ -5779,7 +5779,8 @@
         "R51.140 — clippy lint family 사전-audit 회복 (R51.137-139 reactive 10건 누적) [[clippy-pre-audit-recovery]]",
         "test_fixtures doc: rust,no_run + # hidden imports (Rust canonical); compile-check 보존 (R588).",
         "R1013.1: GUI grid font policy decided in 5.37 (self-hosted, Nanum/Noto OFL), not an open question",
-        "R1013.1: 5.36 system-fallback under-fills CJK ~70.8%; no 5.36 stopgap, resolves in 5.37"
+        "R1013.1: 5.36 system-fallback under-fills CJK ~70.8%; no 5.36 stopgap, resolves in 5.37",
+        "R1014.1: 'decided in 5.37' overclaimed - Nanum/Noto=5.37.1 fixtures, 5.37=parser, policy undecided"
       ],
       "alternatives_rejected": [
         {
@@ -10029,6 +10030,50 @@
         "slice 6 RESUME (실 epub/document consumer 등장 OR hello-reflow-virtual forcing example 우선 시): 신규 substrate = 가변 visual-line 윈도잉. 난점 = paragraph 를 shape 해야 line count/height 를 앎(chicken-egg) -> paragraph-chunking + estimated/progressive 측정(실 epub reader 방식). seam = visual_line_metrics(caret.rs:421) 출력 + virtual_list RowOffsets 윈도잉 결합 + paragraph 경계 추정. 상세 = model-view-scale-campaign 메모리",
         "CLAUDE.md Phase B 'Model/View 18%x68%' 는 slices 1-5(R996-R1007) 이전 수치라 stale; 다음 Phase B 재집계 시 ~85% + 캠페인 close 반영 (aggregate cascade 는 별도 재집계 라운드)",
         "Model-View 명명 캠페인 종결 -> 다음 라운드 방향 open (GATED 는 §7 API 만; sprag forcing case OR Phase B 타 축)"
+      ]
+    },
+    "R1014.1": {
+      "decision_summary": "R1014.1 세션리뷰 clearance (2 적대 reviewer: quality-engineer 코드 + system-architect SSOT) — R1013/R1013.1/R1014 감사. 실 결함 청산: (1) R1013.1 주석/caveat 의 '§5.37 decided/bundled' 과대주장 정정(§5.37=parser, Nanum/Noto=fixture), (2) r995 trailer no-ink 단언이 R1013 후 font-dependent → trailer skip(ZERO-FLAKE), (3) R1014 '~85%' breakdown 없는 수치 → qualify. binding-kind swap·loop 중복·north-star drop over-flag 는 증거와 함께 기각",
+      "changes_bullets": [
+        "A.1/A.3 (MED) 정정: paint_text_grid 폰트 주석 + §5.41 caveat 의 \"grid font policy decided in §5.37 / bundled Nanum\" 과대주장 -> 정확화. §5.37=OpenType parser(R50.1.x), fallback/metric 정책 미결; Nanum/Noto=§5.37.1 test fixture(production include_bytes! 0건), decided render font 아님; under-fill=§5.37-era tracked item. corrective(R1013.1)가 진단한 drift class 를 스스로 재현한 것 시인",
+        "Reviewer-A (MED, ZERO-FLAKE 잠재): r995 cross-consistency 의 trailer (1,1) no-ink 단언이 R1013 two-pass(head 글리프 overflow 보존)로 font-dependent 화 -> (0,1) head 처럼 (1,1) trailer 도 skip; 와이드 span 은 2-col blue bg 로 여전히 font-independent 증명",
+        "B.2 (MED) qualify: R1014 \"~68%->~85%\" 는 per-axis breakdown 없는 17pt 점프 -> memory/SEED 에서 \"slices 1-5 landed; aggregate 재집계 pending; ~85%=soft directional 추정, 분해 아님\" 으로 정직화",
+        "B.1 refine: slice 6 gate 사유를 \"no consumer\"(캠페인은 hello-* forcing example 양산 norm)가 아니라 \"북극성 off-critical-path(에디터=logical-line 가상화, paragraph reflow 아님) + 본질적 난도(chicken-egg shaping)\"로 명시"
+      ],
+      "verification_bullets": [
+        "2 독립 적대 reviewer (quality-engineer=코드 R1013 + system-architect=SSOT R1013.1/R1014) read-only(no-cargo, tree-race 회피) + 내 grep audit. reviewer A: 코어 two-pass CLEAN/무회귀, r1013 witness 정당(font-robust); reviewer B: A.1 overclaim + B.2 metric 적발",
+        "over-flag 기각(증거): binding kind swap 기각 — paint_text_grid 는 §5.41(§2#6 GUI/TUI dual cell-render scope; 이미 ShellCore/core_shell GUI symbol bind)의 GUI 절반 realize=implements 정당, §5.36 text-primitive 는 use-not-implement(LayoutCache 가 impl)=references 정확; loop 중복=layered-render 정석(z-layer 분리); slice 6 gate=north-star drop 아님(에디터 logical-line 가상화)",
+        "게이트: clippy --workspace --all-targets --features pinion-runtime/vello = 0; headless-GPU r995/r1013 재실행 PASS(trailer-skip 후); validate-workspace T1=0"
+      ],
+      "impact_refs": [
+        "5.41",
+        "5.36",
+        "5.37"
+      ],
+      "carry_forward_bullets": [
+        "R1013.1 carry 의 validator 규칙(deferred/open/TODO 주석은 소유 § 인용 + status=open)은 \"decided\" 형 과대주장(A.1)을 못 잡음 -> 규칙을 \"결정-주장 주석도 해당 § status=active + 그 결정이 섹션에 실재하는지 검증\"으로 확장 고려 (Mnemosyne 자체 확장)",
+        "Model-View aggregate % 정식 재집계(per-axis breakdown, CLAUDE.md Phase B 갱신 동반) = 별도 라운드; 현재 ~85% 는 soft directional 추정으로만 기록"
+      ],
+      "publishable_decision_summary": "R1014.1 세션리뷰 clearance (2 적대 reviewer: quality-engineer 코드 + system-architect SSOT) — R1013/R1013.1/R1014 감사. 실 결함 청산: (1) R1013.1 주석/caveat 의 '§5.37 decided/bundled' 과대주장 정정(§5.37=parser, Nanum/Noto=fixture), (2) r995 trailer no-ink 단언이 R1013 후 font-dependent → trailer skip(ZERO-FLAKE), (3) R1014 '~85%' breakdown 없는 수치 → qualify. binding-kind swap·loop 중복·north-star drop over-flag 는 증거와 함께 기각",
+      "publishable_changes_bullets": [
+        "A.1/A.3 (MED) 정정: paint_text_grid 폰트 주석 + §5.41 caveat 의 \"grid font policy decided in §5.37 / bundled Nanum\" 과대주장 -> 정확화. §5.37=OpenType parser(R50.1.x), fallback/metric 정책 미결; Nanum/Noto=§5.37.1 test fixture(production include_bytes! 0건), decided render font 아님; under-fill=§5.37-era tracked item. corrective(R1013.1)가 진단한 drift class 를 스스로 재현한 것 시인",
+        "Reviewer-A (MED, ZERO-FLAKE 잠재): r995 cross-consistency 의 trailer (1,1) no-ink 단언이 R1013 two-pass(head 글리프 overflow 보존)로 font-dependent 화 -> (0,1) head 처럼 (1,1) trailer 도 skip; 와이드 span 은 2-col blue bg 로 여전히 font-independent 증명",
+        "B.2 (MED) qualify: R1014 \"~68%->~85%\" 는 per-axis breakdown 없는 17pt 점프 -> memory/SEED 에서 \"slices 1-5 landed; aggregate 재집계 pending; ~85%=soft directional 추정, 분해 아님\" 으로 정직화",
+        "B.1 refine: slice 6 gate 사유를 \"no consumer\"(캠페인은 hello-* forcing example 양산 norm)가 아니라 \"북극성 off-critical-path(에디터=logical-line 가상화, paragraph reflow 아님) + 본질적 난도(chicken-egg shaping)\"로 명시"
+      ],
+      "publishable_verification_bullets": [
+        "2 독립 적대 reviewer (quality-engineer=코드 R1013 + system-architect=SSOT R1013.1/R1014) read-only(no-cargo, tree-race 회피) + 내 grep audit. reviewer A: 코어 two-pass CLEAN/무회귀, r1013 witness 정당(font-robust); reviewer B: A.1 overclaim + B.2 metric 적발",
+        "over-flag 기각(증거): binding kind swap 기각 — paint_text_grid 는 §5.41(§2#6 GUI/TUI dual cell-render scope; 이미 ShellCore/core_shell GUI symbol bind)의 GUI 절반 realize=implements 정당, §5.36 text-primitive 는 use-not-implement(LayoutCache 가 impl)=references 정확; loop 중복=layered-render 정석(z-layer 분리); slice 6 gate=north-star drop 아님(에디터 logical-line 가상화)",
+        "게이트: clippy --workspace --all-targets --features pinion-runtime/vello = 0; headless-GPU r995/r1013 재실행 PASS(trailer-skip 후); validate-workspace T1=0"
+      ],
+      "publishable_impact_refs": [
+        "5.41",
+        "5.36",
+        "5.37"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R1013.1 carry 의 validator 규칙(deferred/open/TODO 주석은 소유 § 인용 + status=open)은 \"decided\" 형 과대주장(A.1)을 못 잡음 -> 규칙을 \"결정-주장 주석도 해당 § status=active + 그 결정이 섹션에 실재하는지 검증\"으로 확장 고려 (Mnemosyne 자체 확장)",
+        "Model-View aggregate % 정식 재집계(per-axis breakdown, CLAUDE.md Phase B 갱신 동반) = 별도 라운드; 현재 ~85% 는 soft directional 추정으로만 기록"
       ]
     },
     "R232": {
