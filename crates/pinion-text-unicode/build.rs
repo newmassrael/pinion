@@ -53,6 +53,7 @@ fn main() {
     println!("cargo:rerun-if-changed=ucd/DerivedBidiClass.txt");
     println!("cargo:rerun-if-changed=ucd/BidiBrackets.txt");
     println!("cargo:rerun-if-changed=ucd/BidiMirroring.txt");
+    println!("cargo:rerun-if-changed=ucd/LineBreak.txt");
 
     let unicode_data =
         fs::read_to_string(ucd_dir.join("UnicodeData.txt"))
@@ -69,6 +70,8 @@ fn main() {
         .expect("ucd/BidiBrackets.txt must be vendored");
     let bidi_mirroring = fs::read_to_string(ucd_dir.join("BidiMirroring.txt"))
         .expect("ucd/BidiMirroring.txt must be vendored");
+    let line_break = fs::read_to_string(ucd_dir.join("LineBreak.txt"))
+        .expect("ucd/LineBreak.txt must be vendored");
 
     let parsed = parse_unicode_data(&unicode_data);
     let exclusions = parse_full_composition_exclusion(&derived);
@@ -87,6 +90,8 @@ fn main() {
     let bidi_brackets = parse_bidi_brackets(&bidi_brackets);
     let bidi_mirroring = parse_bidi_mirroring(&bidi_mirroring);
 
+    let line_break_ranges = parse_line_break(&line_break);
+
     let out_dir = env::var_os("OUT_DIR").expect("OUT_DIR must be set by cargo");
     let out_path = Path::new(&out_dir).join("tables.rs");
     emit_tables(
@@ -102,6 +107,9 @@ fn main() {
 
     let bidi_path = Path::new(&out_dir).join("bidi_tables.rs");
     emit_bidi_tables(&bidi_path, &bidi_ranges, &bidi_brackets, &bidi_mirroring);
+
+    let line_break_path = Path::new(&out_dir).join("linebreak_tables.rs");
+    emit_line_break_tables(&line_break_path, &line_break_ranges);
 }
 
 /// `Bidi_Paired_Bracket_Type` — UAX #9 BD16 codepoint kind. `0` = Open
@@ -1310,4 +1318,126 @@ fn emit_qc_no_table(s: &mut String, name: &str, doc: &str, table: &[u32]) {
     let promoted: Vec<(u32, u8)> =
         table.iter().copied().map(|cp| (cp, 1)).collect();
     emit_u8_bmp_trie_table(s, name, doc, &promoted);
+}
+
+/// UAX #14 `Line_Break` property value (UCD short name) → emitted
+/// `u8` index. The order is alphabetical by short name — the UCD
+/// `PropertyValueAliases` order and the order in which the values
+/// first appear in a `sort`ed `LineBreak.txt` — and matches the
+/// discriminants of `pinion_text_unicode::linebreak::LineBreak` so
+/// `LineBreak::from_index` is a direct enum cast. Codegen-only; the
+/// runtime crate re-derives the enum from these indices via a
+/// `match`, so the enum itself is the source of truth.
+fn lb_class_index(name: &str) -> u8 {
+    match name {
+        "AI" => 0,
+        "AK" => 1,
+        "AL" => 2,
+        "AP" => 3,
+        "AS" => 4,
+        "B2" => 5,
+        "BA" => 6,
+        "BB" => 7,
+        "BK" => 8,
+        "CB" => 9,
+        "CJ" => 10,
+        "CL" => 11,
+        "CM" => 12,
+        "CP" => 13,
+        "CR" => 14,
+        "EB" => 15,
+        "EM" => 16,
+        "EX" => 17,
+        "GL" => 18,
+        "H2" => 19,
+        "H3" => 20,
+        "HL" => 21,
+        "HY" => 22,
+        "ID" => 23,
+        "IN" => 24,
+        "IS" => 25,
+        "JL" => 26,
+        "JT" => 27,
+        "JV" => 28,
+        "LF" => 29,
+        "NL" => 30,
+        "NS" => 31,
+        "NU" => 32,
+        "OP" => 33,
+        "PO" => 34,
+        "PR" => 35,
+        "QU" => 36,
+        "RI" => 37,
+        "SA" => 38,
+        "SG" => 39,
+        "SP" => 40,
+        "SY" => 41,
+        "VF" => 42,
+        "VI" => 43,
+        "WJ" => 44,
+        "XX" => 45,
+        "ZW" => 46,
+        "ZWJ" => 47,
+        _ => panic!("unknown Line_Break value: {name}"),
+    }
+}
+
+/// Parse `LineBreak.txt` (UCD 16.0.0) into sorted
+/// `(start, end, class_idx)` ranges. Comments (`#` to end of line,
+/// which also covers the `@missing` default directives) are
+/// stripped; every remaining `RANGE ; CLASS` row contributes one
+/// range. Codepoints listed nowhere fall to the universal
+/// `@missing: 0000..10FFFF; XX` default at lookup time, so the
+/// `XX` default is *not* materialised as explicit ranges here.
+fn parse_line_break(text: &str) -> Vec<(u32, u32, u8)> {
+    let mut out: Vec<(u32, u32, u8)> = Vec::new();
+    for raw in text.lines() {
+        let line = match raw.find('#') {
+            Some(pos) => &raw[..pos],
+            None => raw,
+        };
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = line.split(';').collect();
+        if parts.len() < 2 {
+            continue;
+        }
+        let range = parts[0].trim();
+        let class_idx = lb_class_index(parts[1].trim());
+        let (start, end) = if let Some(dot) = range.find("..") {
+            let s = u32::from_str_radix(&range[..dot], 16).expect("range start");
+            let e = u32::from_str_radix(&range[dot + 2..], 16).expect("range end");
+            (s, e)
+        } else {
+            let cp = u32::from_str_radix(range, 16).expect("single codepoint");
+            (cp, cp)
+        };
+        out.push((start, end, class_idx));
+    }
+    out.sort_by_key(|(start, _, _)| *start);
+    out
+}
+
+fn emit_line_break_tables(out_path: &Path, ranges: &[(u32, u32, u8)]) {
+    use std::fmt::Write as _;
+    let mut s = String::new();
+    s.push_str("// AUTO-GENERATED by pinion-text-unicode/build.rs from\n");
+    s.push_str("// ucd/LineBreak.txt (UCD 16.0.0). Do not edit by hand.\n\n");
+    let _ = writeln!(
+        s,
+        "/// UAX #14 Line_Break table: sorted `(start, end, class_idx)`\n\
+         /// ranges. `class_idx` is the discriminant of `LineBreak`\n\
+         /// (u8 cast). Binary-search by `start` then verify\n\
+         /// `cp <= end` to look up the class; a codepoint outside\n\
+         /// every range defaults to `XX` per the\n\
+         /// `@missing: 0000..10FFFF; XX` directive.\n\
+         pub const LINE_BREAK_CLASS_RANGES: &[(u32, u32, u8)] = &["
+    );
+    for (start, end, idx) in ranges {
+        let _ = writeln!(s, "    (0x{start:04X}, 0x{end:04X}, {idx}),");
+    }
+    s.push_str("];\n");
+    fs::write(out_path, s).expect("failed to write linebreak_tables.rs");
 }

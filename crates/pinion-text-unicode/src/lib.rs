@@ -190,6 +190,9 @@ mod nfkd;
 pub mod bidi;
 pub use bidi::{bidi_class, BidiClass};
 
+pub mod linebreak;
+pub use linebreak::{line_break_class, LineBreak};
+
 #[cfg(test)]
 mod test_fixture;
 
