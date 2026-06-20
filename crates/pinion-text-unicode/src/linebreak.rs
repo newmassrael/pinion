@@ -385,6 +385,7 @@ mod tests {
         // values added in recent Unicode versions, so a build/runtime
         // index skew on any class surfaces here.
         let cases: &[(char, LineBreak)] = &[
+            ('\u{00A7}', LineBreak::AI),
             (' ', LineBreak::SP),
             ('A', LineBreak::AL),
             ('0', LineBreak::NU),
@@ -432,6 +433,10 @@ mod tests {
             ('\u{261D}', LineBreak::EB),
             ('\u{1F3FB}', LineBreak::EM),
             ('\u{1F1E6}', LineBreak::RI),
+            // Private-use area carries an explicit `; XX` row, so this
+            // exercises XX through a table *hit* — distinct from the
+            // search-*miss* default path covered by the next test.
+            ('\u{E000}', LineBreak::XX),
         ];
         for &(cp, expected) in cases {
             assert_eq!(
