@@ -4324,6 +4324,67 @@
         "decision_status 변경 primitive 부재 — 진짜 정정 = mnemosyne MCP RFC carry"
       ]
     },
+    "5.37.8": {
+      "title": "Glyph rasterization — TrueType outline to AA coverage bitmap (R50.8 sub-scope)",
+      "parent_doc": "docs/GENERATED.md",
+      "parent_section": "5.37",
+      "decision_status": "active",
+      "intent": "§5.37 text engine 의 rasterization layer — §5.37.1 TrueType simple-glyph outline 을 self-hosted signed-area accumulation 으로 anti-aliased coverage bitmap 으로 변환 (nonzero winding, 외부 raster lib 0).",
+      "rationale_bullets": [
+        "§5.37 master 의 'vector outline → raster' 단계 — parser 다음 첫 pixel-producing layer",
+        "swash rasterization 제거 시작 — §5.36 bridge 의존 종료를 향한 self-hosted raster",
+        "signed-area accumulation (font-rs / stb_truetype v2) = canonical pure-Rust AA, 외부 dep 0",
+        "analytic AA (supersampling 아님) = deterministic, §5.37 sub-pixel 비결정 제거 정합",
+        "nonzero winding = TrueType fill rule; signed dy 누적 + abs 가 winding count 산출",
+        "coverage bitmap = downstream GPU atlas / SDF / paint 의 공통 입력"
+      ],
+      "inputs_bullets": [
+        "§5.37.1 SimpleGlyph (end_pts_of_contours + on/off-curve GlyphPoint) outline",
+        "units_per_em (§5.37.1 head) + target px_per_em → scale = px / upem",
+        "y-flip (font y-up → bitmap y-down) + glyph bbox(header) → pixel extent + 1px margin",
+        "(deferred) §5.37.1 CompositeGlyph components + transform — R50.8.x 후속"
+      ],
+      "outputs_bullets": [
+        "Coverage struct — width/height + pen-origin offset(left/top) + Vec<u8> alpha 0..=255",
+        "Font::rasterize_glyph(glyph_id, px_per_em) -> Result<Coverage, RasterError>",
+        "RasterError — GlyphNotFound / CompositeUnsupported (R50.8.x 까지 한시)",
+        "empty glyph(space) → empty Coverage(Ok); ink_sum / at(x,y) introspect helper"
+      ],
+      "caveats_bullets": [
+        "R50.8 scope = simple + empty glyph; composite = R50.8.x 후속(현재 CompositeUnsupported)",
+        "hinting / GPU atlas / SDF / paint-path wiring = §5.37 후속 layer, R50.8 미포함",
+        "production paint 는 여전히 §5.36 swash; raster 는 test 로만 검증, paint wiring 은 shape+layout 후",
+        "1px outline margin + stride+2 = right-carry deposit cross-row 방지 + edge AA 비클리핑"
+      ],
+      "alternatives_rejected": [
+        {
+          "alternative": "swash / ab_glyph rasterizer 유지",
+          "reason": "§5.37 self-hosted raster 정신 위반, black-box AA"
+        },
+        {
+          "alternative": "even-odd fill rule",
+          "reason": "TrueType 는 nonzero winding, even-odd 가 self-intersect 오류"
+        },
+        {
+          "alternative": "supersampling AA (NxN grid)",
+          "reason": "비용 + 비-analytic; signed-area 가 exact AA"
+        },
+        {
+          "alternative": "vello path-fill 로 glyph",
+          "reason": "glyph coverage 를 RHI 에 위임 = §5.37 raster self-host 이탈"
+        },
+        {
+          "alternative": "composite 동시 구현",
+          "reason": "scope creep; parser R50.1.4.1/.2 simple/composite 분리 선례"
+        }
+      ],
+      "impact_scope": [
+        "5.37",
+        "5.37.1",
+        "5.36",
+        "5.16"
+      ]
+    },
     "5.38": {
       "title": "Widget catalog — Tier 1 primitive widgets",
       "parent_doc": "docs/GENERATED.md",
@@ -10074,6 +10135,48 @@
       "publishable_carry_forward_bullets": [
         "R1013.1 carry 의 validator 규칙(deferred/open/TODO 주석은 소유 § 인용 + status=open)은 \"decided\" 형 과대주장(A.1)을 못 잡음 -> 규칙을 \"결정-주장 주석도 해당 § status=active + 그 결정이 섹션에 실재하는지 검증\"으로 확장 고려 (Mnemosyne 자체 확장)",
         "Model-View aggregate % 정식 재집계(per-axis breakdown, CLAUDE.md Phase B 갱신 동반) = 별도 라운드; 현재 ~85% 는 soft directional 추정으로만 기록"
+      ]
+    },
+    "R1015": {
+      "decision_summary": "R1015 §5.37.8 ratify — §5.37 self-hosted text engine 의 rasterization layer 진입. §5.37.1 TrueType simple-glyph outline → anti-aliased coverage bitmap(signed-area accumulation, nonzero winding, 외부 raster lib 0). §5.37 master 의 'vector outline→raster' 단계 = parser 다음 첫 pixel-producing layer. impl+test = R1015.1.",
+      "changes_bullets": [
+        "§5.37.8 신규 sub-section(parent §5.37): intent/rationale/inputs/outputs/alternatives/4 caveat/impact_scope[§5.37,§5.37.1,§5.36,§5.16]",
+        "결정: signed-area accumulation(font-rs/stb_truetype v2 = canonical pure-Rust analytic AA) 채택; supersampling/even-odd/vello-path-fill/swash-유지 모두 기각",
+        "scope = simple+empty glyph; composite(component+transform)=R50.8.x 후속(parser R50.1.4.1/.2 분리 선례); hinting/GPU atlas/paint-wiring 미포함"
+      ],
+      "verification_bullets": [
+        "atomic-only ratify: validate-workspace T1 orphan=0, sections 65→66, no new orphan",
+        "impl(raster code) + 13 forcing-consumer test = R1015.1 후속 commit"
+      ],
+      "impact_refs": [
+        "5.37",
+        "5.37.1",
+        "5.36",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "R1015.1 = raster impl: pinion-text-font/src/raster/{mod,outline}.rs + Font::rasterize_glyph + 13 test",
+        "composite glyph raster = R50.8.x; paint-path wiring = shape+layout(§5.37.6/.7) 완성 후, production paint 는 여전히 §5.36 swash"
+      ],
+      "publishable_decision_summary": "R1015 §5.37.8 ratify — §5.37 self-hosted text engine 의 rasterization layer 진입. §5.37.1 TrueType simple-glyph outline → anti-aliased coverage bitmap(signed-area accumulation, nonzero winding, 외부 raster lib 0). §5.37 master 의 'vector outline→raster' 단계 = parser 다음 첫 pixel-producing layer. impl+test = R1015.1.",
+      "publishable_changes_bullets": [
+        "§5.37.8 신규 sub-section(parent §5.37): intent/rationale/inputs/outputs/alternatives/4 caveat/impact_scope[§5.37,§5.37.1,§5.36,§5.16]",
+        "결정: signed-area accumulation(font-rs/stb_truetype v2 = canonical pure-Rust analytic AA) 채택; supersampling/even-odd/vello-path-fill/swash-유지 모두 기각",
+        "scope = simple+empty glyph; composite(component+transform)=R50.8.x 후속(parser R50.1.4.1/.2 분리 선례); hinting/GPU atlas/paint-wiring 미포함"
+      ],
+      "publishable_verification_bullets": [
+        "atomic-only ratify: validate-workspace T1 orphan=0, sections 65→66, no new orphan",
+        "impl(raster code) + 13 forcing-consumer test = R1015.1 후속 commit"
+      ],
+      "publishable_impact_refs": [
+        "5.37",
+        "5.37.1",
+        "5.36",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R1015.1 = raster impl: pinion-text-font/src/raster/{mod,outline}.rs + Font::rasterize_glyph + 13 test",
+        "composite glyph raster = R50.8.x; paint-path wiring = shape+layout(§5.37.6/.7) 완성 후, production paint 는 여전히 §5.36 swash"
       ]
     },
     "R232": {
