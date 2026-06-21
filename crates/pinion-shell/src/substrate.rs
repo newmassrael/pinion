@@ -73,6 +73,9 @@ struct WindowScopedRpcReads {
     /// R907 — `scene/frame_timings`; `None` →
     /// `FrameTimingsUnavailable` (window has not painted yet).
     frame_timings: Option<FrameTimingsSnapshot>,
+    /// R1036 — `scene/render_fidelity`; `None` →
+    /// `RenderFidelityUnavailable` (window has not painted yet).
+    render_fidelity: Option<pinion_runtime::RenderFidelity>,
     /// R885 — `scene/input_state`; `None` → `InputStateUnavailable`.
     input_state: Option<pinion_core::InputStateSnapshot>,
     /// R888 — `scene/pacing_state`; `None` → `PacingStateUnavailable`.
@@ -397,6 +400,17 @@ pub struct ShellCore<V: WidgetView> {
     /// (the R890 "store the source, project on read" rule).
     frame_timings_per_window: HashMap<String, FrameTimingStats>,
 
+    /// R1036 §5.16 §5.7 §2 #7 — per-window render-fidelity record (PR-17).
+    /// `AppShell::render_window` writes the encoded frame's fingerprint here
+    /// after `renderer.render`, on the winit paint path ONLY — never by an RPC
+    /// recompute, so it stays the uncontaminated "what is actually displayed"
+    /// SSOT that `scene/render_fidelity`
+    /// ([`Self::render_fidelity_for_window`]) projects and compares against a
+    /// fresh recompute of current state (the `last_paint_scene` it does NOT
+    /// share is overwritten by the R684 post-dispatch finalize, hiding exactly
+    /// the divergence this record exposes).
+    render_fidelity_per_window: HashMap<String, pinion_runtime::RenderFidelity>,
+
     /// R763 §5.36 §5.22 — in-progress pointer-driven text selection.
     ///
     /// Set on a press inside a focused text field — the binding's
@@ -545,6 +559,7 @@ impl<V: WidgetView> ShellCore<V> {
             sim_accumulator_per_window: HashMap::new(),
             fragment_cache_stats_per_window: HashMap::new(),
             frame_timings_per_window: HashMap::new(),
+            render_fidelity_per_window: HashMap::new(),
             text_select_drag: None,
         };
         // (R1020 §5.39) Seed the focus enumeration from the binding's first
@@ -956,6 +971,7 @@ impl<V: WidgetView> ShellCore<V> {
         WindowScopedRpcReads {
             cache_stats: self.fragment_cache_stats_for_window(wid),
             frame_timings: self.frame_timings_for_window(wid),
+            render_fidelity: self.render_fidelity_for_window(wid),
             input_state: self.core.input_state_snapshot(wid, Some(self.modifiers)),
             pacing_state: self.core.is_window_known(wid).then(|| {
                 match self.target_fps_for_window(wid) {
@@ -1026,6 +1042,42 @@ impl<V: WidgetView> ShellCore<V> {
             .record(timing);
     }
 
+    /// R1036 §5.16 §5.7 §2 #7 — record the render-fidelity fingerprint of the
+    /// frame `AppShell::render_window` just ENCODED + presented for `window_id`
+    /// (PR-17). `present_ok` is the `renderer.render` outcome; `viewport` is the
+    /// logical size it laid out at; `scene` is the exact encoded tree.
+    ///
+    /// The monotonic `paint_seq` advances by one per recorded present (starting
+    /// at 1), so an AI client reads the count before and after driving an
+    /// interaction: no advance ⟹ no frame presented for the settled state. This
+    /// is the winit-paint-path SSOT for `scene/render_fidelity` — the
+    /// `last_paint_scene` the RPC dispatch overwrites is deliberately NOT
+    /// consulted here, so the record cannot be contaminated by a query-time
+    /// recompute.
+    pub fn record_presented_frame(
+        &mut self,
+        window_id: &str,
+        present_ok: bool,
+        viewport: (u32, u32),
+        scene: &pinion_core::Scene,
+    ) {
+        let paint_seq = self
+            .render_fidelity_per_window
+            .get(window_id)
+            .map_or(1, |prev| prev.paint_seq.wrapping_add(1));
+        self.render_fidelity_per_window.insert(
+            window_id.to_owned(),
+            pinion_runtime::RenderFidelity {
+                paint_seq,
+                presented_at_ms: pinion_runtime::render_fidelity::elapsed_ms(),
+                present_ok,
+                viewport_w: viewport.0,
+                viewport_h: viewport.1,
+                grids: pinion_runtime::render_fidelity::grid_fidelity(scene),
+            },
+        );
+    }
+
     /// R683 §5.16 §5.41 — drop every shell-side per-window state
     /// entry for `window_id`.
     ///
@@ -1064,7 +1116,8 @@ impl<V: WidgetView> ShellCore<V> {
                 .fragment_cache_stats_per_window
                 .remove(window_id)
                 .is_some()
-            | self.frame_timings_per_window.remove(window_id).is_some();
+            | self.frame_timings_per_window.remove(window_id).is_some()
+            | self.render_fidelity_per_window.remove(window_id).is_some();
         // CoreShell::remove_window returns true on at least one
         // runtime-side removal; the OR with shell_side surfaces "any
         // per-window state existed" so the AppShell-side reconcile
@@ -1126,6 +1179,19 @@ impl<V: WidgetView> ShellCore<V> {
         self.frame_timings_per_window
             .get(window_id)
             .and_then(|stats| stats.snapshot(budget_us))
+    }
+
+    /// R1036 §5.16 §5.7 §2 #7 — the window's last presented-frame
+    /// [`pinion_runtime::RenderFidelity`] record (PR-17), or `None` before its
+    /// first paint (`scene/render_fidelity` surfaces `RenderFidelityUnavailable`).
+    /// A clone — the record is small (one entry per `TextGrid`) and the RPC read
+    /// is AI-paced, not on the paint path.
+    #[must_use]
+    pub fn render_fidelity_for_window(
+        &self,
+        window_id: &str,
+    ) -> Option<pinion_runtime::RenderFidelity> {
+        self.render_fidelity_per_window.get(window_id).cloned()
     }
 
     /// R925 §5.16 §5.7 — the per-frame budget (µs) the window's frame
@@ -3398,6 +3464,9 @@ impl<V: WidgetView> ShellCore<V> {
             }
             if let Some(timings) = window_reads.frame_timings {
                 ctx = ctx.with_frame_timings(timings);
+            }
+            if let Some(fidelity) = window_reads.render_fidelity {
+                ctx = ctx.with_render_fidelity(fidelity);
             }
             if let Some(snapshot) = window_reads.input_state {
                 ctx = ctx.with_input_state(snapshot);

@@ -694,6 +694,10 @@ impl<V: WidgetView> AppShell<V> {
         // path that reaches `record_frame_timing` always assigns both.
         let encode_us;
         let render_us;
+        // R1036 PR-17 — the `renderer.render` outcome for this frame, fed into
+        // the per-window render-fidelity record so `scene/render_fidelity`
+        // surfaces a failed present (the present-staleness signature).
+        let present_ok;
         // Re-acquire the slot mutable borrow now that the substrate
         // borrow released, then bind window + renderer for the
         // intrinsic-resize hook + vello submit. Scope the borrow
@@ -793,11 +797,23 @@ impl<V: WidgetView> AppShell<V> {
             } else {
                 &slot.vello_scene
             };
-            if let Err(e) = renderer.render(render_target, VelloContext { base_color: base }) {
-                eprintln!("shell: vello render: {e}");
-            }
+            present_ok = match renderer.render(render_target, VelloContext { base_color: base }) {
+                Ok(()) => true,
+                Err(e) => {
+                    eprintln!("shell: vello render: {e}");
+                    false
+                }
+            };
             render_us = instant_delta_us(render_start, Instant::now());
         };
+        // R1036 PR-17 §2 #7 — record the uncontaminated fidelity fingerprint of
+        // the frame just ENCODED + presented for this window (per-TextGrid
+        // used-row count + content hash + present outcome). Written ONLY here on
+        // the winit paint path, never by an RPC recompute, so
+        // `scene/render_fidelity` can answer "what is actually displayed"
+        // without the `last_paint_scene` post-dispatch-finalize contamination.
+        self.core
+            .record_presented_frame(&spec_id, present_ok, (w.get(), h.get()), &paint_scene);
         // The post-paint helpers (`emit_accesskit_for_window`,
         // `publish_ime_for_window`) each re-acquire their own slot
         // borrow internally and take `&mut self.core` — the scope

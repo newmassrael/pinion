@@ -38,6 +38,7 @@ pub mod layout;
 #[cfg(feature = "vello")]
 pub mod paint_adapter;
 pub mod paint_cache_stats;
+pub mod render_fidelity;
 pub mod window;
 
 pub use command::{
@@ -52,4 +53,5 @@ pub use input::{InputRouter, Modifiers, PanRelease, PointerId, Touch, TouchPhase
 pub use intent_queue::{IntentQueue, walk_scene_and_drain, walk_scene_and_drain_immediate};
 pub use layout::{compute_layout, compute_layout_with_scroll_dirty};
 pub use paint_cache_stats::FragmentCacheStats;
+pub use render_fidelity::{GridFidelity, RenderFidelity};
 pub use window::WindowRouter;

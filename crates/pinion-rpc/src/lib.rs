@@ -29,6 +29,7 @@ pub mod locate;
 pub mod path;
 pub mod preview;
 pub mod query;
+pub mod render_fidelity;
 pub mod resize;
 pub mod resolve;
 pub mod rewind;

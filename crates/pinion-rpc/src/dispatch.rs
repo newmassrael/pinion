@@ -54,6 +54,7 @@ use crate::preview::{
     TypedProposal, ViewBlueprint, apply_preview, cancel_preview, list_previews, propose_change,
 };
 use crate::query::{QueryError, query};
+use crate::render_fidelity::{RenderFidelityError, render_fidelity};
 use crate::resize::{ResizeError, ResizeParams, resize};
 use crate::rewind::{RewindError, rewind};
 use crate::screenshot::{Screenshot, ScreenshotError, screenshot};
@@ -407,6 +408,17 @@ pub struct DispatchContext<'a> {
     /// `FrameTimingsUnavailable` (window has not painted yet, or
     /// headless embedder opt-out), distinct from an all-zero snapshot.
     pub frame_timings: Option<pinion_runtime::FrameTimingsSnapshot>,
+
+    /// R1036 §5.16 §5.7 §2 #7 — per-window render-fidelity record (PR-17),
+    /// resolved by the embedder before dispatch from
+    /// `ShellCore::render_fidelity_for_window` (the [`Self::frame_timings`]
+    /// pattern). Consumed by `scene/render_fidelity` to project the last
+    /// PRESENTED frame's per-`TextGrid` fingerprint and compare it against a
+    /// fresh recompute of current producer state — an AI-first, pixel-free
+    /// divergence verdict that the contaminated `scene/snapshot from: paint`
+    /// cannot give. `None` → `RenderFidelityUnavailable` (window has not painted
+    /// yet, or headless embedder opt-out).
+    pub render_fidelity: Option<pinion_runtime::RenderFidelity>,
 
     /// R885 §5.49 — out-of-band input state snapshot, resolved by the
     /// embedder before dispatch (the [`Self::fragment_cache_stats`]
@@ -918,6 +930,7 @@ impl<'a> DispatchContext<'a> {
             window_id: None,
             fragment_cache_stats: None,
             frame_timings: None,
+            render_fidelity: None,
             input_state: None,
             pacing_state: None,
             unknown_window: None,
@@ -1081,6 +1094,18 @@ impl<'a> DispatchContext<'a> {
     #[must_use]
     pub fn with_frame_timings(mut self, snapshot: pinion_runtime::FrameTimingsSnapshot) -> Self {
         self.frame_timings = Some(snapshot);
+        self
+    }
+
+    /// R1036 §5.16 §5.7 §2 #7 — builder: attach the per-window render-fidelity
+    /// record the embedder pre-resolved from
+    /// `pinion-shell::ShellCore::render_fidelity_for_window`.
+    /// `scene/render_fidelity` reads the slot; every other arm ignores it.
+    /// `None` (the default) causes `scene/render_fidelity` to surface
+    /// `RenderFidelityUnavailable`.
+    #[must_use]
+    pub fn with_render_fidelity(mut self, record: pinion_runtime::RenderFidelity) -> Self {
+        self.render_fidelity = Some(record);
         self
     }
 
@@ -1269,6 +1294,10 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
     // Copy out for the dispatch lifetime; `scene/frame_timings` reads
     // it, every other arm ignores it.
     let frame_timings = ctx.frame_timings;
+    // R1036 §5.16 §5.7 §2 #7 — per-window render-fidelity record; taken out for
+    // the dispatch lifetime (owned, non-`Copy` — carries a `Vec` of per-grid
+    // fingerprints). `scene/render_fidelity` is the only consumer.
+    let render_fidelity = ctx.render_fidelity.take();
     // R885 §5.49 — embedder-resolved input-state snapshot; taken out
     // for the dispatch lifetime (the slot is per-dispatch like the
     // inbox), `scene/input_state` is the only consumer.
@@ -1571,6 +1600,13 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
             HandlerKind::Read,
         ),
         "scene/frame_timings" => (handle_scene_frame_timings(frame_timings), HandlerKind::Read),
+        "scene/render_fidelity" => {
+            let producer = paint_producer.as_deref_mut();
+            (
+                handle_scene_render_fidelity(render_fidelity.as_ref(), producer),
+                HandlerKind::Read,
+            )
+        }
         "scene/export_pdf" => (
             handle_scene_export_pdf(last_paint_scene, request.params.as_ref()),
             HandlerKind::Read,
@@ -4330,6 +4366,49 @@ fn frame_timings_error_to_rpc(err: &FrameTimingsError) -> RpcError {
         FrameTimingsError::FrameTimingsUnavailable => {
             RpcError::invalid_params("frame timings unavailable for this window")
                 .with_data_string("FrameTimingsUnavailable")
+        }
+    }
+}
+
+/// R1036 §5.16 §5.7 §2 #7 — `scene/render_fidelity` typed handler (PR-17).
+///
+/// Projects the embedder-resolved presented-frame
+/// [`pinion_runtime::RenderFidelity`] record and, when a paint producer is
+/// wired, recomputes current producer state at the record's viewport so the
+/// outcome carries a per-`TextGrid` displayed-vs-state divergence verdict.
+/// `None` record surfaces `RenderFidelityUnavailable`.
+fn handle_scene_render_fidelity<F>(
+    record: Option<&pinion_runtime::RenderFidelity>,
+    paint_producer: Option<&mut F>,
+) -> Result<Value, RpcError>
+where
+    F: FnMut(u32, u32) -> Scene + ?Sized,
+{
+    // Recompute current producer state at the SAME viewport the frame was
+    // encoded at (clamped to >= 1 so a degenerate record cannot 0-size the
+    // producer). `None` producer (headless opt-out) ⟹ displayed record alone.
+    let state_grids = match (record, paint_producer) {
+        (Some(rec), Some(producer)) => {
+            let scene = (producer)(rec.viewport_w.max(1), rec.viewport_h.max(1));
+            Some(pinion_runtime::render_fidelity::grid_fidelity(&scene))
+        }
+        _ => None,
+    };
+    match render_fidelity(record, state_grids) {
+        Ok(outcome) => serde_json::to_value(outcome).map_err(|e| {
+            RpcError::internal_error(format!(
+                "scene/render_fidelity: failed to serialize outcome: {e}",
+            ))
+        }),
+        Err(err) => Err(render_fidelity_error_to_rpc(&err)),
+    }
+}
+
+fn render_fidelity_error_to_rpc(err: &RenderFidelityError) -> RpcError {
+    match err {
+        RenderFidelityError::RenderFidelityUnavailable => {
+            RpcError::invalid_params("render fidelity unavailable for this window")
+                .with_data_string("RenderFidelityUnavailable")
         }
     }
 }
