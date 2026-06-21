@@ -10939,6 +10939,44 @@
         "R1022 is impl-complete + green but PUSH PENDING explicit user consent."
       ]
     },
+    "R1023": {
+      "decision_summary": "R1023 §5.16: winit Resized requests a redraw — the WindowEvent::Resized arm now calls window.request_redraw() right after renderer.resize(), so a live drag-resize repaints the reconfigured swapchain each size step instead of presenting a stale backbuffer until an unrelated redraw arrives (the full-bleed ghosting sprag-gui observed). Mirrors the existing request_inner_size + request_redraw pairing; per-window (R670.B). Forcing consumer: sprag-gui live drag-resize. Paint-layer fix: compile/clippy-verified + precedent-mirrored; live visual confirmation is a manual real-window check.",
+      "changes_bullets": [
+        "app.rs WindowEvent::Resized arm: match RenderState::Active { renderer, window, .. } and call window.request_redraw() immediately after renderer.resize(). Per-window (R670.B) — only the resized window repaints. winit coalesces repeated request_redraw before the next RedrawRequested, so a fast drag costs at most one paint per frame.",
+        "Mirrors the two request_inner_size sites that already pair a size change with request_redraw (\"the explicit request_redraw shortens the gap\"); the user-driven winit Resized arm was the missing sibling. Root cause: winit does not auto-emit RedrawRequested after Resized, so the reconfigured swapchain presented a stale/undefined backbuffer until an unrelated redraw arrived."
+      ],
+      "verification_bullets": [
+        "cargo check -p pinion-shell clean. clippy --workspace --all-targets --features pinion-runtime/vello = 0.",
+        "NOT headlessly unit-testable: the Resized arm needs a live winit Window + GPU renderer slot (the existing app.rs tests cover only pure winit->pinion mapping helpers, not the ApplicationHandler event loop). The fix mirrors the established request_inner_size precedent exactly.",
+        "Live drag-resize visual confirmation (no ghosting on full-bleed content) is a manual real-window check, NOT performed in this headless session; the code fix + precedent are the headless evidence (never-record-unverified-outcomes)."
+      ],
+      "impact_refs": [
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "Session-review clearance (R1023.1): adversarial review + grep audit before any push, per standing discipline.",
+        "Live-window visual confirmation pending: drag-resize a full-bleed binding (sprag-gui) and confirm no stale-pixel ghosting; the code fix + the request_inner_size precedent are the headless evidence.",
+        "R1023 is impl-complete + compile/clippy green but PUSH PENDING explicit user consent."
+      ],
+      "publishable_decision_summary": "R1023 §5.16: winit Resized requests a redraw — the WindowEvent::Resized arm now calls window.request_redraw() right after renderer.resize(), so a live drag-resize repaints the reconfigured swapchain each size step instead of presenting a stale backbuffer until an unrelated redraw arrives (the full-bleed ghosting sprag-gui observed). Mirrors the existing request_inner_size + request_redraw pairing; per-window (R670.B). Forcing consumer: sprag-gui live drag-resize. Paint-layer fix: compile/clippy-verified + precedent-mirrored; live visual confirmation is a manual real-window check.",
+      "publishable_changes_bullets": [
+        "app.rs WindowEvent::Resized arm: match RenderState::Active { renderer, window, .. } and call window.request_redraw() immediately after renderer.resize(). Per-window (R670.B) — only the resized window repaints. winit coalesces repeated request_redraw before the next RedrawRequested, so a fast drag costs at most one paint per frame.",
+        "Mirrors the two request_inner_size sites that already pair a size change with request_redraw (\"the explicit request_redraw shortens the gap\"); the user-driven winit Resized arm was the missing sibling. Root cause: winit does not auto-emit RedrawRequested after Resized, so the reconfigured swapchain presented a stale/undefined backbuffer until an unrelated redraw arrived."
+      ],
+      "publishable_verification_bullets": [
+        "cargo check -p pinion-shell clean. clippy --workspace --all-targets --features pinion-runtime/vello = 0.",
+        "NOT headlessly unit-testable: the Resized arm needs a live winit Window + GPU renderer slot (the existing app.rs tests cover only pure winit->pinion mapping helpers, not the ApplicationHandler event loop). The fix mirrors the established request_inner_size precedent exactly.",
+        "Live drag-resize visual confirmation (no ghosting on full-bleed content) is a manual real-window check, NOT performed in this headless session; the code fix + precedent are the headless evidence (never-record-unverified-outcomes)."
+      ],
+      "publishable_impact_refs": [
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Session-review clearance (R1023.1): adversarial review + grep audit before any push, per standing discipline.",
+        "Live-window visual confirmation pending: drag-resize a full-bleed binding (sprag-gui) and confirm no stale-pixel ghosting; the code fix + the request_inner_size precedent are the headless evidence.",
+        "R1023 is impl-complete + compile/clippy green but PUSH PENDING explicit user consent."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

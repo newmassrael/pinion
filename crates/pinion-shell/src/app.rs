@@ -1683,9 +1683,23 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
                 // holds the live GPU renderer the wgpu surface
                 // resize-event must reach.
                 if let Some(slot) = self.windows.get_mut(&window_id)
-                    && let RenderState::Active { renderer, .. } = &mut slot.render
+                    && let RenderState::Active { renderer, window, .. } = &mut slot.render
                 {
                     renderer.resize(size.width.max(1), size.height.max(1));
+                    // R1023 §5.16 — pair the surface resize with an explicit
+                    // redraw of THIS window. winit does not guarantee a
+                    // `RedrawRequested` after a `Resized`, so without this the
+                    // reconfigured swapchain presents a stale/undefined
+                    // backbuffer until some unrelated redraw arrives — the live
+                    // drag-resize ghosting on full-bleed content. The
+                    // `request_inner_size` sites already pair resize +
+                    // `request_redraw` (their "the explicit `request_redraw`
+                    // shortens the gap" note); the user-driven winit `Resized`
+                    // arm was the missing sibling. Per-window (R670.B): only the
+                    // resized window repaints. winit coalesces repeated
+                    // `request_redraw` before the next `RedrawRequested`, so a
+                    // fast drag costs at most one paint per frame.
+                    window.request_redraw();
                 }
             }
             // R57.1 §5.50 — OS `prefers-color-scheme` change. winit
