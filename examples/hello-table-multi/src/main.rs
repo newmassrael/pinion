@@ -242,7 +242,7 @@ fn view(state: &TableMultiState, _frame: &Frame) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
     // R1020 §5.39 — the grid is a single Tab stop; opt the table into the
     // scene-derived focus enumeration so its PRIMARY_TAG is collected.
-    let style = TableStyle::m3().with_focusable(true);
+    let style = TableStyle::m3();
     let rows: Vec<&[&str]> = ROWS.iter().map(|r| &r[..]).collect();
     let table = view_table(
         PRIMARY_TAG,

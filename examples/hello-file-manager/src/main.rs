@@ -247,8 +247,7 @@ fn toolbar_button(
         &ButtonColors::filled_tonal(theme),
         &ButtonStyle::m3_default(tag)
             .with_size(Size::px(BTN_W, BTN_H))
-            .with_label_font_size_px(14)
-            .with_focusable(true),
+            .with_label_font_size_px(14),
     )
 }
 

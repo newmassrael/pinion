@@ -107,7 +107,7 @@ fn view(state: &AccordionState, _frame: &Frame) -> Scene {
     // (R1020 §5.39) Each header is its own Tab stop — `.with_focusable(true)`
     // marks all of `SECTION_TAGS`, so the shared header style opts
     // into the scene-derived focus enumeration.
-    let style = DisclosureStyle::m3().with_focusable(true);
+    let style = DisclosureStyle::m3();
     let sections: Vec<Scene> = (0..N)
         .map(|i| {
             let (interaction, expanded) = state[i];

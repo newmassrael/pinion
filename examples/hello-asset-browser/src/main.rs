@@ -567,10 +567,7 @@ fn toolbar_button(
         &ButtonColors::filled_tonal(theme),
         &ButtonStyle::m3_default(tag)
             .with_size(Size::px(160, 38))
-            .with_label_font_size_px(14)
-            // R1020 §5.39 — each toolbar button is a Tab stop; opt it into the
-            // scene-derived enumeration (SORT then FILTER in paint order).
-            .with_focusable(true),
+            .with_label_font_size_px(14),
     )
 }
 

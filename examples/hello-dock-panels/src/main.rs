@@ -644,10 +644,7 @@ fn view_inspector_content(state: ButtonState, theme: &Theme) -> Scene {
         INSPECTOR_TREE_TAG,
         &tree_items,
         theme,
-        // (R1020 §5.39) The inspector tree is a Tab stop —
-        // `.with_focusable(true)` marks it alongside the viewport button —
-        // so its `TreeViewStyle` opts into the scene-derived enumeration.
-        &TreeViewStyle::m3_default().with_focusable(true),
+        &TreeViewStyle::m3_default(),
         &focus,
     )
 }

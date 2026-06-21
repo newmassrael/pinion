@@ -287,7 +287,7 @@ fn view(state: &TableState, _frame: &Frame) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
     // R1020 §5.39 — the grid is a single Tab stop; opt the table into the
     // scene-derived focus enumeration so its PRIMARY_TAG is collected.
-    let style = TableStyle::m3().with_focusable(true);
+    let style = TableStyle::m3();
     // R730 §5.40 — paint rows in the coordinator's sorted (visual) order;
     // `row_ids` carries each visual row's data index so cells tag by data
     // id and the data-indexed selection / state stay correct.

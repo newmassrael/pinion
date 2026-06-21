@@ -174,7 +174,7 @@ fn view(state: ColsState, _frame: &Frame) -> Scene {
         state.cols_focus,
         state.cols_focused,
         &theme,
-        &ToolbarStyle::m3_default().with_focusable(true),
+        &ToolbarStyle::m3_default(),
     );
 
     let count = Scene::Text(

@@ -113,8 +113,7 @@ fn button_scene(
         &ButtonStyle::m3_default(tag)
             .with_size(Size::px(72, 40))
             .with_corner_radius(20)
-            .with_label_font_size_px(15)
-            .with_focusable(true),
+            .with_label_font_size_px(15),
     )
 }
 

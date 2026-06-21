@@ -11655,6 +11655,40 @@
         "SEPARATE bugs (not tag_not_focusable): r674 Space-toggle, r957/r962/r972/r987 text-band, R1029 font."
       ]
     },
+    "R1030.1": {
+      "decision_summary": "R1030.1 §5.39 SSOT cleanup: remove the now-redundant .with_focusable(true) restatements on the 8 R1030-flipped widget *Style call sites in examples (20 calls + 4 stale comments) — with the style default now true, an example restating it is SSOT duplication. LayoutStyle / chip_layout / hand-composed opt-ins (44 sites) are KEPT because the scene primitive LayoutStyle::focusable stays default-false (a hand-composed raw node genuinely needs the explicit marker). Conservative discrimination (keep-when-unsure, since a wrong removal silently breaks focus while a leftover is harmless). Verified: cargo check/clippy/fmt/workspace-tests clean + 6 affected demos (toolbar/menu/button/tree) PASS = no focus regression from the removals.",
+      "changes_bullets": [
+        "removed 20 redundant .with_focusable(true) on Button/Menu/Toolbar/Disclosure/DatePicker/Tree/Table styles",
+        "kept 44 LayoutStyle/chip hand-composed opt-ins (primitive LayoutStyle default stays false); +4 stale comments"
+      ],
+      "verification_bullets": [
+        "6 affected demos PASS (column-vis/grid-header-menu/selection-toolbar/fab/undo/dock) = no focus regression",
+        "clippy --workspace --all-targets + cargo fmt --check + cargo test --workspace clean"
+      ],
+      "impact_refs": [
+        "5.39"
+      ],
+      "carry_forward_bullets": [
+        "R1029.1 + R1030 + R1030.1 committed locally; PUSH PENDING explicit user consent.",
+        "file_browser FileBrowserMetrics.focusable still default-false (not flipped); consistency follow-up."
+      ],
+      "publishable_decision_summary": "R1030.1 §5.39 SSOT cleanup: remove the now-redundant .with_focusable(true) restatements on the 8 R1030-flipped widget *Style call sites in examples (20 calls + 4 stale comments) — with the style default now true, an example restating it is SSOT duplication. LayoutStyle / chip_layout / hand-composed opt-ins (44 sites) are KEPT because the scene primitive LayoutStyle::focusable stays default-false (a hand-composed raw node genuinely needs the explicit marker). Conservative discrimination (keep-when-unsure, since a wrong removal silently breaks focus while a leftover is harmless). Verified: cargo check/clippy/fmt/workspace-tests clean + 6 affected demos (toolbar/menu/button/tree) PASS = no focus regression from the removals.",
+      "publishable_changes_bullets": [
+        "removed 20 redundant .with_focusable(true) on Button/Menu/Toolbar/Disclosure/DatePicker/Tree/Table styles",
+        "kept 44 LayoutStyle/chip hand-composed opt-ins (primitive LayoutStyle default stays false); +4 stale comments"
+      ],
+      "publishable_verification_bullets": [
+        "6 affected demos PASS (column-vis/grid-header-menu/selection-toolbar/fab/undo/dock) = no focus regression",
+        "clippy --workspace --all-targets + cargo fmt --check + cargo test --workspace clean"
+      ],
+      "publishable_impact_refs": [
+        "5.39"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R1029.1 + R1030 + R1030.1 committed locally; PUSH PENDING explicit user consent.",
+        "file_browser FileBrowserMetrics.focusable still default-false (not flipped); consistency follow-up."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

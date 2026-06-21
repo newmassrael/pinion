@@ -429,8 +429,7 @@ fn view(state: FileSaveViewState, _frame: &Frame) -> Scene {
         &ButtonColors::filled_tonal(&theme),
         &ButtonStyle::m3_default(TRIGGER_TAG)
             .with_size(Size::px(TRIGGER_W, TRIGGER_H))
-            .with_label_font_size_px(16)
-            .with_focusable(true),
+            .with_label_font_size_px(16),
     );
     let saved = use_saved().get();
     let status = Scene::Text(TextNode::styled(

@@ -558,9 +558,7 @@ fn view(state: SelState, _frame: &Frame) -> Scene {
         state.actions_focus,
         state.actions_focused,
         &theme,
-        // R1020 §5.39 — the action toolbar is a single Tab stop (roving
-        // tabindex internally); opt it into the scene-derived enumeration.
-        &ToolbarStyle::m3_default().with_focusable(true),
+        &ToolbarStyle::m3_default(),
     );
 
     // The selection count readout.

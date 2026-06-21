@@ -315,7 +315,7 @@ fn view(state: HeaderMenuState, _frame: &Frame) -> Scene {
     let h_scroll = use_scroll_state(H_SCROLL_KEY);
     let theme = use_theme(THEME_TAG).theme_animated();
     let tstyle = table_style();
-    let mstyle = MenuStyle::m3_default().with_focusable(true);
+    let mstyle = MenuStyle::m3_default();
 
     let grid_sort = use_grid_data();
     let sort = grid_sort.sort();

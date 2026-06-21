@@ -308,8 +308,7 @@ fn button(label: &str, tag: &'static str, state: ButtonState, colors: &ButtonCol
     let style = ButtonStyle::m3_default(tag)
         .with_corner_radius(8)
         .with_padding(Rect::new(14, 8, 14, 8))
-        .with_label_font_size_px(BODY_FONT_PX)
-        .with_focusable(true);
+        .with_label_font_size_px(BODY_FONT_PX);
     view_button(label, state, 0.0, false, colors, &style)
 }
 

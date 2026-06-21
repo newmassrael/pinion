@@ -213,7 +213,7 @@ fn active_day(state: &PickerState) -> u8 {
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: &PickerState, _frame: &Frame) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
-    let style = DatePickerStyle::m3().with_focusable(true);
+    let style = DatePickerStyle::m3();
     // The keyboard-focus ring is the shell's job: R694 `paint_focus_ring`
     // strokes it around the tag this binding reports focused — the roving
     // active-descendant day cell, resolved through `access_focus_target`

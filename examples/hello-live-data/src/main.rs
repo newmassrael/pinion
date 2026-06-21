@@ -289,8 +289,7 @@ fn view(state: LiveDataViewState, _frame: &Frame) -> Scene {
         &ButtonColors::filled_tonal(&theme),
         &ButtonStyle::m3_default(TICK_TAG)
             .with_size(Size::px(140, 40))
-            .with_label_font_size_px(15)
-            .with_focusable(true),
+            .with_label_font_size_px(15),
     );
 
     Scene::Container(

@@ -135,9 +135,6 @@ fn view_fab(i: usize, state: ButtonState, focused: bool, theme: &Theme) -> Scene
         .with_corner_radius(RADII[i])
         .with_size(fab_size(i))
         .with_label_font_size_px(FONTS[i])
-        // R1020 §5.39 — each FAB is a Tab stop; opt it into the
-        // scene-derived focus enumeration.
-        .with_focusable(true)
         .with_elevation(fab_level(state));
     let label = if i == EXTENDED { EXTENDED_LABEL } else { ICON };
     view_button(label, state, hover_progress, focused, &colors, &style)
