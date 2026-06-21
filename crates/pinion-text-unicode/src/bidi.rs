@@ -159,7 +159,10 @@ pub fn bidi_class(cp: char) -> BidiClass {
     let ranges = tables::RANGES;
     // Binary search for the largest range whose `start <= cp`,
     // then check `cp <= end`. Mirrors the §5.37.3 NFC CCC lookup
-    // shape ([[uax-semantic-spec-lock]]).
+    // shape ([[uax-semantic-spec-lock]]). NOTE: this loop is an exact
+    // twin of `linebreak::line_break_class` (§5.37.7) over the same
+    // `(start, end, idx)` shape — keep the two in lock-step until a
+    // third such property triggers the shared range-helper lift.
     let mut lo = 0usize;
     let mut hi = ranges.len();
     while lo < hi {

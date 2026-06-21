@@ -1509,6 +1509,15 @@ fn parse_general_category(text: &str, gc: &str) -> Vec<u32> {
             continue;
         }
         if fields[2] == gc {
+            // Fail loud if reused for a gc that uses the `<…, First>` /
+            // `<…, Last>` range convention: this emits one codepoint per
+            // row, so a range gc would silently under-count. Pi/Pf (the
+            // only current callers) never use it.
+            assert!(
+                !fields[1].ends_with("First>") && !fields[1].ends_with("Last>"),
+                "parse_general_category({gc}): range convention unsupported at {}",
+                fields[0]
+            );
             let cp = u32::from_str_radix(fields[0], 16)
                 .unwrap_or_else(|_| panic!("invalid hex codepoint: {}", fields[0]));
             out.push(cp);

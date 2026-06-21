@@ -4540,6 +4540,16 @@
           "file": "crates/pinion-text-unicode/src/test_fixture.rs",
           "symbol": "parse_line_break_test",
           "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-text-unicode/src/linebreak.rs",
+          "symbol": "is_initial_punctuation",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-text-unicode/src/linebreak.rs",
+          "symbol": "is_final_punctuation",
+          "kind": "implements"
         }
       ]
     },
