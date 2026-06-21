@@ -100,10 +100,12 @@ fn view(state: RailState, _frame: &Frame) -> Scene {
     // PRIMARY_TAG on the rail column so `{path:"nav_rail"}` AI routing +
     // `rect_for_tag` AT bounds attach to the Navigation landmark.
     let rail = Scene::Container(
+        // (R1030 §5.39) hand-composed focus stop — composing view owns the opt-in.
         ContainerNode::new(items).with_tag(PRIMARY_TAG).with_layout(
             LayoutStyle::new()
                 .flex(FlexDirection::Column)
                 .with_align_items(AlignItems::Stretch)
+                .with_focusable(true)
                 .with_gap(RAIL_GAP)
                 .with_padding(Rect::new(RAIL_PAD, RAIL_PAD, RAIL_PAD, RAIL_PAD)),
         ),

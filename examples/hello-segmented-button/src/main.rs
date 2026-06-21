@@ -127,10 +127,12 @@ fn view(state: GroupState, _frame: &Frame) -> Scene {
                 BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHighest))
                     .with_corner_radius(TRACK_RADIUS),
             )
+            // (R1030 §5.39) hand-composed focus stop — composing view owns the opt-in.
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Row)
                     .with_align_items(AlignItems::Center)
+                    .with_focusable(true)
                     .with_padding(Rect::new(TRACK_PAD, TRACK_PAD, TRACK_PAD, TRACK_PAD))
                     .with_gap(0),
             ),

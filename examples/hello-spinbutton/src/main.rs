@@ -120,10 +120,12 @@ fn view(state: &SpinState, _frame: &Frame) -> Scene {
             BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHighest))
                 .with_corner_radius(FIELD_H / 2),
         )
+        // (R1030 §5.39) hand-composed focus stop — composing view owns the opt-in.
         .with_layout(
             LayoutStyle::new()
                 .flex(FlexDirection::Row)
                 .with_align_items(AlignItems::Center)
+                .with_focusable(true)
                 .with_gap(0),
         ),
     );

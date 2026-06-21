@@ -211,7 +211,12 @@ fn view(state: &DiscState, _frame: &Frame) -> Scene {
         ContainerNode::new(children)
             .with_tag(TAG)
             .with_aria_label("Quality")
-            .with_layout(LayoutStyle::new().with_size(Size::px(TRACK_W, THUMB_SIZE))),
+            // (R1030 §5.39) hand-composed focus stop — composing view owns the opt-in.
+            .with_layout(
+                LayoutStyle::new()
+                    .with_size(Size::px(TRACK_W, THUMB_SIZE))
+                    .with_focusable(true),
+            ),
     );
 
     let label = Scene::Text(TextNode::styled(

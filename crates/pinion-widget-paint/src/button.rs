@@ -247,15 +247,18 @@ pub struct ButtonStyle {
     /// shadow ramp behind the surface — the M3 FAB's resting / raised
     /// lift. This is the "elevation" axis the type doc anticipated.
     pub elevation_level: u8,
-    /// (R1020 §5.39) Keyboard focus stop. When `true`, `button_scene`
+    /// (R1020 §5.39 / R1030) Keyboard focus stop. When `true`, `button_scene`
     /// marks the button's outer Container `.with_focusable(true)` so the
     /// scene-derived §5.39 enumeration collects its tag as a Tab stop.
     ///
-    /// Default `false` (opt-in): most buttons are standalone Tab stops
-    /// and set this true, but a button painted as a modal-dialog member
-    /// (focusable only via `push_modal_scope` while the dialog is open)
-    /// or a non-interactive decorative affordance leaves it false so it
-    /// stays out of the base Tab order.
+    /// Default `true` (R1030 fail-safe): a button is an interactive control
+    /// and a Tab stop by default, mirroring the HTML native `<button>` (a
+    /// focusable element without an explicit `tabindex`). The rare non-stop
+    /// cases opt OUT with `.with_focusable(false)`: a modal-dialog member
+    /// managed by `push_modal_scope` (focusable only while the dialog is up)
+    /// or a non-interactive decorative affordance. The pre-R1030 default
+    /// `false` was fail-dangerous — a forgotten opt-in silently dropped the
+    /// control from the Tab order (and from AI focus introspection).
     pub focusable: bool,
 }
 
@@ -271,13 +274,13 @@ impl ButtonStyle {
             size: None,
             label_font_size_px: 14,
             elevation_level: 0,
-            focusable: false,
+            focusable: true,
         }
     }
 
-    /// (R1020 §5.39) Mark this button a keyboard focus stop (default
-    /// `false`). Standalone buttons set this true; modal-dialog members
-    /// and decorative affordances leave it false. See [`Self::focusable`].
+    /// (R1020 §5.39 / R1030) Override the keyboard focus stop (default
+    /// `true`). Interactive buttons keep the default; modal-dialog members
+    /// and decorative affordances opt out with `false`. See [`Self::focusable`].
     #[must_use]
     pub const fn with_focusable(mut self, focusable: bool) -> Self {
         self.focusable = focusable;

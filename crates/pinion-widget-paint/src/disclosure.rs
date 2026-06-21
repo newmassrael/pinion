@@ -83,11 +83,10 @@ pub struct DisclosureStyle {
     /// marks the disclosure's header Container `.with_focusable(true)` so
     /// the scene-derived §5.39 enumeration collects its tag as a Tab stop.
     ///
-    /// Default `false` (opt-in), mirroring
-    /// [`crate::button::ButtonStyle::focusable`]: a disclosure header that
-    /// is a standalone Tab stop sets this true; a decorative or
-    /// modal-scoped section leaves it false so it stays out of the base
-    /// Tab order.
+    /// Default `true` (R1030 fail-safe, web native-element model), mirroring
+    /// [`crate::button::ButtonStyle::focusable`]: a disclosure header is a Tab
+    /// stop by default; a decorative or modal-scoped section opts out with
+    /// `.with_focusable(false)` so it stays out of the base Tab order.
     pub focusable: bool,
 }
 
@@ -104,7 +103,7 @@ impl DisclosureStyle {
             chevron_gap: 12,
             content_pad: 16,
             corner_radius: 8,
-            focusable: false,
+            focusable: true,
         }
     }
 

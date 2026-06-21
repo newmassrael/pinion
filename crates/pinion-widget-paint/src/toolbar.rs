@@ -89,10 +89,11 @@ pub struct ToolbarStyle {
     /// (R1020 §5.39) Keyboard focus stop. When `true`, `view_toolbar`
     /// marks the strip Container `.with_focusable(true)` so the
     /// scene-derived §5.39 enumeration collects the strip as a single Tab
-    /// stop (the controls rove internally). Default `false` (opt-in): a
-    /// toolbar used as a non-interactive affordance strip — e.g. a text
-    /// editor's formatting bar, whose focus belongs to the text field —
-    /// leaves it false so the strip stays out of the Tab order.
+    /// stop (the controls rove internally). Default `true` (R1030 fail-safe,
+    /// web native-element model); opt out with `.with_focusable(false)` for a
+    /// non-interactive affordance strip — e.g. a text editor's formatting bar,
+    /// whose focus belongs to the text field — so the strip stays out of the
+    /// Tab order.
     pub focusable: bool,
 }
 
@@ -110,12 +111,12 @@ impl ToolbarStyle {
             bar_padding: 6,
             item_radius: 8,
             focus_ring_width: 2,
-            focusable: false,
+            focusable: true,
         }
     }
 
     /// (R1020 §5.39) Mark the toolbar a single keyboard focus stop
-    /// (default `false`). See [`Self::focusable`].
+    /// (default `true`). See [`Self::focusable`].
     #[must_use]
     pub const fn with_focusable(mut self, focusable: bool) -> Self {
         self.focusable = focusable;

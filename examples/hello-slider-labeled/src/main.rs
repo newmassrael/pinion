@@ -254,7 +254,12 @@ fn view(state: &LabeledState, _frame: &Frame) -> Scene {
         ContainerNode::new(vec![rail, filled, thumb])
             .with_tag(TAG)
             .with_aria_label("Brightness")
-            .with_layout(LayoutStyle::new().with_size(Size::px(TRACK_W, THUMB_SIZE))),
+            // (R1030 §5.39) hand-composed focus stop — composing view owns the opt-in.
+            .with_layout(
+                LayoutStyle::new()
+                    .with_size(Size::px(TRACK_W, THUMB_SIZE))
+                    .with_focusable(true),
+            ),
     );
 
     let stop_labels = stop_label_row(&theme, interaction, active);

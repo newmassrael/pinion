@@ -85,9 +85,9 @@ pub struct TableStyle {
     /// (R1020 §5.39) Keyboard focus stop. When `true`, [`view_table`] /
     /// [`view_virtual_table`] mark the table's tag-carrying outer Container
     /// `.with_focusable(true)` so the scene-derived §5.39 enumeration collects
-    /// its tag as a Tab stop. Default `false` (opt-in): a grid binding sets this
-    /// true to make the table a Tab stop; a decorative or modal-scoped table
-    /// leaves it false. Mirrors
+    /// its tag as a Tab stop. Default `true` (R1030 fail-safe, web
+    /// native-element model): a table is a Tab stop by default; a decorative or
+    /// modal-scoped table opts out with `.with_focusable(false)`. Mirrors
     /// [`ButtonStyle::focusable`](crate::button::ButtonStyle::focusable).
     pub focusable: bool,
 }
@@ -112,11 +112,11 @@ impl TableStyle {
             block_pad: 8,
             corner_radius: 12,
             resize_handle_w: 8,
-            focusable: false,
+            focusable: true,
         }
     }
 
-    /// (R1020 §5.39) Mark this table a keyboard focus stop (default `false`).
+    /// (R1020 §5.39 / R1030) Override this table's keyboard focus stop (default `true`).
     /// A grid binding sets this true; a decorative / modal-scoped table leaves
     /// it false. See [`Self::focusable`].
     #[must_use]

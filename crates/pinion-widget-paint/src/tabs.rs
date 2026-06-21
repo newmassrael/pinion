@@ -85,6 +85,13 @@ pub struct TabsStyle {
     /// contiguous (0 px); a binding can widen this for a segmented
     /// look.
     pub tab_gap: u32,
+    /// (R1030 §5.39) Keyboard focus stop. When `true`, [`view_tabs`] marks
+    /// the tag-carrying tab strip `.with_focusable(true)` so the scene-derived
+    /// §5.39 enumeration collects the strip as a Tab stop (the WAI-ARIA tablist
+    /// is a single Tab stop; Arrow keys move between tabs). Default `true`
+    /// (R1030 fail-safe, web native-element model); a decorative strip opts out
+    /// with `.with_focusable(false)`.
+    pub focusable: bool,
 }
 
 impl TabsStyle {
@@ -99,7 +106,16 @@ impl TabsStyle {
             font_size_px: 14,
             tab_padding: 16,
             tab_gap: 0,
+            focusable: true,
         }
+    }
+
+    /// (R1030 §5.39) Override the keyboard focus stop (default `true`). See
+    /// [`Self::focusable`].
+    #[must_use]
+    pub const fn with_focusable(mut self, focusable: bool) -> Self {
+        self.focusable = focusable;
+        self
     }
 }
 
@@ -174,6 +190,9 @@ pub fn view_tabs(
                     .with_align_items(AlignItems::Stretch)
                     .with_justify(JustifyContent::Start)
                     .with_gap(style.tab_gap)
+                    // (R1030 §5.39) Carry the focus opt-in onto the tag-bearing
+                    // tablist strip (a single Tab stop per WAI-ARIA).
+                    .with_focusable(style.focusable)
                     .with_size(Size::auto().with_height(SizeValue::Px(style.tab_height))),
             ),
     )

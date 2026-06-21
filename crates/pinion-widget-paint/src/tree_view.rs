@@ -117,11 +117,11 @@ pub struct TreeViewStyle {
     /// Container `.with_focusable(true)` so the scene-derived §5.39
     /// enumeration collects the tree's tag as a Tab stop.
     ///
-    /// Default `false` (opt-in), mirroring
-    /// [`crate::button::ButtonStyle::focusable`]: a tree that is a
-    /// standalone Tab stop (file-tree / inspector / scene outliner) sets
-    /// this true; a tree painted as a modal-scoped or decorative member
-    /// leaves it false so it stays out of the base Tab order.
+    /// Default `true` (R1030 fail-safe, web native-element model), mirroring
+    /// [`crate::button::ButtonStyle::focusable`]: a tree (file-tree /
+    /// inspector / scene outliner) is a Tab stop by default; a tree painted as
+    /// a modal-scoped or decorative member opts out with
+    /// `.with_focusable(false)` so it stays out of the base Tab order.
     pub focusable: bool,
 }
 
@@ -140,7 +140,7 @@ impl TreeViewStyle {
             font_size_px: 16,
             row_padding: 12,
             glyph_label_gap: 10,
-            focusable: false,
+            focusable: true,
         }
     }
 

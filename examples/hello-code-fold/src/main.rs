@@ -279,9 +279,11 @@ fn view(_state: (TextFieldState, u32), _frame: &Frame) -> Scene {
             .with_style(BoxStyle::filled(
                 theme.resolve(ColorRole::SurfaceContainerHighest),
             ))
+            // (R1030 §5.39) hand-composed focus stop — composing view owns the opt-in.
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Column)
+                    .with_focusable(true)
                     .with_gap(LINE_GAP),
             ),
     );

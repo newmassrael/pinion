@@ -289,7 +289,12 @@ fn view(state: ListState, _frame: &Frame) -> Scene {
     let listbox_root = Scene::Container(
         ContainerNode::new(vec![Scene::Scroll(scroll), scrollbar_visual])
             .with_tag(PRIMARY_TAG)
-            .with_layout(LayoutStyle::new().flex(FlexDirection::Row)),
+            // (R1030 §5.39) hand-composed focus stop — composing view owns the opt-in.
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Row)
+                    .with_focusable(true),
+            ),
     );
 
     Scene::Container(

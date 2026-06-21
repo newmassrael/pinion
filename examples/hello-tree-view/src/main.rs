@@ -317,7 +317,14 @@ fn view(state: ButtonState) -> Scene {
     let invisible_root = Scene::Container(
         ContainerNode::new(Vec::new())
             .with_tag(ROOT_BTN_TAG)
-            .with_layout(LayoutStyle::new().with_size(Size::px(0, 0))),
+            // (R1030 §5.39) The invisible root IS the tree's keyboard focus
+            // stop (apply_key drives the tree off it). Hand-composed node, so
+            // the composing view owns the focus opt-in.
+            .with_layout(
+                LayoutStyle::new()
+                    .with_size(Size::px(0, 0))
+                    .with_focusable(true),
+            ),
     );
 
     let header_text = Scene::Text(TextNode::styled(

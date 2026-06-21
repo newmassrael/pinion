@@ -148,10 +148,12 @@ fn view(state: StepperState, _frame: &Frame) -> Scene {
     // PRIMARY_TAG on the strip so `{path:"stepper"}` AI routing +
     // `rect_for_tag` AT bounds attach to the Group.
     let strip = Scene::Container(
+        // (R1030 §5.39) hand-composed focus stop — composing view owns the opt-in.
         ContainerNode::new(row).with_tag(PRIMARY_TAG).with_layout(
             LayoutStyle::new()
                 .flex(FlexDirection::Row)
-                .with_align_items(AlignItems::Center),
+                .with_align_items(AlignItems::Center)
+                .with_focusable(true),
         ),
     );
     Scene::Container(

@@ -102,11 +102,11 @@ pub struct DatePickerStyle {
     /// `.with_focusable(true)` so the scene-derived §5.39 enumeration
     /// collects their tags as Tab stops.
     ///
-    /// Default `false` (opt-in), mirroring
-    /// [`ButtonStyle::focusable`](crate::button::ButtonStyle::focusable):
-    /// a stand-alone picker sets this true, while a picker embedded as a
-    /// modal-popup member leaves it false so it stays out of the base Tab
-    /// order until the popup opens.
+    /// Default `true` (R1030 fail-safe, web native-element model), mirroring
+    /// [`ButtonStyle::focusable`](crate::button::ButtonStyle::focusable): a
+    /// stand-alone picker is a Tab stop by default; a picker embedded as a
+    /// modal-popup member opts out with `.with_focusable(false)` so it stays
+    /// out of the base Tab order until the popup opens.
     pub focusable: bool,
 }
 
@@ -123,7 +123,7 @@ impl DatePickerStyle {
             nav_size: 32,
             block_pad: 12,
             corner_radius: 12,
-            focusable: false,
+            focusable: true,
         }
     }
 

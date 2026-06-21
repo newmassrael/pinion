@@ -139,6 +139,12 @@ fn view(state: RatingState, _frame: &Frame) -> Scene {
                 .flex(FlexDirection::Row)
                 .with_align_items(AlignItems::Center)
                 .with_justify(JustifyContent::Center)
+                // (R1030 §5.39) A rating is a single radiogroup Tab stop. This
+                // is a hand-composed widget (a raw Container over
+                // `RadioGroupExternal`, not a focus-aware helper), so the
+                // composing view owns the focus opt-in — there is no widget
+                // style default to carry it.
+                .with_focusable(true)
                 .with_gap(4),
         ),
     );

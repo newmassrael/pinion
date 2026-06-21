@@ -99,10 +99,12 @@ fn view(state: TrailState, _frame: &Frame) -> Scene {
     // PRIMARY_TAG on the trail row so `{path:"breadcrumb"}` AI routing +
     // `rect_for_tag` AT bounds attach to the Navigation landmark.
     let trail = Scene::Container(
+        // (R1030 §5.39) hand-composed focus stop — composing view owns the opt-in.
         ContainerNode::new(row).with_tag(PRIMARY_TAG).with_layout(
             LayoutStyle::new()
                 .flex(FlexDirection::Row)
                 .with_align_items(AlignItems::Center)
+                .with_focusable(true)
                 .with_gap(CRUMB_GAP),
         ),
     );
