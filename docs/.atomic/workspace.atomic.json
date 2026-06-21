@@ -3237,7 +3237,8 @@
         "R1025: ShellCore exposes hover_target + captured_target READ accessors (sprag PR-14)",
         "R1025: read-only CoreShell/InputRouter passthrough; pointer sibling of focus()/redraw read",
         "R1025: CoreShell gains captured_target passthrough; grounds splitter/pan/drag tests in data",
-        "R1027: CursorMoved/Touch/PixelDelta physical /scale_factor -> logical before router (HiDPI hit)"
+        "R1027: CursorMoved/Touch/PixelDelta physical /scale_factor -> logical before router (HiDPI hit)",
+        "R1027 rule: every winit physical-px input /scale before router; PanGesture.delta = future seam"
       ],
       "alternatives_rejected": [
         {
@@ -6606,7 +6607,8 @@
         "R57.X.scrollbar: shell substrate re-runs V::view + compute_layout same-frame when scroll_dirty=true.",
         "R57.X.scrollbar: set_max returns dirty bool (revision delta, post equality-skip).",
         "pinion-tui has no compute_layout in compute_paint_scene; future TUI scrollbar warmup is axis carry.",
-        "ScrollState::set_max single bool API: #[allow(must_use_candidate)] is the textbook trade-off."
+        "ScrollState::set_max single bool API: #[allow(must_use_candidate)] is the textbook trade-off.",
+        "R1027: wheel PixelDelta physical /scale_factor -> logical; LineDelta unitless notches unscaled"
       ],
       "alternatives_rejected": [
         {
@@ -11407,6 +11409,52 @@
         "render_window + window_event arms not headlessly driveable (live event loop) — seams covered by helper units + GPU append witness + router composition (honest winit-boundary convention)",
         "scale_is_non_identity epsilon predicate duplicated app.rs + a11y tree.rs (cross-crate, 2 sites); lift to pinion-core only on a 3rd DPI-gate consumer (abstraction-needs-second-consumer)",
         "Mac/Win per-monitor-DPI native surfaces out of scope (need those OS runners; phase-B-excludes-mac-win); live 2x manual verify (no WINIT_X11_SCALE_FACTOR workaround) pending user"
+      ]
+    },
+    "R1027.1": {
+      "decision_summary": "R1027.1 §5.16 §6.3 §2 #3 session-review clearance (user 'textbook/SSOT/north-star?', 2 fresh adversarial reviewers): remove dead .max(1) clamp in logical_layout_size (restore 0-size early-return), fix frame.rs SSOT drift (scale_factor forbidden as view-fn Frame field per dry_run determinism), add §5.45 wheel + §5.35 general-input-rule caveats; core wheel/AccessKit/design re-verified textbook",
+      "changes_bullets": [
+        "pinion-shell logical_layout_size drops the .max(1) clamp -> returns raw logical (0 for a sub-pixel/0 dimension); render_window NonZeroU32 guard is load-bearing again (0-size window early-returns, no wasted 1px paint), comment + unit test fixed to match",
+        "pinion-core frame.rs doc: scale_factor removed from the addable-Frame-fields example + a note that it is forbidden as a view-fn input (R1027 keeps DPI a shell render-boundary concern; threading it into Frame would break dry_run determinism, 2#3)",
+        "Mnemosyne caveats: §5.45 (wheel PixelDelta /scale, LineDelta unitless) + §5.35 (general rule: every winit physical-px input /scale before router; PanGesture.delta = latent future seam)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 = 0 failed; clippy --workspace --all-targets --features pinion-runtime/vello = 0; fmt --all --check = 0; GPU witness r1027_scaled_append_doubles_ink_extent_on_hidpi --ignored PASS (lavapipe)",
+        "2 fresh adversarial reviewers (refactoring-expert smell/SSOT + system-architect completeness/north-star), read-only parallel: 0 HIGH; wheel PixelDelta fix verified correct vs BOTH consumers (input.rs + external.rs both contract logical px); AccessKit no double-scale (accesskit_winit applies none); byte-identical-at-scale-1 now strictly true after clamp removal",
+        "kept as reviewer-affirmed textbook: scale_is_non_identity 2-site cross-crate dup NOT lifted (1-line idiom, pinion-core itself inlines it; abstraction-needs-second-consumer); eager empty scaled_scene per-slot (~free, Option would be premature)"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.35",
+        "5.45",
+        "6.3"
+      ],
+      "carry_forward_bullets": [
+        "PanGesture.delta (winit iOS-only, currently unhandled) is a latent physical-px seam; a future gesture round must /scale it (now documented in the §5.35 caveat)",
+        "scale_is_non_identity epsilon predicate still 2-site (app.rs scale_is_non_identity + a11y tree.rs inline); lift to pinion-core only on a 3rd DPI-gate consumer",
+        "live 2x manual verify (no WINIT_X11_SCALE_FACTOR workaround) still pending user hardware; render_window + window_event arms not headlessly driveable (seams covered by unit + GPU + router-composition tests)"
+      ],
+      "publishable_decision_summary": "R1027.1 §5.16 §6.3 §2 #3 session-review clearance (user 'textbook/SSOT/north-star?', 2 fresh adversarial reviewers): remove dead .max(1) clamp in logical_layout_size (restore 0-size early-return), fix frame.rs SSOT drift (scale_factor forbidden as view-fn Frame field per dry_run determinism), add §5.45 wheel + §5.35 general-input-rule caveats; core wheel/AccessKit/design re-verified textbook",
+      "publishable_changes_bullets": [
+        "pinion-shell logical_layout_size drops the .max(1) clamp -> returns raw logical (0 for a sub-pixel/0 dimension); render_window NonZeroU32 guard is load-bearing again (0-size window early-returns, no wasted 1px paint), comment + unit test fixed to match",
+        "pinion-core frame.rs doc: scale_factor removed from the addable-Frame-fields example + a note that it is forbidden as a view-fn input (R1027 keeps DPI a shell render-boundary concern; threading it into Frame would break dry_run determinism, 2#3)",
+        "Mnemosyne caveats: §5.45 (wheel PixelDelta /scale, LineDelta unitless) + §5.35 (general rule: every winit physical-px input /scale before router; PanGesture.delta = latent future seam)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 = 0 failed; clippy --workspace --all-targets --features pinion-runtime/vello = 0; fmt --all --check = 0; GPU witness r1027_scaled_append_doubles_ink_extent_on_hidpi --ignored PASS (lavapipe)",
+        "2 fresh adversarial reviewers (refactoring-expert smell/SSOT + system-architect completeness/north-star), read-only parallel: 0 HIGH; wheel PixelDelta fix verified correct vs BOTH consumers (input.rs + external.rs both contract logical px); AccessKit no double-scale (accesskit_winit applies none); byte-identical-at-scale-1 now strictly true after clamp removal",
+        "kept as reviewer-affirmed textbook: scale_is_non_identity 2-site cross-crate dup NOT lifted (1-line idiom, pinion-core itself inlines it; abstraction-needs-second-consumer); eager empty scaled_scene per-slot (~free, Option would be premature)"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.35",
+        "5.45",
+        "6.3"
+      ],
+      "publishable_carry_forward_bullets": [
+        "PanGesture.delta (winit iOS-only, currently unhandled) is a latent physical-px seam; a future gesture round must /scale it (now documented in the §5.35 caveat)",
+        "scale_is_non_identity epsilon predicate still 2-site (app.rs scale_is_non_identity + a11y tree.rs inline); lift to pinion-core only on a 3rd DPI-gate consumer",
+        "live 2x manual verify (no WINIT_X11_SCALE_FACTOR workaround) still pending user hardware; render_window + window_event arms not headlessly driveable (seams covered by unit + GPU + router-composition tests)"
       ]
     },
     "R232": {

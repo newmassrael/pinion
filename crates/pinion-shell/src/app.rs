@@ -651,9 +651,11 @@ impl<V: WidgetView> AppShell<V> {
             // surface in physical pixels; the window `scale_factor` maps
             // physical -> logical so app-authored dimensions render at
             // their intended size on `HiDPI` (the scale is re-applied at the
-            // GPU raster boundary below). `logical_layout_size` clamps to
-            // `>= 1`, so a degenerate zero-logical dimension never reaches
-            // layout; the `NonZeroU32` guards stay as a defensive backstop.
+            // GPU raster boundary below). `logical_layout_size` may return a
+            // `0` dimension for a degenerate (minimized / sub-pixel) window;
+            // the `NonZeroU32` guards below then early-return with no paint —
+            // the load-bearing 0-size skip pre-R1027 got from feeding the raw
+            // physical `inner_size` to `NonZeroU32::new`.
             let scale = slot.scale_factor;
             let (lw, lh) = logical_layout_size(window.inner_size(), scale);
             let Some(w) = core::num::NonZeroU32::new(lw) else {
@@ -2111,8 +2113,16 @@ fn scale_is_non_identity(scale: f64) -> bool {
 /// logical; physical pixels appear only at the GPU surface size, the
 /// vello raster scale, and pointer input. Delegates to winit's own DPI
 /// math ([`PhysicalSize::to_logical`]) rather than hand-rolling the
-/// division + rounding, then clamps to `>= 1` so a degenerate
-/// zero-logical dimension never reaches layout.
+/// division + rounding.
+///
+/// May return `0` for a degenerate (minimized / sub-logical-pixel)
+/// dimension — e.g. a 1-physical-px width at scale 4 rounds to `0`
+/// logical. The caller's `NonZeroU32` guard in `render_window`
+/// early-returns on a `0` dimension (no paint), exactly as pre-R1027
+/// did when it fed the raw physical `inner_size` to `NonZeroU32::new`.
+/// This is deliberately NOT clamped to `>= 1` here: clamping would make
+/// that guard unreachable and paint a wasted 1px frame for a 0-size
+/// window.
 ///
 /// `scale` must be a valid winit factor (positive + normal); winit's
 /// `to_logical` asserts this. Always satisfied here — the only callers
@@ -2120,7 +2130,7 @@ fn scale_is_non_identity(scale: f64) -> bool {
 /// / `ScaleFactorChanged`.
 fn logical_layout_size(physical: PhysicalSize<u32>, scale: f64) -> (u32, u32) {
     let logical: LogicalSize<u32> = physical.to_logical(scale);
-    (logical.width.max(1), logical.height.max(1))
+    (logical.width, logical.height)
 }
 
 /// R1027 §5.16 §5.35 — convert a winit **physical** pointer position to
@@ -2938,8 +2948,11 @@ mod tests {
             logical_layout_size(PhysicalSize::new(1440, 901), 1.5),
             (960, 601)
         );
-        // Clamp: a sub-logical-pixel dimension never reaches layout as 0.
-        assert_eq!(logical_layout_size(PhysicalSize::new(1, 1), 4.0), (1, 1));
+        // Degenerate: a sub-logical-pixel physical dimension (1px / 4 =
+        // 0.25 -> round -> 0) returns 0 — NOT clamped to 1. render_window's
+        // `NonZeroU32` guard then early-returns (no paint), matching the
+        // pre-R1027 0-size skip rather than painting a wasted 1px frame.
+        assert_eq!(logical_layout_size(PhysicalSize::new(1, 1), 4.0), (0, 0));
     }
 
     #[test]

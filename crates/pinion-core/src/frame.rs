@@ -3,8 +3,17 @@
 //! v0 carried a ZST `Frame`; R51.135 added the [`Frame::dt`] field as
 //! the spring solver's caller-injected time delta substrate (§5.28
 //! carry from R51.133 closed). The struct is `#[non_exhaustive]` so
-//! further fields (e.g. `frame_index`, `scale_factor`) can be added
-//! without a `SemVer` major bump.
+//! further fields (e.g. `frame_index`) can be added without a `SemVer`
+//! major bump.
+//!
+//! R1027 §5.16 §2 #3 — the window `scale_factor` is deliberately NOT
+//! such a field. DPI is a shell render-boundary concern: scale is
+//! applied at the GPU raster + pointer-input + AccessKit-root
+//! boundaries, and the scene / layout the view-fn produces stays
+//! logical (resolution-independent). Threading `scale_factor` into
+//! `Frame` would make it a view-fn input, so the same state would yield
+//! different scenes at 1x vs 2x — breaking the `dry_run` determinism
+//! invariant. Keep DPI out of `Frame`.
 //!
 //! ABI note: as of R51.135, `Frame` is no longer a ZST — it carries
 //! a single `f32`. The previous "LLVM elides `&Frame` from ABI" guarantee
