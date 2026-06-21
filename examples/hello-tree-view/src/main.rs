@@ -288,8 +288,13 @@ fn view(state: ButtonState) -> Scene {
     let tree_scene = view_tree_focused(
         TREE_TAG,
         &items,
+        // (R1030.2 §5.39) This binding routes keyboard focus through the
+        // invisible `tree_root` (apply_key gates on it); the painted tree
+        // container must NOT also be a focus stop, or a row click would move
+        // shell focus onto `file_tree` and the Space/Arrow gate would reject
+        // keys. Opt the container out of the R1030 fail-safe default.
         &theme,
-        &TreeViewStyle::m3_default(),
+        &TreeViewStyle::m3_default().with_focusable(false),
         &focus,
     );
 
