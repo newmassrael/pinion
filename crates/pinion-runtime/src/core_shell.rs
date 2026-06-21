@@ -1325,6 +1325,27 @@ impl<V: WidgetCore> CoreShell<V> {
     /// the `None`-skip above leaves a foreign window's pane untouched. This lets a
     /// torn-off pane reflow to the secondary window it is drawn in.
     ///
+    /// # Precondition (R1021.1 — unchecked): one pane tag is drawn in at most one
+    /// window per frame
+    ///
+    /// The registry is keyed by **tag only**, not `(window, tag)` — and it must
+    /// be, because the consumer [`use_pane_viewport_size`] resolves under the
+    /// binding-wide [`Self::root_owner`] (every window's view fn runs there,
+    /// R680), so it has no window to disambiguate by. That makes the tag-keyed
+    /// shared registry the *correct* model for a window-agnostic consumer, but it
+    /// carries an unchecked precondition: **a given pane tag must be drawn in at
+    /// most one window per frame.** If two windows draw the same tag in one
+    /// event-loop turn, both `set` the one shared signal and the last window to
+    /// paint wins; across turns the pane's reflow Effect (a PTY `TIOCSWINSZ`)
+    /// would oscillate between the two windows' rects every frame. The dock /
+    /// tear-off model satisfies this by construction (a pane lives in exactly one
+    /// window — the primary drops it when it floats), so it is left a documented
+    /// precondition rather than enforced. A future "mirror one pane in N windows"
+    /// feature cannot use this seam as-is; it would need a different (per-view)
+    /// size source — the same window-discriminator problem R1021 deferred for the
+    /// window-size seam. The `same_tag_in_two_windows_is_last_writer_wins` test
+    /// pins this consequence so the precondition's teeth are explicit.
+    ///
     /// The writes run inside [`Self::root_owner`]'s scope (R1006 blocker B): a
     /// [`Signal::set`] re-runs the reflow Effect
     /// synchronously, and that body resolves

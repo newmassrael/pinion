@@ -381,3 +381,45 @@ fn secondary_window_publishes_its_pane_without_clobbering_absent_tags() {
     let log = PTY_LOG.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
     assert_eq!(log, vec![(LEFT_TAG.to_owned(), (40, 12))]);
 }
+
+#[test]
+fn same_tag_in_two_windows_is_last_writer_wins() {
+    // R1021.1 — pins the UNCHECKED PRECONDITION documented on
+    // CoreShell::publish_pane_viewports: a pane tag is drawn in at most one window
+    // per frame. The registry is tag-keyed (one signal per tag, shared across
+    // windows — it must be, since the consumer resolves under the binding-wide
+    // root_owner with no window to disambiguate by, R680). So if the SAME tag is
+    // drawn in two windows, the last window to paint wins, and the pane's reflow
+    // oscillates as the windows alternate painting. This test makes that teeth
+    // explicit: the dock/tear-off model avoids it by drawing each tag in exactly
+    // one window (the primary drops a pane when it floats); a future "mirror one
+    // pane in N windows" feature cannot use this seam as-is.
+    let _g = TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    PTY_LOG.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clear();
+
+    let mut core = ShellCore::<PaneView>::new();
+
+    // Primary draws LEFT_TAG (in the 3:5 split) -> 240x384 -> 30x24.
+    core.compute_paint_scene(640, 384);
+    assert_eq!(core.root_owner().run(|| pty_dims(LEFT_TAG).get()), (30, 24));
+
+    // The FLOAT window also draws LEFT_TAG (filling 320x192) -> 40x12. Because the
+    // signal is shared per tag, the float paint (last writer) clobbers the
+    // primary's value — this is the precondition violation made visible.
+    core.compute_paint_scene_for_window(FLOAT_LEFT_WINDOW, 320, 192);
+    assert_eq!(
+        core.root_owner().run(|| pty_dims(LEFT_TAG).get()),
+        (40, 12),
+        "two windows on one tag: the last painter wins (float clobbers primary)",
+    );
+
+    // Re-painting the primary flips it straight back -> 30x24. Across alternating
+    // frames the tag would oscillate; this is exactly why the dock model keeps a
+    // tag in one window at a time.
+    core.compute_paint_scene(640, 384);
+    assert_eq!(
+        core.root_owner().run(|| pty_dims(LEFT_TAG).get()),
+        (30, 24),
+        "re-painting the primary re-clobbers: last-writer-wins, not stable",
+    );
+}

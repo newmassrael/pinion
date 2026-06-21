@@ -10897,6 +10897,44 @@
         "R1021 is impl-complete + green but PUSH PENDING explicit user consent."
       ]
     },
+    "R1021.1": {
+      "decision_summary": "R1021.1 §5.23 §5.16: pane-publish review clearance — documented the unchecked precondition on CoreShell::publish_pane_viewports (a pane tag is drawn in at most one window per frame). The registry is tag-keyed because the consumer resolves under the binding-wide root_owner with no window to disambiguate by (R680), so per-(window,tag) keying is impossible — the same wall as the deferred window-size seam; a tag in two windows is last-writer-wins and the dock model satisfies the precondition by construction. Added same_tag_in_two_windows_is_last_writer_wins to pin the consequence.",
+      "changes_bullets": [
+        "core_shell.rs publish_pane_viewports doc: new \"Precondition (unchecked)\" section — a pane tag is drawn in at most one window per frame. The registry is tag-keyed (one shared signal per tag) because the consumer use_pane_viewport_size resolves under the binding-wide root_owner (every window's view fn runs there, R680) and so has no window to disambiguate by; per-(window,tag) keying is therefore impossible — the same window-discriminator wall as the deferred window-size seam. A tag drawn in two windows is last-writer-wins and would oscillate across alternating frames; the dock/tear-off model satisfies the precondition by construction (the primary drops a pane when it floats). A future \"mirror one pane in N windows\" feature cannot use this seam as-is.",
+        "pane_viewport_seam.rs: same_tag_in_two_windows_is_last_writer_wins test — primary draws LEFT (30x24), the float window also draws LEFT (40x12, clobbers the shared signal), re-painting the primary flips it back (30x24). Pins the precondition's teeth so it is explicit + tested rather than a silently-assumed prose invariant."
+      ],
+      "verification_bullets": [
+        "cargo test -p pinion-shell --test pane_viewport_seam = 6 ok 0 fail (5 prior + 1 new).",
+        "cargo test --workspace = 7268 ok 0 fail; clippy --workspace --all-targets --features pinion-runtime/vello = 0.",
+        "core_shell.rs change is doc-only (no behavior change); the new test documents existing last-writer-wins behavior, not a new guarantee."
+      ],
+      "impact_refs": [
+        "5.23",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "Addresses the architect-HIGH / root-cause-MED session-review finding (unenforced one-tag-per-window invariant; the prior test passed by paint ordering, not by the invariant holding). Resolution = document + test the precondition; per-(window,tag) keying is architecturally blocked by R680, so the tag-keyed shared registry stays the correct model.",
+        "PUSH PENDING explicit user consent."
+      ],
+      "publishable_decision_summary": "R1021.1 §5.23 §5.16: pane-publish review clearance — documented the unchecked precondition on CoreShell::publish_pane_viewports (a pane tag is drawn in at most one window per frame). The registry is tag-keyed because the consumer resolves under the binding-wide root_owner with no window to disambiguate by (R680), so per-(window,tag) keying is impossible — the same wall as the deferred window-size seam; a tag in two windows is last-writer-wins and the dock model satisfies the precondition by construction. Added same_tag_in_two_windows_is_last_writer_wins to pin the consequence.",
+      "publishable_changes_bullets": [
+        "core_shell.rs publish_pane_viewports doc: new \"Precondition (unchecked)\" section — a pane tag is drawn in at most one window per frame. The registry is tag-keyed (one shared signal per tag) because the consumer use_pane_viewport_size resolves under the binding-wide root_owner (every window's view fn runs there, R680) and so has no window to disambiguate by; per-(window,tag) keying is therefore impossible — the same window-discriminator wall as the deferred window-size seam. A tag drawn in two windows is last-writer-wins and would oscillate across alternating frames; the dock/tear-off model satisfies the precondition by construction (the primary drops a pane when it floats). A future \"mirror one pane in N windows\" feature cannot use this seam as-is.",
+        "pane_viewport_seam.rs: same_tag_in_two_windows_is_last_writer_wins test — primary draws LEFT (30x24), the float window also draws LEFT (40x12, clobbers the shared signal), re-painting the primary flips it back (30x24). Pins the precondition's teeth so it is explicit + tested rather than a silently-assumed prose invariant."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p pinion-shell --test pane_viewport_seam = 6 ok 0 fail (5 prior + 1 new).",
+        "cargo test --workspace = 7268 ok 0 fail; clippy --workspace --all-targets --features pinion-runtime/vello = 0.",
+        "core_shell.rs change is doc-only (no behavior change); the new test documents existing last-writer-wins behavior, not a new guarantee."
+      ],
+      "publishable_impact_refs": [
+        "5.23",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Addresses the architect-HIGH / root-cause-MED session-review finding (unenforced one-tag-per-window invariant; the prior test passed by paint ordering, not by the invariant holding). Resolution = document + test the precondition; per-(window,tag) keying is architecturally blocked by R680, so the tag-keyed shared registry stays the correct model.",
+        "PUSH PENDING explicit user consent."
+      ]
+    },
     "R1022": {
       "decision_summary": "R1022 §5.39 §5.16: focus-ring far-edge framebuffer clamp — build_focus_ring_box now clamps the ring bottom/right edges into the framebuffer (sibling of the R806 top/left near-edge clamp), so a widget flush against the window's bottom/right edge keeps all four ring strokes on-screen instead of rasterising the far strokes off-screen. The shell threads the layout viewport (w,h) through apply_focus_ring -> inject_styled_focus_ring -> inject_focus_ring. The default Inside border alignment lands the clamped stroke fully visible. Forcing consumer: sprag full-bleed multi-pane terminal (the focused pane showed only 3 of its 4 ring edges).",
       "changes_bullets": [
