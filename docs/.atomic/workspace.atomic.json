@@ -4308,11 +4308,28 @@
       ]
     },
     "5.37.5": {
-      "title": "Script analysis (UCD Script property) — carry placeholder",
+      "title": "Script analysis (UAX #24 Script property + run segmentation)",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5.37",
       "decision_status": "active",
-      "intent": "§5.37.5 script analysis sub-layer placeholder — UCD Script property 기반 segmentation. shape engine input (run splitting). ratify 는 multi-session carry, BIDI 이후 자연 순서"
+      "intent": "Self-hosted UAX #24 Script property lookup and script-run segmentation — the shaping pipeline's run-itemisation input over a code-generated Script enum and range table.",
+      "rationale_bullets": [
+        "Property-first (R1019 precedent); BIDI algorithm already landed, so Script is the natural next layer",
+        "3rd (start,end,idx) range property: Rule-of-Three lift of range_class_index (bidi/linebreak/script)",
+        "Codegen the 171-variant enum (vs hand-written 23/48): one source eliminates the N-arm skew",
+        "UAX #24 simplified: Common/Inherited extend the run; break only at a different concrete script"
+      ],
+      "outputs_bullets": [
+        "script(char) -> Script via shared range_class_index over code-generated SCRIPT_RANGES (UCD 16.0.0)",
+        "script_runs(&str) -> Vec<ScriptRun>: maximal same-script runs in logical order (byte offsets)",
+        "Script enum (171 variants) + from_index/ucd_name, code-generated wholesale from ucd/Scripts.txt"
+      ],
+      "caveats_bullets": [
+        "Deferred R50.5.x: Script_Extensions (scx) not yet used — Common/Inherited resolved by adjacency only",
+        "Deferred: UAX #24 paired-bracket Common resolution (matching brackets take the run's script)",
+        "Deferred: interaction with BIDI run direction (§5.37.4) — segmentation is over logical order only",
+        "script/script_runs are test forcing-consumers; production paint still swash until paint-wiring"
+      ]
     },
     "5.37.6": {
       "title": "Shape — cmap/hmtx + GSUB liga substitution + GPOS kern positioning (integer-snap); mark/contextual = R50.7.x",
@@ -12055,6 +12072,54 @@
         "Deferred R50.7.x: GSUB single/multiple/alternate/contextual/reverse-chain; lookupFlag filtering",
         "Production paint still §5.36 swash; GSUB+GPOS test forcing-consumers until paint-wiring",
         "Paint-wiring needs script-seg (§5.37.5) + bidi reorder wiring (§5.37.4) to be non-regressing"
+      ]
+    },
+    "R1037": {
+      "decision_summary": "§5.37.5 UAX #24 Script property + script-run segmentation: script(char) over a code-generated Script enum/range table plus simplified run itemisation; Rule-of-Three lift of the (start,end,idx) range search shared by bidi_class/line_break_class/script.",
+      "changes_bullets": [
+        "Vendor ucd/Scripts.txt (16.0.0); build.rs codegens Script enum + from_index/ucd_name + SCRIPT_RANGES",
+        "New script(char) + script_runs(&str) segmentation (UAX #24 simplified: Common/Inherited extend runs)",
+        "Rule-of-Three lift: range_class_index now shared by bidi_class + line_break_class + script",
+        "Script enum is code-generated (171 variants); single source eliminates the N-arm skew"
+      ],
+      "verification_bullets": [
+        "pinion-text-unicode 263 tests 0 fail (script 10 + range 2 new; bidi/linebreak conformance unchanged)",
+        "workspace test 0 fail; clippy --workspace vello + rustfmt clean; my files cargo doc 0 new",
+        "validate-workspace T1=0; entries 1044 to 1045; section 5.37.5 ratified"
+      ],
+      "impact_refs": [
+        "5.37.5",
+        "5.37.4",
+        "5.37.7"
+      ],
+      "carry_forward_bullets": [
+        "Deferred R50.5.x: Script_Extensions (scx), paired-bracket Common resolution, BIDI interaction",
+        "script/script_runs are test forcing-consumers; production paint still swash until paint-wiring",
+        "ucd_version_pinned checks UCD_VERSION const only, not vendored file headers (pre-existing, all UCD)",
+        "R1036/R1036.1 committed without Mnemosyne entries (prior-session git-vs-store gap)"
+      ],
+      "publishable_decision_summary": "§5.37.5 UAX #24 Script property + script-run segmentation: script(char) over a code-generated Script enum/range table plus simplified run itemisation; Rule-of-Three lift of the (start,end,idx) range search shared by bidi_class/line_break_class/script.",
+      "publishable_changes_bullets": [
+        "Vendor ucd/Scripts.txt (16.0.0); build.rs codegens Script enum + from_index/ucd_name + SCRIPT_RANGES",
+        "New script(char) + script_runs(&str) segmentation (UAX #24 simplified: Common/Inherited extend runs)",
+        "Rule-of-Three lift: range_class_index now shared by bidi_class + line_break_class + script",
+        "Script enum is code-generated (171 variants); single source eliminates the N-arm skew"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-text-unicode 263 tests 0 fail (script 10 + range 2 new; bidi/linebreak conformance unchanged)",
+        "workspace test 0 fail; clippy --workspace vello + rustfmt clean; my files cargo doc 0 new",
+        "validate-workspace T1=0; entries 1044 to 1045; section 5.37.5 ratified"
+      ],
+      "publishable_impact_refs": [
+        "5.37.5",
+        "5.37.4",
+        "5.37.7"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Deferred R50.5.x: Script_Extensions (scx), paired-bracket Common resolution, BIDI interaction",
+        "script/script_runs are test forcing-consumers; production paint still swash until paint-wiring",
+        "ucd_version_pinned checks UCD_VERSION const only, not vendored file headers (pre-existing, all UCD)",
+        "R1036/R1036.1 committed without Mnemosyne entries (prior-session git-vs-store gap)"
       ]
     },
     "R232": {

@@ -55,6 +55,7 @@ fn main() {
     println!("cargo:rerun-if-changed=ucd/BidiMirroring.txt");
     println!("cargo:rerun-if-changed=ucd/LineBreak.txt");
     println!("cargo:rerun-if-changed=ucd/EastAsianWidth.txt");
+    println!("cargo:rerun-if-changed=ucd/Scripts.txt");
 
     let unicode_data = fs::read_to_string(ucd_dir.join("UnicodeData.txt"))
         .expect("ucd/UnicodeData.txt must be vendored");
@@ -70,6 +71,8 @@ fn main() {
         .expect("ucd/LineBreak.txt must be vendored");
     let east_asian_width = fs::read_to_string(ucd_dir.join("EastAsianWidth.txt"))
         .expect("ucd/EastAsianWidth.txt must be vendored");
+    let scripts =
+        fs::read_to_string(ucd_dir.join("Scripts.txt")).expect("ucd/Scripts.txt must be vendored");
 
     let parsed = parse_unicode_data(&unicode_data);
     let exclusions = parse_full_composition_exclusion(&derived);
@@ -97,6 +100,11 @@ fn main() {
     // carve-outs. Coalesced (start, end) membership ranges.
     let east_asian_wide = parse_east_asian_wide(&east_asian_width);
 
+    // UAX #24 Script property (§5.37.5). The distinct script names
+    // (alphabetical) become the `Script` enum discriminants; the ranges
+    // key codepoint -> discriminant for `script()`.
+    let (script_names, script_ranges) = parse_scripts(&scripts);
+
     let out_dir = env::var_os("OUT_DIR").expect("OUT_DIR must be set by cargo");
     let out_path = Path::new(&out_dir).join("tables.rs");
     emit_tables(
@@ -121,6 +129,9 @@ fn main() {
         &final_punctuation,
         &east_asian_wide,
     );
+
+    let script_path = Path::new(&out_dir).join("script_tables.rs");
+    emit_script_tables(&script_path, &script_names, &script_ranges);
 }
 
 /// `Bidi_Paired_Bracket_Type` — UAX #9 BD16 codepoint kind. `0` = Open
@@ -1525,4 +1536,153 @@ fn parse_general_category(text: &str, gc: &str) -> Vec<u32> {
     }
     out.sort_unstable();
     out
+}
+
+/// Parse `Scripts.txt` (UCD 16.0.0) into the alphabetically-sorted set
+/// of distinct `Script` value names and the sorted `(start, end,
+/// script_idx)` ranges, where `script_idx` is the position of the name
+/// in the sorted list (= the `Script` enum discriminant emitted by
+/// [`emit_script_tables`]). `Unknown` is always present (the
+/// `@missing: 0000..10FFFF; Unknown` default) even if no codepoint is
+/// *explicitly* assigned it, so `Script::Unknown` has a stable
+/// discriminant. The `Unknown` default is not materialised as explicit
+/// ranges (codepoints listed nowhere fall to it at lookup time),
+/// mirroring the `XX` line-break default.
+fn parse_scripts(text: &str) -> (Vec<String>, Vec<(u32, u32, u8)>) {
+    use std::collections::BTreeSet;
+    let mut names: BTreeSet<String> = BTreeSet::new();
+    names.insert("Unknown".to_string());
+    let mut rows: Vec<(u32, u32, String)> = Vec::new();
+    for raw in text.lines() {
+        let line = match raw.find('#') {
+            Some(pos) => &raw[..pos],
+            None => raw,
+        };
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = line.split(';').collect();
+        if parts.len() < 2 {
+            continue;
+        }
+        let range = parts[0].trim();
+        let name = parts[1].trim().to_string();
+        names.insert(name.clone());
+        let (start, end) = if let Some(dot) = range.find("..") {
+            let s = u32::from_str_radix(&range[..dot], 16).expect("script range start");
+            let e = u32::from_str_radix(&range[dot + 2..], 16).expect("script range end");
+            (s, e)
+        } else {
+            let cp = u32::from_str_radix(range, 16).expect("script single codepoint");
+            (cp, cp)
+        };
+        rows.push((start, end, name));
+    }
+    let names: Vec<String> = names.into_iter().collect();
+    // Variant identifiers strip underscores from the UCD Title_Case names
+    // (UpperCamelCase). Guard against a future UCD version where two names
+    // would collapse to the same identifier: fail loudly here with the
+    // offending pair rather than as an opaque "duplicate variant" error in
+    // the generated enum. (No collision exists in UCD 16.0.0.)
+    let mut idents: std::collections::HashMap<String, &str> = std::collections::HashMap::new();
+    for name in &names {
+        let ident = name.replace('_', "");
+        if let Some(prev) = idents.insert(ident.clone(), name.as_str()) {
+            panic!(
+                "Script variant identifier collision: {prev:?} and {name:?} both map to {ident:?}"
+            );
+        }
+    }
+    let name_to_idx: std::collections::HashMap<&str, u8> = names
+        .iter()
+        .enumerate()
+        .map(|(i, n)| {
+            (
+                n.as_str(),
+                u8::try_from(i).expect("script discriminant exceeds u8"),
+            )
+        })
+        .collect();
+    let mut ranges: Vec<(u32, u32, u8)> = rows
+        .into_iter()
+        .map(|(s, e, n)| (s, e, name_to_idx[n.as_str()]))
+        .collect();
+    ranges.sort_by_key(|(start, _, _)| *start);
+    (names, ranges)
+}
+
+/// Emit `script_tables.rs`: the `Script` enum (one variant per UCD
+/// `Script` value, alphabetical discriminant order matching the
+/// `(start, end, idx)` ranges) plus its `from_index` / `ucd_name`
+/// inverses and the `SCRIPT_RANGES` table.
+///
+/// Unlike the 23-value `BidiClass` (§5.37.4) and 48-value `LineBreak`
+/// (§5.37.7) enums — small, closed sets hand-written in their modules
+/// with a parallel `build.rs` index map — the ~170 UCD `Script` values
+/// are code-generated here from the single parsed name list. One source
+/// for the variant list, `from_index`, `ucd_name`, and the range
+/// indices makes the N-arm skew the R1019 line-break lesson warns about
+/// structurally impossible.
+fn emit_script_tables(out_path: &Path, names: &[String], ranges: &[(u32, u32, u8)]) {
+    use std::fmt::Write as _;
+    let mut s = String::new();
+    s.push_str("// AUTO-GENERATED by pinion-text-unicode/build.rs from\n");
+    s.push_str("// ucd/Scripts.txt (UCD 16.0.0). Do not edit by hand.\n\n");
+
+    s.push_str("/// UAX #24 `Script` property value (UCD 16.0.0). One variant per\n");
+    s.push_str("/// distinct script name in `Scripts.txt`; the discriminant is the\n");
+    s.push_str("/// alphabetical index, matching the `u8` emitted in `SCRIPT_RANGES`.\n");
+    s.push_str("/// `Unknown` is the `@missing` default for unassigned codepoints.\n");
+    s.push_str("/// Code-generated wholesale; regenerated on a UCD version bump.\n");
+    s.push_str("#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]\n");
+    s.push_str("#[repr(u8)]\n");
+    s.push_str("pub enum Script {\n");
+    for (i, name) in names.iter().enumerate() {
+        // Variant identifier is UpperCamelCase (underscores stripped from
+        // the UCD Title_Case name); `ucd_name` preserves the exact source
+        // name as the SSOT string.
+        let ident = name.replace('_', "");
+        let _ = writeln!(s, "    /// UCD `{name}`.");
+        let _ = writeln!(s, "    {ident} = {i},");
+    }
+    s.push_str("}\n\n");
+
+    s.push_str("impl Script {\n");
+    s.push_str("    /// Map a `SCRIPT_RANGES` discriminant back to the enum. Panics\n");
+    s.push_str("    /// on an out-of-range index (generator / runtime version skew).\n");
+    s.push_str("    #[must_use]\n");
+    s.push_str("    pub const fn from_index(idx: u8) -> Self {\n");
+    s.push_str("        match idx {\n");
+    for (i, name) in names.iter().enumerate() {
+        let ident = name.replace('_', "");
+        let _ = writeln!(s, "            {i} => Script::{ident},");
+    }
+    s.push_str("            _ => panic!(\"Script::from_index: out-of-range script index\"),\n");
+    s.push_str("        }\n");
+    s.push_str("    }\n\n");
+
+    s.push_str("    /// The UCD `Scripts.txt` long name for this value.\n");
+    s.push_str("    #[must_use]\n");
+    s.push_str("    pub const fn ucd_name(self) -> &'static str {\n");
+    s.push_str("        match self {\n");
+    for name in names {
+        let ident = name.replace('_', "");
+        let _ = writeln!(s, "            Script::{ident} => \"{name}\",");
+    }
+    s.push_str("        }\n");
+    s.push_str("    }\n");
+    s.push_str("}\n\n");
+
+    s.push_str("/// UAX #24 `Script` table: sorted `(start, end, script_idx)` ranges.\n");
+    s.push_str("/// `script_idx` is the `Script` discriminant (`u8` cast). Binary-\n");
+    s.push_str("/// search by `start` then verify `cp <= end`; a codepoint outside\n");
+    s.push_str("/// every range defaults to `Script::Unknown` per the\n");
+    s.push_str("/// `@missing: 0000..10FFFF; Unknown` directive.\n");
+    s.push_str("pub const SCRIPT_RANGES: &[(u32, u32, u8)] = &[\n");
+    for (start, end, idx) in ranges {
+        let _ = writeln!(s, "    (0x{start:04X}, 0x{end:04X}, {idx}),");
+    }
+    s.push_str("];\n");
+    fs::write(out_path, s).expect("failed to write script_tables.rs");
 }

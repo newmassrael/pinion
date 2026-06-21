@@ -186,12 +186,16 @@ mod nfkc;
 mod nfkd;
 mod ordering;
 mod quick_check;
+mod range;
 
 pub mod bidi;
 pub use bidi::{BidiClass, bidi_class};
 
 pub mod linebreak;
 pub use linebreak::{BreakOpportunity, LineBreak, line_break_class, line_break_opportunities};
+
+pub mod script;
+pub use script::{Script, ScriptRun, script, script_runs};
 
 #[cfg(test)]
 mod test_fixture;

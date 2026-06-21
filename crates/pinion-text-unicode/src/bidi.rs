@@ -155,28 +155,12 @@ mod tables {
 /// fallback is only hit by genuine gaps.)
 #[must_use]
 pub fn bidi_class(cp: char) -> BidiClass {
-    let cp = cp as u32;
-    let ranges = tables::RANGES;
-    // Binary search for the largest range whose `start <= cp`,
-    // then check `cp <= end`. Mirrors the §5.37.3 NFC CCC lookup
-    // shape ([[uax-semantic-spec-lock]]). NOTE: this loop is an exact
-    // twin of `linebreak::line_break_class` (§5.37.7) over the same
-    // `(start, end, idx)` shape — keep the two in lock-step until a
-    // third such property triggers the shared range-helper lift.
-    let mut lo = 0usize;
-    let mut hi = ranges.len();
-    while lo < hi {
-        let mid = lo + (hi - lo) / 2;
-        let (start, end, _) = ranges[mid];
-        if cp < start {
-            hi = mid;
-        } else if cp > end {
-            lo = mid + 1;
-        } else {
-            return BidiClass::from_index(ranges[mid].2);
-        }
-    }
-    BidiClass::L
+    // Shared `(start, end, idx)` range search with `line_break_class`
+    // (§5.37.7) and `script` (§5.37.5) — the Rule-of-Three lift (R1037)
+    // of what were two inline twins. A codepoint outside every range
+    // defaults to L per UAX #9.
+    crate::range::range_class_index(tables::RANGES, cp as u32)
+        .map_or(BidiClass::L, BidiClass::from_index)
 }
 
 // ======================================================================

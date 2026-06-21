@@ -804,30 +804,14 @@ fn break_actions(chars: &[char]) -> Vec<Action> {
 /// the surrogate range by construction.
 #[must_use]
 pub fn line_break_class(cp: char) -> LineBreak {
-    let cp = cp as u32;
-    let ranges = tables::RANGES;
-    // Largest range whose `start <= cp`, then confirm `cp <= end`.
-    // Mirrors `bidi::bidi_class` (§5.37.4) — the second range-property
-    // lookup of this exact `(start, end, idx)` shape. (`is_east_asian_wide`
-    // is a third range table but a different — `(start, end)` membership —
-    // shape, so it is not a clean twin.) A third `(start, end, idx)`
-    // property (e.g. a §5.37.5 Script enum) is the Rule-of-Three trigger
-    // to lift a shared range-search helper; at two such sites the parallel
-    // is kept explicit rather than abstracted.
-    let mut lo = 0usize;
-    let mut hi = ranges.len();
-    while lo < hi {
-        let mid = lo + (hi - lo) / 2;
-        let (start, end, _) = ranges[mid];
-        if cp < start {
-            hi = mid;
-        } else if cp > end {
-            lo = mid + 1;
-        } else {
-            return LineBreak::from_index(ranges[mid].2);
-        }
-    }
-    LineBreak::XX
+    // Shared `(start, end, idx)` range search with `bidi_class`
+    // (§5.37.4) and `script` (§5.37.5) — the Rule-of-Three lift (R1037)
+    // of what were two inline twins. (`is_east_asian_wide` is a fourth
+    // range table but of `(start, end)` membership shape, not this one.)
+    // A codepoint outside every range defaults to XX per
+    // `@missing: 0000..10FFFF; XX`.
+    crate::range::range_class_index(tables::RANGES, cp as u32)
+        .map_or(LineBreak::XX, LineBreak::from_index)
 }
 
 #[cfg(test)]
