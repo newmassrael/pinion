@@ -1319,6 +1319,12 @@ impl<V: WidgetCore> CoreShell<V> {
     /// but this seam's model is top-level splitter panes (a pane fills its
     /// splitter share, it is not scroll-nested), so that case does not occur.
     ///
+    /// R1021 §5.16 — the substrate calls this for **every** painted window (not
+    /// `DEFAULT_WINDOW`-only like [`Self::set_viewport_size`]): the registry is
+    /// tag-keyed + window-agnostic, so each window publishes the tags it draws and
+    /// the `None`-skip above leaves a foreign window's pane untouched. This lets a
+    /// torn-off pane reflow to the secondary window it is drawn in.
+    ///
     /// The writes run inside [`Self::root_owner`]'s scope (R1006 blocker B): a
     /// [`Signal::set`] re-runs the reflow Effect
     /// synchronously, and that body resolves

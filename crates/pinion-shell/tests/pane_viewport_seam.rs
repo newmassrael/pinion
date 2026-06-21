@@ -43,6 +43,8 @@ const LEFT_TAG: &str = "pane.left";
 const RIGHT_TAG: &str = "pane.right";
 const LEFT_GRID_TAG: &str = "pane.left.grid";
 const RIGHT_GRID_TAG: &str = "pane.right.grid";
+/// R1021 — the secondary (torn-off) window id hosting ONLY the left pane.
+const FLOAT_LEFT_WINDOW: &str = "float.left";
 
 /// Serialises the file's tests: the binding writes the reflow log through a
 /// process-global static, and `compute_paint_scene` touches no per-test owner
@@ -202,6 +204,20 @@ impl WidgetView for PaneView {
     fn initial_size_strategy() -> SizeStrategy {
         SizeStrategy::Fixed { width: 640, height: 384 }
     }
+
+    /// R1021 — a torn-off (undock) secondary window hosting ONLY the left pane.
+    /// The pane Container is the window root, so `compute_layout`'s root-fill
+    /// stretches it to the window `(w, h)` (the declared flex size is ignored at
+    /// the top level) — no `use_viewport_size` (which stays primary-gated). The
+    /// per-window pane publish (R1021, gate removed) then reflows the left pane to
+    /// the secondary window's size. The main window keeps the two-pane split.
+    fn view_for_window(window_id: &str, state: Self::State, frame: &Frame) -> Scene {
+        if window_id == FLOAT_LEFT_WINDOW {
+            pane(LEFT_TAG, LEFT_GRID_TAG, 1.0)
+        } else {
+            Self::view(state, frame)
+        }
+    }
 }
 
 /// Find the `tag`ged TextGrid in a painted scene and return its buffer dims —
@@ -319,4 +335,49 @@ fn nondivisible_width_floors_each_pane_independently() {
     // so a non-cell-aligned pane never diverges hit-vs-paint.
     assert_eq!(painted_grid_dims(&scene, LEFT_GRID_TAG), Some((29, 24)));
     assert_eq!(painted_grid_dims(&scene, RIGHT_GRID_TAG), Some((49, 24)));
+}
+
+#[test]
+fn secondary_window_publishes_its_pane_without_clobbering_absent_tags() {
+    // R1021 §5.23 §5.16 — the per-window pane publish (the DEFAULT_WINDOW gate on
+    // `publish_pane_viewports` removed). The forcing case: sprag R37 undock, where
+    // a pane torn off into its own OS window must reflow to THAT window's size.
+    let _g = TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    PTY_LOG.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clear();
+
+    let mut core = ShellCore::<PaneView>::new();
+
+    // (1) Main window paints the 3:5 split: both panes register + reflow to their
+    //     split rects (the docked baseline).
+    core.compute_paint_scene(640, 384);
+    assert_eq!(core.root_owner().run(|| pty_dims(LEFT_TAG).get()), (30, 24));
+    assert_eq!(core.root_owner().run(|| pty_dims(RIGHT_TAG).get()), (50, 24));
+    PTY_LOG.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clear(); // drop first-paint reflows
+
+    // (2) The left pane is torn off into its own 320×192 secondary window. Before
+    //     R1021 this published nothing (gated to DEFAULT_WINDOW); now the secondary
+    //     window publishes the rect of the tag IT draws. The pane fills the window
+    //     via layout root-fill (no use_viewport_size), so it reflows to the
+    //     SECONDARY window size: 320/8 × 192/16 = 40×12.
+    let scene = core.compute_paint_scene_for_window(FLOAT_LEFT_WINDOW, 320, 192);
+    assert_eq!(
+        core.root_owner().run(|| pty_dims(LEFT_TAG).get()),
+        (40, 12),
+        "the torn-off pane reflows to its secondary window's size"
+    );
+    // The same-frame re-pass makes the painted grid reflect the post-reflow dims.
+    assert_eq!(painted_grid_dims(&scene, LEFT_GRID_TAG), Some((40, 12)));
+
+    // (3) The right pane is absent from the secondary window's scene →
+    //     rect_for_tag_absolute resolves None → skipped → it RETAINS its last
+    //     docked size, NOT clobbered by the foreign window's paint.
+    assert_eq!(
+        core.root_owner().run(|| pty_dims(RIGHT_TAG).get()),
+        (50, 24),
+        "a tag absent from the painting window is skipped, never clobbered"
+    );
+
+    // Only the drawn pane re-fires; the absent pane is inert.
+    let log = PTY_LOG.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+    assert_eq!(log, vec![(LEFT_TAG.to_owned(), (40, 12))]);
 }

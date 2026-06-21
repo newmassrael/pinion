@@ -2472,12 +2472,27 @@ impl<V: WidgetView> ShellCore<V> {
             // re-run `view` + `compute_layout` once when it fires, so the re-run
             // reads the post-reflow producer state on this same paint. Idempotent
             // on steady-state frames (Signal equality-skip floors `pane_dirty` at
-            // `false`). Primary-window only and the side-effect-free mirror
+            // `false`).
+            //
+            // R1021 §5.23 §5.16 — published for EVERY painted window, NOT
+            // primary-only (unlike the R1006 `set_viewport_size` publish above,
+            // which stays `DEFAULT_WINDOW`-gated). The pane registry is
+            // `root_owner`-scoped and tag-keyed, so it is window-agnostic: each
+            // painted window publishes the rects of the tags IT draws, and a tag
+            // absent from this window's scene resolves `rect_for_tag_absolute →
+            // None` and is skipped (retains its last measured size — a foreign
+            // window's pane is never clobbered). In the dock model a pane tag is
+            // drawn in exactly one window at a time, so there is no ambiguity. This
+            // is what lets a torn-off (undock) pane reflow to its secondary
+            // window's size: that window's content fills `(w, h)` via
+            // `compute_layout`'s root-fill (the root's declared size is ignored at
+            // the top level), so the pane Container's measured rect IS the window
+            // rect — no per-window `use_viewport_size` is needed (the R1006
+            // window-size seam stays primary-gated; sprag R37 undock is the forcing
+            // consumer). The side-effect-free mirror
             // (`compute_paint_scene_pure_internal`) never reaches this fn, so an
             // introspection paint never publishes (the R1006 contract, inherited).
-            if window_key == pinion_runtime::DEFAULT_WINDOW
-                && self.core.publish_pane_viewports(&scene)
-            {
+            if self.core.publish_pane_viewports(&scene) {
                 scene = run_view();
                 compute_layout(&mut scene, &mut self.text_cache, w, h);
             }

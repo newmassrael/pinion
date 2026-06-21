@@ -10847,6 +10847,56 @@
         "Adversarial review complete; round is push-ready pending explicit user consent (nothing pushed)"
       ]
     },
+    "R1021": {
+      "decision_summary": "R1021 §5.23 §5.22 §5.16: per-window pane-viewport publish — removed the DEFAULT_WINDOW gate on CoreShell::publish_pane_viewports in compute_paint_scene_internal so every painted window publishes the rects of the tags it draws. The pane registry is root_owner-scoped + tag-keyed (window-agnostic); a tag absent from a window's scene resolves rect_for_tag_absolute None and is skipped (foreign panes never clobbered). A torn-off (undock) pane reflows to its secondary window via layout root-fill — no per-window use_viewport_size needed. Forcing consumer: sprag R37 undock. The R1006 window-size seam stays DEFAULT_WINDOW-gated (bullet 1 deferred — no consumer + collides with the R680 root-scope view-fn decision).",
+      "changes_bullets": [
+        "compute_paint_scene_internal (pinion-shell/src/substrate.rs): removed the `window_key == DEFAULT_WINDOW &&` guard on the publish_pane_viewports re-pass — the per-pane viewport publish now runs for EVERY painted window. The R1006 set_viewport_size publish above stays DEFAULT_WINDOW-gated (unchanged).",
+        "Why per-window is safe: the pane registry (pinion-core reactive/pane_viewport.rs) is root_owner-scoped + tag-keyed = window-agnostic. rect_for_tag_absolute returns None for a tag absent from the painting window's scene, so publish_pane_viewports skips it (retains last measured size — a foreign window's pane is never clobbered). Dock model = one tag drawn in one window at a time, so there is no ambiguity.",
+        "Why no per-window use_viewport_size is needed: compute_layout forces the root to fill the (w,h) viewport (the root's declared size is ignored at the top level, <html>-style), so a secondary window's content fills its window and the pane Container's measured rect IS the window rect. A torn-off pane reflows via the pane seam, not the window seam.",
+        "Docs: pane_viewport.rs gains a 'Per-window publish (R1021)' section; CoreShell::publish_pane_viewports doc + the substrate publish comment updated from 'primary-window only' to 'every painted window'. The R1006 window-size seam doc is unchanged.",
+        "Scope (PR-10 review outcome): only the pane-viewport gate (bullet 2) is removed. Per-window use_viewport_size (bullet 1) is DEFERRED — no in-repo/sprag consumer needs the window-size seam to differ per window, and it collides with the ratified R680 decision to run every window's view fn under root_owner (so there is no per-window owner scope a consumer could resolve from)."
+      ],
+      "verification_bullets": [
+        "New regression test crates/pinion-shell/tests/pane_viewport_seam.rs::secondary_window_publishes_its_pane_without_clobbering_absent_tags: a torn-off window (PaneView::view_for_window FLOAT_LEFT_WINDOW arm hosting only the left pane) asserts (a) the pane reflows to the SECONDARY window size (320x192 -> 40x12 cells) via layout root-fill, and (b) the absent right tag retains its docked (50,24) — None-skip non-clobber.",
+        "cargo test -p pinion-shell --test pane_viewport_seam = 5 ok 0 fail (4 prior + 1 new). The R1006 window-seam test substrate::r1006_viewport_seam_tests::primary_paint_publishes_viewport_secondary_does_not_clobber still passes (the gate removal does not touch the window seam).",
+        "cargo check --workspace = clean. cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (the commit-gate lint set: forbid unsafe / deny warnings / clippy::pedantic)."
+      ],
+      "impact_refs": [
+        "5.23",
+        "5.22",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "Session-review clearance (R1021.1): adversarial review + grep audit before any push, per standing discipline.",
+        "Deferred (bullet 1): per-window use_viewport_size needs a window discriminator (paint-time thread-local or explicit-key API) because view fns run under root_owner for all windows (R680). No consumer yet — it is a spec question, not a mechanical addition; revisit when a real consumer appears.",
+        "sprag R37 hand-off: pinion now publishes secondary-window pane rects, so the sprag-side undock window can drop fixed-size and let the pane reflow on OS resize. The sprag-side change is done in a sprag-native session, never from pinion.",
+        "R1021 is impl-complete + green but PUSH PENDING explicit user consent."
+      ],
+      "publishable_decision_summary": "R1021 §5.23 §5.22 §5.16: per-window pane-viewport publish — removed the DEFAULT_WINDOW gate on CoreShell::publish_pane_viewports in compute_paint_scene_internal so every painted window publishes the rects of the tags it draws. The pane registry is root_owner-scoped + tag-keyed (window-agnostic); a tag absent from a window's scene resolves rect_for_tag_absolute None and is skipped (foreign panes never clobbered). A torn-off (undock) pane reflows to its secondary window via layout root-fill — no per-window use_viewport_size needed. Forcing consumer: sprag R37 undock. The R1006 window-size seam stays DEFAULT_WINDOW-gated (bullet 1 deferred — no consumer + collides with the R680 root-scope view-fn decision).",
+      "publishable_changes_bullets": [
+        "compute_paint_scene_internal (pinion-shell/src/substrate.rs): removed the `window_key == DEFAULT_WINDOW &&` guard on the publish_pane_viewports re-pass — the per-pane viewport publish now runs for EVERY painted window. The R1006 set_viewport_size publish above stays DEFAULT_WINDOW-gated (unchanged).",
+        "Why per-window is safe: the pane registry (pinion-core reactive/pane_viewport.rs) is root_owner-scoped + tag-keyed = window-agnostic. rect_for_tag_absolute returns None for a tag absent from the painting window's scene, so publish_pane_viewports skips it (retains last measured size — a foreign window's pane is never clobbered). Dock model = one tag drawn in one window at a time, so there is no ambiguity.",
+        "Why no per-window use_viewport_size is needed: compute_layout forces the root to fill the (w,h) viewport (the root's declared size is ignored at the top level, <html>-style), so a secondary window's content fills its window and the pane Container's measured rect IS the window rect. A torn-off pane reflows via the pane seam, not the window seam.",
+        "Docs: pane_viewport.rs gains a 'Per-window publish (R1021)' section; CoreShell::publish_pane_viewports doc + the substrate publish comment updated from 'primary-window only' to 'every painted window'. The R1006 window-size seam doc is unchanged.",
+        "Scope (PR-10 review outcome): only the pane-viewport gate (bullet 2) is removed. Per-window use_viewport_size (bullet 1) is DEFERRED — no in-repo/sprag consumer needs the window-size seam to differ per window, and it collides with the ratified R680 decision to run every window's view fn under root_owner (so there is no per-window owner scope a consumer could resolve from)."
+      ],
+      "publishable_verification_bullets": [
+        "New regression test crates/pinion-shell/tests/pane_viewport_seam.rs::secondary_window_publishes_its_pane_without_clobbering_absent_tags: a torn-off window (PaneView::view_for_window FLOAT_LEFT_WINDOW arm hosting only the left pane) asserts (a) the pane reflows to the SECONDARY window size (320x192 -> 40x12 cells) via layout root-fill, and (b) the absent right tag retains its docked (50,24) — None-skip non-clobber.",
+        "cargo test -p pinion-shell --test pane_viewport_seam = 5 ok 0 fail (4 prior + 1 new). The R1006 window-seam test substrate::r1006_viewport_seam_tests::primary_paint_publishes_viewport_secondary_does_not_clobber still passes (the gate removal does not touch the window seam).",
+        "cargo check --workspace = clean. cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (the commit-gate lint set: forbid unsafe / deny warnings / clippy::pedantic)."
+      ],
+      "publishable_impact_refs": [
+        "5.23",
+        "5.22",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Session-review clearance (R1021.1): adversarial review + grep audit before any push, per standing discipline.",
+        "Deferred (bullet 1): per-window use_viewport_size needs a window discriminator (paint-time thread-local or explicit-key API) because view fns run under root_owner for all windows (R680). No consumer yet — it is a spec question, not a mechanical addition; revisit when a real consumer appears.",
+        "sprag R37 hand-off: pinion now publishes secondary-window pane rects, so the sprag-side undock window can drop fixed-size and let the pane reflow on OS resize. The sprag-side change is done in a sprag-native session, never from pinion.",
+        "R1021 is impl-complete + green but PUSH PENDING explicit user consent."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

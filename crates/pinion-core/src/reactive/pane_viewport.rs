@@ -70,13 +70,30 @@
 //!    first laid out. A reflow Effect runs eagerly once at registration with
 //!    this value, so it MUST skip on `(0, 0)` to avoid a spurious `1 x 1` reflow.
 //! 3. **Introspection paint does not publish.** The publish runs only in the
-//!    live, primary-window paint (`compute_paint_scene_internal`); the
-//!    side-effect-free mirror (`compute_paint_scene_pure_internal`) and the RPC
-//!    produce path never reach it. So an introspection paint cannot fire a pane
-//!    reflow — there is no `set`, hence nothing to gate. (Under `dry_run` /
-//!    `simulate` the inherited [`is_simulating`](super::is_simulating) gate in
+//!    live paint (`compute_paint_scene_internal`); the side-effect-free mirror
+//!    (`compute_paint_scene_pure_internal`) and the RPC produce path never reach
+//!    it. So an introspection paint cannot fire a pane reflow — there is no
+//!    `set`, hence nothing to gate. (Under `dry_run` / `simulate` the inherited
+//!    [`is_simulating`](super::is_simulating) gate in
 //!    [`Effect`](super::effect::Effect) is the secondary defense, exactly as for
 //!    the R1006 window seam.)
+//!
+//! # Per-window publish (R1021)
+//!
+//! Unlike the R1006 *window*-size seam — one global signal, published
+//! `DEFAULT_WINDOW`-only so a secondary paint cannot clobber the primary — this
+//! seam is published for **every painted window**. It can be, because the
+//! registry is tag-keyed and window-agnostic: each window publishes the rects of
+//! the tags *it* draws, and a tag absent from a window's scene resolves
+//! [`Scene::rect_for_tag_absolute`](crate::scene::Scene::rect_for_tag_absolute)
+//! `→ None` and is skipped (retains its last size — a foreign window's pane is
+//! never clobbered). In the dock model a pane tag is drawn in exactly one window
+//! at a time, so there is no ambiguity. This is what lets a torn-off (undock)
+//! pane reflow to its secondary window's size — the window's content fills its
+//! `(w, h)` via layout's root-fill, so the pane's measured rect is the window
+//! rect, with no per-window `use_viewport_size`
+//! ([`use_viewport_size`](super::viewport::use_viewport_size) stays
+//! primary-gated). sprag R37 undock is the forcing consumer.
 //!
 //! # Re-entrancy
 //!
