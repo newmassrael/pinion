@@ -851,6 +851,108 @@ mod tests {
         // font-independently by the two-column background span (head + trailer).
     }
 
+    /// R1028 §5.41 §2 #6 — the [`Scene::TextGrid`] paint fills its *whole node
+    /// rect* with the palette default background (pass 0) before any cell, so a
+    /// sub-cell gutter (when `cols*cell_w` / `rows*cell_h` does not tile the
+    /// rect exactly — the §3 one-way winsize SSOT case, cols/rows derived from a
+    /// continuous pixel rect) reads as the terminal background, not whatever
+    /// parent surface sits behind. Builds a 2x2 grid of red cells inside a
+    /// deliberately larger rect, clears the GPU surface to WHITE (the
+    /// parent-bleed analog), and asserts the right / bottom / corner gutters are
+    /// the palette default bg (black), never the white clear. Without the pass-0
+    /// fill the gutters expose the white clear and this guard fails.
+    ///
+    /// `#[ignore]` for the same wgpu cold-boot reason as the sibling headless
+    /// tests; run with `--ignored`.
+    #[test]
+    #[ignore = "wgpu adapter cold-boot too slow for default test suite; run with --ignored"]
+    fn r1028_text_grid_fills_rect_gutter_with_default_bg() {
+        use pinion_core::cell_metric::CellMetric;
+        use pinion_core::scene::{Rect, Scene, TextGridNode};
+        use pinion_core::style::Color;
+        use pinion_core::term_grid::{GridBuffer, TermCell, TermColor};
+        use pinion_runtime::paint_adapter::{FragmentCache, to_vello_cached};
+        use pinion_text::LayoutCache;
+
+        const CW: u32 = 10;
+        const CH: u32 = 12;
+        const COLS: u16 = 2;
+        const ROWS: u16 = 2;
+        // The cell area covers only COLS*CW x ROWS*CH = 20x24; the node rect is
+        // larger, leaving a right gutter (x in 20..30) and a bottom gutter
+        // (y in 24..36) — the continuous-rect winsize case.
+        const CELL_W: u32 = CW * COLS as u32; // 20
+        const CELL_H: u32 = CH * ROWS as u32; // 24
+        const W: u32 = 30;
+        const H: u32 = 36;
+
+        let metric = CellMetric::new(CW, CH).expect("non-zero cell metric");
+        let red = TermColor::Rgb(Color::rgb(0xff, 0x00, 0x00));
+        // Every cell opaque red so the cell area is unambiguously distinct from
+        // both the white clear and the black default bg.
+        let cell = TermCell::new(" ", TermColor::Default, red);
+        let buffer = GridBuffer::new(COLS, ROWS)
+            .with_row(0, vec![cell.clone(), cell.clone()])
+            .with_row(1, vec![cell.clone(), cell.clone()]);
+        let mut node = TextGridNode::new(metric).with_cells(buffer);
+        node.rect = Rect::new(0, 0, W, H);
+        let scene = Scene::TextGrid(node);
+
+        let mut text_cache = LayoutCache::new();
+        let mut cache = FragmentCache::new();
+        let mut image_cache = pinion_runtime::image_cache::ImageCache::new();
+        let mut vello = VelloScene::new();
+        to_vello_cached(
+            &scene,
+            &|_| None,
+            &mut text_cache,
+            &mut image_cache,
+            &mut cache,
+            &mut vello,
+        );
+        // Clear to WHITE — the analog of a parent splitter `Surface` fill
+        // sitting behind the grid. If pass 0 is absent, the gutters show this.
+        let base = vello::peniko::Color::WHITE;
+        let mut shot = HeadlessScreenshot::new().expect("headless screenshot bootstrap");
+        let rgba8 = shot.render_to_rgba8(&vello, W, H, base).expect("render");
+
+        let at = |x: u32, y: u32| -> (i64, i64, i64) {
+            let i = ((y * W + x) * 4) as usize;
+            (
+                i64::from(rgba8[i]),
+                i64::from(rgba8[i + 1]),
+                i64::from(rgba8[i + 2]),
+            )
+        };
+
+        // Cell interior — opaque red (pass 0 must not erase the cell bg).
+        for &(x, y) in &[(5, 6), (15, 18)] {
+            let (r, g, b) = at(x, y);
+            assert!(
+                r > 200 && g < 60 && b < 60,
+                "cell interior must stay red, got ({r},{g},{b}) at ({x},{y})"
+            );
+        }
+        // Gutters — right (x>=CELL_W), bottom (y>=CELL_H), and the corner — must
+        // be the palette default bg (black), NOT the white clear. Sampled well
+        // inset from the cell boundary to dodge antialiasing.
+        let gutters = [
+            (CELL_W + 4, 6),          // right gutter, top row
+            (CELL_W + 4, CH + 6),     // right gutter, bottom row
+            (4, CELL_H + 6),          // bottom gutter, left column
+            (CW + 4, CELL_H + 6),     // bottom gutter, right column
+            (CELL_W + 4, CELL_H + 6), // bottom-right corner gutter
+        ];
+        for &(x, y) in &gutters {
+            let (r, g, b) = at(x, y);
+            assert!(
+                r < 50 && g < 50 && b < 50,
+                "gutter ({x},{y}) must be the palette default bg (black), not the \
+                 white parent clear — got ({r},{g},{b})"
+            );
+        }
+    }
+
     /// R992 §5.41 §5.16 — deterministic guard for the cell-grid typographic
     /// SGR attributes. The `underline` / `strikethrough` / `dim` paths are
     /// **geometric** (full-cell rules + an alpha factor), so they are asserted

@@ -41,6 +41,7 @@ use std::collections::{HashMap, HashSet};
 use crate::image_cache::ImageCache;
 use crate::paint_cache_stats::FragmentCacheStats;
 use pinion_core::Scene;
+use pinion_core::cell_metric::CellMetric;
 use pinion_core::scene::{
     BoxNode, ImageNode, ImmediateModeNode, ImmediatePainter, PathCommand, PathNode, PathPoint,
     Rect, TextGridNode, TextNode,
@@ -49,7 +50,9 @@ use pinion_core::style::{
     Border, BorderPlacement, BoxStyle, Color, Fit, FontStyle, FontWeight, GenericFontFamily,
     Gradient, GradientKind, LineHeight, StrokeCap, TextOverflow, TextStyle,
 };
-use pinion_core::term_grid::{CellWidth, ColorTarget, CursorShape, TermCell, TermColor};
+use pinion_core::term_grid::{
+    CellWidth, ColorTarget, CursorShape, GridBuffer, Palette, TermCell, TermColor,
+};
 use pinion_text::LayoutCache;
 use pinion_text::parley::PositionedLayoutItem;
 use vello::Glyph;
@@ -1210,6 +1213,25 @@ fn paint_text_grid(
     // offsets depend on the cell origin and are computed inside.
     let rule_w = (cell_h / 16.0).max(1.0);
     out.push_clip_layer(Fill::NonZero, transform, &clip_rect);
+    // Pass 0 — fill the whole node rect with the palette default background
+    // before any cell. The cell area (`cols*cell_w x rows*cell_h`) need not
+    // tile `rect` exactly: a consumer that sizes the grid to a continuous
+    // pixel rect (the §3 one-way winsize SSOT — cols/rows are *derived* from
+    // the layout rect, not chosen to be an exact multiple) leaves a sub-cell
+    // gutter on the right / bottom edge. Real terminal emulators paint the
+    // whole widget in the default background and draw cells on top, so that
+    // gutter reads as the terminal background; without this the gutter exposes
+    // whatever parent surface sits behind the grid (e.g. a splitter
+    // Container's `Surface` fill bleeding through). The clip above bounds the
+    // fill to `rect`; pass 1's cell backgrounds and pass 2's glyphs draw over
+    // it, so every covered cell is visually unchanged (R15.1).
+    out.fill(
+        Fill::NonZero,
+        transform,
+        to_peniko(palette.default_bg()),
+        None,
+        &clip_rect,
+    );
     // Pass 1 — every cell's opaque background. R1013 §5.41: backgrounds are
     // laid down for the whole grid *before* any glyph, so a wide head glyph
     // that overflows its column into the trailer (drawn in pass 2) is not
@@ -1280,62 +1302,87 @@ fn paint_text_grid(
             }
         }
     }
-    // Cursor overlay (R993) — drawn after the cells so it sits on top, and
-    // inside the same clip layer. The producer reports the effective cursor
-    // (R975); only a visible cursor whose cell falls within the buffer paints
-    // (a position outside the buffer is a transient resize artefact, skipped).
+    // Cursor overlay (R993) — drawn after the cells so it sits on top, inside
+    // the same clip layer. Split into its own pass (the cursor's effective-
+    // colour + per-shape geometry is a concern distinct from the cell grid).
+    paint_grid_cursor(out, grid, metric, palette, cache, &style, origin);
+    out.pop_layer();
+}
+
+/// R993 §5.41 — paint the [`TextGridNode`] cursor overlay on top of the already
+/// completed cell layers, sharing the caller's clip. Split out of
+/// [`paint_text_grid`] so that painter stays a single cohesive pass sequence
+/// (pass 0 default-bg fill, pass 1 cell backgrounds, pass 2 glyphs) and the
+/// cursor — a distinct concern (effective-colour resolution + per-shape
+/// geometry) — owns its own routine. `cell_w` / `cell_h` are re-derived from
+/// `metric` rather than threaded in, keeping the argument list small.
+///
+/// The producer reports the effective cursor (R975); only a visible cursor
+/// whose cell falls within the buffer paints — an out-of-buffer position is a
+/// transient resize artefact and is skipped.
+fn paint_grid_cursor(
+    out: &mut VelloScene,
+    grid: &GridBuffer,
+    metric: CellMetric,
+    palette: Palette,
+    cache: &mut LayoutCache,
+    style: &TextStyle,
+    origin: Affine,
+) {
     let cursor = grid.cursor();
-    if cursor.visible && cursor.col < grid.cols() && cursor.row < grid.rows() {
-        let (cx, cy) = metric.cell_to_px(cursor.col, cursor.row);
-        let cur_cell = grid.cell(cursor.col, cursor.row);
-        // The cursor colour is the cell's effective (reverse-honoured)
-        // foreground — its ink colour — at full intensity (no dim: the cursor
-        // is a prominent UI accent, not faint text). A dedicated cursor colour
-        // is a deferred `GridCursor` field (R975 forward-compat note). An
-        // absent cell (resize) falls back to the palette default fg / bg.
-        let (fg_term, bg_term) =
-            cur_cell.map_or((TermColor::Default, TermColor::Default), effective_terms);
-        let cursor_color = to_peniko(palette.resolve(fg_term, ColorTarget::Foreground));
-        // A block / underline cursor on a wide head spans both of its columns,
-        // matching the glyph (and the TUI, where the reversed head renders two
-        // columns wide). The bar stays a single leading-edge beam.
-        let span_w = if matches!(cur_cell, Some(c) if c.width == CellWidth::Wide) {
-            2.0 * cell_w
-        } else {
-            cell_w
-        };
-        match cursor.shape {
-            CursorShape::Block => {
-                // Inverse block: fill the cursor span in the cursor colour, then
-                // redraw the glyph in the cell background so the character reads
-                // through (the conventional terminal block cursor).
-                let rect = KurboRect::new(cx, cy, cx + span_w, cy + cell_h);
-                out.fill(Fill::NonZero, origin, cursor_color, None, &rect);
-                if let Some(c) = cur_cell {
-                    if has_glyph_cluster(c) && !c.attrs.hidden {
-                        let bg_brush = to_peniko(palette.resolve(bg_term, ColorTarget::Background));
-                        let glyph_transform = origin * Affine::translate((cx, cy));
-                        draw_cell_glyph(out, cache, &style, c, glyph_transform, bg_brush);
-                    }
+    if !(cursor.visible && cursor.col < grid.cols() && cursor.row < grid.rows()) {
+        return;
+    }
+    let cell_w = f64::from(metric.cell_w());
+    let cell_h = f64::from(metric.cell_h());
+    let (cx, cy) = metric.cell_to_px(cursor.col, cursor.row);
+    let cur_cell = grid.cell(cursor.col, cursor.row);
+    // The cursor colour is the cell's effective (reverse-honoured) foreground —
+    // its ink colour — at full intensity (no dim: the cursor is a prominent UI
+    // accent, not faint text). A dedicated cursor colour is a deferred
+    // `GridCursor` field (R975 forward-compat note). An absent cell (resize)
+    // falls back to the palette default fg / bg.
+    let (fg_term, bg_term) =
+        cur_cell.map_or((TermColor::Default, TermColor::Default), effective_terms);
+    let cursor_color = to_peniko(palette.resolve(fg_term, ColorTarget::Foreground));
+    // A block / underline cursor on a wide head spans both of its columns,
+    // matching the glyph (and the TUI, where the reversed head renders two
+    // columns wide). The bar stays a single leading-edge beam.
+    let span_w = if matches!(cur_cell, Some(c) if c.width == CellWidth::Wide) {
+        2.0 * cell_w
+    } else {
+        cell_w
+    };
+    match cursor.shape {
+        CursorShape::Block => {
+            // Inverse block: fill the cursor span in the cursor colour, then
+            // redraw the glyph in the cell background so the character reads
+            // through (the conventional terminal block cursor).
+            let rect = KurboRect::new(cx, cy, cx + span_w, cy + cell_h);
+            out.fill(Fill::NonZero, origin, cursor_color, None, &rect);
+            if let Some(c) = cur_cell {
+                if has_glyph_cluster(c) && !c.attrs.hidden {
+                    let bg_brush = to_peniko(palette.resolve(bg_term, ColorTarget::Background));
+                    let glyph_transform = origin * Affine::translate((cx, cy));
+                    draw_cell_glyph(out, cache, style, c, glyph_transform, bg_brush);
                 }
             }
-            CursorShape::Bar => {
-                // A thin vertical beam at the cell's leading edge.
-                let bar_w = (cell_w / 8.0).max(1.0);
-                let rect = KurboRect::new(cx, cy, cx + bar_w, cy + cell_h);
-                out.fill(Fill::NonZero, origin, cursor_color, None, &rect);
-            }
-            CursorShape::Underline => {
-                // A solid bar along the cell bottom — deliberately thicker than
-                // the SGR underline rule so the cursor reads distinctly from an
-                // underlined character.
-                let uc_h = (cell_h / 8.0).max(2.0);
-                let rect = KurboRect::new(cx, cy + cell_h - uc_h, cx + span_w, cy + cell_h);
-                out.fill(Fill::NonZero, origin, cursor_color, None, &rect);
-            }
+        }
+        CursorShape::Bar => {
+            // A thin vertical beam at the cell's leading edge.
+            let bar_w = (cell_w / 8.0).max(1.0);
+            let rect = KurboRect::new(cx, cy, cx + bar_w, cy + cell_h);
+            out.fill(Fill::NonZero, origin, cursor_color, None, &rect);
+        }
+        CursorShape::Underline => {
+            // A solid bar along the cell bottom — deliberately thicker than the
+            // SGR underline rule so the cursor reads distinctly from an
+            // underlined character.
+            let uc_h = (cell_h / 8.0).max(2.0);
+            let rect = KurboRect::new(cx, cy + cell_h - uc_h, cx + span_w, cy + cell_h);
+            out.fill(Fill::NonZero, origin, cursor_color, None, &rect);
         }
     }
-    out.pop_layer();
 }
 
 /// Emit one Vello filled-rectangle path for a pinion (`Rect`, `Color`,

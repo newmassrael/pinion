@@ -11457,6 +11457,46 @@
         "live 2x manual verify (no WINIT_X11_SCALE_FACTOR workaround) still pending user hardware; render_window + window_event arms not headlessly driveable (seams covered by unit + GPU + router-composition tests)"
       ]
     },
+    "R1028": {
+      "decision_summary": "R1028 §5.41 §2 #6 TextGrid gutter fill (sprag PR-15): paint_text_grid now lays a pass-0 fill of the whole node rect in palette.default_bg before any cell, so a sub-cell gutter (cols*cell_w / rows*cell_h not tiling a continuous pixel rect — the §3 one-way winsize SSOT case, cols/rows derived from the layout rect) reads as the terminal background instead of the parent surface bleeding through (sprag-gui multi-pane splitter Surface white bar). The clip already bounds the fill to rect; cell backgrounds + glyphs draw over it so covered cells are visually unchanged. Cursor overlay extracted to paint_grid_cursor (SRP) to keep the painter under clippy too_many_lines. Forcing GPU pixel test r1028; negative-control verified the gutter shows the white clear without pass 0.",
+      "changes_bullets": [
+        "paint_text_grid pass 0: fill node rect with palette.default_bg before cells (clip-bounded to rect)",
+        "cursor overlay extracted to paint_grid_cursor (SRP; keeps painter under clippy too_many_lines)",
+        "r1028 headless-GPU test: red 2x2 grid in larger rect, white clear; gutters must read default_bg"
+      ],
+      "verification_bullets": [
+        "r1028 + R991/R992/R993/R995 grid GPU tests pass; no-pass-0 negative control fails on white gutter",
+        "clippy --workspace --all-targets --features pinion-runtime/vello clean; cargo fmt --check clean",
+        "pinion-runtime + pinion-shell default suites green; live visual = manual real-window check"
+      ],
+      "impact_refs": [
+        "5.41",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "R1028 impl-complete + clippy/fmt/test green; PUSH PENDING explicit user consent.",
+        "TUI unaffected: char-cell has no sub-pixel gutter; 2#6 cross-consistency pins cell structure only."
+      ],
+      "publishable_decision_summary": "R1028 §5.41 §2 #6 TextGrid gutter fill (sprag PR-15): paint_text_grid now lays a pass-0 fill of the whole node rect in palette.default_bg before any cell, so a sub-cell gutter (cols*cell_w / rows*cell_h not tiling a continuous pixel rect — the §3 one-way winsize SSOT case, cols/rows derived from the layout rect) reads as the terminal background instead of the parent surface bleeding through (sprag-gui multi-pane splitter Surface white bar). The clip already bounds the fill to rect; cell backgrounds + glyphs draw over it so covered cells are visually unchanged. Cursor overlay extracted to paint_grid_cursor (SRP) to keep the painter under clippy too_many_lines. Forcing GPU pixel test r1028; negative-control verified the gutter shows the white clear without pass 0.",
+      "publishable_changes_bullets": [
+        "paint_text_grid pass 0: fill node rect with palette.default_bg before cells (clip-bounded to rect)",
+        "cursor overlay extracted to paint_grid_cursor (SRP; keeps painter under clippy too_many_lines)",
+        "r1028 headless-GPU test: red 2x2 grid in larger rect, white clear; gutters must read default_bg"
+      ],
+      "publishable_verification_bullets": [
+        "r1028 + R991/R992/R993/R995 grid GPU tests pass; no-pass-0 negative control fails on white gutter",
+        "clippy --workspace --all-targets --features pinion-runtime/vello clean; cargo fmt --check clean",
+        "pinion-runtime + pinion-shell default suites green; live visual = manual real-window check"
+      ],
+      "publishable_impact_refs": [
+        "5.41",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R1028 impl-complete + clippy/fmt/test green; PUSH PENDING explicit user consent.",
+        "TUI unaffected: char-cell has no sub-pixel gutter; 2#6 cross-consistency pins cell structure only."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
