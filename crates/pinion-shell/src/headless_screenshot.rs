@@ -2049,17 +2049,31 @@ mod tests {
     /// looseness fix. Layer 1 (a real fixed-pitch face) alone does NOT make an
     /// arbitrary producer-picked `cell_w` snug — with a cell whose width does
     /// not match the font advance, the fit path leaves the glyph left-jammed
-    /// against a wide right gutter (the PR-5 looseness signature). Here 16×32
-    /// (no explicit font size) is over-wide for the resolved monospace's
-    /// advance at the fit size, so the right gutter clearly exceeds the left.
-    /// This pins the design contract: a monospace grid's `cell_w` MUST equal
-    /// the advance ([`measure_monospace_cell`]); a mismatched cell is loose by
-    /// design, not a bug to paper over with centering/scaling.
+    /// against a wide right gutter (the PR-5 looseness signature). This pins
+    /// the design contract: a monospace grid's `cell_w` MUST equal the advance
+    /// ([`measure_monospace_cell`]); a mismatched cell is loose by design, not
+    /// a bug to paper over with centering/scaling.
+    ///
+    /// R1029 §6.3 — the over-wide cell is **font-derived**, not a magic `16`:
+    /// the resolved monospace differs across environments (a dev box's wide
+    /// Noto CJK Mono vs CI's `DejaVu Sans Mono`, whose advance happened to
+    /// ~match 16 px and made the cell snug-not-loose, failing this guard).
+    /// Measuring the advance then building a cell at twice it is provably
+    /// over-wide for any face: the height-fit advance is `<=` the measured one
+    /// (fit-size `<=` `cell_h`), so `2x measured` always exceeds it.
     #[test]
     #[ignore = "wgpu adapter cold-boot too slow for default test suite; run with --ignored"]
     fn r1002_text_grid_fit_path_is_loose_for_mismatched_cell() {
         use pinion_core::cell_metric::CellMetric;
-        let metric = CellMetric::new(16, 32).expect("non-zero cell metric");
+        use pinion_text::LayoutCache;
+        const CH: u32 = 32;
+        // The resolved monospace advance at the cell height (same family the
+        // grid paints). `2x` it: provably over-wide vs the height-fit advance.
+        let advance = LayoutCache::new()
+            .measure_monospace_cell(CH)
+            .expect("monospace advance probe")
+            .cell_w();
+        let metric = CellMetric::new(advance * 2, CH).expect("non-zero cell metric");
         let (rgba8, cw, ch) = render_single_glyph_cell(metric, None, "M");
         let (left, right, _span) = glyph_gutters(&rgba8, cw, ch);
         // Left-jammed: the right gutter is clearly larger than the left (the +2
@@ -2067,8 +2081,9 @@ mod tests {
         // measured metric — not a defect in the fit path.
         assert!(
             right >= left + 2,
-            "fit path with an over-wide cell must be left-jammed (loose), proving \
-             the measured metric is required: left={left} right={right} cw={cw}",
+            "fit path with an over-wide cell (2x the measured advance) must be \
+             left-jammed (loose), proving the measured metric is required: \
+             left={left} right={right} cw={cw}",
         );
     }
 

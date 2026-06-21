@@ -11581,6 +11581,38 @@
         "real-CI green confirmed when the workflow runs (push triggers gpu-tests); locally lavapipe-verified."
       ]
     },
+    "R1029.1": {
+      "decision_summary": "R1029.1 §6.3 §5.41 fix the R1029 gpu-tests CI red: r1002_text_grid_fit_path_is_loose_for_mismatched_cell was font-metric-fragile — its magic 16px cell happened to ~match CI's DejaVu Sans Mono advance (snug-not-loose) and failed, while a dev box's wide Noto CJK Mono made 16 over-wide and passed. The over-wide cell is now font-DERIVED: measure the resolved monospace advance (measure_monospace_cell) then build the cell at 2x it — provably over-wide vs the height-fit advance (fit-size <= cell_h) for any face. Verified under forced DejaVu Sans Mono (CI's exact font via FONTCONFIG_FILE) + lavapipe: r1002 + the full --skip-r806 gpu suite, 14/14 pass.",
+      "changes_bullets": [
+        "r1002: over-wide cell is font-derived (2x measure_monospace_cell advance), not a magic 16px"
+      ],
+      "verification_bullets": [
+        "forced DejaVu Sans Mono (FONTCONFIG_FILE) + lavapipe: r1002 + full gpu --skip r806 = 14/14 pass",
+        "clippy -p pinion-shell --tests + cargo fmt --check clean"
+      ],
+      "impact_refs": [
+        "6.3",
+        "5.41"
+      ],
+      "carry_forward_bullets": [
+        "R1029.1 committed locally (with R1030); PUSH PENDING explicit user consent."
+      ],
+      "publishable_decision_summary": "R1029.1 §6.3 §5.41 fix the R1029 gpu-tests CI red: r1002_text_grid_fit_path_is_loose_for_mismatched_cell was font-metric-fragile — its magic 16px cell happened to ~match CI's DejaVu Sans Mono advance (snug-not-loose) and failed, while a dev box's wide Noto CJK Mono made 16 over-wide and passed. The over-wide cell is now font-DERIVED: measure the resolved monospace advance (measure_monospace_cell) then build the cell at 2x it — provably over-wide vs the height-fit advance (fit-size <= cell_h) for any face. Verified under forced DejaVu Sans Mono (CI's exact font via FONTCONFIG_FILE) + lavapipe: r1002 + the full --skip-r806 gpu suite, 14/14 pass.",
+      "publishable_changes_bullets": [
+        "r1002: over-wide cell is font-derived (2x measure_monospace_cell advance), not a magic 16px"
+      ],
+      "publishable_verification_bullets": [
+        "forced DejaVu Sans Mono (FONTCONFIG_FILE) + lavapipe: r1002 + full gpu --skip r806 = 14/14 pass",
+        "clippy -p pinion-shell --tests + cargo fmt --check clean"
+      ],
+      "publishable_impact_refs": [
+        "6.3",
+        "5.41"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R1029.1 committed locally (with R1030); PUSH PENDING explicit user consent."
+      ]
+    },
     "R1030": {
       "decision_summary": "R1030 §5.39 fail-safe focusable defaults: interactive widget *helpers* now default focusable=true (web native-element model — a button/menu/toolbar/tree/table/disclosure/datepicker/tabs is a Tab stop without an explicit opt-in; opt OUT via .with_focusable(false) for modal/decorative). Fixes the demo-sweep tag_not_focusable regression that has been red since R1020: R1020 retired the focusable_tags() enumeration for scene-derived LayoutStyle::focusable, but its opt-in conversion missed ~28 demos and the view_menu_bar menubar node, silently dropping interactive widgets from the Tab order (and from AI focus introspection) — a fail-DANGEROUS default. R1030 flips 7 widget-style defaults, adds a focusable field to TabsStyle, fixes the view_menu_bar helper-node gap, and adds per-example opt-in for hand-composed focus nodes (rating, tree invisible-root, raw slider/stepper/etc. containers). Decision driver: per the user's textbook/SSOT/north-star directive, fail-safe (web-aligned, AI-introspection-critical) over R1020's fail-dangerous default-false. Out of scope (separate pre-existing bugs surfaced or unrelated): r674 Space-toggle, r957/r962/r972/r987 text-band layout, immediate-mode demos.",
       "changes_bullets": [
