@@ -22,16 +22,20 @@
 //! exist. Landing each standalone keeps every round a complete,
 //! UCD-conformant artifact rather than a half-built algorithm.
 //!
-//! Deferred (honest gaps, not silent): the East Asian Width carve-outs
-//! of `LB19a`/`LB30` (this engine has no `East_Asian_Width` substrate
-//! yet — `$EastAsian` is treated as empty, which is exact for the
-//! all-non-East-Asian conformance suite and over-applies the QU /
-//! parenthesis non-break rules to real East Asian text); the `LB30b`
+//! The East Asian Width carve-outs of `LB19a`/`LB21a`/`LB30` and the
+//! Pi/Pf quotation sub-classes of `LB15a`/`LB15b`/`LB19` are implemented
+//! from build.rs-derived tables (`is_east_asian_wide`,
+//! `is_initial_punctuation`); the conformance suite exercises both.
+//!
+//! Deferred (honest gaps, not silent): the `LB30b`
 //! `[\p{Extended_Pictographic}&\p{Cn}] × EM` clause (needs the
-//! `Extended_Pictographic` property); and the `LB1` `SA → CM`
-//! resolution for `Mn`/`Mc` South-East Asian marks (resolved to `AL`;
-//! the suite exercises no `SA` combining mark). Each follows the
-//! `East_Asian_Width` / `Script` substrate (§5.37.5).
+//! `Extended_Pictographic` property); the `LB1` `SA → CM` resolution for
+//! `Mn`/`Mc` South-East Asian marks (resolved to `AL`; the suite
+//! exercises no `SA` combining mark); and the `East_Asian_Width`
+//! block-level `W` default for unassigned CJK code points (only the
+//! single `@missing N` directive is applied — see `is_east_asian_wide`).
+//! Each awaits its substrate (`Extended_Pictographic` / `Script` /
+//! gc `Mn`/`Mc`), tracked under §5.37.5.
 //!
 //! External dependencies: zero. `std` only — mirrors the §5.37.3 NFC
 //! engine and §5.37.4 BIDI policy.
@@ -295,8 +299,8 @@ fn is_final_punctuation(c: char) -> bool {
 /// `LB21a` and `LB30` carve-outs. A codepoint outside every range
 /// defaults to `N` (not East Asian) per `EastAsianWidth.txt`'s single
 /// `@missing: 0000..10FFFF; N`; the block-level `W` default for some
-/// unassigned CJK ranges is not applied (no such codepoint reaches the
-/// rules in practice, and the conformance suite samples are assigned).
+/// unassigned CJK ranges is not applied (the conformance suite samples
+/// are all assigned, so this gap is not exercised — see module docs).
 fn is_east_asian_wide(c: char) -> bool {
     let cp = c as u32;
     tables::EAST_ASIAN_WIDE_RANGES
@@ -804,10 +808,12 @@ pub fn line_break_class(cp: char) -> LineBreak {
     let ranges = tables::RANGES;
     // Largest range whose `start <= cp`, then confirm `cp <= end`.
     // Mirrors `bidi::bidi_class` (§5.37.4) — the second range-property
-    // lookup of this exact `(start, end, idx)` shape. A third such
-    // property (e.g. §5.37.5 Script / East_Asian_Width) is the
-    // Rule-of-Three trigger to lift a shared range-search helper; at
-    // two sites the parallel is kept explicit rather than abstracted.
+    // lookup of this exact `(start, end, idx)` shape. (`is_east_asian_wide`
+    // is a third range table but a different — `(start, end)` membership —
+    // shape, so it is not a clean twin.) A third `(start, end, idx)`
+    // property (e.g. a §5.37.5 Script enum) is the Rule-of-Three trigger
+    // to lift a shared range-search helper; at two such sites the parallel
+    // is kept explicit rather than abstracted.
     let mut lo = 0usize;
     let mut hi = ranges.len();
     while lo < hi {
@@ -1003,7 +1009,10 @@ mod tests {
 
     // ---- LB1-LB31 break algorithm ----
 
-    use super::{BreakOpportunity, line_break_opportunities};
+    use super::{
+        BreakOpportunity, is_east_asian_wide, is_final_punctuation, is_initial_punctuation,
+        line_break_opportunities,
+    };
 
     /// Resolve the break opportunities of `text` into one `÷`/`×` marker
     /// per boundary (`out[0]` = sot, `out[n]` = eot), mirroring the
@@ -1076,8 +1085,10 @@ mod tests {
     #[test]
     fn uax14_linebreaktest_conformance() {
         let cases = crate::test_fixture::load_line_break_test();
+        // UCD 16.0 LineBreakTest.txt carries 16_672 data rows; a parser
+        // regression that silently dropped rows must not slip the floor.
         assert!(
-            cases.len() > 9000,
+            cases.len() > 16_000,
             "LineBreakTest.txt under-loaded: {} rows",
             cases.len()
         );
@@ -1106,5 +1117,67 @@ mod tests {
             "exactly one [30.22] Extended_Pictographic&Cn line is deferred; \
              got lines {deferred:?}"
         );
+    }
+
+    #[test]
+    fn membership_tables_are_sorted_for_binary_search() {
+        // `is_*_punctuation` / `is_east_asian_wide` binary-search these;
+        // a build.rs coalescing/ordering regression would silently return
+        // wrong results without tripping the bulk sweep.
+        for table in [tables::INITIAL_PUNCTUATION, tables::FINAL_PUNCTUATION] {
+            assert!(!table.is_empty());
+            assert!(
+                table.windows(2).all(|w| w[0] < w[1]),
+                "punct table must be strictly sorted"
+            );
+        }
+        let ea = tables::EAST_ASIAN_WIDE_RANGES;
+        assert!(!ea.is_empty());
+        let mut prev_end: Option<u32> = None;
+        for &(start, end) in ea {
+            assert!(start <= end, "EAW range inverted at 0x{start:04X}");
+            if let Some(pe) = prev_end {
+                // Strictly increasing with a real gap — coalescing merges
+                // adjacency, so `start == pe + 1` would indicate a miss.
+                assert!(
+                    pe + 1 < start,
+                    "EAW ranges unsorted/uncoalesced near 0x{start:04X}"
+                );
+            }
+            prev_end = Some(end);
+        }
+    }
+
+    #[test]
+    fn quotation_and_east_asian_predicates_spot_check() {
+        // Pi / Pf / ambiguous QU samples used by LB15a/LB15b/LB19.
+        assert!(is_initial_punctuation('\u{00AB}'), "« is Pi");
+        assert!(!is_final_punctuation('\u{00AB}'));
+        assert!(is_final_punctuation('\u{00BB}'), "» is Pf");
+        assert!(!is_initial_punctuation('\u{00BB}'));
+        assert!(
+            !is_initial_punctuation('"') && !is_final_punctuation('"'),
+            "U+0022 is neither"
+        );
+        // East Asian width: fullwidth / wide vs ASCII.
+        assert!(is_east_asian_wide('\u{FF08}'), "FULLWIDTH ( is F");
+        assert!(is_east_asian_wide('\u{2329}'), "ANGLE BRACKET is W");
+        assert!(!is_east_asian_wide('('), "ASCII ( is Na");
+        assert!(!is_east_asian_wide('A'));
+    }
+
+    #[test]
+    fn multibyte_break_offsets_are_byte_accurate() {
+        // Hangul (3 bytes each) around an ASCII space: 가=3B, SP=1B, 나=3B.
+        // LB18 breaks after the space (byte 4), LB3 at eot (byte 7).
+        // Offsets must be byte offsets, not char indices.
+        let opps = line_break_opportunities("\u{AC00} \u{B098}");
+        let bytes: Vec<usize> = opps.iter().map(|o| o.offset).collect();
+        assert_eq!(
+            bytes,
+            [4, 7],
+            "break after the space (byte 4) and at eot (byte 7)"
+        );
+        assert!(!opps[0].mandatory && opps[1].mandatory);
     }
 }
