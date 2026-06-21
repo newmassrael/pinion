@@ -208,6 +208,27 @@ impl AccessTreeBuilder {
     /// bounds; AT will fall back to native window geometry).
     #[must_use]
     pub fn build(self, window_bounds: Option<Rect>) -> TreeUpdate {
+        self.build_with_scale(window_bounds, 1.0)
+    }
+
+    /// R1027 §5.40 — like [`Self::build`] but re-expresses the
+    /// (logical-pixel) node bounds in AccessKit's physical-pixel
+    /// coordinate space via a single root-node
+    /// `Affine::scale(scale_factor)` transform.
+    ///
+    /// Since R1027 the paint scene is laid out in logical pixels (the
+    /// shell applies the window `scale_factor` only at the GPU raster +
+    /// pointer-input boundaries), so the `AccessNode` bounds collected
+    /// from it are logical. AccessKit expects physical-pixel coordinates
+    /// (`accesskit::Node::transform` doc), and a node's transform applies
+    /// to its own `bounds` plus every descendant (descendants carry no
+    /// transform of their own), so one scale on the synthetic root
+    /// re-expresses the whole tree in physical pixels. `scale_factor`
+    /// effectively `1.0` leaves the transform unset — byte-identical to
+    /// the pre-R1027 (and non-`HiDPI`) output, matching AccessKit's
+    /// "should be `None` for the identity transform" guidance.
+    #[must_use]
+    pub fn build_with_scale(self, window_bounds: Option<Rect>, scale_factor: f64) -> TreeUpdate {
         let claimed = collect_claimed_children(&self.nodes);
         let root_children: Vec<NodeId> = self
             .insertion_order
@@ -222,6 +243,17 @@ impl AccessTreeBuilder {
         let mut root = Node::new(Role::Window);
         if let Some(bounds) = window_bounds {
             root.set_bounds(rect_to_accesskit(bounds));
+        }
+        // R1027 §5.40 — map the logical-pixel tree into AccessKit's
+        // physical-pixel space. The transform applies to the root's own
+        // `bounds` and propagates to every (transform-less) descendant,
+        // so a single scale on the root covers the whole tree. Skipped at
+        // identity so non-`HiDPI` output is byte-identical (AccessKit asks
+        // for `None`, not `Affine::scale(1.0)`, at identity). `!= 1.0`
+        // would trip `clippy::float_cmp`; winit reports exact factors so
+        // the `f64::EPSILON` margin only excludes a literal 1.0.
+        if (scale_factor - 1.0).abs() > f64::EPSILON {
+            root.set_transform(accesskit::Affine::scale(scale_factor));
         }
         for child_id in root_children {
             root.push_child(child_id);
@@ -799,6 +831,53 @@ mod tests {
         // API, so just verify build succeeds with bounds passed.
         let update = AccessTreeBuilder::new().build(Some(Rect::new(0, 0, 1024, 768)));
         assert_eq!(update.nodes.len(), 1);
+    }
+
+    #[test]
+    fn r1027_build_with_scale_sets_root_transform() {
+        // R1027 §5.40 — at non-identity scale the synthetic root node
+        // carries an `Affine::scale(scale_factor)` transform so the
+        // logical-pixel bounds + descendants map into AccessKit's
+        // physical-pixel space (the only place the scale enters the tree).
+        let update =
+            AccessTreeBuilder::new().build_with_scale(Some(Rect::new(0, 0, 480, 320)), 2.0);
+        let (_, root) = update
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == ROOT_NODE_ID)
+            .expect("synthetic root node emitted");
+        assert_eq!(
+            root.transform(),
+            Some(&accesskit::Affine::scale(2.0)),
+            "root transform re-expresses the logical tree in physical pixels"
+        );
+    }
+
+    #[test]
+    fn r1027_build_with_scale_identity_leaves_transform_none() {
+        // R1027 §5.40 — at scale 1.0 the root carries NO transform
+        // (AccessKit asks for `None`, not `Affine::scale(1.0)`, at
+        // identity), so non-`HiDPI` output is byte-identical to `build()`.
+        let update =
+            AccessTreeBuilder::new().build_with_scale(Some(Rect::new(0, 0, 480, 320)), 1.0);
+        let (_, root) = update
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == ROOT_NODE_ID)
+            .expect("synthetic root node emitted");
+        assert_eq!(
+            root.transform(),
+            None,
+            "identity scale leaves the root transform unset"
+        );
+        // And it matches the plain `build()` root (no transform divergence).
+        let plain = AccessTreeBuilder::new().build(Some(Rect::new(0, 0, 480, 320)));
+        let (_, plain_root) = plain
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == ROOT_NODE_ID)
+            .expect("synthetic root node emitted");
+        assert_eq!(plain_root.transform(), None);
     }
 
     #[test]

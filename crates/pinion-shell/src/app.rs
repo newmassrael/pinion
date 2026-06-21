@@ -37,8 +37,9 @@ use pinion_core::event::WheelDelta;
 use pinion_core::scene::BoxNode;
 use pinion_runtime::{CommandExecutor, HandlerRegistry, PointerId, image_cache, paint_adapter};
 use vello::Scene as VelloScene;
+use vello::kurbo::Affine;
 use winit::application::ApplicationHandler;
-use winit::dpi::{LogicalPosition, LogicalSize};
+use winit::dpi::{LogicalPosition, LogicalSize, PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::{Key, NamedKey};
@@ -157,19 +158,41 @@ struct WindowSlot<R: VelloRenderer> {
     /// multi-window image consumer that wants one shared decode is an
     /// additive app-level move, [[abstraction-needs-second-consumer]]).
     image_cache: image_cache::ImageCache,
+    /// R1027 §5.16 — the window's current winit `scale_factor` (device
+    /// pixels per logical pixel). Seeded from `Window::scale_factor()` at
+    /// slot construction and refreshed on
+    /// `WindowEvent::ScaleFactorChanged`. The paint scene is laid out in
+    /// logical pixels; this factor is applied only at the GPU raster
+    /// boundary (the scaled vello append in `render_window`), the
+    /// pointer-input boundary (`CursorMoved` / `Touch` physical ->
+    /// logical), and the AccessKit root transform. `1.0` on a non-`HiDPI`
+    /// display, which keeps the byte-identical pre-R1027 render path.
+    scale_factor: f64,
+    /// R1027 §5.16 — reusable scratch scene for the `HiDPI` scaled append.
+    /// When `scale_factor` is non-identity, `render_window` appends the
+    /// logical `vello_scene` into this buffer under an
+    /// `Affine::scale(scale_factor)` so the logical scene rasterizes at
+    /// device resolution; the renderer then submits this scene. At `1.0`
+    /// the renderer submits `vello_scene` directly and this buffer stays
+    /// untouched (no extra append, so non-`HiDPI` performance is
+    /// unchanged). Per-window for the same reason `vello_scene` is (no
+    /// cross-window buffer race on `reset`).
+    scaled_scene: VelloScene,
 }
 
 impl<R: VelloRenderer> WindowSlot<R> {
     /// R682 §5.16 — collapse the per-slot field defaults that the
     /// `resume_spec` code path repeats at both the suspended-init and
-    /// active-init sites. Only `render`, `accesskit`, `spec_id`, and
-    /// `pending_intrinsic_resize` vary between the two sites; every
-    /// other field starts at its canonical empty-state value.
+    /// active-init sites. Only `render`, `accesskit`, `spec_id`,
+    /// `pending_intrinsic_resize`, and `scale_factor` (R1027) vary
+    /// between the two sites; every other field starts at its canonical
+    /// empty-state value.
     fn build(
         render: RenderState<R>,
         accesskit: Option<accesskit_winit::Adapter>,
         spec_id: Cow<'static, str>,
         pending_intrinsic_resize: Option<((u32, u32), (u32, u32))>,
+        scale_factor: f64,
     ) -> Self {
         Self {
             render,
@@ -181,6 +204,8 @@ impl<R: VelloRenderer> WindowSlot<R> {
             spec_id,
             fragment_cache: paint_adapter::FragmentCache::new(),
             image_cache: image_cache::ImageCache::new(),
+            scale_factor,
+            scaled_scene: VelloScene::new(),
         }
     }
 }
@@ -516,6 +541,7 @@ impl<V: WidgetView> AppShell<V> {
         paint_scene: &pinion_core::Scene,
         size_w: u32,
         size_h: u32,
+        scale_factor: f64,
     ) {
         let Some(slot) = self.windows.get_mut(&window_id) else {
             return;
@@ -561,7 +587,12 @@ impl<V: WidgetView> AppShell<V> {
                 } else {
                     builder.focused(None);
                 }
-                builder.build(Some(window_bounds))
+                // R1027 §5.40 — `window_bounds` + every AccessNode rect
+                // are logical pixels (the paint scene is logical since
+                // R1027). The root-node `Affine::scale(scale_factor)`
+                // re-expresses the whole tree in the physical-pixel space
+                // AccessKit expects; identity scale leaves it byte-identical.
+                builder.build_with_scale(Some(window_bounds), scale_factor)
             });
         }
         // R51.77 / R51.79 §5.40 — commit step. By-value Vec move
@@ -609,21 +640,29 @@ impl<V: WidgetView> AppShell<V> {
         // `String::clone` for `Owned`. The clone detaches from the
         // `&slot` borrow so the substrate's `&mut self.core` call
         // below does not conflict.
-        let (spec_id, w, h) = {
+        let (spec_id, scale, w, h) = {
             let Some(slot) = self.windows.get(&window_id) else {
                 return;
             };
             let RenderState::Active { window, .. } = &slot.render else {
                 return;
             };
-            let size = window.inner_size();
-            let Some(w) = core::num::NonZeroU32::new(size.width) else {
+            // R1027 §5.16 — lay out in logical pixels. winit reports the
+            // surface in physical pixels; the window `scale_factor` maps
+            // physical -> logical so app-authored dimensions render at
+            // their intended size on `HiDPI` (the scale is re-applied at the
+            // GPU raster boundary below). `logical_layout_size` clamps to
+            // `>= 1`, so a degenerate zero-logical dimension never reaches
+            // layout; the `NonZeroU32` guards stay as a defensive backstop.
+            let scale = slot.scale_factor;
+            let (lw, lh) = logical_layout_size(window.inner_size(), scale);
+            let Some(w) = core::num::NonZeroU32::new(lw) else {
                 return;
             };
-            let Some(h) = core::num::NonZeroU32::new(size.height) else {
+            let Some(h) = core::num::NonZeroU32::new(lh) else {
                 return;
             };
-            (slot.spec_id.clone(), w, h)
+            (slot.spec_id.clone(), scale, w, h)
         };
         // R51.80 §5.16 §5.36 — ShellCore owns the paint scene
         // pipeline; AppShell only handles the vello/wgpu submit.
@@ -659,14 +698,17 @@ impl<V: WidgetView> AppShell<V> {
         // so it drops before the post-paint helpers
         // (emit_accesskit_for_window, publish_ime_for_window) which
         // take `&mut self`.
-        let size = {
+        // R1027 §5.16 — this scope no longer yields the physical
+        // `inner_size`: AccessKit bounds are now logical (`w`/`h`) and the
+        // GPU surface is sized by the `Resized` arm, so nothing past the
+        // paint needs the physical size.
+        {
             let Some(slot) = self.windows.get_mut(&window_id) else {
                 return;
             };
             let RenderState::Active { window, renderer } = &mut slot.render else {
                 return;
             };
-            let size = window.inner_size();
             // R668 §5.16 — `IntrinsicAfterFirstPaint` post-first-paint
             // resize hook (per-window since R670.B). The first painted
             // scene now carries layout-computed rects on every node, so
@@ -732,17 +774,37 @@ impl<V: WidgetView> AppShell<V> {
             // `renderer.render` auto-derefs through `Box<R>` because the
             // `WidgetRenderer` trait is in scope.
             let render_start = Instant::now();
-            if let Err(e) = renderer.render(&slot.vello_scene, VelloContext { base_color: base }) {
+            // R1027 §5.16 — the paint scene (and thus `vello_scene`) is in
+            // logical pixels; the GPU surface is physical. At non-identity
+            // scale, append the logical scene into `scaled_scene` under
+            // `Affine::scale(scale)` so it rasterizes at device resolution.
+            // The `FragmentCache` stays IDENTITY-keyed and fully intact —
+            // the scale is one top-level transform applied AFTER the cached
+            // walk, not threaded through it, so cache hits are unaffected.
+            // At `1.0` the renderer submits `vello_scene` directly: zero
+            // extra append, byte-identical to the pre-R1027 output.
+            let render_target: &VelloScene = if scale_is_non_identity(scale) {
+                slot.scaled_scene.reset();
+                slot.scaled_scene
+                    .append(&slot.vello_scene, Some(Affine::scale(scale)));
+                &slot.scaled_scene
+            } else {
+                &slot.vello_scene
+            };
+            if let Err(e) = renderer.render(render_target, VelloContext { base_color: base }) {
                 eprintln!("shell: vello render: {e}");
             }
             render_us = instant_delta_us(render_start, Instant::now());
-            size
         };
         // The post-paint helpers (`emit_accesskit_for_window`,
         // `publish_ime_for_window`) each re-acquire their own slot
         // borrow internally and take `&mut self.core` — the scope
         // above released the long-held slot borrow so this is safe.
-        self.emit_accesskit_for_window(window_id, &spec_id, &paint_scene, size.width, size.height);
+        // R1027 §5.16 §5.40 — AccessKit window bounds are the LOGICAL
+        // (`w`, `h`) dims (matching the logical paint scene the AccessNode
+        // rects are collected from); `scale` rides through to the root
+        // node transform so the AT side still sees physical-pixel coords.
+        self.emit_accesskit_for_window(window_id, &spec_id, &paint_scene, w.get(), h.get(), scale);
         // R56.2.c §5.13 §5.38 — push IME candidate window position
         // to the platform IME (per-window since R670.B).
         self.publish_ime_for_window(window_id, &paint_scene);
@@ -1346,6 +1408,11 @@ impl<V: WidgetView> AppShell<V> {
             pinion_core::set_system_color_scheme(winit_theme_to_pinion_scheme(theme));
         }
         let size = window.inner_size();
+        // R1027 §5.16 — seed the per-slot scale factor from the OS so the
+        // first paint already lays out logical and rasters at the device
+        // resolution (refreshed later by `WindowEvent::ScaleFactorChanged`).
+        // The renderer surface is sized in physical pixels (unchanged).
+        let scale_factor = window.scale_factor();
         let renderer = pollster::block_on(<V::Renderer as VelloRenderer>::new(
             Arc::clone(&window),
             size.width.max(1),
@@ -1370,6 +1437,7 @@ impl<V: WidgetView> AppShell<V> {
                         None,
                         spec.id.clone(),
                         pending_intrinsic_resize,
+                        scale_factor,
                     ),
                 );
                 self.spec_id_to_window_id.insert(spec.id.clone(), window_id);
@@ -1396,6 +1464,7 @@ impl<V: WidgetView> AppShell<V> {
             Some(adapter),
             spec.id.clone(),
             pending_intrinsic_resize,
+            scale_factor,
         );
         self.windows.insert(window_id, slot);
         self.spec_id_to_window_id.insert(spec.id.clone(), window_id);
@@ -1406,6 +1475,24 @@ impl<V: WidgetView> AppShell<V> {
             "shell: {} resumed (window {}; initial size {}x{})",
             spec.title, &spec.id, init_w, init_h,
         );
+    }
+
+    /// R1027 §5.16 — the window moved to a display with a different DPI,
+    /// or the OS scale changed. Refresh the cached factor so the next paint
+    /// lays out logical -> rasters at the new device resolution and pointer
+    /// events convert against the new scale. winit pairs this event with a
+    /// `Resized` (the new physical inner size) that reconfigures the GPU
+    /// surface; the explicit redraw here makes the rescaled frame appear
+    /// immediately rather than waiting on an unrelated redraw.
+    /// `inner_size_writer` is left untouched — pinion accepts winit's
+    /// recommended physical size.
+    fn note_scale_factor_changed(&mut self, window_id: WindowId, scale_factor: f64) {
+        if let Some(slot) = self.windows.get_mut(&window_id) {
+            slot.scale_factor = scale_factor;
+            if let RenderState::Active { window, .. } = &slot.render {
+                window.request_redraw();
+            }
+        }
     }
 }
 
@@ -1552,6 +1639,13 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
             .windows
             .get(&window_id)
             .map_or(pinion_runtime::DEFAULT_WINDOW, |s| &*s.spec_id);
+        // R1027 §5.16 §5.35 — the addressed window's scale factor, copied
+        // out (so it does not extend the `self.windows` borrow into the
+        // arms). Used to map physical pointer coordinates -> logical for
+        // `CursorMoved` / `Touch`. `1.0` for an untracked window (a
+        // Resumed event landing before the slot is inserted), which is the
+        // pre-R1027 behaviour.
+        let scale = self.windows.get(&window_id).map_or(1.0, |s| s.scale_factor);
         match event {
             WindowEvent::CloseRequested => {
                 eprintln!(
@@ -1568,12 +1662,14 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
                 // R51.38 §5.35 — winit mouse events are single-source
                 // on every desktop platform pinion supports; the
                 // shell threads `PointerId::MOUSE` unconditionally.
-                self.core.cursor_moved_for_window(
-                    spec_id,
-                    PointerId::MOUSE,
-                    position.x,
-                    position.y,
-                );
+                // R1027 §5.16 §5.35 — `position` is physical; convert to
+                // logical so it shares the router's coordinate space (the
+                // same logical space the paint scene lays out in). Without
+                // this a small hit target (splitter handle, slider thumb)
+                // is unreachable on `HiDPI`.
+                let (lx, ly) = winit_pointer_to_logical(position, scale);
+                self.core
+                    .cursor_moved_for_window(spec_id, PointerId::MOUSE, lx, ly);
             }
             WindowEvent::CursorLeft { .. } => {
                 self.core.cursor_left_for_window(spec_id, PointerId::MOUSE);
@@ -1610,7 +1706,9 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
             // convert the unit-tagged `MouseScrollDelta` into the
             // matching pinion-native [`WheelDelta`] and forward.
             WindowEvent::MouseWheel { delta, .. } => {
-                let pinion_delta = winit_wheel_to_pinion(delta);
+                // R1027 §5.16 §5.45 — `scale` converts a `PixelDelta`
+                // (physical) to logical, mirroring the `CursorMoved` arm.
+                let pinion_delta = winit_wheel_to_pinion(delta, scale);
                 self.core
                     .wheel_for_window(spec_id, PointerId::MOUSE, pinion_delta);
             }
@@ -1619,8 +1717,10 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
             // R51.108 §5.41 — convert at the winit boundary so the
             // substrate sees only the abstract `pinion_runtime::Touch`.
             WindowEvent::Touch(touch) => {
+                // R1027 §5.16 §5.35 — pass `scale` so the touch's physical
+                // location maps to logical (mirrors `CursorMoved`).
                 self.core
-                    .touch_event_for_window(spec_id, winit_touch_to_pinion(touch));
+                    .touch_event_for_window(spec_id, winit_touch_to_pinion(touch, scale));
             }
             WindowEvent::ModifiersChanged(modifiers) => {
                 // R51.53 §5.39 — winit emits `KeyEvent` without
@@ -1715,6 +1815,13 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
                     // fast drag costs at most one paint per frame.
                     window.request_redraw();
                 }
+            }
+            // R1027 §5.16 — DPI / scale change. Extracted to
+            // `note_scale_factor_changed` to keep this dispatcher under the
+            // workspace `clippy::too_many_lines` (100) ceiling (the app.rs
+            // split convention, as `handle_mouse_button` / `handle_file_dnd`).
+            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                self.note_scale_factor_changed(window_id, scale_factor);
             }
             // R57.1 §5.50 — OS `prefers-color-scheme` change. winit
             // fires this on every desktop platform pinion supports
@@ -1986,11 +2093,59 @@ fn spawn_stdin_rpc_reader(proxy: EventLoopProxy<AppEvent>) {
 /// `winit::event::Touch::id` already matches the abstract `id: u64`;
 /// `location: PhysicalPosition<f64>` decomposes to `(x, y)`; the
 /// four-variant `TouchPhase` enum maps 1:1.
-fn winit_touch_to_pinion(touch: winit::event::Touch) -> pinion_runtime::Touch {
+/// R1027 §5.16 — whether a window `scale_factor` is non-identity.
+///
+/// Gates the scaled vello append (`render_window`) + the AccessKit root
+/// transform so a `1.0` (non-`HiDPI`) window stays on the byte-identical
+/// pre-R1027 render path. winit reports exact factors (`1.0` / `1.5` /
+/// `2.0` …), but a bare `!= 1.0` would trip `clippy::float_cmp`; the
+/// `f64::EPSILON` margin excludes only a literal `1.0`.
+fn scale_is_non_identity(scale: f64) -> bool {
+    (scale - 1.0).abs() > f64::EPSILON
+}
+
+/// R1027 §5.16 — convert a winit **physical** `inner_size` to the
+/// **logical** layout size the paint scene is built in.
+///
+/// Since R1027 the whole pinion scene / layout / introspection world is
+/// logical; physical pixels appear only at the GPU surface size, the
+/// vello raster scale, and pointer input. Delegates to winit's own DPI
+/// math ([`PhysicalSize::to_logical`]) rather than hand-rolling the
+/// division + rounding, then clamps to `>= 1` so a degenerate
+/// zero-logical dimension never reaches layout.
+///
+/// `scale` must be a valid winit factor (positive + normal); winit's
+/// `to_logical` asserts this. Always satisfied here — the only callers
+/// pass `WindowSlot::scale_factor`, sourced from `Window::scale_factor()`
+/// / `ScaleFactorChanged`.
+fn logical_layout_size(physical: PhysicalSize<u32>, scale: f64) -> (u32, u32) {
+    let logical: LogicalSize<u32> = physical.to_logical(scale);
+    (logical.width.max(1), logical.height.max(1))
+}
+
+/// R1027 §5.16 §5.35 — convert a winit **physical** pointer position to
+/// the **logical** coordinate space the [`pinion_runtime::InputRouter`]
+/// hit-tests in (the same space the logical paint scene lays out in).
+///
+/// Without this, a 4-logical-px hit target (e.g. a splitter handle) on a
+/// 2x display would be a 4-device-px target the router never resolves at
+/// the cursor's true logical position. Delegates to winit's
+/// [`PhysicalPosition::to_logical`] (the canonical platform DPI math).
+/// `scale` must be a valid winit factor (positive + normal), which the
+/// per-slot `scale_factor` always is.
+fn winit_pointer_to_logical(pos: PhysicalPosition<f64>, scale: f64) -> (f64, f64) {
+    let logical: LogicalPosition<f64> = pos.to_logical(scale);
+    (logical.x, logical.y)
+}
+
+fn winit_touch_to_pinion(touch: winit::event::Touch, scale: f64) -> pinion_runtime::Touch {
+    // R1027 §5.16 §5.35 — touch location is physical; map to logical so
+    // it shares the router's coordinate space (mirrors `CursorMoved`).
+    let (x, y) = winit_pointer_to_logical(touch.location, scale);
     pinion_runtime::Touch {
         id: touch.id,
-        x: touch.location.x,
-        y: touch.location.y,
+        x,
+        y,
         phase: match touch.phase {
             winit::event::TouchPhase::Started => pinion_runtime::TouchPhase::Started,
             winit::event::TouchPhase::Moved => pinion_runtime::TouchPhase::Moved,
@@ -2007,11 +2162,18 @@ fn winit_touch_to_pinion(touch: winit::event::Touch) -> pinion_runtime::Touch {
 /// `LineDelta(f32, f32)` for legacy notched mouse wheels and
 /// `PixelDelta(PhysicalPosition<f64>)` for trackpad inertia /
 /// high-resolution scroll. Both narrow into pinion's unit-tagged
-/// variants. The `PhysicalPosition<f64>` narrows to `f32` here
-/// (winit's logical-pixel coordinates already use `f32` precision;
-/// the substrate consumes the delta at `f32` — `External::wheel`
-/// directly, the `ScrollState` fallback after an `i32` round — so
-/// the wider `f64` carries no information past the boundary).
+/// variants.
+///
+/// R1027 §5.16 §5.45 — `PixelDelta` is in **physical** device pixels
+/// (winit `MouseScrollDelta` doc), so it is divided by `scale` to the
+/// logical coordinate space the scene + `ScrollState` live in — the
+/// pointer-input boundary (#3) of the R1027 logical-coordinate policy.
+/// Without this a 2x display would over-scroll the logical content 2x.
+/// `LineDelta` is unitless notch counts (not pixels), so it is
+/// scale-independent and left unscaled. The `f64` delta narrows to
+/// `f32` after the divide (the substrate consumes the delta at `f32` —
+/// `External::wheel` directly, the `ScrollState` fallback after an
+/// `i32` round — so the wider `f64` carries no information past here).
 ///
 /// (R51.192 §5.45 R55.C.2) Both axes flip sign at this boundary.
 /// winit's [`MouseScrollDelta`] convention is "positive = content
@@ -2030,13 +2192,20 @@ fn winit_touch_to_pinion(touch: winit::event::Touch) -> pinion_runtime::Touch {
 /// `ScrollDown` → `dy = +1.0`), so the substrate stays
 /// crossterm + W3C agreed and only winit needs the flip.
 #[allow(clippy::cast_possible_truncation)]
-fn winit_wheel_to_pinion(delta: MouseScrollDelta) -> WheelDelta {
+fn winit_wheel_to_pinion(delta: MouseScrollDelta, scale: f64) -> WheelDelta {
     match delta {
         MouseScrollDelta::LineDelta(dx, dy) => WheelDelta::Lines { dx: -dx, dy: -dy },
-        MouseScrollDelta::PixelDelta(pos) => WheelDelta::Pixels {
-            dx: -(pos.x as f32),
-            dy: -(pos.y as f32),
-        },
+        MouseScrollDelta::PixelDelta(pos) => {
+            // R1027 §5.16 §5.45 — physical device pixels -> logical, same
+            // conversion as `CursorMoved` / `Touch` (reuses the shared
+            // `winit_pointer_to_logical` helper), so high-res / trackpad
+            // scrolling moves the logical content the intended distance.
+            let (lx, ly) = winit_pointer_to_logical(pos, scale);
+            WheelDelta::Pixels {
+                dx: -(lx as f32),
+                dy: -(ly as f32),
+            }
+        }
     }
 }
 
@@ -2637,7 +2806,7 @@ mod tests {
         // User scrolls wheel forward (away from them) — winit
         // reports y > 0. W3C / substrate convention: forward wheel
         // moves toward content origin (deltaY < 0).
-        let pinion = winit_wheel_to_pinion(MouseScrollDelta::LineDelta(0.0, 1.0));
+        let pinion = winit_wheel_to_pinion(MouseScrollDelta::LineDelta(0.0, 1.0), 1.0);
         match pinion {
             WheelDelta::Lines { dx, dy } => {
                 assert!((dx - 0.0).abs() < f32::EPSILON);
@@ -2654,7 +2823,7 @@ mod tests {
     fn r51_192_line_delta_x_flips_sign() {
         // Horizontal tilt right — winit x > 0. W3C: deltaX < 0
         // (reveals content to the left).
-        let pinion = winit_wheel_to_pinion(MouseScrollDelta::LineDelta(1.0, 0.0));
+        let pinion = winit_wheel_to_pinion(MouseScrollDelta::LineDelta(1.0, 0.0), 1.0);
         match pinion {
             WheelDelta::Lines { dx, dy } => {
                 assert!(
@@ -2671,16 +2840,51 @@ mod tests {
     fn r51_192_pixel_delta_both_axes_flip() {
         // Trackpad inertia — both axes flip. The conversion narrows
         // f64 → f32 at the same boundary.
-        let pinion = winit_wheel_to_pinion(MouseScrollDelta::PixelDelta(PhysicalPosition {
-            x: 12.5,
-            y: 24.0,
-        }));
+        let pinion = winit_wheel_to_pinion(
+            MouseScrollDelta::PixelDelta(PhysicalPosition { x: 12.5, y: 24.0 }),
+            1.0,
+        );
         match pinion {
             WheelDelta::Pixels { dx, dy } => {
                 assert!((dx - (-12.5)).abs() < f32::EPSILON);
                 assert!((dy - (-24.0)).abs() < f32::EPSILON);
             }
             other => panic!("expected Pixels, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn r1027_pixel_delta_scaled_to_logical() {
+        // R1027 §5.16 §5.45 — a `PixelDelta` is physical device pixels; on
+        // a 2x display it must be halved to logical so the content scrolls
+        // the intended distance (not 2x). The sign flip still applies.
+        let pinion = winit_wheel_to_pinion(
+            MouseScrollDelta::PixelDelta(PhysicalPosition { x: 12.5, y: 24.0 }),
+            2.0,
+        );
+        match pinion {
+            WheelDelta::Pixels { dx, dy } => {
+                assert!(
+                    (dx - (-6.25)).abs() < f32::EPSILON,
+                    "12.5 physical / 2 = 6.25 logical"
+                );
+                assert!(
+                    (dy - (-12.0)).abs() < f32::EPSILON,
+                    "24 physical / 2 = 12 logical"
+                );
+            }
+            other => panic!("expected Pixels, got {other:?}"),
+        }
+        // LineDelta (notch counts) is unitless — scale must NOT change it.
+        let lines = winit_wheel_to_pinion(MouseScrollDelta::LineDelta(0.0, 1.0), 2.0);
+        match lines {
+            WheelDelta::Lines { dy, .. } => {
+                assert!(
+                    (dy - (-1.0)).abs() < f32::EPSILON,
+                    "line notches are scale-independent"
+                );
+            }
+            other => panic!("expected Lines, got {other:?}"),
         }
     }
 
@@ -2693,7 +2897,7 @@ mod tests {
         // trips, the two backends disagree on direction and
         // `ScrollState::scroll_by` will move the offset opposite
         // ways per backend — §2 #6 GUI/TUI dual invariant break.
-        let from_winit_forward = winit_wheel_to_pinion(MouseScrollDelta::LineDelta(0.0, 1.0));
+        let from_winit_forward = winit_wheel_to_pinion(MouseScrollDelta::LineDelta(0.0, 1.0), 1.0);
         let from_tui_scroll_up = WheelDelta::Lines { dx: 0.0, dy: -1.0 };
         match (from_winit_forward, from_tui_scroll_up) {
             (WheelDelta::Lines { dy: w_dy, .. }, WheelDelta::Lines { dy: t_dy, .. }) => {
@@ -2705,5 +2909,67 @@ mod tests {
             }
             _ => panic!("both branches must be Lines variants"),
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R1027 §5.16 §5.35 — `HiDPI` scale_factor coordinate policy. The
+    // whole pinion scene / layout / pointer world is logical; physical
+    // pixels appear only at the GPU surface, the vello raster scale,
+    // and these winit input + layout-dim boundaries. These pin the pure
+    // conversions (the shell wires them into render_window + the
+    // CursorMoved / Touch arms).
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r1027_logical_layout_size_divides_physical_by_scale() {
+        // 1920x1200 physical on a 2x display = 960x600 logical — the
+        // size the paint scene is built in (app dims rastered at 2x).
+        assert_eq!(
+            logical_layout_size(PhysicalSize::new(1920, 1200), 2.0),
+            (960, 600)
+        );
+        // Identity: logical == physical (non-`HiDPI`, unchanged path).
+        assert_eq!(
+            logical_layout_size(PhysicalSize::new(800, 600), 1.0),
+            (800, 600)
+        );
+        // Fractional scale rounds to nearest: 1440/1.5=960, 901/1.5=600.67->601.
+        assert_eq!(
+            logical_layout_size(PhysicalSize::new(1440, 901), 1.5),
+            (960, 601)
+        );
+        // Clamp: a sub-logical-pixel dimension never reaches layout as 0.
+        assert_eq!(logical_layout_size(PhysicalSize::new(1, 1), 4.0), (1, 1));
+    }
+
+    #[test]
+    fn r1027_pointer_physical_to_logical() {
+        // The splitter case (PR-15): a physical cursor at x=960 on a 2x
+        // display is logical 480 — exactly the 4-logical-px handle the
+        // router must resolve. Pre-R1027 it saw 960 and missed the handle.
+        assert_eq!(
+            winit_pointer_to_logical(PhysicalPosition::new(960.0, 600.0), 2.0),
+            (480.0, 300.0)
+        );
+        // Identity is a pass-through (byte-identical pre-R1027 routing).
+        assert_eq!(
+            winit_pointer_to_logical(PhysicalPosition::new(12.0, 34.0), 1.0),
+            (12.0, 34.0)
+        );
+        // Fractional scale: 150/1.5 = 100, 75/1.5 = 50.
+        let (x, y) = winit_pointer_to_logical(PhysicalPosition::new(150.0, 75.0), 1.5);
+        assert!((x - 100.0).abs() < f64::EPSILON);
+        assert!((y - 50.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn r1027_scale_is_non_identity_gate() {
+        // Drives the byte-identical fast path (scaled append + AccessKit
+        // root transform are both skipped at identity).
+        assert!(!scale_is_non_identity(1.0));
+        assert!(scale_is_non_identity(2.0));
+        assert!(scale_is_non_identity(1.5));
+        // A downscaled (< 1.0) display is also non-identity.
+        assert!(scale_is_non_identity(0.75));
     }
 }

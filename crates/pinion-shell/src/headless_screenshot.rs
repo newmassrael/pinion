@@ -444,6 +444,79 @@ mod tests {
         assert_eq!(rgba8.len(), 64 * 32 * 4);
     }
 
+    /// R1027 §5.16 — the shell lays the scene out in LOGICAL pixels and, on
+    /// a `HiDPI` window, rasterizes it by appending into a scratch scene under
+    /// `Affine::scale(scale)` before submit (the `render_window` `HiDPI` path).
+    /// This is the real-GPU forcing consumer for that mechanism: a
+    /// 4-logical-px-wide white band is 4 device-px at scale 1 (the identity
+    /// fast path renders the scene directly) and 8 device-px through the
+    /// scaled append at scale 2 — the splitter-handle / half-font fix
+    /// (PR-15) at the raster boundary. The band sits on integer pixel
+    /// boundaries so area anti-aliasing leaves no partial edge column (exact
+    /// 4 / 8).
+    ///
+    /// `#[ignore]` for the same wgpu cold-boot reason as the sibling
+    /// headless tests; run with `--ignored`.
+    #[test]
+    #[ignore = "wgpu adapter cold-boot too slow for default test suite; run with --ignored"]
+    fn r1027_scaled_append_doubles_ink_extent_on_hidpi() {
+        const BAND_W: f64 = 4.0;
+        const LOGICAL_W: u32 = 40;
+        const LOGICAL_H: u32 = 24;
+
+        // Count the lit (non-black) columns in the middle row of a
+        // premultiplied RGBA8 buffer (`width*height*4`, row-major, top-left
+        // origin) — the same `((y*W+x)*4) as usize` indexing the sibling
+        // tests use. The white band over black makes any bright R = lit.
+        let lit_columns = |rgba: &[u8], width: u32| -> u32 {
+            let row = 0; // any row: the band is full-height
+            let mut lit = 0;
+            for col in 0..width {
+                let i = ((row * width + col) * 4) as usize;
+                if rgba[i] > 127 {
+                    lit += 1;
+                }
+            }
+            lit
+        };
+
+        let mut shot = HeadlessScreenshot::new().expect("headless screenshot bootstrap");
+
+        let mut logical = VelloScene::new();
+        logical.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            PenikoColor::from_rgba8(0xFF, 0xFF, 0xFF, 0xFF),
+            None,
+            &KurboRect::new(0.0, 0.0, BAND_W, f64::from(LOGICAL_H)),
+        );
+
+        // Scale 1 — the shell submits `vello_scene` directly (identity path).
+        let rgba_1x = shot
+            .render_to_rgba8(&logical, LOGICAL_W, LOGICAL_H, PenikoColor::BLACK)
+            .expect("render 1x");
+        let band_1x = lit_columns(&rgba_1x, LOGICAL_W);
+
+        // Scale 2 — append under `Affine::scale(2.0)` into a scratch scene and
+        // render at the doubled physical surface (exactly render_window's
+        // `HiDPI` path: logical scene, device-resolution raster).
+        let scale = 2.0;
+        let mut scaled = VelloScene::new();
+        scaled.append(&logical, Some(Affine::scale(scale)));
+        let pw = LOGICAL_W * 2;
+        let ph = LOGICAL_H * 2;
+        let rgba_2x = shot
+            .render_to_rgba8(&scaled, pw, ph, PenikoColor::BLACK)
+            .expect("render 2x");
+        let band_2x = lit_columns(&rgba_2x, pw);
+
+        assert_eq!(band_1x, 4, "a 4-logical-px band is 4 device-px at scale 1");
+        assert_eq!(
+            band_2x, 8,
+            "the scaled append doubles the band to 8 device-px at scale 2"
+        );
+    }
+
     /// R706.1 §5.16 §5.39 — faithful regression guard for the
     /// fragment-cache "direct-draw-after-append" rasterization defect.
     ///

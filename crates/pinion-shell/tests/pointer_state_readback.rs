@@ -261,3 +261,44 @@ fn pressing_a_noncapturing_widget_hovers_but_captures_nothing() {
     );
     core.mouse_released(PointerId::MOUSE);
 }
+
+#[test]
+fn r1027_physical_cursor_on_hidpi_resolves_to_logical_target() {
+    // R1027 §5.16 §5.35 — the shell converts a winit PHYSICAL pointer
+    // position to LOGICAL (physical / scale_factor) before the router
+    // hit-tests, because the paint scene is laid out in logical pixels.
+    // This composes that conversion with the real hit-test: on a 2x
+    // display a physical cursor at (100, 300) is logical (50, 150), which
+    // lands on the `splitter` cell (logical y < 200). Fed RAW, the same
+    // physical y=300 mis-resolves to the `pane` cell below (200 <= y < 400)
+    // — the scale-naive bug PR-15 reported (a 4-logical-px splitter handle
+    // was likewise a 4-device-px target the user could not grab). The
+    // division here mirrors `winit_pointer_to_logical`, a private shell
+    // helper unit-tested in app.rs to equal winit's
+    // `PhysicalPosition::to_logical`.
+    let _g = TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let scale = 2.0_f64;
+    let (phys_x, phys_y) = (100.0_f64, 300.0_f64);
+
+    // Converted (R1027 behaviour): logical (50, 150) -> splitter.
+    let mut core = booted();
+    core.cursor_moved(PointerId::MOUSE, phys_x / scale, phys_y / scale);
+    assert_eq!(
+        core.hover_target(PointerId::MOUSE),
+        Some(SPLITTER),
+        "physical (100,300) at scale 2 = logical (50,150) hits the splitter cell",
+    );
+
+    // Contrast — the SAME physical coord fed RAW (the pre-R1027 bug)
+    // mis-resolves to the pane below: scale-naivety routes the pointer to
+    // the wrong widget on HiDPI.
+    let mut raw = booted();
+    raw.cursor_moved(PointerId::MOUSE, phys_x, phys_y);
+    assert_eq!(
+        raw.hover_target(PointerId::MOUSE),
+        Some(PANE),
+        "unconverted physical (100,300) mis-resolves to the pane (the bug R1027 fixes)",
+    );
+}
