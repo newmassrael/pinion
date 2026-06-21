@@ -3015,7 +3015,11 @@ impl<V: WidgetView> ShellCore<V> {
     /// click-to-focus pick the wrong widget across windows.
     fn click_to_focus_for_window(&mut self, window_id: &str, pid: PointerId) {
         let focus_before = self.focus.focused().map(str::to_owned);
-        if let Some(target) = self
+        // `focus_set` / `focus_clear` return `true` only on a real focus
+        // mutation (already-focused / missing-tag / already-clear all return
+        // `false`), so this is the exact change boundary — the same signal the
+        // programmatic `drain_focus_request` path gates its redraw on.
+        let focus_changed = if let Some(target) = self
             .core
             .hover_target_for_window(window_id, pid)
             .map(str::to_owned)
@@ -3027,13 +3031,28 @@ impl<V: WidgetView> ShellCore<V> {
             // single-tab-stop composites). `None` means a tagged but
             // non-focusable decoration — leave focus unchanged (the W3C
             // HTML convention: only focusable elements focus on mousedown).
-            if let Some(focusable) = self.focus.resolve_focusable(&target) {
-                self.focus.focus_set(&focusable);
+            match self.focus.resolve_focusable(&target) {
+                Some(focusable) => self.focus.focus_set(&focusable),
+                None => false,
             }
         } else {
-            self.focus.focus_clear();
-        }
+            self.focus.focus_clear()
+        };
         self.notify_focus_change(focus_before.as_deref());
+        // (R1024 §5.39) A click / tap that moves focus must request a redraw,
+        // mirroring `drain_focus_request`'s programmatic-focus pairing. The
+        // focus ring is paint-time-injected (`apply_focus_ring`) and a
+        // `FocusManager` mutation dirties no reactive owner, so without this the
+        // ring lags to the next unrelated repaint (sprag PR-13). The wake is
+        // binding-wide (`request_redraw`), not per-window: focus is binding-wide
+        // state, so a cross-window steal must repaint BOTH the window losing the
+        // ring and the one gaining it. A click that moves no focus (re-click the
+        // focused widget, a tagged non-focusable decoration, an empty-background
+        // click while already cleared) requests nothing.
+        if focus_changed {
+            self.revision.bump();
+            self.request_redraw();
+        }
     }
 
     /// R56.1.h §5.38 §5.39 — focus-change observer. Compares the

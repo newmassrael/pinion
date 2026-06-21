@@ -5263,7 +5263,12 @@
         "R1020: shell re-runs Scene::collect_focusable_tags over the paint scene every frame",
         "R1020: WidgetCore::focusable_tags() flat list removed (unratified §5.39 drift)",
         "R1020: tab order = tree order; focus_request re-derives pre-drain for just-painted nodes",
-        "R1020: §5.39 inputs' WidgetView::focusable_tags(&Scene) never built; realized as marker+walk"
+        "R1020: §5.39 inputs' WidgetView::focusable_tags(&Scene) never built; realized as marker+walk",
+        "R1024: click/tap-to-focus pairs revision.bump+request_redraw on a real focus change (sprag PR-13)",
+        "R1024: change gate = focus_set/focus_clear return; no-op click requests nothing (no spurious frame)",
+        "R1024: binding-wide request_redraw not per-window - cross-window focus steal repaints loser+gainer",
+        "R1024: one click_to_focus_for_window fix covers both mouse_pressed and touch-Started press callers",
+        "R1024: TUI has no click-to-focus path so no §2 #6 gap (drain bumps revision, differential redraw)"
       ],
       "alternatives_rejected": [
         {
@@ -11087,6 +11092,54 @@
       "publishable_carry_forward_bullets": [
         "Addresses the architect-LOW / root-cause session-review finding (two redraw idioms with no documented rule). R1023's direct poke matches the request_inner_size precedent; the selection rule is now documented at the drain chokepoint rather than tribal knowledge.",
         "All six session commits (R1021/R1022/R1023 + R1021.1/R1022.1/R1023.1) are green + review-cleared; PUSH PENDING explicit user consent."
+      ]
+    },
+    "R1024": {
+      "decision_summary": "R1024 §5.39 click/tap-to-focus requests a redraw on a real focus change (sprag PR-13), mirroring the programmatic drain_focus_request bump+request_redraw pairing",
+      "changes_bullets": [
+        "click_to_focus_for_window: gate revision.bump()+request_redraw() on the focus_set/focus_clear change-return; the focus ring is paint-injected (apply_focus_ring) and dirties no reactive owner, so without this it lagged to the next unrelated frame",
+        "binding-wide request_redraw (not per-window): focus is binding-wide state, so a cross-window steal repaints both the losing and the gaining window; per-window would leave a stale ring in the loser",
+        "one fix covers both press callers (mouse_pressed_for_window + touch Started); a no-op click (re-click focused / tagged non-focusable decoration / empty-bg while cleared) requests nothing",
+        "new tests/click_focus_redraw.rs forcing consumer: two fixed-rect focusable panes driven over the real cursor_moved+mouse_pressed path"
+      ],
+      "verification_bullets": [
+        "red->green witness: pre-fix the 3 focus-changing cases fail (focus moved but no redraw) while the 2 no-redraw controls pass; post-fix all 5 pass, the controls pinning attribution to the focus change",
+        "cargo test --workspace -j2 = 7273 ok 0 failed",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) = 0",
+        "mnemosyne validate-workspace T1=0 (entries 1023 -> 1024)"
+      ],
+      "impact_refs": [
+        "5.39",
+        "5.16",
+        "5.35"
+      ],
+      "carry_forward_bullets": [
+        "TUI has no click-to-focus path; its drain_focus_request bumps revision only (ratatui differential redraw), so no §2 #6 parity fix needed",
+        "cross-window focus steal stays bounded by R1020's primary-window-only focus enumeration; a true multi-window focus model is a separate later round",
+        "PR-13's suggested request_redraw_for_window(window_id) was corrected to binding-wide request_redraw (the true isomorphism with drain_focus_request and the multi-window-correct wake)"
+      ],
+      "publishable_decision_summary": "R1024 §5.39 click/tap-to-focus requests a redraw on a real focus change (sprag PR-13), mirroring the programmatic drain_focus_request bump+request_redraw pairing",
+      "publishable_changes_bullets": [
+        "click_to_focus_for_window: gate revision.bump()+request_redraw() on the focus_set/focus_clear change-return; the focus ring is paint-injected (apply_focus_ring) and dirties no reactive owner, so without this it lagged to the next unrelated frame",
+        "binding-wide request_redraw (not per-window): focus is binding-wide state, so a cross-window steal repaints both the losing and the gaining window; per-window would leave a stale ring in the loser",
+        "one fix covers both press callers (mouse_pressed_for_window + touch Started); a no-op click (re-click focused / tagged non-focusable decoration / empty-bg while cleared) requests nothing",
+        "new tests/click_focus_redraw.rs forcing consumer: two fixed-rect focusable panes driven over the real cursor_moved+mouse_pressed path"
+      ],
+      "publishable_verification_bullets": [
+        "red->green witness: pre-fix the 3 focus-changing cases fail (focus moved but no redraw) while the 2 no-redraw controls pass; post-fix all 5 pass, the controls pinning attribution to the focus change",
+        "cargo test --workspace -j2 = 7273 ok 0 failed",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) = 0",
+        "mnemosyne validate-workspace T1=0 (entries 1023 -> 1024)"
+      ],
+      "publishable_impact_refs": [
+        "5.39",
+        "5.16",
+        "5.35"
+      ],
+      "publishable_carry_forward_bullets": [
+        "TUI has no click-to-focus path; its drain_focus_request bumps revision only (ratatui differential redraw), so no §2 #6 parity fix needed",
+        "cross-window focus steal stays bounded by R1020's primary-window-only focus enumeration; a true multi-window focus model is a separate later round",
+        "PR-13's suggested request_redraw_for_window(window_id) was corrected to binding-wide request_redraw (the true isomorphism with drain_focus_request and the multi-window-correct wake)"
       ]
     },
     "R232": {
