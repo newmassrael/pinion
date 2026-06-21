@@ -1177,10 +1177,48 @@ fn paint_text_grid(
     transform: Affine,
 ) {
     let grid = n.cells();
+    let palette = n.palette();
+    // R991.1 — clip all grid paint to the node's layout rect. The producer's
+    // buffer dims and the node's rect-derived winsize are distinct facts that
+    // can diverge during an in-flight resize (see `term_grid`); clipping stops
+    // an over-large buffer from overdrawing past `rect`, mirroring
+    // `paint_text`'s overflow clip.
+    let clip_rect = KurboRect::new(
+        f64::from(n.rect.x),
+        f64::from(n.rect.y),
+        f64::from(n.rect.x.saturating_add(n.rect.w)),
+        f64::from(n.rect.y.saturating_add(n.rect.h)),
+    );
+    out.push_clip_layer(Fill::NonZero, transform, &clip_rect);
+    // Pass 0 — fill the whole node rect with the palette default background
+    // before any cell. The cell area (`cols*cell_w x rows*cell_h`) need not
+    // tile `rect` exactly: a consumer that sizes the grid to a continuous
+    // pixel rect (the §3 one-way winsize SSOT — cols/rows are *derived* from
+    // the layout rect, not chosen to be an exact multiple) leaves a sub-cell
+    // gutter on the right / bottom edge. A geometry-only grid (a sized rect
+    // with no cells yet — a documented `TextGridNode::new` state, and the
+    // transient first frame before a consumer pushes its buffer) is the
+    // whole-rect case of the same gap, which is why pass 0 runs *before* the
+    // empty-grid early-out below. Real terminal emulators paint the whole
+    // widget in the default background and draw cells on top, so the gutter
+    // reads as the terminal background; without this it exposes whatever parent
+    // surface sits behind the grid (e.g. a splitter Container's `Surface` fill
+    // bleeding through). The clip above bounds the fill to `rect`; pass 1's
+    // cell backgrounds and pass 2's glyphs draw over it, so every covered cell
+    // is visually unchanged (R15.1 / R1028.1 geometry-only completeness).
+    out.fill(
+        Fill::NonZero,
+        transform,
+        to_peniko(palette.default_bg()),
+        None,
+        &clip_rect,
+    );
+    // An empty (geometry-only) grid has no cells, glyphs, or cursor to paint —
+    // pass 0 already laid its background, so balance the clip and return.
     if grid.is_empty() {
+        out.pop_layer();
         return;
     }
-    let palette = n.palette();
     let metric = n.cell_metric();
     let cell_w = f64::from(metric.cell_w());
     let cell_h = f64::from(metric.cell_h());
@@ -1197,41 +1235,10 @@ fn paint_text_grid(
     let mut style = TextStyle::new().with_generic_family(GenericFontFamily::Monospace);
     style.font_size_px = grid_glyph_font_size(n, cache, &mut style);
     style.line_height = LineHeight::Px(metric.cell_h());
-    // R991.1 — clip the cell paint to the node's layout rect. The producer's
-    // buffer dims and the node's rect-derived winsize are distinct facts that
-    // can diverge during an in-flight resize (see `term_grid`); clipping stops
-    // an over-large buffer from overdrawing past `rect`, mirroring
-    // `paint_text`'s overflow clip.
-    let clip_rect = KurboRect::new(
-        f64::from(n.rect.x),
-        f64::from(n.rect.y),
-        f64::from(n.rect.x.saturating_add(n.rect.w)),
-        f64::from(n.rect.y.saturating_add(n.rect.h)),
-    );
     // SGR 4 underline / SGR 9 strikethrough are rules of this pen width.
     // Cell height is loop-invariant so the width is hoisted; the per-cell Y
     // offsets depend on the cell origin and are computed inside.
     let rule_w = (cell_h / 16.0).max(1.0);
-    out.push_clip_layer(Fill::NonZero, transform, &clip_rect);
-    // Pass 0 — fill the whole node rect with the palette default background
-    // before any cell. The cell area (`cols*cell_w x rows*cell_h`) need not
-    // tile `rect` exactly: a consumer that sizes the grid to a continuous
-    // pixel rect (the §3 one-way winsize SSOT — cols/rows are *derived* from
-    // the layout rect, not chosen to be an exact multiple) leaves a sub-cell
-    // gutter on the right / bottom edge. Real terminal emulators paint the
-    // whole widget in the default background and draw cells on top, so that
-    // gutter reads as the terminal background; without this the gutter exposes
-    // whatever parent surface sits behind the grid (e.g. a splitter
-    // Container's `Surface` fill bleeding through). The clip above bounds the
-    // fill to `rect`; pass 1's cell backgrounds and pass 2's glyphs draw over
-    // it, so every covered cell is visually unchanged (R15.1).
-    out.fill(
-        Fill::NonZero,
-        transform,
-        to_peniko(palette.default_bg()),
-        None,
-        &clip_rect,
-    );
     // Pass 1 — every cell's opaque background. R1013 §5.41: backgrounds are
     // laid down for the whole grid *before* any glyph, so a wide head glyph
     // that overflows its column into the trailer (drawn in pass 2) is not

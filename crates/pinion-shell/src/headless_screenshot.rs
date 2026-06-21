@@ -953,6 +953,90 @@ mod tests {
         }
     }
 
+    /// R1028.1 §5.41 §2 #6 — pass 0 must run BEFORE the empty-grid early-out, so
+    /// a geometry-only grid (a sized rect with no cells — a documented
+    /// `TextGridNode::new` state, and the transient first frame before a
+    /// consumer pushes its buffer) still paints its terminal background instead
+    /// of leaking the parent surface across the whole rect. The grid is placed
+    /// at a NON-ZERO rect origin and rendered into a larger surface, so the test
+    /// also pins the pass-0 coordinate frame: the fill lands at the rect's
+    /// offset (inside reads default bg) and the clip bounds it (outside the rect
+    /// reads the parent clear) — a regression in either the empty-grid order or
+    /// the fill transform fails this guard.
+    ///
+    /// `#[ignore]` for the same wgpu cold-boot reason as the sibling headless
+    /// tests; run with `--ignored`.
+    #[test]
+    #[ignore = "wgpu adapter cold-boot too slow for default test suite; run with --ignored"]
+    fn r1028_1_geometry_only_grid_fills_rect_and_clips_at_origin() {
+        use pinion_core::cell_metric::CellMetric;
+        use pinion_core::scene::{Rect, Scene, TextGridNode};
+        use pinion_runtime::paint_adapter::{FragmentCache, to_vello_cached};
+        use pinion_text::LayoutCache;
+
+        const OX: u32 = 8;
+        const OY: u32 = 6;
+        const RW: u32 = 24;
+        const RH: u32 = 20;
+        const W: u32 = OX + RW + 6; // surface wider than the rect on both axes
+        const H: u32 = OY + RH + 6;
+
+        let metric = CellMetric::new(10, 12).expect("non-zero cell metric");
+        // No `with_cells` — a geometry-only grid (0x0 buffer, `is_empty()`),
+        // but with a sized, offset layout rect.
+        let mut node = TextGridNode::new(metric);
+        node.rect = Rect::new(OX, OY, RW, RH);
+        let scene = Scene::TextGrid(node);
+
+        let mut text_cache = LayoutCache::new();
+        let mut cache = FragmentCache::new();
+        let mut image_cache = pinion_runtime::image_cache::ImageCache::new();
+        let mut vello = VelloScene::new();
+        to_vello_cached(
+            &scene,
+            &|_| None,
+            &mut text_cache,
+            &mut image_cache,
+            &mut cache,
+            &mut vello,
+        );
+        let base = vello::peniko::Color::WHITE;
+        let mut shot = HeadlessScreenshot::new().expect("headless screenshot bootstrap");
+        let rgba8 = shot.render_to_rgba8(&vello, W, H, base).expect("render");
+
+        let at = |x: u32, y: u32| -> (i64, i64, i64) {
+            let i = ((y * W + x) * 4) as usize;
+            (
+                i64::from(rgba8[i]),
+                i64::from(rgba8[i + 1]),
+                i64::from(rgba8[i + 2]),
+            )
+        };
+
+        // Inside the rect (offset by OX/OY) — the geometry-only grid still fills
+        // the palette default bg (black), sampled inset from the rect edges.
+        for &(x, y) in &[
+            (OX + 4, OY + 4),
+            (OX + RW - 4, OY + RH - 4),
+            (OX + RW / 2, OY + RH / 2),
+        ] {
+            let (r, g, b) = at(x, y);
+            assert!(
+                r < 50 && g < 50 && b < 50,
+                "inside the rect ({x},{y}) must be the default bg (black), got ({r},{g},{b})"
+            );
+        }
+        // Outside the rect — the clip bounds pass 0, so the parent clear (white)
+        // shows. Samples in the left margin (x<OX) and top margin (y<OY).
+        for &(x, y) in &[(2, OY + 4), (OX + 4, 2), (2, 2)] {
+            let (r, g, b) = at(x, y);
+            assert!(
+                r > 200 && g > 200 && b > 200,
+                "outside the rect ({x},{y}) must stay the white parent clear, got ({r},{g},{b})"
+            );
+        }
+    }
+
     /// R992 §5.41 §5.16 — deterministic guard for the cell-grid typographic
     /// SGR attributes. The `underline` / `strikethrough` / `dim` paths are
     /// **geometric** (full-cell rules + an alpha factor), so they are asserted

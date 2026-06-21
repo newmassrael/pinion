@@ -11497,6 +11497,48 @@
         "TUI unaffected: char-cell has no sub-pixel gutter; 2#6 cross-consistency pins cell structure only."
       ]
     },
+    "R1028.1": {
+      "decision_summary": "R1028.1 §5.41 §2 #6 adversarial-review clearance (3 reviewers): the R1028 pass-0 default-bg fill ran AFTER the grid.is_empty() early-return, so a geometry-only grid (a documented TextGridNode::new state: sized rect, 0x0 cells — and the transient first frame before a consumer pushes its buffer) still leaked the parent surface across its whole rect, contradicting R1028's stated goal. Fix: move the clip push + pass-0 fill before the empty-grid early-out (balance the clip + return). New r1028_1 GPU test places an empty grid at a NON-ZERO rect origin, pinning both empty-grid completeness and the pass-0 coordinate frame (inside=default bg, outside-clip=parent clear); negative-control verified. Other review findings: opaque-by-construction (no transparent-bg regression), TUI parity intact (char-cell has no sub-pixel gutter), and the standing CI gap that #[ignore] GPU tests never run in ci.yml (project-wide, not R1028-specific, left as-is).",
+      "changes_bullets": [
+        "move clip + pass-0 default-bg fill BEFORE the grid.is_empty() early-return",
+        "geometry-only grid (sized rect, 0x0 cells) now fills its rect instead of leaking parent",
+        "r1028_1 GPU test: empty grid at non-zero rect origin; inside=default_bg, outside-clip=parent"
+      ],
+      "verification_bullets": [
+        "r1028 + r1028_1 + R991/R992/R993/R995/R1001/R1002/R1013 grid GPU tests pass",
+        "r1028_1 negative control (pre-fix early-out) fails: rect interior reads white parent clear",
+        "workspace clippy + cargo fmt --check clean; pinion-runtime + pinion-shell default suites green"
+      ],
+      "impact_refs": [
+        "5.41",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "R1028 + R1028.1 committed locally; PUSH PENDING explicit user consent.",
+        "CI gap (standing, not R1028): #[ignore] GPU tests never run in ci.yml (cargo test, no --ignored).",
+        "empty-grid was the only actionable adversarial finding; coord-frame now pinned via offset test."
+      ],
+      "publishable_decision_summary": "R1028.1 §5.41 §2 #6 adversarial-review clearance (3 reviewers): the R1028 pass-0 default-bg fill ran AFTER the grid.is_empty() early-return, so a geometry-only grid (a documented TextGridNode::new state: sized rect, 0x0 cells — and the transient first frame before a consumer pushes its buffer) still leaked the parent surface across its whole rect, contradicting R1028's stated goal. Fix: move the clip push + pass-0 fill before the empty-grid early-out (balance the clip + return). New r1028_1 GPU test places an empty grid at a NON-ZERO rect origin, pinning both empty-grid completeness and the pass-0 coordinate frame (inside=default bg, outside-clip=parent clear); negative-control verified. Other review findings: opaque-by-construction (no transparent-bg regression), TUI parity intact (char-cell has no sub-pixel gutter), and the standing CI gap that #[ignore] GPU tests never run in ci.yml (project-wide, not R1028-specific, left as-is).",
+      "publishable_changes_bullets": [
+        "move clip + pass-0 default-bg fill BEFORE the grid.is_empty() early-return",
+        "geometry-only grid (sized rect, 0x0 cells) now fills its rect instead of leaking parent",
+        "r1028_1 GPU test: empty grid at non-zero rect origin; inside=default_bg, outside-clip=parent"
+      ],
+      "publishable_verification_bullets": [
+        "r1028 + r1028_1 + R991/R992/R993/R995/R1001/R1002/R1013 grid GPU tests pass",
+        "r1028_1 negative control (pre-fix early-out) fails: rect interior reads white parent clear",
+        "workspace clippy + cargo fmt --check clean; pinion-runtime + pinion-shell default suites green"
+      ],
+      "publishable_impact_refs": [
+        "5.41",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R1028 + R1028.1 committed locally; PUSH PENDING explicit user consent.",
+        "CI gap (standing, not R1028): #[ignore] GPU tests never run in ci.yml (cargo test, no --ignored).",
+        "empty-grid was the only actionable adversarial finding; coord-frame now pinned via offset test."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
