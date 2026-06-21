@@ -43,6 +43,10 @@ cd "$repo_root"
 mnemosyne-cli validate-workspace
 
 if git diff --cached --name-only --diff-filter=ACMR | grep -qE '\.rs$'; then
+    # R1026 §6.3 — rustfmt gate (rustfmt.toml, max_width=100). Runs before
+    # clippy (cheaper, fail-fast) and only when staged files include `*.rs`.
+    echo "pre-commit: cargo fmt --all --check ..." >&2
+    cargo fmt --all --check
     echo "pre-commit: cargo clippy --workspace --all-targets --features pinion-runtime/vello ..." >&2
     cargo clippy --workspace --all-targets --features pinion-runtime/vello
 fi

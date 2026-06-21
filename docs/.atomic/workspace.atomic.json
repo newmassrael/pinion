@@ -7600,7 +7600,9 @@
       "caveats_bullets": [
         "Async view-fn could enable streaming/lazy scenes; defer until concrete need",
         "Frame ZST guarantee: size_of::<Frame>() == 0 in v1.0; LLVM elides &Frame from ABI; runtime zero-cost",
-        "Frame must be read-only and side-effect-free to preserve §2 dry_run purity invariant"
+        "Frame must be read-only and side-effect-free to preserve §2 dry_run purity invariant",
+        "R1026: rustfmt adopted (was clippy-only); rustfmt.toml max_width=100, reformat 472 files",
+        "R1026: fmt --check in pre-commit + pre-push; max_width=100 min-churn; .git-blame-ignore-revs added"
       ],
       "alternatives_rejected": [
         {
@@ -11273,6 +11275,48 @@
         "router hover/capture state is readable via Rust accessors but NOT yet over the §7 RPC surface; expose as scene-as-data when an AI agent must diagnose a drag stall (Phase-B-API carry)",
         "ShellCore::cursor_position stays unexposed (move-not-delivered is currently inferential, not a dedicated readback); surface only if a consumer needs it",
         "R1024 + R1024.1 + R1025 + R1025.1 committed locally, push consent pending"
+      ]
+    },
+    "R1026": {
+      "decision_summary": "R1026 §6.3 adopt rustfmt (the formatting gate was clippy-only): rustfmt.toml + workspace reformat + cargo fmt --check wired into the git hooks + .git-blame-ignore-revs",
+      "changes_bullets": [
+        "rustfmt.toml max_width=100 — the minimum-churn config: reformatting the prior hand-narrow tree at width 80/90 rewrites 16457/10566 hunks vs 6344 at 100; wrap_comments left off so hand-wrapped doc comments are preserved verbatim (only code layout + import order normalised)",
+        "cargo fmt --all reformat: 472 of 585 .rs files; vendor/sce (not a workspace member) untouched; no checked-in generated .rs to exclude",
+        "rustfmt's reflow surfaced pedantic lints fixed in the same commit: semicolon_if_nothing_returned x16 (wrapped match arms; clippy --fix) + too_many_lines #[allow] x5 (functions kept just under 100, reflow pushed 1-16 over)",
+        "cargo fmt --all --check wired into .githooks/pre-commit (staged *.rs, before clippy) + pre-push (unconditional, before clippy); .git-blame-ignore-revs lists the reformat commit 3a73470"
+      ],
+      "verification_bullets": [
+        "cargo fmt --all --check = 0 diffs; cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) = 0; cargo test --workspace -j2 = 7278 ok 0 failed (reformat is semantics-preserving)",
+        "the R1024/R1025 import-order nit flagged in review is auto-fixed by the reformat (rustfmt alphabetised the import groups)",
+        "mnemosyne validate-workspace T1=0 (entries 1027 -> 1028)"
+      ],
+      "impact_refs": [
+        "6.3"
+      ],
+      "carry_forward_bullets": [
+        "the 5 too_many_lines #[allow]s are formatting-induced (functions only 1-16 lines over the 100 ceiling they were kept just under); helper extraction deferred to the owner if the ceiling is to stay strict",
+        "local clones must run `git config blame.ignoreRevsFile .git-blame-ignore-revs` once to honour the reformat skip (GitHub/GitLab auto-honour the file)",
+        "R1024 + R1024.1 + R1025 + R1025.1 + R1026 (reformat) + R1026 (hooks) committed locally, push consent pending"
+      ],
+      "publishable_decision_summary": "R1026 §6.3 adopt rustfmt (the formatting gate was clippy-only): rustfmt.toml + workspace reformat + cargo fmt --check wired into the git hooks + .git-blame-ignore-revs",
+      "publishable_changes_bullets": [
+        "rustfmt.toml max_width=100 — the minimum-churn config: reformatting the prior hand-narrow tree at width 80/90 rewrites 16457/10566 hunks vs 6344 at 100; wrap_comments left off so hand-wrapped doc comments are preserved verbatim (only code layout + import order normalised)",
+        "cargo fmt --all reformat: 472 of 585 .rs files; vendor/sce (not a workspace member) untouched; no checked-in generated .rs to exclude",
+        "rustfmt's reflow surfaced pedantic lints fixed in the same commit: semicolon_if_nothing_returned x16 (wrapped match arms; clippy --fix) + too_many_lines #[allow] x5 (functions kept just under 100, reflow pushed 1-16 over)",
+        "cargo fmt --all --check wired into .githooks/pre-commit (staged *.rs, before clippy) + pre-push (unconditional, before clippy); .git-blame-ignore-revs lists the reformat commit 3a73470"
+      ],
+      "publishable_verification_bullets": [
+        "cargo fmt --all --check = 0 diffs; cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) = 0; cargo test --workspace -j2 = 7278 ok 0 failed (reformat is semantics-preserving)",
+        "the R1024/R1025 import-order nit flagged in review is auto-fixed by the reformat (rustfmt alphabetised the import groups)",
+        "mnemosyne validate-workspace T1=0 (entries 1027 -> 1028)"
+      ],
+      "publishable_impact_refs": [
+        "6.3"
+      ],
+      "publishable_carry_forward_bullets": [
+        "the 5 too_many_lines #[allow]s are formatting-induced (functions only 1-16 lines over the 100 ceiling they were kept just under); helper extraction deferred to the owner if the ceiling is to stay strict",
+        "local clones must run `git config blame.ignoreRevsFile .git-blame-ignore-revs` once to honour the reformat skip (GitHub/GitLab auto-honour the file)",
+        "R1024 + R1024.1 + R1025 + R1025.1 + R1026 (reformat) + R1026 (hooks) committed locally, push consent pending"
       ]
     },
     "R232": {

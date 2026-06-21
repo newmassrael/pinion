@@ -1,0 +1,10 @@
+# git blame ignore list — bulk-reformat revs to skip when running `git blame`.
+#
+# Enable locally with:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+# (GitHub / GitLab honour this file automatically.)
+
+# R1026 §6.3 — adopt rustfmt: workspace-wide reformat (cargo fmt --all, 472
+# files). Pure mechanical formatting; skip so `git blame` attributes lines to
+# their real author, not the reformat.
+3a73470caf452a69ae82e885361056ff25004e62

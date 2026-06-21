@@ -41,6 +41,14 @@ if ! mnemosyne-cli validate-workspace; then
 fi
 
 echo "pre-push: cargo clippy --workspace --all-targets --features pinion-runtime/vello ..." >&2
+# R1026 §6.3 — rustfmt gate (unconditional; push validates the publishable
+# state). Runs before clippy so a formatting drift fails fast.
+echo "pre-push: cargo fmt --all --check ..." >&2
+if ! cargo fmt --all --check; then
+    echo "pre-push: cargo fmt --check failed — run 'cargo fmt --all' before push" >&2
+    exit 1
+fi
+
 if ! cargo clippy --workspace --all-targets --features pinion-runtime/vello; then
     echo "pre-push: clippy failed — fix violations before push" >&2
     exit 1
