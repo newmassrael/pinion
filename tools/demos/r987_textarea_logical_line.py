@@ -240,7 +240,16 @@ def body() -> None:
         (_, b1y, _, b1h) = band_rect(ta)
         assert b1y > b0y, f"the band moved DOWN to the next logical line ({b1y} > {b0y})"  # 27
         assert_eq(b1h, sh, "line-1 band is one row tall too")                     # 28
-        assert_eq(b1y - b0y, sh, "the two hard lines are one row apart")          # 29
+        # (R1031 §5.37) Lines advance by ~one row. The step is the font's line
+        # advance; the band height `sh` is the (ceil'd) line box, which can
+        # exceed the advance when boxes overlap (e.g. DejaVu Sans Mono: step 20,
+        # box 22). Only one band paints at a time, so a sub-row box overlap is
+        # harmless — assert the step is positive and at most one band tall,
+        # font-robustly, instead of an exact step==height that assumes contiguous
+        # boxes.
+        assert 0 < b1y - b0y <= sh, (
+            f"the two hard lines are ~one row apart (0 < {b1y - b0y} <= {sh})"    # 29
+        )
 
         # ── (F) the band is a passive decoration (R965.1) ────────────
         # A click on the line-1 band region sets the caret (falls through).

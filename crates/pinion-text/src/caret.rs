@@ -462,9 +462,16 @@ pub fn visual_line_metrics(layout: &Layout) -> Vec<VisualLineMetric> {
 /// caller falls back to the caret's own row box).
 #[must_use]
 pub fn logical_line_span(metrics: &[VisualLineMetric], caret_y: f32) -> Option<(f32, f32)> {
+    // R1031 §5.37 — the *last* row whose box contains `caret_y`, not the first.
+    // Visual line boxes can overlap when the resolved font's line height leaves
+    // the natural box taller than the advance step (e.g. DejaVu Sans Mono's
+    // first row has a negative top, so its box extends down into the second
+    // row's top). `caret_y` is the caret row's top, so the owning row is the
+    // last one starting at-or-above it; a first-match `position` would pick the
+    // overflowing previous row and collapse line N onto line N-1.
     let idx = metrics
         .iter()
-        .position(|m| caret_y >= m.y && caret_y < m.y + m.height)?;
+        .rposition(|m| caret_y >= m.y && caret_y < m.y + m.height)?;
     let mut start = idx;
     while start > 0 && !metrics[start].starts_logical_line {
         start -= 1;
@@ -889,6 +896,41 @@ mod tests {
             None,
             "caret below all rows"
         );
+    }
+
+    #[test]
+    fn r1031_logical_line_span_overlapping_boxes_resolve_to_lower_row() {
+        // R1031 §5.37 — DejaVu-class metrics: the natural line box is taller
+        // than the advance step, so consecutive row boxes OVERLAP (row 0 here
+        // has a negative top and its box [-1, 21) extends into row 1's top at
+        // y=20). Each row is a hard logical line. The caret-row top for line 1
+        // (y=20) still falls inside row 0's box, so a first-match lookup would
+        // collapse line 1 onto line 0 (the r962/r987 demo regression under
+        // DejaVu Sans Mono). The span must isolate each line.
+        let m = vec![
+            VisualLineMetric {
+                y: -1.0,
+                height: 22.0,
+                starts_logical_line: true,
+            },
+            VisualLineMetric {
+                y: 20.0,
+                height: 22.0,
+                starts_logical_line: true,
+            },
+            VisualLineMetric {
+                y: 41.0,
+                height: 22.0,
+                starts_logical_line: true,
+            },
+        ];
+        assert_eq!(logical_line_span(&m, -1.0), Some((-1.0, 22.0)), "line 0");
+        assert_eq!(
+            logical_line_span(&m, 20.0),
+            Some((20.0, 22.0)),
+            "line 1 must resolve to its own row, not collapse onto overlapping line 0",
+        );
+        assert_eq!(logical_line_span(&m, 41.0), Some((41.0, 22.0)), "line 2");
     }
 
     #[test]

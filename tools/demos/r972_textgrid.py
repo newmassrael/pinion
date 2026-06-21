@@ -42,8 +42,13 @@ from rpc_verify import (
 
 # Mirror of the example's layout constants (examples/hello-textgrid).
 WIN = (680, 840)
-DEFAULT = {"tag": "htg_default", "x": 16, "y": 16, "w": 640, "h": 384, "cw": 8, "ch": 16}
-MEASURED = {"tag": "htg_measured", "x": 16, "y": 432, "w": 360, "h": 360, "cw": 9, "ch": 18}
+DEFAULT = {"tag": "htg_default", "x": 16, "y": 16, "w": 640, "h": 384, "cw": 8, "ch": 16, "fixed": True}
+# (R1031 §5.37) htg_measured uses a font-DERIVED cell (measured_monospace_cell),
+# so cell_w/cell_h vary with the resolved monospace (DejaVu vs Noto CJK) — do NOT
+# hardcode them. The winsize round-trip is asserted against the node's OWN
+# cell_w/cell_h (invariants) below. htg_default is CellMetric::DEFAULT (8x16,
+# font-independent), so its absolute cell metric IS pinned.
+MEASURED = {"tag": "htg_measured", "x": 16, "y": 432, "w": 360, "h": 360, "fixed": False}
 
 
 def check_grid(tf, spec: dict) -> dict:
@@ -53,10 +58,12 @@ def check_grid(tf, spec: dict) -> dict:
     # ZERO-FLAKE gate: poll the paint snapshot until the layout pass has
     # resolved this grid's rect (cols becomes non-zero only once `rect`
     # is filled — winsize is strictly layout-derived). No fixed sleep.
-    expect_cols = spec["w"] // spec["cw"]
+    # cols becomes positive only once the layout pass fills `rect` (winsize is
+    # strictly layout-derived). Poll for that — font-robustly, without assuming
+    # the cell width (htg_measured's is font-derived).
     snap = wait_snap(
         tf,
-        lambda s: (find_by_tag(s, tag) or {}).get("cols") == expect_cols,
+        lambda s: ((find_by_tag(s, tag) or {}).get("cols") or 0) > 0,
         source="paint",
         viewport=WIN,
         desc=f"{tag} layout-resolved",
@@ -72,8 +79,11 @@ def check_grid(tf, spec: dict) -> dict:
     assert_eq(rect["y"], spec["y"], f"{tag} rect.y")
     assert_eq(rect["w"], spec["w"], f"{tag} rect.w")
     assert_eq(rect["h"], spec["h"], f"{tag} rect.h")
-    assert_eq(node["cell_w"], spec["cw"], f"{tag} cell_w")
-    assert_eq(node["cell_h"], spec["ch"], f"{tag} cell_h")
+    # Absolute cell metric only for the fixed-metric grid; the measured grid's
+    # cell is font-derived and verified via the winsize invariants below.
+    if spec.get("fixed"):
+        assert_eq(node["cell_w"], spec["cw"], f"{tag} cell_w")
+        assert_eq(node["cell_h"], spec["ch"], f"{tag} cell_h")
 
     # --- winsize round-trip (R969 layout-derived (rows, cols) SSOT) ---
     cols = node["cols"]
@@ -106,10 +116,19 @@ def body() -> None:
         default = check_grid(tf, DEFAULT)
         measured = check_grid(tf, MEASURED)
 
-        # Both grids derive exactly the dims their layout rect + metric
-        # imply (80x24 @ 8x16, 40x20 @ 9x18).
+        # The fixed-metric grid derives exactly the dims its rect +
+        # CellMetric::DEFAULT imply (80x24 @ 8x16). The measured grid's dims are
+        # font-derived (its cell varies with the resolved monospace), so assert
+        # the round-trip against its OWN cell metric rather than absolute px.
         assert_eq((default["cols"], default["rows"]), (80, 24), "default dims 80x24")
-        assert_eq((measured["cols"], measured["rows"]), (40, 20), "measured dims 40x20")
+        assert_eq(
+            (measured["cols"], measured["rows"]),
+            (
+                measured["rect"]["w"] // measured["cell_w"],
+                measured["rect"]["h"] // measured["cell_h"],
+            ),
+            "measured dims = rect // its font-derived cell",
+        )
 
         # Node-local metric (R968): the two grids carry DIFFERENT cell
         # metrics — the metric travels with the node, not a global space.

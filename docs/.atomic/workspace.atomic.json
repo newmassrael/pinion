@@ -11717,6 +11717,44 @@
         "unpushed: R1029.1 R1030 R1030.1 R1030.2 (R1031 next); PUSH PENDING explicit user consent."
       ]
     },
+    "R1031": {
+      "decision_summary": "R1031 §5.37 fix the text-band demo-sweep cluster (r962/r987/r957) — a real layout bug in logical_line_span (pinion-text/caret.rs): it picked the FIRST visual row whose box [y, y+height) contains caret_y, but when the resolved font's natural line box exceeds the advance step the row boxes OVERLAP (DejaVu Sans Mono's first row has a negative top that extends into row 1's top), so line N's caret-top matched row N-1's box and the current-line band collapsed onto the previous logical line (the non-increasing [79,79,99,...] band tops; invisible on Noto CJK Mono, whose boxes are contiguous). Fix: select the LAST containing row via rposition (the row starting at-or-above caret_y), robust to overlapping/negative boxes; + an overlapping-box regression test. Also made two demos font-robust (r1002-class fragility, not layer bugs): r987 asserted band step == band height (false when boxes overlap — step <= height now) and r972 hardcoded the measured grid's font-derived cell (9x18) and dims (40x20) — now asserts the winsize round-trip against the node's own cell_w/cell_h (htg_default's fixed 8x16 stays pinned). Verified r957/r962/r972/r987 PASS under forced DejaVu (CI font) AND Noto.",
+      "changes_bullets": [
+        "caret.rs logical_line_span: last-containing-row (rposition) for overlapping/negative line boxes + regression test",
+        "r987 demo: band step <= band height (overlap-robust), not exact step==height",
+        "r972 demo: measured grid cell/dims read from node (font-derived); only htg_default pins absolute 8x16"
+      ],
+      "verification_bullets": [
+        "r957/r962/r972/r987 PASS under forced DejaVu (CI font) AND local Noto; pinion-text 55 unit tests pass",
+        "clippy --workspace --all-targets --features pinion-runtime/vello + cargo fmt --check clean"
+      ],
+      "impact_refs": [
+        "5.37",
+        "5.36"
+      ],
+      "carry_forward_bullets": [
+        "unpushed: R1029.1 R1030 R1030.1 R1030.2 R1031; PUSH PENDING explicit user consent.",
+        "demo-sweep clusters tag_not_focusable + text-band + r674 all locally green; full sweep confirms on push."
+      ],
+      "publishable_decision_summary": "R1031 §5.37 fix the text-band demo-sweep cluster (r962/r987/r957) — a real layout bug in logical_line_span (pinion-text/caret.rs): it picked the FIRST visual row whose box [y, y+height) contains caret_y, but when the resolved font's natural line box exceeds the advance step the row boxes OVERLAP (DejaVu Sans Mono's first row has a negative top that extends into row 1's top), so line N's caret-top matched row N-1's box and the current-line band collapsed onto the previous logical line (the non-increasing [79,79,99,...] band tops; invisible on Noto CJK Mono, whose boxes are contiguous). Fix: select the LAST containing row via rposition (the row starting at-or-above caret_y), robust to overlapping/negative boxes; + an overlapping-box regression test. Also made two demos font-robust (r1002-class fragility, not layer bugs): r987 asserted band step == band height (false when boxes overlap — step <= height now) and r972 hardcoded the measured grid's font-derived cell (9x18) and dims (40x20) — now asserts the winsize round-trip against the node's own cell_w/cell_h (htg_default's fixed 8x16 stays pinned). Verified r957/r962/r972/r987 PASS under forced DejaVu (CI font) AND Noto.",
+      "publishable_changes_bullets": [
+        "caret.rs logical_line_span: last-containing-row (rposition) for overlapping/negative line boxes + regression test",
+        "r987 demo: band step <= band height (overlap-robust), not exact step==height",
+        "r972 demo: measured grid cell/dims read from node (font-derived); only htg_default pins absolute 8x16"
+      ],
+      "publishable_verification_bullets": [
+        "r957/r962/r972/r987 PASS under forced DejaVu (CI font) AND local Noto; pinion-text 55 unit tests pass",
+        "clippy --workspace --all-targets --features pinion-runtime/vello + cargo fmt --check clean"
+      ],
+      "publishable_impact_refs": [
+        "5.37",
+        "5.36"
+      ],
+      "publishable_carry_forward_bullets": [
+        "unpushed: R1029.1 R1030 R1030.1 R1030.2 R1031; PUSH PENDING explicit user consent.",
+        "demo-sweep clusters tag_not_focusable + text-band + r674 all locally green; full sweep confirms on push."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
