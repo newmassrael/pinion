@@ -16,9 +16,11 @@
 //! and capture state the new accessors expose:
 //!   * `hover_target` tracks the cursor onto and off the widget;
 //!   * `captured_target` is empty while merely hovering, holds the tag between
-//!     press and release, and clears on release;
-//!   * a press off any hit-target captures nothing (the diagnostic that
-//!     distinguishes a hover-miss from a capture failure).
+//!     press and release, and survives a cursor move while held (the drag);
+//!   * the two failure modes are distinguishable in data: a press off any
+//!     hit-target captures nothing (hover-miss), and a press on a hovered but
+//!     NON-capturing widget also captures nothing (capture-miss) while
+//!     `hover_target` still reports the widget.
 //!
 //! Each single-window read is cross-checked against its per-window form.
 
@@ -35,6 +37,10 @@ use pinion_shell::{ShellCore, SizeStrategy, WidgetView};
 use std::sync::Mutex;
 
 const SPLITTER: &str = "splitter";
+/// A second, NON-capturing focus target (no matching capturing External in the
+/// state scene), so a press on it hovers but captures nothing — the capture-miss
+/// contrast to the hover-miss `press_off_target` case.
+const PANE: &str = "pane";
 const W: u32 = 640;
 const H: u32 = 384;
 
@@ -82,16 +88,20 @@ impl WidgetCore for DragView {
 
     fn read_state(_scene: &Scene) {}
 
-    // One hittable node tagged `splitter` pinned to 200x200 at the origin; the
-    // root is UNtagged so a cursor past x=200 resolves to no target (hover
-    // `None`). The painted tag matches the primary External's tag (`tag()`), so
-    // the capture path's state-scene lookup finds the capturing External.
+    // Two hittable 200x200 nodes stacked by block flow: `splitter` at (0,0) and
+    // `pane` below it at (0,200). The root is UNtagged so a cursor outside both
+    // resolves to no target (hover `None`). Only `splitter` matches the primary
+    // External's tag (`tag()`), so the capture path's state-scene lookup finds a
+    // capturing External for `splitter` but none for `pane` (capture-miss case).
     fn view(_state: (), _frame: &Frame) -> Scene {
-        Scene::Container(ContainerNode::new(vec![Scene::Container(
-            ContainerNode::new(Vec::new())
-                .with_tag(SPLITTER)
-                .with_layout(LayoutStyle::new().with_size(Size::px(200, 200))),
-        )]))
+        let cell = |tag: &'static str| {
+            Scene::Container(
+                ContainerNode::new(Vec::new())
+                    .with_tag(tag)
+                    .with_layout(LayoutStyle::new().with_size(Size::px(200, 200))),
+            )
+        };
+        Scene::Container(ContainerNode::new(vec![cell(SPLITTER), cell(PANE)]))
     }
 
     fn event_name(_event: ()) -> &'static str {
@@ -172,6 +182,16 @@ fn captured_target_holds_between_press_and_release() {
         "per-window capture accessor agrees with the single-window one",
     );
 
+    // The drag: the cursor moves while the button is held. Capture pins to the
+    // splitter through the move (the held-pointer branch bypasses hover
+    // refresh), which is exactly the state a splitter-drag test reads back.
+    core.cursor_moved(PointerId::MOUSE, 80.0, 130.0);
+    assert_eq!(
+        core.captured_target(PointerId::MOUSE),
+        Some(SPLITTER),
+        "capture survives a cursor move while the button is held",
+    );
+
     core.mouse_released(PointerId::MOUSE);
     assert_eq!(
         core.captured_target(PointerId::MOUSE),
@@ -185,9 +205,8 @@ fn press_off_target_captures_nothing() {
     let _g = TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut core = booted();
 
-    // The diagnostic the seam unblocks: a press that hits no widget captures
-    // nothing, so a binding can tell a hover-miss from a capture failure.
-    core.cursor_moved(PointerId::MOUSE, 300.0, 50.0);
+    // Hover-miss: a press that hits no widget captures nothing.
+    core.cursor_moved(PointerId::MOUSE, 500.0, 300.0);
     assert_eq!(core.hover_target(PointerId::MOUSE), None, "cursor hit nothing");
 
     core.mouse_pressed(PointerId::MOUSE);
@@ -195,6 +214,31 @@ fn press_off_target_captures_nothing() {
         core.captured_target(PointerId::MOUSE),
         None,
         "a press off any hit-target engages no capture",
+    );
+    core.mouse_released(PointerId::MOUSE);
+}
+
+#[test]
+fn pressing_a_noncapturing_widget_hovers_but_captures_nothing() {
+    let _g = TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut core = booted();
+
+    // Capture-miss (distinct from hover-miss): the cursor IS over a widget, but
+    // that widget's External does not want capture. `hover_target` reports it,
+    // `captured_target` stays empty after a press — the readback that tells a
+    // missed hit-target apart from an un-capturing widget.
+    core.cursor_moved(PointerId::MOUSE, 50.0, 300.0);
+    assert_eq!(
+        core.hover_target(PointerId::MOUSE),
+        Some(PANE),
+        "cursor is over the (non-capturing) pane",
+    );
+
+    core.mouse_pressed(PointerId::MOUSE);
+    assert_eq!(
+        core.captured_target(PointerId::MOUSE),
+        None,
+        "a press on a hovered but non-capturing widget engages no capture",
     );
     core.mouse_released(PointerId::MOUSE);
 }

@@ -11235,6 +11235,46 @@
         "R1024 + R1024.1 + R1025 committed locally, push consent pending"
       ]
     },
+    "R1025.1": {
+      "decision_summary": "R1025.1 §5.35 clearance (2 adversarial reviewers): harden the pointer-readback forcing test to cover capture-survives-move-while-held and the non-capturing hover vs capture-miss contrast",
+      "changes_bullets": [
+        "tests/pointer_state_readback.rs: assert capture persists through a cursor move while the button is held (the splitter-drag branch, input.rs held-pointer path) - the literal target use named in the R1025 carry",
+        "added a second non-capturing widget (pane) + pressing_a_noncapturing_widget_hovers_but_captures_nothing: hover=Some(pane), captured=None, distinguishing a capture-miss from the hover-miss press_off_target case the module doc claims to tell apart",
+        "no production change: the read-only accessors are unchanged; only the forcing consumer is hardened to match its own doc/carry claims"
+      ],
+      "verification_bullets": [
+        "2 independent read-only adversarial reviewers (system-architect SSOT + quality-engineer code/test) returned push-ready; both verified the accessors are correct read-only passthroughs and the capture chain is genuinely exercised (a default-capture External would make the test fail correctly)",
+        "tests/pointer_state_readback.rs 4 ok (capture-while-held assert + non-capturing contrast added)",
+        "cargo test --workspace -j2 = 7278 ok 0 failed; cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0; mnemosyne validate-workspace T1=0"
+      ],
+      "impact_refs": [
+        "5.35"
+      ],
+      "carry_forward_bullets": [
+        "router hover/capture state is readable via Rust accessors but NOT yet over the §7 RPC surface; expose as scene-as-data when an AI agent must diagnose a drag stall (Phase-B-API carry)",
+        "ShellCore::cursor_position stays unexposed (move-not-delivered is currently inferential, not a dedicated readback); surface only if a consumer needs it",
+        "R1024 + R1024.1 + R1025 + R1025.1 committed locally, push consent pending"
+      ],
+      "publishable_decision_summary": "R1025.1 §5.35 clearance (2 adversarial reviewers): harden the pointer-readback forcing test to cover capture-survives-move-while-held and the non-capturing hover vs capture-miss contrast",
+      "publishable_changes_bullets": [
+        "tests/pointer_state_readback.rs: assert capture persists through a cursor move while the button is held (the splitter-drag branch, input.rs held-pointer path) - the literal target use named in the R1025 carry",
+        "added a second non-capturing widget (pane) + pressing_a_noncapturing_widget_hovers_but_captures_nothing: hover=Some(pane), captured=None, distinguishing a capture-miss from the hover-miss press_off_target case the module doc claims to tell apart",
+        "no production change: the read-only accessors are unchanged; only the forcing consumer is hardened to match its own doc/carry claims"
+      ],
+      "publishable_verification_bullets": [
+        "2 independent read-only adversarial reviewers (system-architect SSOT + quality-engineer code/test) returned push-ready; both verified the accessors are correct read-only passthroughs and the capture chain is genuinely exercised (a default-capture External would make the test fail correctly)",
+        "tests/pointer_state_readback.rs 4 ok (capture-while-held assert + non-capturing contrast added)",
+        "cargo test --workspace -j2 = 7278 ok 0 failed; cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0; mnemosyne validate-workspace T1=0"
+      ],
+      "publishable_impact_refs": [
+        "5.35"
+      ],
+      "publishable_carry_forward_bullets": [
+        "router hover/capture state is readable via Rust accessors but NOT yet over the §7 RPC surface; expose as scene-as-data when an AI agent must diagnose a drag stall (Phase-B-API carry)",
+        "ShellCore::cursor_position stays unexposed (move-not-delivered is currently inferential, not a dedicated readback); surface only if a consumer needs it",
+        "R1024 + R1024.1 + R1025 + R1025.1 committed locally, push consent pending"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
