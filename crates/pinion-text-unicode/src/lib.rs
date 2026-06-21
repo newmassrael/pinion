@@ -197,6 +197,9 @@ pub use linebreak::{BreakOpportunity, LineBreak, line_break_class, line_break_op
 pub mod script;
 pub use script::{Script, ScriptRun, script, script_runs};
 
+pub mod itemize;
+pub use itemize::{ItemRun, itemize};
+
 #[cfg(test)]
 mod test_fixture;
 

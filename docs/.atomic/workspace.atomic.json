@@ -4328,7 +4328,8 @@
         "Deferred R50.5.x: Script_Extensions (scx) not yet used — Common/Inherited resolved by adjacency only",
         "Deferred: UAX #24 paired-bracket Common resolution (matching brackets take the run's script)",
         "Deferred: interaction with BIDI run direction (§5.37.4) — segmentation is over logical order only",
-        "script/script_runs are test forcing-consumers; production paint still swash until paint-wiring"
+        "script/script_runs are test forcing-consumers; production paint still swash until paint-wiring",
+        "R1038 itemize() now combines bidi level + script; visual reorder still deferred to the shaper"
       ]
     },
     "5.37.6": {
@@ -12202,6 +12203,48 @@
         "script/script_runs are test forcing-consumers; production paint still swash until paint-wiring",
         "ucd_version_pinned checks UCD_VERSION const only, not vendored file headers (pre-existing, all UCD)",
         "R1036/R1036.1 committed without Mnemosyne entries (prior-session git-vs-store gap)"
+      ]
+    },
+    "R1038": {
+      "decision_summary": "§5.37.4+§5.37.5 bidi+script itemisation: itemize(paragraph) splits a paragraph into maximal runs uniform in both resolved BIDI embedding level and script (the shaper's logical-order run-splitting input); expose bidi::resolved_levels and DRY-consolidate the P-X-W-N-I-L1 pipeline into one SSOT shared by bidi_reorder, the L4 mirror helpers, and resolved_levels.",
+      "changes_bullets": [
+        "New src/itemize.rs: itemize(paragraph)->Vec<ItemRun{level,script,start,end}> + is_rtl()",
+        "Add bidi::resolved_levels; DRY bidi_reorder onto resolved_levels_for_paragraph SSOT (1 pipeline)",
+        "itemize combines bidi level + script per char; R1037 script_runs now a real 2nd consumer"
+      ],
+      "verification_bullets": [
+        "pinion-text-unicode 271 tests 0 fail (8 new itemize); bidi full sweeps pass (rewire preserving)",
+        "workspace test 0 fail; clippy --workspace vello + rustfmt clean; my files cargo doc 0 new",
+        "validate T1=0; entries 1047->1048; §5.37.5 caveat reconciled (itemize realizes bidi interaction)"
+      ],
+      "impact_refs": [
+        "5.37.4",
+        "5.37.5"
+      ],
+      "carry_forward_bullets": [
+        "itemize logical-order only; visual reorder + shape-per-run = R1039 font integration (R50.10)",
+        "itemize is a test forcing-consumer; production paint still §5.36 swash until paint-wiring",
+        "cargo-doc bidi.rs:236/1353 pre-existing carry; module-tag R1038 since R50.10 reserved for font dep"
+      ],
+      "publishable_decision_summary": "§5.37.4+§5.37.5 bidi+script itemisation: itemize(paragraph) splits a paragraph into maximal runs uniform in both resolved BIDI embedding level and script (the shaper's logical-order run-splitting input); expose bidi::resolved_levels and DRY-consolidate the P-X-W-N-I-L1 pipeline into one SSOT shared by bidi_reorder, the L4 mirror helpers, and resolved_levels.",
+      "publishable_changes_bullets": [
+        "New src/itemize.rs: itemize(paragraph)->Vec<ItemRun{level,script,start,end}> + is_rtl()",
+        "Add bidi::resolved_levels; DRY bidi_reorder onto resolved_levels_for_paragraph SSOT (1 pipeline)",
+        "itemize combines bidi level + script per char; R1037 script_runs now a real 2nd consumer"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-text-unicode 271 tests 0 fail (8 new itemize); bidi full sweeps pass (rewire preserving)",
+        "workspace test 0 fail; clippy --workspace vello + rustfmt clean; my files cargo doc 0 new",
+        "validate T1=0; entries 1047->1048; §5.37.5 caveat reconciled (itemize realizes bidi interaction)"
+      ],
+      "publishable_impact_refs": [
+        "5.37.4",
+        "5.37.5"
+      ],
+      "publishable_carry_forward_bullets": [
+        "itemize logical-order only; visual reorder + shape-per-run = R1039 font integration (R50.10)",
+        "itemize is a test forcing-consumer; production paint still §5.36 swash until paint-wiring",
+        "cargo-doc bidi.rs:236/1353 pre-existing carry; module-tag R1038 since R50.10 reserved for font dep"
       ]
     },
     "R232": {

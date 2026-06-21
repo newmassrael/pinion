@@ -1696,12 +1696,7 @@ fn apply_l3_combining_marks(visual_indices: &mut [usize], original_classes: &[Bi
 /// embedding level being odd, to obtain the L4 substitute glyph.
 #[must_use]
 pub fn bidi_reorder(paragraph: &str) -> Vec<usize> {
-    let p_level = paragraph_level(paragraph);
-    let post_x = resolve_explicit_levels(paragraph, p_level);
-    let post_w = resolve_weak_types(post_x, p_level);
-    let post_n = resolve_neutral_types(post_w, paragraph, p_level);
-    let post_i = resolve_implicit_levels(post_n);
-    let post_l1 = apply_l1_line_break(post_i, paragraph, p_level);
+    let post_l1 = resolved_levels_for_paragraph(paragraph);
 
     // UAX #9 X9 — "Remove all RLE, LRE, RLO, LRO, PDF, and BN codes."
     // The W/N/I/L1 stages already treat BN-classed positions as
@@ -1817,9 +1812,9 @@ pub fn mirror_paired_brackets(text: &str) -> std::borrow::Cow<'_, str> {
 }
 
 /// Run the BIDI pipeline through L1 and return the resulting
-/// per-codepoint `(level, class)` pair. Helper for
-/// [`mirror_paired_brackets`] — encapsulates the
-/// P→X→W→N→I→L1 cascade so the two passes share one implementation.
+/// per-codepoint levels and classes. The single SSOT for the
+/// P→X→W→N→I→L1 cascade, shared by [`bidi_reorder`],
+/// [`mirror_paired_brackets`], and [`resolved_levels`].
 fn resolved_levels_for_paragraph(paragraph: &str) -> ExplicitLevels {
     let p_level = paragraph_level(paragraph);
     let post_x = resolve_explicit_levels(paragraph, p_level);
@@ -1827,6 +1822,19 @@ fn resolved_levels_for_paragraph(paragraph: &str) -> ExplicitLevels {
     let post_n = resolve_neutral_types(post_w, paragraph, p_level);
     let post_i = resolve_implicit_levels(post_n);
     apply_l1_line_break(post_i, paragraph, p_level)
+}
+
+/// The resolved UAX #9 embedding level of every codepoint in
+/// `paragraph` (one entry per `char`, in logical order) after the
+/// P→X→W→N→I→L1 cascade — even = left-to-right, odd = right-to-left.
+///
+/// These logical-order levels are what [`bidi_reorder`] reorders into the
+/// visual permutation, and what script/shape itemisation (`crate::itemize`)
+/// splits runs on when the level changes. Expects a single paragraph
+/// (slice from [`iter_paragraphs`]); levels are paragraph-local.
+#[must_use]
+pub fn resolved_levels(paragraph: &str) -> Vec<u8> {
+    resolved_levels_for_paragraph(paragraph).levels
 }
 
 #[cfg(test)]
