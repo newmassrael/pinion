@@ -536,7 +536,7 @@ mod tests {
 
         // Inject the focus ring at the active-descendant cell, then
         // rasterize through the cached (live) path.
-        let scene = inject_focus_ring(scene, Some(FOCUSED_TAG), FocusRingStyle::default());
+        let scene = inject_focus_ring(scene, Some(FOCUSED_TAG), FocusRingStyle::default(), W, H);
         let base = root_background(&scene);
         let mut cache = FragmentCache::new();
         let mut image_cache = pinion_runtime::image_cache::ImageCache::new();
@@ -1327,6 +1327,8 @@ mod tests {
             white_root(Scene::Box(title)),
             Some("menu#t1"),
             FocusRingStyle::default(),
+            W,
+            H,
         );
         let edge = top_run(&mut shot, &framed, 96 + 48);
         assert!(

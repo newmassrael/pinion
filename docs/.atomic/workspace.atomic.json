@@ -10897,6 +10897,48 @@
         "R1021 is impl-complete + green but PUSH PENDING explicit user consent."
       ]
     },
+    "R1022": {
+      "decision_summary": "R1022 §5.39 §5.16: focus-ring far-edge framebuffer clamp — build_focus_ring_box now clamps the ring bottom/right edges into the framebuffer (sibling of the R806 top/left near-edge clamp), so a widget flush against the window's bottom/right edge keeps all four ring strokes on-screen instead of rasterising the far strokes off-screen. The shell threads the layout viewport (w,h) through apply_focus_ring -> inject_styled_focus_ring -> inject_focus_ring. The default Inside border alignment lands the clamped stroke fully visible. Forcing consumer: sprag full-bleed multi-pane terminal (the focused pane showed only 3 of its 4 ring edges).",
+      "changes_bullets": [
+        "build_focus_ring_box (pinion-overlay/src/focus_ring.rs) gains fb_w/fb_h and clamps the ring far edges: right=min(ideal_right,fb_w), bottom=min(ideal_bottom,fb_h). A far-flush edge has no outward room so the ring INSETS (same shape as the R807 top flood-row inset, not a mirror of the near saturating_sub). The default Inside border alignment draws the whole stroke within the box rect, so a far edge clamped to the framebuffer lands the stroke fully visible. A 0 framebuffer extent (unknown/headless) disables the far clamp so the ring is never collapsed to zero.",
+        "Threaded the framebuffer (layout viewport) extent through the chain: inject_focus_ring (pub) + inject_styled_focus_ring + ShellCore::apply_focus_ring all take (w,h); the shell passes the same (w,h) it fed compute_layout. Callers updated: 2 apply_focus_ring sites + the RPC produce path + 2 headless_screenshot tests + 14 overlay unit tests (the tests pass their 1000x1000 container size, so existing assertions stay byte-identical).",
+        "Non-flush widgets and top/left-flush widgets (R806 near-edge) are byte-unchanged: the far clamp is a no-op when ideal_far <= framebuffer. The same paint scene feeds the renderer and scene/snapshot from:paint, so the clamped ring rect is introspectable (§2 #7 preserved)."
+      ],
+      "verification_bullets": [
+        "3 new pinion-overlay tests: ring_clamps_far_edges_into_framebuffer_at_bottom_right_corner (a full-bleed 200x100 pane -> ring all 4 edges <= framebuffer), ring_far_clamp_is_per_axis (bottom-flush only; the right edge stays concentric), ring_far_clamp_disabled_for_zero_framebuffer. The R806 near-edge guards (ring_stays_concentric_at_top_left_flush_corner, ring_clips_only_the_overflowing_axis) stay byte-identical: 16 overlay tests ok.",
+        "GPU screenshot ring tests pass with --ignored on the real vello rasterizer: r806_focus_ring_top_edge_rasterizes_two_px_not_thick + r706_cached_render_frames_focused_day_cell_not_next_column (ring rects in-bounds, unchanged).",
+        "cargo check --workspace clean. clippy --workspace --all-targets --features pinion-runtime/vello = 0. cargo test --workspace = 7261 ok 0 fail (R1021 was 7258, +3 far-edge tests)."
+      ],
+      "impact_refs": [
+        "5.39",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "Session-review clearance (R1022.1): adversarial review + grep audit before any push, per standing discipline.",
+        "Visual confirmation in a real full-bleed window (a focused multi-pane terminal pane showing a complete 4-edge ring) is sprag's, done in a sprag-native session; the ring geometry + rasterization are headlessly proven here.",
+        "R1022 is impl-complete + green but PUSH PENDING explicit user consent."
+      ],
+      "publishable_decision_summary": "R1022 §5.39 §5.16: focus-ring far-edge framebuffer clamp — build_focus_ring_box now clamps the ring bottom/right edges into the framebuffer (sibling of the R806 top/left near-edge clamp), so a widget flush against the window's bottom/right edge keeps all four ring strokes on-screen instead of rasterising the far strokes off-screen. The shell threads the layout viewport (w,h) through apply_focus_ring -> inject_styled_focus_ring -> inject_focus_ring. The default Inside border alignment lands the clamped stroke fully visible. Forcing consumer: sprag full-bleed multi-pane terminal (the focused pane showed only 3 of its 4 ring edges).",
+      "publishable_changes_bullets": [
+        "build_focus_ring_box (pinion-overlay/src/focus_ring.rs) gains fb_w/fb_h and clamps the ring far edges: right=min(ideal_right,fb_w), bottom=min(ideal_bottom,fb_h). A far-flush edge has no outward room so the ring INSETS (same shape as the R807 top flood-row inset, not a mirror of the near saturating_sub). The default Inside border alignment draws the whole stroke within the box rect, so a far edge clamped to the framebuffer lands the stroke fully visible. A 0 framebuffer extent (unknown/headless) disables the far clamp so the ring is never collapsed to zero.",
+        "Threaded the framebuffer (layout viewport) extent through the chain: inject_focus_ring (pub) + inject_styled_focus_ring + ShellCore::apply_focus_ring all take (w,h); the shell passes the same (w,h) it fed compute_layout. Callers updated: 2 apply_focus_ring sites + the RPC produce path + 2 headless_screenshot tests + 14 overlay unit tests (the tests pass their 1000x1000 container size, so existing assertions stay byte-identical).",
+        "Non-flush widgets and top/left-flush widgets (R806 near-edge) are byte-unchanged: the far clamp is a no-op when ideal_far <= framebuffer. The same paint scene feeds the renderer and scene/snapshot from:paint, so the clamped ring rect is introspectable (§2 #7 preserved)."
+      ],
+      "publishable_verification_bullets": [
+        "3 new pinion-overlay tests: ring_clamps_far_edges_into_framebuffer_at_bottom_right_corner (a full-bleed 200x100 pane -> ring all 4 edges <= framebuffer), ring_far_clamp_is_per_axis (bottom-flush only; the right edge stays concentric), ring_far_clamp_disabled_for_zero_framebuffer. The R806 near-edge guards (ring_stays_concentric_at_top_left_flush_corner, ring_clips_only_the_overflowing_axis) stay byte-identical: 16 overlay tests ok.",
+        "GPU screenshot ring tests pass with --ignored on the real vello rasterizer: r806_focus_ring_top_edge_rasterizes_two_px_not_thick + r706_cached_render_frames_focused_day_cell_not_next_column (ring rects in-bounds, unchanged).",
+        "cargo check --workspace clean. clippy --workspace --all-targets --features pinion-runtime/vello = 0. cargo test --workspace = 7261 ok 0 fail (R1021 was 7258, +3 far-edge tests)."
+      ],
+      "publishable_impact_refs": [
+        "5.39",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Session-review clearance (R1022.1): adversarial review + grep audit before any push, per standing discipline.",
+        "Visual confirmation in a real full-bleed window (a focused multi-pane terminal pane showing a complete 4-edge ring) is sprag's, done in a sprag-native session; the ring geometry + rasterization are headlessly proven here.",
+        "R1022 is impl-complete + green but PUSH PENDING explicit user consent."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

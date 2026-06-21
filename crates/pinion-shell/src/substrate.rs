@@ -615,10 +615,17 @@ fn resolve_focus_ring_tag<V: WidgetView>(
 /// RPC produce path: `None` from the hook draws no ring (the content-surface
 /// opt-out), `Some(style)` draws it; a `None` `ring_tag` (no focus) is also a
 /// no-op.
-fn inject_styled_focus_ring<V: WidgetView>(scene: Scene, ring_tag: Option<&str>) -> Scene {
+fn inject_styled_focus_ring<V: WidgetView>(
+    scene: Scene,
+    ring_tag: Option<&str>,
+    fb_w: u32,
+    fb_h: u32,
+) -> Scene {
     match ring_tag {
         Some(tag) => match V::focus_ring_style(tag) {
-            Some(style) => pinion_overlay::inject_focus_ring(scene, Some(tag), style),
+            // R1022 §5.39 — thread the framebuffer (layout viewport) extent so
+            // the ring's far edges clamp on-screen for a window-flush widget.
+            Some(style) => pinion_overlay::inject_focus_ring(scene, Some(tag), style, fb_w, fb_h),
             None => scene,
         },
         None => scene,
@@ -2675,7 +2682,7 @@ impl<V: WidgetView> ShellCore<V> {
         // `Signal::set` re-flags it — the `handle_tail` `is_dirty()` bridge
         // then knows a real change occurred and a benign no-op did not.
         self.core.root_owner().clear_dirty();
-        self.apply_focus_ring(paint_scene)
+        self.apply_focus_ring(paint_scene, w, h)
     }
 
     /// R705 §5.39 §2 #1/#7 — inject the keyboard focus ring as an
@@ -2691,7 +2698,7 @@ impl<V: WidgetView> ShellCore<V> {
     /// (R705 §5.39 substrate) so it never shadows its widget for input,
     /// even though the very scene returned here also feeds
     /// [`pinion_runtime::InputRouter::last_paint_scene`] hit-testing.
-    fn apply_focus_ring(&self, scene: Scene) -> Scene {
+    fn apply_focus_ring(&self, scene: Scene, w: u32, h: u32) -> Scene {
         let Some(focused) = self.focus.focused() else {
             return scene;
         };
@@ -2702,7 +2709,9 @@ impl<V: WidgetView> ShellCore<V> {
             resolve_focus_ring_tag::<V>(self.core.cached_state(), focused, self.core.root_owner());
         // R1010 §5.39 §5.40 — the binding owns the ring style for the rung tag
         // (None suppresses it; the default draws the framework ring).
-        inject_styled_focus_ring::<V>(scene, Some(&ring_tag))
+        // R1022 §5.39 — `(w, h)` = the framebuffer the scene was laid out to, so
+        // the ring's far edges clamp on-screen for a window-flush widget.
+        inject_styled_focus_ring::<V>(scene, Some(&ring_tag), w, h)
     }
 
     /// R670.B §5.16 — per-window paint scene producer. Same pipeline
@@ -2819,7 +2828,7 @@ impl<V: WidgetView> ShellCore<V> {
         // (re-store / headless) render also consumed the current reactive
         // state, so reset the dirty flag in lockstep.
         self.core.root_owner().clear_dirty();
-        self.apply_focus_ring(paint_scene)
+        self.apply_focus_ring(paint_scene, w, h)
     }
 
     /// R51.80 §5.40 — build the inputs to
@@ -3297,7 +3306,9 @@ impl<V: WidgetView> ShellCore<V> {
                 // matches what the AI client addressed.
                 // R1010 §5.39 §5.40 — same binding-controlled ring as the winit
                 // paint path (None = no ring), through the shared SSOT.
-                inject_styled_focus_ring::<V>(paint, ring_tag_for_paint.as_deref())
+                // R1022 §5.39 — same framebuffer `(w, h)` the produce closure laid
+                // out to, so the introspected ring rect matches the winit path.
+                inject_styled_focus_ring::<V>(paint, ring_tag_for_paint.as_deref(), w, h)
             };
             // R979 §5.40 §2 #7 — `scene/access` producer (the `build_access_tree`
             // SSOT the live AccessKit emit also runs; entry-focus `focus_before`).
