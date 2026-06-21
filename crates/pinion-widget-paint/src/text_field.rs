@@ -51,6 +51,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use crate::coord::saturating_f32_to_u32;
 use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole};
 use pinion_core::external::IntrospectValue;
 use pinion_core::reactive::Owner;
@@ -65,11 +66,10 @@ use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::text_edit::use_text_edit_state;
 use pinion_core::widgets::text_field::TextFieldState;
 use pinion_core::{Color, CompositionEvent, Scene, WidgetStateName};
-use crate::coord::saturating_f32_to_u32;
 use pinion_text::{
-    byte_offset_for_line_boundary, byte_offset_for_line_move, byte_offset_for_point,
-    caret_rect_for_byte_offset, logical_line_span, selection_rects_for_range, visual_line_metrics,
-    CaretRect, LayoutCache, VisualLineMetric,
+    CaretRect, LayoutCache, VisualLineMetric, byte_offset_for_line_boundary,
+    byte_offset_for_line_move, byte_offset_for_point, caret_rect_for_byte_offset,
+    logical_line_span, selection_rects_for_range, visual_line_metrics,
 };
 
 /// (R657 §5.16) Owner-cache key for the shared
@@ -391,9 +391,10 @@ fn field_fill_for(theme: &Theme, interaction: TextFieldState) -> Color {
         }
         // Divergent: TextFieldState has no hover/pressed posture, only the
         // disabled fade — keep the custom arm but source the shared token.
-        TextFieldState::Disabled => theme
-            .resolve(ColorRole::SurfaceContainerHighest)
-            .lerp(theme.resolve(ColorRole::Surface), crate::state_layer::DISABLED),
+        TextFieldState::Disabled => theme.resolve(ColorRole::SurfaceContainerHighest).lerp(
+            theme.resolve(ColorRole::Surface),
+            crate::state_layer::DISABLED,
+        ),
     }
 }
 
@@ -490,7 +491,15 @@ fn rect_to_band(r: CaretRect, font_floor: u32) -> (u32, u32, u32, u32) {
 /// at `inner_pad + (x, y)`. A zero-width band is skipped. The single `Box`-emit
 /// the three band kinds share — their geometry comes from [`rect_to_band`],
 /// only the `fill` differs (the prior 3 byte-identical loops are now one site).
-fn push_band(children: &mut Vec<Scene>, x: u32, y: u32, w: u32, h: u32, inner_pad: u32, fill: Color) {
+fn push_band(
+    children: &mut Vec<Scene>,
+    x: u32,
+    y: u32,
+    w: u32,
+    h: u32,
+    inner_pad: u32,
+    fill: Color,
+) {
     if w == 0 {
         return;
     }
@@ -622,7 +631,10 @@ pub fn field_scroll_offset(tag: &'static str, style: &TextFieldStyle) -> u32 {
 /// visual. Binding view fns wrap this in their root container with
 /// any surrounding chrome (title + status + list etc.).
 #[must_use]
-#[allow(clippy::too_many_lines, reason = "view-fn shape — sequential composition pass")]
+#[allow(
+    clippy::too_many_lines,
+    reason = "view-fn shape — sequential composition pass"
+)]
 pub fn view_field(
     tag: &'static str,
     interaction: TextFieldState,
@@ -831,11 +843,8 @@ pub fn view_field(
     // caret drops down, glyphs run right. Pinning the text node's
     // width to the same `max_width` makes taffy wrap the painted glyphs
     // at the identical break points, so paint and geometry agree.
-    let mut text_node = pinion_core::scene::TextNode::styled(
-        effective_text.clone(),
-        Rect::default(),
-        text_style,
-    );
+    let mut text_node =
+        pinion_core::scene::TextNode::styled(effective_text.clone(), Rect::default(), text_style);
     // R767 §5.36 — paint the field's styled runs (rich text). The paint
     // adapter emits one Vello glyph run per `StyleRun` (R713); the same
     // `runs` were just shaped into the caret / selection geometry above
@@ -925,14 +934,30 @@ pub fn view_field(
     // order (later children paint atop earlier).
     let sel_fill = selection_fill(theme, style.selection_alpha);
     for &(sel_x, sel_y, sel_w, sel_h) in &selection_pixel {
-        push_band(&mut field_children, sel_x, sel_y, sel_w, sel_h, inner_pad, sel_fill);
+        push_band(
+            &mut field_children,
+            sel_x,
+            sel_y,
+            sel_w,
+            sel_h,
+            inner_pad,
+            sel_fill,
+        );
     }
 
     // R56.1.g.3 §5.22 — preedit background tint paints BEFORE text
     // (same layering rule as selection band).
     if let Some((pre_x, pre_y, pre_w, pre_h)) = preedit_pixel {
         let pre_fill = preedit_bg_fill(theme, style.preedit_bg_alpha);
-        push_band(&mut field_children, pre_x, pre_y, pre_w, pre_h, inner_pad, pre_fill);
+        push_band(
+            &mut field_children,
+            pre_x,
+            pre_y,
+            pre_w,
+            pre_h,
+            inner_pad,
+            pre_fill,
+        );
     }
 
     field_children.push(text_node);
@@ -1020,8 +1045,7 @@ pub fn view_field(
         )]
         let offset_y = scroll_y as i32;
         vec![Scene::Scroll(
-            ScrollNode::new(Rect::new(0, 0, inner_w, inner_h), content)
-                .with_offset(0, offset_y),
+            ScrollNode::new(Rect::new(0, 0, inner_w, inner_h), content).with_offset(0, offset_y),
         )]
     } else {
         field_children
@@ -1431,7 +1455,9 @@ pub fn forward_composition_to_field(
         // (delete_surrounding etc.) defers to the shell fallback.
         _ => return false,
     };
-    intro.invoke("composition", IntrospectValue::Json(args)).is_ok()
+    intro
+        .invoke("composition", IntrospectValue::Json(args))
+        .is_ok()
 }
 
 /// (R657 §5.16) Convenience helper extracting `(TextFieldState,
@@ -1456,9 +1482,7 @@ pub fn read_text_field_state(scene: &Scene, tag: &str) -> (TextFieldState, u32) 
     // (R643) instead of a paint-side duplicate match table; unknown /
     // missing tokens still collapse to `Idle` via `from_name_or_default`.
     let interaction = match intro.query("state") {
-        Some(IntrospectValue::Text(name)) => {
-            TextFieldState::from_name_or_default(&name)
-        }
+        Some(IntrospectValue::Text(name)) => TextFieldState::from_name_or_default(&name),
         _ => TextFieldState::Idle,
     };
     let caret = match intro.query("caret") {
@@ -1530,9 +1554,11 @@ mod tests {
         assert_eq!(node.state.checked, None);
         assert!(!node.state.hovered && !node.state.pressed);
         // Disabled interaction → aria-disabled; unfocused honoured.
-        let disabled =
-            text_field_a11y_node("tf", String::new(), TextFieldState::Disabled, false);
-        assert!(disabled.state.disabled, "Disabled interaction sets aria-disabled");
+        let disabled = text_field_a11y_node("tf", String::new(), TextFieldState::Disabled, false);
+        assert!(
+            disabled.state.disabled,
+            "Disabled interaction sets aria-disabled"
+        );
         assert!(!disabled.state.focused);
     }
 
@@ -1620,11 +1646,7 @@ mod tests {
                 Scene::Container(c) => {
                     // Only the text node (1 child) at default fixture
                     // state.
-                    assert_eq!(
-                        c.children.len(),
-                        1,
-                        "Idle field has only the text node",
-                    );
+                    assert_eq!(c.children.len(), 1, "Idle field has only the text node",);
                 }
                 _ => panic!("view_field must return a Container"),
             }
@@ -1726,7 +1748,10 @@ mod tests {
     }
 
     fn current_line_style() -> TextFieldStyle {
-        TextFieldStyle { current_line_alpha: 0x14, ..TextFieldStyle::m3_multiline(4) }
+        TextFieldStyle {
+            current_line_alpha: 0x14,
+            ..TextFieldStyle::m3_multiline(4)
+        }
     }
 
     #[test]
@@ -1808,7 +1833,10 @@ mod tests {
             let tag = "tf_cl_single";
             use_text_edit_state(tag).set_text("oneline".to_owned());
             // Alpha set, but single-line is one row — the gate excludes it.
-            let style = TextFieldStyle { current_line_alpha: 0x40, ..TextFieldStyle::m3_filled() };
+            let style = TextFieldStyle {
+                current_line_alpha: 0x40,
+                ..TextFieldStyle::m3_filled()
+            };
             let scene = view_field(tag, TextFieldState::Focused, 0, &theme, &style, "in");
             assert!(
                 find_box_by_tag(&scene, &current_line_band_tag(tag)).is_none(),
@@ -1829,7 +1857,10 @@ mod tests {
             );
             let style = current_line_style(); // m3_multiline(4): soft_wrap + opt-in alpha
             let metrics = field_visual_lines(tag, TextFieldState::Focused, 0, &theme, &style);
-            assert!(metrics.len() >= 2, "the long line soft-wraps into multiple rows");
+            assert!(
+                metrics.len() >= 2,
+                "the long line soft-wraps into multiple rows"
+            );
             // No `\n`, so every visual row is one logical line: the band spans
             // from the first row's top to the last row's bottom — computed from
             // the same `field_visual_lines` substrate, so it is font-robust.
@@ -1837,7 +1868,10 @@ mod tests {
             let last = *metrics.last().unwrap();
             let full_h = saturating_f32_to_u32(last.y + last.height - first.y);
             let one_row_h = saturating_f32_to_u32(first.height);
-            assert!(full_h > one_row_h, "the wrapped band is taller than a single row");
+            assert!(
+                full_h > one_row_h,
+                "the wrapped band is taller than a single row"
+            );
             let scene = view_field(tag, TextFieldState::Focused, 0, &theme, &style, "code");
             let band = find_box_by_tag(&scene, &current_line_band_tag(tag)).unwrap();
             assert_eq!(
@@ -1850,7 +1884,10 @@ mod tests {
 
     #[test]
     fn r962_current_line_band_tag_derives_from_field_tag() {
-        assert_eq!(current_line_band_tag("main_textarea"), "main_textarea-current-line");
+        assert_eq!(
+            current_line_band_tag("main_textarea"),
+            "main_textarea-current-line"
+        );
     }
 
     #[test]
@@ -1902,17 +1939,8 @@ mod tests {
         with_owner(|| {
             let theme = Theme::light();
             let style = TextFieldStyle::m3_multiline(3);
-            let shaping = field_shaping(
-                "ta_test",
-                0,
-                TextFieldState::Idle,
-                &theme,
-                &style,
-            );
-            assert_eq!(
-                shaping.max_width,
-                Some(style.field_w - 2 * style.field_pad),
-            );
+            let shaping = field_shaping("ta_test", 0, TextFieldState::Idle, &theme, &style);
+            assert_eq!(shaping.max_width, Some(style.field_w - 2 * style.field_pad),);
         });
     }
 
@@ -1962,13 +1990,7 @@ mod tests {
             let long = "the quick brown fox jumps over the lazy dog repeatedly today";
             use_text_edit_state(tag).insert(long);
             let style = TextFieldStyle::m3_multiline(3);
-            let shaping = field_shaping(
-                tag,
-                long.len(),
-                TextFieldState::Editing,
-                &theme,
-                &style,
-            );
+            let shaping = field_shaping(tag, long.len(), TextFieldState::Editing, &theme, &style);
             let cache = use_text_field_layout_cache();
             let mut cache = cache.borrow_mut();
             let wrapped_lines = {
@@ -1984,11 +2006,7 @@ mod tests {
                 "soft-wrap breaks the long no-newline line: got {wrapped_lines}",
             );
             let flat_lines = {
-                let flat = cache.layout(
-                    shaping.effective_text.as_str(),
-                    &shaping.text_style,
-                    None,
-                );
+                let flat = cache.layout(shaping.effective_text.as_str(), &shaping.text_style, None);
                 flat.lines().count()
             };
             assert_eq!(
@@ -2015,7 +2033,10 @@ mod tests {
                 lines.iter().all(|l| l.starts_logical_line),
                 "each hard line opens a logical line (gutter numbers 1/2/3)",
             );
-            assert!(lines[1].y > lines[0].y && lines[2].y > lines[1].y, "rows increase in y");
+            assert!(
+                lines[1].y > lines[0].y && lines[2].y > lines[1].y,
+                "rows increase in y"
+            );
         });
     }
 
@@ -2030,8 +2051,7 @@ mod tests {
             let long = "the quick brown fox jumps over the lazy dog repeatedly today";
             use_text_edit_state(tag).set_text(long.to_owned());
             let style = TextFieldStyle::m3_multiline(3);
-            let lines =
-                field_visual_lines(tag, TextFieldState::Editing, 0, &theme, &style);
+            let lines = field_visual_lines(tag, TextFieldState::Editing, 0, &theme, &style);
             assert!(lines.len() > 1, "the long line wraps onto ≥2 rows");
             let logical = lines.iter().filter(|l| l.starts_logical_line).count();
             assert_eq!(logical, 1, "one logical line ⇒ one gutter number");

@@ -55,32 +55,39 @@
 //! and the dismiss barrier (`colmenu#barrier`) mirror `hello-contextmenu`.
 
 use pinion_a11y::{
-    menu_item_nodes, windowed_grid_nodes_sorted, AccessAction, AccessFocus, AccessNode,
-    MenuItemCell, WidgetA11y,
+    AccessAction, AccessFocus, AccessNode, MenuItemCell, WidgetA11y, menu_item_nodes,
+    windowed_grid_nodes_sorted,
 };
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::intent::Intent;
 use pinion_core::reactive::{Owner, Signal};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
-use pinion_core::style::{AlignItems, BoxStyle, FlexDirection, LayoutStyle, Size, SizeValue, TextStyle};
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::style::{
+    AlignItems, BoxStyle, FlexDirection, LayoutStyle, Size, SizeValue, TextStyle,
+};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
-use pinion_core::widgets::context_menu::{read_open_state, ContextMenuExternal};
-use pinion_core::widgets::grid_sort::{grid_sort_str, use_grid_sort, GridSortExternal, GridSortState};
+use pinion_core::widgets::context_menu::{ContextMenuExternal, read_open_state};
+use pinion_core::widgets::grid_sort::{
+    GridSortExternal, GridSortState, grid_sort_str, use_grid_sort,
+};
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::{Command, Frame, Scene, WidgetCore};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::barrier::dismiss_barrier;
 use pinion_widget_paint::coord::saturating_f32_to_u32;
 use pinion_widget_paint::menu::{
-    composite_item_tag, parse_item_sub_tag, view_context_menu, ContextMenuPlacement, MenuStyle,
+    ContextMenuPlacement, MenuStyle, composite_item_tag, parse_item_sub_tag, view_context_menu,
 };
-use pinion_widget_paint::table::{view_virtual_table, GridScroll, TableStyle, VirtualTableData};
+use pinion_widget_paint::table::{GridScroll, TableStyle, VirtualTableData, view_virtual_table};
 use std::rc::Rc;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
-vello_renderer_impl!(HelloGridHeaderMenuRenderer, HelloGridHeaderMenuRendererError);
+vello_renderer_impl!(
+    HelloGridHeaderMenuRenderer,
+    HelloGridHeaderMenuRendererError
+);
 
 /// Window size: fixed, wide enough that `NCOLS * COL_W` fits without an
 /// h-scroll and tall enough that all `N` rows + the popup are visible.
@@ -199,8 +206,11 @@ enum SortCommand {
 }
 
 /// The menu's items, in paint / dispatch order.
-const SORT_COMMANDS: [SortCommand; 3] =
-    [SortCommand::Ascending, SortCommand::Descending, SortCommand::Clear];
+const SORT_COMMANDS: [SortCommand; 3] = [
+    SortCommand::Ascending,
+    SortCommand::Descending,
+    SortCommand::Clear,
+];
 
 impl SortCommand {
     /// The popup label for this command, naming the right-clicked column.
@@ -282,7 +292,9 @@ fn status_bar(theme: &Theme, sort: Option<(usize, bool)>, target: Option<MenuTar
     );
     Scene::Container(
         ContainerNode::new(vec![text])
-            .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh)))
+            .with_style(BoxStyle::filled(
+                theme.resolve(ColorRole::SurfaceContainerHigh),
+            ))
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Row)
@@ -312,7 +324,10 @@ fn view(state: HeaderMenuState, _frame: &Frame) -> Scene {
 
     let grid = view_virtual_table(
         GRID_TAG,
-        GridScroll { body: &scroll, horizontal: &h_scroll },
+        GridScroll {
+            body: &scroll,
+            horizontal: &h_scroll,
+        },
         VirtualTableData {
             headers: &HEADERS,
             item_count: N,
@@ -519,7 +534,8 @@ impl WidgetA11y for GridHeaderMenuView {
         let sort = grid_sort.sort();
         let order = grid_sort.order();
         let (_, measured_h) = scroll.measured_viewport();
-        let window = compute_visible_range(scroll.offset_y(), measured_h, order.len(), ROW_H, OVERSCAN);
+        let window =
+            compute_visible_range(scroll.offset_y(), measured_h, order.len(), ROW_H, OVERSCAN);
         let mut nodes = windowed_grid_nodes_sorted(
             GRID_TAG,
             "Sortable data grid (right-click a header for column actions)",
@@ -531,8 +547,9 @@ impl WidgetA11y for GridHeaderMenuView {
         );
         if state.open_at.is_some() {
             let group_focused = focused == Some(MENU_TAG);
-            let tags: Vec<String> =
-                (0..MENU_ITEM_COUNT).map(|i| composite_item_tag(MENU_TAG, i)).collect();
+            let tags: Vec<String> = (0..MENU_ITEM_COUNT)
+                .map(|i| composite_item_tag(MENU_TAG, i))
+                .collect();
             let items: Vec<MenuItemCell<'_>> = (0..MENU_ITEM_COUNT)
                 .map(|i| MenuItemCell {
                     tag: &tags[i],
@@ -658,15 +675,38 @@ mod tests {
         // Body cell click resolves the column AND its row.
         assert_eq!(
             grid_target_at((pad + 2 * COL_W + 10) as f32, body_y),
-            Some(MenuTarget { col: 2, row: Some(1) }),
+            Some(MenuTarget {
+                col: 2,
+                row: Some(1)
+            }),
             "body cell col 2, row 1",
         );
         // Outside the grid.
-        assert_eq!(grid_target_at((pad - 1) as f32, band_y), None, "x left of the first column");
-        assert_eq!(grid_target_at((pad + 3 * COL_W + 1) as f32, band_y), None, "x past the last column");
-        assert_eq!(grid_target_at(10.0, (STATUS_H + pad - 1) as f32), None, "y in the pad gap above the header");
-        assert_eq!(grid_target_at(10.0, (STATUS_H - 1) as f32), None, "y in the status bar");
-        assert_eq!(grid_target_at(10.0, 10_000.0), None, "y far below the last row");
+        assert_eq!(
+            grid_target_at((pad - 1) as f32, band_y),
+            None,
+            "x left of the first column"
+        );
+        assert_eq!(
+            grid_target_at((pad + 3 * COL_W + 1) as f32, band_y),
+            None,
+            "x past the last column"
+        );
+        assert_eq!(
+            grid_target_at(10.0, (STATUS_H + pad - 1) as f32),
+            None,
+            "y in the pad gap above the header"
+        );
+        assert_eq!(
+            grid_target_at(10.0, (STATUS_H - 1) as f32),
+            None,
+            "y in the status bar"
+        );
+        assert_eq!(
+            grid_target_at(10.0, 10_000.0),
+            None,
+            "y far below the last row"
+        );
     }
 
     // ----- the captured-column reducer -----
@@ -680,12 +720,20 @@ mod tests {
                 open(None),
                 &Intent::new_static("colmenu.command", IntrospectValue::Text("0".to_string())),
             );
-            assert_eq!(use_grid_data().sort(), Some((1, true)), "item 0 -> col 1 ascending");
+            assert_eq!(
+                use_grid_data().sort(),
+                Some((1, true)),
+                "item 0 -> col 1 ascending"
+            );
             let _ = GridHeaderMenuView::update(
                 open(None),
                 &Intent::new_static("colmenu.command", IntrospectValue::Text("1".to_string())),
             );
-            assert_eq!(use_grid_data().sort(), Some((1, false)), "item 1 -> col 1 descending");
+            assert_eq!(
+                use_grid_data().sort(),
+                Some((1, false)),
+                "item 1 -> col 1 descending"
+            );
             let _ = GridHeaderMenuView::update(
                 open(None),
                 &Intent::new_static("colmenu.command", IntrospectValue::Text("2".to_string())),
@@ -702,7 +750,11 @@ mod tests {
                 open(None),
                 &Intent::new_static("colmenu.command", IntrospectValue::Text("0".to_string())),
             );
-            assert_eq!(use_grid_data().sort(), None, "no captured column -> no sort change");
+            assert_eq!(
+                use_grid_data().sort(),
+                None,
+                "no captured column -> no sort change"
+            );
         });
     }
 
@@ -714,14 +766,25 @@ mod tests {
                 open(None),
                 &Intent::new_static("colmenu.command", IntrospectValue::Text("0".to_string())),
             );
-            assert_eq!(use_grid_data().sort(), Some((0, true)), "first capture sorts col 0");
+            assert_eq!(
+                use_grid_data().sort(),
+                Some((0, true)),
+                "first capture sorts col 0"
+            );
             // A later right-click on a different column's data cell re-captures it.
-            use_menu_target().set(Some(MenuTarget { col: 2, row: Some(3) }));
+            use_menu_target().set(Some(MenuTarget {
+                col: 2,
+                row: Some(3),
+            }));
             let _ = GridHeaderMenuView::update(
                 open(None),
                 &Intent::new_static("colmenu.command", IntrospectValue::Text("1".to_string())),
             );
-            assert_eq!(use_grid_data().sort(), Some((2, false)), "re-capture sorts col 2 desc");
+            assert_eq!(
+                use_grid_data().sort(),
+                Some((2, false)),
+                "re-capture sorts col 2 desc"
+            );
         });
     }
 
@@ -735,7 +798,11 @@ mod tests {
             scroll.scroll_to(0, 0);
             GridHeaderMenuView::access_node(&HeaderMenuState::default(), None)
         });
-        assert_eq!(nodes[0].role, AriaRole::Grid, "the grid root leads the forest");
+        assert_eq!(
+            nodes[0].role,
+            AriaRole::Grid,
+            "the grid root leads the forest"
+        );
         assert!(
             !nodes.iter().any(|n| n.role == AriaRole::Menu),
             "a closed menu contributes no menu node",
@@ -756,7 +823,11 @@ mod tests {
             .find(|n| n.role == AriaRole::Menu)
             .expect("open menu contributes a Menu node");
         assert_eq!(menu.tag, MENU_TAG);
-        assert_eq!(menu.children.len(), MENU_ITEM_COUNT, "one menuitem per command");
+        assert_eq!(
+            menu.children.len(),
+            MENU_ITEM_COUNT,
+            "one menuitem per command"
+        );
         let item1 = nodes
             .iter()
             .find(|n| n.tag == "colmenu#i1")

@@ -527,14 +527,14 @@ mod tests {
     use super::*;
     use crate::command::handler::{Handler, HandlerFuture};
     use crate::command::sink::VecSink;
-    use pinion_core::external::IntrospectValue;
     use pinion_core::Intent;
+    use pinion_core::external::IntrospectValue;
 
     fn echo_handler() -> Arc<dyn Handler> {
         Arc::new(|cmd: Command| -> HandlerFuture {
-            Box::pin(async move {
-                Intent::new_owned(format!("echo.{}", cmd.kind_str()), cmd.payload)
-            })
+            Box::pin(
+                async move { Intent::new_owned(format!("echo.{}", cmd.kind_str()), cmd.payload) },
+            )
         })
     }
 
@@ -654,11 +654,7 @@ mod tests {
     #[test]
     fn dispatch_unknown_kind_returns_none() {
         let (exec, sink) = build_block_on(HandlerRegistry::new());
-        let handle = exec.dispatch(Command::new_static(
-            "nope",
-            IntrospectValue::Null,
-            7,
-        ));
+        let handle = exec.dispatch(Command::new_static("nope", IntrospectValue::Null, 7));
         assert!(handle.is_none(), "no handler registered → None");
         assert!(sink.is_empty(), "no intent must reach the sink");
     }
@@ -691,8 +687,7 @@ mod tests {
         assert_eq!(drained.len(), 3);
         let tags: Vec<&str> = drained.iter().map(Intent::tag_str).collect();
         assert_eq!(tags, vec!["echo.a", "echo.b", "echo.a"]);
-        let payloads: Vec<&IntrospectValue> =
-            drained.iter().map(|i| &i.payload).collect();
+        let payloads: Vec<&IntrospectValue> = drained.iter().map(|i| &i.payload).collect();
         assert_eq!(
             payloads,
             vec![
@@ -808,10 +803,7 @@ mod tests {
         }
         let drained = sink.drain();
         assert_eq!(drained.len(), 4);
-        let payloads: Vec<i64> = drained
-            .iter()
-            .filter_map(|i| i.payload.as_i64())
-            .collect();
+        let payloads: Vec<i64> = drained.iter().filter_map(|i| i.payload.as_i64()).collect();
         assert_eq!(payloads, vec![0, 1, 2, 3]);
     }
 
@@ -888,9 +880,10 @@ mod tests {
         // R51.158 — unknown kinds short-circuit before the in-flight
         // insert; the tracker stays empty.
         let (exec, sink) = build_block_on(HandlerRegistry::new());
-        assert!(exec
-            .dispatch(Command::new_static("nope", IntrospectValue::Null, 99))
-            .is_none());
+        assert!(
+            exec.dispatch(Command::new_static("nope", IntrospectValue::Null, 99))
+                .is_none()
+        );
         assert_eq!(exec.in_flight_len(), 0, "no insert for unhandled kind");
         assert!(sink.is_empty());
     }
@@ -943,11 +936,12 @@ mod tests {
             .dispatch(Command::new_static("k", IntrospectValue::Null, 5))
             .expect("dispatch");
         assert!(!h.is_cancelled());
-        let returned = exec
-            .cancel_scope(5)
-            .expect("scope tracked → some returned");
+        let returned = exec.cancel_scope(5).expect("scope tracked → some returned");
         assert!(returned.is_cancelled());
-        assert!(h.is_cancelled(), "shared flag propagates to original handle");
+        assert!(
+            h.is_cancelled(),
+            "shared flag propagates to original handle"
+        );
         assert!(!exec.has_in_flight(5), "scope removed after cancel");
         assert_eq!(exec.in_flight_len(), 0);
     }

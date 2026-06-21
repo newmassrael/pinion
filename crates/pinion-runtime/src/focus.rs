@@ -346,11 +346,7 @@ impl FocusManager {
                     // the leading edge for the direction instead of
                     // dropping focus, so a trapped modal never lets the
                     // cursor escape to "no focus".
-                    if direction > 0 {
-                        0
-                    } else {
-                        n - 1
-                    }
+                    if direction > 0 { 0 } else { n - 1 }
                 }
             },
         };
@@ -626,7 +622,10 @@ mod tests {
         // Inner trap confines to its own members.
         m.focus_next();
         assert_eq!(m.focused(), Some("no"));
-        assert!(!m.focus_set("a"), "outer member unreachable from inner trap");
+        assert!(
+            !m.focus_set("a"),
+            "outer member unreachable from inner trap"
+        );
         // Pop inner -> restores the settings dialog's saved member.
         m.pop_modal_scope();
         assert_eq!(m.modal_depth(), 1);

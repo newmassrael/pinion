@@ -32,8 +32,8 @@ pub use atlas::{AtlasGlyph, GlyphAtlas};
 pub use error::{FieldValue, ParseError};
 pub use font::Font;
 pub use raster::{Coverage, RasterError};
-pub use shape::{PositionedGlyph, ShapedRun};
 pub use sfnt::{Flavor as SfntFlavor, OffsetTable, TableRecord, find_table, parse_sfnt};
+pub use shape::{PositionedGlyph, ShapedRun};
 pub use tables::glyf::{
     Component, ComponentArgs, ComponentTransform, CompositeGlyph, Glyf, Glyph, GlyphHeader,
     GlyphPoint, SimpleGlyph,

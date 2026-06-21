@@ -320,7 +320,11 @@ mod tests {
         assert_eq!(s.panel_padding, 12);
         assert_eq!(s.item_gap, 4);
         assert_eq!(s.title_font_px, 14);
-        assert_eq!(s.edge, DrawerEdge::Left, "default edge is the left nav rail");
+        assert_eq!(
+            s.edge,
+            DrawerEdge::Left,
+            "default edge is the left nav rail"
+        );
         assert_eq!(
             DrawerStyle::m3_default().with_edge(DrawerEdge::Right).edge,
             DrawerEdge::Right,
@@ -340,8 +344,16 @@ mod tests {
     fn r702_scrim_fills_window_and_anchors_origin() {
         let scene = drawer(DrawerEdge::Left);
         let scrim = find_container(&scene, "drawer_scrim").expect("scrim node");
-        assert_eq!(scrim.layout.size, Size::px(520, 360), "scrim covers viewport");
-        assert_eq!(scrim.layout.absolute_position, Some((0, 0)), "anchored at origin");
+        assert_eq!(
+            scrim.layout.size,
+            Size::px(520, 360),
+            "scrim covers viewport"
+        );
+        assert_eq!(
+            scrim.layout.absolute_position,
+            Some((0, 0)),
+            "anchored at origin"
+        );
         assert_eq!(scrim.style.fill, Color::rgba(0, 0, 0, 0x66));
     }
 
@@ -366,8 +378,16 @@ mod tests {
         let t = theme();
         let scene = drawer(DrawerEdge::Left);
         let panel = find_container(&scene, "drawer_panel").expect("panel node");
-        assert_eq!(panel.layout.size.width, SizeValue::Px(280), "fixed nav width");
-        assert_eq!(panel.layout.size.height, SizeValue::Px(360), "full window height");
+        assert_eq!(
+            panel.layout.size.width,
+            SizeValue::Px(280),
+            "fixed nav width"
+        );
+        assert_eq!(
+            panel.layout.size.height,
+            SizeValue::Px(360),
+            "full window height"
+        );
         assert_eq!(panel.style.fill, t.resolve(ColorRole::SurfaceContainerHigh));
         // R711 — MD3 modal drawer = Level 1 elevation.
         assert_eq!(
@@ -380,7 +400,10 @@ mod tests {
     #[test]
     fn r702_title_present_and_items_in_order() {
         let scene = drawer(DrawerEdge::Left);
-        assert!(all_text(&scene).contains(&"Navigation".to_string()), "title node painted");
+        assert!(
+            all_text(&scene).contains(&"Navigation".to_string()),
+            "title node painted"
+        );
         assert_eq!(
             external_tags(&scene),
             vec!["drawer_item_0".to_string(), "drawer_item_1".to_string()],

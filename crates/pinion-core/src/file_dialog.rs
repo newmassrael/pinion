@@ -406,9 +406,7 @@ mod tests {
     //! battery: queue FIFO ordering, cancel-on-empty, the call log,
     //! request capture, and `Rc<dyn FileDialog>` polymorphism.
 
-    use super::{
-        DialogKind, FileDialog, FileDialogRequest, FileFilter, ScriptedFileDialog,
-    };
+    use super::{DialogKind, FileDialog, FileDialogRequest, FileFilter, ScriptedFileDialog};
     use std::future::Future;
     use std::path::PathBuf;
     use std::pin::Pin;
@@ -459,8 +457,14 @@ mod tests {
         let mut fut = d.open_file(&FileDialogRequest::new());
         let waker: &Waker = Waker::noop();
         let mut cx = Context::from_waker(waker);
-        assert!(Pin::new(&mut fut).poll(&mut cx).is_pending(), "poll 1 Pending");
-        assert!(Pin::new(&mut fut).poll(&mut cx).is_pending(), "poll 2 Pending");
+        assert!(
+            Pin::new(&mut fut).poll(&mut cx).is_pending(),
+            "poll 1 Pending"
+        );
+        assert!(
+            Pin::new(&mut fut).poll(&mut cx).is_pending(),
+            "poll 2 Pending"
+        );
         match Pin::new(&mut fut).poll(&mut cx) {
             Poll::Ready(out) => assert_eq!(out, Some(PathBuf::from("/slow.dat"))),
             Poll::Pending => panic!("poll 3 must resolve the deferred outcome"),
@@ -473,9 +477,15 @@ mod tests {
         d.queue_selection("/first");
         d.queue_cancel();
         d.queue_selection("/third");
-        assert_eq!(block(d.open_file(&FileDialogRequest::new())), Some("/first".into()));
+        assert_eq!(
+            block(d.open_file(&FileDialogRequest::new())),
+            Some("/first".into())
+        );
         assert_eq!(block(d.save_file(&FileDialogRequest::new())), None);
-        assert_eq!(block(d.pick_folder(&FileDialogRequest::new())), Some("/third".into()));
+        assert_eq!(
+            block(d.pick_folder(&FileDialogRequest::new())),
+            Some("/third".into())
+        );
     }
 
     #[test]
@@ -532,7 +542,6 @@ mod tests {
         assert_eq!(req.start_dir, Some(PathBuf::from("/start")));
         assert_eq!(req.filters.len(), 1);
     }
-
 }
 
 // Queueing is a concrete-impl affordance, not part of the capability

@@ -41,18 +41,18 @@
 //! `ArrowLeft` (and `ArrowDown` / `ArrowUp`) rove focus with wrap, `Home` /
 //! `End` jump to the first / last chip.
 
-use pinion_a11y::{toggle_button_group_nodes, AccessNode, ToggleSegment, WidgetA11y};
+use pinion_a11y::{AccessNode, ToggleSegment, WidgetA11y, toggle_button_group_nodes};
 use pinion_core::external::External;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::toggle::ToggleState;
 use pinion_core::widgets::toggle_group;
 use pinion_core::{Color, Frame, Scene, WidgetCore, WidgetStateName};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::chip::{self, CHIP_HEIGHT, OUTLINE_W};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -136,14 +136,12 @@ fn view(state: ChipBarState, _frame: &Frame) -> Scene {
     // The row carries `GROUP_TAG` and *no* fill — the WAI-ARIA `group` is a
     // passive container, and chips are free-standing (no segmented track).
     let row = Scene::Container(
-        ContainerNode::new(chips)
-            .with_tag(GROUP_TAG)
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Row)
-                    .with_align_items(AlignItems::Center)
-                    .with_gap(CHIP_GAP),
-            ),
+        ContainerNode::new(chips).with_tag(GROUP_TAG).with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Row)
+                .with_align_items(AlignItems::Center)
+                .with_gap(CHIP_GAP),
+        ),
     );
     Scene::Container(
         ContainerNode::new(vec![row])
@@ -180,14 +178,21 @@ fn chip(index: usize, state: ToggleState, on: bool, theme: &Theme) -> Scene {
     // optional outline) + inner layout come from the shared
     // `pinion_widget_paint::chip` substrate; this binding supplies only the
     // base fill (the filter-chip affordance) and the fixed CHIP_W width.
-    let style = chip::chip_style(chip_fill_base(theme, on), chip_border(theme, on), state, theme);
+    let style = chip::chip_style(
+        chip_fill_base(theme, on),
+        chip_border(theme, on),
+        state,
+        theme,
+    );
     Scene::Container(
         ContainerNode::new(children)
             .with_tag(CHIP_TAGS[index])
             .with_style(style)
             // R1020 §5.39 — each chip is a Tab stop; opt its tag-carrying
             // Container into the scene-derived focus enumeration.
-            .with_layout(chip::chip_layout(Size::px(CHIP_W, CHIP_HEIGHT), None).with_focusable(true)),
+            .with_layout(
+                chip::chip_layout(Size::px(CHIP_W, CHIP_HEIGHT), None).with_focusable(true),
+            ),
     )
 }
 
@@ -274,7 +279,6 @@ impl WidgetCore for FilterChipView {
         "pinion hello-filter-chip (R753 §5.38 Material 3 filter chips)"
     }
 
-
     /// WAI-ARIA toggle-button-group keyboard model — delegated wholesale to
     /// the shared [`toggle_group::apply_key`] substrate.
     fn apply_key(
@@ -324,7 +328,10 @@ impl WidgetView for FilterChipView {
     type Renderer = HelloFilterChipRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 }
 
@@ -356,8 +363,7 @@ mod tests {
 
     #[test]
     fn view_carries_every_chip_tag_and_the_group_row() {
-        let scene =
-            pinion_core::Owner::new().run(|| view(state_with(BOOT_ON), &Frame::new()));
+        let scene = pinion_core::Owner::new().run(|| view(state_with(BOOT_ON), &Frame::new()));
         assert!(scene.contains_tag(GROUP_TAG), "row carries the group tag");
         for tag in CHIP_TAGS {
             assert!(scene.contains_tag(tag), "chip tag {tag} present");
@@ -385,7 +391,10 @@ mod tests {
         let unsel = find_chip(&scene, CHIP_TAGS[1]).expect("chip 1");
         // Selected: opaque Accent fill, no border.
         assert_eq!(sel.style.fill.a, 255, "selected chip is opaque");
-        assert!(sel.style.border.is_none(), "selected chip drops the outline");
+        assert!(
+            sel.style.border.is_none(),
+            "selected chip drops the outline"
+        );
         // Unselected: transparent fill, an Outline border.
         assert_eq!(unsel.style.fill.a, 0, "unselected chip is transparent");
         assert!(unsel.style.border.is_some(), "unselected chip is outlined");
@@ -394,16 +403,28 @@ mod tests {
     /// Count a chip container's direct `Text` children (selected = check
     /// glyph + label = 2; unselected = label only = 1).
     fn text_child_count(scene: &Scene, tag: &str) -> usize {
-        find_chip(scene, tag)
-            .map_or(0, |c| c.children.iter().filter(|ch| matches!(ch, Scene::Text(_))).count())
+        find_chip(scene, tag).map_or(0, |c| {
+            c.children
+                .iter()
+                .filter(|ch| matches!(ch, Scene::Text(_)))
+                .count()
+        })
     }
 
     #[test]
     fn selected_chip_has_check_glyph_plus_label() {
         let scene = pinion_core::Owner::new()
             .run(|| view(state_with([true, false, false, false]), &Frame::new()));
-        assert_eq!(text_child_count(&scene, CHIP_TAGS[0]), 2, "selected: check + label");
-        assert_eq!(text_child_count(&scene, CHIP_TAGS[1]), 1, "unselected: label only");
+        assert_eq!(
+            text_child_count(&scene, CHIP_TAGS[0]),
+            2,
+            "selected: check + label"
+        );
+        assert_eq!(
+            text_child_count(&scene, CHIP_TAGS[1]),
+            1,
+            "unselected: label only"
+        );
     }
 
     // ── WidgetCore wiring (delegation smoke — mechanics live in the
@@ -412,11 +433,13 @@ mod tests {
     #[test]
     fn every_chip_is_a_tab_stop() {
         // §5.39: tree order IS tab order — collected from the paint scene.
-        let scene =
-            pinion_core::Owner::new().run(|| view(state_with(BOOT_ON), &Frame::new()));
+        let scene = pinion_core::Owner::new().run(|| view(state_with(BOOT_ON), &Frame::new()));
         assert_eq!(
             scene.collect_focusable_tags(),
-            CHIP_TAGS.iter().map(|t| (*t).to_owned()).collect::<Vec<_>>(),
+            CHIP_TAGS
+                .iter()
+                .map(|t| (*t).to_owned())
+                .collect::<Vec<_>>(),
         );
     }
 
@@ -443,12 +466,20 @@ mod tests {
     fn emits_group_parent_plus_n_aria_pressed_buttons() {
         let nodes = FilterChipView::access_node(&state_with(BOOT_ON), None);
         assert_eq!(nodes.len(), N + 1, "one group + N chips");
-        assert_eq!(nodes[0].role, pinion_a11y::AriaRole::Group, "first node is the group");
+        assert_eq!(
+            nodes[0].role,
+            pinion_a11y::AriaRole::Group,
+            "first node is the group"
+        );
         assert_eq!(nodes[0].name.as_deref(), Some("Filters"));
         assert_eq!(nodes[0].children.len(), N, "group references every chip");
         for (i, node) in nodes[1..].iter().enumerate() {
             assert_eq!(node.role, pinion_a11y::AriaRole::Button, "chip is a button");
-            assert_eq!(node.state.checked, Some(BOOT_ON[i]), "aria-pressed mirrors on/off");
+            assert_eq!(
+                node.state.checked,
+                Some(BOOT_ON[i]),
+                "aria-pressed mirrors on/off"
+            );
             assert_eq!(node.name.as_deref(), Some(LABELS[i]));
         }
     }

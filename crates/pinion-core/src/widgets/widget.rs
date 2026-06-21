@@ -97,7 +97,10 @@ pub struct IntentEmitter<W> {
 impl<W> IntentEmitter<W> {
     /// Wrap `inner` with an empty intent buffer.
     pub const fn new(inner: W) -> Self {
-        Self { inner, pending: Vec::new() }
+        Self {
+            inner,
+            pending: Vec::new(),
+        }
     }
 
     /// Enqueue an intent. Called from the adapter's `send` after
@@ -211,11 +214,7 @@ pub trait WidgetTransition {
     /// pipeline consumes the return; direct callers should never
     /// discard it.
     #[must_use]
-    fn detect(
-        before: Self::Snapshot,
-        event: Self::Event,
-        after: Self::Snapshot,
-    ) -> Vec<Intent>;
+    fn detect(before: Self::Snapshot, event: Self::Event, after: Self::Snapshot) -> Vec<Intent>;
 }
 
 impl<W: WidgetTransition> IntentEmitter<W> {

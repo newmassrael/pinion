@@ -227,7 +227,7 @@ fn word_end(text: &str, start: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{highlight_code, SyntaxPalette};
+    use super::{SyntaxPalette, highlight_code};
 
     const KW: &[&str] = &["fn", "let", "if", "return", "true"];
     const SIZE: u32 = 16;
@@ -283,7 +283,11 @@ mod tests {
         // fractional digit follows).
         assert_eq!(spans("12 3.14 4."), vec![(0, 2), (3, 7), (8, 9)]);
         let r = highlight_code("4.", KW, SyntaxPalette::classic(), SIZE);
-        assert_eq!((r[0].start, r[0].end), (0, 1), "no fraction digit → just '4'");
+        assert_eq!(
+            (r[0].start, r[0].end),
+            (0, 1),
+            "no fraction digit → just '4'"
+        );
     }
 
     #[test]

@@ -62,7 +62,14 @@ mod tests {
         owner.provide_monospace_metrics(Rc::new(LayoutCacheMonospaceMetrics::new()));
         let via_seam = owner.run(|| pinion_core::measured_monospace_cell(32));
 
-        assert_eq!(via_seam, Some(direct), "seam must deliver the measured cell");
-        assert!(direct.cell_w() < direct.cell_h(), "measured cell is taller than wide");
+        assert_eq!(
+            via_seam,
+            Some(direct),
+            "seam must deliver the measured cell"
+        );
+        assert!(
+            direct.cell_w() < direct.cell_h(),
+            "measured cell is taller than wide"
+        );
     }
 }

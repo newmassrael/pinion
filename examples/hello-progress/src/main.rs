@@ -29,16 +29,16 @@
 //! animation driver, so the R724 `scene/tick` RPC drives + verifies it
 //! deterministically.
 
+use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
 use pinion_core::external::External;
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole};
-use pinion_core::widgets::progress_bar::{use_indeterminate_sweep, ProgressBarExternal};
-use pinion_core::{scale_normalized_to_px, Frame, Scene, WidgetCore};
-use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_core::theme::{ColorRole, use_theme};
+use pinion_core::widgets::progress_bar::{ProgressBarExternal, use_indeterminate_sweep};
+use pinion_core::{Frame, Scene, WidgetCore, scale_normalized_to_px};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloProgressRenderer, HelloProgressRendererError);
@@ -263,7 +263,6 @@ impl WidgetCore for ProgressView {
         None
     }
 
-
     fn fmt_state_log(state: &(f32, bool)) -> String {
         if state.1 {
             "indeterminate".to_string()
@@ -356,16 +355,18 @@ mod tests {
                 .intervene("indeterminate", IntrospectValue::Bool(true))
                 .expect("indeterminate is writable");
         }
-        assert!(ProgressView::read_state(&scene).1, "indeterminate flag round-trips");
+        assert!(
+            ProgressView::read_state(&scene).1,
+            "indeterminate flag round-trips"
+        );
     }
 
     #[test]
     fn read_state_defaults_to_zero_without_external() {
         // A non-External scene (a bare paint container) yields 0.0 — the
         // `read_state` walk only resolves a root `Scene::External`.
-        let (value, indeterminate) = ProgressView::read_state(&Scene::Container(
-            ContainerNode::new(vec![]),
-        ));
+        let (value, indeterminate) =
+            ProgressView::read_state(&Scene::Container(ContainerNode::new(vec![])));
         assert!((value - 0.0).abs() < 1e-5);
         assert!(!indeterminate);
     }
@@ -401,7 +402,10 @@ mod a11y_tests {
         // WAI-ARIA: an indeterminate bar carries no aria-valuenow.
         let nodes = ProgressView::access_node(&(0.4, true), None);
         assert_eq!(nodes[0].role, AriaRole::ProgressBar);
-        assert!(nodes[0].value.is_none(), "indeterminate omits the Float value");
+        assert!(
+            nodes[0].value.is_none(),
+            "indeterminate omits the Float value"
+        );
     }
 
     #[test]

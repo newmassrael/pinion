@@ -16,7 +16,7 @@
 //! Rust enum sticks to idiomatic Rust casing — [`serde`] bridges via
 //! per-variant `rename`.
 
-use pinion_text_unicode::{normalize, NormForm};
+use pinion_text_unicode::{NormForm, normalize};
 use serde::{Deserialize, Serialize};
 
 /// Wire-shape selector for the requested normalization form.
@@ -72,7 +72,7 @@ pub fn text_normalize(text: &str, form: NormalizeForm) -> NormalizeOutcome {
 
 #[cfg(test)]
 mod tests {
-    use super::{text_normalize, NormalizeForm};
+    use super::{NormalizeForm, text_normalize};
 
     #[test]
     fn ascii_round_trip_all_forms() {
@@ -118,10 +118,7 @@ mod tests {
     #[test]
     fn hangul_jamo_compose_to_syllable() {
         // ᄒ ᅡ ᆫ → 한 via algorithmic Hangul composition.
-        let out = text_normalize(
-            "\u{1112}\u{1161}\u{11AB}",
-            NormalizeForm::Nfc,
-        );
+        let out = text_normalize("\u{1112}\u{1161}\u{11AB}", NormalizeForm::Nfc);
         assert_eq!(out.text, "\u{D55C}");
     }
 
@@ -153,8 +150,7 @@ mod tests {
         // abbreviation (wire format expected by AI agents).
         let nfc = serde_json::to_string(&NormalizeForm::Nfc).unwrap();
         assert_eq!(nfc, "\"NFC\"");
-        let nfkd: NormalizeForm =
-            serde_json::from_str("\"NFKD\"").unwrap();
+        let nfkd: NormalizeForm = serde_json::from_str("\"NFKD\"").unwrap();
         assert_eq!(nfkd, NormalizeForm::Nfkd);
     }
 }

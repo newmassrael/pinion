@@ -94,7 +94,10 @@ pub fn slider_apply_key(
     };
     // A disabled slider ignores keyboard input (ARIA).
     if let Some(IntrospectValue::Text(name)) = intro.query("state") {
-        if matches!(SliderState::from_name_or_default(&name), SliderState::Disabled) {
+        if matches!(
+            SliderState::from_name_or_default(&name),
+            SliderState::Disabled
+        ) {
             return false;
         }
     }
@@ -148,9 +151,10 @@ pub fn slider_track_inactive(theme: &Theme, state: SliderState) -> Color {
     // Divergent: the inactive track carries no hover/pressed overlay (only
     // the disabled fade), so it keeps its own arms but sources the token.
     match state {
-        SliderState::Disabled => {
-            base.lerp(theme.resolve(ColorRole::Surface), crate::state_layer::DISABLED)
-        }
+        SliderState::Disabled => base.lerp(
+            theme.resolve(ColorRole::Surface),
+            crate::state_layer::DISABLED,
+        ),
         _ => base,
     }
 }
@@ -165,9 +169,10 @@ pub fn slider_thumb_fill(theme: &Theme, state: SliderState) -> Color {
     match state {
         SliderState::Idle | SliderState::Hover => on_accent,
         SliderState::Dragging => on_accent.lerp(theme.resolve(ColorRole::Accent), 0.2),
-        SliderState::Disabled => {
-            on_accent.lerp(theme.resolve(ColorRole::Surface), crate::state_layer::DISABLED)
-        }
+        SliderState::Disabled => on_accent.lerp(
+            theme.resolve(ColorRole::Surface),
+            crate::state_layer::DISABLED,
+        ),
     }
 }
 
@@ -198,13 +203,20 @@ mod tests {
             slider_scene("b", 0.8),
         ]));
         let (_, value) = read_slider_state(&scene, "b").expect("tag b present");
-        assert!((value - 0.8).abs() < 1e-5, "reads the addressed external, not the first");
+        assert!(
+            (value - 0.8).abs() < 1e-5,
+            "reads the addressed external, not the first"
+        );
     }
 
     #[test]
     fn returns_none_for_missing_external() {
         let scene = slider_scene("vol", 0.5);
-        assert_eq!(read_slider_state(&scene, "nope"), None, "missing tag → None (caller defaults)");
+        assert_eq!(
+            read_slider_state(&scene, "nope"),
+            None,
+            "missing tag → None (caller defaults)"
+        );
     }
 
     // ── R739.1 slider_apply_key scaffold (the SSOT shared by every
@@ -220,19 +232,33 @@ mod tests {
         // Wrong focus → the scaffold refuses before reading the value.
         let handled = slider_apply_key(&mut scene, Some("other"), "vol", |c| Some(c + 0.1));
         assert!(!handled, "key for a different tag is not handled");
-        assert!((value_of(&scene, "vol") - 0.5).abs() < 1e-5, "value unchanged");
+        assert!(
+            (value_of(&scene, "vol") - 0.5).abs() < 1e-5,
+            "value unchanged"
+        );
         // Focused but the policy closure declines (None) → not handled.
         let handled = slider_apply_key(&mut scene, Some("vol"), "vol", |_| None);
         assert!(!handled, "a key the policy declines falls through");
-        assert!((value_of(&scene, "vol") - 0.5).abs() < 1e-5, "value unchanged");
+        assert!(
+            (value_of(&scene, "vol") - 0.5).abs() < 1e-5,
+            "value unchanged"
+        );
     }
 
     #[test]
     fn apply_key_routes_policy_value_through_intervene() {
         let mut scene = slider_scene("vol", 0.5);
-        let handled = slider_apply_key(&mut scene, Some("vol"), "vol", |c| Some((c + 0.2).clamp(0.0, 1.0)));
-        assert!(handled, "focused + policy value → written through intervene");
-        assert!((value_of(&scene, "vol") - 0.7).abs() < 1e-5, "0.5 + 0.2 = 0.7");
+        let handled = slider_apply_key(&mut scene, Some("vol"), "vol", |c| {
+            Some((c + 0.2).clamp(0.0, 1.0))
+        });
+        assert!(
+            handled,
+            "focused + policy value → written through intervene"
+        );
+        assert!(
+            (value_of(&scene, "vol") - 0.7).abs() < 1e-5,
+            "0.5 + 0.2 = 0.7"
+        );
     }
 
     #[test]
@@ -250,7 +276,10 @@ mod tests {
         });
         assert!(!handled, "disabled slider refuses the key");
         assert!(!ran, "policy closure never runs while disabled");
-        assert!((value_of(&scene, "vol") - 0.5).abs() < 1e-5, "value unchanged while disabled");
+        assert!(
+            (value_of(&scene, "vol") - 0.5).abs() < 1e-5,
+            "value unchanged while disabled"
+        );
     }
 
     // ── R738 color contract (pre-lift parity with the inline bindings) ──
@@ -294,6 +323,9 @@ mod tests {
         let expected_drag = theme
             .resolve(ColorRole::OnAccent)
             .lerp(theme.resolve(ColorRole::Accent), 0.2);
-        assert_eq!(slider_thumb_fill(&theme, SliderState::Dragging), expected_drag);
+        assert_eq!(
+            slider_thumb_fill(&theme, SliderState::Dragging),
+            expected_drag
+        );
     }
 }

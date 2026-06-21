@@ -447,7 +447,11 @@ mod tests {
     #[test]
     fn emits_tree_root_then_one_treeitem_per_row() {
         let out = nodes();
-        assert_eq!(out.len(), sample_rows().len() + 1, "root + one node per row");
+        assert_eq!(
+            out.len(),
+            sample_rows().len() + 1,
+            "root + one node per row"
+        );
         assert_eq!(out[0].role, AriaRole::Tree, "first node is the tree root");
         for row in &out[1..] {
             assert_eq!(row.role, AriaRole::TreeItem, "every child is a treeitem");
@@ -462,18 +466,45 @@ mod tests {
         let rows = sample_rows();
         // Window rows[1..3]: "main.rs" + "widgets" (the middle two of five).
         let window = VisibleWindow { first: 1, count: 2 };
-        let out =
-            windowed_tree_access_nodes("tree", "tree", None, &rows, &window, None, Some("src/widgets"));
+        let out = windowed_tree_access_nodes(
+            "tree",
+            "tree",
+            None,
+            &rows,
+            &window,
+            None,
+            Some("src/widgets"),
+        );
         assert_eq!(out.len(), 3, "root + 2 windowed treeitems, not all 5 rows");
         assert_eq!(out[0].role, AriaRole::Tree, "first node is the tree root");
-        assert_eq!(out[1].tag, tree_row_tag("tree", "src/main.rs"), "first windowed row");
-        assert_eq!(out[2].tag, tree_row_tag("tree", "src/widgets"), "second windowed row");
+        assert_eq!(
+            out[1].tag,
+            tree_row_tag("tree", "src/main.rs"),
+            "first windowed row"
+        );
+        assert_eq!(
+            out[2].tag,
+            tree_row_tag("tree", "src/widgets"),
+            "second windowed row"
+        );
         // The window cuts the top-level sibling group, but each treeitem keeps
         // its absolute posinset/setsize from the row (not the slice position).
-        assert_eq!(out[2].position_in_set, Some(2), "absolute posinset survives windowing");
-        assert_eq!(out[2].size_of_set, Some(2), "absolute setsize survives windowing");
+        assert_eq!(
+            out[2].position_in_set,
+            Some(2),
+            "absolute posinset survives windowing"
+        );
+        assert_eq!(
+            out[2].size_of_set,
+            Some(2),
+            "absolute setsize survives windowing"
+        );
         // The root references exactly the windowed children.
-        assert_eq!(out[0].children.len(), 2, "root claims only the windowed rows");
+        assert_eq!(
+            out[0].children.len(),
+            2,
+            "root claims only the windowed rows"
+        );
     }
 
     #[test]
@@ -498,7 +529,13 @@ mod tests {
         let tags: Vec<&str> = out[1..].iter().map(|n| n.tag.as_str()).collect();
         assert_eq!(
             tags,
-            ["tree#src", "tree#src/main.rs", "tree#src/widgets", "tree#src/widgets/mod.rs", "tree#docs"],
+            [
+                "tree#src",
+                "tree#src/main.rs",
+                "tree#src/widgets",
+                "tree#src/widgets/mod.rs",
+                "tree#docs"
+            ],
         );
     }
 
@@ -522,9 +559,15 @@ mod tests {
         let src = by_tag("tree#src");
         assert_eq!((src.position_in_set, src.size_of_set), (Some(1), Some(2)));
         let widgets = by_tag("tree#src/widgets");
-        assert_eq!((widgets.position_in_set, widgets.size_of_set), (Some(2), Some(2)));
+        assert_eq!(
+            (widgets.position_in_set, widgets.size_of_set),
+            (Some(2), Some(2))
+        );
         let mod_rs = by_tag("tree#src/widgets/mod.rs");
-        assert_eq!((mod_rs.position_in_set, mod_rs.size_of_set), (Some(1), Some(1)));
+        assert_eq!(
+            (mod_rs.position_in_set, mod_rs.size_of_set),
+            (Some(1), Some(1))
+        );
     }
 
     #[test]
@@ -533,7 +576,10 @@ mod tests {
         let by_tag = |tag: &str| out.iter().find(|n| n.tag == tag).expect("row present");
         assert_eq!(by_tag("tree#src").name.as_deref(), Some("src"));
         assert_eq!(by_tag("tree#src/main.rs").name.as_deref(), Some("main.rs"));
-        assert_eq!(by_tag("tree#src/widgets/mod.rs").name.as_deref(), Some("mod.rs"));
+        assert_eq!(
+            by_tag("tree#src/widgets/mod.rs").name.as_deref(),
+            Some("mod.rs")
+        );
     }
 
     #[test]
@@ -545,25 +591,51 @@ mod tests {
         let by_tag = |tag: &str| out.iter().find(|n| n.tag == tag).expect("row present");
         assert_eq!(by_tag("tree#src").expanded, Some(true));
         assert_eq!(by_tag("tree#src/widgets").expanded, Some(true));
-        assert_eq!(by_tag("tree#docs").expanded, Some(false), "collapsed branch");
-        assert_eq!(by_tag("tree#src/main.rs").expanded, None, "leaf omits aria-expanded");
+        assert_eq!(
+            by_tag("tree#docs").expanded,
+            Some(false),
+            "collapsed branch"
+        );
+        assert_eq!(
+            by_tag("tree#src/main.rs").expanded,
+            None,
+            "leaf omits aria-expanded"
+        );
         assert_eq!(by_tag("tree#src/widgets/mod.rs").expanded, None);
     }
 
     #[test]
     fn selected_row_carries_aria_selected_others_omit_it() {
         // Single-select tree: only the named cursor row is aria-selected.
-        let out = tree_access_nodes("tree", "tree", None, &sample_rows(), Some("src/widgets"), None);
+        let out = tree_access_nodes(
+            "tree",
+            "tree",
+            None,
+            &sample_rows(),
+            Some("src/widgets"),
+            None,
+        );
         let by_tag = |tag: &str| out.iter().find(|n| n.tag == tag).expect("row present");
-        assert_eq!(by_tag("tree#src/widgets").selected, Some(true), "cursor row selected");
-        assert_eq!(by_tag("tree#src").selected, None, "non-cursor row omits aria-selected");
+        assert_eq!(
+            by_tag("tree#src/widgets").selected,
+            Some(true),
+            "cursor row selected"
+        );
+        assert_eq!(
+            by_tag("tree#src").selected,
+            None,
+            "non-cursor row omits aria-selected"
+        );
         assert_eq!(by_tag("tree#docs").selected, None);
     }
 
     #[test]
     fn no_selection_leaves_every_row_unselected() {
         for node in &nodes()[1..] {
-            assert_eq!(node.selected, None, "None selected_id → no aria-selected anywhere");
+            assert_eq!(
+                node.selected, None,
+                "None selected_id → no aria-selected anywhere"
+            );
         }
     }
 
@@ -572,16 +644,40 @@ mod tests {
         // R868 — the keyboard cursor row carries `with_focused`
         // (aria-activedescendant), independent of `aria-selected`: here a
         // navigation tree has a cursor but no selection.
-        let out = tree_access_nodes("tree", "tree", None, &sample_rows(), None, Some("src/widgets"));
+        let out = tree_access_nodes(
+            "tree",
+            "tree",
+            None,
+            &sample_rows(),
+            None,
+            Some("src/widgets"),
+        );
         let by_tag = |tag: &str| out.iter().find(|n| n.tag == tag).expect("row present");
-        assert!(by_tag("tree#src/widgets").state.focused, "cursor row is the active descendant");
-        assert_eq!(by_tag("tree#src/widgets").selected, None, "no selection model: not selected");
-        assert!(!by_tag("tree#src").state.focused, "non-cursor row is not focused");
+        assert!(
+            by_tag("tree#src/widgets").state.focused,
+            "cursor row is the active descendant"
+        );
+        assert_eq!(
+            by_tag("tree#src/widgets").selected,
+            None,
+            "no selection model: not selected"
+        );
+        assert!(
+            !by_tag("tree#src").state.focused,
+            "non-cursor row is not focused"
+        );
         // A click-only selection tree: selected but no keyboard cursor.
         let sel = tree_access_nodes("tree", "tree", None, &sample_rows(), Some("docs"), None);
         let sel_by = |tag: &str| sel.iter().find(|n| n.tag == tag).expect("row present");
-        assert_eq!(sel_by("tree#docs").selected, Some(true), "click-selected row is selected");
-        assert!(!sel_by("tree#docs").state.focused, "no keyboard cursor: not active descendant");
+        assert_eq!(
+            sel_by("tree#docs").selected,
+            Some(true),
+            "click-selected row is selected"
+        );
+        assert!(
+            !sel_by("tree#docs").state.focused,
+            "no keyboard cursor: not active descendant"
+        );
     }
 
     #[test]
@@ -590,8 +686,14 @@ mod tests {
         // the AT announces only what the user sees.
         let out = nodes();
         let tags: Vec<&str> = out.iter().map(|n| n.tag.as_str()).collect();
-        assert!(tags.contains(&"tree#docs"), "the collapsed branch itself stays visible");
-        assert!(!tags.iter().any(|t| t.starts_with("tree#docs/")), "its descendants are hidden");
+        assert!(
+            tags.contains(&"tree#docs"),
+            "the collapsed branch itself stays visible"
+        );
+        assert!(
+            !tags.iter().any(|t| t.starts_with("tree#docs/")),
+            "its descendants are hidden"
+        );
     }
 
     #[test]
@@ -601,15 +703,27 @@ mod tests {
         // ("file_tree"). The Tree node carries the root tag; rows carry
         // the prefix.
         let out = tree_access_nodes("tree_root", "file_tree", None, &sample_rows(), None, None);
-        assert_eq!(out[0].tag, "tree_root", "Tree root node uses the focusable tag");
+        assert_eq!(
+            out[0].tag, "tree_root",
+            "Tree root node uses the focusable tag"
+        );
         assert_eq!(out[1].tag, "file_tree#src", "rows use the composite prefix");
-        assert_eq!(out[0].children[0], "file_tree#src", "root references the prefixed row tags");
+        assert_eq!(
+            out[0].children[0], "file_tree#src",
+            "root references the prefixed row tags"
+        );
     }
 
     #[test]
     fn optional_name_lowers_when_present() {
-        let named =
-            tree_access_nodes("tree", "tree", Some("Scene inspector"), &sample_rows(), None, None);
+        let named = tree_access_nodes(
+            "tree",
+            "tree",
+            Some("Scene inspector"),
+            &sample_rows(),
+            None,
+            None,
+        );
         assert_eq!(named[0].name.as_deref(), Some("Scene inspector"));
         assert_eq!(nodes()[0].name, None, "no name when None");
     }
@@ -624,7 +738,7 @@ mod tests {
 
     // ── R863 §5.40 §5.27 — treegrid (columned tree) builder ──────────
 
-    use super::{treegrid_nodes, TreeGridSelection};
+    use super::{TreeGridSelection, treegrid_nodes};
     use std::collections::BTreeSet;
 
     const DATA_HEADERS: [&str; 3] = ["Type", "Visible", "Layer"];
@@ -640,8 +754,16 @@ mod tests {
     fn tg_nodes() -> Vec<AccessNode> {
         let empty = BTreeSet::new();
         treegrid_nodes(
-            "tg_root", "tg", Some("Scene outliner"), "Name", &DATA_HEADERS, &sample_rows(),
-            &TreeGridSelection { selected: &empty, cursor: None },
+            "tg_root",
+            "tg",
+            Some("Scene outliner"),
+            "Name",
+            &DATA_HEADERS,
+            &sample_rows(),
+            &TreeGridSelection {
+                selected: &empty,
+                cursor: None,
+            },
         )
     }
 
@@ -651,10 +773,17 @@ mod tests {
         // 1 treegrid + 1 header row + (1 name + 3 metadata) columnheaders +
         // 5 rows × (1 row + 1 rowheader + 3 gridcells).
         assert_eq!(out.len(), 1 + 1 + 4 + sample_rows().len() * 5);
-        assert_eq!(out[0].role, AriaRole::TreeGrid, "container is a treegrid, not a tree");
+        assert_eq!(
+            out[0].role,
+            AriaRole::TreeGrid,
+            "container is a treegrid, not a tree"
+        );
         assert_eq!(out[0].name.as_deref(), Some("Scene outliner"));
         // R902 — the outliner is multi-select, so its container is multiselectable.
-        assert!(out[0].multiselectable, "treegrid container is aria-multiselectable");
+        assert!(
+            out[0].multiselectable,
+            "treegrid container is aria-multiselectable"
+        );
         // The container references the header row + every visible data-row strip.
         assert_eq!(out[0].children[0], "tg_hrow");
         assert_eq!(out[0].children[1], "tg_drowsrc");
@@ -668,10 +797,18 @@ mod tests {
         // the AT row bounds cover the name column, not just the metadata.
         let out = tg_nodes();
         let hrow = out.iter().find(|n| n.tag == "tg_hrow").unwrap();
-        assert_eq!(hrow.bounds_union_tags, vec!["tg_fhrow"], "header row spans both header bands");
+        assert_eq!(
+            hrow.bounds_union_tags,
+            vec!["tg_fhrow"],
+            "header row spans both header bands"
+        );
         let row = out.iter().find(|n| n.tag == "tg_drowsrc").unwrap();
         assert_eq!(row.role, AriaRole::Row);
-        assert_eq!(row.bounds_union_tags, vec!["tg#src"], "data row spans the frozen name cell");
+        assert_eq!(
+            row.bounds_union_tags,
+            vec!["tg#src"],
+            "data row spans the frozen name cell"
+        );
     }
 
     #[test]
@@ -680,14 +817,24 @@ mod tests {
         // The name cell (`tg#src`) is the row's label → rowheader.
         let name = out.iter().find(|n| n.tag == "tg#src").unwrap();
         assert_eq!(name.role, AriaRole::RowHeader);
-        assert_eq!(name.name.as_deref(), Some("src"), "rowheader name mirrors the label");
+        assert_eq!(
+            name.name.as_deref(),
+            Some("src"),
+            "rowheader name mirrors the label"
+        );
         // The metadata cells are gridcells, named by enrichment (None here).
         let cell0 = out.iter().find(|n| n.tag == "tg_dcellsrc_0").unwrap();
         assert_eq!(cell0.role, AriaRole::GridCell);
-        assert!(cell0.name.is_none(), "gridcell name comes from the painted text, not the builder");
+        assert!(
+            cell0.name.is_none(),
+            "gridcell name comes from the painted text, not the builder"
+        );
         // The row references the rowheader first, then one gridcell per column.
         let row = out.iter().find(|n| n.tag == "tg_drowsrc").unwrap();
-        assert_eq!(row.children, vec!["tg#src", "tg_dcellsrc_0", "tg_dcellsrc_1", "tg_dcellsrc_2"]);
+        assert_eq!(
+            row.children,
+            vec!["tg#src", "tg_dcellsrc_0", "tg_dcellsrc_1", "tg_dcellsrc_2"]
+        );
     }
 
     #[test]
@@ -727,7 +874,10 @@ mod tests {
         );
         // The header row references them in the same order.
         let hrow = out.iter().find(|n| n.tag == "tg_hrow").unwrap();
-        assert_eq!(hrow.children, vec!["tg_chtree", "tg_ch0", "tg_ch1", "tg_ch2"]);
+        assert_eq!(
+            hrow.children,
+            vec!["tg_chtree", "tg_ch0", "tg_ch1", "tg_ch2"]
+        );
     }
 
     #[test]
@@ -738,35 +888,75 @@ mod tests {
         // → `with_focused`) is a SEPARATE id that need not be in the set.
         let selected = sel(&["src", "src/widgets"]);
         let out = treegrid_nodes(
-            "tg_root", "tg", None, "Name", &DATA_HEADERS, &sample_rows(),
-            &TreeGridSelection { selected: &selected, cursor: Some("docs") },
+            "tg_root",
+            "tg",
+            None,
+            "Name",
+            &DATA_HEADERS,
+            &sample_rows(),
+            &TreeGridSelection {
+                selected: &selected,
+                cursor: Some("docs"),
+            },
         );
         let by_tag = |tag: &str| out.iter().find(|n| n.tag == tag).expect("row present");
         // Two selected rows are aria-selected at once (set membership).
         assert_eq!(by_tag("tg_drowsrc").selected, Some(true), "selected row");
-        assert_eq!(by_tag("tg_drowsrc/widgets").selected, Some(true), "second selected row");
+        assert_eq!(
+            by_tag("tg_drowsrc/widgets").selected,
+            Some(true),
+            "second selected row"
+        );
         // A non-selected row carries explicit aria-selected=false (multiselectable
         // convention), NOT an omitted axis.
-        assert_eq!(by_tag("tg_drowsrc/main.rs").selected, Some(false), "unselected row is explicit false");
+        assert_eq!(
+            by_tag("tg_drowsrc/main.rs").selected,
+            Some(false),
+            "unselected row is explicit false"
+        );
         // The cursor (`docs`) carries the roving `focused` flag though it is NOT
         // selected — the decoupling Ctrl+Space exercises.
-        assert!(by_tag("tg_drowdocs").state.focused, "cursor row is the active descendant");
-        assert_eq!(by_tag("tg_drowdocs").selected, Some(false), "the cursor row is not in the selection");
-        assert!(!by_tag("tg_drowsrc").state.focused, "a selected non-cursor row is not the active descendant");
+        assert!(
+            by_tag("tg_drowdocs").state.focused,
+            "cursor row is the active descendant"
+        );
+        assert_eq!(
+            by_tag("tg_drowdocs").selected,
+            Some(false),
+            "the cursor row is not in the selection"
+        );
+        assert!(
+            !by_tag("tg_drowsrc").state.focused,
+            "a selected non-cursor row is not the active descendant"
+        );
     }
 
     #[test]
     fn treegrid_empty_rows_emit_container_and_headers_only() {
         let empty = BTreeSet::new();
         let out = treegrid_nodes(
-            "tg_root", "tg", None, "Name", &DATA_HEADERS, &[],
-            &TreeGridSelection { selected: &empty, cursor: None },
+            "tg_root",
+            "tg",
+            None,
+            "Name",
+            &DATA_HEADERS,
+            &[],
+            &TreeGridSelection {
+                selected: &empty,
+                cursor: None,
+            },
         );
         // container + header row + (1 name + 3 metadata) columnheaders.
         assert_eq!(out.len(), 1 + 1 + 4);
         assert_eq!(out[0].role, AriaRole::TreeGrid);
-        assert!(out[0].multiselectable, "the multiselectable axis applies even when empty");
+        assert!(
+            out[0].multiselectable,
+            "the multiselectable axis applies even when empty"
+        );
         assert_eq!(out[0].children, vec!["tg_hrow"], "no data rows referenced");
-        assert!(out.iter().all(|n| n.role != AriaRole::Row || n.tag == "tg_hrow"));
+        assert!(
+            out.iter()
+                .all(|n| n.role != AriaRole::Row || n.tag == "tg_hrow")
+        );
     }
 }

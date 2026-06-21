@@ -194,8 +194,8 @@ impl<T> std::fmt::Debug for Signal<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::Signal;
     use super::super::owner::Owner;
+    use super::Signal;
 
     #[test]
     fn new_then_get_returns_initial() {

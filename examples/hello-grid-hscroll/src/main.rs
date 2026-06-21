@@ -35,20 +35,20 @@
 
 use std::rc::Rc;
 
-use pinion_a11y::{windowed_grid_nodes, AccessNode, WidgetA11y};
+use pinion_a11y::{AccessNode, WidgetA11y, windowed_grid_nodes};
 use pinion_core::external::{External, StubExternal};
 use pinion_core::scene::ContainerNode;
 use pinion_core::style::{BoxStyle, FlexDirection, LayoutStyle};
-use pinion_core::theme::{use_theme, ColorRole};
+use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::column_widths::{
-    column_resize_externals, use_column_widths, ColumnWidthExternal,
+    ColumnWidthExternal, column_resize_externals, use_column_widths,
 };
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::{Frame, Scene, WidgetCore};
-use pinion_widget_paint::table::{view_virtual_table, GridScroll, TableStyle, VirtualTableData};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_shell::{WidgetView, vello_renderer_impl};
+use pinion_widget_paint::table::{GridScroll, TableStyle, VirtualTableData, view_virtual_table};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloGridHscrollRenderer, HelloGridHscrollRendererError);
@@ -71,8 +71,9 @@ const ROW_H: u32 = 36;
 /// Rows built beyond the strict window on each side.
 const OVERSCAN: usize = 3;
 /// Column header labels — a process-table-style wide row.
-const HEADERS: [&str; NCOLS] =
-    ["PID", "Name", "CPU%", "Memory", "Threads", "Status", "User", "Started"];
+const HEADERS: [&str; NCOLS] = [
+    "PID", "Name", "CPU%", "Memory", "Threads", "Status", "User", "Started",
+];
 /// Paint-root + a11y `grid` tag, and the [`StubExternal`] anchor tag.
 const TABLE_TAG: &str = "ghs";
 /// Cache key (and input-router tag) for the vertical body `ScrollState`.
@@ -137,7 +138,10 @@ fn view(_state: (), _frame: &Frame) -> Scene {
 
     let grid = view_virtual_table(
         TABLE_TAG,
-        GridScroll { body: &scroll, horizontal: &h_scroll },
+        GridScroll {
+            body: &scroll,
+            horizontal: &h_scroll,
+        },
         VirtualTableData {
             headers: &HEADERS,
             item_count: N,
@@ -200,9 +204,16 @@ impl WidgetCore for GridHscrollView {
         // scroll viewport (a stable width — the dragged cell resizes, the
         // viewport does not), so they share the grid's h-scroll state + tag.
         let h_scroll = use_scroll_state(H_SCROLL_KEY);
-        let mut externals =
-            vec![ExtraExternal::new(COLS_KEY, Box::new(ColumnWidthExternal::new(Rc::clone(&widths))))];
-        externals.extend(column_resize_externals(TABLE_TAG, &widths, &h_scroll, H_SCROLL_KEY));
+        let mut externals = vec![ExtraExternal::new(
+            COLS_KEY,
+            Box::new(ColumnWidthExternal::new(Rc::clone(&widths))),
+        )];
+        externals.extend(column_resize_externals(
+            TABLE_TAG,
+            &widths,
+            &h_scroll,
+            H_SCROLL_KEY,
+        ));
         externals
     }
 

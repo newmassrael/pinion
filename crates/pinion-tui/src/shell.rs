@@ -89,7 +89,7 @@
 use std::env;
 use std::fs::OpenOptions;
 use std::io::{self, BufRead, Stdout, Write, stderr, stdout};
-use std::sync::{mpsc, Arc};
+use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::Duration;
 
@@ -343,8 +343,7 @@ fn run_impl<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdout>>>>(
                     // honour the WAI-ARIA "Escape closes the dialog,
                     // not the app" contract identically.
                     if core.focus_is_modal() {
-                        let modifiers =
-                            crate::input::modifiers_from_crossterm(key.modifiers);
+                        let modifiers = crate::input::modifiers_from_crossterm(key.modifiers);
                         if core.dispatch_key("Escape", modifiers) {
                             commit_and_finalize::<V>(&mut core, cols, rows, &mut renderer)?;
                         }
@@ -448,9 +447,7 @@ fn dispatch_mouse<V: WidgetViewTui>(
         // Plain move and left-button drag both forward a cursor
         // position to the router — drag-aware capture is handled
         // inside the router so the surface arm collapses.
-        MouseEventKind::Moved | MouseEventKind::Drag(MouseButton::Left) => {
-            core.cursor_moved(x, y)
-        }
+        MouseEventKind::Moved | MouseEventKind::Drag(MouseButton::Left) => core.cursor_moved(x, y),
         MouseEventKind::Down(MouseButton::Left) => {
             // Sync the cursor first so `pointer_down` sees the
             // correct hover target. Vello shell's

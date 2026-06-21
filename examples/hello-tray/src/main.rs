@@ -39,6 +39,8 @@
 
 use std::rc::Rc;
 
+#[cfg(test)]
+use pinion_a11y::{AriaRole, WidgetA11y};
 use pinion_core::external::query_proxy_external_impl;
 use pinion_core::external::{
     ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
@@ -51,8 +53,6 @@ use pinion_core::tray::{
     InMemoryTrayBackend, TrayBackend, TrayEvent, TrayMenuItem, TrayModel, TrayStatus,
 };
 use pinion_core::{Frame, Owner, Scene, Signal};
-#[cfg(test)]
-use pinion_a11y::{AriaRole, WidgetA11y};
 use pinion_derive::widget;
 use pinion_shell::vello_renderer_impl;
 
@@ -71,21 +71,31 @@ const ROW_PX: u32 = 14;
 // ─── Shared reactive app state (the menu drives these) ────────────
 
 fn use_window_visible() -> Rc<Signal<bool>> {
-    Owner::current().expect("Owner").cache("tray.window_visible", || Signal::new(true))
+    Owner::current()
+        .expect("Owner")
+        .cache("tray.window_visible", || Signal::new(true))
 }
 fn use_dark_mode() -> Rc<Signal<bool>> {
-    Owner::current().expect("Owner").cache("tray.dark_mode", || Signal::new(false))
+    Owner::current()
+        .expect("Owner")
+        .cache("tray.dark_mode", || Signal::new(false))
 }
 fn use_build_running() -> Rc<Signal<bool>> {
-    Owner::current().expect("Owner").cache("tray.build_running", || Signal::new(false))
+    Owner::current()
+        .expect("Owner")
+        .cache("tray.build_running", || Signal::new(false))
 }
 fn use_quit_requested() -> Rc<Signal<bool>> {
-    Owner::current().expect("Owner").cache("tray.quit_requested", || Signal::new(false))
+    Owner::current()
+        .expect("Owner")
+        .cache("tray.quit_requested", || Signal::new(false))
 }
 fn use_tray_backend() -> Rc<InMemoryTrayBackend> {
     // R949.1 — the backend's `TrayBackend` methods are `&self` (interior
     // mutability), so no outer `RefCell` is needed (the print/storage shape).
-    Owner::current().expect("Owner").cache("tray.backend", InMemoryTrayBackend::new)
+    Owner::current()
+        .expect("Owner")
+        .cache("tray.backend", InMemoryTrayBackend::new)
 }
 
 // ─── Model SSOT (built from app state; view + External share it) ──
@@ -97,14 +107,25 @@ fn build_tray_model(visible: bool, dark: bool, building: bool) -> TrayModel {
     let menu = vec![
         TrayMenuItem::action(
             "toggle_window",
-            if visible { "Hide window" } else { "Show window" },
+            if visible {
+                "Hide window"
+            } else {
+                "Show window"
+            },
         ),
         TrayMenuItem::check("dark", "Dark mode", dark),
         TrayMenuItem::Separator,
         TrayMenuItem::SubMenu {
             label: "Build".to_owned(),
             items: vec![
-                TrayMenuItem::action("bake", if building { "Cancel bake" } else { "Bake assets" }),
+                TrayMenuItem::action(
+                    "bake",
+                    if building {
+                        "Cancel bake"
+                    } else {
+                        "Bake assets"
+                    },
+                ),
                 // Disabled until a bake completes — exercises the
                 // can_activate guard (a disabled id is never dispatched).
                 TrayMenuItem::Action {
@@ -117,11 +138,18 @@ fn build_tray_model(visible: bool, dark: bool, building: bool) -> TrayModel {
         TrayMenuItem::action("quit", "Quit"),
     ];
     let (icon, tip, status) = if building {
-        ("emblem-synchronizing", "Pinion — baking assets…", TrayStatus::NeedsAttention)
+        (
+            "emblem-synchronizing",
+            "Pinion — baking assets…",
+            TrayStatus::NeedsAttention,
+        )
     } else {
         ("applications-games", "Pinion editor", TrayStatus::Active)
     };
-    TrayModel::new(APP_ID, "Pinion", icon).with_tooltip(tip).with_status(status).with_menu(menu)
+    TrayModel::new(APP_ID, "Pinion", icon)
+        .with_tooltip(tip)
+        .with_status(status)
+        .with_menu(menu)
 }
 
 /// Find a menu item by activation id (walks one submenu level) — the read
@@ -164,10 +192,18 @@ fn menu_summary(model: &TrayModel) -> String {
         .iter()
         .map(|it| match it {
             TrayMenuItem::Action { label, enabled, .. } => {
-                if *enabled { label.clone() } else { format!("{label} (disabled)") }
+                if *enabled {
+                    label.clone()
+                } else {
+                    format!("{label} (disabled)")
+                }
             }
             TrayMenuItem::Check { label, checked, .. } => {
-                if *checked { format!("{label} ✓") } else { label.clone() }
+                if *checked {
+                    format!("{label} ✓")
+                } else {
+                    label.clone()
+                }
             }
             TrayMenuItem::Separator => "—".to_owned(),
             TrayMenuItem::SubMenu { label, .. } => format!("{label} ▸"),
@@ -278,14 +314,14 @@ impl ExternalIntrospect for TrayExternal {
         let model = self.model();
         match path {
             "available" => Some(IntrospectValue::Bool(self.backend.is_available())),
-            "publish_count" => {
-                Some(IntrospectValue::Int(i64::from(self.backend.publish_count())))
-            }
+            "publish_count" => Some(IntrospectValue::Int(i64::from(
+                self.backend.publish_count(),
+            ))),
             // Whether the last published model matches the live model — the
             // AI-first "is the OS showing what the app thinks it is" read.
-            "published_in_sync" => {
-                Some(IntrospectValue::Bool(self.backend.published().as_ref() == Some(&model)))
-            }
+            "published_in_sync" => Some(IntrospectValue::Bool(
+                self.backend.published().as_ref() == Some(&model),
+            )),
             "title" => Some(IntrospectValue::Text(model.title)),
             "icon" => Some(IntrospectValue::Text(model.icon_name)),
             "status" => Some(IntrospectValue::Text(model.status.as_str().to_owned())),
@@ -325,7 +361,11 @@ impl ExternalIntrospect for TrayExternal {
         Err(InterveneError::ReadOnly)
     }
 
-    fn invoke(&mut self, path: &str, args: IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+    fn invoke(
+        &mut self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
         match path {
             // An icon (primary) click.
             "activate" => {
@@ -347,7 +387,9 @@ impl ExternalIntrospect for TrayExternal {
             // Force a publish (returns the new publish count).
             "republish" => {
                 self.publish();
-                Ok(IntrospectValue::Int(i64::from(self.backend.publish_count())))
+                Ok(IntrospectValue::Int(i64::from(
+                    self.backend.publish_count(),
+                )))
             }
             _ => Err(InvokeError::UnknownPath),
         }
@@ -391,25 +433,47 @@ fn view(_dark: bool, _frame: &Frame) -> Scene {
 
     // Light / dark panel theming driven by the tray's own Dark-mode toggle.
     let (bg, fg, muted, accent) = if dark {
-        (Color::rgb(0x1e, 0x1e, 0x24), Color::rgb(0xe8, 0xe8, 0xee), Color::rgb(0x9a, 0x9a, 0xa6), Color::rgb(0x6c, 0xb6, 0xff))
+        (
+            Color::rgb(0x1e, 0x1e, 0x24),
+            Color::rgb(0xe8, 0xe8, 0xee),
+            Color::rgb(0x9a, 0x9a, 0xa6),
+            Color::rgb(0x6c, 0xb6, 0xff),
+        )
     } else {
-        (Color::rgb(0xf6, 0xf6, 0xfa), Color::rgb(0x1c, 0x1c, 0x22), Color::rgb(0x66, 0x66, 0x70), Color::rgb(0x16, 0x6c, 0xff))
+        (
+            Color::rgb(0xf6, 0xf6, 0xfa),
+            Color::rgb(0x1c, 0x1c, 0x22),
+            Color::rgb(0x66, 0x66, 0x70),
+            Color::rgb(0x16, 0x6c, 0xff),
+        )
     };
 
     let mut rows: Vec<Scene> = Vec::new();
-    rows.push(label_row(format!("System Tray — {}", model.title), fg, TITLE_PX));
-    rows.push(label_row(format!("icon: {}   status: {}", model.icon_name, model.status.as_str()), muted, ROW_PX));
+    rows.push(label_row(
+        format!("System Tray — {}", model.title),
+        fg,
+        TITLE_PX,
+    ));
+    rows.push(label_row(
+        format!(
+            "icon: {}   status: {}",
+            model.icon_name,
+            model.status.as_str()
+        ),
+        muted,
+        ROW_PX,
+    ));
     rows.push(label_row(model.tooltip.clone(), muted, ROW_PX));
     rows.push(label_row("Menu:".to_owned(), accent, ROW_PX));
     for it in &model.menu {
         let (text, color) = match it {
-            TrayMenuItem::Action { label, enabled, .. } => (
-                format!("  {label}"),
-                if *enabled { fg } else { muted },
-            ),
-            TrayMenuItem::Check { label, checked, .. } => {
-                (format!("  [{}] {label}", if *checked { "x" } else { " " }), fg)
+            TrayMenuItem::Action { label, enabled, .. } => {
+                (format!("  {label}"), if *enabled { fg } else { muted })
             }
+            TrayMenuItem::Check { label, checked, .. } => (
+                format!("  [{}] {label}", if *checked { "x" } else { " " }),
+                fg,
+            ),
             TrayMenuItem::Separator => ("  ────────".to_owned(), muted),
             TrayMenuItem::SubMenu { label, items } => {
                 (format!("  {label} ▸ ({} items)", items.len()), fg)
@@ -494,74 +558,161 @@ mod tests {
     fn r949_boot_model_is_active_with_full_menu() {
         let e = ext();
         assert_eq!(e.query("available"), Some(IntrospectValue::Bool(true)));
-        assert_eq!(e.query("title"), Some(IntrospectValue::Text("Pinion".to_owned())));
-        assert_eq!(e.query("status"), Some(IntrospectValue::Text("Active".to_owned())));
-        assert_eq!(e.query("icon"), Some(IntrospectValue::Text("applications-games".to_owned())));
+        assert_eq!(
+            e.query("title"),
+            Some(IntrospectValue::Text("Pinion".to_owned()))
+        );
+        assert_eq!(
+            e.query("status"),
+            Some(IntrospectValue::Text("Active".to_owned()))
+        );
+        assert_eq!(
+            e.query("icon"),
+            Some(IntrospectValue::Text("applications-games".to_owned()))
+        );
         assert_eq!(e.query("menu_count"), Some(IntrospectValue::Int(5)));
         // Nothing published until an explicit publish / activation.
         assert_eq!(e.query("publish_count"), Some(IntrospectValue::Int(0)));
-        assert_eq!(e.query("published_in_sync"), Some(IntrospectValue::Bool(false)));
+        assert_eq!(
+            e.query("published_in_sync"),
+            Some(IntrospectValue::Bool(false))
+        );
     }
 
     #[test]
     fn r949_republish_records_the_live_model() {
         let mut e = ext();
-        assert_eq!(e.invoke("republish", IntrospectValue::Null), Ok(IntrospectValue::Int(1)));
-        assert_eq!(e.query("published_in_sync"), Some(IntrospectValue::Bool(true)));
-        assert_eq!(e.invoke("republish", IntrospectValue::Null), Ok(IntrospectValue::Int(2)));
+        assert_eq!(
+            e.invoke("republish", IntrospectValue::Null),
+            Ok(IntrospectValue::Int(1))
+        );
+        assert_eq!(
+            e.query("published_in_sync"),
+            Some(IntrospectValue::Bool(true))
+        );
+        assert_eq!(
+            e.invoke("republish", IntrospectValue::Null),
+            Ok(IntrospectValue::Int(2))
+        );
     }
 
     #[test]
     fn r949_dark_toggle_flips_check_and_republishes() {
         let mut e = ext();
         assert_eq!(e.query("dark_mode"), Some(IntrospectValue::Bool(false)));
-        assert_eq!(e.query("item.dark.checked"), Some(IntrospectValue::Bool(false)));
-        assert_eq!(e.invoke("menu_item", IntrospectValue::Text("dark".to_owned())), Ok(IntrospectValue::Bool(true)));
-        assert_eq!(e.query("dark_mode"), Some(IntrospectValue::Bool(true)), "menu flipped app state");
-        assert_eq!(e.query("item.dark.checked"), Some(IntrospectValue::Bool(true)), "the check reflects it");
-        assert_eq!(e.query("publish_count"), Some(IntrospectValue::Int(1)), "the activation re-published");
-        assert_eq!(e.query("published_in_sync"), Some(IntrospectValue::Bool(true)));
+        assert_eq!(
+            e.query("item.dark.checked"),
+            Some(IntrospectValue::Bool(false))
+        );
+        assert_eq!(
+            e.invoke("menu_item", IntrospectValue::Text("dark".to_owned())),
+            Ok(IntrospectValue::Bool(true))
+        );
+        assert_eq!(
+            e.query("dark_mode"),
+            Some(IntrospectValue::Bool(true)),
+            "menu flipped app state"
+        );
+        assert_eq!(
+            e.query("item.dark.checked"),
+            Some(IntrospectValue::Bool(true)),
+            "the check reflects it"
+        );
+        assert_eq!(
+            e.query("publish_count"),
+            Some(IntrospectValue::Int(1)),
+            "the activation re-published"
+        );
+        assert_eq!(
+            e.query("published_in_sync"),
+            Some(IntrospectValue::Bool(true))
+        );
     }
 
     #[test]
     fn r949_toggle_window_relabels_and_activate_is_icon_click() {
         let mut e = ext();
         assert_eq!(e.query("window_visible"), Some(IntrospectValue::Bool(true)));
-        assert_eq!(e.query("item.toggle_window.label"), Some(IntrospectValue::Text("Hide window".to_owned())));
-        e.invoke("menu_item", IntrospectValue::Text("toggle_window".to_owned())).unwrap();
-        assert_eq!(e.query("window_visible"), Some(IntrospectValue::Bool(false)));
-        assert_eq!(e.query("item.toggle_window.label"), Some(IntrospectValue::Text("Show window".to_owned())), "label tracks state");
+        assert_eq!(
+            e.query("item.toggle_window.label"),
+            Some(IntrospectValue::Text("Hide window".to_owned()))
+        );
+        e.invoke(
+            "menu_item",
+            IntrospectValue::Text("toggle_window".to_owned()),
+        )
+        .unwrap();
+        assert_eq!(
+            e.query("window_visible"),
+            Some(IntrospectValue::Bool(false))
+        );
+        assert_eq!(
+            e.query("item.toggle_window.label"),
+            Some(IntrospectValue::Text("Show window".to_owned())),
+            "label tracks state"
+        );
         // The icon (primary) click toggles the window too.
         e.invoke("activate", IntrospectValue::Null).unwrap();
-        assert_eq!(e.query("window_visible"), Some(IntrospectValue::Bool(true)), "activate is an icon click");
+        assert_eq!(
+            e.query("window_visible"),
+            Some(IntrospectValue::Bool(true)),
+            "activate is an icon click"
+        );
     }
 
     #[test]
     fn r949_bake_sets_needs_attention_status_and_icon() {
         let mut e = ext();
-        e.invoke("menu_item", IntrospectValue::Text("bake".to_owned())).unwrap();
+        e.invoke("menu_item", IntrospectValue::Text("bake".to_owned()))
+            .unwrap();
         assert_eq!(e.query("build_running"), Some(IntrospectValue::Bool(true)));
-        assert_eq!(e.query("status"), Some(IntrospectValue::Text("NeedsAttention".to_owned())));
-        assert_eq!(e.query("icon"), Some(IntrospectValue::Text("emblem-synchronizing".to_owned())));
-        assert_eq!(e.query("item.bake.label"), Some(IntrospectValue::Text("Cancel bake".to_owned())));
+        assert_eq!(
+            e.query("status"),
+            Some(IntrospectValue::Text("NeedsAttention".to_owned()))
+        );
+        assert_eq!(
+            e.query("icon"),
+            Some(IntrospectValue::Text("emblem-synchronizing".to_owned()))
+        );
+        assert_eq!(
+            e.query("item.bake.label"),
+            Some(IntrospectValue::Text("Cancel bake".to_owned()))
+        );
     }
 
     #[test]
     fn r949_disabled_and_unknown_ids_are_rejected() {
         let mut e = ext();
         // `ship` is present but disabled.
-        assert_eq!(e.query("item.ship.activatable"), Some(IntrospectValue::Bool(false)));
-        assert_eq!(e.invoke("menu_item", IntrospectValue::Text("ship".to_owned())), Ok(IntrospectValue::Bool(false)));
+        assert_eq!(
+            e.query("item.ship.activatable"),
+            Some(IntrospectValue::Bool(false))
+        );
+        assert_eq!(
+            e.invoke("menu_item", IntrospectValue::Text("ship".to_owned())),
+            Ok(IntrospectValue::Bool(false))
+        );
         // An unknown id.
-        assert_eq!(e.invoke("menu_item", IntrospectValue::Text("nope".to_owned())), Ok(IntrospectValue::Bool(false)));
-        assert_eq!(e.query("publish_count"), Some(IntrospectValue::Int(0)), "a rejected activation publishes nothing");
+        assert_eq!(
+            e.invoke("menu_item", IntrospectValue::Text("nope".to_owned())),
+            Ok(IntrospectValue::Bool(false))
+        );
+        assert_eq!(
+            e.query("publish_count"),
+            Some(IntrospectValue::Int(0)),
+            "a rejected activation publishes nothing"
+        );
     }
 
     #[test]
     fn r949_quit_sets_quit_requested() {
         let mut e = ext();
-        assert_eq!(e.query("quit_requested"), Some(IntrospectValue::Bool(false)));
-        e.invoke("menu_item", IntrospectValue::Text("quit".to_owned())).unwrap();
+        assert_eq!(
+            e.query("quit_requested"),
+            Some(IntrospectValue::Bool(false))
+        );
+        e.invoke("menu_item", IntrospectValue::Text("quit".to_owned()))
+            .unwrap();
         assert_eq!(e.query("quit_requested"), Some(IntrospectValue::Bool(true)));
     }
 
@@ -574,7 +725,8 @@ mod tests {
                 "Hide window | Dark mode | — | Build ▸ | Quit".to_owned()
             )),
         );
-        e.invoke("menu_item", IntrospectValue::Text("dark".to_owned())).unwrap();
+        e.invoke("menu_item", IntrospectValue::Text("dark".to_owned()))
+            .unwrap();
         assert_eq!(
             e.query("menu"),
             Some(IntrospectValue::Text(
@@ -598,12 +750,18 @@ mod tests {
         let scene = owner.run(|| view(false, &Frame::new()));
         assert!(has_text(&scene, "System Tray"), "header rendered");
         assert!(has_text(&scene, "Hide window"), "menu action rendered");
-        assert!(has_text(&scene, "[ ] Dark mode"), "unchecked check rendered");
+        assert!(
+            has_text(&scene, "[ ] Dark mode"),
+            "unchecked check rendered"
+        );
     }
 
     #[test]
     fn r55_g20_view_carries_composite_paint_root_tag() {
-        pinion_core::test_fixtures::assert_widget_view_carries_tag::<TrayView>(false, &Frame::new());
+        pinion_core::test_fixtures::assert_widget_view_carries_tag::<TrayView>(
+            false,
+            &Frame::new(),
+        );
     }
 
     #[test]

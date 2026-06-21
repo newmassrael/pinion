@@ -46,7 +46,7 @@
 //! the visible rows (the windowed-widget keyboard model
 //! `hello-virtual-select` / `hello-virtual-nav` use).
 
-use pinion_a11y::{tree_row_tag, windowed_tree_access_nodes, AccessFocus, AccessNode, WidgetA11y};
+use pinion_a11y::{AccessFocus, AccessNode, WidgetA11y, tree_row_tag, windowed_tree_access_nodes};
 use pinion_core::external::{
     External, ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
 };
@@ -56,22 +56,22 @@ use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
-use pinion_core::widgets::scroll::{use_scroll_state, ScrollState};
+use pinion_core::widgets::scroll::{ScrollState, use_scroll_state};
 use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
-use pinion_core::widgets::tree_filter::{use_tree_filter, TreeFilterExternal, TreeFilterState};
+use pinion_core::widgets::tree_filter::{TreeFilterExternal, TreeFilterState, use_tree_filter};
 use pinion_core::widgets::tree_nav::{
-    flat_visible, flat_visible_filtered, resolve_tree_key, TreeKey, TreeNode, VisibleRow,
+    TreeKey, TreeNode, VisibleRow, flat_visible, flat_visible_filtered, resolve_tree_key,
 };
 use pinion_core::widgets::virtual_list::{compute_visible_range, scroll_offset_to_reveal};
 use pinion_core::{Frame, Owner, Scene, Signal, WidgetCore};
 use pinion_shell::typeahead::is_typeahead_char;
-use pinion_shell::{vello_renderer_impl, SizeStrategy, WidgetView};
-use pinion_widget_paint::scrollbar::{view_vertical_scrollbar, VerticalScrollbarStyle};
+use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
+use pinion_widget_paint::scrollbar::{VerticalScrollbarStyle, view_vertical_scrollbar};
 use pinion_widget_paint::tree_view::{
-    view_virtual_tree, TreeRowClickExternal, TreeViewFocus, TreeViewStyle,
+    TreeRowClickExternal, TreeViewFocus, TreeViewStyle, view_virtual_tree,
 };
 use std::rc::Rc;
 
@@ -140,7 +140,12 @@ struct TreeRow {
 
 impl TreeRow {
     fn leaf(id: String, label: String) -> Self {
-        Self { id, label, expanded: false, children: Vec::new() }
+        Self {
+            id,
+            label,
+            expanded: false,
+            children: Vec::new(),
+        }
     }
 }
 
@@ -327,7 +332,9 @@ impl TreeSortExternal {
 
 impl core::fmt::Debug for TreeSortExternal {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("TreeSortExternal").field("sort", &self.state.sort.get().label()).finish()
+        f.debug_struct("TreeSortExternal")
+            .field("sort", &self.state.sort.get().label())
+            .finish()
     }
 }
 
@@ -337,12 +344,18 @@ pinion_core::external::query_proxy_external_impl!(TreeSortExternal);
 
 impl ExternalIntrospect for TreeSortExternal {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[("sort", "string"), ("cycle_sort", "string"), ("set_sort", "string")])
+        IntrospectSchema::new(&[
+            ("sort", "string"),
+            ("cycle_sort", "string"),
+            ("set_sort", "string"),
+        ])
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
         match path {
-            "sort" => Some(IntrospectValue::Text(self.state.sort.get().label().to_owned())),
+            "sort" => Some(IntrospectValue::Text(
+                self.state.sort.get().label().to_owned(),
+            )),
             _ => None,
         }
     }
@@ -359,7 +372,11 @@ impl ExternalIntrospect for TreeSortExternal {
         Ok(())
     }
 
-    fn invoke(&mut self, path: &str, args: IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+    fn invoke(
+        &mut self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
         match path {
             "cycle_sort" => Ok(self.set(self.state.sort.get().cycle())),
             "set_sort" => match args {
@@ -423,9 +440,7 @@ fn apply_key_impl(key: &str) -> bool {
             let state = use_tree_state();
             let rows = filter.visible_rows();
             let current = state.focused_id.get();
-            if let TreeKey::Focus(id) =
-                resolve_tree_key(&rows, current.as_deref(), key, NAV_PAGE)
-            {
+            if let TreeKey::Focus(id) = resolve_tree_key(&rows, current.as_deref(), key, NAV_PAGE) {
                 state.focused_id.set(Some(id));
                 reveal_cursor(
                     state.focused_id.get().as_deref(),
@@ -449,7 +464,10 @@ fn search_box(query: &str, theme: &Theme) -> Scene {
             theme.resolve(ColorRole::OnSurfaceMuted),
         )
     } else {
-        (format!("Filter: {query}\u{2588}"), theme.resolve(ColorRole::OnSurface))
+        (
+            format!("Filter: {query}\u{2588}"),
+            theme.resolve(ColorRole::OnSurface),
+        )
     };
     Scene::Container(
         ContainerNode::new(vec![Scene::Text(TextNode::styled(
@@ -474,7 +492,9 @@ fn header(query: &str, visible: usize, theme: &Theme) -> Scene {
     let summary = if query.is_empty() {
         format!("{TOTAL_NODES} nodes \u{00B7} {visible} rows visible \u{00B7} sort: {sort}")
     } else {
-        format!("{TOTAL_NODES} nodes \u{00B7} filter \u{2192} {visible} match rows \u{00B7} sort: {sort}")
+        format!(
+            "{TOTAL_NODES} nodes \u{00B7} filter \u{2192} {visible} match rows \u{00B7} sort: {sort}"
+        )
     };
     Scene::Text(TextNode::styled(
         summary,
@@ -504,7 +524,9 @@ fn view(_state: ButtonState, _frame: &Frame) -> Scene {
         TREE_TAG,
         &scroll,
         &rows,
-        &TreeViewFocus { focused_id: focused.as_deref() },
+        &TreeViewFocus {
+            focused_id: focused.as_deref(),
+        },
         OVERSCAN,
         &theme,
         &TreeViewStyle::m3_default(),
@@ -513,14 +535,21 @@ fn view(_state: ButtonState, _frame: &Frame) -> Scene {
     let (_, measured_h) = scroll.measured_viewport();
     let scrollbar_style = VerticalScrollbarStyle::material(measured_h, SCROLLBAR_TAG);
     let scrollbar_interaction = use_scrollbar_interaction(SCROLLBAR_TAG);
-    let scrollbar_visual =
-        view_vertical_scrollbar(&scroll, &theme, &scrollbar_style, scrollbar_interaction.get());
+    let scrollbar_visual = view_vertical_scrollbar(
+        &scroll,
+        &theme,
+        &scrollbar_style,
+        scrollbar_interaction.get(),
+    );
 
     // Row band: the windowed tree beside the scrollbar peer, flex-grow so it
     // fills the window below the search box + header.
     let band = Scene::Container(
-        ContainerNode::new(vec![tree, scrollbar_visual])
-            .with_layout(LayoutStyle::new().flex(FlexDirection::Row).with_flex_grow(1.0)),
+        ContainerNode::new(vec![tree, scrollbar_visual]).with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Row)
+                .with_flex_grow(1.0),
+        ),
     );
 
     // Invisible 0x0 root External keeps the SCXML state surface alive for
@@ -528,7 +557,11 @@ fn view(_state: ButtonState, _frame: &Frame) -> Scene {
     let invisible_root = Scene::Container(
         ContainerNode::new(Vec::new())
             .with_tag(ROOT_TAG)
-            .with_layout(LayoutStyle::new().with_size(Size::px(0, 0)).with_focusable(true)),
+            .with_layout(
+                LayoutStyle::new()
+                    .with_size(Size::px(0, 0))
+                    .with_focusable(true),
+            ),
     );
 
     Scene::Container(
@@ -576,7 +609,10 @@ impl WidgetCore for SceneGraphFilter {
         let filter = use_filter();
         vec![
             ExtraExternal::new(TREE_TAG, Box::new(TreeRowClickExternal::new())),
-            ExtraExternal::new(FILTER_TAG, Box::new(TreeFilterExternal::new(Rc::clone(&filter)))),
+            ExtraExternal::new(
+                FILTER_TAG,
+                Box::new(TreeFilterExternal::new(Rc::clone(&filter))),
+            ),
             // R855 — the AI-first sibling-sort surface (`/sgtree_sort/external`).
             ExtraExternal::new(SORT_TAG, Box::new(TreeSortExternal::new(use_tree_state()))),
             scrollbar_extra_external(use_scroll_state(SCROLL_KEY), SCROLLBAR_TAG),
@@ -658,8 +694,13 @@ impl WidgetA11y for SceneGraphFilter {
         let rows = filter.visible_rows();
         let scroll = use_scroll_state(SCROLL_KEY);
         let (_, measured_h) = scroll.measured_viewport();
-        let window =
-            compute_visible_range(scroll.offset_y(), measured_h, rows.len(), ROW_PITCH, OVERSCAN);
+        let window = compute_visible_range(
+            scroll.offset_y(),
+            measured_h,
+            rows.len(),
+            ROW_PITCH,
+            OVERSCAN,
+        );
         windowed_tree_access_nodes(
             ROOT_TAG,
             TREE_TAG,
@@ -678,7 +719,10 @@ impl WidgetA11y for SceneGraphFilter {
         if focused == Some(ROOT_TAG)
             && let Some(cursor) = use_tree_state().focused_id.get()
         {
-            return Some(AccessFocus::composite(ROOT_TAG, tree_row_tag(TREE_TAG, &cursor)));
+            return Some(AccessFocus::composite(
+                ROOT_TAG,
+                tree_row_tag(TREE_TAG, &cursor),
+            ));
         }
         focused.map(AccessFocus::atomic)
     }
@@ -688,7 +732,10 @@ impl WidgetView for SceneGraphFilter {
     type Renderer = HelloTreeFilterRenderer;
 
     fn initial_size_strategy() -> SizeStrategy {
-        SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 }
 
@@ -699,20 +746,18 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
+        CHILDREN_PER, CLICK_INTENT_TAG, EXPANDED_AT_BOOT, GROUPS, ROOT_TAG, ROW_PITCH, SCROLL_KEY,
+        SceneGraphFilter, TOTAL_NODES, TREE_TAG, TreeRow, TreeSort, TreeSortExternal,
         apply_key_impl, initial_nodes, sorted_tree, tree_row_tag, use_filter, use_tree_state, view,
-        SceneGraphFilter, TreeRow, TreeSort, TreeSortExternal, CHILDREN_PER, CLICK_INTENT_TAG,
-        EXPANDED_AT_BOOT, GROUPS, ROOT_TAG, ROW_PITCH, SCROLL_KEY, TOTAL_NODES, TREE_TAG,
     };
     use std::rc::Rc;
 
     use pinion_a11y::{AriaRole, WidgetA11y};
-    use pinion_core::external::{
-        ExternalIntrospect, InterveneError, IntrospectValue, InvokeError,
-    };
+    use pinion_core::external::{ExternalIntrospect, InterveneError, IntrospectValue, InvokeError};
     use pinion_core::widgets::button::ButtonState;
     use pinion_core::widgets::scroll::use_scroll_state;
     use pinion_core::{Frame, Owner, Scene};
-    use pinion_widget_paint::tree_view::{TreeViewStyle, TREE_ROW_CLICK_EVENT};
+    use pinion_widget_paint::tree_view::{TREE_ROW_CLICK_EVENT, TreeViewStyle};
 
     const WIN_VIEWPORT_W: u32 = 480;
     const WIN_VIEWPORT_H: u32 = 384;
@@ -732,7 +777,10 @@ mod tests {
 
     #[test]
     fn click_intent_tag_matches_substrate_event() {
-        assert_eq!(CLICK_INTENT_TAG, format!("{TREE_TAG}.{TREE_ROW_CLICK_EVENT}"));
+        assert_eq!(
+            CLICK_INTENT_TAG,
+            format!("{TREE_TAG}.{TREE_ROW_CLICK_EVENT}")
+        );
     }
 
     #[test]
@@ -762,11 +810,24 @@ mod tests {
                 "a collapsed group's child is hidden unfiltered",
             );
             // …but filtering reveals Group09 → Node09_* regardless of the flag.
-            assert_eq!(filter.set_query("Node09"), 1 + CHILDREN_PER, "group 9 + its 20 leaves");
-            let labels: Vec<String> =
-                filter.visible_rows().iter().map(|r| r.label.clone()).collect();
-            assert_eq!(labels[0], "Group09", "the ancestor is revealed as path context");
-            assert!(labels.iter().any(|l| l == "Node09_00"), "the buried match is revealed");
+            assert_eq!(
+                filter.set_query("Node09"),
+                1 + CHILDREN_PER,
+                "group 9 + its 20 leaves"
+            );
+            let labels: Vec<String> = filter
+                .visible_rows()
+                .iter()
+                .map(|r| r.label.clone())
+                .collect();
+            assert_eq!(
+                labels[0], "Group09",
+                "the ancestor is revealed as path context"
+            );
+            assert!(
+                labels.iter().any(|l| l == "Node09_00"),
+                "the buried match is revealed"
+            );
         });
     }
 
@@ -778,7 +839,10 @@ mod tests {
             assert_eq!(filter.set_query("Group03"), 1, "just the matched group");
             let rows = filter.visible_rows();
             assert_eq!(rows[0].label, "Group03");
-            assert!(!rows[0].has_children, "a matched branch with no matching child is a leaf");
+            assert!(
+                !rows[0].has_children,
+                "a matched branch with no matching child is a leaf"
+            );
         });
     }
 
@@ -786,8 +850,16 @@ mod tests {
     fn filter_is_case_insensitive_and_clears() {
         Owner::new().run(|| {
             let filter = use_filter();
-            assert_eq!(filter.set_query("node03"), 1 + CHILDREN_PER, "lowercase matches Node03");
-            assert_eq!(filter.set_query(""), GROUPS + EXPANDED_AT_BOOT * CHILDREN_PER, "clear");
+            assert_eq!(
+                filter.set_query("node03"),
+                1 + CHILDREN_PER,
+                "lowercase matches Node03"
+            );
+            assert_eq!(
+                filter.set_query(""),
+                GROUPS + EXPANDED_AT_BOOT * CHILDREN_PER,
+                "clear"
+            );
         });
     }
 
@@ -797,10 +869,17 @@ mod tests {
             let filter = use_filter();
             // Type "Group" one char at a time (alphanumeric → appends).
             for ch in ["G", "r", "o", "u", "p"] {
-                assert!(apply_key_impl(ch), "an alphanumeric key is consumed by the filter");
+                assert!(
+                    apply_key_impl(ch),
+                    "an alphanumeric key is consumed by the filter"
+                );
             }
             assert_eq!(filter.query(), "Group");
-            assert_eq!(filter.visible_count(), GROUPS, "every group label contains 'Group'");
+            assert_eq!(
+                filter.visible_count(),
+                GROUPS,
+                "every group label contains 'Group'"
+            );
             // Backspace pops one char.
             assert!(apply_key_impl("Backspace"));
             assert_eq!(filter.query(), "Grou");
@@ -819,8 +898,7 @@ mod tests {
             match scene {
                 Scene::Scroll(s) => walk(s.content.as_ref(), prefix),
                 Scene::Container(c) => {
-                    let here =
-                        usize::from(c.tag.as_deref().is_some_and(|t| t.starts_with(prefix)));
+                    let here = usize::from(c.tag.as_deref().is_some_and(|t| t.starts_with(prefix)));
                     here + c.children.iter().map(|ch| walk(ch, prefix)).sum::<usize>()
                 }
                 _ => 0,
@@ -841,7 +919,10 @@ mod tests {
             let scene = view(ButtonState::Idle, &Frame::default());
             let rendered = rendered_row_count(&scene);
             assert!(rendered > 0, "some rows render");
-            assert!(rendered < TOTAL_NODES, "only a window renders, not all {TOTAL_NODES}");
+            assert!(
+                rendered < TOTAL_NODES,
+                "only a window renders, not all {TOTAL_NODES}"
+            );
         });
     }
 
@@ -871,8 +952,10 @@ mod tests {
                 focus.active_descendant.as_deref(),
                 Some(tree_row_tag(TREE_TAG, "g3").as_str()),
             );
-            let cursor =
-                nodes.iter().find(|n| n.tag == tree_row_tag(TREE_TAG, "g3")).expect("cursor row");
+            let cursor = nodes
+                .iter()
+                .find(|n| n.tag == tree_row_tag(TREE_TAG, "g3"))
+                .expect("cursor row");
             assert!(cursor.state.focused, "cursor row carries with_focused");
         });
     }
@@ -888,7 +971,7 @@ mod tests {
     #[test]
     fn external_query_invoke_intervene_and_guards() {
         use pinion_core::external::{
-            ExternalIntrospect, InterveneError, InvokeError, IntrospectValue,
+            ExternalIntrospect, InterveneError, IntrospectValue, InvokeError,
         };
         use pinion_core::widgets::tree_filter::TreeFilterExternal;
         use std::rc::Rc;
@@ -899,16 +982,28 @@ mod tests {
             let state = use_filter();
             let mut ext = TreeFilterExternal::new(Rc::clone(&state));
             // Boot: empty query, full view.
-            assert_eq!(ext.query("query"), Some(IntrospectValue::Text(String::new())));
+            assert_eq!(
+                ext.query("query"),
+                Some(IntrospectValue::Text(String::new()))
+            );
             assert_eq!(ext.query("visible_count"), Some(IntrospectValue::Int(boot)));
             // invoke set_filter returns the resulting visible_count in one trip.
             assert_eq!(
                 ext.invoke("set_filter", IntrospectValue::Text("Node03".into())),
                 Ok(IntrospectValue::Int(node03)),
             );
-            assert_eq!(ext.query("query"), Some(IntrospectValue::Text("Node03".into())));
-            assert_eq!(ext.query("visible_at.0"), Some(IntrospectValue::Text("g3".into())));
-            assert_eq!(ext.query("label_at.0"), Some(IntrospectValue::Text("Group03".into())));
+            assert_eq!(
+                ext.query("query"),
+                Some(IntrospectValue::Text("Node03".into()))
+            );
+            assert_eq!(
+                ext.query("visible_at.0"),
+                Some(IntrospectValue::Text("g3".into()))
+            );
+            assert_eq!(
+                ext.query("label_at.0"),
+                Some(IntrospectValue::Text("Group03".into()))
+            );
             assert_eq!(
                 ext.query("visible_at.999"),
                 Some(IntrospectValue::Null),
@@ -916,7 +1011,8 @@ mod tests {
             );
             assert_eq!(ext.query("nope"), None, "undeclared path is absent");
             // intervene sets the query (admin/restore); read-only + type guards.
-            ext.intervene("query", IntrospectValue::Text("Group07".into())).unwrap();
+            ext.intervene("query", IntrospectValue::Text("Group07".into()))
+                .unwrap();
             assert_eq!(state.query(), "Group07");
             assert_eq!(
                 ext.intervene("visible_count", IntrospectValue::Int(1)),
@@ -926,7 +1022,10 @@ mod tests {
                 ext.intervene("query", IntrospectValue::Int(1)),
                 Err(InterveneError::TypeMismatch),
             );
-            assert_eq!(ext.invoke("bogus", IntrospectValue::Null), Err(InvokeError::UnknownPath));
+            assert_eq!(
+                ext.invoke("bogus", IntrospectValue::Null),
+                Err(InvokeError::UnknownPath)
+            );
             // Null clears via invoke → back to the full view.
             assert_eq!(
                 ext.invoke("set_filter", IntrospectValue::Null),
@@ -968,17 +1067,33 @@ mod tests {
     #[test]
     fn r855_sorted_tree_orders_siblings_recursively() {
         let nodes = initial_nodes();
-        assert_eq!(sorted_tree(&nodes, TreeSort::Source), nodes, "Source is the identity");
+        assert_eq!(
+            sorted_tree(&nodes, TreeSort::Source),
+            nodes,
+            "Source is the identity"
+        );
         let asc = sorted_tree(&nodes, TreeSort::Asc);
         let desc = sorted_tree(&nodes, TreeSort::Desc);
         let asc_l: Vec<&str> = asc.iter().map(|n| n.label.as_str()).collect();
         let desc_l: Vec<&str> = desc.iter().map(|n| n.label.as_str()).collect();
-        assert!(asc_l.windows(2).all(|w| w[0] <= w[1]), "top-level siblings ascending: {asc_l:?}");
-        assert!(desc_l.windows(2).all(|w| w[0] >= w[1]), "top-level siblings descending: {desc_l:?}");
-        assert_ne!(asc_l, desc_l, "asc and desc differ (the sort actually reorders)");
+        assert!(
+            asc_l.windows(2).all(|w| w[0] <= w[1]),
+            "top-level siblings ascending: {asc_l:?}"
+        );
+        assert!(
+            desc_l.windows(2).all(|w| w[0] >= w[1]),
+            "top-level siblings descending: {desc_l:?}"
+        );
+        assert_ne!(
+            asc_l, desc_l,
+            "asc and desc differ (the sort actually reorders)"
+        );
         // Recursive: a group's children are ordered too.
         let ch: Vec<&str> = asc[0].children.iter().map(|n| n.label.as_str()).collect();
-        assert!(ch.windows(2).all(|w| w[0] <= w[1]), "children sorted ascending (recursive): {ch:?}");
+        assert!(
+            ch.windows(2).all(|w| w[0] <= w[1]),
+            "children sorted ascending (recursive): {ch:?}"
+        );
     }
 
     #[test]
@@ -989,11 +1104,21 @@ mod tests {
             let source_first = filter.visible_rows().first().map(|r| r.label.clone());
             state.sort.set(TreeSort::Desc);
             let desc_first = filter.visible_rows().first().map(|r| r.label.clone());
-            assert_ne!(source_first, desc_first, "a sort change re-derives the visible order");
+            assert_ne!(
+                source_first, desc_first,
+                "a sort change re-derives the visible order"
+            );
             // The leading visible group is the largest label under descending sort.
-            let groups: Vec<String> =
-                filter.visible_rows().iter().filter(|r| r.depth == 0).map(|r| r.label.clone()).collect();
-            assert!(groups.windows(2).all(|w| w[0] >= w[1]), "visible groups sorted descending: {groups:?}");
+            let groups: Vec<String> = filter
+                .visible_rows()
+                .iter()
+                .filter(|r| r.depth == 0)
+                .map(|r| r.label.clone())
+                .collect();
+            assert!(
+                groups.windows(2).all(|w| w[0] >= w[1]),
+                "visible groups sorted descending: {groups:?}"
+            );
         });
     }
 
@@ -1005,24 +1130,47 @@ mod tests {
             let text = |s: &str| Some(IntrospectValue::Text(s.to_owned()));
             assert_eq!(ext.query("sort"), text("source"), "boots in source order");
             // cycle: source -> asc -> desc -> source
-            assert_eq!(ext.invoke("cycle_sort", IntrospectValue::Null), Ok(IntrospectValue::Text("asc".to_owned())));
+            assert_eq!(
+                ext.invoke("cycle_sort", IntrospectValue::Null),
+                Ok(IntrospectValue::Text("asc".to_owned()))
+            );
             assert_eq!(ext.query("sort"), text("asc"));
-            assert_eq!(ext.invoke("cycle_sort", IntrospectValue::Null), Ok(IntrospectValue::Text("desc".to_owned())));
-            assert_eq!(ext.invoke("cycle_sort", IntrospectValue::Null), Ok(IntrospectValue::Text("source".to_owned())));
+            assert_eq!(
+                ext.invoke("cycle_sort", IntrospectValue::Null),
+                Ok(IntrospectValue::Text("desc".to_owned()))
+            );
+            assert_eq!(
+                ext.invoke("cycle_sort", IntrospectValue::Null),
+                Ok(IntrospectValue::Text("source".to_owned()))
+            );
             // set_sort jumps to a named mode; an unknown name is Rejected.
             assert_eq!(
                 ext.invoke("set_sort", IntrospectValue::Text("desc".to_owned())),
                 Ok(IntrospectValue::Text("desc".to_owned())),
             );
-            assert_eq!(state.sort.get(), TreeSort::Desc, "set_sort wrote the shared signal");
-            assert_eq!(ext.invoke("set_sort", IntrospectValue::Text("bogus".to_owned())), Err(InvokeError::Rejected));
+            assert_eq!(
+                state.sort.get(),
+                TreeSort::Desc,
+                "set_sort wrote the shared signal"
+            );
+            assert_eq!(
+                ext.invoke("set_sort", IntrospectValue::Text("bogus".to_owned())),
+                Err(InvokeError::Rejected)
+            );
             // intervene mirrors set_sort; a bad value is a TypeMismatch.
-            ext.intervene("sort", IntrospectValue::Text("asc".to_owned())).expect("intervene asc");
+            ext.intervene("sort", IntrospectValue::Text("asc".to_owned()))
+                .expect("intervene asc");
             assert_eq!(state.sort.get(), TreeSort::Asc);
-            assert_eq!(ext.intervene("sort", IntrospectValue::Text("nope".to_owned())), Err(InterveneError::TypeMismatch));
+            assert_eq!(
+                ext.intervene("sort", IntrospectValue::Text("nope".to_owned())),
+                Err(InterveneError::TypeMismatch)
+            );
             // guards
             assert_eq!(ext.query("bogus"), None);
-            assert_eq!(ext.invoke("bogus", IntrospectValue::Null), Err(InvokeError::UnknownPath));
+            assert_eq!(
+                ext.invoke("bogus", IntrospectValue::Null),
+                Err(InvokeError::UnknownPath)
+            );
         });
     }
 
@@ -1037,8 +1185,15 @@ mod tests {
             let rows = filter.visible_rows();
             // The filtered view is still sorted: depth-0 groups descend, and a
             // group's revealed leaves descend within it.
-            let groups: Vec<String> = rows.iter().filter(|r| r.depth == 0).map(|r| r.label.clone()).collect();
-            assert!(groups.windows(2).all(|w| w[0] >= w[1]), "filtered groups descend: {groups:?}");
+            let groups: Vec<String> = rows
+                .iter()
+                .filter(|r| r.depth == 0)
+                .map(|r| r.label.clone())
+                .collect();
+            assert!(
+                groups.windows(2).all(|w| w[0] >= w[1]),
+                "filtered groups descend: {groups:?}"
+            );
             // The revealed leaves under the first group (consecutive depth >= 1
             // rows after the leading header) descend too.
             let first_leaves: Vec<String> = rows

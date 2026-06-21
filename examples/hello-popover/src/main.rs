@@ -66,15 +66,15 @@
 //! else (event loop, paint pipeline, RPC ingress, `IntrinsicAfterFirstPaint`
 //! wire) lives in `pinion_shell`.
 
+#[cfg(test)]
+use pinion_a11y::{AriaRole, WidgetA11y};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole};
+use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
 use pinion_core::{Color, Frame, Scene, WidgetCore};
-#[cfg(test)]
-use pinion_a11y::{AriaRole, WidgetA11y};
 use pinion_derive::widget;
 use pinion_shell::vello_renderer_impl;
 
@@ -201,9 +201,7 @@ fn view(state: ButtonState, _frame: &Frame) -> Scene {
     // mapping mirrors hello-button so the visual language stays
     // consistent across the example gallery.
     let btn_fill: Color = match state {
-        ButtonState::Idle | ButtonState::Hover => {
-            theme.resolve(ColorRole::SurfaceContainerHighest)
-        }
+        ButtonState::Idle | ButtonState::Hover => theme.resolve(ColorRole::SurfaceContainerHighest),
         ButtonState::Pressed => theme
             .resolve(ColorRole::SurfaceContainerHighest)
             .lerp(on_surface, 0.12),
@@ -214,7 +212,9 @@ fn view(state: ButtonState, _frame: &Frame) -> Scene {
     let btn_label = Scene::Text(TextNode::styled(
         BTN_LABEL,
         Rect::default(),
-        TextStyle::new().with_size_px(BODY_FONT_PX).with_fg(on_surface),
+        TextStyle::new()
+            .with_size_px(BODY_FONT_PX)
+            .with_fg(on_surface),
     ));
     let button = Scene::Container(
         ContainerNode::new(vec![btn_label])
@@ -451,12 +451,7 @@ mod r670_intrinsic_first_paint_tests {
         // first paint, so the intrinsic walker measures against that
         // pre-resize layout.
         let mut text_cache = pinion_text::LayoutCache::new();
-        pinion_runtime::compute_layout(
-            &mut scene,
-            &mut text_cache,
-            POPOVER_MIN_W,
-            POPOVER_MIN_H,
-        );
+        pinion_runtime::compute_layout(&mut scene, &mut text_cache, POPOVER_MIN_W, POPOVER_MIN_H);
         let (w, h) = scene.intrinsic_content_size();
         assert!(
             w > 0 && h > 0,

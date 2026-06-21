@@ -41,6 +41,10 @@ use pinion_core::external::IntrospectValue;
 // Borrowed in the V::update reducer to read the post-flip authority
 // out of the Toggle intent's payload — see the body comment for why
 // the intent payload (not V::read_state) is the canonical source.
+#[cfg(test)]
+use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
+#[cfg(test)]
+use pinion_core::Theme;
 use pinion_core::intent::Intent;
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -50,10 +54,6 @@ use pinion_core::widgets::toggle::{ToggleEvent, ToggleExternal, ToggleState};
 use pinion_core::{
     Color, ColorRole, Command, Frame, Scene, ThemeMode, WidgetCore, WidgetStateName, use_theme,
 };
-#[cfg(test)]
-use pinion_core::Theme;
-#[cfg(test)]
-use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
 use pinion_derive::widget;
 use pinion_shell::vello_renderer_impl;
 
@@ -238,11 +238,7 @@ fn view(state: ToggleState, on: bool, _frame: &Frame) -> Scene {
             .with_size_px(LABEL_FONT_PX)
             .with_fg(on_surface),
     ));
-    let status_str = format!(
-        "{} | {}",
-        state.as_name(),
-        if on { "On" } else { "Off" },
-    );
+    let status_str = format!("{} | {}", state.as_name(), if on { "On" } else { "Off" },);
     let status = Scene::Text(TextNode::styled(
         status_str,
         Rect::default(),
@@ -389,7 +385,11 @@ impl ToggleView {
         if intent.tag.as_ref() == TOGGLE_INTENT_TAG_FULL {
             if let IntrospectValue::Bool(on) = intent.payload {
                 let provider = use_theme(THEME_TAG);
-                provider.set_mode(if on { ThemeMode::Dark } else { ThemeMode::Light });
+                provider.set_mode(if on {
+                    ThemeMode::Dark
+                } else {
+                    ThemeMode::Light
+                });
             }
         }
         Vec::new()

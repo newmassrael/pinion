@@ -35,15 +35,15 @@ use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole};
-use pinion_core::undo::{use_undo_stack, SignalEdit, UndoStack, UndoStackExternal};
+use pinion_core::theme::{ColorRole, use_theme};
+use pinion_core::undo::{SignalEdit, UndoStack, UndoStackExternal, use_undo_stack};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::aria::apply_aria_activate;
 use pinion_core::widgets::button::{ButtonExternal, ButtonState};
 use pinion_core::{Frame, Modifiers, Scene, WidgetCore};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::button::{
-    button_a11y_state, read_button_focused, read_button_state, ButtonColors, ButtonStyle,
+    ButtonColors, ButtonStyle, button_a11y_state, read_button_focused, read_button_state,
 };
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -164,8 +164,16 @@ fn view(state: UndoViewState, _frame: &Frame) -> Scene {
 
     // Undo / Redo paint Disabled at the history boundaries (clicking is a
     // harmless no-op there too — `UndoStack::undo`/`redo` return false).
-    let undo_state = if can_undo { undo_s } else { ButtonState::Disabled };
-    let redo_state = if can_redo { redo_s } else { ButtonState::Disabled };
+    let undo_state = if can_undo {
+        undo_s
+    } else {
+        ButtonState::Disabled
+    };
+    let redo_state = if can_redo {
+        redo_s
+    } else {
+        ButtonState::Disabled
+    };
 
     let tonal = ButtonColors::filled_tonal(&theme);
     let accent = ButtonColors::accent(&theme);
@@ -174,8 +182,22 @@ fn view(state: UndoViewState, _frame: &Frame) -> Scene {
         ContainerNode::new(vec![
             button_scene(DEC_TAG, "\u{2212}", dec_s, dec_f, DEC_HOVER_KEY, &tonal),
             button_scene(INC_TAG, "+", inc_s, inc_f, INC_HOVER_KEY, &tonal),
-            button_scene(UNDO_TAG, "Undo", undo_state, undo_f, UNDO_HOVER_KEY, &accent),
-            button_scene(REDO_TAG, "Redo", redo_state, redo_f, REDO_HOVER_KEY, &accent),
+            button_scene(
+                UNDO_TAG,
+                "Undo",
+                undo_state,
+                undo_f,
+                UNDO_HOVER_KEY,
+                &accent,
+            ),
+            button_scene(
+                REDO_TAG,
+                "Redo",
+                redo_state,
+                redo_f,
+                REDO_HOVER_KEY,
+                &accent,
+            ),
         ])
         .with_layout(
             LayoutStyle::new()
@@ -270,7 +292,12 @@ impl WidgetCore for UndoView {
         None
     }
 
-    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, _modifiers: Modifiers) -> bool {
+    fn apply_key(
+        scene: &mut Scene,
+        focused: Option<&str>,
+        key: &str,
+        _modifiers: Modifiers,
+    ) -> bool {
         [INC_TAG, DEC_TAG, UNDO_TAG, REDO_TAG]
             .iter()
             .any(|tag| apply_aria_activate(scene, focused, key, tag))
@@ -279,7 +306,10 @@ impl WidgetCore for UndoView {
     /// R748 reducer: `+` / `-` record a reversible [`SignalEdit`] onto the
     /// shared [`UndoStack`] (which applies it); `Undo` / `Redo` step the
     /// cursor. Every mutation flows through the stack — the single path.
-    fn update(_state: UndoViewState, intent: &pinion_core::Intent) -> Vec<pinion_core::command::Command> {
+    fn update(
+        _state: UndoViewState,
+        intent: &pinion_core::Intent,
+    ) -> Vec<pinion_core::command::Command> {
         let st = stack();
         match intent.tag_str() {
             "inc.click" => {
@@ -308,8 +338,16 @@ impl WidgetA11y for UndoView {
     fn access_node(state: &UndoViewState, focused: Option<&str>) -> Vec<AccessNode> {
         let ([dec_s, inc_s, undo_s, redo_s], _) = *state;
         let st = stack();
-        let undo_state = if st.can_undo() { undo_s } else { ButtonState::Disabled };
-        let redo_state = if st.can_redo() { redo_s } else { ButtonState::Disabled };
+        let undo_state = if st.can_undo() {
+            undo_s
+        } else {
+            ButtonState::Disabled
+        };
+        let redo_state = if st.can_redo() {
+            redo_s
+        } else {
+            ButtonState::Disabled
+        };
         vec![
             AccessNode::new(DEC_TAG, AriaRole::Button)
                 .with_name("Decrement")
@@ -331,7 +369,10 @@ impl WidgetView for UndoView {
     type Renderer = HelloUndoRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 }
 
@@ -349,7 +390,10 @@ mod tests {
     fn drive(tags: &[&str]) -> (i64, usize, usize) {
         Owner::new().run(|| {
             for tag in tags {
-                let intent = pinion_core::Intent::new_owned((*tag).to_string(), pinion_core::external::IntrospectValue::Null);
+                let intent = pinion_core::Intent::new_owned(
+                    (*tag).to_string(),
+                    pinion_core::external::IntrospectValue::Null,
+                );
                 let _ = UndoView::update(([ButtonState::Idle; 4], [false; 4]), &intent);
             }
             let st = stack();
@@ -362,7 +406,10 @@ mod tests {
         // +, +, + → 3; undo → 2; redo → 3.
         assert_eq!(drive(&["inc.click", "inc.click", "inc.click"]), (3, 3, 3));
         assert_eq!(drive(&["inc.click", "inc.click", "undo.click"]), (1, 1, 2));
-        assert_eq!(drive(&["inc.click", "inc.click", "undo.click", "redo.click"]), (2, 2, 2));
+        assert_eq!(
+            drive(&["inc.click", "inc.click", "undo.click", "redo.click"]),
+            (2, 2, 2)
+        );
     }
 
     #[test]
@@ -375,7 +422,10 @@ mod tests {
     fn new_edit_truncates_the_redo_branch() {
         // +, +, undo (→1, redo branch holds the 2nd inc), + (→2, branch
         // dropped): len is 2, cursor 2, no redo available.
-        assert_eq!(drive(&["inc.click", "inc.click", "undo.click", "inc.click"]), (2, 2, 2));
+        assert_eq!(
+            drive(&["inc.click", "inc.click", "undo.click", "inc.click"]),
+            (2, 2, 2)
+        );
     }
 
     #[test]
@@ -389,9 +439,8 @@ mod tests {
     /// first because `tag() == INC_TAG`; tree order = tab order now).
     #[test]
     fn r1020_focusable_enumeration_is_tree_order() {
-        let scene = Owner::new().run(|| {
-            UndoView::view(([ButtonState::Idle; 4], [false; 4]), &Frame::with_dt(0.0))
-        });
+        let scene = Owner::new()
+            .run(|| UndoView::view(([ButtonState::Idle; 4], [false; 4]), &Frame::with_dt(0.0)));
         assert_eq!(
             scene.collect_focusable_tags(),
             vec![

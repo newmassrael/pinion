@@ -44,15 +44,24 @@ pub enum WindowEvent {
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub enum PointerEvent {
-    Down { coord: Coord },
-    Up { coord: Coord },
-    Move { coord: Coord },
+    Down {
+        coord: Coord,
+    },
+    Up {
+        coord: Coord,
+    },
+    Move {
+        coord: Coord,
+    },
     /// (R55.C.1 §5.45) Mouse wheel input. `coord` is the pointer
     /// location at the time of the wheel event (same convention as
     /// [`Self::Move`]); the unit-tagged [`WheelDelta`] carries the
     /// scroll magnitude on each axis. The runtime maps this into
     /// scroll-container offset updates via the §5.41 input router.
-    Wheel { coord: Coord, delta: WheelDelta },
+    Wheel {
+        coord: Coord,
+        delta: WheelDelta,
+    },
 }
 
 /// (R55.C.1 §5.45) Mouse wheel delta with explicit unit. Mirrors

@@ -43,18 +43,17 @@ use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole};
+use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::aria::apply_aria_activate;
 use pinion_core::widgets::button::{ButtonExternal, ButtonState};
 use pinion_core::widgets::snackbar::{
-    snackbar_introspection_extra, use_snackbar_timer, SnackbarTimer,
+    SnackbarTimer, snackbar_introspection_extra, use_snackbar_timer,
 };
 use pinion_core::{Frame, Scene, WidgetCore};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::button::{
-    button_a11y_state, read_button_focused, read_button_state,
-    ButtonColors, ButtonStyle,
+    ButtonColors, ButtonStyle, button_a11y_state, read_button_focused, read_button_state,
 };
 use std::rc::Rc;
 
@@ -140,12 +139,12 @@ fn snackbar_action_colors(theme: &pinion_core::theme::Theme) -> ButtonColors {
     let inverse_surface = theme.resolve(ColorRole::InverseSurface);
     let inverse_primary = theme.resolve(ColorRole::InversePrimary);
     ButtonColors::new(
-        inverse_surface,                          // base (blends into snackbar)
-        inverse_primary,                          // hover / pressed state layer
-        inverse_surface,                          // disabled fill (unused here)
-        inverse_primary,                          // label
+        inverse_surface,                            // base (blends into snackbar)
+        inverse_primary,                            // hover / pressed state layer
+        inverse_surface,                            // disabled fill (unused here)
+        inverse_primary,                            // label
         theme.resolve(ColorRole::InverseOnSurface), // disabled label
-        inverse_primary,                          // focus ring
+        inverse_primary,                            // focus ring
     )
 }
 
@@ -396,7 +395,10 @@ mod tests {
     #[test]
     fn snackbar_hidden_until_shown() {
         let scene = rendered();
-        assert!(find_container(&scene, SNACK_TAG).is_none(), "hidden by default");
+        assert!(
+            find_container(&scene, SNACK_TAG).is_none(),
+            "hidden by default"
+        );
     }
 
     #[test]
@@ -442,11 +444,15 @@ mod tests {
             <SnackbarView as WidgetA11y>::access_node(&idle(), None)
         });
         assert!(
-            nodes.iter().any(|n| n.tag == SNACK_TAG && n.role == AriaRole::Status),
+            nodes
+                .iter()
+                .any(|n| n.tag == SNACK_TAG && n.role == AriaRole::Status),
             "snackbar exposes a role=status live region while visible"
         );
         assert!(
-            nodes.iter().any(|n| n.tag == UNDO_TAG && n.role == AriaRole::Button),
+            nodes
+                .iter()
+                .any(|n| n.tag == UNDO_TAG && n.role == AriaRole::Button),
             "UNDO action is a button"
         );
     }

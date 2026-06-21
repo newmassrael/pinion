@@ -44,7 +44,7 @@
     clippy::style,
     clippy::complexity,
     clippy::pedantic,
-    clippy::all,
+    clippy::all
 )]
 mod sm {
     include!(concat!(env!("OUT_DIR"), "/listbox_item_sm.rs"));
@@ -56,13 +56,16 @@ pub use sm::{ListboxItemEvent, ListboxItemState};
 // R643 `WidgetStateName` SSOT primitive, replacing the hand-written
 // `listbox_item_state_name` fn (mirrors the R696.A Disclosure adoption).
 // listbox.rs calls `self.state(idx).as_name()` via the trait too.
-crate::widget_state_name!(ListboxItemState, default = Idle, [
-    Idle, Hover, Pressed, Disabled,
-]);
+crate::widget_state_name!(
+    ListboxItemState,
+    default = Idle,
+    [Idle, Hover, Pressed, Disabled,]
+);
 // R699 §5.16 — ListboxItemEvent <-> SCXML-name mapping through the
 // `WidgetEventName` SSOT primitive, replacing `parse_listbox_item_event`.
 // listbox.rs drives selection through `ListboxItemEvent::from_name` too.
-crate::widget_event_name!(ListboxItemEvent,
+crate::widget_event_name!(
+    ListboxItemEvent,
     external = [
         PointerEnter,
         PointerLeave,
@@ -78,9 +81,8 @@ crate::widget_event_name!(ListboxItemEvent,
 use sm::ListboxItemPolicy;
 
 use crate::external::{
-    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner,
-    ThreadOwnership,
+    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
 use crate::intent::Intent;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
@@ -103,7 +105,10 @@ impl ListBoxItem {
     /// Construct an unselected `ListBoxItem` in the `Idle` state.
     #[must_use]
     pub fn new() -> Self {
-        Self { inner: Widget::new(), selected: false }
+        Self {
+            inner: Widget::new(),
+            selected: false,
+        }
     }
 
     /// Drive a [`ListboxItemEvent`] through the SCXML. `selected` is
@@ -130,8 +135,7 @@ impl ListBoxItem {
         self.inner.send(event);
         let after = self.state();
         let pointer_activate =
-            matches!(before, ListboxItemState::Pressed)
-                && matches!(after, ListboxItemState::Hover);
+            matches!(before, ListboxItemState::Pressed) && matches!(after, ListboxItemState::Hover);
         let keyboard_activate =
             is_keyboard_activate && !matches!(before, ListboxItemState::Disabled);
         if pointer_activate || keyboard_activate {
@@ -188,11 +192,7 @@ impl WidgetTransition for ListBoxItem {
         self.send(event);
     }
 
-    fn detect(
-        before: Self::Snapshot,
-        event: Self::Event,
-        after: Self::Snapshot,
-    ) -> Vec<Intent> {
+    fn detect(before: Self::Snapshot, event: Self::Event, after: Self::Snapshot) -> Vec<Intent> {
         let (before_state, before_value) = before;
         let (after_state, after_value) = after;
         let pointer_select = matches!(before_state, ListboxItemState::Pressed)
@@ -203,9 +203,8 @@ impl WidgetTransition for ListBoxItem {
         // internal transition. !before_value && after_value covers
         // disabled (mutation skipped in send) and already-selected
         // (idempotent set-not-flip) both silently.
-        let keyboard_select = matches!(event, ListboxItemEvent::KeyboardActivate)
-            && !before_value
-            && after_value;
+        let keyboard_select =
+            matches!(event, ListboxItemEvent::KeyboardActivate) && !before_value && after_value;
         if pointer_select || keyboard_select {
             vec![Intent::new_static("selected", IntrospectValue::Null)]
         } else {
@@ -226,7 +225,9 @@ pub struct ListBoxItemExternal {
 impl ListBoxItemExternal {
     #[must_use]
     pub fn new() -> Self {
-        Self { em: IntentEmitter::default() }
+        Self {
+            em: IntentEmitter::default(),
+        }
     }
 
     /// Drive a [`ListboxItemEvent`] and queue a `"selected"` intent
@@ -305,19 +306,13 @@ impl ExternalIntrospect for ListBoxItemExternal {
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
         match path {
-            "state" => Some(IntrospectValue::Text(
-                self.state().as_name().to_string(),
-            )),
+            "state" => Some(IntrospectValue::Text(self.state().as_name().to_string())),
             "selected" => Some(IntrospectValue::Bool(self.is_selected())),
             _ => None,
         }
     }
 
-    fn intervene(
-        &mut self,
-        path: &str,
-        value: IntrospectValue,
-    ) -> Result<(), InterveneError> {
+    fn intervene(&mut self, path: &str, value: IntrospectValue) -> Result<(), InterveneError> {
         match path {
             "state" => Err(InterveneError::ReadOnly),
             "selected" => match value {
@@ -339,12 +334,9 @@ impl ExternalIntrospect for ListBoxItemExternal {
         match path {
             "send" => match args {
                 IntrospectValue::Text(ref name) => {
-                    let ev = ListboxItemEvent::from_name(name)
-                        .ok_or(InvokeError::Rejected)?;
+                    let ev = ListboxItemEvent::from_name(name).ok_or(InvokeError::Rejected)?;
                     self.send(ev);
-                    Ok(IntrospectValue::Text(
-                        self.state().as_name().to_string(),
-                    ))
+                    Ok(IntrospectValue::Text(self.state().as_name().to_string()))
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
@@ -483,7 +475,8 @@ mod tests {
     #[test]
     fn external_intervene_selected_writes_value() {
         let mut ix = ListBoxItemExternal::new();
-        ix.intervene("selected", IntrospectValue::Bool(true)).unwrap();
+        ix.intervene("selected", IntrospectValue::Bool(true))
+            .unwrap();
         assert!(ix.is_selected());
         ix.intervene("selected", IntrospectValue::Bool(false))
             .unwrap();

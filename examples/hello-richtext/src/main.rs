@@ -44,16 +44,16 @@
 //!   show one) — the live-pixel guard a structural query cannot replace
 //!   ([[introspection-from-paint-not-screen]], R706/R707.3 precedent).
 
+#[cfg(test)]
+use pinion_a11y::{AriaRole, WidgetA11y};
 use pinion_core::external::IntrospectValue;
 use pinion_core::scene::{ContainerNode, Rect, StyleRun, TextNode};
 use pinion_core::style::{
-    AlignItems, BoxStyle, Color, FlexDirection, FontStyle, FontWeight, JustifyContent,
-    LayoutStyle, Size, TextStyle,
+    AlignItems, BoxStyle, Color, FlexDirection, FontStyle, FontWeight, JustifyContent, LayoutStyle,
+    Size, TextStyle,
 };
 use pinion_core::widgets::toggle::{ToggleEvent, ToggleExternal, ToggleState};
 use pinion_core::{ColorRole, Frame, Scene, WidgetCore, WidgetStateName, use_theme};
-#[cfg(test)]
-use pinion_a11y::{AriaRole, WidgetA11y};
 use pinion_derive::widget;
 use pinion_shell::vello_renderer_impl;
 
@@ -117,13 +117,23 @@ const DISABLED_OVERLAY_T: f32 = 0.50;
 /// span's colour / weight / italic / size. `on` flips the `"fox"` run
 /// between a teal regular weight and a bold red.
 fn rich_runs(base: &TextStyle, on: bool) -> Vec<StyleRun> {
-    let quick = base.clone().with_fg(EMPH_PURPLE).with_weight(FontWeight::BOLD);
-    let brown = base.clone().with_fg(SADDLE_BROWN).with_style(FontStyle::Italic);
+    let quick = base
+        .clone()
+        .with_fg(EMPH_PURPLE)
+        .with_weight(FontWeight::BOLD);
+    let brown = base
+        .clone()
+        .with_fg(SADDLE_BROWN)
+        .with_style(FontStyle::Italic);
     let fox = base
         .clone()
         .with_size_px(FOX_FONT_PX)
         .with_fg(if on { FOX_RED } else { FOX_TEAL })
-        .with_weight(if on { FontWeight::BOLD } else { FontWeight::NORMAL });
+        .with_weight(if on {
+            FontWeight::BOLD
+        } else {
+            FontWeight::NORMAL
+        });
     vec![
         StyleRun::new(QUICK_START, QUICK_END, quick),
         StyleRun::new(BROWN_START, BROWN_END, brown),
@@ -333,8 +343,14 @@ mod tests {
         let para = find_text(&scene, PARA_TAG).expect("paragraph present");
         assert_eq!(para.content, PARA_TEXT, "one logical string");
         assert_eq!(para.runs.len(), 3, "quick / brown / fox spans");
-        assert_eq!((para.runs[0].start, para.runs[0].end), (QUICK_START, QUICK_END));
-        assert_eq!((para.runs[1].start, para.runs[1].end), (BROWN_START, BROWN_END));
+        assert_eq!(
+            (para.runs[0].start, para.runs[0].end),
+            (QUICK_START, QUICK_END)
+        );
+        assert_eq!(
+            (para.runs[1].start, para.runs[1].end),
+            (BROWN_START, BROWN_END)
+        );
         assert_eq!((para.runs[2].start, para.runs[2].end), (FOX_START, FOX_END));
     }
 

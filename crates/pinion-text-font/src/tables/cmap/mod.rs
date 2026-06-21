@@ -27,8 +27,8 @@ mod format4;
 mod test_helpers;
 
 pub use format0::Format0;
-pub use format12::{Format12, SequentialMapGroup};
 pub use format4::Format4;
+pub use format12::{Format12, SequentialMapGroup};
 
 pub(super) const CMAP_TAG: [u8; 4] = *b"cmap";
 
@@ -194,9 +194,7 @@ fn selection_score(rec: &EncodingRecord, sub: &CmapSubtable) -> u8 {
             0
         }
         CmapSubtable::Format12(_) => 1,
-        CmapSubtable::Format4(_) if is_preferred_unicode_bmp(rec.platform_id, rec.encoding_id) => {
-            2
-        }
+        CmapSubtable::Format4(_) if is_preferred_unicode_bmp(rec.platform_id, rec.encoding_id) => 2,
         CmapSubtable::Format4(_) => 3,
         CmapSubtable::Format0(_) => 4,
     }
@@ -252,9 +250,8 @@ mod tests {
     #[test]
     fn selection_score_priority_ordering() {
         use super::format12::SequentialMapGroup;
-        let f4 = CmapSubtable::Format4(
-            Format4::parse(&build_format4_simple(0x41, 0x5A, 35)).unwrap(),
-        );
+        let f4 =
+            CmapSubtable::Format4(Format4::parse(&build_format4_simple(0x41, 0x5A, 35)).unwrap());
         let f12 = CmapSubtable::Format12(
             Format12::parse(&build_format12_simple(&[SequentialMapGroup {
                 start_char_code: 0x41,
@@ -409,7 +406,10 @@ mod tests {
         assert!(matches!(cmap.subtables[0], Some(CmapSubtable::Format0(_))));
         assert_eq!(cmap.glyph_id(0x41), Some(42));
         // format 0 is priority 4 (lowest), so still selected when sole subtable.
-        assert_eq!(selection_score(&cmap.encodings[0], cmap.subtables[0].as_ref().unwrap()), 4);
+        assert_eq!(
+            selection_score(&cmap.encodings[0], cmap.subtables[0].as_ref().unwrap()),
+            4
+        );
     }
 
     #[test]

@@ -262,7 +262,11 @@ impl ExternalIntrospect for TooltipExternal {
         }
     }
 
-    fn invoke(&mut self, path: &str, args: IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+    fn invoke(
+        &mut self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
         match path {
             // Hover channel: the router forwards `PointerEnter` /
             // `PointerLeave` here. Returns the resulting `visible`
@@ -321,7 +325,10 @@ mod tests {
         let mut t = TooltipExternal::new();
         t.on_focus_change(true);
         assert!(t.focused());
-        assert!(t.visible(), "keyboard focus shows the tooltip (WCAG 1.4.13)");
+        assert!(
+            t.visible(),
+            "keyboard focus shows the tooltip (WCAG 1.4.13)"
+        );
         t.on_focus_change(false);
         assert!(!t.visible());
     }
@@ -360,7 +367,10 @@ mod tests {
         assert!(!t.visible());
         // Leave (episode falling edge) clears the latch.
         send(&mut t, "PointerLeave");
-        assert!(!t.dismissed(), "leaving the trigger clears the dismiss latch");
+        assert!(
+            !t.dismissed(),
+            "leaving the trigger clears the dismiss latch"
+        );
         // Re-hover shows again.
         send(&mut t, "PointerEnter");
         assert!(t.visible(), "re-hover after dismiss + leave re-shows");
@@ -373,7 +383,10 @@ mod tests {
         t.invoke("dismiss", IntrospectValue::Null).unwrap();
         assert!(!t.visible());
         t.on_focus_change(false);
-        assert!(!t.dismissed(), "blur with no hover clears the dismiss latch");
+        assert!(
+            !t.dismissed(),
+            "blur with no hover clears the dismiss latch"
+        );
         t.on_focus_change(true);
         assert!(t.visible(), "re-focus after dismiss + blur re-shows");
     }
@@ -388,7 +401,10 @@ mod tests {
         t.on_focus_change(true);
         t.invoke("dismiss", IntrospectValue::Null).unwrap();
         send(&mut t, "PointerLeave");
-        assert!(t.dismissed(), "focus still holds the episode -> latch persists");
+        assert!(
+            t.dismissed(),
+            "focus still holds the episode -> latch persists"
+        );
         assert!(!t.visible());
     }
 

@@ -134,14 +134,21 @@ impl TreeFilterState {
         let query = Signal::new(String::new());
         let q = query.clone();
         let visible = Computed::new(move || Rc::new(rows_fn(&q.get())));
-        Self { tag: None, query, visible }
+        Self {
+            tag: None,
+            query,
+            visible,
+        }
     }
 
     /// As [`new`](Self::new) but records the `use_tree_filter` cache key, for
     /// symmetry with [`ScrollState::with_tag`](crate::widgets::scroll::ScrollState::with_tag).
     #[must_use]
     pub fn with_tag(key: &'static str, rows_fn: TreeRowsFn) -> Self {
-        Self { tag: Some(key), ..Self::new(rows_fn) }
+        Self {
+            tag: Some(key),
+            ..Self::new(rows_fn)
+        }
     }
 
     /// The `use_tree_filter` cache key, or `None` when constructed directly.
@@ -224,7 +231,10 @@ impl TreeFilterState {
 /// Panics if no current [`Owner`] is set (call from within a `view` / a
 /// `create_extra_externals` hook — both run inside a `root_owner.run`).
 #[must_use]
-pub fn use_tree_filter(key: &'static str, rows_fn: impl FnOnce() -> TreeRowsFn) -> Rc<TreeFilterState> {
+pub fn use_tree_filter(
+    key: &'static str,
+    rows_fn: impl FnOnce() -> TreeRowsFn,
+) -> Rc<TreeFilterState> {
     Owner::current()
         .expect("use_tree_filter requires an active Owner scope")
         .cache(key, || TreeFilterState::with_tag(key, rows_fn()))
@@ -356,7 +366,11 @@ impl ExternalIntrospect for TreeFilterExternal {
         }
     }
 
-    fn invoke(&mut self, path: &str, args: IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+    fn invoke(
+        &mut self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
         match path {
             // AI-first filter: a Text payload sets the query, Null clears.
             // Returns the resulting visible_count in one round-trip, so an AI
@@ -389,7 +403,6 @@ fn id_value(rest: &str, lookup: impl Fn(usize) -> Option<String>) -> IntrospectV
     crate::external::at_index(rest, lookup, IntrospectValue::Text)
 }
 
-
 #[cfg(test)]
 mod tests {
     //! R821 §5.27 §5.50 coverage for the tree-filter proxy, restored to
@@ -401,10 +414,10 @@ mod tests {
     //! so a `cfg(test)`-scoped crate allow in `lib.rs` lets the proxy
     //! coordinator be tested next to its definition.
 
-    use super::{use_tree_filter, TreeFilterExternal, TreeFilterState, TreeRowsFn};
-    use crate::external::{ExternalIntrospect, InterveneError, InvokeError, IntrospectValue};
+    use super::{TreeFilterExternal, TreeFilterState, TreeRowsFn, use_tree_filter};
+    use crate::external::{ExternalIntrospect, InterveneError, IntrospectValue, InvokeError};
     use crate::reactive::{Owner, Signal};
-    use crate::widgets::tree_nav::{flat_visible, flat_visible_filtered, TreeNode};
+    use crate::widgets::tree_nav::{TreeNode, flat_visible, flat_visible_filtered};
     use std::rc::Rc;
 
     #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -417,10 +430,20 @@ mod tests {
 
     impl Node {
         fn leaf(id: &str, label: &str) -> Self {
-            Self { id: id.to_owned(), label: label.to_owned(), expanded: false, children: Vec::new() }
+            Self {
+                id: id.to_owned(),
+                label: label.to_owned(),
+                expanded: false,
+                children: Vec::new(),
+            }
         }
         fn branch(id: &str, label: &str, children: Vec<Node>) -> Self {
-            Self { id: id.to_owned(), label: label.to_owned(), expanded: true, children }
+            Self {
+                id: id.to_owned(),
+                label: label.to_owned(),
+                expanded: true,
+                children,
+            }
         }
     }
 
@@ -449,8 +472,16 @@ mod tests {
     /// leaves, "rry" only `g1`'s `Cherry`.
     fn fixture() -> Vec<Node> {
         vec![
-            Node::branch("g0", "Group0", vec![Node::leaf("a0", "Apple"), Node::leaf("a1", "Apricot")]),
-            Node::branch("g1", "Group1", vec![Node::leaf("b0", "Banana"), Node::leaf("b1", "Cherry")]),
+            Node::branch(
+                "g0",
+                "Group0",
+                vec![Node::leaf("a0", "Apple"), Node::leaf("a1", "Apricot")],
+            ),
+            Node::branch(
+                "g1",
+                "Group1",
+                vec![Node::leaf("b0", "Banana"), Node::leaf("b1", "Cherry")],
+            ),
         ]
     }
 
@@ -465,7 +496,9 @@ mod tests {
                 flat_visible(&tree)
             } else {
                 let needle = q.to_lowercase();
-                flat_visible_filtered(&tree, move |n: &Node| n.label().to_lowercase().contains(&needle))
+                flat_visible_filtered(&tree, move |n: &Node| {
+                    n.label().to_lowercase().contains(&needle)
+                })
             }
         })
     }
@@ -476,14 +509,30 @@ mod tests {
             let state = Rc::new(TreeFilterState::new(rows_fn_over(Signal::new(fixture()))));
             assert_eq!(state.query(), "");
             assert!(!state.is_filtering());
-            assert_eq!(state.visible_count(), 6, "empty query = full expand-respecting tree");
+            assert_eq!(
+                state.visible_count(),
+                6,
+                "empty query = full expand-respecting tree"
+            );
             // set_query returns the resulting filtered count in one round-trip.
-            assert_eq!(state.set_query("Ap"), 3, "g0 + its two Ap* leaves; g1 pruned");
+            assert_eq!(
+                state.set_query("Ap"),
+                3,
+                "g0 + its two Ap* leaves; g1 pruned"
+            );
             assert!(state.is_filtering());
             assert_eq!(state.visible_id_at(0).as_deref(), Some("g0"));
             assert_eq!(state.visible_label_at(1).as_deref(), Some("Apple"));
-            assert_eq!(state.visible_id_at(99), None, "out-of-range filtered position");
-            assert_eq!(state.set_query(""), 6, "clearing the query restores the full view");
+            assert_eq!(
+                state.visible_id_at(99),
+                None,
+                "out-of-range filtered position"
+            );
+            assert_eq!(
+                state.set_query(""),
+                6,
+                "clearing the query restores the full view"
+            );
         });
     }
 
@@ -493,7 +542,10 @@ mod tests {
             let state = Rc::new(TreeFilterState::new(rows_fn_over(Signal::new(fixture()))));
             let mut ext = TreeFilterExternal::new(Rc::clone(&state));
             // Boot: empty query, full view.
-            assert_eq!(ext.query("query"), Some(IntrospectValue::Text(String::new())));
+            assert_eq!(
+                ext.query("query"),
+                Some(IntrospectValue::Text(String::new()))
+            );
             assert_eq!(ext.query("visible_count"), Some(IntrospectValue::Int(6)));
             // invoke set_filter returns the resulting visible_count in one trip.
             assert_eq!(
@@ -501,9 +553,18 @@ mod tests {
                 Ok(IntrospectValue::Int(2)),
                 "g1 + Cherry",
             );
-            assert_eq!(ext.query("query"), Some(IntrospectValue::Text("rry".into())));
-            assert_eq!(ext.query("visible_at.0"), Some(IntrospectValue::Text("g1".into())));
-            assert_eq!(ext.query("label_at.1"), Some(IntrospectValue::Text("Cherry".into())));
+            assert_eq!(
+                ext.query("query"),
+                Some(IntrospectValue::Text("rry".into()))
+            );
+            assert_eq!(
+                ext.query("visible_at.0"),
+                Some(IntrospectValue::Text("g1".into()))
+            );
+            assert_eq!(
+                ext.query("label_at.1"),
+                Some(IntrospectValue::Text("Cherry".into()))
+            );
             assert_eq!(
                 ext.query("visible_at.999"),
                 Some(IntrospectValue::Null),
@@ -511,7 +572,8 @@ mod tests {
             );
             assert_eq!(ext.query("nope"), None, "undeclared path is absent");
             // intervene sets the query (admin / restore); read-only + type guards.
-            ext.intervene("query", IntrospectValue::Text("Ap".into())).unwrap();
+            ext.intervene("query", IntrospectValue::Text("Ap".into()))
+                .unwrap();
             assert_eq!(state.query(), "Ap");
             assert_eq!(
                 ext.intervene("visible_count", IntrospectValue::Int(1)),
@@ -521,9 +583,15 @@ mod tests {
                 ext.intervene("query", IntrospectValue::Int(1)),
                 Err(InterveneError::TypeMismatch),
             );
-            assert_eq!(ext.invoke("bogus", IntrospectValue::Null), Err(InvokeError::UnknownPath));
+            assert_eq!(
+                ext.invoke("bogus", IntrospectValue::Null),
+                Err(InvokeError::UnknownPath)
+            );
             // Null clears via invoke → back to the full view.
-            assert_eq!(ext.invoke("set_filter", IntrospectValue::Null), Ok(IntrospectValue::Int(6)));
+            assert_eq!(
+                ext.invoke("set_filter", IntrospectValue::Null),
+                Ok(IntrospectValue::Int(6))
+            );
             assert_eq!(state.query(), "");
         });
     }
@@ -555,11 +623,16 @@ mod tests {
     fn use_tree_filter_caches_one_shared_state_per_key() {
         Owner::new().run(|| {
             let make = || {
-                use_tree_filter("r822-tree-filter-test", || rows_fn_over(Signal::new(fixture())))
+                use_tree_filter("r822-tree-filter-test", || {
+                    rows_fn_over(Signal::new(fixture()))
+                })
             };
             let a = make();
             let b = make();
-            assert!(Rc::ptr_eq(&a, &b), "the same key resolves to one shared Rc (factory runs once)");
+            assert!(
+                Rc::ptr_eq(&a, &b),
+                "the same key resolves to one shared Rc (factory runs once)"
+            );
         });
     }
 }

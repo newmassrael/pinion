@@ -67,23 +67,22 @@
 
 use pinion_a11y::{AccessNode, AriaRole, WidgetA11y};
 use pinion_core::external::External;
-use pinion_core::reactive::{batch, Owner, Signal};
+use pinion_core::reactive::{Owner, Signal, batch};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole};
-use pinion_core::widgets::aria::apply_aria_activate;
+use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::widget_core::ExtraExternal;
+use pinion_core::widgets::aria::apply_aria_activate;
 use pinion_core::widgets::button::{ButtonExternal, ButtonState};
-use pinion_core::widgets::modal::{modal_introspection_extra, use_modal, ModalState};
+use pinion_core::widgets::modal::{ModalState, modal_introspection_extra, use_modal};
 use pinion_core::{Frame, Scene, WidgetCore};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::button::{
-    button_a11y_state, read_button_focused, read_button_state,
-    ButtonColors, ButtonStyle,
+    ButtonColors, ButtonStyle, button_a11y_state, read_button_focused, read_button_state,
 };
-use pinion_widget_paint::dialog::{view_dialog, DialogContent, DialogStyle};
+use pinion_widget_paint::dialog::{DialogContent, DialogStyle, view_dialog};
 use std::rc::Rc;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -360,7 +359,6 @@ impl WidgetCore for DialogView {
         None
     }
 
-
     /// R693 §5.39 — Escape dismisses the open dialog (the shell routes
     /// Escape here only while the trap is active). Enter / Space on a
     /// focused button activate it through the shared ARIA helper, which
@@ -427,9 +425,10 @@ impl WidgetA11y for DialogView {
     fn access_node(state: &DialogViewState, focused: Option<&str>) -> Vec<AccessNode> {
         let open = modal().is_open();
         if !open {
-            return vec![AccessNode::new(TRIGGER_TAG, AriaRole::Button).with_state(
-                button_a11y_state(state.0, focused == Some(TRIGGER_TAG)),
-            )];
+            return vec![
+                AccessNode::new(TRIGGER_TAG, AriaRole::Button)
+                    .with_state(button_a11y_state(state.0, focused == Some(TRIGGER_TAG))),
+            ];
         }
         let dialog = AccessNode::new(PANEL_TAG, AriaRole::Dialog)
             .with_modal()
@@ -526,7 +525,11 @@ mod tests {
                     .find(|n| n.tag == t)
                     .and_then(|n| n.name.as_deref())
             };
-            assert_eq!(name(PANEL_TAG), Some("Delete file?"), "dialog name from title");
+            assert_eq!(
+                name(PANEL_TAG),
+                Some("Delete file?"),
+                "dialog name from title"
+            );
             assert_eq!(name(CANCEL_TAG), Some("Cancel"));
             assert_eq!(name(OK_TAG), Some("Delete"));
         });
@@ -685,9 +688,9 @@ mod tests {
     /// to dispatch against.
     fn boot_scene() -> Scene {
         use pinion_core::scene::ExternalNode;
-        let mut children = vec![
-            Scene::External(ExternalNode::new(DialogView::create_external()).with_tag(TRIGGER_TAG)),
-        ];
+        let mut children = vec![Scene::External(
+            ExternalNode::new(DialogView::create_external()).with_tag(TRIGGER_TAG),
+        )];
         for extra in DialogView::create_extra_externals() {
             children.push(Scene::External(
                 ExternalNode::new(extra.handle).with_tag(extra.tag),

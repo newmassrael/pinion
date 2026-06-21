@@ -160,8 +160,16 @@ mod tests {
         assert_eq!(nodes.len(), 4, "one list container + 3 windowed items");
         assert_eq!(nodes[0].role, AriaRole::List);
         assert_eq!(nodes[0].name.as_deref(), Some("Item list"));
-        assert_eq!(nodes[0].size_of_set, Some(10_000), "setsize conveys the FULL dataset");
-        assert_eq!(nodes[0].children.len(), 3, "list references every windowed row tag");
+        assert_eq!(
+            nodes[0].size_of_set,
+            Some(10_000),
+            "setsize conveys the FULL dataset"
+        );
+        assert_eq!(
+            nodes[0].children.len(),
+            3,
+            "list references every windowed row tag"
+        );
         for item in &nodes[1..] {
             assert_eq!(item.role, AriaRole::ListItem);
             assert_eq!(item.size_of_set, Some(10_000));
@@ -199,7 +207,11 @@ mod tests {
         assert_eq!(nodes[1].tag, "vlist#100");
         assert_eq!(nodes[1].selected, Some(false));
         assert_eq!(nodes[2].tag, "vlist#101");
-        assert_eq!(nodes[2].selected, Some(true), "the selected index is aria-selected");
+        assert_eq!(
+            nodes[2].selected,
+            Some(true),
+            "the selected index is aria-selected"
+        );
         assert_eq!(nodes[3].tag, "vlist#102");
         assert_eq!(nodes[3].selected, Some(false));
     }
@@ -210,8 +222,7 @@ mod tests {
         // posinset + child topology as the display-only builder — only
         // the per-item `aria-selected` axis is added.
         let plain = windowed_list_nodes("vlist", "List", 10_000, &window(0, 3));
-        let decorated =
-            windowed_list_nodes_selected("vlist", "List", 10_000, &window(0, 3), None);
+        let decorated = windowed_list_nodes_selected("vlist", "List", 10_000, &window(0, 3), None);
         assert_eq!(plain.len(), decorated.len());
         for (p, d) in plain.iter().zip(&decorated) {
             assert_eq!(p.tag, d.tag);
@@ -257,7 +268,10 @@ mod tests {
         let selection: std::collections::BTreeSet<usize> = [101, 103].into_iter().collect();
         let nodes =
             windowed_list_nodes_multiselected("vlist", "List", 10_000, &window(100, 4), &selection);
-        assert!(nodes[0].multiselectable, "multi-select container is aria-multiselectable");
+        assert!(
+            nodes[0].multiselectable,
+            "multi-select container is aria-multiselectable"
+        );
         assert_eq!(nodes[1].tag, "vlist#100");
         assert_eq!(nodes[1].selected, Some(false));
         assert_eq!(nodes[2].tag, "vlist#101");
@@ -265,7 +279,11 @@ mod tests {
         assert_eq!(nodes[3].tag, "vlist#102");
         assert_eq!(nodes[3].selected, Some(false));
         assert_eq!(nodes[4].tag, "vlist#103");
-        assert_eq!(nodes[4].selected, Some(true), "two members aria-selected at once");
+        assert_eq!(
+            nodes[4].selected,
+            Some(true),
+            "two members aria-selected at once"
+        );
     }
 
     #[test]
@@ -284,7 +302,10 @@ mod tests {
             assert_eq!(p.size_of_set, d.size_of_set);
             assert_eq!(p.children, d.children);
         }
-        assert!(!plain[0].multiselectable, "display-only is not multiselectable");
+        assert!(
+            !plain[0].multiselectable,
+            "display-only is not multiselectable"
+        );
         assert!(decorated[0].multiselectable);
         assert_eq!(plain[1].selected, None, "display-only omits aria-selected");
         assert_eq!(decorated[1].selected, Some(false), "multi-select sets it");

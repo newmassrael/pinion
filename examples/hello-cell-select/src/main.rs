@@ -69,23 +69,23 @@
 //! deferred: a `Ctrl`-click disjoint multi-rectangle selection, fill-handle /
 //! range copy, and editable cells.
 
-use pinion_a11y::{
-    grid_table_nodes, AccessAction, AccessFocus, AccessNode, GridCell, GridColumn, GridRow,
-    WidgetA11y,
-};
 #[cfg(test)]
 use pinion_a11y::AriaRole;
+use pinion_a11y::{
+    AccessAction, AccessFocus, AccessNode, GridCell, GridColumn, GridRow, WidgetA11y,
+    grid_table_nodes,
+};
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::scene::ContainerNode;
 use pinion_core::style::{AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle};
-use pinion_core::theme::{use_theme, ColorRole};
+use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::table::{
-    read_cols, read_focused_col, read_focused_row, read_rows, TableExternal,
+    TableExternal, read_cols, read_focused_col, read_focused_row, read_rows,
 };
 use pinion_core::{Frame, Scene, WidgetCore};
-use pinion_shell::{vello_renderer_impl, WidgetView};
-use pinion_widget_paint::table::{view_table, TableData, TableSelection, TableStyle};
+use pinion_shell::{WidgetView, vello_renderer_impl};
+use pinion_widget_paint::table::{TableData, TableSelection, TableStyle, view_table};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloCellSelectRenderer, HelloCellSelectRendererError);
@@ -146,7 +146,11 @@ struct CellSelectState {
 
 impl CellSelectState {
     fn idle() -> Self {
-        Self { focused_row: None, focused_col: 0, cell_selection: None }
+        Self {
+            focused_row: None,
+            focused_col: 0,
+            cell_selection: None,
+        }
     }
 }
 
@@ -249,8 +253,15 @@ fn view(state: &CellSelectState, _frame: &Frame) -> Scene {
     let row_states = [RadioState::Idle; NROWS];
     let table = view_table(
         PRIMARY_TAG,
-        TableData { headers: &HEADERS, rows: &rows, row_ids: &[] },
-        TableSelection { rows: &no_rows_selected, cells: state.cell_selection },
+        TableData {
+            headers: &HEADERS,
+            rows: &rows,
+            row_ids: &[],
+        },
+        TableSelection {
+            rows: &no_rows_selected,
+            cells: state.cell_selection,
+        },
         &row_states,
         None,
         &theme,
@@ -349,7 +360,11 @@ impl WidgetCore for CellSelectView {
             return false;
         };
         if let Some((row, col)) = nav_target(intro, key) {
-            let action = if modifiers.shift { "extend-cell" } else { "select-cell" };
+            let action = if modifiers.shift {
+                "extend-cell"
+            } else {
+                "select-cell"
+            };
             let _ = intro.invoke(action, IntrospectValue::Text(format!("{row},{col}")));
             return true;
         }
@@ -487,7 +502,10 @@ impl WidgetView for CellSelectView {
     type Renderer = HelloCellSelectRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 }
 
@@ -508,7 +526,10 @@ mod tests {
     }
 
     fn key(scene: &mut Scene, name: &str, shift: bool) -> bool {
-        let modifiers = pinion_core::Modifiers { shift, ..Default::default() };
+        let modifiers = pinion_core::Modifiers {
+            shift,
+            ..Default::default()
+        };
         CellSelectView::apply_key(scene, Some(PRIMARY_TAG), name, modifiers)
     }
 
@@ -545,9 +566,16 @@ mod tests {
     #[test]
     fn first_arrow_enters_at_origin_and_selects_one_cell() {
         let mut scene = scene_fixture();
-        assert!(key(&mut scene, "ArrowDown", false), "first ArrowDown handled");
+        assert!(
+            key(&mut scene, "ArrowDown", false),
+            "first ArrowDown handled"
+        );
         assert_eq!(cursor(&scene), (0, 0), "first arrow enters at (0,0)");
-        assert_eq!(bounds(&scene), Some((0, 0, 0, 0)), "a plain arrow selects one cell");
+        assert_eq!(
+            bounds(&scene),
+            Some((0, 0, 0, 0)),
+            "a plain arrow selects one cell"
+        );
     }
 
     #[test]
@@ -556,11 +584,19 @@ mod tests {
         key(&mut scene, "ArrowDown", false); // (0,0)
         key(&mut scene, "ArrowDown", true); // extend to (1,0)
         key(&mut scene, "ArrowRight", true); // extend to (1,1) -> 2x2
-        assert_eq!(bounds(&scene), Some((0, 0, 1, 1)), "Shift built a 2x2 rectangle");
+        assert_eq!(
+            bounds(&scene),
+            Some((0, 0, 1, 1)),
+            "Shift built a 2x2 rectangle"
+        );
         // A plain arrow collapses the rectangle to the single new cell.
         key(&mut scene, "ArrowDown", false);
         assert_eq!(cursor(&scene), (2, 1), "cursor advanced");
-        assert_eq!(bounds(&scene), Some((2, 1, 2, 1)), "plain arrow collapsed to one cell");
+        assert_eq!(
+            bounds(&scene),
+            Some((2, 1, 2, 1)),
+            "plain arrow collapsed to one cell"
+        );
     }
 
     #[test]
@@ -573,7 +609,11 @@ mod tests {
         assert_eq!(bounds(&scene), Some((0, 0, 2, 1)), "rectangle (0,0)->(2,1)");
         // Extending back toward the anchor shrinks it (anchor stays pinned).
         key(&mut scene, "ArrowUp", true); // (1,1)
-        assert_eq!(bounds(&scene), Some((0, 0, 1, 1)), "anchor (0,0) pinned, extent shrank");
+        assert_eq!(
+            bounds(&scene),
+            Some((0, 0, 1, 1)),
+            "anchor (0,0) pinned, extent shrank"
+        );
     }
 
     #[test]
@@ -589,7 +629,11 @@ mod tests {
         // Extend up-left past the anchor: bounds normalize (row0<=row1).
         key(&mut scene, "ArrowUp", true); // (1,2)
         key(&mut scene, "ArrowLeft", true); // (1,1)
-        assert_eq!(bounds(&scene), Some((1, 1, 2, 2)), "bounds normalize regardless of order");
+        assert_eq!(
+            bounds(&scene),
+            Some((1, 1, 2, 2)),
+            "bounds normalize regardless of order"
+        );
     }
 
     #[test]
@@ -608,11 +652,19 @@ mod tests {
         let mut scene = scene_fixture();
         key(&mut scene, "ArrowDown", false); // (0,0)
         key(&mut scene, "End", false);
-        assert_eq!(cursor(&scene).1, i64::try_from(NCOLS - 1).unwrap(), "End -> last col");
+        assert_eq!(
+            cursor(&scene).1,
+            i64::try_from(NCOLS - 1).unwrap(),
+            "End -> last col"
+        );
         key(&mut scene, "Home", false);
         assert_eq!(cursor(&scene).1, 0, "Home -> first col");
         key(&mut scene, "PageDown", false);
-        assert_eq!(cursor(&scene).0, i64::try_from(NROWS - 1).unwrap(), "PageDown -> last row");
+        assert_eq!(
+            cursor(&scene).0,
+            i64::try_from(NROWS - 1).unwrap(),
+            "PageDown -> last row"
+        );
         key(&mut scene, "PageUp", false);
         assert_eq!(cursor(&scene).0, 0, "PageUp -> first row");
     }
@@ -641,12 +693,20 @@ mod tests {
             .find(|n| n.tag == format!("{PRIMARY_TAG}#2_1"))
             .expect("gridcell 2_1");
         assert_eq!(inside.role, AriaRole::GridCell);
-        assert_eq!(inside.selected, Some(true), "cell in the rectangle is aria-selected");
+        assert_eq!(
+            inside.selected,
+            Some(true),
+            "cell in the rectangle is aria-selected"
+        );
         let outside = nodes
             .iter()
             .find(|n| n.tag == format!("{PRIMARY_TAG}#0_0"))
             .expect("gridcell 0_0");
-        assert_eq!(outside.selected, Some(false), "cell outside is aria-selected=false");
+        assert_eq!(
+            outside.selected,
+            Some(false),
+            "cell outside is aria-selected=false"
+        );
         // Rows themselves are never selected in a SelectItems grid.
         let row0 = nodes
             .iter()
@@ -662,7 +722,10 @@ mod tests {
             .iter()
             .find(|n| n.tag == format!("{PRIMARY_TAG}#0_0"))
             .expect("gridcell 0_0");
-        assert_eq!(cell.selected, None, "no aria-selected attribute without a selection");
+        assert_eq!(
+            cell.selected, None,
+            "no aria-selected attribute without a selection"
+        );
     }
 
     #[test]
@@ -685,7 +748,11 @@ mod tests {
             "3_2",
             AccessAction::Click,
         ));
-        assert_eq!(bounds(&scene), Some((3, 2, 3, 2)), "AT click selects that one cell");
+        assert_eq!(
+            bounds(&scene),
+            Some((3, 2, 3, 2)),
+            "AT click selects that one cell"
+        );
         assert_eq!(cursor(&scene), (3, 2), "the cursor followed the AT click");
     }
 
@@ -702,7 +769,10 @@ mod tests {
                 panic!("external");
             };
             let intro = node.handle.introspect_mut().expect("introspect");
-            let mods = pinion_core::Modifiers { shift, ..Default::default() };
+            let mods = pinion_core::Modifiers {
+                shift,
+                ..Default::default()
+            };
             // A real click is the full pointer cycle; only PointerUp activates.
             for ev in ["PointerEnter", "PointerDown", "PointerUp", "PointerLeave"] {
                 let wire = compose_send_payload(Some(cell), ev, mods);
@@ -710,10 +780,18 @@ mod tests {
             }
         };
         click(&mut scene, "2_1", false);
-        assert_eq!(bounds(&scene), Some((2, 1, 2, 1)), "plain click selects the single cell");
+        assert_eq!(
+            bounds(&scene),
+            Some((2, 1, 2, 1)),
+            "plain click selects the single cell"
+        );
         assert_eq!(cursor(&scene), (2, 1), "the cursor followed the click");
         click(&mut scene, "0_0", true);
-        assert_eq!(bounds(&scene), Some((0, 0, 2, 1)), "Shift+click extends from the anchor");
+        assert_eq!(
+            bounds(&scene),
+            Some((0, 0, 2, 1)),
+            "Shift+click extends from the anchor"
+        );
     }
 
     #[test]

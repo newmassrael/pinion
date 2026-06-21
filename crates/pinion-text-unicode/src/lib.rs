@@ -177,21 +177,21 @@ mod tables {
     include!(concat!(env!("OUT_DIR"), "/tables.rs"));
 }
 
-mod hangul;
-mod decompose;
-mod ordering;
 mod composition;
-mod quick_check;
+mod decompose;
+mod hangul;
 mod nfc;
 mod nfd;
 mod nfkc;
 mod nfkd;
+mod ordering;
+mod quick_check;
 
 pub mod bidi;
-pub use bidi::{bidi_class, BidiClass};
+pub use bidi::{BidiClass, bidi_class};
 
 pub mod linebreak;
-pub use linebreak::{line_break_class, LineBreak};
+pub use linebreak::{LineBreak, line_break_class};
 
 #[cfg(test)]
 mod test_fixture;
@@ -202,24 +202,17 @@ mod tests {
     use super::decompose::{decompose_canonical, decompose_compatibility};
     use super::ordering::combining_class;
     use super::tables::{
-        CANONICAL_COMBINING_CLASS_BMP_DATA,
-        CANONICAL_COMBINING_CLASS_BMP_INDEX,
-        CANONICAL_COMBINING_CLASS_SUPPLEMENTARY,
-        CANONICAL_DECOMPOSITION_BMP_DATA,
-        CANONICAL_DECOMPOSITION_BMP_INDEX,
-        CANONICAL_DECOMPOSITION_DATA, CANONICAL_DECOMPOSITION_ENTRY_COUNT,
-        CANONICAL_DECOMPOSITION_SUPPLEMENTARY,
-        COMPATIBILITY_DECOMPOSITION_BMP_DATA,
-        COMPATIBILITY_DECOMPOSITION_BMP_INDEX,
-        COMPATIBILITY_DECOMPOSITION_DATA,
-        COMPATIBILITY_DECOMPOSITION_ENTRY_COUNT,
-        COMPATIBILITY_DECOMPOSITION_SUPPLEMENTARY,
-        FULL_COMPOSITION_EXCLUSION, PRIMARY_COMPOSITES_BC_DATA,
-        PRIMARY_COMPOSITES_BMP_DATA, PRIMARY_COMPOSITES_BMP_INDEX,
-        PRIMARY_COMPOSITES_ENTRY_COUNT,
-        PRIMARY_COMPOSITES_SUPPLEMENTARY, TABLES_GENERATED_BYTES,
+        CANONICAL_COMBINING_CLASS_BMP_DATA, CANONICAL_COMBINING_CLASS_BMP_INDEX,
+        CANONICAL_COMBINING_CLASS_SUPPLEMENTARY, CANONICAL_DECOMPOSITION_BMP_DATA,
+        CANONICAL_DECOMPOSITION_BMP_INDEX, CANONICAL_DECOMPOSITION_DATA,
+        CANONICAL_DECOMPOSITION_ENTRY_COUNT, CANONICAL_DECOMPOSITION_SUPPLEMENTARY,
+        COMPATIBILITY_DECOMPOSITION_BMP_DATA, COMPATIBILITY_DECOMPOSITION_BMP_INDEX,
+        COMPATIBILITY_DECOMPOSITION_DATA, COMPATIBILITY_DECOMPOSITION_ENTRY_COUNT,
+        COMPATIBILITY_DECOMPOSITION_SUPPLEMENTARY, FULL_COMPOSITION_EXCLUSION,
+        PRIMARY_COMPOSITES_BC_DATA, PRIMARY_COMPOSITES_BMP_DATA, PRIMARY_COMPOSITES_BMP_INDEX,
+        PRIMARY_COMPOSITES_ENTRY_COUNT, PRIMARY_COMPOSITES_SUPPLEMENTARY, TABLES_GENERATED_BYTES,
     };
-    use super::{normalize, NormForm, UCD_VERSION};
+    use super::{NormForm, UCD_VERSION, normalize};
 
     // R50.2.12 — compile-time guard against an unintended codegen
     // blow-up. `TABLES_GENERATED_BYTES` is a build-time `const`, so
@@ -335,7 +328,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn ccc_bmp_trie_well_formed() {
         // R50.2.10 — 2-stage trie invariants.
@@ -351,16 +343,15 @@ mod tests {
         );
         // Block 0 must be the all-zero null block (shared sentinel).
         assert!(
-            CANONICAL_COMBINING_CLASS_BMP_DATA[..256].iter().all(|&v| v == 0),
+            CANONICAL_COMBINING_CLASS_BMP_DATA[..256]
+                .iter()
+                .all(|&v| v == 0),
             "Stage 2 block 0 must be the null block"
         );
         // Every Stage-1 index must point inside Stage 2.
-        let num_blocks = u16::try_from(
-            CANONICAL_COMBINING_CLASS_BMP_DATA.len() / 256,
-        )
-        .expect("BMP CCC trie block count must fit in u16");
-        for (i, &idx) in CANONICAL_COMBINING_CLASS_BMP_INDEX.iter().enumerate()
-        {
+        let num_blocks = u16::try_from(CANONICAL_COMBINING_CLASS_BMP_DATA.len() / 256)
+            .expect("BMP CCC trie block count must fit in u16");
+        for (i, &idx) in CANONICAL_COMBINING_CLASS_BMP_INDEX.iter().enumerate() {
             assert!(
                 idx < num_blocks,
                 "Stage 1 entry {i} points outside Stage 2 (idx = {idx}, \
@@ -400,13 +391,13 @@ mod tests {
             CANONICAL_DECOMPOSITION_BMP_DATA.len()
         );
         assert!(
-            CANONICAL_DECOMPOSITION_BMP_DATA[..256].iter().all(|&v| v == 0),
+            CANONICAL_DECOMPOSITION_BMP_DATA[..256]
+                .iter()
+                .all(|&v| v == 0),
             "Stage 2 block 0 must be the null block"
         );
-        let num_blocks = u16::try_from(
-            CANONICAL_DECOMPOSITION_BMP_DATA.len() / 256,
-        )
-        .expect("BMP decomp trie block count must fit in u16");
+        let num_blocks = u16::try_from(CANONICAL_DECOMPOSITION_BMP_DATA.len() / 256)
+            .expect("BMP decomp trie block count must fit in u16");
         for (i, &idx) in CANONICAL_DECOMPOSITION_BMP_INDEX.iter().enumerate() {
             assert!(
                 idx < num_blocks,
@@ -446,13 +437,9 @@ mod tests {
                 .all(|&v| v == 0),
             "Stage 2 block 0 must be the null block"
         );
-        let num_blocks = u16::try_from(
-            COMPATIBILITY_DECOMPOSITION_BMP_DATA.len() / 256,
-        )
-        .expect("BMP compat decomp trie block count must fit in u16");
-        for (i, &idx) in
-            COMPATIBILITY_DECOMPOSITION_BMP_INDEX.iter().enumerate()
-        {
+        let num_blocks = u16::try_from(COMPATIBILITY_DECOMPOSITION_BMP_DATA.len() / 256)
+            .expect("BMP compat decomp trie block count must fit in u16");
+        for (i, &idx) in COMPATIBILITY_DECOMPOSITION_BMP_INDEX.iter().enumerate() {
             assert!(
                 idx < num_blocks,
                 "Stage 1 entry {i} points outside Stage 2 (idx = {idx}, \
@@ -631,11 +618,9 @@ mod tests {
         // strictly ascending on `b`. Catches `sort_by_key` drift
         // in `build_primary_composites_trie` before the lookup
         // returns a wrong composite.
-        for (high, &block_idx) in PRIMARY_COMPOSITES_BMP_INDEX.iter().enumerate()
-        {
+        for (high, &block_idx) in PRIMARY_COMPOSITES_BMP_INDEX.iter().enumerate() {
             let block = block_idx as usize;
-            let block_data =
-                &PRIMARY_COMPOSITES_BMP_DATA[block * 256..(block + 1) * 256];
+            let block_data = &PRIMARY_COMPOSITES_BMP_DATA[block * 256..(block + 1) * 256];
             for (low, &cell) in block_data.iter().enumerate() {
                 if cell == 0 {
                     continue;
@@ -643,8 +628,7 @@ mod tests {
                 let length = (cell >> 24) as usize;
                 let offset = (cell & 0x00FF_FFFF) as usize;
                 let sub = &PRIMARY_COMPOSITES_BC_DATA[offset..offset + length];
-                let a = u32::try_from((high << 8) | low)
-                    .expect("BMP codepoint always fits in u32");
+                let a = u32::try_from((high << 8) | low).expect("BMP codepoint always fits in u32");
                 for window in sub.windows(2) {
                     assert!(
                         window[0].0 < window[1].0,
@@ -671,10 +655,8 @@ mod tests {
             PRIMARY_COMPOSITES_BMP_DATA[..256].iter().all(|&v| v == 0),
             "Stage 2 block 0 must be the null block"
         );
-        let num_blocks = u16::try_from(
-            PRIMARY_COMPOSITES_BMP_DATA.len() / 256,
-        )
-        .expect("BMP primary-composites trie block count must fit in u16");
+        let num_blocks = u16::try_from(PRIMARY_COMPOSITES_BMP_DATA.len() / 256)
+            .expect("BMP primary-composites trie block count must fit in u16");
         for (i, &idx) in PRIMARY_COMPOSITES_BMP_INDEX.iter().enumerate() {
             assert!(
                 idx < num_blocks,
@@ -703,22 +685,17 @@ mod tests {
     /// exposed outside of `#[cfg(test)]`.
     fn iter_primary_composites_for_test() -> Vec<(u32, u32, u32)> {
         let mut out = Vec::with_capacity(PRIMARY_COMPOSITES_ENTRY_COUNT);
-        for (high, &block_idx) in PRIMARY_COMPOSITES_BMP_INDEX.iter().enumerate()
-        {
+        for (high, &block_idx) in PRIMARY_COMPOSITES_BMP_INDEX.iter().enumerate() {
             let block = block_idx as usize;
-            let block_data =
-                &PRIMARY_COMPOSITES_BMP_DATA[block * 256..(block + 1) * 256];
+            let block_data = &PRIMARY_COMPOSITES_BMP_DATA[block * 256..(block + 1) * 256];
             for (low, &cell) in block_data.iter().enumerate() {
                 if cell == 0 {
                     continue;
                 }
                 let length = (cell >> 24) as usize;
                 let offset = (cell & 0x00FF_FFFF) as usize;
-                let a = u32::try_from((high << 8) | low)
-                    .expect("BMP codepoint always fits in u32");
-                for &(b, c) in
-                    &PRIMARY_COMPOSITES_BC_DATA[offset..offset + length]
-                {
+                let a = u32::try_from((high << 8) | low).expect("BMP codepoint always fits in u32");
+                for &(b, c) in &PRIMARY_COMPOSITES_BC_DATA[offset..offset + length] {
                     out.push((a, b, c));
                 }
             }

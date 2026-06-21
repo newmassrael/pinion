@@ -44,23 +44,23 @@
 //! tree is built inline (R776's view-order-permutation carve-out, shared with
 //! `hello-grid-sort`).
 
-use pinion_a11y::{windowed_grid_nodes_sorted, AccessNode, WidgetA11y};
+use pinion_a11y::{AccessNode, WidgetA11y, windowed_grid_nodes_sorted};
 use pinion_core::external::External;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, LayoutStyle, Size, SizeValue, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::grid_sort::{
-    grid_filter_str, grid_sort_str, use_grid_sort, GridFilter, GridSortExternal, GridSortState,
+    GridFilter, GridSortExternal, GridSortState, grid_filter_str, grid_sort_str, use_grid_sort,
 };
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::virtual_list::compute_visible_range;
-use pinion_core::widgets::virtual_select::{read_selected, VirtualSelectExternal};
+use pinion_core::widgets::virtual_select::{VirtualSelectExternal, read_selected};
 use pinion_core::{Frame, Scene, WidgetCore};
-use pinion_shell::{vello_renderer_impl, WidgetView};
-use pinion_widget_paint::table::{view_virtual_table, GridScroll, TableStyle, VirtualTableData};
+use pinion_shell::{WidgetView, vello_renderer_impl};
+use pinion_widget_paint::table::{GridScroll, TableStyle, VirtualTableData, view_virtual_table};
 use std::rc::Rc;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -168,7 +168,9 @@ fn status_bar(
     );
     Scene::Container(
         ContainerNode::new(vec![text])
-            .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh)))
+            .with_style(BoxStyle::filled(
+                theme.resolve(ColorRole::SurfaceContainerHigh),
+            ))
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Row)
@@ -198,7 +200,10 @@ fn view(selected: Option<usize>, _frame: &Frame) -> Scene {
 
     let table = view_virtual_table(
         GRID_TAG,
-        GridScroll { body: &scroll, horizontal: &h_scroll },
+        GridScroll {
+            body: &scroll,
+            horizontal: &h_scroll,
+        },
         VirtualTableData {
             headers: &HEADERS,
             item_count: N,
@@ -218,9 +223,12 @@ fn view(selected: Option<usize>, _frame: &Frame) -> Scene {
     );
 
     Scene::Container(
-        ContainerNode::new(vec![status_bar(&theme, sort, filter.as_ref(), order.len()), table])
-            .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
-            .with_layout(LayoutStyle::new().flex(FlexDirection::Column)),
+        ContainerNode::new(vec![
+            status_bar(&theme, sort, filter.as_ref(), order.len()),
+            table,
+        ])
+        .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
+        .with_layout(LayoutStyle::new().flex(FlexDirection::Column)),
     )
 }
 
@@ -245,7 +253,10 @@ impl WidgetCore for GridFilterView {
     /// clicks cycle its sort; `invoke "set_filter"` drives its filter facet
     /// (sort ⊥ filter ⊥ selection).
     fn create_extra_externals() -> Vec<ExtraExternal> {
-        vec![ExtraExternal::new(SORT_TAG, Box::new(GridSortExternal::new(use_grid_data())))]
+        vec![ExtraExternal::new(
+            SORT_TAG,
+            Box::new(GridSortExternal::new(use_grid_data())),
+        )]
     }
 
     fn tag() -> &'static str {
@@ -294,7 +305,8 @@ impl WidgetA11y for GridFilterView {
         let sort = grid.sort();
         let order = grid.order();
         let (_, measured_h) = scroll.measured_viewport();
-        let window = compute_visible_range(scroll.offset_y(), measured_h, order.len(), ROW_H, OVERSCAN);
+        let window =
+            compute_visible_range(scroll.offset_y(), measured_h, order.len(), ROW_H, OVERSCAN);
         windowed_grid_nodes_sorted(
             GRID_TAG,
             "Filterable data grid",
@@ -334,7 +346,9 @@ mod tests {
     // `tools/r783_grid_filter.py`.
 
     fn active_rows_in_view(order: &[usize]) -> bool {
-        order.iter().all(|&id| row_cells(id)[STATUS_COL] == "Active")
+        order
+            .iter()
+            .all(|&id| row_cells(id)[STATUS_COL] == "Active")
     }
 
     #[test]
@@ -342,12 +356,17 @@ mod tests {
         Owner::new().run(|| {
             let grid = use_grid_data();
             assert_eq!(grid.view_len(), N, "unfiltered view is the full dataset");
-            let kept =
-                grid.set_filter(Some(GridFilter::eq(STATUS_COL, "Active")));
-            assert!(kept > 0 && kept < N, "filter keeps a strict subset, got {kept}");
+            let kept = grid.set_filter(Some(GridFilter::eq(STATUS_COL, "Active")));
+            assert!(
+                kept > 0 && kept < N,
+                "filter keeps a strict subset, got {kept}"
+            );
             let order = grid.order();
             assert_eq!(order.len(), kept, "view len equals the order length");
-            assert!(active_rows_in_view(&order), "every row in the view is Status=Active");
+            assert!(
+                active_rows_in_view(&order),
+                "every row in the view is Status=Active"
+            );
         });
     }
 
@@ -358,7 +377,10 @@ mod tests {
             grid.set_filter(Some(GridFilter::eq(STATUS_COL, "Active")));
             grid.set_sort(Some((1, true))); // Score ascending over the filtered rows
             let order = grid.order();
-            assert!(active_rows_in_view(&order), "survivors are still all Active after sort");
+            assert!(
+                active_rows_in_view(&order),
+                "survivors are still all Active after sort"
+            );
             for pair in order.windows(2) {
                 assert!(
                     score(pair[0]) <= score(pair[1]),
@@ -382,8 +404,15 @@ mod tests {
             let filtered = GridFilterView::access_node(&None, None)[0].size_of_set;
             (full, filtered)
         });
-        assert_eq!(full, Some(u32::try_from(N).unwrap()), "unfiltered grid setsize = N");
+        assert_eq!(
+            full,
+            Some(u32::try_from(N).unwrap()),
+            "unfiltered grid setsize = N"
+        );
         let filtered = filtered.unwrap();
-        assert!(filtered > 0 && filtered < u32::try_from(N).unwrap(), "setsize shrinks under filter");
+        assert!(
+            filtered > 0 && filtered < u32::try_from(N).unwrap(),
+            "setsize shrinks under filter"
+        );
     }
 }

@@ -224,9 +224,9 @@ impl<T> Clone for Computed<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::Computed;
     use super::super::owner::Owner;
     use super::super::signal::Signal;
+    use super::Computed;
     use std::cell::Cell;
     use std::rc::Rc;
 
@@ -346,13 +346,7 @@ mod tests {
         let cond_c = cond.clone();
         let a_c = a.clone();
         let b_c = b.clone();
-        let c = Computed::new(move || {
-            if cond_c.get() {
-                a_c.get()
-            } else {
-                b_c.get()
-            }
-        });
+        let c = Computed::new(move || if cond_c.get() { a_c.get() } else { b_c.get() });
         // First read: cond=true, reads a only.
         assert_eq!(c.get(), 1);
         assert_eq!(a.observer_count(), 1);

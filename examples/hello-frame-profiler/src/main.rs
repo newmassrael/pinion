@@ -43,15 +43,15 @@
 //! their structure ([[ai-first-rpc-introspection-obligation]],
 //! [[introspection-from-paint-not-screen]]).
 
-use pinion_core::scene::{ContainerNode, Rect, TextNode};
+#[cfg(test)]
+use pinion_a11y::{AriaRole, WidgetA11y};
 use pinion_core::external::IntrospectValue;
+use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, Color, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::widgets::toggle::{ToggleEvent, ToggleExternal, ToggleState};
 use pinion_core::{ColorRole, Frame, Scene, WidgetCore, WidgetStateName, use_theme};
-#[cfg(test)]
-use pinion_a11y::{AriaRole, WidgetA11y};
 use pinion_derive::widget;
 use pinion_shell::vello_renderer_impl;
 

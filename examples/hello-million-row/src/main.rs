@@ -64,21 +64,21 @@
 //! that has been evicted re-appears as a skeleton before resolving — the
 //! observable signature of eviction. See `tools/demos/r934_million_row.py`.
 
-use pinion_a11y::{windowed_list_nodes, AccessNode, WidgetA11y};
+use pinion_a11y::{AccessNode, WidgetA11y, windowed_list_nodes};
 use pinion_core::external::{External, StubExternal};
 use pinion_core::reactive::{DeferredReady, Effect, Owner, ResourceCache, ResourceState};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
-use pinion_core::widgets::virtual_list::{compute_visible_range, pages_in_window, VisibleWindow};
-use pinion_core::{use_local_task_pump, Frame, LocalTaskPump, Scene, WidgetCore};
-use pinion_shell::{vello_renderer_impl, WidgetView};
-use pinion_widget_paint::scrollbar::{view_vertical_scrollbar, VerticalScrollbarStyle};
+use pinion_core::widgets::virtual_list::{VisibleWindow, compute_visible_range, pages_in_window};
+use pinion_core::{Frame, LocalTaskPump, Scene, WidgetCore, use_local_task_pump};
+use pinion_shell::{WidgetView, vello_renderer_impl};
+use pinion_widget_paint::scrollbar::{VerticalScrollbarStyle, view_vertical_scrollbar};
 use pinion_widget_paint::virtual_list::view_virtual_list;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -255,7 +255,11 @@ fn status_line(window: &VisibleWindow, page_states: &PageStates) -> String {
         .any(|p| !matches!(page_states.get(&p), Some(ResourceState::Ready(_))));
     let last = window.first + window.count.saturating_sub(1);
     if loading {
-        format!("Loading rows {}\u{2013}{}\u{2026}", window.first + 1, last + 1)
+        format!(
+            "Loading rows {}\u{2013}{}\u{2026}",
+            window.first + 1,
+            last + 1
+        )
     } else {
         format!("Rows {}\u{2013}{} of {N}", window.first + 1, last + 1)
     }
@@ -278,7 +282,11 @@ fn zebra_fill(index: usize, theme: &Theme) -> pinion_core::style::Color {
 }
 
 /// One row's inner text node, by the visible page's resolved state.
-fn row_text(page_state: Option<&ResourceState<Vec<AssetRow>, String>>, off: usize, theme: &Theme) -> Scene {
+fn row_text(
+    page_state: Option<&ResourceState<Vec<AssetRow>, String>>,
+    off: usize,
+    theme: &Theme,
+) -> Scene {
     let (content, role) = match page_state {
         Some(ResourceState::Ready(rows)) => match rows.get(off) {
             Some(row) => (row_label(row), ColorRole::OnSurface),
@@ -291,7 +299,9 @@ fn row_text(page_state: Option<&ResourceState<Vec<AssetRow>, String>>, off: usiz
     Scene::Text(TextNode::styled(
         content,
         Rect::default(),
-        TextStyle::new().with_size_px(14).with_fg(theme.resolve(role)),
+        TextStyle::new()
+            .with_size_px(14)
+            .with_fg(theme.resolve(role)),
     ))
 }
 
@@ -383,8 +393,12 @@ fn view(_state: (), _frame: &Frame) -> Scene {
     // layout pass wrote into `ScrollState::max_y`), sharing the same `Rc`.
     let scrollbar_style = VerticalScrollbarStyle::material(VIEWPORT_H, SCROLLBAR_TAG);
     let scrollbar_interaction = use_scrollbar_interaction(SCROLLBAR_TAG);
-    let scrollbar_visual =
-        view_vertical_scrollbar(&scroll, &theme, &scrollbar_style, scrollbar_interaction.get());
+    let scrollbar_visual = view_vertical_scrollbar(
+        &scroll,
+        &theme,
+        &scrollbar_style,
+        scrollbar_interaction.get(),
+    );
 
     let list_root = Scene::Container(
         ContainerNode::new(vec![list, scrollbar_visual])
@@ -421,7 +435,10 @@ impl WidgetCore for MillionRowView {
         // fetch the initially visible pages) so the data layer is live before
         // the first paint, and the side-effecting fetch never runs in `view`.
         let _loader = install_loader();
-        vec![scrollbar_extra_external(use_scroll_state(SCROLL_KEY), SCROLLBAR_TAG)]
+        vec![scrollbar_extra_external(
+            use_scroll_state(SCROLL_KEY),
+            SCROLLBAR_TAG,
+        )]
     }
 
     fn tag() -> &'static str {
@@ -456,7 +473,12 @@ impl WidgetA11y for MillionRowView {
     fn access_node(_state: &(), _focused: Option<&str>) -> Vec<AccessNode> {
         let scroll = use_scroll_state(SCROLL_KEY);
         let window = compute_visible_range(scroll.offset_y(), VIEWPORT_H, N, ROW_PITCH, OVERSCAN);
-        windowed_list_nodes(LIST_TAG, "Asset store", u32::try_from(N).unwrap_or(u32::MAX), &window)
+        windowed_list_nodes(
+            LIST_TAG,
+            "Asset store",
+            u32::try_from(N).unwrap_or(u32::MAX),
+            &window,
+        )
     }
 }
 
@@ -504,8 +526,10 @@ mod tests {
 
     /// Scroll so `row` is at the window top, then drain the pump.
     fn scroll_to_row(row: usize) {
-        use_scroll_state(SCROLL_KEY)
-            .scroll_to(0, i32::try_from(row).unwrap() * i32::try_from(ROW_PITCH).unwrap());
+        use_scroll_state(SCROLL_KEY).scroll_to(
+            0,
+            i32::try_from(row).unwrap() * i32::try_from(ROW_PITCH).unwrap(),
+        );
         drain_pump();
     }
 
@@ -514,7 +538,10 @@ mod tests {
         fn walk(scene: &Scene, n: &mut usize) {
             match scene {
                 Scene::Container(c) => {
-                    if c.tag.as_deref().is_some_and(|t| t.starts_with("millionrow#")) {
+                    if c.tag
+                        .as_deref()
+                        .is_some_and(|t| t.starts_with("millionrow#"))
+                    {
                         *n += 1;
                     }
                     for child in &c.children {
@@ -559,7 +586,10 @@ mod tests {
             drain_pump();
             count_row_tags(&view((), &Frame::default()))
         });
-        assert!(rendered < 30, "virtualized: small window, got {rendered} of {N}");
+        assert!(
+            rendered < 30,
+            "virtualized: small window, got {rendered} of {N}"
+        );
         assert!(rendered >= 12, "must cover the 12-row viewport");
     }
 
@@ -578,7 +608,10 @@ mod tests {
             row_text_of(&scene, 0).as_deref(),
             Some("asset_0000000.png (Texture, 19 KB)"),
         );
-        assert_eq!(text_of(&scene, STATUS_TAG).as_deref(), Some(format!("Rows 1\u{2013}16 of {N}").as_str()));
+        assert_eq!(
+            text_of(&scene, STATUS_TAG).as_deref(),
+            Some(format!("Rows 1\u{2013}16 of {N}").as_str())
+        );
     }
 
     #[test]
@@ -587,7 +620,11 @@ mod tests {
         owner.run(|| {
             boot();
             drain_pump();
-            assert_eq!(page_cache().capacity(), Some(CACHE_PAGES), "page cache is bounded");
+            assert_eq!(
+                page_cache().capacity(),
+                Some(CACHE_PAGES),
+                "page cache is bounded"
+            );
             set_scroll_bound();
             // Scroll through many far bands — far more distinct pages than the cap.
             for row in [150_000, 300_000, 450_000, 600_000, 750_000, 900_000] {
@@ -615,7 +652,10 @@ mod tests {
             scroll_to_row(300_000);
             scroll_to_row(600_000);
             scroll_to_row(900_000);
-            assert!(!page_cache().contains(&0), "page 0 evicted after far scrolling");
+            assert!(
+                !page_cache().contains(&0),
+                "page 0 evicted after far scrolling"
+            );
         });
     }
 
@@ -632,7 +672,10 @@ mod tests {
             assert!(!page_cache().contains(&0), "precondition: page 0 evicted");
             // Scroll back to the top: page 0 is re-requested (a fresh fetch).
             use_scroll_state(SCROLL_KEY).scroll_to(0, 0);
-            assert!(page_cache().contains(&0), "page 0 re-requested on scroll-back");
+            assert!(
+                page_cache().contains(&0),
+                "page 0 re-requested on scroll-back"
+            );
             assert_eq!(
                 page_cache().state(&0),
                 Some(ResourceState::Loading),
@@ -640,7 +683,10 @@ mod tests {
             );
             // Row 0 renders as a skeleton mid-refetch, then resolves to data.
             let reloading = view((), &Frame::default());
-            assert_eq!(row_text_of(&reloading, 0).as_deref(), Some("Loading\u{2026}"));
+            assert_eq!(
+                row_text_of(&reloading, 0).as_deref(),
+                Some("Loading\u{2026}")
+            );
             drain_pump();
             let reloaded = view((), &Frame::default());
             assert_eq!(
@@ -659,7 +705,10 @@ mod tests {
             view((), &Frame::default())
         });
         // Boot window touches page 0 only → exactly 1 resident, bound 4.
-        assert_eq!(text_of(&scene, CACHEINFO_TAG).as_deref(), Some("Resident pages: 1/4"));
+        assert_eq!(
+            text_of(&scene, CACHEINFO_TAG).as_deref(),
+            Some("Resident pages: 1/4")
+        );
     }
 
     #[test]
@@ -669,12 +718,17 @@ mod tests {
             boot();
             drain_pump();
             set_scroll_bound();
-            use_scroll_state(SCROLL_KEY)
-                .scroll_to(0, 500_000 * i32::try_from(ROW_PITCH).unwrap());
+            use_scroll_state(SCROLL_KEY).scroll_to(0, 500_000 * i32::try_from(ROW_PITCH).unwrap());
             // Mid-flight: the new page (5000) is Loading.
-            assert!(page_cache().contains(&5000), "page 5000 requested on scroll");
+            assert!(
+                page_cache().contains(&5000),
+                "page 5000 requested on scroll"
+            );
             let loading_scene = view((), &Frame::default());
-            assert_eq!(row_text_of(&loading_scene, 500_000).as_deref(), Some("Loading\u{2026}"));
+            assert_eq!(
+                row_text_of(&loading_scene, 500_000).as_deref(),
+                Some("Loading\u{2026}")
+            );
             drain_pump();
             let scene = view((), &Frame::default());
             // i=500000 → KINDS[500000 % 6 = 2] = Audio/wav; size=(500000*37+11)%900+8=519.
@@ -682,7 +736,10 @@ mod tests {
                 row_text_of(&scene, 500_000).as_deref(),
                 Some("asset_0500000.wav (Audio, 519 KB)"),
             );
-            assert!(row_text_of(&scene, 0).is_none(), "row 0 outside the window after scroll");
+            assert!(
+                row_text_of(&scene, 0).is_none(),
+                "row 0 outside the window after scroll"
+            );
         });
     }
 
@@ -696,9 +753,20 @@ mod tests {
             MillionRowView::access_node(&(), None)
         });
         assert_eq!(nodes[0].role, AriaRole::List);
-        assert_eq!(nodes[0].size_of_set, Some(u32::try_from(N).unwrap()), "aria-setsize=N");
-        assert!(nodes.len() - 1 < 30, "only the rendered window has listitems");
-        assert_eq!(nodes[1].position_in_set, Some(1), "top window starts at posinset 1");
+        assert_eq!(
+            nodes[0].size_of_set,
+            Some(u32::try_from(N).unwrap()),
+            "aria-setsize=N"
+        );
+        assert!(
+            nodes.len() - 1 < 30,
+            "only the rendered window has listitems"
+        );
+        assert_eq!(
+            nodes[1].position_in_set,
+            Some(1),
+            "top window starts at posinset 1"
+        );
         for item in &nodes[1..] {
             assert_eq!(item.role, AriaRole::ListItem);
             assert_eq!(item.size_of_set, Some(u32::try_from(N).unwrap()));

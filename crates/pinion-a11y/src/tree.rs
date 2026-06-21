@@ -308,7 +308,11 @@ impl AccessTreeBuilder {
 
         TreeUpdate {
             nodes,
-            tree: if self.initial { Some(Tree::new(ROOT_NODE_ID)) } else { None },
+            tree: if self.initial {
+                Some(Tree::new(ROOT_NODE_ID))
+            } else {
+                None
+            },
             tree_id: TreeId::ROOT,
             focus,
         }
@@ -340,7 +344,11 @@ fn lower_access_node(access: &AccessNode) -> Node {
 
     match &access.value {
         Some(AccessValue::Bool(b)) => {
-            node.set_toggled(if *b { accesskit::Toggled::True } else { accesskit::Toggled::False });
+            node.set_toggled(if *b {
+                accesskit::Toggled::True
+            } else {
+                accesskit::Toggled::False
+            });
         }
         Some(AccessValue::Float { value, min, max }) => {
             node.set_numeric_value(f64::from(*value));
@@ -364,7 +372,11 @@ fn lower_access_node(access: &AccessNode) -> Node {
     }
 
     if let Some(checked) = access.state.checked {
-        node.set_toggled(if checked { accesskit::Toggled::True } else { accesskit::Toggled::False });
+        node.set_toggled(if checked {
+            accesskit::Toggled::True
+        } else {
+            accesskit::Toggled::False
+        });
     }
     // R696 §5.40 — WAI-ARIA `aria-expanded` mapping for disclosure
     // controls (accordion header, future submenu title / tree twisty).
@@ -738,8 +750,8 @@ mod tests {
     #[test]
     fn composite_children_not_at_root() {
         let mut b = AccessTreeBuilder::new();
-        b.add(&
-            AccessNode::new("main_group", AriaRole::RadioGroup)
+        b.add(
+            &AccessNode::new("main_group", AriaRole::RadioGroup)
                 .with_child("r0")
                 .with_child("r1"),
         );
@@ -785,8 +797,7 @@ mod tests {
     fn window_bounds_sets_root_bounds() {
         // We can't introspect Node bounds without accesskit private
         // API, so just verify build succeeds with bounds passed.
-        let update =
-            AccessTreeBuilder::new().build(Some(Rect::new(0, 0, 1024, 768)));
+        let update = AccessTreeBuilder::new().build(Some(Rect::new(0, 0, 1024, 768)));
         assert_eq!(update.nodes.len(), 1);
     }
 
@@ -850,7 +861,10 @@ mod tests {
         // role (verified at the binding's `access_node` level).
         let pressed = AccessNode::new("seg", AriaRole::Button)
             .with_name("Photos")
-            .with_state(AccessState { checked: Some(true), ..AccessState::default() })
+            .with_state(AccessState {
+                checked: Some(true),
+                ..AccessState::default()
+            })
             .with_bounds(Rect::new(0, 0, 80, 32));
         let mut b = AccessTreeBuilder::new();
         b.add(&pressed);
@@ -867,7 +881,11 @@ mod tests {
     #[test]
     fn slider_emits_float_range() {
         let node = AccessNode::new("sl", AriaRole::Slider)
-            .with_value(AccessValue::Float { value: 50.0, min: 0.0, max: 100.0 })
+            .with_value(AccessValue::Float {
+                value: 50.0,
+                min: 0.0,
+                max: 100.0,
+            })
             .with_bounds(Rect::new(0, 0, 200, 24));
         let mut b = AccessTreeBuilder::new();
         b.add(&node);
@@ -878,8 +896,8 @@ mod tests {
     #[test]
     fn active_descendant_does_not_alter_focus_or_node_count() {
         let mut b = AccessTreeBuilder::new();
-        b.add(&
-            AccessNode::new("main_group", AriaRole::RadioGroup)
+        b.add(
+            &AccessNode::new("main_group", AriaRole::RadioGroup)
                 .with_child("main_group#0")
                 .with_child("main_group#1"),
         );
@@ -964,8 +982,7 @@ mod tests {
         b.add(&AccessNode::new("main_btn", AriaRole::Button));
         b.add(&AccessNode::new("main_cb", AriaRole::CheckBox));
         b.add(&AccessNode::new("main_sl", AriaRole::Slider));
-        let dirty: HashSet<String> =
-            ["main_cb".to_owned()].into_iter().collect();
+        let dirty: HashSet<String> = ["main_cb".to_owned()].into_iter().collect();
         b.dirty_tags(dirty);
         let update = b.build(None);
         // Root + 1 dirty widget = 2 emitted.
@@ -988,8 +1005,9 @@ mod tests {
     fn dirty_tags_unknown_tag_silently_skipped() {
         let mut b = AccessTreeBuilder::new();
         b.add(&AccessNode::new("main_btn", AriaRole::Button));
-        let dirty: HashSet<String> =
-            ["nonexistent".to_owned(), "main_btn".to_owned()].into_iter().collect();
+        let dirty: HashSet<String> = ["nonexistent".to_owned(), "main_btn".to_owned()]
+            .into_iter()
+            .collect();
         b.dirty_tags(dirty);
         let update = b.build(None);
         // The unknown tag is silently dropped; only main_btn lowered.
@@ -1020,14 +1038,8 @@ mod tests {
                 .with_child("list#0")
                 .with_child("list#1"),
         );
-        b.add(
-            &AccessNode::new("list#0", AriaRole::ListBoxOption)
-                .with_selected(true),
-        );
-        b.add(
-            &AccessNode::new("list#1", AriaRole::ListBoxOption)
-                .with_selected(false),
-        );
+        b.add(&AccessNode::new("list#0", AriaRole::ListBoxOption).with_selected(true));
+        b.add(&AccessNode::new("list#1", AriaRole::ListBoxOption).with_selected(false));
         let update = b.build(None);
         // root + list + 2 options = 4
         assert_eq!(update.nodes.len(), 4);
@@ -1138,7 +1150,11 @@ mod tests {
         b.add(
             &AccessNode::new("dl_progress", AriaRole::ProgressBar)
                 .with_name("Download")
-                .with_value(crate::AccessValue::Float { value: 0.4, min: 0.0, max: 1.0 }),
+                .with_value(crate::AccessValue::Float {
+                    value: 0.4,
+                    min: 0.0,
+                    max: 1.0,
+                }),
         );
         let update = b.build(None);
         assert_eq!(update.nodes.len(), 2);
@@ -1153,20 +1169,51 @@ mod tests {
         // range for context. Call the private lowering directly so we can
         // read both back via the AccessKit getters.
         let labeled = AccessNode::new("sl", AriaRole::Slider)
-            .with_value(AccessValue::Float { value: 0.5, min: 0.0, max: 1.0 })
+            .with_value(AccessValue::Float {
+                value: 0.5,
+                min: 0.0,
+                max: 1.0,
+            })
             .with_value_text("Medium");
         let node = lower_access_node(&labeled);
-        assert_eq!(node.value(), Some("Medium"), "aria-valuetext string lowered");
-        assert_eq!(node.numeric_value(), Some(0.5), "aria-valuenow still lowered");
-        assert_eq!(node.min_numeric_value(), Some(0.0), "aria-valuemin retained");
-        assert_eq!(node.max_numeric_value(), Some(1.0), "aria-valuemax retained");
+        assert_eq!(
+            node.value(),
+            Some("Medium"),
+            "aria-valuetext string lowered"
+        );
+        assert_eq!(
+            node.numeric_value(),
+            Some(0.5),
+            "aria-valuenow still lowered"
+        );
+        assert_eq!(
+            node.min_numeric_value(),
+            Some(0.0),
+            "aria-valuemin retained"
+        );
+        assert_eq!(
+            node.max_numeric_value(),
+            Some(1.0),
+            "aria-valuemax retained"
+        );
 
         // A plain numeric slider (no value_text) omits the string value.
-        let plain = AccessNode::new("sl", AriaRole::Slider)
-            .with_value(AccessValue::Float { value: 0.5, min: 0.0, max: 1.0 });
+        let plain = AccessNode::new("sl", AriaRole::Slider).with_value(AccessValue::Float {
+            value: 0.5,
+            min: 0.0,
+            max: 1.0,
+        });
         let plain_node = lower_access_node(&plain);
-        assert_eq!(plain_node.value(), None, "plain numeric slider omits aria-valuetext");
-        assert_eq!(plain_node.numeric_value(), Some(0.5), "numeric value still present");
+        assert_eq!(
+            plain_node.value(),
+            None,
+            "plain numeric slider omits aria-valuetext"
+        );
+        assert_eq!(
+            plain_node.numeric_value(),
+            Some(0.5),
+            "numeric value still present"
+        );
     }
 
     #[test]
@@ -1189,8 +1236,8 @@ mod tests {
     #[test]
     fn active_descendant_last_call_wins_per_parent() {
         let mut b = AccessTreeBuilder::new();
-        b.add(&
-            AccessNode::new("g", AriaRole::RadioGroup)
+        b.add(
+            &AccessNode::new("g", AriaRole::RadioGroup)
                 .with_child("g#a")
                 .with_child("g#b"),
         );

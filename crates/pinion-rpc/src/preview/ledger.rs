@@ -296,8 +296,7 @@ impl PreviewLedger {
             None => return Err(ApplyError::UnknownPreview),
             Some(entry) => (
                 entry.deadline <= now,
-                (entry.base_revision != current_scene_revision)
-                    .then_some(entry.base_revision),
+                (entry.base_revision != current_scene_revision).then_some(entry.base_revision),
             ),
         };
         if expired {
@@ -371,10 +370,7 @@ mod tests {
             paths
         }
 
-        fn apply(
-            &self,
-            _ctx: &mut crate::preview::ApplyContext<'_>,
-        ) -> Result<(), String> {
+        fn apply(&self, _ctx: &mut crate::preview::ApplyContext<'_>) -> Result<(), String> {
             // The PreviewLedger unit tests exercise the lifecycle
             // primitives (propose / cancel / list / apply_extract);
             // `apply_preview` end-to-end coverage lives in
@@ -397,9 +393,15 @@ mod tests {
     fn propose_returns_monotonic_ids_starting_at_one() {
         let ledger = PreviewLedger::default();
         let now = t0();
-        let a = ledger.propose(0, TestProposal::at("/a"), None, now).unwrap();
-        let b = ledger.propose(0, TestProposal::at("/b"), None, now).unwrap();
-        let c = ledger.propose(0, TestProposal::at("/c"), None, now).unwrap();
+        let a = ledger
+            .propose(0, TestProposal::at("/a"), None, now)
+            .unwrap();
+        let b = ledger
+            .propose(0, TestProposal::at("/b"), None, now)
+            .unwrap();
+        let c = ledger
+            .propose(0, TestProposal::at("/c"), None, now)
+            .unwrap();
         assert_eq!(a.get(), 1);
         assert_eq!(b.get(), 2);
         assert_eq!(c.get(), 3);
@@ -409,9 +411,15 @@ mod tests {
     fn propose_allows_multiple_entries_on_same_target_path() {
         let ledger = PreviewLedger::default();
         let now = t0();
-        let a = ledger.propose(0, TestProposal::at("/same"), None, now).unwrap();
-        let b = ledger.propose(0, TestProposal::at("/same"), None, now).unwrap();
-        let c = ledger.propose(0, TestProposal::at("/same"), None, now).unwrap();
+        let a = ledger
+            .propose(0, TestProposal::at("/same"), None, now)
+            .unwrap();
+        let b = ledger
+            .propose(0, TestProposal::at("/same"), None, now)
+            .unwrap();
+        let c = ledger
+            .propose(0, TestProposal::at("/same"), None, now)
+            .unwrap();
         assert_ne!(a, b);
         assert_ne!(b, c);
         assert_eq!(ledger.len(), 3);
@@ -421,8 +429,12 @@ mod tests {
     fn propose_fails_with_capacity_full_at_limit() {
         let ledger = PreviewLedger::with_config(2, DEFAULT_TTL, MAX_TTL);
         let now = t0();
-        ledger.propose(0, TestProposal::at("/a"), None, now).unwrap();
-        ledger.propose(0, TestProposal::at("/b"), None, now).unwrap();
+        ledger
+            .propose(0, TestProposal::at("/a"), None, now)
+            .unwrap();
+        ledger
+            .propose(0, TestProposal::at("/b"), None, now)
+            .unwrap();
         let err = ledger
             .propose(0, TestProposal::at("/c"), None, now)
             .unwrap_err();
@@ -433,8 +445,12 @@ mod tests {
     fn propose_lazy_sweep_reclaims_expired_slots() {
         let ledger = PreviewLedger::with_config(2, Duration::from_secs(1), MAX_TTL);
         let now = t0();
-        ledger.propose(0, TestProposal::at("/a"), None, now).unwrap();
-        ledger.propose(0, TestProposal::at("/b"), None, now).unwrap();
+        ledger
+            .propose(0, TestProposal::at("/a"), None, now)
+            .unwrap();
+        ledger
+            .propose(0, TestProposal::at("/b"), None, now)
+            .unwrap();
         let later = now + Duration::from_secs(2);
         // At capacity, but both entries are past deadline → lazy sweep reclaims.
         let c = ledger
@@ -450,7 +466,12 @@ mod tests {
             PreviewLedger::with_config(8, Duration::from_secs(10), Duration::from_secs(30));
         let now = t0();
         let id = ledger
-            .propose(0, TestProposal::at("/a"), Some(Duration::from_secs(9999)), now)
+            .propose(
+                0,
+                TestProposal::at("/a"),
+                Some(Duration::from_secs(9999)),
+                now,
+            )
             .unwrap();
         let view = ledger
             .list(now)
@@ -464,7 +485,9 @@ mod tests {
     fn propose_uses_default_ttl_when_hint_absent() {
         let ledger = ledger_with_ttl(Duration::from_secs(7));
         let now = t0();
-        let id = ledger.propose(0, TestProposal::at("/a"), None, now).unwrap();
+        let id = ledger
+            .propose(0, TestProposal::at("/a"), None, now)
+            .unwrap();
         let view = ledger.list(now).into_iter().find(|v| v.id == id).unwrap();
         assert_eq!(view.deadline - now, Duration::from_secs(7));
     }
@@ -473,7 +496,9 @@ mod tests {
     fn cancel_removes_active_entry_and_is_idempotent() {
         let ledger = PreviewLedger::default();
         let now = t0();
-        let id = ledger.propose(0, TestProposal::at("/a"), None, now).unwrap();
+        let id = ledger
+            .propose(0, TestProposal::at("/a"), None, now)
+            .unwrap();
         assert!(ledger.cancel(id));
         assert!(!ledger.cancel(id), "second cancel returns false");
         assert!(ledger.is_empty());
@@ -483,7 +508,9 @@ mod tests {
     fn cancel_unknown_id_returns_false() {
         let ledger = PreviewLedger::default();
         let now = t0();
-        let id = ledger.propose(0, TestProposal::at("/a"), None, now).unwrap();
+        let id = ledger
+            .propose(0, TestProposal::at("/a"), None, now)
+            .unwrap();
         let _ = ledger.apply_extract(id, 0, now).unwrap();
         // id is now consumed.
         assert!(!ledger.cancel(id));
@@ -493,10 +520,19 @@ mod tests {
     fn list_returns_entries_in_id_order_and_filters_expired() {
         let ledger = PreviewLedger::with_config(8, Duration::from_secs(5), MAX_TTL);
         let now = t0();
-        let a = ledger.propose(0, TestProposal::at("/a"), None, now).unwrap();
-        let b = ledger.propose(0, TestProposal::at("/b"), None, now).unwrap();
+        let a = ledger
+            .propose(0, TestProposal::at("/a"), None, now)
+            .unwrap();
+        let b = ledger
+            .propose(0, TestProposal::at("/b"), None, now)
+            .unwrap();
         let c = ledger
-            .propose(0, TestProposal::at("/c"), Some(Duration::from_secs(60)), now)
+            .propose(
+                0,
+                TestProposal::at("/c"),
+                Some(Duration::from_secs(60)),
+                now,
+            )
             .unwrap();
         let later = now + Duration::from_secs(10);
         let view = ledger.list(later);
@@ -522,7 +558,11 @@ mod tests {
         assert_eq!(view[0].target_path, "/root");
         assert_eq!(
             view[0].affected_paths,
-            vec!["/root".to_owned(), "/root/a".to_owned(), "/root/b".to_owned()]
+            vec![
+                "/root".to_owned(),
+                "/root/a".to_owned(),
+                "/root/b".to_owned()
+            ]
         );
     }
 
@@ -542,7 +582,9 @@ mod tests {
     fn apply_extract_unknown_returns_unknown_preview() {
         let ledger = PreviewLedger::default();
         let now = t0();
-        let id = ledger.propose(0, TestProposal::at("/a"), None, now).unwrap();
+        let id = ledger
+            .propose(0, TestProposal::at("/a"), None, now)
+            .unwrap();
         ledger.cancel(id);
         let err = ledger.apply_extract(id, 0, now).unwrap_err();
         assert_eq!(err, ApplyError::UnknownPreview);
@@ -552,7 +594,9 @@ mod tests {
     fn apply_extract_expired_returns_expired_and_removes_entry() {
         let ledger = PreviewLedger::with_config(8, Duration::from_secs(1), MAX_TTL);
         let now = t0();
-        let id = ledger.propose(0, TestProposal::at("/a"), None, now).unwrap();
+        let id = ledger
+            .propose(0, TestProposal::at("/a"), None, now)
+            .unwrap();
         let later = now + Duration::from_secs(2);
         let err = ledger.apply_extract(id, 0, later).unwrap_err();
         assert_eq!(err, ApplyError::Expired);
@@ -583,7 +627,9 @@ mod tests {
     fn apply_extract_cannot_be_called_twice() {
         let ledger = PreviewLedger::default();
         let now = t0();
-        let id = ledger.propose(0, TestProposal::at("/a"), None, now).unwrap();
+        let id = ledger
+            .propose(0, TestProposal::at("/a"), None, now)
+            .unwrap();
         let _ = ledger.apply_extract(id, 0, now).unwrap();
         let err = ledger.apply_extract(id, 0, now).unwrap_err();
         assert_eq!(err, ApplyError::UnknownPreview);
@@ -593,10 +639,19 @@ mod tests {
     fn sweep_expired_removes_only_past_deadline_entries() {
         let ledger = PreviewLedger::with_config(8, Duration::from_secs(5), MAX_TTL);
         let now = t0();
-        ledger.propose(0, TestProposal::at("/a"), None, now).unwrap();
-        ledger.propose(0, TestProposal::at("/b"), None, now).unwrap();
         ledger
-            .propose(0, TestProposal::at("/c"), Some(Duration::from_secs(60)), now)
+            .propose(0, TestProposal::at("/a"), None, now)
+            .unwrap();
+        ledger
+            .propose(0, TestProposal::at("/b"), None, now)
+            .unwrap();
+        ledger
+            .propose(
+                0,
+                TestProposal::at("/c"),
+                Some(Duration::from_secs(60)),
+                now,
+            )
             .unwrap();
         let report = ledger.sweep_expired(now + Duration::from_secs(10));
         assert_eq!(

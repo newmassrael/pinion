@@ -47,13 +47,13 @@ use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::button::{ButtonExternal, ButtonState};
 use pinion_core::{Frame, WidgetCore, WidgetStateName};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::button::{
-    button_a11y_state, read_button_state, view_button, ButtonColors, ButtonStyle,
+    ButtonColors, ButtonStyle, button_a11y_state, read_button_state, view_button,
 };
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -126,7 +126,11 @@ fn view_fab(i: usize, state: ButtonState, focused: bool, theme: &Theme) -> Scene
     let colors = ButtonColors::accent(theme);
     // Discrete hover (no spring): 1.0 on Hover, 0.0 otherwise — m3_button_fill
     // lands on the same endpoints a spring would settle to.
-    let hover_progress = if matches!(state, ButtonState::Hover) { 1.0 } else { 0.0 };
+    let hover_progress = if matches!(state, ButtonState::Hover) {
+        1.0
+    } else {
+        0.0
+    };
     let style = ButtonStyle::m3_default(FAB_TAGS[i])
         .with_corner_radius(RADII[i])
         .with_size(fab_size(i))
@@ -232,7 +236,6 @@ impl WidgetCore for FabView {
         "pinion hello-fab (R760 §5.38 Material 3 FAB — small / standard / large / extended)"
     }
 
-
     /// R760 §5.39 — `Space` / `Enter` activates the focused FAB; the Arrow
     /// / `Home` / `End` keys rove between them — the shared
     /// [`pinion_core::focus_request::activate_or_rove`] SSOT (the FAB is
@@ -275,7 +278,10 @@ impl WidgetView for FabView {
     type Renderer = HelloFabRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 }
 
@@ -308,7 +314,10 @@ mod tests {
 
     #[test]
     fn view_carries_primary_composite_paint_root_tag() {
-        pinion_core::test_fixtures::assert_widget_view_carries_tag::<FabView>(idle(), &Frame::new());
+        pinion_core::test_fixtures::assert_widget_view_carries_tag::<FabView>(
+            idle(),
+            &Frame::new(),
+        );
     }
 
     #[test]
@@ -316,7 +325,10 @@ mod tests {
         let scene = pinion_core::Owner::new().run(|| view(&idle(), &Frame::new()));
         for (tag, caption) in FAB_TAGS.iter().zip(CAPTIONS) {
             assert!(scene.contains_tag(tag), "fab surface tag {tag} present");
-            assert!(scene_contains_text(&scene, caption), "caption {caption} painted");
+            assert!(
+                scene_contains_text(&scene, caption),
+                "caption {caption} painted"
+            );
         }
     }
 
@@ -328,8 +340,13 @@ mod tests {
         let accent = theme.resolve(ColorRole::Accent);
         for i in 0..N {
             let scene = view_fab(i, ButtonState::Idle, false, &theme);
-            let Scene::Container(c) = &scene else { panic!("Container") };
-            assert_eq!(c.style.fill, accent, "FAB {i} idle fill is the accent container tone");
+            let Scene::Container(c) = &scene else {
+                panic!("Container")
+            };
+            assert_eq!(
+                c.style.fill, accent,
+                "FAB {i} idle fill is the accent container tone"
+            );
         }
     }
 
@@ -342,7 +359,10 @@ mod tests {
             let (Scene::Container(ci), Scene::Container(ch)) = (&idle, &hover) else {
                 panic!("Container");
             };
-            assert!(!ci.style.shadows.is_empty(), "FAB {i} casts a resting shadow (elevated)");
+            assert!(
+                !ci.style.shadows.is_empty(),
+                "FAB {i} casts a resting shadow (elevated)"
+            );
             assert!(
                 ch.style.shadows[0].blur > ci.style.shadows[0].blur,
                 "FAB {i} hover lifts the elevation (L3 -> L4, larger blur)",
@@ -364,7 +384,9 @@ mod tests {
         assert_eq!(RADII, [12, 16, 28, 16]);
         let theme = Theme::light();
         let small = view_fab(0, ButtonState::Idle, false, &theme);
-        let Scene::Container(c) = &small else { panic!("Container") };
+        let Scene::Container(c) = &small else {
+            panic!("Container")
+        };
         assert_eq!(c.style.corner_radius, 12);
     }
 
@@ -408,7 +430,10 @@ mod tests {
             "ArrowRight",
             pinion_core::Modifiers::empty(),
         ));
-        assert_eq!(pinion_core::focus_request::drain().as_deref(), Some(FAB_TAGS[0]));
+        assert_eq!(
+            pinion_core::focus_request::drain().as_deref(),
+            Some(FAB_TAGS[0])
+        );
     }
 
     #[test]
@@ -458,7 +483,11 @@ mod a11y_tests {
         assert_eq!(nodes.len(), N);
         for (node, name) in nodes.iter().zip(NAMES) {
             assert_eq!(node.role, AriaRole::Button);
-            assert_eq!(node.name.as_deref(), Some(name), "icon FAB carries an explicit name");
+            assert_eq!(
+                node.name.as_deref(),
+                Some(name),
+                "icon FAB carries an explicit name"
+            );
         }
     }
 
@@ -471,7 +500,11 @@ mod a11y_tests {
         let mut nodes = FabView::access_node(&state, None);
         pinion_a11y::enrich_names_from_scene(&mut nodes, &scene);
         for (node, name) in nodes.iter().zip(NAMES) {
-            assert_eq!(node.name.as_deref(), Some(name), "explicit name survives enrichment");
+            assert_eq!(
+                node.name.as_deref(),
+                Some(name),
+                "explicit name survives enrichment"
+            );
         }
     }
 

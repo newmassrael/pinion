@@ -155,7 +155,11 @@ pub fn scrollbar_thumb_rect(
     // zero-area rect; no signed-arithmetic invariants to defend.
     if track_extent == 0 || content_extent == 0 {
         let thumb = thumb_at(orientation, track, 0, 0, track_cross);
-        return ScrollBarGeometry { orientation, track, thumb };
+        return ScrollBarGeometry {
+            orientation,
+            track,
+            thumb,
+        };
     }
 
     // Nothing to scroll: thumb fills the entire track. Material /
@@ -164,7 +168,11 @@ pub fn scrollbar_thumb_rect(
     // track` to elide the paint at the composition layer.
     if content_extent <= viewport_extent {
         let thumb = thumb_at(orientation, track, 0, track_extent, track_cross);
-        return ScrollBarGeometry { orientation, track, thumb };
+        return ScrollBarGeometry {
+            orientation,
+            track,
+            thumb,
+        };
     }
 
     // Thumb size = floor(track_extent * viewport / content), with
@@ -178,8 +186,7 @@ pub fn scrollbar_thumb_rect(
     // fallback that satisfies clippy's `cast_possible_truncation`
     // gate without an explicit allow.
     let product = u64::from(track_extent) * u64::from(viewport_extent);
-    let ratio_thumb =
-        u32::try_from(product / u64::from(content_extent)).unwrap_or(track_extent);
+    let ratio_thumb = u32::try_from(product / u64::from(content_extent)).unwrap_or(track_extent);
     let thumb_extent = ratio_thumb.max(min_thumb_size).min(track_extent);
 
     // Scroll range and offset clamp. content > viewport guard above
@@ -196,8 +203,18 @@ pub fn scrollbar_thumb_rect(
     let thumb_pos_offset =
         u32::try_from(travel_product / u64::from(scroll_max)).unwrap_or(thumb_travel);
 
-    let thumb = thumb_at(orientation, track, thumb_pos_offset, thumb_extent, track_cross);
-    ScrollBarGeometry { orientation, track, thumb }
+    let thumb = thumb_at(
+        orientation,
+        track,
+        thumb_pos_offset,
+        thumb_extent,
+        track_cross,
+    );
+    ScrollBarGeometry {
+        orientation,
+        track,
+        thumb,
+    }
 }
 
 /// Helper that materialises the thumb rectangle in the right
@@ -260,7 +277,7 @@ fn thumb_at(
     clippy::style,
     clippy::complexity,
     clippy::pedantic,
-    clippy::all,
+    clippy::all
 )]
 mod sm {
     include!(concat!(env!("OUT_DIR"), "/scroll_bar_sm.rs"));
@@ -271,13 +288,16 @@ pub use sm::{ScrollBarEvent, ScrollBarState};
 // R698 §5.16 — route ScrollBarState <-> SCXML-id mapping through the
 // R643 `WidgetStateName` SSOT primitive, replacing the hand-written
 // `scroll_bar_state_name` fn (mirrors the R696.A Disclosure adoption).
-crate::widget_state_name!(ScrollBarState, default = Idle, [
-    Idle, Hover, Dragging, Disabled,
-]);
+crate::widget_state_name!(
+    ScrollBarState,
+    default = Idle,
+    [Idle, Hover, Dragging, Disabled,]
+);
 // R699 §5.16 — ScrollBarEvent <-> SCXML-name mapping through the
 // `WidgetEventName` SSOT primitive, replacing `parse_scroll_bar_event`.
 // No KeyboardActivate (the scrollbar has no ARIA Space/Enter activate).
-crate::widget_event_name!(ScrollBarEvent,
+crate::widget_event_name!(
+    ScrollBarEvent,
     external = [
         PointerEnter,
         PointerLeave,
@@ -438,13 +458,12 @@ use sm::ScrollBarPolicy;
 
 use std::rc::Rc;
 
-use crate::reactive::{Owner, Signal};
 use crate::external::{
-    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner,
-    ThreadOwnership,
+    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
 use crate::intent::Intent;
+use crate::reactive::{Owner, Signal};
 use crate::widgets::scroll::ScrollState;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
 use crate::{WidgetEventName, WidgetStateName};
@@ -667,14 +686,8 @@ impl WidgetTransition for ScrollBar {
         self.send(event);
     }
 
-    fn detect(
-        before: Self::Snapshot,
-        _event: Self::Event,
-        after: Self::Snapshot,
-    ) -> Vec<Intent> {
-        if matches!(before, ScrollBarState::Dragging)
-            && matches!(after, ScrollBarState::Hover)
-        {
+    fn detect(before: Self::Snapshot, _event: Self::Event, after: Self::Snapshot) -> Vec<Intent> {
+        if matches!(before, ScrollBarState::Dragging) && matches!(after, ScrollBarState::Hover) {
             vec![Intent::new_static(
                 "scroll_committed",
                 IntrospectValue::Null,
@@ -932,10 +945,8 @@ impl External for ScrollBarExternal {
         // `f32::EPSILON × 2^24 ≈ 1 px`). The cast back to i32
         // saturates on overflow (R51.x cast contract).
         #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
-        let delta_offset =
-            (delta_fraction * drag_start.scroll_max as f32).round() as i32;
-        let new_along =
-            drag_start.offset_at_press.saturating_add(delta_offset);
+        let delta_offset = (delta_fraction * drag_start.scroll_max as f32).round() as i32;
+        let new_along = drag_start.offset_at_press.saturating_add(delta_offset);
         match orientation {
             ScrollBarOrientation::Vertical => {
                 state.scroll_to(state.offset_x(), new_along);
@@ -974,9 +985,7 @@ impl ExternalIntrospect for ScrollBarExternal {
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
         match path {
-            "state" => Some(IntrospectValue::Text(
-                self.state().as_name().to_string(),
-            )),
+            "state" => Some(IntrospectValue::Text(self.state().as_name().to_string())),
             "orientation" => Some(IntrospectValue::Text(
                 scroll_bar_orientation_name(self.orientation()).to_string(),
             )),
@@ -984,11 +993,7 @@ impl ExternalIntrospect for ScrollBarExternal {
         }
     }
 
-    fn intervene(
-        &mut self,
-        path: &str,
-        _value: IntrospectValue,
-    ) -> Result<(), InterveneError> {
+    fn intervene(&mut self, path: &str, _value: IntrospectValue) -> Result<(), InterveneError> {
         match path {
             // §5.38 — `state` is SCXML-owned (the framework drives
             // it via `send`); `orientation` is construction-time
@@ -1010,12 +1015,9 @@ impl ExternalIntrospect for ScrollBarExternal {
         match path {
             "send" => match args {
                 IntrospectValue::Text(ref name) => {
-                    let ev =
-                        ScrollBarEvent::from_name(name).ok_or(InvokeError::Rejected)?;
+                    let ev = ScrollBarEvent::from_name(name).ok_or(InvokeError::Rejected)?;
                     self.send(ev);
-                    Ok(IntrospectValue::Text(
-                        self.state().as_name().to_string(),
-                    ))
+                    Ok(IntrospectValue::Text(self.state().as_name().to_string()))
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
@@ -1044,18 +1046,10 @@ mod r55_d1_tests {
     //! position) plus every degenerate case the module-doc table
     //! enumerates.
 
-    use super::{
-        scrollbar_thumb_rect, ScrollBarGeometry, ScrollBarOrientation,
-    };
+    use super::{ScrollBarGeometry, ScrollBarOrientation, scrollbar_thumb_rect};
     use crate::scene::Rect;
 
-    fn v(
-        track: Rect,
-        viewport: u32,
-        content: u32,
-        offset: u32,
-        min: u32,
-    ) -> ScrollBarGeometry {
+    fn v(track: Rect, viewport: u32, content: u32, offset: u32, min: u32) -> ScrollBarGeometry {
         scrollbar_thumb_rect(
             ScrollBarOrientation::Vertical,
             track,
@@ -1066,13 +1060,7 @@ mod r55_d1_tests {
         )
     }
 
-    fn h(
-        track: Rect,
-        viewport: u32,
-        content: u32,
-        offset: u32,
-        min: u32,
-    ) -> ScrollBarGeometry {
+    fn h(track: Rect, viewport: u32, content: u32, offset: u32, min: u32) -> ScrollBarGeometry {
         scrollbar_thumb_rect(
             ScrollBarOrientation::Horizontal,
             track,
@@ -1213,14 +1201,14 @@ mod r55_d2_tests {
     //! orientation immutability.
 
     use super::{
-        scroll_bar_orientation_name, ScrollBar, ScrollBarEvent,
-        ScrollBarExternal, ScrollBarOrientation, ScrollBarState,
+        ScrollBar, ScrollBarEvent, ScrollBarExternal, ScrollBarOrientation, ScrollBarState,
+        scroll_bar_orientation_name,
+    };
+    use crate::external::{
+        Backend, External, ExternalIntrospect, InterveneError, IntrospectValue, InvokeError,
+        RepaintOwner, ThreadOwnership,
     };
     use crate::{WidgetEventName, WidgetStateName};
-    use crate::external::{
-        Backend, External, ExternalIntrospect, InterveneError, IntrospectValue,
-        InvokeError, RepaintOwner, ThreadOwnership,
-    };
 
     #[test]
     fn initial_state_is_idle() {
@@ -1231,7 +1219,10 @@ mod r55_d2_tests {
     #[test]
     fn default_orientation_is_vertical() {
         // ARIA / web canonical default for the `scrollbar` role.
-        assert_eq!(ScrollBar::new().orientation(), ScrollBarOrientation::Vertical);
+        assert_eq!(
+            ScrollBar::new().orientation(),
+            ScrollBarOrientation::Vertical
+        );
         assert_eq!(
             ScrollBarExternal::new().orientation(),
             ScrollBarOrientation::Vertical,
@@ -1244,13 +1235,11 @@ mod r55_d2_tests {
         // mutability (the SCXML and ARIA semantics differ between
         // axes — construction-time fixed, mirrors R51.39 Slider).
         assert_eq!(
-            ScrollBar::with_orientation(ScrollBarOrientation::Horizontal)
-                .orientation(),
+            ScrollBar::with_orientation(ScrollBarOrientation::Horizontal).orientation(),
             ScrollBarOrientation::Horizontal,
         );
         assert_eq!(
-            ScrollBarExternal::with_orientation(ScrollBarOrientation::Horizontal)
-                .orientation(),
+            ScrollBarExternal::with_orientation(ScrollBarOrientation::Horizontal).orientation(),
             ScrollBarOrientation::Horizontal,
         );
     }
@@ -1516,7 +1505,10 @@ mod r55_d2_tests {
         // SCXML transitions are pure synchronous state mutations —
         // safe to drive from the UI thread.
         let sx = ScrollBarExternal::new();
-        assert!(matches!(sx.thread_ownership(), ThreadOwnership::UiThreadSync));
+        assert!(matches!(
+            sx.thread_ownership(),
+            ThreadOwnership::UiThreadSync
+        ));
     }
 
     #[test]
@@ -1616,8 +1608,7 @@ mod r55_d3_tests {
     use std::rc::Rc;
 
     use super::{
-        ScrollBar, ScrollBarEvent, ScrollBarExternal, ScrollBarOrientation,
-        ScrollBarState,
+        ScrollBar, ScrollBarEvent, ScrollBarExternal, ScrollBarOrientation, ScrollBarState,
     };
     use crate::external::External;
     use crate::widgets::scroll::ScrollState;
@@ -1805,7 +1796,11 @@ mod r55_d3_tests {
         sx.send(ScrollBarEvent::PointerDown);
         sx.pointer_move(0.0, 0.5);
         sx.pointer_move(0.0, 0.75);
-        assert_eq!(state.offset(), (0, 200), "second drag should add to new offset");
+        assert_eq!(
+            state.offset(),
+            (0, 200),
+            "second drag should add to new offset"
+        );
     }
 
     #[test]
@@ -1910,6 +1905,10 @@ mod r55_d3_tests {
         sx.pointer_move(0.0, 0.0); // press
         sx.pointer_move(0.0, 0.1); // +0.1 × 400 = +40
         // 80 + 40 = 120.
-        assert_eq!(state.offset(), (0, 120), "fresh drag must snapshot 80, not 0");
+        assert_eq!(
+            state.offset(),
+            (0, 120),
+            "fresh drag must snapshot 80, not 0"
+        );
     }
 }

@@ -164,15 +164,7 @@ use crate::style::Color;
 /// the same as [`Self::Light`] per W3C — the page falls back to the
 /// light palette when the OS reports no preference.
 #[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    Default,
-    serde::Serialize,
-    serde::Deserialize,
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
 )]
 #[non_exhaustive]
 pub enum SystemColorScheme {
@@ -299,9 +291,7 @@ pub fn set_system_color_scheme(scheme: SystemColorScheme) {
 /// `hello-textfield`). Subsequent slices add the Material 3 container
 /// / variant pairs without breaking `SemVer` thanks to the
 /// `#[non_exhaustive]` annotation.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[non_exhaustive]
 pub enum ColorRole {
     /// Window / panel background. Material 3 `surface`, W3C
@@ -551,9 +541,7 @@ impl ColorRole {
 /// [`ColorRole`] variant name (`OnSurface` ↔ `on_surface`). The
 /// [`Theme::resolve`] method dispatches the enum to the matching
 /// field so widgets stay role-driven.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Theme {
     /// Resolves [`ColorRole::Surface`].
     pub surface: Color,
@@ -761,9 +749,7 @@ impl Default for Theme {
 /// implementing [`Animatable`] for [`Color`] directly. The deferred
 /// carry stays deferred — a future 2nd consumer evidences the
 /// per-color generalization ([[abstraction-needs-second-consumer]]).
-#[derive(
-    Debug, Clone, Copy, PartialEq, Default, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 struct ThemeLinear {
     surface: AnimVec4,
     on_surface: AnimVec4,
@@ -876,9 +862,7 @@ impl Animatable for ThemeLinear {
             surface_container_highest: self
                 .surface_container_highest
                 .add(other.surface_container_highest),
-            surface_container_low: self
-                .surface_container_low
-                .add(other.surface_container_low),
+            surface_container_low: self.surface_container_low.add(other.surface_container_low),
             surface_container: self.surface_container.add(other.surface_container),
             surface_container_high: self
                 .surface_container_high
@@ -886,9 +870,7 @@ impl Animatable for ThemeLinear {
             error: self.error.add(other.error),
             on_error: self.on_error.add(other.on_error),
             error_container: self.error_container.add(other.error_container),
-            on_error_container: self
-                .on_error_container
-                .add(other.on_error_container),
+            on_error_container: self.on_error_container.add(other.on_error_container),
             inverse_surface: self.inverse_surface.add(other.inverse_surface),
             inverse_on_surface: self.inverse_on_surface.add(other.inverse_on_surface),
             inverse_primary: self.inverse_primary.add(other.inverse_primary),
@@ -906,9 +888,7 @@ impl Animatable for ThemeLinear {
             surface_container_highest: self
                 .surface_container_highest
                 .sub(other.surface_container_highest),
-            surface_container_low: self
-                .surface_container_low
-                .sub(other.surface_container_low),
+            surface_container_low: self.surface_container_low.sub(other.surface_container_low),
             surface_container: self.surface_container.sub(other.surface_container),
             surface_container_high: self
                 .surface_container_high
@@ -916,9 +896,7 @@ impl Animatable for ThemeLinear {
             error: self.error.sub(other.error),
             on_error: self.on_error.sub(other.on_error),
             error_container: self.error_container.sub(other.error_container),
-            on_error_container: self
-                .on_error_container
-                .sub(other.on_error_container),
+            on_error_container: self.on_error_container.sub(other.on_error_container),
             inverse_surface: self.inverse_surface.sub(other.inverse_surface),
             inverse_on_surface: self.inverse_on_surface.sub(other.inverse_on_surface),
             inverse_primary: self.inverse_primary.sub(other.inverse_primary),
@@ -1047,15 +1025,7 @@ impl std::fmt::Debug for ThemeFadeState {
 /// `FluentUI` design systems already specify high-contrast accessibility
 /// modes that mirror the same enum-extension shape.
 #[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    Default,
-    serde::Serialize,
-    serde::Deserialize,
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
 )]
 #[non_exhaustive]
 pub enum ThemeMode {
@@ -1609,10 +1579,7 @@ mod tests {
         assert_eq!(t.accent, Color::rgb(0x19, 0x76, 0xd2));
         assert_eq!(t.on_accent, Color::rgb(0xff, 0xff, 0xff));
         assert_eq!(t.outline, Color::rgb(0xc0, 0xc0, 0xc0));
-        assert_eq!(
-            t.surface_container_highest,
-            Color::rgb(0xe6, 0xe0, 0xe9),
-        );
+        assert_eq!(t.surface_container_highest, Color::rgb(0xe6, 0xe0, 0xe9),);
         assert_eq!(t.surface_container_low, Color::rgb(0xf7, 0xf2, 0xfa));
         assert_eq!(t.surface_container, Color::rgb(0xf3, 0xed, 0xf7));
         assert_eq!(t.surface_container_high, Color::rgb(0xec, 0xe6, 0xf0));
@@ -1629,10 +1596,7 @@ mod tests {
         assert_eq!(t.accent, Color::rgb(0x60, 0xa5, 0xfa));
         assert_eq!(t.on_accent, Color::rgb(0x0b, 0x1f, 0x3f));
         assert_eq!(t.outline, Color::rgb(0x40, 0x40, 0x40));
-        assert_eq!(
-            t.surface_container_highest,
-            Color::rgb(0x36, 0x34, 0x3b),
-        );
+        assert_eq!(t.surface_container_highest, Color::rgb(0x36, 0x34, 0x3b),);
         assert_eq!(t.surface_container_low, Color::rgb(0x1d, 0x1b, 0x20));
         assert_eq!(t.surface_container, Color::rgb(0x21, 0x1f, 0x26));
         assert_eq!(t.surface_container_high, Color::rgb(0x2b, 0x29, 0x30));
@@ -1825,7 +1789,11 @@ mod tests {
     fn r608_from_name_rejects_non_canonical_inputs() {
         assert_eq!(ColorRole::from_name(""), None);
         assert_eq!(ColorRole::from_name("Surface"), None, "case-sensitive");
-        assert_eq!(ColorRole::from_name("onsurface"), None, "missing underscore");
+        assert_eq!(
+            ColorRole::from_name("onsurface"),
+            None,
+            "missing underscore"
+        );
         assert_eq!(ColorRole::from_name("on-surface"), None, "kebab-case");
         assert_eq!(ColorRole::from_name("surface_typo"), None);
         assert_eq!(ColorRole::from_name(" surface "), None, "whitespace");
@@ -2109,7 +2077,10 @@ mod tests {
         // W3C `prefers-color-scheme: no-preference` is the spec
         // default — pin it so a future enum reshuffle does not
         // silently flip the application's first-frame appearance.
-        assert_eq!(SystemColorScheme::default(), SystemColorScheme::NoPreference);
+        assert_eq!(
+            SystemColorScheme::default(),
+            SystemColorScheme::NoPreference
+        );
     }
 
     #[test]
@@ -2383,10 +2354,7 @@ mod tests {
             actual.surface_container_highest,
             expected.surface_container_highest,
         );
-        assert_color_close(
-            actual.surface_container_low,
-            expected.surface_container_low,
-        );
+        assert_color_close(actual.surface_container_low, expected.surface_container_low);
         assert_color_close(actual.surface_container, expected.surface_container);
         assert_color_close(
             actual.surface_container_high,

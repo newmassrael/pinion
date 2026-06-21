@@ -70,12 +70,12 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::external::{
-    query_proxy_external_impl, ExternalIntrospect, InterveneError, IntrospectSchema,
-    IntrospectValue, InvokeError,
+    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
+    query_proxy_external_impl,
 };
-use crate::reactive::{batch, Owner, Signal};
+use crate::reactive::{Owner, Signal, batch};
 use crate::undo::{UndoCommand, UndoStack};
-use crate::widgets::order_memo::{source_at_value, OrderMemo};
+use crate::widgets::order_memo::{OrderMemo, source_at_value};
 
 /// R747 §5.40 — cycle a sort key the way a clicked sort header does:
 /// unsorted → ascending → descending → unsorted.
@@ -202,7 +202,10 @@ impl ViewOrderState {
     /// symmetry with [`ScrollState::with_tag`](crate::widgets::scroll::ScrollState::with_tag).
     #[must_use]
     pub fn with_tag(key: &'static str, keys: Vec<String>, categories: Vec<usize>) -> Self {
-        Self { tag: Some(key), ..Self::new(keys, categories) }
+        Self {
+            tag: Some(key),
+            ..Self::new(keys, categories)
+        }
     }
 
     /// The `use_view_order` cache key, or `None` when constructed directly.
@@ -518,7 +521,9 @@ impl ExternalIntrospect for ViewSortFilterExternal {
             return Some(source_at_value(rest, |p| self.state.source_at(p)));
         }
         match path {
-            "sort_dir" => Some(IntrospectValue::Text(sort_dir_str(self.state.sort()).into())),
+            "sort_dir" => Some(IntrospectValue::Text(
+                sort_dir_str(self.state.sort()).into(),
+            )),
             "filter" => Some(
                 self.state
                     .filter()
@@ -560,12 +565,18 @@ impl ExternalIntrospect for ViewSortFilterExternal {
         }
     }
 
-    fn invoke(&mut self, path: &str, args: IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+    fn invoke(
+        &mut self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
         match path {
             // AI-first sort cycle — returns the resulting sort_dir string.
             "cycle_sort" => {
                 self.apply_cycle_sort();
-                Ok(IntrospectValue::Text(sort_dir_str(self.state.sort()).into()))
+                Ok(IntrospectValue::Text(
+                    sort_dir_str(self.state.sort()).into(),
+                ))
             }
             // AI-first filter — Int sets the category, Null clears; returns
             // the resulting view_len in one round-trip.
@@ -585,7 +596,9 @@ impl ExternalIntrospect for ViewSortFilterExternal {
             "send" => match args {
                 IntrospectValue::Text(ref payload) => {
                     self.handle_send(payload);
-                    Ok(IntrospectValue::Text(sort_dir_str(self.state.sort()).into()))
+                    Ok(IntrospectValue::Text(
+                        sort_dir_str(self.state.sort()).into(),
+                    ))
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
@@ -687,13 +700,20 @@ mod tests {
         let s = state();
         let first = s.order();
         // Cache hit returns the same Rc while the config is unchanged.
-        assert!(Rc::ptr_eq(&first, &s.order()), "order memoized across reads");
+        assert!(
+            Rc::ptr_eq(&first, &s.order()),
+            "order memoized across reads"
+        );
         s.cycle_sort(); // ascending
         assert_eq!(s.sort(), Some(true));
         assert_eq!(&*s.order(), &[0, 3, 6, 9, 1, 4, 7, 10, 2, 5, 8, 11]);
         s.cycle_sort(); // descending
         assert_eq!(s.sort(), Some(false));
-        assert_eq!(s.source_at(0), Some(11), "descending paints C11 (source 11) first");
+        assert_eq!(
+            s.source_at(0),
+            Some(11),
+            "descending paints C11 (source 11) first"
+        );
         s.cycle_sort(); // back to source order
         assert_eq!(s.sort(), None);
         assert_eq!(&*s.order(), &(0..12).collect::<Vec<_>>());
@@ -716,13 +736,20 @@ mod tests {
         let s = state();
         let mut e = ViewSortFilterExternal::new(Rc::clone(&s));
         e.invoke("cycle_sort", IntrospectValue::Null).unwrap();
-        assert_eq!(s.sort(), Some(true), "external + view share one source of truth");
+        assert_eq!(
+            s.sort(),
+            Some(true),
+            "external + view share one source of truth"
+        );
     }
 
     #[test]
     fn query_surfaces_sort_filter_view_len_and_source_map() {
         let e = ext();
-        assert_eq!(e.query("sort_dir"), Some(IntrospectValue::Text("none".into())));
+        assert_eq!(
+            e.query("sort_dir"),
+            Some(IntrospectValue::Text("none".into()))
+        );
         assert_eq!(e.query("filter"), Some(IntrospectValue::Null));
         assert_eq!(e.query("view_len"), Some(IntrospectValue::Int(12)));
         assert_eq!(e.query("count"), Some(IntrospectValue::Int(12)));
@@ -741,10 +768,12 @@ mod tests {
         e.intervene("sort_dir", IntrospectValue::Text("descending".into()))
             .expect("sort_dir set");
         assert_eq!(e.state().sort(), Some(false));
-        e.intervene("filter", IntrospectValue::Int(2)).expect("filter set");
+        e.intervene("filter", IntrospectValue::Int(2))
+            .expect("filter set");
         assert_eq!(e.state().filter(), Some(2));
         assert_eq!(e.state().view_len(), 4);
-        e.intervene("filter", IntrospectValue::Null).expect("filter clear");
+        e.intervene("filter", IntrospectValue::Null)
+            .expect("filter clear");
         assert_eq!(e.state().filter(), None);
         assert_eq!(
             e.intervene("view_len", IntrospectValue::Int(1)),
@@ -778,7 +807,11 @@ mod tests {
         // Composite send: only the activation edge cycles.
         e.invoke("send", IntrospectValue::Text("cycle:PointerEnter".into()))
             .expect("enter is a no-op");
-        assert_eq!(e.state().sort(), Some(true), "hover did not change the sort");
+        assert_eq!(
+            e.state().sort(),
+            Some(true),
+            "hover did not change the sort"
+        );
         assert_eq!(
             e.invoke("send", IntrospectValue::Text("cycle:PointerUp".into())),
             Ok(IntrospectValue::Text("descending".into())),
@@ -806,7 +839,8 @@ mod tests {
                 e.invoke("cycle_sort", IntrospectValue::Null),
                 Ok(IntrospectValue::Text("ascending".into())),
             );
-            e.invoke("set_filter", IntrospectValue::Int(1)).expect("filter set");
+            e.invoke("set_filter", IntrospectValue::Int(1))
+                .expect("filter set");
             assert_eq!(st.sort(), Some(true));
             assert_eq!(st.filter(), Some(1));
             assert_eq!(stack.len(), 2, "two recorded edits");

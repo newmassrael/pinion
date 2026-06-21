@@ -106,39 +106,39 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use pinion_a11y::{
-    attach_child_button, listbox_option_nodes, tree_access_nodes, tree_row_tag, AccessAction,
-    AccessFocus, AccessNode, AriaRole, ListOption, WidgetA11y,
+    AccessAction, AccessFocus, AccessNode, AriaRole, ListOption, WidgetA11y, attach_child_button,
+    listbox_option_nodes, tree_access_nodes, tree_row_tag,
 };
+use pinion_core::cell_value::{CellKind, CellValue};
 use pinion_core::composite_tag::split_send_payload;
-use pinion_core::input::{DragCalibration, DRAG_CLICK_THRESHOLD_PX};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, CaptureNormalize, External, ExternalIntrospect,
-    IntrospectSchema, IntrospectValue, InterveneError, InvokeError, RepaintOwner, ThreadOwnership,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
+use pinion_core::input::{DRAG_CLICK_THRESHOLD_PX, DragCalibration};
 use pinion_core::reactive::{Owner, Signal};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::caret_blink::use_caret_blink;
 use pinion_core::widgets::checkbox::CheckboxState;
 use pinion_core::widgets::listbox_item::ListboxItemState;
 use pinion_core::widgets::slider::SliderState;
-use pinion_core::widgets::text_edit::{use_text_edit_state, TextEditState};
+use pinion_core::widgets::text_edit::{TextEditState, use_text_edit_state};
 use pinion_core::widgets::text_field::{TextFieldExternal, TextFieldState};
 use pinion_core::widgets::tree_nav::{
-    find_node, find_node_mut, flat_visible, flat_visible_filtered, resolve_tree_key,
-    set_expanded_in, toggle_expanded, tree_view_introspection_extra, TreeKey, TreeNode, VisibleRow,
+    TreeKey, TreeNode, VisibleRow, find_node, find_node_mut, flat_visible, flat_visible_filtered,
+    resolve_tree_key, set_expanded_in, toggle_expanded, tree_view_introspection_extra,
 };
-use pinion_core::cell_value::{CellKind, CellValue};
 use pinion_core::{Color, Command, Frame, Modifiers, Scene, WidgetCore};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::barrier::dismiss_barrier;
-use pinion_widget_paint::checkbox::{view_checkbox_box, CheckboxStyle};
+use pinion_widget_paint::checkbox::{CheckboxStyle, view_checkbox_box};
 use pinion_widget_paint::group_header::group_header_row;
-use pinion_widget_paint::listbox::{view_option, OptionRow};
+use pinion_widget_paint::listbox::{OptionRow, view_option};
 use pinion_widget_paint::popup::popup_surface;
 use pinion_widget_paint::slider::{slider_accent_for, slider_track_inactive};
 use pinion_widget_paint::text_field as tf_paint;
@@ -411,7 +411,6 @@ const COLOR_SWATCHES: [(Color, &str); 8] = [
     (Color::rgb(0x8e, 0x24, 0xaa), "Purple"),
 ];
 
-
 // ─── typed property model ─────────────────────────────────────────
 
 /// Value-model slot count: the 12 R836 scalar leaves (indices 0..12, unchanged —
@@ -577,7 +576,13 @@ impl PropertyNode {
     /// A collapsible branch (`id` already prefixed) with `children`, expanded by
     /// default (the Details panel boots fully open).
     fn branch(id: String, label: &str, children: Vec<PropertyNode>) -> Self {
-        Self { id, label: label.to_owned(), expanded: true, value_index: None, children }
+        Self {
+            id,
+            label: label.to_owned(),
+            expanded: true,
+            value_index: None,
+            children,
+        }
     }
 
     /// R931 — an **array element** leaf at array position `k`. Its `value_index`
@@ -707,8 +712,15 @@ fn struct_value_summary(model: &[CellValue], tree: &[PropertyNode], struct_id: &
 /// reset `button`) and the RPC (`struct_modified.<id>`) share — the R886.1
 /// one-gate extended to the struct row, so the arrow, the AT button and the
 /// query can never disagree.
-fn struct_is_modified(model: &[CellValue], defaults: &[CellValue], tree: &[PropertyNode], id: &str) -> bool {
-    struct_field_indices(tree, id).iter().any(|&i| leaf_modified(model, defaults, i))
+fn struct_is_modified(
+    model: &[CellValue],
+    defaults: &[CellValue],
+    tree: &[PropertyNode],
+    id: &str,
+) -> bool {
+    struct_field_indices(tree, id)
+        .iter()
+        .any(|&i| leaf_modified(model, defaults, i))
 }
 
 /// R921.1 / R936 — whether the leaf at slot `i` of `values` differs from its
@@ -770,7 +782,11 @@ fn leaf_descendant_count(tree: &[PropertyNode], id: &str) -> usize {
 /// [`default_properties`] model, so add / remove never shifts a scalar leaf's
 /// `value_index`.
 fn default_array() -> Vec<CellValue> {
-    vec![CellValue::Float(1.0), CellValue::Float(0.5), CellValue::Float(0.25)]
+    vec![
+        CellValue::Float(1.0),
+        CellValue::Float(0.5),
+        CellValue::Float(0.25),
+    ]
 }
 
 /// R931 — the value a freshly-added array element starts at: the zero of the
@@ -815,32 +831,54 @@ fn default_tree() -> Vec<PropertyNode> {
         PropertyNode::branch(
             format!("{STRUCT_PREFIX}{label}"),
             label,
-            vec![PropertyNode::leaf(x, "X"), PropertyNode::leaf(y, "Y"), PropertyNode::leaf(z, "Z")],
+            vec![
+                PropertyNode::leaf(x, "X"),
+                PropertyNode::leaf(y, "Y"),
+                PropertyNode::leaf(z, "Z"),
+            ],
         )
     };
     vec![
-        cat("Identity", vec![
-            PropertyNode::leaf(0, "Name"),
-            PropertyNode::leaf(1, "Tag"),
-            PropertyNode::leaf(4, "Layer"),
-        ]),
-        cat("Appearance", vec![
-            PropertyNode::leaf(2, "Visible"),
-            PropertyNode::leaf(8, "Opacity"),
-            PropertyNode::leaf(9, "Blend"),
-            PropertyNode::leaf(11, "Tint"),
-        ]),
-        cat("Physics", vec![PropertyNode::leaf(3, "Locked"), PropertyNode::leaf(10, "Body")]),
+        cat(
+            "Identity",
+            vec![
+                PropertyNode::leaf(0, "Name"),
+                PropertyNode::leaf(1, "Tag"),
+                PropertyNode::leaf(4, "Layer"),
+            ],
+        ),
+        cat(
+            "Appearance",
+            vec![
+                PropertyNode::leaf(2, "Visible"),
+                PropertyNode::leaf(8, "Opacity"),
+                PropertyNode::leaf(9, "Blend"),
+                PropertyNode::leaf(11, "Tint"),
+            ],
+        ),
+        cat(
+            "Physics",
+            vec![
+                PropertyNode::leaf(3, "Locked"),
+                PropertyNode::leaf(10, "Body"),
+            ],
+        ),
         cat("Stats", vec![PropertyNode::leaf(5, "Health")]),
-        cat("Transform", vec![vec3("Position", 6, 7, 12), vec3("Scale", 13, 14, 15)]),
+        cat(
+            "Transform",
+            vec![vec3("Position", 6, 7, 12), vec3("Scale", 13, 14, 15)],
+        ),
         // R931 — the Gameplay category holds the demo **array** property: a
         // collapsible `arr.weights` branch whose element leaves are synthesized
         // from the array sub-model length (`default_array().len()` at boot).
-        cat("Gameplay", vec![PropertyNode::branch(
-            ARR_BRANCH_ID.to_owned(),
-            ARRAY_LABEL,
-            array_children(default_array().len()),
-        )]),
+        cat(
+            "Gameplay",
+            vec![PropertyNode::branch(
+                ARR_BRANCH_ID.to_owned(),
+                ARRAY_LABEL,
+                array_children(default_array().len()),
+            )],
+        ),
     ]
 }
 
@@ -931,7 +969,10 @@ fn use_property_cursor() -> Rc<Signal<Option<String>>> {
 /// The live filter query (the R872 search box text), trimmed + lowercased; the
 /// empty string means "no filter".
 fn current_search_query() -> String {
-    use_text_edit_state(SEARCH_TF_TAG).text().trim().to_lowercase()
+    use_text_edit_state(SEARCH_TF_TAG)
+        .text()
+        .trim()
+        .to_lowercase()
 }
 
 /// R921 — the per-node filter match: a node survives the search iff its
@@ -946,7 +987,10 @@ fn node_matches_query(node: &PropertyNode, query: &str) -> bool {
     // so "weights" surfaces every element under the array, the same way a struct
     // field is searchable by its qualified name (no scalar-vs-element asymmetry).
     let name = match node.value_index {
-        Some(i) => PROPERTY_NAMES.get(i).copied().unwrap_or(node.label.as_str()),
+        Some(i) => PROPERTY_NAMES
+            .get(i)
+            .copied()
+            .unwrap_or(node.label.as_str()),
         None if node.id.starts_with(ELEM_PREFIX) => ARRAY_LABEL,
         None => node.label.as_str(),
     };
@@ -1263,7 +1307,9 @@ impl PropertyGridExternal {
     /// so "Reset all" returns the whole object to default — scalars AND the
     /// element list — never leaving the array dirty behind a "clean" readout.
     fn reset_all(&self) -> usize {
-        let scalars = (0..self.count()).filter(|&i| self.reset_to_default(i)).count();
+        let scalars = (0..self.count())
+            .filter(|&i| self.reset_to_default(i))
+            .count();
         scalars + usize::from(self.reset_array())
     }
 
@@ -1288,7 +1334,12 @@ impl PropertyGridExternal {
     /// any of its components is, the Unreal Details struct-row roll-up). Delegates
     /// to the [`struct_is_modified`] one-gate the paint + a11y also use.
     fn struct_modified(&self, struct_id: &str) -> bool {
-        struct_is_modified(&self.model.get(), &self.defaults, &self.tree.get(), struct_id)
+        struct_is_modified(
+            &self.model.get(),
+            &self.defaults,
+            &self.tree.get(),
+            struct_id,
+        )
     }
 
     /// R921 — reset every field of struct `struct_id` to its class default,
@@ -1486,8 +1537,12 @@ impl PropertyGridExternal {
     /// the array emptied, fall onto the array branch row. A cursor elsewhere
     /// (a scalar leaf, another branch) is untouched.
     fn reanchor_array_cursor(&self, removed: usize) {
-        let Some(cursor_id) = self.cursor.get() else { return };
-        let Some(ValueRef::Elem(k)) = row_ref(&cursor_id) else { return };
+        let Some(cursor_id) = self.cursor.get() else {
+            return;
+        };
+        let Some(ValueRef::Elem(k)) = row_ref(&cursor_id) else {
+            return;
+        };
         // The cursor's element survives unmoved only if it was strictly before
         // the removed slot; at-or-after it either vanished (`k == removed`) or
         // shifted down one (`k > removed`).
@@ -1543,8 +1598,16 @@ impl PropertyGridExternal {
         let Some((drag, delta)) = self.scrub_cal.drive(x_rel, || {
             let source = self.scrub_armed.get()?;
             match self.value_at(source) {
-                Some(CellValue::Int(i)) => Some(ScrubDrag { source, kind: CellKind::Int, base: i as f64 }),
-                Some(CellValue::Float(f)) => Some(ScrubDrag { source, kind: CellKind::Float, base: f }),
+                Some(CellValue::Int(i)) => Some(ScrubDrag {
+                    source,
+                    kind: CellKind::Int,
+                    base: i as f64,
+                }),
+                Some(CellValue::Float(f)) => Some(ScrubDrag {
+                    source,
+                    kind: CellKind::Float,
+                    base: f,
+                }),
                 // Nothing armed, or the armed source is no longer numeric.
                 _ => None,
             }
@@ -1586,7 +1649,8 @@ impl PropertyGridExternal {
     /// (`GRID_W_PX`). The one decision the scrub mutation gate, the
     /// click-suppression at release, and the AI-first `scrubbing` query share.
     fn is_scrubbing(&self) -> bool {
-        self.scrub_cal.traveled_beyond(GRID_W_PX, DRAG_CLICK_THRESHOLD_PX)
+        self.scrub_cal
+            .traveled_beyond(GRID_W_PX, DRAG_CLICK_THRESHOLD_PX)
     }
 
     /// Enter edit mode on `row`. A text / int / float row latches
@@ -1671,7 +1735,10 @@ impl PropertyGridExternal {
         let Some(CellValue::Color(c)) = model.get(row) else {
             return false;
         };
-        let cursor = COLOR_SWATCHES.iter().position(|(sw, _)| sw == c).unwrap_or(0);
+        let cursor = COLOR_SWATCHES
+            .iter()
+            .position(|(sw, _)| sw == c)
+            .unwrap_or(0);
         self.editing_row.set(Some(ValueRef::Scalar(row)));
         self.popup_cursor.set(Some(cursor));
         self.popup_hover.set(None);
@@ -1766,7 +1833,10 @@ impl PropertyGridExternal {
         // R921 / R931 — a click on a branch row (category / struct / array)
         // toggles its collapse on the activation edge and moves the cursor onto
         // it.
-        if key.starts_with(CAT_PREFIX) || key.starts_with(STRUCT_PREFIX) || key.starts_with(ARR_PREFIX) {
+        if key.starts_with(CAT_PREFIX)
+            || key.starts_with(STRUCT_PREFIX)
+            || key.starts_with(ARR_PREFIX)
+        {
             if event_name == "PointerUp" {
                 self.toggle_branch(key);
                 self.move_cursor(key);
@@ -1812,7 +1882,12 @@ impl PropertyGridExternal {
     /// affordances — and a `DoubleClick` enters edit mode. Both leaf kinds share
     /// this one path via [`ValueRef`]. Always succeeds (an unknown event is a
     /// no-op `Null`), so it returns the value directly.
-    fn dispatch_leaf(&mut self, key: &str, event_name: &str, value_ref: ValueRef) -> IntrospectValue {
+    fn dispatch_leaf(
+        &mut self,
+        key: &str,
+        event_name: &str,
+        value_ref: ValueRef,
+    ) -> IntrospectValue {
         match event_name {
             // R875 — arm a numeric scrub; the first capture `pointer_move`
             // calibrates it. A non-numeric press leaves the arm clear.
@@ -1845,7 +1920,9 @@ impl PropertyGridExternal {
                         _ => {}
                     }
                 }
-                IntrospectValue::Int(i64::try_from(value_ref.slot()).expect("row index fits in i64"))
+                IntrospectValue::Int(
+                    i64::try_from(value_ref.slot()).expect("row index fits in i64"),
+                )
             }
             // R875 — the capture lock lets the cursor stray off the row; a
             // release there arrives as PointerLeave / PointerCancel. Tear the
@@ -1872,7 +1949,10 @@ impl core::fmt::Debug for PropertyGridExternal {
 
 impl External for PropertyGridExternal {
     fn backends(&self) -> BackendSupport {
-        BackendSupport::new(&[Backend::Gui, Backend::Tui, Backend::Rpc], BackendFallback::Skip)
+        BackendSupport::new(
+            &[Backend::Gui, Backend::Tui, Backend::Rpc],
+            BackendFallback::Skip,
+        )
     }
 
     fn repaint_ownership(&self) -> RepaintOwner {
@@ -1993,15 +2073,21 @@ impl ExternalIntrospect for PropertyGridExternal {
             // R921.1 — Null unless the open popup's row is visible (same gate):
             // a popup hidden by a collapse / filter paints no panel, so its
             // cursor is not reported either.
-            "popup_cursor" => Some(match self.editing_if_visible().and(self.popup_cursor.get()) {
-                Some(i) => {
-                    IntrospectValue::Int(i64::try_from(i).expect("cursor index fits in i64"))
-                }
-                None => IntrospectValue::Null,
-            }),
+            "popup_cursor" => Some(
+                match self.editing_if_visible().and(self.popup_cursor.get()) {
+                    Some(i) => {
+                        IntrospectValue::Int(i64::try_from(i).expect("cursor index fits in i64"))
+                    }
+                    None => IntrospectValue::Null,
+                },
+            ),
             "scrubbing" => Some(IntrospectValue::Bool(self.is_scrubbing())),
             // R921 — the roving cursor's node id (Null when unset).
-            "cursor" => Some(self.cursor.get().map_or(IntrospectValue::Null, IntrospectValue::Text)),
+            "cursor" => Some(
+                self.cursor
+                    .get()
+                    .map_or(IntrospectValue::Null, IntrospectValue::Text),
+            ),
             // R919 — any property modified from its default (the dirty read).
             "any_modified" => Some(IntrospectValue::Bool(self.any_modified())),
             // R931 — the array element count (the dynamic-collection length).
@@ -2028,12 +2114,11 @@ impl ExternalIntrospect for PropertyGridExternal {
                 // throughout: the read shape is identical for both.
                 if let Some(addr) = path.strip_prefix("name.") {
                     return match row_ref(addr)? {
-                        ValueRef::Scalar(i) => {
-                            PROPERTY_NAMES.get(i).map(|name| IntrospectValue::Text((*name).to_owned()))
-                        }
-                        ValueRef::Elem(k) => {
-                            (k < self.array_len()).then(|| IntrospectValue::Text(format!("{ARRAY_LABEL} [{k}]")))
-                        }
+                        ValueRef::Scalar(i) => PROPERTY_NAMES
+                            .get(i)
+                            .map(|name| IntrospectValue::Text((*name).to_owned())),
+                        ValueRef::Elem(k) => (k < self.array_len())
+                            .then(|| IntrospectValue::Text(format!("{ARRAY_LABEL} [{k}]"))),
                     };
                 }
                 if let Some(addr) = path.strip_prefix("kind.") {
@@ -2053,9 +2138,8 @@ impl ExternalIntrospect for PropertyGridExternal {
                 // DCC widgets.
                 if let Some(addr) = path.strip_prefix("range.") {
                     return Some(IntrospectValue::Text(match row_ref(addr)? {
-                        ValueRef::Scalar(i) => {
-                            scalar_range(i).map_or_else(|| "none".to_owned(), |(lo, hi)| format!("{lo}..{hi}"))
-                        }
+                        ValueRef::Scalar(i) => scalar_range(i)
+                            .map_or_else(|| "none".to_owned(), |(lo, hi)| format!("{lo}..{hi}")),
                         ValueRef::Elem(_) => "none".to_owned(),
                     }));
                 }
@@ -2149,7 +2233,11 @@ impl ExternalIntrospect for PropertyGridExternal {
         }
     }
 
-    fn invoke(&mut self, path: &str, args: IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+    fn invoke(
+        &mut self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
         match path {
             // Composite wire `"<key>:<EventName>"` — routed in `dispatch_send`.
             "send" => match args {
@@ -2180,7 +2268,9 @@ impl ExternalIntrospect for PropertyGridExternal {
                     Ok(IntrospectValue::Bool(self.reset_to_default(row)))
                 }
                 IntrospectValue::Text(ref id) => match row_ref(id) {
-                    Some(ValueRef::Scalar(i)) => Ok(IntrospectValue::Bool(self.reset_to_default(i))),
+                    Some(ValueRef::Scalar(i)) => {
+                        Ok(IntrospectValue::Bool(self.reset_to_default(i)))
+                    }
                     Some(ValueRef::Elem(k)) => Ok(IntrospectValue::Bool(self.reset_element(k))),
                     None => Err(InvokeError::Rejected),
                 },
@@ -2250,7 +2340,9 @@ impl ExternalIntrospect for PropertyGridExternal {
                     if row >= self.count() {
                         return Err(InvokeError::Rejected);
                     }
-                    Ok(IntrospectValue::Bool(self.begin_edit(ValueRef::Scalar(row))))
+                    Ok(IntrospectValue::Bool(
+                        self.begin_edit(ValueRef::Scalar(row)),
+                    ))
                 }
                 // R931 — a node-id payload begins editing any leaf (a scalar "6"
                 // or an array element "elem.2"), the unified `ValueRef` address
@@ -2573,7 +2665,10 @@ fn reset_source(scene: &mut Scene, row: usize) -> bool {
     let Some(intro) = node.handle.introspect_mut() else {
         return false;
     };
-    let _ = intro.invoke("reset", IntrospectValue::Int(i64::try_from(row).expect("row fits in i64")));
+    let _ = intro.invoke(
+        "reset",
+        IntrospectValue::Int(i64::try_from(row).expect("row fits in i64")),
+    );
     true
 }
 
@@ -2602,7 +2697,10 @@ fn remove_elem_kbd(scene: &mut Scene, k: usize) -> bool {
     let Some(intro) = node.handle.introspect_mut() else {
         return false;
     };
-    let _ = intro.invoke("remove_elem", IntrospectValue::Int(i64::try_from(k).expect("k fits in i64")));
+    let _ = intro.invoke(
+        "remove_elem",
+        IntrospectValue::Int(i64::try_from(k).expect("k fits in i64")),
+    );
     true
 }
 
@@ -2652,7 +2750,11 @@ fn apply_key_search(scene: &mut Scene, key: &str, modifiers: Modifiers) -> bool 
 /// toggle, so there is no per-cell `CheckboxExternal`) — keeping one M3
 /// checkbox rendering across the catalog instead of a hand-rolled copy.
 fn cell_checkbox_style() -> CheckboxStyle {
-    CheckboxStyle { box_size: CHECKBOX_SIZE, glyph_size_px: 16, ..CheckboxStyle::m3_filled() }
+    CheckboxStyle {
+        box_size: CHECKBOX_SIZE,
+        glyph_size_px: 16,
+        ..CheckboxStyle::m3_filled()
+    }
 }
 
 /// One leaf property row: `[ name cell | value cell ]`, tagged
@@ -2686,14 +2788,13 @@ fn view_row(
             .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
     )));
     let name_cell = Scene::Container(
-        ContainerNode::new(name_children)
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Row)
-                    .with_align_items(AlignItems::Center)
-                    .with_padding(Rect::new(CELL_PAD, 0, CELL_PAD, 0))
-                    .with_size(Size::px(NAME_COL_W, ROW_H)),
-            ),
+        ContainerNode::new(name_children).with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Row)
+                .with_align_items(AlignItems::Center)
+                .with_padding(Rect::new(CELL_PAD, 0, CELL_PAD, 0))
+                .with_size(Size::px(NAME_COL_W, ROW_H)),
+        ),
     );
 
     let value_inner = if edit_active {
@@ -2714,7 +2815,10 @@ fn view_row(
             // other scalar (unranged Float / Int / Text) keeps the plain value
             // text. The range is keyed by the row's leaf slot, so an array
             // element (id `elem.<k>` → no slot) never gauges.
-            other => match (other, row_value_index(&row.id).and_then(|i| scalar_range(i).map(|(lo, hi)| (i, lo, hi)))) {
+            other => match (
+                other,
+                row_value_index(&row.id).and_then(|i| scalar_range(i).map(|(lo, hi)| (i, lo, hi))),
+            ) {
                 (CellValue::Float(f), Some((slot, lo, hi))) => {
                     ranged_slider_cell(slot, *f, lo, hi, theme)
                 }
@@ -2796,7 +2900,9 @@ fn remove_button(k: usize, theme: &Theme) -> Scene {
         ContainerNode::new(vec![Scene::Text(TextNode::styled(
             REMOVE_GLYPH,
             Rect::default(),
-            TextStyle::new().with_size_px(CELL_PX).with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+            TextStyle::new()
+                .with_size_px(CELL_PX)
+                .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
         ))])
         .with_tag(format!("{GRID_TAG}#{RM_ELEM_PREFIX}{k}"))
         .with_layout(
@@ -2822,7 +2928,9 @@ fn add_button(theme: &Theme) -> Scene {
         ContainerNode::new(vec![Scene::Text(TextNode::styled(
             ADD_GLYPH,
             Rect::default(),
-            TextStyle::new().with_size_px(CELL_PX).with_fg(theme.resolve(ColorRole::Accent)),
+            TextStyle::new()
+                .with_size_px(CELL_PX)
+                .with_fg(theme.resolve(ColorRole::Accent)),
         ))])
         .with_tag(format!("{GRID_TAG}#{ADD_ELEM_TAG}"))
         .with_layout(
@@ -2854,7 +2962,11 @@ fn array_header_row(
     theme: &Theme,
 ) -> Scene {
     let label = row.label.as_str();
-    let glyph = if row.expanded { DISCLOSURE_EXPANDED } else { DISCLOSURE_COLLAPSED };
+    let glyph = if row.expanded {
+        DISCLOSURE_EXPANDED
+    } else {
+        DISCLOSURE_COLLAPSED
+    };
     let mut name_children: Vec<Scene> = Vec::new();
     let indent_px = row.depth * INDENT_STEP;
     if indent_px > 0 {
@@ -2866,21 +2978,31 @@ fn array_header_row(
     name_children.push(Scene::Text(TextNode::styled(
         format!("{glyph}  {label}"),
         Rect::default(),
-        TextStyle::new().with_size_px(CELL_PX).with_fg(theme.resolve(ColorRole::OnSurface)),
+        TextStyle::new()
+            .with_size_px(CELL_PX)
+            .with_fg(theme.resolve(ColorRole::OnSurface)),
     )));
-    let name_cell = Scene::Container(ContainerNode::new(name_children).with_layout(
-        LayoutStyle::new()
-            .flex(FlexDirection::Row)
-            .with_align_items(AlignItems::Center)
-            .with_padding(Rect::new(CELL_PAD, 0, CELL_PAD, 0))
-            .with_size(Size::px(NAME_COL_W, ROW_H)),
-    ));
-    let summary = if count == 1 { "1 element".to_owned() } else { format!("{count} elements") };
+    let name_cell = Scene::Container(
+        ContainerNode::new(name_children).with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Row)
+                .with_align_items(AlignItems::Center)
+                .with_padding(Rect::new(CELL_PAD, 0, CELL_PAD, 0))
+                .with_size(Size::px(NAME_COL_W, ROW_H)),
+        ),
+    );
+    let summary = if count == 1 {
+        "1 element".to_owned()
+    } else {
+        format!("{count} elements")
+    };
     let value_cell = Scene::Container(
         ContainerNode::new(vec![Scene::Text(TextNode::styled(
             summary,
             Rect::default(),
-            TextStyle::new().with_size_px(CELL_PX).with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+            TextStyle::new()
+                .with_size_px(CELL_PX)
+                .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
         ))])
         .with_layout(
             LayoutStyle::new()
@@ -2913,10 +3035,20 @@ fn array_header_row(
 /// reflecting its expanded flag, the collapsed-value `summary` in the value
 /// column, and — when `modified` — the reset arrow (resetting every field). The
 /// Unreal / Qt Details struct row.
-fn struct_header_row(row: &VisibleRow, summary: &str, modified: bool, is_focused: bool, theme: &Theme) -> Scene {
+fn struct_header_row(
+    row: &VisibleRow,
+    summary: &str,
+    modified: bool,
+    is_focused: bool,
+    theme: &Theme,
+) -> Scene {
     let struct_id = row.id.as_str();
     let label = row.label.as_str();
-    let glyph = if row.expanded { DISCLOSURE_EXPANDED } else { DISCLOSURE_COLLAPSED };
+    let glyph = if row.expanded {
+        DISCLOSURE_EXPANDED
+    } else {
+        DISCLOSURE_COLLAPSED
+    };
     let mut name_children: Vec<Scene> = Vec::new();
     let indent_px = row.depth * INDENT_STEP;
     if indent_px > 0 {
@@ -2928,20 +3060,26 @@ fn struct_header_row(row: &VisibleRow, summary: &str, modified: bool, is_focused
     name_children.push(Scene::Text(TextNode::styled(
         format!("{glyph}  {label}"),
         Rect::default(),
-        TextStyle::new().with_size_px(CELL_PX).with_fg(theme.resolve(ColorRole::OnSurface)),
+        TextStyle::new()
+            .with_size_px(CELL_PX)
+            .with_fg(theme.resolve(ColorRole::OnSurface)),
     )));
-    let name_cell = Scene::Container(ContainerNode::new(name_children).with_layout(
-        LayoutStyle::new()
-            .flex(FlexDirection::Row)
-            .with_align_items(AlignItems::Center)
-            .with_padding(Rect::new(CELL_PAD, 0, CELL_PAD, 0))
-            .with_size(Size::px(NAME_COL_W, ROW_H)),
-    ));
+    let name_cell = Scene::Container(
+        ContainerNode::new(name_children).with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Row)
+                .with_align_items(AlignItems::Center)
+                .with_padding(Rect::new(CELL_PAD, 0, CELL_PAD, 0))
+                .with_size(Size::px(NAME_COL_W, ROW_H)),
+        ),
+    );
     let value_cell = Scene::Container(
         ContainerNode::new(vec![Scene::Text(TextNode::styled(
             summary,
             Rect::default(),
-            TextStyle::new().with_size_px(CELL_PX).with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+            TextStyle::new()
+                .with_size_px(CELL_PX)
+                .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
         ))])
         .with_layout(
             LayoutStyle::new()
@@ -2976,12 +3114,16 @@ fn choice_value_cell(selected: usize, options: &[String], theme: &Theme) -> Scen
     let label_node = Scene::Text(TextNode::styled(
         label,
         Rect::default(),
-        TextStyle::new().with_size_px(CELL_PX).with_fg(theme.resolve(ColorRole::OnSurface)),
+        TextStyle::new()
+            .with_size_px(CELL_PX)
+            .with_fg(theme.resolve(ColorRole::OnSurface)),
     ));
     let chevron = Scene::Text(TextNode::styled(
         CHOICE_CHEVRON,
         Rect::default(),
-        TextStyle::new().with_size_px(CELL_PX).with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+        TextStyle::new()
+            .with_size_px(CELL_PX)
+            .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
     ));
     Scene::Container(
         ContainerNode::new(vec![label_node, chevron]).with_layout(
@@ -2996,15 +3138,21 @@ fn choice_value_cell(selected: usize, options: &[String], theme: &Theme) -> Scen
 
 /// A closed colour cell: a filled swatch chip plus the `#RRGGBB` hex value.
 fn color_value_cell(color: Color, theme: &Theme) -> Scene {
-    let swatch = Scene::Container(ContainerNode::new(vec![]).with_style(
-        BoxStyle::filled(color)
-            .with_corner_radius(4)
-            .with_border(Border::new(theme.resolve(ColorRole::Outline), 1)),
-    ).with_layout(LayoutStyle::new().with_size(Size::px(CELL_PX + 6, CELL_PX + 6))));
+    let swatch = Scene::Container(
+        ContainerNode::new(vec![])
+            .with_style(
+                BoxStyle::filled(color)
+                    .with_corner_radius(4)
+                    .with_border(Border::new(theme.resolve(ColorRole::Outline), 1)),
+            )
+            .with_layout(LayoutStyle::new().with_size(Size::px(CELL_PX + 6, CELL_PX + 6))),
+    );
     let hex = Scene::Text(TextNode::styled(
         color.to_hex(),
         Rect::default(),
-        TextStyle::new().with_size_px(CELL_PX).with_fg(theme.resolve(ColorRole::OnSurface)),
+        TextStyle::new()
+            .with_size_px(CELL_PX)
+            .with_fg(theme.resolve(ColorRole::OnSurface)),
     ));
     Scene::Container(
         ContainerNode::new(vec![swatch, hex]).with_layout(
@@ -3128,12 +3276,23 @@ fn view_color_popup(
             let cells: Vec<Scene> = (start..end)
                 .map(|i| {
                     let (color, _) = COLOR_SWATCHES[i];
-                    view_swatch(i, color, color == current, cursor == i, hover == Some(i), theme)
+                    view_swatch(
+                        i,
+                        color,
+                        color == current,
+                        cursor == i,
+                        hover == Some(i),
+                        theme,
+                    )
                 })
                 .collect();
-            Scene::Container(ContainerNode::new(cells).with_layout(
-                LayoutStyle::new().flex(FlexDirection::Row).with_gap(SWATCH_GAP),
-            ))
+            Scene::Container(
+                ContainerNode::new(cells).with_layout(
+                    LayoutStyle::new()
+                        .flex(FlexDirection::Row)
+                        .with_gap(SWATCH_GAP),
+                ),
+            )
         })
         .collect();
     // The hex-entry field below the palette — the arbitrary-colour path.
@@ -3142,7 +3301,14 @@ fn view_color_popup(
         field_h: HEX_FIELD_H,
         ..tf_paint::TextFieldStyle::m3_filled()
     };
-    children.push(tf_paint::view_field(EDIT_TF_TAG, edit_field.0, edit_field.1, theme, &field_style, ""));
+    children.push(tf_paint::view_field(
+        EDIT_TF_TAG,
+        edit_field.0,
+        edit_field.1,
+        theme,
+        &field_style,
+        "",
+    ));
     let panel_w = inner_w + 2 * POPUP_PAD;
     let panel_h =
         n_rows * SWATCH_SIZE + (n_rows - 1) * SWATCH_GAP + SWATCH_GAP + HEX_FIELD_H + 2 * POPUP_PAD;
@@ -3174,7 +3340,8 @@ fn popup_origin(view_pos: usize, panel_h: u32) -> (u32, u32) {
     let x = PANEL_PAD + GRID_BORDER + NAME_COL_W;
     let row_step = ROW_H + ROW_GAP;
     let grid_top = PANEL_PAD + TITLE_H + TITLE_GAP + GRID_BORDER;
-    let row_top = grid_top + row_step + u32::try_from(view_pos).expect("row fits in u32") * row_step;
+    let row_top =
+        grid_top + row_step + u32::try_from(view_pos).expect("row fits in u32") * row_step;
     let below = row_top + ROW_H;
     let content_bottom = WIN_H - PANEL_PAD;
     let y = if below + panel_h <= content_bottom {
@@ -3206,14 +3373,19 @@ fn view_header(theme: &Theme) -> Scene {
         )
     };
     Scene::Container(
-        ContainerNode::new(vec![cell("Property", NAME_COL_W), cell("Value", VALUE_COL_W)])
-            .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHighest)))
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Row)
-                    .with_align_items(AlignItems::Center)
-                    .with_size(Size::px(NAME_COL_W + VALUE_COL_W, ROW_H)),
-            ),
+        ContainerNode::new(vec![
+            cell("Property", NAME_COL_W),
+            cell("Value", VALUE_COL_W),
+        ])
+        .with_style(BoxStyle::filled(
+            theme.resolve(ColorRole::SurfaceContainerHighest),
+        ))
+        .with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Row)
+                .with_align_items(AlignItems::Center)
+                .with_size(Size::px(NAME_COL_W + VALUE_COL_W, ROW_H)),
+        ),
     )
 }
 
@@ -3252,20 +3424,27 @@ fn popup_view_pos(editing: Option<ValueRef>) -> Option<(usize, usize)> {
 /// SSOT the paint uses) so the AT `listbox` is never emitted for a popup the
 /// screen does not show.
 fn popup_listbox_nodes(model: &[CellValue]) -> Vec<AccessNode> {
-    let Some((row, _)) = popup_view_pos(use_editing_row().get()) else { return Vec::new() };
+    let Some((row, _)) = popup_view_pos(use_editing_row().get()) else {
+        return Vec::new();
+    };
     match model.get(row) {
         Some(CellValue::Choice { selected, options }) => {
             let cursor = use_popup_cursor().get().unwrap_or(*selected);
             let hover = use_popup_hover().get();
-            let tags: Vec<String> =
-                (0..options.len()).map(|i| format!("{GRID_TAG}#{CHOICE_OPT_PREFIX}{i}")).collect();
+            let tags: Vec<String> = (0..options.len())
+                .map(|i| format!("{GRID_TAG}#{CHOICE_OPT_PREFIX}{i}"))
+                .collect();
             let opts: Vec<ListOption<'_>> = options
                 .iter()
                 .enumerate()
                 .map(|(i, label)| ListOption {
                     tag: &tags[i],
                     label: Some(label.as_str()),
-                    state: if hover == Some(i) { ListboxItemState::Hover } else { ListboxItemState::Idle },
+                    state: if hover == Some(i) {
+                        ListboxItemState::Hover
+                    } else {
+                        ListboxItemState::Idle
+                    },
                     selected: *selected == i,
                     focused: cursor == i,
                 })
@@ -3276,15 +3455,20 @@ fn popup_listbox_nodes(model: &[CellValue]) -> Vec<AccessNode> {
         Some(CellValue::Color(current)) => {
             let cursor = use_popup_cursor().get().unwrap_or(0);
             let hover = use_popup_hover().get();
-            let tags: Vec<String> =
-                (0..COLOR_SWATCHES.len()).map(|i| format!("{GRID_TAG}#{COLOR_SW_PREFIX}{i}")).collect();
+            let tags: Vec<String> = (0..COLOR_SWATCHES.len())
+                .map(|i| format!("{GRID_TAG}#{COLOR_SW_PREFIX}{i}"))
+                .collect();
             let opts: Vec<ListOption<'_>> = COLOR_SWATCHES
                 .iter()
                 .enumerate()
                 .map(|(i, &(color, label))| ListOption {
                     tag: &tags[i],
                     label: Some(label),
-                    state: if hover == Some(i) { ListboxItemState::Hover } else { ListboxItemState::Idle },
+                    state: if hover == Some(i) {
+                        ListboxItemState::Hover
+                    } else {
+                        ListboxItemState::Idle
+                    },
                     selected: color == *current,
                     focused: cursor == i,
                 })
@@ -3302,7 +3486,9 @@ fn view_popup_overlay(
     edit_field: (TextFieldState, u32),
     theme: &Theme,
 ) -> Vec<Scene> {
-    let Some((row, view_pos)) = popup_view_pos(editing) else { return Vec::new() };
+    let Some((row, view_pos)) = popup_view_pos(editing) else {
+        return Vec::new();
+    };
     match model.get(row) {
         Some(CellValue::Choice { selected, options }) => {
             let cursor = use_popup_cursor().get().unwrap_or(*selected);
@@ -3333,15 +3519,23 @@ fn view_title(search_state: TextFieldState, search_caret: u32, theme: &Theme) ->
     let title_label = Scene::Text(TextNode::styled(
         "Inspector",
         Rect::default(),
-        TextStyle::new().with_size_px(TITLE_PX).with_fg(theme.resolve(ColorRole::OnSurface)),
+        TextStyle::new()
+            .with_size_px(TITLE_PX)
+            .with_fg(theme.resolve(ColorRole::OnSurface)),
     ));
     let search_style = tf_paint::TextFieldStyle {
         field_w: SEARCH_W,
         field_h: TITLE_H - 4,
         ..tf_paint::TextFieldStyle::m3_filled()
     };
-    let search_field =
-        tf_paint::view_field(SEARCH_TF_TAG, search_state, search_caret, theme, &search_style, "Filter");
+    let search_field = tf_paint::view_field(
+        SEARCH_TF_TAG,
+        search_state,
+        search_caret,
+        theme,
+        &search_style,
+        "Filter",
+    );
     Scene::Container(
         ContainerNode::new(vec![title_label, search_field]).with_layout(
             LayoutStyle::new()
@@ -3353,7 +3547,8 @@ fn view_title(search_state: TextFieldState, search_caret: u32, theme: &Theme) ->
     )
 }
 
-#[allow(clippy::trivially_copy_pass_by_ref)]
+// R1026 — rustfmt's reflow pushed this example view past too_many_lines (100).
+#[allow(clippy::trivially_copy_pass_by_ref, clippy::too_many_lines)]
 fn view(state: RootState, _frame: &Frame) -> Scene {
     let ((edit_state, edit_caret), (search_state, search_caret)) = state;
     let theme = use_theme(THEME_TAG).theme_animated();
@@ -3384,12 +3579,21 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
         if let Some(vi) = row_value_index(&vr.id) {
             // A scalar leaf (editable) row — trailing reset arrow iff modified.
             let value = &model[vi];
-            let edit_active = editing == Some(ValueRef::Scalar(vi)) && value.kind().is_text_editable();
+            let edit_active =
+                editing == Some(ValueRef::Scalar(vi)) && value.kind().is_text_editable();
             let trailing = leaf_modified(&model, &defaults, vi)
                 .then(|| reset_arrow(&vr.id, RESET_DOT_X, &theme))
                 .into_iter()
                 .collect();
-            rows.push(view_row(vr, value, is_focused, edit_active, trailing, &theme, (edit_state, edit_caret)));
+            rows.push(view_row(
+                vr,
+                value,
+                is_focused,
+                edit_active,
+                trailing,
+                &theme,
+                (edit_state, edit_caret),
+            ));
         } else if let Some(ValueRef::Elem(k)) = row_ref(&vr.id) {
             // R931 / R936 — an array element leaf: render the element value (from
             // the array sub-model) through the *same* `view_row` as a scalar
@@ -3403,19 +3607,35 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
             if leaf_modified(&array, &array_defaults, k) {
                 trailing.push(reset_arrow(&vr.id, RESET_DOT_X2, &theme));
             }
-            rows.push(view_row(vr, &value, is_focused, edit_active, trailing, &theme, (edit_state, edit_caret)));
+            rows.push(view_row(
+                vr,
+                &value,
+                is_focused,
+                edit_active,
+                trailing,
+                &theme,
+                (edit_state, edit_caret),
+            ));
         } else if vr.id.starts_with(STRUCT_PREFIX) {
             // A struct branch row: disclosure + name + the collapsed-value tuple.
             let summary = struct_value_summary(&model, &tree_nodes, &vr.id);
             let modified = struct_is_modified(&model, &defaults, &tree_nodes, &vr.id);
-            rows.push(struct_header_row(vr, &summary, modified, is_focused, &theme));
+            rows.push(struct_header_row(
+                vr, &summary, modified, is_focused, &theme,
+            ));
         } else if vr.id.starts_with(ARR_PREFIX) {
             // R931 / R936 — the array branch row: disclosure + name + element
             // count, with a trailing "add element" button (the grow verb) and a
             // reset arrow when the list differs from its class default (length or
             // any element) — the array peer of the struct row's modified roll-up.
             let modified = array_is_modified(&array, &array_defaults);
-            rows.push(array_header_row(vr, array.len(), modified, is_focused, &theme));
+            rows.push(array_header_row(
+                vr,
+                array.len(),
+                modified,
+                is_focused,
+                &theme,
+            ));
         } else {
             // A category branch row: the full-width section header (`collapsed`
             // is the inverse of `expanded`; a filter auto-expands branches).
@@ -3434,9 +3654,10 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
         ContainerNode::new(rows)
             .with_tag(GRID_TAG)
             .with_aria_label("Inspector")
-            .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)).with_border(
-                Border::new(theme.resolve(ColorRole::Outline), 1),
-            ))
+            .with_style(
+                BoxStyle::filled(theme.resolve(ColorRole::Surface))
+                    .with_border(Border::new(theme.resolve(ColorRole::Outline), 1)),
+            )
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Column)
@@ -3451,7 +3672,12 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
     // pushed first so the panel hit-tests on top; a click outside the panel
     // routes `dismiss` to the coordinator (the toggle-close convention).
     let mut children = vec![title, grid];
-    children.extend(view_popup_overlay(editing, &model, (edit_state, edit_caret), &theme));
+    children.extend(view_popup_overlay(
+        editing,
+        &model,
+        (edit_state, edit_caret),
+        &theme,
+    ));
 
     Scene::Container(
         ContainerNode::new(children)
@@ -3551,7 +3777,11 @@ impl WidgetCore for PropertyGridView {
             // the filter is live (every keystroke re-filters), not commit-gated.
             ExtraExternal::new(
                 SEARCH_TF_TAG,
-                Box::new(TextFieldExternal::new().attach_state(search_state).attach_blink(search_blink)),
+                Box::new(
+                    TextFieldExternal::new()
+                        .attach_state(search_state)
+                        .attach_blink(search_blink),
+                ),
             ),
         ]
     }
@@ -3638,16 +3868,27 @@ fn row_access_name(
     tree: &[PropertyNode],
 ) -> String {
     if let Some(vi) = row_value_index(&row.id) {
-        let name = PROPERTY_NAMES.get(vi).copied().unwrap_or(row.label.as_str());
-        model.get(vi).map_or_else(|| name.to_owned(), |v| format!("{name}: {}", v.display()))
+        let name = PROPERTY_NAMES
+            .get(vi)
+            .copied()
+            .unwrap_or(row.label.as_str());
+        model
+            .get(vi)
+            .map_or_else(|| name.to_owned(), |v| format!("{name}: {}", v.display()))
     } else if let Some(ValueRef::Elem(k)) = row_ref(&row.id) {
         // R931 — an array element: the qualified "Spawn Weights [k]" name folds
         // in the element value (the same single-column-tree convention as a
         // scalar leaf).
         let name = format!("{ARRAY_LABEL} [{k}]");
-        array.get(k).map_or(name.clone(), |v| format!("{name}: {}", v.display()))
+        array
+            .get(k)
+            .map_or(name.clone(), |v| format!("{name}: {}", v.display()))
     } else if row.id.starts_with(STRUCT_PREFIX) {
-        format!("{} {}", row.label, struct_value_summary(model, tree, &row.id))
+        format!(
+            "{} {}",
+            row.label,
+            struct_value_summary(model, tree, &row.id)
+        )
     } else if row.id.starts_with(ARR_PREFIX) {
         // R931 — the array branch announces its element count.
         let n = array.len();
@@ -3685,7 +3926,10 @@ impl WidgetA11y for PropertyGridView {
         // row tags (`{GRID_TAG}#{id}`) match the painted rows, so bounds resolve.
         let labelled: Vec<VisibleRow> = rows
             .iter()
-            .map(|r| VisibleRow { label: row_access_name(r, &model, &array, &tree_nodes), ..r.clone() })
+            .map(|r| VisibleRow {
+                label: row_access_name(r, &model, &array, &tree_nodes),
+                ..r.clone()
+            })
             .collect();
         let mut nodes = tree_access_nodes(
             GRID_TAG,
@@ -3704,11 +3948,24 @@ impl WidgetA11y for PropertyGridView {
         for r in &rows {
             let (modified, name) = if let Some(vi) = row_value_index(&r.id) {
                 let m = leaf_modified(&model, &defaults, vi);
-                (m, PROPERTY_NAMES.get(vi).copied().unwrap_or(r.label.as_str()).to_owned())
+                (
+                    m,
+                    PROPERTY_NAMES
+                        .get(vi)
+                        .copied()
+                        .unwrap_or(r.label.as_str())
+                        .to_owned(),
+                )
             } else if let Some(ValueRef::Elem(k)) = row_ref(&r.id) {
-                (leaf_modified(&array, &array_defaults, k), format!("{ARRAY_LABEL} [{k}]"))
+                (
+                    leaf_modified(&array, &array_defaults, k),
+                    format!("{ARRAY_LABEL} [{k}]"),
+                )
             } else if r.id.starts_with(STRUCT_PREFIX) {
-                (struct_is_modified(&model, &defaults, &tree_nodes, &r.id), r.label.clone())
+                (
+                    struct_is_modified(&model, &defaults, &tree_nodes, &r.id),
+                    r.label.clone(),
+                )
             } else if r.id.starts_with(ARR_PREFIX) {
                 (array_is_modified(&array, &array_defaults), r.label.clone())
             } else {
@@ -3857,7 +4114,10 @@ impl WidgetA11y for PropertyGridView {
             return false;
         };
         intro
-            .invoke("send", IntrospectValue::Text(format!("{sub_tag}:PointerUp")))
+            .invoke(
+                "send",
+                IntrospectValue::Text(format!("{sub_tag}:PointerUp")),
+            )
             .is_ok()
     }
 }
@@ -3866,7 +4126,10 @@ impl WidgetView for PropertyGridView {
     type Renderer = HelloPropertyGridRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 }
 
@@ -3918,7 +4181,9 @@ mod tests {
             ExternalNode::new(PropertyGridView::create_external()).with_tag(GRID_TAG),
         )];
         for extra in PropertyGridView::create_extra_externals() {
-            children.push(Scene::External(ExternalNode::new(extra.handle).with_tag(extra.tag)));
+            children.push(Scene::External(
+                ExternalNode::new(extra.handle).with_tag(extra.tag),
+            ));
         }
         Scene::Container(ContainerNode::new(children))
     }
@@ -3932,7 +4197,9 @@ mod tests {
 
     /// Run `f` against the grid's mutable introspection in a borrow scope.
     fn with_grid_mut<R>(scene: &mut Scene, f: impl FnOnce(&mut dyn ExternalIntrospect) -> R) -> R {
-        let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+        let node = scene
+            .find_external_with_tag_mut(GRID_TAG)
+            .expect("grid present");
         f(node.handle.introspect_mut().expect("introspectable"))
     }
 
@@ -3944,22 +4211,56 @@ mod tests {
     fn r919_modified_and_reset_via_rpc() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            assert_eq!(grid_intro(&scene).query("any_modified"), Some(IntrospectValue::Bool(false)), "boot: clean");
-            assert_eq!(grid_intro(&scene).query("modified.4"), Some(IntrospectValue::Bool(false)));
-            with_grid_mut(&mut scene, |i| i.intervene("value.4", IntrospectValue::Int(17)).unwrap());
-            assert_eq!(grid_intro(&scene).query("modified.4"), Some(IntrospectValue::Bool(true)), "an edited value is modified");
-            assert_eq!(grid_intro(&scene).query("any_modified"), Some(IntrospectValue::Bool(true)));
-            assert_eq!(grid_intro(&scene).query("modified.6"), Some(IntrospectValue::Bool(false)), "an untouched row stays clean");
-            assert_eq!(grid_intro(&scene).query("modified.99"), None, "out-of-range modified -> None");
+            assert_eq!(
+                grid_intro(&scene).query("any_modified"),
+                Some(IntrospectValue::Bool(false)),
+                "boot: clean"
+            );
+            assert_eq!(
+                grid_intro(&scene).query("modified.4"),
+                Some(IntrospectValue::Bool(false))
+            );
+            with_grid_mut(&mut scene, |i| {
+                i.intervene("value.4", IntrospectValue::Int(17)).unwrap();
+            });
+            assert_eq!(
+                grid_intro(&scene).query("modified.4"),
+                Some(IntrospectValue::Bool(true)),
+                "an edited value is modified"
+            );
+            assert_eq!(
+                grid_intro(&scene).query("any_modified"),
+                Some(IntrospectValue::Bool(true))
+            );
+            assert_eq!(
+                grid_intro(&scene).query("modified.6"),
+                Some(IntrospectValue::Bool(false)),
+                "an untouched row stays clean"
+            );
+            assert_eq!(
+                grid_intro(&scene).query("modified.99"),
+                None,
+                "out-of-range modified -> None"
+            );
             // Reset restores the default and clears modified.
             assert_eq!(
                 with_grid_mut(&mut scene, |i| i.invoke("reset", IntrospectValue::Int(4))),
                 Ok(IntrospectValue::Bool(true)),
                 "reset changed the modified row",
             );
-            assert_eq!(grid_intro(&scene).query("value.4"), Some(IntrospectValue::Int(3)), "reset restored the default");
-            assert_eq!(grid_intro(&scene).query("modified.4"), Some(IntrospectValue::Bool(false)));
-            assert_eq!(grid_intro(&scene).query("any_modified"), Some(IntrospectValue::Bool(false)));
+            assert_eq!(
+                grid_intro(&scene).query("value.4"),
+                Some(IntrospectValue::Int(3)),
+                "reset restored the default"
+            );
+            assert_eq!(
+                grid_intro(&scene).query("modified.4"),
+                Some(IntrospectValue::Bool(false))
+            );
+            assert_eq!(
+                grid_intro(&scene).query("any_modified"),
+                Some(IntrospectValue::Bool(false))
+            );
             // Resetting an already-default row is a no-op `false`.
             assert_eq!(
                 with_grid_mut(&mut scene, |i| i.invoke("reset", IntrospectValue::Int(4))),
@@ -3979,11 +4280,21 @@ mod tests {
         Owner::new().run(|| {
             let mut scene = boot_scene();
             // Modify row 4 ("Layer", Int default 3) so its reset arrow is active.
-            with_grid_mut(&mut scene, |i| i.intervene("value.4", IntrospectValue::Int(17)).unwrap());
-            assert_eq!(grid_intro(&scene).query("modified.4"), Some(IntrospectValue::Bool(true)));
+            with_grid_mut(&mut scene, |i| {
+                i.intervene("value.4", IntrospectValue::Int(17)).unwrap();
+            });
+            assert_eq!(
+                grid_intro(&scene).query("modified.4"),
+                Some(IntrospectValue::Bool(true))
+            );
             // An AT Click on the reset button child resets the row to its default.
             assert!(
-                PropertyGridView::access_child_invoke(&mut scene, GRID_TAG, "reset4", AccessAction::Click),
+                PropertyGridView::access_child_invoke(
+                    &mut scene,
+                    GRID_TAG,
+                    "reset4",
+                    AccessAction::Click
+                ),
                 "an AT Click on the reset button is handled",
             );
             assert_eq!(
@@ -3993,7 +4304,12 @@ mod tests {
             );
             // A non-control Click (a bare leaf row id) falls through (no prefix).
             assert!(
-                !PropertyGridView::access_child_invoke(&mut scene, GRID_TAG, "6", AccessAction::Click),
+                !PropertyGridView::access_child_invoke(
+                    &mut scene,
+                    GRID_TAG,
+                    "6",
+                    AccessAction::Click
+                ),
                 "a non-control Click falls through to the grid's roving",
             );
         });
@@ -4006,19 +4322,39 @@ mod tests {
             let mut scene = boot_scene();
             with_grid_mut(&mut scene, |i| {
                 i.intervene("value.4", IntrospectValue::Int(17)).unwrap();
-                i.intervene("value.6", IntrospectValue::Float(99.0)).unwrap();
-                i.intervene("value.2", IntrospectValue::Bool(false)).unwrap();
+                i.intervene("value.6", IntrospectValue::Float(99.0))
+                    .unwrap();
+                i.intervene("value.2", IntrospectValue::Bool(false))
+                    .unwrap();
             });
-            assert_eq!(grid_intro(&scene).query("any_modified"), Some(IntrospectValue::Bool(true)));
+            assert_eq!(
+                grid_intro(&scene).query("any_modified"),
+                Some(IntrospectValue::Bool(true))
+            );
             assert_eq!(
                 with_grid_mut(&mut scene, |i| i.invoke("reset_all", IntrospectValue::Null)),
                 Ok(IntrospectValue::Int(3)),
                 "reset_all returns the count reset",
             );
-            assert_eq!(grid_intro(&scene).query("value.4"), Some(IntrospectValue::Int(3)), "Int restored");
-            assert_eq!(grid_intro(&scene).query("value.6"), Some(IntrospectValue::Float(12.5)), "Float restored");
-            assert_eq!(grid_intro(&scene).query("value.2"), Some(IntrospectValue::Bool(true)), "Bool restored");
-            assert_eq!(grid_intro(&scene).query("any_modified"), Some(IntrospectValue::Bool(false)));
+            assert_eq!(
+                grid_intro(&scene).query("value.4"),
+                Some(IntrospectValue::Int(3)),
+                "Int restored"
+            );
+            assert_eq!(
+                grid_intro(&scene).query("value.6"),
+                Some(IntrospectValue::Float(12.5)),
+                "Float restored"
+            );
+            assert_eq!(
+                grid_intro(&scene).query("value.2"),
+                Some(IntrospectValue::Bool(true)),
+                "Bool restored"
+            );
+            assert_eq!(
+                grid_intro(&scene).query("any_modified"),
+                Some(IntrospectValue::Bool(false))
+            );
             assert_eq!(
                 with_grid_mut(&mut scene, |i| i.invoke("reset_all", IntrospectValue::Null)),
                 Ok(IntrospectValue::Int(0)),
@@ -4035,21 +4371,44 @@ mod tests {
         Owner::new().run(|| {
             let mut scene = boot_scene();
             let arrow_tag = format!("{GRID_TAG}#{RESET_PREFIX}4");
-            assert!(!view(idle_state(), &Frame::new()).contains_tag(&arrow_tag), "no reset arrow on a clean row");
             assert!(
-                PropertyGridView::access_node(&idle_state(), Some(GRID_TAG)).iter().all(|n| n.tag != arrow_tag),
+                !view(idle_state(), &Frame::new()).contains_tag(&arrow_tag),
+                "no reset arrow on a clean row"
+            );
+            assert!(
+                PropertyGridView::access_node(&idle_state(), Some(GRID_TAG))
+                    .iter()
+                    .all(|n| n.tag != arrow_tag),
                 "no reset button advertised while clean",
             );
-            with_grid_mut(&mut scene, |i| i.intervene("value.4", IntrospectValue::Int(17)).unwrap());
-            assert!(view(idle_state(), &Frame::new()).contains_tag(&arrow_tag), "the modified row paints a reset arrow");
+            with_grid_mut(&mut scene, |i| {
+                i.intervene("value.4", IntrospectValue::Int(17)).unwrap();
+            });
+            assert!(
+                view(idle_state(), &Frame::new()).contains_tag(&arrow_tag),
+                "the modified row paints a reset arrow"
+            );
             let a11y = PropertyGridView::access_node(&idle_state(), Some(GRID_TAG));
-            let btn = a11y.iter().find(|n| n.tag == arrow_tag).expect("reset button advertised");
+            let btn = a11y
+                .iter()
+                .find(|n| n.tag == arrow_tag)
+                .expect("reset button advertised");
             assert_eq!(btn.role, AriaRole::Button);
-            assert_eq!(btn.name.as_deref(), Some("Reset Layer to default"), "named for the property");
+            assert_eq!(
+                btn.name.as_deref(),
+                Some("Reset Layer to default"),
+                "named for the property"
+            );
             // R921 — the reset button is a child of the Layer leaf's `treeitem`
             // row node (`{GRID_TAG}#4`), the painted-row tag.
-            let row = a11y.iter().find(|n| n.tag == format!("{GRID_TAG}#4")).expect("Layer row node");
-            assert!(row.children.iter().any(|c| c.as_str() == arrow_tag), "the button is the row's child");
+            let row = a11y
+                .iter()
+                .find(|n| n.tag == format!("{GRID_TAG}#4"))
+                .expect("Layer row node");
+            assert!(
+                row.children.iter().any(|c| c.as_str() == arrow_tag),
+                "the button is the row's child"
+            );
         });
     }
 
@@ -4060,14 +4419,26 @@ mod tests {
     fn r920_keyboard_delete_resets_cursor_row() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            with_grid_mut(&mut scene, |i| i.intervene("value.4", IntrospectValue::Int(17)).unwrap());
+            with_grid_mut(&mut scene, |i| {
+                i.intervene("value.4", IntrospectValue::Int(17)).unwrap();
+            });
             // Click row 4 (an Int row: a click only moves the roving cursor onto it).
             with_grid_mut(&mut scene, |i| {
                 let _ = i.invoke("send", IntrospectValue::Text("4:PointerUp".to_owned()));
             });
-            assert!(apply_key_grid(&mut scene, "Delete"), "Delete on a data row is consumed");
-            assert_eq!(grid_intro(&scene).query("value.4"), Some(IntrospectValue::Int(3)), "Delete reset the cursor row");
-            assert_eq!(grid_intro(&scene).query("modified.4"), Some(IntrospectValue::Bool(false)));
+            assert!(
+                apply_key_grid(&mut scene, "Delete"),
+                "Delete on a data row is consumed"
+            );
+            assert_eq!(
+                grid_intro(&scene).query("value.4"),
+                Some(IntrospectValue::Int(3)),
+                "Delete reset the cursor row"
+            );
+            assert_eq!(
+                grid_intro(&scene).query("modified.4"),
+                Some(IntrospectValue::Bool(false))
+            );
         });
     }
 
@@ -4079,10 +4450,20 @@ mod tests {
             let mut scene = boot_scene();
             with_grid_mut(&mut scene, |i| {
                 i.intervene("value.4", IntrospectValue::Int(17)).unwrap();
-                let _ = i.invoke("send", IntrospectValue::Text(format!("{RESET_PREFIX}4:PointerUp")));
+                let _ = i.invoke(
+                    "send",
+                    IntrospectValue::Text(format!("{RESET_PREFIX}4:PointerUp")),
+                );
             });
-            assert_eq!(grid_intro(&scene).query("value.4"), Some(IntrospectValue::Int(3)), "the arrow click reset the row");
-            assert_eq!(grid_intro(&scene).query("modified.4"), Some(IntrospectValue::Bool(false)));
+            assert_eq!(
+                grid_intro(&scene).query("value.4"),
+                Some(IntrospectValue::Int(3)),
+                "the arrow click reset the row"
+            );
+            assert_eq!(
+                grid_intro(&scene).query("modified.4"),
+                Some(IntrospectValue::Bool(false))
+            );
         });
     }
 
@@ -4094,21 +4475,49 @@ mod tests {
     fn r936_element_modified_and_reset_via_rpc() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            assert_eq!(grid_intro(&scene).query("modified.elem.0"), Some(IntrospectValue::Bool(false)), "boot: clean");
-            with_grid_mut(&mut scene, |i| i.intervene("value.elem.0", IntrospectValue::Float(9.0)).unwrap());
-            assert_eq!(grid_intro(&scene).query("modified.elem.0"), Some(IntrospectValue::Bool(true)), "an edited element is modified");
-            assert_eq!(grid_intro(&scene).query("modified.elem.1"), Some(IntrospectValue::Bool(false)), "a sibling element stays clean");
-            assert_eq!(grid_intro(&scene).query("modified.elem.9"), None, "out-of-range element modified -> None");
+            assert_eq!(
+                grid_intro(&scene).query("modified.elem.0"),
+                Some(IntrospectValue::Bool(false)),
+                "boot: clean"
+            );
+            with_grid_mut(&mut scene, |i| {
+                i.intervene("value.elem.0", IntrospectValue::Float(9.0))
+                    .unwrap();
+            });
+            assert_eq!(
+                grid_intro(&scene).query("modified.elem.0"),
+                Some(IntrospectValue::Bool(true)),
+                "an edited element is modified"
+            );
+            assert_eq!(
+                grid_intro(&scene).query("modified.elem.1"),
+                Some(IntrospectValue::Bool(false)),
+                "a sibling element stays clean"
+            );
+            assert_eq!(
+                grid_intro(&scene).query("modified.elem.9"),
+                None,
+                "out-of-range element modified -> None"
+            );
             // The unified `reset` funnel takes an element node id, like the click.
             assert_eq!(
-                with_grid_mut(&mut scene, |i| i.invoke("reset", IntrospectValue::Text("elem.0".to_owned()))),
+                with_grid_mut(&mut scene, |i| i
+                    .invoke("reset", IntrospectValue::Text("elem.0".to_owned()))),
                 Ok(IntrospectValue::Bool(true)),
                 "reset changed the modified element",
             );
-            assert_eq!(grid_intro(&scene).query("value.elem.0"), Some(IntrospectValue::Float(1.0)), "reset restored the default");
-            assert_eq!(grid_intro(&scene).query("modified.elem.0"), Some(IntrospectValue::Bool(false)));
             assert_eq!(
-                with_grid_mut(&mut scene, |i| i.invoke("reset", IntrospectValue::Text("elem.0".to_owned()))),
+                grid_intro(&scene).query("value.elem.0"),
+                Some(IntrospectValue::Float(1.0)),
+                "reset restored the default"
+            );
+            assert_eq!(
+                grid_intro(&scene).query("modified.elem.0"),
+                Some(IntrospectValue::Bool(false))
+            );
+            assert_eq!(
+                with_grid_mut(&mut scene, |i| i
+                    .invoke("reset", IntrospectValue::Text("elem.0".to_owned()))),
                 Ok(IntrospectValue::Bool(false)),
                 "reset of an already-default element is a no-op",
             );
@@ -4123,28 +4532,72 @@ mod tests {
         Owner::new().run(|| {
             let mut scene = boot_scene();
             let arr_q = format!("array_modified.{ARR_BRANCH_ID}");
-            assert_eq!(grid_intro(&scene).query(&arr_q), Some(IntrospectValue::Bool(false)), "boot: array clean");
-            assert_eq!(grid_intro(&scene).query("array_modified.struct.Position"), None, "only the array branch id is valid");
+            assert_eq!(
+                grid_intro(&scene).query(&arr_q),
+                Some(IntrospectValue::Bool(false)),
+                "boot: array clean"
+            );
+            assert_eq!(
+                grid_intro(&scene).query("array_modified.struct.Position"),
+                None,
+                "only the array branch id is valid"
+            );
             // (a) an element edit makes the branch modified; reset clears it.
-            with_grid_mut(&mut scene, |i| i.intervene("value.elem.1", IntrospectValue::Float(9.0)).unwrap());
-            assert_eq!(grid_intro(&scene).query(&arr_q), Some(IntrospectValue::Bool(true)), "edited element -> array modified");
-            with_grid_mut(&mut scene, |i| { i.invoke("reset", IntrospectValue::Text("elem.1".to_owned())).unwrap(); });
-            assert_eq!(grid_intro(&scene).query(&arr_q), Some(IntrospectValue::Bool(false)), "element reset -> array clean");
+            with_grid_mut(&mut scene, |i| {
+                i.intervene("value.elem.1", IntrospectValue::Float(9.0))
+                    .unwrap();
+            });
+            assert_eq!(
+                grid_intro(&scene).query(&arr_q),
+                Some(IntrospectValue::Bool(true)),
+                "edited element -> array modified"
+            );
+            with_grid_mut(&mut scene, |i| {
+                i.invoke("reset", IntrospectValue::Text("elem.1".to_owned()))
+                    .unwrap();
+            });
+            assert_eq!(
+                grid_intro(&scene).query(&arr_q),
+                Some(IntrospectValue::Bool(false)),
+                "element reset -> array clean"
+            );
             // (b) a length change makes the branch modified; `reset_array` restores
             // both length and content in one wholesale step.
-            with_grid_mut(&mut scene, |i| { i.invoke("add_elem", IntrospectValue::Null).unwrap(); });
-            with_grid_mut(&mut scene, |i| i.intervene("value.elem.0", IntrospectValue::Float(7.0)).unwrap());
-            assert_eq!(grid_intro(&scene).query(&arr_q), Some(IntrospectValue::Bool(true)), "length + content differ");
+            with_grid_mut(&mut scene, |i| {
+                i.invoke("add_elem", IntrospectValue::Null).unwrap();
+            });
+            with_grid_mut(&mut scene, |i| {
+                i.intervene("value.elem.0", IntrospectValue::Float(7.0))
+                    .unwrap();
+            });
             assert_eq!(
-                with_grid_mut(&mut scene, |i| i.invoke("reset_array", IntrospectValue::Null)),
+                grid_intro(&scene).query(&arr_q),
+                Some(IntrospectValue::Bool(true)),
+                "length + content differ"
+            );
+            assert_eq!(
+                with_grid_mut(&mut scene, |i| i
+                    .invoke("reset_array", IntrospectValue::Null)),
                 Ok(IntrospectValue::Bool(true)),
                 "reset_array changed the list",
             );
-            assert_eq!(grid_intro(&scene).query("elem_count"), Some(IntrospectValue::Int(3)), "length restored");
-            assert_eq!(grid_intro(&scene).query("value.elem.0"), Some(IntrospectValue::Float(1.0)), "content restored");
-            assert_eq!(grid_intro(&scene).query(&arr_q), Some(IntrospectValue::Bool(false)));
             assert_eq!(
-                with_grid_mut(&mut scene, |i| i.invoke("reset_array", IntrospectValue::Null)),
+                grid_intro(&scene).query("elem_count"),
+                Some(IntrospectValue::Int(3)),
+                "length restored"
+            );
+            assert_eq!(
+                grid_intro(&scene).query("value.elem.0"),
+                Some(IntrospectValue::Float(1.0)),
+                "content restored"
+            );
+            assert_eq!(
+                grid_intro(&scene).query(&arr_q),
+                Some(IntrospectValue::Bool(false))
+            );
+            assert_eq!(
+                with_grid_mut(&mut scene, |i| i
+                    .invoke("reset_array", IntrospectValue::Null)),
                 Ok(IntrospectValue::Bool(false)),
                 "reset_array on a default list is a no-op",
             );
@@ -4161,21 +4614,52 @@ mod tests {
         Owner::new().run(|| {
             let mut scene = boot_scene();
             let arrow_tag = format!("{GRID_TAG}#{RESET_PREFIX}elem.0");
-            assert!(!view(idle_state(), &Frame::new()).contains_tag(&arrow_tag), "no reset arrow on a clean element");
-            with_grid_mut(&mut scene, |i| i.intervene("value.elem.0", IntrospectValue::Float(9.0)).unwrap());
-            assert!(view(idle_state(), &Frame::new()).contains_tag(&arrow_tag), "the modified element paints a reset arrow");
+            assert!(
+                !view(idle_state(), &Frame::new()).contains_tag(&arrow_tag),
+                "no reset arrow on a clean element"
+            );
+            with_grid_mut(&mut scene, |i| {
+                i.intervene("value.elem.0", IntrospectValue::Float(9.0))
+                    .unwrap();
+            });
+            assert!(
+                view(idle_state(), &Frame::new()).contains_tag(&arrow_tag),
+                "the modified element paints a reset arrow"
+            );
             // The remove button stays — both trailing affordances coexist.
-            assert!(view(idle_state(), &Frame::new()).contains_tag(&format!("{GRID_TAG}#{RM_ELEM_PREFIX}0")), "remove button still painted");
+            assert!(
+                view(idle_state(), &Frame::new())
+                    .contains_tag(&format!("{GRID_TAG}#{RM_ELEM_PREFIX}0")),
+                "remove button still painted"
+            );
             let a11y = PropertyGridView::access_node(&idle_state(), Some(GRID_TAG));
-            let btn = a11y.iter().find(|n| n.tag == arrow_tag).expect("element reset button advertised");
+            let btn = a11y
+                .iter()
+                .find(|n| n.tag == arrow_tag)
+                .expect("element reset button advertised");
             assert_eq!(btn.role, AriaRole::Button);
-            assert_eq!(btn.name.as_deref(), Some("Reset Spawn Weights [0] to default"));
-            let row = a11y.iter().find(|n| n.tag == tree_row_tag(GRID_TAG, "elem.0")).expect("element row node");
-            assert!(row.children.iter().any(|c| c.as_str() == arrow_tag), "the reset button is the element row's child");
+            assert_eq!(
+                btn.name.as_deref(),
+                Some("Reset Spawn Weights [0] to default")
+            );
+            let row = a11y
+                .iter()
+                .find(|n| n.tag == tree_row_tag(GRID_TAG, "elem.0"))
+                .expect("element row node");
+            assert!(
+                row.children.iter().any(|c| c.as_str() == arrow_tag),
+                "the reset button is the element row's child"
+            );
             // An added element (index 3, no class counterpart) is array-modified but
             // never per-element-resettable.
-            with_grid_mut(&mut scene, |i| { i.invoke("add_elem", IntrospectValue::Null).unwrap(); });
-            assert!(!view(idle_state(), &Frame::new()).contains_tag(&format!("{GRID_TAG}#{RESET_PREFIX}elem.3")), "an added element has no per-element reset arrow");
+            with_grid_mut(&mut scene, |i| {
+                i.invoke("add_elem", IntrospectValue::Null).unwrap();
+            });
+            assert!(
+                !view(idle_state(), &Frame::new())
+                    .contains_tag(&format!("{GRID_TAG}#{RESET_PREFIX}elem.3")),
+                "an added element has no per-element reset arrow"
+            );
         });
     }
 
@@ -4187,16 +4671,38 @@ mod tests {
         Owner::new().run(|| {
             let mut scene = boot_scene();
             let arrow_tag = format!("{GRID_TAG}#{RESET_PREFIX}{ARR_BRANCH_ID}");
-            assert!(!view(idle_state(), &Frame::new()).contains_tag(&arrow_tag), "no reset arrow on a clean array branch");
-            with_grid_mut(&mut scene, |i| i.intervene("value.elem.0", IntrospectValue::Float(9.0)).unwrap());
-            assert!(view(idle_state(), &Frame::new()).contains_tag(&arrow_tag), "the modified array branch paints a reset arrow");
-            assert!(view(idle_state(), &Frame::new()).contains_tag(&format!("{GRID_TAG}#{ADD_ELEM_TAG}")), "add button still painted");
+            assert!(
+                !view(idle_state(), &Frame::new()).contains_tag(&arrow_tag),
+                "no reset arrow on a clean array branch"
+            );
+            with_grid_mut(&mut scene, |i| {
+                i.intervene("value.elem.0", IntrospectValue::Float(9.0))
+                    .unwrap();
+            });
+            assert!(
+                view(idle_state(), &Frame::new()).contains_tag(&arrow_tag),
+                "the modified array branch paints a reset arrow"
+            );
+            assert!(
+                view(idle_state(), &Frame::new())
+                    .contains_tag(&format!("{GRID_TAG}#{ADD_ELEM_TAG}")),
+                "add button still painted"
+            );
             let a11y = PropertyGridView::access_node(&idle_state(), Some(GRID_TAG));
-            let btn = a11y.iter().find(|n| n.tag == arrow_tag).expect("array branch reset button advertised");
+            let btn = a11y
+                .iter()
+                .find(|n| n.tag == arrow_tag)
+                .expect("array branch reset button advertised");
             assert_eq!(btn.role, AriaRole::Button);
             assert_eq!(btn.name.as_deref(), Some("Reset Spawn Weights to default"));
-            let row = a11y.iter().find(|n| n.tag == tree_row_tag(GRID_TAG, ARR_BRANCH_ID)).expect("array branch row node");
-            assert!(row.children.iter().any(|c| c.as_str() == arrow_tag), "the reset button is the array branch row's child");
+            let row = a11y
+                .iter()
+                .find(|n| n.tag == tree_row_tag(GRID_TAG, ARR_BRANCH_ID))
+                .expect("array branch row node");
+            assert!(
+                row.children.iter().any(|c| c.as_str() == arrow_tag),
+                "the reset button is the array branch row's child"
+            );
         });
     }
 
@@ -4209,18 +4715,38 @@ mod tests {
             let mut scene = boot_scene();
             // Element arrow click.
             with_grid_mut(&mut scene, |i| {
-                i.intervene("value.elem.0", IntrospectValue::Float(9.0)).unwrap();
-                let _ = i.invoke("send", IntrospectValue::Text(format!("{RESET_PREFIX}elem.0:PointerUp")));
+                i.intervene("value.elem.0", IntrospectValue::Float(9.0))
+                    .unwrap();
+                let _ = i.invoke(
+                    "send",
+                    IntrospectValue::Text(format!("{RESET_PREFIX}elem.0:PointerUp")),
+                );
             });
-            assert_eq!(grid_intro(&scene).query("value.elem.0"), Some(IntrospectValue::Float(1.0)), "element arrow click reset it");
+            assert_eq!(
+                grid_intro(&scene).query("value.elem.0"),
+                Some(IntrospectValue::Float(1.0)),
+                "element arrow click reset it"
+            );
             // Array branch arrow click (after a length change).
             with_grid_mut(&mut scene, |i| {
                 i.invoke("add_elem", IntrospectValue::Null).unwrap();
-                i.intervene("value.elem.1", IntrospectValue::Float(8.0)).unwrap();
-                let _ = i.invoke("send", IntrospectValue::Text(format!("{RESET_PREFIX}{ARR_BRANCH_ID}:PointerUp")));
+                i.intervene("value.elem.1", IntrospectValue::Float(8.0))
+                    .unwrap();
+                let _ = i.invoke(
+                    "send",
+                    IntrospectValue::Text(format!("{RESET_PREFIX}{ARR_BRANCH_ID}:PointerUp")),
+                );
             });
-            assert_eq!(grid_intro(&scene).query("elem_count"), Some(IntrospectValue::Int(3)), "array arrow click restored length");
-            assert_eq!(grid_intro(&scene).query("value.elem.1"), Some(IntrospectValue::Float(0.5)), "array arrow click restored content");
+            assert_eq!(
+                grid_intro(&scene).query("elem_count"),
+                Some(IntrospectValue::Int(3)),
+                "array arrow click restored length"
+            );
+            assert_eq!(
+                grid_intro(&scene).query("value.elem.1"),
+                Some(IntrospectValue::Float(0.5)),
+                "array arrow click restored content"
+            );
         });
     }
 
@@ -4233,17 +4759,34 @@ mod tests {
             let mut scene = boot_scene();
             with_grid_mut(&mut scene, |i| {
                 i.intervene("value.4", IntrospectValue::Int(17)).unwrap(); // a scalar
-                i.intervene("value.elem.0", IntrospectValue::Float(9.0)).unwrap(); // the array
+                i.intervene("value.elem.0", IntrospectValue::Float(9.0))
+                    .unwrap(); // the array
             });
-            assert_eq!(grid_intro(&scene).query("any_modified"), Some(IntrospectValue::Bool(true)), "scalar OR array dirties the object");
+            assert_eq!(
+                grid_intro(&scene).query("any_modified"),
+                Some(IntrospectValue::Bool(true)),
+                "scalar OR array dirties the object"
+            );
             assert_eq!(
                 with_grid_mut(&mut scene, |i| i.invoke("reset_all", IntrospectValue::Null)),
                 Ok(IntrospectValue::Int(2)),
                 "reset_all counts the scalar + the array as 2 reset units",
             );
-            assert_eq!(grid_intro(&scene).query("value.4"), Some(IntrospectValue::Int(3)), "scalar restored");
-            assert_eq!(grid_intro(&scene).query("value.elem.0"), Some(IntrospectValue::Float(1.0)), "array restored");
-            assert_eq!(grid_intro(&scene).query("any_modified"), Some(IntrospectValue::Bool(false)), "object clean after reset_all");
+            assert_eq!(
+                grid_intro(&scene).query("value.4"),
+                Some(IntrospectValue::Int(3)),
+                "scalar restored"
+            );
+            assert_eq!(
+                grid_intro(&scene).query("value.elem.0"),
+                Some(IntrospectValue::Float(1.0)),
+                "array restored"
+            );
+            assert_eq!(
+                grid_intro(&scene).query("any_modified"),
+                Some(IntrospectValue::Bool(false)),
+                "object clean after reset_all"
+            );
         });
     }
 
@@ -4253,10 +4796,23 @@ mod tests {
     fn r936_dirty_array_alone_dirties_the_object() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            with_grid_mut(&mut scene, |i| i.intervene("value.elem.2", IntrospectValue::Float(3.0)).unwrap());
-            assert_eq!(grid_intro(&scene).query("any_modified"), Some(IntrospectValue::Bool(true)), "a dirty array alone is dirty");
-            with_grid_mut(&mut scene, |i| { i.invoke("reset", IntrospectValue::Text("elem.2".to_owned())).unwrap(); });
-            assert_eq!(grid_intro(&scene).query("any_modified"), Some(IntrospectValue::Bool(false)));
+            with_grid_mut(&mut scene, |i| {
+                i.intervene("value.elem.2", IntrospectValue::Float(3.0))
+                    .unwrap();
+            });
+            assert_eq!(
+                grid_intro(&scene).query("any_modified"),
+                Some(IntrospectValue::Bool(true)),
+                "a dirty array alone is dirty"
+            );
+            with_grid_mut(&mut scene, |i| {
+                i.invoke("reset", IntrospectValue::Text("elem.2".to_owned()))
+                    .unwrap();
+            });
+            assert_eq!(
+                grid_intro(&scene).query("any_modified"),
+                Some(IntrospectValue::Bool(false))
+            );
         });
     }
 
@@ -4265,18 +4821,43 @@ mod tests {
         Owner::new().run(|| {
             let scene = boot_scene();
             let intro = grid_intro(&scene);
-            assert_eq!(intro.query("row_count"), Some(IntrospectValue::Int(16)), "12 scalars + 4 struct fields");
-            assert_eq!(intro.query("name.0"), Some(IntrospectValue::Text("Name".to_owned())));
-            assert_eq!(intro.query("name.6"), Some(IntrospectValue::Text("Position X".to_owned())));
-            assert_eq!(intro.query("kind.2"), Some(IntrospectValue::Text("bool".to_owned())));
-            assert_eq!(intro.query("kind.4"), Some(IntrospectValue::Text("int".to_owned())));
-            assert_eq!(intro.query("kind.6"), Some(IntrospectValue::Text("float".to_owned())));
+            assert_eq!(
+                intro.query("row_count"),
+                Some(IntrospectValue::Int(16)),
+                "12 scalars + 4 struct fields"
+            );
+            assert_eq!(
+                intro.query("name.0"),
+                Some(IntrospectValue::Text("Name".to_owned()))
+            );
+            assert_eq!(
+                intro.query("name.6"),
+                Some(IntrospectValue::Text("Position X".to_owned()))
+            );
+            assert_eq!(
+                intro.query("kind.2"),
+                Some(IntrospectValue::Text("bool".to_owned()))
+            );
+            assert_eq!(
+                intro.query("kind.4"),
+                Some(IntrospectValue::Text("int".to_owned()))
+            );
+            assert_eq!(
+                intro.query("kind.6"),
+                Some(IntrospectValue::Text("float".to_owned()))
+            );
             assert_eq!(intro.query("value.2"), Some(IntrospectValue::Bool(true)));
             assert_eq!(intro.query("value.4"), Some(IntrospectValue::Int(3)));
             assert_eq!(intro.query("value.6"), Some(IntrospectValue::Float(12.5)));
-            assert_eq!(intro.query("value.0"), Some(IntrospectValue::Text("Player".to_owned())));
+            assert_eq!(
+                intro.query("value.0"),
+                Some(IntrospectValue::Text("Player".to_owned()))
+            );
             assert_eq!(intro.query("value.99"), None, "out-of-range -> None");
-            assert_eq!(intro.query("editing"), Some(IntrospectValue::Json(serde_json::Value::Null)));
+            assert_eq!(
+                intro.query("editing"),
+                Some(IntrospectValue::Json(serde_json::Value::Null))
+            );
         });
     }
 
@@ -4284,7 +4865,9 @@ mod tests {
     fn r836_intervene_sets_typed_value_strictly() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            let node = scene
+                .find_external_with_tag_mut(GRID_TAG)
+                .expect("grid present");
             let intro = node.handle.introspect_mut().expect("introspectable");
             // Strict per kind.
             assert!(intro.intervene("value.4", IntrospectValue::Int(17)).is_ok());
@@ -4293,7 +4876,11 @@ mod tests {
                 Err(InterveneError::TypeMismatch),
                 "int row rejects text",
             );
-            assert!(intro.intervene("value.2", IntrospectValue::Bool(false)).is_ok());
+            assert!(
+                intro
+                    .intervene("value.2", IntrospectValue::Bool(false))
+                    .is_ok()
+            );
             assert_eq!(
                 intro.intervene("editing", IntrospectValue::Int(0)),
                 Err(InterveneError::ReadOnly),
@@ -4328,7 +4915,14 @@ mod tests {
                 // Row 15 = the Position struct header (after 5 cats + Identity's 3
                 // leaves + Appearance's 4 + Physics's 2 + Stats's 1 + the Transform
                 // header); row 16 = its first field (Position X).
-                (int("row_count"), text("id_at.0"), int("level_at.0"), expanded0, text("id_at.15"), int("level_at.16"))
+                (
+                    int("row_count"),
+                    text("id_at.0"),
+                    int("level_at.0"),
+                    expanded0,
+                    text("id_at.15"),
+                    int("level_at.16"),
+                )
             };
             // 6 categories + 2 structs + 1 array branch + 19 leaves (16 scalar +
             // 3 R931 array elements) = 28 visible rows (all open).
@@ -4337,38 +4931,78 @@ mod tests {
             assert_eq!(id0, "cat.Identity");
             assert_eq!(level0, 1, "a category is aria-level 1");
             assert!(exp0, "categories boot expanded");
-            assert_eq!(id15, "struct.Position", "the Transform category nests the Position struct");
-            assert_eq!(level16, 3, "a struct field is aria-level 3 (category > struct > field)");
+            assert_eq!(
+                id15, "struct.Position",
+                "the Transform category nests the Position struct"
+            );
+            assert_eq!(
+                level16, 3,
+                "a struct field is aria-level 3 (category > struct > field)"
+            );
             // The primary owns the struct aggregate + the per-branch collapse.
             let gi = grid_intro(&scene);
-            let IntrospectValue::Text(summary) = gi.query("struct_summary.struct.Position").expect("summary") else {
+            let IntrospectValue::Text(summary) =
+                gi.query("struct_summary.struct.Position").expect("summary")
+            else {
                 panic!("summary is text");
             };
             assert!(
                 summary.starts_with('(') && summary.ends_with(')') && summary.contains("12.5"),
                 "Position summary is a tuple of its field values, got {summary}",
             );
-            assert_eq!(gi.query("struct_modified.struct.Position"), Some(IntrospectValue::Bool(false)), "boot clean");
-            assert_eq!(gi.query("expanded.cat.Identity"), Some(IntrospectValue::Bool(true)));
-            assert_eq!(gi.query("expanded.0"), Some(IntrospectValue::Null), "a leaf has no expanded flag");
+            assert_eq!(
+                gi.query("struct_modified.struct.Position"),
+                Some(IntrospectValue::Bool(false)),
+                "boot clean"
+            );
+            assert_eq!(
+                gi.query("expanded.cat.Identity"),
+                Some(IntrospectValue::Bool(true))
+            );
+            assert_eq!(
+                gi.query("expanded.0"),
+                Some(IntrospectValue::Null),
+                "a leaf has no expanded flag"
+            );
             // Collapse Identity via toggle_branch → its 3 leaves vanish (23 − 3).
             assert_eq!(
-                with_grid_mut(&mut scene, |i| i.invoke("toggle_branch", IntrospectValue::Text("cat.Identity".to_owned()))),
+                with_grid_mut(&mut scene, |i| i.invoke(
+                    "toggle_branch",
+                    IntrospectValue::Text("cat.Identity".to_owned())
+                )),
                 Ok(IntrospectValue::Bool(false)),
                 "toggle_branch returns the resulting expanded flag",
             );
-            assert_eq!(grid_intro(&scene).query("expanded.cat.Identity"), Some(IntrospectValue::Bool(false)));
+            assert_eq!(
+                grid_intro(&scene).query("expanded.cat.Identity"),
+                Some(IntrospectValue::Bool(false))
+            );
             assert_eq!(tree_intro(&scene).0, 25, "28 − 3 Identity leaves");
             // Editing a struct field marks the struct modified; reset_struct clears it.
-            with_grid_mut(&mut scene, |i| i.intervene("value.6", IntrospectValue::Float(99.0)).unwrap());
-            assert_eq!(grid_intro(&scene).query("struct_modified.struct.Position"), Some(IntrospectValue::Bool(true)));
+            with_grid_mut(&mut scene, |i| {
+                i.intervene("value.6", IntrospectValue::Float(99.0))
+                    .unwrap();
+            });
             assert_eq!(
-                with_grid_mut(&mut scene, |i| i.invoke("reset_struct", IntrospectValue::Text("struct.Position".to_owned()))),
+                grid_intro(&scene).query("struct_modified.struct.Position"),
+                Some(IntrospectValue::Bool(true))
+            );
+            assert_eq!(
+                with_grid_mut(&mut scene, |i| i.invoke(
+                    "reset_struct",
+                    IntrospectValue::Text("struct.Position".to_owned())
+                )),
                 Ok(IntrospectValue::Int(1)),
                 "reset_struct restores 1 modified field",
             );
-            assert_eq!(grid_intro(&scene).query("value.6"), Some(IntrospectValue::Float(12.5)));
-            assert_eq!(grid_intro(&scene).query("struct_modified.struct.Position"), Some(IntrospectValue::Bool(false)));
+            assert_eq!(
+                grid_intro(&scene).query("value.6"),
+                Some(IntrospectValue::Float(12.5))
+            );
+            assert_eq!(
+                grid_intro(&scene).query("struct_modified.struct.Position"),
+                Some(IntrospectValue::Bool(false))
+            );
         });
     }
 
@@ -4379,13 +5013,35 @@ mod tests {
     fn r921_cursor_read_write_over_rpc() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            assert_eq!(grid_intro(&scene).query("cursor"), Some(IntrospectValue::Null), "no cursor at boot");
-            with_grid_mut(&mut scene, |i| i.intervene("cursor", IntrospectValue::Text("struct.Position".to_owned())).unwrap());
-            assert_eq!(grid_intro(&scene).query("cursor"), Some(IntrospectValue::Text("struct.Position".to_owned())));
+            assert_eq!(
+                grid_intro(&scene).query("cursor"),
+                Some(IntrospectValue::Null),
+                "no cursor at boot"
+            );
+            with_grid_mut(&mut scene, |i| {
+                i.intervene(
+                    "cursor",
+                    IntrospectValue::Text("struct.Position".to_owned()),
+                )
+                .unwrap();
+            });
+            assert_eq!(
+                grid_intro(&scene).query("cursor"),
+                Some(IntrospectValue::Text("struct.Position".to_owned()))
+            );
             // A pure cursor move does NOT toggle / edit the row (no side effect).
-            assert_eq!(grid_intro(&scene).query("editing"), Some(IntrospectValue::Json(serde_json::Value::Null)));
-            with_grid_mut(&mut scene, |i| i.intervene("cursor", IntrospectValue::Null).unwrap());
-            assert_eq!(grid_intro(&scene).query("cursor"), Some(IntrospectValue::Null), "Null clears the cursor");
+            assert_eq!(
+                grid_intro(&scene).query("editing"),
+                Some(IntrospectValue::Json(serde_json::Value::Null))
+            );
+            with_grid_mut(&mut scene, |i| {
+                i.intervene("cursor", IntrospectValue::Null).unwrap();
+            });
+            assert_eq!(
+                grid_intro(&scene).query("cursor"),
+                Some(IntrospectValue::Null),
+                "Null clears the cursor"
+            );
         });
     }
 
@@ -4407,10 +5063,16 @@ mod tests {
                 Some(IntrospectValue::Json(serde_json::Value::from("9"))),
                 "while visible the open popup is advertised",
             );
-            assert_eq!(grid_intro(&scene).query("popup_cursor"), Some(IntrospectValue::Int(0)));
+            assert_eq!(
+                grid_intro(&scene).query("popup_cursor"),
+                Some(IntrospectValue::Int(0))
+            );
             // Collapse Appearance (hides the Blend row) via RPC.
             with_grid_mut(&mut scene, |i| {
-                let _ = i.invoke("toggle_branch", IntrospectValue::Text("cat.Appearance".to_owned()));
+                let _ = i.invoke(
+                    "toggle_branch",
+                    IntrospectValue::Text("cat.Appearance".to_owned()),
+                );
             });
             // The now-hidden edit/popup reports as not-editing (matches paint).
             assert_eq!(
@@ -4418,15 +5080,30 @@ mod tests {
                 Some(IntrospectValue::Json(serde_json::Value::Null)),
                 "a collapsed edit is not advertised",
             );
-            assert_eq!(grid_intro(&scene).query("popup_cursor"), Some(IntrospectValue::Null));
+            assert_eq!(
+                grid_intro(&scene).query("popup_cursor"),
+                Some(IntrospectValue::Null)
+            );
             // The invisible popup does not intercept the grid keymap: ArrowDown
             // moves the tree cursor (Identity branch -> its first leaf).
             set_cursor_id("cat.Identity");
-            assert!(PropertyGridView::apply_key(&mut scene, Some(GRID_TAG), "ArrowDown", Modifiers::empty()));
-            assert_eq!(cursor_id().as_deref(), Some("0"), "tree nav advanced, not hijacked by the hidden popup");
+            assert!(PropertyGridView::apply_key(
+                &mut scene,
+                Some(GRID_TAG),
+                "ArrowDown",
+                Modifiers::empty()
+            ));
+            assert_eq!(
+                cursor_id().as_deref(),
+                Some("0"),
+                "tree nav advanced, not hijacked by the hidden popup"
+            );
             // Re-expanding re-advertises the still-open edit (state suspended, not destroyed).
             with_grid_mut(&mut scene, |i| {
-                let _ = i.invoke("toggle_branch", IntrospectValue::Text("cat.Appearance".to_owned()));
+                let _ = i.invoke(
+                    "toggle_branch",
+                    IntrospectValue::Text("cat.Appearance".to_owned()),
+                );
             });
             assert_eq!(
                 grid_intro(&scene).query("editing"),
@@ -4440,14 +5117,25 @@ mod tests {
     fn r836_toggle_invoke_flips_bool_by_source() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            let node = scene
+                .find_external_with_tag_mut(GRID_TAG)
+                .expect("grid present");
             let intro = node.handle.introspect_mut().expect("introspectable");
             // Toggle the Visible bool by its stable source index (2).
-            assert_eq!(intro.invoke("toggle", IntrospectValue::Int(2)), Ok(IntrospectValue::Bool(true)));
+            assert_eq!(
+                intro.invoke("toggle", IntrospectValue::Int(2)),
+                Ok(IntrospectValue::Bool(true))
+            );
             assert_eq!(intro.query("value.2"), Some(IntrospectValue::Bool(false)));
             // A non-bool source -> no-op.
-            assert_eq!(intro.invoke("toggle", IntrospectValue::Int(0)), Ok(IntrospectValue::Bool(false)));
-            assert_eq!(intro.query("value.0"), Some(IntrospectValue::Text("Player".to_owned())));
+            assert_eq!(
+                intro.invoke("toggle", IntrospectValue::Int(0)),
+                Ok(IntrospectValue::Bool(false))
+            );
+            assert_eq!(
+                intro.query("value.0"),
+                Some(IntrospectValue::Text("Player".to_owned()))
+            );
         });
     }
 
@@ -4455,13 +5143,23 @@ mod tests {
     fn r836_click_moves_cursor_and_toggles_bool() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            let node = scene
+                .find_external_with_tag_mut(GRID_TAG)
+                .expect("grid present");
             let intro = node.handle.introspect_mut().expect("introspectable");
             // PointerUp on the Locked bool (source 3) moves the cursor onto its
             // leaf-id row + toggles it.
             let _ = intro.invoke("send", IntrospectValue::Text("3:PointerUp".to_owned()));
-            assert_eq!(intro.query("value.3"), Some(IntrospectValue::Bool(true)), "false -> true");
-            assert_eq!(cursor_id().as_deref(), Some("3"), "cursor moved onto the clicked leaf");
+            assert_eq!(
+                intro.query("value.3"),
+                Some(IntrospectValue::Bool(true)),
+                "false -> true"
+            );
+            assert_eq!(
+                cursor_id().as_deref(),
+                Some("3"),
+                "cursor moved onto the clicked leaf"
+            );
             // PointerUp on a text row moves the cursor but does not toggle.
             let _ = intro.invoke("send", IntrospectValue::Text("0:PointerUp".to_owned()));
             assert_eq!(cursor_id().as_deref(), Some("0"));
@@ -4475,29 +5173,54 @@ mod tests {
     fn r875_float_scrub_adds_pixel_travel_times_sensitivity() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            let node = scene
+                .find_external_with_tag_mut(GRID_TAG)
+                .expect("grid present");
             // Pos X (source 6) boots at 12.5.
-            assert_eq!(node.handle.introspect().unwrap().query("value.6"), Some(IntrospectValue::Float(12.5)));
+            assert_eq!(
+                node.handle.introspect().unwrap().query("value.6"),
+                Some(IntrospectValue::Float(12.5))
+            );
             // Press the row (arm), then drag the captured cursor from x_rel 0.5
             // to 0.75 across the 400px grid: travel = 0.25 · 400 = 100px → +1.0.
-            node.handle.introspect_mut().unwrap()
-                .invoke("send", IntrospectValue::Text("6:PointerDown".to_owned())).unwrap();
+            node.handle
+                .introspect_mut()
+                .unwrap()
+                .invoke("send", IntrospectValue::Text("6:PointerDown".to_owned()))
+                .unwrap();
             node.handle.pointer_move(0.5, 0.5); // calibrate (no mutation)
-            assert_eq!(node.handle.introspect().unwrap().query("value.6"), Some(IntrospectValue::Float(12.5)),
-                "first move only calibrates");
-            assert_eq!(node.handle.introspect().unwrap().query("scrubbing"), Some(IntrospectValue::Bool(false)),
-                "R915: the calibration frame is a click so far, not yet a scrub");
+            assert_eq!(
+                node.handle.introspect().unwrap().query("value.6"),
+                Some(IntrospectValue::Float(12.5)),
+                "first move only calibrates"
+            );
+            assert_eq!(
+                node.handle.introspect().unwrap().query("scrubbing"),
+                Some(IntrospectValue::Bool(false)),
+                "R915: the calibration frame is a click so far, not yet a scrub"
+            );
             node.handle.pointer_move(0.75, 0.5); // apply +100px (past the 4px dead zone)
-            assert_eq!(node.handle.introspect().unwrap().query("scrubbing"), Some(IntrospectValue::Bool(true)),
-                "a real drag past the threshold is a scrub");
-            let IntrospectValue::Float(v) = node.handle.introspect().unwrap().query("value.6").unwrap() else {
+            assert_eq!(
+                node.handle.introspect().unwrap().query("scrubbing"),
+                Some(IntrospectValue::Bool(true)),
+                "a real drag past the threshold is a scrub"
+            );
+            let IntrospectValue::Float(v) =
+                node.handle.introspect().unwrap().query("value.6").unwrap()
+            else {
                 panic!("Pos X stays a float");
             };
             assert!((v - 13.5).abs() < 1e-6, "12.5 + 100px·0.01 = 13.5, got {v}");
             // Release clears the scrub; the value is the committed live value.
-            node.handle.introspect_mut().unwrap()
-                .invoke("send", IntrospectValue::Text("6:PointerUp".to_owned())).unwrap();
-            assert_eq!(node.handle.introspect().unwrap().query("scrubbing"), Some(IntrospectValue::Bool(false)));
+            node.handle
+                .introspect_mut()
+                .unwrap()
+                .invoke("send", IntrospectValue::Text("6:PointerUp".to_owned()))
+                .unwrap();
+            assert_eq!(
+                node.handle.introspect().unwrap().query("scrubbing"),
+                Some(IntrospectValue::Bool(false))
+            );
         });
     }
 
@@ -4507,12 +5230,27 @@ mod tests {
     fn r964_clamp_to_range_bounds_only_ranged_float() {
         assert_eq!(scalar_range(OPACITY_SLOT), Some((0.0, 1.0)));
         assert_eq!(scalar_range(6), None, "Pos X is unranged");
-        assert_eq!(clamp_to_range(OPACITY_SLOT, CellValue::Float(2.5)), CellValue::Float(1.0));
-        assert_eq!(clamp_to_range(OPACITY_SLOT, CellValue::Float(-0.5)), CellValue::Float(0.0));
-        assert_eq!(clamp_to_range(OPACITY_SLOT, CellValue::Float(0.25)), CellValue::Float(0.25));
+        assert_eq!(
+            clamp_to_range(OPACITY_SLOT, CellValue::Float(2.5)),
+            CellValue::Float(1.0)
+        );
+        assert_eq!(
+            clamp_to_range(OPACITY_SLOT, CellValue::Float(-0.5)),
+            CellValue::Float(0.0)
+        );
+        assert_eq!(
+            clamp_to_range(OPACITY_SLOT, CellValue::Float(0.25)),
+            CellValue::Float(0.25)
+        );
         // Unranged slot / non-Float value are never clamped.
-        assert_eq!(clamp_to_range(6, CellValue::Float(2.5)), CellValue::Float(2.5));
-        assert_eq!(clamp_to_range(OPACITY_SLOT, CellValue::Int(9)), CellValue::Int(9));
+        assert_eq!(
+            clamp_to_range(6, CellValue::Float(2.5)),
+            CellValue::Float(2.5)
+        );
+        assert_eq!(
+            clamp_to_range(OPACITY_SLOT, CellValue::Int(9)),
+            CellValue::Int(9)
+        );
     }
 
     /// R964 — `range.<i>` reports the interval for a ranged scalar and Null for an
@@ -4521,20 +5259,39 @@ mod tests {
     fn r964_range_query_and_intervene_clamp() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
-            assert_eq!(node.handle.introspect().unwrap().query("range.8"),
-                Some(IntrospectValue::Text("0..1".to_owned())));
-            assert_eq!(node.handle.introspect().unwrap().query("range.6"),
-                Some(IntrospectValue::Text("none".to_owned())), "Pos X is unranged");
+            let node = scene
+                .find_external_with_tag_mut(GRID_TAG)
+                .expect("grid present");
+            assert_eq!(
+                node.handle.introspect().unwrap().query("range.8"),
+                Some(IntrospectValue::Text("0..1".to_owned()))
+            );
+            assert_eq!(
+                node.handle.introspect().unwrap().query("range.6"),
+                Some(IntrospectValue::Text("none".to_owned())),
+                "Pos X is unranged"
+            );
             // An out-of-range RPC write clamps both ends through the set_value funnel.
-            node.handle.introspect_mut().unwrap()
-                .intervene("value.8", IntrospectValue::Float(2.5)).unwrap();
-            assert_eq!(node.handle.introspect().unwrap().query("value.8"), Some(IntrospectValue::Float(1.0)),
-                "above-max write clamps to 1.0");
-            node.handle.introspect_mut().unwrap()
-                .intervene("value.8", IntrospectValue::Float(-3.0)).unwrap();
-            assert_eq!(node.handle.introspect().unwrap().query("value.8"), Some(IntrospectValue::Float(0.0)),
-                "below-min write clamps to 0.0");
+            node.handle
+                .introspect_mut()
+                .unwrap()
+                .intervene("value.8", IntrospectValue::Float(2.5))
+                .unwrap();
+            assert_eq!(
+                node.handle.introspect().unwrap().query("value.8"),
+                Some(IntrospectValue::Float(1.0)),
+                "above-max write clamps to 1.0"
+            );
+            node.handle
+                .introspect_mut()
+                .unwrap()
+                .intervene("value.8", IntrospectValue::Float(-3.0))
+                .unwrap();
+            assert_eq!(
+                node.handle.introspect().unwrap().query("value.8"),
+                Some(IntrospectValue::Float(0.0)),
+                "below-min write clamps to 0.0"
+            );
         });
     }
 
@@ -4545,22 +5302,41 @@ mod tests {
     fn r964_scrub_clamps_at_top_and_unclamps_on_return() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            let node = scene
+                .find_external_with_tag_mut(GRID_TAG)
+                .expect("grid present");
             // Opacity (source 8) boots at the top of [0, 1].
-            assert_eq!(node.handle.introspect().unwrap().query("value.8"), Some(IntrospectValue::Float(1.0)));
-            node.handle.introspect_mut().unwrap()
-                .invoke("send", IntrospectValue::Text("8:PointerDown".to_owned())).unwrap();
+            assert_eq!(
+                node.handle.introspect().unwrap().query("value.8"),
+                Some(IntrospectValue::Float(1.0))
+            );
+            node.handle
+                .introspect_mut()
+                .unwrap()
+                .invoke("send", IntrospectValue::Text("8:PointerDown".to_owned()))
+                .unwrap();
             node.handle.pointer_move(0.5, 0.5); // calibrate (base = 1.0)
             node.handle.pointer_move(0.6, 0.5); // +40px → 1.0 + 0.4 = 1.4 → clamp 1.0
-            assert_eq!(node.handle.introspect().unwrap().query("value.8"), Some(IntrospectValue::Float(1.0)),
-                "scrub past the top clamps to max");
+            assert_eq!(
+                node.handle.introspect().unwrap().query("value.8"),
+                Some(IntrospectValue::Float(1.0)),
+                "scrub past the top clamps to max"
+            );
             node.handle.pointer_move(0.45, 0.5); // −20px from press → 1.0 − 0.2 = 0.8
-            let IntrospectValue::Float(v) = node.handle.introspect().unwrap().query("value.8").unwrap() else {
+            let IntrospectValue::Float(v) =
+                node.handle.introspect().unwrap().query("value.8").unwrap()
+            else {
                 panic!("Opacity stays a float");
             };
-            assert!((v - 0.8).abs() < 1e-6, "the intermediate clamp un-clamps on return: got {v}");
-            node.handle.introspect_mut().unwrap()
-                .invoke("send", IntrospectValue::Text("8:PointerUp".to_owned())).unwrap();
+            assert!(
+                (v - 0.8).abs() < 1e-6,
+                "the intermediate clamp un-clamps on return: got {v}"
+            );
+            node.handle
+                .introspect_mut()
+                .unwrap()
+                .invoke("send", IntrospectValue::Text("8:PointerUp".to_owned()))
+                .unwrap();
         });
     }
 
@@ -4569,21 +5345,38 @@ mod tests {
     fn r875_int_scrub_steps_in_whole_units_both_directions() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            let node = scene
+                .find_external_with_tag_mut(GRID_TAG)
+                .expect("grid present");
             // Layer (source 4) boots at 3. Drag +80px → +10 steps → 13.
-            node.handle.introspect_mut().unwrap()
-                .invoke("send", IntrospectValue::Text("4:PointerDown".to_owned())).unwrap();
+            node.handle
+                .introspect_mut()
+                .unwrap()
+                .invoke("send", IntrospectValue::Text("4:PointerDown".to_owned()))
+                .unwrap();
             node.handle.pointer_move(0.5, 0.5);
             node.handle.pointer_move(0.7, 0.5); // +0.2·400 = 80px → +10
-            assert_eq!(node.handle.introspect().unwrap().query("value.4"), Some(IntrospectValue::Int(13)));
+            assert_eq!(
+                node.handle.introspect().unwrap().query("value.4"),
+                Some(IntrospectValue::Int(13))
+            );
             // Same gesture, leftward: a fresh press anchors, drag −80px → 3.
-            node.handle.introspect_mut().unwrap()
-                .invoke("send", IntrospectValue::Text("4:PointerUp".to_owned())).unwrap();
-            node.handle.introspect_mut().unwrap()
-                .invoke("send", IntrospectValue::Text("4:PointerDown".to_owned())).unwrap();
+            node.handle
+                .introspect_mut()
+                .unwrap()
+                .invoke("send", IntrospectValue::Text("4:PointerUp".to_owned()))
+                .unwrap();
+            node.handle
+                .introspect_mut()
+                .unwrap()
+                .invoke("send", IntrospectValue::Text("4:PointerDown".to_owned()))
+                .unwrap();
             node.handle.pointer_move(0.5, 0.5);
             node.handle.pointer_move(0.3, 0.5); // −80px → −10 → 3
-            assert_eq!(node.handle.introspect().unwrap().query("value.4"), Some(IntrospectValue::Int(3)));
+            assert_eq!(
+                node.handle.introspect().unwrap().query("value.4"),
+                Some(IntrospectValue::Int(3))
+            );
         });
     }
 
@@ -4593,28 +5386,51 @@ mod tests {
     fn r875_scrub_suppresses_click_and_skips_non_numeric() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            let node = scene
+                .find_external_with_tag_mut(GRID_TAG)
+                .expect("grid present");
             // Scrub the Float row, then release: the editor must NOT open.
-            node.handle.introspect_mut().unwrap()
-                .invoke("send", IntrospectValue::Text("6:PointerDown".to_owned())).unwrap();
+            node.handle
+                .introspect_mut()
+                .unwrap()
+                .invoke("send", IntrospectValue::Text("6:PointerDown".to_owned()))
+                .unwrap();
             node.handle.pointer_move(0.5, 0.5);
             node.handle.pointer_move(0.6, 0.5);
-            node.handle.introspect_mut().unwrap()
-                .invoke("send", IntrospectValue::Text("6:PointerUp".to_owned())).unwrap();
-            assert_eq!(node.handle.introspect().unwrap().query("editing"),
-                Some(IntrospectValue::Json(serde_json::Value::Null)), "a scrub does not open the editor");
+            node.handle
+                .introspect_mut()
+                .unwrap()
+                .invoke("send", IntrospectValue::Text("6:PointerUp".to_owned()))
+                .unwrap();
+            assert_eq!(
+                node.handle.introspect().unwrap().query("editing"),
+                Some(IntrospectValue::Json(serde_json::Value::Null)),
+                "a scrub does not open the editor"
+            );
             // A drag on the Visible bool (source 2) does not scrub; the release
             // still toggles it (true → false).
-            node.handle.introspect_mut().unwrap()
-                .invoke("send", IntrospectValue::Text("2:PointerDown".to_owned())).unwrap();
+            node.handle
+                .introspect_mut()
+                .unwrap()
+                .invoke("send", IntrospectValue::Text("2:PointerDown".to_owned()))
+                .unwrap();
             node.handle.pointer_move(0.5, 0.5);
             node.handle.pointer_move(0.8, 0.5); // no-op (non-numeric armed → none)
-            assert_eq!(node.handle.introspect().unwrap().query("scrubbing"), Some(IntrospectValue::Bool(false)),
-                "a non-numeric press never calibrates a scrub");
-            node.handle.introspect_mut().unwrap()
-                .invoke("send", IntrospectValue::Text("2:PointerUp".to_owned())).unwrap();
-            assert_eq!(node.handle.introspect().unwrap().query("value.2"), Some(IntrospectValue::Bool(false)),
-                "the bool still toggles on release (drag did not scrub it)");
+            assert_eq!(
+                node.handle.introspect().unwrap().query("scrubbing"),
+                Some(IntrospectValue::Bool(false)),
+                "a non-numeric press never calibrates a scrub"
+            );
+            node.handle
+                .introspect_mut()
+                .unwrap()
+                .invoke("send", IntrospectValue::Text("2:PointerUp".to_owned()))
+                .unwrap();
+            assert_eq!(
+                node.handle.introspect().unwrap().query("value.2"),
+                Some(IntrospectValue::Bool(false)),
+                "the bool still toggles on release (drag did not scrub it)"
+            );
         });
     }
 
@@ -4626,17 +5442,36 @@ mod tests {
             let mut scene = boot_scene();
             // begin_edit on the Layer int row (index 4) via invoke (the RPC
             // edit-entry path) seeds the shared editor with the value text.
-            let n = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            let n = scene
+                .find_external_with_tag_mut(GRID_TAG)
+                .expect("grid present");
             let intro = n.handle.introspect_mut().expect("introspectable");
-            assert_eq!(intro.invoke("begin", IntrospectValue::Int(4)), Ok(IntrospectValue::Bool(true)));
-            assert_eq!(intro.query("editing"), Some(IntrospectValue::Json(serde_json::Value::from("4"))));
-            assert_eq!(use_text_edit_state(EDIT_TF_TAG).text(), "3", "seeded with Layer value");
+            assert_eq!(
+                intro.invoke("begin", IntrospectValue::Int(4)),
+                Ok(IntrospectValue::Bool(true))
+            );
+            assert_eq!(
+                intro.query("editing"),
+                Some(IntrospectValue::Json(serde_json::Value::from("4")))
+            );
+            assert_eq!(
+                use_text_edit_state(EDIT_TF_TAG).text(),
+                "3",
+                "seeded with Layer value"
+            );
             // Type a new value + commit.
             use_text_edit_state(EDIT_TF_TAG).set_text("12".to_owned());
             commit_edit(true);
             let intro = grid_intro(&scene);
-            assert_eq!(intro.query("value.4"), Some(IntrospectValue::Int(12)), "committed");
-            assert_eq!(intro.query("editing"), Some(IntrospectValue::Json(serde_json::Value::Null)));
+            assert_eq!(
+                intro.query("value.4"),
+                Some(IntrospectValue::Int(12)),
+                "committed"
+            );
+            assert_eq!(
+                intro.query("editing"),
+                Some(IntrospectValue::Json(serde_json::Value::Null))
+            );
         });
     }
 
@@ -4644,10 +5479,18 @@ mod tests {
     fn r836_begin_rejects_bool_rows() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            let n = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            let n = scene
+                .find_external_with_tag_mut(GRID_TAG)
+                .expect("grid present");
             let intro = n.handle.introspect_mut().expect("introspectable");
-            assert_eq!(intro.invoke("begin", IntrospectValue::Int(2)), Ok(IntrospectValue::Bool(false)));
-            assert_eq!(intro.query("editing"), Some(IntrospectValue::Json(serde_json::Value::Null)));
+            assert_eq!(
+                intro.invoke("begin", IntrospectValue::Int(2)),
+                Ok(IntrospectValue::Bool(false))
+            );
+            assert_eq!(
+                intro.query("editing"),
+                Some(IntrospectValue::Json(serde_json::Value::Null))
+            );
         });
     }
 
@@ -4655,14 +5498,22 @@ mod tests {
     fn r836_cancel_keeps_prior_value() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            let n = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            let n = scene
+                .find_external_with_tag_mut(GRID_TAG)
+                .expect("grid present");
             let intro = n.handle.introspect_mut().expect("introspectable");
             let _ = intro.invoke("begin", IntrospectValue::Int(0));
             use_text_edit_state(EDIT_TF_TAG).set_text("changed".to_owned());
             cancel_edit();
             let intro = grid_intro(&scene);
-            assert_eq!(intro.query("value.0"), Some(IntrospectValue::Text("Player".to_owned())));
-            assert_eq!(intro.query("editing"), Some(IntrospectValue::Json(serde_json::Value::Null)));
+            assert_eq!(
+                intro.query("value.0"),
+                Some(IntrospectValue::Text("Player".to_owned()))
+            );
+            assert_eq!(
+                intro.query("editing"),
+                Some(IntrospectValue::Json(serde_json::Value::Null))
+            );
         });
     }
 
@@ -4670,13 +5521,19 @@ mod tests {
     fn r836_commit_malformed_number_reverts() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            let n = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            let n = scene
+                .find_external_with_tag_mut(GRID_TAG)
+                .expect("grid present");
             let intro = n.handle.introspect_mut().expect("introspectable");
             let _ = intro.invoke("begin", IntrospectValue::Int(4));
             use_text_edit_state(EDIT_TF_TAG).set_text("not a number".to_owned());
             commit_edit(true);
             let intro = grid_intro(&scene);
-            assert_eq!(intro.query("value.4"), Some(IntrospectValue::Int(3)), "kept prior value");
+            assert_eq!(
+                intro.query("value.4"),
+                Some(IntrospectValue::Int(3)),
+                "kept prior value"
+            );
         });
     }
 
@@ -4695,7 +5552,10 @@ mod tests {
 
     /// The value indices of the visible LEAF rows, in flatten order.
     fn visible_leaf_indices() -> Vec<usize> {
-        visible().iter().filter_map(|r| row_value_index(&r.id)).collect()
+        visible()
+            .iter()
+            .filter_map(|r| row_value_index(&r.id))
+            .collect()
     }
 
     /// Park the roving cursor on tree node `id` (a leaf value-index string or a
@@ -4718,16 +5578,49 @@ mod tests {
             let first = ids.first().expect("non-empty flatten").clone(); // "cat.Identity"
             let last = ids.last().expect("non-empty flatten").clone(); // "15" (Scale Z)
             // First ArrowDown from no cursor lands on row 0 (the Identity header).
-            assert!(PropertyGridView::apply_key(&mut scene, Some(GRID_TAG), "ArrowDown", Modifiers::empty()));
+            assert!(PropertyGridView::apply_key(
+                &mut scene,
+                Some(GRID_TAG),
+                "ArrowDown",
+                Modifiers::empty()
+            ));
             assert_eq!(cursor_id().as_deref(), Some(first.as_str()));
-            assert!(PropertyGridView::apply_key(&mut scene, Some(GRID_TAG), "End", Modifiers::empty()));
+            assert!(PropertyGridView::apply_key(
+                &mut scene,
+                Some(GRID_TAG),
+                "End",
+                Modifiers::empty()
+            ));
             assert_eq!(cursor_id().as_deref(), Some(last.as_str()));
-            assert!(PropertyGridView::apply_key(&mut scene, Some(GRID_TAG), "ArrowDown", Modifiers::empty()));
-            assert_eq!(cursor_id().as_deref(), Some(last.as_str()), "clamps at the bottom");
-            assert!(PropertyGridView::apply_key(&mut scene, Some(GRID_TAG), "Home", Modifiers::empty()));
+            assert!(PropertyGridView::apply_key(
+                &mut scene,
+                Some(GRID_TAG),
+                "ArrowDown",
+                Modifiers::empty()
+            ));
+            assert_eq!(
+                cursor_id().as_deref(),
+                Some(last.as_str()),
+                "clamps at the bottom"
+            );
+            assert!(PropertyGridView::apply_key(
+                &mut scene,
+                Some(GRID_TAG),
+                "Home",
+                Modifiers::empty()
+            ));
             assert_eq!(cursor_id().as_deref(), Some(first.as_str()));
-            assert!(PropertyGridView::apply_key(&mut scene, Some(GRID_TAG), "ArrowUp", Modifiers::empty()));
-            assert_eq!(cursor_id().as_deref(), Some(first.as_str()), "clamps at the top");
+            assert!(PropertyGridView::apply_key(
+                &mut scene,
+                Some(GRID_TAG),
+                "ArrowUp",
+                Modifiers::empty()
+            ));
+            assert_eq!(
+                cursor_id().as_deref(),
+                Some(first.as_str()),
+                "clamps at the top"
+            );
         });
     }
 
@@ -4737,17 +5630,36 @@ mod tests {
             let mut scene = boot_scene();
             // Cursor on the Identity category branch.
             set_cursor_id("cat.Identity");
-            let collapsed = || !find_node(&use_property_tree().get(), "cat.Identity").unwrap().expanded;
+            let collapsed = || {
+                !find_node(&use_property_tree().get(), "cat.Identity")
+                    .unwrap()
+                    .expanded
+            };
             // ArrowLeft on an expanded branch collapses it; its 3 leaves vanish.
-            assert!(PropertyGridView::apply_key(&mut scene, Some(GRID_TAG), "ArrowLeft", Modifiers::empty()));
+            assert!(PropertyGridView::apply_key(
+                &mut scene,
+                Some(GRID_TAG),
+                "ArrowLeft",
+                Modifiers::empty()
+            ));
             assert!(collapsed(), "ArrowLeft collapses the focused category");
             assert_eq!(visible().len(), 25, "28 − 3 Identity leaves");
             // ArrowRight re-expands.
-            assert!(PropertyGridView::apply_key(&mut scene, Some(GRID_TAG), "ArrowRight", Modifiers::empty()));
+            assert!(PropertyGridView::apply_key(
+                &mut scene,
+                Some(GRID_TAG),
+                "ArrowRight",
+                Modifiers::empty()
+            ));
             assert!(!collapsed());
             assert_eq!(visible().len(), 28);
             // Enter on a branch toggles it too.
-            assert!(PropertyGridView::apply_key(&mut scene, Some(GRID_TAG), "Enter", Modifiers::empty()));
+            assert!(PropertyGridView::apply_key(
+                &mut scene,
+                Some(GRID_TAG),
+                "Enter",
+                Modifiers::empty()
+            ));
             assert!(collapsed(), "Enter on a branch toggles collapse");
         });
     }
@@ -4758,11 +5670,24 @@ mod tests {
             let mut scene = boot_scene();
             // Cursor onto the Visible bool (leaf 2) and Space-toggle it.
             set_cursor_id("2");
-            assert!(PropertyGridView::apply_key(&mut scene, Some(GRID_TAG), "Space", Modifiers::empty()));
-            assert_eq!(grid_intro(&scene).query("value.2"), Some(IntrospectValue::Bool(false)));
+            assert!(PropertyGridView::apply_key(
+                &mut scene,
+                Some(GRID_TAG),
+                "Space",
+                Modifiers::empty()
+            ));
+            assert_eq!(
+                grid_intro(&scene).query("value.2"),
+                Some(IntrospectValue::Bool(false))
+            );
             // Cursor onto the Name text row (leaf 0) and Enter -> edit mode.
             set_cursor_id("0");
-            assert!(PropertyGridView::apply_key(&mut scene, Some(GRID_TAG), "Enter", Modifiers::empty()));
+            assert!(PropertyGridView::apply_key(
+                &mut scene,
+                Some(GRID_TAG),
+                "Enter",
+                Modifiers::empty()
+            ));
             assert_eq!(
                 grid_intro(&scene).query("editing"),
                 Some(IntrospectValue::Json(serde_json::Value::from("0"))),
@@ -4779,8 +5704,16 @@ mod tests {
                 .and_then(|n| n.handle.introspect_mut())
                 .map(|i| i.invoke("begin", IntrospectValue::Int(0)));
             use_text_edit_state(EDIT_TF_TAG).set_text("Enemy".to_owned());
-            assert!(PropertyGridView::apply_key(&mut scene, Some(EDIT_TF_TAG), "Enter", Modifiers::empty()));
-            assert_eq!(grid_intro(&scene).query("value.0"), Some(IntrospectValue::Text("Enemy".to_owned())));
+            assert!(PropertyGridView::apply_key(
+                &mut scene,
+                Some(EDIT_TF_TAG),
+                "Enter",
+                Modifiers::empty()
+            ));
+            assert_eq!(
+                grid_intro(&scene).query("value.0"),
+                Some(IntrospectValue::Text("Enemy".to_owned()))
+            );
         });
     }
 
@@ -4794,8 +5727,19 @@ mod tests {
                 .map(|i| i.invoke("begin", IntrospectValue::Int(4)));
             use_text_edit_state(EDIT_TF_TAG).set_text(String::new());
             use_text_edit_state(EDIT_TF_TAG).set_caret(0);
-            assert!(PropertyGridView::apply_key(&mut scene, Some(EDIT_TF_TAG), "9", Modifiers::empty()), "digit accepted");
-            assert!(!PropertyGridView::apply_key(&mut scene, Some(EDIT_TF_TAG), "x", Modifiers::empty()), "letter dropped");
+            assert!(
+                PropertyGridView::apply_key(&mut scene, Some(EDIT_TF_TAG), "9", Modifiers::empty()),
+                "digit accepted"
+            );
+            assert!(
+                !PropertyGridView::apply_key(
+                    &mut scene,
+                    Some(EDIT_TF_TAG),
+                    "x",
+                    Modifiers::empty()
+                ),
+                "letter dropped"
+            );
             assert_eq!(use_text_edit_state(EDIT_TF_TAG).text(), "9");
         });
     }
@@ -4804,7 +5748,12 @@ mod tests {
     fn r836_keys_ignored_when_unfocused() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            assert!(!PropertyGridView::apply_key(&mut scene, None, "ArrowDown", Modifiers::empty()));
+            assert!(!PropertyGridView::apply_key(
+                &mut scene,
+                None,
+                "ArrowDown",
+                Modifiers::empty()
+            ));
             assert_eq!(cursor_id(), None, "cursor unchanged");
         });
     }
@@ -4829,7 +5778,11 @@ mod tests {
             assert_eq!(cat.role, AriaRole::TreeItem);
             assert_eq!(cat.level, Some(1), "a category is aria-level 1");
             assert_eq!(cat.expanded, Some(true), "expanded category");
-            assert_eq!(cat.name.as_deref(), Some("Identity (3)"), "category name folds its leaf count");
+            assert_eq!(
+                cat.name.as_deref(),
+                Some("Identity (3)"),
+                "category name folds its leaf count"
+            );
             // The cursor leaf is the active descendant (focus, NO aria-selected —
             // the Inspector has no selection model), level 2, value folded in.
             let active = nodes
@@ -4838,8 +5791,15 @@ mod tests {
                 .expect("Visible leaf node");
             assert_eq!(active.level, Some(2), "a category leaf is aria-level 2");
             assert!(active.state.focused, "cursor row is the active descendant");
-            assert_eq!(active.selected, None, "no selection model → no aria-selected axis");
-            assert_eq!(active.name.as_deref(), Some("Visible: On"), "leaf name folds its value");
+            assert_eq!(
+                active.selected, None,
+                "no selection model → no aria-selected axis"
+            );
+            assert_eq!(
+                active.name.as_deref(),
+                Some("Visible: On"),
+                "leaf name folds its value"
+            );
             // A struct branch lowers to a level-2 treeitem with its summary; its
             // fields are level-3 treeitems named with the qualified property name.
             let pos = nodes
@@ -4853,11 +5813,17 @@ mod tests {
                 "struct name folds its summary, got {:?}",
                 pos.name,
             );
-            let field =
-                nodes.iter().find(|n| n.tag == format!("{GRID_TAG}#6")).expect("Position X field node");
+            let field = nodes
+                .iter()
+                .find(|n| n.tag == format!("{GRID_TAG}#6"))
+                .expect("Position X field node");
             assert_eq!(field.level, Some(3), "a struct field is aria-level 3");
             assert!(
-                field.name.as_deref().unwrap_or("").starts_with("Position X:"),
+                field
+                    .name
+                    .as_deref()
+                    .unwrap_or("")
+                    .starts_with("Position X:"),
                 "field name is qualified, got {:?}",
                 field.name,
             );
@@ -4885,8 +5851,14 @@ mod tests {
         Owner::new().run(|| {
             let scene = boot_scene();
             let intro = grid_intro(&scene);
-            assert_eq!(intro.query("kind.9"), Some(IntrospectValue::Text("choice".to_owned())));
-            assert_eq!(intro.query("kind.10"), Some(IntrospectValue::Text("choice".to_owned())));
+            assert_eq!(
+                intro.query("kind.9"),
+                Some(IntrospectValue::Text("choice".to_owned()))
+            );
+            assert_eq!(
+                intro.query("kind.10"),
+                Some(IntrospectValue::Text("choice".to_owned()))
+            );
             let Some(IntrospectValue::Json(blend)) = intro.query("value.9") else {
                 panic!("choice value is json");
             };
@@ -4896,7 +5868,11 @@ mod tests {
                 blend["options"],
                 serde_json::json!(["Normal", "Additive", "Multiply", "Screen"]),
             );
-            assert_eq!(intro.query("popup_cursor"), Some(IntrospectValue::Null), "no popup at boot");
+            assert_eq!(
+                intro.query("popup_cursor"),
+                Some(IntrospectValue::Null),
+                "no popup at boot"
+            );
         });
     }
 
@@ -4912,7 +5888,10 @@ mod tests {
             let mut scene = boot_scene();
             open_choice(&mut scene, BLEND_ROW);
             let intro = grid_intro(&scene);
-            assert_eq!(intro.query("editing"), Some(IntrospectValue::Json(serde_json::Value::from("9"))));
+            assert_eq!(
+                intro.query("editing"),
+                Some(IntrospectValue::Json(serde_json::Value::from("9")))
+            );
             assert_eq!(
                 intro.query("popup_cursor"),
                 Some(IntrospectValue::Int(0)),
@@ -4935,14 +5914,25 @@ mod tests {
                     Modifiers::empty(),
                 ));
             }
-            assert_eq!(grid_intro(&scene).query("popup_cursor"), Some(IntrospectValue::Int(3)));
+            assert_eq!(
+                grid_intro(&scene).query("popup_cursor"),
+                Some(IntrospectValue::Int(3))
+            );
             // Enter commits the cursor (Screen) and closes the popup.
-            assert!(PropertyGridView::apply_key(&mut scene, Some(GRID_TAG), "Enter", Modifiers::empty()));
+            assert!(PropertyGridView::apply_key(
+                &mut scene,
+                Some(GRID_TAG),
+                "Enter",
+                Modifiers::empty()
+            ));
             let Some(IntrospectValue::Json(v)) = grid_intro(&scene).query("value.9") else {
                 panic!("json");
             };
             assert_eq!(v["label"], serde_json::json!("Screen"));
-            assert_eq!(grid_intro(&scene).query("editing"), Some(IntrospectValue::Json(serde_json::Value::Null)));
+            assert_eq!(
+                grid_intro(&scene).query("editing"),
+                Some(IntrospectValue::Json(serde_json::Value::Null))
+            );
         });
     }
 
@@ -4951,13 +5941,30 @@ mod tests {
         Owner::new().run(|| {
             let mut scene = boot_scene();
             open_choice(&mut scene, BLEND_ROW);
-            assert!(PropertyGridView::apply_key(&mut scene, Some(GRID_TAG), "ArrowDown", Modifiers::empty()));
-            assert!(PropertyGridView::apply_key(&mut scene, Some(GRID_TAG), "Escape", Modifiers::empty()));
-            assert_eq!(grid_intro(&scene).query("editing"), Some(IntrospectValue::Json(serde_json::Value::Null)));
+            assert!(PropertyGridView::apply_key(
+                &mut scene,
+                Some(GRID_TAG),
+                "ArrowDown",
+                Modifiers::empty()
+            ));
+            assert!(PropertyGridView::apply_key(
+                &mut scene,
+                Some(GRID_TAG),
+                "Escape",
+                Modifiers::empty()
+            ));
+            assert_eq!(
+                grid_intro(&scene).query("editing"),
+                Some(IntrospectValue::Json(serde_json::Value::Null))
+            );
             let Some(IntrospectValue::Json(v)) = grid_intro(&scene).query("value.9") else {
                 panic!("json");
             };
-            assert_eq!(v["selected"], serde_json::json!(0), "Escape leaves the committed value");
+            assert_eq!(
+                v["selected"],
+                serde_json::json!(0),
+                "Escape leaves the committed value"
+            );
         });
     }
 
@@ -4970,15 +5977,28 @@ mod tests {
             // Single-click the Blend row opens the popup; clicking option 2
             // (Multiply) commits + closes.
             let _ = intro.invoke("send", IntrospectValue::Text("9:PointerUp".to_owned()));
-            assert_eq!(intro.query("editing"), Some(IntrospectValue::Json(serde_json::Value::from("9"))));
+            assert_eq!(
+                intro.query("editing"),
+                Some(IntrospectValue::Json(serde_json::Value::from("9")))
+            );
             let _ = intro.invoke("send", IntrospectValue::Text("opt2:PointerUp".to_owned()));
-            assert_eq!(intro.query("editing"), Some(IntrospectValue::Json(serde_json::Value::Null)));
-            let Some(IntrospectValue::Json(v)) = intro.query("value.9") else { panic!("json") };
+            assert_eq!(
+                intro.query("editing"),
+                Some(IntrospectValue::Json(serde_json::Value::Null))
+            );
+            let Some(IntrospectValue::Json(v)) = intro.query("value.9") else {
+                panic!("json")
+            };
             assert_eq!(v["label"], serde_json::json!("Multiply"));
             // The RPC `choose` path commits + closes too (Body row 10 -> None).
             let _ = intro.invoke("begin", IntrospectValue::Int(10));
-            assert_eq!(intro.invoke("choose", IntrospectValue::Int(0)), Ok(IntrospectValue::Bool(true)));
-            let Some(IntrospectValue::Json(v)) = intro.query("value.10") else { panic!("json") };
+            assert_eq!(
+                intro.invoke("choose", IntrospectValue::Int(0)),
+                Ok(IntrospectValue::Bool(true))
+            );
+            let Some(IntrospectValue::Json(v)) = intro.query("value.10") else {
+                panic!("json")
+            };
             assert_eq!(v["label"], serde_json::json!("None"));
         });
     }
@@ -4991,11 +6011,19 @@ mod tests {
             let intro = n.handle.introspect_mut().expect("introspectable");
             let _ = intro.invoke("send", IntrospectValue::Text("9:PointerUp".to_owned()));
             // Clicking the dismiss barrier closes without committing.
-            let _ = intro.invoke("send", IntrospectValue::Text("dismiss:PointerUp".to_owned()));
-            assert_eq!(intro.query("editing"), Some(IntrospectValue::Json(serde_json::Value::Null)));
+            let _ = intro.invoke(
+                "send",
+                IntrospectValue::Text("dismiss:PointerUp".to_owned()),
+            );
+            assert_eq!(
+                intro.query("editing"),
+                Some(IntrospectValue::Json(serde_json::Value::Null))
+            );
             // Direct AI set by index (no popup needed) + strict errors.
             assert!(intro.intervene("value.9", IntrospectValue::Int(1)).is_ok());
-            let Some(IntrospectValue::Json(v)) = intro.query("value.9") else { panic!("json") };
+            let Some(IntrospectValue::Json(v)) = intro.query("value.9") else {
+                panic!("json")
+            };
             assert_eq!(v["label"], serde_json::json!("Additive"));
             assert_eq!(
                 intro.intervene("value.9", IntrospectValue::Int(9)),
@@ -5017,32 +6045,69 @@ mod tests {
         Owner::new().run(|| {
             let mut scene = boot_scene();
             // Closed: no popup paint, no listbox a11y.
-            let closed = view(((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)), &Frame::new());
-            assert!(!closed.contains_tag(CHOICE_POPUP_TAG), "no panel when closed");
-            let closed_nodes =
-                PropertyGridView::access_node(&((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)), Some(GRID_TAG));
+            let closed = view(
+                ((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)),
+                &Frame::new(),
+            );
             assert!(
-                !closed_nodes.iter().any(|n| n.role == pinion_a11y::AriaRole::Listbox),
+                !closed.contains_tag(CHOICE_POPUP_TAG),
+                "no panel when closed"
+            );
+            let closed_nodes = PropertyGridView::access_node(
+                &((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)),
+                Some(GRID_TAG),
+            );
+            assert!(
+                !closed_nodes
+                    .iter()
+                    .any(|n| n.role == pinion_a11y::AriaRole::Listbox),
                 "no listbox when closed",
             );
             // Open the Blend popup.
             open_choice(&mut scene, BLEND_ROW);
-            let open = view(((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)), &Frame::new());
-            assert!(open.contains_tag(CHOICE_POPUP_TAG), "panel painted when open");
-            assert!(open.contains_tag(POPUP_DISMISS_TAG), "dismiss barrier painted");
-            assert!(open.contains_tag(&format!("{GRID_TAG}#opt0")), "option 0 painted");
-            assert!(open.contains_tag(&format!("{GRID_TAG}#opt3")), "option 3 painted");
-            let nodes = PropertyGridView::access_node(&((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)), Some(GRID_TAG));
+            let open = view(
+                ((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)),
+                &Frame::new(),
+            );
+            assert!(
+                open.contains_tag(CHOICE_POPUP_TAG),
+                "panel painted when open"
+            );
+            assert!(
+                open.contains_tag(POPUP_DISMISS_TAG),
+                "dismiss barrier painted"
+            );
+            assert!(
+                open.contains_tag(&format!("{GRID_TAG}#opt0")),
+                "option 0 painted"
+            );
+            assert!(
+                open.contains_tag(&format!("{GRID_TAG}#opt3")),
+                "option 3 painted"
+            );
+            let nodes = PropertyGridView::access_node(
+                &((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)),
+                Some(GRID_TAG),
+            );
             let listbox = nodes
                 .iter()
                 .find(|n| n.role == pinion_a11y::AriaRole::Listbox)
                 .expect("listbox node when open");
             assert_eq!(listbox.name.as_deref(), Some("Blend options"));
-            let options: Vec<_> =
-                nodes.iter().filter(|n| n.role == pinion_a11y::AriaRole::ListBoxOption).collect();
+            let options: Vec<_> = nodes
+                .iter()
+                .filter(|n| n.role == pinion_a11y::AriaRole::ListBoxOption)
+                .collect();
             assert_eq!(options.len(), 4, "one option node per choice");
-            assert_eq!(options[0].selected, Some(true), "option 0 is aria-selected (Normal)");
-            assert!(options[0].state.focused, "cursor 0 is the active descendant");
+            assert_eq!(
+                options[0].selected,
+                Some(true),
+                "option 0 is aria-selected (Normal)"
+            );
+            assert!(
+                options[0].state.focused,
+                "cursor 0 is the active descendant"
+            );
         });
     }
 
@@ -5056,7 +6121,10 @@ mod tests {
         Owner::new().run(|| {
             let scene = boot_scene();
             let intro = grid_intro(&scene);
-            assert_eq!(intro.query("kind.11"), Some(IntrospectValue::Text("color".to_owned())));
+            assert_eq!(
+                intro.query("kind.11"),
+                Some(IntrospectValue::Text("color".to_owned()))
+            );
             let Some(IntrospectValue::Json(tint)) = intro.query("value.11") else {
                 panic!("colour value is json");
             };
@@ -5072,7 +6140,10 @@ mod tests {
             let mut scene = boot_scene();
             open_choice(&mut scene, TINT_ROW); // shared open helper (invoke begin)
             let intro = grid_intro(&scene);
-            assert_eq!(intro.query("editing"), Some(IntrospectValue::Json(serde_json::Value::from("11"))));
+            assert_eq!(
+                intro.query("editing"),
+                Some(IntrospectValue::Json(serde_json::Value::from("11")))
+            );
             assert_eq!(
                 intro.query("popup_cursor"),
                 Some(IntrospectValue::Int(4)),
@@ -5087,14 +6158,30 @@ mod tests {
             let mut scene = boot_scene();
             open_choice(&mut scene, TINT_ROW);
             // Blue(4) -> Right -> Yellow(5).
-            assert!(PropertyGridView::apply_key(&mut scene, Some(GRID_TAG), "ArrowRight", Modifiers::empty()));
-            assert_eq!(grid_intro(&scene).query("popup_cursor"), Some(IntrospectValue::Int(5)));
-            assert!(PropertyGridView::apply_key(&mut scene, Some(GRID_TAG), "Enter", Modifiers::empty()));
+            assert!(PropertyGridView::apply_key(
+                &mut scene,
+                Some(GRID_TAG),
+                "ArrowRight",
+                Modifiers::empty()
+            ));
+            assert_eq!(
+                grid_intro(&scene).query("popup_cursor"),
+                Some(IntrospectValue::Int(5))
+            );
+            assert!(PropertyGridView::apply_key(
+                &mut scene,
+                Some(GRID_TAG),
+                "Enter",
+                Modifiers::empty()
+            ));
             let Some(IntrospectValue::Json(v)) = grid_intro(&scene).query("value.11") else {
                 panic!("json");
             };
             assert_eq!(v["hex"], serde_json::json!("#fdd835"), "committed Yellow");
-            assert_eq!(grid_intro(&scene).query("editing"), Some(IntrospectValue::Json(serde_json::Value::Null)));
+            assert_eq!(
+                grid_intro(&scene).query("editing"),
+                Some(IntrospectValue::Json(serde_json::Value::Null))
+            );
         });
     }
 
@@ -5106,19 +6193,42 @@ mod tests {
             let intro = n.handle.introspect_mut().expect("introspectable");
             // Single-click the Tint row opens; clicking swatch 2 (Red) commits.
             let _ = intro.invoke("send", IntrospectValue::Text("11:PointerUp".to_owned()));
-            assert_eq!(intro.query("editing"), Some(IntrospectValue::Json(serde_json::Value::from("11"))));
+            assert_eq!(
+                intro.query("editing"),
+                Some(IntrospectValue::Json(serde_json::Value::from("11")))
+            );
             let _ = intro.invoke("send", IntrospectValue::Text("sw2:PointerUp".to_owned()));
-            let Some(IntrospectValue::Json(v)) = intro.query("value.11") else { panic!("json") };
+            let Some(IntrospectValue::Json(v)) = intro.query("value.11") else {
+                panic!("json")
+            };
             assert_eq!(v["hex"], serde_json::json!("#e53935"), "clicked Red");
-            assert_eq!(intro.query("editing"), Some(IntrospectValue::Json(serde_json::Value::Null)));
+            assert_eq!(
+                intro.query("editing"),
+                Some(IntrospectValue::Json(serde_json::Value::Null))
+            );
             // The RPC pick_color path commits + closes too.
             let _ = intro.invoke("begin", IntrospectValue::Int(11));
-            assert_eq!(intro.invoke("pick_color", IntrospectValue::Int(0)), Ok(IntrospectValue::Bool(true)));
-            let Some(IntrospectValue::Json(v)) = intro.query("value.11") else { panic!("json") };
-            assert_eq!(v["hex"], serde_json::json!("#ffffff"), "pick_color 0 -> White");
+            assert_eq!(
+                intro.invoke("pick_color", IntrospectValue::Int(0)),
+                Ok(IntrospectValue::Bool(true))
+            );
+            let Some(IntrospectValue::Json(v)) = intro.query("value.11") else {
+                panic!("json")
+            };
+            assert_eq!(
+                v["hex"],
+                serde_json::json!("#ffffff"),
+                "pick_color 0 -> White"
+            );
             // intervene sets an arbitrary colour by hex (the AI-first path).
-            assert!(intro.intervene("value.11", IntrospectValue::Text("#abcdef".to_owned())).is_ok());
-            let Some(IntrospectValue::Json(v)) = intro.query("value.11") else { panic!("json") };
+            assert!(
+                intro
+                    .intervene("value.11", IntrospectValue::Text("#abcdef".to_owned()))
+                    .is_ok()
+            );
+            let Some(IntrospectValue::Json(v)) = intro.query("value.11") else {
+                panic!("json")
+            };
             assert_eq!(v["hex"], serde_json::json!("#abcdef"));
             assert_eq!(
                 intro.intervene("value.11", IntrospectValue::Text("nope".to_owned())),
@@ -5131,26 +6241,63 @@ mod tests {
     fn r869_view_and_a11y_expose_the_open_color_popup() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            let closed = view(((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)), &Frame::new());
-            assert!(!closed.contains_tag(COLOR_POPUP_TAG), "no colour panel when closed");
+            let closed = view(
+                ((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)),
+                &Frame::new(),
+            );
+            assert!(
+                !closed.contains_tag(COLOR_POPUP_TAG),
+                "no colour panel when closed"
+            );
             open_choice(&mut scene, TINT_ROW);
-            let open = view(((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)), &Frame::new());
-            assert!(open.contains_tag(COLOR_POPUP_TAG), "colour panel painted when open");
-            assert!(open.contains_tag(POPUP_DISMISS_TAG), "dismiss barrier painted");
-            assert!(open.contains_tag(&format!("{GRID_TAG}#sw0")), "swatch 0 painted");
-            assert!(open.contains_tag(&format!("{GRID_TAG}#sw7")), "swatch 7 painted");
-            let nodes = PropertyGridView::access_node(&((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)), Some(GRID_TAG));
+            let open = view(
+                ((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)),
+                &Frame::new(),
+            );
+            assert!(
+                open.contains_tag(COLOR_POPUP_TAG),
+                "colour panel painted when open"
+            );
+            assert!(
+                open.contains_tag(POPUP_DISMISS_TAG),
+                "dismiss barrier painted"
+            );
+            assert!(
+                open.contains_tag(&format!("{GRID_TAG}#sw0")),
+                "swatch 0 painted"
+            );
+            assert!(
+                open.contains_tag(&format!("{GRID_TAG}#sw7")),
+                "swatch 7 painted"
+            );
+            let nodes = PropertyGridView::access_node(
+                &((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)),
+                Some(GRID_TAG),
+            );
             let listbox = nodes
                 .iter()
                 .find(|n| n.role == pinion_a11y::AriaRole::Listbox)
                 .expect("colour listbox node when open");
             assert_eq!(listbox.name.as_deref(), Some("Tint swatches"));
-            let swatches: Vec<_> =
-                nodes.iter().filter(|n| n.role == pinion_a11y::AriaRole::ListBoxOption).collect();
-            assert_eq!(swatches.len(), COLOR_SWATCHES.len(), "one option node per swatch");
+            let swatches: Vec<_> = nodes
+                .iter()
+                .filter(|n| n.role == pinion_a11y::AriaRole::ListBoxOption)
+                .collect();
+            assert_eq!(
+                swatches.len(),
+                COLOR_SWATCHES.len(),
+                "one option node per swatch"
+            );
             // Blue (index 4) is the committed selection + the cursor.
-            assert_eq!(swatches[4].selected, Some(true), "Blue swatch is aria-selected");
-            assert!(swatches[4].state.focused, "Blue swatch is the active descendant");
+            assert_eq!(
+                swatches[4].selected,
+                Some(true),
+                "Blue swatch is aria-selected"
+            );
+            assert!(
+                swatches[4].state.focused,
+                "Blue swatch is the active descendant"
+            );
             assert_eq!(swatches[2].name.as_deref(), Some("Red"));
         });
     }
@@ -5164,25 +6311,45 @@ mod tests {
             let f = PropertyGridView::access_focus_target(&idle_state(), Some(GRID_TAG))
                 .expect("grid focused -> composite focus target");
             assert_eq!(f.focus_tag, GRID_TAG);
-            assert_eq!(f.active_descendant.as_deref(), Some(format!("{GRID_TAG}#2").as_str()));
+            assert_eq!(
+                f.active_descendant.as_deref(),
+                Some(format!("{GRID_TAG}#2").as_str())
+            );
             // Cursor on a category branch rings the branch's composite tag.
             set_cursor_id("cat.Identity");
             let h = PropertyGridView::access_focus_target(&idle_state(), Some(GRID_TAG))
                 .expect("composite");
-            assert_eq!(h.active_descendant.as_deref(), Some(format!("{GRID_TAG}#cat.Identity").as_str()));
+            assert_eq!(
+                h.active_descendant.as_deref(),
+                Some(format!("{GRID_TAG}#cat.Identity").as_str())
+            );
             // Choice popup open -> the active option (Blend cursor boots 0).
             open_choice(&mut scene, BLEND_ROW);
-            let f = PropertyGridView::access_focus_target(&((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)), Some(GRID_TAG))
-                .expect("composite");
-            assert_eq!(f.active_descendant.as_deref(), Some(format!("{GRID_TAG}#opt0").as_str()));
+            let f = PropertyGridView::access_focus_target(
+                &((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)),
+                Some(GRID_TAG),
+            )
+            .expect("composite");
+            assert_eq!(
+                f.active_descendant.as_deref(),
+                Some(format!("{GRID_TAG}#opt0").as_str())
+            );
             // Colour popup open -> the active swatch (Tint boots Blue=4).
             open_choice(&mut scene, TINT_ROW);
-            let f = PropertyGridView::access_focus_target(&((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)), Some(GRID_TAG))
-                .expect("composite");
-            assert_eq!(f.active_descendant.as_deref(), Some(format!("{GRID_TAG}#sw4").as_str()));
+            let f = PropertyGridView::access_focus_target(
+                &((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)),
+                Some(GRID_TAG),
+            )
+            .expect("composite");
+            assert_eq!(
+                f.active_descendant.as_deref(),
+                Some(format!("{GRID_TAG}#sw4").as_str())
+            );
             // Focus elsewhere -> atomic, no active descendant.
-            let other =
-                PropertyGridView::access_focus_target(&((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)), Some(EDIT_TF_TAG));
+            let other = PropertyGridView::access_focus_target(
+                &((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)),
+                Some(EDIT_TF_TAG),
+            );
             assert!(other.expect("atomic").active_descendant.is_none());
         });
     }
@@ -5192,10 +6359,20 @@ mod tests {
         Owner::new().run(|| {
             let mut scene = boot_scene();
             open_choice(&mut scene, TINT_ROW); // opens the colour popup, seeds the hex field
-            assert_eq!(use_text_edit_state(EDIT_TF_TAG).text(), "#1e88e5", "hex field seeded Blue");
+            assert_eq!(
+                use_text_edit_state(EDIT_TF_TAG).text(),
+                "#1e88e5",
+                "hex field seeded Blue"
+            );
             // The popup paints the hex field (the shared EDIT_TF).
-            let painted = view(((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)), &Frame::new());
-            assert!(painted.contains_tag(EDIT_TF_TAG), "hex field painted in the colour popup");
+            let painted = view(
+                ((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)),
+                &Frame::new(),
+            );
+            assert!(
+                painted.contains_tag(EDIT_TF_TAG),
+                "hex field painted in the colour popup"
+            );
             // Type an arbitrary hex + Enter (the EDIT_TF-focused commit path).
             use_text_edit_state(EDIT_TF_TAG).set_text("#abcdef".to_owned());
             assert!(PropertyGridView::apply_key(
@@ -5207,7 +6384,11 @@ mod tests {
             let Some(IntrospectValue::Json(v)) = grid_intro(&scene).query("value.11") else {
                 panic!("json");
             };
-            assert_eq!(v["hex"], serde_json::json!("#abcdef"), "hex field commits arbitrary colour");
+            assert_eq!(
+                v["hex"],
+                serde_json::json!("#abcdef"),
+                "hex field commits arbitrary colour"
+            );
             assert_eq!(
                 grid_intro(&scene).query("editing"),
                 Some(IntrospectValue::Json(serde_json::Value::Null)),
@@ -5222,14 +6403,35 @@ mod tests {
     fn r836_view_carries_grid_and_row_tags() {
         Owner::new().run(|| {
             let _ = boot_scene();
-            let scene = view(((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)), &Frame::new());
+            let scene = view(
+                ((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)),
+                &Frame::new(),
+            );
             assert!(scene.contains_tag(GRID_TAG), "grid root painted");
-            assert!(scene.contains_tag(&format!("{GRID_TAG}#0")), "leaf row 0 painted");
-            assert!(scene.contains_tag(&format!("{GRID_TAG}#8")), "leaf row 8 painted");
-            assert!(scene.contains_tag(&format!("{GRID_TAG}#cat.Identity")), "Identity header painted");
-            assert!(scene.contains_tag(&format!("{GRID_TAG}#cat.Transform")), "Transform header painted");
-            assert!(scene.contains_tag(&format!("{GRID_TAG}#struct.Position")), "Position struct header painted");
-            assert!(scene.contains_tag(&format!("{GRID_TAG}#12")), "Position Z field row painted");
+            assert!(
+                scene.contains_tag(&format!("{GRID_TAG}#0")),
+                "leaf row 0 painted"
+            );
+            assert!(
+                scene.contains_tag(&format!("{GRID_TAG}#8")),
+                "leaf row 8 painted"
+            );
+            assert!(
+                scene.contains_tag(&format!("{GRID_TAG}#cat.Identity")),
+                "Identity header painted"
+            );
+            assert!(
+                scene.contains_tag(&format!("{GRID_TAG}#cat.Transform")),
+                "Transform header painted"
+            );
+            assert!(
+                scene.contains_tag(&format!("{GRID_TAG}#struct.Position")),
+                "Position struct header painted"
+            );
+            assert!(
+                scene.contains_tag(&format!("{GRID_TAG}#12")),
+                "Position Z field row painted"
+            );
         });
     }
 
@@ -5238,19 +6440,43 @@ mod tests {
         Owner::new().run(|| {
             let _ = boot_scene();
             let before = view(idle_state(), &Frame::new());
-            assert!(before.contains_tag(&format!("{GRID_TAG}#0")), "Name row painted when expanded");
-            assert!(before.contains_tag(&format!("{GRID_TAG}#cat.Identity")), "Identity header painted");
-            assert!(before.contains_tag(&format!("{GRID_TAG}#6")), "Position X painted when struct expanded");
+            assert!(
+                before.contains_tag(&format!("{GRID_TAG}#0")),
+                "Name row painted when expanded"
+            );
+            assert!(
+                before.contains_tag(&format!("{GRID_TAG}#cat.Identity")),
+                "Identity header painted"
+            );
+            assert!(
+                before.contains_tag(&format!("{GRID_TAG}#6")),
+                "Position X painted when struct expanded"
+            );
             // Collapse Identity: its leaves (Name/Tag/Layer) vanish, header stays.
             set_expanded_in(&use_property_tree(), "cat.Identity", false);
             // Collapse the Position struct: its X/Y/Z fields vanish, header stays.
             set_expanded_in(&use_property_tree(), "struct.Position", false);
             let after = view(idle_state(), &Frame::new());
-            assert!(after.contains_tag(&format!("{GRID_TAG}#cat.Identity")), "category header stays on collapse");
-            assert!(!after.contains_tag(&format!("{GRID_TAG}#0")), "Name row hidden when collapsed");
-            assert!(!after.contains_tag(&format!("{GRID_TAG}#1")), "Tag row hidden when collapsed");
-            assert!(after.contains_tag(&format!("{GRID_TAG}#struct.Position")), "struct header stays on collapse");
-            assert!(!after.contains_tag(&format!("{GRID_TAG}#6")), "Position X hidden when struct collapsed");
+            assert!(
+                after.contains_tag(&format!("{GRID_TAG}#cat.Identity")),
+                "category header stays on collapse"
+            );
+            assert!(
+                !after.contains_tag(&format!("{GRID_TAG}#0")),
+                "Name row hidden when collapsed"
+            );
+            assert!(
+                !after.contains_tag(&format!("{GRID_TAG}#1")),
+                "Tag row hidden when collapsed"
+            );
+            assert!(
+                after.contains_tag(&format!("{GRID_TAG}#struct.Position")),
+                "struct header stays on collapse"
+            );
+            assert!(
+                !after.contains_tag(&format!("{GRID_TAG}#6")),
+                "Position X hidden when struct collapsed"
+            );
         });
     }
 
@@ -5258,11 +6484,23 @@ mod tests {
     fn r836_view_paints_inline_field_only_while_editing() {
         Owner::new().run(|| {
             let _ = boot_scene();
-            let before = view(((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)), &Frame::new());
-            assert!(!before.contains_tag(EDIT_TF_TAG), "no inline field when not editing");
+            let before = view(
+                ((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)),
+                &Frame::new(),
+            );
+            assert!(
+                !before.contains_tag(EDIT_TF_TAG),
+                "no inline field when not editing"
+            );
             use_editing_row().set(Some(ValueRef::Scalar(0)));
-            let during = view(((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)), &Frame::new());
-            assert!(during.contains_tag(EDIT_TF_TAG), "inline field painted in the editing row");
+            let during = view(
+                ((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)),
+                &Frame::new(),
+            );
+            assert!(
+                during.contains_tag(EDIT_TF_TAG),
+                "inline field painted in the editing row"
+            );
         });
     }
 
@@ -5280,7 +6518,11 @@ mod tests {
     fn r872_search_filters_rows_and_clears() {
         Owner::new().run(|| {
             let _scene = boot_scene();
-            assert_eq!(visible().len(), 28, "6 cats + 2 structs + 1 array + 19 leaves, empty query");
+            assert_eq!(
+                visible().len(),
+                28,
+                "6 cats + 2 structs + 1 array + 19 leaves, empty query"
+            );
             // "pos" matches the qualified Position X/Y/Z field names; the
             // recursive filter reveals the Transform > Position path.
             use_text_edit_state(SEARCH_TF_TAG).set_text("pos".to_owned());
@@ -5289,7 +6531,11 @@ mod tests {
                 vec!["cat.Transform", "struct.Position", "6", "7", "12"],
                 "path-to-match reveals the matching fields inside their struct",
             );
-            assert_eq!(visible_leaf_indices(), vec![6, 7, 12], "only the Position fields match");
+            assert_eq!(
+                visible_leaf_indices(),
+                vec![6, 7, 12],
+                "only the Position fields match"
+            );
             // Clearing restores every row (the filter recomputes reactively).
             use_text_edit_state(SEARCH_TF_TAG).set_text(String::new());
             assert_eq!(visible().len(), 28, "cleared query restores every row");
@@ -5303,7 +6549,11 @@ mod tests {
             // "name" matches only Name (leaf 0, under Identity) — every other
             // branch is pruned (no match anywhere on its path).
             use_text_edit_state(SEARCH_TF_TAG).set_text("name".to_owned());
-            assert_eq!(visible_ids(), vec!["cat.Identity", "0"], "only Identity > Name survives");
+            assert_eq!(
+                visible_ids(),
+                vec!["cat.Identity", "0"],
+                "only Identity > Name survives"
+            );
             assert_eq!(visible_leaf_indices(), vec![0]);
         });
     }
@@ -5312,8 +6562,14 @@ mod tests {
     fn r872_search_field_painted_and_escape_clears() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            let painted = view(((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)), &Frame::new());
-            assert!(painted.contains_tag(SEARCH_TF_TAG), "search box painted in the title band");
+            let painted = view(
+                ((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)),
+                &Frame::new(),
+            );
+            assert!(
+                painted.contains_tag(SEARCH_TF_TAG),
+                "search box painted in the title band"
+            );
             // Escape on the focused search box clears the live filter.
             use_text_edit_state(SEARCH_TF_TAG).set_text("xyz".to_owned());
             assert!(PropertyGridView::apply_key(
@@ -5322,7 +6578,11 @@ mod tests {
                 "Escape",
                 Modifiers::empty(),
             ));
-            assert_eq!(use_text_edit_state(SEARCH_TF_TAG).text(), "", "Escape clears the query");
+            assert_eq!(
+                use_text_edit_state(SEARCH_TF_TAG).text(),
+                "",
+                "Escape clears the query"
+            );
         });
     }
 
@@ -5343,9 +6603,20 @@ mod tests {
                 .iter()
                 .find(|n| n.tag == SEARCH_TF_TAG)
                 .expect("search box emits a textbox a11y node");
-            assert_eq!(search.role, pinion_a11y::AriaRole::TextInput, "searchbox -> textbox role");
-            assert_eq!(search.name.as_deref(), Some("Filter properties"), "accessible name");
-            assert!(search.state.focused, "the focused search box is announced focused");
+            assert_eq!(
+                search.role,
+                pinion_a11y::AriaRole::TextInput,
+                "searchbox -> textbox role"
+            );
+            assert_eq!(
+                search.name.as_deref(),
+                Some("Filter properties"),
+                "accessible name"
+            );
+            assert!(
+                search.state.focused,
+                "the focused search box is announced focused"
+            );
         });
     }
 
@@ -5363,10 +6634,18 @@ mod tests {
             };
             let (role, name) = status_count();
             assert_eq!(role, AriaRole::Status, "filter result = aria-live Status");
-            assert_eq!(name.as_deref(), Some("19 properties"), "16 scalar + 3 array element leaves, no filter");
+            assert_eq!(
+                name.as_deref(),
+                Some("19 properties"),
+                "16 scalar + 3 array element leaves, no filter"
+            );
             // Narrowing the filter updates the announced count.
             use_text_edit_state(SEARCH_TF_TAG).set_text("pos".to_owned());
-            assert_eq!(status_count().1.as_deref(), Some("3 properties"), "filtered to Position X/Y/Z");
+            assert_eq!(
+                status_count().1.as_deref(),
+                Some("3 properties"),
+                "filtered to Position X/Y/Z"
+            );
         });
     }
 
@@ -5379,13 +6658,17 @@ mod tests {
             // points into it.
             let nodes = PropertyGridView::access_node(&idle_state(), Some(GRID_TAG));
             assert!(
-                nodes.iter().any(|n| n.role == pinion_a11y::AriaRole::Listbox),
+                nodes
+                    .iter()
+                    .any(|n| n.role == pinion_a11y::AriaRole::Listbox),
                 "popup listbox emitted while its row is visible",
             );
             let f = PropertyGridView::access_focus_target(&idle_state(), Some(GRID_TAG))
                 .expect("composite focus");
             assert!(
-                f.active_descendant.as_deref().is_some_and(|d| d.contains(CHOICE_OPT_PREFIX)),
+                f.active_descendant
+                    .as_deref()
+                    .is_some_and(|d| d.contains(CHOICE_OPT_PREFIX)),
                 "active descendant points into the open popup",
             );
             // Filter the Blend row out of the flatten — the popup is now neither
@@ -5398,13 +6681,18 @@ mod tests {
             );
             let nodes = PropertyGridView::access_node(&idle_state(), Some(GRID_TAG));
             assert!(
-                !nodes.iter().any(|n| n.role == pinion_a11y::AriaRole::Listbox),
+                !nodes
+                    .iter()
+                    .any(|n| n.role == pinion_a11y::AriaRole::Listbox),
                 "no listbox a11y when the popup's row is filtered out",
             );
             let f = PropertyGridView::access_focus_target(&idle_state(), Some(GRID_TAG))
                 .expect("focus target");
             assert!(
-                !f.active_descendant.as_deref().unwrap_or("").contains(CHOICE_OPT_PREFIX),
+                !f.active_descendant
+                    .as_deref()
+                    .unwrap_or("")
+                    .contains(CHOICE_OPT_PREFIX),
                 "active descendant no longer points at the unpainted popup",
             );
         });
@@ -5420,10 +6708,22 @@ mod tests {
         Owner::new().run(|| {
             let scene = boot_scene();
             let ids = visible_ids();
-            assert!(ids.iter().any(|id| id == ARR_BRANCH_ID), "array branch row present");
-            assert!(ids.iter().any(|id| id == "elem.0"), "element 0 leaf present");
-            assert!(ids.iter().any(|id| id == "elem.2"), "element 2 leaf present");
-            assert_eq!(grid_intro(&scene).query("elem_count"), Some(IntrospectValue::Int(3)));
+            assert!(
+                ids.iter().any(|id| id == ARR_BRANCH_ID),
+                "array branch row present"
+            );
+            assert!(
+                ids.iter().any(|id| id == "elem.0"),
+                "element 0 leaf present"
+            );
+            assert!(
+                ids.iter().any(|id| id == "elem.2"),
+                "element 2 leaf present"
+            );
+            assert_eq!(
+                grid_intro(&scene).query("elem_count"),
+                Some(IntrospectValue::Int(3))
+            );
         });
     }
 
@@ -5433,10 +6733,18 @@ mod tests {
     fn r931_element_value_read_write_via_rpc() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            assert_eq!(grid_intro(&scene).query("value.elem.1"), Some(IntrospectValue::Float(0.5)));
-            with_grid_mut(&mut scene, |i| i.intervene("value.elem.1", IntrospectValue::Float(2.0)))
-                .expect("set element value");
-            assert_eq!(grid_intro(&scene).query("value.elem.1"), Some(IntrospectValue::Float(2.0)));
+            assert_eq!(
+                grid_intro(&scene).query("value.elem.1"),
+                Some(IntrospectValue::Float(0.5))
+            );
+            with_grid_mut(&mut scene, |i| {
+                i.intervene("value.elem.1", IntrospectValue::Float(2.0))
+            })
+            .expect("set element value");
+            assert_eq!(
+                grid_intro(&scene).query("value.elem.1"),
+                Some(IntrospectValue::Float(2.0))
+            );
             // An out-of-range element address reads None (like a scalar OOB).
             assert_eq!(grid_intro(&scene).query("value.elem.9"), None);
         });
@@ -5466,24 +6774,36 @@ mod tests {
     fn r931_add_and_remove_elements() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            let idx = with_grid_mut(&mut scene, |i| i.invoke("add_elem", IntrospectValue::Null)).unwrap();
+            let idx =
+                with_grid_mut(&mut scene, |i| i.invoke("add_elem", IntrospectValue::Null)).unwrap();
             assert_eq!(idx, IntrospectValue::Int(3), "new element index");
-            assert_eq!(grid_intro(&scene).query("elem_count"), Some(IntrospectValue::Int(4)));
+            assert_eq!(
+                grid_intro(&scene).query("elem_count"),
+                Some(IntrospectValue::Int(4))
+            );
             assert_eq!(
                 grid_intro(&scene).query("value.elem.3"),
                 Some(IntrospectValue::Float(0.0)),
                 "a new element seeds 0.0"
             );
-            let ok = with_grid_mut(&mut scene, |i| i.invoke("remove_elem", IntrospectValue::Int(0))).unwrap();
+            let ok = with_grid_mut(&mut scene, |i| {
+                i.invoke("remove_elem", IntrospectValue::Int(0))
+            })
+            .unwrap();
             assert_eq!(ok, IntrospectValue::Bool(true));
-            assert_eq!(grid_intro(&scene).query("elem_count"), Some(IntrospectValue::Int(3)));
+            assert_eq!(
+                grid_intro(&scene).query("elem_count"),
+                Some(IntrospectValue::Int(3))
+            );
             assert_eq!(
                 grid_intro(&scene).query("value.elem.0"),
                 Some(IntrospectValue::Float(0.5)),
                 "elements shift down on remove"
             );
             assert_eq!(
-                with_grid_mut(&mut scene, |i| i.invoke("remove_elem", IntrospectValue::Int(9))).unwrap(),
+                with_grid_mut(&mut scene, |i| i
+                    .invoke("remove_elem", IntrospectValue::Int(9)))
+                .unwrap(),
                 IntrospectValue::Bool(false),
                 "out-of-range remove is a no-op"
             );
@@ -5497,17 +6817,30 @@ mod tests {
         Owner::new().run(|| {
             let mut scene = boot_scene();
             // [1.0, 0.5, 0.25] — move 0 → 2 — [0.5, 0.25, 1.0].
-            let ok = with_grid_mut(&mut scene, |i| i.invoke("move_elem", IntrospectValue::Text("0,2".to_owned()))).unwrap();
+            let ok = with_grid_mut(&mut scene, |i| {
+                i.invoke("move_elem", IntrospectValue::Text("0,2".to_owned()))
+            })
+            .unwrap();
             assert_eq!(ok, IntrospectValue::Bool(true));
-            assert_eq!(grid_intro(&scene).query("value.elem.0"), Some(IntrospectValue::Float(0.5)));
-            assert_eq!(grid_intro(&scene).query("value.elem.2"), Some(IntrospectValue::Float(1.0)));
             assert_eq!(
-                with_grid_mut(&mut scene, |i| i.invoke("move_elem", IntrospectValue::Text("1,1".to_owned()))).unwrap(),
+                grid_intro(&scene).query("value.elem.0"),
+                Some(IntrospectValue::Float(0.5))
+            );
+            assert_eq!(
+                grid_intro(&scene).query("value.elem.2"),
+                Some(IntrospectValue::Float(1.0))
+            );
+            assert_eq!(
+                with_grid_mut(&mut scene, |i| i
+                    .invoke("move_elem", IntrospectValue::Text("1,1".to_owned())))
+                .unwrap(),
                 IntrospectValue::Bool(false),
                 "from == to is a no-op"
             );
             assert!(
-                with_grid_mut(&mut scene, |i| i.invoke("move_elem", IntrospectValue::Text("oops".to_owned()))).is_err(),
+                with_grid_mut(&mut scene, |i| i
+                    .invoke("move_elem", IntrospectValue::Text("oops".to_owned())))
+                .is_err(),
                 "malformed payload rejected"
             );
         });
@@ -5520,13 +6853,19 @@ mod tests {
     fn r931_remove_cancels_inflight_element_edit() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            with_grid_mut(&mut scene, |i| i.invoke("begin", IntrospectValue::Text("elem.1".to_owned()))).unwrap();
+            with_grid_mut(&mut scene, |i| {
+                i.invoke("begin", IntrospectValue::Text("elem.1".to_owned()))
+            })
+            .unwrap();
             assert_eq!(
                 grid_intro(&scene).query("editing"),
                 Some(IntrospectValue::Json(serde_json::Value::from("elem.1"))),
                 "editing the element"
             );
-            with_grid_mut(&mut scene, |i| i.invoke("remove_elem", IntrospectValue::Int(0))).unwrap();
+            with_grid_mut(&mut scene, |i| {
+                i.invoke("remove_elem", IntrospectValue::Int(0))
+            })
+            .unwrap();
             assert_eq!(
                 grid_intro(&scene).query("editing"),
                 Some(IntrospectValue::Json(serde_json::Value::Null)),
@@ -5543,7 +6882,10 @@ mod tests {
         Owner::new().run(|| {
             let mut scene = boot_scene();
             use_property_cursor().set(Some("elem.2".to_owned()));
-            with_grid_mut(&mut scene, |i| i.invoke("remove_elem", IntrospectValue::Int(0))).unwrap();
+            with_grid_mut(&mut scene, |i| {
+                i.invoke("remove_elem", IntrospectValue::Int(0))
+            })
+            .unwrap();
             assert_eq!(
                 use_property_cursor().get().as_deref(),
                 Some("elem.1"),
@@ -5561,8 +6903,15 @@ mod tests {
             let mut scene = boot_scene();
             let before = grid_intro(&scene).query("value.6");
             with_grid_mut(&mut scene, |i| i.invoke("add_elem", IntrospectValue::Null)).unwrap();
-            with_grid_mut(&mut scene, |i| i.invoke("remove_elem", IntrospectValue::Int(0))).unwrap();
-            assert_eq!(grid_intro(&scene).query("value.6"), before, "value.6 unchanged by array mutation");
+            with_grid_mut(&mut scene, |i| {
+                i.invoke("remove_elem", IntrospectValue::Int(0))
+            })
+            .unwrap();
+            assert_eq!(
+                grid_intro(&scene).query("value.6"),
+                before,
+                "value.6 unchanged by array mutation"
+            );
             assert_eq!(
                 grid_intro(&scene).query("row_count"),
                 Some(IntrospectValue::Int(16)),
@@ -5578,9 +6927,18 @@ mod tests {
         Owner::new().run(|| {
             let _scene = boot_scene();
             let scene = view(idle_state(), &Frame::new());
-            assert!(scene.contains_tag(&format!("{GRID_TAG}#elem.0")), "element row painted");
-            assert!(scene.contains_tag(&format!("{GRID_TAG}#{ADD_ELEM_TAG}")), "add button painted");
-            assert!(scene.contains_tag(&format!("{GRID_TAG}#{RM_ELEM_PREFIX}0")), "remove button painted");
+            assert!(
+                scene.contains_tag(&format!("{GRID_TAG}#elem.0")),
+                "element row painted"
+            );
+            assert!(
+                scene.contains_tag(&format!("{GRID_TAG}#{ADD_ELEM_TAG}")),
+                "add button painted"
+            );
+            assert!(
+                scene.contains_tag(&format!("{GRID_TAG}#{RM_ELEM_PREFIX}0")),
+                "remove button painted"
+            );
         });
     }
 
@@ -5608,7 +6966,10 @@ mod tests {
                 .find(|n| n.tag == tree_row_tag(GRID_TAG, "elem.0"))
                 .expect("element treeitem");
             assert!(
-                elem.name.as_deref().unwrap_or("").contains("Spawn Weights [0]: 1"),
+                elem.name
+                    .as_deref()
+                    .unwrap_or("")
+                    .contains("Spawn Weights [0]: 1"),
                 "the element name folds in its value"
             );
         });
@@ -5622,7 +6983,12 @@ mod tests {
         Owner::new().run(|| {
             let mut scene = boot_scene();
             use_property_cursor().set(Some("elem.0".to_owned()));
-            assert!(PropertyGridView::apply_key(&mut scene, Some(GRID_TAG), "Enter", Modifiers::empty()));
+            assert!(PropertyGridView::apply_key(
+                &mut scene,
+                Some(GRID_TAG),
+                "Enter",
+                Modifiers::empty()
+            ));
             assert_eq!(
                 grid_intro(&scene).query("editing"),
                 Some(IntrospectValue::Json(serde_json::Value::from("elem.0"))),
@@ -5632,7 +6998,12 @@ mod tests {
             use_editing_row().set(None);
             use_text_edit_state(EDIT_TF_TAG).set_text(String::new());
             use_property_cursor().set(Some("elem.0".to_owned()));
-            assert!(PropertyGridView::apply_key(&mut scene, Some(GRID_TAG), "Delete", Modifiers::empty()));
+            assert!(PropertyGridView::apply_key(
+                &mut scene,
+                Some(GRID_TAG),
+                "Delete",
+                Modifiers::empty()
+            ));
             assert_eq!(
                 grid_intro(&scene).query("elem_count"),
                 Some(IntrospectValue::Int(2)),
@@ -5648,7 +7019,10 @@ mod tests {
     fn r931_remove_later_element_keeps_earlier_edit() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            with_grid_mut(&mut scene, |i| i.invoke("begin", IntrospectValue::Text("elem.0".to_owned()))).unwrap();
+            with_grid_mut(&mut scene, |i| {
+                i.invoke("begin", IntrospectValue::Text("elem.0".to_owned()))
+            })
+            .unwrap();
             assert_eq!(
                 grid_intro(&scene).query("editing"),
                 Some(IntrospectValue::Json(serde_json::Value::from("elem.0"))),
@@ -5656,7 +7030,10 @@ mod tests {
             );
             // Remove a LATER element (elem.2) — elem.0 is unaffected, so the edit
             // continues (over-cancelling an earlier edit would be a real smell).
-            with_grid_mut(&mut scene, |i| i.invoke("remove_elem", IntrospectValue::Int(2))).unwrap();
+            with_grid_mut(&mut scene, |i| {
+                i.invoke("remove_elem", IntrospectValue::Int(2))
+            })
+            .unwrap();
             assert_eq!(
                 grid_intro(&scene).query("editing"),
                 Some(IntrospectValue::Json(serde_json::Value::from("elem.0"))),
@@ -5674,8 +7051,14 @@ mod tests {
             let _scene = boot_scene();
             use_text_edit_state(SEARCH_TF_TAG).set_text("weights".to_owned());
             let ids = visible_ids();
-            assert!(ids.iter().any(|id| id == ARR_BRANCH_ID), "the array branch matches 'weights'");
-            assert!(ids.iter().any(|id| id == "elem.0"), "each element matches the array label 'weights'");
+            assert!(
+                ids.iter().any(|id| id == ARR_BRANCH_ID),
+                "the array branch matches 'weights'"
+            );
+            assert!(
+                ids.iter().any(|id| id == "elem.0"),
+                "each element matches the array label 'weights'"
+            );
         });
     }
 }

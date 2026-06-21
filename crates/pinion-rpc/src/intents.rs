@@ -21,9 +21,9 @@
 //!
 //! [`External`]: pinion_core::external::External
 
-use pinion_core::intent::Intent;
 use pinion_core::Scene;
-use pinion_runtime::{walk_scene_and_drain, IntentQueue};
+use pinion_core::intent::Intent;
+use pinion_runtime::{IntentQueue, walk_scene_and_drain};
 
 /// Reasons the typed [`drain_intents`] dispatcher can fail.
 ///
@@ -54,11 +54,9 @@ pub fn drain_intents(scene: &mut Scene) -> Result<Vec<Intent>, IntentsError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pinion_core::external::{
-        CountedExternal, External, IntrospectValue, StubExternal,
-    };
-    use pinion_core::scene::{BoxNode, ContainerNode, ExternalNode, Rect};
     use pinion_core::Color;
+    use pinion_core::external::{CountedExternal, External, IntrospectValue, StubExternal};
+    use pinion_core::scene::{BoxNode, ContainerNode, ExternalNode, Rect};
 
     fn counted_scene(n: i64) -> Scene {
         Scene::External(ExternalNode::new(Box::new(CountedExternal::new(n))))

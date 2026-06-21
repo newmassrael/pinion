@@ -31,20 +31,18 @@
 //!     `paint_adapter::to_vello` (called from the shell) walks the
 //!     tree into a `vello::Scene` and `HelloButtonRenderer` submits it.
 
-use pinion_core::scene::ContainerNode;
-use pinion_core::style::{
-    AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size,
-};
-use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
-use pinion_core::theme::{use_theme, ColorRole};
-#[cfg(test)]
-use pinion_core::theme::ThemeMode;
-use pinion_core::{Frame, Scene, WidgetCore};
 #[cfg(test)]
 use pinion_a11y::{AccessNode, AriaRole, WidgetA11y};
+use pinion_core::scene::ContainerNode;
+use pinion_core::style::{AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size};
+#[cfg(test)]
+use pinion_core::theme::ThemeMode;
+use pinion_core::theme::{ColorRole, use_theme};
+use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
+use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_derive::widget;
-use pinion_widget_paint::button::{use_hover_progress, view_button, ButtonColors, ButtonStyle};
 use pinion_shell::vello_renderer_impl;
+use pinion_widget_paint::button::{ButtonColors, ButtonStyle, use_hover_progress, view_button};
 
 // R650 §5.16 — single-tag binding uses the `"main_btn"` literal
 // directly per [[abstraction-needs-second-consumer]]. The R644
@@ -86,7 +84,6 @@ const BTN_H: u32 = 80;
 /// unique `&'static str` keeps the spring's owner-scoped cache slot
 /// from colliding with any other cached value in the same scope.
 const HOVER_ANIM_KEY: &str = "hello_button::hover_progress";
-
 
 /// view-fn (§6.3): pure sync mapping `ButtonState` → `Scene`. The
 /// `&Frame` slot is the §6.3 ZST hedge — zero-cost today, ready for
@@ -238,7 +235,12 @@ impl ButtonView {
     /// [`#[widget(..., apply_key)]`](pinion_derive::widget) flag
     /// instructs the macro to emit the [`WidgetCore::apply_key`]
     /// forwarding stub.
-    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, _modifiers: pinion_core::Modifiers) -> bool {
+    fn apply_key(
+        scene: &mut Scene,
+        focused: Option<&str>,
+        key: &str,
+        _modifiers: pinion_core::Modifiers,
+    ) -> bool {
         pinion_core::widgets::aria::apply_aria_activate(scene, focused, key, Self::tag())
     }
 }
@@ -250,8 +252,8 @@ fn main() {
 #[cfg(test)]
 mod a11y_tests {
     use super::*;
-    use pinion_core::theme::Theme;
     use pinion_core::Color;
+    use pinion_core::theme::Theme;
 
     /// R51.69 §5.40 — convenience that mirrors the production
     /// `AppShell::render` pipeline: `view` + `access_node` +
@@ -314,7 +316,8 @@ mod a11y_tests {
 
     #[test]
     fn other_focused_tag_does_not_set_focused() {
-        let nodes = <ButtonView as WidgetA11y>::access_node(&ButtonState::Idle, Some("other_widget"));
+        let nodes =
+            <ButtonView as WidgetA11y>::access_node(&ButtonState::Idle, Some("other_widget"));
         assert!(!nodes[0].state.focused);
     }
 
@@ -434,8 +437,7 @@ mod a11y_tests {
     fn scene_contains_fill(scene: &Scene, target: Color) -> bool {
         match scene {
             Scene::Container(n) => {
-                n.style.fill == target
-                    || n.children.iter().any(|c| scene_contains_fill(c, target))
+                n.style.fill == target || n.children.iter().any(|c| scene_contains_fill(c, target))
             }
             Scene::Box(n) => n.style.fill == target,
             _ => false,

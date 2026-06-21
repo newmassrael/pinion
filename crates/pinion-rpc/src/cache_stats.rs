@@ -239,7 +239,10 @@ mod tests {
         let outcome = cache_stats(Some(FragmentCacheStats::default())).unwrap();
         let json = serde_json::to_value(outcome).unwrap();
         assert!(json.get("last_damage_region").is_none());
-        assert_eq!(json.get("hits").and_then(serde_json::Value::as_u64), Some(0));
+        assert_eq!(
+            json.get("hits").and_then(serde_json::Value::as_u64),
+            Some(0)
+        );
     }
 
     #[test]

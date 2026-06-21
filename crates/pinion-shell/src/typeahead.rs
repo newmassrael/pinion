@@ -45,11 +45,11 @@
 
 use pinion_core::widgets::scroll::ScrollState;
 use pinion_core::widgets::tree_nav::{
-    apply_tree_key, flat_visible, reveal_row_cursor, TreeNode, VisibleRow,
+    TreeNode, VisibleRow, apply_tree_key, flat_visible, reveal_row_cursor,
 };
 use pinion_core::{Owner, Signal};
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -148,11 +148,7 @@ pub fn is_typeahead_char(key: &str) -> Option<char> {
 /// through every matching option; falls back to `0` when `current`
 /// is `None` or `>= labels.len()`.
 #[must_use]
-pub fn find_next_cyclic_match(
-    current: Option<usize>,
-    key: char,
-    labels: &[&str],
-) -> Option<usize> {
+pub fn find_next_cyclic_match(current: Option<usize>, key: char, labels: &[&str]) -> Option<usize> {
     let n = labels.len();
     if n == 0 {
         return None;
@@ -179,8 +175,7 @@ pub fn find_next_cyclic_match(
 pub fn find_first_prefix_match(buffer: &str, labels: &[&str]) -> Option<usize> {
     let buf_lower: String = buffer.chars().flat_map(char::to_lowercase).collect();
     for (i, label) in labels.iter().enumerate() {
-        let label_lower: String =
-            label.chars().flat_map(char::to_lowercase).collect();
+        let label_lower: String = label.chars().flat_map(char::to_lowercase).collect();
         if label_lower.starts_with(&buf_lower) {
             return Some(i);
         }
@@ -240,7 +235,9 @@ pub fn tree_typeahead_jump(
         Owner::current().expect("tree_typeahead_jump must run inside the apply_key Owner wrap");
     let cursor: Rc<RefCell<TypeaheadCursor>> =
         owner.cache(cache_key, || RefCell::new(TypeaheadCursor::new()));
-    let target = cursor.borrow_mut().step(ch, current, Instant::now(), &labels);
+    let target = cursor
+        .borrow_mut()
+        .step(ch, current, Instant::now(), &labels);
     let Some(idx) = target else {
         return false;
     };
@@ -313,13 +310,30 @@ mod tests {
             let rows = vec![row("a", "Apple"), row("b", "Banana"), row("c", "Cherry")];
             let focused = Signal::new(Some(String::from("a")));
             // 'b' jumps the cursor to the next label starting with B.
-            assert!(tree_typeahead_jump(&focused, &rows, "tree_ta_test", "b"), "printable handled");
-            assert_eq!(focused.get().as_deref(), Some("b"), "cursor moved to Banana");
+            assert!(
+                tree_typeahead_jump(&focused, &rows, "tree_ta_test", "b"),
+                "printable handled"
+            );
+            assert_eq!(
+                focused.get().as_deref(),
+                Some("b"),
+                "cursor moved to Banana"
+            );
             // A non-printable named key is unhandled (caller falls through).
-            assert!(!tree_typeahead_jump(&focused, &rows, "tree_ta_test", "ArrowDown"), "named key unhandled");
+            assert!(
+                !tree_typeahead_jump(&focused, &rows, "tree_ta_test", "ArrowDown"),
+                "named key unhandled"
+            );
             // No match leaves the cursor and reports unhandled.
-            assert!(!tree_typeahead_jump(&focused, &rows, "tree_ta_test", "z"), "no-match unhandled");
-            assert_eq!(focused.get().as_deref(), Some("b"), "cursor unchanged on no match");
+            assert!(
+                !tree_typeahead_jump(&focused, &rows, "tree_ta_test", "z"),
+                "no-match unhandled"
+            );
+            assert_eq!(
+                focused.get().as_deref(),
+                Some("b"),
+                "cursor unchanged on no match"
+            );
         });
     }
 

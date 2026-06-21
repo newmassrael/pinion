@@ -39,34 +39,33 @@ use std::rc::Rc;
 
 use pinion_a11y::WidgetA11y;
 use pinion_core::external::{External, ExternalIntrospect, IntrospectValue};
-use pinion_core::widget_core::ExtraExternal;
 use pinion_core::intent::Intent;
-use pinion_core::reactive::{batch, Effect, Owner, Signal};
+use pinion_core::reactive::{Effect, Owner, Signal, batch};
 use pinion_core::scene::{ContainerNode, Rect, ScrollNode, TextNode};
 use pinion_core::storage::Storage;
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme, ThemeMode};
+use pinion_core::theme::{ColorRole, Theme, ThemeMode, use_theme};
+use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::caret_blink::CaretBlink;
 use pinion_core::widgets::checkbox::{CheckboxExternal, CheckboxState};
 use pinion_core::widgets::radio::RadioState;
+use pinion_core::widgets::radio_group::RadioGroupExternal;
 use pinion_core::widgets::scroll::ScrollState;
 use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
-use pinion_core::widgets::radio_group::RadioGroupExternal;
 use pinion_core::widgets::slider::{SliderExternal, SliderState};
 use pinion_core::widgets::text_edit::TextEditState;
 use pinion_core::widgets::text_field::{TextFieldEvent, TextFieldExternal, TextFieldState};
 use pinion_core::widgets::toggle::{ToggleExternal, ToggleState};
 use pinion_core::{
-    intent_tag, scale_normalized_to_px, Color, Command, Frame, Scene, WidgetCore,
-    WidgetStateName,
+    Color, Command, Frame, Scene, WidgetCore, WidgetStateName, intent_tag, scale_normalized_to_px,
 };
 use pinion_platform_clipboard::use_app_clipboard;
-use pinion_platform_storage::{use_app_storage, AppStorage};
-use pinion_shell::{vello_renderer_impl, WidgetView};
-use pinion_widget_paint::checkbox::{view_checkbox, CheckboxStyle};
-use pinion_widget_paint::scrollbar::{view_vertical_scrollbar, VerticalScrollbarStyle};
+use pinion_platform_storage::{AppStorage, use_app_storage};
+use pinion_shell::{WidgetView, vello_renderer_impl};
+use pinion_widget_paint::checkbox::{CheckboxStyle, view_checkbox};
+use pinion_widget_paint::scrollbar::{VerticalScrollbarStyle, view_vertical_scrollbar};
 use pinion_widget_paint::slider::{
     read_slider_state, slider_accent_for, slider_thumb_fill, slider_track_inactive,
 };
@@ -361,7 +360,9 @@ fn use_dark_mode() -> Rc<Signal<bool>> {
 #[must_use]
 fn use_font_scale() -> Rc<Cell<f32>> {
     let owner = Owner::current().expect("use_font_scale requires an active Owner scope");
-    owner.cache("settings_panel.font_scale", || Cell::new(DEFAULT_FONT_SCALE))
+    owner.cache("settings_panel.font_scale", || {
+        Cell::new(DEFAULT_FONT_SCALE)
+    })
 }
 
 #[must_use]
@@ -386,18 +387,14 @@ impl NotificationChannels {
         // record reads back (or via the v1→v2 migrator's bit-array
         // fallback for first-install / upgrade boots).
         Self {
-            signals: std::array::from_fn(|i| {
-                Rc::new(Signal::new(NOTIFICATION_DEFAULTS[i]))
-            }),
+            signals: std::array::from_fn(|i| Rc::new(Signal::new(NOTIFICATION_DEFAULTS[i]))),
         }
     }
 }
 
 #[must_use]
 fn use_notification_channels() -> Rc<NotificationChannels> {
-    let owner = Owner::current().expect(
-        "use_notification_channels requires an active Owner scope",
-    );
+    let owner = Owner::current().expect("use_notification_channels requires an active Owner scope");
     owner.cache("settings_panel.notifications", NotificationChannels::new)
 }
 
@@ -441,100 +438,97 @@ fn use_settings_persistence() -> Rc<PersistenceBootMarker> {
     let owner = Owner::current().expect("use_settings_persistence requires an active Owner scope");
     let owner_for_effect = owner.clone();
     owner.cache("settings_panel.persistence.boot", move || {
-            // (1) Hydrate. R669 §5.15 — try the current v2 shape
-            // first; on `serde` reject (missing `notifications`
-            // field) fall back to the explicit v1 shape and run
-            // [`migrate_v1_to_v2`]. Either path lands a fully-
-            // populated [`SettingsPersistedState`]. Schema-version
-            // mismatch beyond the v1→v2 chain (future v3+) takes
-            // the "start fresh" arm so the user does not get
-            // partial-state corruption.
-            if let Some(bytes) = storage.load(STORAGE_STATE_KEY) {
-                let state_opt: Option<SettingsPersistedState> =
-                    match serde_json::from_slice::<SettingsPersistedState>(&bytes) {
-                        Ok(state)
-                            if state.schema_version == PERSISTED_SCHEMA_VERSION =>
-                        {
-                            Some(state)
-                        }
-                        Ok(state) => {
-                            eprintln!(
-                                "settings-panel: persisted schema {} \u{2260} supported {} \
+        // (1) Hydrate. R669 §5.15 — try the current v2 shape
+        // first; on `serde` reject (missing `notifications`
+        // field) fall back to the explicit v1 shape and run
+        // [`migrate_v1_to_v2`]. Either path lands a fully-
+        // populated [`SettingsPersistedState`]. Schema-version
+        // mismatch beyond the v1→v2 chain (future v3+) takes
+        // the "start fresh" arm so the user does not get
+        // partial-state corruption.
+        if let Some(bytes) = storage.load(STORAGE_STATE_KEY) {
+            let state_opt: Option<SettingsPersistedState> =
+                match serde_json::from_slice::<SettingsPersistedState>(&bytes) {
+                    Ok(state) if state.schema_version == PERSISTED_SCHEMA_VERSION => Some(state),
+                    Ok(state) => {
+                        eprintln!(
+                            "settings-panel: persisted schema {} \u{2260} supported {} \
                                  \u{2014} starting fresh (saved state will be overwritten)",
-                                state.schema_version, PERSISTED_SCHEMA_VERSION,
-                            );
-                            None
-                        }
-                        Err(_) => {
-                            // R669 — v2 decode failed; try v1 +
-                            // migrate before declaring corruption.
-                            match serde_json::from_slice::<SettingsPersistedStateV1>(&bytes) {
-                                Ok(v1) if v1.schema_version == 1 => {
-                                    Some(migrate_v1_to_v2(v1))
-                                }
-                                Ok(v1) => {
-                                    eprintln!(
-                                        "settings-panel: v1-shape record carries unexpected \
+                            state.schema_version, PERSISTED_SCHEMA_VERSION,
+                        );
+                        None
+                    }
+                    Err(_) => {
+                        // R669 — v2 decode failed; try v1 +
+                        // migrate before declaring corruption.
+                        match serde_json::from_slice::<SettingsPersistedStateV1>(&bytes) {
+                            Ok(v1) if v1.schema_version == 1 => Some(migrate_v1_to_v2(v1)),
+                            Ok(v1) => {
+                                eprintln!(
+                                    "settings-panel: v1-shape record carries unexpected \
                                          schema_version {}; starting fresh",
-                                        v1.schema_version,
-                                    );
-                                    None
-                                }
-                                Err(e) => {
-                                    eprintln!(
-                                        "settings-panel: persisted state at \
+                                    v1.schema_version,
+                                );
+                                None
+                            }
+                            Err(e) => {
+                                eprintln!(
+                                    "settings-panel: persisted state at \
                                          {STORAGE_STATE_KEY:?} failed to deserialize as \
                                          v2 or v1 ({e}) \u{2014} starting fresh",
-                                    );
-                                    None
-                                }
+                                );
+                                None
                             }
                         }
-                    };
-                if let Some(state) = state_opt {
-                    let display_text = state.display_name.clone();
-                    let notif_bits = state.notifications;
-                    batch(|| {
-                        nav.set(state.nav_index);
-                        dark.set(state.dark_mode);
-                        scale.set(state.font_scale);
-                        name.set(state.display_name);
-                        for (i, sig) in notif.signals.iter().enumerate() {
-                            sig.set(notif_bits[i]);
-                        }
-                    });
-                    // R668 §5.38 — push persisted font scale into
-                    // the text_scale substrate.
-                    let target_scale =
-                        0.5_f32 + state.font_scale.clamp(0.0, 1.0) * 1.5_f32;
-                    pinion_core::text_scale::set_text_scale(target_scale);
-                    display_name_text_state.set_text(display_text);
-                }
+                    }
+                };
+            if let Some(state) = state_opt {
+                let display_text = state.display_name.clone();
+                let notif_bits = state.notifications;
+                batch(|| {
+                    nav.set(state.nav_index);
+                    dark.set(state.dark_mode);
+                    scale.set(state.font_scale);
+                    name.set(state.display_name);
+                    for (i, sig) in notif.signals.iter().enumerate() {
+                        sig.set(notif_bits[i]);
+                    }
+                });
+                // R668 §5.38 — push persisted font scale into
+                // the text_scale substrate.
+                let target_scale = 0.5_f32 + state.font_scale.clamp(0.0, 1.0) * 1.5_f32;
+                pinion_core::text_scale::set_text_scale(target_scale);
+                display_name_text_state.set_text(display_text);
             }
-            // (2) Install save Effect. Subscribes to dark + name +
-            // each notification Signal so any flip triggers a re-
-            // serialise. font_scale Cell + nav_index Cell stay
-            // outside the reactive graph; the dark / name re-fire
-            // tricks in `update` flush them through this Effect.
-            let storage_e = storage.clone();
-            let nav_e = nav.clone();
-            let dark_e = dark.clone();
-            let scale_e = scale.clone();
-            let name_e = name.clone();
-            let notif_e = notif.clone();
-            let save_effect = Effect::new(&owner_for_effect, move || {
-                let snap = SettingsPersistedState::snapshot(
-                    &nav_e, &dark_e, &scale_e, &name_e, &notif_e.signals,
-                );
-                match serde_json::to_vec(&snap) {
-                    Ok(bytes) => storage_e.save(STORAGE_STATE_KEY, &bytes),
-                    Err(e) => eprintln!(
-                        "settings-panel: persistence serialize failed ({e}); skipped",
-                    ),
-                }
-            });
-            PersistenceBootMarker { _save_effect: save_effect }
-        })
+        }
+        // (2) Install save Effect. Subscribes to dark + name +
+        // each notification Signal so any flip triggers a re-
+        // serialise. font_scale Cell + nav_index Cell stay
+        // outside the reactive graph; the dark / name re-fire
+        // tricks in `update` flush them through this Effect.
+        let storage_e = storage.clone();
+        let nav_e = nav.clone();
+        let dark_e = dark.clone();
+        let scale_e = scale.clone();
+        let name_e = name.clone();
+        let notif_e = notif.clone();
+        let save_effect = Effect::new(&owner_for_effect, move || {
+            let snap = SettingsPersistedState::snapshot(
+                &nav_e,
+                &dark_e,
+                &scale_e,
+                &name_e,
+                &notif_e.signals,
+            );
+            match serde_json::to_vec(&snap) {
+                Ok(bytes) => storage_e.save(STORAGE_STATE_KEY, &bytes),
+                Err(e) => eprintln!("settings-panel: persistence serialize failed ({e}); skipped",),
+            }
+        });
+        PersistenceBootMarker {
+            _save_effect: save_effect,
+        }
+    })
 }
 
 // ─── nav rail (RadioGroup walker) ─────────────────────────────────
@@ -652,13 +646,8 @@ fn toggle_track_fill(theme: &Theme, state: ToggleState, on: bool) -> Color {
 
 // ─── section labels ───────────────────────────────────────────────
 
-const SECTION_LABELS: [&str; NAV_COUNT] = [
-    "Theme",
-    "Appearance",
-    "Profile",
-    "Notifications",
-    "Actions",
-];
+const SECTION_LABELS: [&str; NAV_COUNT] =
+    ["Theme", "Appearance", "Profile", "Notifications", "Actions"];
 
 // ─── nav rail view ────────────────────────────────────────────────
 
@@ -690,12 +679,7 @@ fn view_nav_rail(theme: &Theme, nav: &NavRadioStates) -> Scene {
                         .flex(FlexDirection::Row)
                         .with_justify(JustifyContent::Start)
                         .with_align_items(AlignItems::Center)
-                        .with_padding(Rect::new(
-                            NAV_ROW_PAD,
-                            0,
-                            NAV_ROW_PAD,
-                            0,
-                        ))
+                        .with_padding(Rect::new(NAV_ROW_PAD, 0, NAV_ROW_PAD, 0))
                         .with_size(Size::px(NAV_W - 2 * NAV_GAP, NAV_ROW_H)),
                 ),
         );
@@ -705,9 +689,10 @@ fn view_nav_rail(theme: &Theme, nav: &NavRadioStates) -> Scene {
         ContainerNode::new(rows)
             .with_tag(NAV_TAG)
             .with_aria_label("Settings sections")
-            .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)).with_border(
-                Border::new(theme.resolve(ColorRole::Outline), 1),
-            ))
+            .with_style(
+                BoxStyle::filled(theme.resolve(ColorRole::Surface))
+                    .with_border(Border::new(theme.resolve(ColorRole::Outline), 1)),
+            )
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Column)
@@ -751,7 +736,11 @@ fn view_theme_section(theme: &Theme, toggle_state: ToggleState, on: bool) -> Sce
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Row)
-                    .with_justify(if on { JustifyContent::End } else { JustifyContent::Start })
+                    .with_justify(if on {
+                        JustifyContent::End
+                    } else {
+                        JustifyContent::Start
+                    })
                     .with_align_items(AlignItems::Center)
                     .with_size(Size::px(TOGGLE_TRACK_W, TOGGLE_TRACK_H))
                     .with_padding(Rect::new(
@@ -763,20 +752,23 @@ fn view_theme_section(theme: &Theme, toggle_state: ToggleState, on: bool) -> Sce
             ),
     );
     let status = Scene::Text(TextNode::styled(
-        if on { "Dark mode is on" } else { "Light mode is on" },
+        if on {
+            "Dark mode is on"
+        } else {
+            "Light mode is on"
+        },
         Rect::default(),
         TextStyle::new()
             .with_size_px(STATUS_FONT_PX)
             .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
     ));
     Scene::Container(
-        ContainerNode::new(vec![title, track, status])
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Column)
-                    .with_align_items(AlignItems::Start)
-                    .with_gap(ROW_GAP),
-            ),
+        ContainerNode::new(vec![title, track, status]).with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Column)
+                .with_align_items(AlignItems::Start)
+                .with_gap(ROW_GAP),
+        ),
     )
 }
 
@@ -833,21 +825,16 @@ fn view_appearance_section(theme: &Theme, state: SliderState, value: f32) -> Sce
             .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
     ));
     Scene::Container(
-        ContainerNode::new(vec![title, track, status])
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Column)
-                    .with_align_items(AlignItems::Start)
-                    .with_gap(ROW_GAP),
-            ),
+        ContainerNode::new(vec![title, track, status]).with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Column)
+                .with_align_items(AlignItems::Start)
+                .with_gap(ROW_GAP),
+        ),
     )
 }
 
-fn view_profile_section(
-    theme: &Theme,
-    field_state: TextFieldState,
-    caret_byte: u32,
-) -> Scene {
+fn view_profile_section(theme: &Theme, field_state: TextFieldState, caret_byte: u32) -> Scene {
     let title = Scene::Text(TextNode::styled(
         "Profile — Display name",
         Rect::default(),
@@ -876,13 +863,12 @@ fn view_profile_section(
             .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
     ));
     Scene::Container(
-        ContainerNode::new(vec![title, field, hint])
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Column)
-                    .with_align_items(AlignItems::Start)
-                    .with_gap(ROW_GAP),
-            ),
+        ContainerNode::new(vec![title, field, hint]).with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Column)
+                .with_align_items(AlignItems::Start)
+                .with_gap(ROW_GAP),
+        ),
     )
 }
 
@@ -943,8 +929,7 @@ fn view_notifications_section(
         list,
     ));
     let scrollbar_interaction = use_scrollbar_interaction(NOTIF_SCROLLBAR_TAG);
-    let scrollbar_style =
-        VerticalScrollbarStyle::material(NOTIF_VIEWPORT_H, NOTIF_SCROLLBAR_TAG);
+    let scrollbar_style = VerticalScrollbarStyle::material(NOTIF_VIEWPORT_H, NOTIF_SCROLLBAR_TAG);
     let scrollbar_visual = view_vertical_scrollbar(
         &scroll_state,
         theme,
@@ -991,9 +976,7 @@ const NOTIF_ROW_GAP: u32 = 8;
 /// [`use_notification_channels`] Signal handles — view fn reads it
 /// from there, not from the external — so this walker only carries
 /// the interaction-state half.
-fn read_notification_states(
-    scene: &Scene,
-) -> [CheckboxState; NOTIFICATION_COUNT] {
+fn read_notification_states(scene: &Scene) -> [CheckboxState; NOTIFICATION_COUNT] {
     let mut out = [CheckboxState::Idle; NOTIFICATION_COUNT];
     for (i, tag) in NOTIF_INSTANCE_TAGS.iter().enumerate() {
         if let Some(node) = scene.find_external_with_tag(tag) {
@@ -1018,9 +1001,7 @@ fn read_notification_states(
 /// [`read_notification_states`]) since the framework does not wrap
 /// `read_state` in `root_owner.run` per the canonical
 /// non-reactive-snapshot contract.
-fn read_notification_checked(
-    scene: &Scene,
-) -> [bool; NOTIFICATION_COUNT] {
+fn read_notification_checked(scene: &Scene) -> [bool; NOTIFICATION_COUNT] {
     let mut out = [false; NOTIFICATION_COUNT];
     for (i, tag) in NOTIF_INSTANCE_TAGS.iter().enumerate() {
         if let Some(node) = scene.find_external_with_tag(tag) {
@@ -1098,7 +1079,12 @@ fn view_detail_pane(
                 LayoutStyle::new()
                     .flex(FlexDirection::Column)
                     .with_align_items(AlignItems::Start)
-                    .with_padding(Rect::new(SECTION_PAD, SECTION_PAD, SECTION_PAD, SECTION_PAD))
+                    .with_padding(Rect::new(
+                        SECTION_PAD,
+                        SECTION_PAD,
+                        SECTION_PAD,
+                        SECTION_PAD,
+                    ))
                     // (R667 §5.21) flex_grow=1.0 stretches the detail
                     // pane to fill the remaining main-axis width
                     // (window width minus NAV_W). The outer Container
@@ -1294,14 +1280,10 @@ impl WidgetCore for SettingsPanelView {
         // canonical `value` slot mirrors the bool sidecar; the
         // R654 [[r653-state-flags-bool-field]] retrofit makes this
         // the single-source-of-truth path.
-        let mut notif_externals: Vec<ExtraExternal> =
-            Vec::with_capacity(NOTIFICATION_COUNT);
+        let mut notif_externals: Vec<ExtraExternal> = Vec::with_capacity(NOTIFICATION_COUNT);
         for (i, tag) in NOTIF_INSTANCE_TAGS.iter().enumerate() {
             let mut ext = CheckboxExternal::new();
-            let _ = ext.intervene(
-                "value",
-                IntrospectValue::Bool(notif.signals[i].get()),
-            );
+            let _ = ext.intervene("value", IntrospectValue::Bool(notif.signals[i].get()));
             // R55.D.5 composite-tag: shell paint router walks the
             // base tag + parses the suffix per-row. (R688) The const
             // `&'static str` becomes a `Cow::Borrowed` in
@@ -1393,7 +1375,11 @@ impl WidgetCore for SettingsPanelView {
         // [[intent-payload-post-flip-authority]].
         if intent.tag.as_ref() == THEME_TOGGLE_INTENT_TAG {
             if let IntrospectValue::Bool(on) = intent.payload {
-                use_theme(THEME_TAG).set_mode(if on { ThemeMode::Dark } else { ThemeMode::Light });
+                use_theme(THEME_TAG).set_mode(if on {
+                    ThemeMode::Dark
+                } else {
+                    ThemeMode::Light
+                });
                 use_dark_mode().set(on);
             }
         }
@@ -1500,7 +1486,10 @@ impl WidgetView for SettingsPanelView {
     type Renderer = SettingsPanelRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 }
 

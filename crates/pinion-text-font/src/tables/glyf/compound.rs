@@ -240,7 +240,12 @@ mod tests {
     use super::*;
 
     fn header_dummy() -> GlyphHeader {
-        GlyphHeader { x_min: 0, y_min: 0, x_max: 100, y_max: 100 }
+        GlyphHeader {
+            x_min: 0,
+            y_min: 0,
+            x_max: 100,
+            y_max: 100,
+        }
     }
 
     #[test]
@@ -298,7 +303,10 @@ mod tests {
         let composite = parse_composite(&mut r, header_dummy(), body_clone).unwrap();
         assert_eq!(
             composite.components[0].args,
-            ComponentArgs::PointMatch { parent: 200, child: 50 }
+            ComponentArgs::PointMatch {
+                parent: 200,
+                child: 50
+            }
         );
     }
 
@@ -334,7 +342,10 @@ mod tests {
         let composite = parse_composite(&mut r, header_dummy(), body_clone).unwrap();
         assert_eq!(
             composite.components[0].transform,
-            ComponentTransform::XYScale { x: 0x2000, y: -0x2000 }
+            ComponentTransform::XYScale {
+                x: 0x2000,
+                y: -0x2000
+            }
         );
     }
 
@@ -352,7 +363,12 @@ mod tests {
         let composite = parse_composite(&mut r, header_dummy(), body_clone).unwrap();
         assert_eq!(
             composite.components[0].transform,
-            ComponentTransform::Matrix { xx: 0x4000, xy: 0, yx: 0, yy: 0x4000 }
+            ComponentTransform::Matrix {
+                xx: 0x4000,
+                xy: 0,
+                yx: 0,
+                yy: 0x4000
+            }
         );
     }
 
@@ -458,9 +474,7 @@ mod tests {
         // (instructions 는 last component 에만).
         let body = build_composite_body(&[
             ComponentSpec {
-                flags: FLAG_ARGS_ARE_XY_VALUES
-                    | FLAG_MORE_COMPONENTS
-                    | FLAG_WE_HAVE_INSTRUCTIONS,
+                flags: FLAG_ARGS_ARE_XY_VALUES | FLAG_MORE_COMPONENTS | FLAG_WE_HAVE_INSTRUCTIONS,
                 glyph_index: 1,
                 arg1: 0,
                 arg2: 0,
@@ -491,9 +505,7 @@ mod tests {
     fn reject_multiple_transform_bits() {
         // WE_HAVE_A_SCALE + WE_HAVE_AN_X_AND_Y_SCALE = mutually exclusive.
         let body = build_composite_body(&[ComponentSpec {
-            flags: FLAG_ARGS_ARE_XY_VALUES
-                | FLAG_WE_HAVE_A_SCALE
-                | FLAG_WE_HAVE_AN_X_AND_Y_SCALE,
+            flags: FLAG_ARGS_ARE_XY_VALUES | FLAG_WE_HAVE_A_SCALE | FLAG_WE_HAVE_AN_X_AND_Y_SCALE,
             glyph_index: 1,
             arg1: 0,
             arg2: 0,

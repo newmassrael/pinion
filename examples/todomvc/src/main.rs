@@ -33,15 +33,15 @@ use std::rc::Rc;
 
 use pinion_core::storage::Storage;
 use pinion_platform_clipboard::use_app_clipboard;
-use pinion_platform_storage::{use_app_storage, AppStorage};
+use pinion_platform_storage::{AppStorage, use_app_storage};
 // R659 §5.16 §5.35 — lifted composite-tag parser shared by every
 // `<key>:<EventName>` send-payload consumer
 // (TodoDeleteExternal / TodoToggleExternal / TodoFilterExternal —
 // 3-of-3 Rule of Three fired per [[abstraction-needs-second-consumer]]).
 use pinion_core::composite_tag::parse_send_payload;
 use pinion_core::external::{
-    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, IntrospectSchema,
-    IntrospectValue, InterveneError, InvokeError, RepaintOwner, ThreadOwnership,
+    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
 use pinion_core::reactive::{Effect, Owner, Signal};
 use pinion_core::scene::{ContainerNode, Rect, ScrollNode, TextNode};
@@ -54,15 +54,15 @@ use pinion_core::widgets::scroll::use_scroll_state;
 // R659 §5.45 — ScrollBarExternal sibling registered through
 // `create_extra_externals` so the visible scrollbar peer becomes
 // drag-able (4th ExtraExternal after delete + toggle + filter).
+use pinion_a11y::{AccessAction, AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::radio_group::RadioGroupExternal;
 use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
 use pinion_core::widgets::text_edit::use_text_edit_state;
 use pinion_core::widgets::text_field::{TextFieldEvent, TextFieldExternal, TextFieldState};
-use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::{Color, Frame, Scene, WidgetCore, WidgetStateName};
-use pinion_a11y::{AccessAction, AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_text::CaretRect;
 // R657 §5.16 §5.38 — lifted TextField paint substrate shared with
 // hello-textfield (2nd consumer reached per
@@ -73,7 +73,7 @@ use pinion_widget_paint::text_field as tf_paint;
 // (SurfaceContainerHighest track + Outline thumb), one closed-form
 // thumb geometry, one absolute-position composition across both
 // bindings.
-use pinion_widget_paint::scrollbar::{view_vertical_scrollbar, VerticalScrollbarStyle};
+use pinion_widget_paint::scrollbar::{VerticalScrollbarStyle, view_vertical_scrollbar};
 
 // pinion-forge codegen output. Defines `pub struct TodoMvcRenderer`
 // + async `new<W: Into<wgpu::SurfaceTarget<'static>>>` + sync
@@ -205,8 +205,7 @@ const FILTER_KEY: &str = "todomvc.filter";
 /// (R660 §5.16) Dotted wire-form intent tag the R660 [`RadioGroupExternal`]
 /// emits on every selection-change. [`TodoMvcView::update`] matches
 /// this exact string; [[intent-tag-dotted-wire-form]].
-const TODO_FILTER_SELECTED_INTENT_TAG: &str =
-    pinion_core::intent_tag!("todo_filter", "selected");
+const TODO_FILTER_SELECTED_INTENT_TAG: &str = pinion_core::intent_tag!("todo_filter", "selected");
 
 /// (R793 §5.38 §5.39) The `"blur"` intent the inline row editor
 /// ([`EDIT_TF_TAG`], opted in via `TextFieldExternal::with_blur_intent`)
@@ -432,9 +431,8 @@ fn apply_key_textfield(scene: &mut Scene, key: &str) -> bool {
 /// wire so the framework's state machine + intent emission matches
 /// what a paint-side mouse click produces.
 fn apply_key_filter(scene: &mut Scene, key: &str) -> bool {
-    let current_idx = filter_focused_index(scene).unwrap_or_else(|| {
-        Owner::current().map_or(0, |_| use_filter().get().to_index())
-    });
+    let current_idx = filter_focused_index(scene)
+        .unwrap_or_else(|| Owner::current().map_or(0, |_| use_filter().get().to_index()));
     let count: usize = 3;
     let target_idx: usize = match key {
         "ArrowLeft" => current_idx.checked_sub(1).unwrap_or(count - 1),
@@ -457,10 +455,7 @@ fn apply_key_filter(scene: &mut Scene, key: &str) -> bool {
         return false;
     };
     for ev in ["PointerEnter", "PointerDown", "PointerUp", "PointerLeave"] {
-        let _ = intro.invoke(
-            "send",
-            IntrospectValue::Text(format!("{target_idx}:{ev}")),
-        );
+        let _ = intro.invoke("send", IntrospectValue::Text(format!("{target_idx}:{ev}")));
     }
     true
 }
@@ -1029,7 +1024,9 @@ pub(crate) fn seed_todo_row(i: u32, next_id: u64) -> TodoItem {
 /// `pub(crate)` so tests can verify the row count + id range +
 /// completion split without going through `use_persistence_boot`.
 pub(crate) fn build_seed_rows(n: u32, start_id: u64) -> Vec<TodoItem> {
-    (0..n).map(|i| seed_todo_row(i, start_id + u64::from(i))).collect()
+    (0..n)
+        .map(|i| seed_todo_row(i, start_id + u64::from(i)))
+        .collect()
 }
 
 fn use_persistence_boot() -> Rc<PersistenceBootMarker> {
@@ -1046,91 +1043,92 @@ fn use_persistence_boot() -> Rc<PersistenceBootMarker> {
     let owner = Owner::current().expect("use_persistence_boot requires an active Owner scope");
     let owner_for_effect = owner.clone();
 
-    owner
-        .cache("todomvc.persistence.boot", move || {
-            // (1) Hydrate from disk. Load misses + schema mismatches
-            // silently fall through to defaults (the Signals stay at
-            // their `Owner::cache` factory seeds).
-            if let Some(bytes) = storage.load(STORAGE_STATE_KEY) {
-                match serde_json::from_slice::<PersistedState>(&bytes) {
-                    Ok(state) if state.schema_version == PERSISTED_SCHEMA_VERSION => {
-                        // Seed in single batch so Effect subscribers
-                        // observe one atomic update instead of three
-                        // partial writes ([[signal-batch-atomic-multi-axis-update]]).
-                        // The Effect itself is installed AFTER this
-                        // hydration block so the batch is observable
-                        // only by *future* Effects (currently none).
-                        pinion_core::reactive::batch(|| {
-                            todos.set(state.todos);
-                            filter.set(state.filter);
-                            next_id_cell.set(state.next_id);
-                        });
-                    }
-                    Ok(state) => {
-                        eprintln!(
-                            "todomvc: persisted schema {} ≠ supported {} \
-                             — starting fresh (saved state will be overwritten)",
-                            state.schema_version, PERSISTED_SCHEMA_VERSION,
-                        );
-                    }
-                    Err(e) => {
-                        eprintln!(
-                            "todomvc: persisted state at {STORAGE_STATE_KEY:?} \
-                             failed to deserialize ({e}) — starting fresh",
-                        );
-                    }
-                }
-            }
-
-            // (1.5) R682.B §5.16 — paint-fragment cache stress seed.
-            // When [`SEED_N_ENV`] is set + parses + `todos` is still
-            // empty post-hydration, seed N synthetic TodoItem rows
-            // through the same batch arc the hydration path uses so
-            // a single atomic Signal mutation lands. The
-            // `todos.get().is_empty()` gate guarantees the seed
-            // never clobbers user data: real persisted state always
-            // hydrates non-empty, so the seed becomes a no-op as
-            // soon as the binding has been used once. The 2nd
-            // consumer of [`pinion_runtime::FragmentCacheStats`]
-            // per [[abstraction-needs-second-consumer]].
-            //
-            // env-var check fires first so the steady-state (no
-            // env) path never reads the signal during boot.
-            if let Some(n) = parse_seed_n_env(std::env::var(SEED_N_ENV).ok().as_deref()) {
-                if todos.get().is_empty() {
-                    let start_id = next_id_cell.get();
-                    let rows = build_seed_rows(n, start_id);
-                    let new_next_id = start_id + u64::from(n);
+    owner.cache("todomvc.persistence.boot", move || {
+        // (1) Hydrate from disk. Load misses + schema mismatches
+        // silently fall through to defaults (the Signals stay at
+        // their `Owner::cache` factory seeds).
+        if let Some(bytes) = storage.load(STORAGE_STATE_KEY) {
+            match serde_json::from_slice::<PersistedState>(&bytes) {
+                Ok(state) if state.schema_version == PERSISTED_SCHEMA_VERSION => {
+                    // Seed in single batch so Effect subscribers
+                    // observe one atomic update instead of three
+                    // partial writes ([[signal-batch-atomic-multi-axis-update]]).
+                    // The Effect itself is installed AFTER this
+                    // hydration block so the batch is observable
+                    // only by *future* Effects (currently none).
                     pinion_core::reactive::batch(|| {
-                        todos.set(rows);
-                        next_id_cell.set(new_next_id);
+                        todos.set(state.todos);
+                        filter.set(state.filter);
+                        next_id_cell.set(state.next_id);
                     });
                 }
-            }
-
-            // (2) Install the save Effect. Eager initial run also
-            // writes — idempotent on a freshly-hydrated state (the
-            // written bytes equal the loaded bytes), so one extra
-            // fsync at boot is the entire cost. The Effect's owner
-            // is `Owner::current()` (the framework's root_owner) so
-            // the Effect stays alive for the application lifetime.
-            let storage_e = storage.clone();
-            let todos_e = todos.clone();
-            let filter_e = filter.clone();
-            let next_id_e = next_id_cell.clone();
-            let save_effect = Effect::new(&owner_for_effect, move || {
-                let snapshot = PersistedState::snapshot(&todos_e, &filter_e, &next_id_e);
-                match serde_json::to_vec(&snapshot) {
-                    Ok(bytes) => storage_e.save(STORAGE_STATE_KEY, &bytes),
-                    Err(e) => eprintln!(
-                        "todomvc: persistence serialize failed ({e}); \
-                         this write was skipped",
-                    ),
+                Ok(state) => {
+                    eprintln!(
+                        "todomvc: persisted schema {} ≠ supported {} \
+                             — starting fresh (saved state will be overwritten)",
+                        state.schema_version, PERSISTED_SCHEMA_VERSION,
+                    );
                 }
-            });
+                Err(e) => {
+                    eprintln!(
+                        "todomvc: persisted state at {STORAGE_STATE_KEY:?} \
+                             failed to deserialize ({e}) — starting fresh",
+                    );
+                }
+            }
+        }
 
-            PersistenceBootMarker { _save_effect: save_effect }
-        })
+        // (1.5) R682.B §5.16 — paint-fragment cache stress seed.
+        // When [`SEED_N_ENV`] is set + parses + `todos` is still
+        // empty post-hydration, seed N synthetic TodoItem rows
+        // through the same batch arc the hydration path uses so
+        // a single atomic Signal mutation lands. The
+        // `todos.get().is_empty()` gate guarantees the seed
+        // never clobbers user data: real persisted state always
+        // hydrates non-empty, so the seed becomes a no-op as
+        // soon as the binding has been used once. The 2nd
+        // consumer of [`pinion_runtime::FragmentCacheStats`]
+        // per [[abstraction-needs-second-consumer]].
+        //
+        // env-var check fires first so the steady-state (no
+        // env) path never reads the signal during boot.
+        if let Some(n) = parse_seed_n_env(std::env::var(SEED_N_ENV).ok().as_deref()) {
+            if todos.get().is_empty() {
+                let start_id = next_id_cell.get();
+                let rows = build_seed_rows(n, start_id);
+                let new_next_id = start_id + u64::from(n);
+                pinion_core::reactive::batch(|| {
+                    todos.set(rows);
+                    next_id_cell.set(new_next_id);
+                });
+            }
+        }
+
+        // (2) Install the save Effect. Eager initial run also
+        // writes — idempotent on a freshly-hydrated state (the
+        // written bytes equal the loaded bytes), so one extra
+        // fsync at boot is the entire cost. The Effect's owner
+        // is `Owner::current()` (the framework's root_owner) so
+        // the Effect stays alive for the application lifetime.
+        let storage_e = storage.clone();
+        let todos_e = todos.clone();
+        let filter_e = filter.clone();
+        let next_id_e = next_id_cell.clone();
+        let save_effect = Effect::new(&owner_for_effect, move || {
+            let snapshot = PersistedState::snapshot(&todos_e, &filter_e, &next_id_e);
+            match serde_json::to_vec(&snapshot) {
+                Ok(bytes) => storage_e.save(STORAGE_STATE_KEY, &bytes),
+                Err(e) => eprintln!(
+                    "todomvc: persistence serialize failed ({e}); \
+                         this write was skipped",
+                ),
+            }
+        });
+
+        PersistenceBootMarker {
+            _save_effect: save_effect,
+        }
+    })
 }
 
 // R657 §5.16 §5.38 / R958.1 — `saturating_f32_to_u32` moved to
@@ -1149,7 +1147,10 @@ fn use_persistence_boot() -> Rc<PersistenceBootMarker> {
     clippy::too_many_lines,
     reason = "one paint cycle composing 5 sections"
 )]
-fn view(state: (TextFieldState, u32, FilterRadioStates, TextFieldState, u32), _frame: &Frame) -> Scene {
+fn view(
+    state: (TextFieldState, u32, FilterRadioStates, TextFieldState, u32),
+    _frame: &Frame,
+) -> Scene {
     let (interaction, caret_byte, filter_radios, edit_interaction, edit_caret_byte) = state;
 
     // R657 §5.16 §5.38 — TextField paint composition lifted to
@@ -1274,11 +1275,7 @@ fn view(state: (TextFieldState, u32, FilterRadioStates, TextFieldState, u32), _f
 /// `OnSurface` (Hover 0.08, Pressed 0.12) per
 /// [[m3-surface-tier-expansion]]. Single-source labels through
 /// [`FilterMode::label`] keep screen-reader + visible text in sync.
-fn build_filter_row(
-    theme: &Theme,
-    current: FilterMode,
-    radios: &FilterRadioStates,
-) -> Scene {
+fn build_filter_row(theme: &Theme, current: FilterMode, radios: &FilterRadioStates) -> Scene {
     let modes = [FilterMode::Active, FilterMode::Completed, FilterMode::All];
     let on_accent = theme.resolve(ColorRole::OnAccent);
     let accent = theme.resolve(ColorRole::Accent);
@@ -1440,11 +1437,7 @@ impl ExternalIntrospect for TodoDeleteExternal {
         }
     }
 
-    fn intervene(
-        &mut self,
-        path: &str,
-        _value: IntrospectValue,
-    ) -> Result<(), InterveneError> {
+    fn intervene(&mut self, path: &str, _value: IntrospectValue) -> Result<(), InterveneError> {
         match path {
             "count" | "ids" => Err(InterveneError::ReadOnly),
             _ => Err(InterveneError::UnknownPath),
@@ -1465,11 +1458,7 @@ impl ExternalIntrospect for TodoDeleteExternal {
                     let (id, event_name, _): (u64, &str, _) =
                         parse_send_payload(payload).ok_or(InvokeError::Rejected)?;
                     if event_name == "PointerDown" {
-                        let was_present = self
-                            .todos
-                            .get()
-                            .iter()
-                            .any(|item| item.id == id);
+                        let was_present = self.todos.get().iter().any(|item| item.id == id);
                         self.delete_by_id(id);
                         Ok(IntrospectValue::Bool(was_present))
                     } else {
@@ -1481,11 +1470,7 @@ impl ExternalIntrospect for TodoDeleteExternal {
             "delete" => match args {
                 IntrospectValue::Int(i) => {
                     let id = u64::try_from(i).map_err(|_| InvokeError::Rejected)?;
-                    let was_present = self
-                        .todos
-                        .get()
-                        .iter()
-                        .any(|item| item.id == id);
+                    let was_present = self.todos.get().iter().any(|item| item.id == id);
                     self.delete_by_id(id);
                     Ok(IntrospectValue::Bool(was_present))
                 }
@@ -1594,15 +1579,9 @@ impl ExternalIntrospect for TodoToggleExternal {
         }
     }
 
-    fn intervene(
-        &mut self,
-        path: &str,
-        _value: IntrospectValue,
-    ) -> Result<(), InterveneError> {
+    fn intervene(&mut self, path: &str, _value: IntrospectValue) -> Result<(), InterveneError> {
         match path {
-            "count" | "completed_count" | "ids_completed" => {
-                Err(InterveneError::ReadOnly)
-            }
+            "count" | "completed_count" | "ids_completed" => Err(InterveneError::ReadOnly),
             _ => Err(InterveneError::UnknownPath),
         }
     }
@@ -1618,11 +1597,7 @@ impl ExternalIntrospect for TodoToggleExternal {
                     let (id, event_name, _): (u64, &str, _) =
                         parse_send_payload(payload).ok_or(InvokeError::Rejected)?;
                     if event_name == "PointerDown" {
-                        let was_present = self
-                            .todos
-                            .get()
-                            .iter()
-                            .any(|item| item.id == id);
+                        let was_present = self.todos.get().iter().any(|item| item.id == id);
                         self.toggle_by_id(id);
                         // Bool(was_present) lets the AI client tell
                         // "flipped existing item" from "no-op stale id".
@@ -1741,12 +1716,7 @@ impl TodoEditExternal {
     /// row reseats the editor text from the original item (the
     /// `TasteJS` "restart editing" UX).
     fn begin_edit(&self, target_id: u64) -> bool {
-        let Some(item) = self
-            .todos
-            .get()
-            .into_iter()
-            .find(|i| i.id == target_id)
-        else {
+        let Some(item) = self.todos.get().into_iter().find(|i| i.id == target_id) else {
             return false;
         };
         self.editing_id.set(Some(target_id));
@@ -1799,11 +1769,7 @@ impl ExternalIntrospect for TodoEditExternal {
     /// `Bool(was_present)` so callers distinguish "row existed +
     /// editing now" from "no-op stale id".
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[
-            ("editing_id", "json"),
-            ("send", "string"),
-            ("begin", "int"),
-        ])
+        IntrospectSchema::new(&[("editing_id", "json"), ("send", "string"), ("begin", "int")])
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
@@ -1817,11 +1783,7 @@ impl ExternalIntrospect for TodoEditExternal {
         }
     }
 
-    fn intervene(
-        &mut self,
-        path: &str,
-        _value: IntrospectValue,
-    ) -> Result<(), InterveneError> {
+    fn intervene(&mut self, path: &str, _value: IntrospectValue) -> Result<(), InterveneError> {
         match path {
             "editing_id" => Err(InterveneError::ReadOnly),
             _ => Err(InterveneError::UnknownPath),
@@ -1946,11 +1908,7 @@ fn build_todos_list(
             total_count,
         )
     };
-    let header = Scene::Text(TextNode::styled(
-        header_text,
-        Rect::default(),
-        header_style,
-    ));
+    let header = Scene::Text(TextNode::styled(header_text, Rect::default(), header_style));
 
     // R656 §5.16 — each row tagged `todo_item#<id>` (stable u64 id,
     // NOT array index — the R655 index-based tagging would alias
@@ -2095,14 +2053,12 @@ fn build_todos_list(
     }
 
     Scene::Container(
-        ContainerNode::new(children)
-            .with_tag(LIST_TAG)
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Column)
-                    .with_align_items(AlignItems::Start)
-                    .with_gap(LIST_ITEM_GAP),
-            ),
+        ContainerNode::new(children).with_tag(LIST_TAG).with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Column)
+                .with_align_items(AlignItems::Start)
+                .with_gap(LIST_ITEM_GAP),
+        ),
     )
 }
 
@@ -2171,14 +2127,8 @@ impl WidgetCore for TodoMvcView {
         let edit_blink = use_caret_blink(EDIT_TF_TAG);
         let edit_clipboard = use_app_clipboard(EDIT_TF_TAG);
         vec![
-            ExtraExternal::new(
-                DELETE_TAG,
-                Box::new(TodoDeleteExternal::new(todos.clone())),
-            ),
-            ExtraExternal::new(
-                TOGGLE_TAG,
-                Box::new(TodoToggleExternal::new(todos.clone())),
-            ),
+            ExtraExternal::new(DELETE_TAG, Box::new(TodoDeleteExternal::new(todos.clone()))),
+            ExtraExternal::new(TOGGLE_TAG, Box::new(TodoToggleExternal::new(todos.clone()))),
             ExtraExternal::new(FILTER_TAG, Box::new(filter_group)),
             // R746 §5.45 — shared scrollbar peer wiring (state + M3
             // interaction-state mirror, registered under SCROLLBAR_TAG).
@@ -2200,13 +2150,21 @@ impl WidgetCore for TodoMvcView {
 
     fn read_state(scene: &Scene) -> (TextFieldState, u32, FilterRadioStates, TextFieldState, u32) {
         let (interaction, caret) = tf_paint::read_text_field_state(scene, TF_TAG);
-        let (edit_interaction, edit_caret) =
-            tf_paint::read_text_field_state(scene, EDIT_TF_TAG);
+        let (edit_interaction, edit_caret) = tf_paint::read_text_field_state(scene, EDIT_TF_TAG);
         let filter_radios = read_filter_radio_states(scene);
-        (interaction, caret, filter_radios, edit_interaction, edit_caret)
+        (
+            interaction,
+            caret,
+            filter_radios,
+            edit_interaction,
+            edit_caret,
+        )
     }
 
-    fn view(state: (TextFieldState, u32, FilterRadioStates, TextFieldState, u32), frame: &Frame) -> Scene {
+    fn view(
+        state: (TextFieldState, u32, FilterRadioStates, TextFieldState, u32),
+        frame: &Frame,
+    ) -> Scene {
         view(state, frame)
     }
 
@@ -2221,7 +2179,6 @@ impl WidgetCore for TodoMvcView {
     fn title() -> &'static str {
         "pinion todomvc (R655 §5.16) — first composed app"
     }
-
 
     /// R660 reducer — bridge `RadioGroupExternal`'s `"selected"` intent
     /// into `Signal<FilterMode>` so the view-fn `.get()` subscription
@@ -2343,7 +2300,9 @@ impl WidgetCore for TodoMvcView {
         }
     }
 
-    fn fmt_state_log(state: &(TextFieldState, u32, FilterRadioStates, TextFieldState, u32)) -> String {
+    fn fmt_state_log(
+        state: &(TextFieldState, u32, FilterRadioStates, TextFieldState, u32),
+    ) -> String {
         let radios = state
             .2
             .states
@@ -2385,7 +2344,10 @@ impl WidgetA11y for TodoMvcView {
     ///
     /// Labels come from paint-side `with_aria_label` via
     /// `enrich_names_from_scene` so literal strings live in one place.
-    fn access_node(state: &(TextFieldState, u32, FilterRadioStates, TextFieldState, u32), focused: Option<&str>) -> Vec<AccessNode> {
+    fn access_node(
+        state: &(TextFieldState, u32, FilterRadioStates, TextFieldState, u32),
+        focused: Option<&str>,
+    ) -> Vec<AccessNode> {
         let (interaction, _caret, filter_radios, _edit_interaction, _edit_caret) = state;
         let text = use_text_edit_state(TF_TAG).text();
         let tf_tag = <Self as WidgetCore>::tag();
@@ -2580,19 +2542,13 @@ fn filter_at_action(scene: &mut Scene, sub_tag: &str, action: AccessAction) -> b
     match action {
         AccessAction::Click | AccessAction::Default => {
             for ev in ["PointerEnter", "PointerDown", "PointerUp", "PointerLeave"] {
-                let _ = intro.invoke(
-                    "send",
-                    IntrospectValue::Text(format!("{idx}:{ev}")),
-                );
+                let _ = intro.invoke("send", IntrospectValue::Text(format!("{idx}:{ev}")));
             }
             true
         }
         AccessAction::Focus => {
             if let Ok(i) = i64::try_from(idx) {
-                let _ = intro.intervene(
-                    "focused_index",
-                    IntrospectValue::Int(i),
-                );
+                let _ = intro.intervene("focused_index", IntrospectValue::Int(i));
             }
             true
         }
@@ -2640,7 +2596,10 @@ impl WidgetView for TodoMvcView {
     type Renderer = TodoMvcRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 
     /// R56.2.c — publish caret rect for platform IME candidate window.
@@ -2716,11 +2675,12 @@ mod tests {
     //! the new entries — the same observable surface the visible
     //! app depends on.
     use super::{
+        DELETE_GLYPH, DELETE_TAG, DELETE_TAG_PREFIX, EDIT_TF_TAG, FILTER_TAG, FILTER_TAG_PREFIX,
+        FilterMode, FilterRadioStates, ITEM_TAG, ITEM_TAG_PREFIX, LIST_SCROLL_KEY, LIST_TAG,
+        SCROLLBAR_TAG, TF_TAG, TOGGLE_GLYPH_CHECKED, TOGGLE_GLYPH_UNCHECKED, TOGGLE_TAG,
+        TOGGLE_TAG_PREFIX, TodoDeleteExternal, TodoItem, TodoMvcView, TodoToggleExternal,
         allocate_todo_id, build_filter_row, build_todos_list, use_filter, use_next_todo_id,
-        use_todos, view, FilterMode, FilterRadioStates, TodoDeleteExternal, TodoItem, TodoMvcView,
-        TodoToggleExternal, DELETE_GLYPH, DELETE_TAG, DELETE_TAG_PREFIX, EDIT_TF_TAG, FILTER_TAG,
-        FILTER_TAG_PREFIX, ITEM_TAG, ITEM_TAG_PREFIX, LIST_SCROLL_KEY, LIST_TAG, SCROLLBAR_TAG,
-        TF_TAG, TOGGLE_GLYPH_CHECKED, TOGGLE_GLYPH_UNCHECKED, TOGGLE_TAG, TOGGLE_TAG_PREFIX,
+        use_todos, view,
     };
     use pinion_a11y::{AriaRole, WidgetA11y};
     use pinion_core::external::{External, IntrospectValue};
@@ -2810,7 +2770,16 @@ mod tests {
     #[test]
     fn r655_view_carries_tf_tag() {
         with_owner(|| {
-            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0), &Frame::default());
+            let scene = view(
+                (
+                    TextFieldState::Idle,
+                    0,
+                    FilterRadioStates::default(),
+                    TextFieldState::Idle,
+                    0,
+                ),
+                &Frame::default(),
+            );
             assert!(
                 scene.contains_tag(TF_TAG),
                 "paint scene must carry the TextField widget tag",
@@ -2821,7 +2790,16 @@ mod tests {
     #[test]
     fn r655_view_carries_list_tag() {
         with_owner(|| {
-            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0), &Frame::default());
+            let scene = view(
+                (
+                    TextFieldState::Idle,
+                    0,
+                    FilterRadioStates::default(),
+                    TextFieldState::Idle,
+                    0,
+                ),
+                &Frame::default(),
+            );
             assert!(
                 scene.contains_tag(LIST_TAG),
                 "paint scene must carry the todo-list tag even when empty",
@@ -2835,7 +2813,13 @@ mod tests {
         // calls `V::view` under an `Owner::new()` scope and asserts
         // `Scene::contains_tag(V::tag())`.
         pinion_core::test_fixtures::assert_widget_view_carries_tag::<TodoMvcView>(
-            (TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0),
+            (
+                TextFieldState::Idle,
+                0,
+                FilterRadioStates::default(),
+                TextFieldState::Idle,
+                0,
+            ),
             &Frame::default(),
         );
     }
@@ -2849,7 +2833,16 @@ mod tests {
         with_owner(|| {
             // `use_todos()` returns an empty Vec by default
             // (Signal::new(Vec::new()) seed via Owner::cache).
-            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0), &Frame::default());
+            let scene = view(
+                (
+                    TextFieldState::Idle,
+                    0,
+                    FilterRadioStates::default(),
+                    TextFieldState::Idle,
+                    0,
+                ),
+                &Frame::default(),
+            );
             let children = find_children_for_tag(&scene, LIST_TAG);
             assert_eq!(
                 children.len(),
@@ -2877,14 +2870,19 @@ mod tests {
                 });
                 next
             });
-            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0), &Frame::default());
+            let scene = view(
+                (
+                    TextFieldState::Idle,
+                    0,
+                    FilterRadioStates::default(),
+                    TextFieldState::Idle,
+                    0,
+                ),
+                &Frame::default(),
+            );
             let children = find_children_for_tag(&scene, LIST_TAG);
             // header + 2 item rows
-            assert_eq!(
-                children.len(),
-                3,
-                "list children = header + N items (N=2)",
-            );
+            assert_eq!(children.len(), 3, "list children = header + N items (N=2)",);
         });
     }
 
@@ -2909,7 +2907,16 @@ mod tests {
                 }
                 next
             });
-            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0), &Frame::default());
+            let scene = view(
+                (
+                    TextFieldState::Idle,
+                    0,
+                    FilterRadioStates::default(),
+                    TextFieldState::Idle,
+                    0,
+                ),
+                &Frame::default(),
+            );
             for id in &ids {
                 let needle = format!("{ITEM_TAG_PREFIX}#{id}");
                 assert!(
@@ -2936,11 +2943,7 @@ mod tests {
         });
     }
 
-    fn find_tagged_container<'a>(
-        s: &'a Scene,
-        tag: &str,
-        acc: &mut Option<&'a Scene>,
-    ) {
+    fn find_tagged_container<'a>(s: &'a Scene, tag: &str, acc: &mut Option<&'a Scene>) {
         if acc.is_some() {
             return;
         }
@@ -2983,7 +2986,16 @@ mod tests {
                 });
                 next
             });
-            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0), &Frame::default());
+            let scene = view(
+                (
+                    TextFieldState::Idle,
+                    0,
+                    FilterRadioStates::default(),
+                    TextFieldState::Idle,
+                    0,
+                ),
+                &Frame::default(),
+            );
             // The list container holds the header + per-item rows;
             // walk the list region only (not the textfield section)
             // so the textfield's status line text doesn't leak in.
@@ -3090,8 +3102,15 @@ mod tests {
         // R659 — total_count==0 path takes precedence over filter
         // mode, so passing FilterMode::All gives the empty-store
         // header.
-        let scene =
-            build_todos_list(&theme, &[], FilterMode::All, 0, None, TextFieldState::Idle, 0);
+        let scene = build_todos_list(
+            &theme,
+            &[],
+            FilterMode::All,
+            0,
+            None,
+            TextFieldState::Idle,
+            0,
+        );
         let texts = collect_text_nodes(&scene);
         assert_eq!(
             texts,
@@ -3178,7 +3197,16 @@ mod tests {
                 next.retain(|item| item.id != 2);
                 next
             });
-            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0), &Frame::default());
+            let scene = view(
+                (
+                    TextFieldState::Idle,
+                    0,
+                    FilterRadioStates::default(),
+                    TextFieldState::Idle,
+                    0,
+                ),
+                &Frame::default(),
+            );
             // Surviving items keep their ORIGINAL stable ids — no
             // resequencing to {0,1}. This is the R656 invariant.
             assert!(
@@ -3447,10 +3475,7 @@ mod tests {
                 .query("ids")
                 .expect("ids slot exposed");
             // Snapshot ordering matches insertion order.
-            assert_eq!(
-                ids,
-                IntrospectValue::Json(serde_json::json!([7, 42])),
-            );
+            assert_eq!(ids, IntrospectValue::Json(serde_json::json!([7, 42])),);
         });
     }
 
@@ -3491,8 +3516,7 @@ mod tests {
         // invariant (DELETE_TAG present) continues to hold under
         // additive composition.
         with_owner(|| {
-            let extras: Vec<ExtraExternal> =
-                <TodoMvcView as WidgetCore>::create_extra_externals();
+            let extras: Vec<ExtraExternal> = <TodoMvcView as WidgetCore>::create_extra_externals();
             assert_eq!(
                 extras.len(),
                 6,
@@ -3502,9 +3526,18 @@ mod tests {
             assert!(tags.contains(&DELETE_TAG), "DELETE_TAG still registered");
             assert!(tags.contains(&TOGGLE_TAG), "R658 TOGGLE_TAG registered");
             assert!(tags.contains(&FILTER_TAG), "R659 FILTER_TAG registered");
-            assert!(tags.contains(&SCROLLBAR_TAG), "R659 SCROLLBAR_TAG registered");
-            assert!(tags.contains(&ITEM_TAG), "R664 ITEM_TAG (TodoEditExternal) registered");
-            assert!(tags.contains(&EDIT_TF_TAG), "R664 EDIT_TF_TAG (editor TextField) registered");
+            assert!(
+                tags.contains(&SCROLLBAR_TAG),
+                "R659 SCROLLBAR_TAG registered"
+            );
+            assert!(
+                tags.contains(&ITEM_TAG),
+                "R664 ITEM_TAG (TodoEditExternal) registered"
+            );
+            assert!(
+                tags.contains(&EDIT_TF_TAG),
+                "R664 EDIT_TF_TAG (editor TextField) registered"
+            );
         });
     }
 
@@ -3516,21 +3549,28 @@ mod tests {
     fn r656_access_node_emits_list_root_with_no_items() {
         with_owner(|| {
             let nodes = <TodoMvcView as WidgetA11y>::access_node(
-                &(TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0),
+                &(
+                    TextFieldState::Idle,
+                    0,
+                    FilterRadioStates::default(),
+                    TextFieldState::Idle,
+                    0,
+                ),
                 Some(TF_TAG),
             );
             // R659 §5.40 — order: [textbox, RadioGroup(filter),
             // RadioButton×3, List(items)] = 1 + 1 + 3 + 1 = 6 nodes.
-            assert_eq!(nodes.len(), 6, "R659: textbox + filter group + 3 radios + list");
+            assert_eq!(
+                nodes.len(),
+                6,
+                "R659: textbox + filter group + 3 radios + list"
+            );
             assert_eq!(nodes[0].role, AriaRole::TextInput);
             assert_eq!(nodes[1].role, AriaRole::RadioGroup);
             assert_eq!(nodes[1].tag, FILTER_TAG);
             for i in 0..3 {
                 assert_eq!(nodes[2 + i].role, AriaRole::RadioButton);
-                assert_eq!(
-                    nodes[2 + i].tag,
-                    format!("{FILTER_TAG_PREFIX}#{i}"),
-                );
+                assert_eq!(nodes[2 + i].tag, format!("{FILTER_TAG_PREFIX}#{i}"),);
             }
             assert_eq!(nodes[5].role, AriaRole::List);
             assert_eq!(nodes[5].tag, LIST_TAG);
@@ -3557,7 +3597,13 @@ mod tests {
                 next
             });
             let nodes = <TodoMvcView as WidgetA11y>::access_node(
-                &(TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0),
+                &(
+                    TextFieldState::Idle,
+                    0,
+                    FilterRadioStates::default(),
+                    TextFieldState::Idle,
+                    0,
+                ),
                 Some(TF_TAG),
             );
             // R659 §5.40 — order:
@@ -3620,7 +3666,16 @@ mod tests {
                 });
                 next
             });
-            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0), &Frame::default());
+            let scene = view(
+                (
+                    TextFieldState::Idle,
+                    0,
+                    FilterRadioStates::default(),
+                    TextFieldState::Idle,
+                    0,
+                ),
+                &Frame::default(),
+            );
             let mut list_root = None;
             find_tagged_container(&scene, LIST_TAG, &mut list_root);
             let list = list_root.expect("LIST_TAG present");
@@ -3672,7 +3727,16 @@ mod tests {
                 });
                 next
             });
-            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0), &Frame::default());
+            let scene = view(
+                (
+                    TextFieldState::Idle,
+                    0,
+                    FilterRadioStates::default(),
+                    TextFieldState::Idle,
+                    0,
+                ),
+                &Frame::default(),
+            );
             let mut list_root = None;
             find_tagged_container(&scene, LIST_TAG, &mut list_root);
             let list = list_root.expect("LIST_TAG present (inside Scroll)");
@@ -3701,7 +3765,16 @@ mod tests {
                 });
                 next
             });
-            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0), &Frame::default());
+            let scene = view(
+                (
+                    TextFieldState::Idle,
+                    0,
+                    FilterRadioStates::default(),
+                    TextFieldState::Idle,
+                    0,
+                ),
+                &Frame::default(),
+            );
             let mut list_root = None;
             find_tagged_container(&scene, LIST_TAG, &mut list_root);
             let list = list_root.expect("LIST_TAG present (inside Scroll)");
@@ -3735,7 +3808,16 @@ mod tests {
                 });
                 next
             });
-            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0), &Frame::default());
+            let scene = view(
+                (
+                    TextFieldState::Idle,
+                    0,
+                    FilterRadioStates::default(),
+                    TextFieldState::Idle,
+                    0,
+                ),
+                &Frame::default(),
+            );
             for id in [11_u64, 22] {
                 let needle = format!("{TOGGLE_TAG_PREFIX}#{id}");
                 assert!(
@@ -3771,7 +3853,16 @@ mod tests {
                 });
                 next
             });
-            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0), &Frame::default());
+            let scene = view(
+                (
+                    TextFieldState::Idle,
+                    0,
+                    FilterRadioStates::default(),
+                    TextFieldState::Idle,
+                    0,
+                ),
+                &Frame::default(),
+            );
             let mut list_root = None;
             find_tagged_container(&scene, LIST_TAG, &mut list_root);
             let list = list_root.expect("LIST_TAG present");
@@ -3810,10 +3901,7 @@ mod tests {
             let result = handler
                 .introspect_mut()
                 .expect("introspect_mut wired")
-                .invoke(
-                    "send",
-                    IntrospectValue::Text("11:PointerDown".to_owned()),
-                )
+                .invoke("send", IntrospectValue::Text("11:PointerDown".to_owned()))
                 .expect("PointerDown for id=11 must succeed");
             assert_eq!(
                 result,
@@ -3854,19 +3942,13 @@ mod tests {
             handler
                 .introspect_mut()
                 .unwrap()
-                .invoke(
-                    "send",
-                    IntrospectValue::Text("5:PointerDown".to_owned()),
-                )
+                .invoke("send", IntrospectValue::Text("5:PointerDown".to_owned()))
                 .unwrap();
             assert!(use_todos().get()[0].completed, "1st flip → true");
             handler
                 .introspect_mut()
                 .unwrap()
-                .invoke(
-                    "send",
-                    IntrospectValue::Text("5:PointerDown".to_owned()),
-                )
+                .invoke("send", IntrospectValue::Text("5:PointerDown".to_owned()))
                 .unwrap();
             assert!(
                 !use_todos().get()[0].completed,
@@ -3892,10 +3974,7 @@ mod tests {
             let result = handler
                 .introspect_mut()
                 .unwrap()
-                .invoke(
-                    "send",
-                    IntrospectValue::Text("5:PointerUp".to_owned()),
-                )
+                .invoke("send", IntrospectValue::Text("5:PointerUp".to_owned()))
                 .unwrap();
             assert_eq!(
                 result,
@@ -4063,9 +4142,17 @@ mod tests {
             }
         }
         with_owner(|| {
-            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0), &Frame::default());
-            let scroll =
-                walk(&scene).expect("R659: Scroll wrapping LIST_TAG must exist");
+            let scene = view(
+                (
+                    TextFieldState::Idle,
+                    0,
+                    FilterRadioStates::default(),
+                    TextFieldState::Idle,
+                    0,
+                ),
+                &Frame::default(),
+            );
+            let scroll = walk(&scene).expect("R659: Scroll wrapping LIST_TAG must exist");
             assert!(
                 scroll.content.contains_tag(LIST_TAG),
                 "R659: Scroll content must contain LIST_TAG",
@@ -4083,11 +4170,18 @@ mod tests {
         with_owner(|| {
             // First view call instantiates ScrollState in the Owner
             // cache.
-            let _ = view((TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0), &Frame::default());
-            let scroll_state_a =
-                pinion_core::widgets::scroll::use_scroll_state(LIST_SCROLL_KEY);
-            let scroll_state_b =
-                pinion_core::widgets::scroll::use_scroll_state(LIST_SCROLL_KEY);
+            let _ = view(
+                (
+                    TextFieldState::Idle,
+                    0,
+                    FilterRadioStates::default(),
+                    TextFieldState::Idle,
+                    0,
+                ),
+                &Frame::default(),
+            );
+            let scroll_state_a = pinion_core::widgets::scroll::use_scroll_state(LIST_SCROLL_KEY);
+            let scroll_state_b = pinion_core::widgets::scroll::use_scroll_state(LIST_SCROLL_KEY);
             assert!(
                 std::rc::Rc::ptr_eq(&scroll_state_a, &scroll_state_b),
                 "R658: use_scroll_state(LIST_SCROLL_KEY) dedups across calls",
@@ -4098,9 +4192,17 @@ mod tests {
     #[test]
     fn r658_scroll_state_offset_round_trips() {
         with_owner(|| {
-            let _ = view((TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0), &Frame::default());
-            let scroll_state =
-                pinion_core::widgets::scroll::use_scroll_state(LIST_SCROLL_KEY);
+            let _ = view(
+                (
+                    TextFieldState::Idle,
+                    0,
+                    FilterRadioStates::default(),
+                    TextFieldState::Idle,
+                    0,
+                ),
+                &Frame::default(),
+            );
+            let scroll_state = pinion_core::widgets::scroll::use_scroll_state(LIST_SCROLL_KEY);
             // Declare a max bound + scroll. The view fn's
             // ScrollNode::from_state reads offset() on the next paint
             // so the value flows out to the rendered geometry.
@@ -4215,12 +4317,16 @@ mod tests {
     /// `"selected"`, the wire-form match arm sees the dotted form per
     /// [[intent-tag-dotted-wire-form]]).
     fn drive_filter_selected_intent(idx: i64) {
-        let intent = Intent::new_owned(
-            "todo_filter.selected".to_owned(),
-            IntrospectValue::Int(idx),
-        );
+        let intent =
+            Intent::new_owned("todo_filter.selected".to_owned(), IntrospectValue::Int(idx));
         let _ = TodoMvcView::update(
-            (TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0),
+            (
+                TextFieldState::Idle,
+                0,
+                FilterRadioStates::default(),
+                TextFieldState::Idle,
+                0,
+            ),
             &intent,
         );
     }
@@ -4273,7 +4379,13 @@ mod tests {
                 IntrospectValue::Null,
             );
             let _ = TodoMvcView::update(
-                (TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0),
+                (
+                    TextFieldState::Idle,
+                    0,
+                    FilterRadioStates::default(),
+                    TextFieldState::Idle,
+                    0,
+                ),
                 &intent,
             );
             // Reducer is intent-tag-specific; the
@@ -4290,8 +4402,20 @@ mod tests {
     #[test]
     fn r659_view_carries_filter_tag_and_three_buttons() {
         with_owner(|| {
-            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0), &Frame::default());
-            assert!(scene.contains_tag(FILTER_TAG), "filter group root tag present");
+            let scene = view(
+                (
+                    TextFieldState::Idle,
+                    0,
+                    FilterRadioStates::default(),
+                    TextFieldState::Idle,
+                    0,
+                ),
+                &Frame::default(),
+            );
+            assert!(
+                scene.contains_tag(FILTER_TAG),
+                "filter group root tag present"
+            );
             for i in 0..3 {
                 let tag = format!("{FILTER_TAG_PREFIX}#{i}");
                 assert!(
@@ -4305,7 +4429,16 @@ mod tests {
     #[test]
     fn r659_view_carries_scrollbar_tag() {
         with_owner(|| {
-            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0), &Frame::default());
+            let scene = view(
+                (
+                    TextFieldState::Idle,
+                    0,
+                    FilterRadioStates::default(),
+                    TextFieldState::Idle,
+                    0,
+                ),
+                &Frame::default(),
+            );
             assert!(
                 scene.contains_tag(SCROLLBAR_TAG),
                 "scrollbar peer Container tag must be paint-addressable",
@@ -4338,10 +4471,22 @@ mod tests {
             });
             use_filter().set(FilterMode::Active);
 
-            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0), &Frame::default());
+            let scene = view(
+                (
+                    TextFieldState::Idle,
+                    0,
+                    FilterRadioStates::default(),
+                    TextFieldState::Idle,
+                    0,
+                ),
+                &Frame::default(),
+            );
             // Only a + c paint (b is completed → filtered out).
             assert!(scene.contains_tag("todo_item#1"));
-            assert!(!scene.contains_tag("todo_item#2"), "completed row hidden under Active filter");
+            assert!(
+                !scene.contains_tag("todo_item#2"),
+                "completed row hidden under Active filter"
+            );
             assert!(scene.contains_tag("todo_item#3"));
         });
     }
@@ -4366,8 +4511,20 @@ mod tests {
             });
             use_filter().set(FilterMode::Completed);
 
-            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0), &Frame::default());
-            assert!(!scene.contains_tag("todo_item#1"), "active row hidden under Completed filter");
+            let scene = view(
+                (
+                    TextFieldState::Idle,
+                    0,
+                    FilterRadioStates::default(),
+                    TextFieldState::Idle,
+                    0,
+                ),
+                &Frame::default(),
+            );
+            assert!(
+                !scene.contains_tag("todo_item#1"),
+                "active row hidden under Completed filter"
+            );
             assert!(scene.contains_tag("todo_item#2"));
         });
     }
@@ -4392,7 +4549,16 @@ mod tests {
             });
             use_filter().set(FilterMode::All);
 
-            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0), &Frame::default());
+            let scene = view(
+                (
+                    TextFieldState::Idle,
+                    0,
+                    FilterRadioStates::default(),
+                    TextFieldState::Idle,
+                    0,
+                ),
+                &Frame::default(),
+            );
             assert!(scene.contains_tag("todo_item#1"));
             assert!(scene.contains_tag("todo_item#2"));
         });
@@ -4415,7 +4581,16 @@ mod tests {
             });
             use_filter().set(FilterMode::Active);
 
-            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0), &Frame::default());
+            let scene = view(
+                (
+                    TextFieldState::Idle,
+                    0,
+                    FilterRadioStates::default(),
+                    TextFieldState::Idle,
+                    0,
+                ),
+                &Frame::default(),
+            );
             let mut list_root = None;
             find_tagged_container(&scene, LIST_TAG, &mut list_root);
             let list = list_root.expect("LIST_TAG present");
@@ -4446,7 +4621,10 @@ mod tests {
             let Scene::Container(btn) = child else {
                 panic!("filter button {i} must be Container");
             };
-            assert_eq!(btn.tag.as_deref(), Some(format!("{FILTER_TAG_PREFIX}#{i}").as_str()));
+            assert_eq!(
+                btn.tag.as_deref(),
+                Some(format!("{FILTER_TAG_PREFIX}#{i}").as_str())
+            );
             // aria-label populated for screen reader announcement.
             assert!(
                 btn.aria_label.is_some(),
@@ -4490,7 +4668,13 @@ mod tests {
         with_owner(|| {
             use_filter().set(FilterMode::Completed);
             let nodes = <TodoMvcView as WidgetA11y>::access_node(
-                &(TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0),
+                &(
+                    TextFieldState::Idle,
+                    0,
+                    FilterRadioStates::default(),
+                    TextFieldState::Idle,
+                    0,
+                ),
                 Some(TF_TAG),
             );
             // Find the RadioGroup with FILTER_TAG.
@@ -4525,7 +4709,16 @@ mod tests {
     #[test]
     fn r659_scroll_region_holds_scroll_plus_scrollbar_side_by_side() {
         with_owner(|| {
-            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0), &Frame::default());
+            let scene = view(
+                (
+                    TextFieldState::Idle,
+                    0,
+                    FilterRadioStates::default(),
+                    TextFieldState::Idle,
+                    0,
+                ),
+                &Frame::default(),
+            );
             let Scene::Container(outer) = &scene else {
                 panic!("outer Container");
             };
@@ -4533,13 +4726,14 @@ mod tests {
             // holds both a Scroll and a Container tagged SCROLLBAR_TAG.
             let region = outer.children.iter().find_map(|c| match c {
                 Scene::Container(inner) => {
-                    let has_scroll =
-                        inner.children.iter().any(|ch| matches!(ch, Scene::Scroll(_)));
-                    let has_scrollbar =
-                        inner.children.iter().any(|ch| match ch {
-                            Scene::Container(cc) => cc.tag.as_deref() == Some(SCROLLBAR_TAG),
-                            _ => false,
-                        });
+                    let has_scroll = inner
+                        .children
+                        .iter()
+                        .any(|ch| matches!(ch, Scene::Scroll(_)));
+                    let has_scrollbar = inner.children.iter().any(|ch| match ch {
+                        Scene::Container(cc) => cc.tag.as_deref() == Some(SCROLLBAR_TAG),
+                        _ => false,
+                    });
                     if has_scroll && has_scrollbar {
                         Some(inner)
                     } else {
@@ -4595,8 +4789,7 @@ mod tests {
             assert!(was, "existing id matches");
             assert_eq!(super::use_editing_id().get(), Some(id));
             assert_eq!(
-                pinion_core::widgets::text_edit::use_text_edit_state(EDIT_TF_TAG)
-                    .text(),
+                pinion_core::widgets::text_edit::use_text_edit_state(EDIT_TF_TAG).text(),
                 "first thing",
             );
         });
@@ -4752,7 +4945,11 @@ mod tests {
             let id = super::allocate_todo_id();
             use_todos().set_with(|prev| {
                 let mut next = prev.clone();
-                next.push(TodoItem { id, text: "old".to_owned(), completed: false });
+                next.push(TodoItem {
+                    id,
+                    text: "old".to_owned(),
+                    completed: false,
+                });
                 next
             });
             super::use_editing_id().set(Some(id));
@@ -4764,7 +4961,13 @@ mod tests {
                 IntrospectValue::Null,
             );
             let _ = TodoMvcView::update(
-                (TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0),
+                (
+                    TextFieldState::Idle,
+                    0,
+                    FilterRadioStates::default(),
+                    TextFieldState::Idle,
+                    0,
+                ),
                 &intent,
             );
             let items = use_todos().get();
@@ -4773,7 +4976,11 @@ mod tests {
                 "edited",
                 "the blur intent committed the in-flight edit",
             );
-            assert_eq!(super::use_editing_id().get(), None, "edit mode cleared on blur");
+            assert_eq!(
+                super::use_editing_id().get(),
+                None,
+                "edit mode cleared on blur"
+            );
             assert_eq!(
                 pinion_core::focus_request::drain(),
                 None,
@@ -4794,10 +5001,20 @@ mod tests {
                 IntrospectValue::Null,
             );
             let _ = TodoMvcView::update(
-                (TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0),
+                (
+                    TextFieldState::Idle,
+                    0,
+                    FilterRadioStates::default(),
+                    TextFieldState::Idle,
+                    0,
+                ),
                 &intent,
             );
-            assert_eq!(use_todos().get().len(), count, "blur with no edit in progress is inert");
+            assert_eq!(
+                use_todos().get().len(),
+                count,
+                "blur with no edit in progress is inert"
+            );
         });
     }
 
@@ -4961,7 +5178,11 @@ mod tests {
             // in-list EDIT_TF_TAG editor.
             assert_eq!(
                 scene.collect_focusable_tags(),
-                vec![TF_TAG.to_owned(), FILTER_TAG.to_owned(), EDIT_TF_TAG.to_owned()],
+                vec![
+                    TF_TAG.to_owned(),
+                    FILTER_TAG.to_owned(),
+                    EDIT_TF_TAG.to_owned()
+                ],
             );
         });
     }
@@ -5114,8 +5335,7 @@ mod tests {
                 .with_tag(TOGGLE_TAG),
         );
         let item = Scene::External(
-            ExternalNode::new(Box::new(super::TodoEditExternal::new(todos)))
-                .with_tag(ITEM_TAG),
+            ExternalNode::new(Box::new(super::TodoEditExternal::new(todos))).with_tag(ITEM_TAG),
         );
         Scene::Container(super::ContainerNode::new(vec![delete, toggle, item]))
     }
@@ -5137,7 +5357,7 @@ mod tests {
     // the `scene/cache_stats` RPC method by
     // `tools/demos/r682_dirty_subtree_cache.py`.
 
-    use super::{build_seed_rows, parse_seed_n_env, seed_todo_row, SEED_N_MAX};
+    use super::{SEED_N_MAX, build_seed_rows, parse_seed_n_env, seed_todo_row};
 
     #[test]
     fn r682b_parse_seed_n_env_accepts_in_range() {

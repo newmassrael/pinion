@@ -19,9 +19,7 @@ pub(crate) fn nfc(s: &str) -> String {
     canonical_composition(&mut buf);
     buf.into_iter()
         .map(|c| {
-            char::from_u32(c).expect(
-                "UCD-derived codepoints are always Unicode scalar values",
-            )
+            char::from_u32(c).expect("UCD-derived codepoints are always Unicode scalar values")
         })
         .collect()
 }

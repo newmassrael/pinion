@@ -193,10 +193,7 @@ mod tests {
     fn const_tag_returns_per_variant_label() {
         assert_eq!(DemoIntent::Click.const_tag(), "demo.click");
         assert_eq!(DemoIntent::Toggle(true).const_tag(), "demo.toggle");
-        assert_eq!(
-            DemoIntent::Label("x".to_string()).const_tag(),
-            "demo.label",
-        );
+        assert_eq!(DemoIntent::Label("x".to_string()).const_tag(), "demo.label",);
     }
 
     #[test]
@@ -216,10 +213,7 @@ mod tests {
 
     #[test]
     fn from_intent_round_trips_string_variant() {
-        let intent = Intent::new_static(
-            "demo.label",
-            IntrospectValue::Text("hi".to_string()),
-        );
+        let intent = Intent::new_static("demo.label", IntrospectValue::Text("hi".to_string()));
         assert_eq!(
             DemoIntent::from_intent(&intent),
             Some(DemoIntent::Label("hi".to_string())),
@@ -281,10 +275,7 @@ mod tests {
 
     #[test]
     fn owned_tag_constructor_preserves_payload() {
-        let intent = Intent::new_owned(
-            String::from("demo.click"),
-            IntrospectValue::Null,
-        );
+        let intent = Intent::new_owned(String::from("demo.click"), IntrospectValue::Null);
         assert_eq!(intent.tag_str(), "demo.click");
         assert_eq!(intent.payload, IntrospectValue::Null);
     }

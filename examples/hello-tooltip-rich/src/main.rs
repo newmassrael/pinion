@@ -43,12 +43,12 @@ use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widgets::tooltip::TooltipExternal;
 use pinion_core::{Frame, Scene, WidgetCore};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::elevation::elevation;
-use pinion_widget_paint::tooltip::{anchor_position, TooltipPlacement, TooltipSide};
+use pinion_widget_paint::tooltip::{TooltipPlacement, TooltipSide, anchor_position};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloTooltipRichRenderer, HelloTooltipRichRendererError);
@@ -148,7 +148,11 @@ fn trigger_scene(posture: AnchorState, theme: &Theme) -> Scene {
                 .with_fg(theme.resolve(ColorRole::OnSurface)),
         ))])
         .with_tag(TRIGGER_TAG)
-        .with_style(BoxStyle::filled(fill).with_corner_radius(8).with_border(border))
+        .with_style(
+            BoxStyle::filled(fill)
+                .with_corner_radius(8)
+                .with_border(border),
+        )
         .with_layout(
             LayoutStyle::new()
                 .flex(FlexDirection::Row)
@@ -373,7 +377,10 @@ mod tests {
         let nodes = RichTooltipView::access_node(&AnchorState::default(), None);
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].role, AriaRole::Button);
-        assert!(nodes[0].described_by.is_none(), "no dangling describedby when hidden");
+        assert!(
+            nodes[0].described_by.is_none(),
+            "no dangling describedby when hidden"
+        );
     }
 
     #[test]
@@ -389,7 +396,12 @@ mod tests {
         assert!(nodes[0].state.focused);
         assert_eq!(nodes[0].described_by.as_deref(), Some("autosave#pop"));
         assert_eq!(nodes[1].role, AriaRole::Tooltip);
-        assert_eq!(nodes[1].name.as_deref(), Some("Auto-save. Saves your changes automatically every few seconds, so you never lose work."));
+        assert_eq!(
+            nodes[1].name.as_deref(),
+            Some(
+                "Auto-save. Saves your changes automatically every few seconds, so you never lose work."
+            )
+        );
     }
 
     #[test]
@@ -399,7 +411,11 @@ mod tests {
         let Scene::Container(c) = &scene else {
             panic!("rich tooltip is a container");
         };
-        assert_eq!(c.tag.as_deref(), Some("autosave#pop"), "carries the #pop hoverable tag");
+        assert_eq!(
+            c.tag.as_deref(),
+            Some("autosave#pop"),
+            "carries the #pop hoverable tag"
+        );
         assert_eq!(c.style.fill, theme.resolve(ColorRole::SurfaceContainer));
         assert_eq!(c.style.corner_radius, CORNER_RADIUS);
         assert!(!c.style.shadows.is_empty(), "elevated: casts a shadow");

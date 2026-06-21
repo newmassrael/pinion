@@ -45,7 +45,7 @@
     clippy::style,
     clippy::complexity,
     clippy::pedantic,
-    clippy::all,
+    clippy::all
 )]
 mod sm {
     include!(concat!(env!("OUT_DIR"), "/toggle_sm.rs"));
@@ -56,12 +56,15 @@ pub use sm::{ToggleEvent, ToggleState};
 // R698 §5.16 — route ToggleState <-> SCXML-id mapping through the R643
 // `WidgetStateName` SSOT primitive, replacing the hand-written
 // `toggle_state_name` fn (mirrors the R696.A Disclosure adoption).
-crate::widget_state_name!(ToggleState, default = Idle, [
-    Idle, Hover, Pressed, Disabled,
-]);
+crate::widget_state_name!(
+    ToggleState,
+    default = Idle,
+    [Idle, Hover, Pressed, Disabled,]
+);
 // R699 §5.16 — ToggleEvent <-> SCXML-name mapping through the
 // `WidgetEventName` SSOT primitive, replacing `parse_toggle_event`.
-crate::widget_event_name!(ToggleEvent,
+crate::widget_event_name!(
+    ToggleEvent,
     external = [
         PointerEnter,
         PointerLeave,
@@ -77,9 +80,8 @@ crate::widget_event_name!(ToggleEvent,
 use sm::TogglePolicy;
 
 use crate::external::{
-    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner,
-    ThreadOwnership,
+    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
 use crate::intent::Intent;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
@@ -100,7 +102,10 @@ impl Toggle {
     /// before the first activate.
     #[must_use]
     pub fn new() -> Self {
-        Self { inner: Widget::new(), value: false }
+        Self {
+            inner: Widget::new(),
+            value: false,
+        }
     }
 
     /// Drive a [`ToggleEvent`] through the SCXML. The `value` field
@@ -120,8 +125,7 @@ impl Toggle {
         let after = self.state();
         let pointer_activate =
             matches!(before, ToggleState::Pressed) && matches!(after, ToggleState::Hover);
-        let keyboard_activate =
-            is_keyboard_activate && !matches!(before, ToggleState::Disabled);
+        let keyboard_activate = is_keyboard_activate && !matches!(before, ToggleState::Disabled);
         if pointer_activate || keyboard_activate {
             self.value = !self.value;
         }
@@ -174,11 +178,7 @@ impl WidgetTransition for Toggle {
         self.send(event);
     }
 
-    fn detect(
-        before: Self::Snapshot,
-        event: Self::Event,
-        after: Self::Snapshot,
-    ) -> Vec<Intent> {
+    fn detect(before: Self::Snapshot, event: Self::Event, after: Self::Snapshot) -> Vec<Intent> {
         let (before_state, before_value) = before;
         let (after_state, after_value) = after;
         let pointer_toggle = matches!(before_state, ToggleState::Pressed)
@@ -222,7 +222,9 @@ pub struct ToggleExternal {
 impl ToggleExternal {
     #[must_use]
     pub fn new() -> Self {
-        Self { em: IntentEmitter::default() }
+        Self {
+            em: IntentEmitter::default(),
+        }
     }
 
     /// Drive a [`ToggleEvent`] through the wrapped SCXML and queue
@@ -325,28 +327,18 @@ impl ExternalIntrospect for ToggleExternal {
         //           mutable via intervene; `state` mutates only
         //           through `send` to keep the SCXML the single
         //           source of truth for interaction transitions.
-        IntrospectSchema::new(&[
-            ("state", "string"),
-            ("value", "bool"),
-            ("send", "string"),
-        ])
+        IntrospectSchema::new(&[("state", "string"), ("value", "bool"), ("send", "string")])
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
         match path {
-            "state" => Some(IntrospectValue::Text(
-                self.state().as_name().to_string(),
-            )),
+            "state" => Some(IntrospectValue::Text(self.state().as_name().to_string())),
             "value" => Some(IntrospectValue::Bool(self.is_on())),
             _ => None,
         }
     }
 
-    fn intervene(
-        &mut self,
-        path: &str,
-        value: IntrospectValue,
-    ) -> Result<(), InterveneError> {
+    fn intervene(&mut self, path: &str, value: IntrospectValue) -> Result<(), InterveneError> {
         match path {
             // Read-only — interaction state mutates only via the SCXML
             // (drive through `send`).
@@ -380,8 +372,7 @@ impl ExternalIntrospect for ToggleExternal {
             // follow-up query.
             "send" => match args {
                 IntrospectValue::Text(ref name) => {
-                    let ev =
-                        ToggleEvent::from_name(name).ok_or(InvokeError::Rejected)?;
+                    let ev = ToggleEvent::from_name(name).ok_or(InvokeError::Rejected)?;
                     self.send(ev);
                     Ok(IntrospectValue::Text(format!(
                         "state={}, value={}",
@@ -455,19 +446,13 @@ impl ExternalIntrospect for ToggleStateSnapshot {
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
         match path {
-            "state" => Some(IntrospectValue::Text(
-                self.state.as_name().to_string(),
-            )),
+            "state" => Some(IntrospectValue::Text(self.state.as_name().to_string())),
             "value" => Some(IntrospectValue::Bool(self.value)),
             _ => None,
         }
     }
 
-    fn intervene(
-        &mut self,
-        _path: &str,
-        _value: IntrospectValue,
-    ) -> Result<(), InterveneError> {
+    fn intervene(&mut self, _path: &str, _value: IntrospectValue) -> Result<(), InterveneError> {
         Err(InterveneError::ReadOnly)
     }
 
@@ -479,7 +464,6 @@ impl ExternalIntrospect for ToggleStateSnapshot {
         Err(InvokeError::Rejected)
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -784,7 +768,10 @@ mod tests {
     fn keyboard_activate_via_invoke_send_flips() {
         let mut bx = ToggleExternal::new();
         let _ = bx
-            .invoke("send", IntrospectValue::Text("KeyboardActivate".to_string()))
+            .invoke(
+                "send",
+                IntrospectValue::Text("KeyboardActivate".to_string()),
+            )
             .unwrap();
         assert!(bx.is_on());
     }

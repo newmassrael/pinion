@@ -42,9 +42,8 @@
 //! month at activation time, mirroring `RadioGroup`'s index payload).
 
 use crate::external::{
-    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner,
-    ThreadOwnership,
+    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
 use crate::input::PointerWireEvent;
 use crate::intent::Intent;
@@ -109,7 +108,11 @@ pub fn day_of_week(date: CivilDate) -> u8 {
 /// day of `month` in `year`.
 #[must_use]
 pub fn weekday_of_first(year: i32, month: u8) -> u8 {
-    day_of_week(CivilDate { year, month, day: 1 })
+    day_of_week(CivilDate {
+        year,
+        month,
+        day: 1,
+    })
 }
 
 /// Roll `(year, month)` by `delta` months, crossing the year boundary
@@ -203,10 +206,9 @@ impl DatePicker {
     /// month, or no selection).
     #[must_use]
     pub fn selected_day_in_view(&self) -> Option<u8> {
-        self.selected.filter(|d| {
-            d.year == self.displayed_year && d.month == self.displayed_month
-        })
-        .map(|d| d.day)
+        self.selected
+            .filter(|d| d.year == self.displayed_year && d.month == self.displayed_month)
+            .map(|d| d.day)
     }
 
     /// Reset the day-leaf vector to the displayed month's length, with
@@ -347,11 +349,7 @@ impl WidgetTransition for DatePicker {
         self.send(day, ev);
     }
 
-    fn detect(
-        before: Self::Snapshot,
-        _event: Self::Event,
-        after: Self::Snapshot,
-    ) -> Vec<Intent> {
+    fn detect(before: Self::Snapshot, _event: Self::Event, after: Self::Snapshot) -> Vec<Intent> {
         if before != after {
             if let Some(date) = after {
                 return vec![Intent::new_static(
@@ -377,7 +375,9 @@ impl DatePickerExternal {
     /// selection.
     #[must_use]
     pub fn new(year: i32, month: u8, selected: Option<CivilDate>) -> Self {
-        Self { em: IntentEmitter::new(DatePicker::new(year, month, selected)) }
+        Self {
+            em: IntentEmitter::new(DatePicker::new(year, month, selected)),
+        }
     }
 
     /// Drive `event` to the day cell for `day` (1-based). Queues a
@@ -563,11 +563,7 @@ impl ExternalIntrospect for DatePickerExternal {
         }
     }
 
-    fn intervene(
-        &mut self,
-        path: &str,
-        value: IntrospectValue,
-    ) -> Result<(), InterveneError> {
+    fn intervene(&mut self, path: &str, value: IntrospectValue) -> Result<(), InterveneError> {
         match path {
             // R704 §5.40 — the roving active descendant is the one
             // writable slot: AT `Focus` actions + the binding's arrow-key
@@ -593,8 +589,8 @@ impl ExternalIntrospect for DatePickerExternal {
             // direct slot assignment. This mirrors the `RadioGroup`
             // convention where the commit-class paths fire the `"selected"`
             // intent.
-            "year" | "month" | "days" | "selected" | "selected_year"
-            | "selected_month" | "selected_day" => Err(InterveneError::ReadOnly),
+            "year" | "month" | "days" | "selected" | "selected_year" | "selected_month"
+            | "selected_day" => Err(InterveneError::ReadOnly),
             _ => Err(InterveneError::UnknownPath),
         }
     }
@@ -627,8 +623,7 @@ impl ExternalIntrospect for DatePickerExternal {
                     // would otherwise read "PointerUp:c" as the event name
                     // and the month-roll click was silently rejected).
                     let (key, event_name, _mods) =
-                        crate::composite_tag::split_send_payload(s)
-                            .ok_or(InvokeError::Rejected)?;
+                        crate::composite_tag::split_send_payload(s).ok_or(InvokeError::Rejected)?;
                     // Composite nav sub-tags: a click on the paint
                     // `"<tag>#prev"` / `"<tag>#next"` button arrives here
                     // as `"prev:<EventName>"` / `"next:<EventName>"` (the
@@ -655,8 +650,7 @@ impl ExternalIntrospect for DatePickerExternal {
                     if day < 1 || day > self.days_in_displayed_month() {
                         return Err(InvokeError::Rejected);
                     }
-                    let ev = RadioEvent::from_name(event_name)
-                        .ok_or(InvokeError::Rejected)?;
+                    let ev = RadioEvent::from_name(event_name).ok_or(InvokeError::Rejected)?;
                     self.send(day, ev);
                     Ok(match self.selected() {
                         Some(d) => IntrospectValue::Int(i64::from(d.day)),
@@ -711,9 +705,23 @@ mod tests {
     #[test]
     fn day_of_week_known() {
         // 2026-05-01 is a Friday (5).
-        assert_eq!(day_of_week(CivilDate { year: 2026, month: 5, day: 1 }), 5);
+        assert_eq!(
+            day_of_week(CivilDate {
+                year: 2026,
+                month: 5,
+                day: 1
+            }),
+            5
+        );
         // 2000-01-01 is a Saturday (6).
-        assert_eq!(day_of_week(CivilDate { year: 2000, month: 1, day: 1 }), 6);
+        assert_eq!(
+            day_of_week(CivilDate {
+                year: 2000,
+                month: 1,
+                day: 1
+            }),
+            6
+        );
     }
 
     #[test]
@@ -752,7 +760,14 @@ mod tests {
     fn select_day_sets_selection() {
         let mut p = DatePicker::new(2026, 5, None);
         activate(&mut p, 15);
-        assert_eq!(p.selected(), Some(CivilDate { year: 2026, month: 5, day: 15 }));
+        assert_eq!(
+            p.selected(),
+            Some(CivilDate {
+                year: 2026,
+                month: 5,
+                day: 15
+            })
+        );
         assert!(p.is_selected(15));
         assert!(!p.is_selected(14));
     }
@@ -762,7 +777,14 @@ mod tests {
         let mut p = DatePicker::new(2026, 5, None);
         activate(&mut p, 3);
         activate(&mut p, 20);
-        assert_eq!(p.selected(), Some(CivilDate { year: 2026, month: 5, day: 20 }));
+        assert_eq!(
+            p.selected(),
+            Some(CivilDate {
+                year: 2026,
+                month: 5,
+                day: 20
+            })
+        );
         assert!(!p.is_selected(3));
         assert!(p.is_selected(20));
     }
@@ -775,7 +797,14 @@ mod tests {
         assert_eq!(p.displayed_month(), 6);
         assert_eq!(p.displayed_year(), 2026);
         // Selection retained, but day 10 of June is not selected.
-        assert_eq!(p.selected(), Some(CivilDate { year: 2026, month: 5, day: 10 }));
+        assert_eq!(
+            p.selected(),
+            Some(CivilDate {
+                year: 2026,
+                month: 5,
+                day: 10
+            })
+        );
         assert!(!p.is_selected(10));
     }
 
@@ -802,7 +831,10 @@ mod tests {
         p.step_month(1); // June
         assert!(!p.is_selected(10));
         p.step_month(-1); // back to May
-        assert!(p.is_selected(10), "in-view selected day re-selects on return");
+        assert!(
+            p.is_selected(10),
+            "in-view selected day re-selects on return"
+        );
     }
 
     // ── External + intent emission ────────────────────────────────
@@ -830,7 +862,14 @@ mod tests {
                 assert_eq!(out, IntrospectValue::Int(5));
             }
         }
-        assert_eq!(p.selected(), Some(CivilDate { year: 2026, month: 5, day: 5 }));
+        assert_eq!(
+            p.selected(),
+            Some(CivilDate {
+                year: 2026,
+                month: 5,
+                day: 5
+            })
+        );
     }
 
     #[test]
@@ -863,12 +902,20 @@ mod tests {
                 "prev:{ev} accepted as no-op or roll edge",
             );
         }
-        assert_eq!(p.displayed_month(), 4, "prev cycle rolls back one month once");
+        assert_eq!(
+            p.displayed_month(),
+            4,
+            "prev cycle rolls back one month once"
+        );
         assert_eq!(p.displayed_year(), 2026);
         for ev in ["PointerEnter", "PointerDown", "PointerUp", "PointerLeave"] {
             let _ = p.invoke("send", IntrospectValue::Text(format!("next:{ev}")));
         }
-        assert_eq!(p.displayed_month(), 5, "next cycle rolls forward one month once");
+        assert_eq!(
+            p.displayed_month(),
+            5,
+            "next cycle rolls forward one month once"
+        );
     }
 
     #[test]
@@ -891,7 +938,8 @@ mod tests {
         // `Null` clears; out-of-range / wrong-variant rejected.
         let mut p = DatePickerExternal::new(2026, 5, None);
         assert_eq!(p.query("focused_day"), Some(IntrospectValue::Int(-1)));
-        p.intervene("focused_day", IntrospectValue::Int(15)).unwrap();
+        p.intervene("focused_day", IntrospectValue::Int(15))
+            .unwrap();
         assert_eq!(p.focused_day(), Some(15));
         assert_eq!(p.query("focused_day"), Some(IntrospectValue::Int(15)));
         // No `"selected"` intent — focused_day is navigation, not commit.

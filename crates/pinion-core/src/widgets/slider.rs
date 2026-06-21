@@ -33,7 +33,7 @@
     clippy::style,
     clippy::complexity,
     clippy::pedantic,
-    clippy::all,
+    clippy::all
 )]
 mod sm {
     include!(concat!(env!("OUT_DIR"), "/slider_sm.rs"));
@@ -59,10 +59,13 @@ pub use sm::SliderPolicy;
 // macros below carry the impls. `state_name_derive` + `event_name_derive`
 // on `#[widget(...)]` use these to drop the binding's per-binding
 // `parse_slider_state` + `match` arms.
-crate::widget_state_name!(SliderState, default = Idle, [
-    Idle, Hover, Dragging, Disabled,
-]);
-crate::widget_event_name!(SliderEvent,
+crate::widget_state_name!(
+    SliderState,
+    default = Idle,
+    [Idle, Hover, Dragging, Disabled,]
+);
+crate::widget_event_name!(
+    SliderEvent,
     external = [
         PointerEnter,
         PointerLeave,
@@ -76,9 +79,8 @@ crate::widget_event_name!(SliderEvent,
 );
 
 use crate::external::{
-    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner,
-    ThreadOwnership,
+    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
 use crate::intent::Intent;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
@@ -266,11 +268,7 @@ impl WidgetTransition for Slider {
         self.send(event);
     }
 
-    fn detect(
-        before: Self::Snapshot,
-        _event: Self::Event,
-        after: Self::Snapshot,
-    ) -> Vec<Intent> {
+    fn detect(before: Self::Snapshot, _event: Self::Event, after: Self::Snapshot) -> Vec<Intent> {
         let (before_state, _) = before;
         let (after_state, after_value) = after;
         if matches!(before_state, SliderState::Dragging)
@@ -303,7 +301,9 @@ impl SliderExternal {
     /// callers (hello-slider, RPC clients, integration tests).
     #[must_use]
     pub fn new() -> Self {
-        Self { em: IntentEmitter::default() }
+        Self {
+            em: IntentEmitter::default(),
+        }
     }
 
     /// R51.39 §5.38 — construct a Slider external with an explicit
@@ -493,9 +493,7 @@ impl ExternalIntrospect for SliderExternal {
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
         match path {
-            "state" => Some(IntrospectValue::Text(
-                self.state().as_name().to_string(),
-            )),
+            "state" => Some(IntrospectValue::Text(self.state().as_name().to_string())),
             "value" => Some(IntrospectValue::Float(f64::from(self.value()))),
             "orientation" => Some(IntrospectValue::Text(
                 slider_axis_name(self.axis()).to_string(),
@@ -509,11 +507,7 @@ impl ExternalIntrospect for SliderExternal {
         }
     }
 
-    fn intervene(
-        &mut self,
-        path: &str,
-        value: IntrospectValue,
-    ) -> Result<(), InterveneError> {
+    fn intervene(&mut self, path: &str, value: IntrospectValue) -> Result<(), InterveneError> {
         match path {
             // R51.39 §5.38 — `state` is SCXML-owned (the framework
             // drives it via `send`), and `orientation` is
@@ -554,12 +548,9 @@ impl ExternalIntrospect for SliderExternal {
         match path {
             "send" => match args {
                 IntrospectValue::Text(ref name) => {
-                    let ev =
-                        SliderEvent::from_name(name).ok_or(InvokeError::Rejected)?;
+                    let ev = SliderEvent::from_name(name).ok_or(InvokeError::Rejected)?;
                     self.send(ev);
-                    Ok(IntrospectValue::Text(
-                        self.state().as_name().to_string(),
-                    ))
+                    Ok(IntrospectValue::Text(self.state().as_name().to_string()))
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
@@ -932,10 +923,7 @@ mod tests {
         // break in-flight intent contracts. The intervene gate
         // matches `"state"` (also construction-anchored).
         let mut sx = SliderExternal::new();
-        let r = sx.intervene(
-            "orientation",
-            IntrospectValue::Text("vertical".to_string()),
-        );
+        let r = sx.intervene("orientation", IntrospectValue::Text("vertical".to_string()));
         assert_eq!(r, Err(InterveneError::ReadOnly));
         // Original axis untouched.
         assert_eq!(sx.axis(), SliderAxis::Horizontal);

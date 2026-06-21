@@ -155,7 +155,14 @@ pub fn view_tabs(
 ) -> Scene {
     let mut tabs: Vec<Scene> = Vec::with_capacity(labels.len());
     for (i, label) in labels.iter().enumerate() {
-        tabs.push(build_tab(tag, i, label, selected_index == Some(i), theme, style));
+        tabs.push(build_tab(
+            tag,
+            i,
+            label,
+            selected_index == Some(i),
+            theme,
+            style,
+        ));
     }
     Scene::Container(
         ContainerNode::new(tabs)
@@ -321,7 +328,13 @@ mod tests {
 
     #[test]
     fn r690_empty_labels_produces_root_only() {
-        let scene = view_tabs("tabs", &[], Some(0), &light_theme(), &TabsStyle::m3_default());
+        let scene = view_tabs(
+            "tabs",
+            &[],
+            Some(0),
+            &light_theme(),
+            &TabsStyle::m3_default(),
+        );
         assert_eq!(count_tab_children(&scene), 0);
         assert_eq!(collect_tags(&scene), vec!["tabs".to_string()]);
     }
@@ -371,7 +384,13 @@ mod tests {
     #[test]
     fn r690_no_selection_paints_every_indicator_transparent() {
         let labels = tabs();
-        let scene = view_tabs("tabs", &labels, None, &light_theme(), &TabsStyle::m3_default());
+        let scene = view_tabs(
+            "tabs",
+            &labels,
+            None,
+            &light_theme(),
+            &TabsStyle::m3_default(),
+        );
         let Scene::Container(c) = &scene else {
             panic!("expected Container root");
         };
@@ -388,7 +407,10 @@ mod tests {
         let Scene::Container(c) = &scene else {
             panic!("expected Container root");
         };
-        assert_eq!(label_fg(&c.children[2]), Some(theme.resolve(ColorRole::Accent)));
+        assert_eq!(
+            label_fg(&c.children[2]),
+            Some(theme.resolve(ColorRole::Accent))
+        );
         assert_eq!(
             label_fg(&c.children[0]),
             Some(theme.resolve(ColorRole::OnSurfaceMuted))
@@ -398,7 +420,13 @@ mod tests {
     #[test]
     fn r690_label_is_visible_text() {
         let labels = tabs();
-        let scene = view_tabs("tabs", &labels, Some(0), &light_theme(), &TabsStyle::m3_default());
+        let scene = view_tabs(
+            "tabs",
+            &labels,
+            Some(0),
+            &light_theme(),
+            &TabsStyle::m3_default(),
+        );
         let collected = {
             fn collect_text(scene: &Scene, out: &mut Vec<String>) {
                 match scene {

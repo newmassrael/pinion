@@ -222,7 +222,12 @@ mod tests {
             Glyph::Simple(s) => {
                 assert_eq!(
                     s.header,
-                    GlyphHeader { x_min: 0, y_min: 0, x_max: 100, y_max: 50 }
+                    GlyphHeader {
+                        x_min: 0,
+                        y_min: 0,
+                        x_max: 100,
+                        y_max: 50
+                    }
                 );
                 assert_eq!(s.end_pts_of_contours, vec![3]);
                 assert_eq!(s.points.len(), 4);
@@ -339,25 +344,45 @@ mod tests {
         assert_eq!(empty.header(), None);
 
         let simple = Glyph::Simple(SimpleGlyph {
-            header: GlyphHeader { x_min: 1, y_min: 2, x_max: 3, y_max: 4 },
+            header: GlyphHeader {
+                x_min: 1,
+                y_min: 2,
+                x_max: 3,
+                y_max: 4,
+            },
             end_pts_of_contours: vec![],
             instructions: vec![],
             points: vec![],
         });
         assert_eq!(
             simple.header(),
-            Some(GlyphHeader { x_min: 1, y_min: 2, x_max: 3, y_max: 4 })
+            Some(GlyphHeader {
+                x_min: 1,
+                y_min: 2,
+                x_max: 3,
+                y_max: 4
+            })
         );
 
         let composite = Glyph::Composite(CompositeGlyph {
-            header: GlyphHeader { x_min: -10, y_min: -20, x_max: 100, y_max: 200 },
+            header: GlyphHeader {
+                x_min: -10,
+                y_min: -20,
+                x_max: 100,
+                y_max: 200,
+            },
             raw_body: vec![],
             components: vec![],
             instructions: vec![],
         });
         assert_eq!(
             composite.header(),
-            Some(GlyphHeader { x_min: -10, y_min: -20, x_max: 100, y_max: 200 })
+            Some(GlyphHeader {
+                x_min: -10,
+                y_min: -20,
+                x_max: 100,
+                y_max: 200
+            })
         );
     }
 
@@ -387,15 +412,17 @@ mod tests {
             Glyph::Composite(c) => {
                 assert_eq!(
                     c.header,
-                    GlyphHeader { x_min: 0, y_min: 0, x_max: 100, y_max: 100 }
+                    GlyphHeader {
+                        x_min: 0,
+                        y_min: 0,
+                        x_max: 100,
+                        y_max: 100
+                    }
                 );
                 assert_eq!(c.raw_body.len(), 6); // source-of-truth 그대로
                 assert_eq!(c.components.len(), 1);
                 assert_eq!(c.components[0].glyph_index, 5);
-                assert_eq!(
-                    c.components[0].args,
-                    ComponentArgs::Offset { x: 10, y: -5 }
-                );
+                assert_eq!(c.components[0].args, ComponentArgs::Offset { x: 10, y: -5 });
                 assert!(c.instructions.is_empty());
             }
             other => panic!("expected Composite, got {other:?}"),

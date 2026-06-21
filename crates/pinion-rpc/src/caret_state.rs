@@ -65,7 +65,7 @@ use pinion_core::reactive::Owner;
 use pinion_core::widgets::caret_blink::CaretBlink;
 use serde::Serialize;
 
-use crate::substrate_introspect::{lookup, SubstrateIntrospectError};
+use crate::substrate_introspect::{SubstrateIntrospectError, lookup};
 
 /// Typed errors the [`caret_state`] dispatcher can return. R607
 /// §5.7 §5.22 aliased to [`SubstrateIntrospectError`]. See the

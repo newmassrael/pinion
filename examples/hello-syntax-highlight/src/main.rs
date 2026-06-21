@@ -36,23 +36,23 @@
 //! python3 tools/demos/r904_syntax_highlight.py
 //! ```
 
+use pinion_a11y::{AccessNode, WidgetA11y};
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
-use pinion_platform_clipboard::use_app_clipboard;
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, TextStyle,
 };
-use pinion_core::syntax::{highlight_code, SyntaxPalette};
+use pinion_core::syntax::{SyntaxPalette, highlight_code};
+use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::undo::use_undo_stack;
 use pinion_core::widgets::caret_blink::use_caret_blink;
 use pinion_core::widgets::text_edit::use_text_edit_state;
-use std::rc::Rc;
 use pinion_core::widgets::text_field::{TextFieldEvent, TextFieldExternal, TextFieldState};
-use pinion_core::theme::{use_theme, ColorRole};
 use pinion_core::{Frame, Scene, WidgetCore, WidgetStateName};
-use pinion_a11y::{AccessNode, WidgetA11y};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_platform_clipboard::use_app_clipboard;
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_text::CaretRect;
+use std::rc::Rc;
 // R657 §5.16 §5.38 — lifted TextField paint substrate (view body +
 // IME caret rect + state name lookup + SCXML read helper).
 use pinion_widget_paint::text_field as tf_paint;
@@ -352,7 +352,12 @@ impl WidgetCore for SyntaxView {
     /// `hello-listbox`: keys only flow when this widget owns focus,
     /// avoiding the broadcast-to-every-widget aliasing that
     /// pre-R51.x `apply_key` suffered.
-    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, modifiers: pinion_core::Modifiers) -> bool {
+    fn apply_key(
+        scene: &mut Scene,
+        focused: Option<&str>,
+        key: &str,
+        modifiers: pinion_core::Modifiers,
+    ) -> bool {
         if focused != Some(TF_TAG) {
             return false;
         }
@@ -451,11 +456,7 @@ impl WidgetCore for SyntaxView {
     }
 
     fn fmt_state_log(state: &(TextFieldState, u32)) -> String {
-        format!(
-            "{} / caret={}",
-            state.0.as_name(),
-            state.1,
-        )
+        format!("{} / caret={}", state.0.as_name(), state.1,)
     }
 }
 
@@ -477,7 +478,12 @@ impl WidgetA11y for SyntaxView {
         let tag = <Self as WidgetCore>::tag();
         // R790 §5.40 — the textbox node mapping is the lifted SSOT shared
         // by every text-field binding (`tf_paint::text_field_a11y_node`).
-        vec![tf_paint::text_field_a11y_node(tag, text, *interaction, focused == Some(tag))]
+        vec![tf_paint::text_field_a11y_node(
+            tag,
+            text,
+            *interaction,
+            focused == Some(tag),
+        )]
     }
 }
 
@@ -485,7 +491,10 @@ impl WidgetView for SyntaxView {
     type Renderer = HelloSyntaxRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 
     /// R56.2.c §5.13 §5.38 — publish the caret rect to the platform
@@ -677,10 +686,10 @@ mod tests {
     // local tests below cover the BINDING contract: view-fn tag
     // presence, access_node shape, caret position smoke, palette-swap
     // reactive wiring through the binding's view fn.
-    use super::{view, SyntaxView, KEYWORDS, SEED_CODE, STATUS_TAG, THEME_TAG, TF_TAG};
+    use super::{KEYWORDS, SEED_CODE, STATUS_TAG, SyntaxView, TF_TAG, THEME_TAG, view};
     use pinion_a11y::{AccessValue, AriaRole, WidgetA11y};
     use pinion_core::reactive::Owner;
-    use pinion_core::theme::{use_theme, Theme, ThemeMode};
+    use pinion_core::theme::{Theme, ThemeMode, use_theme};
     use pinion_core::widgets::caret_blink::use_caret_blink;
     use pinion_core::widgets::text_edit::use_text_edit_state;
     use pinion_core::widgets::text_field::TextFieldState;
@@ -741,8 +750,8 @@ mod tests {
 
     #[test]
     fn r904_create_external_seeds_code_and_highlights() {
-        use pinion_core::widgets::text_edit::use_text_edit_state;
         use pinion_core::WidgetCore;
+        use pinion_core::widgets::text_edit::use_text_edit_state;
         with_owner(|| {
             // create_external seeds the code and attaches the highlighter.
             let _ext = SyntaxView::create_external();
@@ -758,8 +767,8 @@ mod tests {
 
     #[test]
     fn r904_typing_a_keyword_rehighlights() {
-        use pinion_core::widgets::text_edit::use_text_edit_state;
         use pinion_core::WidgetCore;
+        use pinion_core::widgets::text_edit::use_text_edit_state;
         with_owner(|| {
             let _ext = SyntaxView::create_external();
             let edit = use_text_edit_state(TF_TAG);
@@ -865,8 +874,8 @@ mod tests {
 
     #[test]
     fn r763_native_shift_arrow_extends_selection() {
-        use pinion_core::scene::ExternalNode;
         use pinion_core::WidgetCore;
+        use pinion_core::scene::ExternalNode;
         with_owner(|| {
             // The External attaches the same `use_text_edit_state(TF_TAG)`
             // Rc this test reads (one owner-cached holder per tag), so
@@ -874,9 +883,8 @@ mod tests {
             let edit = use_text_edit_state(TF_TAG);
             edit.set_text("hello".to_owned());
             edit.set_caret(5);
-            let mut scene = Scene::External(
-                ExternalNode::new(SyntaxView::create_external()).with_tag(TF_TAG),
-            );
+            let mut scene =
+                Scene::External(ExternalNode::new(SyntaxView::create_external()).with_tag(TF_TAG));
             let shift = pinion_core::Modifiers {
                 shift: true,
                 ctrl: false,
@@ -887,7 +895,12 @@ mod tests {
             // the bare Text invoke shape, so native Shift+ArrowLeft
             // collapsed instead of extending. R763 forwards the Json
             // shape carrying the shift bit.
-            assert!(SyntaxView::apply_key(&mut scene, Some(TF_TAG), "ArrowLeft", shift));
+            assert!(SyntaxView::apply_key(
+                &mut scene,
+                Some(TF_TAG),
+                "ArrowLeft",
+                shift
+            ));
             assert_eq!(
                 edit.selection_range(),
                 Some((4, 5)),
@@ -941,16 +954,10 @@ mod tests {
     #[test]
     fn r56_1_b_1_access_node_focused_flag_mirrors_focus() {
         with_owner(|| {
-            let unfocused = SyntaxView::access_node(
-                &(TextFieldState::Idle, 0),
-                None,
-            );
+            let unfocused = SyntaxView::access_node(&(TextFieldState::Idle, 0), None);
             assert!(!unfocused[0].state.focused);
 
-            let focused = SyntaxView::access_node(
-                &(TextFieldState::Focused, 0),
-                Some(TF_TAG),
-            );
+            let focused = SyntaxView::access_node(&(TextFieldState::Focused, 0), Some(TF_TAG));
             assert!(focused[0].state.focused);
         });
     }
@@ -958,10 +965,7 @@ mod tests {
     #[test]
     fn r56_1_b_1_access_node_disabled_flag_set_when_disabled() {
         with_owner(|| {
-            let nodes = SyntaxView::access_node(
-                &(TextFieldState::Disabled, 0),
-                None,
-            );
+            let nodes = SyntaxView::access_node(&(TextFieldState::Disabled, 0), None);
             assert!(nodes[0].state.disabled);
         });
     }
@@ -1026,8 +1030,7 @@ mod tests {
     fn scene_contains_fill(scene: &Scene, target: Color) -> bool {
         match scene {
             Scene::Container(n) => {
-                n.style.fill == target
-                    || n.children.iter().any(|c| scene_contains_fill(c, target))
+                n.style.fill == target || n.children.iter().any(|c| scene_contains_fill(c, target))
             }
             Scene::Box(n) => n.style.fill == target,
             _ => false,

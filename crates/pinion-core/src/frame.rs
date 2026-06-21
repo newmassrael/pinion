@@ -69,10 +69,7 @@ mod tests {
     fn default_matches_new() {
         // PartialEq on Frame derives field-wise; bit-exact through
         // Default's zero-init path.
-        assert_eq!(
-            Frame::default().dt.to_bits(),
-            Frame::new().dt.to_bits(),
-        );
+        assert_eq!(Frame::default().dt.to_bits(), Frame::new().dt.to_bits(),);
     }
 
     #[test]

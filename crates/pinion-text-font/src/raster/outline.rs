@@ -49,13 +49,24 @@ impl Affine {
     /// The base design→device map at `scale = px_per_em / units_per_em`: scale
     /// plus the y-flip, with a zero buffer offset (folded in by `translated`).
     pub(super) fn scale_flip(scale: f32) -> Self {
-        Self { a: scale, b: 0.0, c: 0.0, d: -scale, e: 0.0, f: 0.0 }
+        Self {
+            a: scale,
+            b: 0.0,
+            c: 0.0,
+            d: -scale,
+            e: 0.0,
+            f: 0.0,
+        }
     }
 
     /// Post-translate in device space (fold the buffer origin into the map):
     /// `translate(dx, dy) ∘ self`.
     pub(super) fn translated(self, dx: f32, dy: f32) -> Self {
-        Self { e: self.e + dx, f: self.f + dy, ..self }
+        Self {
+            e: self.e + dx,
+            f: self.f + dy,
+            ..self
+        }
     }
 
     /// Compose `self ∘ inner` — `inner` (a child component's design-space affine)
@@ -97,7 +108,14 @@ impl Affine {
                 f32::from(yy) * F2DOT14,
             ),
         };
-        Self { a, b, c, d, e: dx, f: dy }
+        Self {
+            a,
+            b,
+            c,
+            d,
+            e: dx,
+            f: dy,
+        }
     }
 
     fn map(&self, p: GlyphPoint) -> Point {
@@ -110,11 +128,7 @@ impl Affine {
 
 /// Flatten every contour of `glyph` into closed device-space polylines,
 /// passing each directed edge `(p0, p1)` to `emit`.
-pub(super) fn for_each_edge<F: FnMut(Point, Point)>(
-    glyph: &SimpleGlyph,
-    xf: &Affine,
-    mut emit: F,
-) {
+pub(super) fn for_each_edge<F: FnMut(Point, Point)>(glyph: &SimpleGlyph, xf: &Affine, mut emit: F) {
     let mut start = 0usize;
     for &end in &glyph.end_pts_of_contours {
         let end = usize::from(end);
@@ -128,11 +142,7 @@ pub(super) fn for_each_edge<F: FnMut(Point, Point)>(
 }
 
 /// Flatten one contour (a closed cycle of on/off-curve points).
-fn flatten_contour<F: FnMut(Point, Point)>(
-    pts: &[GlyphPoint],
-    xf: &Affine,
-    emit: &mut F,
-) {
+fn flatten_contour<F: FnMut(Point, Point)>(pts: &[GlyphPoint], xf: &Affine, emit: &mut F) {
     let n = pts.len();
     if n < 2 {
         return; // single point / empty contour bounds no area.

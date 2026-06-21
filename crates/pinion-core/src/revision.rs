@@ -117,7 +117,10 @@ mod tests {
                 seen
             }));
         }
-        let mut all: Vec<u64> = handles.into_iter().flat_map(|h| h.join().unwrap()).collect();
+        let mut all: Vec<u64> = handles
+            .into_iter()
+            .flat_map(|h| h.join().unwrap())
+            .collect();
         all.sort_unstable();
         // 64 bumps starting from 1: values 1..=64, all unique.
         assert_eq!(all.len(), 64);

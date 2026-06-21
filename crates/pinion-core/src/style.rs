@@ -75,10 +75,7 @@ impl Color {
     /// Encode back into the softbuffer-style `0xAARRGGBB` literal.
     #[must_use]
     pub const fn to_argb(self) -> u32 {
-        ((self.a as u32) << 24)
-            | ((self.r as u32) << 16)
-            | ((self.g as u32) << 8)
-            | (self.b as u32)
+        ((self.a as u32) << 24) | ((self.r as u32) << 16) | ((self.g as u32) << 8) | (self.b as u32)
     }
 
     /// Fully-transparent (a=0) ARGB literal `0x0000_0000` decoded.
@@ -375,10 +372,7 @@ impl Color {
         if self.a == 0xff {
             format!("#{:02x}{:02x}{:02x}", self.r, self.g, self.b)
         } else {
-            format!(
-                "#{:02x}{:02x}{:02x}{:02x}",
-                self.r, self.g, self.b, self.a,
-            )
+            format!("#{:02x}{:02x}{:02x}{:02x}", self.r, self.g, self.b, self.a,)
         }
     }
 
@@ -421,9 +415,9 @@ impl Color {
         let t = if t.is_nan() { 0.0 } else { t.clamp(0.0, 1.0) };
         let a = self.to_linear();
         let b = other.to_linear();
-        Self::from_linear(<crate::animation::AnimVec4 as crate::animation::Animatable>::lerp(
-            a, b, t,
-        ))
+        Self::from_linear(
+            <crate::animation::AnimVec4 as crate::animation::Animatable>::lerp(a, b, t),
+        )
     }
 
     /// Decode sRGB gamma-encoded channels into linear-light
@@ -541,7 +535,11 @@ fn srgb_decode(c: u8) -> f32 {
     clippy::cast_precision_loss
 )]
 pub fn scale_normalized_to_px(value: f32, total: u32) -> u32 {
-    let v = if value.is_nan() { 0.0 } else { value.clamp(0.0, 1.0) };
+    let v = if value.is_nan() {
+        0.0
+    } else {
+        value.clamp(0.0, 1.0)
+    };
     let pixels = (v * total as f32).round();
     // Clamp the float result before the as-cast so any drift past
     // `total` (e.g. value = 1.0 + epsilon rounded up) saturates
@@ -762,7 +760,11 @@ fn hsl_to_srgb_bytes(h: f32, s: f32, l: f32) -> (u8, u8, u8) {
         let g = quantize_unit_byte(l * 255.0);
         return (g, g, g);
     }
-    let q = if l < 0.5 { l * (1.0 + s) } else { l + s - l * s };
+    let q = if l < 0.5 {
+        l * (1.0 + s)
+    } else {
+        l + s - l * s
+    };
     let p = 2.0 * l - q;
     let h_norm = h / 360.0;
     let r = hue_to_rgb(p, q, h_norm + 1.0 / 3.0);
@@ -951,7 +953,10 @@ mod color_linear_tests {
         // s == 0 → grey ramp driven by v, hue-independent.
         assert_eq!(Color::from_hsv(0.0, 0.0, 0.0), Color::rgb(0, 0, 0));
         assert_eq!(Color::from_hsv(123.0, 0.0, 1.0), Color::rgb(255, 255, 255));
-        assert_eq!(Color::from_hsv(300.0, 0.0, 0.5), Color::from_hsv(0.0, 0.0, 0.5));
+        assert_eq!(
+            Color::from_hsv(300.0, 0.0, 0.5),
+            Color::from_hsv(0.0, 0.0, 0.5)
+        );
         // v == 0 → black regardless of hue/saturation (SV-pad bottom).
         assert_eq!(Color::from_hsv(200.0, 1.0, 0.0), Color::rgb(0, 0, 0));
         // Always opaque (HSV has no alpha).
@@ -961,7 +966,10 @@ mod color_linear_tests {
     #[test]
     fn r709_from_hsv_wraps_and_clamps() {
         // rem_euclid wrap: -60° == 300° (magenta), 360° == 0° (red).
-        assert_eq!(Color::from_hsv(-60.0, 1.0, 1.0), Color::from_hsv(300.0, 1.0, 1.0));
+        assert_eq!(
+            Color::from_hsv(-60.0, 1.0, 1.0),
+            Color::from_hsv(300.0, 1.0, 1.0)
+        );
         assert_eq!(Color::from_hsv(360.0, 1.0, 1.0), Color::rgb(255, 0, 0));
         // Out-of-range s/v saturate, never wrap.
         assert_eq!(Color::from_hsv(0.0, 5.0, 5.0), Color::rgb(255, 0, 0));
@@ -1039,11 +1047,7 @@ mod color_linear_tests {
         let white = Color::rgb(255, 255, 255);
         let black = Color::rgb(0, 0, 0);
         let mid = white.lerp(black, 0.5);
-        assert!(
-            mid.r > 180,
-            "perceptual mid expected > 180, got {}",
-            mid.r,
-        );
+        assert!(mid.r > 180, "perceptual mid expected > 180, got {}", mid.r,);
         assert_eq!(mid.r, mid.g);
         assert_eq!(mid.r, mid.b);
     }
@@ -1841,9 +1845,7 @@ pub enum TextOverflow {
 /// set 1:1, and an exhaustive cross-crate `match` is what lets the compiler
 /// enforce the `pinion-text` parley bridge (`map_generic_family`) stays
 /// complete if a variant is ever added.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum GenericFontFamily {
     /// Proportional serifed (`serif`).
     Serif,
@@ -2083,10 +2085,7 @@ impl TextStyle {
     /// produces [`FontFamily::Named`] (it does NOT classify generic keywords —
     /// that is the wire boundary's job, [`FontFamily::parse_css`]).
     #[must_use]
-    pub fn with_font_family(
-        mut self,
-        family: impl Into<std::borrow::Cow<'static, str>>,
-    ) -> Self {
+    pub fn with_font_family(mut self, family: impl Into<std::borrow::Cow<'static, str>>) -> Self {
         self.font_family = Some(FontFamily::Named(family.into()));
         self
     }
@@ -2878,13 +2877,19 @@ mod tests {
 
     #[test]
     fn r615_from_hex_accepts_six_digit_lowercase() {
-        assert_eq!(Color::from_hex("#fefbff"), Some(Color::rgb(0xfe, 0xfb, 0xff)));
+        assert_eq!(
+            Color::from_hex("#fefbff"),
+            Some(Color::rgb(0xfe, 0xfb, 0xff))
+        );
     }
 
     #[test]
     fn r615_from_hex_accepts_six_digit_uppercase() {
         // CSS Color Module Level 4: hex digits are case-insensitive.
-        assert_eq!(Color::from_hex("#FEFBFF"), Some(Color::rgb(0xfe, 0xfb, 0xff)));
+        assert_eq!(
+            Color::from_hex("#FEFBFF"),
+            Some(Color::rgb(0xfe, 0xfb, 0xff))
+        );
     }
 
     #[test]
@@ -2952,10 +2957,7 @@ mod tests {
 
     #[test]
     fn r615_to_hex_emits_eight_digit_for_translucent() {
-        assert_eq!(
-            Color::rgba(0x10, 0x20, 0x30, 0x80).to_hex(),
-            "#10203080",
-        );
+        assert_eq!(Color::rgba(0x10, 0x20, 0x30, 0x80).to_hex(), "#10203080",);
     }
 
     #[test]
@@ -2972,8 +2974,8 @@ mod tests {
         for c in [
             Color::rgb(0x00, 0x00, 0x00),
             Color::rgb(0xff, 0xff, 0xff),
-            Color::rgb(0x19, 0x76, 0xd2),  // Material Blue 700
-            Color::rgb(0xb3, 0x26, 0x1e),  // Material Error 40
+            Color::rgb(0x19, 0x76, 0xd2), // Material Blue 700
+            Color::rgb(0xb3, 0x26, 0x1e), // Material Error 40
             Color::rgba(0x10, 0x20, 0x30, 0x80),
             Color::rgba(0x00, 0x00, 0x00, 0x01),
             Color::TRANSPARENT,
@@ -3064,14 +3066,8 @@ mod tests {
 
     #[test]
     fn r624_from_rgba_function_rejects_out_of_range_alpha() {
-        assert_eq!(
-            Color::from_rgb_function("rgba(255, 0, 0, 1.5)"),
-            None,
-        );
-        assert_eq!(
-            Color::from_rgb_function("rgba(255, 0, 0, -0.1)"),
-            None,
-        );
+        assert_eq!(Color::from_rgb_function("rgba(255, 0, 0, 1.5)"), None,);
+        assert_eq!(Color::from_rgb_function("rgba(255, 0, 0, -0.1)"), None,);
     }
 
     #[test]
@@ -3188,13 +3184,21 @@ mod tests {
         assert_eq!(c.r, 0xff);
         assert_eq!(c.g, 0x00);
         assert_eq!(c.b, 0x00);
-        assert!((i16::from(c.a) - 128).abs() <= 1, "alpha 0.5 ≈ 128; got {}", c.a);
+        assert!(
+            (i16::from(c.a) - 128).abs() <= 1,
+            "alpha 0.5 ≈ 128; got {}",
+            c.a
+        );
     }
 
     #[test]
     fn r630_from_rgb_function_accepts_modern_alpha_slash_percent() {
         let c = Color::from_rgb_function("rgb(255 0 0 / 50%)").unwrap();
-        assert!((i16::from(c.a) - 128).abs() <= 1, "alpha 50% ≈ 128; got {}", c.a);
+        assert!(
+            (i16::from(c.a) - 128).abs() <= 1,
+            "alpha 50% ≈ 128; got {}",
+            c.a
+        );
     }
 
     #[test]
@@ -3391,7 +3395,6 @@ mod tests {
         );
     }
 
-
     #[test]
     fn from_argb_decodes_softbuffer_layout() {
         // 0xAARRGGBB → {r, g, b, a}
@@ -3414,7 +3417,13 @@ mod tests {
         // Bit-exact compat across the previously-used hello-button
         // palette ensures no visual regression when call sites swap
         // raw u32 fills for typed Color.
-        for argb in [0x0020_3040_u32, 0x00ff_ffff, 0x00d0_d0d0, 0x0050_5050, 0x00b0_2020] {
+        for argb in [
+            0x0020_3040_u32,
+            0x00ff_ffff,
+            0x00d0_d0d0,
+            0x0050_5050,
+            0x00b0_2020,
+        ] {
             let c = Color::from_argb(argb);
             assert_eq!(c.to_argb(), argb);
         }
@@ -3468,8 +3477,7 @@ mod tests {
 
     #[test]
     fn border_with_placement_builder_overrides_default() {
-        let b = Border::new(Color::rgb(0xff, 0, 0), 2)
-            .with_placement(BorderPlacement::Outside);
+        let b = Border::new(Color::rgb(0xff, 0, 0), 2).with_placement(BorderPlacement::Outside);
         assert_eq!(b.placement, BorderPlacement::Outside);
     }
 
@@ -3553,7 +3561,10 @@ mod tests {
     #[test]
     fn text_style_with_generic_family_is_generic() {
         let s = TextStyle::new().with_generic_family(GenericFontFamily::Monospace);
-        assert_eq!(s.font_family, Some(FontFamily::Generic(GenericFontFamily::Monospace)));
+        assert_eq!(
+            s.font_family,
+            Some(FontFamily::Generic(GenericFontFamily::Monospace))
+        );
     }
 
     /// The untyped wire boundary classifies CSS keywords; typed builders do
@@ -3564,7 +3575,10 @@ mod tests {
             FontFamily::parse_css("monospace"),
             FontFamily::Generic(GenericFontFamily::Monospace),
         );
-        assert_eq!(FontFamily::parse_css("Inter"), FontFamily::Named("Inter".into()));
+        assert_eq!(
+            FontFamily::parse_css("Inter"),
+            FontFamily::Named("Inter".into())
+        );
         for f in [
             FontFamily::Generic(GenericFontFamily::Monospace),
             FontFamily::Named("Inter".into()),
@@ -3613,8 +3627,14 @@ mod tests {
         // R47.6 cache hit/miss boundary). Hash + Eq must separate them.
         use std::collections::HashMap;
         let mut m: HashMap<TextStyle, &'static str> = HashMap::new();
-        m.insert(TextStyle::new().with_line_height(LineHeight::Normal), "normal");
-        m.insert(TextStyle::new().with_line_height(LineHeight::Px(20)), "px20");
+        m.insert(
+            TextStyle::new().with_line_height(LineHeight::Normal),
+            "normal",
+        );
+        m.insert(
+            TextStyle::new().with_line_height(LineHeight::Px(20)),
+            "px20",
+        );
         m.insert(
             TextStyle::new().with_line_height(LineHeight::MultiplierX100(150)),
             "x1.5",
@@ -3632,7 +3652,12 @@ mod tests {
 
     #[test]
     fn text_style_with_align_builder_overrides_default() {
-        for a in [TextAlign::Start, TextAlign::Center, TextAlign::End, TextAlign::Justify] {
+        for a in [
+            TextAlign::Start,
+            TextAlign::Center,
+            TextAlign::End,
+            TextAlign::Justify,
+        ] {
             let s = TextStyle::new().with_align(a);
             assert_eq!(s.text_align, a);
         }
@@ -3648,13 +3673,19 @@ mod tests {
         s.insert(TextDecoration::both());
         assert_eq!(s.len(), 4, "all 4 decoration combinations hash distinctly");
         // Builder composition matches the named constructors.
-        let composed = TextDecoration::none().with_underline(true).with_strikethrough(true);
+        let composed = TextDecoration::none()
+            .with_underline(true)
+            .with_strikethrough(true);
         assert_eq!(composed, TextDecoration::both());
     }
 
     #[test]
     fn text_style_with_overflow_builder_overrides_default() {
-        for o in [TextOverflow::Visible, TextOverflow::Clip, TextOverflow::Ellipsis] {
+        for o in [
+            TextOverflow::Visible,
+            TextOverflow::Clip,
+            TextOverflow::Ellipsis,
+        ] {
             let s = TextStyle::new().with_overflow(o);
             assert_eq!(s.overflow, o);
         }
@@ -3998,7 +4029,11 @@ mod tests {
     fn r684_b_size_with_width_overrides_prior_value() {
         let s = Size::px(50, 50).with_width(SizeValue::Px(100));
         assert_eq!(s.width, SizeValue::Px(100));
-        assert_eq!(s.height, SizeValue::Px(50), "height untouched by with_width");
+        assert_eq!(
+            s.height,
+            SizeValue::Px(50),
+            "height untouched by with_width"
+        );
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -4060,9 +4095,9 @@ mod tests {
         let linear = solid
             .clone()
             .with_gradient(Gradient::horizontal().with_stop(0.0, Color::rgb(0xff, 0, 0)));
-        let radial = solid
-            .clone()
-            .with_gradient(Gradient::radial((0.5, 0.5), 0.5).with_stop(0.0, Color::rgb(0xff, 0, 0)));
+        let radial = solid.clone().with_gradient(
+            Gradient::radial((0.5, 0.5), 0.5).with_stop(0.0, Color::rgb(0xff, 0, 0)),
+        );
 
         assert_ne!(h(&solid), h(&linear), "adding a gradient must re-key");
         assert_ne!(h(&linear), h(&radial), "linear vs radial must not alias");

@@ -136,7 +136,11 @@ impl SpinButtonExternal {
     /// Set the value, clamping into `[min, max]`. `NaN` saturates to
     /// `min`. Returns `true` if the stored value actually changed.
     pub fn set_value(&mut self, value: f32) -> bool {
-        let clamped = if value.is_nan() { self.min } else { value.clamp(self.min, self.max) };
+        let clamped = if value.is_nan() {
+            self.min
+        } else {
+            value.clamp(self.min, self.max)
+        };
         if (clamped - self.value).abs() < f32::EPSILON {
             return false;
         }
@@ -266,8 +270,12 @@ impl ExternalIntrospect for SpinButtonExternal {
             "min" => Some(IntrospectValue::Float(f64::from(self.min))),
             "max" => Some(IntrospectValue::Float(f64::from(self.max))),
             "step" => Some(IntrospectValue::Float(f64::from(self.step))),
-            "dec_state" => Some(IntrospectValue::Text(self.dec.state().as_name().to_string())),
-            "inc_state" => Some(IntrospectValue::Text(self.inc.state().as_name().to_string())),
+            "dec_state" => Some(IntrospectValue::Text(
+                self.dec.state().as_name().to_string(),
+            )),
+            "inc_state" => Some(IntrospectValue::Text(
+                self.inc.state().as_name().to_string(),
+            )),
             _ => None,
         }
     }
@@ -296,7 +304,11 @@ impl ExternalIntrospect for SpinButtonExternal {
         }
     }
 
-    fn invoke(&mut self, path: &str, args: IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+    fn invoke(
+        &mut self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
         match path {
             // AI-first step actions (the same arithmetic the keyboard
             // arrows / PageUp-Down drive). Each returns the resulting
@@ -355,7 +367,9 @@ mod tests {
 
     #[test]
     fn new_clamps_start_into_range() {
-        assert!((SpinButtonExternal::new(50.0, 0.0, 10.0, 1.0).value() - 10.0).abs() < f32::EPSILON);
+        assert!(
+            (SpinButtonExternal::new(50.0, 0.0, 10.0, 1.0).value() - 10.0).abs() < f32::EPSILON
+        );
         assert!((SpinButtonExternal::new(-5.0, 0.0, 10.0, 1.0).value() - 0.0).abs() < f32::EPSILON);
     }
 
@@ -380,7 +394,10 @@ mod tests {
     fn page_step_defaults_to_step_and_overrides() {
         let mut a = SpinButtonExternal::new(0.0, 0.0, 100.0, 1.0);
         a.page_up();
-        assert!((a.value() - 1.0).abs() < f32::EPSILON, "default page_step == step");
+        assert!(
+            (a.value() - 1.0).abs() < f32::EPSILON,
+            "default page_step == step"
+        );
         let mut b = SpinButtonExternal::new(0.0, 0.0, 100.0, 1.0).with_page_step(10.0);
         b.page_up();
         assert!((b.value() - 10.0).abs() < f32::EPSILON);
@@ -415,24 +432,38 @@ mod tests {
     #[test]
     fn intervene_value_sets_and_clamps_float_and_int() {
         let mut s = SpinButtonExternal::new(0.0, 0.0, 10.0, 1.0);
-        s.intervene("value", IntrospectValue::Float(4.0)).expect("float accepted");
+        s.intervene("value", IntrospectValue::Float(4.0))
+            .expect("float accepted");
         assert!((s.value() - 4.0).abs() < f32::EPSILON);
-        s.intervene("value", IntrospectValue::Int(99)).expect("int coerced + clamped");
+        s.intervene("value", IntrospectValue::Int(99))
+            .expect("int coerced + clamped");
         assert!((s.value() - 10.0).abs() < f32::EPSILON);
     }
 
     #[test]
     fn intervene_range_descriptors_read_only() {
         let mut s = SpinButtonExternal::new(0.0, 0.0, 10.0, 1.0);
-        assert_eq!(s.intervene("min", IntrospectValue::Float(1.0)), Err(InterveneError::ReadOnly));
-        assert_eq!(s.intervene("max", IntrospectValue::Float(9.0)), Err(InterveneError::ReadOnly));
-        assert_eq!(s.intervene("step", IntrospectValue::Float(2.0)), Err(InterveneError::ReadOnly));
+        assert_eq!(
+            s.intervene("min", IntrospectValue::Float(1.0)),
+            Err(InterveneError::ReadOnly)
+        );
+        assert_eq!(
+            s.intervene("max", IntrospectValue::Float(9.0)),
+            Err(InterveneError::ReadOnly)
+        );
+        assert_eq!(
+            s.intervene("step", IntrospectValue::Float(2.0)),
+            Err(InterveneError::ReadOnly)
+        );
     }
 
     #[test]
     fn intervene_unknown_path_and_type_mismatch() {
         let mut s = SpinButtonExternal::new(0.0, 0.0, 10.0, 1.0);
-        assert_eq!(s.intervene("speed", IntrospectValue::Float(1.0)), Err(InterveneError::UnknownPath));
+        assert_eq!(
+            s.intervene("speed", IntrospectValue::Float(1.0)),
+            Err(InterveneError::UnknownPath)
+        );
         assert_eq!(
             s.intervene("value", IntrospectValue::Bool(true)),
             Err(InterveneError::TypeMismatch),
@@ -442,11 +473,26 @@ mod tests {
     #[test]
     fn invoke_increment_decrement_page_return_value() {
         let mut s = SpinButtonExternal::new(5.0, 0.0, 10.0, 1.0).with_page_step(3.0);
-        assert_eq!(s.invoke("increment", IntrospectValue::Null), Ok(IntrospectValue::Float(6.0)));
-        assert_eq!(s.invoke("decrement", IntrospectValue::Null), Ok(IntrospectValue::Float(5.0)));
-        assert_eq!(s.invoke("page_up", IntrospectValue::Null), Ok(IntrospectValue::Float(8.0)));
-        assert_eq!(s.invoke("page_down", IntrospectValue::Null), Ok(IntrospectValue::Float(5.0)));
-        assert_eq!(s.invoke("bogus", IntrospectValue::Null), Err(InvokeError::UnknownPath));
+        assert_eq!(
+            s.invoke("increment", IntrospectValue::Null),
+            Ok(IntrospectValue::Float(6.0))
+        );
+        assert_eq!(
+            s.invoke("decrement", IntrospectValue::Null),
+            Ok(IntrospectValue::Float(5.0))
+        );
+        assert_eq!(
+            s.invoke("page_up", IntrospectValue::Null),
+            Ok(IntrospectValue::Float(8.0))
+        );
+        assert_eq!(
+            s.invoke("page_down", IntrospectValue::Null),
+            Ok(IntrospectValue::Float(5.0))
+        );
+        assert_eq!(
+            s.invoke("bogus", IntrospectValue::Null),
+            Err(InvokeError::UnknownPath)
+        );
     }
 
     #[test]
@@ -454,38 +500,80 @@ mod tests {
         let mut s = SpinButtonExternal::new(5.0, 0.0, 10.0, 1.0);
         // R734.2 — the full pointer arc drives the inc stepper's Button SM:
         // Enter -> Hover, Down -> Pressed (no step yet), Up -> Hover = activate.
-        s.invoke("send", IntrospectValue::Text("inc:PointerEnter".into())).unwrap();
+        s.invoke("send", IntrospectValue::Text("inc:PointerEnter".into()))
+            .unwrap();
         assert_eq!(s.inc_state(), ButtonState::Hover, "Enter -> stepper Hover");
-        assert!((s.value() - 5.0).abs() < f32::EPSILON, "hover does not step");
-        s.invoke("send", IntrospectValue::Text("inc:PointerDown".into())).unwrap();
-        assert_eq!(s.inc_state(), ButtonState::Pressed, "Down -> stepper Pressed");
-        assert!((s.value() - 5.0).abs() < f32::EPSILON, "press alone does not step");
-        s.invoke("send", IntrospectValue::Text("inc:PointerUp".into())).unwrap();
+        assert!(
+            (s.value() - 5.0).abs() < f32::EPSILON,
+            "hover does not step"
+        );
+        s.invoke("send", IntrospectValue::Text("inc:PointerDown".into()))
+            .unwrap();
+        assert_eq!(
+            s.inc_state(),
+            ButtonState::Pressed,
+            "Down -> stepper Pressed"
+        );
+        assert!(
+            (s.value() - 5.0).abs() < f32::EPSILON,
+            "press alone does not step"
+        );
+        s.invoke("send", IntrospectValue::Text("inc:PointerUp".into()))
+            .unwrap();
         assert_eq!(s.inc_state(), ButtonState::Hover, "Up -> back to Hover");
-        assert!((s.value() - 6.0).abs() < f32::EPSILON, "activate (Pressed->Hover) -> +step");
+        assert!(
+            (s.value() - 6.0).abs() < f32::EPSILON,
+            "activate (Pressed->Hover) -> +step"
+        );
         // The dec stepper stayed Idle the whole time (per-region state).
         assert_eq!(s.dec_state(), ButtonState::Idle, "dec untouched by inc arc");
         // Cancel path (Down then Leave) presses then returns to Idle WITHOUT
         // stepping — the W3C button cancel-on-drag-off path.
-        s.invoke("send", IntrospectValue::Text("dec:PointerEnter".into())).unwrap();
-        s.invoke("send", IntrospectValue::Text("dec:PointerDown".into())).unwrap();
+        s.invoke("send", IntrospectValue::Text("dec:PointerEnter".into()))
+            .unwrap();
+        s.invoke("send", IntrospectValue::Text("dec:PointerDown".into()))
+            .unwrap();
         assert_eq!(s.dec_state(), ButtonState::Pressed);
-        s.invoke("send", IntrospectValue::Text("dec:PointerLeave".into())).unwrap();
-        assert_eq!(s.dec_state(), ButtonState::Idle, "Leave from Pressed -> Idle (cancel)");
-        assert!((s.value() - 6.0).abs() < f32::EPSILON, "cancelled press does not step");
+        s.invoke("send", IntrospectValue::Text("dec:PointerLeave".into()))
+            .unwrap();
+        assert_eq!(
+            s.dec_state(),
+            ButtonState::Idle,
+            "Leave from Pressed -> Idle (cancel)"
+        );
+        assert!(
+            (s.value() - 6.0).abs() < f32::EPSILON,
+            "cancelled press does not step"
+        );
         // Unknown sub-region + malformed wire are harmless no-ops (R660 guard).
-        s.invoke("send", IntrospectValue::Text("xyz:PointerUp".into())).unwrap();
-        s.invoke("send", IntrospectValue::Text("noseparator".into())).unwrap();
-        s.invoke("send", IntrospectValue::Text("inc:".into())).unwrap();
-        assert!((s.value() - 6.0).abs() < f32::EPSILON, "no-op payloads do not step");
+        s.invoke("send", IntrospectValue::Text("xyz:PointerUp".into()))
+            .unwrap();
+        s.invoke("send", IntrospectValue::Text("noseparator".into()))
+            .unwrap();
+        s.invoke("send", IntrospectValue::Text("inc:".into()))
+            .unwrap();
+        assert!(
+            (s.value() - 6.0).abs() < f32::EPSILON,
+            "no-op payloads do not step"
+        );
     }
 
     #[test]
     fn query_exposes_stepper_states() {
         let mut s = SpinButtonExternal::new(5.0, 0.0, 10.0, 1.0);
-        assert_eq!(s.query("dec_state"), Some(IntrospectValue::Text("Idle".into())));
-        assert_eq!(s.query("inc_state"), Some(IntrospectValue::Text("Idle".into())));
-        s.invoke("send", IntrospectValue::Text("inc:PointerEnter".into())).unwrap();
-        assert_eq!(s.query("inc_state"), Some(IntrospectValue::Text("Hover".into())));
+        assert_eq!(
+            s.query("dec_state"),
+            Some(IntrospectValue::Text("Idle".into()))
+        );
+        assert_eq!(
+            s.query("inc_state"),
+            Some(IntrospectValue::Text("Idle".into()))
+        );
+        s.invoke("send", IntrospectValue::Text("inc:PointerEnter".into()))
+            .unwrap();
+        assert_eq!(
+            s.query("inc_state"),
+            Some(IntrospectValue::Text("Hover".into()))
+        );
     }
 }

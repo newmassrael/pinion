@@ -16,7 +16,9 @@ fn main() {
         .expect("cargo populates CARGO_MANIFEST_DIR for build scripts");
     let out_dir = std::env::var_os("OUT_DIR").expect("cargo populates OUT_DIR");
 
-    let input = Path::new(&manifest_dir).join("ui").join("counter.pinion.xml");
+    let input = Path::new(&manifest_dir)
+        .join("ui")
+        .join("counter.pinion.xml");
 
     // Rerun the codegen only when the input changes (or build.rs itself).
     // Without this hint, cargo runs the script on every build.
@@ -32,7 +34,11 @@ fn main() {
             for d in &diags {
                 eprintln!("{d}");
             }
-            panic!("pinion-forge: {} diagnostic(s) in {}", diags.len(), input.display());
+            panic!(
+                "pinion-forge: {} diagnostic(s) in {}",
+                diags.len(),
+                input.display()
+            );
         }
         Err(other) => panic!("pinion-forge: {other}"),
     }

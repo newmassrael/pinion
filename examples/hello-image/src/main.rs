@@ -50,7 +50,7 @@ use pinion_core::style::{
     TextStyle,
 };
 use pinion_core::widgets::toggle::{ToggleEvent, ToggleExternal, ToggleState};
-use pinion_core::{use_theme, ColorRole, Frame, Scene, WidgetCore, WidgetStateName};
+use pinion_core::{ColorRole, Frame, Scene, WidgetCore, WidgetStateName, use_theme};
 use pinion_derive::widget;
 use pinion_shell::vello_renderer_impl;
 
@@ -80,7 +80,13 @@ fn icon_source() -> &'static str {
 /// One labelled cell: the icon under `fit` in a non-square box, with the
 /// fit name beneath. `bounds` outlines the cell so the fit placement is
 /// visible against the identical rect.
-fn fit_cell(fit: Fit, label: &str, tag: &'static str, highlight: bool, theme: &pinion_core::theme::Theme) -> Scene {
+fn fit_cell(
+    fit: Fit,
+    label: &str,
+    tag: &'static str,
+    highlight: bool,
+    theme: &pinion_core::theme::Theme,
+) -> Scene {
     // The cell bounds (destination rect) are always outlined so each fit's
     // placement reads against an identical box — Contain's inner margins,
     // Cover's clipped overflow, Tile's repeats. The "highlight bounds"
@@ -99,13 +105,17 @@ fn fit_cell(fit: Fit, label: &str, tag: &'static str, highlight: bool, theme: &p
             .with_layout(LayoutStyle::new().with_size(Size::px(CELL_W, CELL_H))),
     );
     let image = Scene::Image(
-        ImageNode::styled(icon_source(), Rect::default(), ImageStyle::default().with_fit(fit))
-            .with_tag(tag)
-            .with_layout(
-                LayoutStyle::new()
-                    .with_absolute_position(0, 0)
-                    .with_size(Size::px(CELL_W, CELL_H)),
-            ),
+        ImageNode::styled(
+            icon_source(),
+            Rect::default(),
+            ImageStyle::default().with_fit(fit),
+        )
+        .with_tag(tag)
+        .with_layout(
+            LayoutStyle::new()
+                .with_absolute_position(0, 0)
+                .with_size(Size::px(CELL_W, CELL_H)),
+        ),
     );
     // The image is absolutely positioned over the cell background so both
     // share the CELL_W x CELL_H rect.
@@ -116,7 +126,9 @@ fn fit_cell(fit: Fit, label: &str, tag: &'static str, highlight: bool, theme: &p
     let caption = Scene::Text(TextNode::styled(
         label,
         Rect::default(),
-        TextStyle::new().with_size_px(12).with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+        TextStyle::new()
+            .with_size_px(12)
+            .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
     ));
     Scene::Container(
         ContainerNode::new(vec![stack, caption]).with_layout(
@@ -146,7 +158,9 @@ fn view(state: ToggleState, bounds: bool, _frame: Frame) -> Scene {
     let title = Scene::Text(TextNode::styled(
         "Image — Fit policies",
         Rect::default(),
-        TextStyle::new().with_size_px(18).with_fg(theme.resolve(ColorRole::OnSurface)),
+        TextStyle::new()
+            .with_size_px(18)
+            .with_fg(theme.resolve(ColorRole::OnSurface)),
     ));
     let grid = Scene::Container(
         ContainerNode::new(vec![
@@ -180,7 +194,9 @@ fn view(state: ToggleState, bounds: bool, _frame: Frame) -> Scene {
     let toggle_caption = Scene::Text(TextNode::styled(
         format!("highlight bounds: {knob} ({})", state.as_name()),
         Rect::default(),
-        TextStyle::new().with_size_px(12).with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+        TextStyle::new()
+            .with_size_px(12)
+            .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
     ));
 
     Scene::Container(
@@ -326,7 +342,8 @@ mod tests {
 
     #[test]
     fn emits_switch_node() {
-        let nodes = <ImageView as WidgetA11y>::access_node(&(ToggleState::Idle, true), Some(TOGGLE_TAG));
+        let nodes =
+            <ImageView as WidgetA11y>::access_node(&(ToggleState::Idle, true), Some(TOGGLE_TAG));
         assert!(!nodes.is_empty());
         assert_eq!(nodes[0].role, AriaRole::Switch);
     }

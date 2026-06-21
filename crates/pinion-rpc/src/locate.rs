@@ -106,7 +106,11 @@ pub fn locate(scene: &Scene, x: u32, y: u32) -> Result<LocateOutcome, LocateErro
         .map(|i| format_path(window_name, &hit.segments[..i]))
         .collect();
 
-    Ok(LocateOutcome { path: leaf_path, bbox: hit.bbox, ancestor_paths })
+    Ok(LocateOutcome {
+        path: leaf_path,
+        bbox: hit.bbox,
+        ancestor_paths,
+    })
 }
 
 /// Reverse-lookup (§5.32 R39.3): a fully-qualified path string back
@@ -165,7 +169,10 @@ pub fn locate_region(scene: &Scene, x: u32, y: u32, w: u32, h: u32) -> LocateReg
     let common_segments = longest_common_prefix(hits.iter().map(|h| h.segments.as_slice()));
     let common_ancestor = format_path(window_name, &common_segments);
 
-    LocateRegionOutcome { paths, common_ancestor }
+    LocateRegionOutcome {
+        paths,
+        common_ancestor,
+    }
 }
 
 /// Compute the longest segment-wise common prefix across an iterator
@@ -232,7 +239,10 @@ mod tests {
     fn locate_returns_window_prefixed_path_for_root_hit() {
         let s = box_at(10, 10, 50, 30);
         let out = locate(&s, 20, 15).expect("inside");
-        assert!(out.path.starts_with("/window["), "carries explicit window prefix");
+        assert!(
+            out.path.starts_with("/window["),
+            "carries explicit window prefix"
+        );
         assert!(out.path.ends_with('/'), "root hit has no trailing segment");
         assert!(out.ancestor_paths.is_empty(), "root has no ancestors");
         assert_eq!(out.bbox, Rect::new(10, 10, 50, 30));
@@ -240,7 +250,13 @@ mod tests {
 
     #[test]
     fn locate_returns_indexed_path_for_untagged_child() {
-        let s = container_at(0, 0, 200, 200, vec![box_at(0, 0, 50, 50), box_at(100, 100, 50, 50)]);
+        let s = container_at(
+            0,
+            0,
+            200,
+            200,
+            vec![box_at(0, 0, 50, 50), box_at(100, 100, 50, 50)],
+        );
         let out = locate(&s, 120, 120).expect("on child 1");
         assert!(out.path.ends_with("/1"), "got: {}", out.path);
         assert_eq!(out.ancestor_paths.len(), 1, "1 ancestor (the container)");
@@ -249,7 +265,13 @@ mod tests {
 
     #[test]
     fn locate_uses_tag_in_path_segment() {
-        let s = container_at(0, 0, 200, 200, vec![tagged_box_at(10, 10, 50, 50, "save_btn")]);
+        let s = container_at(
+            0,
+            0,
+            200,
+            200,
+            vec![tagged_box_at(10, 10, 50, 50, "save_btn")],
+        );
         let out = locate(&s, 20, 20).expect("tagged hit");
         assert!(out.path.ends_with("/save_btn"), "got: {}", out.path);
     }
@@ -283,13 +305,19 @@ mod tests {
         let s = box_at(10, 10, 20, 20);
         let out = locate_region(&s, 500, 500, 50, 50);
         assert!(out.paths.is_empty());
-        assert!(out.common_ancestor.ends_with('/'), "ancestor falls back to root");
+        assert!(
+            out.common_ancestor.ends_with('/'),
+            "ancestor falls back to root"
+        );
     }
 
     #[test]
     fn locate_region_full_overlap_collects_all_paths() {
         let s = container_at(
-            0, 0, 200, 200,
+            0,
+            0,
+            200,
+            200,
             vec![box_at(10, 10, 50, 50), box_at(100, 100, 30, 30)],
         );
         let out = locate_region(&s, 0, 0, 200, 200);
@@ -303,7 +331,10 @@ mod tests {
     fn locate_region_common_ancestor_single_branch() {
         // Two children of the same container both intersect.
         let s = container_at(
-            0, 0, 200, 200,
+            0,
+            0,
+            200,
+            200,
             vec![box_at(0, 0, 50, 50), box_at(100, 100, 50, 50)],
         );
         let out = locate_region(&s, 0, 0, 200, 200);
@@ -316,7 +347,10 @@ mod tests {
     fn locate_region_common_ancestor_nested_chain() {
         // Outer → inner → 2 boxes; query covers both boxes only.
         let inner = container_at(
-            0, 0, 100, 100,
+            0,
+            0,
+            100,
+            100,
             vec![box_at(10, 10, 20, 20), box_at(50, 50, 20, 20)],
         );
         let outer = container_at(0, 0, 200, 200, vec![inner]);
@@ -345,19 +379,28 @@ mod tests {
     #[test]
     fn bbox_resolves_indexed_child() {
         let s = container_at(0, 0, 200, 200, vec![box_at(10, 10, 30, 30)]);
-        assert_eq!(bbox(&s, "/window[main]/0").unwrap(), Rect::new(10, 10, 30, 30));
+        assert_eq!(
+            bbox(&s, "/window[main]/0").unwrap(),
+            Rect::new(10, 10, 30, 30)
+        );
     }
 
     #[test]
     fn bbox_resolves_tagged_child() {
         let s = container_at(0, 0, 200, 200, vec![tagged_box_at(20, 20, 40, 40, "btn")]);
-        assert_eq!(bbox(&s, "/window[main]/btn").unwrap(), Rect::new(20, 20, 40, 40));
+        assert_eq!(
+            bbox(&s, "/window[main]/btn").unwrap(),
+            Rect::new(20, 20, 40, 40)
+        );
     }
 
     #[test]
     fn bbox_unknown_path_returns_error() {
         let s = container_at(0, 0, 100, 100, vec![box_at(0, 0, 10, 10)]);
-        assert_eq!(bbox(&s, "/window[main]/ghost").unwrap_err(), BboxError::UnknownPath);
+        assert_eq!(
+            bbox(&s, "/window[main]/ghost").unwrap_err(),
+            BboxError::UnknownPath
+        );
     }
 
     #[test]
@@ -384,10 +427,17 @@ mod tests {
     #[test]
     fn locate_overlapping_siblings_picks_topmost() {
         let s = container_at(
-            0, 0, 200, 200,
+            0,
+            0,
+            200,
+            200,
             vec![box_at(50, 50, 100, 100), box_at(50, 50, 100, 100)],
         );
         let out = locate(&s, 75, 75).expect("overlap");
-        assert!(out.path.ends_with("/1"), "last child wins, got: {}", out.path);
+        assert!(
+            out.path.ends_with("/1"),
+            "last child wins, got: {}",
+            out.path
+        );
     }
 }

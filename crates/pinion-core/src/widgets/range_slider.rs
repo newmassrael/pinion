@@ -142,7 +142,10 @@ impl RangeSlider {
     /// inverts the pointer Y mapping exactly as the single slider does).
     #[must_use]
     pub fn with_axis(axis: SliderAxis) -> Self {
-        Self { axis, ..Self::new() }
+        Self {
+            axis,
+            ..Self::new()
+        }
     }
 
     /// Builder: seed the initial `(low, high)` sub-range. The pair is
@@ -289,19 +292,25 @@ impl RangeSliderExternal {
     /// Construct a horizontal range external with the full span selected.
     #[must_use]
     pub fn new() -> Self {
-        Self { em: IntentEmitter::default() }
+        Self {
+            em: IntentEmitter::default(),
+        }
     }
 
     /// Construct a range external on an explicit [`SliderAxis`].
     #[must_use]
     pub fn with_axis(axis: SliderAxis) -> Self {
-        Self { em: IntentEmitter::new(RangeSlider::with_axis(axis)) }
+        Self {
+            em: IntentEmitter::new(RangeSlider::with_axis(axis)),
+        }
     }
 
     /// Construct a horizontal range external seeded to `(low, high)`.
     #[must_use]
     pub fn with_values(low: f32, high: f32) -> Self {
-        Self { em: IntentEmitter::new(RangeSlider::new().with_values(low, high)) }
+        Self {
+            em: IntentEmitter::new(RangeSlider::new().with_values(low, high)),
+        }
     }
 
     /// Track orientation (delegates to [`RangeSlider::axis`]).
@@ -350,8 +359,10 @@ impl RangeSliderExternal {
         // snapshot tuple does not carry.
         if matches!(before, SliderState::Dragging) && matches!(after, SliderState::Hover) {
             let committed = self.active_value();
-            self.em
-                .push(Intent::new_static("value_committed", IntrospectValue::Float(committed)));
+            self.em.push(Intent::new_static(
+                "value_committed",
+                IntrospectValue::Float(committed),
+            ));
         }
         if !matches!(after, SliderState::Dragging) {
             self.em.inner.end_drag();
@@ -662,7 +673,11 @@ mod tests {
         // Ending the drag releases the latch; the next gesture re-picks.
         r.end_drag();
         assert!(r.drive_drag(0.9));
-        assert_eq!(r.active(), ThumbId::High, "re-picked nearest (high) after end_drag");
+        assert_eq!(
+            r.active(),
+            ThumbId::High,
+            "re-picked nearest (high) after end_drag"
+        );
     }
 
     #[test]
@@ -684,7 +699,10 @@ mod tests {
         assert!(matches!(rx.state(), SliderState::Hover));
         let mut post = Vec::new();
         rx.drain_intents(&mut |i| post.push(i));
-        let commits: Vec<_> = post.iter().filter(|i| i.tag_str() == "value_committed").collect();
+        let commits: Vec<_> = post
+            .iter()
+            .filter(|i| i.tag_str() == "value_committed")
+            .collect();
         assert_eq!(commits.len(), 1, "exactly one commit on drag end");
     }
 
@@ -710,10 +728,16 @@ mod tests {
     fn introspect_reports_both_values_and_active() {
         let rx = RangeSliderExternal::with_values(0.25, 0.75);
         let intro = External::introspect(&rx).expect("opts in");
-        assert!(matches!(intro.query("low"), Some(IntrospectValue::Float(v)) if (v - 0.25).abs() < 1e-6));
-        assert!(matches!(intro.query("high"), Some(IntrospectValue::Float(v)) if (v - 0.75).abs() < 1e-6));
+        assert!(
+            matches!(intro.query("low"), Some(IntrospectValue::Float(v)) if (v - 0.25).abs() < 1e-6)
+        );
+        assert!(
+            matches!(intro.query("high"), Some(IntrospectValue::Float(v)) if (v - 0.75).abs() < 1e-6)
+        );
         assert!(matches!(intro.query("active"), Some(IntrospectValue::Text(ref s)) if s == "high"));
-        assert!(matches!(intro.query("orientation"), Some(IntrospectValue::Text(ref s)) if s == "horizontal"));
+        assert!(
+            matches!(intro.query("orientation"), Some(IntrospectValue::Text(ref s)) if s == "horizontal")
+        );
     }
 
     #[test]
@@ -724,7 +748,9 @@ mod tests {
         assert!(approx(rx.low(), 0.5));
         let intro = External::introspect_mut(&mut rx).expect("opts in");
         // High write below the low thumb clamps to low.
-        intro.intervene("high", IntrospectValue::Float(0.1)).unwrap();
+        intro
+            .intervene("high", IntrospectValue::Float(0.1))
+            .unwrap();
         assert!(approx(rx.high(), 0.5), "high clamps at low");
     }
 
@@ -766,14 +792,23 @@ mod tests {
         rx.send(SliderEvent::PointerUp);
         rx.send(SliderEvent::PointerDown);
         rx.pointer_move(0.0, 1.0);
-        assert!(approx(rx.low(), 0.0), "bottom maps to value 0.0 (low thumb)");
+        assert!(
+            approx(rx.low(), 0.0),
+            "bottom maps to value 0.0 (low thumb)"
+        );
         assert_eq!(rx.active(), ThumbId::Low);
     }
 
     #[test]
     fn thumb_id_name_round_trip() {
-        assert_eq!(ThumbId::from_name(ThumbId::Low.as_name()), Some(ThumbId::Low));
-        assert_eq!(ThumbId::from_name(ThumbId::High.as_name()), Some(ThumbId::High));
+        assert_eq!(
+            ThumbId::from_name(ThumbId::Low.as_name()),
+            Some(ThumbId::Low)
+        );
+        assert_eq!(
+            ThumbId::from_name(ThumbId::High.as_name()),
+            Some(ThumbId::High)
+        );
         assert_eq!(ThumbId::from_name("middle"), None);
     }
 }

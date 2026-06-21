@@ -72,13 +72,19 @@ impl DirEntry {
     /// A directory entry (navigable child).
     #[must_use]
     pub fn dir(name: impl Into<String>) -> Self {
-        Self { name: name.into(), is_dir: true }
+        Self {
+            name: name.into(),
+            is_dir: true,
+        }
     }
 
     /// A file entry (selectable leaf).
     #[must_use]
     pub fn file(name: impl Into<String>) -> Self {
-        Self { name: name.into(), is_dir: false }
+        Self {
+            name: name.into(),
+            is_dir: false,
+        }
     }
 }
 
@@ -160,7 +166,11 @@ fn split_parent_leaf(path: &str) -> (String, String) {
     let trimmed = path.trim_end_matches('/');
     match trimmed.rsplit_once('/') {
         Some((parent, leaf)) => {
-            let parent = if parent.is_empty() { "/".to_string() } else { parent.to_string() };
+            let parent = if parent.is_empty() {
+                "/".to_string()
+            } else {
+                parent.to_string()
+            };
             (parent, leaf.to_string())
         }
         None => (String::new(), trimmed.to_string()),
@@ -272,8 +282,9 @@ impl Directory for InMemoryDirectory {
         }
         let mut tree = self.tree.borrow_mut();
         // Source must exist in its parent listing; capture its `is_dir`.
-        let Some(entry) =
-            tree.get(&from_parent).and_then(|l| l.iter().find(|e| e.name == from_leaf).cloned())
+        let Some(entry) = tree
+            .get(&from_parent)
+            .and_then(|l| l.iter().find(|e| e.name == from_leaf).cloned())
         else {
             return false;
         };
@@ -281,7 +292,9 @@ impl Directory for InMemoryDirectory {
         // free (a rename never creates a parent or overwrites). Renaming
         // to the same path lands here as "name taken" → a `false` no-op.
         if !tree.contains_key(&to_parent)
-            || tree.get(&to_parent).is_some_and(|l| l.iter().any(|e| e.name == to_leaf))
+            || tree
+                .get(&to_parent)
+                .is_some_and(|l| l.iter().any(|e| e.name == to_leaf))
         {
             return false;
         }
@@ -293,7 +306,10 @@ impl Directory for InMemoryDirectory {
         let is_dir = entry.is_dir;
         tree.get_mut(&to_parent)
             .expect("destination parent existence checked above")
-            .push(DirEntry { name: to_leaf, is_dir });
+            .push(DirEntry {
+                name: to_leaf,
+                is_dir,
+            });
         // A directory carries its own listing key plus every descendant
         // key; re-key the whole subtree by swapping the `from` prefix.
         if is_dir {
@@ -319,8 +335,20 @@ mod tests {
 
     #[test]
     fn r787_dir_entry_constructors() {
-        assert_eq!(DirEntry::dir("src"), DirEntry { name: "src".into(), is_dir: true });
-        assert_eq!(DirEntry::file("main.rs"), DirEntry { name: "main.rs".into(), is_dir: false });
+        assert_eq!(
+            DirEntry::dir("src"),
+            DirEntry {
+                name: "src".into(),
+                is_dir: true
+            }
+        );
+        assert_eq!(
+            DirEntry::file("main.rs"),
+            DirEntry {
+                name: "main.rs".into(),
+                is_dir: false
+            }
+        );
     }
 
     #[test]
@@ -341,16 +369,31 @@ mod tests {
     #[test]
     fn r787_in_memory_read_dir_returns_sorted_listing() {
         let d = InMemoryDirectory::new();
-        d.insert("/p", vec![DirEntry::file("b.txt"), DirEntry::dir("z"), DirEntry::dir("a")]);
+        d.insert(
+            "/p",
+            vec![
+                DirEntry::file("b.txt"),
+                DirEntry::dir("z"),
+                DirEntry::dir("a"),
+            ],
+        );
         let listing = d.read_dir("/p").expect("seeded path lists");
         let names: Vec<&str> = listing.iter().map(|x| x.name.as_str()).collect();
-        assert_eq!(names, ["a", "z", "b.txt"], "dirs-first then alpha, re-sorted on read");
+        assert_eq!(
+            names,
+            ["a", "z", "b.txt"],
+            "dirs-first then alpha, re-sorted on read"
+        );
     }
 
     #[test]
     fn r787_in_memory_unseeded_path_is_none() {
         let d = InMemoryDirectory::new();
-        assert_eq!(d.read_dir("/missing"), None, "unseeded path = directory does not exist");
+        assert_eq!(
+            d.read_dir("/missing"),
+            None,
+            "unseeded path = directory does not exist"
+        );
     }
 
     #[test]
@@ -371,20 +414,43 @@ mod tests {
         use super::split_parent_leaf;
         assert_eq!(split_parent_leaf("/proj/x"), ("/proj".into(), "x".into()));
         assert_eq!(split_parent_leaf("/x"), ("/".into(), "x".into()));
-        assert_eq!(split_parent_leaf("/proj/x/"), ("/proj".into(), "x".into()), "trailing slash ignored");
-        assert_eq!(split_parent_leaf("/"), (String::new(), String::new()), "root has no leaf");
+        assert_eq!(
+            split_parent_leaf("/proj/x/"),
+            ("/proj".into(), "x".into()),
+            "trailing slash ignored"
+        );
+        assert_eq!(
+            split_parent_leaf("/"),
+            (String::new(), String::new()),
+            "root has no leaf"
+        );
     }
 
     #[test]
     fn r789_create_dir_appears_in_parent_and_lists_empty() {
         let d = InMemoryDirectory::new();
         d.insert("/proj", vec![DirEntry::file("Cargo.toml")]);
-        assert!(d.create_dir("/proj/src"), "create succeeds under an existing parent");
-        let names: Vec<String> =
-            d.read_dir("/proj").unwrap().iter().map(|e| e.name.clone()).collect();
+        assert!(
+            d.create_dir("/proj/src"),
+            "create succeeds under an existing parent"
+        );
+        let names: Vec<String> = d
+            .read_dir("/proj")
+            .unwrap()
+            .iter()
+            .map(|e| e.name.clone())
+            .collect();
         // Dirs sort first: src before Cargo.toml.
-        assert_eq!(names, ["src", "Cargo.toml"], "new dir appears in the parent listing");
-        assert_eq!(d.read_dir("/proj/src"), Some(vec![]), "the new dir lists empty");
+        assert_eq!(
+            names,
+            ["src", "Cargo.toml"],
+            "new dir appears in the parent listing"
+        );
+        assert_eq!(
+            d.read_dir("/proj/src"),
+            Some(vec![]),
+            "the new dir lists empty"
+        );
     }
 
     #[test]
@@ -392,9 +458,17 @@ mod tests {
         let d = InMemoryDirectory::new();
         d.insert("/proj", vec![DirEntry::dir("src")]);
         assert!(d.create_file("/proj/README.md"));
-        let names: Vec<String> =
-            d.read_dir("/proj").unwrap().iter().map(|e| e.name.clone()).collect();
-        assert_eq!(names, ["src", "README.md"], "new file appears (after the dir)");
+        let names: Vec<String> = d
+            .read_dir("/proj")
+            .unwrap()
+            .iter()
+            .map(|e| e.name.clone())
+            .collect();
+        assert_eq!(
+            names,
+            ["src", "README.md"],
+            "new file appears (after the dir)"
+        );
     }
 
     #[test]
@@ -409,14 +483,32 @@ mod tests {
     #[test]
     fn r789_remove_drops_entry_and_subtree() {
         let d = InMemoryDirectory::new();
-        d.insert("/proj", vec![DirEntry::dir("src"), DirEntry::file("README.md")]);
+        d.insert(
+            "/proj",
+            vec![DirEntry::dir("src"), DirEntry::file("README.md")],
+        );
         d.insert("/proj/src", vec![DirEntry::file("main.rs")]);
         assert!(d.remove("/proj/src"), "removing an existing dir succeeds");
-        let names: Vec<String> =
-            d.read_dir("/proj").unwrap().iter().map(|e| e.name.clone()).collect();
-        assert_eq!(names, ["README.md"], "removed dir gone from the parent listing");
-        assert_eq!(d.read_dir("/proj/src"), None, "removed dir's subtree dropped");
-        assert!(!d.remove("/proj/ghost"), "removing a missing entry is a false no-op");
+        let names: Vec<String> = d
+            .read_dir("/proj")
+            .unwrap()
+            .iter()
+            .map(|e| e.name.clone())
+            .collect();
+        assert_eq!(
+            names,
+            ["README.md"],
+            "removed dir gone from the parent listing"
+        );
+        assert_eq!(
+            d.read_dir("/proj/src"),
+            None,
+            "removed dir's subtree dropped"
+        );
+        assert!(
+            !d.remove("/proj/ghost"),
+            "removing a missing entry is a false no-op"
+        );
     }
 
     // ----- R791 rename surface -----
@@ -424,10 +516,20 @@ mod tests {
     #[test]
     fn r791_rename_file_in_place_changes_leaf() {
         let d = InMemoryDirectory::new();
-        d.insert("/proj", vec![DirEntry::dir("src"), DirEntry::file("old.txt")]);
-        assert!(d.rename("/proj/old.txt", "/proj/new.txt"), "same-parent file rename succeeds");
-        let names: Vec<String> =
-            d.read_dir("/proj").unwrap().iter().map(|e| e.name.clone()).collect();
+        d.insert(
+            "/proj",
+            vec![DirEntry::dir("src"), DirEntry::file("old.txt")],
+        );
+        assert!(
+            d.rename("/proj/old.txt", "/proj/new.txt"),
+            "same-parent file rename succeeds"
+        );
+        let names: Vec<String> = d
+            .read_dir("/proj")
+            .unwrap()
+            .iter()
+            .map(|e| e.name.clone())
+            .collect();
         assert_eq!(names, ["src", "new.txt"], "the leaf name changed in place");
     }
 
@@ -435,19 +537,37 @@ mod tests {
     fn r791_rename_directory_carries_its_subtree() {
         let d = InMemoryDirectory::new();
         d.insert("/proj", vec![DirEntry::dir("old")]);
-        d.insert("/proj/old", vec![DirEntry::file("a.rs"), DirEntry::dir("deep")]);
+        d.insert(
+            "/proj/old",
+            vec![DirEntry::file("a.rs"), DirEntry::dir("deep")],
+        );
         d.insert("/proj/old/deep", vec![DirEntry::file("b.rs")]);
-        assert!(d.rename("/proj/old", "/proj/new"), "directory rename succeeds");
+        assert!(
+            d.rename("/proj/old", "/proj/new"),
+            "directory rename succeeds"
+        );
         // The parent listing shows the new name; the whole subtree re-keys.
-        let names: Vec<String> =
-            d.read_dir("/proj").unwrap().iter().map(|e| e.name.clone()).collect();
+        let names: Vec<String> = d
+            .read_dir("/proj")
+            .unwrap()
+            .iter()
+            .map(|e| e.name.clone())
+            .collect();
         assert_eq!(names, ["new"], "parent lists the renamed directory");
         assert_eq!(d.read_dir("/proj/old"), None, "old subtree key gone");
-        let inner: Vec<String> =
-            d.read_dir("/proj/new").unwrap().iter().map(|e| e.name.clone()).collect();
+        let inner: Vec<String> = d
+            .read_dir("/proj/new")
+            .unwrap()
+            .iter()
+            .map(|e| e.name.clone())
+            .collect();
         assert_eq!(inner, ["deep", "a.rs"], "the renamed dir keeps its listing");
         assert_eq!(
-            d.read_dir("/proj/new/deep").unwrap().iter().map(|e| e.name.clone()).collect::<Vec<_>>(),
+            d.read_dir("/proj/new/deep")
+                .unwrap()
+                .iter()
+                .map(|e| e.name.clone())
+                .collect::<Vec<_>>(),
             ["b.rs"],
             "the deep descendant re-keyed under the new path",
         );
@@ -456,15 +576,38 @@ mod tests {
     #[test]
     fn r791_rename_rejects_taken_name_missing_source_and_self() {
         let d = InMemoryDirectory::new();
-        d.insert("/proj", vec![DirEntry::file("a.txt"), DirEntry::file("b.txt")]);
-        assert!(!d.rename("/proj/a.txt", "/proj/b.txt"), "destination name already taken");
-        assert!(!d.rename("/proj/ghost.txt", "/proj/c.txt"), "missing source rejected");
-        assert!(!d.rename("/proj/a.txt", "/proj/a.txt"), "rename to the same name is a no-op");
-        assert!(!d.rename("/proj/a.txt", "/nope/a.txt"), "missing destination parent rejected");
+        d.insert(
+            "/proj",
+            vec![DirEntry::file("a.txt"), DirEntry::file("b.txt")],
+        );
+        assert!(
+            !d.rename("/proj/a.txt", "/proj/b.txt"),
+            "destination name already taken"
+        );
+        assert!(
+            !d.rename("/proj/ghost.txt", "/proj/c.txt"),
+            "missing source rejected"
+        );
+        assert!(
+            !d.rename("/proj/a.txt", "/proj/a.txt"),
+            "rename to the same name is a no-op"
+        );
+        assert!(
+            !d.rename("/proj/a.txt", "/nope/a.txt"),
+            "missing destination parent rejected"
+        );
         // The listing is untouched by every rejected rename.
-        let names: Vec<String> =
-            d.read_dir("/proj").unwrap().iter().map(|e| e.name.clone()).collect();
-        assert_eq!(names, ["a.txt", "b.txt"], "rejected renames leave the listing intact");
+        let names: Vec<String> = d
+            .read_dir("/proj")
+            .unwrap()
+            .iter()
+            .map(|e| e.name.clone())
+            .collect();
+        assert_eq!(
+            names,
+            ["a.txt", "b.txt"],
+            "rejected renames leave the listing intact"
+        );
     }
 
     #[test]

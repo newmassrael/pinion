@@ -278,7 +278,12 @@ pub fn pages_in_window(window: &VisibleWindow, page_size: usize) -> impl Iterato
 /// first-paint state of a flex `AutoSizer` list) or a zero pitch returns
 /// `offset_y` unchanged — there is no window to reveal into yet.
 #[must_use]
-pub fn scroll_offset_to_reveal(index: usize, offset_y: i32, viewport_h: u32, row_pitch: u32) -> i32 {
+pub fn scroll_offset_to_reveal(
+    index: usize,
+    offset_y: i32,
+    viewport_h: u32,
+    row_pitch: u32,
+) -> i32 {
     if viewport_h == 0 || row_pitch == 0 {
         return offset_y;
     }
@@ -298,7 +303,9 @@ pub fn scroll_offset_to_reveal(index: usize, offset_y: i32, viewport_h: u32, row
         // `.min(row_top)` collapses to align-top when the row is taller
         // than the viewport (then `row_bottom - viewport_h > row_top`),
         // so a degenerate over-tall row reveals its start, not its end.
-        row_bottom.saturating_sub(u64::from(viewport_h)).min(row_top)
+        row_bottom
+            .saturating_sub(u64::from(viewport_h))
+            .min(row_top)
     } else {
         // Already fully visible → align-auto leaves the offset alone.
         return offset_y;
@@ -319,7 +326,9 @@ pub fn scroll_offset_to_reveal(index: usize, offset_y: i32, viewport_h: u32, row
 #[must_use]
 pub fn page_rows(scroll: &crate::widgets::scroll::ScrollState, row_pitch: u32) -> usize {
     let (_, viewport_h) = scroll.measured_viewport();
-    usize::try_from(viewport_h / row_pitch.max(1)).unwrap_or(1).max(1)
+    usize::try_from(viewport_h / row_pitch.max(1))
+        .unwrap_or(1)
+        .max(1)
 }
 
 /// R793.1 §5.27 — scroll a uniform-pitch virtualized collection so the row
@@ -393,7 +402,8 @@ pub fn follow_tail(
     viewport_h: u32,
     was_following: bool,
 ) {
-    let bottom = crate::widgets::scroll::max_scroll_offset(content_height(count, row_pitch), viewport_h);
+    let bottom =
+        crate::widgets::scroll::max_scroll_offset(content_height(count, row_pitch), viewport_h);
     scroll.set_max(0, bottom);
     if was_following && count > 0 {
         scroll.scroll_to(0, bottom);
@@ -484,8 +494,7 @@ impl RowOffsets {
     /// out-of-range index.
     #[must_use]
     pub fn row_height(&self, index: usize) -> u32 {
-        let (Some(&top), Some(&bottom)) =
-            (self.offsets.get(index), self.offsets.get(index + 1))
+        let (Some(&top), Some(&bottom)) = (self.offsets.get(index), self.offsets.get(index + 1))
         else {
             return 0;
         };
@@ -578,10 +587,22 @@ mod tests {
         // An unmeasured (0-height) viewport still pages by at least one row.
         assert_eq!(page_rows(&s, 32), 1, "unmeasured viewport pages by one row");
         s.set_measured_viewport(360, 320);
-        assert_eq!(page_rows(&s, 32), 10, "320px / 32px pitch = 10 rows per page");
-        assert_eq!(page_rows(&s, 0), 320, "zero pitch is guarded against div-by-zero");
+        assert_eq!(
+            page_rows(&s, 32),
+            10,
+            "320px / 32px pitch = 10 rows per page"
+        );
+        assert_eq!(
+            page_rows(&s, 0),
+            320,
+            "zero pitch is guarded against div-by-zero"
+        );
         s.set_measured_viewport(360, 20);
-        assert_eq!(page_rows(&s, 32), 1, "a viewport shorter than one row pages by one");
+        assert_eq!(
+            page_rows(&s, 32),
+            1,
+            "a viewport shorter than one row pages by one"
+        );
     }
 
     #[test]
@@ -591,7 +612,11 @@ mod tests {
         s.set_max(0, 320_000);
         s.set_measured_viewport(360, 384);
         reveal_row(&s, 9_999, 32);
-        assert!(s.offset_y() > 300_000, "deep row revealed, offset {}", s.offset_y());
+        assert!(
+            s.offset_y() > 300_000,
+            "deep row revealed, offset {}",
+            s.offset_y()
+        );
         reveal_row(&s, 0, 32);
         assert_eq!(s.offset_y(), 0, "row 0 reveals at the top");
     }
@@ -606,7 +631,7 @@ mod tests {
 
     #[test]
     fn follow_tail_grows_the_bound_and_pins_only_when_following() {
-        use crate::widgets::scroll::{max_scroll_offset, ScrollState};
+        use crate::widgets::scroll::{ScrollState, max_scroll_offset};
         const PITCH: u32 = 24;
         const VH: u32 = 14 * PITCH; // 336
         // Following: a freshly-grown 50-row list pins to the new bottom.
@@ -622,7 +647,11 @@ mod tests {
         s2.set_measured_viewport(400, VH);
         s2.scroll_to(0, 0);
         follow_tail(&s2, 50, PITCH, VH, false);
-        assert_eq!(s2.max().1, bottom, "bound grows even when paused (scrollbar tracks)");
+        assert_eq!(
+            s2.max().1,
+            bottom,
+            "bound grows even when paused (scrollbar tracks)"
+        );
         assert_eq!(s2.offset_y(), 0, "paused viewport is not pinned");
     }
 
@@ -636,7 +665,10 @@ mod tests {
 
     #[test]
     fn zero_viewport_is_empty_window() {
-        assert_eq!(compute_visible_range(0, 0, N, PITCH, 0), VisibleWindow::EMPTY);
+        assert_eq!(
+            compute_visible_range(0, 0, N, PITCH, 0),
+            VisibleWindow::EMPTY
+        );
     }
 
     #[test]
@@ -666,7 +698,13 @@ mod tests {
         // offset 400: first_visible 10, bottom 600, last_visible
         // floor(599/40)=14 → rows 10..=14.
         let w = compute_visible_range(400, VP, N, PITCH, 0);
-        assert_eq!(w, VisibleWindow { first: 10, count: 5 });
+        assert_eq!(
+            w,
+            VisibleWindow {
+                first: 10,
+                count: 5
+            }
+        );
     }
 
     #[test]
@@ -731,7 +769,10 @@ mod tests {
     #[test]
     fn pages_in_window_spans_first_through_last_page() {
         // Rows 250..=370 (count 121) at page_size 100 → pages 2 and 3.
-        let w = VisibleWindow { first: 250, count: 121 };
+        let w = VisibleWindow {
+            first: 250,
+            count: 121,
+        };
         assert_eq!(w.last(), Some(370));
         assert_eq!(pages_in_window(&w, 100).collect::<Vec<_>>(), vec![2, 3]);
     }
@@ -739,14 +780,20 @@ mod tests {
     #[test]
     fn pages_in_window_single_page_when_window_fits() {
         // Rows 10..=29 are all on page 0.
-        let w = VisibleWindow { first: 10, count: 20 };
+        let w = VisibleWindow {
+            first: 10,
+            count: 20,
+        };
         assert_eq!(pages_in_window(&w, 100).collect::<Vec<_>>(), vec![0]);
     }
 
     #[test]
     fn pages_in_window_partial_last_page_still_spans_it() {
         // Rows 1600..=1666 (a partial last page under a filtered count) → page 16.
-        let w = VisibleWindow { first: 1600, count: 67 };
+        let w = VisibleWindow {
+            first: 1600,
+            count: 67,
+        };
         assert_eq!(pages_in_window(&w, 100).collect::<Vec<_>>(), vec![16]);
     }
 
@@ -977,7 +1024,13 @@ mod tests {
         // largest top <= 999 is 980 (row 25) → rows 20..=25.
         let o = RowOffsets::from_heights(&var_heights(1000));
         let w = compute_visible_range_variable(800, VP, &o, 0);
-        assert_eq!(w, VisibleWindow { first: 20, count: 6 });
+        assert_eq!(
+            w,
+            VisibleWindow {
+                first: 20,
+                count: 6
+            }
+        );
     }
 
     #[test]

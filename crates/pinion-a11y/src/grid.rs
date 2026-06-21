@@ -171,8 +171,16 @@ mod tests {
 
     fn columns() -> Vec<GridColumn> {
         vec![
-            GridColumn { tag: "g_ch0".into(), label: "Name".into(), sort: Some(SortDirection::Ascending) },
-            GridColumn { tag: "g_ch1".into(), label: "Tier".into(), sort: None },
+            GridColumn {
+                tag: "g_ch0".into(),
+                label: "Name".into(),
+                sort: Some(SortDirection::Ascending),
+            },
+            GridColumn {
+                tag: "g_ch1".into(),
+                label: "Tier".into(),
+                sort: None,
+            },
         ]
     }
 
@@ -183,8 +191,18 @@ mod tests {
                 selected: true,
                 state: RadioState::Idle,
                 cells: vec![
-                    GridCell { tag: "g#0_0".into(), name: "Name: Button".into(), focused: true, selected: None },
-                    GridCell { tag: "g#0_1".into(), name: "Tier: 1".into(), focused: false, selected: None },
+                    GridCell {
+                        tag: "g#0_0".into(),
+                        name: "Name: Button".into(),
+                        focused: true,
+                        selected: None,
+                    },
+                    GridCell {
+                        tag: "g#0_1".into(),
+                        name: "Tier: 1".into(),
+                        focused: false,
+                        selected: None,
+                    },
                 ],
             },
             GridRow {
@@ -192,8 +210,18 @@ mod tests {
                 selected: false,
                 state: RadioState::Hover,
                 cells: vec![
-                    GridCell { tag: "g#1_0".into(), name: "Name: Slider".into(), focused: false, selected: None },
-                    GridCell { tag: "g#1_1".into(), name: "Tier: 2".into(), focused: false, selected: None },
+                    GridCell {
+                        tag: "g#1_0".into(),
+                        name: "Name: Slider".into(),
+                        focused: false,
+                        selected: None,
+                    },
+                    GridCell {
+                        tag: "g#1_1".into(),
+                        name: "Tier: 2".into(),
+                        focused: false,
+                        selected: None,
+                    },
                 ],
             },
         ]
@@ -259,7 +287,10 @@ mod tests {
     fn cells_carry_name_and_focused_state() {
         let n = nodes();
         assert_eq!(by_tag(&n, "g#0_0").name.as_deref(), Some("Name: Button"));
-        assert!(by_tag(&n, "g#0_0").state.focused, "the active cell is focused");
+        assert!(
+            by_tag(&n, "g#0_0").state.focused,
+            "the active cell is focused"
+        );
         assert!(!by_tag(&n, "g#0_1").state.focused);
         // Row interaction posture flows to its cells (row 1 = Hover).
         assert!(by_tag(&n, "g#1_0").state.hovered);
@@ -272,7 +303,11 @@ mod tests {
         let n = grid_table_nodes("g", "Catalog", false, "g_hrow", &columns(), &[]);
         // grid + header row + 2 columnheaders = 4.
         assert_eq!(n.len(), 4);
-        assert_eq!(n[0].children, vec!["g_hrow"], "grid references only the header row");
+        assert_eq!(
+            n[0].children,
+            vec!["g_hrow"],
+            "grid references only the header row"
+        );
     }
 
     #[test]
@@ -280,7 +315,11 @@ mod tests {
         // The default-None fixture cells omit `aria-selected` entirely (a
         // row-select / display-only grid is unchanged by R952).
         let n = nodes();
-        assert_eq!(by_tag(&n, "g#0_0").selected, None, "None cell omits aria-selected");
+        assert_eq!(
+            by_tag(&n, "g#0_0").selected,
+            None,
+            "None cell omits aria-selected"
+        );
 
         // A cell-selecting grid passes `Some(bool)`: the rectangle's cells are
         // `Some(true)`, others `Some(false)`.
@@ -289,12 +328,30 @@ mod tests {
             selected: false,
             state: RadioState::Idle,
             cells: vec![
-                GridCell { tag: "g#0_0".into(), name: "A".into(), focused: false, selected: Some(true) },
-                GridCell { tag: "g#0_1".into(), name: "B".into(), focused: false, selected: Some(false) },
+                GridCell {
+                    tag: "g#0_0".into(),
+                    name: "A".into(),
+                    focused: false,
+                    selected: Some(true),
+                },
+                GridCell {
+                    tag: "g#0_1".into(),
+                    name: "B".into(),
+                    focused: false,
+                    selected: Some(false),
+                },
             ],
         }];
         let n = grid_table_nodes("g", "Sheet", true, "g_hrow", &columns(), &rows);
-        assert_eq!(by_tag(&n, "g#0_0").selected, Some(true), "in-rectangle cell is aria-selected");
-        assert_eq!(by_tag(&n, "g#0_1").selected, Some(false), "out-of-rectangle cell is not");
+        assert_eq!(
+            by_tag(&n, "g#0_0").selected,
+            Some(true),
+            "in-rectangle cell is aria-selected"
+        );
+        assert_eq!(
+            by_tag(&n, "g#0_1").selected,
+            Some(false),
+            "out-of-rectangle cell is not"
+        );
     }
 }

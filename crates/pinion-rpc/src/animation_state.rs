@@ -205,7 +205,10 @@ mod tests {
         // value, so explicitly retarget to perturb the system.
         anim.set_target(1.0);
         let outcome = animation_state(Some(&owner), None).unwrap();
-        assert!(outcome.active, "spring with non-zero target diff must be active");
+        assert!(
+            outcome.active,
+            "spring with non-zero target diff must be active"
+        );
     }
 
     #[test]

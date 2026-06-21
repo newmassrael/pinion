@@ -38,20 +38,20 @@ use std::time::{Duration, Instant};
 
 use accesskit::NodeId;
 use pinion_a11y::{
-    tag_to_node_id, translate_action, AccessAction, AccessFocus, AccessNode,
-    PinionAccessAction, ROOT_NODE_ID,
+    AccessAction, AccessFocus, AccessNode, PinionAccessAction, ROOT_NODE_ID, tag_to_node_id,
+    translate_action,
 };
 use pinion_core::event::WheelDelta;
 use pinion_core::{Frame, Intent, Scene, SceneRevision};
 use pinion_rpc::{
-    dispatch_parsed, parse_request, DeferredInput, DispatchContext, DragButton, KeyWireState, LayoutNode, PreviewLedger,
-    Request,
+    DeferredInput, DispatchContext, DragButton, KeyWireState, LayoutNode, PreviewLedger, Request,
+    dispatch_parsed, parse_request,
 };
 use pinion_runtime::{
+    CommandExecutor, CoreShell, DispatchTail, FocusManager, FrameTiming, FrameTimingStats,
+    FrameTimingsSnapshot, IntentQueue, Modifiers, PanRelease, PointerId, Touch, TouchPhase,
     clamp_frame_dt, compute_layout, compute_layout_with_scroll_dirty, rect_for_tag,
-    walk_scene_and_drain_immediate, CommandExecutor, CoreShell, DispatchTail,
-    FocusManager, FrameTiming, FrameTimingStats, FrameTimingsSnapshot, IntentQueue,
-    PanRelease, Modifiers, PointerId, Touch, TouchPhase,
+    walk_scene_and_drain_immediate,
 };
 use pinion_text::LayoutCache;
 
@@ -679,7 +679,6 @@ fn inject_styled_focus_ring<V: WidgetView>(
 }
 
 impl<V: WidgetView> ShellCore<V> {
-
     /// R51.76 §5.40 — borrow the cached state projection. Tests
     /// observe widget state transitions through this accessor.
     /// R51.123 §5.41 — delegates to [`CoreShell::cached_state`].
@@ -892,8 +891,7 @@ impl<V: WidgetView> ShellCore<V> {
     /// re-calling this method with a different `fps` is the
     /// canonical "change pacing on the fly" surface.
     pub fn set_target_fps_for_window(&mut self, window_id: &str, fps: u32) {
-        self.target_fps_per_window
-            .insert(window_id.to_owned(), fps);
+        self.target_fps_per_window.insert(window_id.to_owned(), fps);
         // R831 §2 #4 §5.28 — pausing (`fps == 0`) snaps the immediate-mode
         // accumulator back to a zero phase, so an AI client that then
         // frame-steps via `scene/tick` advances from a known fixed-step
@@ -1010,11 +1008,7 @@ impl<V: WidgetView> ShellCore<V> {
     /// `AppShell::render_window` calls this after each paint cycle so
     /// the GUI-agnostic substrate can surface cache observability to
     /// RPC / tests without exposing `vello::Scene` references.
-    pub fn publish_fragment_cache_stats(
-        &mut self,
-        window_id: &str,
-        stats: FragmentCacheStats,
-    ) {
+    pub fn publish_fragment_cache_stats(&mut self, window_id: &str, stats: FragmentCacheStats) {
         self.fragment_cache_stats_per_window
             .insert(window_id.to_owned(), stats);
     }
@@ -1058,28 +1052,19 @@ impl<V: WidgetView> ShellCore<V> {
         if window_id == pinion_runtime::DEFAULT_WINDOW {
             return false;
         }
-        let shell_side = self
-            .redraw_requested_per_window
-            .remove(window_id)
-            .is_some()
+        let shell_side = self.redraw_requested_per_window.remove(window_id).is_some()
             | self.last_paint_instants.remove(window_id).is_some()
             | self.target_fps_per_window.remove(window_id).is_some()
             | self
                 .pending_immediate_dt_per_window
                 .remove(window_id)
                 .is_some()
-            | self
-                .sim_accumulator_per_window
-                .remove(window_id)
-                .is_some()
+            | self.sim_accumulator_per_window.remove(window_id).is_some()
             | self
                 .fragment_cache_stats_per_window
                 .remove(window_id)
                 .is_some()
-            | self
-                .frame_timings_per_window
-                .remove(window_id)
-                .is_some();
+            | self.frame_timings_per_window.remove(window_id).is_some();
         // CoreShell::remove_window returns true on at least one
         // runtime-side removal; the OR with shell_side surfaces "any
         // per-window state existed" so the AppShell-side reconcile
@@ -1119,13 +1104,8 @@ impl<V: WidgetView> ShellCore<V> {
     /// substrate via this typed surface, not via screenshot diffing
     /// or human visual review.
     #[must_use]
-    pub fn fragment_cache_stats_for_window(
-        &self,
-        window_id: &str,
-    ) -> Option<FragmentCacheStats> {
-        self.fragment_cache_stats_per_window
-            .get(window_id)
-            .copied()
+    pub fn fragment_cache_stats_for_window(&self, window_id: &str) -> Option<FragmentCacheStats> {
+        self.fragment_cache_stats_per_window.get(window_id).copied()
     }
 
     /// R907 §5.16 §5.7 — project the window's rolling
@@ -1215,7 +1195,6 @@ impl<V: WidgetView> ShellCore<V> {
         self.modifiers.shift_key()
     }
 
-
     /// R51.45 §5.35 — abstract [`Touch`] dispatch (R51.108 §5.41
     /// winit-free, R51.122 §5.41 router-side lift into
     /// [`CoreShell::touch_event`]). Each finger mints a distinct
@@ -1230,11 +1209,7 @@ impl<V: WidgetView> ShellCore<V> {
     /// (`Started`) so a tap on a tagged focusable widget aliases
     /// `FocusManager::focus_set`.
     /// R672 §5.35 §5.41 — per-window touch handler.
-    fn handle_touch_for_window(
-        &mut self,
-        window_id: &str,
-        touch: Touch,
-    ) -> DispatchTail<V::State> {
+    fn handle_touch_for_window(&mut self, window_id: &str, touch: Touch) -> DispatchTail<V::State> {
         let phase = touch.phase;
         let pid = PointerId::touch(touch.id);
         let tail = self.core.touch_event_for_window(window_id, touch);
@@ -1346,7 +1321,10 @@ impl<V: WidgetView> ShellCore<V> {
     /// fans out from this surface).
     pub fn middle_click(&mut self) {
         let focused = self.focus.focused().map(str::to_owned);
-        if let Some(tail) = self.core.apply_middle_click(focused.as_deref(), self.modifiers) {
+        if let Some(tail) = self
+            .core
+            .apply_middle_click(focused.as_deref(), self.modifiers)
+        {
             self.revision.bump();
             self.handle_tail(&tail);
         }
@@ -1518,7 +1496,10 @@ impl<V: WidgetView> ShellCore<V> {
     /// unhandled `Escape` does not.
     pub fn try_apply_key(&mut self, key_str: &str) -> bool {
         let focused = self.focus.focused().map(str::to_owned);
-        if let Some(tail) = self.core.apply_key(focused.as_deref(), key_str, self.modifiers) {
+        if let Some(tail) = self
+            .core
+            .apply_key(focused.as_deref(), key_str, self.modifiers)
+        {
             self.revision.bump();
             // R705.1 — `handle_tail` arms `redraw_requested` whenever the
             // dispatch dirtied a view-subscribed `Signal` (the reactive
@@ -1607,25 +1588,15 @@ impl<V: WidgetView> ShellCore<V> {
     /// with the resolved [`crate::WindowSpec::id`] so the addressed
     /// window's [`pinion_runtime::InputRouter`] handles the
     /// cursor + `refresh_hover` walk independently of other windows.
-    pub fn cursor_moved_for_window(
-        &mut self,
-        window_id: &str,
-        pid: PointerId,
-        x: f64,
-        y: f64,
-    ) {
+    pub fn cursor_moved_for_window(&mut self, window_id: &str, pid: PointerId, x: f64, y: f64) {
         // R881 §5.35 §5.49 — thread the out-of-band modifier cache so a
         // live middle pan's wheel-vocabulary dispatch sees held chords
         // (`Ctrl`+middle-drag zooms a canvas exactly as `Ctrl`+wheel
         // does); the returned flag is the pan repaint cue, mirroring
         // `wheel_for_window`.
-        let (tail, pan_dispatched) = self.core.cursor_moved_for_window_with_modifiers(
-            window_id,
-            pid,
-            x,
-            y,
-            self.modifiers,
-        );
+        let (tail, pan_dispatched) =
+            self.core
+                .cursor_moved_for_window_with_modifiers(window_id, pid, x, y, self.modifiers);
         if pan_dispatched {
             self.request_redraw();
         }
@@ -1832,13 +1803,7 @@ impl<V: WidgetView> ShellCore<V> {
         clippy::cast_possible_truncation,
         reason = "window-local logical-pixel cursor coords fit f32 in every realistic viewport"
     )]
-    fn extend_text_selection_on_drag(
-        &mut self,
-        window_id: &str,
-        pid: PointerId,
-        x: f64,
-        y: f64,
-    ) {
+    fn extend_text_selection_on_drag(&mut self, window_id: &str, pid: PointerId, x: f64, y: f64) {
         let Some(drag) = self.text_select_drag.as_ref() else {
             return;
         };
@@ -1962,12 +1927,7 @@ impl<V: WidgetView> ShellCore<V> {
     /// one cache, both producers), so a hovered `External` wheel
     /// consumer (canvas pan / `Ctrl`-zoom) reads the held modifiers
     /// the same way `scene/click` Shift-extend does.
-    pub fn wheel_for_window(
-        &mut self,
-        window_id: &str,
-        pid: PointerId,
-        delta: WheelDelta,
-    ) {
+    pub fn wheel_for_window(&mut self, window_id: &str, pid: PointerId, delta: WheelDelta) {
         let (tail, dispatched) =
             self.core
                 .wheel_with_modifiers_for_window(window_id, pid, delta, self.modifiers);
@@ -1992,11 +1952,11 @@ impl<V: WidgetView> ShellCore<V> {
     /// state. Pre-R672 every drained replay went through the
     /// binding-wide router → `scene/click` against a non-last-painted
     /// window had a race condition on `last_paint_scene`.
-    fn drain_deferred_inputs_for_window(
-        &mut self,
-        window_id: &str,
-        inputs: &[DeferredInput],
-    ) {
+    // R1026 — rustfmt's reflow pushed this 1 line over the workspace
+    // too_many_lines (100) ceiling it was kept just under; the body is a flat
+    // per-input dispatch, not bloat. Extraction is deferred to the owner.
+    #[allow(clippy::too_many_lines)]
+    fn drain_deferred_inputs_for_window(&mut self, window_id: &str, inputs: &[DeferredInput]) {
         // `DeferredInput` is `non_exhaustive`; the wildcard arm
         // covers future variants (key, cursor_only, etc.) silently
         // no-op against this drain until a follow-up round extends
@@ -2139,7 +2099,12 @@ impl<V: WidgetView> ShellCore<V> {
                 }
                 // R882 §5.49 §5.39 — `state` carries the keyboard edge;
                 // the shared policy lives in `drain_key_for_window`.
-                DeferredInput::Key { x, y, ref key, state } => {
+                DeferredInput::Key {
+                    x,
+                    y,
+                    ref key,
+                    state,
+                } => {
                     self.drain_key_for_window(window_id, (x, y), key, state, false);
                 }
                 // R666 §5.37 — `scene/key` single-codepoint arc. The
@@ -2390,12 +2355,7 @@ impl<V: WidgetView> ShellCore<V> {
     /// animation heartbeat) was the canonical signal; see
     /// [[r670b-paint-scene-producer-parity]] for the long-form
     /// post-mortem.
-    fn compute_paint_scene_internal(
-        &mut self,
-        window_id: Option<&str>,
-        w: u32,
-        h: u32,
-    ) -> Scene {
+    fn compute_paint_scene_internal(&mut self, window_id: Option<&str>, w: u32, h: u32) -> Scene {
         // R680 atomic 1 §5.16 §5.28 §5.41 — resolve the canonical
         // window key. `None` (single-window legacy paint entry)
         // maps to `DEFAULT_WINDOW` so the per-window last-paint
@@ -2565,7 +2525,8 @@ impl<V: WidgetView> ShellCore<V> {
         // with no focus stops paints no focusable node, so the enumeration is
         // correctly empty.
         if window_key == pinion_runtime::DEFAULT_WINDOW {
-            self.focus.update_focusable_tags(paint_scene.collect_focusable_tags());
+            self.focus
+                .update_focusable_tags(paint_scene.collect_focusable_tags());
         }
         // R681 §2 #4 atomic 1 / R831 — per-window immediate-mode tick.
         // The paint scene the view fn just produced may contain one or
@@ -2611,8 +2572,7 @@ impl<V: WidgetView> ShellCore<V> {
         //     repaint (a click forwarding `on_pointer_down`, a focus-ring
         //     redraw, a resize) does NOT fast-forward a long-paused game;
         //   - the clamped wall-clock delta otherwise (the live loop).
-        let sim_dt = if let Some(injected) =
-            self.pending_immediate_dt_per_window.remove(window_key)
+        let sim_dt = if let Some(injected) = self.pending_immediate_dt_per_window.remove(window_key)
         {
             injected
         } else if paused {
@@ -2775,12 +2735,7 @@ impl<V: WidgetView> ShellCore<V> {
     /// R671 §5.16: thin wrapper around
     /// [`Self::compute_paint_scene_internal`]; the parity carry from
     /// R670.B is permanently cleared by the unified producer.
-    pub fn compute_paint_scene_for_window(
-        &mut self,
-        window_id: &str,
-        w: u32,
-        h: u32,
-    ) -> Scene {
+    pub fn compute_paint_scene_for_window(&mut self, window_id: &str, w: u32, h: u32) -> Scene {
         self.compute_paint_scene_internal(Some(window_id), w, h)
     }
 
@@ -2916,7 +2871,13 @@ impl<V: WidgetView> ShellCore<V> {
         // global `V::access_node` for single-window bindings). R979 — the
         // build sequence is the `build_access_tree` SSOT the `scene/access`
         // RPC dump also runs, so the dump cannot drift from the AT emit.
-        build_access_tree::<V>(owner, cached, Some(window_id), focused.as_deref(), Some(paint_scene))
+        build_access_tree::<V>(
+            owner,
+            cached,
+            Some(window_id),
+            focused.as_deref(),
+            Some(paint_scene),
+        )
     }
 
     /// R51.80 §5.12 §5.35 — post-render bookkeeping.
@@ -2996,7 +2957,8 @@ impl<V: WidgetView> ShellCore<V> {
         window_id: &str,
         paint_scene: Scene,
     ) {
-        self.core.update_paint_scene_for_window(window_id, paint_scene);
+        self.core
+            .update_paint_scene_for_window(window_id, paint_scene);
     }
 
     /// (R685.C atomic 4 §5.16 §5.41 §5.35) Paint-storage write with
@@ -3028,11 +2990,7 @@ impl<V: WidgetView> ShellCore<V> {
     /// third unnamed publish path alongside the composed finalize.
     /// R685.C lifts it into this named primitive so the dispatch hook
     /// reads declaratively.
-    pub fn apply_paint_for_window_storage_only(
-        &mut self,
-        window_id: &str,
-        paint_scene: Scene,
-    ) {
+    pub fn apply_paint_for_window_storage_only(&mut self, window_id: &str, paint_scene: Scene) {
         self.core.set_paint_scene_for_window(window_id, paint_scene);
     }
 
@@ -3229,14 +3187,14 @@ impl<V: WidgetView> ShellCore<V> {
             // serialized response, so we just return it.
             Err(err_resp) => return Some(err_resp),
         };
-        let scope: Option<String> = parsed
-            .window_scope()
-            .ok()
-            .flatten()
-            .map(str::to_owned);
+        let scope: Option<String> = parsed.window_scope().ok().flatten().map(str::to_owned);
         self.dispatch_rpc_inner(parsed, scope.as_deref(), resize_request)
     }
 
+    // R1026 — rustfmt's reflow pushed this 4 lines over the workspace
+    // too_many_lines (100) ceiling it was kept just under; the body is a flat
+    // method-dispatch match, not bloat. Extraction is deferred to the owner.
+    #[allow(clippy::too_many_lines)]
     fn dispatch_rpc_inner(
         &mut self,
         request: Request,
@@ -3309,8 +3267,7 @@ impl<V: WidgetView> ShellCore<V> {
             // is cheap (one atomic bump) and unblocks the borrow
             // split so the dispatcher can hand `&CommandExecutor`
             // into the with_commands_executor builder below.
-            let executor_for_rpc: Option<Arc<CommandExecutor>> =
-                self.core.executor().cloned();
+            let executor_for_rpc: Option<Arc<CommandExecutor>> = self.core.executor().cloned();
             // R705 §5.12 §2 #7 — split borrow: the dispatcher mutates
             // the authoritative state scene while `scene/snapshot
             // from: paint` reads the addressed window's stored paint
@@ -3320,8 +3277,7 @@ impl<V: WidgetView> ShellCore<V> {
             // aliasing — replacing the pre-R705 query-time re-render
             // that drifted from the on-screen pixels
             // ([[introspection-from-paint-not-screen]]).
-            let paint_window_key =
-                window_id.unwrap_or(pinion_runtime::DEFAULT_WINDOW);
+            let paint_window_key = window_id.unwrap_or(pinion_runtime::DEFAULT_WINDOW);
             let (scene_ptr, last_paint_scene_ref) = self
                 .core
                 .scene_mut_and_last_paint_for_window(paint_window_key);
@@ -3381,7 +3337,15 @@ impl<V: WidgetView> ShellCore<V> {
             // R979 §5.40 §2 #7 — `scene/access` producer (the `build_access_tree`
             // SSOT the live AccessKit emit also runs; entry-focus `focus_before`).
             let access_focused = focus_before.clone();
-            let mut produce_access = || build_access_tree::<V>(&root_owner, &cached_state, producer_window_id.as_deref(), access_focused.as_deref(), last_paint_scene_ref);
+            let mut produce_access = || {
+                build_access_tree::<V>(
+                    &root_owner,
+                    &cached_state,
+                    producer_window_id.as_deref(),
+                    access_focused.as_deref(),
+                    last_paint_scene_ref,
+                )
+            };
             let mut ctx = DispatchContext::new(scene_ptr, previews, revision)
                 .with_paint_producer(&mut produce)
                 .with_access_producer(&mut produce_access)
@@ -3846,7 +3810,8 @@ impl<V: WidgetView> ShellCore<V> {
             let core = &self.core;
             core.root_owner().run(|| V::view(cached_state, &frame))
         };
-        self.focus.update_focusable_tags(scene.collect_focusable_tags());
+        self.focus
+            .update_focusable_tags(scene.collect_focusable_tags());
     }
 
     /// R51.159 §5.23 — install or replace the
@@ -4019,21 +3984,14 @@ impl<V: WidgetView> ShellCore<V> {
     /// (for the next focus-change detection), `access_emit_initial`
     /// (set to `false` after the first commit so the next plan emits
     /// incrementally).
-    pub fn commit_access_emit(
-        &mut self,
-        nodes: Vec<AccessNode>,
-        focus: Option<&AccessFocus>,
-    ) {
+    pub fn commit_access_emit(&mut self, nodes: Vec<AccessNode>, focus: Option<&AccessFocus>) {
         // R51.67 §5.40 — refresh the NodeId → tag map. Borrow before
         // the by-value move below.
         self.last_access_tag_map = build_tag_map(&nodes);
         // R51.79 §5.40 — move the Vec straight into the per-tag
         // HashMap. `tag.clone()` lifts only the key (a String) out;
         // each `AccessNode` itself moves without an extra clone.
-        self.last_access_nodes = nodes
-            .into_iter()
-            .map(|n| (n.tag.clone(), n))
-            .collect();
+        self.last_access_nodes = nodes.into_iter().map(|n| (n.tag.clone(), n)).collect();
         // Refresh the focus snapshot for the next frame's
         // focus-change check.
         self.last_access_focus = focus.cloned();
@@ -4093,7 +4051,8 @@ impl<V: WidgetView> ShellCore<V> {
                     // back to the atomic `apply_key` chain (no
                     // keyboard equivalent for "make this the active
                     // descendant").
-                    let _ = V::access_child_invoke(self.core.scene_mut(), parent_tag, sub, action.kind);
+                    let _ =
+                        V::access_child_invoke(self.core.scene_mut(), parent_tag, sub, action.kind);
                     self.revision.bump();
                     let tail = self.core.tail();
                     self.handle_tail(&tail);
@@ -4160,7 +4119,6 @@ impl<V: WidgetView> ShellCore<V> {
         }
         self.request_redraw();
     }
-
 }
 
 /// R51.67 §5.40 — build the `NodeId` → widget tag map for a
@@ -4259,7 +4217,11 @@ mod r1006_viewport_seam_tests {
 
         // Primary path (`window_id == None` -> window_key == DEFAULT_WINDOW).
         let _ = sc.compute_paint_scene(640, 480);
-        assert_eq!(sig.get(), (640, 480), "primary paint publishes the viewport");
+        assert_eq!(
+            sig.get(),
+            (640, 480),
+            "primary paint publishes the viewport"
+        );
 
         // The live winit path uses the explicit primary id; same gate fires.
         let _ = sc.compute_paint_scene_for_window(pinion_runtime::DEFAULT_WINDOW, 800, 600);
@@ -4283,7 +4245,9 @@ mod r1006_viewport_seam_tests {
 
 #[cfg(test)]
 mod r863_bounds_union_tests {
-    use super::{compute_layout, rect_for_tag, resolve_access_bounds, AccessNode, LayoutCache, Scene};
+    use super::{
+        AccessNode, LayoutCache, Scene, compute_layout, rect_for_tag, resolve_access_bounds,
+    };
     use pinion_a11y::AriaRole;
     use pinion_core::scene::ContainerNode;
     use pinion_core::style::{FlexDirection, LayoutStyle, Size};
@@ -4323,8 +4287,15 @@ mod r863_bounds_union_tests {
         resolve_access_bounds(&scene, &mut nodes);
         let union = nodes[0].bounds.expect("row bounds resolved");
 
-        assert_eq!(union, frozen_rect.union(scrolled_rect), "bounds = union of both panes");
-        assert_eq!(union.x, frozen_rect.x, "union starts at the frozen pane's left");
+        assert_eq!(
+            union,
+            frozen_rect.union(scrolled_rect),
+            "bounds = union of both panes"
+        );
+        assert_eq!(
+            union.x, frozen_rect.x,
+            "union starts at the frozen pane's left"
+        );
         assert!(
             union.w > scrolled_rect.w,
             "the unioned row ({union:?}) is wider than the scrolled strip alone ({scrolled_rect:?})",
@@ -4343,7 +4314,11 @@ mod r863_bounds_union_tests {
         let mut nodes =
             vec![AccessNode::new("g_row0", AriaRole::Row).with_bounds_union_tag("g_absent")];
         resolve_access_bounds(&scene, &mut nodes);
-        assert_eq!(nodes[0].bounds, Some(scrolled_rect), "absent fragment leaves the primary rect");
+        assert_eq!(
+            nodes[0].bounds,
+            Some(scrolled_rect),
+            "absent fragment leaves the primary rect"
+        );
     }
 
     #[test]
@@ -4354,6 +4329,10 @@ mod r863_bounds_union_tests {
         let scrolled_rect = rect_for_tag(&scene, "g_row0").unwrap();
         let mut nodes = vec![AccessNode::new("g_row0", AriaRole::Row)];
         resolve_access_bounds(&scene, &mut nodes);
-        assert_eq!(nodes[0].bounds, Some(scrolled_rect), "single-fragment node = its own tag");
+        assert_eq!(
+            nodes[0].bounds,
+            Some(scrolled_rect),
+            "single-fragment node = its own tag"
+        );
     }
 }

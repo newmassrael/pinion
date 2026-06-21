@@ -39,35 +39,40 @@
 use std::rc::Rc;
 
 use pinion_a11y::{
-    grouped_grid_access_nodes, AccessNode, GridColumn, GroupedGridSelection, GroupedGridSpec,
-    SortDirection, WidgetA11y,
+    AccessNode, GridColumn, GroupedGridSelection, GroupedGridSpec, SortDirection, WidgetA11y,
+    grouped_grid_access_nodes,
 };
 use pinion_core::external::{
-    int_of, External, IntrospectSchema, IntrospectValue, QueryOnlyIntrospect, QuerySource,
+    External, IntrospectSchema, IntrospectValue, QueryOnlyIntrospect, QuerySource, int_of,
 };
+use pinion_core::reactive::Owner;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
-use pinion_core::widgets::grid_sort::{col_sort_dir, use_grid_sort, GridSortExternal, GridSortState};
+use pinion_core::widgets::grid_sort::{
+    GridSortExternal, GridSortState, col_sort_dir, use_grid_sort,
+};
 use pinion_core::widgets::group_order::{
-    use_group_order_with_source, GroupOrderExternal, GroupOrderState, GroupRow,
+    GroupOrderExternal, GroupOrderState, GroupRow, use_group_order_with_source,
 };
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
 use pinion_core::widgets::virtual_list::compute_visible_range;
-use pinion_core::widgets::virtual_select::{read_selected, VirtualSelectExternal};
-use pinion_core::reactive::Owner;
+use pinion_core::widgets::virtual_select::{VirtualSelectExternal, read_selected};
 use pinion_core::{Frame, Scene, WidgetCore};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::group_header::group_header_row;
-use pinion_widget_paint::scrollbar::{view_vertical_scrollbar, VerticalScrollbarStyle};
+use pinion_widget_paint::scrollbar::{VerticalScrollbarStyle, view_vertical_scrollbar};
 use pinion_widget_paint::virtual_list::view_virtual_list;
-use pinion_shell::{vello_renderer_impl, WidgetView};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
-vello_renderer_impl!(HelloGroupedGridSortRenderer, HelloGroupedGridSortRendererError);
+vello_renderer_impl!(
+    HelloGroupedGridSortRenderer,
+    HelloGroupedGridSortRendererError
+);
 
 const WIN_W: u32 = 400;
 const WIN_H: u32 = 540;
@@ -149,7 +154,9 @@ struct GroupAggregates {
 
 impl core::fmt::Debug for GroupAggregates {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("GroupAggregates").field("total_size", &self.total_size).finish_non_exhaustive()
+        f.debug_struct("GroupAggregates")
+            .field("total_size", &self.total_size)
+            .finish_non_exhaustive()
     }
 }
 
@@ -216,8 +223,9 @@ fn use_group_aggregates() -> Rc<GroupAggregates> {
 /// The shared column-sort proxy over the materialized cell grid.
 fn use_grid_data() -> Rc<GridSortState> {
     use_grid_sort(SORT_TAG, || {
-        let cells: Vec<Vec<String>> =
-            (0..N).map(|i| (0..NCOLS).map(|c| cell_value(i, c)).collect()).collect();
+        let cells: Vec<Vec<String>> = (0..N)
+            .map(|i| (0..NCOLS).map(|c| cell_value(i, c)).collect())
+            .collect();
         (NCOLS, cells)
     })
 }
@@ -232,7 +240,10 @@ fn use_grid_groups() -> Rc<GroupOrderState> {
         GROUP_TAG,
         || {
             let groups = (0..N).map(row_group).collect::<Vec<usize>>();
-            let labels = GROUPS.iter().map(|&g| g.to_string()).collect::<Vec<String>>();
+            let labels = GROUPS
+                .iter()
+                .map(|&g| g.to_string())
+                .collect::<Vec<String>>();
             (groups, labels)
         },
         move || grid.order(),
@@ -244,12 +255,14 @@ fn use_grid_groups() -> Rc<GroupOrderState> {
 fn column_header_row(sort: Option<(usize, bool)>, theme: &Theme) -> Scene {
     let mut cells: Vec<Scene> = Vec::with_capacity(NCOLS);
     for (c, &name) in COLS.iter().enumerate() {
-        let glyph = pinion_widget_paint::glyph::sort_glyph(col_sort_dir(sort, c))
-            .unwrap_or(ARROW_NONE);
+        let glyph =
+            pinion_widget_paint::glyph::sort_glyph(col_sort_dir(sort, c)).unwrap_or(ARROW_NONE);
         let label = Scene::Text(TextNode::styled(
             format!("{name} {glyph}"),
             Rect::default(),
-            TextStyle::new().with_size_px(13).with_fg(theme.resolve(ColorRole::OnSurface)),
+            TextStyle::new()
+                .with_size_px(13)
+                .with_fg(theme.resolve(ColorRole::OnSurface)),
         ));
         cells.push(Scene::Container(
             ContainerNode::new(vec![label])
@@ -265,8 +278,14 @@ fn column_header_row(sort: Option<(usize, bool)>, theme: &Theme) -> Scene {
     }
     Scene::Container(
         ContainerNode::new(cells)
-            .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHighest)))
-            .with_layout(LayoutStyle::new().flex(FlexDirection::Row).with_size(Size::px(GRID_W, ROW_PITCH))),
+            .with_style(BoxStyle::filled(
+                theme.resolve(ColorRole::SurfaceContainerHighest),
+            ))
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Row)
+                    .with_size(Size::px(GRID_W, ROW_PITCH)),
+            ),
     )
 }
 
@@ -275,7 +294,13 @@ fn column_header_row(sort: Option<(usize, bool)>, theme: &Theme) -> Scene {
 /// header skin is the [`group_header_row`] SSOT (R871); this variant passes the
 /// aggregate as the parenthesized detail (the only divergence from the three
 /// count-only grouped headers).
-fn build_header(group: usize, member_count: usize, total_size: u64, collapsed: bool, theme: &Theme) -> Scene {
+fn build_header(
+    group: usize,
+    member_count: usize,
+    total_size: u64,
+    collapsed: bool,
+    theme: &Theme,
+) -> Scene {
     group_header_row(
         format!("{GROUP_TAG}#{group}"),
         GROUPS[group % GROUPS.len()],
@@ -290,9 +315,16 @@ fn build_header(group: usize, member_count: usize, total_size: u64, collapsed: b
 fn build_data_row(source: usize, theme: &Theme, selected: Option<usize>) -> Scene {
     let is_selected = selected == Some(source);
     let (fill, fg) = if is_selected {
-        (theme.resolve(ColorRole::Accent), theme.resolve(ColorRole::OnAccent))
+        (
+            theme.resolve(ColorRole::Accent),
+            theme.resolve(ColorRole::OnAccent),
+        )
     } else {
-        let stripe = if source % 2 == 0 { ColorRole::SurfaceContainerLow } else { ColorRole::Surface };
+        let stripe = if source % 2 == 0 {
+            ColorRole::SurfaceContainerLow
+        } else {
+            ColorRole::Surface
+        };
         (theme.resolve(stripe), theme.resolve(ColorRole::OnSurface))
     };
     let mut cells: Vec<Scene> = Vec::with_capacity(NCOLS);
@@ -319,7 +351,11 @@ fn build_data_row(source: usize, theme: &Theme, selected: Option<usize>) -> Scen
         ContainerNode::new(cells)
             .with_tag(format!("{GRID_TAG}#{source}"))
             .with_style(BoxStyle::filled(fill))
-            .with_layout(LayoutStyle::new().flex(FlexDirection::Row).with_size(Size::px(GRID_W, ROW_PITCH))),
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Row)
+                    .with_size(Size::px(GRID_W, ROW_PITCH)),
+            ),
     )
 }
 
@@ -343,7 +379,11 @@ fn view(selected: Option<usize>, _frame: &Frame) -> Scene {
         ROW_PITCH,
         OVERSCAN,
         |view_pos| match rows[view_pos] {
-            GroupRow::Header { group, member_count, collapsed } => {
+            GroupRow::Header {
+                group,
+                member_count,
+                collapsed,
+            } => {
                 let total_size = aggregates.total_size.get(group).copied().unwrap_or(0);
                 build_header(group, member_count, total_size, collapsed, &theme)
             }
@@ -353,8 +393,12 @@ fn view(selected: Option<usize>, _frame: &Frame) -> Scene {
 
     let scrollbar_style = VerticalScrollbarStyle::material(VIEWPORT_H, SCROLLBAR_TAG);
     let scrollbar_interaction = use_scrollbar_interaction(SCROLLBAR_TAG);
-    let scrollbar_visual =
-        view_vertical_scrollbar(&scroll_state, &theme, &scrollbar_style, scrollbar_interaction.get());
+    let scrollbar_visual = view_vertical_scrollbar(
+        &scroll_state,
+        &theme,
+        &scrollbar_style,
+        scrollbar_interaction.get(),
+    );
 
     let list_row = Scene::Container(
         ContainerNode::new(vec![list, scrollbar_visual])
@@ -392,10 +436,16 @@ impl WidgetCore for GroupedGridSortView {
     fn create_extra_externals() -> Vec<ExtraExternal> {
         vec![
             ExtraExternal::new(SORT_TAG, Box::new(GridSortExternal::new(use_grid_data()))),
-            ExtraExternal::new(GROUP_TAG, Box::new(GroupOrderExternal::new(use_grid_groups()))),
+            ExtraExternal::new(
+                GROUP_TAG,
+                Box::new(GroupOrderExternal::new(use_grid_groups())),
+            ),
             // R854 — the AI-first per-group aggregate surface, query-only via the
             // QueryOnlyIntrospect substrate (the modal/snackbar R810.1 pattern).
-            ExtraExternal::new(AGG_TAG, Box::new(QueryOnlyIntrospect::new(use_group_aggregates()))),
+            ExtraExternal::new(
+                AGG_TAG,
+                Box::new(QueryOnlyIntrospect::new(use_group_aggregates())),
+            ),
             scrollbar_extra_external(use_scroll_state(SCROLL_KEY), SCROLLBAR_TAG),
         ]
     }
@@ -440,8 +490,13 @@ impl WidgetA11y for GroupedGridSortView {
         let sort = use_grid_data().sort();
         let groups = use_grid_groups();
         let rows = groups.rows();
-        let window =
-            compute_visible_range(scroll_state.offset_y(), VIEWPORT_H, rows.len(), ROW_PITCH, OVERSCAN);
+        let window = compute_visible_range(
+            scroll_state.offset_y(),
+            VIEWPORT_H,
+            rows.len(),
+            ROW_PITCH,
+            OVERSCAN,
+        );
         // Sortable columns: the active column carries its `aria-sort` in the
         // GridColumn slice (the one datum that differs from the static grid).
         let columns: Vec<GridColumn> = COLS
@@ -482,7 +537,10 @@ impl WidgetView for GroupedGridSortView {
     type Renderer = HelloGroupedGridSortRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 }
 
@@ -526,7 +584,10 @@ mod tests {
     fn data_sources_ordered(scene: &Scene) -> Vec<usize> {
         present_tags(scene)
             .iter()
-            .filter_map(|t| t.strip_prefix(&format!("{GRID_TAG}#")).and_then(|r| r.parse::<usize>().ok()))
+            .filter_map(|t| {
+                t.strip_prefix(&format!("{GRID_TAG}#"))
+                    .and_then(|r| r.parse::<usize>().ok())
+            })
             .collect()
     }
 
@@ -535,12 +596,19 @@ mod tests {
         let scene = render(None, None);
         let tags = present_tags(&scene);
         for c in 0..NCOLS {
-            assert!(tags.contains(&format!("{SORT_TAG}#h{c}")), "sortable column header {c} present");
+            assert!(
+                tags.contains(&format!("{SORT_TAG}#h{c}")),
+                "sortable column header {c} present"
+            );
         }
         // Unsorted: the first Mesh members are in source order.
         let mut srcs = data_sources_ordered(&scene);
         srcs.sort_unstable();
-        assert_eq!(&srcs[..3], &[0, 6, 12], "unsorted Mesh members in source order");
+        assert_eq!(
+            &srcs[..3],
+            &[0, 6, 12],
+            "unsorted Mesh members in source order"
+        );
     }
 
     #[test]
@@ -549,11 +617,18 @@ mod tests {
         // leads (group 9999 % 6 == 3); within each group rows go high -> low.
         let scene = render(None, Some((0, false)));
         let ordered = data_sources_ordered(&scene);
-        assert_eq!(ordered[0], 9999, "descending Name puts the highest source first");
+        assert_eq!(
+            ordered[0], 9999,
+            "descending Name puts the highest source first"
+        );
         // The first group's members descend (all share a group; strictly
         // decreasing source indices).
         let g0 = 9999 % GROUPS.len();
-        let first_group: Vec<usize> = ordered.iter().copied().take_while(|&s| s % GROUPS.len() == g0).collect();
+        let first_group: Vec<usize> = ordered
+            .iter()
+            .copied()
+            .take_while(|&s| s % GROUPS.len() == g0)
+            .collect();
         assert!(
             first_group.windows(2).all(|w| w[0] > w[1]),
             "members descend within the leading group: {first_group:?}",
@@ -571,8 +646,15 @@ mod tests {
             .iter()
             .find(|n| n.tag == format!("{SORT_TAG}#h1"))
             .expect("Size column header node");
-        assert_eq!(col1.sort, Some(SortDirection::Ascending), "active column carries aria-sort");
-        let col0 = nodes.iter().find(|n| n.tag == format!("{SORT_TAG}#h0")).expect("Name column header");
+        assert_eq!(
+            col1.sort,
+            Some(SortDirection::Ascending),
+            "active column carries aria-sort"
+        );
+        let col0 = nodes
+            .iter()
+            .find(|n| n.tag == format!("{SORT_TAG}#h0"))
+            .expect("Name column header");
         assert_eq!(col0.sort, None, "inactive column has no aria-sort");
     }
 
@@ -599,7 +681,11 @@ mod tests {
             }
             walk(&scene, &format!("{GRID_TAG}#9999"))
         };
-        assert_eq!(fill, Some(accent), "selected source 9999 stays Accent after the sort");
+        assert_eq!(
+            fill,
+            Some(accent),
+            "selected source 9999 stays Accent after the sort"
+        );
     }
 
     // ── R854 per-group aggregates ──────────────────────────────────
@@ -628,10 +714,17 @@ mod tests {
             for i in 0..N {
                 expected[row_group(i)] += row_size(i);
             }
-            assert_eq!(agg.total_size, expected, "per-group Size sums match a fresh tally");
+            assert_eq!(
+                agg.total_size, expected,
+                "per-group Size sums match a fresh tally"
+            );
             // R856 — counts come from the GroupOrderState membership SSOT, not a
             // 2nd tally in GroupAggregates.
-            assert_eq!(agg.groups.group_count(), GROUPS.len(), "one entry per group");
+            assert_eq!(
+                agg.groups.group_count(),
+                GROUPS.len(),
+                "one entry per group"
+            );
             assert_eq!(agg.groups.count(), N, "every row counted once");
             assert_eq!(
                 agg.groups.total_member_count(0),
@@ -649,7 +742,10 @@ mod tests {
                 agg.introspect_query("group_count"),
                 Some(IntrospectValue::Int(int_of(GROUPS.len()))),
             );
-            assert_eq!(agg.introspect_query("total_count"), Some(IntrospectValue::Int(int_of(N))));
+            assert_eq!(
+                agg.introspect_query("total_count"),
+                Some(IntrospectValue::Int(int_of(N)))
+            );
             let total: u64 = agg.total_size.iter().sum();
             assert_eq!(
                 agg.introspect_query("total_size"),
@@ -657,12 +753,21 @@ mod tests {
             );
             // group count delegates to the membership SSOT (R856).
             let g0 = agg.groups.total_member_count(0);
-            assert_eq!(agg.introspect_query("group.0.count"), Some(IntrospectValue::Int(int_of(g0))));
+            assert_eq!(
+                agg.introspect_query("group.0.count"),
+                Some(IntrospectValue::Int(int_of(g0)))
+            );
             assert_eq!(
                 agg.introspect_query("group.0.size"),
-                Some(IntrospectValue::Int(i64::try_from(agg.total_size[0]).unwrap())),
+                Some(IntrospectValue::Int(
+                    i64::try_from(agg.total_size[0]).unwrap()
+                )),
             );
-            assert_eq!(agg.introspect_query("group.99.count"), None, "out-of-range group is None");
+            assert_eq!(
+                agg.introspect_query("group.99.count"),
+                None,
+                "out-of-range group is None"
+            );
             assert_eq!(agg.introspect_query("bogus"), None, "unknown path is None");
         });
     }
@@ -677,10 +782,15 @@ mod tests {
                 intro.query("group_count"),
                 Some(IntrospectValue::Int(int_of(GROUPS.len()))),
             );
-            assert_eq!(intro.query("total_count"), Some(IntrospectValue::Int(int_of(N))));
+            assert_eq!(
+                intro.query("total_count"),
+                Some(IntrospectValue::Int(int_of(N)))
+            );
             assert_eq!(
                 intro.query("group.0.size"),
-                Some(IntrospectValue::Int(i64::try_from(agg.total_size[0]).unwrap())),
+                Some(IntrospectValue::Int(
+                    i64::try_from(agg.total_size[0]).unwrap()
+                )),
             );
         });
     }

@@ -27,12 +27,12 @@
 // this fixture keeps the workspace baseline strict.
 #![allow(clippy::unused_self, clippy::unnecessary_wraps)]
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use pinion_a11y::{
-    tag_to_node_id, AccessAction, AccessFocus, AccessNode, AccessValue, AriaRole,
-    PinionAccessAction, WidgetA11y,
+    AccessAction, AccessFocus, AccessNode, AccessValue, AriaRole, PinionAccessAction, WidgetA11y,
+    tag_to_node_id,
 };
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
@@ -114,11 +114,7 @@ impl ExternalIntrospect for TestExternal {
             _ => None,
         }
     }
-    fn intervene(
-        &mut self,
-        _path: &str,
-        _value: IntrospectValue,
-    ) -> Result<(), InterveneError> {
+    fn intervene(&mut self, _path: &str, _value: IntrospectValue) -> Result<(), InterveneError> {
         Err(InterveneError::UnknownPath)
     }
     fn invoke(
@@ -287,8 +283,7 @@ impl WidgetCore for TestView {
         // substrate runs `V::view` inside `root_owner().run(...)`.
         // Other tests reset the static via `reset_mocks` and leave
         // the value alone; the cost is one atomic op per `view` call.
-        *OBSERVED_OWNER_ID.lock().unwrap() =
-            pinion_core::Owner::current().map(|o| o.id());
+        *OBSERVED_OWNER_ID.lock().unwrap() = pinion_core::Owner::current().map(|o| o.id());
         Scene::Container(
             ContainerNode::new(vec![Scene::Box(BoxNode::filled(
                 Rect::default(),
@@ -389,10 +384,7 @@ impl WidgetCore for TestView {
         APPLY_MIDDLE_CLICK_RETURNS.load(Ordering::SeqCst)
     }
 
-    fn update(
-        _state: Self::State,
-        intent: &pinion_core::Intent,
-    ) -> Vec<pinion_core::Command> {
+    fn update(_state: Self::State, intent: &pinion_core::Intent) -> Vec<pinion_core::Command> {
         // R51.168 §5.23 R27 — log the intent and conditionally emit
         // a `test.echo` command so the wiring test can assert that
         // `ShellCore::dispatch_intent` actually routed the intent
@@ -432,7 +424,10 @@ impl WidgetView for TestView {
     type Renderer = TestRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: 8, height: 8 }
+        pinion_shell::SizeStrategy::Fixed {
+            width: 8,
+            height: 8,
+        }
     }
 }
 
@@ -681,7 +676,11 @@ fn r51_70_composite_click_routes_to_child_invoke_first() {
         "composite Click focuses the parent tag (R51.70 contract)",
     );
     let child_log = CHILD_INVOKE_LOG.lock().unwrap();
-    assert_eq!(child_log.len(), 1, "access_child_invoke called exactly once");
+    assert_eq!(
+        child_log.len(),
+        1,
+        "access_child_invoke called exactly once"
+    );
     assert_eq!(child_log[0].0, "child_2", "sub-tag is everything after '#'");
     assert_eq!(child_log[0].1, AccessAction::Click);
     assert!(
@@ -840,8 +839,7 @@ fn r51_72_changed_node_only_in_dirty() {
     reset_mocks();
 
     let mut core = ShellCore::<TestView>::new();
-    let initial_nodes =
-        vec![atomic_node("a", false), atomic_node("b", false)];
+    let initial_nodes = vec![atomic_node("a", false), atomic_node("b", false)];
     let focus = Some(AccessFocus::atomic("a"));
     let _initial = core.plan_access_emit(&initial_nodes, focus.as_ref());
     core.commit_access_emit(initial_nodes.clone(), focus.as_ref());
@@ -886,10 +884,8 @@ fn r51_71_active_descendant_does_not_leak_into_dirty() {
 
     let mut core = ShellCore::<TestView>::new();
     let nodes = vec![atomic_node("group", false)];
-    let focus_1 =
-        Some(AccessFocus::composite("group", "group#child_1"));
-    let focus_2 =
-        Some(AccessFocus::composite("group", "group#child_2"));
+    let focus_1 = Some(AccessFocus::composite("group", "group#child_1"));
+    let focus_2 = Some(AccessFocus::composite("group", "group#child_2"));
     let _initial = core.plan_access_emit(&nodes, focus_1.as_ref());
     core.commit_access_emit(nodes.clone(), focus_1.as_ref());
 
@@ -940,10 +936,7 @@ fn r51_78_focus_traverse_tab_advances_then_wraps() {
         "first Tab advances from None → 'test'",
     );
     assert_eq!(core.focus().focused(), Some("test"));
-    assert!(
-        core.take_redraw_request(),
-        "focus change requests redraw",
-    );
+    assert!(core.take_redraw_request(), "focus change requests redraw",);
 
     // FocusManager::focus_next on a one-tag list keeps focus on the
     // single tag — no change, no redraw.
@@ -985,11 +978,7 @@ fn r51_78_character_key_routes_to_apply_key_when_no_binding() {
     core.handle_character_key("z");
 
     let log = APPLY_KEY_LOG.lock().unwrap();
-    assert_eq!(
-        log.len(),
-        1,
-        "no keybinding → fall through to V::apply_key",
-    );
+    assert_eq!(log.len(), 1, "no keybinding → fall through to V::apply_key",);
     assert_eq!(log[0].1, "z");
     assert!(
         EVENT_NAME_LOG.lock().unwrap().is_empty(),
@@ -1052,7 +1041,8 @@ fn r51_80_finalize_frame_snapshots_layout() {
     // substrate projects a LayoutNode from it on demand. Before any
     // finalize the projection is honestly absent...
     assert!(
-        core.last_paint_layout_for_window(pinion_runtime::DEFAULT_WINDOW).is_none(),
+        core.last_paint_layout_for_window(pinion_runtime::DEFAULT_WINDOW)
+            .is_none(),
         "no paint yet -> no layout projection",
     );
     let scene = core.compute_paint_scene(64, 32);
@@ -1101,8 +1091,7 @@ fn r51_80_collect_access_emit_inputs_runs_pipeline() {
     // R813 §5.40 — per-window node contribution; the default window id
     // routes through `access_node_for_window`'s default forward to the
     // global `access_node` (TestView opts out → empty either way).
-    let (nodes, focus) =
-        core.collect_access_emit_inputs(pinion_runtime::DEFAULT_WINDOW, &scene);
+    let (nodes, focus) = core.collect_access_emit_inputs(pinion_runtime::DEFAULT_WINDOW, &scene);
 
     // TestView::access_node defaults to empty (Vec::new) — opt-out
     // path. The substrate must still run name enrichment + bounds
@@ -1145,7 +1134,7 @@ mod r51_143_paint_cycle_dt {
 
     use pinion_core::animation::Tickable;
 
-    use super::{reset_mocks, ShellCore, TestView, TEST_LOCK};
+    use super::{ShellCore, TEST_LOCK, TestView, reset_mocks};
 
     /// Records every `tick(dt)` the substrate dispatches so the test
     /// asserts both the count of dispatches and the magnitude of
@@ -1220,11 +1209,7 @@ mod r51_143_paint_cycle_dt {
         sleep(Duration::from_millis(5));
         let _scene2 = core.compute_paint_scene(64, 48);
 
-        assert_eq!(
-            recorder.ticks.get(),
-            2,
-            "two paints → two ticks",
-        );
+        assert_eq!(recorder.ticks.get(), 2, "two paints → two ticks",);
         let dt = recorder.last_dt.get();
         assert!(
             dt > 0.001,
@@ -1272,8 +1257,7 @@ mod r51_152_apply_key_owner_wrap {
     use std::sync::atomic::Ordering;
 
     use super::{
-        reset_mocks, ShellCore, TestView, APPLY_KEY_RETURNS, OBSERVED_OWNER_ID_APPLY_KEY,
-        TEST_LOCK,
+        APPLY_KEY_RETURNS, OBSERVED_OWNER_ID_APPLY_KEY, ShellCore, TEST_LOCK, TestView, reset_mocks,
     };
 
     #[test]
@@ -1340,7 +1324,7 @@ mod r51_152_apply_key_owner_wrap {
 // ─────────────────────────────────────────────────────────────────────
 
 mod r51_146_view_fn_owner_wrap {
-    use super::{reset_mocks, ShellCore, TestView, OBSERVED_OWNER_ID, TEST_LOCK};
+    use super::{OBSERVED_OWNER_ID, ShellCore, TEST_LOCK, TestView, reset_mocks};
 
     #[test]
     fn compute_paint_scene_runs_view_under_root_owner() {
@@ -1440,18 +1424,13 @@ mod r51_159_command_executor_wiring {
 
     fn echo_handler() -> Arc<dyn pinion_runtime::Handler> {
         Arc::new(|cmd: Command| -> HandlerFuture {
-            Box::pin(async move {
-                Intent::new_owned(
-                    format!("echo.{}", cmd.kind_str()),
-                    cmd.payload,
-                )
-            })
+            Box::pin(
+                async move { Intent::new_owned(format!("echo.{}", cmd.kind_str()), cmd.payload) },
+            )
         })
     }
 
-    fn build_executor(
-        kinds: &[&'static str],
-    ) -> (Arc<CommandExecutor>, Arc<VecSink>) {
+    fn build_executor(kinds: &[&'static str]) -> (Arc<CommandExecutor>, Arc<VecSink>) {
         let mut reg = HandlerRegistry::new();
         for k in kinds {
             reg.register(*k, echo_handler());
@@ -1469,7 +1448,10 @@ mod r51_159_command_executor_wiring {
         reset_mocks();
 
         let mut core = ShellCore::<TestView>::new();
-        assert!(core.command_executor().is_none(), "fresh ShellCore has no executor");
+        assert!(
+            core.command_executor().is_none(),
+            "fresh ShellCore has no executor"
+        );
 
         let (first, _sink) = build_executor(&[]);
         let first_ptr = Arc::as_ptr(&first).cast::<()>() as usize;
@@ -1712,10 +1694,8 @@ mod r51_169_handle_tail_drain_routing {
         let _g = TEST_LOCK.lock().unwrap();
         reset_mocks();
         UPDATE_EMITS_ECHO_COMMAND.store(true, Ordering::SeqCst);
-        *EXTERNAL_DRAIN_INTENT.lock().unwrap() = Some(Intent::new_static(
-            "drain_event",
-            IntrospectValue::Null,
-        ));
+        *EXTERNAL_DRAIN_INTENT.lock().unwrap() =
+            Some(Intent::new_static("drain_event", IntrospectValue::Null));
 
         let mut core = ShellCore::<TestView>::new();
         core.forward(());
@@ -1748,10 +1728,8 @@ mod r51_169_handle_tail_drain_routing {
         // transparent on the no-op path.
         let _g = TEST_LOCK.lock().unwrap();
         reset_mocks();
-        *EXTERNAL_DRAIN_INTENT.lock().unwrap() = Some(Intent::new_static(
-            "drain_event",
-            IntrospectValue::Null,
-        ));
+        *EXTERNAL_DRAIN_INTENT.lock().unwrap() =
+            Some(Intent::new_static("drain_event", IntrospectValue::Null));
 
         let mut core = ShellCore::<TestView>::new();
         core.forward(());
@@ -1790,10 +1768,12 @@ mod r51_169_handle_tail_drain_routing {
 // ─────────────────────────────────────────────────────────────────────────
 
 mod r51_175_shared_fixture_wiring {
-    use pinion_core::external::IntrospectValue;
-    use pinion_core::test_fixtures::{ContextMenuFixture, EchoButtonFixture, ScrollbarMultiFixture};
-    use pinion_core::widgets::button::ButtonState;
     use pinion_core::Intent;
+    use pinion_core::external::IntrospectValue;
+    use pinion_core::test_fixtures::{
+        ContextMenuFixture, EchoButtonFixture, ScrollbarMultiFixture,
+    };
+    use pinion_core::widgets::button::ButtonState;
     use pinion_shell::ShellCore;
 
     #[test]
@@ -1938,9 +1918,7 @@ mod r51_175_shared_fixture_wiring {
 // =====================================================================
 
 mod r56_1_h_focus_lifecycle_wire {
-    use super::{
-        reset_mocks, FOCUS_CHANGE_LOG, TEST_LOCK, TestView,
-    };
+    use super::{FOCUS_CHANGE_LOG, TEST_LOCK, TestView, reset_mocks};
     use pinion_a11y::{AccessAction, PinionAccessAction};
     use pinion_shell::ShellCore;
 
@@ -2148,8 +2126,8 @@ mod r56_2_a_apply_composition_wire {
     //! tests on `pinion-shell::app::winit_ime_to_composition` (added
     //! alongside the arm in this same round).
     use super::{
-        reset_mocks, APPLY_COMPOSITION_LOG, APPLY_COMPOSITION_RETURNS,
-        OBSERVED_OWNER_ID_APPLY_COMPOSITION, TEST_LOCK, TestView,
+        APPLY_COMPOSITION_LOG, APPLY_COMPOSITION_RETURNS, OBSERVED_OWNER_ID_APPLY_COMPOSITION,
+        TEST_LOCK, TestView, reset_mocks,
     };
     use pinion_a11y::{AccessAction, PinionAccessAction};
     use pinion_shell::ShellCore;
@@ -2189,14 +2167,23 @@ mod r56_2_a_apply_composition_wire {
 
         core.apply_composition(&pinion_core::CompositionEvent::Start);
         core.apply_composition(&pinion_core::CompositionEvent::Update("ha".to_owned()));
-        core.apply_composition(&pinion_core::CompositionEvent::Commit("\u{D55C}".to_owned()));
+        core.apply_composition(&pinion_core::CompositionEvent::Commit(
+            "\u{D55C}".to_owned(),
+        ));
         core.apply_composition(&pinion_core::CompositionEvent::Cancel);
 
         let log = snapshot_log();
-        assert_eq!(log.len(), 4, "four dispatches → four V::apply_composition calls");
+        assert_eq!(
+            log.len(),
+            4,
+            "four dispatches → four V::apply_composition calls"
+        );
         assert_eq!(log[0], (Some("test".to_owned()), "start".to_owned()));
         assert_eq!(log[1], (Some("test".to_owned()), "update(ha)".to_owned()));
-        assert_eq!(log[2], (Some("test".to_owned()), "commit(\u{D55C})".to_owned()));
+        assert_eq!(
+            log[2],
+            (Some("test".to_owned()), "commit(\u{D55C})".to_owned())
+        );
         assert_eq!(log[3], (Some("test".to_owned()), "cancel".to_owned()));
     }
 
@@ -2279,14 +2266,14 @@ mod r56_2_a_apply_composition_wire {
         // The mock recorded Owner::current().map(|o| o.id()); the
         // wrap is in place iff this is Some(_).
         assert!(
-            OBSERVED_OWNER_ID_APPLY_COMPOSITION.lock().unwrap().is_some(),
+            OBSERVED_OWNER_ID_APPLY_COMPOSITION
+                .lock()
+                .unwrap()
+                .is_some(),
             "apply_composition must run inside root_owner.run(...)",
         );
         // Post-dispatch: wrap popped.
-        assert!(
-            pinion_core::Owner::current().is_none(),
-            "wrap pops on exit",
-        );
+        assert!(pinion_core::Owner::current().is_none(), "wrap pops on exit",);
     }
 }
 
@@ -2320,8 +2307,8 @@ mod r56_2_e_apply_middle_click_wire {
     //! `WindowEvent::Ime` arm.
 
     use super::{
-        reset_mocks, APPLY_MIDDLE_CLICK_LOG, APPLY_MIDDLE_CLICK_RETURNS,
-        OBSERVED_OWNER_ID_APPLY_MIDDLE_CLICK, TEST_LOCK, TestView,
+        APPLY_MIDDLE_CLICK_LOG, APPLY_MIDDLE_CLICK_RETURNS, OBSERVED_OWNER_ID_APPLY_MIDDLE_CLICK,
+        TEST_LOCK, TestView, reset_mocks,
     };
     use pinion_a11y::{AccessAction, PinionAccessAction};
     use pinion_shell::ShellCore;
@@ -2353,7 +2340,11 @@ mod r56_2_e_apply_middle_click_wire {
         core.middle_click();
 
         let log = snapshot_log();
-        assert_eq!(log.len(), 1, "one middle_click dispatches one V::apply_middle_click");
+        assert_eq!(
+            log.len(),
+            1,
+            "one middle_click dispatches one V::apply_middle_click"
+        );
         assert_eq!(log[0], Some("test".to_owned()));
     }
 
@@ -2431,13 +2422,13 @@ mod r56_2_e_apply_middle_click_wire {
         assert!(pinion_core::Owner::current().is_none());
         core.middle_click();
         assert!(
-            OBSERVED_OWNER_ID_APPLY_MIDDLE_CLICK.lock().unwrap().is_some(),
+            OBSERVED_OWNER_ID_APPLY_MIDDLE_CLICK
+                .lock()
+                .unwrap()
+                .is_some(),
             "apply_middle_click must run inside root_owner.run(...)",
         );
-        assert!(
-            pinion_core::Owner::current().is_none(),
-            "wrap pops on exit",
-        );
+        assert!(pinion_core::Owner::current().is_none(), "wrap pops on exit",);
     }
 
     #[test]
@@ -2446,8 +2437,8 @@ mod r56_2_e_apply_middle_click_wire {
         // method directly with a scratch scene + None focus + empty
         // modifiers — no mock interception. Default false is the
         // baseline for non-text widgets.
-        use pinion_core::scene::{ContainerNode, Scene};
         use pinion_core::WidgetCore;
+        use pinion_core::scene::{ContainerNode, Scene};
         struct PlainView;
         impl pinion_a11y::WidgetA11y for PlainView {}
         impl WidgetCore for PlainView {
@@ -2490,7 +2481,7 @@ mod r881_middle_gesture_paste_on_release {
     //! paste funnel itself (`ShellCore::middle_click`, covered by the
     //! `r56_2_e` mod above) is unchanged, just re-sequenced.
 
-    use super::{reset_mocks, APPLY_MIDDLE_CLICK_LOG, TEST_LOCK, TestView};
+    use super::{APPLY_MIDDLE_CLICK_LOG, TEST_LOCK, TestView, reset_mocks};
     use pinion_runtime::PointerId;
     use pinion_shell::ShellCore;
 
@@ -2507,7 +2498,11 @@ mod r881_middle_gesture_paste_on_release {
         core.middle_pressed(PointerId::MOUSE);
         assert_eq!(paste_count(), 0, "paste is deferred past the press");
         core.middle_released(PointerId::MOUSE);
-        assert_eq!(paste_count(), 1, "release-in-place runs the paste funnel once");
+        assert_eq!(
+            paste_count(),
+            1,
+            "release-in-place runs the paste funnel once"
+        );
         // A trailing spurious release must not double-paste.
         core.middle_released(PointerId::MOUSE);
         assert_eq!(paste_count(), 1, "NoPress release is silent");
@@ -2525,7 +2520,11 @@ mod r881_middle_gesture_paste_on_release {
         core.middle_pressed(PointerId::MOUSE);
         core.cursor_moved(PointerId::MOUSE, 60.0, 60.0);
         core.middle_released(PointerId::MOUSE);
-        assert_eq!(paste_count(), 0, "a moved middle drag is a pan, never a paste");
+        assert_eq!(
+            paste_count(),
+            0,
+            "a moved middle drag is a pan, never a paste"
+        );
     }
 }
 
@@ -2545,7 +2544,7 @@ mod r882_space_chord_pan {
     //! a pan gesture?" is observable as "does a middle click paste?" —
     //! no paint scene required.
 
-    use super::{reset_mocks, APPLY_MIDDLE_CLICK_LOG, TEST_LOCK, TestView};
+    use super::{APPLY_MIDDLE_CLICK_LOG, TEST_LOCK, TestView, reset_mocks};
     use pinion_runtime::PointerId;
     use pinion_shell::ShellCore;
 
@@ -2776,7 +2775,6 @@ mod r56_2_c_ime_caret_rect_default {
             );
         }
     }
-
 }
 
 mod r680_per_window_redraw_wakeup {
@@ -2797,8 +2795,8 @@ mod r680_per_window_redraw_wakeup {
     //! - Unknown `window_id` never-touched returns false on probe +
     //!   drain without allocating.
 
-    use super::TestView;
     use super::TEST_LOCK;
+    use super::TestView;
     use pinion_shell::ShellCore;
 
     #[test]
@@ -3018,7 +3016,10 @@ mod r681_immediate_mode_paint_cycle {
         type Renderer = TestRenderer;
 
         fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-            pinion_shell::SizeStrategy::Fixed { width: 200, height: 200 }
+            pinion_shell::SizeStrategy::Fixed {
+                width: 200,
+                height: 200,
+            }
         }
     }
 
@@ -3043,7 +3044,8 @@ mod r681_immediate_mode_paint_cycle {
         // fn emitted.
         assert!(scene.has_immediate_mode_subtree());
         assert_eq!(
-            driver.borrow().tick_count, 0,
+            driver.borrow().tick_count,
+            0,
             "dt=0 first paint releases no whole fixed step (R831 accumulator)",
         );
         assert_eq!(
@@ -3091,7 +3093,8 @@ mod r681_immediate_mode_paint_cycle {
         );
         let _ = core.compute_paint_scene_for_window("main", 200, 200);
         assert_eq!(
-            driver.borrow().tick_count, 3,
+            driver.borrow().tick_count,
+            3,
             "0.03 s / (1/120 s) = 3.6 → exactly 3 whole fixed steps",
         );
         // Each step advanced by the FIXED timestep, not the injected
@@ -3200,8 +3203,7 @@ mod r681_immediate_mode_paint_cycle {
             // It is the FIXED step, not the ≥12 ms wall-clock frame — the
             // defining property of the fixed-timestep loop.
             assert!(
-                (Duration::from_micros(8000)..=Duration::from_micros(8700))
-                    .contains(&last),
+                (Duration::from_micros(8000)..=Duration::from_micros(8700)).contains(&last),
                 "last_dt is the fixed 1/120 s step (~8333 us), not the \
                  wall-clock frame delta; saw {last:?}",
             );
@@ -3336,11 +3338,17 @@ mod r682_fragment_cache_stats_substrate {
         let mut core: ShellCore<TestView> = ShellCore::new();
         core.publish_fragment_cache_stats(
             "main",
-            FragmentCacheStats { hits: 1, ..Default::default() },
+            FragmentCacheStats {
+                hits: 1,
+                ..Default::default()
+            },
         );
         core.publish_fragment_cache_stats(
             "main",
-            FragmentCacheStats { hits: 99, ..Default::default() },
+            FragmentCacheStats {
+                hits: 99,
+                ..Default::default()
+            },
         );
         let got = core.fragment_cache_stats_for_window("main").unwrap();
         assert_eq!(got.hits, 99);
@@ -3506,7 +3514,10 @@ mod r907_frame_timing_substrate {
         core.record_frame_timing("main", FrameTiming::new(12_000, 5_000, 3_000, 20_000));
         let snap = core.frame_timings_for_window("main").unwrap();
         assert_eq!(snap.budget_us, Some(16_666), "⌊1e6/60⌋ µs budget");
-        assert_eq!(snap.over_budget_frames, 1, "only the 20_000µs frame is over");
+        assert_eq!(
+            snap.over_budget_frames, 1,
+            "only the 20_000µs frame is over"
+        );
         assert_eq!(snap.worst_overrun_us, 20_000 - 16_666);
         assert!((snap.jank_ratio - 0.5).abs() < 1e-6, "1 of 2 frames janked");
     }
@@ -3526,7 +3537,10 @@ mod r907_frame_timing_substrate {
         core.set_target_fps_for_window("main", 120);
         let at_120 = core.frame_timings_for_window("main").unwrap();
         assert_eq!(at_120.budget_us, Some(8_333), "⌊1e6/120⌋");
-        assert_eq!(at_120.over_budget_frames, 1, "12_000µs misses the 8_333µs budget");
+        assert_eq!(
+            at_120.over_budget_frames, 1,
+            "12_000µs misses the 8_333µs budget"
+        );
     }
 
     #[test]
@@ -3606,7 +3620,11 @@ mod r888_pacing_state_rpc {
         let read = r#"{"jsonrpc":"2.0","method":"scene/pacing_state","id":1}"#;
         let resp = core.dispatch_rpc(read, &mut no_resize).expect("response");
         let body: serde_json::Value = serde_json::from_str(&resp).expect("JSON");
-        body.get("result").expect("dispatch ok").get("fps").expect("fps field").clone()
+        body.get("result")
+            .expect("dispatch ok")
+            .get("fps")
+            .expect("fps field")
+            .clone()
     }
 
     fn set_fps(core: &mut ShellCore<TestView>, fps: &str) {
@@ -3615,7 +3633,10 @@ mod r888_pacing_state_rpc {
             r#"{{"jsonrpc":"2.0","method":"scene/set_fps","params":{{"fps":{fps}}},"id":2}}"#
         );
         let resp = core.dispatch_rpc(&req, &mut no_resize).expect("response");
-        assert!(resp.contains(r#""result":null"#), "set_fps {fps} ok: {resp}");
+        assert!(
+            resp.contains(r#""result":null"#),
+            "set_fps {fps} ok: {resp}"
+        );
     }
 
     #[test]
@@ -3629,11 +3650,23 @@ mod r888_pacing_state_rpc {
         super::reset_mocks();
         let mut core: ShellCore<TestView> = ShellCore::new();
 
-        assert_eq!(fps_of(&mut core), serde_json::Value::Null, "boot: default policy");
+        assert_eq!(
+            fps_of(&mut core),
+            serde_json::Value::Null,
+            "boot: default policy"
+        );
         set_fps(&mut core, "30");
-        assert_eq!(fps_of(&mut core), serde_json::json!(30), "override installs");
+        assert_eq!(
+            fps_of(&mut core),
+            serde_json::json!(30),
+            "override installs"
+        );
         set_fps(&mut core, "0");
-        assert_eq!(fps_of(&mut core), serde_json::json!(0), "paused (frame-step) reads 0");
+        assert_eq!(
+            fps_of(&mut core),
+            serde_json::json!(0),
+            "paused (frame-step) reads 0"
+        );
         set_fps(&mut core, "null");
         assert_eq!(
             fps_of(&mut core),
@@ -3684,7 +3717,10 @@ mod r889_window_known_gate {
     fn assert_unknown_window(body: &serde_json::Value, supplied: &str) {
         let err = body.get("error").expect("error frame");
         assert_eq!(err.get("code"), Some(&serde_json::json!(-32602)));
-        assert_eq!(err.get("message"), Some(&serde_json::json!("unknown_window")));
+        assert_eq!(
+            err.get("message"),
+            Some(&serde_json::json!("unknown_window"))
+        );
         assert_eq!(err.get("data"), Some(&serde_json::json!(supplied)));
     }
 
@@ -3821,9 +3857,7 @@ mod r885_input_state_rpc {
     use super::TestView;
 
     fn req(method: &str, params: &str, id: u64) -> String {
-        format!(
-            r#"{{"jsonrpc":"2.0","method":"{method}","params":{params},"id":{id}}}"#,
-        )
+        format!(r#"{{"jsonrpc":"2.0","method":"{method}","params":{params},"id":{id}}}"#,)
     }
 
     fn result(core: &mut ShellCore<TestView>, frame: &str) -> serde_json::Value {
@@ -3880,8 +3914,14 @@ mod r885_input_state_rpc {
             &vec![serde_json::Value::String("Space".into())],
         );
         let cursor = r2.get("cursor").expect("cursor follows the key injection");
-        assert_eq!(cursor.get("x").and_then(serde_json::Value::as_f64), Some(4.0));
-        assert_eq!(cursor.get("y").and_then(serde_json::Value::as_f64), Some(5.0));
+        assert_eq!(
+            cursor.get("x").and_then(serde_json::Value::as_f64),
+            Some(4.0)
+        );
+        assert_eq!(
+            cursor.get("y").and_then(serde_json::Value::as_f64),
+            Some(5.0)
+        );
 
         // Release clears the chord; the modifier cache is untouched.
         let _ = result(
@@ -3909,9 +3949,7 @@ mod r682b_cache_stats_rpc {
 
     /// Helper: build the JSON-RPC `scene/cache_stats` request frame.
     fn cache_stats_request(id: u64) -> String {
-        format!(
-            r#"{{"jsonrpc":"2.0","method":"scene/cache_stats","params":{{}},"id":{id}}}"#,
-        )
+        format!(r#"{{"jsonrpc":"2.0","method":"scene/cache_stats","params":{{}},"id":{id}}}"#,)
     }
 
     fn parse_response(json: &str) -> serde_json::Value {
@@ -3952,12 +3990,29 @@ mod r682b_cache_stats_rpc {
             .expect("response");
         let body = parse_response(&resp);
         let result = body.get("result").expect("dispatch ok");
-        assert_eq!(result.get("hits").and_then(serde_json::Value::as_u64), Some(240));
-        assert_eq!(result.get("misses").and_then(serde_json::Value::as_u64), Some(12));
-        assert_eq!(result.get("paint_count").and_then(serde_json::Value::as_u64), Some(5));
-        assert_eq!(result.get("entries").and_then(serde_json::Value::as_u64), Some(12));
+        assert_eq!(
+            result.get("hits").and_then(serde_json::Value::as_u64),
+            Some(240)
+        );
+        assert_eq!(
+            result.get("misses").and_then(serde_json::Value::as_u64),
+            Some(12)
+        );
+        assert_eq!(
+            result
+                .get("paint_count")
+                .and_then(serde_json::Value::as_u64),
+            Some(5)
+        );
+        assert_eq!(
+            result.get("entries").and_then(serde_json::Value::as_u64),
+            Some(12)
+        );
         // hit_rate ≈ 240 / 252.
-        let hit_rate = result.get("hit_rate").and_then(serde_json::Value::as_f64).unwrap();
+        let hit_rate = result
+            .get("hit_rate")
+            .and_then(serde_json::Value::as_f64)
+            .unwrap();
         let expected = 240.0 / 252.0;
         assert!((hit_rate - expected).abs() < 1e-5);
         // last_damage_region absent (skip_serializing_if).
@@ -4015,7 +4070,10 @@ mod r682b_cache_stats_rpc {
             .dispatch_rpc(&cache_stats_request(4), &mut no_resize)
             .expect("response");
         let body = parse_response(&resp);
-        assert!(body.get("result").is_some(), "default window resolves to main");
+        assert!(
+            body.get("result").is_some(),
+            "default window resolves to main"
+        );
         // hit_rate at hits=1/misses=0 = 1.0.
         let hr = body
             .get("result")
@@ -4047,8 +4105,8 @@ mod r682b_cache_stats_rpc {
 mod r683_remove_window_shell_side {
     use pinion_shell::{FragmentCacheStats, ShellCore};
 
-    use super::TestView;
     use super::TEST_LOCK;
+    use super::TestView;
 
     #[test]
     fn r683_remove_window_refuses_default_window_at_shell_level() {
@@ -4072,7 +4130,10 @@ mod r683_remove_window_shell_side {
             },
         );
         let removed = core.remove_window("main");
-        assert!(!removed, "DEFAULT_WINDOW is primary-protected at shell level too");
+        assert!(
+            !removed,
+            "DEFAULT_WINDOW is primary-protected at shell level too"
+        );
         // Per-window state survives.
         assert!(core.redraw_requested_for_window("main"));
         assert_eq!(core.target_fps_for_window("main"), Some(60));
@@ -4106,7 +4167,10 @@ mod r683_remove_window_shell_side {
         assert!(core.fragment_cache_stats_for_window("inspector").is_some());
         // Removal.
         let removed = core.remove_window("inspector");
-        assert!(removed, "secondary window with published state reports `true`");
+        assert!(
+            removed,
+            "secondary window with published state reports `true`"
+        );
         // Post-state — every map drained.
         assert!(
             !core.redraw_requested_for_window("inspector"),
@@ -4272,8 +4336,8 @@ mod r684_headless_rpc_floating_window_finalize {
         reset_mocks();
         let mut core: ShellCore<TestView> = ShellCore::new();
         core.register_window("floating");
-        let req = parse_request(&focus_get_request(1, "floating"))
-            .expect("focus_get request parses");
+        let req =
+            parse_request(&focus_get_request(1, "floating")).expect("focus_get request parses");
         let _ = core.dispatch_rpc_scoped(req, &mut no_resize);
         assert!(
             !core.has_last_paint_scene_for_window("floating"),
@@ -4375,8 +4439,7 @@ mod r684_headless_rpc_floating_window_finalize {
         core.register_window("win_b");
         // Paint A via a viewport-supplied layout call (runs produce +
         // the R684 finalize stores A's scene).
-        let req = parse_request(&snapshot_request(1, "win_a", 320, 200))
-            .expect("frame parses");
+        let req = parse_request(&snapshot_request(1, "win_a", 320, 200)).expect("frame parses");
         let _ = core.dispatch_rpc_scoped(req, &mut no_resize);
         // A's viewport:null read = A's own frame.
         let req = parse_request(

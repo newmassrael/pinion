@@ -76,8 +76,8 @@
 //!   paint axis R690 deferred; focus is real + RPC-observable).
 
 use pinion_a11y::{
-    listbox_option_nodes, AccessFocus, AccessNode, AccessState, AccessValue, AriaRole, AutoComplete,
-    ListOption, WidgetA11y,
+    AccessFocus, AccessNode, AccessState, AccessValue, AriaRole, AutoComplete, ListOption,
+    WidgetA11y, listbox_option_nodes,
 };
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::reactive::{Owner, Signal};
@@ -85,7 +85,7 @@ use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::button::ButtonExternal;
 use pinion_core::widgets::caret_blink::use_caret_blink;
@@ -94,15 +94,18 @@ use pinion_core::widgets::listbox_item::ListboxItemState;
 use pinion_core::widgets::text_edit::use_text_edit_state;
 use pinion_core::widgets::text_field::{TextFieldExternal, TextFieldState};
 use pinion_core::{Frame, Scene, WidgetCore, WidgetStateName};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::barrier::dismiss_barrier;
-use pinion_widget_paint::listbox::{view_option, OptionRow};
+use pinion_widget_paint::listbox::{OptionRow, view_option};
 use pinion_widget_paint::popup::popup_surface;
 use pinion_widget_paint::text_field as tf_paint;
 use std::rc::Rc;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
-vello_renderer_impl!(HelloComboBoxEditableRenderer, HelloComboBoxEditableRendererError);
+vello_renderer_impl!(
+    HelloComboBoxEditableRenderer,
+    HelloComboBoxEditableRendererError
+);
 
 const WIN_W: u32 = 560;
 const WIN_H: u32 = 460;
@@ -126,7 +129,12 @@ const STATUS_TAG: &str = "combo_status";
 /// to exercise substring filtering. Each label doubles as the option's
 /// AT accessible name and the committed field text. The single SoT.
 const LABELS: [&str; N] = [
-    "Apple", "Apricot", "Banana", "Blueberry", "Cherry", "Cranberry",
+    "Apple",
+    "Apricot",
+    "Banana",
+    "Blueberry",
+    "Cherry",
+    "Cranberry",
 ];
 
 /// Placeholder shown in the empty field before any text is typed.
@@ -274,7 +282,12 @@ fn read_combo_state(scene: &Scene) -> ComboViewState {
 /// InputRouter `'#'`-split reaches the composite [`ListBoxExternal`]. Only
 /// filtered options are passed here, but the tag keeps the *absolute*
 /// index so selection / roving stay consistent with the full listbox.
-fn option_scene(abs_index: usize, state: &ComboViewState, active: Option<usize>, theme: &Theme) -> Scene {
+fn option_scene(
+    abs_index: usize,
+    state: &ComboViewState,
+    active: Option<usize>,
+    theme: &Theme,
+) -> Scene {
     // The option-cell skin is the lifted [`view_option`] SSOT (R867, 2nd of
     // three consumers — combobox / editable-combobox / property-grid choice).
     view_option(
@@ -515,7 +528,6 @@ impl WidgetCore for ComboView {
         None
     }
 
-
     /// WAI-ARIA §4.5 editable-combobox keyboard model. Only ArrowDown /
     /// ArrowUp / Enter / Escape are combobox-reserved; every other key
     /// flows to the text field (Home/End/Left/Right move the caret).
@@ -632,8 +644,10 @@ impl WidgetA11y for ComboView {
             // `aria-posinset` / `aria-setsize` within the filtered slice
             // (the active match is the `aria-activedescendant`).
             let active = resolve_active(state, &filtered);
-            let tags: Vec<String> =
-                filtered.iter().map(|&abs| format!("{OPTIONS_TAG}#{abs}")).collect();
+            let tags: Vec<String> = filtered
+                .iter()
+                .map(|&abs| format!("{OPTIONS_TAG}#{abs}"))
+                .collect();
             let options: Vec<ListOption<'_>> = filtered
                 .iter()
                 .enumerate()
@@ -645,7 +659,12 @@ impl WidgetA11y for ComboView {
                     focused: input_focused && active == Some(abs),
                 })
                 .collect();
-            nodes.extend(listbox_option_nodes(OPTIONS_TAG, "Fruit options", false, &options));
+            nodes.extend(listbox_option_nodes(
+                OPTIONS_TAG,
+                "Fruit options",
+                false,
+                &options,
+            ));
         }
         nodes
     }
@@ -734,11 +753,23 @@ mod tests {
     fn r717_resolve_active_prefers_focused_in_filter_else_first() {
         let mut s = idle();
         let filtered = vec![0, 1];
-        assert_eq!(resolve_active(&s, &filtered), Some(0), "no focus → first match");
+        assert_eq!(
+            resolve_active(&s, &filtered),
+            Some(0),
+            "no focus → first match"
+        );
         s.focused = Some(1);
-        assert_eq!(resolve_active(&s, &filtered), Some(1), "focus in filter kept");
+        assert_eq!(
+            resolve_active(&s, &filtered),
+            Some(1),
+            "focus in filter kept"
+        );
         s.focused = Some(4); // out of filter
-        assert_eq!(resolve_active(&s, &filtered), Some(0), "stale focus → first match");
+        assert_eq!(
+            resolve_active(&s, &filtered),
+            Some(0),
+            "stale focus → first match"
+        );
         assert_eq!(resolve_active(&s, &[]), None, "empty filter → none");
     }
 
@@ -749,9 +780,16 @@ mod tests {
         Owner::new().run(|| {
             open_combo();
             // Commit absolute index 2 = "Banana".
-            let _ = ComboView::update(idle(), &intent_with("combo_options.selected", IntrospectValue::Int(2)));
+            let _ = ComboView::update(
+                idle(),
+                &intent_with("combo_options.selected", IntrospectValue::Int(2)),
+            );
             assert!(!use_combo_open().get(), "committing closes the popup");
-            assert_eq!(use_text_edit_state(INPUT_TAG).text(), "Banana", "field value = committed label");
+            assert_eq!(
+                use_text_edit_state(INPUT_TAG).text(),
+                "Banana",
+                "field value = committed label"
+            );
         });
     }
 
@@ -760,9 +798,16 @@ mod tests {
         Owner::new().run(|| {
             use_text_edit_state(INPUT_TAG).set_text("App".to_string());
             open_combo();
-            let _ = ComboView::update(idle(), &intent_with("combo_barrier.click", IntrospectValue::Null));
+            let _ = ComboView::update(
+                idle(),
+                &intent_with("combo_barrier.click", IntrospectValue::Null),
+            );
             assert!(!use_combo_open().get(), "outside click dismisses");
-            assert_eq!(use_text_edit_state(INPUT_TAG).text(), "App", "barrier dismiss keeps typed text");
+            assert_eq!(
+                use_text_edit_state(INPUT_TAG).text(),
+                "App",
+                "barrier dismiss keeps typed text"
+            );
         });
     }
 
@@ -816,7 +861,10 @@ mod tests {
                 pinion_core::Modifiers::empty(),
             );
             assert!(handled);
-            assert!(use_combo_open().get(), "ArrowDown opens the closed combobox");
+            assert!(
+                use_combo_open().get(),
+                "ArrowDown opens the closed combobox"
+            );
         });
     }
 
@@ -828,13 +876,28 @@ mod tests {
             let mut scene = boot_scene();
             let m = pinion_core::Modifiers::empty();
             // Fresh open: first ArrowDown lands on the active (first match, 0).
-            assert!(ComboView::apply_key(&mut scene, Some(INPUT_TAG), "ArrowDown", m));
+            assert!(ComboView::apply_key(
+                &mut scene,
+                Some(INPUT_TAG),
+                "ArrowDown",
+                m
+            ));
             assert_eq!(read_combo_state(&scene).focused, Some(0));
             // Next ArrowDown steps to the 2nd filtered match (1 = Apricot).
-            assert!(ComboView::apply_key(&mut scene, Some(INPUT_TAG), "ArrowDown", m));
+            assert!(ComboView::apply_key(
+                &mut scene,
+                Some(INPUT_TAG),
+                "ArrowDown",
+                m
+            ));
             assert_eq!(read_combo_state(&scene).focused, Some(1));
             // ArrowDown again clamps at the last filtered match (still 1).
-            assert!(ComboView::apply_key(&mut scene, Some(INPUT_TAG), "ArrowDown", m));
+            assert!(ComboView::apply_key(
+                &mut scene,
+                Some(INPUT_TAG),
+                "ArrowDown",
+                m
+            ));
             assert_eq!(read_combo_state(&scene).focused, Some(1));
         });
     }
@@ -872,9 +935,21 @@ mod tests {
             assert_eq!(nodes.len(), 1);
             assert_eq!(nodes[0].role, AriaRole::EditableComboBox);
             assert_eq!(nodes[0].tag, INPUT_TAG);
-            assert_eq!(nodes[0].expanded, Some(false), "closed carries aria-expanded=false");
-            assert_eq!(nodes[0].controls.as_deref(), Some(OPTIONS_TAG), "aria-controls → listbox");
-            assert_eq!(nodes[0].auto_complete, Some(AutoComplete::List), "aria-autocomplete=list");
+            assert_eq!(
+                nodes[0].expanded,
+                Some(false),
+                "closed carries aria-expanded=false"
+            );
+            assert_eq!(
+                nodes[0].controls.as_deref(),
+                Some(OPTIONS_TAG),
+                "aria-controls → listbox"
+            );
+            assert_eq!(
+                nodes[0].auto_complete,
+                Some(AutoComplete::List),
+                "aria-autocomplete=list"
+            );
         });
     }
 
@@ -889,7 +964,11 @@ mod tests {
             assert_eq!(nodes[0].role, AriaRole::EditableComboBox);
             assert_eq!(nodes[0].expanded, Some(true));
             assert_eq!(nodes[1].role, AriaRole::Listbox);
-            assert_eq!(nodes[1].children.len(), 2, "only filtered options are children");
+            assert_eq!(
+                nodes[1].children.len(),
+                2,
+                "only filtered options are children"
+            );
             for (i, node) in nodes.iter().skip(2).enumerate() {
                 assert_eq!(node.role, AriaRole::ListBoxOption);
                 assert_eq!(node.size_of_set, Some(2), "setsize = filtered count");
@@ -945,9 +1024,18 @@ mod tests {
             let scene = view(&idle(), &Frame::new());
             assert!(scene.contains_tag(BARRIER_TAG), "open: barrier painted");
             assert!(scene.contains_tag(PANEL_TAG), "open: panel painted");
-            assert!(scene.contains_tag(&format!("{OPTIONS_TAG}#0")), "Apple row painted");
-            assert!(scene.contains_tag(&format!("{OPTIONS_TAG}#1")), "Apricot row painted");
-            assert!(!scene.contains_tag(&format!("{OPTIONS_TAG}#2")), "Banana filtered out");
+            assert!(
+                scene.contains_tag(&format!("{OPTIONS_TAG}#0")),
+                "Apple row painted"
+            );
+            assert!(
+                scene.contains_tag(&format!("{OPTIONS_TAG}#1")),
+                "Apricot row painted"
+            );
+            assert!(
+                !scene.contains_tag(&format!("{OPTIONS_TAG}#2")),
+                "Banana filtered out"
+            );
         });
     }
 
@@ -957,7 +1045,10 @@ mod tests {
             use_text_edit_state(INPUT_TAG).set_text("zzz".to_string());
             open_combo();
             let scene = view(&idle(), &Frame::new());
-            assert!(!scene.contains_tag(PANEL_TAG), "no match → no popup even when open");
+            assert!(
+                !scene.contains_tag(PANEL_TAG),
+                "no match → no popup even when open"
+            );
         });
     }
 

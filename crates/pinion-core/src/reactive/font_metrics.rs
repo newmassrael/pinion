@@ -119,7 +119,10 @@ mod tests {
     fn provided_metrics_are_returned() {
         let owner = Owner::new();
         owner.provide_monospace_metrics(Rc::new(FixedMetrics));
-        assert_eq!(owner.monospace_metrics().monospace_cell(32), CellMetric::new(16, 32));
+        assert_eq!(
+            owner.monospace_metrics().monospace_cell(32),
+            CellMetric::new(16, 32)
+        );
     }
 
     #[test]
@@ -128,7 +131,10 @@ mod tests {
         owner.provide_monospace_metrics(Rc::new(FixedMetrics));
         owner.provide_monospace_metrics(Rc::new(NullMonospaceMetrics));
         // The first (FixedMetrics) stays installed; the second is dropped.
-        assert_eq!(owner.monospace_metrics().monospace_cell(32), CellMetric::new(16, 32));
+        assert_eq!(
+            owner.monospace_metrics().monospace_cell(32),
+            CellMetric::new(16, 32)
+        );
     }
 
     #[test]

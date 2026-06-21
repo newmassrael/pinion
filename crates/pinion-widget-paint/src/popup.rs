@@ -18,7 +18,7 @@
 use pinion_core::style::{Border, BoxStyle};
 use pinion_core::theme::{ColorRole, Theme};
 
-use crate::elevation::{elevation, MENU_LEVEL};
+use crate::elevation::{MENU_LEVEL, elevation};
 
 /// The surface skin of a floating popup panel — `SurfaceContainer` fill, a
 /// 6 px corner radius, a 1 px outline, and the `MENU_LEVEL` elevation shadow.
@@ -39,7 +39,10 @@ mod tests {
     fn popup_surface_is_the_floating_panel_skin() {
         let s = popup_surface(&Theme::light());
         assert!(s.border.is_some(), "popup panel has a 1px outline");
-        assert!(!s.shadows.is_empty(), "popup panel casts the MENU_LEVEL elevation shadow");
+        assert!(
+            !s.shadows.is_empty(),
+            "popup panel casts the MENU_LEVEL elevation shadow"
+        );
         assert_eq!(s.corner_radius, 6, "6 px corner radius");
     }
 }

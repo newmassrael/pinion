@@ -27,7 +27,9 @@
 //! type symbols and the supertrait impls are both in scope at the
 //! same time this impl compiles.
 
-use pinion_core::test_fixtures::{ButtonFixture, ContextMenuFixture, EchoButtonFixture, ScrollbarMultiFixture};
+use pinion_core::test_fixtures::{
+    ButtonFixture, ContextMenuFixture, EchoButtonFixture, ScrollbarMultiFixture,
+};
 use ratatui::backend::TestBackend;
 
 use crate::widget::WidgetViewTui;

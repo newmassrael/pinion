@@ -7,8 +7,7 @@
 
 use crate::tables::{
     CANONICAL_COMBINING_CLASS_BMP_DATA, CANONICAL_COMBINING_CLASS_BMP_INDEX,
-    CANONICAL_COMBINING_CLASS_FIRST_CP,
-    CANONICAL_COMBINING_CLASS_SUPPLEMENTARY,
+    CANONICAL_COMBINING_CLASS_FIRST_CP, CANONICAL_COMBINING_CLASS_SUPPLEMENTARY,
 };
 
 /// Canonical combining class of `c`. Codepoints absent from the
@@ -43,10 +42,8 @@ pub(crate) fn combining_class(c: u32) -> u8 {
         return 0;
     }
     if c < 0x10000 {
-        let block =
-            CANONICAL_COMBINING_CLASS_BMP_INDEX[(c >> 8) as usize] as usize;
-        return CANONICAL_COMBINING_CLASS_BMP_DATA
-            [block * 256 + (c & 0xFF) as usize];
+        let block = CANONICAL_COMBINING_CLASS_BMP_INDEX[(c >> 8) as usize] as usize;
+        return CANONICAL_COMBINING_CLASS_BMP_DATA[block * 256 + (c & 0xFF) as usize];
     }
     combining_class_supplementary(c)
 }
@@ -59,9 +56,7 @@ pub(crate) fn combining_class(c: u32) -> u8 {
 /// precomposed regression carry.
 #[inline(never)]
 fn combining_class_supplementary(c: u32) -> u8 {
-    match CANONICAL_COMBINING_CLASS_SUPPLEMENTARY
-        .binary_search_by_key(&c, |(cp, _)| *cp)
-    {
+    match CANONICAL_COMBINING_CLASS_SUPPLEMENTARY.binary_search_by_key(&c, |(cp, _)| *cp) {
         Ok(idx) => CANONICAL_COMBINING_CLASS_SUPPLEMENTARY[idx].1,
         Err(_) => 0,
     }
@@ -128,8 +123,7 @@ mod tests {
     fn starter_blocks_run() {
         // Starter between two non-starter runs prevents the second
         // run from being sorted into the first.
-        let mut buf: Vec<u32> =
-            vec![0x0061, 0x0307, 0x0062, 0x0323];
+        let mut buf: Vec<u32> = vec![0x0061, 0x0307, 0x0062, 0x0323];
         canonical_ordering(&mut buf);
         assert_eq!(buf, vec![0x0061, 0x0307, 0x0062, 0x0323]);
     }

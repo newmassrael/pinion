@@ -74,40 +74,43 @@
 //! a default name (`untitled.txt`, caret at end), keeping the flow
 //! deterministic.
 
-use pinion_a11y::{windowed_list_nodes_selected, AccessNode, AriaRole, WidgetA11y};
+use pinion_a11y::{AccessNode, AriaRole, WidgetA11y, windowed_list_nodes_selected};
 use pinion_core::directory::{Directory, InMemoryDirectory};
 use pinion_core::external::{External, IntrospectValue};
-use pinion_core::reactive::{batch, Effect, Owner, Signal};
+use pinion_core::reactive::{Effect, Owner, Signal, batch};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::aria::apply_aria_activate;
 use pinion_core::widgets::button::{ButtonExternal, ButtonState};
 use pinion_core::widgets::caret_blink::use_caret_blink;
-use pinion_core::widgets::file_browser::{use_directory_state, DirectoryExternal, DirectoryState};
-use pinion_core::widgets::modal::{modal_introspection_extra, use_modal, ModalState};
+use pinion_core::widgets::file_browser::{DirectoryExternal, DirectoryState, use_directory_state};
+use pinion_core::widgets::modal::{ModalState, modal_introspection_extra, use_modal};
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::text_edit::use_text_edit_state;
 use pinion_core::widgets::text_field::{TextFieldExternal, TextFieldState};
 use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::{DirEntry, Frame, Scene, WidgetCore, WidgetStateName};
 use pinion_platform_clipboard::use_app_clipboard;
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_text::CaretRect;
 use pinion_widget_paint::button::{
-    button_a11y_state, button_scene, read_button_focused, read_button_state, ButtonColors,
-    ButtonStyle,
+    ButtonColors, ButtonStyle, button_a11y_state, button_scene, read_button_focused,
+    read_button_state,
 };
-use pinion_widget_paint::dialog::{view_dialog, DialogContent, DialogStyle};
-use pinion_widget_paint::file_browser::{file_browser_pane, FileBrowserMetrics};
+use pinion_widget_paint::dialog::{DialogContent, DialogStyle, view_dialog};
+use pinion_widget_paint::file_browser::{FileBrowserMetrics, file_browser_pane};
 use pinion_widget_paint::text_field as tf_paint;
 use std::rc::Rc;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
-vello_renderer_impl!(HelloFileSaveDialogRenderer, HelloFileSaveDialogRendererError);
+vello_renderer_impl!(
+    HelloFileSaveDialogRenderer,
+    HelloFileSaveDialogRendererError
+);
 
 const WIN_W: u32 = 600;
 const WIN_H: u32 = 640;
@@ -169,18 +172,28 @@ const OVERSCAN: usize = 3;
 /// moves Name → Cancel → Save and wraps. The file rows are pointer/RPC-
 /// driven (R787), not Tab stops.
 fn dialog_members() -> Vec<String> {
-    vec![FILENAME_TAG.to_string(), CANCEL_TAG.to_string(), SAVE_TAG.to_string()]
+    vec![
+        FILENAME_TAG.to_string(),
+        CANCEL_TAG.to_string(),
+        SAVE_TAG.to_string(),
+    ]
 }
 
 /// The R788 modal panel style: the M3 default widened to hold the body.
 fn dialog_style() -> DialogStyle {
-    DialogStyle { panel_width: PANEL_W, ..DialogStyle::m3_default() }
+    DialogStyle {
+        panel_width: PANEL_W,
+        ..DialogStyle::m3_default()
+    }
 }
 
 /// The filename field paint style — the M3 filled `TextField` widened to
 /// span the dialog body so it aligns with the browser pane above it.
 fn filename_style() -> tf_paint::TextFieldStyle {
-    tf_paint::TextFieldStyle { field_w: LIST_W, ..tf_paint::TextFieldStyle::m3_filled() }
+    tf_paint::TextFieldStyle {
+        field_w: LIST_W,
+        ..tf_paint::TextFieldStyle::m3_filled()
+    }
 }
 
 /// The shared [`ModalState`] (R788 lifted open-lifecycle SSOT). One `Rc`
@@ -225,8 +238,14 @@ fn seed_directory() -> Rc<dyn Directory> {
             DirEntry::file("README.md"),
         ],
     );
-    d.insert("/proj/src", vec![DirEntry::file("main.rs"), DirEntry::file("lib.rs")]);
-    d.insert("/proj/assets", vec![DirEntry::file("logo.png"), DirEntry::file("icon.svg")]);
+    d.insert(
+        "/proj/src",
+        vec![DirEntry::file("main.rs"), DirEntry::file("lib.rs")],
+    );
+    d.insert(
+        "/proj/assets",
+        vec![DirEntry::file("logo.png"), DirEntry::file("icon.svg")],
+    );
     Rc::new(d)
 }
 
@@ -314,7 +333,13 @@ fn browser_pane(
         dir,
         scroll,
         theme,
-        FileBrowserMetrics { list_width: LIST_W, list_height: LIST_H, row_pitch: ROW_PITCH, overscan: OVERSCAN, focusable: false },
+        FileBrowserMetrics {
+            list_width: LIST_W,
+            list_height: LIST_H,
+            row_pitch: ROW_PITCH,
+            overscan: OVERSCAN,
+            focusable: false,
+        },
         None,
     )
 }
@@ -327,7 +352,9 @@ fn filename_section(interaction: TextFieldState, caret_byte: u32, theme: &Theme)
     let label = Scene::Text(TextNode::styled(
         "Save as:",
         Rect::default(),
-        TextStyle::new().with_size_px(14).with_fg(theme.resolve(ColorRole::OnSurface)),
+        TextStyle::new()
+            .with_size_px(14)
+            .with_fg(theme.resolve(ColorRole::OnSurface)),
     ));
     let field = tf_paint::view_field(
         FILENAME_TAG,
@@ -339,7 +366,10 @@ fn filename_section(interaction: TextFieldState, caret_byte: u32, theme: &Theme)
     );
     Scene::Container(
         ContainerNode::new(vec![label, field]).with_layout(
-            LayoutStyle::new().flex(FlexDirection::Column).with_align_items(AlignItems::Start).with_gap(4),
+            LayoutStyle::new()
+                .flex(FlexDirection::Column)
+                .with_align_items(AlignItems::Start)
+                .with_gap(4),
         ),
     )
 }
@@ -372,7 +402,14 @@ fn action_button(
 /// filename field's interaction state + caret byte offset. `open` /
 /// `saved` / browse state / field text live in signals the owner-scoped
 /// view + access_node read directly.
-type FileSaveViewState = (ButtonState, ButtonState, ButtonState, [bool; 3], TextFieldState, u32);
+type FileSaveViewState = (
+    ButtonState,
+    ButtonState,
+    ButtonState,
+    [bool; 3],
+    TextFieldState,
+    u32,
+);
 
 /// view-fn (§6.3): pure sync mapping `(postures) -> Scene`, reading the
 /// reactive `modal` open flag, `saved` path, browse state, and filename
@@ -402,7 +439,9 @@ fn view(state: FileSaveViewState, _frame: &Frame) -> Scene {
             None => "Saved: (none)".to_string(),
         },
         Rect::default(),
-        TextStyle::new().with_size_px(14).with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+        TextStyle::new()
+            .with_size_px(14)
+            .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
     ));
     let content = Scene::Container(
         ContainerNode::new(vec![trigger, status]).with_layout(
@@ -438,7 +477,11 @@ fn view(state: FileSaveViewState, _frame: &Frame) -> Scene {
             CANCEL_HOVER_KEY,
             &ButtonColors::filled_tonal(&theme),
         );
-        let save_posture = if has_name { save_state } else { ButtonState::Disabled };
+        let save_posture = if has_name {
+            save_state
+        } else {
+            ButtonState::Disabled
+        };
         let save = action_button(
             SAVE_TAG,
             "Save",
@@ -451,7 +494,11 @@ fn view(state: FileSaveViewState, _frame: &Frame) -> Scene {
         children.push(view_dialog(
             SCRIM_TAG,
             PANEL_TAG,
-            DialogContent { title: "Save file", message: "", body: Some(body) },
+            DialogContent {
+                title: "Save file",
+                message: "",
+                body: Some(body),
+            },
             vec![cancel, save],
             (WIN_W, WIN_H),
             &theme,
@@ -514,8 +561,7 @@ impl WidgetCore for FileSaveView {
     }
 
     fn read_state(scene: &Scene) -> FileSaveViewState {
-        let (fname_interaction, fname_caret) =
-            tf_paint::read_text_field_state(scene, FILENAME_TAG);
+        let (fname_interaction, fname_caret) = tf_paint::read_text_field_state(scene, FILENAME_TAG);
         (
             read_button_state(scene, TRIGGER_TAG),
             read_button_state(scene, SAVE_TAG),
@@ -545,7 +591,6 @@ impl WidgetCore for FileSaveView {
     fn keybinding(_key: &str) -> Option<()> {
         None
     }
-
 
     /// R790 §5.38 §5.39 — Escape dismisses the open dialog as a cancel.
     /// `Enter` in the filename field commits the Save (the dialog's
@@ -658,8 +703,10 @@ impl WidgetA11y for FileSaveView {
     /// matching the painted gate. Names enrich from the paint scene.
     fn access_node(state: &FileSaveViewState, focused: Option<&str>) -> Vec<AccessNode> {
         if !modal().is_open() {
-            return vec![AccessNode::new(TRIGGER_TAG, AriaRole::Button)
-                .with_state(button_a11y_state(state.0, focused == Some(TRIGGER_TAG)))];
+            return vec![
+                AccessNode::new(TRIGGER_TAG, AriaRole::Button)
+                    .with_state(button_a11y_state(state.0, focused == Some(TRIGGER_TAG))),
+            ];
         }
         let dir = directory();
         let scroll = use_scroll_state(SCROLL_KEY);
@@ -691,7 +738,11 @@ impl WidgetA11y for FileSaveView {
             focused == Some(FILENAME_TAG),
         ));
         // Save reflects the name gate (aria-disabled until a name typed).
-        let save_posture = if has_name { state.1 } else { ButtonState::Disabled };
+        let save_posture = if has_name {
+            state.1
+        } else {
+            ButtonState::Disabled
+        };
         nodes.push(
             AccessNode::new(CANCEL_TAG, AriaRole::Button)
                 .with_state(button_a11y_state(state.2, focused == Some(CANCEL_TAG)))
@@ -712,7 +763,10 @@ impl WidgetView for FileSaveView {
     type Renderer = HelloFileSaveDialogRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 
     /// R790 §5.13 — publish the filename field's caret rect to the
@@ -763,7 +817,10 @@ mod tests {
     }
 
     fn intent(tag: &str) -> pinion_core::Intent {
-        pinion_core::Intent::new_owned(tag.to_string(), pinion_core::external::IntrospectValue::Null)
+        pinion_core::Intent::new_owned(
+            tag.to_string(),
+            pinion_core::external::IntrospectValue::Null,
+        )
     }
 
     // ----- reducer + signals -----
@@ -779,7 +836,11 @@ mod tests {
             let _ = FileSaveView::update(idle(), &intent("save_file.click"));
             assert!(modal().is_open(), "trigger opens the dialog");
             assert_eq!(dir.cwd(), ROOT_DIR, "open resets the browser to the root");
-            assert_eq!(filename_state().text(), DEFAULT_NAME, "open pre-fills the default name");
+            assert_eq!(
+                filename_state().text(),
+                DEFAULT_NAME,
+                "open pre-fills the default name"
+            );
             assert_eq!(
                 filename_state().caret(),
                 DEFAULT_NAME.len(),
@@ -787,7 +848,9 @@ mod tests {
             );
             assert_eq!(
                 modal_scope_request::drain(),
-                Some(ModalRequest::Open { members: dialog_members() }),
+                Some(ModalRequest::Open {
+                    members: dialog_members()
+                }),
                 "modal trap requested over the filename field + action buttons",
             );
         });
@@ -807,10 +870,17 @@ mod tests {
             filename_state().set_text("   ".to_owned()); // whitespace = blank
             let before = directory().entries().len();
             let _ = FileSaveView::update(idle(), &intent("savefile_save.click"));
-            assert!(modal().is_open(), "Save with a blank name keeps the dialog open");
+            assert!(
+                modal().is_open(),
+                "Save with a blank name keeps the dialog open"
+            );
             assert_eq!(use_saved().get(), None, "nothing saved");
             assert_eq!(directory().entries().len(), before, "no file created");
-            assert_eq!(modal_scope_request::drain(), None, "no modal lifecycle change");
+            assert_eq!(
+                modal_scope_request::drain(),
+                None,
+                "no modal lifecycle change"
+            );
         });
     }
 
@@ -828,7 +898,10 @@ mod tests {
                 "Save records the written path",
             );
             assert!(
-                directory().entries().iter().any(|e| e.name == "notes.md" && !e.is_dir),
+                directory()
+                    .entries()
+                    .iter()
+                    .any(|e| e.name == "notes.md" && !e.is_dir),
                 "the file was created in the current directory",
             );
             assert!(!modal().is_open(), "Save closes the dialog");
@@ -863,7 +936,10 @@ mod tests {
             assert!(!modal().is_open(), "Cancel closes the dialog");
             assert_eq!(use_saved().get(), None, "Cancel does not save");
             assert!(
-                !directory().entries().iter().any(|e| e.name == "scratch.txt"),
+                !directory()
+                    .entries()
+                    .iter()
+                    .any(|e| e.name == "scratch.txt"),
                 "Cancel writes no file",
             );
             assert_eq!(modal_scope_request::drain(), Some(ModalRequest::Close));
@@ -879,7 +955,11 @@ mod tests {
             // Install the reactive bridge, then open the dialog.
             let _sync = use_filename_sync();
             open_dialog();
-            assert_eq!(filename_state().text(), DEFAULT_NAME, "starts at the default");
+            assert_eq!(
+                filename_state().text(),
+                DEFAULT_NAME,
+                "starts at the default"
+            );
             // Clicking an existing file mirrors its basename into the field.
             directory().select("README.md");
             assert_eq!(
@@ -925,7 +1005,11 @@ mod tests {
                 pinion_core::Modifiers::empty(),
             );
             assert!(handled, "Enter in the name field is consumed");
-            assert_eq!(use_saved().get(), Some("/proj/via-enter.txt".to_string()), "Enter saves");
+            assert_eq!(
+                use_saved().get(),
+                Some("/proj/via-enter.txt".to_string()),
+                "Enter saves"
+            );
             assert!(!modal().is_open(), "Enter closes the dialog");
         });
     }
@@ -991,9 +1075,18 @@ mod tests {
             assert!(scene.contains_tag(PANEL_TAG), "open: panel painted");
             assert!(scene.contains_tag(SAVE_TAG), "Save action painted");
             assert!(scene.contains_tag(CANCEL_TAG), "Cancel action painted");
-            assert!(scene.contains_tag(FILENAME_TAG), "filename field painted in body");
-            assert!(scene.contains_tag(&format!("{DIR_TAG}#0")), "row 0 painted in body");
-            assert!(scene.contains_tag(&format!("{DIR_TAG}#up")), "parent affordance painted");
+            assert!(
+                scene.contains_tag(FILENAME_TAG),
+                "filename field painted in body"
+            );
+            assert!(
+                scene.contains_tag(&format!("{DIR_TAG}#0")),
+                "row 0 painted in body"
+            );
+            assert!(
+                scene.contains_tag(&format!("{DIR_TAG}#up")),
+                "parent affordance painted"
+            );
         });
     }
 
@@ -1019,12 +1112,24 @@ mod tests {
             filename_state().set_text(String::new()); // blank
             let accent = Theme::light().resolve(ColorRole::Accent);
             let scene = view(idle(), &Frame::new());
-            let save_blank = find_tagged(&scene, SAVE_TAG).expect("save painted").style.fill;
-            assert_ne!(save_blank, accent, "Save is not Accent with a blank name (gate)");
+            let save_blank = find_tagged(&scene, SAVE_TAG)
+                .expect("save painted")
+                .style
+                .fill;
+            assert_ne!(
+                save_blank, accent,
+                "Save is not Accent with a blank name (gate)"
+            );
             filename_state().set_text("ok.txt".to_owned());
             let scene = view(idle(), &Frame::new());
-            let save_named = find_tagged(&scene, SAVE_TAG).expect("save painted").style.fill;
-            assert_eq!(save_named, accent, "Save paints Accent once a name is typed");
+            let save_named = find_tagged(&scene, SAVE_TAG)
+                .expect("save painted")
+                .style
+                .fill;
+            assert_eq!(
+                save_named, accent,
+                "Save paints Accent once a name is typed"
+            );
         });
     }
 
@@ -1047,11 +1152,20 @@ mod tests {
             let nodes = FileSaveView::access_node(&idle(), Some(FILENAME_TAG));
             assert_eq!(nodes[0].role, AriaRole::Dialog);
             assert!(nodes[0].modal, "dialog root carries aria-modal");
-            assert_eq!(nodes[0].children, vec![DIR_TAG, FILENAME_TAG, CANCEL_TAG, SAVE_TAG]);
-            let list = nodes.iter().find(|n| n.tag == DIR_TAG).expect("file list node");
+            assert_eq!(
+                nodes[0].children,
+                vec![DIR_TAG, FILENAME_TAG, CANCEL_TAG, SAVE_TAG]
+            );
+            let list = nodes
+                .iter()
+                .find(|n| n.tag == DIR_TAG)
+                .expect("file list node");
             assert_eq!(list.role, AriaRole::List);
             assert_eq!(list.size_of_set, Some(4), "four entries in /proj");
-            let field = nodes.iter().find(|n| n.tag == FILENAME_TAG).expect("filename node");
+            let field = nodes
+                .iter()
+                .find(|n| n.tag == FILENAME_TAG)
+                .expect("filename node");
             assert_eq!(field.role, AriaRole::TextInput);
             assert_eq!(
                 field.value,
@@ -1060,7 +1174,10 @@ mod tests {
             );
             // Save enabled (the default name is non-blank).
             let save = nodes.iter().find(|n| n.tag == SAVE_TAG).expect("save node");
-            assert!(!save.state.disabled, "Save enabled with the pre-filled name");
+            assert!(
+                !save.state.disabled,
+                "Save enabled with the pre-filled name"
+            );
         });
     }
 
@@ -1071,7 +1188,10 @@ mod tests {
             filename_state().set_text(String::new());
             let nodes = FileSaveView::access_node(&idle(), None);
             let save = nodes.iter().find(|n| n.tag == SAVE_TAG).expect("save node");
-            assert!(save.state.disabled, "Save is aria-disabled until a name is typed");
+            assert!(
+                save.state.disabled,
+                "Save is aria-disabled until a name is typed"
+            );
         });
     }
 
@@ -1083,7 +1203,10 @@ mod tests {
             let mut nodes = FileSaveView::access_node(&idle(), Some(FILENAME_TAG));
             pinion_a11y::enrich_names_from_scene(&mut nodes, &scene);
             let name = |t: &str| {
-                nodes.iter().find(|n| n.tag == t).and_then(|n| n.name.as_deref())
+                nodes
+                    .iter()
+                    .find(|n| n.tag == t)
+                    .and_then(|n| n.name.as_deref())
             };
             assert_eq!(name(PANEL_TAG), Some("Save file"), "dialog name from title");
             assert_eq!(name(CANCEL_TAG), Some("Cancel"));
@@ -1107,7 +1230,9 @@ mod tests {
             ExternalNode::new(FileSaveView::create_external()).with_tag(TRIGGER_TAG),
         )];
         for extra in FileSaveView::create_extra_externals() {
-            children.push(Scene::External(ExternalNode::new(extra.handle).with_tag(extra.tag)));
+            children.push(Scene::External(
+                ExternalNode::new(extra.handle).with_tag(extra.tag),
+            ));
         }
         Scene::Container(ContainerNode::new(children))
     }

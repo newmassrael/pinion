@@ -81,7 +81,7 @@ use std::rc::Rc;
 use pinion_core::reactive::Signal;
 use pinion_core::undo::{SignalEdit, UndoStack};
 
-use crate::splitter::{view_splitter, SplitterOrientation, SplitterStyle};
+use crate::splitter::{SplitterOrientation, SplitterStyle, view_splitter};
 
 // ─────────────────────────────────────────────────────────────────────
 // R685 §5.16 §5.49 — DockSurface topology composition substrate.
@@ -519,11 +519,20 @@ impl core::fmt::Display for TopologyError {
                  InputRouter deepest-tagged hit-test resolves unambiguously",
             ),
             Self::InvalidRatio { split_id, ratio } => {
-                write!(f, "split {split_id:?} has invalid ratio {ratio}; must be finite in [0.0, 1.0]")
+                write!(
+                    f,
+                    "split {split_id:?} has invalid ratio {ratio}; must be finite in [0.0, 1.0]"
+                )
             }
-            Self::EmptyId => write!(f, "empty id (panel_id or split id) — empty tags collide with InputRouter dispatch"),
+            Self::EmptyId => write!(
+                f,
+                "empty id (panel_id or split id) — empty tags collide with InputRouter dispatch"
+            ),
             Self::PanelNotFound(id) => write!(f, "panel_id {id:?} not found in topology"),
-            Self::RootRemoval => write!(f, "cannot remove the topology's sole panel (an empty topology has no valid layout)"),
+            Self::RootRemoval => write!(
+                f,
+                "cannot remove the topology's sole panel (an empty topology has no valid layout)"
+            ),
         }
     }
 }
@@ -575,7 +584,8 @@ impl DockTopology {
     /// if `root` violates any topology invariant.
     #[must_use]
     pub fn new(root: DockNode) -> Self {
-        Self::try_new(root).expect("DockTopology::new: invariant violation; use try_new for fallible construction")
+        Self::try_new(root)
+            .expect("DockTopology::new: invariant violation; use try_new for fallible construction")
     }
 
     /// (R685 §5.16) Convenience constructor for a single-panel
@@ -852,9 +862,9 @@ fn split_leaf_rec(
 ) -> DockNode {
     match node {
         DockNode::Leaf { panel_id } if panel_id.as_ref() == target => {
-            let ins = insertion
-                .take()
-                .expect("split_leaf_rec: target leaf visited more than once (unique-id invariant broken)");
+            let ins = insertion.take().expect(
+                "split_leaf_rec: target leaf visited more than once (unique-id invariant broken)",
+            );
             let existing = DockNode::Leaf {
                 panel_id: panel_id.clone(),
             };
@@ -971,12 +981,8 @@ fn validate_node(
             }
             match seen.insert(panel_id.to_string(), NodeKind::Panel) {
                 None => Ok(()),
-                Some(NodeKind::Panel) => {
-                    Err(TopologyError::DuplicatePanelId(panel_id.to_string()))
-                }
-                Some(NodeKind::Split) => {
-                    Err(TopologyError::IdCollision(panel_id.to_string()))
-                }
+                Some(NodeKind::Panel) => Err(TopologyError::DuplicatePanelId(panel_id.to_string())),
+                Some(NodeKind::Split) => Err(TopologyError::IdCollision(panel_id.to_string())),
             }
         }
         DockNode::Split {
@@ -1155,9 +1161,7 @@ pub const REORG_SPLIT_ID_PREFIX: &str = "reorg-split-";
 /// the `first` slot, right/bottom in `second`. Returns `None` for the
 /// non-edge zones ([`DockDropZone::Center`] / [`DockDropZone::None`]),
 /// which are not split gestures.
-fn zone_split_geometry(
-    zone: DockDropZone,
-) -> Option<(SplitterOrientation, DockSplitPosition)> {
+fn zone_split_geometry(zone: DockDropZone) -> Option<(SplitterOrientation, DockSplitPosition)> {
     match zone {
         DockDropZone::Left => Some((SplitterOrientation::Horizontal, DockSplitPosition::First)),
         DockDropZone::Right => Some((SplitterOrientation::Horizontal, DockSplitPosition::Second)),
@@ -1191,7 +1195,12 @@ fn parse_drop_zone(s: &str) -> Option<DockDropZone> {
 /// action surfaces that as [`InvokeError::TypeMismatch`].
 fn parse_json_rect(v: &serde_json::Value) -> Option<Rect> {
     let field = |k: &str| -> Option<u32> { u32::try_from(v.get(k)?.as_u64()?).ok() };
-    Some(Rect::new(field("x")?, field("y")?, field("w")?, field("h")?))
+    Some(Rect::new(
+        field("x")?,
+        field("y")?,
+        field("w")?,
+        field("h")?,
+    ))
 }
 
 /// (R686 §5.16 §5.45) A resolved drag-to-reorganize gesture — the
@@ -1463,10 +1472,7 @@ impl DockReorganizeExternal {
     /// Returns the [`TopologyError`] from the underlying mutation when
     /// the gesture cannot apply (stale panel id, root removal, id
     /// collision). The live topology is left unchanged on error.
-    pub fn apply_intent(
-        &self,
-        intent: &DockReorganizeIntent,
-    ) -> Result<String, TopologyError> {
+    pub fn apply_intent(&self, intent: &DockReorganizeIntent) -> Result<String, TopologyError> {
         let current = self.topology.get();
         let seq = self.split_seq.get();
         let new_split_id = format!("{REORG_SPLIT_ID_PREFIX}{seq}");
@@ -1531,7 +1537,9 @@ impl ExternalIntrospect for DockReorganizeExternal {
                     .ok()
                     .map(IntrospectValue::Json)
             }
-            "split_seq" => Some(IntrospectValue::Int(i64::try_from(self.split_seq.get()).unwrap_or(i64::MAX))),
+            "split_seq" => Some(IntrospectValue::Int(
+                i64::try_from(self.split_seq.get()).unwrap_or(i64::MAX),
+            )),
             "last_outcome" => Some(match self.last_outcome.borrow().as_deref() {
                 Some(s) => IntrospectValue::Text(s.to_string()),
                 None => IntrospectValue::Null,
@@ -1540,11 +1548,7 @@ impl ExternalIntrospect for DockReorganizeExternal {
         }
     }
 
-    fn intervene(
-        &mut self,
-        path: &str,
-        _value: IntrospectValue,
-    ) -> Result<(), InterveneError> {
+    fn intervene(&mut self, path: &str, _value: IntrospectValue) -> Result<(), InterveneError> {
         match path {
             // Topology mutation flows through `invoke("drop", …)` /
             // `invoke("reorganize", …)`, not direct slot writes — every
@@ -1670,8 +1674,7 @@ impl ExternalIntrospect for DockReorganizeExternal {
                 match self.apply_intent(&intent) {
                     Ok(summary) => Ok(IntrospectValue::Text(summary)),
                     Err(e) => {
-                        *self.last_outcome.borrow_mut() =
-                            Some(format!("rejected: {e}"));
+                        *self.last_outcome.borrow_mut() = Some(format!("rejected: {e}"));
                         Err(InvokeError::Rejected)
                     }
                 }
@@ -1871,9 +1874,7 @@ pub fn view_dock_panel(
     Scene::Container(
         ContainerNode::new(vec![header, content_wrapper])
             .with_tag(style.tag.clone())
-            .with_style(BoxStyle::filled(
-                theme.resolve(ColorRole::SurfaceContainer),
-            ))
+            .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainer)))
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Column)
@@ -1976,7 +1977,9 @@ pub fn view_floating_placeholder(
                 .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
         ))])
         .with_tag(format!("{panel_id}{PLACEHOLDER_TAG_SUFFIX}"))
-        .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerLow)))
+        .with_style(BoxStyle::filled(
+            theme.resolve(ColorRole::SurfaceContainerLow),
+        ))
         .with_layout(
             LayoutStyle::new()
                 .flex(FlexDirection::Column)
@@ -2168,10 +2171,8 @@ where
             // Walker builds the splitter style from the topology's
             // id + orientation — SSOT.
             let style = SplitterStyle::m3_default(*orientation, id.clone());
-            let first_scene =
-                view_dock_surface_node(first, panel_content, split_state, theme);
-            let second_scene =
-                view_dock_surface_node(second, panel_content, split_state, theme);
+            let first_scene = view_dock_surface_node(first, panel_content, split_state, theme);
+            let second_scene = view_dock_surface_node(second, panel_content, split_state, theme);
             view_splitter(
                 first_scene,
                 second_scene,
@@ -2324,10 +2325,7 @@ impl DockPanelExternal {
     /// uses — they are paired (visual + drag detection) for the
     /// canonical UX.
     #[must_use]
-    pub fn new(
-        panel_id: impl Into<Cow<'static, str>>,
-        tear_off_threshold_frac: f32,
-    ) -> Self {
+    pub fn new(panel_id: impl Into<Cow<'static, str>>, tear_off_threshold_frac: f32) -> Self {
         Self {
             panel_id: panel_id.into(),
             tear_off_threshold_frac,
@@ -2488,20 +2486,16 @@ impl ExternalIntrospect for DockPanelExternal {
     fn query(&self, path: &str) -> Option<IntrospectValue> {
         match path {
             "panel_id" => Some(IntrospectValue::Text(self.panel_id.to_string())),
-            "tear_off_threshold_frac" => {
-                Some(IntrospectValue::Float(f64::from(self.tear_off_threshold_frac)))
-            }
+            "tear_off_threshold_frac" => Some(IntrospectValue::Float(f64::from(
+                self.tear_off_threshold_frac,
+            ))),
             "dragging" => Some(IntrospectValue::Bool(self.is_dragging())),
             "tear_off_fired" => Some(IntrospectValue::Bool(self.tear_off_fired())),
             _ => None,
         }
     }
 
-    fn intervene(
-        &mut self,
-        path: &str,
-        _value: IntrospectValue,
-    ) -> Result<(), InterveneError> {
+    fn intervene(&mut self, path: &str, _value: IntrospectValue) -> Result<(), InterveneError> {
         match path {
             // Every slot is framework-owned or construction-time
             // fixed. AI clients drive the tear-off through the
@@ -2605,7 +2599,6 @@ impl ExternalIntrospect for DockPanelExternal {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     //! R683.B §5.16 — Dock-panel paint + tear-off wire tests.
@@ -2640,8 +2633,8 @@ mod tests {
     //!     `{tag}#content`.
 
     use super::{
-        composite_tag, view_dock_panel, DockPanelExternal, DockPanelStyle,
-        CONTENT_TAG_SUFFIX, HEADER_TAG_SUFFIX, TEAR_OFF_EVENT,
+        CONTENT_TAG_SUFFIX, DockPanelExternal, DockPanelStyle, HEADER_TAG_SUFFIX, TEAR_OFF_EVENT,
+        composite_tag, view_dock_panel,
     };
     use pinion_core::external::{External, ExternalIntrospect, IntrospectValue};
     use pinion_core::intent::Intent;
@@ -2663,13 +2656,14 @@ mod tests {
         Theme::light()
     }
 
-
     #[test]
     fn r683_view_dock_panel_outer_container_carries_tag_and_two_children() {
         run_in_owner(|| {
             let style = DockPanelStyle::m3_default(PANEL_TAG);
             let scene = view_dock_panel("My Panel", empty_content(), &theme_light(), &style);
-            let Scene::Container(outer) = &scene else { panic!() };
+            let Scene::Container(outer) = &scene else {
+                panic!()
+            };
             assert_eq!(outer.tag.as_deref(), Some(PANEL_TAG));
             assert_eq!(outer.children.len(), 2);
         });
@@ -2680,8 +2674,12 @@ mod tests {
         run_in_owner(|| {
             let style = DockPanelStyle::m3_default(PANEL_TAG);
             let scene = view_dock_panel("Title", empty_content(), &theme_light(), &style);
-            let Scene::Container(outer) = &scene else { panic!() };
-            let Scene::Container(header) = &outer.children[0] else { panic!() };
+            let Scene::Container(outer) = &scene else {
+                panic!()
+            };
+            let Scene::Container(header) = &outer.children[0] else {
+                panic!()
+            };
             assert_eq!(
                 header.tag.as_deref(),
                 Some(composite_tag(PANEL_TAG, HEADER_TAG_SUFFIX).as_str()),
@@ -2694,8 +2692,12 @@ mod tests {
         run_in_owner(|| {
             let style = DockPanelStyle::m3_default(PANEL_TAG);
             let scene = view_dock_panel("Title", empty_content(), &theme_light(), &style);
-            let Scene::Container(outer) = &scene else { panic!() };
-            let Scene::Container(content) = &outer.children[1] else { panic!() };
+            let Scene::Container(outer) = &scene else {
+                panic!()
+            };
+            let Scene::Container(content) = &outer.children[1] else {
+                panic!()
+            };
             assert_eq!(
                 content.tag.as_deref(),
                 Some(composite_tag(PANEL_TAG, CONTENT_TAG_SUFFIX).as_str()),
@@ -2708,8 +2710,12 @@ mod tests {
         run_in_owner(|| {
             let style = DockPanelStyle::m3_default(PANEL_TAG).with_header_height_px(32);
             let scene = view_dock_panel("Title", empty_content(), &theme_light(), &style);
-            let Scene::Container(outer) = &scene else { panic!() };
-            let Scene::Container(header) = &outer.children[0] else { panic!() };
+            let Scene::Container(outer) = &scene else {
+                panic!()
+            };
+            let Scene::Container(header) = &outer.children[0] else {
+                panic!()
+            };
             // size.height is a SizeValue::Px(32) — match the
             // numeric extent via the layout.size field.
             let height_px = match header.layout.size.height {
@@ -2725,11 +2731,17 @@ mod tests {
         run_in_owner(|| {
             let style = DockPanelStyle::m3_default(PANEL_TAG);
             let scene = view_dock_panel("Inspector", empty_content(), &theme_light(), &style);
-            let Scene::Container(outer) = &scene else { panic!() };
-            let Scene::Container(header) = &outer.children[0] else { panic!() };
+            let Scene::Container(outer) = &scene else {
+                panic!()
+            };
+            let Scene::Container(header) = &outer.children[0] else {
+                panic!()
+            };
             // Header has exactly one child: the title TextNode.
             assert_eq!(header.children.len(), 1);
-            let Scene::Text(text) = &header.children[0] else { panic!() };
+            let Scene::Text(text) = &header.children[0] else {
+                panic!()
+            };
             assert_eq!(text.content, "Inspector");
         });
     }
@@ -2917,8 +2929,14 @@ mod tests {
         // tags both follow this format so the InputRouter's
         // deepest-tagged hit-test + dispatch_send wire route
         // PointerDown to the matching External.
-        assert_eq!(composite_tag("panel_a", HEADER_TAG_SUFFIX), "panel_a#header");
-        assert_eq!(composite_tag("panel_a", CONTENT_TAG_SUFFIX), "panel_a#content");
+        assert_eq!(
+            composite_tag("panel_a", HEADER_TAG_SUFFIX),
+            "panel_a#header"
+        );
+        assert_eq!(
+            composite_tag("panel_a", CONTENT_TAG_SUFFIX),
+            "panel_a#content"
+        );
     }
 
     #[test]
@@ -2963,10 +2981,14 @@ mod tests {
             let panel_w: u32 = 400;
             let panel_h: u32 = 300;
             compute_layout(&mut scene, &mut cache, panel_w, panel_h);
-            let Scene::Container(outer) = &scene else { panic!("outer Container") };
+            let Scene::Container(outer) = &scene else {
+                panic!("outer Container")
+            };
             // Outer panel fills the viewport (Block default).
             assert_eq!(outer.rect.w, panel_w, "panel root fills viewport width");
-            let Scene::Container(header) = &outer.children[0] else { panic!("header") };
+            let Scene::Container(header) = &outer.children[0] else {
+                panic!("header")
+            };
             assert_eq!(
                 header.rect.w, panel_w,
                 "R684 atomic 1: header strip must stretch to full panel width \
@@ -3051,12 +3073,8 @@ mod topology_tests {
 
     #[test]
     fn r685_dock_node_split_horizontal_carries_stable_id_and_ratio() {
-        let split = DockNode::split_horizontal(
-            "my_split",
-            0.42,
-            DockNode::leaf("a"),
-            DockNode::leaf("b"),
-        );
+        let split =
+            DockNode::split_horizontal("my_split", 0.42, DockNode::leaf("a"), DockNode::leaf("b"));
         let DockNode::Split {
             id,
             orientation,
@@ -3082,13 +3100,12 @@ mod topology_tests {
 
     #[test]
     fn r685_dock_node_split_vertical_sets_orientation() {
-        let split = DockNode::split_vertical(
-            "v_split",
-            0.5,
-            DockNode::leaf("top"),
-            DockNode::leaf("bot"),
-        );
-        let DockNode::Split { id, orientation, .. } = split else {
+        let split =
+            DockNode::split_vertical("v_split", 0.5, DockNode::leaf("top"), DockNode::leaf("bot"));
+        let DockNode::Split {
+            id, orientation, ..
+        } = split
+        else {
             panic!("expected Split");
         };
         assert_eq!(id.as_ref(), "v_split");
@@ -3134,7 +3151,11 @@ mod topology_tests {
             vec![
                 ("outer".to_string(), SplitterOrientation::Vertical, 0.10),
                 ("inner_v".to_string(), SplitterOrientation::Vertical, 0.80),
-                ("middle_h".to_string(), SplitterOrientation::Horizontal, 0.20),
+                (
+                    "middle_h".to_string(),
+                    SplitterOrientation::Horizontal,
+                    0.20
+                ),
                 ("inner_h".to_string(), SplitterOrientation::Horizontal, 0.75),
             ],
             "for_each_split walks DF pre-order with id + orientation + initial ratio",
@@ -3163,34 +3184,27 @@ mod topology_tests {
         // Pre-R685 atomic 5c form carried a `"slot":...` field —
         // R685 dropped the dead field, so it must NOT appear.
         assert!(!serialized.contains("\"slot\":"));
-        let parsed: DockNode =
-            serde_json::from_str(&serialized).expect("parse leaf");
+        let parsed: DockNode = serde_json::from_str(&serialized).expect("parse leaf");
         assert_eq!(parsed, leaf, "leaf round-trips through JSON identity");
     }
 
     #[test]
     fn r685_dock_node_split_serde_round_trip_through_json() {
-        let split = DockNode::split_horizontal(
-            "h_split",
-            0.30,
-            DockNode::leaf("a"),
-            DockNode::leaf("b"),
-        );
+        let split =
+            DockNode::split_horizontal("h_split", 0.30, DockNode::leaf("a"), DockNode::leaf("b"));
         let serialized = serde_json::to_string(&split).expect("serialize split");
         assert!(serialized.contains("\"type\":\"Split\""));
         assert!(serialized.contains("\"id\":\"h_split\""));
         assert!(serialized.contains("\"orientation\":\"Horizontal\""));
         assert!(serialized.contains("\"ratio\":"));
-        let parsed: DockNode =
-            serde_json::from_str(&serialized).expect("parse split");
+        let parsed: DockNode = serde_json::from_str(&serialized).expect("parse split");
         assert_eq!(parsed, split, "split round-trips through JSON identity");
     }
 
     #[test]
     fn r685_dock_topology_full_editor_serde_round_trip() {
         let topology = editor_topology();
-        let serialized =
-            serde_json::to_string(&topology).expect("serialize editor topology");
+        let serialized = serde_json::to_string(&topology).expect("serialize editor topology");
         let parsed: DockTopology =
             serde_json::from_str(&serialized).expect("parse editor topology");
         assert_eq!(parsed, topology, "5-pane editor topology round-trips");
@@ -3230,7 +3244,10 @@ mod topology_tests {
             DockNode::leaf("dup_panel"),
         );
         let err = DockTopology::try_new(root).unwrap_err();
-        assert_eq!(err, TopologyError::DuplicatePanelId("dup_panel".to_string()));
+        assert_eq!(
+            err,
+            TopologyError::DuplicatePanelId("dup_panel".to_string())
+        );
     }
 
     #[test]
@@ -3252,12 +3269,8 @@ mod topology_tests {
 
     #[test]
     fn r685_b_try_new_rejects_nan_ratio() {
-        let root = DockNode::split_horizontal(
-            "split",
-            f32::NAN,
-            DockNode::leaf("a"),
-            DockNode::leaf("b"),
-        );
+        let root =
+            DockNode::split_horizontal("split", f32::NAN, DockNode::leaf("a"), DockNode::leaf("b"));
         let err = DockTopology::try_new(root).unwrap_err();
         let TopologyError::InvalidRatio { split_id, .. } = err else {
             panic!("expected InvalidRatio")
@@ -3267,12 +3280,8 @@ mod topology_tests {
 
     #[test]
     fn r685_b_try_new_rejects_out_of_range_ratio() {
-        let root = DockNode::split_horizontal(
-            "split",
-            1.5,
-            DockNode::leaf("a"),
-            DockNode::leaf("b"),
-        );
+        let root =
+            DockNode::split_horizontal("split", 1.5, DockNode::leaf("a"), DockNode::leaf("b"));
         let err = DockTopology::try_new(root).unwrap_err();
         let TopologyError::InvalidRatio { ratio, .. } = err else {
             panic!("expected InvalidRatio")
@@ -3289,12 +3298,7 @@ mod topology_tests {
 
     #[test]
     fn r685_b_try_new_rejects_empty_split_id() {
-        let root = DockNode::split_horizontal(
-            "",
-            0.5,
-            DockNode::leaf("a"),
-            DockNode::leaf("b"),
-        );
+        let root = DockNode::split_horizontal("", 0.5, DockNode::leaf("a"), DockNode::leaf("b"));
         let err = DockTopology::try_new(root).unwrap_err();
         assert_eq!(err, TopologyError::EmptyId);
     }
@@ -3311,19 +3315,9 @@ mod topology_tests {
     #[test]
     fn r685_b_try_new_boundary_ratios_accepted() {
         // 0.0 and 1.0 are valid (degenerate but well-defined).
-        let zero = DockNode::split_horizontal(
-            "z",
-            0.0,
-            DockNode::leaf("a"),
-            DockNode::leaf("b"),
-        );
+        let zero = DockNode::split_horizontal("z", 0.0, DockNode::leaf("a"), DockNode::leaf("b"));
         assert!(DockTopology::try_new(zero).is_ok());
-        let one = DockNode::split_horizontal(
-            "o",
-            1.0,
-            DockNode::leaf("a"),
-            DockNode::leaf("b"),
-        );
+        let one = DockNode::split_horizontal("o", 1.0, DockNode::leaf("a"), DockNode::leaf("b"));
         assert!(DockTopology::try_new(one).is_ok());
     }
 
@@ -3373,12 +3367,8 @@ mod topology_tests {
     #[test]
     fn r685_c_try_new_distinguishes_duplicate_kind_vs_cross_namespace() {
         // Same-kind duplicate (two panels with the same id) → DuplicatePanelId.
-        let dup = DockNode::split_horizontal(
-            "outer",
-            0.5,
-            DockNode::leaf("dup"),
-            DockNode::leaf("dup"),
-        );
+        let dup =
+            DockNode::split_horizontal("outer", 0.5, DockNode::leaf("dup"), DockNode::leaf("dup"));
         assert_eq!(
             DockTopology::try_new(dup).unwrap_err(),
             TopologyError::DuplicatePanelId("dup".to_string()),
@@ -3386,7 +3376,8 @@ mod topology_tests {
 
         // Cross-namespace → IdCollision (NOT DuplicatePanelId).
         let cross = DockNode::split_horizontal(
-            "cross", 0.5,
+            "cross",
+            0.5,
             DockNode::leaf("cross"),
             DockNode::leaf("other"),
         );
@@ -3413,7 +3404,10 @@ mod topology_tests {
             vec!["console", "outliner", "viewport", "properties", "toolbar"],
         );
         // Tree shape (splits + ratios) is untouched by a swap.
-        assert_eq!(swapped.split_ids(), vec!["outer", "inner_v", "middle_h", "inner_h"]);
+        assert_eq!(
+            swapped.split_ids(),
+            vec!["outer", "inner_v", "middle_h", "inner_h"]
+        );
         assert_eq!(swapped.split_count(), 4);
         assert_eq!(swapped.leaf_count(), 5);
     }
@@ -3427,10 +3421,14 @@ mod topology_tests {
 
     #[test]
     fn r686_swap_leaves_unknown_panel_errors() {
-        let err = editor_topology().swap_leaves("toolbar", "ghost").unwrap_err();
+        let err = editor_topology()
+            .swap_leaves("toolbar", "ghost")
+            .unwrap_err();
         assert_eq!(err, TopologyError::PanelNotFound("ghost".to_string()));
         // First-arg miss is reported on the first arg.
-        let err_a = editor_topology().swap_leaves("ghost", "toolbar").unwrap_err();
+        let err_a = editor_topology()
+            .swap_leaves("ghost", "toolbar")
+            .unwrap_err();
         assert_eq!(err_a, TopologyError::PanelNotFound("ghost".to_string()));
     }
 
@@ -3439,11 +3437,25 @@ mod topology_tests {
         // Split "outliner" into a vertical pair, the new "assets" panel
         // taking the bottom (Second) slot.
         let grown = editor_topology()
-            .split_leaf_into("outliner", "assets", "outliner_v", Orient::Vertical, 0.5, DockSplitPosition::Second)
+            .split_leaf_into(
+                "outliner",
+                "assets",
+                "outliner_v",
+                Orient::Vertical,
+                0.5,
+                DockSplitPosition::Second,
+            )
             .unwrap();
         assert_eq!(
             grown.panel_ids(),
-            vec!["toolbar", "outliner", "assets", "viewport", "properties", "console"],
+            vec![
+                "toolbar",
+                "outliner",
+                "assets",
+                "viewport",
+                "properties",
+                "console"
+            ],
         );
         assert_eq!(grown.split_count(), 5);
         assert!(grown.split_ids().contains(&"outliner_v"));
@@ -3454,18 +3466,39 @@ mod topology_tests {
         // Same split but the new "assets" panel takes the top (First)
         // slot, pushing "outliner" after it in depth-first order.
         let grown = editor_topology()
-            .split_leaf_into("outliner", "assets", "outliner_v", Orient::Vertical, 0.5, DockSplitPosition::First)
+            .split_leaf_into(
+                "outliner",
+                "assets",
+                "outliner_v",
+                Orient::Vertical,
+                0.5,
+                DockSplitPosition::First,
+            )
             .unwrap();
         assert_eq!(
             grown.panel_ids(),
-            vec!["toolbar", "assets", "outliner", "viewport", "properties", "console"],
+            vec![
+                "toolbar",
+                "assets",
+                "outliner",
+                "viewport",
+                "properties",
+                "console"
+            ],
         );
     }
 
     #[test]
     fn r686_split_leaf_into_unknown_target_errors() {
         let err = editor_topology()
-            .split_leaf_into("ghost", "assets", "s", Orient::Vertical, 0.5, DockSplitPosition::First)
+            .split_leaf_into(
+                "ghost",
+                "assets",
+                "s",
+                Orient::Vertical,
+                0.5,
+                DockSplitPosition::First,
+            )
             .unwrap_err();
         assert_eq!(err, TopologyError::PanelNotFound("ghost".to_string()));
     }
@@ -3475,7 +3508,14 @@ mod topology_tests {
         // New leaf id collides with an existing panel → DuplicatePanelId
         // surfaced by the try_new gate (the live topology is unchanged).
         let err = editor_topology()
-            .split_leaf_into("outliner", "viewport", "s", Orient::Vertical, 0.5, DockSplitPosition::First)
+            .split_leaf_into(
+                "outliner",
+                "viewport",
+                "s",
+                Orient::Vertical,
+                0.5,
+                DockSplitPosition::First,
+            )
             .unwrap_err();
         assert_eq!(err, TopologyError::DuplicatePanelId("viewport".to_string()));
     }
@@ -3483,7 +3523,14 @@ mod topology_tests {
     #[test]
     fn r686_split_leaf_into_duplicate_split_id_rejected() {
         let err = editor_topology()
-            .split_leaf_into("outliner", "assets", "outer", Orient::Vertical, 0.5, DockSplitPosition::First)
+            .split_leaf_into(
+                "outliner",
+                "assets",
+                "outer",
+                Orient::Vertical,
+                0.5,
+                DockSplitPosition::First,
+            )
             .unwrap_err();
         assert_eq!(err, TopologyError::DuplicateSplitId("outer".to_string()));
     }
@@ -3492,7 +3539,14 @@ mod topology_tests {
     fn r686_split_leaf_into_id_collision_rejected() {
         // New *leaf* id "outer" collides with an existing *split* id.
         let err = editor_topology()
-            .split_leaf_into("outliner", "outer", "fresh_split", Orient::Vertical, 0.5, DockSplitPosition::First)
+            .split_leaf_into(
+                "outliner",
+                "outer",
+                "fresh_split",
+                Orient::Vertical,
+                0.5,
+                DockSplitPosition::First,
+            )
             .unwrap_err();
         assert_eq!(err, TopologyError::IdCollision("outer".to_string()));
     }
@@ -3500,7 +3554,14 @@ mod topology_tests {
     #[test]
     fn r686_split_leaf_into_invalid_ratio_rejected() {
         let err = editor_topology()
-            .split_leaf_into("outliner", "assets", "s", Orient::Vertical, f32::NAN, DockSplitPosition::First)
+            .split_leaf_into(
+                "outliner",
+                "assets",
+                "s",
+                Orient::Vertical,
+                f32::NAN,
+                DockSplitPosition::First,
+            )
             .unwrap_err();
         let TopologyError::InvalidRatio { split_id, .. } = err else {
             panic!("expected InvalidRatio, got {err:?}");
@@ -3513,7 +3574,10 @@ mod topology_tests {
         // Remove "toolbar" (outer.first) → the "outer" Split disappears
         // and its sibling sub-tree (inner_v) becomes the new root.
         let pruned = editor_topology().remove_leaf("toolbar").unwrap();
-        assert_eq!(pruned.panel_ids(), vec!["outliner", "viewport", "properties", "console"]);
+        assert_eq!(
+            pruned.panel_ids(),
+            vec!["outliner", "viewport", "properties", "console"]
+        );
         // "outer" is gone; the remaining splits keep their ids + ratios.
         assert_eq!(pruned.split_ids(), vec!["inner_v", "middle_h", "inner_h"]);
         assert!(matches!(pruned.root(), DockNode::Split { id, .. } if id.as_ref() == "inner_v"));
@@ -3524,7 +3588,10 @@ mod topology_tests {
         // Remove "properties" (inner_h.second) → inner_h collapses to
         // its surviving "viewport" leaf, which takes inner_h's slot.
         let pruned = editor_topology().remove_leaf("properties").unwrap();
-        assert_eq!(pruned.panel_ids(), vec!["toolbar", "outliner", "viewport", "console"]);
+        assert_eq!(
+            pruned.panel_ids(),
+            vec!["toolbar", "outliner", "viewport", "console"]
+        );
         assert_eq!(pruned.split_ids(), vec!["outer", "inner_v", "middle_h"]);
     }
 
@@ -3536,7 +3603,9 @@ mod topology_tests {
 
     #[test]
     fn r686_remove_leaf_sole_panel_is_root_removal() {
-        let err = DockTopology::single("only").remove_leaf("only").unwrap_err();
+        let err = DockTopology::single("only")
+            .remove_leaf("only")
+            .unwrap_err();
         assert_eq!(err, TopologyError::RootRemoval);
     }
 
@@ -3548,7 +3617,14 @@ mod topology_tests {
         let without_console = topology.remove_leaf("console").unwrap();
         assert!(!without_console.panel_ids().contains(&"console"));
         let reparented = without_console
-            .split_leaf_into("viewport", "console", "viewport_h", Orient::Horizontal, 0.5, DockSplitPosition::First)
+            .split_leaf_into(
+                "viewport",
+                "console",
+                "viewport_h",
+                Orient::Horizontal,
+                0.5,
+                DockSplitPosition::First,
+            )
             .unwrap();
         // console is back, now beside viewport; total leaf count restored.
         assert_eq!(reparented.leaf_count(), 5);
@@ -3568,7 +3644,7 @@ mod drop_zone_tests {
     //! tiebreak precedence, half-open containment, and degenerate-rect
     //! handling.
 
-    use super::{dock_drop_zone_for, DockDropZone, DOCK_EDGE_ZONE_FRAC};
+    use super::{DOCK_EDGE_ZONE_FRAC, DockDropZone, dock_drop_zone_for};
     use pinion_core::scene::Rect;
 
     /// Canonical 400×400 panel at offset (100, 100). With
@@ -3581,18 +3657,27 @@ mod drop_zone_tests {
     #[test]
     fn r686_drop_zone_center_is_center() {
         // Dead centre — far from every edge.
-        assert_eq!(dock_drop_zone_for(panel(), 300.0, 300.0), DockDropZone::Center);
+        assert_eq!(
+            dock_drop_zone_for(panel(), 300.0, 300.0),
+            DockDropZone::Center
+        );
     }
 
     #[test]
     fn r686_drop_zone_left_edge() {
         // 50 px in from the left → from_left = 0.125 < 0.25.
-        assert_eq!(dock_drop_zone_for(panel(), 150.0, 300.0), DockDropZone::Left);
+        assert_eq!(
+            dock_drop_zone_for(panel(), 150.0, 300.0),
+            DockDropZone::Left
+        );
     }
 
     #[test]
     fn r686_drop_zone_right_edge() {
-        assert_eq!(dock_drop_zone_for(panel(), 450.0, 300.0), DockDropZone::Right);
+        assert_eq!(
+            dock_drop_zone_for(panel(), 450.0, 300.0),
+            DockDropZone::Right
+        );
     }
 
     #[test]
@@ -3602,7 +3687,10 @@ mod drop_zone_tests {
 
     #[test]
     fn r686_drop_zone_bottom_edge() {
-        assert_eq!(dock_drop_zone_for(panel(), 300.0, 450.0), DockDropZone::Bottom);
+        assert_eq!(
+            dock_drop_zone_for(panel(), 300.0, 450.0),
+            DockDropZone::Bottom
+        );
     }
 
     #[test]
@@ -3610,10 +3698,16 @@ mod drop_zone_tests {
         // Top-left corner: from_left == from_top == 0.125 (exact tie).
         // Declaration-order precedence (Left → Right → Top → Bottom)
         // resolves the corner to Left.
-        assert_eq!(dock_drop_zone_for(panel(), 150.0, 150.0), DockDropZone::Left);
+        assert_eq!(
+            dock_drop_zone_for(panel(), 150.0, 150.0),
+            DockDropZone::Left
+        );
         // Bottom-right corner: from_right == from_bottom tie → Right wins
         // over Bottom by precedence.
-        assert_eq!(dock_drop_zone_for(panel(), 450.0, 450.0), DockDropZone::Right);
+        assert_eq!(
+            dock_drop_zone_for(panel(), 450.0, 450.0),
+            DockDropZone::Right
+        );
     }
 
     #[test]
@@ -3639,16 +3733,28 @@ mod drop_zone_tests {
     #[test]
     fn r686_drop_zone_right_bottom_edges_are_half_open() {
         // x = 100 + 400 = 500 is the exclusive right edge → None.
-        assert_eq!(dock_drop_zone_for(panel(), 500.0, 300.0), DockDropZone::None);
+        assert_eq!(
+            dock_drop_zone_for(panel(), 500.0, 300.0),
+            DockDropZone::None
+        );
         // y = 100 + 400 = 500 is the exclusive bottom edge → None.
-        assert_eq!(dock_drop_zone_for(panel(), 300.0, 500.0), DockDropZone::None);
+        assert_eq!(
+            dock_drop_zone_for(panel(), 300.0, 500.0),
+            DockDropZone::None
+        );
     }
 
     #[test]
     fn r686_drop_zone_degenerate_rect_is_none() {
         // Zero width / zero height carry no pixels → never a target.
-        assert_eq!(dock_drop_zone_for(Rect::new(0, 0, 0, 100), 0.0, 50.0), DockDropZone::None);
-        assert_eq!(dock_drop_zone_for(Rect::new(0, 0, 100, 0), 50.0, 0.0), DockDropZone::None);
+        assert_eq!(
+            dock_drop_zone_for(Rect::new(0, 0, 0, 100), 0.0, 50.0),
+            DockDropZone::None
+        );
+        assert_eq!(
+            dock_drop_zone_for(Rect::new(0, 0, 100, 0), 50.0, 0.0),
+            DockDropZone::None
+        );
     }
 }
 
@@ -3667,8 +3773,8 @@ mod reorganize_tests {
     use std::rc::Rc;
 
     use super::{
-        resolve_dock_drop, DockNode, DockReorganizeExternal, DockReorganizeIntent, DockSplitPosition,
-        DockTopology,
+        DockNode, DockReorganizeExternal, DockReorganizeIntent, DockSplitPosition, DockTopology,
+        resolve_dock_drop,
     };
     use crate::splitter::SplitterOrientation as Orient;
     use pinion_core::external::{ExternalIntrospect, InterveneError, IntrospectValue, InvokeError};
@@ -3700,7 +3806,10 @@ mod reorganize_tests {
         let intent = resolve_dock_drop(&abc_rects(), "a", 300.0, 200.0).unwrap();
         assert_eq!(
             intent,
-            DockReorganizeIntent::Swap { source: "a".into(), target: "b".into() },
+            DockReorganizeIntent::Swap {
+                source: "a".into(),
+                target: "b".into()
+            },
         );
     }
 
@@ -3723,7 +3832,12 @@ mod reorganize_tests {
     fn r686_resolve_top_edge_maps_to_vertical_first() {
         // b's top edge (300, 10) → vertical split, source on top.
         let intent = resolve_dock_drop(&abc_rects(), "a", 300.0, 10.0).unwrap();
-        let DockReorganizeIntent::SplitInsert { orientation, position, .. } = intent else {
+        let DockReorganizeIntent::SplitInsert {
+            orientation,
+            position,
+            ..
+        } = intent
+        else {
             panic!("expected SplitInsert, got {intent:?}");
         };
         assert_eq!(orientation, Orient::Vertical);
@@ -3745,7 +3859,10 @@ mod reorganize_tests {
     #[test]
     fn r686_intent_apply_swap_exchanges_panels() {
         let topo = abc_topology();
-        let intent = DockReorganizeIntent::Swap { source: "a".into(), target: "c".into() };
+        let intent = DockReorganizeIntent::Swap {
+            source: "a".into(),
+            target: "c".into(),
+        };
         let next = intent.apply(&topo, "unused", 0.5).unwrap();
         assert_eq!(next.panel_ids(), vec!["c", "b", "a"]);
         // Swap leaves the tree shape intact.
@@ -3796,13 +3913,25 @@ mod reorganize_tests {
             IntrospectValue::Json(serde_json::json!({"source":"a","target":"b","zone":"Center"})),
         )
         .unwrap();
-        assert_eq!(signal.get().panel_ids(), vec!["b", "a", "c"], "reorganize applied");
+        assert_eq!(
+            signal.get().panel_ids(),
+            vec!["b", "a", "c"],
+            "reorganize applied"
+        );
         assert_eq!(stack.len(), 1, "one recorded edit");
         // Undo restores the prior layout; redo re-applies it.
         assert!(stack.undo());
-        assert_eq!(signal.get().panel_ids(), vec!["a", "b", "c"], "undo restored the layout");
+        assert_eq!(
+            signal.get().panel_ids(),
+            vec!["a", "b", "c"],
+            "undo restored the layout"
+        );
         assert!(stack.redo());
-        assert_eq!(signal.get().panel_ids(), vec!["b", "a", "c"], "redo re-applied");
+        assert_eq!(
+            signal.get().panel_ids(),
+            vec!["b", "a", "c"],
+            "redo re-applied"
+        );
     }
 
     #[test]
@@ -3816,7 +3945,13 @@ mod reorganize_tests {
         ext.invoke("reorganize", payload).unwrap();
         // A split was minted → seq bumped; topology grew a reorg split.
         assert_eq!(ext.split_seq(), 1);
-        assert!(signal.get().split_ids().iter().any(|id| id.starts_with("reorg-split-")));
+        assert!(
+            signal
+                .get()
+                .split_ids()
+                .iter()
+                .any(|id| id.starts_with("reorg-split-"))
+        );
         assert_eq!(signal.get().leaf_count(), 3);
     }
 
@@ -3837,7 +3972,9 @@ mod reorganize_tests {
     fn r686_external_invoke_non_json_payload_is_type_mismatch() {
         let signal = Rc::new(Signal::new(abc_topology()));
         let mut ext = DockReorganizeExternal::new(signal);
-        let err = ext.invoke("reorganize", IntrospectValue::Text("a:b:Center".into())).unwrap_err();
+        let err = ext
+            .invoke("reorganize", IntrospectValue::Text("a:b:Center".into()))
+            .unwrap_err();
         assert_eq!(err, InvokeError::TypeMismatch);
     }
 
@@ -3848,7 +3985,9 @@ mod reorganize_tests {
         let err = ext
             .invoke(
                 "reorganize",
-                IntrospectValue::Json(serde_json::json!({"source":"a","target":"b","zone":"Diagonal"})),
+                IntrospectValue::Json(
+                    serde_json::json!({"source":"a","target":"b","zone":"Diagonal"}),
+                ),
             )
             .unwrap_err();
         assert_eq!(err, InvokeError::Rejected);
@@ -3862,7 +4001,9 @@ mod reorganize_tests {
         let err = ext
             .invoke(
                 "reorganize",
-                IntrospectValue::Json(serde_json::json!({"source":"ghost","target":"b","zone":"Center"})),
+                IntrospectValue::Json(
+                    serde_json::json!({"source":"ghost","target":"b","zone":"Center"}),
+                ),
             )
             .unwrap_err();
         assert_eq!(err, InvokeError::Rejected);
@@ -3925,11 +4066,13 @@ mod reorganize_tests {
         ext.invoke("drop", payload).unwrap();
         assert_eq!(ext.split_seq(), 1, "edge drop mints a reorg split");
         assert_eq!(signal.get().leaf_count(), 3, "a relocated, not duplicated");
-        assert!(signal
-            .get()
-            .split_ids()
-            .iter()
-            .any(|id| id.starts_with("reorg-split-")));
+        assert!(
+            signal
+                .get()
+                .split_ids()
+                .iter()
+                .any(|id| id.starts_with("reorg-split-"))
+        );
     }
 
     #[test]
@@ -3973,7 +4116,10 @@ mod reorganize_tests {
             panic!("topology query must return JSON");
         };
         // The serialized tree carries the root node's "type" tag.
-        assert!(value.get("root").is_some(), "topology JSON exposes the root node");
+        assert!(
+            value.get("root").is_some(),
+            "topology JSON exposes the root node"
+        );
     }
 
     #[test]
@@ -3999,9 +4145,7 @@ mod placeholder_tests {
     //! 2nd-consumer signal (`hello-dock-panels-editor` round entry)
     //! per [[abstraction-needs-second-consumer]].
 
-    use super::{
-        view_floating_placeholder, FloatingPlaceholderStyle, PLACEHOLDER_TAG_SUFFIX,
-    };
+    use super::{FloatingPlaceholderStyle, PLACEHOLDER_TAG_SUFFIX, view_floating_placeholder};
     use pinion_core::scene::Scene;
     use pinion_core::theme::Theme;
 
@@ -4010,7 +4154,9 @@ mod placeholder_tests {
         let theme = Theme::light();
         let scene =
             view_floating_placeholder("inspector", &theme, &FloatingPlaceholderStyle::m3_default());
-        let Scene::Container(outer) = &scene else { panic!() };
+        let Scene::Container(outer) = &scene else {
+            panic!()
+        };
         assert_eq!(
             outer.tag.as_deref(),
             Some(format!("inspector{PLACEHOLDER_TAG_SUFFIX}").as_str()),
@@ -4022,9 +4168,13 @@ mod placeholder_tests {
         let theme = Theme::light();
         let scene =
             view_floating_placeholder("viewport", &theme, &FloatingPlaceholderStyle::m3_default());
-        let Scene::Container(outer) = &scene else { panic!() };
+        let Scene::Container(outer) = &scene else {
+            panic!()
+        };
         assert_eq!(outer.children.len(), 1, "single Text child");
-        let Scene::Text(text) = &outer.children[0] else { panic!("expected Text") };
+        let Scene::Text(text) = &outer.children[0] else {
+            panic!("expected Text")
+        };
         assert!(
             text.content.contains("viewport") && text.content.contains("torn off"),
             "label '{}' contains panel id + 'torn off'",
@@ -4052,13 +4202,16 @@ mod placeholder_tests {
 
     #[test]
     fn r685_floating_window_id_uses_prefix_concat() {
-        use super::{floating_window_id, DEFAULT_FLOATING_WINDOW_PREFIX};
+        use super::{DEFAULT_FLOATING_WINDOW_PREFIX, floating_window_id};
         assert_eq!(
             floating_window_id(DEFAULT_FLOATING_WINDOW_PREFIX, "inspector"),
             "torn-inspector",
         );
         // Custom prefix preserves the concat form.
-        assert_eq!(floating_window_id("floating-", "panel-1"), "floating-panel-1");
+        assert_eq!(
+            floating_window_id("floating-", "panel-1"),
+            "floating-panel-1"
+        );
     }
 }
 
@@ -4069,7 +4222,7 @@ mod surface_tests {
     //! panel ids / split ids / orientations / initial ratios;
     //! callbacks supply only panel content + reactive split state).
 
-    use super::{view_dock_surface, DockNode, DockSplitState, DockTopology};
+    use super::{DockNode, DockSplitState, DockTopology, view_dock_surface};
     use pinion_core::reactive::{Owner, Signal};
     use pinion_core::scene::{ContainerNode, Scene};
     use pinion_core::style::{BoxStyle, Color, FlexDirection};
@@ -4101,8 +4254,12 @@ mod surface_tests {
         }
     }
 
-    fn theme_light() -> Theme { Theme::light() }
-    fn run_in_owner<R>(f: impl FnOnce() -> R) -> R { Owner::new().run(f) }
+    fn theme_light() -> Theme {
+        Theme::light()
+    }
+    fn run_in_owner<R>(f: impl FnOnce() -> R) -> R {
+        Owner::new().run(f)
+    }
 
     #[test]
     fn r685_dock_surface_single_leaf_emits_panel_no_splitter_wrap() {
@@ -4117,7 +4274,9 @@ mod surface_tests {
                 |_, _| panic!("split_state should not fire for single-leaf"),
                 &theme_light(),
             );
-            let Scene::Container(outer) = &scene else { panic!() };
+            let Scene::Container(outer) = &scene else {
+                panic!()
+            };
             assert_eq!(outer.tag.as_deref(), Some("viewport"));
             assert_eq!(outer.children.len(), 2);
         });
@@ -4143,7 +4302,9 @@ mod surface_tests {
                 },
                 &theme_light(),
             );
-            let Scene::Container(outer) = &scene else { panic!() };
+            let Scene::Container(outer) = &scene else {
+                panic!()
+            };
             assert_eq!(outer.layout.flex_direction, FlexDirection::Row);
             assert_eq!(outer.children.len(), 3);
             // (R685.B SSOT) Walker passes the topology's declared
@@ -4168,7 +4329,9 @@ mod surface_tests {
                 |_split_id, initial_ratio| split_state_for(initial_ratio),
                 &theme_light(),
             );
-            let Scene::Container(outer) = &scene else { panic!() };
+            let Scene::Container(outer) = &scene else {
+                panic!()
+            };
             assert_eq!(outer.layout.flex_direction, FlexDirection::Column);
             assert_eq!(outer.children.len(), 3);
         });
@@ -4178,12 +4341,9 @@ mod surface_tests {
     fn r685_dock_surface_3_leaf_nested_dispatches_by_declared_id() {
         run_in_owner(|| {
             let topology = DockTopology::new(DockNode::split_horizontal(
-                "outer", 0.5,
-                DockNode::split_vertical(
-                    "inner", 0.3,
-                    DockNode::leaf("a"),
-                    DockNode::leaf("b"),
-                ),
+                "outer",
+                0.5,
+                DockNode::split_vertical("inner", 0.3, DockNode::leaf("a"), DockNode::leaf("b")),
                 DockNode::leaf("c"),
             ));
             let calls: Rc<RefCell<Vec<(String, f32)>>> = Rc::new(RefCell::new(Vec::new()));
@@ -4199,10 +4359,7 @@ mod surface_tests {
             );
             assert_eq!(
                 *calls.borrow(),
-                vec![
-                    ("outer".to_string(), 0.5),
-                    ("inner".to_string(), 0.3),
-                ],
+                vec![("outer".to_string(), 0.5), ("inner".to_string(), 0.3),],
                 "DF pre-order with declared ids + topology-sourced ratios",
             );
         });
@@ -4212,11 +4369,20 @@ mod surface_tests {
     fn r685_dock_surface_4_leaf_2x2_grid_by_id() {
         run_in_owner(|| {
             let topology = DockTopology::new(DockNode::split_horizontal(
-                "outer", 0.5,
-                DockNode::split_vertical("left_col", 0.5,
-                    DockNode::leaf("tl"), DockNode::leaf("bl")),
-                DockNode::split_vertical("right_col", 0.5,
-                    DockNode::leaf("tr"), DockNode::leaf("br")),
+                "outer",
+                0.5,
+                DockNode::split_vertical(
+                    "left_col",
+                    0.5,
+                    DockNode::leaf("tl"),
+                    DockNode::leaf("bl"),
+                ),
+                DockNode::split_vertical(
+                    "right_col",
+                    0.5,
+                    DockNode::leaf("tr"),
+                    DockNode::leaf("br"),
+                ),
             ));
             assert_eq!(topology.split_count(), 3);
             assert_eq!(topology.leaf_count(), 4);
@@ -4233,7 +4399,11 @@ mod surface_tests {
             );
             assert_eq!(
                 *calls.borrow(),
-                vec!["outer".to_string(), "left_col".to_string(), "right_col".to_string()],
+                vec![
+                    "outer".to_string(),
+                    "left_col".to_string(),
+                    "right_col".to_string()
+                ],
             );
         });
     }
@@ -4242,14 +4412,25 @@ mod surface_tests {
     fn r685_dock_surface_5_leaf_editor_dispatch_by_id() {
         run_in_owner(|| {
             let topology = DockTopology::new(DockNode::split_vertical(
-                "outer", 0.10, DockNode::leaf("toolbar"),
-                DockNode::split_vertical("inner_v", 0.80,
-                    DockNode::split_horizontal("middle_h", 0.20,
+                "outer",
+                0.10,
+                DockNode::leaf("toolbar"),
+                DockNode::split_vertical(
+                    "inner_v",
+                    0.80,
+                    DockNode::split_horizontal(
+                        "middle_h",
+                        0.20,
                         DockNode::leaf("outliner"),
-                        DockNode::split_horizontal("inner_h", 0.75,
+                        DockNode::split_horizontal(
+                            "inner_h",
+                            0.75,
                             DockNode::leaf("viewport"),
-                            DockNode::leaf("properties"))),
-                    DockNode::leaf("console")),
+                            DockNode::leaf("properties"),
+                        ),
+                    ),
+                    DockNode::leaf("console"),
+                ),
             ));
             assert_eq!(topology.split_count(), 4);
             let split_calls: Rc<RefCell<Vec<(String, f32)>>> = Rc::new(RefCell::new(Vec::new()));
@@ -4263,8 +4444,7 @@ mod surface_tests {
                     panel_content_for(id)
                 },
                 |split_id, initial_ratio| {
-                    sc.borrow_mut()
-                        .push((split_id.to_string(), initial_ratio));
+                    sc.borrow_mut().push((split_id.to_string(), initial_ratio));
                     split_state_for(initial_ratio)
                 },
                 &theme_light(),
@@ -4272,16 +4452,21 @@ mod surface_tests {
             assert_eq!(
                 *split_calls.borrow(),
                 vec![
-                    ("outer".to_string(),    0.10),
-                    ("inner_v".to_string(),  0.80),
+                    ("outer".to_string(), 0.10),
+                    ("inner_v".to_string(), 0.80),
                     ("middle_h".to_string(), 0.20),
-                    ("inner_h".to_string(),  0.75),
+                    ("inner_h".to_string(), 0.75),
                 ],
             );
             assert_eq!(
                 *panel_calls.borrow(),
-                vec!["toolbar".to_string(),"outliner".to_string(),"viewport".to_string(),
-                     "properties".to_string(),"console".to_string()],
+                vec![
+                    "toolbar".to_string(),
+                    "outliner".to_string(),
+                    "viewport".to_string(),
+                    "properties".to_string(),
+                    "console".to_string()
+                ],
             );
         });
     }
@@ -4290,9 +4475,9 @@ mod surface_tests {
     fn r685_dock_surface_split_state_invoked_once_per_split() {
         run_in_owner(|| {
             let topology = DockTopology::new(DockNode::split_horizontal(
-                "outer", 0.5,
-                DockNode::split_vertical("inner", 0.5,
-                    DockNode::leaf("a"), DockNode::leaf("b")),
+                "outer",
+                0.5,
+                DockNode::split_vertical("inner", 0.5, DockNode::leaf("a"), DockNode::leaf("b")),
                 DockNode::leaf("c"),
             ));
             let count = Rc::new(RefCell::new(0_usize));
@@ -4310,4 +4495,3 @@ mod surface_tests {
         });
     }
 }
-

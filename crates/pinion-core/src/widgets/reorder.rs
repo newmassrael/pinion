@@ -129,7 +129,8 @@ impl ReorderModel {
 
     /// Set the keyboard cursor to `visual` (clamped to a valid index).
     pub fn set_focused(&self, visual: usize) {
-        self.focused.set(Some(visual.min(self.count.saturating_sub(1))));
+        self.focused
+            .set(Some(visual.min(self.count.saturating_sub(1))));
     }
 
     /// Whether a keyboard grab (APG pick-up) is currently in flight.
@@ -335,7 +336,11 @@ impl ReorderModel {
             return;
         }
         let item = order.remove(from);
-        let dest = if insert_at > from { insert_at - 1 } else { insert_at };
+        let dest = if insert_at > from {
+            insert_at - 1
+        } else {
+            insert_at
+        };
         let dest = dest.min(order.len());
         order.insert(dest, item);
     }
@@ -466,8 +471,11 @@ mod tests {
     }
 
     fn press(m: &ReorderModel, visual: usize) {
-        m.invoke("send", &IntrospectValue::Text(format!("{visual}:PointerDown")))
-            .expect("send accepted");
+        m.invoke(
+            "send",
+            &IntrospectValue::Text(format!("{visual}:PointerDown")),
+        )
+        .expect("send accepted");
     }
 
     #[test]
@@ -547,10 +555,15 @@ mod tests {
     #[test]
     fn move_action_reorders_clamps_follows_cursor() {
         let m = ReorderModel::new(4, ReorderAxis::Horizontal);
-        m.intervene("focused_index", &IntrospectValue::Int(0)).expect("focus");
-        assert_eq!(m.invoke("move", &IntrospectValue::Int(1)).unwrap(), IntrospectValue::Int(1));
+        m.intervene("focused_index", &IntrospectValue::Int(0))
+            .expect("focus");
+        assert_eq!(
+            m.invoke("move", &IntrospectValue::Int(1)).unwrap(),
+            IntrospectValue::Int(1)
+        );
         assert_eq!(m.order(), [1, 0, 2, 3]);
-        m.intervene("focused_index", &IntrospectValue::Int(1)).expect("focus");
+        m.intervene("focused_index", &IntrospectValue::Int(1))
+            .expect("focus");
         m.invoke("move", &IntrospectValue::Int(10)).expect("move");
         assert_eq!(m.focused(), Some(3));
         m.invoke("move", &IntrospectValue::Int(-10)).expect("move");
@@ -560,7 +573,8 @@ mod tests {
     #[test]
     fn grab_snapshots_and_cancel_reverts() {
         let m = ReorderModel::new(4, ReorderAxis::Horizontal);
-        m.intervene("focused_index", &IntrospectValue::Int(0)).expect("focus");
+        m.intervene("focused_index", &IntrospectValue::Int(0))
+            .expect("focus");
         assert_eq!(
             m.invoke("grab", &IntrospectValue::Bool(true)).unwrap(),
             IntrospectValue::Bool(true)
@@ -568,7 +582,8 @@ mod tests {
         assert!(m.grabbed());
         m.invoke("move", &IntrospectValue::Int(1)).expect("move");
         assert_ne!(m.order(), [0, 1, 2, 3]);
-        m.invoke("grab_cancel", &IntrospectValue::Null).expect("cancel");
+        m.invoke("grab_cancel", &IntrospectValue::Null)
+            .expect("cancel");
         assert!(!m.grabbed());
         assert_eq!(m.order(), [0, 1, 2, 3]);
         // Grab without a focused item is a no-op.
@@ -582,7 +597,8 @@ mod tests {
     #[test]
     fn intervene_focused_clamps_and_rejects() {
         let m = ReorderModel::new(4, ReorderAxis::Horizontal);
-        m.intervene("focused_index", &IntrospectValue::Int(2)).expect("in range");
+        m.intervene("focused_index", &IntrospectValue::Int(2))
+            .expect("in range");
         assert_eq!(m.focused(), Some(2));
         assert!(matches!(
             m.intervene("focused_index", &IntrospectValue::Int(9)),
@@ -602,7 +618,10 @@ mod tests {
     fn query_unknown_path_is_none() {
         let m = ReorderModel::new(2, ReorderAxis::Horizontal);
         assert!(m.query("selected_id").is_none());
-        assert!(matches!(m.query("grabbed"), Some(IntrospectValue::Bool(false))));
+        assert!(matches!(
+            m.query("grabbed"),
+            Some(IntrospectValue::Bool(false))
+        ));
     }
 
     /// A minimal `ExternalIntrospect` that delegates `query` to a model —
@@ -632,13 +651,20 @@ mod tests {
     #[test]
     fn read_reorder_round_trips_query_encode() {
         let m = ReorderModel::new(4, ReorderAxis::Horizontal);
-        m.intervene("focused_index", &IntrospectValue::Int(1)).expect("focus");
+        m.intervene("focused_index", &IntrospectValue::Int(1))
+            .expect("focus");
         press(&m, 0);
         m.drag_to(&pl(), Some(&drop_h(2, 0.8))); // preview from 0 → gap 3
         let v = read_reorder(&Probe(m));
         assert_eq!(v.order, vec![0, 1, 2, 3]);
         assert_eq!(v.focused, Some(1));
-        assert_eq!(v.preview, Some(DragPreview { from_visual: 0, insert_at: 3 }));
+        assert_eq!(
+            v.preview,
+            Some(DragPreview {
+                from_visual: 0,
+                insert_at: 3
+            })
+        );
         assert!(!v.grabbed);
     }
 }

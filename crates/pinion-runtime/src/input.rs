@@ -748,8 +748,7 @@ impl InputRouter {
         // pointer is captured by the gesture, so free-mode hover
         // Enter/Leave churn is suppressed below (the same pinning
         // capture and DnD already get).
-        let (pan_live, pan_dispatched) =
-            self.advance_pan(id, x, y, modifiers, state_scene);
+        let (pan_live, pan_dispatched) = self.advance_pan(id, x, y, modifiers, state_scene);
         // R876 §5.49 §5.51 — advance the click-vs-drag SSOT, then let its two
         // consumers read it. Once this press has strayed into a drag it is no
         // longer a click candidate, so drop the `last_press` snapshot the
@@ -841,12 +840,19 @@ impl InputRouter {
         {
             return;
         }
-        let pan = self.cursors.get(&id).copied().map(|origin| self.pin_pan_targets(id, origin));
-        self.pan_gestures.insert(id, PanGesture {
-            button,
-            swallowed_presses: 0,
-            pan,
-        });
+        let pan = self
+            .cursors
+            .get(&id)
+            .copied()
+            .map(|origin| self.pin_pan_targets(id, origin));
+        self.pan_gestures.insert(
+            id,
+            PanGesture {
+                button,
+                swallowed_presses: 0,
+                pan,
+            },
+        );
     }
 
     /// R881.1 §5.35 — pin the pan state for a gesture whose origin is
@@ -990,11 +996,7 @@ impl InputRouter {
         // Stage 0: advance the latch + compute the delta, then release
         // the gesture borrow before touching the paint scene.
         let (dx, dy, tag, scroll, frac) = {
-            let Some(pan) = self
-                .pan_gestures
-                .get_mut(&id)
-                .and_then(|g| g.pan.as_mut())
-            else {
+            let Some(pan) = self.pan_gestures.get_mut(&id).and_then(|g| g.pan.as_mut()) else {
                 return (false, false);
             };
             if !pan.latch.advance((x, y)) {
@@ -1017,7 +1019,10 @@ impl InputRouter {
         // semantics (vertical drag panning horizontally). Masking makes
         // Shift+middle-drag a plain pan — exactly Blender's chord set.
         // Ctrl / Cmd (zoom-class chords) pass through untouched.
-        let modifiers = Modifiers { shift: false, ..modifiers };
+        let modifiers = Modifiers {
+            shift: false,
+            ..modifiers
+        };
         let Some(paint) = self.last_paint_scene.as_ref() else {
             return (true, false);
         };
@@ -1146,11 +1151,7 @@ impl InputRouter {
             // populated when the pointer enters this tag and
             // cleared on leave, so it is always consistent with the
             // current `hover_targets[id]`.
-            let wants = self
-                .hover_wants_capture
-                .get(&id)
-                .copied()
-                .unwrap_or(false);
+            let wants = self.hover_wants_capture.get(&id).copied().unwrap_or(false);
             if wants {
                 self.captured_targets.insert(id, tag.clone());
                 // R51.35 §5.35 — click-to-position: forward the
@@ -1340,7 +1341,12 @@ impl InputRouter {
             // Free (no-capture) release: the cursor is over the target
             // (a mid-press stray already drove the SCXML out of Pressed
             // via `cursor_moved`'s `PointerLeave`).
-            dispatch_send_mods(state_scene, &tag, PointerWireEvent::Up.as_wire_name(), modifiers);
+            dispatch_send_mods(
+                state_scene,
+                &tag,
+                PointerWireEvent::Up.as_wire_name(),
+                modifiers,
+            );
         }
     }
 
@@ -1474,8 +1480,13 @@ impl InputRouter {
         );
         match scroll {
             Some(s) => {
-                self.wheel_remainders
-                    .insert(id, WheelRemainder { target: Rc::downgrade(&s), frac: new_frac });
+                self.wheel_remainders.insert(
+                    id,
+                    WheelRemainder {
+                        target: Rc::downgrade(&s),
+                        frac: new_frac,
+                    },
+                );
             }
             None => {
                 self.wheel_remainders.remove(&id);
@@ -1738,7 +1749,11 @@ impl InputRouter {
         if let Some(prev_tag) = prev {
             self.hover_targets.remove(&id);
             self.hover_wants_capture.remove(&id);
-            dispatch_send(state_scene, &prev_tag, PointerWireEvent::Leave.as_wire_name());
+            dispatch_send(
+                state_scene,
+                &prev_tag,
+                PointerWireEvent::Leave.as_wire_name(),
+            );
         }
         if let Some(target) = now {
             self.hover_targets.insert(id, target.clone());
@@ -1784,7 +1799,9 @@ fn resolve_hover_tag(paint_scene: &Scene, x: f64, y: f64) -> Option<String> {
 /// has already recorded which sub-region was pressed.
 fn widget_begin_drag(state_scene: &mut Scene, target_tag: &str) -> Option<DragPayload> {
     let (primary, _) = split_subindex(target_tag);
-    find_external_by_tag(state_scene, primary)?.handle.begin_drag()
+    find_external_by_tag(state_scene, primary)?
+        .handle
+        .begin_drag()
 }
 
 /// Dispatch a synthetic input event to the state scene's matching
@@ -1847,13 +1864,15 @@ fn dispatch_send_mods(
     let _ = intro.invoke("send", IntrospectValue::Text(payload));
 }
 
-
 /// Depth-first search for an [`ExternalNode`] whose tag matches
 /// `target_tag`. Returns the first match in declaration order
 /// (matches [`walk_scene_and_drain`](crate::walk_scene_and_drain)'s
 /// traversal direction). Containers recurse; non-container variants
 /// compare their own tag (when applicable) and stop.
-fn find_external_by_tag<'a>(scene: &'a mut Scene, target_tag: &str) -> Option<&'a mut ExternalNode> {
+fn find_external_by_tag<'a>(
+    scene: &'a mut Scene,
+    target_tag: &str,
+) -> Option<&'a mut ExternalNode> {
     match scene {
         Scene::External(node) => {
             if tag_matches(node.tag.as_deref(), target_tag) {
@@ -2019,7 +2038,9 @@ fn offer_wheel_to_external(
     else {
         return false;
     };
-    external.handle.wheel(x_rel, y_rel, delta.0, delta.1, modifiers)
+    external
+        .handle
+        .wheel(x_rel, y_rel, delta.0, delta.1, modifiers)
 }
 
 fn capture_rel_coords(
@@ -2230,7 +2251,12 @@ mod tests {
     impl CaptureExternal {
         fn new() -> (Self, Arc<Mutex<Vec<String>>>) {
             let captures = Arc::new(Mutex::new(Vec::new()));
-            (Self { captures: Arc::clone(&captures) }, captures)
+            (
+                Self {
+                    captures: Arc::clone(&captures),
+                },
+                captures,
+            )
         }
     }
 
@@ -2319,9 +2345,7 @@ mod tests {
     /// the captures without re-walking the scene tree.
     fn state_with_button() -> (Scene, Arc<Mutex<Vec<String>>>) {
         let (capture, captures) = CaptureExternal::new();
-        let scene = Scene::External(
-            ExternalNode::new(Box::new(capture)).with_tag("main_btn"),
-        );
+        let scene = Scene::External(ExternalNode::new(Box::new(capture)).with_tag("main_btn"));
         (scene, captures)
     }
 
@@ -2345,7 +2369,9 @@ mod tests {
         use pinion_core::widgets::toggle::ToggleExternal;
 
         fn toggle_value(scene: &Scene) -> bool {
-            let Scene::External(node) = scene else { panic!("external root") };
+            let Scene::External(node) = scene else {
+                panic!("external root")
+            };
             matches!(
                 node.handle.introspect().unwrap().query("value"),
                 Some(IntrospectValue::Bool(true))
@@ -2369,10 +2395,16 @@ mod tests {
         let (mut router, mut state) = fresh();
         router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
         router.pointer_down(PointerId::MOUSE, &mut state);
-        assert_eq!(router.captured_target(PointerId::MOUSE), Some("main_btn"),
-            "button captures the pointer on press (R741)");
+        assert_eq!(
+            router.captured_target(PointerId::MOUSE),
+            Some("main_btn"),
+            "button captures the pointer on press (R741)"
+        );
         router.pointer_up(PointerId::MOUSE, &mut state);
-        assert!(toggle_value(&state), "release over the captured button activates");
+        assert!(
+            toggle_value(&state),
+            "release over the captured button activates"
+        );
 
         // JITTER — a stray *back onto* the widget before release still
         // activates (capture suppressed the mid-press PointerLeave).
@@ -2382,7 +2414,10 @@ mod tests {
         router.cursor_moved(PointerId::MOUSE, 121.0, 100.0, &mut state); // 1px off
         router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state); // back on
         router.pointer_up(PointerId::MOUSE, &mut state);
-        assert!(toggle_value(&state), "sub-pixel jitter during press does not cancel");
+        assert!(
+            toggle_value(&state),
+            "sub-pixel jitter during press does not cancel"
+        );
 
         // CANCEL — a deliberate slide off the widget then release cancels.
         let (mut router, mut state) = fresh();
@@ -2390,7 +2425,10 @@ mod tests {
         router.pointer_down(PointerId::MOUSE, &mut state);
         router.cursor_moved(PointerId::MOUSE, 10.0, 10.0, &mut state); // slid off
         router.pointer_up(PointerId::MOUSE, &mut state);
-        assert!(!toggle_value(&state), "release off the captured button cancels");
+        assert!(
+            !toggle_value(&state),
+            "release off the captured button cancels"
+        );
     }
 
     #[test]
@@ -2405,7 +2443,11 @@ mod tests {
         router.pointer_up(PointerId::MOUSE, &mut state);
         assert_eq!(
             read(&captures),
-            vec!["PointerEnter".to_string(), "PointerDown".into(), "PointerUp".into()],
+            vec![
+                "PointerEnter".to_string(),
+                "PointerDown".into(),
+                "PointerUp".into()
+            ],
         );
         assert_eq!(router.hover_target(PointerId::MOUSE), Some("main_btn"));
     }
@@ -2493,9 +2535,8 @@ mod tests {
         let mut router = InputRouter::new();
         // State has a different tag than the paint scene's button.
         let (capture, captures) = CaptureExternal::new();
-        let mut state = Scene::External(
-            ExternalNode::new(Box::new(capture)).with_tag("other_widget"),
-        );
+        let mut state =
+            Scene::External(ExternalNode::new(Box::new(capture)).with_tag("other_widget"));
         let paint = paint_with_button(200, 200, Rect::new(80, 80, 40, 40));
         router.update_paint_scene(paint, &mut state);
         router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
@@ -2603,7 +2644,10 @@ mod tests {
             }
         }
         fn pointer_move(&mut self, x_rel: f32, y_rel: f32) {
-            self.moves.lock().expect("mutex poisoned").push((x_rel, y_rel));
+            self.moves
+                .lock()
+                .expect("mutex poisoned")
+                .push((x_rel, y_rel));
         }
         fn wants_bare_send_modifiers(&self) -> bool {
             self.bare_send_modifiers
@@ -2670,9 +2714,7 @@ mod tests {
 
     fn state_with_slider() -> (Scene, EventLog, MoveLog) {
         let (capture, events, moves) = DragCaptureExternal::new();
-        let scene = Scene::External(
-            ExternalNode::new(Box::new(capture)).with_tag("main_slider"),
-        );
+        let scene = Scene::External(ExternalNode::new(Box::new(capture)).with_tag("main_slider"));
         (scene, events, moves)
     }
 
@@ -2687,7 +2729,10 @@ mod tests {
         router.update_paint_scene(paint, &mut state);
         router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state); // PointerEnter
         router.pointer_down(PointerId::MOUSE, &mut state); // PointerDown + capture lock
-        assert_eq!(router.captured_target(PointerId::MOUSE), Some("main_slider"));
+        assert_eq!(
+            router.captured_target(PointerId::MOUSE),
+            Some("main_slider")
+        );
         router.cursor_moved(PointerId::MOUSE, 200.0, 200.0, &mut state); // stray off
         // No PointerLeave during stray — capture lock keeps the
         // hover pinned. Only PointerEnter + PointerDown so far.
@@ -2723,7 +2768,12 @@ mod tests {
         // `":PointerUp:c"` — but ONLY for an External that opts in via
         // `wants_bare_send_modifiers` (the bare payload doubles as the SCXML
         // event name everywhere else, so the default wire must stay exact).
-        let ctrl = Modifiers { shift: false, ctrl: true, alt: false, meta: false };
+        let ctrl = Modifiers {
+            shift: false,
+            ctrl: true,
+            alt: false,
+            meta: false,
+        };
 
         // Opted-in target: the modifier segment rides the bare wire.
         let mut router = InputRouter::new();
@@ -2737,7 +2787,11 @@ mod tests {
         router.pointer_up_with_modifiers(PointerId::MOUSE, &mut state, ctrl);
         assert_eq!(
             read(&events),
-            vec!["PointerEnter".to_string(), "PointerDown".into(), ":PointerUp:c".into()],
+            vec![
+                "PointerEnter".to_string(),
+                "PointerDown".into(),
+                ":PointerUp:c".into()
+            ],
         );
         // A modifier-free release stays the colon-free back-compat wire
         // even for an opted-in target.
@@ -2847,7 +2901,10 @@ mod tests {
             read(&events),
             vec!["PointerEnter".to_string(), "PointerDown".into()],
         );
-        assert_eq!(router.captured_target(PointerId::MOUSE), Some("main_slider"));
+        assert_eq!(
+            router.captured_target(PointerId::MOUSE),
+            Some("main_slider")
+        );
         // Drag resumes when cursor re-enters.
         router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
         router.pointer_up(PointerId::MOUSE, &mut state);
@@ -3185,7 +3242,10 @@ mod tests {
         // Pointer hovers a drag-aware widget — the cache hit makes
         // pointer_down lock capture without re-walking the scene.
         router.pointer_down(PointerId::MOUSE, &mut state);
-        assert_eq!(router.captured_target(PointerId::MOUSE), Some("main_slider"));
+        assert_eq!(
+            router.captured_target(PointerId::MOUSE),
+            Some("main_slider")
+        );
         router.pointer_up(PointerId::MOUSE, &mut state);
         // Drop hover (cache cleared on PointerLeave path).
         let mut router2 = InputRouter::new();
@@ -3226,8 +3286,7 @@ mod tests {
             s
         };
         let mut root = Scene::Container(
-            ContainerNode::new(vec![inner])
-                .with_style(BoxStyle::filled(Color::default())),
+            ContainerNode::new(vec![inner]).with_style(BoxStyle::filled(Color::default())),
         );
         if let Scene::Container(c) = &mut root {
             c.rect = Rect::new(0, 0, viewport_w, viewport_h);
@@ -3241,9 +3300,8 @@ mod tests {
     /// forwards through `invoke("send", ...)`.
     fn state_with_primary_external(primary: &str) -> (Scene, Arc<Mutex<Vec<String>>>) {
         let (capture, captures) = CaptureExternal::new();
-        let scene = Scene::External(
-            ExternalNode::new(Box::new(capture)).with_tag(primary.to_string()),
-        );
+        let scene =
+            Scene::External(ExternalNode::new(Box::new(capture)).with_tag(primary.to_string()));
         (scene, captures)
     }
 
@@ -3255,9 +3313,8 @@ mod tests {
     /// widget would rely on the symmetric path landing here.
     fn state_with_primary_drag(primary: &str) -> (Scene, EventLog, MoveLog) {
         let (drag, events, moves) = DragCaptureExternal::new();
-        let scene = Scene::External(
-            ExternalNode::new(Box::new(drag)).with_tag(primary.to_string()),
-        );
+        let scene =
+            Scene::External(ExternalNode::new(Box::new(drag)).with_tag(primary.to_string()));
         (scene, events, moves)
     }
 
@@ -3308,8 +3365,7 @@ mod tests {
         // high thumb). The `DragCaptureExternal` mock here returns true.
         let mut router = InputRouter::new();
         let (drag, _events, moves) = DragCaptureExternal::with_normalize_primary(true);
-        let mut state =
-            Scene::External(ExternalNode::new(Box::new(drag)).with_tag("range"));
+        let mut state = Scene::External(ExternalNode::new(Box::new(drag)).with_tag("range"));
         // Track x 80..120 (width 40); thumb x 96..104 (width 8). Cursor
         // x=98 is on the thumb but off-centre so the two rects differ.
         let paint = paint_with_primary_and_subtag(
@@ -3345,8 +3401,7 @@ mod tests {
         // header, so it must NOT normalize against the whole panel.
         let mut router = InputRouter::new();
         let (drag, _events, moves) = DragCaptureExternal::with_normalize_primary(false);
-        let mut state =
-            Scene::External(ExternalNode::new(Box::new(drag)).with_tag("panel"));
+        let mut state = Scene::External(ExternalNode::new(Box::new(drag)).with_tag("panel"));
         let paint = paint_with_primary_and_subtag(
             200,
             200,
@@ -3358,7 +3413,10 @@ mod tests {
         router.update_paint_scene(paint, &mut state);
         router.cursor_moved(PointerId::MOUSE, 98.0, 100.0, &mut state);
         router.pointer_down(PointerId::MOUSE, &mut state);
-        assert_eq!(router.captured_target(PointerId::MOUSE), Some("panel#header"));
+        assert_eq!(
+            router.captured_target(PointerId::MOUSE),
+            Some("panel#header")
+        );
         let log = read_moves(&moves);
         assert_eq!(log.len(), 1);
         // (98-96)/8 = 0.25 against the 8px header sub-rect (NOT 0.45,
@@ -3378,13 +3436,7 @@ mod tests {
         // handler parses (radio_group.rs:357 `split_once(':')`).
         let mut router = InputRouter::new();
         let (mut state, captures) = state_with_primary_external("main_group");
-        let paint = paint_with_subindex_tag(
-            200,
-            200,
-            Rect::new(80, 80, 40, 40),
-            "main_group",
-            "2",
-        );
+        let paint = paint_with_subindex_tag(200, 200, Rect::new(80, 80, 40, 40), "main_group", "2");
         router.update_paint_scene(paint, &mut state);
         router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
         router.pointer_down(PointerId::MOUSE, &mut state);
@@ -3416,7 +3468,12 @@ mod tests {
         router.update_paint_scene(paint, &mut state);
         router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
         router.pointer_down(PointerId::MOUSE, &mut state);
-        let mods = Modifiers { shift: true, ctrl: true, alt: false, meta: false };
+        let mods = Modifiers {
+            shift: true,
+            ctrl: true,
+            alt: false,
+            meta: false,
+        };
         router.pointer_up_with_modifiers(PointerId::MOUSE, &mut state, mods);
         assert_eq!(
             read(&captures),
@@ -3440,7 +3497,10 @@ mod tests {
         router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
         router.pointer_down(PointerId::MOUSE, &mut state);
         router.pointer_up_with_modifiers(PointerId::MOUSE, &mut state, Modifiers::empty());
-        assert_eq!(read(&captures).last().map(String::as_str), Some("2:PointerUp"));
+        assert_eq!(
+            read(&captures).last().map(String::as_str),
+            Some("2:PointerUp")
+        );
     }
 
     #[test]
@@ -3484,13 +3544,7 @@ mod tests {
         // *track* its sole capture target rather than tagging thumbs.)
         let mut router = InputRouter::new();
         let (mut state, _events, moves) = state_with_primary_drag("composite");
-        let paint = paint_with_subindex_tag(
-            200,
-            200,
-            Rect::new(80, 80, 40, 40),
-            "composite",
-            "0",
-        );
+        let paint = paint_with_subindex_tag(200, 200, Rect::new(80, 80, 40, 40), "composite", "0");
         router.update_paint_scene(paint, &mut state);
         router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
         router.pointer_down(PointerId::MOUSE, &mut state);
@@ -3533,8 +3587,7 @@ mod tests {
                 c.rect = Rect::new(80, 80, 40, 40);
             }
             let mut root = Scene::Container(
-                ContainerNode::new(vec![inner])
-                    .with_style(BoxStyle::filled(Color::default())),
+                ContainerNode::new(vec![inner]).with_style(BoxStyle::filled(Color::default())),
             );
             if let Scene::Container(c) = &mut root {
                 c.rect = Rect::new(0, 0, 200, 200);
@@ -3613,8 +3666,11 @@ mod tests {
         );
         router.update_paint_scene(paint, &mut state_scene);
         // No cursor_moved before wheel.
-        let dispatched =
-            router.wheel(PointerId::MOUSE, WheelDelta::Pixels { dx: 0.0, dy: 40.0 }, &mut state_scene);
+        let dispatched = router.wheel(
+            PointerId::MOUSE,
+            WheelDelta::Pixels { dx: 0.0, dy: 40.0 },
+            &mut state_scene,
+        );
         assert!(!dispatched);
         assert_eq!(state.offset(), (0, 0));
     }
@@ -3627,8 +3683,11 @@ mod tests {
         let mut router = InputRouter::new();
         let (mut state_scene, _) = state_with_button();
         router.cursor_moved(PointerId::MOUSE, 50.0, 50.0, &mut state_scene);
-        let dispatched =
-            router.wheel(PointerId::MOUSE, WheelDelta::Pixels { dx: 0.0, dy: 40.0 }, &mut state_scene);
+        let dispatched = router.wheel(
+            PointerId::MOUSE,
+            WheelDelta::Pixels { dx: 0.0, dy: 40.0 },
+            &mut state_scene,
+        );
         assert!(!dispatched);
     }
 
@@ -3642,8 +3701,11 @@ mod tests {
         let paint = paint_with_button(200, 200, Rect::new(80, 80, 40, 40));
         router.update_paint_scene(paint, &mut state_scene);
         router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state_scene);
-        let dispatched =
-            router.wheel(PointerId::MOUSE, WheelDelta::Pixels { dx: 0.0, dy: 40.0 }, &mut state_scene);
+        let dispatched = router.wheel(
+            PointerId::MOUSE,
+            WheelDelta::Pixels { dx: 0.0, dy: 40.0 },
+            &mut state_scene,
+        );
         assert!(!dispatched);
     }
 
@@ -3655,18 +3717,14 @@ mod tests {
         // ship a Scroll primitive without wiring input routing.
         let mut router = InputRouter::new();
         let (mut state_scene, _) = state_with_button();
-        let paint = paint_with_scroll(
-            200,
-            200,
-            Rect::new(0, 0, 100, 100),
-            200,
-            500,
-            None,
-        );
+        let paint = paint_with_scroll(200, 200, Rect::new(0, 0, 100, 100), 200, 500, None);
         router.update_paint_scene(paint, &mut state_scene);
         router.cursor_moved(PointerId::MOUSE, 50.0, 50.0, &mut state_scene);
-        let dispatched =
-            router.wheel(PointerId::MOUSE, WheelDelta::Pixels { dx: 0.0, dy: 40.0 }, &mut state_scene);
+        let dispatched = router.wheel(
+            PointerId::MOUSE,
+            WheelDelta::Pixels { dx: 0.0, dy: 40.0 },
+            &mut state_scene,
+        );
         assert!(!dispatched);
     }
 
@@ -3689,15 +3747,26 @@ mod tests {
         );
         router.update_paint_scene(paint, &mut state_scene);
         router.cursor_moved(PointerId::MOUSE, 50.0, 50.0, &mut state_scene);
-        let dispatched =
-            router.wheel(PointerId::MOUSE, WheelDelta::Pixels { dx: 0.0, dy: 40.0 }, &mut state_scene);
+        let dispatched = router.wheel(
+            PointerId::MOUSE,
+            WheelDelta::Pixels { dx: 0.0, dy: 40.0 },
+            &mut state_scene,
+        );
         assert!(dispatched);
         assert_eq!(state.offset(), (0, 40));
         // Second wheel — accumulates.
-        router.wheel(PointerId::MOUSE, WheelDelta::Pixels { dx: 0.0, dy: 35.0 }, &mut state_scene);
+        router.wheel(
+            PointerId::MOUSE,
+            WheelDelta::Pixels { dx: 0.0, dy: 35.0 },
+            &mut state_scene,
+        );
         assert_eq!(state.offset(), (0, 75));
         // Horizontal axis routes too.
-        router.wheel(PointerId::MOUSE, WheelDelta::Pixels { dx: 12.0, dy: 0.0 }, &mut state_scene);
+        router.wheel(
+            PointerId::MOUSE,
+            WheelDelta::Pixels { dx: 12.0, dy: 0.0 },
+            &mut state_scene,
+        );
         assert_eq!(state.offset(), (12, 75));
     }
 
@@ -3720,12 +3789,19 @@ mod tests {
         );
         router.update_paint_scene(paint, &mut state_scene);
         router.cursor_moved(PointerId::MOUSE, 50.0, 50.0, &mut state_scene);
-        let dispatched =
-            router.wheel(PointerId::MOUSE, WheelDelta::Lines { dx: 0.0, dy: 3.0 }, &mut state_scene);
+        let dispatched = router.wheel(
+            PointerId::MOUSE,
+            WheelDelta::Lines { dx: 0.0, dy: 3.0 },
+            &mut state_scene,
+        );
         assert!(dispatched);
         assert_eq!(state.offset(), (0, 48));
         // Negative line delta scrolls upward; clamped at zero.
-        router.wheel(PointerId::MOUSE, WheelDelta::Lines { dx: 0.0, dy: -10.0 }, &mut state_scene);
+        router.wheel(
+            PointerId::MOUSE,
+            WheelDelta::Lines { dx: 0.0, dy: -10.0 },
+            &mut state_scene,
+        );
         assert_eq!(state.offset(), (0, 0));
     }
 
@@ -3749,7 +3825,14 @@ mod tests {
         );
         router.update_paint_scene(paint, &mut state_scene);
         router.cursor_moved(PointerId::MOUSE, 50.0, 50.0, &mut state_scene);
-        router.wheel(PointerId::MOUSE, WheelDelta::Pixels { dx: 0.0, dy: 9999.0 }, &mut state_scene);
+        router.wheel(
+            PointerId::MOUSE,
+            WheelDelta::Pixels {
+                dx: 0.0,
+                dy: 9999.0,
+            },
+            &mut state_scene,
+        );
         // Bound is 100 on the y axis.
         assert_eq!(state.offset(), (0, 100));
     }
@@ -3779,7 +3862,10 @@ mod tests {
         router.cursor_moved(PointerId::MOUSE, 50.0, 50.0, &mut state_scene);
         let dispatched = router.wheel(
             PointerId::MOUSE,
-            WheelDelta::Pixels { dx: f32::NAN, dy: f32::NAN },
+            WheelDelta::Pixels {
+                dx: f32::NAN,
+                dy: f32::NAN,
+            },
             &mut state_scene,
         );
         assert!(dispatched, "NaN delta still counts as a dispatched wheel");
@@ -3857,7 +3943,11 @@ mod tests {
         router.cursor_moved(t, 150.0, 150.0, &mut state_scene);
         // Wheel via touch — touch cursor is outside the scroll
         // viewport → silent drop.
-        assert!(!router.wheel(t, WheelDelta::Pixels { dx: 0.0, dy: 20.0 }, &mut state_scene));
+        assert!(!router.wheel(
+            t,
+            WheelDelta::Pixels { dx: 0.0, dy: 20.0 },
+            &mut state_scene
+        ));
         assert_eq!(state.offset(), (0, 0));
         // Wheel via mouse — dispatches.
         assert!(router.wheel(
@@ -3884,7 +3974,13 @@ mod tests {
     impl WheelExternal {
         fn new(consume: bool) -> (Self, Arc<Mutex<Vec<WheelCall>>>) {
             let calls = Arc::new(Mutex::new(Vec::new()));
-            (Self { calls: Arc::clone(&calls), consume }, calls)
+            (
+                Self {
+                    calls: Arc::clone(&calls),
+                    consume,
+                },
+                calls,
+            )
         }
     }
 
@@ -3904,7 +4000,14 @@ mod tests {
         fn thread_ownership(&self) -> ThreadOwnership {
             ThreadOwnership::UiThreadSync
         }
-        fn wheel(&mut self, x_rel: f32, y_rel: f32, dx: f32, dy: f32, modifiers: Modifiers) -> bool {
+        fn wheel(
+            &mut self,
+            x_rel: f32,
+            y_rel: f32,
+            dx: f32,
+            dy: f32,
+            modifiers: Modifiers,
+        ) -> bool {
             self.calls
                 .lock()
                 .expect("mutex poisoned")
@@ -3974,7 +4077,11 @@ mod tests {
             WheelDelta::Lines { dx: 0.0, dy: 2.0 },
             &mut state_scene,
         ));
-        assert_eq!(scroll.offset(), (0, 0), "consumed wheel must not also scroll");
+        assert_eq!(
+            scroll.offset(),
+            (0, 0),
+            "consumed wheel must not also scroll"
+        );
         let recorded = calls.lock().expect("mutex poisoned").clone();
         assert_eq!(recorded.len(), 1);
         let (x_rel, y_rel, dx, dy, mods) = recorded[0];
@@ -4005,8 +4112,16 @@ mod tests {
             WheelDelta::Pixels { dx: 0.0, dy: 40.0 },
             &mut state_scene,
         ));
-        assert_eq!(scroll.offset(), (0, 40), "declined offer falls through to scroll");
-        assert_eq!(calls.lock().expect("mutex poisoned").len(), 1, "offer was made first");
+        assert_eq!(
+            scroll.offset(),
+            (0, 40),
+            "declined offer falls through to scroll"
+        );
+        assert_eq!(
+            calls.lock().expect("mutex poisoned").len(),
+            1,
+            "offer was made first"
+        );
     }
 
     #[test]
@@ -4018,9 +4133,15 @@ mod tests {
         let mut state_scene =
             Scene::External(ExternalNode::new(Box::new(ext)).with_tag("main_btn"));
         let mut router = InputRouter::new();
-        router.update_paint_scene(paint_with_button_over_scroll(scroll, None), &mut state_scene);
+        router.update_paint_scene(
+            paint_with_button_over_scroll(scroll, None),
+            &mut state_scene,
+        );
         router.cursor_moved(PointerId::MOUSE, 100.0, 90.0, &mut state_scene);
-        let ctrl = Modifiers { ctrl: true, ..Modifiers::empty() };
+        let ctrl = Modifiers {
+            ctrl: true,
+            ..Modifiers::empty()
+        };
         assert!(router.wheel_with_modifiers(
             PointerId::MOUSE,
             WheelDelta::Pixels { dx: 0.0, dy: -10.0 },
@@ -4029,7 +4150,10 @@ mod tests {
         ));
         let recorded = calls.lock().expect("mutex poisoned").clone();
         assert_eq!(recorded.len(), 1);
-        assert!(recorded[0].4.control_key(), "ctrl modifier must reach the External");
+        assert!(
+            recorded[0].4.control_key(),
+            "ctrl modifier must reach the External"
+        );
     }
 
     #[test]
@@ -4145,7 +4269,11 @@ mod tests {
         assert_eq!(scroll.offset(), (0, 30));
         router.pointer_cancel(PointerId::MOUSE, &mut state_scene);
         assert_eq!(router.middle_up(PointerId::MOUSE), PanRelease::NoPress);
-        assert_eq!(scroll.offset(), (0, 30), "applied pan deltas are not rolled back");
+        assert_eq!(
+            scroll.offset(),
+            (0, 30),
+            "applied pan deltas are not rolled back"
+        );
     }
 
     #[test]
@@ -4179,7 +4307,11 @@ mod tests {
         // Content follows the cursor down: offset shrinks, clamped at 0
         // … so drag the other way to observe motion.
         assert!(router.cursor_moved(PointerId::MOUSE, 50.0, 350.0, &mut state_scene));
-        assert_eq!(scroll.offset(), (0, 50), "pinned target pans outside its viewport");
+        assert_eq!(
+            scroll.offset(),
+            (0, 50),
+            "pinned target pans outside its viewport"
+        );
         assert_eq!(router.middle_up(PointerId::MOUSE), PanRelease::Pan);
     }
 
@@ -4203,7 +4335,10 @@ mod tests {
         // Over the tagged button → the hover tag is pinned at press.
         router.cursor_moved(PointerId::MOUSE, 100.0, 90.0, &mut state_scene);
         router.middle_down(PointerId::MOUSE);
-        let ctrl = Modifiers { ctrl: true, ..Modifiers::empty() };
+        let ctrl = Modifiers {
+            ctrl: true,
+            ..Modifiers::empty()
+        };
         assert!(router.cursor_moved_with_modifiers(
             PointerId::MOUSE,
             100.0,
@@ -4215,9 +4350,19 @@ mod tests {
         assert_eq!(recorded.len(), 1);
         let (_, _, dx, dy, mods) = recorded[0];
         assert!((dx - 0.0).abs() < f32::EPSILON);
-        assert!((dy - 30.0).abs() < f32::EPSILON, "delta = last - current, dy {dy}");
-        assert!(mods.control_key(), "held modifiers reach the External's wheel arm");
-        assert_eq!(scroll.offset(), (0, 0), "consumed offer skips the scroll fallback");
+        assert!(
+            (dy - 30.0).abs() < f32::EPSILON,
+            "delta = last - current, dy {dy}"
+        );
+        assert!(
+            mods.control_key(),
+            "held modifiers reach the External's wheel arm"
+        );
+        assert_eq!(
+            scroll.offset(),
+            (0, 0),
+            "consumed offer skips the scroll fallback"
+        );
         assert_eq!(router.middle_up(PointerId::MOUSE), PanRelease::Pan);
     }
 
@@ -4439,7 +4584,11 @@ mod tests {
         // First move seeds the origin (and pins targets there).
         router.cursor_moved(PointerId::MOUSE, 50.0, 90.0, &mut state_scene);
         router.cursor_moved(PointerId::MOUSE, 50.0, 60.0, &mut state_scene);
-        assert_eq!(scroll.offset(), (0, 30), "lazy-seeded pan pans from the seed origin");
+        assert_eq!(
+            scroll.offset(),
+            (0, 30),
+            "lazy-seeded pan pans from the seed origin"
+        );
         assert_eq!(router.middle_up(PointerId::MOUSE), PanRelease::Pan);
         // Dead-zone variant: seed then wobble → still a click.
         router.middle_down(PointerId::MOUSE);
@@ -4465,7 +4614,11 @@ mod tests {
         );
         router.cursor_moved(PointerId::MOUSE, 100.0, 90.0, &mut state_scene);
         router.middle_down(PointerId::MOUSE);
-        let chord = Modifiers { shift: true, ctrl: true, ..Modifiers::empty() };
+        let chord = Modifiers {
+            shift: true,
+            ctrl: true,
+            ..Modifiers::empty()
+        };
         assert!(router.cursor_moved_with_modifiers(
             PointerId::MOUSE,
             100.0,
@@ -4475,8 +4628,14 @@ mod tests {
         ));
         let recorded = calls.lock().expect("mutex poisoned").clone();
         assert_eq!(recorded.len(), 1);
-        assert!(!recorded[0].4.shift_key(), "Shift is masked out of the pan dispatch");
-        assert!(recorded[0].4.control_key(), "zoom-class chords pass through");
+        assert!(
+            !recorded[0].4.shift_key(),
+            "Shift is masked out of the pan dispatch"
+        );
+        assert!(
+            recorded[0].4.control_key(),
+            "zoom-class chords pass through"
+        );
         assert_eq!(router.middle_up(PointerId::MOUSE), PanRelease::Pan);
     }
 
@@ -4591,9 +4750,16 @@ mod tests {
             PanRelease::NoPress,
             "a middle release must not close a left-opened pan",
         );
-        assert!(router.left_pan_in_flight(PointerId::MOUSE), "the pan survives");
+        assert!(
+            router.left_pan_in_flight(PointerId::MOUSE),
+            "the pan survives"
+        );
         assert!(router.cursor_moved(PointerId::MOUSE, 50.0, 40.0, &mut state_scene));
-        assert_eq!(scroll.offset(), (0, 50), "the pan keeps panning after the stray release");
+        assert_eq!(
+            scroll.offset(),
+            (0, 50),
+            "the pan keeps panning after the stray release"
+        );
         assert_eq!(router.left_pan_up(PointerId::MOUSE), PanRelease::Pan);
 
         // The mirror direction: a left release cannot close a middle pan.
@@ -4601,7 +4767,10 @@ mod tests {
         router.middle_down(PointerId::MOUSE);
         router.cursor_moved(PointerId::MOUSE, 50.0, 60.0, &mut state_scene);
         assert_eq!(router.left_pan_up(PointerId::MOUSE), PanRelease::NoPress);
-        assert!(!router.left_pan_in_flight(PointerId::MOUSE), "middle gesture ≠ left pan");
+        assert!(
+            !router.left_pan_in_flight(PointerId::MOUSE),
+            "middle gesture ≠ left pan"
+        );
         assert_eq!(router.middle_up(PointerId::MOUSE), PanRelease::Pan);
     }
 
@@ -4695,7 +4864,11 @@ mod tests {
         router.pointer_cancel(PointerId::MOUSE, &mut state_scene);
         assert!(!router.left_pan_in_flight(PointerId::MOUSE));
         assert_eq!(router.left_pan_up(PointerId::MOUSE), PanRelease::NoPress);
-        assert_eq!(scroll.offset(), (0, 30), "applied pan deltas are not rolled back");
+        assert_eq!(
+            scroll.offset(),
+            (0, 30),
+            "applied pan deltas are not rolled back"
+        );
     }
 
     #[test]
@@ -4716,7 +4889,10 @@ mod tests {
         );
         router.cursor_moved(PointerId::MOUSE, 100.0, 90.0, &mut state_scene);
         router.left_pan_down(PointerId::MOUSE);
-        let ctrl = Modifiers { ctrl: true, ..Modifiers::empty() };
+        let ctrl = Modifiers {
+            ctrl: true,
+            ..Modifiers::empty()
+        };
         assert!(router.cursor_moved_with_modifiers(
             PointerId::MOUSE,
             100.0,
@@ -4728,9 +4904,19 @@ mod tests {
         assert_eq!(recorded.len(), 1);
         let (_, _, dx, dy, mods) = recorded[0];
         assert!((dx - 0.0).abs() < f32::EPSILON);
-        assert!((dy - 30.0).abs() < f32::EPSILON, "delta = last - current, dy {dy}");
-        assert!(mods.control_key(), "held chords reach the External's wheel arm");
-        assert_eq!(scroll.offset(), (0, 0), "consumed offer skips the scroll fallback");
+        assert!(
+            (dy - 30.0).abs() < f32::EPSILON,
+            "delta = last - current, dy {dy}"
+        );
+        assert!(
+            mods.control_key(),
+            "held chords reach the External's wheel arm"
+        );
+        assert_eq!(
+            scroll.offset(),
+            (0, 0),
+            "consumed offer skips the scroll fallback"
+        );
         assert_eq!(router.left_pan_up(PointerId::MOUSE), PanRelease::Pan);
     }
 
@@ -4762,13 +4948,19 @@ mod tests {
         // channel): press refused + counted, release drains the count.
         router.left_pan_down(PointerId::MOUSE);
         assert_eq!(router.left_pan_up(PointerId::MOUSE), PanRelease::NoPress);
-        assert!(router.left_pan_in_flight(PointerId::MOUSE), "the native pan survives");
+        assert!(
+            router.left_pan_in_flight(PointerId::MOUSE),
+            "the native pan survives"
+        );
         // Injected pair, chordless flavour (the routed arc): press
         // swallowed + counted by `pointer_down`, release drained by
         // `pointer_up` — each release travels exactly one channel.
         router.pointer_down(PointerId::MOUSE, &mut state_scene);
         router.pointer_up(PointerId::MOUSE, &mut state_scene);
-        assert!(router.left_pan_in_flight(PointerId::MOUSE), "still in flight");
+        assert!(
+            router.left_pan_in_flight(PointerId::MOUSE),
+            "still in flight"
+        );
         // The pan still works and the OWNING release closes it.
         assert!(router.cursor_moved(PointerId::MOUSE, 50.0, 40.0, &mut state_scene));
         assert_eq!(scroll.offset(), (0, 50));
@@ -5031,8 +5223,7 @@ mod tests {
         // bare root with no children to simulate "both widgets
         // moved away".
         let bare_root = Scene::Container(
-            ContainerNode::new(vec![])
-                .with_style(BoxStyle::filled(Color::default())),
+            ContainerNode::new(vec![]).with_style(BoxStyle::filled(Color::default())),
         );
         router.update_paint_scene(bare_root, &mut state);
         // Both pointers lost their hover — each sees PointerLeave.
@@ -5213,7 +5404,10 @@ mod tests {
         router.pointer_up(PointerId::MOUSE, &mut state);
         let log = read(&captures);
         let double_count = log.iter().filter(|s| s.as_str() == "DoubleClick").count();
-        assert_eq!(double_count, 2, "exactly two DoubleClick fires across 4 presses");
+        assert_eq!(
+            double_count, 2,
+            "exactly two DoubleClick fires across 4 presses"
+        );
     }
 
     // ----- R742 §5.51 drag-and-drop session -----
@@ -5275,7 +5469,10 @@ mod tests {
         }
         fn begin_drag(&self) -> Option<DragPayload> {
             self.pressed.get().map(|i| {
-                self.log.lock().expect("poisoned").push(format!("begin:{i}"));
+                self.log
+                    .lock()
+                    .expect("poisoned")
+                    .push(format!("begin:{i}"));
                 DragPayload {
                     kind: std::borrow::Cow::Borrowed("dnd-row"),
                     value: IntrospectValue::Int(i64::try_from(i).unwrap_or(0)),
@@ -5291,10 +5488,10 @@ mod tests {
         }
         fn drag_release(&mut self, payload: &DragPayload, over: Option<DropPoint>) {
             let dst = over.map_or_else(|| "none".to_string(), |p| p.tag);
-            self.log
-                .lock()
-                .expect("poisoned")
-                .push(format!("drop:{}:{dst}", payload.value.as_i64().unwrap_or(-1)));
+            self.log.lock().expect("poisoned").push(format!(
+                "drop:{}:{dst}",
+                payload.value.as_i64().unwrap_or(-1)
+            ));
         }
         fn drag_cancel(&mut self, payload: &DragPayload) {
             self.log
@@ -5374,8 +5571,11 @@ mod tests {
         // Press inside row 0, drag down into row 1, release there.
         router.cursor_moved(PointerId::MOUSE, 100.0, 20.0, &mut state);
         router.pointer_down(PointerId::MOUSE, &mut state);
-        assert_eq!(router.captured_target(PointerId::MOUSE), None,
-            "a reorder source does not opt into pointer capture");
+        assert_eq!(
+            router.captured_target(PointerId::MOUSE),
+            None,
+            "a reorder source does not opt into pointer capture"
+        );
         router.cursor_moved(PointerId::MOUSE, 100.0, 60.0, &mut state);
         router.pointer_up(PointerId::MOUSE, &mut state);
         let log = read(&log);
@@ -5384,20 +5584,31 @@ mod tests {
         // and the trailing PointerUp still reached the statechart.
         assert!(log.contains(&"0:PointerDown".to_string()), "{log:?}");
         assert!(log.contains(&"begin:0".to_string()), "{log:?}");
-        assert!(log.iter().any(|s| s == "to:0:dnd#1"), "drag_to over row 1: {log:?}");
-        assert!(log.iter().any(|s| s == "drop:0:dnd#1"), "drop on row 1: {log:?}");
+        assert!(
+            log.iter().any(|s| s == "to:0:dnd#1"),
+            "drag_to over row 1: {log:?}"
+        );
+        assert!(
+            log.iter().any(|s| s == "drop:0:dnd#1"),
+            "drop on row 1: {log:?}"
+        );
         // R794 — a real (moved) drag is NOT also a click: the drop committed
         // via drag_release, so the router does not synthesize the trailing
         // PointerUp (Qt startDragDistance / DOM no-click-after-drag). This is
         // what lets a file move / tab reorder not also activate the source.
-        assert!(!log.contains(&"0:PointerUp".to_string()),
-            "a moved drag must not synthesize a click: {log:?}");
+        assert!(
+            !log.contains(&"0:PointerUp".to_string()),
+            "a moved drag must not synthesize a click: {log:?}"
+        );
         // Hover was pinned *during* the drag — no `PointerLeave` reaches
         // the source between arming and the drop commit (the capture-
         // equivalent guarantee). A leave *after* the drop is correct: the
         // post-gesture `refresh_hover` resettles hover onto row 1, where
         // the cursor genuinely ended (mirrors capture's `pointer_up`).
-        let drop_at = log.iter().position(|s| s == "drop:0:dnd#1").expect("drop logged");
+        let drop_at = log
+            .iter()
+            .position(|s| s == "drop:0:dnd#1")
+            .expect("drop logged");
         assert!(
             !log[..drop_at].iter().any(|s| s.contains("PointerLeave")),
             "no stray leave mid-drag: {log:?}"
@@ -5441,12 +5652,24 @@ mod tests {
         router.pointer_down(PointerId::MOUSE, &mut state);
         router.pointer_cancel(PointerId::MOUSE, &mut state);
         let snap = read(&log);
-        assert!(snap.contains(&"begin:0".to_string()), "the drag armed at press: {snap:?}");
-        assert!(snap.contains(&"cancel:0".to_string()), "cancel aborts via drag_cancel: {snap:?}");
-        assert!(!snap.iter().any(|s| s.starts_with("drop:")), "a cancel must NOT commit a drop: {snap:?}");
+        assert!(
+            snap.contains(&"begin:0".to_string()),
+            "the drag armed at press: {snap:?}"
+        );
+        assert!(
+            snap.contains(&"cancel:0".to_string()),
+            "cancel aborts via drag_cancel: {snap:?}"
+        );
+        assert!(
+            !snap.iter().any(|s| s.starts_with("drop:")),
+            "a cancel must NOT commit a drop: {snap:?}"
+        );
         // The session is gone: a subsequent move does not route to `drag_to`.
         router.cursor_moved(PointerId::MOUSE, 100.0, 60.0, &mut state);
-        assert!(!read(&log).iter().any(|s| s.starts_with("to:")), "no update_drag after a cancelled session");
+        assert!(
+            !read(&log).iter().any(|s| s.starts_with("to:")),
+            "no update_drag after a cancelled session"
+        );
     }
 
     #[test]
@@ -5461,7 +5684,10 @@ mod tests {
         let log = read(&log);
         // The drop resolves to the same row (no reorder); PointerUp still
         // reaches the statechart so press-to-select stays reachable.
-        assert!(log.iter().any(|s| s == "drop:0:dnd#0"), "drop on self: {log:?}");
+        assert!(
+            log.iter().any(|s| s == "drop:0:dnd#0"),
+            "drop on self: {log:?}"
+        );
         assert!(log.contains(&"0:PointerUp".to_string()), "{log:?}");
     }
 
@@ -5477,8 +5703,10 @@ mod tests {
         router.cursor_moved(PointerId::MOUSE, 102.0, 21.0, &mut state); // ~2.2px < 4px
         router.pointer_up(PointerId::MOUSE, &mut state);
         let clicked = read(&log);
-        assert!(clicked.contains(&"0:PointerUp".to_string()),
-            "a sub-threshold jiggle is a click: {clicked:?}");
+        assert!(
+            clicked.contains(&"0:PointerUp".to_string()),
+            "a sub-threshold jiggle is a click: {clicked:?}"
+        );
 
         // A press that wanders past the threshold and *returns* to the press
         // point is still a drag (the latch): no trailing PointerUp.
@@ -5490,7 +5718,9 @@ mod tests {
         router.cursor_moved(PointerId::MOUSE, 100.0, 20.0, &mut state2); // back to press
         router.pointer_up(PointerId::MOUSE, &mut state2);
         let dragged = read(&log2);
-        assert!(!dragged.contains(&"0:PointerUp".to_string()),
-            "a drag that returns to the press point is still a drag, not a click: {dragged:?}");
+        assert!(
+            !dragged.contains(&"0:PointerUp".to_string()),
+            "a drag that returns to the press point is still a drag, not a click: {dragged:?}"
+        );
     }
 }

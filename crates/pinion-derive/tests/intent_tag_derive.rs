@@ -42,10 +42,7 @@ fn const_tag_returns_per_variant_label() {
         "save_btn.toggle",
     );
     assert_eq!(ButtonIntentFixture::Set(7).const_tag(), "counter.set");
-    assert_eq!(
-        ButtonIntentFixture::Value(1.5).const_tag(),
-        "slider.value",
-    );
+    assert_eq!(ButtonIntentFixture::Value(1.5).const_tag(), "slider.value",);
     assert_eq!(
         ButtonIntentFixture::Label("hi".to_string()).const_tag(),
         "input.label",
@@ -81,10 +78,7 @@ fn from_intent_round_trips_bool_int_float_string_payloads() {
         Some(ButtonIntentFixture::Value(1.5)),
     );
 
-    let text_in = Intent::new_static(
-        "input.label",
-        IntrospectValue::Text("hello".to_string()),
-    );
+    let text_in = Intent::new_static("input.label", IntrospectValue::Text("hello".to_string()));
     assert_eq!(
         ButtonIntentFixture::from_intent(&text_in),
         Some(ButtonIntentFixture::Label("hello".to_string())),

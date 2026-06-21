@@ -361,8 +361,16 @@ mod tests {
     fn r693_scrim_fills_the_window() {
         let scene = dialog();
         let scrim = find_container(&scene, "dialog_scrim").expect("scrim node");
-        assert_eq!(scrim.layout.size, Size::px(520, 320), "scrim covers the viewport");
-        assert_eq!(scrim.layout.absolute_position, Some((0, 0)), "anchored at origin");
+        assert_eq!(
+            scrim.layout.size,
+            Size::px(520, 320),
+            "scrim covers the viewport"
+        );
+        assert_eq!(
+            scrim.layout.absolute_position,
+            Some((0, 0)),
+            "anchored at origin"
+        );
         assert_eq!(scrim.style.fill, Color::rgba(0, 0, 0, 0x66));
     }
 
@@ -419,7 +427,11 @@ mod tests {
             &DialogStyle::m3_default(),
         );
         let text = all_text(&scene);
-        assert_eq!(text, vec!["Body only.".to_string()], "no empty title text node");
+        assert_eq!(
+            text,
+            vec!["Body only.".to_string()],
+            "no empty title text node"
+        );
     }
 
     #[test]
@@ -437,7 +449,11 @@ mod tests {
         let scene = view_dialog(
             "dialog_scrim",
             "dialog_panel",
-            DialogContent { title: "Open file", message: "Pick one.", body: Some(body) },
+            DialogContent {
+                title: "Open file",
+                message: "Pick one.",
+                body: Some(body),
+            },
             vec![action("dialog_cancel"), action("dialog_ok")],
             (640, 480),
             &theme(),
@@ -462,7 +478,10 @@ mod tests {
             "body slot sits between the message and the action row",
         );
         // The body's own content survives into the tree.
-        assert!(all_text(&scene).contains(&"browser pane".to_string()), "body content rendered");
+        assert!(
+            all_text(&scene).contains(&"browser pane".to_string()),
+            "body content rendered"
+        );
     }
 
     #[test]

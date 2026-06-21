@@ -25,7 +25,7 @@
 
 use std::rc::Rc;
 
-use crate::external::{at_index, IntrospectValue};
+use crate::external::{IntrospectValue, at_index};
 
 /// A single-entry memo of an order permutation (`Rc<Vec<usize>>`) keyed on a
 /// config snapshot `K`. [`get`](Self::get) returns the cached permutation when
@@ -40,17 +40,16 @@ pub(crate) struct OrderMemo<K> {
 impl<K: PartialEq> OrderMemo<K> {
     /// An empty memo (no key computed yet).
     pub(crate) fn new() -> Self {
-        Self { key: None, order: Rc::new(Vec::new()) }
+        Self {
+            key: None,
+            order: Rc::new(Vec::new()),
+        }
     }
 
     /// The memoized order for `key`: a cheap `Rc` clone on a hit, else
     /// `recompute()` re-keyed. The single source of truth for "recompute the
     /// permutation only when the sort/filter config changed".
-    pub(crate) fn get(
-        &mut self,
-        key: K,
-        recompute: impl FnOnce() -> Vec<usize>,
-    ) -> Rc<Vec<usize>> {
+    pub(crate) fn get(&mut self, key: K, recompute: impl FnOnce() -> Vec<usize>) -> Rc<Vec<usize>> {
         if self.key.as_ref() != Some(&key) {
             self.order = Rc::new(recompute());
             self.key = Some(key);
@@ -69,10 +68,7 @@ impl<K: PartialEq> OrderMemo<K> {
 /// sort projection speaks the same `source_at.<pos>` wire vocabulary, and
 /// re-implementing the edge semantics drifted to absence-on-out-of-range
 /// — the Null contract lives here so every speaker shares it.
-pub fn source_at_value(
-    rest: &str,
-    lookup: impl Fn(usize) -> Option<usize>,
-) -> IntrospectValue {
+pub fn source_at_value(rest: &str, lookup: impl Fn(usize) -> Option<usize>) -> IntrospectValue {
     // The sort-proxy binding of the shared [`at_index`] projection: look up
     // the source index, project it to an `Int` (an out-of-`i64` index also
     // collapses to `Null`).
@@ -117,7 +113,15 @@ mod tests {
         let lookup = |p: usize| order.get(p).copied();
         assert_eq!(source_at_value("0", lookup), IntrospectValue::Int(3));
         assert_eq!(source_at_value("2", lookup), IntrospectValue::Int(2));
-        assert_eq!(source_at_value("9", lookup), IntrospectValue::Null, "out of range → Null");
-        assert_eq!(source_at_value("x", lookup), IntrospectValue::Null, "unparseable → Null");
+        assert_eq!(
+            source_at_value("9", lookup),
+            IntrospectValue::Null,
+            "out of range → Null"
+        );
+        assert_eq!(
+            source_at_value("x", lookup),
+            IntrospectValue::Null,
+            "unparseable → Null"
+        );
     }
 }

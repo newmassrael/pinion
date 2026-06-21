@@ -38,24 +38,27 @@
     clippy::style,
     clippy::complexity,
     clippy::pedantic,
-    clippy::all,
+    clippy::all
 )]
 mod sm {
     include!(concat!(env!("OUT_DIR"), "/color_area_sm.rs"));
 }
 
-pub use sm::{ColorAreaEvent, ColorAreaState};
 use sm::ColorAreaPolicy;
+pub use sm::{ColorAreaEvent, ColorAreaState};
 
 // R709 §5.16 — pinion-side WidgetStateName + WidgetEventName impls for
 // the sce-build-emitted enums (vendor/sce templates emit no
 // pinion-side derives, [[sce-priority-over-pinion]]). The grammar
 // mirrors the Slider's; only the `*Activate` raise variant is
 // renamed.
-crate::widget_state_name!(ColorAreaState, default = Idle, [
-    Idle, Hover, Dragging, Disabled,
-]);
-crate::widget_event_name!(ColorAreaEvent,
+crate::widget_state_name!(
+    ColorAreaState,
+    default = Idle,
+    [Idle, Hover, Dragging, Disabled,]
+);
+crate::widget_event_name!(
+    ColorAreaEvent,
     external = [
         PointerEnter,
         PointerLeave,
@@ -69,9 +72,8 @@ crate::widget_event_name!(ColorAreaEvent,
 );
 
 use crate::external::{
-    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner,
-    ThreadOwnership,
+    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
 use crate::intent::Intent;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
@@ -132,8 +134,7 @@ impl ColorArea {
     pub fn set_xy(&mut self, x: f32, y: f32) -> bool {
         let cx = x.clamp(0.0, 1.0);
         let cy = y.clamp(0.0, 1.0);
-        let changed =
-            (cx - self.x).abs() >= f32::EPSILON || (cy - self.y).abs() >= f32::EPSILON;
+        let changed = (cx - self.x).abs() >= f32::EPSILON || (cy - self.y).abs() >= f32::EPSILON;
         if changed {
             self.x = cx;
             self.y = cy;
@@ -168,11 +169,7 @@ impl WidgetTransition for ColorArea {
         self.send(event);
     }
 
-    fn detect(
-        before: Self::Snapshot,
-        _event: Self::Event,
-        after: Self::Snapshot,
-    ) -> Vec<Intent> {
+    fn detect(before: Self::Snapshot, _event: Self::Event, after: Self::Snapshot) -> Vec<Intent> {
         let (before_state, _) = before;
         let (after_state, (x, y)) = after;
         if matches!(before_state, ColorAreaState::Dragging)
@@ -212,7 +209,9 @@ impl ColorAreaExternal {
     /// `(0.0, 0.0)`.
     #[must_use]
     pub fn new() -> Self {
-        Self { em: IntentEmitter::default() }
+        Self {
+            em: IntentEmitter::default(),
+        }
     }
 
     /// Drive a [`ColorAreaEvent`] and queue a `"value_committed"`
@@ -342,11 +341,7 @@ impl ExternalIntrospect for ColorAreaExternal {
         }
     }
 
-    fn intervene(
-        &mut self,
-        path: &str,
-        value: IntrospectValue,
-    ) -> Result<(), InterveneError> {
+    fn intervene(&mut self, path: &str, value: IntrospectValue) -> Result<(), InterveneError> {
         // `state` is SCXML-owned (driven via `send`). `x` and `y`
         // intervene independently; the unaddressed axis is preserved
         // by re-reading it from the live sidecar.
@@ -383,8 +378,7 @@ impl ExternalIntrospect for ColorAreaExternal {
         match path {
             "send" => match args {
                 IntrospectValue::Text(ref name) => {
-                    let ev =
-                        ColorAreaEvent::from_name(name).ok_or(InvokeError::Rejected)?;
+                    let ev = ColorAreaEvent::from_name(name).ok_or(InvokeError::Rejected)?;
                     self.send(ev);
                     Ok(IntrospectValue::Text(self.state().as_name().to_string()))
                 }

@@ -40,11 +40,11 @@
 //! `#[non_exhaustive]` so every later variant addition stays a
 //! non-breaking enum extension per Bloch / Hyrum.
 
+use pinion_core::Scene;
 use pinion_core::scene::{
     BoxNode, ContainerNode, ImageNode, PathCommand, PathNode, Rect, TextNode,
 };
 use pinion_core::style::{BoxStyle, ImageStyle, PathStyle, TextStyle};
-use pinion_core::Scene;
 
 /// Wire-form scene description carried by
 /// [`TypedProposal::ReplaceView`](super::TypedProposal). Clone-friendly
@@ -126,8 +126,10 @@ impl ViewBlueprint {
                 tag,
                 children,
             } => {
-                let materialised: Vec<Scene> =
-                    children.into_iter().map(ViewBlueprint::materialize).collect();
+                let materialised: Vec<Scene> = children
+                    .into_iter()
+                    .map(ViewBlueprint::materialize)
+                    .collect();
                 let mut node = ContainerNode::new(materialised);
                 node.rect = rect;
                 node.style = style;

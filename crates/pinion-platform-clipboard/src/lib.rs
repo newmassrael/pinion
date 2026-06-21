@@ -147,8 +147,7 @@ impl ArboardClipboard {
 
 impl core::fmt::Debug for ArboardClipboard {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("ArboardClipboard")
-            .finish_non_exhaustive()
+        f.debug_struct("ArboardClipboard").finish_non_exhaustive()
     }
 }
 
@@ -489,9 +488,9 @@ mod tests {
         match (via_legacy, via_selection) {
             (Some(a), Some(b)) => assert_eq!(a, b),
             (None, None) => {}
-            (a, b) => panic!(
-                "legacy vs selection paste shape mismatch: legacy={a:?} selection={b:?}",
-            ),
+            (a, b) => {
+                panic!("legacy vs selection paste shape mismatch: legacy={a:?} selection={b:?}",)
+            }
         }
     }
 
@@ -502,59 +501,59 @@ mod tests {
     // imports do not clash with the cfg-gated PRIMARY-test imports above.
     // ─────────────────────────────────────────────────────────────
     mod r790_lift {
-    use std::rc::Rc;
+        use std::rc::Rc;
 
-    use super::super::{use_app_clipboard, AppClipboard};
-    use pinion_core::reactive::Owner;
-    use pinion_core::{Clipboard, ClipboardSelection, InMemoryClipboard};
+        use super::super::{AppClipboard, use_app_clipboard};
+        use pinion_core::reactive::Owner;
+        use pinion_core::{Clipboard, ClipboardSelection, InMemoryClipboard};
 
-    /// R790 §5.22 — the wrapper must forward the *selection-aware*
-    /// `copy_to` / `paste_from` to the inner impl. The pre-R790
-    /// per-binding copies forwarded only `copy` / `paste`, so a wrapped
-    /// `ArboardClipboard`'s Linux PRIMARY override fell through to the
-    /// trait no-op default. Wrap an [`InMemoryClipboard`] (which keeps an
-    /// independent PRIMARY buffer) and verify PRIMARY survives the
-    /// wrapper, independent of the CLIPBOARD selection.
-    #[test]
-    fn r790_app_clipboard_forwards_selection_aware_methods() {
-        let cb = AppClipboard(Box::new(InMemoryClipboard::new()));
-        cb.copy_to(ClipboardSelection::Primary, "primary-token".to_owned());
-        assert_eq!(
-            cb.paste_from(ClipboardSelection::Primary),
-            Some("primary-token".to_owned()),
-            "PRIMARY write/read must reach the inner impl (not the no-op default)",
-        );
-        // CLIPBOARD selection stays independent of PRIMARY.
-        cb.copy("clip-token".to_owned());
-        assert_eq!(cb.paste(), Some("clip-token".to_owned()));
-        assert_eq!(
-            cb.paste_from(ClipboardSelection::Primary),
-            Some("primary-token".to_owned()),
-            "a CLIPBOARD write must not clobber the PRIMARY buffer",
-        );
-    }
+        /// R790 §5.22 — the wrapper must forward the *selection-aware*
+        /// `copy_to` / `paste_from` to the inner impl. The pre-R790
+        /// per-binding copies forwarded only `copy` / `paste`, so a wrapped
+        /// `ArboardClipboard`'s Linux PRIMARY override fell through to the
+        /// trait no-op default. Wrap an [`InMemoryClipboard`] (which keeps an
+        /// independent PRIMARY buffer) and verify PRIMARY survives the
+        /// wrapper, independent of the CLIPBOARD selection.
+        #[test]
+        fn r790_app_clipboard_forwards_selection_aware_methods() {
+            let cb = AppClipboard(Box::new(InMemoryClipboard::new()));
+            cb.copy_to(ClipboardSelection::Primary, "primary-token".to_owned());
+            assert_eq!(
+                cb.paste_from(ClipboardSelection::Primary),
+                Some("primary-token".to_owned()),
+                "PRIMARY write/read must reach the inner impl (not the no-op default)",
+            );
+            // CLIPBOARD selection stays independent of PRIMARY.
+            cb.copy("clip-token".to_owned());
+            assert_eq!(cb.paste(), Some("clip-token".to_owned()));
+            assert_eq!(
+                cb.paste_from(ClipboardSelection::Primary),
+                Some("primary-token".to_owned()),
+                "a CLIPBOARD write must not clobber the PRIMARY buffer",
+            );
+        }
 
-    /// R790 §5.22 — the hook dedups per `Owner::cache` key: two calls
-    /// with the same key resolve to one shared `Rc<dyn Clipboard>` so the
-    /// External's `attach_clipboard` and a later view-fn read see the
-    /// same instance. (Backend-agnostic: holds whether the real arboard
-    /// handle or the `InMemory` fallback won.)
-    #[test]
-    fn r790_use_app_clipboard_dedups_per_key() {
-        Owner::new().run(|| {
-            let a = use_app_clipboard("test_field");
-            let b = use_app_clipboard("test_field");
-            assert!(Rc::ptr_eq(&a, &b), "same key resolves to one shared handle");
-            let c = use_app_clipboard("other_field");
-            assert!(!Rc::ptr_eq(&a, &c), "a distinct key is a distinct handle");
-            // NB: deliberately no `copy`/`paste` here. When a real
-            // arboard handle wins, a `copy` would write the *shared
-            // system* clipboard and race the `r56_2_e_*` round-trip tests
-            // running concurrently in this same binary. The dedup
-            // contract (`Rc::ptr_eq`) is the pin; the copy/paste surface
-            // is covered by `r790_app_clipboard_forwards_selection_aware_methods`
-            // over a hermetic `InMemoryClipboard`.
-        });
-    }
+        /// R790 §5.22 — the hook dedups per `Owner::cache` key: two calls
+        /// with the same key resolve to one shared `Rc<dyn Clipboard>` so the
+        /// External's `attach_clipboard` and a later view-fn read see the
+        /// same instance. (Backend-agnostic: holds whether the real arboard
+        /// handle or the `InMemory` fallback won.)
+        #[test]
+        fn r790_use_app_clipboard_dedups_per_key() {
+            Owner::new().run(|| {
+                let a = use_app_clipboard("test_field");
+                let b = use_app_clipboard("test_field");
+                assert!(Rc::ptr_eq(&a, &b), "same key resolves to one shared handle");
+                let c = use_app_clipboard("other_field");
+                assert!(!Rc::ptr_eq(&a, &c), "a distinct key is a distinct handle");
+                // NB: deliberately no `copy`/`paste` here. When a real
+                // arboard handle wins, a `copy` would write the *shared
+                // system* clipboard and race the `r56_2_e_*` round-trip tests
+                // running concurrently in this same binary. The dedup
+                // contract (`Rc::ptr_eq`) is the pin; the copy/paste surface
+                // is covered by `r790_app_clipboard_forwards_selection_aware_methods`
+                // over a hermetic `InMemoryClipboard`.
+            });
+        }
     }
 }

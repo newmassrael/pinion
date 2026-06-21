@@ -25,7 +25,7 @@
     clippy::style,
     clippy::complexity,
     clippy::pedantic,
-    clippy::all,
+    clippy::all
 )]
 mod sm {
     include!(concat!(env!("OUT_DIR"), "/app_sm.rs"));
@@ -35,8 +35,8 @@ use sce_rust_runtime::{Engine, StatePolicy};
 
 use crate::topology;
 
-pub use sm::{AppEvent, AppState};
 use sm::AppPolicy;
+pub use sm::{AppEvent, AppState};
 
 /// Application-level state machine driving window topology.
 ///

@@ -97,16 +97,14 @@
 //! python3 tools/demos/figma_button_m3_r640.py
 //! ```
 
-use pinion_core::scene::{ContainerNode, Rect};
-use pinion_core::style::{
-    AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size,
-};
-use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
-use pinion_core::{Color, Frame, Scene};
-#[cfg(test)]
-use pinion_core::WidgetCore;
 #[cfg(test)]
 use pinion_a11y::{AriaRole, WidgetA11y};
+#[cfg(test)]
+use pinion_core::WidgetCore;
+use pinion_core::scene::{ContainerNode, Rect};
+use pinion_core::style::{AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size};
+use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
+use pinion_core::{Color, Frame, Scene};
 use pinion_derive::widget;
 use pinion_shell::vello_renderer_impl;
 // R686.B §5.16 — M3 filled-button paint substrate. The state-layer
@@ -114,7 +112,7 @@ use pinion_shell::vello_renderer_impl;
 // design tokens via `ButtonColors::new` and keeps `button_fill_for`
 // as a thin adapter that injects the hover spring.
 use pinion_widget_paint::button::{
-    use_hover_progress, view_button, ButtonColors, ButtonStyle, DISABLED_STATE_LAYER,
+    ButtonColors, ButtonStyle, DISABLED_STATE_LAYER, use_hover_progress, view_button,
 };
 // `m3_button_fill` is only reached by the `#[cfg(test)]` `button_fill_for`
 // helper (the production `view` calls `view_button`, which runs the
@@ -214,7 +212,11 @@ fn figma_button_colors() -> ButtonColors {
 /// `#[cfg(test)]`.
 #[cfg(test)]
 fn button_fill_for(state: ButtonState) -> Color {
-    m3_button_fill(&figma_button_colors(), state, use_hover_progress(matches!(state, ButtonState::Hover), HOVER_ANIM_KEY))
+    m3_button_fill(
+        &figma_button_colors(),
+        state,
+        use_hover_progress(matches!(state, ButtonState::Hover), HOVER_ANIM_KEY),
+    )
 }
 
 /// R640 §5.7 — paint the Material 3 Filled Button at the supplied
@@ -423,8 +425,8 @@ mod tests {
         ] {
             let owner = pinion_core::Owner::new();
             let scene = owner.run(|| view(state, Frame::new()));
-            let button = find_button(&scene)
-                .unwrap_or_else(|| panic!("view({state:?}) must contain tag"));
+            let button =
+                find_button(&scene).unwrap_or_else(|| panic!("view({state:?}) must contain tag"));
             let expected = owner.run(|| button_fill_for(state));
             assert_eq!(
                 button.style.fill, expected,
@@ -536,16 +538,28 @@ mod tests {
         // SCXML state ids against the derived parse.
         use pinion_core::WidgetStateName;
         assert_eq!(ButtonState::from_name_or_default("Idle"), ButtonState::Idle);
-        assert_eq!(ButtonState::from_name_or_default("Hover"), ButtonState::Hover);
-        assert_eq!(ButtonState::from_name_or_default("Pressed"), ButtonState::Pressed);
-        assert_eq!(ButtonState::from_name_or_default("Disabled"), ButtonState::Disabled);
+        assert_eq!(
+            ButtonState::from_name_or_default("Hover"),
+            ButtonState::Hover
+        );
+        assert_eq!(
+            ButtonState::from_name_or_default("Pressed"),
+            ButtonState::Pressed
+        );
+        assert_eq!(
+            ButtonState::from_name_or_default("Disabled"),
+            ButtonState::Disabled
+        );
     }
 
     #[test]
     fn r643_state_name_derive_unknown_falls_back_to_idle() {
         use pinion_core::WidgetStateName;
         assert_eq!(ButtonState::from_name_or_default(""), ButtonState::Idle);
-        assert_eq!(ButtonState::from_name_or_default("Unknown"), ButtonState::Idle);
+        assert_eq!(
+            ButtonState::from_name_or_default("Unknown"),
+            ButtonState::Idle
+        );
     }
 
     #[test]

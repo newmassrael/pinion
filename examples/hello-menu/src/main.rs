@@ -63,22 +63,22 @@
 //! node (§2 invariant #7).
 
 use pinion_a11y::{
-    menu_item_nodes, AccessAction, AccessFocus, AccessNode, AccessState, AriaRole, MenuItemCell,
-    WidgetA11y,
+    AccessAction, AccessFocus, AccessNode, AccessState, AriaRole, MenuItemCell, WidgetA11y,
+    menu_item_nodes,
 };
 use pinion_core::external::{External, ExternalIntrospect, IntrospectValue};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole};
+use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::widgets::menu::{MenuBarExternal, MenuItem};
 use pinion_core::{Frame, Scene, WidgetCore};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::barrier::dismiss_barrier;
 use pinion_widget_paint::menu::{
-    composite_item_tag, composite_title_tag, view_menu_bar, view_menu_dropdown, MenuItemView,
-    MenuStyle,
+    MenuItemView, MenuStyle, composite_item_tag, composite_title_tag, view_menu_bar,
+    view_menu_dropdown,
 };
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -442,18 +442,20 @@ impl WidgetA11y for MenuView {
             // a checkbox item maps to `checked: Some(..)` (= menuitemcheckbox
             // + aria-checked), a disabled command to `disabled`.
             let items = MENUS[m];
-            let menu_items: Vec<usize> =
-                (0..items.len()).filter(|&i| !items[i].is_separator()).collect();
-            let tags: Vec<String> =
-                menu_items.iter().map(|&i| composite_item_tag(BAR_TAG, i)).collect();
+            let menu_items: Vec<usize> = (0..items.len())
+                .filter(|&i| !items[i].is_separator())
+                .collect();
+            let tags: Vec<String> = menu_items
+                .iter()
+                .map(|&i| composite_item_tag(BAR_TAG, i))
+                .collect();
             let cells: Vec<MenuItemCell<'_>> = menu_items
                 .iter()
                 .enumerate()
                 .map(|(pos, &i)| MenuItemCell {
                     tag: &tags[pos],
                     label: None,
-                    checked: matches!(items[i], Item::Checkbox(..))
-                        .then(|| state.item_checked(i)),
+                    checked: matches!(items[i], Item::Checkbox(..)).then(|| state.item_checked(i)),
                     disabled: matches!(items[i], Item::DisabledCommand(..)),
                     focused: group_focused && state.active == Some(i),
                     ..MenuItemCell::default()
@@ -480,7 +482,10 @@ impl WidgetA11y for MenuView {
             },
             None => composite_title_tag(BAR_TAG, state.bar_focus),
         };
-        Some(AccessFocus::composite(<Self as WidgetCore>::tag(), descendant))
+        Some(AccessFocus::composite(
+            <Self as WidgetCore>::tag(),
+            descendant,
+        ))
     }
 
     /// R51.70 §5.40 — composite child action dispatch. `Click` /
@@ -663,7 +668,10 @@ mod a11y_tests {
         let nodes = MenuView::access_node(&open_menu(1, None), None);
         let redo = nodes.iter().find(|n| n.tag == "menu#i1").unwrap();
         assert_eq!(redo.role, AriaRole::MenuItem);
-        assert!(redo.state.disabled, "disabled command carries aria-disabled");
+        assert!(
+            redo.state.disabled,
+            "disabled command carries aria-disabled"
+        );
         let undo = nodes.iter().find(|n| n.tag == "menu#i0").unwrap();
         assert!(!undo.state.disabled, "enabled command is not disabled");
     }
@@ -672,7 +680,10 @@ mod a11y_tests {
     fn r805_separator_omitted_from_item_tree() {
         // Edit item 2 = Separator -> no AccessNode, not a Menu child.
         let nodes = MenuView::access_node(&open_menu(1, None), None);
-        assert!(nodes.iter().all(|n| n.tag != "menu#i2"), "separator has no AT node");
+        assert!(
+            nodes.iter().all(|n| n.tag != "menu#i2"),
+            "separator has no AT node"
+        );
         let menu = nodes.iter().find(|n| n.role == AriaRole::Menu).unwrap();
         assert_eq!(menu.children.len(), 5, "5 menu items, separator excluded");
         assert!(menu.children.iter().all(|c| c != "menu#i2"));
@@ -884,7 +895,10 @@ mod key_tests {
             !scene.contains_tag(BARRIER_TAG),
             "closed: no click-outside barrier painted"
         );
-        assert!(!scene.contains_tag(DROPDOWN_TAG), "closed: no dropdown painted");
+        assert!(
+            !scene.contains_tag(DROPDOWN_TAG),
+            "closed: no dropdown painted"
+        );
     }
 
     #[test]
@@ -900,7 +914,10 @@ mod key_tests {
             scene.contains_tag(BARRIER_TAG),
             "open: transparent click-outside barrier painted"
         );
-        assert!(scene.contains_tag(DROPDOWN_TAG), "open: dropdown painted above barrier");
+        assert!(
+            scene.contains_tag(DROPDOWN_TAG),
+            "open: dropdown painted above barrier"
+        );
         // The barrier leaves the title strip clickable: it is anchored at
         // y = bar_height, not the window origin.
         let bar_h = MenuStyle::m3_default().bar_height;

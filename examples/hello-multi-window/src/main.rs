@@ -45,6 +45,8 @@
 
 use std::rc::Rc;
 
+#[cfg(test)]
+use pinion_a11y::WidgetA11y;
 use pinion_core::external::IntrospectValue;
 use pinion_core::intent::Intent;
 use pinion_core::intent_tag;
@@ -52,17 +54,15 @@ use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
 use pinion_core::{Color, Frame, Owner, Scene, Signal, WidgetCore};
-#[cfg(test)]
-use pinion_a11y::WidgetA11y;
 // R813 §5.40 — per-window AT nodes for the inspector window (the 3rd
 // consumer of the lifted tree AccessNode builder).
-use pinion_a11y::{tree_access_nodes, AccessNode};
+use pinion_a11y::{AccessNode, tree_access_nodes};
 use pinion_core::widgets::tree_nav::flat_visible;
-use pinion_shell::{vello_renderer_impl, SizeStrategy, WidgetView, WindowSpec};
+use pinion_shell::{SizeStrategy, WidgetView, WindowSpec, vello_renderer_impl};
 // R678 §5.16 §5.49 — `DevTools` substrate (path addressing + highlight
 // overlay composition) consumer; lifted from this binding at R678
 // atomic (2) per [[abstraction-needs-second-consumer]] Rule-of-Three
@@ -73,11 +73,11 @@ use pinion_shell::{vello_renderer_impl, SizeStrategy, WidgetView, WindowSpec};
 // for its main-window scope) while the substrate names stay
 // binding-agnostic per the substrate's contract.
 use pinion_widget_paint::devtools::{
-    find_node_at_path as find_main_node_at_path, rebuild_with_highlight_at_path,
-    scene_root_path_segment, scene_to_tree_item, scene_type_name, ClickRouter,
+    ClickRouter, find_node_at_path as find_main_node_at_path, rebuild_with_highlight_at_path,
+    scene_root_path_segment, scene_to_tree_item, scene_type_name,
 };
 use pinion_widget_paint::tree_view::{
-    view_tree_focused, TreeItem, TreeRowClickExternal, TreeViewFocus, TreeViewStyle,
+    TreeItem, TreeRowClickExternal, TreeViewFocus, TreeViewStyle, view_tree_focused,
 };
 
 use pinion_widget_paint::state_layer::{HOVER, PRESSED};
@@ -369,7 +369,9 @@ fn view_main_raw(state: ButtonState) -> Scene {
     let label_text = Scene::Text(TextNode::styled(
         label,
         Rect::default(),
-        TextStyle::new().with_size_px(LABEL_FONT_PX).with_fg(label_fg),
+        TextStyle::new()
+            .with_size_px(LABEL_FONT_PX)
+            .with_fg(label_fg),
     ));
     let button = Scene::Container(
         ContainerNode::new(vec![label_text])
@@ -676,10 +678,7 @@ fn property_pane_rows(scene: &Scene) -> Vec<String> {
         Scene::Container(c) => {
             rows.push(format!("tag: {}", format_optional_tag(c.tag.as_deref())));
             rows.push(format!("style.fill: {}", format_color(c.style.fill)));
-            rows.push(format!(
-                "style.border: {}",
-                format_border(c.style.border),
-            ));
+            rows.push(format!("style.border: {}", format_border(c.style.border),));
             rows.push(format!("layout.size: {}", format_size(c.layout.size)));
             rows.push(format!("children: {}", c.children.len()));
         }
@@ -757,7 +756,6 @@ fn format_size_value(value: pinion_core::style::SizeValue) -> String {
     }
 }
 
-
 /// R683.C §5.16 §5.20 §5.49 — `DevTools` bidirectional select router
 /// for the **main** window. Now powered by the lifted substrate
 /// [`pinion_widget_paint::devtools::ClickRouter`] (R683.C
@@ -815,10 +813,7 @@ impl WidgetCore for MultiWindowView {
     /// that drove the R674 → R675 binding-to-substrate lift.
     fn create_extra_externals() -> Vec<ExtraExternal> {
         vec![
-            ExtraExternal::new(
-                INSPECTOR_TREE_TAG,
-                Box::new(TreeRowClickExternal::new()),
-            ),
+            ExtraExternal::new(INSPECTOR_TREE_TAG, Box::new(TreeRowClickExternal::new())),
             // R679 §5.16 §5.49 — second `ExtraExternal` registering
             // the `DevTools` bidirectional-select router for the
             // main window. AI clients write a path via
@@ -833,10 +828,7 @@ impl WidgetCore for MultiWindowView {
             // now carries (R55.D.5 multi-External composition wraps
             // them into a Container holding the primary plus
             // extras).
-            ExtraExternal::new(
-                MAIN_CLICK_ROUTER_TAG,
-                Box::new(ClickRouter::new()),
-            ),
+            ExtraExternal::new(MAIN_CLICK_ROUTER_TAG, Box::new(ClickRouter::new())),
         ]
     }
 
@@ -855,9 +847,7 @@ impl WidgetCore for MultiWindowView {
             && let Some(intro) = node.handle.introspect()
             && let Some(IntrospectValue::Text(name)) = intro.query("state")
         {
-            return <Self::State as pinion_core::WidgetStateName>::from_name_or_default(
-                &name,
-            );
+            return <Self::State as pinion_core::WidgetStateName>::from_name_or_default(&name);
         }
         ButtonState::Idle
     }
@@ -875,10 +865,7 @@ impl WidgetCore for MultiWindowView {
     /// `Signal::set` writes are the mutation. Both windows' view fns
     /// observe each Signal change on their next paint cycle (per the
     /// substrate's reactive any-animation-active redraw wire).
-    fn update(
-        _state: Self::State,
-        intent: &Intent,
-    ) -> Vec<pinion_core::command::Command> {
+    fn update(_state: Self::State, intent: &Intent) -> Vec<pinion_core::command::Command> {
         match intent.tag_str() {
             tag if tag == INSPECTOR_CLICK_INTENT_TAG => {
                 if let IntrospectValue::Text(path) = &intent.payload {
@@ -1119,7 +1106,10 @@ mod r670_b_multi_window_tests {
                 &ButtonState::Idle,
                 None,
             );
-            assert!(!inspector.is_empty(), "inspector window emits the tree AT subtree");
+            assert!(
+                !inspector.is_empty(),
+                "inspector window emits the tree AT subtree"
+            );
             assert_eq!(inspector[0].role, AriaRole::Tree, "root node is role=tree");
             assert_eq!(inspector[0].tag, INSPECTOR_TREE_TAG);
             assert!(
@@ -1127,7 +1117,9 @@ mod r670_b_multi_window_tests {
                 "every non-root node is a treeitem",
             );
             assert!(
-                inspector.iter().any(|n| n.tag == format!("{INSPECTOR_TREE_TAG}#state")),
+                inspector
+                    .iter()
+                    .any(|n| n.tag == format!("{INSPECTOR_TREE_TAG}#state")),
                 "the fixed State leaf is present as a row",
             );
 
@@ -1136,7 +1128,10 @@ mod r670_b_multi_window_tests {
                 &ButtonState::Idle,
                 None,
             );
-            assert!(main.is_empty(), "main window AT tree carries no inspector ghost nodes");
+            assert!(
+                main.is_empty(),
+                "main window AT tree carries no inspector ghost nodes"
+            );
         });
     }
 
@@ -1167,8 +1162,8 @@ mod r670_b_multi_window_tests {
     #[test]
     fn r670_b_view_for_window_main_contains_button_tag() {
         let owner = pinion_core::Owner::new();
-        let scene =
-            owner.run(|| MultiWindowView::view_for_window("main", ButtonState::Idle, &Frame::new()));
+        let scene = owner
+            .run(|| MultiWindowView::view_for_window("main", ButtonState::Idle, &Frame::new()));
         assert!(
             scene.contains_tag(MAIN_BTN_TAG),
             "main view must carry the {MAIN_BTN_TAG:?} tag for input routing",
@@ -1210,8 +1205,9 @@ mod r670_b_multi_window_tests {
     #[test]
     fn r670_b_inspector_view_reflects_state_value() {
         let owner = pinion_core::Owner::new();
-        let scene_idle = owner
-            .run(|| MultiWindowView::view_for_window("inspector", ButtonState::Idle, &Frame::new()));
+        let scene_idle = owner.run(|| {
+            MultiWindowView::view_for_window("inspector", ButtonState::Idle, &Frame::new())
+        });
         let scene_hover = owner.run(|| {
             MultiWindowView::view_for_window("inspector", ButtonState::Hover, &Frame::new())
         });
@@ -1231,9 +1227,8 @@ mod r670_b_multi_window_tests {
     #[test]
     fn r670_b_view_for_window_unknown_id_falls_back_to_main() {
         let owner = pinion_core::Owner::new();
-        let scene = owner.run(|| {
-            MultiWindowView::view_for_window("ghost", ButtonState::Idle, &Frame::new())
-        });
+        let scene = owner
+            .run(|| MultiWindowView::view_for_window("ghost", ButtonState::Idle, &Frame::new()));
         assert!(
             scene.contains_tag(MAIN_BTN_TAG),
             "unknown id falls back to main view",
@@ -1313,9 +1308,8 @@ mod r670_b_multi_window_tests {
         // Fresh Owner → use_selected_path() returns Signal(None) →
         // view_main must not render a "Selected: …" banner.
         let owner = Owner::new();
-        let scene = owner.run(|| {
-            MultiWindowView::view_for_window("main", ButtonState::Idle, &Frame::new())
-        });
+        let scene = owner
+            .run(|| MultiWindowView::view_for_window("main", ButtonState::Idle, &Frame::new()));
         assert!(
             first_text_containing(&scene, "Selected:").is_none(),
             "fresh boot must not render the cross-window selection banner",
@@ -1330,9 +1324,8 @@ mod r670_b_multi_window_tests {
         owner.run(|| {
             use_selected_path().set(Some("state".to_string()));
         });
-        let scene = owner.run(|| {
-            MultiWindowView::view_for_window("main", ButtonState::Idle, &Frame::new())
-        });
+        let scene = owner
+            .run(|| MultiWindowView::view_for_window("main", ButtonState::Idle, &Frame::new()));
         assert_eq!(
             first_text_containing(&scene, "Selected:"),
             Some("Selected: state"),
@@ -1348,9 +1341,8 @@ mod r670_b_multi_window_tests {
         owner.run(|| {
             use_selected_path().set(Some("main/0".to_string()));
         });
-        let scene = owner.run(|| {
-            MultiWindowView::view_for_window("main", ButtonState::Idle, &Frame::new())
-        });
+        let scene = owner
+            .run(|| MultiWindowView::view_for_window("main", ButtonState::Idle, &Frame::new()));
         assert!(
             scene.contains_tag(MAIN_BTN_TAG),
             "main view must continue to carry {MAIN_BTN_TAG:?} alongside the banner",
@@ -1372,10 +1364,7 @@ mod r670_b_multi_window_tests {
                 INSPECTOR_CLICK_INTENT_TAG,
                 IntrospectValue::Text("main/0/3".to_string()),
             );
-            let commands = <MultiWindowView as WidgetCore>::update(
-                ButtonState::Idle,
-                &intent,
-            );
+            let commands = <MultiWindowView as WidgetCore>::update(ButtonState::Idle, &intent);
             assert!(
                 commands.is_empty(),
                 "side-effect-only reducer returns no commands",
@@ -1397,10 +1386,7 @@ mod r670_b_multi_window_tests {
         // proves the reducer's `_ => {}` fallthrough still works.
         let owner = Owner::new();
         owner.run(|| {
-            let foreign = Intent::new_static(
-                "disable.click",
-                IntrospectValue::Null,
-            );
+            let foreign = Intent::new_static("disable.click", IntrospectValue::Null);
             let _ = <MultiWindowView as WidgetCore>::update(ButtonState::Idle, &foreign);
             assert!(
                 use_selected_path().get().is_none(),
@@ -1441,10 +1427,7 @@ mod r670_b_multi_window_tests {
         // `pinion_core::widgets::button::Button`'s
         // WidgetTransition::detect). Runtime prefixes with the
         // External's tag → `main_btn.click`.
-        assert_eq!(
-            MAIN_BTN_CLICK_INTENT_TAG,
-            format!("{MAIN_BTN_TAG}.click"),
-        );
+        assert_eq!(MAIN_BTN_CLICK_INTENT_TAG, format!("{MAIN_BTN_TAG}.click"),);
     }
 
     #[test]
@@ -1460,10 +1443,7 @@ mod r670_b_multi_window_tests {
                 MAIN_CLICK_ROUTER_INTENT_TAG,
                 IntrospectValue::Text("Container/Container[main_btn]".to_string()),
             );
-            let commands = <MultiWindowView as WidgetCore>::update(
-                ButtonState::Idle,
-                &intent,
-            );
+            let commands = <MultiWindowView as WidgetCore>::update(ButtonState::Idle, &intent);
             assert!(commands.is_empty(), "side-effect-only reducer");
             assert_eq!(
                 use_selected_path().get().as_deref(),
@@ -1480,10 +1460,7 @@ mod r670_b_multi_window_tests {
         let owner = Owner::new();
         owner.run(|| {
             use_selected_path().set(Some("Container/Container[main_btn]".to_string()));
-            let intent = Intent::new_static(
-                MAIN_CLICK_ROUTER_INTENT_TAG,
-                IntrospectValue::Null,
-            );
+            let intent = Intent::new_static(MAIN_CLICK_ROUTER_INTENT_TAG, IntrospectValue::Null);
             let _ = <MultiWindowView as WidgetCore>::update(ButtonState::Idle, &intent);
             assert!(
                 use_selected_path().get().is_none(),
@@ -1504,10 +1481,7 @@ mod r670_b_multi_window_tests {
         let owner = Owner::new();
         owner.run(|| {
             assert!(use_selected_path().get().is_none(), "baseline empty");
-            let intent = Intent::new_static(
-                MAIN_BTN_CLICK_INTENT_TAG,
-                IntrospectValue::Null,
-            );
+            let intent = Intent::new_static(MAIN_BTN_CLICK_INTENT_TAG, IntrospectValue::Null);
             let _ = <MultiWindowView as WidgetCore>::update(ButtonState::Idle, &intent);
             assert_eq!(
                 use_selected_path().get().as_deref(),
@@ -1572,10 +1546,7 @@ mod r670_b_multi_window_tests {
             assert_eq!(use_selected_path().get().as_deref(), Some("Z"));
 
             // Main router deselect (Null).
-            let i4 = Intent::new_static(
-                MAIN_CLICK_ROUTER_INTENT_TAG,
-                IntrospectValue::Null,
-            );
+            let i4 = Intent::new_static(MAIN_CLICK_ROUTER_INTENT_TAG, IntrospectValue::Null);
             let _ = <MultiWindowView as WidgetCore>::update(ButtonState::Idle, &i4);
             assert!(use_selected_path().get().is_none(), "deselect wins last");
         });
@@ -1592,10 +1563,7 @@ mod r670_b_multi_window_tests {
     /// Walk `scene` depth-first for a `Scene::Container` whose
     /// tag equals `target`. Returns the matched container's fill
     /// colour so the test can assert focus state-layer presence.
-    fn find_container_fill_by_tag(
-        scene: &Scene,
-        target: &str,
-    ) -> Option<pinion_core::Color> {
+    fn find_container_fill_by_tag(scene: &Scene, target: &str) -> Option<pinion_core::Color> {
         match scene {
             Scene::Container(c) => {
                 if c.tag.as_deref() == Some(target) {
@@ -1645,9 +1613,7 @@ mod r670_b_multi_window_tests {
         // `{INSPECTOR_TREE_TAG}#{path}`.
         let row_tag = format!("{INSPECTOR_TREE_TAG}#{MAIN_BUTTON_RAW_PATH}");
         let fill = find_container_fill_by_tag(&scene, &row_tag).unwrap_or_else(|| {
-            panic!(
-                "inspector view must carry a row Container tagged {row_tag:?}",
-            )
+            panic!("inspector view must carry a row Container tagged {row_tag:?}",)
         });
         // SurfaceContainerHighest is non-transparent in both
         // light and dark M3 palettes; comparing against
@@ -1669,8 +1635,7 @@ mod r670_b_multi_window_tests {
         // MAIN_BUTTON_RAW_PATH paints the focus state-layer.
         let owner = Owner::new();
         owner.run(|| {
-            let intent =
-                Intent::new_static(MAIN_BTN_CLICK_INTENT_TAG, IntrospectValue::Null);
+            let intent = Intent::new_static(MAIN_BTN_CLICK_INTENT_TAG, IntrospectValue::Null);
             let _ = <MultiWindowView as WidgetCore>::update(ButtonState::Idle, &intent);
             assert_eq!(
                 use_selected_path().get().as_deref(),
@@ -1682,9 +1647,8 @@ mod r670_b_multi_window_tests {
             MultiWindowView::view_for_window("inspector", ButtonState::Idle, &Frame::new())
         });
         let row_tag = format!("{INSPECTOR_TREE_TAG}#{MAIN_BUTTON_RAW_PATH}");
-        let fill = find_container_fill_by_tag(&scene, &row_tag).unwrap_or_else(|| {
-            panic!("inspector view must carry row tagged {row_tag:?}")
-        });
+        let fill = find_container_fill_by_tag(&scene, &row_tag)
+            .unwrap_or_else(|| panic!("inspector view must carry row tagged {row_tag:?}"));
         assert_ne!(
             fill,
             pinion_core::Color::TRANSPARENT,
@@ -1707,12 +1671,12 @@ mod r670_b_multi_window_tests {
             );
             let _ = <MultiWindowView as WidgetCore>::update(ButtonState::Idle, &select);
             // Then deselect via Null.
-            let deselect = Intent::new_static(
-                MAIN_CLICK_ROUTER_INTENT_TAG,
-                IntrospectValue::Null,
-            );
+            let deselect = Intent::new_static(MAIN_CLICK_ROUTER_INTENT_TAG, IntrospectValue::Null);
             let _ = <MultiWindowView as WidgetCore>::update(ButtonState::Idle, &deselect);
-            assert!(use_selected_path().get().is_none(), "precondition: deselected");
+            assert!(
+                use_selected_path().get().is_none(),
+                "precondition: deselected"
+            );
         });
         let scene = owner.run(|| {
             MultiWindowView::view_for_window("inspector", ButtonState::Idle, &Frame::new())
@@ -1728,7 +1692,6 @@ mod r670_b_multi_window_tests {
         );
     }
 }
-
 
 #[cfg(test)]
 mod r676_highlight_overlay_tests {
@@ -1767,7 +1730,11 @@ mod r676_highlight_overlay_tests {
         match scene {
             Scene::Container(c) => {
                 if c.style.border.is_some_and(|b| b.width > 0) {
-                    return c.tag.as_deref().map(str::to_owned).or_else(|| Some(String::new()));
+                    return c
+                        .tag
+                        .as_deref()
+                        .map(str::to_owned)
+                        .or_else(|| Some(String::new()));
                 }
                 for child in &c.children {
                     if let Some(found) = find_stroked_container_tag(child) {
@@ -1857,8 +1824,8 @@ mod r676_highlight_overlay_tests {
         let raw = owner.run(|| view_main_raw(ButtonState::Idle));
         let root_path = scene_root_path_segment(&raw);
         let tree = scene_to_tree_item(&raw, &root_path);
-        let button_path = walk_button(&tree)
-            .expect("forward walker must produce a button path on banner-off");
+        let button_path =
+            walk_button(&tree).expect("forward walker must produce a button path on banner-off");
 
         owner.run(|| {
             use_selected_path().set(Some(button_path.clone()));
@@ -2008,14 +1975,14 @@ mod r676_highlight_overlay_tests {
     fn r676_highlight_overlay_uses_theme_error_role() {
         let owner = Owner::new();
         let expected = owner.run(|| {
-            use_selected_path().set(Some(format!(
-                "Container/Container[{MAIN_BTN_TAG}]",
-            )));
+            use_selected_path().set(Some(format!("Container/Container[{MAIN_BTN_TAG}]",)));
             // `use_theme` requires an active Owner scope — read the
             // expected colour inside the same scope so the cached
             // ThemeProvider initialises against the same Owner the
             // view fn will use.
-            use_theme(THEME_TAG).theme_animated().resolve(ColorRole::Error)
+            use_theme(THEME_TAG)
+                .theme_animated()
+                .resolve(ColorRole::Error)
         });
         let scene = owner.run(|| view_main(ButtonState::Idle));
         let actual = find_first_stroked_border_color(&scene);
@@ -2106,9 +2073,7 @@ mod r676_highlight_overlay_tests {
     fn r676_highlight_overlay_wrapper_carries_single_child() {
         let owner = Owner::new();
         owner.run(|| {
-            use_selected_path().set(Some(format!(
-                "Container/Container[{MAIN_BTN_TAG}]",
-            )));
+            use_selected_path().set(Some(format!("Container/Container[{MAIN_BTN_TAG}]",)));
         });
         let scene = owner.run(|| view_main(ButtonState::Idle));
         let wrapper = find_wrapper_container(&scene)
@@ -2228,8 +2193,7 @@ mod r677_property_pane_layout_tests {
         let scene = owner.run(|| {
             MultiWindowView::view_for_window("inspector", ButtonState::Idle, &Frame::new())
         });
-        let pane = find_pane_by_tag(&scene, PROPERTY_PANE_TAG)
-            .expect("property pane must exist");
+        let pane = find_pane_by_tag(&scene, PROPERTY_PANE_TAG).expect("property pane must exist");
         let text_contents: Vec<&str> = pane
             .children
             .iter()
@@ -2259,8 +2223,7 @@ mod r677_property_pane_layout_tests {
         let scene = owner.run(|| {
             MultiWindowView::view_for_window("inspector", ButtonState::Idle, &Frame::new())
         });
-        let pane = find_pane_by_tag(&scene, PROPERTY_PANE_TAG)
-            .expect("property pane must exist");
+        let pane = find_pane_by_tag(&scene, PROPERTY_PANE_TAG).expect("property pane must exist");
         let has_placeholder = pane.children.iter().any(|child| match child {
             Scene::Text(t) => t.content == PROPERTY_PANE_NO_SELECTION_TEXT,
             _ => false,
@@ -2283,8 +2246,8 @@ mod r677_property_pane_layout_tests {
             MultiWindowView::view_for_window("inspector", ButtonState::Idle, &Frame::new())
         });
         // Tree pane is the first child of the outer Row.
-        let tree_pane = find_pane_by_tag(&scene, INSPECTOR_TREE_TAG)
-            .expect("inspector_tree pane must persist");
+        let tree_pane =
+            find_pane_by_tag(&scene, INSPECTOR_TREE_TAG).expect("inspector_tree pane must persist");
         assert!(
             !tree_pane.children.is_empty(),
             "tree pane must carry its row children (TreeView paint)",
@@ -2297,9 +2260,8 @@ mod r677_property_pane_layout_tests {
     /// the atomic (1) contract.
     #[test]
     fn r677_property_pane_rows_always_emits_type_row() {
-        let scene = Scene::Container(
-            pinion_core::scene::ContainerNode::new(vec![]).with_tag(MAIN_BTN_TAG),
-        );
+        let scene =
+            Scene::Container(pinion_core::scene::ContainerNode::new(vec![]).with_tag(MAIN_BTN_TAG));
         let rows = property_pane_rows(&scene);
         assert!(
             !rows.is_empty(),
@@ -2320,7 +2282,9 @@ mod r677_property_pane_layout_tests {
                 if c.tag.as_deref() == Some(tag) {
                     return Some(c);
                 }
-                c.children.iter().find_map(|child| find_pane_by_tag(child, tag))
+                c.children
+                    .iter()
+                    .find_map(|child| find_pane_by_tag(child, tag))
             }
             _ => None,
         }
@@ -2427,9 +2391,8 @@ mod r677_field_walker_tests {
     /// External itself owns those internally).
     #[test]
     fn r677_external_field_rows_type_and_tag() {
-        let scene = Scene::External(
-            ExternalNode::new(Box::new(StubExternal::new())).with_tag("grid"),
-        );
+        let scene =
+            Scene::External(ExternalNode::new(Box::new(StubExternal::new())).with_tag("grid"));
         let rows = property_pane_rows(&scene);
         assert_eq!(rows.len(), 2, "External emits 2 rows; got: {rows:?}");
         assert_eq!(rows[0], "type: External");
@@ -2440,17 +2403,16 @@ mod r677_field_walker_tests {
     /// `<width>px @ rgba(...)` shape via `format_border`.
     #[test]
     fn r677_container_border_row_renders_width_at_color() {
-        let scene = Scene::Container(
-            ContainerNode::new(vec![]).with_style(
-                BoxStyle::default().with_border(pinion_core::style::Border::new(
-                    Color::rgba(186, 26, 26, 255),
-                    2,
-                )),
-            ),
-        );
+        let scene = Scene::Container(ContainerNode::new(vec![]).with_style(
+            BoxStyle::default().with_border(pinion_core::style::Border::new(
+                Color::rgba(186, 26, 26, 255),
+                2,
+            )),
+        ));
         let rows = property_pane_rows(&scene);
         assert!(
-            rows.iter().any(|r| r == "style.border: 2px @ rgba(186,26,26,255)"),
+            rows.iter()
+                .any(|r| r == "style.border: 2px @ rgba(186,26,26,255)"),
             "stroked Container border row must format as '<W>px @ rgba(...)'; rows: {rows:?}",
         );
     }
@@ -2499,10 +2461,7 @@ mod r677_field_walker_tests {
             format_color(Color::rgba(0, 128, 255, 255)),
             "rgba(0,128,255,255)",
         );
-        assert_eq!(
-            format_color(Color::rgba(0, 0, 0, 0)),
-            "rgba(0,0,0,0)",
-        );
+        assert_eq!(format_color(Color::rgba(0, 0, 0, 0)), "rgba(0,0,0,0)",);
     }
 
     /// (R677) Integration: end-to-end inspector view with a
@@ -2519,8 +2478,8 @@ mod r677_field_walker_tests {
         let scene = owner.run(|| {
             MultiWindowView::view_for_window("inspector", ButtonState::Idle, &Frame::new())
         });
-        let pane = find_pane_by_tag_in_scene(&scene, PROPERTY_PANE_TAG)
-            .expect("property pane must exist");
+        let pane =
+            find_pane_by_tag_in_scene(&scene, PROPERTY_PANE_TAG).expect("property pane must exist");
         let text_contents: Vec<&str> = pane
             .children
             .iter()
@@ -2683,7 +2642,10 @@ mod r678_hover_bridge_tests {
     fn r678_update_reducer_routes_hover_text_intent_to_signal() {
         let owner = Owner::new();
         owner.run(|| {
-            assert!(use_hovered_path().get().is_none(), "boot-clean precondition");
+            assert!(
+                use_hovered_path().get().is_none(),
+                "boot-clean precondition"
+            );
             let intent = Intent::new_static(
                 INSPECTOR_HOVER_INTENT_TAG,
                 IntrospectValue::Text("Container/Container[main_btn]".to_string()),
@@ -2706,10 +2668,7 @@ mod r678_hover_bridge_tests {
         let owner = Owner::new();
         owner.run(|| {
             use_hovered_path().set(Some("pre-existing".to_string()));
-            let intent = Intent::new_static(
-                INSPECTOR_HOVER_INTENT_TAG,
-                IntrospectValue::Null,
-            );
+            let intent = Intent::new_static(INSPECTOR_HOVER_INTENT_TAG, IntrospectValue::Null);
             let _ = MultiWindowView::update(ButtonState::Idle, &intent);
             assert!(
                 use_hovered_path().get().is_none(),
@@ -2737,10 +2696,7 @@ mod r678_hover_bridge_tests {
                 Some("selected-only"),
                 "hover intent must not write into the selected_path slot",
             );
-            assert_eq!(
-                use_hovered_path().get().as_deref(),
-                Some("hover-only"),
-            );
+            assert_eq!(use_hovered_path().get().as_deref(), Some("hover-only"),);
         });
     }
 
@@ -2753,10 +2709,7 @@ mod r678_hover_bridge_tests {
         let owner = Owner::new();
         owner.run(|| {
             use_hovered_path().set(Some("pre-existing".to_string()));
-            let intent = Intent::new_static(
-                INSPECTOR_HOVER_INTENT_TAG,
-                IntrospectValue::Int(42),
-            );
+            let intent = Intent::new_static(INSPECTOR_HOVER_INTENT_TAG, IntrospectValue::Int(42));
             let _ = MultiWindowView::update(ButtonState::Idle, &intent);
             assert_eq!(
                 use_hovered_path().get().as_deref(),
@@ -2791,9 +2744,7 @@ mod r678_hover_bridge_tests {
     fn r678_view_main_paints_hover_wrap_in_surface_container_highest() {
         let owner = Owner::new();
         owner.run(|| {
-            use_hovered_path().set(Some(format!(
-                "Container/Container[{MAIN_BTN_TAG}]",
-            )));
+            use_hovered_path().set(Some(format!("Container/Container[{MAIN_BTN_TAG}]",)));
         });
         let scene = owner.run(|| view_main(ButtonState::Idle));
         let colors = collect_border_colors(&scene);
@@ -2824,9 +2775,7 @@ mod r678_hover_bridge_tests {
         owner.run(|| {
             // Selection on the root Container; hover on the button.
             use_selected_path().set(Some("Container".to_string()));
-            use_hovered_path().set(Some(format!(
-                "Container/Container[{MAIN_BTN_TAG}]",
-            )));
+            use_hovered_path().set(Some(format!("Container/Container[{MAIN_BTN_TAG}]",)));
         });
         let scene = owner.run(|| view_main(ButtonState::Idle));
         let colors = collect_border_colors(&scene);
@@ -2929,9 +2878,7 @@ mod r678_hover_bridge_tests {
     fn r678_view_main_hover_alone_paints_no_banner() {
         let owner = Owner::new();
         owner.run(|| {
-            use_hovered_path().set(Some(format!(
-                "Container/Container[{MAIN_BTN_TAG}]",
-            )));
+            use_hovered_path().set(Some(format!("Container/Container[{MAIN_BTN_TAG}]",)));
         });
         let scene = owner.run(|| view_main(ButtonState::Idle));
         assert!(

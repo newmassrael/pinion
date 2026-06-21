@@ -41,12 +41,12 @@
 //! a transparent hit-bridge is a future axis if M3's 4 dp tooltip
 //! offset is wanted without losing contiguity.
 
+use pinion_core::Scene;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme};
-use pinion_core::Scene;
 
 /// R695 §5.50 — the preferred side the tooltip opens toward, relative to
 /// its anchor. [`anchor_position`] flips to the opposite side when the
@@ -417,7 +417,10 @@ mod tests {
         // R723 §5.50 — MD3 plain tooltip: inverseSurface fill, no outline.
         assert_eq!(overlay.style.fill, t.resolve(ColorRole::InverseSurface));
         assert_eq!(overlay.style.corner_radius, 4);
-        assert!(overlay.style.border.is_none(), "plain tooltip has no outline");
+        assert!(
+            overlay.style.border.is_none(),
+            "plain tooltip has no outline"
+        );
     }
 
     #[test]
@@ -436,7 +439,10 @@ mod tests {
             &style,
         );
         let overlay = find_container(&scene, "tip").expect("overlay node");
-        let border = overlay.style.border.expect("border_width>0 opts into outline");
+        let border = overlay
+            .style
+            .border
+            .expect("border_width>0 opts into outline");
         assert_eq!(border.color, t.resolve(ColorRole::Outline));
         assert_eq!(border.width, 1);
     }

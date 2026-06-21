@@ -43,21 +43,21 @@
 
 use std::rc::Rc;
 
-use pinion_a11y::{windowed_list_nodes, AccessNode, WidgetA11y};
+use pinion_a11y::{AccessNode, WidgetA11y, windowed_list_nodes};
 use pinion_core::external::{External, StubExternal};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
-use pinion_core::widgets::virtual_list::{compute_visible_range_variable, RowOffsets};
+use pinion_core::widgets::virtual_list::{RowOffsets, compute_visible_range_variable};
 use pinion_core::{Frame, Owner, Scene, WidgetCore};
-use pinion_widget_paint::scrollbar::{view_vertical_scrollbar, VerticalScrollbarStyle};
+use pinion_shell::{WidgetView, vello_renderer_impl};
+use pinion_widget_paint::scrollbar::{VerticalScrollbarStyle, view_vertical_scrollbar};
 use pinion_widget_paint::virtual_list::view_variable_virtual_list;
-use pinion_shell::{vello_renderer_impl, WidgetView};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloVariableListRenderer, HelloVariableListRendererError);
@@ -238,7 +238,10 @@ impl WidgetCore for VariableListView {
 
     /// Sibling `ScrollBarExternal` sharing the list's `Rc<ScrollState>`.
     fn create_extra_externals() -> Vec<ExtraExternal> {
-        vec![scrollbar_extra_external(use_scroll_state(SCROLL_KEY), SCROLLBAR_TAG)]
+        vec![scrollbar_extra_external(
+            use_scroll_state(SCROLL_KEY),
+            SCROLLBAR_TAG,
+        )]
     }
 
     fn tag() -> &'static str {
@@ -389,12 +392,22 @@ mod tests {
             Some(u32::try_from(N).unwrap()),
             "aria-setsize conveys the FULL dataset size",
         );
-        assert!(nodes.len() - 1 < 40, "only the rendered window has listitem nodes");
+        assert!(
+            nodes.len() - 1 < 40,
+            "only the rendered window has listitem nodes"
+        );
         for item in &nodes[1..] {
             assert_eq!(item.role, AriaRole::ListItem);
-            assert!(item.position_in_set.is_some(), "each row carries aria-posinset");
+            assert!(
+                item.position_in_set.is_some(),
+                "each row carries aria-posinset"
+            );
         }
-        assert_eq!(nodes[1].position_in_set, Some(1), "top window starts at posinset 1");
+        assert_eq!(
+            nodes[1].position_in_set,
+            Some(1),
+            "top window starts at posinset 1"
+        );
     }
 
     #[test]

@@ -79,7 +79,7 @@ use pinion_core::{Command, HeldKeys, Owner, Scene, WidgetCore};
 
 use crate::command::CommandExecutor;
 use crate::input::{InputRouter, PanRelease, PointerId, Touch, TouchPhase};
-use crate::intent_queue::{walk_scene_and_drain, IntentQueue};
+use crate::intent_queue::{IntentQueue, walk_scene_and_drain};
 
 /// R51.122 §5.41 — backend-agnostic dispatch substrate.
 ///
@@ -632,10 +632,7 @@ impl<V: WidgetCore> CoreShell<V> {
     /// after a scoped swap — matches the §5.23 R27 "swappable for
     /// testing" contract on the underlying
     /// [`HandlerRegistry`](crate::command::HandlerRegistry).
-    pub fn set_executor(
-        &mut self,
-        executor: Arc<CommandExecutor>,
-    ) -> Option<Arc<CommandExecutor>> {
+    pub fn set_executor(&mut self, executor: Arc<CommandExecutor>) -> Option<Arc<CommandExecutor>> {
         self.executor.replace(executor)
     }
 
@@ -1019,7 +1016,8 @@ impl<V: WidgetCore> CoreShell<V> {
         // destruction releases the child's animations / commands /
         // cache slots without an explicit teardown call.
         let child = Owner::new_child(&self.root_owner);
-        self.window_owners.insert(window_id.to_owned(), child.clone());
+        self.window_owners
+            .insert(window_id.to_owned(), child.clone());
         child
     }
 
@@ -1444,15 +1442,9 @@ impl<V: WidgetCore> CoreShell<V> {
     /// against the new scene. Foreign windows' pointer state stays
     /// pinned to their own last-paint scenes — no cross-window
     /// flip-flop.
-    pub fn update_paint_scene_for_window(
-        &mut self,
-        window_id: &str,
-        paint_scene: Scene,
-    ) {
+    pub fn update_paint_scene_for_window(&mut self, window_id: &str, paint_scene: Scene) {
         let Self { scene, routers, .. } = self;
-        let router = routers
-            .entry(window_id.to_owned())
-            .or_default();
+        let router = routers.entry(window_id.to_owned()).or_default();
         router.update_paint_scene(paint_scene, scene);
     }
 
@@ -1470,15 +1462,9 @@ impl<V: WidgetCore> CoreShell<V> {
     /// only the layout moved under it). R684 atomic 3 worked around
     /// the side-effect with a first-paint-only gate; R685 lands the
     /// proper substrate split so every-RPC refresh is safe.
-    pub fn set_paint_scene_for_window(
-        &mut self,
-        window_id: &str,
-        paint_scene: Scene,
-    ) {
+    pub fn set_paint_scene_for_window(&mut self, window_id: &str, paint_scene: Scene) {
         let Self { routers, .. } = self;
-        let router = routers
-            .entry(window_id.to_owned())
-            .or_default();
+        let router = routers.entry(window_id.to_owned()).or_default();
         router.set_paint_scene(paint_scene);
     }
 
@@ -1503,12 +1489,10 @@ impl<V: WidgetCore> CoreShell<V> {
     /// entry yet) — single-window default callers can use
     /// [`Self::hover_target`] unchanged.
     #[must_use]
-    pub fn hover_target_for_window(
-        &self,
-        window_id: &str,
-        pid: PointerId,
-    ) -> Option<&str> {
-        self.routers.get(window_id).and_then(|r| r.hover_target(pid))
+    pub fn hover_target_for_window(&self, window_id: &str, pid: PointerId) -> Option<&str> {
+        self.routers
+            .get(window_id)
+            .and_then(|r| r.hover_target(pid))
     }
 
     /// R1025 §5.35 — single-window read of the pointer-capture lock
@@ -1529,11 +1513,7 @@ impl<V: WidgetCore> CoreShell<V> {
     /// drag-gesture test on the capture state without exposing the
     /// router's mutable interior.
     #[must_use]
-    pub fn captured_target_for_window(
-        &self,
-        window_id: &str,
-        pid: PointerId,
-    ) -> Option<&str> {
+    pub fn captured_target_for_window(&self, window_id: &str, pid: PointerId) -> Option<&str> {
         self.routers
             .get(window_id)
             .and_then(|r| r.captured_target(pid))
@@ -1685,7 +1665,10 @@ impl<V: WidgetCore> CoreShell<V> {
             self.cached_state = now;
             Some(StateChange { before, after: now })
         };
-        DispatchTail { intents, state_change }
+        DispatchTail {
+            intents,
+            state_change,
+        }
     }
 
     /// R884 §5.41 §5.45 — invoke `send` with `name` on the *primary*
@@ -1770,11 +1753,7 @@ impl<V: WidgetCore> CoreShell<V> {
         let owner = self.root_owner.clone();
         let scene = &mut self.scene;
         let handled = owner.run(|| V::apply_key(scene, focused, key, modifiers));
-        if handled {
-            Some(self.tail())
-        } else {
-            None
-        }
+        if handled { Some(self.tail()) } else { None }
     }
 
     /// R56.2.a §5.13 §5.38 — route an IME [`CompositionEvent`] through
@@ -1808,11 +1787,7 @@ impl<V: WidgetCore> CoreShell<V> {
         let owner = self.root_owner.clone();
         let scene = &mut self.scene;
         let handled = owner.run(|| V::apply_composition(scene, focused, event));
-        if handled {
-            Some(self.tail())
-        } else {
-            None
-        }
+        if handled { Some(self.tail()) } else { None }
     }
 
     /// R56.2.e §5.13 §5.22 — route a middle-mouse-button press through
@@ -1848,11 +1823,7 @@ impl<V: WidgetCore> CoreShell<V> {
         let owner = self.root_owner.clone();
         let scene = &mut self.scene;
         let handled = owner.run(|| V::apply_middle_click(scene, focused, modifiers));
-        if handled {
-            Some(self.tail())
-        } else {
-            None
-        }
+        if handled { Some(self.tail()) } else { None }
     }
 
     /// R772 §5.53 §5.38 — route a secondary-button (right-click) press
@@ -1876,11 +1847,7 @@ impl<V: WidgetCore> CoreShell<V> {
         let owner = self.root_owner.clone();
         let scene = &mut self.scene;
         let handled = owner.run(|| V::apply_secondary_click(scene, x, y));
-        if handled {
-            Some(self.tail())
-        } else {
-            None
-        }
+        if handled { Some(self.tail()) } else { None }
     }
 
     /// R51.122 §5.41 — pointer cursor-move dispatch (cell→pixel or
@@ -1941,9 +1908,7 @@ impl<V: WidgetCore> CoreShell<V> {
         modifiers: pinion_core::Modifiers,
     ) -> (DispatchTail<V::State>, bool) {
         let Self { scene, routers, .. } = self;
-        let router = routers
-            .entry(window_id.to_owned())
-            .or_default();
+        let router = routers.entry(window_id.to_owned()).or_default();
         let pan_dispatched = router.cursor_moved_with_modifiers(pid, x, y, modifiers, scene);
         (self.tail(), pan_dispatched)
     }
@@ -2052,10 +2017,7 @@ impl<V: WidgetCore> CoreShell<V> {
         window_id: &str,
         pid: PointerId,
     ) -> Option<DispatchTail<V::State>> {
-        let router = self
-            .routers
-            .entry(window_id.to_owned())
-            .or_default();
+        let router = self.routers.entry(window_id.to_owned()).or_default();
         if self.held_keys.space() {
             router.left_pan_down(pid);
             return None;
@@ -2135,9 +2097,7 @@ impl<V: WidgetCore> CoreShell<V> {
         pid: PointerId,
     ) -> DispatchTail<V::State> {
         let Self { scene, routers, .. } = self;
-        let router = routers
-            .entry(window_id.to_owned())
-            .or_default();
+        let router = routers.entry(window_id.to_owned()).or_default();
         router.cursor_left(pid, scene);
         self.tail()
     }
@@ -2160,9 +2120,7 @@ impl<V: WidgetCore> CoreShell<V> {
         pid: PointerId,
     ) -> DispatchTail<V::State> {
         let Self { scene, routers, .. } = self;
-        let router = routers
-            .entry(window_id.to_owned())
-            .or_default();
+        let router = routers.entry(window_id.to_owned()).or_default();
         router.pointer_down(pid, scene);
         self.tail()
     }
@@ -2198,9 +2156,7 @@ impl<V: WidgetCore> CoreShell<V> {
         modifiers: pinion_core::Modifiers,
     ) -> DispatchTail<V::State> {
         let Self { scene, routers, .. } = self;
-        let router = routers
-            .entry(window_id.to_owned())
-            .or_default();
+        let router = routers.entry(window_id.to_owned()).or_default();
         router.pointer_up_with_modifiers(pid, scene, modifiers);
         self.tail()
     }
@@ -2224,9 +2180,7 @@ impl<V: WidgetCore> CoreShell<V> {
         pid: PointerId,
     ) -> DispatchTail<V::State> {
         let Self { scene, routers, .. } = self;
-        let router = routers
-            .entry(window_id.to_owned())
-            .or_default();
+        let router = routers.entry(window_id.to_owned()).or_default();
         router.pointer_cancel(pid, scene);
         self.tail()
     }
@@ -2273,9 +2227,7 @@ impl<V: WidgetCore> CoreShell<V> {
     ) -> DispatchTail<V::State> {
         let pid = PointerId::touch(touch.id);
         let Self { scene, routers, .. } = self;
-        let router = routers
-            .entry(window_id.to_owned())
-            .or_default();
+        let router = routers.entry(window_id.to_owned()).or_default();
         match touch.phase {
             TouchPhase::Started => {
                 router.cursor_moved(pid, touch.x, touch.y, scene);
@@ -2318,11 +2270,7 @@ impl<V: WidgetCore> CoreShell<V> {
     /// cached `V::State` snapshot the substrate compares. The
     /// backend's `wheel` wrapper instead reads the `dispatched`
     /// boolean to decide when to repaint.
-    pub fn wheel(
-        &mut self,
-        pid: PointerId,
-        delta: WheelDelta,
-    ) -> (DispatchTail<V::State>, bool) {
+    pub fn wheel(&mut self, pid: PointerId, delta: WheelDelta) -> (DispatchTail<V::State>, bool) {
         self.wheel_for_window(DEFAULT_WINDOW, pid, delta)
     }
 
@@ -2352,9 +2300,7 @@ impl<V: WidgetCore> CoreShell<V> {
         modifiers: pinion_core::Modifiers,
     ) -> (DispatchTail<V::State>, bool) {
         let Self { scene, routers, .. } = self;
-        let router = routers
-            .entry(window_id.to_owned())
-            .or_default();
+        let router = routers.entry(window_id.to_owned()).or_default();
         let dispatched = router.wheel_with_modifiers(pid, delta, modifiers, scene);
         (self.tail(), dispatched)
     }
@@ -2378,11 +2324,7 @@ impl<V: WidgetCore> CoreShell<V> {
     /// dispatch arm stays primary so widget-bound keys (Slider's
     /// `ArrowLeft` / `ArrowRight`, Toggle's `Space`, etc.) keep
     /// their existing semantics.
-    pub fn scroll_key(
-        &mut self,
-        pid: PointerId,
-        key: &str,
-    ) -> (DispatchTail<V::State>, bool) {
+    pub fn scroll_key(&mut self, pid: PointerId, key: &str) -> (DispatchTail<V::State>, bool) {
         self.scroll_key_for_window(DEFAULT_WINDOW, pid, key)
     }
 
@@ -2393,10 +2335,7 @@ impl<V: WidgetCore> CoreShell<V> {
         pid: PointerId,
         key: &str,
     ) -> (DispatchTail<V::State>, bool) {
-        let router = self
-            .routers
-            .entry(window_id.to_owned())
-            .or_default();
+        let router = self.routers.entry(window_id.to_owned()).or_default();
         let dispatched = router.scroll_key(pid, key);
         (self.tail(), dispatched)
     }
@@ -2405,9 +2344,9 @@ impl<V: WidgetCore> CoreShell<V> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_core::Frame;
     use pinion_core::test_fixtures::ButtonFixture as TestButton;
     use pinion_core::widgets::button::{ButtonEvent, ButtonState};
-    use pinion_core::Frame;
 
     #[test]
     fn constructor_seeds_cached_state_from_introspect() {
@@ -2434,7 +2373,7 @@ mod tests {
         // reads `use_viewport_size` with no `Owner::current` panic. Also
         // covers equality-skip (a same-size publish is inert) and the boot
         // "viewport unknown" `(0, 0)` seed.
-        use pinion_core::{use_viewport_size, Effect, Owner};
+        use pinion_core::{Effect, Owner, use_viewport_size};
         use std::cell::RefCell;
         use std::rc::Rc;
 
@@ -2452,7 +2391,11 @@ mod tests {
                 seen_c.borrow_mut().push(use_viewport_size());
             })
         });
-        assert_eq!(seen.borrow().as_slice(), &[(0, 0)], "eager run sees the seed");
+        assert_eq!(
+            seen.borrow().as_slice(),
+            &[(0, 0)],
+            "eager run sees the seed"
+        );
 
         core.set_viewport_size(800, 600);
         core.set_viewport_size(800, 600); // same size -> equality-skip, no re-fire
@@ -2474,7 +2417,7 @@ mod tests {
         // return, equality-skip on an unchanged republish, per-pane
         // independence, and the skip-absent-tag (torn-off pane) contract.
         use pinion_core::scene::{ContainerNode, Rect};
-        use pinion_core::{use_pane_viewport_size, Effect, Owner, Scene};
+        use pinion_core::{Effect, Owner, Scene, use_pane_viewport_size};
         use std::cell::RefCell;
         use std::rc::Rc;
 
@@ -2581,7 +2524,14 @@ mod tests {
         // `WidgetCore::apply_key` reports `false`. ArrowLeft is not
         // a Button keybinding and `apply_aria_activate` rejects it.
         let mut core: CoreShell<TestButton> = CoreShell::new();
-        assert!(core.apply_key(Some("test_btn"), "ArrowLeft", pinion_core::Modifiers::empty()).is_none());
+        assert!(
+            core.apply_key(
+                Some("test_btn"),
+                "ArrowLeft",
+                pinion_core::Modifiers::empty()
+            )
+            .is_none()
+        );
         assert_eq!(*core.cached_state(), ButtonState::Idle);
     }
 
@@ -2592,7 +2542,8 @@ mod tests {
         // emitting a `click` intent. State stays Idle (KeyboardActivate
         // is an internal SCXML transition).
         let mut core: CoreShell<TestButton> = CoreShell::new();
-        let Some(tail) = core.apply_key(Some("test_btn"), "Space", pinion_core::Modifiers::empty()) else {
+        let Some(tail) = core.apply_key(Some("test_btn"), "Space", pinion_core::Modifiers::empty())
+        else {
             panic!("apply_key must return Some for handled Space");
         };
         assert_eq!(tail.intents.len(), 1);
@@ -2606,8 +2557,18 @@ mod tests {
         // dispatch. Substrate observes this as `None` and the
         // backend wrapper skips its post-handle bookkeeping.
         let mut core: CoreShell<TestButton> = CoreShell::new();
-        assert!(core.apply_key(Some("other_widget"), "Space", pinion_core::Modifiers::empty()).is_none());
-        assert!(core.apply_key(None, "Space", pinion_core::Modifiers::empty()).is_none());
+        assert!(
+            core.apply_key(
+                Some("other_widget"),
+                "Space",
+                pinion_core::Modifiers::empty()
+            )
+            .is_none()
+        );
+        assert!(
+            core.apply_key(None, "Space", pinion_core::Modifiers::empty())
+                .is_none()
+        );
     }
 
     #[test]
@@ -2969,10 +2930,7 @@ mod tests {
         // to confirm the wrap pops regardless of the trait return.
         let mut core: CoreShell<TestButton> = CoreShell::new();
         assert!(pinion_core::Owner::current().is_none());
-        let _ = core.apply_composition(
-            Some("test_btn"),
-            &pinion_core::CompositionEvent::Start,
-        );
+        let _ = core.apply_composition(Some("test_btn"), &pinion_core::CompositionEvent::Start);
         assert!(
             pinion_core::Owner::current().is_none(),
             "apply_composition's root_owner.run wrap must pop on exit",
@@ -2985,10 +2943,7 @@ mod tests {
             pinion_core::Owner::current().is_none(),
             "wrap pops even when V::apply_composition returns false",
         );
-        let _ = core.apply_composition(
-            None,
-            &pinion_core::CompositionEvent::Cancel,
-        );
+        let _ = core.apply_composition(None, &pinion_core::CompositionEvent::Cancel);
         assert!(
             pinion_core::Owner::current().is_none(),
             "wrap pops on unfocused dispatch (None focus)",
@@ -3049,10 +3004,7 @@ mod tests {
             5,
             "identical dt across ticks must each re-fire the Effect (not equality-skip)",
         );
-        assert_eq!(
-            recorder.last_dt.get().to_bits(),
-            0.016_666_67_f32.to_bits(),
-        );
+        assert_eq!(recorder.last_dt.get().to_bits(), 0.016_666_67_f32.to_bits(),);
     }
 
     #[test]
@@ -3061,8 +3013,8 @@ mod tests {
         // the per-tick counter cascade. Verifies the public accessor
         // is wired into the same Signal the substrate's internal
         // driver fires on.
-        use std::cell::Cell;
         use pinion_core::reactive::Effect;
+        use std::cell::Cell;
         let core: CoreShell<TestButton> = CoreShell::new();
         let observed = Rc::new(Cell::new(0_u32));
         let observed_clone = Rc::clone(&observed);
@@ -3143,18 +3095,13 @@ mod tests {
 
     fn echo_handler() -> std::sync::Arc<dyn crate::command::Handler> {
         std::sync::Arc::new(|cmd: Command| -> crate::command::HandlerFuture {
-            Box::pin(async move {
-                Intent::new_owned(
-                    format!("echo.{}", cmd.kind_str()),
-                    cmd.payload,
-                )
-            })
+            Box::pin(
+                async move { Intent::new_owned(format!("echo.{}", cmd.kind_str()), cmd.payload) },
+            )
         })
     }
 
-    fn build_executor_with(
-        kinds: &[&'static str],
-    ) -> (Arc<CommandExecutor>, Arc<VecSink>) {
+    fn build_executor_with(kinds: &[&'static str]) -> (Arc<CommandExecutor>, Arc<VecSink>) {
         let mut reg = HandlerRegistry::new();
         for k in kinds {
             reg.register(*k, echo_handler());
@@ -3193,8 +3140,7 @@ mod tests {
         // the drained Command resolves through BlockOnExecutor inside
         // dispatch (sync), and the resulting Intent reaches the sink.
         let (executor, sink) = build_executor_with(&["http.get"]);
-        let core: CoreShell<TestButton> =
-            CoreShell::new().with_executor(executor);
+        let core: CoreShell<TestButton> = CoreShell::new().with_executor(executor);
         core.root_owner().dispatch_command(Command::new_static(
             "http.get",
             IntrospectValue::Text("/api/v1".into()),
@@ -3205,10 +3151,7 @@ mod tests {
         let drained = sink.drain();
         assert_eq!(drained.len(), 1);
         assert_eq!(drained[0].tag_str(), "echo.http.get");
-        assert_eq!(
-            drained[0].payload,
-            IntrospectValue::Text("/api/v1".into()),
-        );
+        assert_eq!(drained[0].payload, IntrospectValue::Text("/api/v1".into()),);
         // Owner queue is now empty (the drain pump consumed it).
         assert!(core.root_owner().pending_commands().is_empty());
     }
@@ -3219,8 +3162,7 @@ mod tests {
         // command is returned in the unhandled Vec so the backend
         // can log it. The sink stays empty because no future ran.
         let (executor, sink) = build_executor_with(&["http.get"]);
-        let core: CoreShell<TestButton> =
-            CoreShell::new().with_executor(executor);
+        let core: CoreShell<TestButton> = CoreShell::new().with_executor(executor);
         core.root_owner().dispatch_command(Command::new_static(
             "audio.play",
             IntrospectValue::Int(440),
@@ -3239,16 +3181,14 @@ mod tests {
         // unhandled commands accumulate in the returned Vec. The
         // sink observes only the handled ones, in dispatch order.
         let (executor, sink) = build_executor_with(&["a", "c"]);
-        let core: CoreShell<TestButton> =
-            CoreShell::new().with_executor(executor);
+        let core: CoreShell<TestButton> = CoreShell::new().with_executor(executor);
         let owner = core.root_owner();
         owner.dispatch_command(Command::new_static("a", IntrospectValue::Int(1), 0));
         owner.dispatch_command(Command::new_static("b", IntrospectValue::Int(2), 0));
         owner.dispatch_command(Command::new_static("c", IntrospectValue::Int(3), 0));
         owner.dispatch_command(Command::new_static("d", IntrospectValue::Int(4), 0));
         let unhandled = core.dispatch_pending_commands();
-        let unhandled_kinds: Vec<&str> =
-            unhandled.iter().map(Command::kind_str).collect();
+        let unhandled_kinds: Vec<&str> = unhandled.iter().map(Command::kind_str).collect();
         assert_eq!(unhandled_kinds, vec!["b", "d"]);
         let drained = sink.drain();
         let handled_tags: Vec<&str> = drained.iter().map(Intent::tag_str).collect();
@@ -3262,8 +3202,7 @@ mod tests {
         // the recursion automatically. Both child + parent commands
         // reach the sink.
         let (executor, sink) = build_executor_with(&["child.evt", "parent.evt"]);
-        let core: CoreShell<TestButton> =
-            CoreShell::new().with_executor(executor);
+        let core: CoreShell<TestButton> = CoreShell::new().with_executor(executor);
         let child = Owner::new_child(core.root_owner());
         child.dispatch_command(Command::new_static(
             "child.evt",
@@ -3292,8 +3231,7 @@ mod tests {
         let (first, _sink_a) = build_executor_with(&["k"]);
         let (second, _sink_b) = build_executor_with(&["k"]);
         let first_id = Arc::as_ptr(&first).cast::<()>() as usize;
-        let mut core: CoreShell<TestButton> =
-            CoreShell::new().with_executor(first);
+        let mut core: CoreShell<TestButton> = CoreShell::new().with_executor(first);
         let prior = core.set_executor(second);
         let prior = prior.expect("first executor returned on replace");
         assert_eq!(Arc::as_ptr(&prior).cast::<()>() as usize, first_id);
@@ -3305,17 +3243,13 @@ mod tests {
         // a shutdown path can still drive remaining in-flight work)
         // and switches the drain pump back to no-op behaviour.
         let (executor, sink) = build_executor_with(&["k"]);
-        let mut core: CoreShell<TestButton> =
-            CoreShell::new().with_executor(executor);
+        let mut core: CoreShell<TestButton> = CoreShell::new().with_executor(executor);
         let _detached = core
             .clear_executor()
             .expect("clear returns the prior executor");
         assert!(core.executor().is_none());
-        core.root_owner().dispatch_command(Command::new_static(
-            "k",
-            IntrospectValue::Null,
-            0,
-        ));
+        core.root_owner()
+            .dispatch_command(Command::new_static("k", IntrospectValue::Null, 0));
         let unhandled = core.dispatch_pending_commands();
         assert!(unhandled.is_empty(), "no executor → no-op drain");
         assert!(sink.is_empty(), "no executor → sink stays empty");
@@ -3501,10 +3435,8 @@ mod tests {
         }
         core.update_paint_scene(root);
         let _ = core.cursor_moved(PointerId::MOUSE, 50.0, 50.0);
-        let (tail, dispatched) = core.wheel(
-            PointerId::MOUSE,
-            WheelDelta::Pixels { dx: 0.0, dy: 60.0 },
-        );
+        let (tail, dispatched) =
+            core.wheel(PointerId::MOUSE, WheelDelta::Pixels { dx: 0.0, dy: 60.0 });
         assert!(dispatched, "wheel must dispatch against attached state");
         assert_eq!(state.offset(), (0, 60));
         assert!(tail.intents.is_empty(), "wheel emits no SCXML intents");
@@ -3523,10 +3455,8 @@ mod tests {
         let paint = <TestButton as WidgetCore>::view(*core.cached_state(), &Frame::new());
         core.update_paint_scene(paint);
         let _ = core.cursor_moved(PointerId::MOUSE, 8.0, 8.0);
-        let (_tail, dispatched) = core.wheel(
-            PointerId::MOUSE,
-            WheelDelta::Pixels { dx: 0.0, dy: 40.0 },
-        );
+        let (_tail, dispatched) =
+            core.wheel(PointerId::MOUSE, WheelDelta::Pixels { dx: 0.0, dy: 40.0 });
         assert!(!dispatched);
     }
 
@@ -3583,11 +3513,11 @@ mod tests {
     //      `hello-listbox` exercises in production).
     // ─────────────────────────────────────────────────────────────────
 
-    use pinion_core::scene::{BoxNode, Rect};
-    use pinion_core::test_fixtures::{ScrollbarMultiFixture, MULTI_FIXTURE_SCROLL_KEY as SB_KEY};
-    use pinion_core::widget_core::ExtraExternal;
-    use pinion_core::widgets::scroll::{use_scroll_state, ScrollState};
     use pinion_core::Color;
+    use pinion_core::scene::{BoxNode, Rect};
+    use pinion_core::test_fixtures::{MULTI_FIXTURE_SCROLL_KEY as SB_KEY, ScrollbarMultiFixture};
+    use pinion_core::widget_core::ExtraExternal;
+    use pinion_core::widgets::scroll::{ScrollState, use_scroll_state};
     use std::rc::Rc as TestRc;
 
     // (R55.D.5 §5.45, lifted R884) `ScrollbarMultiFixture` + its
@@ -3662,12 +3592,16 @@ mod tests {
         let mut core: CoreShell<ScrollbarMultiFixture> = CoreShell::new();
 
         let t = core.forward(ButtonEvent::Disable);
-        let sc = t.state_change.expect("Idle → Disabled through Container root");
+        let sc = t
+            .state_change
+            .expect("Idle → Disabled through Container root");
         assert_eq!(sc.before, ButtonState::Idle);
         assert_eq!(sc.after, ButtonState::Disabled);
 
         let t = core.forward(ButtonEvent::Enable);
-        let sc = t.state_change.expect("Disabled → Idle through Container root");
+        let sc = t
+            .state_change
+            .expect("Disabled → Idle through Container root");
         assert_eq!(sc.before, ButtonState::Disabled);
         assert_eq!(sc.after, ButtonState::Idle);
     }
@@ -3696,11 +3630,17 @@ mod tests {
         // `remove_window`. `is_window_known` is the one predicate;
         // "known" is independent of "has painted" (`routers`).
         let mut core: CoreShell<TestButton> = CoreShell::new();
-        assert!(core.is_window_known(crate::DEFAULT_WINDOW), "primary seeded at new()");
+        assert!(
+            core.is_window_known(crate::DEFAULT_WINDOW),
+            "primary seeded at new()"
+        );
         assert!(!core.is_window_known("tear"), "unregistered id is unknown");
 
         core.register_window("tear");
-        assert!(core.is_window_known("tear"), "registration edge makes it known");
+        assert!(
+            core.is_window_known("tear"),
+            "registration edge makes it known"
+        );
         assert!(
             !core.has_last_paint_scene_for_window("tear"),
             "known is NOT painted — the two registries answer different questions",
@@ -3712,7 +3652,10 @@ mod tests {
             .expect("known window answers even before its first paint");
         assert_eq!(snap.cursor, None, "never-painted window has no cursor yet");
 
-        assert!(core.remove_window("tear"), "removal edge drains the registry");
+        assert!(
+            core.remove_window("tear"),
+            "removal edge drains the registry"
+        );
         assert!(!core.is_window_known("tear"), "removed id is unknown again");
         assert!(core.input_state_snapshot("tear", None).is_none());
 
@@ -3734,7 +3677,9 @@ mod tests {
 
         core.send_to_primary("Disable");
         let t = core.tail();
-        let sc = t.state_change.expect("send_to_primary must reach the button");
+        let sc = t
+            .state_change
+            .expect("send_to_primary must reach the button");
         assert_eq!(sc.after, ButtonState::Disabled);
     }
 
@@ -4177,7 +4122,7 @@ mod tests {
         // NOT through the same probe targeted at root or at a
         // sibling secondary.
         let mut core: CoreShell<TestButton> = CoreShell::new();
-        let recorder = Rc::new(TickRecorder::new());  // is_at_rest = false (always moving)
+        let recorder = Rc::new(TickRecorder::new()); // is_at_rest = false (always moving)
         core.window_owner("inspector").register_animation(recorder);
         // Also create a sibling secondary with NO registered
         // animations so the cross-secondary probe targets a real
@@ -4323,10 +4268,9 @@ mod tests {
             let inspector = core.window_owner("inspector");
             let flag_clone = Rc::clone(&flag);
             let _: Rc<Sentinel> = inspector.run(|| {
-                pinion_core::Owner::current().unwrap().cache(
-                    "r680_drop_sentinel",
-                    move || Sentinel { flag: flag_clone },
-                )
+                pinion_core::Owner::current()
+                    .unwrap()
+                    .cache("r680_drop_sentinel", move || Sentinel { flag: flag_clone })
             });
             assert!(
                 !flag.get(),

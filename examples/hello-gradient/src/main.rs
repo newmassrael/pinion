@@ -38,6 +38,8 @@
 //!   live-pixel guard a structural query cannot replace
 //!   ([[introspection-from-paint-not-screen]], R706/R707.3 precedent).
 
+#[cfg(test)]
+use pinion_a11y::{AriaRole, WidgetA11y};
 use pinion_core::external::IntrospectValue;
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -46,8 +48,6 @@ use pinion_core::style::{
 };
 use pinion_core::widgets::toggle::{ToggleEvent, ToggleExternal, ToggleState};
 use pinion_core::{ColorRole, Frame, Scene, WidgetCore, WidgetStateName, use_theme};
-#[cfg(test)]
-use pinion_a11y::{AriaRole, WidgetA11y};
 use pinion_derive::widget;
 use pinion_shell::vello_renderer_impl;
 
@@ -156,8 +156,7 @@ fn view(state: ToggleState, on: bool, _frame: &Frame) -> Scene {
     let hue_strip = Scene::Box(
         BoxNode::new(
             Rect::default(),
-            BoxStyle::filled(Color::rgb(0x00, 0x00, 0x00))
-                .with_gradient(hue_strip_gradient()),
+            BoxStyle::filled(Color::rgb(0x00, 0x00, 0x00)).with_gradient(hue_strip_gradient()),
         )
         .with_tag("hue_strip")
         .with_layout(LayoutStyle::new().with_size(Size::px(STRIP_W, STRIP_H))),
@@ -223,7 +222,11 @@ fn view(state: ToggleState, on: bool, _frame: &Frame) -> Scene {
     );
 
     let status = Scene::Text(TextNode::styled(
-        format!("{} | {}", state.as_name(), if on { "Radial" } else { "Linear" }),
+        format!(
+            "{} | {}",
+            state.as_name(),
+            if on { "Radial" } else { "Linear" }
+        ),
         Rect::default(),
         TextStyle::new()
             .with_size_px(STATUS_FONT_PX)

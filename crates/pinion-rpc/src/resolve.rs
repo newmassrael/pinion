@@ -37,8 +37,8 @@
 //! inside [`crate::simulate`] alone); the helper is canonical
 //! Rule-of-Three lift territory.
 
-use pinion_core::external::ExternalIntrospect;
 use pinion_core::Scene;
+use pinion_core::external::ExternalIntrospect;
 
 use crate::path::{self, PathError};
 
@@ -194,18 +194,17 @@ pub fn resolve_external_introspect<'s>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_core::Color;
     use pinion_core::external::{CountedExternal, IntrospectValue, StubExternal};
     use pinion_core::scene::{BoxNode, ContainerNode, ExternalNode, Rect};
-    use pinion_core::Color;
 
     fn counted_scene(n: i64) -> Scene {
         Scene::External(ExternalNode::new(Box::new(CountedExternal::new(n))))
     }
 
     fn container_with_tagged_counted(tag: &'static str, count: i64) -> Scene {
-        let ext = Scene::External(
-            ExternalNode::new(Box::new(CountedExternal::new(count))).with_tag(tag),
-        );
+        let ext =
+            Scene::External(ExternalNode::new(Box::new(CountedExternal::new(count))).with_tag(tag));
         let mut c = ContainerNode::new(vec![ext]);
         c.rect = Rect::new(0, 0, 100, 100);
         Scene::Container(c)
@@ -213,8 +212,7 @@ mod tests {
 
     #[test]
     fn path_parses_window_prefix_and_split() {
-        let (segs, intro) =
-            resolve_external_path("/window[main]/counter/external/count").unwrap();
+        let (segs, intro) = resolve_external_path("/window[main]/counter/external/count").unwrap();
         assert_eq!(segs, vec!["counter".to_string()]);
         assert_eq!(intro, "count");
     }
@@ -235,7 +233,10 @@ mod tests {
     #[test]
     fn path_malformed_window_prefix_surfaces_as_path_error() {
         let err = resolve_external_path("/window[main/external/count").unwrap_err();
-        assert!(matches!(err, ResolveExternalError::Path(PathError::MalformedPrefix)));
+        assert!(matches!(
+            err,
+            ResolveExternalError::Path(PathError::MalformedPrefix)
+        ));
     }
 
     #[test]

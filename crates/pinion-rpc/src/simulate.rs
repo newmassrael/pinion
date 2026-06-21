@@ -65,8 +65,8 @@ use pinion_core::{Owner, Scene, SimulationGuard};
 
 use crate::dry_run::DryRunError;
 use crate::path::PathError;
-use crate::resolve::{introspect_mut_at, resolve_external_path, ResolveExternalError};
-use crate::snapshot::{snapshot, SnapshotError, SnapshotNode};
+use crate::resolve::{ResolveExternalError, introspect_mut_at, resolve_external_path};
+use crate::snapshot::{SnapshotError, SnapshotNode, snapshot};
 
 /// One step in a [`simulate`] sequence — an `(path, value)` pair
 /// that will be applied via `External::intervene`.
@@ -104,7 +104,10 @@ pub enum SimulateError {
     /// `intervene` rejected the hypothetical write at `step_index`.
     /// Earlier steps have been rolled back; caller's scene is
     /// restored to pre-call state.
-    Intervene { step_index: usize, error: InterveneError },
+    Intervene {
+        step_index: usize,
+        error: InterveneError,
+    },
     /// Rollback `intervene` failed during cleanup. Caller's scene is
     /// in an indeterminate state — invariant violation.
     RollbackFailed,
@@ -195,10 +198,7 @@ pub fn simulate_with_owner(
 /// See [`SimulateError`] for the failure modes. Every error path
 /// leaves the caller's scene in its pre-call state except
 /// [`SimulateError::RollbackFailed`].
-pub fn simulate(
-    scene: &mut Scene,
-    steps: &[SimulateStep],
-) -> Result<SnapshotNode, SimulateError> {
+pub fn simulate(scene: &mut Scene, steps: &[SimulateStep]) -> Result<SnapshotNode, SimulateError> {
     // R649 §5.23 R27 — Effect suppression covers all phases so
     // Effects observing Signals mutated through External::intervene
     // don't fire during Phase 2 (apply) or Phase 4 (rollback).
@@ -218,7 +218,10 @@ pub fn simulate(
     let mut resolved: Vec<(Vec<String>, String)> = Vec::with_capacity(steps.len());
     for (i, step) in steps.iter().enumerate() {
         resolved.push(resolve_external_path(&step.path).map_err(|e| match e {
-            ResolveExternalError::Path(error) => SimulateError::Path { step_index: i, error },
+            ResolveExternalError::Path(error) => SimulateError::Path {
+                step_index: i,
+                error,
+            },
             // `resolve_external_path` is string-only — `NoExternalAtPath`
             // / `IntrospectionOptedOut` cannot fire here. Collapse
             // exhaustively because `ResolveExternalError` is non_exhaustive.
@@ -348,9 +351,9 @@ impl From<SimulateError> for DryRunError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_core::Color;
     use pinion_core::external::{CountedExternal, StubExternal};
     use pinion_core::scene::{BoxNode, ExternalNode, Rect};
-    use pinion_core::Color;
 
     use crate::query::query;
     use crate::snapshot::ExternalSnapshot;
@@ -360,7 +363,10 @@ mod tests {
     }
 
     fn step(path: &str, value: IntrospectValue) -> SimulateStep {
-        SimulateStep { path: path.into(), value }
+        SimulateStep {
+            path: path.into(),
+            value,
+        }
     }
 
     #[test]
@@ -368,7 +374,10 @@ mod tests {
         let mut scene = counted_scene(0);
         let err = simulate(&mut scene, &[]).unwrap_err();
         assert_eq!(err, SimulateError::EmptySteps);
-        assert_eq!(query(&scene, "/external/count").unwrap(), IntrospectValue::Int(0));
+        assert_eq!(
+            query(&scene, "/external/count").unwrap(),
+            IntrospectValue::Int(0)
+        );
     }
 
     #[test]
@@ -380,13 +389,19 @@ mod tests {
         )
         .unwrap();
         match snap {
-            SnapshotNode::External(ExternalSnapshot { introspect: Some(fields), .. }) => {
+            SnapshotNode::External(ExternalSnapshot {
+                introspect: Some(fields),
+                ..
+            }) => {
                 assert_eq!(fields[0].1, IntrospectValue::Int(999));
             }
             other => panic!("expected External snapshot, got {other:?}"),
         }
         // Original value restored.
-        assert_eq!(query(&scene, "/external/count").unwrap(), IntrospectValue::Int(7));
+        assert_eq!(
+            query(&scene, "/external/count").unwrap(),
+            IntrospectValue::Int(7)
+        );
     }
 
     #[test]
@@ -404,7 +419,10 @@ mod tests {
         )
         .unwrap();
         match snap {
-            SnapshotNode::External(ExternalSnapshot { introspect: Some(fields), .. }) => {
+            SnapshotNode::External(ExternalSnapshot {
+                introspect: Some(fields),
+                ..
+            }) => {
                 assert_eq!(fields[0].1, IntrospectValue::Int(999));
             }
             other => panic!("expected External snapshot, got {other:?}"),
@@ -412,7 +430,10 @@ mod tests {
         // Critical: rollback restores PRE-CALL state (7), not the
         // intermediate state (42) the first step landed on. Per-
         // unique-path save semantics.
-        assert_eq!(query(&scene, "/external/count").unwrap(), IntrospectValue::Int(7));
+        assert_eq!(
+            query(&scene, "/external/count").unwrap(),
+            IntrospectValue::Int(7)
+        );
     }
 
     #[test]
@@ -437,7 +458,10 @@ mod tests {
             }
         );
         // Pre-call state restored, even though step 1 mutated it.
-        assert_eq!(query(&scene, "/external/count").unwrap(), IntrospectValue::Int(11));
+        assert_eq!(
+            query(&scene, "/external/count").unwrap(),
+            IntrospectValue::Int(11)
+        );
     }
 
     #[test]
@@ -452,7 +476,10 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(err, SimulateError::InitialQueryFailed { step_index: 1 });
-        assert_eq!(query(&scene, "/external/count").unwrap(), IntrospectValue::Int(0));
+        assert_eq!(
+            query(&scene, "/external/count").unwrap(),
+            IntrospectValue::Int(0)
+        );
     }
 
     #[test]
@@ -468,9 +495,15 @@ mod tests {
         .unwrap_err();
         assert!(matches!(
             err,
-            SimulateError::Path { step_index: 1, error: PathError::MalformedPrefix }
+            SimulateError::Path {
+                step_index: 1,
+                error: PathError::MalformedPrefix
+            }
         ));
-        assert_eq!(query(&scene, "/external/count").unwrap(), IntrospectValue::Int(0));
+        assert_eq!(
+            query(&scene, "/external/count").unwrap(),
+            IntrospectValue::Int(0)
+        );
     }
 
     #[test]
@@ -507,7 +540,10 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(err, SimulateError::UnsupportedPath { step_index: 1 });
-        assert_eq!(query(&scene, "/external/count").unwrap(), IntrospectValue::Int(5));
+        assert_eq!(
+            query(&scene, "/external/count").unwrap(),
+            IntrospectValue::Int(5)
+        );
     }
 
     // R648 §5.34 R42 — multi-External path tests. Container with
@@ -522,12 +558,10 @@ mod tests {
             // child carries one External. Paths
             // "/widget_a/external/count" + "/widget_b/external/count"
             // resolve to distinct slots.
-            let child_a = Scene::Container(
-                ContainerNode::new(vec![counted_scene(a)]).with_tag("widget_a"),
-            );
-            let child_b = Scene::Container(
-                ContainerNode::new(vec![counted_scene(b)]).with_tag("widget_b"),
-            );
+            let child_a =
+                Scene::Container(ContainerNode::new(vec![counted_scene(a)]).with_tag("widget_a"));
+            let child_b =
+                Scene::Container(ContainerNode::new(vec![counted_scene(b)]).with_tag("widget_b"));
             Scene::Container(ContainerNode::new(vec![child_a, child_b]))
         }
 
@@ -659,12 +693,18 @@ mod tests {
             )
             .unwrap();
             match snap {
-                SnapshotNode::External(ExternalSnapshot { introspect: Some(fields), .. }) => {
+                SnapshotNode::External(ExternalSnapshot {
+                    introspect: Some(fields),
+                    ..
+                }) => {
                     assert_eq!(fields[0].1, IntrospectValue::Int(42));
                 }
                 other => panic!("expected External snapshot, got {other:?}"),
             }
-            assert_eq!(query(&scene, "/external/count").unwrap(), IntrospectValue::Int(11));
+            assert_eq!(
+                query(&scene, "/external/count").unwrap(),
+                IntrospectValue::Int(11)
+            );
         }
 
         #[test]
@@ -686,14 +726,20 @@ mod tests {
             )
             .unwrap();
             match snap {
-                SnapshotNode::External(ExternalSnapshot { introspect: Some(fields), .. }) => {
+                SnapshotNode::External(ExternalSnapshot {
+                    introspect: Some(fields),
+                    ..
+                }) => {
                     assert_eq!(fields[0].1, IntrospectValue::Int(999));
                 }
                 other => panic!("expected External snapshot, got {other:?}"),
             }
             // Both paths agree on the original value.
             assert_eq!(signal.get(), 7);
-            assert_eq!(query(&scene, "/external/value").unwrap(), IntrospectValue::Int(7));
+            assert_eq!(
+                query(&scene, "/external/value").unwrap(),
+                IntrospectValue::Int(7)
+            );
         }
 
         #[test]
@@ -793,7 +839,10 @@ mod tests {
             )
             .unwrap();
             match snap {
-                SnapshotNode::External(ExternalSnapshot { introspect: Some(fields), .. }) => {
+                SnapshotNode::External(ExternalSnapshot {
+                    introspect: Some(fields),
+                    ..
+                }) => {
                     assert_eq!(fields[0].1, IntrospectValue::Int(999));
                 }
                 other => panic!("expected External snapshot, got {other:?}"),

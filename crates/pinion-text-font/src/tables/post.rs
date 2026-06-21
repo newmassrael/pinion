@@ -187,10 +187,7 @@ mod tests {
         let err = Post::parse(&bytes).unwrap_err();
         assert!(matches!(
             err,
-            ParseError::TableTooShort {
-                tag: POST_TAG,
-                ..
-            }
+            ParseError::TableTooShort { tag: POST_TAG, .. }
         ));
     }
 

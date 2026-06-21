@@ -29,21 +29,21 @@
 //! cursor and return the new source row — the whole search is observable and
 //! driveable without a pixel (see `tools/demos/r1004_grid_search.py`).
 
-use pinion_a11y::{windowed_grid_nodes, AccessNode, WidgetA11y};
+use pinion_a11y::{AccessNode, WidgetA11y, windowed_grid_nodes};
 use pinion_core::external::External;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, Color, FlexDirection, LayoutStyle, Size, SizeValue, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
-use pinion_core::widgets::grid_sort::{grid_filter_str, ColumnFacet, FilterOp, GridFilter};
-use pinion_core::widgets::row_search::{use_row_search, RowSearchExternal, RowSearchState};
+use pinion_core::widgets::grid_sort::{ColumnFacet, FilterOp, GridFilter, grid_filter_str};
+use pinion_core::widgets::row_search::{RowSearchExternal, RowSearchState, use_row_search};
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::{Frame, Scene, WidgetCore};
-use pinion_shell::{vello_renderer_impl, WidgetView};
-use pinion_widget_paint::table::{view_virtual_table, GridScroll, TableStyle, VirtualTableData};
+use pinion_shell::{WidgetView, vello_renderer_impl};
+use pinion_widget_paint::table::{GridScroll, TableStyle, VirtualTableData, view_virtual_table};
 use std::rc::Rc;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -81,7 +81,11 @@ const MATCH_BG: Color = Color::rgb(255, 243, 205);
 const MATCH_FG: Color = Color::rgb(0, 0, 0);
 
 fn table_style() -> TableStyle {
-    TableStyle { col_width: COL_W, row_height: ROW_H, ..TableStyle::m3() }
+    TableStyle {
+        col_width: COL_W,
+        row_height: ROW_H,
+        ..TableStyle::m3()
+    }
 }
 
 /// Score for data row `id`: a non-monotonic pseudo-random number in `0..1000`,
@@ -117,7 +121,10 @@ fn status_bar(theme: &Theme, search: &RowSearchState) -> Scene {
     let q = grid_filter_str(search.query().as_ref());
     let total = search.match_count();
     let label = match search.current_index() {
-        Some(i) => format!("match {} of {total} \u{00B7} {q} \u{00B7} {N} rows (all visible)", i + 1),
+        Some(i) => format!(
+            "match {} of {total} \u{00B7} {q} \u{00B7} {N} rows (all visible)",
+            i + 1
+        ),
         None if total == 0 && search.query().is_some() => {
             format!("no matches \u{00B7} {q} \u{00B7} {N} rows")
         }
@@ -127,13 +134,17 @@ fn status_bar(theme: &Theme, search: &RowSearchState) -> Scene {
         TextNode::styled(
             label,
             Rect::default(),
-            TextStyle::new().with_size_px(13).with_fg(theme.resolve(ColorRole::OnSurface)),
+            TextStyle::new()
+                .with_size_px(13)
+                .with_fg(theme.resolve(ColorRole::OnSurface)),
         )
         .with_tag(STATUS_TAG),
     );
     Scene::Container(
         ContainerNode::new(vec![text])
-            .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh)))
+            .with_style(BoxStyle::filled(
+                theme.resolve(ColorRole::SurfaceContainerHigh),
+            ))
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Row)
@@ -175,7 +186,10 @@ fn view(_state: (), _frame: &Frame) -> Scene {
 
     let table = view_virtual_table(
         GRID_TAG,
-        GridScroll { body: &scroll, horizontal: &h_scroll },
+        GridScroll {
+            body: &scroll,
+            horizontal: &h_scroll,
+        },
         VirtualTableData {
             headers: &HEADERS,
             item_count: N,
@@ -272,7 +286,10 @@ impl WidgetView for GridSearchView {
     type Renderer = HelloGridSearchRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 }
 
@@ -317,8 +334,15 @@ mod tests {
             // the match set yet still fully addressable (a filter would have
             // removed it from the view; search keeps every row).
             assert_eq!(search.count(), N, "the dataset never shrinks");
-            assert!(!search.matches().contains(&0), "row 0 (Alpha) is not a match");
-            assert_eq!(search.cell(0, 0), "Alpha0000", "yet row 0 is still addressable");
+            assert!(
+                !search.matches().contains(&0),
+                "row 0 (Alpha) is not a match"
+            );
+            assert_eq!(
+                search.cell(0, 0),
+                "Alpha0000",
+                "yet row 0 is still addressable"
+            );
         });
     }
 
@@ -327,7 +351,11 @@ mod tests {
         Owner::new().run(|| {
             let search = use_search();
             // Score >= 900 — the R997 numeric `>=` op over the live cells.
-            search.set_query(Some(GridFilter::single(ColumnFacet::new(1, FilterOp::Ge, "900"))));
+            search.set_query(Some(GridFilter::single(ColumnFacet::new(
+                1,
+                FilterOp::Ge,
+                "900",
+            ))));
             let n = search.match_count();
             assert!(n > 0 && n < N, "a sparse numeric match set: {n}");
             // Every match really has Score >= 900.
@@ -341,7 +369,11 @@ mod tests {
     fn row_cells_shape() {
         assert_eq!(
             row_cells(3),
-            vec!["Delta0003".to_string(), score(3).to_string(), "Idle".to_string()],
+            vec![
+                "Delta0003".to_string(),
+                score(3).to_string(),
+                "Idle".to_string()
+            ],
         );
     }
 }

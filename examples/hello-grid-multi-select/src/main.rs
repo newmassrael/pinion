@@ -57,25 +57,28 @@
 //! once) and a `gridcell` per column, under a frozen header row of
 //! `columnheader`s. The grid is the focusable tab stop.
 
-use pinion_a11y::{windowed_grid_nodes_multiselected, AccessNode, WidgetA11y};
+use pinion_a11y::{AccessNode, WidgetA11y, windowed_grid_nodes_multiselected};
 use pinion_core::external::External;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, LayoutStyle, Size, SizeValue, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::widgets::virtual_select::{
-    nav_select_key, read_selection, RowMetrics, VirtualSelectExternal,
+    RowMetrics, VirtualSelectExternal, nav_select_key, read_selection,
 };
 use pinion_core::{Frame, Scene, WidgetCore};
-use pinion_shell::{vello_renderer_impl, WidgetView};
-use pinion_widget_paint::table::{view_virtual_table, GridScroll, TableStyle, VirtualTableData};
+use pinion_shell::{WidgetView, vello_renderer_impl};
+use pinion_widget_paint::table::{GridScroll, TableStyle, VirtualTableData, view_virtual_table};
 use std::collections::BTreeSet;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
-vello_renderer_impl!(HelloGridMultiSelectRenderer, HelloGridMultiSelectRendererError);
+vello_renderer_impl!(
+    HelloGridMultiSelectRenderer,
+    HelloGridMultiSelectRendererError
+);
 
 /// Initial window size — freely resizable; the grid body re-windows on every
 /// `Resized` event (R774 `AutoSizer`). Wide enough that `NCOLS × COL_W` fits.
@@ -123,7 +126,10 @@ struct MultiSelection {
 
 impl MultiSelection {
     fn empty() -> Self {
-        Self { selected: [false; N], total: 0 }
+        Self {
+            selected: [false; N],
+            total: 0,
+        }
     }
 
     /// Build the bitmap from a list of selected data indices (out-of-range
@@ -189,7 +195,9 @@ fn status_bar(
     );
     Scene::Container(
         ContainerNode::new(vec![text])
-            .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh)))
+            .with_style(BoxStyle::filled(
+                theme.resolve(ColorRole::SurfaceContainerHigh),
+            ))
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Row)
@@ -215,7 +223,10 @@ fn view(selection: &MultiSelection, _frame: &Frame) -> Scene {
 
     let grid = view_virtual_table(
         TABLE_TAG,
-        GridScroll { body: &scroll, horizontal: &h_scroll },
+        GridScroll {
+            body: &scroll,
+            horizontal: &h_scroll,
+        },
         VirtualTableData {
             headers: &HEADERS,
             item_count: N,
@@ -302,7 +313,10 @@ impl WidgetCore for GridMultiSelectView {
             focused,
             key,
             modifiers,
-            RowMetrics { item_count: N, row_pitch: ROW_H },
+            RowMetrics {
+                item_count: N,
+                row_pitch: ROW_H,
+            },
         )
     }
 
@@ -330,8 +344,10 @@ impl WidgetA11y for GridMultiSelectView {
         let scroll = use_scroll_state(SCROLL_KEY);
         let (_, measured_h) = scroll.measured_viewport();
         let window = compute_visible_range(scroll.offset_y(), measured_h, N, ROW_H, OVERSCAN);
-        let windowed_set: BTreeSet<usize> =
-            window.indices().filter(|&i| selection.is_selected(i)).collect();
+        let windowed_set: BTreeSet<usize> = window
+            .indices()
+            .filter(|&i| selection.is_selected(i))
+            .collect();
         windowed_grid_nodes_multiselected(
             TABLE_TAG,
             "Multi-selectable data grid",
@@ -409,7 +425,11 @@ mod tests {
         let scene = run_view_with_measured(&[1, 3], 0, 384);
         assert_eq!(row_fill(&scene, 1), Some(wash), "row 1 washes accent");
         assert_eq!(row_fill(&scene, 3), Some(wash), "row 3 washes accent too");
-        assert_ne!(row_fill(&scene, 2), Some(wash), "row 2 between them does not");
+        assert_ne!(
+            row_fill(&scene, 2),
+            Some(wash),
+            "row 2 between them does not"
+        );
     }
 
     #[test]
@@ -421,7 +441,10 @@ mod tests {
         });
         assert_eq!(nodes[0].role, AriaRole::Grid);
         assert_eq!(nodes[0].size_of_set, Some(u32::try_from(N).unwrap()));
-        assert!(nodes[0].multiselectable, "container is aria-multiselectable");
+        assert!(
+            nodes[0].multiselectable,
+            "container is aria-multiselectable"
+        );
         let selected_count = nodes
             .iter()
             .filter(|n| n.role == AriaRole::Row && n.selected == Some(true))

@@ -34,6 +34,7 @@
 
 use core::fmt;
 
+use pinion_a11y::WidgetA11y;
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
@@ -41,8 +42,7 @@ use pinion_core::external::{
 use pinion_core::scene::{BoxNode, ContainerNode, Rect};
 use pinion_core::style::{BoxStyle, Color};
 use pinion_core::{Frame, Scene, WidgetCore};
-use pinion_a11y::WidgetA11y;
-use pinion_shell::{run, vello_renderer_impl, WidgetView};
+use pinion_shell::{WidgetView, run, vello_renderer_impl};
 
 /// Mirror of the pinion-forge codegen output: a renderer struct that
 /// stores nothing (no actual wgpu surface — the smoke test never
@@ -71,11 +71,7 @@ impl SmokeRenderer {
     /// Returns immediately with an empty `SmokeRenderer`; the smoke
     /// test never awaits this future.
     #[allow(clippy::unused_async)]
-    async fn new<W>(
-        _target: W,
-        _width: u32,
-        _height: u32,
-    ) -> Result<Self, SmokeRendererError>
+    async fn new<W>(_target: W, _width: u32, _height: u32) -> Result<Self, SmokeRendererError>
     where
         W: Into<vello::wgpu::SurfaceTarget<'static>>,
     {
@@ -132,11 +128,7 @@ impl ExternalIntrospect for SmokeExternal {
             _ => None,
         }
     }
-    fn intervene(
-        &mut self,
-        _path: &str,
-        _value: IntrospectValue,
-    ) -> Result<(), InterveneError> {
+    fn intervene(&mut self, _path: &str, _value: IntrospectValue) -> Result<(), InterveneError> {
         Err(InterveneError::UnknownPath)
     }
     fn invoke(
@@ -195,7 +187,10 @@ impl WidgetView for SmokeView {
     type Renderer = SmokeRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: 8, height: 8 }
+        pinion_shell::SizeStrategy::Fixed {
+            width: 8,
+            height: 8,
+        }
     }
 }
 

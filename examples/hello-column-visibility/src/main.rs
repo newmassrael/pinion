@@ -40,25 +40,28 @@
 //! last column.
 
 use pinion_a11y::{
-    grid_table_nodes, toolbar_button_nodes, AccessAction, AccessFocus, AccessNode, GridCell,
-    GridColumn, GridRow, ToolbarControl, WidgetA11y,
+    AccessAction, AccessFocus, AccessNode, GridCell, GridColumn, GridRow, ToolbarControl,
+    WidgetA11y, grid_table_nodes, toolbar_button_nodes,
 };
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::intent::Intent;
 use pinion_core::reactive::{Owner, Signal};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{BoxStyle, FlexDirection, LayoutStyle, TextStyle};
-use pinion_core::theme::{use_theme, ColorRole};
+use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::widgets::radio::RadioState;
-use pinion_core::widgets::toolbar::{read_roving_focus, ToolItem, ToolbarExternal};
+use pinion_core::widgets::toolbar::{ToolItem, ToolbarExternal, read_roving_focus};
 use pinion_core::{Command, Frame, Modifiers, Scene, WidgetCore};
-use pinion_shell::{vello_renderer_impl, WidgetView};
-use pinion_widget_paint::table::{view_table, TableData, TableSelection, TableStyle};
-use pinion_widget_paint::toolbar::{composite_item_tag as col_ctl_tag, view_toolbar, ToolbarStyle};
+use pinion_shell::{WidgetView, vello_renderer_impl};
+use pinion_widget_paint::table::{TableData, TableSelection, TableStyle, view_table};
+use pinion_widget_paint::toolbar::{ToolbarStyle, composite_item_tag as col_ctl_tag, view_toolbar};
 use std::rc::Rc;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
-vello_renderer_impl!(HelloColumnVisibilityRenderer, HelloColumnVisibilityRendererError);
+vello_renderer_impl!(
+    HelloColumnVisibilityRenderer,
+    HelloColumnVisibilityRendererError
+);
 
 const WIN_W: u32 = 620;
 const WIN_H: u32 = 420;
@@ -84,12 +87,24 @@ const COMMAND_INTENT_TAG_FULL: &str = pinion_core::intent_tag!("cols", "command"
 /// The [`use_visibility`] holder cache key.
 const VIS_KEY: &str = "column_visibility.bits";
 
-const NAMES: [&str; NROWS] =
-    ["report.pdf", "photo.png", "notes.txt", "build.rs", "data.csv", "movie.mp4"];
+const NAMES: [&str; NROWS] = [
+    "report.pdf",
+    "photo.png",
+    "notes.txt",
+    "build.rs",
+    "data.csv",
+    "movie.mp4",
+];
 const TYPES: [&str; NROWS] = ["PDF", "Image", "Text", "Rust", "CSV", "Video"];
 const SIZES: [&str; NROWS] = ["2.1 MB", "880 KB", "4 KB", "1 KB", "32 KB", "1.4 GB"];
-const MODIFIED: [&str; NROWS] =
-    ["2026-06-01", "2026-05-30", "2026-06-10", "2026-06-18", "2026-04-22", "2026-03-09"];
+const MODIFIED: [&str; NROWS] = [
+    "2026-06-01",
+    "2026-05-30",
+    "2026-06-10",
+    "2026-06-18",
+    "2026-04-22",
+    "2026-03-09",
+];
 const OWNERS: [&str; NROWS] = ["coin", "coin", "alex", "coin", "alex", "guest"];
 
 /// Cell text for source `(row, col)`.
@@ -99,7 +114,10 @@ fn cell_text(row: usize, col: usize) -> String {
 }
 
 fn table_style() -> TableStyle {
-    TableStyle { col_width: 110, ..TableStyle::m3() }
+    TableStyle {
+        col_width: 110,
+        ..TableStyle::m3()
+    }
 }
 
 /// The shared per-column visibility model (one bit per source column). The
@@ -112,7 +130,9 @@ fn use_visibility() -> Rc<Signal<Vec<bool>>> {
 
 /// The source columns currently visible, in source order.
 fn visible_cols(vis: &[bool]) -> Vec<usize> {
-    (0..NCOLS).filter(|&c| vis.get(c).copied().unwrap_or(false)).collect()
+    (0..NCOLS)
+        .filter(|&c| vis.get(c).copied().unwrap_or(false))
+        .collect()
 }
 
 /// The count of visible columns.
@@ -127,7 +147,9 @@ fn visible_count(vis: &[bool]) -> usize {
 /// on, so a greyed control is genuinely inoperable.
 fn col_disabled(vis: &[bool]) -> Vec<bool> {
     let only_one = visible_count(vis) == 1;
-    (0..NCOLS).map(|c| vis.get(c).copied().unwrap_or(false) && only_one).collect()
+    (0..NCOLS)
+        .map(|c| vis.get(c).copied().unwrap_or(false) && only_one)
+        .collect()
 }
 
 // ----------------------------------------------------------------------------
@@ -159,7 +181,9 @@ fn view(state: ColsState, _frame: &Frame) -> Scene {
         TextNode::styled(
             format!("{} of {NCOLS} columns shown", visible.len()),
             Rect::default(),
-            TextStyle::new().with_size_px(14).with_fg(theme.resolve(ColorRole::OnSurface)),
+            TextStyle::new()
+                .with_size_px(14)
+                .with_fg(theme.resolve(ColorRole::OnSurface)),
         )
         .with_tag(COUNT_TAG),
     );
@@ -170,15 +194,24 @@ fn view(state: ColsState, _frame: &Frame) -> Scene {
     let cell_owned: Vec<Vec<String>> = (0..NROWS)
         .map(|r| visible.iter().map(|&c| cell_text(r, c)).collect())
         .collect();
-    let cell_refs: Vec<Vec<&str>> =
-        cell_owned.iter().map(|row| row.iter().map(String::as_str).collect()).collect();
+    let cell_refs: Vec<Vec<&str>> = cell_owned
+        .iter()
+        .map(|row| row.iter().map(String::as_str).collect())
+        .collect();
     let rows_slices: Vec<&[&str]> = cell_refs.iter().map(Vec::as_slice).collect();
     let row_states = [RadioState::Idle; NROWS];
     let row_sel = [false; NROWS];
     let grid = view_table(
         GRID_TAG,
-        TableData { headers: &headers_v, rows: &rows_slices, row_ids: &[] },
-        TableSelection { rows: &row_sel, cells: None },
+        TableData {
+            headers: &headers_v,
+            rows: &rows_slices,
+            row_ids: &[],
+        },
+        TableSelection {
+            rows: &row_sel,
+            cells: None,
+        },
         &row_states,
         None,
         &theme,
@@ -231,7 +264,10 @@ impl WidgetCore for ColumnVisibilityView {
         let mut out = ColsState::default();
         // R990.1 — the chooser's roving cursor + group focus via the lifted
         // `read_roving_focus` reader (the toolbar peer of `read_selected`).
-        if let Some(intro) = scene.find_external_with_tag(COLS_TAG).and_then(|n| n.handle.introspect()) {
+        if let Some(intro) = scene
+            .find_external_with_tag(COLS_TAG)
+            .and_then(|n| n.handle.introspect())
+        {
             (out.cols_focus, out.cols_focused) = read_roving_focus(intro);
         }
         out
@@ -253,7 +289,12 @@ impl WidgetCore for ColumnVisibilityView {
         None
     }
 
-    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, modifiers: Modifiers) -> bool {
+    fn apply_key(
+        scene: &mut Scene,
+        focused: Option<&str>,
+        key: &str,
+        modifiers: Modifiers,
+    ) -> bool {
         if focused != Some(COLS_TAG) {
             return false;
         }
@@ -287,7 +328,10 @@ impl WidgetCore for ColumnVisibilityView {
     }
 
     fn fmt_state_log(state: &ColsState) -> String {
-        format!("cols_focus={} cols_focused={}", state.cols_focus, state.cols_focused)
+        format!(
+            "cols_focus={} cols_focused={}",
+            state.cols_focus, state.cols_focused
+        )
     }
 }
 
@@ -366,7 +410,12 @@ impl WidgetA11y for ColumnVisibilityView {
 
     /// AT child activation for a chooser control (`cols#<i>`): `Click` toggles
     /// the column; `Focus` records the AT-side active descendant.
-    fn access_child_invoke(scene: &mut Scene, parent_tag: &str, sub_tag: &str, action: AccessAction) -> bool {
+    fn access_child_invoke(
+        scene: &mut Scene,
+        parent_tag: &str,
+        sub_tag: &str,
+        action: AccessAction,
+    ) -> bool {
         if parent_tag != COLS_TAG {
             return false;
         }
@@ -378,7 +427,10 @@ impl WidgetA11y for ColumnVisibilityView {
         };
         match action {
             AccessAction::Click | AccessAction::Default => {
-                let _ = intro.invoke("send", IntrospectValue::Text(format!("{sub_tag}:PointerUp")));
+                let _ = intro.invoke(
+                    "send",
+                    IntrospectValue::Text(format!("{sub_tag}:PointerUp")),
+                );
                 true
             }
             AccessAction::Focus => {
@@ -396,7 +448,10 @@ impl WidgetView for ColumnVisibilityView {
     type Renderer = HelloColumnVisibilityRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 }
 
@@ -422,7 +477,10 @@ mod tests {
     #[test]
     fn disabled_only_the_sole_visible_column() {
         // Two visible -> none disabled.
-        assert_eq!(col_disabled(&[true, true, false, false, false]), [false; NCOLS]);
+        assert_eq!(
+            col_disabled(&[true, true, false, false, false]),
+            [false; NCOLS]
+        );
         // One visible -> only that column disabled (cannot hide the last).
         assert_eq!(
             col_disabled(&[false, false, true, false, false]),
@@ -471,14 +529,20 @@ mod tests {
             set_vis([true; NCOLS]);
             ColumnVisibilityView::access_node(&ColsState::default(), Some(COLS_TAG))
         });
-        let ch = nodes.iter().filter(|n| n.role == AriaRole::ColumnHeader).count();
+        let ch = nodes
+            .iter()
+            .filter(|n| n.role == AriaRole::ColumnHeader)
+            .count();
         assert_eq!(ch, NCOLS, "all columns are columnheaders when all visible");
 
         let hidden = Owner::new().run(|| {
             set_vis([true, false, true, false, true]);
             ColumnVisibilityView::access_node(&ColsState::default(), Some(COLS_TAG))
         });
-        let ch2 = hidden.iter().filter(|n| n.role == AriaRole::ColumnHeader).count();
+        let ch2 = hidden
+            .iter()
+            .filter(|n| n.role == AriaRole::ColumnHeader)
+            .count();
         assert_eq!(ch2, 3, "hiding two columns drops the columnheader count");
         // The visible headers are Name / Size / Owner (cols 0, 2, 4).
         let names: Vec<&str> = hidden
@@ -486,7 +550,11 @@ mod tests {
             .filter(|n| n.role == AriaRole::ColumnHeader)
             .filter_map(|n| n.name.as_deref())
             .collect();
-        assert_eq!(names, vec!["Name", "Size", "Owner"], "the visible headers, in order");
+        assert_eq!(
+            names,
+            vec!["Name", "Size", "Owner"],
+            "the visible headers, in order"
+        );
     }
 
     #[test]
@@ -496,10 +564,24 @@ mod tests {
             ColumnVisibilityView::access_node(&ColsState::default(), Some(COLS_TAG))
         });
         let name_ctl = by_tag(&nodes, &col_ctl_tag(COLS_TAG, 0));
-        assert_eq!(name_ctl.state.checked, Some(true), "Name control is aria-pressed (visible)");
-        assert!(name_ctl.state.disabled, "the sole visible column's control is disabled");
+        assert_eq!(
+            name_ctl.state.checked,
+            Some(true),
+            "Name control is aria-pressed (visible)"
+        );
+        assert!(
+            name_ctl.state.disabled,
+            "the sole visible column's control is disabled"
+        );
         let type_ctl = by_tag(&nodes, &col_ctl_tag(COLS_TAG, 1));
-        assert_eq!(type_ctl.state.checked, Some(false), "Type control is not pressed (hidden)");
-        assert!(!type_ctl.state.disabled, "a hidden column's control stays operable");
+        assert_eq!(
+            type_ctl.state.checked,
+            Some(false),
+            "Type control is not pressed (hidden)"
+        );
+        assert!(
+            !type_ctl.state.disabled,
+            "a hidden column's control stays operable"
+        );
     }
 }

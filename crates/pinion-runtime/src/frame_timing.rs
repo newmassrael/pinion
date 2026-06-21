@@ -206,7 +206,8 @@ impl FrameTimingStats {
         let last = *self.samples.back()?;
         let len = self.samples.len() as u64; // >= 1 past the `?`
         let (mut min_total, mut max_total) = (u64::MAX, 0u64);
-        let (mut sum_total, mut sum_build, mut sum_encode, mut sum_render) = (0u64, 0u64, 0u64, 0u64);
+        let (mut sum_total, mut sum_build, mut sum_encode, mut sum_render) =
+            (0u64, 0u64, 0u64, 0u64);
         let mut over_budget_frames: u32 = 0;
         let mut worst_overrun_us: u64 = 0;
         for s in &self.samples {
@@ -336,7 +337,7 @@ pub struct FrameTimingsSnapshot {
 
 #[cfg(test)]
 mod tests {
-    use super::{FrameTiming, FrameTimingStats, FRAME_TIMING_WINDOW};
+    use super::{FRAME_TIMING_WINDOW, FrameTiming, FrameTimingStats};
 
     #[test]
     fn r907_empty_window_has_no_snapshot() {
@@ -564,7 +565,10 @@ mod tests {
             stats.record(FrameTiming::new(10, 10, 10, 900));
         }
         let busy = stats.snapshot(Some(500)).unwrap();
-        assert_eq!(busy.over_budget_frames, u32::try_from(FRAME_TIMING_WINDOW).unwrap());
+        assert_eq!(
+            busy.over_budget_frames,
+            u32::try_from(FRAME_TIMING_WINDOW).unwrap()
+        );
         for _ in 0..FRAME_TIMING_WINDOW {
             stats.record(FrameTiming::new(10, 10, 10, 100));
         }

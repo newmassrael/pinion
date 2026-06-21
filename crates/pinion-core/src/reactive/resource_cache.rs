@@ -273,9 +273,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::owner::Owner;
     use super::super::resource::{DeferredReady, LocalTaskPump};
+    use super::*;
 
     type Cache = ResourceCache<usize, i32, String>;
 
@@ -334,7 +334,10 @@ mod tests {
             DeferredReady::new(0, Err::<i32, String>("boom".to_owned()))
         });
         drain(&pump);
-        assert_eq!(cache.state(&3), Some(ResourceState::Error("boom".to_owned())));
+        assert_eq!(
+            cache.state(&3),
+            Some(ResourceState::Error("boom".to_owned()))
+        );
     }
 
     #[test]
@@ -389,10 +392,18 @@ mod tests {
         // the same page index under a different ordering is a distinct entry.
         let pump = LocalTaskPump::new();
         let cache: ResourceCache<(u8, Option<u8>, usize), i32, String> = ResourceCache::new();
-        cache.ensure((0, None, 0), &pump, || DeferredReady::new(0, Ok::<i32, String>(1)));
-        cache.ensure((1, None, 0), &pump, || DeferredReady::new(0, Ok::<i32, String>(2)));
+        cache.ensure((0, None, 0), &pump, || {
+            DeferredReady::new(0, Ok::<i32, String>(1))
+        });
+        cache.ensure((1, None, 0), &pump, || {
+            DeferredReady::new(0, Ok::<i32, String>(2))
+        });
         drain(&pump);
-        assert_eq!(cache.len(), 2, "same page, different sort → distinct entries");
+        assert_eq!(
+            cache.len(),
+            2,
+            "same page, different sort → distinct entries"
+        );
         assert_eq!(cache.state(&(0, None, 0)), Some(ResourceState::Ready(1)));
         assert_eq!(cache.state(&(1, None, 0)), Some(ResourceState::Ready(2)));
     }
@@ -522,7 +533,10 @@ mod tests {
         drain(&pump);
         assert_eq!(cache.len(), 1);
         assert_eq!(cache.state(&1), Some(ResourceState::Ready(701)));
-        assert!(!cache.contains(&0), "orphaned completion did not re-add key 0");
+        assert!(
+            !cache.contains(&0),
+            "orphaned completion did not re-add key 0"
+        );
     }
 
     #[test]
@@ -539,9 +553,17 @@ mod tests {
         assert!(!cache.contains(&0));
         // Re-ensure key 0: it is gone, so the factory runs a fresh fetch.
         cache.ensure(0, &pump, || DeferredReady::new(1, Ok::<i32, String>(42)));
-        assert_eq!(cache.state(&0), Some(ResourceState::Loading), "re-fetch starts loading");
+        assert_eq!(
+            cache.state(&0),
+            Some(ResourceState::Loading),
+            "re-fetch starts loading"
+        );
         drain(&pump);
-        assert_eq!(cache.state(&0), Some(ResourceState::Ready(42)), "re-fetched value lands");
+        assert_eq!(
+            cache.state(&0),
+            Some(ResourceState::Ready(42)),
+            "re-fetched value lands"
+        );
     }
 
     #[test]
@@ -559,9 +581,17 @@ mod tests {
         assert!(!cache.contains(&9), "invalidated page is gone");
         // The next ensure re-fetches it with the grown content (value 2).
         cache.ensure(9, &pump, || DeferredReady::new(1, Ok::<i32, String>(2)));
-        assert_eq!(cache.state(&9), Some(ResourceState::Loading), "re-fetch starts loading");
+        assert_eq!(
+            cache.state(&9),
+            Some(ResourceState::Loading),
+            "re-fetch starts loading"
+        );
         drain(&pump);
-        assert_eq!(cache.state(&9), Some(ResourceState::Ready(2)), "grown page lands");
+        assert_eq!(
+            cache.state(&9),
+            Some(ResourceState::Ready(2)),
+            "grown page lands"
+        );
     }
 
     #[test]
@@ -576,6 +606,10 @@ mod tests {
         assert_eq!(cache.len(), 1, "absent invalidate left the cache untouched");
         // Other keys are undisturbed.
         cache.invalidate(&999);
-        assert_eq!(cache.state(&0), Some(ResourceState::Ready(100)), "key 0 intact");
+        assert_eq!(
+            cache.state(&0),
+            Some(ResourceState::Ready(100)),
+            "key 0 intact"
+        );
     }
 }

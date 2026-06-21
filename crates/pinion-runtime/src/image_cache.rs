@@ -46,7 +46,9 @@ impl ImageCache {
     /// An empty cache.
     #[must_use]
     pub fn new() -> Self {
-        Self { entries: HashMap::new() }
+        Self {
+            entries: HashMap::new(),
+        }
     }
 
     /// Resolve `source` to a drawable `peniko::ImageData`, decoding +
@@ -80,7 +82,8 @@ impl ImageCache {
     /// registrar) seed the cache deterministically without a fixture
     /// file on disk.
     pub fn insert_decoded(&mut self, source: impl Into<String>, image: &DecodedImage) {
-        self.entries.insert(source.into(), Some(to_image_data(image)));
+        self.entries
+            .insert(source.into(), Some(to_image_data(image)));
     }
 }
 
@@ -139,7 +142,10 @@ mod tests {
     #[test]
     fn missing_file_caches_the_miss() {
         let mut c = ImageCache::new();
-        assert!(c.resolve("/no/such/file/exists.png").is_none(), "missing → None");
+        assert!(
+            c.resolve("/no/such/file/exists.png").is_none(),
+            "missing → None"
+        );
         // The miss is cached (one entry), so a second resolve does not retry IO.
         assert_eq!(c.len(), 1);
         assert!(c.resolve("/no/such/file/exists.png").is_none());

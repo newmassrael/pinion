@@ -30,16 +30,17 @@
 
 use std::rc::Rc;
 
+use pinion_core::Scene;
 use pinion_core::composite_tag::{GridSendKey, GridTag};
 use pinion_core::scene::{ContainerNode, Rect, ScrollAxis, ScrollNode, TextNode, TextRole};
 use pinion_core::style::{
-    AlignItems, Border, BoxStyle, Color, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
+    AlignItems, Border, BoxStyle, Color, FlexDirection, JustifyContent, LayoutStyle, Size,
+    TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme};
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::scroll::ScrollState;
-use pinion_core::widgets::virtual_list::{compute_visible_range, content_height, VisibleWindow};
-use pinion_core::Scene;
+use pinion_core::widgets::virtual_list::{VisibleWindow, compute_visible_range, content_height};
 
 use crate::virtual_list::{assemble_windowed_flex, uniform_slots};
 
@@ -270,9 +271,8 @@ fn cell_selection_overlay(
     // `block_pad`; the overlay adds it back to line up with them.
     let x: u32 = style.block_pad + widths.iter().take(c0).sum::<u32>();
     let w: u32 = widths.iter().skip(c0).take(c1 - c0 + 1).sum();
-    let y = style.block_pad
-        + style.header_height
-        + u32::try_from(r0).unwrap_or(0) * style.row_height;
+    let y =
+        style.block_pad + style.header_height + u32::try_from(r0).unwrap_or(0) * style.row_height;
     let h = u32::try_from(r1 - r0 + 1).unwrap_or(0) * style.row_height;
     let accent = theme.resolve(ColorRole::Accent);
     let wash = accent.with_alpha(CELL_SEL_WASH_ALPHA);
@@ -304,7 +304,12 @@ fn cell_selection_overlay(
 /// plus a separate column count.
 fn resolve_widths(cols: usize, col_widths: Option<&[u32]>, style: &TableStyle) -> Vec<u32> {
     (0..cols)
-        .map(|c| col_widths.and_then(|w| w.get(c)).copied().unwrap_or(style.col_width))
+        .map(|c| {
+            col_widths
+                .and_then(|w| w.get(c))
+                .copied()
+                .unwrap_or(style.col_width)
+        })
         .collect()
 }
 
@@ -333,7 +338,9 @@ fn resize_handle(tag: &str, col: usize, outline: Color, style: &TableStyle) -> S
     let divider = Scene::Container(
         ContainerNode::new(Vec::new())
             .with_style(BoxStyle::filled(outline))
-            .with_layout(LayoutStyle::new().with_size(Size::px(RESIZE_DIVIDER_W, style.header_height))),
+            .with_layout(
+                LayoutStyle::new().with_size(Size::px(RESIZE_DIVIDER_W, style.header_height)),
+            ),
     );
     Scene::Container(
         ContainerNode::new(vec![divider])
@@ -366,17 +373,27 @@ fn header_cell(
     theme: &Theme,
     style: &TableStyle,
 ) -> Scene {
-    let ColCell { col, width, resizable } = cell;
+    let ColCell {
+        col,
+        width,
+        resizable,
+    } = cell;
     let fg = theme.resolve(ColorRole::OnSurface);
     // R786 — reserve the trailing grabber width from the clickable / label area
     // so the cell's total width stays `width` (the data cells' width). A
     // non-resizable header is byte-identical to the R785 layout (full `width`).
-    let content_w = if resizable { width.saturating_sub(style.resize_handle_w) } else { width };
+    let content_w = if resizable {
+        width.saturating_sub(style.resize_handle_w)
+    } else {
+        width
+    };
     let label_node = Scene::Text(
         TextNode::styled(
             label.to_string(),
             Rect::default(),
-            TextStyle::new().with_size_px(style.header_size_px).with_fg(fg),
+            TextStyle::new()
+                .with_size_px(style.header_size_px)
+                .with_fg(fg),
         )
         .with_role(TextRole::Presentational),
     );
@@ -391,7 +408,9 @@ fn header_cell(
             TextNode::styled(
                 glyph.to_string(),
                 Rect::default(),
-                TextStyle::new().with_size_px(style.header_size_px).with_fg(fg),
+                TextStyle::new()
+                    .with_size_px(style.header_size_px)
+                    .with_fg(fg),
             )
             .with_role(TextRole::Presentational),
         ));
@@ -402,7 +421,10 @@ fn header_cell(
             // R778 — the click routes to `click_tag` (the sort anchor),
             // which may differ from the presentational `tag` (the a11y /
             // paint-root anchor) when sort is a separate coordinator.
-            .with_tag(format!("{click_tag}#{}", GridSendKey::Header { col }.encode()))
+            .with_tag(format!(
+                "{click_tag}#{}",
+                GridSendKey::Header { col }.encode()
+            ))
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Row)
@@ -417,7 +439,12 @@ fn header_cell(
     // resize grabber, tiling the cell's full `width` (content_w + handle_w).
     let mut cell_children = vec![inner];
     if resizable {
-        cell_children.push(resize_handle(tag, col, theme.resolve(ColorRole::Outline), style));
+        cell_children.push(resize_handle(
+            tag,
+            col,
+            theme.resolve(ColorRole::Outline),
+            style,
+        ));
     }
     Scene::Container(
         ContainerNode::new(cell_children)
@@ -488,7 +515,11 @@ fn header_row(
             header_cell(
                 tag,
                 click_tag,
-                ColCell { col, width, resizable: layout.resizable },
+                ColCell {
+                    col,
+                    width,
+                    resizable: layout.resizable,
+                },
                 label,
                 sort,
                 theme,
@@ -503,7 +534,9 @@ fn header_row(
             // attach the header `row` node (and resolve its bounds); not a
             // composite `'#'` tag, so it is inert to hit routing.
             .with_tag(layout.container_tag.to_string())
-            .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh)))
+            .with_style(BoxStyle::filled(
+                theme.resolve(ColorRole::SurfaceContainerHigh),
+            ))
             .with_layout(LayoutStyle::new().flex(FlexDirection::Row)),
     )
 }
@@ -630,7 +663,12 @@ pub fn view_table(
         tag,
         data.headers,
         sort,
-        ColumnLayout { widths: &widths, resizable: false, col_base: 0, container_tag: &hrow_tag },
+        ColumnLayout {
+            widths: &widths,
+            resizable: false,
+            col_base: 0,
+            container_tag: &hrow_tag,
+        },
         theme,
         style,
     );
@@ -652,7 +690,11 @@ pub fn view_table(
             cells_text,
             fill,
             fg,
-            RowPane { container_tag: &row_tag, col_base: 0, widths: &widths },
+            RowPane {
+                container_tag: &row_tag,
+                col_base: 0,
+                widths: &widths,
+            },
             style,
         ));
     }
@@ -1058,7 +1100,8 @@ pub(crate) fn frozen_split_panes(
 ) -> Scene {
     // Frozen pane: header + follower V-body, pinned at `frozen.width` (width
     // fixed, height stretches via the Row's `AlignItems::Stretch`).
-    let frozen_body = assemble_windowed_flex(scroll.body, frozen.width, total_h, frozen.slots, true);
+    let frozen_body =
+        assemble_windowed_flex(scroll.body, frozen.width, total_h, frozen.slots, true);
     let frozen_pane = Scene::Container(
         ContainerNode::new(vec![frozen.header, frozen_body]).with_layout(
             LayoutStyle::new()
@@ -1069,11 +1112,15 @@ pub(crate) fn frozen_split_panes(
     // Scrolling pane: an R784 horizontally-scrolled `[header, body]` column,
     // flex-growing into the width left of the frozen pane; its inner V body
     // is the body PRIMARY.
-    let scroll_body = assemble_windowed_flex(scroll.body, scrolled.width, total_h, scrolled.slots, false);
+    let scroll_body =
+        assemble_windowed_flex(scroll.body, scrolled.width, total_h, scrolled.slots, false);
     let scroll_pane = h_scrolled_column(scroll.horizontal, scrolled.header, scroll_body);
     Scene::Container(
-        ContainerNode::new(vec![frozen_pane, scroll_pane])
-            .with_layout(LayoutStyle::new().flex(FlexDirection::Row).with_flex_grow(1.0)),
+        ContainerNode::new(vec![frozen_pane, scroll_pane]).with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Row)
+                .with_flex_grow(1.0),
+        ),
     )
 }
 
@@ -1093,7 +1140,11 @@ impl GridRender<'_> {
     /// **visual** (`view_pos`, so the stripe pattern is stable across
     /// re-sorts — the eager `view_table` convention). Lifted here so the
     /// three slot closures cannot disagree on the fill / fg derivation.
-    fn row_inputs(&self, view_pos: usize, is_selected: &impl Fn(usize) -> bool) -> (usize, Color, Color) {
+    fn row_inputs(
+        &self,
+        view_pos: usize,
+        is_selected: &impl Fn(usize) -> bool,
+    ) -> (usize, Color, Color) {
         let source = self.source_of(view_pos);
         let selected = is_selected(source);
         // R998 — precedence: selection highlight > matched coloring rule >
@@ -1162,7 +1213,11 @@ impl GridRender<'_> {
                     &cell_refs,
                     fill,
                     fg,
-                    RowPane { container_tag: &row_tag, col_base: 0, widths: self.widths },
+                    RowPane {
+                        container_tag: &row_tag,
+                        col_base: 0,
+                        widths: self.widths,
+                    },
                     self.style,
                 )
             },
@@ -1205,7 +1260,11 @@ impl GridRender<'_> {
                 &cell_refs[..split],
                 fill,
                 fg,
-                RowPane { container_tag: &frow_tag, col_base: 0, widths: &self.widths[..frozen_cols] },
+                RowPane {
+                    container_tag: &frow_tag,
+                    col_base: 0,
+                    widths: &self.widths[..frozen_cols],
+                },
                 self.style,
             )
         });
@@ -1270,8 +1329,16 @@ impl GridRender<'_> {
         frozen_split_panes(
             scroll,
             self.total_h,
-            SplitPane { header: frozen_header, width: frozen_w, slots: frozen_slots },
-            SplitPane { header: scroll_header, width: scroll_w, slots: scroll_slots },
+            SplitPane {
+                header: frozen_header,
+                width: frozen_w,
+                slots: frozen_slots,
+            },
+            SplitPane {
+                header: scroll_header,
+                width: scroll_w,
+                slots: scroll_slots,
+            },
         )
     }
 }
@@ -1316,8 +1383,15 @@ mod tests {
         let scene = Owner::new().run(|| {
             view_table(
                 "table",
-                TableData { headers: &headers, rows: &rows, row_ids: &[] },
-                TableSelection { rows: &[], cells: None },
+                TableData {
+                    headers: &headers,
+                    rows: &rows,
+                    row_ids: &[],
+                },
+                TableSelection {
+                    rows: &[],
+                    cells: None,
+                },
                 &all_idle(),
                 None,
                 &light(),
@@ -1375,8 +1449,15 @@ mod tests {
         let unsorted = Owner::new().run(|| {
             view_table(
                 "table",
-                TableData { headers: &headers, rows: &rows, row_ids: &[] },
-                TableSelection { rows: &[], cells: None },
+                TableData {
+                    headers: &headers,
+                    rows: &rows,
+                    row_ids: &[],
+                },
+                TableSelection {
+                    rows: &[],
+                    cells: None,
+                },
                 &all_idle(),
                 None,
                 &theme,
@@ -1385,13 +1466,24 @@ mod tests {
         });
         let mut t = Vec::new();
         collect_text(&unsorted, &mut t);
-        assert!(!t.iter().any(|s| s == crate::glyph::SORT_ASCENDING || s == crate::glyph::SORT_DESCENDING), "no glyph when unsorted");
+        assert!(
+            !t.iter()
+                .any(|s| s == crate::glyph::SORT_ASCENDING || s == crate::glyph::SORT_DESCENDING),
+            "no glyph when unsorted"
+        );
 
         let sorted = Owner::new().run(|| {
             view_table(
                 "table",
-                TableData { headers: &headers, rows: &rows, row_ids: &[] },
-                TableSelection { rows: &[], cells: None },
+                TableData {
+                    headers: &headers,
+                    rows: &rows,
+                    row_ids: &[],
+                },
+                TableSelection {
+                    rows: &[],
+                    cells: None,
+                },
                 &all_idle(),
                 Some((1, true)),
                 &theme,
@@ -1400,8 +1492,17 @@ mod tests {
         });
         let mut t2 = Vec::new();
         collect_text(&sorted, &mut t2);
-        assert_eq!(t2.iter().filter(|s| *s == crate::glyph::SORT_ASCENDING).count(), 1, "one ascending glyph");
-        assert!(!t2.iter().any(|s| s == crate::glyph::SORT_DESCENDING), "no descending glyph for ascending sort");
+        assert_eq!(
+            t2.iter()
+                .filter(|s| *s == crate::glyph::SORT_ASCENDING)
+                .count(),
+            1,
+            "one ascending glyph"
+        );
+        assert!(
+            !t2.iter().any(|s| s == crate::glyph::SORT_DESCENDING),
+            "no descending glyph for ascending sort"
+        );
     }
 
     #[test]
@@ -1414,18 +1515,29 @@ mod tests {
         let scene = Owner::new().run(|| {
             view_table(
                 "table",
-                TableData { headers: &headers, rows: &reordered, row_ids: &[2, 0, 1] },
-                TableSelection { rows: &[], cells: None },
+                TableData {
+                    headers: &headers,
+                    rows: &reordered,
+                    row_ids: &[2, 0, 1],
+                },
+                TableSelection {
+                    rows: &[],
+                    cells: None,
+                },
                 &all_idle(),
                 Some((0, true)),
                 &light(),
                 &TableStyle::m3(),
             )
         });
-        let Scene::Container(root) = &scene else { panic!("root container") };
+        let Scene::Container(root) = &scene else {
+            panic!("root container")
+        };
         // children[0] = header band; children[1..] = data rows in visual order.
         let strip_tag = |i: usize| {
-            let Scene::Container(c) = &root.children[i] else { panic!("row strip") };
+            let Scene::Container(c) = &root.children[i] else {
+                panic!("row strip")
+            };
             c.tag.clone().unwrap()
         };
         assert_eq!(strip_tag(1), "table_row2", "1st visual row = data row 2");
@@ -1494,7 +1606,10 @@ mod tests {
         Owner::new().run(|| {
             view_virtual_table(
                 "vtbl",
-                GridScroll { body: &state, horizontal: &h_state },
+                GridScroll {
+                    body: &state,
+                    horizontal: &h_state,
+                },
                 VirtualTableData {
                     headers: &VT_HEADERS,
                     item_count: VT_N,
@@ -1573,7 +1688,10 @@ mod tests {
         Owner::new().run(|| {
             view_virtual_table(
                 "vtbl",
-                GridScroll { body: &state, horizontal: &h_state },
+                GridScroll {
+                    body: &state,
+                    horizontal: &h_state,
+                },
                 VirtualTableData {
                     headers: &VT_HEADERS,
                     item_count: VT_N,
@@ -1618,12 +1736,27 @@ mod tests {
         // frozen_cols = 1 → column 0 ("Index") pinned, columns 1..3 scroll.
         let scene = run_vtable_frozen(360, 200, 1);
         // Two distinct header-row containers, never a duplicate tag.
-        assert!(scene.contains_tag("vtbl_fhrow"), "frozen header band present");
-        assert!(scene.contains_tag("vtbl_hrow"), "scrolled header band present");
+        assert!(
+            scene.contains_tag("vtbl_fhrow"),
+            "frozen header band present"
+        );
+        assert!(
+            scene.contains_tag("vtbl_hrow"),
+            "scrolled header band present"
+        );
         // Frozen header owns column 0; scrolled header owns columns 1 + 2.
-        assert!(scene.contains_tag("vtbl_ch0"), "frozen pane carries col 0 header");
-        assert!(scene.contains_tag("vtbl_ch1"), "scrolled pane carries col 1 header");
-        assert!(scene.contains_tag("vtbl_ch2"), "scrolled pane carries col 2 header");
+        assert!(
+            scene.contains_tag("vtbl_ch0"),
+            "frozen pane carries col 0 header"
+        );
+        assert!(
+            scene.contains_tag("vtbl_ch1"),
+            "scrolled pane carries col 1 header"
+        );
+        assert!(
+            scene.contains_tag("vtbl_ch2"),
+            "scrolled pane carries col 2 header"
+        );
     }
 
     #[test]
@@ -1634,7 +1767,10 @@ mod tests {
         let scene = run_vtable_frozen(360, 200, 1);
         for col in 0..3 {
             let tag = format!("vtbl#{}", GridSendKey::Cell { row: 0, col }.encode());
-            assert!(scene.contains_tag(&tag), "cell {tag} present across the split");
+            assert!(
+                scene.contains_tag(&tag),
+                "cell {tag} present across the split"
+            );
         }
         // Frozen + scrolled data-row strips use distinct container tags.
         assert!(scene.contains_tag("vtbl_frow0"), "frozen pane row strip");
@@ -1656,7 +1792,11 @@ mod tests {
             1,
             "exactly one follower; the other is the primary that owns bounds",
         );
-        assert_eq!(followers, vec![true, false], "frozen pane follows, scrolled pane leads");
+        assert_eq!(
+            followers,
+            vec![true, false],
+            "frozen pane follows, scrolled pane leads"
+        );
     }
 
     #[test]
@@ -1664,10 +1804,17 @@ mod tests {
         // The default (every pre-R859 caller) renders no frozen pane.
         let scene = run_vtable_frozen(360, 0, 0);
         assert!(scene.contains_tag("vtbl_hrow"), "single header band");
-        assert!(!scene.contains_tag("vtbl_fhrow"), "no frozen header band when unsplit");
+        assert!(
+            !scene.contains_tag("vtbl_fhrow"),
+            "no frozen header band when unsplit"
+        );
         let mut followers = Vec::new();
         collect_vertical_followers(&scene, &mut followers);
-        assert_eq!(followers, vec![false], "one primary vertical scroll, no follower");
+        assert_eq!(
+            followers,
+            vec![false],
+            "one primary vertical scroll, no follower"
+        );
     }
 
     #[test]
@@ -1676,7 +1823,10 @@ mod tests {
         // and 1 freeze, column 2 stays scrollable. Must not panic on the
         // over-range request, and the scrolled pane keeps column 2.
         let scene = run_vtable_frozen(360, 200, 99);
-        assert!(scene.contains_tag("vtbl_fhrow"), "frozen pane exists (clamped, not unsplit)");
+        assert!(
+            scene.contains_tag("vtbl_fhrow"),
+            "frozen pane exists (clamped, not unsplit)"
+        );
         assert!(scene.contains_tag("vtbl_ch0"), "col 0 frozen");
         assert!(scene.contains_tag("vtbl_ch1"), "col 1 frozen");
         assert!(scene.contains_tag("vtbl_ch2"), "col 2 stays scrollable");
@@ -1694,7 +1844,10 @@ mod tests {
     fn r775_virtual_table_rendered_count_grows_with_measured_height() {
         let short = count_vt_rows(&run_vtable(360, 0));
         let tall = count_vt_rows(&run_vtable(720, 0));
-        assert!(tall > short, "taller viewport => more body rows: {tall} vs {short}");
+        assert!(
+            tall > short,
+            "taller viewport => more body rows: {tall} vs {short}"
+        );
         assert!(tall < 40, "still a window: {tall}");
     }
 
@@ -1705,7 +1858,9 @@ mod tests {
         // the outer horizontal scroll, so it is pinned vertically yet
         // tracks the body's horizontal offset.
         let scene = run_vtable(360, 0);
-        let Scene::Container(frame) = &scene else { panic!("root frame is a Container") };
+        let Scene::Container(frame) = &scene else {
+            panic!("root frame is a Container")
+        };
         let Scene::Scroll(h) = &frame.children[0] else {
             panic!("frame's only child is the outer horizontal ScrollNode")
         };
@@ -1717,7 +1872,10 @@ mod tests {
             &column.children[0],
             Scene::Container(c) if c.tag.as_deref() == Some("vtbl_hrow")
         );
-        assert!(header_first, "frozen header band is the column's first child");
+        assert!(
+            header_first,
+            "frozen header band is the column's first child"
+        );
         let body_is_vertical_scroll = matches!(
             &column.children[1],
             Scene::Scroll(b) if b.axis == ScrollAxis::Vertical
@@ -1732,13 +1890,21 @@ mod tests {
     fn r784_virtual_table_outer_scroll_is_horizontal_flex_grow_with_state() {
         let scene = run_vtable(360, 0);
         let h = find_vt_hscroll(&scene).expect("outer horizontal Scene::Scroll present");
-        assert_eq!(h.axis, ScrollAxis::Horizontal, "outer scroll axis is horizontal");
+        assert_eq!(
+            h.axis,
+            ScrollAxis::Horizontal,
+            "outer scroll axis is horizontal"
+        );
         assert!(
             (h.layout.flex_grow - 1.0).abs() < f32::EPSILON,
             "outer horizontal ScrollNode flex-grows to fill the framed interior",
         );
         assert!(h.state.is_some(), "outer scroll carries its ScrollState Rc");
-        assert_eq!(h.tag.as_deref(), Some("vtbl_h"), "derived from the h_scroll tag");
+        assert_eq!(
+            h.tag.as_deref(),
+            Some("vtbl_h"),
+            "derived from the h_scroll tag"
+        );
     }
 
     /// Walk to the container tagged `tag` and return its layout-sidecar pixel
@@ -1775,7 +1941,10 @@ mod tests {
         let scene = Owner::new().run(|| {
             view_virtual_table(
                 "vtbl",
-                GridScroll { body: &state, horizontal: &h_state },
+                GridScroll {
+                    body: &state,
+                    horizontal: &h_state,
+                },
                 VirtualTableData {
                     headers: &VT_HEADERS,
                     item_count: 5,
@@ -1794,9 +1963,21 @@ mod tests {
                 |id| vec![format!("{id}"), "x".to_string(), "y".to_string()],
             )
         });
-        assert_eq!(cell_layout_width(&scene, "vtbl#0_0"), Some(200), "col 0 cell width");
-        assert_eq!(cell_layout_width(&scene, "vtbl#0_1"), Some(50), "col 1 cell width");
-        assert_eq!(cell_layout_width(&scene, "vtbl#0_2"), Some(300), "col 2 cell width");
+        assert_eq!(
+            cell_layout_width(&scene, "vtbl#0_0"),
+            Some(200),
+            "col 0 cell width"
+        );
+        assert_eq!(
+            cell_layout_width(&scene, "vtbl#0_1"),
+            Some(50),
+            "col 1 cell width"
+        );
+        assert_eq!(
+            cell_layout_width(&scene, "vtbl#0_2"),
+            Some(300),
+            "col 2 cell width"
+        );
     }
 
     #[test]
@@ -1805,8 +1986,16 @@ mod tests {
         // pre-R785 behaviour every existing grid relies on).
         let scene = run_vtable(360, 0);
         let uniform = TableStyle::m3().col_width;
-        assert_eq!(cell_layout_width(&scene, "vtbl#0_0"), Some(uniform), "uniform fallback");
-        assert_eq!(cell_layout_width(&scene, "vtbl#0_1"), Some(uniform), "uniform fallback");
+        assert_eq!(
+            cell_layout_width(&scene, "vtbl#0_0"),
+            Some(uniform),
+            "uniform fallback"
+        );
+        assert_eq!(
+            cell_layout_width(&scene, "vtbl#0_1"),
+            Some(uniform),
+            "uniform fallback"
+        );
     }
 
     fn run_vtable_resizable(widths: &[u32], resizable: bool) -> Scene {
@@ -1816,7 +2005,10 @@ mod tests {
         Owner::new().run(|| {
             view_virtual_table(
                 "vtbl",
-                GridScroll { body: &state, horizontal: &h_state },
+                GridScroll {
+                    body: &state,
+                    horizontal: &h_state,
+                },
                 VirtualTableData {
                     headers: &VT_HEADERS,
                     item_count: 5,
@@ -1854,11 +2046,27 @@ mod tests {
             );
         }
         // Header click/content area is the column width minus the grabber.
-        assert_eq!(cell_layout_width(&scene, "vtbl#h0"), Some(200 - handle_w), "col 0 content");
-        assert_eq!(cell_layout_width(&scene, "vtbl#h1"), Some(50 - handle_w), "col 1 content");
+        assert_eq!(
+            cell_layout_width(&scene, "vtbl#h0"),
+            Some(200 - handle_w),
+            "col 0 content"
+        );
+        assert_eq!(
+            cell_layout_width(&scene, "vtbl#h1"),
+            Some(50 - handle_w),
+            "col 1 content"
+        );
         // Data cells keep the full per-column width (no grabber).
-        assert_eq!(cell_layout_width(&scene, "vtbl#0_0"), Some(200), "data cell full width");
-        assert_eq!(cell_layout_width(&scene, "vtbl#0_2"), Some(300), "data cell full width");
+        assert_eq!(
+            cell_layout_width(&scene, "vtbl#0_0"),
+            Some(200),
+            "data cell full width"
+        );
+        assert_eq!(
+            cell_layout_width(&scene, "vtbl#0_2"),
+            Some(300),
+            "data cell full width"
+        );
     }
 
     #[test]
@@ -1866,8 +2074,15 @@ mod tests {
         // R786 — `resizable: false` is byte-identical to the R785 header: no
         // grabber tag, and the content area is the full column width.
         let scene = run_vtable_resizable(&[200, 50, 300], false);
-        assert!(!scene.contains_tag("vtbl_ch0#resize"), "no grabber when not resizable");
-        assert_eq!(cell_layout_width(&scene, "vtbl#h0"), Some(200), "full-width content area");
+        assert!(
+            !scene.contains_tag("vtbl_ch0#resize"),
+            "no grabber when not resizable"
+        );
+        assert_eq!(
+            cell_layout_width(&scene, "vtbl#h0"),
+            Some(200),
+            "full-width content area"
+        );
     }
 
     #[test]
@@ -1932,14 +2147,20 @@ mod tests {
         let state = Rc::new(ScrollState::new());
         let pitch = TableStyle::m3().row_height;
         state.set_measured_viewport(360, pitch * 8);
-        state.set_max(0, i32::try_from(order.len()).unwrap() * i32::try_from(pitch).unwrap());
+        state.set_max(
+            0,
+            i32::try_from(order.len()).unwrap() * i32::try_from(pitch).unwrap(),
+        );
         let h_state = Rc::new(ScrollState::with_tag("vtbl_h"));
         let theme = light();
         let style = TableStyle::m3();
         Owner::new().run(|| {
             view_virtual_table(
                 "vtbl",
-                GridScroll { body: &state, horizontal: &h_state },
+                GridScroll {
+                    body: &state,
+                    horizontal: &h_state,
+                },
                 VirtualTableData {
                     headers: &VT_HEADERS,
                     item_count: order.len(),
@@ -1998,8 +2219,17 @@ mod tests {
         // Descending glyph on the active column only.
         let mut text = Vec::new();
         collect_text(&scene, &mut text);
-        assert_eq!(text.iter().filter(|s| *s == crate::glyph::SORT_DESCENDING).count(), 1, "one descending glyph");
-        assert!(!text.iter().any(|s| s == crate::glyph::SORT_ASCENDING), "no ascending glyph for a descending sort");
+        assert_eq!(
+            text.iter()
+                .filter(|s| *s == crate::glyph::SORT_DESCENDING)
+                .count(),
+            1,
+            "one descending glyph"
+        );
+        assert!(
+            !text.iter().any(|s| s == crate::glyph::SORT_ASCENDING),
+            "no ascending glyph for a descending sort"
+        );
     }
 
     #[test]
@@ -2007,6 +2237,9 @@ mod tests {
         // sort_tag = None (the R777 default) keeps headers on the paint root,
         // where the selection coordinator harmlessly ignores `h<col>`.
         let scene = run_vtable(360, 0);
-        assert!(scene.contains_tag("vtbl#h0"), "display grid header stays on the grid anchor");
+        assert!(
+            scene.contains_tag("vtbl#h0"),
+            "display grid header stays on the grid anchor"
+        );
     }
 }

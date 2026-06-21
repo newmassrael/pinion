@@ -23,6 +23,7 @@
 
 use std::borrow::Cow;
 
+use crate::Frame;
 use crate::command::Command;
 use crate::external::{External, IntrospectValue};
 use crate::intent::Intent;
@@ -35,7 +36,6 @@ use crate::term_grid::{
 use crate::widget_core::WidgetCore;
 use crate::widgets::aria;
 use crate::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
-use crate::Frame;
 
 /// R55.G.22 §5.49 — pin the composite paint-root tag convention.
 ///
@@ -209,10 +209,7 @@ impl BindableCacheSlot for crate::widgets::caret_blink::CaretBlink {
 /// `bind_cache_slot::<_>(&owner, "list")` when the return type is
 /// inferred from the binding's later use).
 #[must_use]
-pub fn bind_cache_slot<S: BindableCacheSlot>(
-    owner: &Owner,
-    tag: &'static str,
-) -> std::rc::Rc<S> {
+pub fn bind_cache_slot<S: BindableCacheSlot>(owner: &Owner, tag: &'static str) -> std::rc::Rc<S> {
     owner.run(|| S::use_in_scope(tag))
 }
 
@@ -675,8 +672,7 @@ pub fn text_grid_consistency_buffer() -> GridBuffer {
                 TermCell::new("B", red, TermColor::Default)
                     .with_attrs(e().with_italic(true).with_underline(true)),
                 // SGR reverse, no cursor — effective-reversed on its own.
-                TermCell::new("C", TermColor::Indexed(2), blue)
-                    .with_attrs(e().with_reverse(true)),
+                TermCell::new("C", TermColor::Indexed(2), blue).with_attrs(e().with_reverse(true)),
                 TermCell::new("D", TermColor::Default, TermColor::Default)
                     .with_attrs(e().with_blink(true).with_strikethrough(true)),
             ],
@@ -723,11 +719,11 @@ mod r55_g22_tests {
     //! for an always-true predicate would let the fail-arm test
     //! catch it).
     use super::{ButtonFixture, assert_widget_view_carries_tag};
+    use crate::Frame;
     use crate::external::External;
     use crate::scene::{ContainerNode, Rect, Scene, TextNode};
     use crate::widget_core::WidgetCore;
     use crate::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
-    use crate::Frame;
 
     #[test]
     fn pass_arm_button_fixture_view_carries_tag() {
@@ -814,9 +810,7 @@ mod r995_text_grid_facts_tests {
     //! Vello / TUI tests assert against a verified truth (not a tautology with
     //! either painter). Each assertion below is an *independent* read of the
     //! model — "(2, 0) carries SGR reverse so it reads reversed", etc.
-    use super::{
-        TextGridCellFacts, expected_text_grid_cell_facts, text_grid_consistency_buffer,
-    };
+    use super::{TextGridCellFacts, expected_text_grid_cell_facts, text_grid_consistency_buffer};
     use crate::term_grid::CellWidth;
 
     fn facts(col: u16, row: u16) -> TextGridCellFacts {
@@ -842,7 +836,10 @@ mod r995_text_grid_facts_tests {
         // (2,1) is "E" with SGR 8 hidden — a non-blank cluster, but concealed,
         // so no *visible* ink (Vello suppresses the glyph; the TUI tags it
         // HIDDEN and the terminal conceals it).
-        assert!(!facts(2, 1).inks_glyph, "(2,1) hidden 'E' inks nothing visible");
+        assert!(
+            !facts(2, 1).inks_glyph,
+            "(2,1) hidden 'E' inks nothing visible"
+        );
     }
 
     #[test]
@@ -859,7 +856,11 @@ mod r995_text_grid_facts_tests {
     #[test]
     fn wide_head_and_trailer_are_classified() {
         assert_eq!(facts(0, 1).width, CellWidth::Wide, "(0,1) is the wide head");
-        assert_eq!(facts(1, 1).width, CellWidth::Trailer, "(1,1) is the trailer");
+        assert_eq!(
+            facts(1, 1).width,
+            CellWidth::Trailer,
+            "(1,1) is the trailer"
+        );
         assert_eq!(facts(0, 0).width, CellWidth::Narrow, "(0,0) is narrow");
     }
 

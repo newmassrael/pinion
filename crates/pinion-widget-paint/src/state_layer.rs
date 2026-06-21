@@ -30,8 +30,8 @@
 //! `OnSurface` — keep their own arms but reference these shared token
 //! constants, so the magic numbers still live in exactly one place.
 
-use pinion_core::theme::{ColorRole, Theme};
 use pinion_core::Color;
+use pinion_core::theme::{ColorRole, Theme};
 
 // R755 — the interaction-posture trait lifted down to `pinion-core` so the
 // a11y layer can share it (see `pinion_core::widgets::interaction`). Re-

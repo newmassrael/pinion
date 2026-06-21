@@ -49,15 +49,15 @@ use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextAlign, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::use_repaint_sink;
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::aria::apply_aria_activate;
 use pinion_core::widgets::button::{ButtonExternal, ButtonState};
 use pinion_core::{Frame, Scene, WidgetCore};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::button::{
-    button_a11y_state, read_button_focused, read_button_state, ButtonColors, ButtonStyle,
+    ButtonColors, ButtonStyle, button_a11y_state, read_button_focused, read_button_state,
 };
 use std::rc::Rc;
 use std::sync::mpsc::{self, Sender};
@@ -146,7 +146,11 @@ fn use_live_log() -> Rc<LiveLog> {
                 }
             })
             .expect("spawn hello-live-data producer thread");
-        LiveLog { lines, tx, _thread: thread }
+        LiveLog {
+            lines,
+            tx,
+            _thread: thread,
+        }
     })
 }
 
@@ -223,7 +227,8 @@ fn log_list_scene(lines: &[String], theme: &Theme) -> Scene {
         ContainerNode::new(children)
             .with_tag(LIST_TAG)
             .with_style(
-                BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerLow)).with_corner_radius(8),
+                BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerLow))
+                    .with_corner_radius(8),
             )
             .with_layout(
                 LayoutStyle::new()
@@ -395,7 +400,9 @@ impl WidgetA11y for LiveDataView {
         let mut nodes = Vec::with_capacity(items.len() + 3);
         nodes.push(list);
         nodes.extend(items);
-        nodes.push(AccessNode::new(STATUS_TAG, AriaRole::Status).with_name(status_line(lines.len())));
+        nodes.push(
+            AccessNode::new(STATUS_TAG, AriaRole::Status).with_name(status_line(lines.len())),
+        );
         nodes.push(
             AccessNode::new(TICK_TAG, AriaRole::Button)
                 .with_state(button_a11y_state(posture, focused == Some(TICK_TAG))),
@@ -539,11 +546,11 @@ mod tests {
                 }
                 std::thread::sleep(std::time::Duration::from_millis(5));
             }
-            assert!(appended, "producer thread appended a line after the tick poke");
-            assert_eq!(
-                log.lines.lock().unwrap()[0],
-                "[001] background event #1",
+            assert!(
+                appended,
+                "producer thread appended a line after the tick poke"
             );
+            assert_eq!(log.lines.lock().unwrap()[0], "[001] background event #1",);
         });
     }
 
@@ -559,15 +566,22 @@ mod tests {
         assert_eq!(list.role, AriaRole::List);
         assert_eq!(list.children.len(), 1, "one resident line claimed");
         assert_eq!(
-            nodes.iter().filter(|n| n.role == AriaRole::ListItem).count(),
+            nodes
+                .iter()
+                .filter(|n| n.role == AriaRole::ListItem)
+                .count(),
             1,
         );
-        assert!(nodes
-            .iter()
-            .any(|n| n.tag == STATUS_TAG && n.role == AriaRole::Status));
-        assert!(nodes
-            .iter()
-            .any(|n| n.tag == TICK_TAG && n.role == AriaRole::Button));
+        assert!(
+            nodes
+                .iter()
+                .any(|n| n.tag == STATUS_TAG && n.role == AriaRole::Status)
+        );
+        assert!(
+            nodes
+                .iter()
+                .any(|n| n.tag == TICK_TAG && n.role == AriaRole::Button)
+        );
     }
 
     #[test]

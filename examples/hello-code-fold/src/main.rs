@@ -70,13 +70,13 @@ use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole};
-use pinion_core::widgets::text_edit::{use_text_edit_state, TextEditState};
+use pinion_core::theme::{ColorRole, use_theme};
+use pinion_core::widgets::text_edit::{TextEditState, use_text_edit_state};
 use pinion_core::widgets::text_field::{
     TextFieldEvent, TextFieldExternal, TextFieldSendKey, TextFieldState,
 };
 use pinion_core::{Frame, Scene, WidgetCore};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 // R657 §5.16 §5.38 — lifted TextField substrate: state-scene introspect
 // read + the textbox ARIA node SSOT (the only two helpers this fold view
 // borrows; the folded panel itself is rendered binding-local).
@@ -137,8 +137,7 @@ const FOLD_ELLIPSIS: &str = "\u{2026}";
 /// R933 §5.36 — the seeded code. Two nested brace blocks: the `fn` body
 /// (opener line 0, closer line 5) and the `if` body (opener line 2, closer
 /// line 4); the same-line `()` calls are not foldable (one line each).
-const SEED_CODE: &str =
-    "fn main() {\n    let x = 1;\n    if x > 0 {\n        log(x);\n    }\n}";
+const SEED_CODE: &str = "fn main() {\n    let x = 1;\n    if x > 0 {\n        log(x);\n    }\n}";
 
 /// R955 §5.22 §5.36 — the next **visible** logical line from `cur` in the
 /// `down` direction, skipping lines hidden inside a collapsed region
@@ -173,7 +172,8 @@ fn next_visible_line(edit: &TextEditState, cur: usize, total: usize, down: bool)
 /// a `…` appended to a collapsed opener), and the status line.
 #[allow(
     clippy::trivially_copy_pass_by_ref,
-    reason = "view-fn shape mirrors WidgetCore::view (&Frame)"
+    clippy::too_many_lines,
+    reason = "view-fn shape mirrors WidgetCore::view (&Frame); R1026 rustfmt reflow"
 )]
 fn view(_state: (TextFieldState, u32), _frame: &Frame) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
@@ -256,11 +256,17 @@ fn view(_state: (TextFieldState, u32), _frame: &Frame) -> Scene {
         ));
         let mut row = ContainerNode::new(vec![gutter, code])
             .with_tag(format!("fold_row_{i}"))
-            .with_layout(LayoutStyle::new().flex(FlexDirection::Row).with_gap(GUTTER_GAP));
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Row)
+                    .with_gap(GUTTER_GAP),
+            );
         if i == cursor_line {
             // Current-line band — a step lighter than the panel so the active
             // line reads as the keyboard cursor's position.
-            row = row.with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh)));
+            row = row.with_style(BoxStyle::filled(
+                theme.resolve(ColorRole::SurfaceContainerHigh),
+            ));
         }
         rows.push(Scene::Container(row));
     }
@@ -270,8 +276,14 @@ fn view(_state: (TextFieldState, u32), _frame: &Frame) -> Scene {
             // R55.G.17 — the paint scene must carry `WidgetCore::tag` so
             // `scene/<tag>` routing + `rect_for_tag` resolve.
             .with_tag(TF_TAG)
-            .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHighest)))
-            .with_layout(LayoutStyle::new().flex(FlexDirection::Column).with_gap(LINE_GAP)),
+            .with_style(BoxStyle::filled(
+                theme.resolve(ColorRole::SurfaceContainerHighest),
+            ))
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Column)
+                    .with_gap(LINE_GAP),
+            ),
     );
 
     let collapsed = regions.iter().filter(|r| r.collapsed).count();
@@ -404,7 +416,12 @@ impl WidgetA11y for FoldView {
         let (interaction, _caret) = state;
         let text = use_text_edit_state(TF_TAG).text();
         let tag = <Self as WidgetCore>::tag();
-        vec![tf_paint::text_field_a11y_node(tag, text, *interaction, focused == Some(tag))]
+        vec![tf_paint::text_field_a11y_node(
+            tag,
+            text,
+            *interaction,
+            focused == Some(tag),
+        )]
     }
 }
 
@@ -412,7 +429,10 @@ impl WidgetView for FoldView {
     type Renderer = HelloCodeFoldRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 }
 
@@ -425,7 +445,7 @@ mod tests {
     //! R933 §5.36 — binding-level regression: paint-root tag presence +
     //! the folded view actually drops the hidden rows.
 
-    use super::{view, FoldView, SEED_CODE, STATUS_TAG, TF_TAG};
+    use super::{FoldView, SEED_CODE, STATUS_TAG, TF_TAG, view};
     use pinion_core::reactive::Owner;
     use pinion_core::scene::ExternalNode;
     use pinion_core::widgets::text_edit::use_text_edit_state;
@@ -526,10 +546,17 @@ mod tests {
             st.set_text(SEED_CODE.to_string());
             st.set_caret(0); // line 0 = the outer foldable opener
             let mut scene = scene_fixture();
-            let collapsed_at0 = || st.fold_regions().iter().any(|r| r.start_line == 0 && r.collapsed);
+            let collapsed_at0 = || {
+                st.fold_regions()
+                    .iter()
+                    .any(|r| r.start_line == 0 && r.collapsed)
+            };
             assert!(!collapsed_at0(), "the outer block is open at the start");
             press(&mut scene, "Enter");
-            assert!(collapsed_at0(), "Enter folded the region at the cursor line");
+            assert!(
+                collapsed_at0(),
+                "Enter folded the region at the cursor line"
+            );
             press(&mut scene, "Enter");
             assert!(!collapsed_at0(), "Enter again unfolded it");
         });
@@ -548,8 +575,14 @@ mod tests {
             let mut scene = scene_fixture();
             press(&mut scene, "ArrowDown");
             let line = st.caret_line();
-            assert_eq!(line, 5, "ArrowDown stepped over the collapsed inner block to line 5");
-            assert!(!st.is_line_hidden(line), "the cursor never lands on a hidden line");
+            assert_eq!(
+                line, 5,
+                "ArrowDown stepped over the collapsed inner block to line 5"
+            );
+            assert!(
+                !st.is_line_hidden(line),
+                "the cursor never lands on a hidden line"
+            );
         });
     }
 

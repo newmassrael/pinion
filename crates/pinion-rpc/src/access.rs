@@ -76,7 +76,12 @@ fn access_node_to_json(node: &AccessNode) -> Value {
     if !node.children.is_empty() {
         obj.insert(
             "children".to_string(),
-            Value::Array(node.children.iter().map(|c| Value::String(c.clone())).collect()),
+            Value::Array(
+                node.children
+                    .iter()
+                    .map(|c| Value::String(c.clone()))
+                    .collect(),
+            ),
         );
     }
     if let Some(selected) = node.selected {
@@ -101,22 +106,37 @@ fn access_node_to_json(node: &AccessNode) -> Value {
         obj.insert("expanded".to_string(), Value::Bool(expanded));
     }
     if let Some(described_by) = &node.described_by {
-        obj.insert("described_by".to_string(), Value::String(described_by.clone()));
+        obj.insert(
+            "described_by".to_string(),
+            Value::String(described_by.clone()),
+        );
     }
     if let Some(controls) = &node.controls {
         obj.insert("controls".to_string(), Value::String(controls.clone()));
     }
     if let Some(ac) = node.auto_complete {
-        obj.insert("auto_complete".to_string(), Value::String(ac.aria_name().to_string()));
+        obj.insert(
+            "auto_complete".to_string(),
+            Value::String(ac.aria_name().to_string()),
+        );
     }
     if let Some(sort) = node.sort {
-        obj.insert("sort".to_string(), Value::String(sort.aria_name().to_string()));
+        obj.insert(
+            "sort".to_string(),
+            Value::String(sort.aria_name().to_string()),
+        );
     }
     if let Some(current) = node.current {
-        obj.insert("current".to_string(), Value::String(current.aria_name().to_string()));
+        obj.insert(
+            "current".to_string(),
+            Value::String(current.aria_name().to_string()),
+        );
     }
     if let Some(has_popup) = node.has_popup {
-        obj.insert("haspopup".to_string(), Value::String(has_popup.aria_name().to_string()));
+        obj.insert(
+            "haspopup".to_string(),
+            Value::String(has_popup.aria_name().to_string()),
+        );
     }
     Value::Object(obj)
 }
@@ -171,7 +191,10 @@ fn access_focus_to_json(focus: &AccessFocus) -> Value {
     let mut obj = Map::new();
     obj.insert("tag".to_string(), Value::String(focus.focus_tag.clone()));
     if let Some(child) = &focus.active_descendant {
-        obj.insert("active_descendant".to_string(), Value::String(child.clone()));
+        obj.insert(
+            "active_descendant".to_string(),
+            Value::String(child.clone()),
+        );
     }
     Value::Object(obj)
 }
@@ -192,9 +215,7 @@ fn finite(f: f32) -> Value {
 #[cfg(test)]
 mod tests {
     use super::access_to_json;
-    use pinion_a11y::{
-        AccessFocus, AccessNode, AccessState, AccessValue, AriaRole, SortDirection,
-    };
+    use pinion_a11y::{AccessFocus, AccessNode, AccessState, AccessValue, AriaRole, SortDirection};
     use pinion_core::scene::Rect;
 
     #[test]
@@ -218,8 +239,15 @@ mod tests {
         // The R966 carry: a slider's valuenow / valuemin / valuemax was
         // RPC-invisible. It rides the `value` object now.
         let node = AccessNode::new("opacity", AriaRole::Slider)
-            .with_value(AccessValue::Float { value: 0.5, min: 0.0, max: 1.0 })
-            .with_state(AccessState { focused: true, ..AccessState::default() });
+            .with_value(AccessValue::Float {
+                value: 0.5,
+                min: 0.0,
+                max: 1.0,
+            })
+            .with_state(AccessState {
+                focused: true,
+                ..AccessState::default()
+            });
         let json = access_to_json(&[node], None);
         let value = &json["nodes"][0]["value"]["float"];
         assert_eq!(value["value"], 0.5);
@@ -248,7 +276,10 @@ mod tests {
         let n = &json["nodes"][0];
         assert_eq!(n["name"], "Layer");
         assert_eq!(n["role"], "treeitem");
-        assert_eq!(n["bounds"], serde_json::json!({ "x": 4, "y": 8, "w": 120, "h": 24 }));
+        assert_eq!(
+            n["bounds"],
+            serde_json::json!({ "x": 4, "y": 8, "w": 120, "h": 24 })
+        );
         assert_eq!(n["selected"], true);
         assert_eq!(n["expanded"], true);
         assert_eq!(n["level"], 2);

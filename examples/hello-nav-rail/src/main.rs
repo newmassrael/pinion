@@ -36,19 +36,19 @@
 //! tree (`navigation` > `link` with `aria-current="page"`) all converge on
 //! the same `RadioGroupExternal` statechart.
 
+use pinion_a11y::{
+    AccessAction, AccessFocus, AccessNode, NavLink, WidgetA11y, navigation_link_nodes,
+};
 use pinion_core::external::External;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, LayoutStyle, Size, SizeValue, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widgets::radio::{RadioEvent, RadioState};
 use pinion_core::widgets::radio_group::RadioGroupExternal;
 use pinion_core::{Color, Frame, Scene, WidgetCore};
-use pinion_a11y::{
-    navigation_link_nodes, AccessAction, AccessFocus, AccessNode, NavLink, WidgetA11y,
-};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::radio_composite as rc;
 use pinion_widget_paint::state_layer::state_layer;
 
@@ -100,15 +100,13 @@ fn view(state: RailState, _frame: &Frame) -> Scene {
     // PRIMARY_TAG on the rail column so `{path:"nav_rail"}` AI routing +
     // `rect_for_tag` AT bounds attach to the Navigation landmark.
     let rail = Scene::Container(
-        ContainerNode::new(items)
-            .with_tag(PRIMARY_TAG)
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Column)
-                    .with_align_items(AlignItems::Stretch)
-                    .with_gap(RAIL_GAP)
-                    .with_padding(Rect::new(RAIL_PAD, RAIL_PAD, RAIL_PAD, RAIL_PAD)),
-            ),
+        ContainerNode::new(items).with_tag(PRIMARY_TAG).with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Column)
+                .with_align_items(AlignItems::Stretch)
+                .with_gap(RAIL_GAP)
+                .with_padding(Rect::new(RAIL_PAD, RAIL_PAD, RAIL_PAD, RAIL_PAD)),
+        ),
     );
     Scene::Container(
         ContainerNode::new(vec![rail])
@@ -143,7 +141,9 @@ fn destination(index: usize, state: RadioState, active: bool, theme: &Theme) -> 
         ContainerNode::new(vec![Scene::Text(TextNode::styled(
             DESTINATIONS[index],
             Rect::default(),
-            TextStyle::new().with_size_px(LABEL_FONT_PX).with_fg(label_color),
+            TextStyle::new()
+                .with_size_px(LABEL_FONT_PX)
+                .with_fg(label_color),
         ))])
         .with_tag(format!("{PRIMARY_TAG}#{index}"))
         .with_style(BoxStyle::filled(pill_fill).with_corner_radius(PILL_RADIUS))
@@ -334,8 +334,15 @@ mod tests {
     #[test]
     fn active_destination_carries_aria_current_page() {
         let nodes = NavRailView::access_node(&selected_state(2), None);
-        assert_eq!(nodes[3].current, Some(AriaCurrent::Page), "destination 2 is active");
-        assert!(nodes[1].current.is_none(), "inactive destination has no aria-current");
+        assert_eq!(
+            nodes[3].current,
+            Some(AriaCurrent::Page),
+            "destination 2 is active"
+        );
+        assert!(
+            nodes[1].current.is_none(),
+            "inactive destination has no aria-current"
+        );
         assert!(nodes[2].current.is_none());
         assert!(nodes[4].current.is_none());
     }
@@ -361,11 +368,16 @@ mod tests {
     }
 
     fn active_index(scene: &Scene) -> Option<i64> {
-        let Scene::External(node) = scene else { return None };
-        node.handle.introspect()?.query("selected_index").and_then(|v| match v {
-            IntrospectValue::Int(i) => Some(i),
-            _ => None,
-        })
+        let Scene::External(node) = scene else {
+            return None;
+        };
+        node.handle
+            .introspect()?
+            .query("selected_index")
+            .and_then(|v| match v {
+                IntrospectValue::Int(i) => Some(i),
+                _ => None,
+            })
     }
 
     #[test]
@@ -385,23 +397,43 @@ mod tests {
     #[test]
     fn home_end_jump_to_edges() {
         let mut s = scene();
-        assert!(NavRailView::apply_key(&mut s, Some(PRIMARY_TAG), "End", pinion_core::Modifiers::empty()));
+        assert!(NavRailView::apply_key(
+            &mut s,
+            Some(PRIMARY_TAG),
+            "End",
+            pinion_core::Modifiers::empty()
+        ));
         assert_eq!(active_index(&s), Some(i64::try_from(N - 1).unwrap()));
-        assert!(NavRailView::apply_key(&mut s, Some(PRIMARY_TAG), "Home", pinion_core::Modifiers::empty()));
+        assert!(NavRailView::apply_key(
+            &mut s,
+            Some(PRIMARY_TAG),
+            "Home",
+            pinion_core::Modifiers::empty()
+        ));
         assert_eq!(active_index(&s), Some(0));
     }
 
     #[test]
     fn unfocused_swallows_arrow() {
         let mut s = scene();
-        assert!(!NavRailView::apply_key(&mut s, None, "ArrowDown", pinion_core::Modifiers::empty()));
+        assert!(!NavRailView::apply_key(
+            &mut s,
+            None,
+            "ArrowDown",
+            pinion_core::Modifiers::empty()
+        ));
         assert_eq!(active_index(&s), None);
     }
 
     #[test]
     fn at_click_navigates_to_destination() {
         let mut s = scene();
-        assert!(NavRailView::access_child_invoke(&mut s, PRIMARY_TAG, "1", AccessAction::Click));
+        assert!(NavRailView::access_child_invoke(
+            &mut s,
+            PRIMARY_TAG,
+            "1",
+            AccessAction::Click
+        ));
         assert_eq!(active_index(&s), Some(1));
     }
 

@@ -52,9 +52,7 @@
 use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::{Rc, Weak};
 
-use super::owner::{
-    Owner, ReactiveNode, next_node_id, run_cleanups_isolated, run_with_node,
-};
+use super::owner::{Owner, ReactiveNode, next_node_id, run_cleanups_isolated, run_with_node};
 
 /// Reactive side-effect scope.
 ///
@@ -291,10 +289,10 @@ mod tests {
     use std::cell::{Cell, RefCell};
     use std::rc::Rc;
 
-    use super::Effect;
     use super::super::computed::Computed;
     use super::super::owner::{Owner, batch};
     use super::super::signal::Signal;
+    use super::Effect;
 
     #[test]
     fn effect_runs_eagerly_on_construction() {
@@ -383,7 +381,11 @@ mod tests {
         assert_eq!(count.get(), 2, "child kept alive via parent's strong ref");
         drop(parent);
         signal.set(2);
-        assert_eq!(count.get(), 2, "parent drop cascades to child → effect cancelled");
+        assert_eq!(
+            count.get(),
+            2,
+            "parent drop cascades to child → effect cancelled"
+        );
     }
 
     #[test]

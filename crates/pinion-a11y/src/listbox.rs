@@ -133,7 +133,11 @@ mod tests {
         assert_eq!(nodes.len(), o.len() + 1, "one listbox + N options");
         assert_eq!(nodes[0].role, AriaRole::Listbox);
         assert_eq!(nodes[0].name.as_deref(), Some("Sizes"));
-        assert_eq!(nodes[0].children.len(), o.len(), "listbox references every option");
+        assert_eq!(
+            nodes[0].children.len(),
+            o.len(),
+            "listbox references every option"
+        );
         for node in &nodes[1..] {
             assert_eq!(node.role, AriaRole::ListBoxOption);
         }
@@ -150,13 +154,19 @@ mod tests {
     #[test]
     fn single_select_omits_multiselectable_flag() {
         let nodes = listbox_option_nodes("l", "Sizes", false, &options());
-        assert!(!nodes[0].multiselectable, "single-select listbox is not multiselectable");
+        assert!(
+            !nodes[0].multiselectable,
+            "single-select listbox is not multiselectable"
+        );
     }
 
     #[test]
     fn multiselectable_flag_lowers_on_the_container() {
         let nodes = listbox_option_nodes("l", "Sizes", true, &options());
-        assert!(nodes[0].multiselectable, "multi-select listbox sets aria-multiselectable");
+        assert!(
+            nodes[0].multiselectable,
+            "multi-select listbox sets aria-multiselectable"
+        );
         // The flag is a container property; options are unaffected.
         assert!(nodes[1..].iter().all(|n| !n.multiselectable));
     }
@@ -164,15 +174,25 @@ mod tests {
     #[test]
     fn explicit_label_set_and_none_left_for_enrichment() {
         let nodes = listbox_option_nodes("l", "Sizes", false, &options());
-        assert_eq!(nodes[1].name.as_deref(), Some("Small"), "explicit label applied");
+        assert_eq!(
+            nodes[1].name.as_deref(),
+            Some("Small"),
+            "explicit label applied"
+        );
         assert_eq!(nodes[3].name, None, "label None left to scene enrichment");
     }
 
     #[test]
     fn focused_option_carries_focused_state() {
         let nodes = listbox_option_nodes("l", "Sizes", false, &options());
-        assert!(!nodes[1].state.focused, "option 0 not the active descendant");
-        assert!(nodes[2].state.focused, "option 1 is the roving active descendant");
+        assert!(
+            !nodes[1].state.focused,
+            "option 0 not the active descendant"
+        );
+        assert!(
+            nodes[2].state.focused,
+            "option 1 is the roving active descendant"
+        );
     }
 
     #[test]
@@ -180,7 +200,10 @@ mod tests {
         let nodes = listbox_option_nodes("l", "Sizes", false, &options());
         // Hover posture → hovered; Disabled posture → disabled.
         assert!(nodes[2].state.hovered, "Hover posture lowers to hovered");
-        assert!(nodes[3].state.disabled, "Disabled posture lowers to disabled");
+        assert!(
+            nodes[3].state.disabled,
+            "Disabled posture lowers to disabled"
+        );
         // aria-selected is the membership axis — options never set aria-checked.
         assert!(nodes[1..].iter().all(|n| n.state.checked.is_none()));
     }

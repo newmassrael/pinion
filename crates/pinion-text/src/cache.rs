@@ -111,8 +111,7 @@ impl LayoutCache {
     /// Default cache capacity (cached layouts). A `NonZeroUsize`
     /// compile-time constant so [`LayoutCache::new`] needs no runtime
     /// unwrap.
-    pub const DEFAULT_CAPACITY: NonZeroUsize = NonZeroUsize::new(256)
-        .expect("256 is non-zero");
+    pub const DEFAULT_CAPACITY: NonZeroUsize = NonZeroUsize::new(256).expect("256 is non-zero");
 
     /// Construct a cache with `capacity` slots. Use [`LayoutCache::new`]
     /// for the default.
@@ -142,12 +141,7 @@ impl LayoutCache {
     /// `LruCache` invariant that a key just inserted via `put` is
     /// retrievable via `get` on the same call sequence; an LRU
     /// implementation violating that would be a backing-library bug.
-    pub fn layout(
-        &mut self,
-        text: &str,
-        style: &TextStyle,
-        max_width: Option<u32>,
-    ) -> &Layout {
+    pub fn layout(&mut self, text: &str, style: &TextStyle, max_width: Option<u32>) -> &Layout {
         self.layout_with_runs(text, style, &[], max_width)
     }
 
@@ -233,10 +227,7 @@ impl LayoutCache {
     /// would resolve to a proportional fallback and the advance would not be
     /// a true cell width.
     #[must_use]
-    pub fn measure_monospace_cell(
-        &mut self,
-        font_size_px: u32,
-    ) -> Option<pinion_core::CellMetric> {
+    pub fn measure_monospace_cell(&mut self, font_size_px: u32) -> Option<pinion_core::CellMetric> {
         let mut style = TextStyle::new().with_generic_family(GenericFontFamily::Monospace);
         style.font_size_px = font_size_px;
         // line_height stays `Normal` so the measured line box is the font's
@@ -314,7 +305,10 @@ impl LayoutCache {
         )]
         let break_at = max_width.map(|w| w as f32);
         layout.break_all_lines(break_at);
-        layout.align(map_text_align(style.text_align), AlignmentOptions::default());
+        layout.align(
+            map_text_align(style.text_align),
+            AlignmentOptions::default(),
+        );
         layout
     }
 }
@@ -370,7 +364,9 @@ fn style_properties(style: &TextStyle) -> Vec<StyleProperty<'static, Color>> {
                 FontFamilyName::Generic(GenericFamily::SansSerif),
             ],
         };
-        props.push(StyleProperty::FontFamily(FontFamily::List(Cow::Owned(families))));
+        props.push(StyleProperty::FontFamily(FontFamily::List(Cow::Owned(
+            families,
+        ))));
     }
     props
 }
@@ -412,16 +408,15 @@ fn map_font_style(style: FontStyle) -> parley::FontStyle {
 /// widens from fixed-point u16 (pinion: Hash-safe) to `f32`.
 fn map_line_height(line_height: LineHeight) -> ParleyLineHeight {
     match line_height {
-        LineHeight::Px(px) => {
+        LineHeight::Px(px) =>
+        {
             #[allow(
                 clippy::cast_precision_loss,
                 reason = "line_height px <= 2^24 in practice"
             )]
             ParleyLineHeight::Absolute(px as f32)
         }
-        LineHeight::MultiplierX100(m) => {
-            ParleyLineHeight::FontSizeRelative(f32::from(m) / 100.0)
-        }
+        LineHeight::MultiplierX100(m) => ParleyLineHeight::FontSizeRelative(f32::from(m) / 100.0),
         // Normal + any future #[non_exhaustive] variant → parley
         // default (MetricsRelative(1.0)).
         _ => ParleyLineHeight::MetricsRelative(1.0),
@@ -439,7 +434,6 @@ fn map_text_align(align: TextAlign) -> Alignment {
         _ => Alignment::Start,
     }
 }
-
 
 impl Default for LayoutCache {
     fn default() -> Self {
@@ -524,8 +518,12 @@ mod tests {
     #[test]
     fn different_fg_color_creates_new_entry() {
         let mut cache = LayoutCache::new();
-        let red = TextStyle::new().with_size_px(16).with_fg(Color::rgb(255, 0, 0));
-        let blue = TextStyle::new().with_size_px(16).with_fg(Color::rgb(0, 0, 255));
+        let red = TextStyle::new()
+            .with_size_px(16)
+            .with_fg(Color::rgb(255, 0, 0));
+        let blue = TextStyle::new()
+            .with_size_px(16)
+            .with_fg(Color::rgb(0, 0, 255));
         let _ = cache.layout("text", &red, None);
         let _ = cache.layout("text", &blue, None);
         assert_eq!(
@@ -554,7 +552,9 @@ mod tests {
     fn styled_runs_create_distinct_entry() {
         let mut cache = LayoutCache::new();
         let base = style(16);
-        let red = TextStyle::new().with_size_px(16).with_fg(Color::rgb(255, 0, 0));
+        let red = TextStyle::new()
+            .with_size_px(16)
+            .with_fg(Color::rgb(255, 0, 0));
         let _ = cache.layout("AB", &base, None);
         let _ = cache.layout_with_runs("AB", &base, &[StyleRun::new(0, 1, red)], None);
         assert_eq!(cache.len(), 2, "a styled run is a distinct cache key");
@@ -599,8 +599,12 @@ mod tests {
     fn styled_run_carries_per_run_brush() {
         use parley::PositionedLayoutItem;
         let mut cache = LayoutCache::new();
-        let base = TextStyle::new().with_size_px(16).with_fg(Color::rgb(0, 0, 0));
-        let red = TextStyle::new().with_size_px(16).with_fg(Color::rgb(255, 0, 0));
+        let base = TextStyle::new()
+            .with_size_px(16)
+            .with_fg(Color::rgb(0, 0, 0));
+        let red = TextStyle::new()
+            .with_size_px(16)
+            .with_fg(Color::rgb(255, 0, 0));
         let runs = vec![StyleRun::new(0, 1, red.clone())];
         let layout = cache.layout_with_runs("AB", &base, &runs, None);
         let mut brushes: Vec<Color> = Vec::new();
@@ -611,8 +615,14 @@ mod tests {
                 }
             }
         }
-        assert!(brushes.contains(&red.fg_color), "red run brush present: {brushes:?}");
-        assert!(brushes.contains(&base.fg_color), "base brush present: {brushes:?}");
+        assert!(
+            brushes.contains(&red.fg_color),
+            "red run brush present: {brushes:?}"
+        );
+        assert!(
+            brushes.contains(&base.fg_color),
+            "base brush present: {brushes:?}"
+        );
     }
 
     /// Width of the single shaped glyph in `text` at `size` px in the CSS
@@ -639,7 +649,10 @@ mod tests {
         let i = glyph_advance(&mut cache, "i", "monospace", 32);
         let m = glyph_advance(&mut cache, "M", "monospace", 32);
         let w = glyph_advance(&mut cache, "W", "monospace", 32);
-        assert!(i > 0.0 && m > 0.0 && w > 0.0, "advances are positive: i={i} M={m} W={w}");
+        assert!(
+            i > 0.0 && m > 0.0 && w > 0.0,
+            "advances are positive: i={i} M={m} W={w}"
+        );
         // Fixed pitch ⇒ equal advances. Allow a sub-pixel tolerance for any
         // hinting / rounding in the shaper; a proportional font's i-vs-W gap
         // is several px, far outside this.
@@ -669,9 +682,16 @@ mod tests {
     #[test]
     fn r1002_measure_monospace_cell_is_usable() {
         let mut cache = LayoutCache::new();
-        let m16 = cache.measure_monospace_cell(16).expect("16px monospace measures");
-        let m32 = cache.measure_monospace_cell(32).expect("32px monospace measures");
-        assert!(m16.cell_w() > 0 && m16.cell_h() > 0, "positive axes: {m16:?}");
+        let m16 = cache
+            .measure_monospace_cell(16)
+            .expect("16px monospace measures");
+        let m32 = cache
+            .measure_monospace_cell(32)
+            .expect("32px monospace measures");
+        assert!(
+            m16.cell_w() > 0 && m16.cell_h() > 0,
+            "positive axes: {m16:?}"
+        );
         assert!(
             m16.cell_w() < m16.cell_h(),
             "a monospace cell is taller than wide: {m16:?}",

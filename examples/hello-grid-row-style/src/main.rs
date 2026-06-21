@@ -37,26 +37,27 @@
 //! every row to the zebra fill and `add_rule` re-colours — all without pixels
 //! (see `tools/demos/r998_grid_row_style.py`).
 
-use pinion_a11y::{windowed_grid_nodes_sorted, AccessNode, WidgetA11y};
+use pinion_a11y::{AccessNode, WidgetA11y, windowed_grid_nodes_sorted};
 use pinion_core::external::External;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, Color, FlexDirection, LayoutStyle, Size, SizeValue, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::grid_sort::{
-    grid_sort_str, use_grid_sort, ColumnFacet, FilterOp, GridFilter, GridSortExternal, GridSortState,
+    ColumnFacet, FilterOp, GridFilter, GridSortExternal, GridSortState, grid_sort_str,
+    use_grid_sort,
 };
 use pinion_core::widgets::row_style::{
-    use_row_style, RowStyleExternal, RowStyleRule, RowStyleState, RowTint,
+    RowStyleExternal, RowStyleRule, RowStyleState, RowTint, use_row_style,
 };
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::virtual_list::compute_visible_range;
-use pinion_core::widgets::virtual_select::{read_selected, VirtualSelectExternal};
+use pinion_core::widgets::virtual_select::{VirtualSelectExternal, read_selected};
 use pinion_core::{Frame, Scene, WidgetCore};
-use pinion_shell::{vello_renderer_impl, WidgetView};
-use pinion_widget_paint::table::{view_virtual_table, GridScroll, TableStyle, VirtualTableData};
+use pinion_shell::{WidgetView, vello_renderer_impl};
+use pinion_widget_paint::table::{GridScroll, TableStyle, VirtualTableData, view_virtual_table};
 use std::rc::Rc;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -90,7 +91,11 @@ const CATEGORIES: [&str; 5] = ["Alpha", "Bravo", "Charlie", "Delta", "Echo"];
 const STATUS: [&str; 3] = ["Idle", "Active", "Done"];
 
 fn table_style() -> TableStyle {
-    TableStyle { col_width: COL_W, row_height: ROW_H, ..TableStyle::m3() }
+    TableStyle {
+        col_width: COL_W,
+        row_height: ROW_H,
+        ..TableStyle::m3()
+    }
 }
 
 /// Score for data row `id`: a non-monotonic pseudo-random number in `0..1000`,
@@ -140,15 +145,22 @@ fn seed_rules() -> Vec<RowStyleRule> {
 fn status_bar(theme: &Theme, sort: Option<(usize, bool)>, rule_count: usize) -> Scene {
     let text = Scene::Text(
         TextNode::styled(
-            format!("{rule_count} coloring rules \u{00B7} sort {} \u{00B7} {N} rows", grid_sort_str(sort)),
+            format!(
+                "{rule_count} coloring rules \u{00B7} sort {} \u{00B7} {N} rows",
+                grid_sort_str(sort)
+            ),
             Rect::default(),
-            TextStyle::new().with_size_px(13).with_fg(theme.resolve(ColorRole::OnSurface)),
+            TextStyle::new()
+                .with_size_px(13)
+                .with_fg(theme.resolve(ColorRole::OnSurface)),
         )
         .with_tag(STATUS_TAG),
     );
     Scene::Container(
         ContainerNode::new(vec![text])
-            .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh)))
+            .with_style(BoxStyle::filled(
+                theme.resolve(ColorRole::SurfaceContainerHigh),
+            ))
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Row)
@@ -186,7 +198,10 @@ fn view(selected: Option<usize>, _frame: &Frame) -> Scene {
 
     let table = view_virtual_table(
         GRID_TAG,
-        GridScroll { body: &scroll, horizontal: &h_scroll },
+        GridScroll {
+            body: &scroll,
+            horizontal: &h_scroll,
+        },
         VirtualTableData {
             headers: &HEADERS,
             item_count: N,
@@ -284,7 +299,8 @@ impl WidgetA11y for GridRowStyleView {
         let sort = grid.sort();
         let order = grid.order();
         let (_, measured_h) = scroll.measured_viewport();
-        let window = compute_visible_range(scroll.offset_y(), measured_h, order.len(), ROW_H, OVERSCAN);
+        let window =
+            compute_visible_range(scroll.offset_y(), measured_h, order.len(), ROW_H, OVERSCAN);
         windowed_grid_nodes_sorted(
             GRID_TAG,
             "Colour-ruled data grid",
@@ -301,7 +317,10 @@ impl WidgetView for GridRowStyleView {
     type Renderer = HelloGridRowStyleRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 }
 
@@ -354,7 +373,11 @@ mod tests {
                     "row {id} matches both → the earlier Done rule wins",
                 );
                 let tint = rules.resolve(|c| grid.cell(id, c)).unwrap();
-                assert_eq!(tint.bg, Color::rgb(200, 40, 40), "painted red (Done), not green");
+                assert_eq!(
+                    tint.bg,
+                    Color::rgb(200, 40, 40),
+                    "painted red (Done), not green"
+                );
             }
         });
     }
@@ -366,9 +389,15 @@ mod tests {
             let rules = use_rules();
             rules.set_rules(seed_rules());
             let done = (0..N).find(|&id| STATUS[id % 3] == "Done").unwrap();
-            assert!(rules.resolve(|c| grid.cell(done, c)).is_some(), "Done row coloured");
+            assert!(
+                rules.resolve(|c| grid.cell(done, c)).is_some(),
+                "Done row coloured"
+            );
             rules.clear();
-            assert!(rules.resolve(|c| grid.cell(done, c)).is_none(), "cleared → no tint");
+            assert!(
+                rules.resolve(|c| grid.cell(done, c)).is_none(),
+                "cleared → no tint"
+            );
         });
     }
 }

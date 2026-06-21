@@ -138,11 +138,12 @@ where
     F: FnOnce(&str, &S) -> V,
 {
     let owner = runtime_owner.ok_or(SubstrateIntrospectError::RuntimeOwnerUnavailable)?;
-    let state: Rc<S> = owner.cache_get_by_str::<S>(tag).ok_or_else(|| {
-        SubstrateIntrospectError::NotBound {
-            tag: tag.to_owned(),
-        }
-    })?;
+    let state: Rc<S> =
+        owner
+            .cache_get_by_str::<S>(tag)
+            .ok_or_else(|| SubstrateIntrospectError::NotBound {
+                tag: tag.to_owned(),
+            })?;
     Ok(project(tag, &state))
 }
 
@@ -163,8 +164,7 @@ mod tests {
     #[test]
     fn r607_lookup_returns_not_bound_with_tag_when_missing() {
         let owner = Owner::new();
-        let err =
-            lookup::<ProbeState, _, _>(Some(&owner), "phantom", |_, _| ()).unwrap_err();
+        let err = lookup::<ProbeState, _, _>(Some(&owner), "phantom", |_, _| ()).unwrap_err();
         assert_eq!(
             err,
             SubstrateIntrospectError::NotBound {
@@ -177,12 +177,9 @@ mod tests {
     fn r607_lookup_projects_cached_state_with_tag_echoed() {
         let owner = Owner::new();
         owner.cache::<ProbeState, _>("widget", || ProbeState(42));
-        let out: (String, u32) = lookup::<ProbeState, _, _>(
-            Some(&owner),
-            "widget",
-            |tag, s| (tag.to_owned(), s.0),
-        )
-        .unwrap();
+        let out: (String, u32) =
+            lookup::<ProbeState, _, _>(Some(&owner), "widget", |tag, s| (tag.to_owned(), s.0))
+                .unwrap();
         assert_eq!(out, ("widget".into(), 42));
     }
 
@@ -204,9 +201,7 @@ mod tests {
             "TagRequired",
         );
         assert_eq!(
-            introspect_error_to_data(&SubstrateIntrospectError::NotBound {
-                tag: "any".into()
-            }),
+            introspect_error_to_data(&SubstrateIntrospectError::NotBound { tag: "any".into() }),
             "NotBound",
         );
     }

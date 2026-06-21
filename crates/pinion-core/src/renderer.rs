@@ -65,11 +65,7 @@ pub trait WidgetRenderer: Sized {
     /// # Errors
     /// Implementation-defined — frame submission failure, swapchain
     /// loss (Vello), IO error writing terminal cells (TUI), etc.
-    fn render(
-        &mut self,
-        frame: &Self::Frame,
-        ctx: Self::Context,
-    ) -> Result<(), Self::Error>;
+    fn render(&mut self, frame: &Self::Frame, ctx: Self::Context) -> Result<(), Self::Error>;
 
     /// Resize the backend surface to match a new logical dimension.
     /// Logical units are backend-specific: Vello sees pixels (DPI-aware);

@@ -39,13 +39,15 @@ impl Format12 {
         let num_groups = r.read_u32()?;
         // spec: length = 16 (header) + 12 (group bytes) × num_groups. strict check.
         let expected_length = 16u32
-            .checked_add(num_groups.checked_mul(12).ok_or(
-                ParseError::InvalidTableField {
-                    tag: CMAP_TAG,
-                    field: "format12/numGroups",
-                    value: FieldValue::from_u32(num_groups),
-                },
-            )?)
+            .checked_add(
+                num_groups
+                    .checked_mul(12)
+                    .ok_or(ParseError::InvalidTableField {
+                        tag: CMAP_TAG,
+                        field: "format12/numGroups",
+                        value: FieldValue::from_u32(num_groups),
+                    })?,
+            )
             .ok_or(ParseError::InvalidTableField {
                 tag: CMAP_TAG,
                 field: "format12/length-overflow",
@@ -93,9 +95,7 @@ impl Format12 {
     /// Format 12 lookup: binary-search the group containing `codepoint`.
     #[must_use]
     pub fn glyph_id(&self, codepoint: u32) -> Option<u16> {
-        let idx = self
-            .groups
-            .partition_point(|g| g.end_char_code < codepoint);
+        let idx = self.groups.partition_point(|g| g.end_char_code < codepoint);
         let group = self.groups.get(idx)?;
         if group.start_char_code > codepoint {
             return None;
@@ -109,7 +109,7 @@ impl Format12 {
 #[cfg(test)]
 mod tests {
     use super::super::test_helpers::*;
-    use super::super::{Cmap, CMAP_TAG};
+    use super::super::{CMAP_TAG, Cmap};
     use super::*;
 
     #[test]

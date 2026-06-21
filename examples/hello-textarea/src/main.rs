@@ -133,7 +133,7 @@
 //! discrete step), `Ctrl+Shift+Z` / `Ctrl+Y` redoes; deleting a coloured
 //! word and undoing brings its colour back with it.
 
-use pinion_a11y::{toolbar_button_nodes, AccessNode, ToolbarControl, WidgetA11y};
+use pinion_a11y::{AccessNode, ToolbarControl, WidgetA11y, toolbar_button_nodes};
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::intent::Intent;
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, ScrollNode, StyleRun, TextNode};
@@ -141,19 +141,19 @@ use pinion_core::style::{
     AlignItems, Border, BoxStyle, Color, FlexDirection, FontStyle, FontWeight, JustifyContent,
     LayoutStyle, Size, TextAlign, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole};
+use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::undo::use_undo_stack;
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::caret_blink::use_caret_blink;
-use pinion_core::widgets::text_edit::{use_text_edit_state, FormatField};
+use pinion_core::widgets::text_edit::{FormatField, use_text_edit_state};
 use pinion_core::widgets::text_field::{
     TextFieldEvent, TextFieldExternal, TextFieldSendKey, TextFieldState,
 };
 use pinion_core::widgets::toolbar::{ToolItem, ToolbarExternal};
-use pinion_core::{intent_tag, Command, Frame, Scene, WidgetCore, WidgetStateName};
+use pinion_core::{Command, Frame, Scene, WidgetCore, WidgetStateName, intent_tag};
 use pinion_platform_clipboard::use_app_clipboard;
-use pinion_shell::{vello_renderer_impl, WidgetView};
-use pinion_text::{logical_line_span, CaretRect, VisualLineMetric};
+use pinion_shell::{WidgetView, vello_renderer_impl};
+use pinion_text::{CaretRect, VisualLineMetric, logical_line_span};
 use pinion_widget_paint::coord::saturating_f32_to_u32;
 use pinion_widget_paint::text_field as tf_paint;
 use pinion_widget_paint::toolbar::composite_item_tag;
@@ -294,7 +294,13 @@ fn toolbar(theme: &pinion_core::theme::Theme, bold_active: bool, italic_active: 
     let accent = theme.resolve(ColorRole::Accent);
     // Reflective toggle fill: a tonal blend toward the accent while the
     // selection already carries the style (the `aria-pressed` affordance).
-    let toggle_fill = |active: bool| if active { surface.lerp(accent, 0.16) } else { surface };
+    let toggle_fill = |active: bool| {
+        if active {
+            surface.lerp(accent, 0.16)
+        } else {
+            surface
+        }
+    };
 
     let cell = |index: usize, fill: Color, border: bool, child: Vec<Scene>| {
         let mut style = BoxStyle::filled(fill).with_corner_radius(6);
@@ -336,13 +342,19 @@ fn toolbar(theme: &pinion_core::theme::Theme, bold_active: bool, italic_active: 
         FMT_BOLD,
         toggle_fill(bold_active),
         true,
-        label("B", TextStyle::new().with_fg(on).with_weight(FontWeight::BOLD)),
+        label(
+            "B",
+            TextStyle::new().with_fg(on).with_weight(FontWeight::BOLD),
+        ),
     );
     let italic_btn = cell(
         FMT_ITALIC,
         toggle_fill(italic_active),
         true,
-        label("I", TextStyle::new().with_fg(on).with_style(FontStyle::Italic)),
+        label(
+            "I",
+            TextStyle::new().with_fg(on).with_style(FontStyle::Italic),
+        ),
     );
     let mut children = vec![bold_btn, italic_btn];
     children.extend(FMT_SWATCHES.iter().enumerate().map(|(j, ink)| {
@@ -393,7 +405,11 @@ fn apply_format(index: usize, interaction: TextFieldState) {
             // bytes still resolve against the theme field base.
             let theme = use_theme(THEME_TAG).theme_animated();
             let base = base_text_style(&theme, interaction);
-            let field = if index == FMT_BOLD { FormatField::Bold } else { FormatField::Italic };
+            let field = if index == FMT_BOLD {
+                FormatField::Bold
+            } else {
+                FormatField::Italic
+            };
             edit.toggle_format(field, &base);
         }
         // Colour swatches: wholesale `setCharFormat` over the selection; the
@@ -469,8 +485,9 @@ fn gutter(
     // line's bottom) so the gutter's `Scene::Scroll` has the same scroll
     // range as the field — an all-absolute child contributes no flow
     // height, so the explicit size is what lets it scroll in lock-step.
-    let content_h =
-        lines.last().map_or(0, |m| saturating_f32_to_u32(m.y + m.height));
+    let content_h = lines
+        .last()
+        .map_or(0, |m| saturating_f32_to_u32(m.y + m.height));
 
     // R957 — the caret's line number reads in the brighter `OnSurface`
     // ink; every other line stays muted. The active-line band (below)
@@ -479,8 +496,12 @@ fn gutter(
         .with_size_px(style.font_size_px)
         .with_fg(theme.resolve(ColorRole::OnSurfaceMuted))
         .with_align(TextAlign::End);
-    let current_style = muted_style.clone().with_fg(theme.resolve(ColorRole::OnSurface));
-    let current_band_fill = theme.resolve(ColorRole::Accent).with_alpha(GUTTER_CURRENT_ALPHA);
+    let current_style = muted_style
+        .clone()
+        .with_fg(theme.resolve(ColorRole::OnSurface));
+    let current_band_fill = theme
+        .resolve(ColorRole::Accent)
+        .with_alpha(GUTTER_CURRENT_ALPHA);
 
     let mut logical_n: u32 = 0;
     let mut numbers: Vec<Scene> = Vec::new();
@@ -515,14 +536,21 @@ fn gutter(
                     ),
             ));
         }
-        let ink = if is_current { &current_style } else { &muted_style };
+        let ink = if is_current {
+            &current_style
+        } else {
+            &muted_style
+        };
         numbers.push(Scene::Text(
             // R959 — tag each number under the *field's* composite namespace
             // (`main_textarea#gl<n>`), so a click routes through the
             // InputRouter to the field's `send` wire (`go_to_line`) instead of
             // the geometry press hook: focus-independent + no caret-drag arm.
             TextNode::styled(format!("{logical_n}"), Rect::default(), ink.clone())
-                .with_tag(TextFieldSendKey::gutter_line_tag(TA_TAG, logical_n as usize))
+                .with_tag(TextFieldSendKey::gutter_line_tag(
+                    TA_TAG,
+                    logical_n as usize,
+                ))
                 .with_layout(
                     LayoutStyle::new()
                         .with_size(Size::px(inner_w, row_h))
@@ -547,7 +575,9 @@ fn gutter(
     Scene::Container(
         ContainerNode::new(vec![scroll])
             .with_tag(GUTTER_TAG.to_owned())
-            .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh)))
+            .with_style(BoxStyle::filled(
+                theme.resolve(ColorRole::SurfaceContainerHigh),
+            ))
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Row)
@@ -588,12 +618,15 @@ fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
     // R957 — the caret's logical line drives the gutter current-line band.
     let caret_line = use_text_edit_state(TA_TAG).caret_line();
     let editor = Scene::Container(
-        ContainerNode::new(vec![gutter(&theme, &ta_style(), &lines, scroll_y, caret_line), field])
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Row)
-                    .with_align_items(AlignItems::Start),
-            ),
+        ContainerNode::new(vec![
+            gutter(&theme, &ta_style(), &lines, scroll_y, caret_line),
+            field,
+        ])
+        .with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Row)
+                .with_align_items(AlignItems::Start),
+        ),
     );
 
     let title = Scene::Text(TextNode::styled(
@@ -616,11 +649,9 @@ fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
     // `reflective_style` SSOT (the SAME read `toggle_format` uses for its flip
     // direction, so pressed-state + flip cannot diverge), so the cells also light
     // for a collapsed-caret armed mark / inherited style, not only a selection.
-    let (bold_active, italic_active) = text_state
-        .reflective_style()
-        .map_or((false, false), |st| {
-            (FormatField::Bold.is_on(&st), FormatField::Italic.is_on(&st))
-        });
+    let (bold_active, italic_active) = text_state.reflective_style().map_or((false, false), |st| {
+        (FormatField::Bold.is_on(&st), FormatField::Italic.is_on(&st))
+    });
     let status_str = format!(
         "{} | caret={} | lines={}{}",
         interaction.as_name(),
@@ -637,15 +668,20 @@ fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
     ));
 
     Scene::Container(
-        ContainerNode::new(vec![title, editor, toolbar(&theme, bold_active, italic_active), status])
-            .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Column)
-                    .with_justify(JustifyContent::Center)
-                    .with_align_items(AlignItems::Center)
-                    .with_gap(ROW_GAP),
-            ),
+        ContainerNode::new(vec![
+            title,
+            editor,
+            toolbar(&theme, bold_active, italic_active),
+            status,
+        ])
+        .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
+        .with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Column)
+                .with_justify(JustifyContent::Center)
+                .with_align_items(AlignItems::Center)
+                .with_gap(ROW_GAP),
+        ),
     )
 }
 
@@ -818,11 +854,7 @@ impl WidgetCore for TextAreaView {
                 let end = key == "End";
                 let edit = use_text_edit_state(TA_TAG);
                 let new_byte = if modifiers.control_key() {
-                    if end {
-                        edit.text().len()
-                    } else {
-                        0
-                    }
+                    if end { edit.text().len() } else { 0 }
                 } else {
                     let (interaction, _caret) = Self::read_state(scene);
                     let theme = use_theme(THEME_TAG).theme_animated();
@@ -882,8 +914,12 @@ impl WidgetA11y for TextAreaView {
         // R790 §5.40 — the lifted textbox node SSOT. The deferred
         // `aria-multiline` refinement above becomes an additive param to
         // this helper once a 2nd textarea consumer surfaces.
-        let mut nodes =
-            vec![tf_paint::text_field_a11y_node(tag, text, *interaction, focused == Some(tag))];
+        let mut nodes = vec![tf_paint::text_field_a11y_node(
+            tag,
+            text,
+            *interaction,
+            focused == Some(tag),
+        )];
 
         // R800 §5.40 — the formatting toolbar's a11y, via the lifted SSOT
         // ([`pinion_a11y::toolbar_button_nodes`], shared with hello-toolbar).
@@ -892,13 +928,12 @@ impl WidgetA11y for TextAreaView {
         // the colour swatches are command buttons named explicitly (no glyph
         // to enrich from). The strip is non-focusable, so it rings nothing
         // (`focused_control = None`).
-        let (bold_active, italic_active) = edit
-            .reflective_style()
-            .map_or((false, false), |st| {
-                (FormatField::Bold.is_on(&st), FormatField::Italic.is_on(&st))
-            });
-        let tags: Vec<String> =
-            (0..FMT_CONTROLS).map(|i| composite_item_tag(FMT_TAG, i)).collect();
+        let (bold_active, italic_active) = edit.reflective_style().map_or((false, false), |st| {
+            (FormatField::Bold.is_on(&st), FormatField::Italic.is_on(&st))
+        });
+        let tags: Vec<String> = (0..FMT_CONTROLS)
+            .map(|i| composite_item_tag(FMT_TAG, i))
+            .collect();
         let controls: Vec<ToolbarControl<'_>> = (0..FMT_CONTROLS)
             .map(|i| ToolbarControl {
                 tag: &tags[i],
@@ -911,7 +946,12 @@ impl WidgetA11y for TextAreaView {
                 disabled: false, // formatting controls are always operable (R989)
             })
             .collect();
-        nodes.extend(toolbar_button_nodes(FMT_TAG, "Formatting toolbar", &controls, None));
+        nodes.extend(toolbar_button_nodes(
+            FMT_TAG,
+            "Formatting toolbar",
+            &controls,
+            None,
+        ));
         nodes
     }
 }
@@ -920,7 +960,10 @@ impl WidgetView for TextAreaView {
     type Renderer = HelloTextAreaRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 
     fn ime_caret_rect(
@@ -1045,7 +1088,7 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{view, TextAreaView, FMT_CMD_INTENT, FMT_CONTROLS, FMT_TAG, TA_TAG};
+    use super::{FMT_CMD_INTENT, FMT_CONTROLS, FMT_TAG, TA_TAG, TextAreaView, view};
     use pinion_a11y::{AriaRole, WidgetA11y};
     use pinion_core::external::IntrospectValue;
     use pinion_core::intent::Intent;
@@ -1066,7 +1109,10 @@ mod tests {
     fn r764_view_carries_textarea_tag() {
         with_owner(|| {
             let scene = view((TextFieldState::Idle, 0), &Frame::default());
-            assert!(scene.contains_tag(TA_TAG), "paint scene carries the textarea tag");
+            assert!(
+                scene.contains_tag(TA_TAG),
+                "paint scene carries the textarea tag"
+            );
         });
     }
 
@@ -1076,8 +1122,9 @@ mod tests {
             let edit = use_text_edit_state(TA_TAG);
             edit.set_text("ab".to_owned());
             edit.set_caret(1);
-            let mut scene =
-                Scene::External(ExternalNode::new(TextAreaView::create_external()).with_tag(TA_TAG));
+            let mut scene = Scene::External(
+                ExternalNode::new(TextAreaView::create_external()).with_tag(TA_TAG),
+            );
             assert!(TextAreaView::apply_key(
                 &mut scene,
                 Some(TA_TAG),
@@ -1097,8 +1144,9 @@ mod tests {
             let edit = use_text_edit_state(TA_TAG);
             edit.set_text("abc\nxyz".to_owned());
             edit.set_caret(1); // after 'a' on line 0
-            let mut scene =
-                Scene::External(ExternalNode::new(TextAreaView::create_external()).with_tag(TA_TAG));
+            let mut scene = Scene::External(
+                ExternalNode::new(TextAreaView::create_external()).with_tag(TA_TAG),
+            );
             // Paint once so the layout cache holds the shaped multi-line
             // Layout the vertical-move helper reads.
             let _ = view((TextFieldState::Focused, 1), &Frame::default());
@@ -1109,7 +1157,11 @@ mod tests {
                 pinion_core::Modifiers::empty(),
             ));
             // Line 1 starts at byte 4 ("abc\n" = 4 bytes); column 1 → byte 5.
-            assert_eq!(edit.caret(), 5, "ArrowDown lands on the next line at the same column");
+            assert_eq!(
+                edit.caret(),
+                5,
+                "ArrowDown lands on the next line at the same column"
+            );
         });
     }
 
@@ -1121,8 +1173,9 @@ mod tests {
             let edit = use_text_edit_state(TA_TAG);
             edit.set_text("abc\nxyz".to_owned());
             edit.set_caret(1);
-            let mut scene =
-                Scene::External(ExternalNode::new(TextAreaView::create_external()).with_tag(TA_TAG));
+            let mut scene = Scene::External(
+                ExternalNode::new(TextAreaView::create_external()).with_tag(TA_TAG),
+            );
             let _ = view((TextFieldState::Focused, 1), &Frame::default());
             assert!(edit.goal_column().is_none(), "goal column starts unarmed");
             assert!(TextAreaView::apply_key(
@@ -1150,8 +1203,9 @@ mod tests {
             // '\n' 11, line 2 "cccccccc" (12..20).
             edit.set_text("aaaaaaaa\nbb\ncccccccc".to_owned());
             edit.set_caret(5); // line 0, column 5
-            let mut scene =
-                Scene::External(ExternalNode::new(TextAreaView::create_external()).with_tag(TA_TAG));
+            let mut scene = Scene::External(
+                ExternalNode::new(TextAreaView::create_external()).with_tag(TA_TAG),
+            );
             let _ = view((TextFieldState::Focused, 5), &Frame::default());
             let down = |scene: &mut Scene| {
                 TextAreaView::apply_key(
@@ -1163,10 +1217,16 @@ mod tests {
             };
             assert!(down(&mut scene));
             let m1 = edit.caret();
-            assert!((9..=11).contains(&m1), "first ArrowDown lands on the short line 1 (got {m1})");
+            assert!(
+                (9..=11).contains(&m1),
+                "first ArrowDown lands on the short line 1 (got {m1})"
+            );
             assert!(down(&mut scene));
             let m2 = edit.caret();
-            assert!(m2 >= 12, "second ArrowDown lands on the long line 2 (got {m2})");
+            assert!(
+                m2 >= 12,
+                "second ArrowDown lands on the long line 2 (got {m2})"
+            );
             assert!(
                 m2 - 12 > m1 - 9,
                 "goal column restores a column wider than the short line allowed \
@@ -1185,8 +1245,9 @@ mod tests {
             let edit = use_text_edit_state(TA_TAG);
             edit.set_text("abc\nxyz".to_owned()); // line 1 = bytes 4..7
             edit.set_caret(6); // line 1, between 'y' and 'z'
-            let mut scene =
-                Scene::External(ExternalNode::new(TextAreaView::create_external()).with_tag(TA_TAG));
+            let mut scene = Scene::External(
+                ExternalNode::new(TextAreaView::create_external()).with_tag(TA_TAG),
+            );
             let _ = view((TextFieldState::Focused, 6), &Frame::default());
             assert!(TextAreaView::apply_key(
                 &mut scene,
@@ -1194,15 +1255,26 @@ mod tests {
                 "Home",
                 pinion_core::Modifiers::empty(),
             ));
-            assert_eq!(edit.caret(), 4, "Home moves to the start of the current visual line");
-            assert!(edit.goal_column().is_none(), "Home (a horizontal move) clears the goal column");
+            assert_eq!(
+                edit.caret(),
+                4,
+                "Home moves to the start of the current visual line"
+            );
+            assert!(
+                edit.goal_column().is_none(),
+                "Home (a horizontal move) clears the goal column"
+            );
             assert!(TextAreaView::apply_key(
                 &mut scene,
                 Some(TA_TAG),
                 "End",
                 pinion_core::Modifiers::empty(),
             ));
-            assert_eq!(edit.caret(), 7, "End moves to the end of the current visual line");
+            assert_eq!(
+                edit.caret(),
+                7,
+                "End moves to the end of the current visual line"
+            );
         });
     }
 
@@ -1214,13 +1286,27 @@ mod tests {
             let edit = use_text_edit_state(TA_TAG);
             edit.set_text("abc\nxyz".to_owned());
             edit.set_caret(5); // line 1
-            let mut scene =
-                Scene::External(ExternalNode::new(TextAreaView::create_external()).with_tag(TA_TAG));
+            let mut scene = Scene::External(
+                ExternalNode::new(TextAreaView::create_external()).with_tag(TA_TAG),
+            );
             let _ = view((TextFieldState::Focused, 5), &Frame::default());
-            let ctrl = pinion_core::Modifiers { ctrl: true, ..pinion_core::Modifiers::empty() };
-            assert!(TextAreaView::apply_key(&mut scene, Some(TA_TAG), "Home", ctrl));
+            let ctrl = pinion_core::Modifiers {
+                ctrl: true,
+                ..pinion_core::Modifiers::empty()
+            };
+            assert!(TextAreaView::apply_key(
+                &mut scene,
+                Some(TA_TAG),
+                "Home",
+                ctrl
+            ));
             assert_eq!(edit.caret(), 0, "Ctrl+Home moves to the document start");
-            assert!(TextAreaView::apply_key(&mut scene, Some(TA_TAG), "End", ctrl));
+            assert!(TextAreaView::apply_key(
+                &mut scene,
+                Some(TA_TAG),
+                "End",
+                ctrl
+            ));
             assert_eq!(edit.caret(), 7, "Ctrl+End moves to the document end");
             // Ctrl+Shift+Home selects from the caret back to byte 0.
             let ctrl_shift = pinion_core::Modifiers {
@@ -1228,7 +1314,12 @@ mod tests {
                 shift: true,
                 ..pinion_core::Modifiers::empty()
             };
-            assert!(TextAreaView::apply_key(&mut scene, Some(TA_TAG), "Home", ctrl_shift));
+            assert!(TextAreaView::apply_key(
+                &mut scene,
+                Some(TA_TAG),
+                "Home",
+                ctrl_shift
+            ));
             assert_eq!(
                 edit.selection_range(),
                 Some((0, 7)),
@@ -1251,8 +1342,9 @@ mod tests {
             let edit = use_text_edit_state(TA_TAG);
             edit.set_text("first second".to_owned());
             edit.set_selection(0, 5); // the range a toolbar command would act on
-            let scene =
-                Scene::External(ExternalNode::new(TextAreaView::create_external()).with_tag(TA_TAG));
+            let scene = Scene::External(
+                ExternalNode::new(TextAreaView::create_external()).with_tag(TA_TAG),
+            );
             let toolbar_tag = composite_item_tag(FMT_TAG, 0);
             // Press routed to the toolbar sibling while the field keeps focus.
             assert_eq!(
@@ -1299,12 +1391,25 @@ mod tests {
             let edit = use_text_edit_state(TA_TAG);
             edit.set_text("abc\nxyz".to_owned());
             edit.set_caret(6); // line 1
-            let mut scene =
-                Scene::External(ExternalNode::new(TextAreaView::create_external()).with_tag(TA_TAG));
+            let mut scene = Scene::External(
+                ExternalNode::new(TextAreaView::create_external()).with_tag(TA_TAG),
+            );
             let _ = view((TextFieldState::Focused, 6), &Frame::default());
-            let mods = pinion_core::Modifiers { shift: true, ..pinion_core::Modifiers::empty() };
-            assert!(TextAreaView::apply_key(&mut scene, Some(TA_TAG), "Home", mods));
-            assert_eq!(edit.caret(), 4, "Shift+Home moves the caret to the line start");
+            let mods = pinion_core::Modifiers {
+                shift: true,
+                ..pinion_core::Modifiers::empty()
+            };
+            assert!(TextAreaView::apply_key(
+                &mut scene,
+                Some(TA_TAG),
+                "Home",
+                mods
+            ));
+            assert_eq!(
+                edit.caret(),
+                4,
+                "Shift+Home moves the caret to the line start"
+            );
             assert_eq!(
                 edit.selection_range(),
                 Some((4, 6)),
@@ -1320,25 +1425,46 @@ mod tests {
     fn r798_ctrl_z_reverts_to_seed_floor_then_redoes() {
         with_owner(|| {
             let edit = use_text_edit_state(TA_TAG);
-            let mut scene =
-                Scene::External(ExternalNode::new(TextAreaView::create_external()).with_tag(TA_TAG));
+            let mut scene = Scene::External(
+                ExternalNode::new(TextAreaView::create_external()).with_tag(TA_TAG),
+            );
             let seed = edit.text();
             edit.set_caret(seed.len());
             edit.insert("Z"); // a content edit recorded on the stack
             assert_eq!(edit.text(), format!("{seed}Z"), "insert appended a char");
-            let ctrl = pinion_core::Modifiers { ctrl: true, ..pinion_core::Modifiers::empty() };
+            let ctrl = pinion_core::Modifiers {
+                ctrl: true,
+                ..pinion_core::Modifiers::empty()
+            };
             assert!(TextAreaView::apply_key(&mut scene, Some(TA_TAG), "z", ctrl));
-            assert_eq!(edit.text(), seed, "Ctrl+Z reverts the insert to the seed floor");
+            assert_eq!(
+                edit.text(),
+                seed,
+                "Ctrl+Z reverts the insert to the seed floor"
+            );
             // Cannot undo past the floor: the seed was below the attach point.
             assert!(TextAreaView::apply_key(&mut scene, Some(TA_TAG), "z", ctrl));
-            assert_eq!(edit.text(), seed, "no further undo past the seeded document");
+            assert_eq!(
+                edit.text(),
+                seed,
+                "no further undo past the seeded document"
+            );
             let ctrl_shift = pinion_core::Modifiers {
                 ctrl: true,
                 shift: true,
                 ..pinion_core::Modifiers::empty()
             };
-            assert!(TextAreaView::apply_key(&mut scene, Some(TA_TAG), "z", ctrl_shift));
-            assert_eq!(edit.text(), format!("{seed}Z"), "Ctrl+Shift+Z redoes the insert");
+            assert!(TextAreaView::apply_key(
+                &mut scene,
+                Some(TA_TAG),
+                "z",
+                ctrl_shift
+            ));
+            assert_eq!(
+                edit.text(),
+                format!("{seed}Z"),
+                "Ctrl+Shift+Z redoes the insert"
+            );
         });
     }
 
@@ -1350,17 +1476,27 @@ mod tests {
     fn r798_undo_restores_a_deleted_style_run() {
         with_owner(|| {
             let edit = use_text_edit_state(TA_TAG);
-            let mut scene =
-                Scene::External(ExternalNode::new(TextAreaView::create_external()).with_tag(TA_TAG));
+            let mut scene = Scene::External(
+                ExternalNode::new(TextAreaView::create_external()).with_tag(TA_TAG),
+            );
             // The seed styles "first" (bytes 0..5) red.
-            assert!(edit.style_at(0).is_some(), "the leading word seeds a style run");
+            assert!(
+                edit.style_at(0).is_some(),
+                "the leading word seeds a style run"
+            );
             edit.set_selection(0, 5);
             edit.backspace(); // selection-delete drops "first" and clips its run
             assert!(!edit.text().starts_with("first"), "the word is gone");
             assert!(edit.style_at(0).is_none(), "its style run went with it");
-            let ctrl = pinion_core::Modifiers { ctrl: true, ..pinion_core::Modifiers::empty() };
+            let ctrl = pinion_core::Modifiers {
+                ctrl: true,
+                ..pinion_core::Modifiers::empty()
+            };
             assert!(TextAreaView::apply_key(&mut scene, Some(TA_TAG), "z", ctrl));
-            assert!(edit.text().starts_with("first"), "undo restored the deleted word");
+            assert!(
+                edit.text().starts_with("first"),
+                "undo restored the deleted word"
+            );
             assert!(
                 edit.style_at(0).is_some(),
                 "undo restored its style run (R796.1 removed_runs reversal)",
@@ -1376,16 +1512,30 @@ mod tests {
     fn r799_toolbar_command_bolds_the_selection() {
         with_owner(|| {
             let edit = use_text_edit_state(TA_TAG);
-            let _ =
-                Scene::External(ExternalNode::new(TextAreaView::create_external()).with_tag(TA_TAG));
+            let _ = Scene::External(
+                ExternalNode::new(TextAreaView::create_external()).with_tag(TA_TAG),
+            );
             edit.set_selection(5, 10); // " line" after the seed's red "first"
             assert!(edit.style_at(7).is_none(), "byte 7 starts unstyled");
             let intent = Intent::new_static(FMT_CMD_INTENT, IntrospectValue::Text("0".to_owned()));
             let cmds = TextAreaView::update((TextFieldState::Focused, 5), &intent);
-            assert!(cmds.is_empty(), "format is fire-and-forget — no Command back to externals");
-            let st = edit.style_at(7).expect("bolding materialised a run over the gap");
-            assert_eq!(st.font_weight, FontWeight::BOLD, "the command bolded the selection");
-            assert_eq!(st.font_style, FontStyle::Normal, "italic untouched (merge is field-level)");
+            assert!(
+                cmds.is_empty(),
+                "format is fire-and-forget — no Command back to externals"
+            );
+            let st = edit
+                .style_at(7)
+                .expect("bolding materialised a run over the gap");
+            assert_eq!(
+                st.font_weight,
+                FontWeight::BOLD,
+                "the command bolded the selection"
+            );
+            assert_eq!(
+                st.font_style,
+                FontStyle::Normal,
+                "italic untouched (merge is field-level)"
+            );
         });
     }
 
@@ -1395,8 +1545,9 @@ mod tests {
     fn r799_toolbar_command_without_selection_is_noop() {
         with_owner(|| {
             let edit = use_text_edit_state(TA_TAG);
-            let _ =
-                Scene::External(ExternalNode::new(TextAreaView::create_external()).with_tag(TA_TAG));
+            let _ = Scene::External(
+                ExternalNode::new(TextAreaView::create_external()).with_tag(TA_TAG),
+            );
             edit.set_caret(5); // collapsed — no selection range
             assert!(edit.selection_range().is_none(), "no active selection");
             let runs_before = edit.style_runs().len();
@@ -1420,8 +1571,15 @@ mod tests {
     /// ([[wire-vocab-canon-pin-not-fold]]).
     #[test]
     fn r800_intent_tag_pins_to_the_bar_tag() {
-        assert!(FMT_CMD_INTENT.starts_with(FMT_TAG), "the intent is scoped to the bar tag");
-        assert_eq!(FMT_CMD_INTENT, format!("{FMT_TAG}.command"), "intent = <bar>.command");
+        assert!(
+            FMT_CMD_INTENT.starts_with(FMT_TAG),
+            "the intent is scoped to the bar tag"
+        );
+        assert_eq!(
+            FMT_CMD_INTENT,
+            format!("{FMT_TAG}.command"),
+            "intent = <bar>.command"
+        );
     }
 
     /// R800 §5.40 — `access_node` exposes the formatting toolbar (lifted
@@ -1432,21 +1590,43 @@ mod tests {
     fn r800_access_node_exposes_reflective_toolbar() {
         with_owner(|| {
             let edit = use_text_edit_state(TA_TAG);
-            let _ =
-                Scene::External(ExternalNode::new(TextAreaView::create_external()).with_tag(TA_TAG));
+            let _ = Scene::External(
+                ExternalNode::new(TextAreaView::create_external()).with_tag(TA_TAG),
+            );
             // No selection → B / I report aria-pressed = false.
             edit.set_caret(0);
             let nodes = TextAreaView::access_node(&(TextFieldState::Focused, 0), Some(TA_TAG));
-            assert_eq!(nodes.len(), 2 + FMT_CONTROLS, "textbox + toolbar + N control buttons");
-            let toolbar =
-                nodes.iter().find(|n| n.role == AriaRole::Toolbar).expect("a toolbar node");
-            assert_eq!(toolbar.children.len(), FMT_CONTROLS, "toolbar references every control");
+            assert_eq!(
+                nodes.len(),
+                2 + FMT_CONTROLS,
+                "textbox + toolbar + N control buttons"
+            );
+            let toolbar = nodes
+                .iter()
+                .find(|n| n.role == AriaRole::Toolbar)
+                .expect("a toolbar node");
+            assert_eq!(
+                toolbar.children.len(),
+                FMT_CONTROLS,
+                "toolbar references every control"
+            );
             // nodes = [textbox, toolbar, bold, italic, red, green, blue, clear]
             assert_eq!(nodes[2].role, AriaRole::Button);
             assert_eq!(nodes[2].name.as_deref(), Some("Bold"));
-            assert_eq!(nodes[2].state.checked, Some(false), "no selection -> Bold not pressed");
-            assert_eq!(nodes[4].name.as_deref(), Some("Red"), "a glyph-less swatch is named");
-            assert_eq!(nodes[4].state.checked, None, "a colour swatch carries no aria-pressed");
+            assert_eq!(
+                nodes[2].state.checked,
+                Some(false),
+                "no selection -> Bold not pressed"
+            );
+            assert_eq!(
+                nodes[4].name.as_deref(),
+                Some("Red"),
+                "a glyph-less swatch is named"
+            );
+            assert_eq!(
+                nodes[4].state.checked, None,
+                "a colour swatch carries no aria-pressed"
+            );
 
             // Bold the selection → the reflective B node flips to pressed.
             edit.set_selection(0, 5);

@@ -14,9 +14,9 @@
 
 use std::borrow::Cow;
 
+use pinion_core::Scene;
 use pinion_core::external::External;
 use pinion_core::intent::Intent;
-use pinion_core::Scene;
 
 /// Per-frame queue of [`Intent`]s drained from the scene's
 /// [`External`] nodes.
@@ -158,12 +158,12 @@ pub fn walk_scene_and_drain_immediate(scene: &mut Scene, queue: &mut IntentQueue
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_core::Color;
     use pinion_core::external::{
         Backend, BackendFallback, BackendSupport, CountedExternal, External, IntrospectValue,
         RepaintOwner, StubExternal, ThreadOwnership,
     };
     use pinion_core::scene::{BoxNode, ContainerNode, ExternalNode, Rect};
-    use pinion_core::Color;
 
     /// Test fixture proving the trait surface without any
     /// state-mutation side effects: a single static `Intent` armed
@@ -229,8 +229,9 @@ mod tests {
 
     #[test]
     fn walk_drains_a_single_external_at_root() {
-        let mut scene =
-            Scene::External(ExternalNode::new(Box::new(ArmedEmitter::with_one("x.click"))));
+        let mut scene = Scene::External(ExternalNode::new(Box::new(ArmedEmitter::with_one(
+            "x.click",
+        ))));
         let mut q = IntentQueue::new();
         walk_scene_and_drain(&mut scene, &mut q);
         let drained = q.drain();
@@ -250,7 +251,8 @@ mod tests {
 
     #[test]
     fn walk_skips_non_external_primitives() {
-        let mut scene = Scene::Box(BoxNode::filled(Rect::default(), Color::default()).with_tag("just_a_box"));
+        let mut scene =
+            Scene::Box(BoxNode::filled(Rect::default(), Color::default()).with_tag("just_a_box"));
         let mut q = IntentQueue::new();
         walk_scene_and_drain(&mut scene, &mut q);
         assert!(q.is_empty());
@@ -260,9 +262,9 @@ mod tests {
     fn walk_recurses_into_container_children() {
         // §5.20 dirty walk covers nested External nodes through
         // Container, so a button buried under a toolbar still emits.
-        let inner = Scene::External(ExternalNode::new(Box::new(
-            ArmedEmitter::with_one("inner.click"),
-        )));
+        let inner = Scene::External(ExternalNode::new(Box::new(ArmedEmitter::with_one(
+            "inner.click",
+        ))));
         let mut scene = Scene::Container(ContainerNode::new(vec![inner]).with_tag("toolbar"));
         let mut q = IntentQueue::new();
         walk_scene_and_drain(&mut scene, &mut q);
@@ -300,8 +302,7 @@ mod tests {
     #[test]
     fn external_node_tag_prefixes_through_container() {
         let inner: Box<dyn External> = Box::new(ArmedEmitter::with_one("click"));
-        let scene_inner =
-            Scene::External(ExternalNode::new(inner).with_tag("toolbar_btn"));
+        let scene_inner = Scene::External(ExternalNode::new(inner).with_tag("toolbar_btn"));
         let mut scene = Scene::Container(ContainerNode::new(vec![scene_inner]));
         let mut q = IntentQueue::new();
         walk_scene_and_drain(&mut scene, &mut q);
@@ -400,8 +401,9 @@ mod tests {
 
     #[test]
     fn walk_immediate_untagged_passes_intent_tag_through() {
-        let mut scene =
-            Scene::ImmediateModeNode(immediate_node(ArmedImmediateDriver::with_one("custom.event")));
+        let mut scene = Scene::ImmediateModeNode(immediate_node(ArmedImmediateDriver::with_one(
+            "custom.event",
+        )));
         let mut q = IntentQueue::new();
         walk_scene_and_drain_immediate(&mut scene, &mut q);
         let drained = q.drain();
@@ -431,8 +433,9 @@ mod tests {
         // `Scene::External` (already harvested from the state scene in
         // `CoreShell::tail`). A dirty External left intact proves the
         // walk does not touch it.
-        let mut scene =
-            Scene::External(ExternalNode::new(Box::new(ArmedEmitter::with_one("x.click"))));
+        let mut scene = Scene::External(ExternalNode::new(Box::new(ArmedEmitter::with_one(
+            "x.click",
+        ))));
         let mut q = IntentQueue::new();
         walk_scene_and_drain_immediate(&mut scene, &mut q);
         assert!(q.is_empty(), "immediate walk must not drain External nodes");

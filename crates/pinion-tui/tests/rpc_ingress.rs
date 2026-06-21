@@ -45,10 +45,7 @@ fn r670_dispatch_rpc_scene_snapshot_returns_json_with_external_node() {
         response.contains("\"jsonrpc\":\"2.0\""),
         "response shape: {response}",
     );
-    assert!(
-        response.contains("\"id\":1"),
-        "id round-trips: {response}",
-    );
+    assert!(response.contains("\"id\":1"), "id round-trips: {response}",);
     // Root scene IS the test_btn's External node (ButtonFixture's
     // create_external returns a Scene::External(node) with the
     // button tag); the snapshot must include the External tag in
@@ -79,10 +76,7 @@ fn r670_dispatch_rpc_scene_click_drains_to_hover_state() {
     let response = core
         .dispatch_rpc(request)
         .expect("scene/click must produce a response");
-    assert!(
-        response.contains("\"id\":2"),
-        "id round-trips: {response}",
-    );
+    assert!(response.contains("\"id\":2"), "id round-trips: {response}",);
     assert_eq!(
         *core.cached_state(),
         ButtonState::Hover,
@@ -107,10 +101,7 @@ fn r670_dispatch_rpc_scene_key_named_space_fires_click_intent() {
     let response = core
         .dispatch_rpc(request)
         .expect("scene/key must produce a response");
-    assert!(
-        response.contains("\"id\":3"),
-        "id round-trips: {response}",
-    );
+    assert!(response.contains("\"id\":3"), "id round-trips: {response}",);
     // The deferred-input drain runs `cursor_moved(8, 8)` BEFORE the
     // named-key dispatch, so the cursor lands on the button rect →
     // Idle → Hover. The subsequent `Space` press fires the
@@ -136,10 +127,7 @@ fn r670_dispatch_rpc_scene_key_character_d_disables_button() {
     let response = core
         .dispatch_rpc(request)
         .expect("scene/key character arc must produce a response");
-    assert!(
-        response.contains("\"id\":4"),
-        "id round-trips: {response}",
-    );
+    assert!(response.contains("\"id\":4"), "id round-trips: {response}",);
     assert_eq!(
         *core.cached_state(),
         ButtonState::Disabled,
@@ -168,10 +156,7 @@ fn r670_dispatch_rpc_scene_invoke_send_disable_flips_state() {
     let response = core
         .dispatch_rpc(request)
         .expect("scene/invoke must produce a response");
-    assert!(
-        response.contains("\"id\":5"),
-        "id round-trips: {response}",
-    );
+    assert!(response.contains("\"id\":5"), "id round-trips: {response}",);
     assert_eq!(
         *core.cached_state(),
         ButtonState::Disabled,
@@ -192,10 +177,7 @@ fn r670_dispatch_rpc_focus_get_returns_none_on_fresh_substrate() {
     let response = core
         .dispatch_rpc(request)
         .expect("focus/get must produce a response");
-    assert!(
-        response.contains("\"id\":6"),
-        "id round-trips: {response}",
-    );
+    assert!(response.contains("\"id\":6"), "id round-trips: {response}",);
     // `focused_tag: null` shape — no widget has focus on a fresh substrate.
     assert!(
         response.contains("null") || response.contains("\"focused_tag\":null"),
@@ -218,10 +200,7 @@ fn r670_dispatch_rpc_focus_set_targets_button_tag() {
     let response = core
         .dispatch_rpc(request)
         .expect("focus/set must produce a response");
-    assert!(
-        response.contains("\"id\":7"),
-        "id round-trips: {response}",
-    );
+    assert!(response.contains("\"id\":7"), "id round-trips: {response}",);
     assert_eq!(
         core.focus().focused(),
         Some("test_btn"),
@@ -272,10 +251,7 @@ fn r984_dispatch_rpc_scene_access_returns_tree_not_unavailable() {
     let response = core
         .dispatch_rpc(request)
         .expect("scene/access must produce a response");
-    assert!(
-        response.contains("\"id\":9"),
-        "id round-trips: {response}",
-    );
+    assert!(response.contains("\"id\":9"), "id round-trips: {response}",);
     // The §2 #6 parity deliverable: the access producer is wired, so the dump
     // is a success envelope, NOT the pre-R984 AccessTreeUnavailable error.
     assert!(
@@ -314,7 +290,7 @@ fn r984_dispatch_rpc_scene_access_returns_tree_not_unavailable() {
 /// resolves geometry, the same `resolve_access_bounds` SSOT both shells share.
 #[test]
 fn r984_1_tui_access_bounds_resolve_over_a_real_paint_scene() {
-    use pinion_a11y::{resolve_access_bounds, AccessNode, AriaRole};
+    use pinion_a11y::{AccessNode, AriaRole, resolve_access_bounds};
 
     let core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
     let paint = core.compute_paint_scene();
@@ -397,7 +373,8 @@ fn r886_1_input_state_cursor_follows_tui_click() {
         "no cursor event at boot: {response}",
     );
 
-    let click = r#"{"jsonrpc":"2.0","id":2,"method":"scene/click","params":{"at":{"x":7.0,"y":3.0}}}"#;
+    let click =
+        r#"{"jsonrpc":"2.0","id":2,"method":"scene/click","params":{"at":{"x":7.0,"y":3.0}}}"#;
     let _ = core.dispatch_rpc(click).expect("click must respond");
     let response = core.dispatch_rpc(read).expect("read must respond");
     assert!(

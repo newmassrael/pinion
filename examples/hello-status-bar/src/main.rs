@@ -32,18 +32,18 @@
 
 use std::rc::Rc;
 
+#[cfg(test)]
+use pinion_a11y::{AriaRole, WidgetA11y};
 use pinion_core::composite_tag::send_activation_key;
+use pinion_core::external::query_proxy_external_impl;
 use pinion_core::external::{
     ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
 };
-use pinion_core::external::query_proxy_external_impl;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, Color, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::{ColorRole, Frame, Owner, Scene, Signal, use_theme};
-#[cfg(test)]
-use pinion_a11y::{AriaRole, WidgetA11y};
 use pinion_derive::widget;
 use pinion_shell::vello_renderer_impl;
 
@@ -82,19 +82,29 @@ fn encoding_name(idx: usize) -> &'static str {
 // ─── Shared reactive state ────────────────────────────────────────
 
 fn use_line() -> Rc<Signal<u32>> {
-    Owner::current().expect("Owner").cache("statusbar.line", || Signal::new(1u32))
+    Owner::current()
+        .expect("Owner")
+        .cache("statusbar.line", || Signal::new(1u32))
 }
 fn use_col() -> Rc<Signal<u32>> {
-    Owner::current().expect("Owner").cache("statusbar.col", || Signal::new(1u32))
+    Owner::current()
+        .expect("Owner")
+        .cache("statusbar.col", || Signal::new(1u32))
 }
 fn use_mode() -> Rc<Signal<usize>> {
-    Owner::current().expect("Owner").cache("statusbar.mode", || Signal::new(1usize)) // Rust
+    Owner::current()
+        .expect("Owner")
+        .cache("statusbar.mode", || Signal::new(1usize)) // Rust
 }
 fn use_encoding() -> Rc<Signal<usize>> {
-    Owner::current().expect("Owner").cache("statusbar.encoding", || Signal::new(0usize))
+    Owner::current()
+        .expect("Owner")
+        .cache("statusbar.encoding", || Signal::new(0usize))
 }
 fn use_message() -> Rc<Signal<String>> {
-    Owner::current().expect("Owner").cache("statusbar.message", || Signal::new(String::new()))
+    Owner::current()
+        .expect("Owner")
+        .cache("statusbar.message", || Signal::new(String::new()))
 }
 
 // ─── External ─────────────────────────────────────────────────────
@@ -112,7 +122,8 @@ impl StatusBarExternal {
         self.mode.set((self.mode.get() + 1) % MODES.len());
     }
     fn cycle_encoding(&self) {
-        self.encoding.set((self.encoding.get() + 1) % ENCODINGS.len());
+        self.encoding
+            .set((self.encoding.get() + 1) % ENCODINGS.len());
     }
     fn position(&self) -> String {
         format!("Ln {}, Col {}", self.line.get(), self.col.get())
@@ -121,7 +132,9 @@ impl StatusBarExternal {
 
 impl core::fmt::Debug for StatusBarExternal {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("StatusBarExternal").field("position", &self.position()).finish_non_exhaustive()
+        f.debug_struct("StatusBarExternal")
+            .field("position", &self.position())
+            .finish_non_exhaustive()
     }
 }
 
@@ -152,9 +165,9 @@ impl ExternalIntrospect for StatusBarExternal {
             "position" => Some(IntrospectValue::Text(self.position())),
             "mode" => Some(IntrospectValue::Text(mode_name(self.mode.get()).to_owned())),
             "mode_index" => Some(IntrospectValue::Int(i64::try_from(self.mode.get()).ok()?)),
-            "encoding" => {
-                Some(IntrospectValue::Text(encoding_name(self.encoding.get()).to_owned()))
-            }
+            "encoding" => Some(IntrospectValue::Text(
+                encoding_name(self.encoding.get()).to_owned(),
+            )),
             "message" => Some(IntrospectValue::Text(self.message.get())),
             _ => None,
         }
@@ -164,14 +177,22 @@ impl ExternalIntrospect for StatusBarExternal {
         match path {
             "line" => match value {
                 IntrospectValue::Int(n) => {
-                    self.line.set(u32::try_from(n).map_err(|_| InterveneError::OutOfRange)?.max(1));
+                    self.line.set(
+                        u32::try_from(n)
+                            .map_err(|_| InterveneError::OutOfRange)?
+                            .max(1),
+                    );
                     Ok(())
                 }
                 _ => Err(InterveneError::TypeMismatch),
             },
             "col" => match value {
                 IntrospectValue::Int(n) => {
-                    self.col.set(u32::try_from(n).map_err(|_| InterveneError::OutOfRange)?.max(1));
+                    self.col.set(
+                        u32::try_from(n)
+                            .map_err(|_| InterveneError::OutOfRange)?
+                            .max(1),
+                    );
                     Ok(())
                 }
                 _ => Err(InterveneError::TypeMismatch),
@@ -188,7 +209,11 @@ impl ExternalIntrospect for StatusBarExternal {
         }
     }
 
-    fn invoke(&mut self, path: &str, args: IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+    fn invoke(
+        &mut self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
         match path {
             "cycle_mode" => {
                 self.cycle_mode();
@@ -196,7 +221,9 @@ impl ExternalIntrospect for StatusBarExternal {
             }
             "cycle_encoding" => {
                 self.cycle_encoding();
-                Ok(IntrospectValue::Text(encoding_name(self.encoding.get()).to_owned()))
+                Ok(IntrospectValue::Text(
+                    encoding_name(self.encoding.get()).to_owned(),
+                ))
             }
             // Named-segment send wire: a click on `statusbar#mode` /
             // `statusbar#encoding` cycles that segment on the activation
@@ -274,7 +301,11 @@ fn view(_mode_index: usize, _frame: &Frame) -> Scene {
     let pos_seg = segment(position, None, seg_fg, Color::TRANSPARENT);
     let msg_seg = Scene::Container(
         ContainerNode::new(vec![Scene::Text(TextNode::styled(
-            if message.is_empty() { "Ready".to_owned() } else { message },
+            if message.is_empty() {
+                "Ready".to_owned()
+            } else {
+                message
+            },
             Rect::default(),
             TextStyle::new().with_size_px(SEG_FONT_PX).with_fg(muted),
         ))])
@@ -369,62 +400,112 @@ mod tests {
         let mut e = ext();
         e.intervene("line", IntrospectValue::Int(42)).unwrap();
         e.intervene("col", IntrospectValue::Int(7)).unwrap();
-        assert_eq!(e.query("position"), Some(IntrospectValue::Text("Ln 42, Col 7".to_owned())));
+        assert_eq!(
+            e.query("position"),
+            Some(IntrospectValue::Text("Ln 42, Col 7".to_owned()))
+        );
     }
 
     #[test]
     fn r913_line_col_floor_at_one() {
         let mut e = ext();
         assert_eq!(e.intervene("line", IntrospectValue::Int(0)), Ok(()));
-        assert_eq!(e.query("line"), Some(IntrospectValue::Int(1)), "line floors at 1");
-        assert!(e.intervene("line", IntrospectValue::Int(-3)).is_err(), "negative rejected");
+        assert_eq!(
+            e.query("line"),
+            Some(IntrospectValue::Int(1)),
+            "line floors at 1"
+        );
+        assert!(
+            e.intervene("line", IntrospectValue::Int(-3)).is_err(),
+            "negative rejected"
+        );
     }
 
     #[test]
     fn r913_cycle_mode_advances_and_wraps() {
         let mut e = ext();
         // Boot mode = Rust (index 1).
-        assert_eq!(e.query("mode"), Some(IntrospectValue::Text("Rust".to_owned())));
+        assert_eq!(
+            e.query("mode"),
+            Some(IntrospectValue::Text("Rust".to_owned()))
+        );
         for _ in 0..MODES.len() {
             e.invoke("cycle_mode", IntrospectValue::Null).unwrap();
         }
         // A full cycle returns to Rust (wrap).
-        assert_eq!(e.query("mode"), Some(IntrospectValue::Text("Rust".to_owned())));
+        assert_eq!(
+            e.query("mode"),
+            Some(IntrospectValue::Text("Rust".to_owned()))
+        );
     }
 
     #[test]
     fn r913_cycle_encoding_advances() {
         let mut e = ext();
-        assert_eq!(e.query("encoding"), Some(IntrospectValue::Text("UTF-8".to_owned())));
+        assert_eq!(
+            e.query("encoding"),
+            Some(IntrospectValue::Text("UTF-8".to_owned()))
+        );
         e.invoke("cycle_encoding", IntrospectValue::Null).unwrap();
-        assert_eq!(e.query("encoding"), Some(IntrospectValue::Text("UTF-16 LE".to_owned())));
+        assert_eq!(
+            e.query("encoding"),
+            Some(IntrospectValue::Text("UTF-16 LE".to_owned()))
+        );
     }
 
     #[test]
     fn r913_named_send_cycles_the_clicked_segment() {
         let mut e = ext();
         // Hover does not cycle; the PointerUp activation edge does.
-        e.invoke("send", IntrospectValue::Text("mode:PointerEnter".to_owned())).unwrap();
-        assert_eq!(e.query("mode"), Some(IntrospectValue::Text("Rust".to_owned())));
-        e.invoke("send", IntrospectValue::Text("mode:PointerUp".to_owned())).unwrap();
-        assert_eq!(e.query("mode"), Some(IntrospectValue::Text("Python".to_owned())));
+        e.invoke(
+            "send",
+            IntrospectValue::Text("mode:PointerEnter".to_owned()),
+        )
+        .unwrap();
+        assert_eq!(
+            e.query("mode"),
+            Some(IntrospectValue::Text("Rust".to_owned()))
+        );
+        e.invoke("send", IntrospectValue::Text("mode:PointerUp".to_owned()))
+            .unwrap();
+        assert_eq!(
+            e.query("mode"),
+            Some(IntrospectValue::Text("Python".to_owned()))
+        );
         // The encoding segment is independent.
-        e.invoke("send", IntrospectValue::Text("encoding:PointerUp".to_owned())).unwrap();
-        assert_eq!(e.query("encoding"), Some(IntrospectValue::Text("UTF-16 LE".to_owned())));
+        e.invoke(
+            "send",
+            IntrospectValue::Text("encoding:PointerUp".to_owned()),
+        )
+        .unwrap();
+        assert_eq!(
+            e.query("encoding"),
+            Some(IntrospectValue::Text("UTF-16 LE".to_owned()))
+        );
     }
 
     #[test]
     fn r913_message_round_trips() {
         let mut e = ext();
-        e.intervene("message", IntrospectValue::Text("Saved 3 files".to_owned())).unwrap();
-        assert_eq!(e.query("message"), Some(IntrospectValue::Text("Saved 3 files".to_owned())));
+        e.intervene("message", IntrospectValue::Text("Saved 3 files".to_owned()))
+            .unwrap();
+        assert_eq!(
+            e.query("message"),
+            Some(IntrospectValue::Text("Saved 3 files".to_owned()))
+        );
     }
 
     #[test]
     fn r913_read_only_axes_reject_intervene() {
         let mut e = ext();
-        assert_eq!(e.intervene("mode", IntrospectValue::Text("x".to_owned())), Err(InterveneError::ReadOnly));
-        assert_eq!(e.intervene("position", IntrospectValue::Text("x".to_owned())), Err(InterveneError::ReadOnly));
+        assert_eq!(
+            e.intervene("mode", IntrospectValue::Text("x".to_owned())),
+            Err(InterveneError::ReadOnly)
+        );
+        assert_eq!(
+            e.intervene("position", IntrospectValue::Text("x".to_owned())),
+            Err(InterveneError::ReadOnly)
+        );
     }
 
     fn has_text(scene: &Scene, needle: &str) -> bool {
@@ -449,7 +530,10 @@ mod tests {
 
     #[test]
     fn r55_g20_view_carries_composite_paint_root_tag() {
-        pinion_core::test_fixtures::assert_widget_view_carries_tag::<StatusBarView>(0, &Frame::new());
+        pinion_core::test_fixtures::assert_widget_view_carries_tag::<StatusBarView>(
+            0,
+            &Frame::new(),
+        );
     }
 
     #[test]

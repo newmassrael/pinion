@@ -21,12 +21,21 @@ fn find_glyph(font: &Font, pred: impl Fn(&Glyph) -> bool) -> Option<u16> {
 fn noto_simple_glyph_rasterizes_to_ink() {
     let font = load("tests/fonts/NotoSans-Regular.ttf");
     // gid 0 (.notdef) is a simple hollow box per the parser sweep; rasterize it.
-    let gid = find_glyph(&font, |g| matches!(g, Glyph::Simple(s) if !s.points.is_empty()))
-        .expect("Noto has a simple glyph");
-    let cov = font.rasterize_glyph(gid, 64.0).expect("simple glyph rasterizes");
+    let gid = find_glyph(
+        &font,
+        |g| matches!(g, Glyph::Simple(s) if !s.points.is_empty()),
+    )
+    .expect("Noto has a simple glyph");
+    let cov = font
+        .rasterize_glyph(gid, 64.0)
+        .expect("simple glyph rasterizes");
     assert!(!cov.is_empty(), "bitmap has pixels");
     assert!(cov.ink_sum() > 0, "glyph leaves ink");
-    assert_eq!(cov.alpha.len(), cov.width * cov.height, "alpha sized to bitmap");
+    assert_eq!(
+        cov.alpha.len(),
+        cov.width * cov.height,
+        "alpha sized to bitmap"
+    );
 }
 
 #[test]
@@ -44,7 +53,11 @@ fn noto_capital_h_rasterizes() {
     // The bitmap is at most a couple px wider/taller than the 48px em.
     assert!(cov.width <= 64 && cov.height <= 64, "plausible bitmap size");
     // A cap-height glyph sits above the baseline → top row is above it.
-    assert!(cov.top <= 0, "glyph top is at/above baseline, got {}", cov.top);
+    assert!(
+        cov.top <= 0,
+        "glyph top is at/above baseline, got {}",
+        cov.top
+    );
 }
 
 #[test]
@@ -53,11 +66,16 @@ fn nanum_simple_glyph_rasterizes_to_ink() {
     // Prefer 한글 '가' (U+AC00) when it is a simple outline; otherwise any simple
     // glyph, so the 한글 fixture exercises the raster path regardless of how the
     // font composes its syllables (composite hangul is a R50.8.x concern).
-    let gid = font.glyph_id_for(0xAC00).filter(|&g| {
-        matches!(font.glyph_outline(g), Some(Glyph::Simple(s)) if !s.points.is_empty())
-    });
+    let gid = font.glyph_id_for(0xAC00).filter(
+        |&g| matches!(font.glyph_outline(g), Some(Glyph::Simple(s)) if !s.points.is_empty()),
+    );
     let gid = gid
-        .or_else(|| find_glyph(&font, |g| matches!(g, Glyph::Simple(s) if !s.points.is_empty())))
+        .or_else(|| {
+            find_glyph(
+                &font,
+                |g| matches!(g, Glyph::Simple(s) if !s.points.is_empty()),
+            )
+        })
         .expect("Nanum has a simple glyph");
     let cov = font.rasterize_glyph(gid, 64.0).expect("rasterizes");
     assert!(cov.ink_sum() > 0, "glyph inks");
@@ -74,7 +92,10 @@ fn noto_composite_glyphs_rasterize_to_ink() {
     let composites: Vec<u16> = (0..font.num_glyphs())
         .filter(|&g| matches!(font.glyph_outline(g), Some(Glyph::Composite(_))))
         .collect();
-    assert!(!composites.is_empty(), "Noto has composite glyphs to exercise");
+    assert!(
+        !composites.is_empty(),
+        "Noto has composite glyphs to exercise"
+    );
     let mut inked = 0usize;
     for &gid in &composites {
         match font.rasterize_glyph(gid, 32.0) {
@@ -140,9 +161,21 @@ fn larger_size_yields_more_ink() {
     // Monotonic sanity: the same glyph at 2× the size leaves substantially
     // more coverage mass (area scales ~quadratically).
     let font = load("tests/fonts/NotoSans-Regular.ttf");
-    let gid = find_glyph(&font, |g| matches!(g, Glyph::Simple(s) if s.points.len() > 8))
-        .expect("a non-trivial simple glyph");
-    let small = font.rasterize_glyph(gid, 24.0).expect("rasterizes").ink_sum();
-    let large = font.rasterize_glyph(gid, 48.0).expect("rasterizes").ink_sum();
-    assert!(large > small * 2, "2× size should ~4× ink: {small} → {large}");
+    let gid = find_glyph(
+        &font,
+        |g| matches!(g, Glyph::Simple(s) if s.points.len() > 8),
+    )
+    .expect("a non-trivial simple glyph");
+    let small = font
+        .rasterize_glyph(gid, 24.0)
+        .expect("rasterizes")
+        .ink_sum();
+    let large = font
+        .rasterize_glyph(gid, 48.0)
+        .expect("rasterizes")
+        .ink_sum();
+    assert!(
+        large > small * 2,
+        "2× size should ~4× ink: {small} → {large}"
+    );
 }

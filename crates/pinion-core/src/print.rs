@@ -81,7 +81,11 @@ impl PrinterInfo {
     /// Construct a printer descriptor.
     #[must_use]
     pub fn new(id: impl Into<String>, name: impl Into<String>, is_default: bool) -> Self {
-        Self { id: id.into(), name: name.into(), is_default }
+        Self {
+            id: id.into(),
+            name: name.into(),
+            is_default,
+        }
     }
 }
 
@@ -267,10 +271,18 @@ mod tests {
     #[test]
     fn orientation_from_wire_inverts_as_str() {
         for o in [Orientation::Portrait, Orientation::Landscape] {
-            assert_eq!(Orientation::from_wire(o.as_str()), Some(o), "round-trip {o:?}");
+            assert_eq!(
+                Orientation::from_wire(o.as_str()),
+                Some(o),
+                "round-trip {o:?}"
+            );
         }
         assert_eq!(Orientation::from_wire("sideways"), None);
-        assert_eq!(Orientation::from_wire("Portrait"), None, "strict lowercase token");
+        assert_eq!(
+            Orientation::from_wire("Portrait"),
+            None,
+            "strict lowercase token"
+        );
     }
 
     #[test]
@@ -288,7 +300,10 @@ mod tests {
         let printers = b.enumerate_printers();
         assert_eq!(printers.len(), 3);
         assert_eq!(printers.iter().filter(|p| p.is_default).count(), 1);
-        assert!(printers[0].is_default, "first sample printer is the default");
+        assert!(
+            printers[0].is_default,
+            "first sample printer is the default"
+        );
     }
 
     #[test]

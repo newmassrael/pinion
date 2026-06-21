@@ -11,11 +11,11 @@
 //! wired in; for now it is the standalone state-write half of the RPC
 //! surface.
 
-use pinion_core::external::{InterveneError, IntrospectValue};
 use pinion_core::Scene;
+use pinion_core::external::{InterveneError, IntrospectValue};
 
 use crate::path::PathError;
-use crate::resolve::{resolve_external_introspect_mut, ResolveExternalError};
+use crate::resolve::{ResolveExternalError, resolve_external_introspect_mut};
 
 /// Reasons [`rewind`] can fail.
 #[non_exhaustive]
@@ -76,9 +76,9 @@ pub fn rewind(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_core::Color;
     use pinion_core::external::{CountedExternal, StubExternal};
     use pinion_core::scene::{BoxNode, ExternalNode, Rect};
-    use pinion_core::Color;
 
     use crate::query::query;
 
@@ -162,9 +162,8 @@ mod tests {
 
     fn container_with_nested_counted(tag: &'static str, count: i64) -> Scene {
         use pinion_core::scene::{ContainerNode, Rect};
-        let ext = Scene::External(
-            ExternalNode::new(Box::new(CountedExternal::new(count))).with_tag(tag),
-        );
+        let ext =
+            Scene::External(ExternalNode::new(Box::new(CountedExternal::new(count))).with_tag(tag));
         let mut c = ContainerNode::new(vec![ext]);
         c.rect = Rect::new(0, 0, 100, 100);
         Scene::Container(c)
@@ -176,7 +175,12 @@ mod tests {
         // holding a tagged ExternalNode. /counter/external/count
         // walks the tree, finds External, intervenes. Query confirms.
         let mut scene = container_with_nested_counted("counter", 0);
-        rewind(&mut scene, "/counter/external/count", IntrospectValue::Int(99)).unwrap();
+        rewind(
+            &mut scene,
+            "/counter/external/count",
+            IntrospectValue::Int(99),
+        )
+        .unwrap();
         assert_eq!(
             query(&scene, "/counter/external/count").unwrap(),
             IntrospectValue::Int(99),
@@ -201,30 +205,18 @@ mod tests {
     #[test]
     fn rewind_nested_unknown_segment_is_no_external() {
         let mut scene = container_with_nested_counted("counter", 0);
-        let err = rewind(
-            &mut scene,
-            "/ghost/external/count",
-            IntrospectValue::Int(0),
-        )
-        .unwrap_err();
+        let err = rewind(&mut scene, "/ghost/external/count", IntrospectValue::Int(0)).unwrap_err();
         assert_eq!(err, RewindError::NoExternalAtPath);
     }
 
     #[test]
     fn rewind_nested_non_external_target_is_no_external() {
         use pinion_core::scene::{BoxNode as BNode, ContainerNode, Rect};
-        let child = Scene::Box(
-            BNode::filled(Rect::default(), Color::default()).with_tag("info"),
-        );
+        let child = Scene::Box(BNode::filled(Rect::default(), Color::default()).with_tag("info"));
         let mut c = ContainerNode::new(vec![child]);
         c.rect = Rect::new(0, 0, 100, 100);
         let mut scene = Scene::Container(c);
-        let err = rewind(
-            &mut scene,
-            "/info/external/count",
-            IntrospectValue::Int(0),
-        )
-        .unwrap_err();
+        let err = rewind(&mut scene, "/info/external/count", IntrospectValue::Int(0)).unwrap_err();
         assert_eq!(err, RewindError::NoExternalAtPath);
     }
 }

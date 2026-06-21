@@ -28,13 +28,13 @@
 //! chip), the leading/trailing children, and the ink colour — each variant's
 //! own affordance.
 
+use pinion_core::Color;
+use pinion_core::scene::Rect;
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size,
 };
-use pinion_core::widgets::interaction::InteractionState;
 use pinion_core::theme::Theme;
-use pinion_core::Color;
-use pinion_core::scene::Rect;
+use pinion_core::widgets::interaction::InteractionState;
 
 /// M3 chip corner radius — 8 px, the spec value. Deliberately *not* the
 /// fully-rounded stadium a segmented button uses, so the two skins read as
@@ -116,12 +116,18 @@ mod tests {
             &theme,
         );
         let bare = chip_style(fill, None, ButtonState::Idle, &theme);
-        assert_eq!(outlined.fill, bare.fill, "same base fill, idle: identical tint");
+        assert_eq!(
+            outlined.fill, bare.fill,
+            "same base fill, idle: identical tint"
+        );
         assert_eq!(
             outlined.corner_radius, bare.corner_radius,
             "both rounded to CHIP_RADIUS",
         );
-        assert!(outlined.border.is_some(), "outlined chip carries the border");
+        assert!(
+            outlined.border.is_some(),
+            "outlined chip carries the border"
+        );
         assert!(bare.border.is_none(), "bare chip drops the border");
     }
 
@@ -145,9 +151,17 @@ mod tests {
             Some(Rect::new(0, 12, 0, 12)),
         );
         assert_eq!(layout.gap, INNER_GAP, "inner gap is the shared token");
-        assert_eq!(layout.size.height, SizeValue::Px(CHIP_HEIGHT), "height pinned");
+        assert_eq!(
+            layout.size.height,
+            SizeValue::Px(CHIP_HEIGHT),
+            "height pinned"
+        );
         assert_eq!(layout.size.width, SizeValue::Auto, "width hugs content");
-        assert_eq!(layout.padding, Rect::new(0, 12, 0, 12), "horizontal insets carried");
+        assert_eq!(
+            layout.padding,
+            Rect::new(0, 12, 0, 12),
+            "horizontal insets carried"
+        );
     }
 
     #[test]
@@ -156,7 +170,11 @@ mod tests {
         let layout = chip_layout(Size::px(104, CHIP_HEIGHT), None);
         assert_eq!(layout.size.width, SizeValue::Px(104));
         assert_eq!(layout.size.height, SizeValue::Px(CHIP_HEIGHT));
-        assert_eq!(layout.padding, Rect::default(), "no insets for fixed-width chips");
+        assert_eq!(
+            layout.padding,
+            Rect::default(),
+            "no insets for fixed-width chips"
+        );
         assert_eq!(layout.gap, INNER_GAP);
     }
 }

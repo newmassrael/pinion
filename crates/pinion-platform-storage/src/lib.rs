@@ -215,9 +215,8 @@ fn is_valid_key(key: &str) -> bool {
     if key == "." || key == ".." {
         return false;
     }
-    key.bytes().all(|b| {
-        b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-')
-    })
+    key.bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
 }
 
 /// R665 §3 §5.15 — `data_dir`-rooted [`FileStorage`] constructor.
@@ -373,7 +372,11 @@ impl Directory for FsDirectory {
     /// (`false`) when the file already exists, mirroring the in-memory
     /// backing's duplicate rejection.
     fn create_file(&self, path: &str) -> bool {
-        fs::OpenOptions::new().write(true).create_new(true).open(path).is_ok()
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .is_ok()
     }
 
     /// R789 — remove the entry at `path`: a directory (and its subtree)
@@ -490,8 +493,8 @@ mod tests {
     //! silent-no-op contract on invalid keys.
 
     use super::{
-        default_app_dir, is_valid_key, key_path, list_keys_for_test, open_app_storage,
-        storage_root, temp_key_path, AppStorage, FileStorage, InMemoryStorage, Storage,
+        AppStorage, FileStorage, InMemoryStorage, Storage, default_app_dir, is_valid_key, key_path,
+        list_keys_for_test, open_app_storage, storage_root, temp_key_path,
     };
     use std::fs;
     use std::path::PathBuf;
@@ -507,8 +510,8 @@ mod tests {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_nanos())
                 .unwrap_or(0);
-            let path = std::env::temp_dir()
-                .join(format!("pinion-platform-storage-{prefix}-{nanos}"));
+            let path =
+                std::env::temp_dir().join(format!("pinion-platform-storage-{prefix}-{nanos}"));
             fs::create_dir_all(&path).expect("create test tempdir");
             Self(path)
         }
@@ -532,7 +535,11 @@ mod tests {
         let app = AppStorage::new(Box::new(InMemoryStorage::new()));
         assert_eq!(app.load("k"), None, "empty backend loads None");
         app.save("k", b"v");
-        assert_eq!(app.load("k"), Some(b"v".to_vec()), "save then load forwards");
+        assert_eq!(
+            app.load("k"),
+            Some(b"v".to_vec()),
+            "save then load forwards"
+        );
         app.remove("k");
         assert_eq!(app.load("k"), None, "remove forwards");
     }
@@ -686,7 +693,10 @@ mod tests {
         let storage = FileStorage::try_new(tmp.path().clone()).expect("open root");
         let path = key_path(&storage, "todomvc.state").expect("valid key");
         assert_eq!(path.parent(), Some(tmp.path().as_path()));
-        assert_eq!(path.file_name().and_then(|n| n.to_str()), Some("todomvc.state"));
+        assert_eq!(
+            path.file_name().and_then(|n| n.to_str()),
+            Some("todomvc.state")
+        );
 
         let tmp_path = temp_key_path(&storage, "todomvc.state").expect("valid key");
         assert_eq!(
@@ -758,7 +768,10 @@ mod tests {
         assert!(!listing[1].is_dir, "a.txt is a file");
 
         // A missing path lists None (the total-surface contract).
-        assert_eq!(fsd.read_dir(&format!("{}/nope", tmp.path().display())), None);
+        assert_eq!(
+            fsd.read_dir(&format!("{}/nope", tmp.path().display())),
+            None
+        );
         // TmpDir's Drop removes the seeded tree.
     }
 
@@ -772,23 +785,52 @@ mod tests {
         let fsd = FsDirectory::new();
 
         // create_dir + create_file appear in the real listing.
-        assert!(fsd.create_dir(&format!("{root}/src")), "create_dir succeeds");
-        assert!(fsd.create_file(&format!("{root}/README.md")), "create_file succeeds");
-        let names: Vec<String> =
-            fsd.read_dir(&root).expect("lists").iter().map(|e| e.name.clone()).collect();
-        assert_eq!(names, ["src", "README.md"], "created entries appear (dir first)");
+        assert!(
+            fsd.create_dir(&format!("{root}/src")),
+            "create_dir succeeds"
+        );
+        assert!(
+            fsd.create_file(&format!("{root}/README.md")),
+            "create_file succeeds"
+        );
+        let names: Vec<String> = fsd
+            .read_dir(&root)
+            .expect("lists")
+            .iter()
+            .map(|e| e.name.clone())
+            .collect();
+        assert_eq!(
+            names,
+            ["src", "README.md"],
+            "created entries appear (dir first)"
+        );
 
         // create_new semantics: a duplicate file is rejected.
-        assert!(!fsd.create_file(&format!("{root}/README.md")), "duplicate file rejected");
+        assert!(
+            !fsd.create_file(&format!("{root}/README.md")),
+            "duplicate file rejected"
+        );
         // create_dir under a missing parent is rejected (non-recursive).
-        assert!(!fsd.create_dir(&format!("{root}/nope/deep")), "missing parent rejected");
+        assert!(
+            !fsd.create_dir(&format!("{root}/nope/deep")),
+            "missing parent rejected"
+        );
 
         // remove drops a file and (recursively) a directory.
-        assert!(fsd.remove(&format!("{root}/README.md")), "remove file succeeds");
+        assert!(
+            fsd.remove(&format!("{root}/README.md")),
+            "remove file succeeds"
+        );
         fs::write(format!("{root}/src/main.rs"), b"fn main() {{}}").expect("seed subfile");
-        assert!(fsd.remove(&format!("{root}/src")), "remove dir (recursive) succeeds");
+        assert!(
+            fsd.remove(&format!("{root}/src")),
+            "remove dir (recursive) succeeds"
+        );
         assert_eq!(fsd.read_dir(&root).expect("lists").len(), 0, "both removed");
-        assert!(!fsd.remove(&format!("{root}/ghost")), "removing a missing path = false");
+        assert!(
+            !fsd.remove(&format!("{root}/ghost")),
+            "removing a missing path = false"
+        );
         // TmpDir's Drop removes the root.
     }
 
@@ -804,18 +846,45 @@ mod tests {
         fs::create_dir(format!("{root}/keep")).expect("seed dir");
 
         // Rename the file: old gone, new present, content preserved.
-        assert!(fsd.rename(&format!("{root}/old.txt"), &format!("{root}/new.txt")), "rename ok");
-        let names: Vec<String> =
-            fsd.read_dir(&root).expect("lists").iter().map(|e| e.name.clone()).collect();
-        assert_eq!(names, ["keep", "new.txt"], "renamed entry present, old gone");
-        assert_eq!(fs::read(format!("{root}/new.txt")).expect("read"), b"content", "content kept");
+        assert!(
+            fsd.rename(&format!("{root}/old.txt"), &format!("{root}/new.txt")),
+            "rename ok"
+        );
+        let names: Vec<String> = fsd
+            .read_dir(&root)
+            .expect("lists")
+            .iter()
+            .map(|e| e.name.clone())
+            .collect();
+        assert_eq!(
+            names,
+            ["keep", "new.txt"],
+            "renamed entry present, old gone"
+        );
+        assert_eq!(
+            fs::read(format!("{root}/new.txt")).expect("read"),
+            b"content",
+            "content kept"
+        );
 
         // Never overwrite: renaming onto an existing name is a false no-op.
         fs::write(format!("{root}/taken.txt"), b"x").expect("seed");
-        assert!(!fsd.rename(&format!("{root}/new.txt"), &format!("{root}/taken.txt")), "no overwrite");
-        assert!(fsd.read_dir(&root).expect("lists").iter().any(|e| e.name == "new.txt"), "source kept");
+        assert!(
+            !fsd.rename(&format!("{root}/new.txt"), &format!("{root}/taken.txt")),
+            "no overwrite"
+        );
+        assert!(
+            fsd.read_dir(&root)
+                .expect("lists")
+                .iter()
+                .any(|e| e.name == "new.txt"),
+            "source kept"
+        );
         // A missing source is a false no-op.
-        assert!(!fsd.rename(&format!("{root}/ghost"), &format!("{root}/z.txt")), "missing source");
+        assert!(
+            !fsd.rename(&format!("{root}/ghost"), &format!("{root}/z.txt")),
+            "missing source"
+        );
         // TmpDir's Drop removes the root.
     }
 }

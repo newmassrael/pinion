@@ -131,8 +131,7 @@ impl PrintBackend for CupsPrintBackend {
             )));
         }
         let stdout = String::from_utf8_lossy(&out.stdout);
-        let job_id =
-            parse_request_id(&stdout).unwrap_or_else(|| format!("{printer_id}-unknown"));
+        let job_id = parse_request_id(&stdout).unwrap_or_else(|| format!("{printer_id}-unknown"));
         Ok(PrintReceipt {
             printer_id: printer_id.to_owned(),
             copies: job.copies,

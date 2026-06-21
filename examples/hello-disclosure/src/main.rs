@@ -19,19 +19,21 @@
 //! summary label) on an M3 `SurfaceContainerHigh` state-layer ramp,
 //! with the content panel appearing beneath only while expanded.
 
-use pinion_core::external::IntrospectValue;
-use pinion_core::scene::{Rect, TextNode};
-use pinion_core::style::{AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, TextStyle};
-use pinion_core::theme::{use_theme, ColorRole};
-#[cfg(test)]
-use pinion_core::theme::Theme;
-use pinion_core::widgets::disclosure::{DisclosureEvent, DisclosureExternal, DisclosureState};
-use pinion_core::{Frame, Scene, WidgetCore, WidgetStateName};
 #[cfg(test)]
 use pinion_a11y::{AccessNode, AriaRole, WidgetA11y};
+use pinion_core::external::IntrospectValue;
+use pinion_core::scene::{Rect, TextNode};
+use pinion_core::style::{
+    AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, TextStyle,
+};
+#[cfg(test)]
+use pinion_core::theme::Theme;
+use pinion_core::theme::{ColorRole, use_theme};
+use pinion_core::widgets::disclosure::{DisclosureEvent, DisclosureExternal, DisclosureState};
+use pinion_core::{Frame, Scene, WidgetCore, WidgetStateName};
 use pinion_derive::widget;
 use pinion_shell::vello_renderer_impl;
-use pinion_widget_paint::disclosure::{view_disclosure, DisclosureStyle};
+use pinion_widget_paint::disclosure::{DisclosureStyle, view_disclosure};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloDisclosureRenderer, HelloDisclosureRendererError);
@@ -126,8 +128,7 @@ impl DisclosureView {
                 } else {
                     DisclosureState::Idle
                 };
-                let expanded =
-                    matches!(intro.query("expanded"), Some(IntrospectValue::Bool(true)));
+                let expanded = matches!(intro.query("expanded"), Some(IntrospectValue::Bool(true)));
                 return (state, expanded);
             }
         }
@@ -176,7 +177,10 @@ impl DisclosureView {
             return false;
         };
         intro
-            .invoke("send", IntrospectValue::Text("KeyboardActivate".to_string()))
+            .invoke(
+                "send",
+                IntrospectValue::Text("KeyboardActivate".to_string()),
+            )
             .is_ok()
     }
 
@@ -232,10 +236,8 @@ mod a11y_tests {
 
     #[test]
     fn focused_tag_sets_focused_flag() {
-        let nodes = DisclosureView::access_node(
-            &(DisclosureState::Idle, false),
-            Some("main_disclosure"),
-        );
+        let nodes =
+            DisclosureView::access_node(&(DisclosureState::Idle, false), Some("main_disclosure"));
         assert!(nodes[0].state.focused);
     }
 
@@ -260,10 +262,7 @@ mod a11y_tests {
     fn r696_header_ramp_idle_uses_surface_container_high_role() {
         let light = Theme::light();
         assert_eq!(
-            pinion_widget_paint::disclosure::disclosure_header_for(
-                &light,
-                DisclosureState::Idle,
-            ),
+            pinion_widget_paint::disclosure::disclosure_header_for(&light, DisclosureState::Idle,),
             light.resolve(ColorRole::SurfaceContainerHigh),
         );
     }

@@ -110,10 +110,7 @@ impl VecSink {
     /// Panics if the internal [`Mutex`] is poisoned.
     #[must_use]
     pub fn snapshot(&self) -> Vec<Intent> {
-        self.intents
-            .lock()
-            .expect("VecSink mutex poisoned")
-            .clone()
+        self.intents.lock().expect("VecSink mutex poisoned").clone()
     }
 
     /// Number of intents collected so far.
@@ -122,10 +119,7 @@ impl VecSink {
     /// Panics if the internal [`Mutex`] is poisoned.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.intents
-            .lock()
-            .expect("VecSink mutex poisoned")
-            .len()
+        self.intents.lock().expect("VecSink mutex poisoned").len()
     }
 
     /// `true` when no intents have been collected since the last
@@ -201,14 +195,13 @@ mod tests {
         let sink_b = sink_a.clone();
         sink_a.send(Intent::new_static("via_a", IntrospectValue::Null));
         sink_b.send(Intent::new_static("via_b", IntrospectValue::Null));
-        assert_eq!(
-            sink_a.len(),
-            2,
-            "cloned sinks must observe the same Vec",
-        );
+        assert_eq!(sink_a.len(), 2, "cloned sinks must observe the same Vec",);
         let drained = sink_b.drain();
         assert_eq!(drained.len(), 2);
-        assert!(sink_a.is_empty(), "drain through one clone empties the other");
+        assert!(
+            sink_a.is_empty(),
+            "drain through one clone empties the other"
+        );
     }
 
     #[test]

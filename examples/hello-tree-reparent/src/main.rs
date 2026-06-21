@@ -60,12 +60,12 @@
 use std::borrow::Cow;
 
 use pinion_a11y::{
-    tree_access_nodes, tree_row_tag, AccessAction, AccessFocus, AccessNode, WidgetA11y,
+    AccessAction, AccessFocus, AccessNode, WidgetA11y, tree_access_nodes, tree_row_tag,
 };
 use pinion_core::composite_tag::{parse_send_payload, split_subindex};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, DragPayload, DropPoint, External, ExternalIntrospect,
-    IntrospectSchema, IntrospectValue, InterveneError, InvokeError, RepaintOwner, ThreadOwnership,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
 use pinion_core::input::PointerWireEvent;
 use pinion_core::reactive::{Owner, Signal};
@@ -73,13 +73,13 @@ use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole};
+use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::widgets::tree_nav::{
-    apply_tree_key, find_node, find_node_mut, flat_visible, insert_subtree, remove_subtree,
-    MutableTreeNode, TreeNode, VisibleRow,
+    MutableTreeNode, TreeNode, VisibleRow, apply_tree_key, find_node, find_node_mut, flat_visible,
+    insert_subtree, remove_subtree,
 };
 use pinion_core::{Frame, Scene, WidgetCore};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use serde::{Deserialize, Serialize};
 use std::rc::Rc;
 
@@ -168,10 +168,20 @@ struct OutlinerNode {
 
 impl OutlinerNode {
     fn leaf(id: &str, label: &str) -> Self {
-        Self { id: id.to_owned(), label: label.to_owned(), expanded: false, children: Vec::new() }
+        Self {
+            id: id.to_owned(),
+            label: label.to_owned(),
+            expanded: false,
+            children: Vec::new(),
+        }
     }
     fn branch(id: &str, label: &str, expanded: bool, children: Vec<OutlinerNode>) -> Self {
-        Self { id: id.to_owned(), label: label.to_owned(), expanded, children }
+        Self {
+            id: id.to_owned(),
+            label: label.to_owned(),
+            expanded,
+            children,
+        }
     }
 }
 
@@ -220,7 +230,12 @@ fn initial_nodes() -> Vec<OutlinerNode> {
                         OutlinerNode::leaf("light", "Key Light"),
                     ],
                 ),
-                OutlinerNode::branch("props", "Props", false, vec![OutlinerNode::leaf("crate", "Crate")]),
+                OutlinerNode::branch(
+                    "props",
+                    "Props",
+                    false,
+                    vec![OutlinerNode::leaf("crate", "Crate")],
+                ),
             ],
         ),
         OutlinerNode::branch("ui", "UI", true, vec![OutlinerNode::leaf("hud", "HUD")]),
@@ -286,7 +301,11 @@ fn reparent(nodes: &mut Vec<OutlinerNode>, drag_id: &str, target: &str, zone: Dr
         }
         DropZone::Before | DropZone::After => {
             let (tp, ti) = locate(nodes, target).unwrap_or((None, 0));
-            let idx = if matches!(zone, DropZone::After) { ti + 1 } else { ti };
+            let idx = if matches!(zone, DropZone::After) {
+                ti + 1
+            } else {
+                ti
+            };
             (tp, idx)
         }
     };
@@ -341,7 +360,9 @@ struct OutlinerExternal {
 
 impl OutlinerExternal {
     fn new() -> Self {
-        Self { state: use_outliner() }
+        Self {
+            state: use_outliner(),
+        }
     }
 
     /// Classify the cursor's drop into `(target id, zone)`; `None` over no row.
@@ -397,7 +418,11 @@ impl External for OutlinerExternal {
         // Over a row, refresh the preview; over no row, hold the last one (no
         // snapping over inter-row gaps — the `hello-dnd` hold-last behaviour).
         if let Some((target, zone)) = Self::classify(over.as_ref()) {
-            self.state.preview.set(Some(DropPreview { drag_id, target, zone }));
+            self.state.preview.set(Some(DropPreview {
+                drag_id,
+                target,
+                zone,
+            }));
         }
     }
 
@@ -535,7 +560,11 @@ fn row_node(
     let is_focused = focused == Some(row.id.as_str());
 
     let glyph = if row.has_children {
-        if row.expanded { "\u{25BE} " } else { "\u{25B8} " }
+        if row.expanded {
+            "\u{25BE} "
+        } else {
+            "\u{25B8} "
+        }
     } else {
         "\u{2022} "
     };
@@ -578,7 +607,9 @@ fn row_node(
 /// positioned at the gap above visible row `visual` so it never reflows rows.
 fn insertion_line(visual: usize, theme: &pinion_core::theme::Theme) -> Scene {
     let top = u32::try_from(visual).unwrap_or(0) * ROW_H;
-    let top = top.saturating_sub(LINE_H / 2).min(LIST_H.saturating_sub(LINE_H));
+    let top = top
+        .saturating_sub(LINE_H / 2)
+        .min(LIST_H.saturating_sub(LINE_H));
     Scene::Container(
         ContainerNode::new(vec![])
             .with_tag("outliner_insert")
@@ -611,33 +642,39 @@ fn view(_state: (), _frame: &Frame) -> Scene {
     if let Some(p) = &preview {
         if p.zone != DropZone::Onto {
             if let Some(vis) = rows.iter().position(|r| r.id == p.target) {
-                let gap = if p.zone == DropZone::After { vis + 1 } else { vis };
+                let gap = if p.zone == DropZone::After {
+                    vis + 1
+                } else {
+                    vis
+                };
                 kids.push(insertion_line(gap, &theme));
             }
         }
     }
 
     let list = Scene::Container(
-        ContainerNode::new(kids)
-            .with_tag(TAG)
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Column)
-                    .with_align_items(AlignItems::Stretch)
-                    .with_size(Size::px(WIN_W - 24, LIST_H))
-                    .with_focusable(true),
-            ),
+        ContainerNode::new(kids).with_tag(TAG).with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Column)
+                .with_align_items(AlignItems::Stretch)
+                .with_size(Size::px(WIN_W - 24, LIST_H))
+                .with_focusable(true),
+        ),
     );
 
     let title = Scene::Text(TextNode::styled(
         "Scene outliner — drag to reparent",
         Rect::default(),
-        TextStyle::new().with_size_px(15).with_fg(theme.resolve(ColorRole::OnSurface)),
+        TextStyle::new()
+            .with_size_px(15)
+            .with_fg(theme.resolve(ColorRole::OnSurface)),
     ));
     let footer = Scene::Text(TextNode::styled(
         "drag onto a row = child   between rows = reorder",
         Rect::default(),
-        TextStyle::new().with_size_px(12).with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+        TextStyle::new()
+            .with_size_px(12)
+            .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
     ));
 
     Scene::Container(
@@ -722,7 +759,11 @@ impl WidgetA11y for TreeReparentView {
         let st = use_outliner();
         let rows = flat_visible(&st.nodes.get());
         let cursor = st.focused.get();
-        let focused_id = if focused == Some(TAG) { cursor.as_deref() } else { None };
+        let focused_id = if focused == Some(TAG) {
+            cursor.as_deref()
+        } else {
+            None
+        };
         tree_access_nodes(TAG, TAG, Some("Scene outliner"), &rows, None, focused_id)
     }
 
@@ -732,7 +773,10 @@ impl WidgetA11y for TreeReparentView {
         if focused == Some(TAG) {
             let st = use_outliner();
             let cursor = st.focused.get().unwrap_or_else(|| {
-                flat_visible(&st.nodes.get()).first().map(|r| r.id.clone()).unwrap_or_default()
+                flat_visible(&st.nodes.get())
+                    .first()
+                    .map(|r| r.id.clone())
+                    .unwrap_or_default()
             });
             Some(AccessFocus::composite(TAG, tree_row_tag(TAG, &cursor)))
         } else {
@@ -765,7 +809,10 @@ impl WidgetView for TreeReparentView {
     type Renderer = HelloTreeReparentRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 }
 
@@ -787,7 +834,12 @@ mod tests {
         let ids = visible_ids(&initial_nodes());
         // world(exp) > terrain, player(exp) > camera, light, props(collapsed);
         // ui(exp) > hud. props' child `crate` is hidden (collapsed).
-        assert_eq!(ids, ["world", "terrain", "player", "camera", "light", "props", "ui", "hud"]);
+        assert_eq!(
+            ids,
+            [
+                "world", "terrain", "player", "camera", "light", "props", "ui", "hud"
+            ]
+        );
     }
 
     #[test]
@@ -797,8 +849,15 @@ mod tests {
         // props' child and props auto-expands so it shows.
         assert!(reparent(&mut tree, "light", "props", DropZone::Onto));
         assert_eq!(parent_of(&tree, "light").as_deref(), Some("props"));
-        assert!(find_node(&tree, "props").unwrap().expanded, "target auto-expands");
-        assert_eq!(parent_of(&tree, "camera").as_deref(), Some("player"), "sibling untouched");
+        assert!(
+            find_node(&tree, "props").unwrap().expanded,
+            "target auto-expands"
+        );
+        assert_eq!(
+            parent_of(&tree, "camera").as_deref(),
+            Some("player"),
+            "sibling untouched"
+        );
     }
 
     #[test]
@@ -832,7 +891,11 @@ mod tests {
         let before = visible_ids(&tree);
         // Drop "player" ONTO "camera" (its own child) → rejected, no change.
         assert!(!reparent(&mut tree, "player", "camera", DropZone::Onto));
-        assert_eq!(visible_ids(&tree), before, "tree unchanged after a cycle drop");
+        assert_eq!(
+            visible_ids(&tree),
+            before,
+            "tree unchanged after a cycle drop"
+        );
         // Drop "world" onto "light" (a deep descendant) → also rejected.
         assert!(!reparent(&mut tree, "world", "light", DropZone::Onto));
         assert_eq!(visible_ids(&tree), before);
@@ -848,17 +911,30 @@ mod tests {
     #[test]
     fn is_descendant_distinguishes_subtree_membership() {
         let tree = initial_nodes();
-        assert!(is_descendant(&tree, "world", "camera"), "camera is under world");
+        assert!(
+            is_descendant(&tree, "world", "camera"),
+            "camera is under world"
+        );
         assert!(is_descendant(&tree, "player", "light"));
-        assert!(!is_descendant(&tree, "player", "world"), "ancestor is not a descendant");
+        assert!(
+            !is_descendant(&tree, "player", "world"),
+            "ancestor is not a descendant"
+        );
         assert!(!is_descendant(&tree, "ui", "camera"), "different subtree");
-        assert!(!is_descendant(&tree, "camera", "camera"), "a node is not its own descendant");
+        assert!(
+            !is_descendant(&tree, "camera", "camera"),
+            "a node is not its own descendant"
+        );
     }
 
     // ── External drag-hook integration (the scene/drag path) ──────────────
 
     fn drop_point(id: &str, y_rel: f32) -> DropPoint {
-        DropPoint { tag: tree_row_tag(TAG, id), x_rel: 0.5, y_rel }
+        DropPoint {
+            tag: tree_row_tag(TAG, id),
+            x_rel: 0.5,
+            y_rel,
+        }
     }
 
     #[test]
@@ -869,7 +945,11 @@ mod tests {
             ext.invoke("send", IntrospectValue::Text("light:PointerDown".into()))
                 .expect("send accepted");
             let payload = ext.begin_drag().expect("armed after press");
-            assert_eq!(payload.value, IntrospectValue::Text("light".into()), "payload carries id");
+            assert_eq!(
+                payload.value,
+                IntrospectValue::Text("light".into()),
+                "payload carries id"
+            );
             ext.drag_to(&payload, Some(drop_point("props", 0.5)));
             assert!(
                 matches!(ext.query("preview"), Some(IntrospectValue::Json(_))),
@@ -877,8 +957,15 @@ mod tests {
             );
             ext.drag_release(&payload, Some(drop_point("props", 0.5)));
             // light reparented under props; drag state cleared.
-            assert_eq!(ext.query("parent_of.light"), Some(IntrospectValue::Text("props".into())));
-            assert_eq!(ext.query("preview"), Some(IntrospectValue::Null), "preview cleared");
+            assert_eq!(
+                ext.query("parent_of.light"),
+                Some(IntrospectValue::Text("props".into()))
+            );
+            assert_eq!(
+                ext.query("preview"),
+                Some(IntrospectValue::Null),
+                "preview cleared"
+            );
             assert!(ext.begin_drag().is_none(), "press cleared on release");
         });
     }
@@ -888,12 +975,28 @@ mod tests {
         Owner::new().run(|| {
             let mut ext = OutlinerExternal::new();
             assert_eq!(ext.query("row_count"), Some(IntrospectValue::Int(8)));
-            assert_eq!(ext.query("id_at.0"), Some(IntrospectValue::Text("world".into())));
-            assert_eq!(ext.query("depth_at.3"), Some(IntrospectValue::Int(2)), "camera is depth 2");
-            assert_eq!(ext.query("parent_of.world"), Some(IntrospectValue::Text(String::new())), "root");
-            assert_eq!(ext.query("parent_of.nope"), Some(IntrospectValue::Null), "absent → Null");
+            assert_eq!(
+                ext.query("id_at.0"),
+                Some(IntrospectValue::Text("world".into()))
+            );
+            assert_eq!(
+                ext.query("depth_at.3"),
+                Some(IntrospectValue::Int(2)),
+                "camera is depth 2"
+            );
+            assert_eq!(
+                ext.query("parent_of.world"),
+                Some(IntrospectValue::Text(String::new())),
+                "root"
+            );
+            assert_eq!(
+                ext.query("parent_of.nope"),
+                Some(IntrospectValue::Null),
+                "absent → Null"
+            );
             // Drag "player" onto its own child "camera" → rejected, no change.
-            ext.invoke("send", IntrospectValue::Text("player:PointerDown".into())).expect("send");
+            ext.invoke("send", IntrospectValue::Text("player:PointerDown".into()))
+                .expect("send");
             let p = ext.begin_drag().expect("armed");
             ext.drag_release(&p, Some(drop_point("camera", 0.5)));
             assert_eq!(
@@ -908,8 +1011,12 @@ mod tests {
     fn external_send_rejects_unknown_node() {
         Owner::new().run(|| {
             let mut ext = OutlinerExternal::new();
-            ext.invoke("send", IntrospectValue::Text("ghost:PointerDown".into())).expect("send ok");
-            assert!(ext.begin_drag().is_none(), "unknown node does not arm a drag");
+            ext.invoke("send", IntrospectValue::Text("ghost:PointerDown".into()))
+                .expect("send ok");
+            assert!(
+                ext.begin_drag().is_none(),
+                "unknown node does not arm a drag"
+            );
         });
     }
 

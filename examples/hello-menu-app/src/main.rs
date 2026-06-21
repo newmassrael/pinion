@@ -46,28 +46,28 @@ use std::fmt::Write as _;
 use std::rc::Rc;
 
 use pinion_a11y::{
-    menu_item_nodes, AccessAction, AccessFocus, AccessNode, AccessState, AriaRole, MenuItemCell,
-    WidgetA11y,
+    AccessAction, AccessFocus, AccessNode, AccessState, AriaRole, MenuItemCell, WidgetA11y,
+    menu_item_nodes,
 };
 use pinion_core::external::{
-    int_of, External, ExternalIntrospect, IntrospectSchema, IntrospectValue, QueryOnlyIntrospect,
-    QuerySource,
+    External, ExternalIntrospect, IntrospectSchema, IntrospectValue, QueryOnlyIntrospect,
+    QuerySource, int_of,
 };
 use pinion_core::intent::Intent;
-use pinion_core::reactive::{batch, Owner, Signal};
+use pinion_core::reactive::{Owner, Signal, batch};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::menu::{MenuBarExternal, MenuItem};
-use pinion_core::{intent_tag, Command, Frame, Scene, WidgetCore};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_core::{Command, Frame, Scene, WidgetCore, intent_tag};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::barrier::dismiss_barrier;
 use pinion_widget_paint::menu::{
-    composite_item_tag, composite_title_tag, view_menu_bar, view_menu_dropdown, MenuItemView,
-    MenuStyle,
+    MenuItemView, MenuStyle, composite_item_tag, composite_title_tag, view_menu_bar,
+    view_menu_dropdown,
 };
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -329,15 +329,23 @@ fn view_content_area(content: &str, state: MenuState, dirty: bool, theme: &Theme
         body_rows.push(Scene::Text(TextNode::styled(
             "(empty document - use File > Open Sample or Edit > Append Line)",
             Rect::default(),
-            TextStyle::new().with_size_px(BODY_FONT_PX).with_fg(on_surface_muted),
+            TextStyle::new()
+                .with_size_px(BODY_FONT_PX)
+                .with_fg(on_surface_muted),
         )));
     } else {
-        let shown = if state.uppercase { content.to_uppercase() } else { content.to_owned() };
+        let shown = if state.uppercase {
+            content.to_uppercase()
+        } else {
+            content.to_owned()
+        };
         for line in shown.lines() {
             body_rows.push(Scene::Text(TextNode::styled(
                 line,
                 Rect::default(),
-                TextStyle::new().with_size_px(BODY_FONT_PX).with_fg(on_surface),
+                TextStyle::new()
+                    .with_size_px(BODY_FONT_PX)
+                    .with_fg(on_surface),
             )));
         }
     }
@@ -364,19 +372,23 @@ fn view_content_area(content: &str, state: MenuState, dirty: bool, theme: &Theme
         content_children.push(Scene::Text(TextNode::styled(
             &status,
             Rect::default(),
-            TextStyle::new().with_size_px(STATUS_FONT_PX).with_fg(on_surface_muted),
+            TextStyle::new()
+                .with_size_px(STATUS_FONT_PX)
+                .with_fg(on_surface_muted),
         )));
     }
     Scene::Container(
-        ContainerNode::new(content_children).with_tag("content").with_layout(
-            LayoutStyle::new()
-                .flex(FlexDirection::Column)
-                .with_align_items(AlignItems::Stretch)
-                .with_justify(JustifyContent::Start)
-                .with_flex_grow(1.0)
-                .with_gap(8)
-                .with_padding(Rect::new(8, 8, 8, 8)),
-        ),
+        ContainerNode::new(content_children)
+            .with_tag("content")
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Column)
+                    .with_align_items(AlignItems::Stretch)
+                    .with_justify(JustifyContent::Start)
+                    .with_flex_grow(1.0)
+                    .with_gap(8)
+                    .with_padding(Rect::new(8, 8, 8, 8)),
+            ),
     )
 }
 
@@ -576,10 +588,13 @@ impl WidgetA11y for AppMenuView {
 
         if let Some(m) = state.open {
             let items = MENUS[m];
-            let menu_items: Vec<usize> =
-                (0..items.len()).filter(|&i| !items[i].is_separator()).collect();
-            let tags: Vec<String> =
-                menu_items.iter().map(|&i| composite_item_tag(BAR_TAG, i)).collect();
+            let menu_items: Vec<usize> = (0..items.len())
+                .filter(|&i| !items[i].is_separator())
+                .collect();
+            let tags: Vec<String> = menu_items
+                .iter()
+                .map(|&i| composite_item_tag(BAR_TAG, i))
+                .collect();
             let cells: Vec<MenuItemCell<'_>> = menu_items
                 .iter()
                 .enumerate()
@@ -608,7 +623,10 @@ impl WidgetA11y for AppMenuView {
             },
             None => composite_title_tag(BAR_TAG, state.bar_focus),
         };
-        Some(AccessFocus::composite(<Self as WidgetCore>::tag(), descendant))
+        Some(AccessFocus::composite(
+            <Self as WidgetCore>::tag(),
+            descendant,
+        ))
     }
 
     fn access_child_invoke(

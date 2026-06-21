@@ -32,14 +32,14 @@
     clippy::style,
     clippy::complexity,
     clippy::pedantic,
-    clippy::all,
+    clippy::all
 )]
 mod sm {
     include!(concat!(env!("OUT_DIR"), "/disclosure_sm.rs"));
 }
 
-pub use sm::{DisclosureEvent, DisclosureState};
 use sm::DisclosurePolicy;
+pub use sm::{DisclosureEvent, DisclosureState};
 
 // R696.A §5.16 — route the DisclosureState <-> SCXML-id mapping through
 // the R643 `WidgetStateName` SSOT primitive (single variant list emits
@@ -47,12 +47,15 @@ use sm::DisclosurePolicy;
 // `*_state_name` fn + a per-example `parse_*_state` fallback. The
 // External introspect below calls `self.state().as_name()`; the
 // hello-disclosure binding's `read_state` calls `from_name_or_default`.
-crate::widget_state_name!(DisclosureState, default = Idle, [
-    Idle, Hover, Pressed, Disabled,
-]);
+crate::widget_state_name!(
+    DisclosureState,
+    default = Idle,
+    [Idle, Hover, Pressed, Disabled,]
+);
 // R699 §5.16 — DisclosureEvent <-> SCXML-name mapping through the
 // `WidgetEventName` SSOT primitive, replacing `parse_disclosure_event`.
-crate::widget_event_name!(DisclosureEvent,
+crate::widget_event_name!(
+    DisclosureEvent,
     external = [
         PointerEnter,
         PointerLeave,
@@ -67,9 +70,8 @@ crate::widget_event_name!(DisclosureEvent,
 );
 
 use crate::external::{
-    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner,
-    ThreadOwnership,
+    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
 use crate::intent::Intent;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
@@ -90,7 +92,10 @@ impl Disclosure {
     /// Construct a collapsed Disclosure in the `Idle` state.
     #[must_use]
     pub fn new() -> Self {
-        Self { inner: Widget::new(), expanded: false }
+        Self {
+            inner: Widget::new(),
+            expanded: false,
+        }
     }
 
     /// Drive a [`DisclosureEvent`] through the SCXML. The `expanded`
@@ -108,8 +113,8 @@ impl Disclosure {
         let is_keyboard_activate = matches!(event, DisclosureEvent::KeyboardActivate);
         self.inner.send(event);
         let after = self.state();
-        let pointer_activate = matches!(before, DisclosureState::Pressed)
-            && matches!(after, DisclosureState::Hover);
+        let pointer_activate =
+            matches!(before, DisclosureState::Pressed) && matches!(after, DisclosureState::Hover);
         let keyboard_activate =
             is_keyboard_activate && !matches!(before, DisclosureState::Disabled);
         if pointer_activate || keyboard_activate {
@@ -160,11 +165,7 @@ impl WidgetTransition for Disclosure {
         self.send(event);
     }
 
-    fn detect(
-        before: Self::Snapshot,
-        event: Self::Event,
-        after: Self::Snapshot,
-    ) -> Vec<Intent> {
+    fn detect(before: Self::Snapshot, event: Self::Event, after: Self::Snapshot) -> Vec<Intent> {
         let (before_state, before_value) = before;
         let (after_state, after_value) = after;
         let pointer_toggle = matches!(before_state, DisclosureState::Pressed)
@@ -173,8 +174,8 @@ impl WidgetTransition for Disclosure {
         // §5.39 — keyboard activation is a state-stable internal
         // transition. `before_value != after_value` automatically
         // ignores the disabled case (mutation skipped in `send`).
-        let keyboard_toggle = matches!(event, DisclosureEvent::KeyboardActivate)
-            && before_value != after_value;
+        let keyboard_toggle =
+            matches!(event, DisclosureEvent::KeyboardActivate) && before_value != after_value;
         if pointer_toggle || keyboard_toggle {
             vec![Intent::new_static(
                 "expanded",
@@ -198,7 +199,9 @@ pub struct DisclosureExternal {
 impl DisclosureExternal {
     #[must_use]
     pub fn new() -> Self {
-        Self { em: IntentEmitter::default() }
+        Self {
+            em: IntentEmitter::default(),
+        }
     }
 
     /// Drive a [`DisclosureEvent`] and queue any `"expanded"` intent
@@ -284,11 +287,7 @@ impl ExternalIntrospect for DisclosureExternal {
         }
     }
 
-    fn intervene(
-        &mut self,
-        path: &str,
-        value: IntrospectValue,
-    ) -> Result<(), InterveneError> {
+    fn intervene(&mut self, path: &str, value: IntrospectValue) -> Result<(), InterveneError> {
         match path {
             "state" => Err(InterveneError::ReadOnly),
             "expanded" => match value {
@@ -310,8 +309,7 @@ impl ExternalIntrospect for DisclosureExternal {
         match path {
             "send" => match args {
                 IntrospectValue::Text(ref name) => {
-                    let ev = DisclosureEvent::from_name(name)
-                        .ok_or(InvokeError::Rejected)?;
+                    let ev = DisclosureEvent::from_name(name).ok_or(InvokeError::Rejected)?;
                     self.send(ev);
                     Ok(IntrospectValue::Text(self.state().as_name().to_string()))
                 }
@@ -428,7 +426,10 @@ mod tests {
     #[test]
     fn external_query_state_and_expanded() {
         let mut dx = DisclosureExternal::new();
-        assert_eq!(dx.query("state").unwrap(), IntrospectValue::Text("Idle".to_string()));
+        assert_eq!(
+            dx.query("state").unwrap(),
+            IntrospectValue::Text("Idle".to_string())
+        );
         assert_eq!(dx.query("expanded").unwrap(), IntrospectValue::Bool(false));
         dx.send(DisclosureEvent::PointerEnter);
         dx.send(DisclosureEvent::PointerDown);
@@ -466,7 +467,11 @@ mod tests {
         let dx = DisclosureExternal::new();
         assert_eq!(
             dx.schema().fields,
-            &[("state", "string"), ("expanded", "bool"), ("send", "string")]
+            &[
+                ("state", "string"),
+                ("expanded", "bool"),
+                ("send", "string")
+            ]
         );
     }
 

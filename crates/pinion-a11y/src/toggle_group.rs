@@ -77,9 +77,24 @@ mod tests {
 
     fn segs() -> [ToggleSegment<'static>; 3] {
         [
-            ToggleSegment { tag: "g_0", label: "Photos", state: ToggleState::Idle, on: true },
-            ToggleSegment { tag: "g_1", label: "Videos", state: ToggleState::Hover, on: false },
-            ToggleSegment { tag: "g_2", label: "Audio", state: ToggleState::Idle, on: false },
+            ToggleSegment {
+                tag: "g_0",
+                label: "Photos",
+                state: ToggleState::Idle,
+                on: true,
+            },
+            ToggleSegment {
+                tag: "g_1",
+                label: "Videos",
+                state: ToggleState::Hover,
+                on: false,
+            },
+            ToggleSegment {
+                tag: "g_2",
+                label: "Audio",
+                state: ToggleState::Idle,
+                on: false,
+            },
         ]
     }
 
@@ -90,10 +105,22 @@ mod tests {
         assert_eq!(nodes.len(), s.len() + 1, "one group + N segments");
         assert_eq!(nodes[0].role, AriaRole::Group);
         assert_eq!(nodes[0].name.as_deref(), Some("Show"));
-        assert_eq!(nodes[0].children.len(), s.len(), "group references every segment");
+        assert_eq!(
+            nodes[0].children.len(),
+            s.len(),
+            "group references every segment"
+        );
         for (i, node) in nodes[1..].iter().enumerate() {
-            assert_eq!(node.role, AriaRole::Button, "segment is a button (aria-pressed)");
-            assert_eq!(node.state.checked, Some(s[i].on), "aria-pressed mirrors on/off");
+            assert_eq!(
+                node.role,
+                AriaRole::Button,
+                "segment is a button (aria-pressed)"
+            );
+            assert_eq!(
+                node.state.checked,
+                Some(s[i].on),
+                "aria-pressed mirrors on/off"
+            );
             assert_eq!(node.name.as_deref(), Some(s[i].label));
         }
     }

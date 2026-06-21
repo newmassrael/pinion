@@ -59,7 +59,9 @@ impl ModalState {
     /// A fresh, closed modal.
     #[must_use]
     pub fn new() -> Self {
-        Self { open: Signal::new(false) }
+        Self {
+            open: Signal::new(false),
+        }
     }
 
     /// Whether the modal is currently up. Subscribes when read inside a
@@ -264,7 +266,10 @@ mod tests {
             let _ = modal_scope_request::drain();
             let m = use_modal("m");
             let extra = modal_introspection_extra("dialog_state", m.clone());
-            assert_eq!(extra.tag, "dialog_state", "the helper registers under the given tag");
+            assert_eq!(
+                extra.tag, "dialog_state",
+                "the helper registers under the given tag"
+            );
             let introspect = extra
                 .handle
                 .introspect()

@@ -50,19 +50,21 @@
 //! with `aria-posinset` + `aria-selected = (id == selected)` and a
 //! `gridcell` per column, under a frozen header row of `columnheader`s.
 
-use pinion_a11y::{windowed_grid_nodes_selected, AccessNode, WidgetA11y};
+use pinion_a11y::{AccessNode, WidgetA11y, windowed_grid_nodes_selected};
 use pinion_core::external::External;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, LayoutStyle, Size, SizeValue, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::virtual_list::compute_visible_range;
-use pinion_core::widgets::virtual_select::{nav_select_key, read_selected, RowMetrics, VirtualSelectExternal};
+use pinion_core::widgets::virtual_select::{
+    RowMetrics, VirtualSelectExternal, nav_select_key, read_selected,
+};
 use pinion_core::{Frame, Scene, WidgetCore};
-use pinion_shell::{vello_renderer_impl, WidgetView};
-use pinion_widget_paint::table::{view_virtual_table, GridScroll, TableStyle, VirtualTableData};
+use pinion_shell::{WidgetView, vello_renderer_impl};
+use pinion_widget_paint::table::{GridScroll, TableStyle, VirtualTableData, view_virtual_table};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloGridNavRenderer, HelloGridNavRendererError);
@@ -145,7 +147,9 @@ fn status_bar(
     );
     Scene::Container(
         ContainerNode::new(vec![text])
-            .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh)))
+            .with_style(BoxStyle::filled(
+                theme.resolve(ColorRole::SurfaceContainerHigh),
+            ))
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Row)
@@ -170,7 +174,10 @@ fn view(selected: Option<usize>, _frame: &Frame) -> Scene {
 
     let grid = view_virtual_table(
         TABLE_TAG,
-        GridScroll { body: &scroll, horizontal: &h_scroll },
+        GridScroll {
+            body: &scroll,
+            horizontal: &h_scroll,
+        },
         VirtualTableData {
             headers: &HEADERS,
             item_count: N,
@@ -253,7 +260,10 @@ impl WidgetCore for GridNavView {
             focused,
             key,
             modifiers,
-            RowMetrics { item_count: N, row_pitch: ROW_H },
+            RowMetrics {
+                item_count: N,
+                row_pitch: ROW_H,
+            },
         )
     }
 
@@ -312,9 +322,9 @@ fn main() {
 mod tests {
     use super::*;
     use pinion_a11y::AriaRole;
+    use pinion_core::Owner;
     use pinion_core::widgets::scroll::ScrollState;
     use pinion_core::widgets::virtual_list::scroll_offset_to_reveal;
-    use pinion_core::Owner;
     use std::rc::Rc;
 
     // Keyboard nav policy + controller (`clamp_nav` / `nav_select_key`) are
@@ -359,8 +369,16 @@ mod tests {
             .resolve(ColorRole::Surface)
             .lerp(theme.resolve(ColorRole::Accent), 0.16);
         let scene = run_view_with_measured(Some(2), 0, 384);
-        assert_eq!(row_fill(&scene, 2), Some(wash), "selected row strip is the accent wash");
-        assert_ne!(row_fill(&scene, 3), Some(wash), "an unselected neighbor differs");
+        assert_eq!(
+            row_fill(&scene, 2),
+            Some(wash),
+            "selected row strip is the accent wash"
+        );
+        assert_ne!(
+            row_fill(&scene, 3),
+            Some(wash),
+            "an unselected neighbor differs"
+        );
     }
 
     #[test]
@@ -372,9 +390,19 @@ mod tests {
         });
         assert_eq!(nodes[0].role, AriaRole::Grid);
         assert_eq!(nodes[0].size_of_set, Some(u32::try_from(N).unwrap()));
-        let row1 = nodes.iter().find(|n| n.tag == format!("{TABLE_TAG}_row1")).unwrap();
-        assert_eq!(row1.selected, Some(true), "selected row carries aria-selected=true");
-        let row0 = nodes.iter().find(|n| n.tag == format!("{TABLE_TAG}_row0")).unwrap();
+        let row1 = nodes
+            .iter()
+            .find(|n| n.tag == format!("{TABLE_TAG}_row1"))
+            .unwrap();
+        assert_eq!(
+            row1.selected,
+            Some(true),
+            "selected row carries aria-selected=true"
+        );
+        let row0 = nodes
+            .iter()
+            .find(|n| n.tag == format!("{TABLE_TAG}_row0"))
+            .unwrap();
         assert_eq!(row0.selected, Some(false));
     }
 

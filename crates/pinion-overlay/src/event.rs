@@ -65,9 +65,24 @@ mod tests {
     fn drag_as_rect_normalises_corner_order() {
         // Backend may report drag start at any corner; the rect is the
         // bounding box regardless of direction.
-        let forward = OverlayEvent::Drag { x1: 10, y1: 20, x2: 60, y2: 80 };
-        let backward = OverlayEvent::Drag { x1: 60, y1: 80, x2: 10, y2: 20 };
-        let mixed = OverlayEvent::Drag { x1: 60, y1: 20, x2: 10, y2: 80 };
+        let forward = OverlayEvent::Drag {
+            x1: 10,
+            y1: 20,
+            x2: 60,
+            y2: 80,
+        };
+        let backward = OverlayEvent::Drag {
+            x1: 60,
+            y1: 80,
+            x2: 10,
+            y2: 20,
+        };
+        let mixed = OverlayEvent::Drag {
+            x1: 60,
+            y1: 20,
+            x2: 10,
+            y2: 80,
+        };
         let expected = (10, 20, 50, 60);
         assert_eq!(forward.drag_as_rect(), Some(expected));
         assert_eq!(backward.drag_as_rect(), Some(expected));
@@ -76,7 +91,12 @@ mod tests {
 
     #[test]
     fn drag_as_rect_zero_extent_when_same_point() {
-        let e = OverlayEvent::Drag { x1: 5, y1: 5, x2: 5, y2: 5 };
+        let e = OverlayEvent::Drag {
+            x1: 5,
+            y1: 5,
+            x2: 5,
+            y2: 5,
+        };
         assert_eq!(e.drag_as_rect(), Some((5, 5, 0, 0)));
     }
 

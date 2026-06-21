@@ -82,9 +82,27 @@ mod tests {
 
     fn links() -> [NavLink<'static>; 3] {
         [
-            NavLink { tag: "n#0", label: "Home", state: RadioState::Idle, current: false, focused: false },
-            NavLink { tag: "n#1", label: "Docs", state: RadioState::Hover, current: false, focused: true },
-            NavLink { tag: "n#2", label: "Now", state: RadioState::Idle, current: true, focused: false },
+            NavLink {
+                tag: "n#0",
+                label: "Home",
+                state: RadioState::Idle,
+                current: false,
+                focused: false,
+            },
+            NavLink {
+                tag: "n#1",
+                label: "Docs",
+                state: RadioState::Hover,
+                current: false,
+                focused: true,
+            },
+            NavLink {
+                tag: "n#2",
+                label: "Now",
+                state: RadioState::Idle,
+                current: true,
+                focused: false,
+            },
         ]
     }
 
@@ -95,7 +113,11 @@ mod tests {
         assert_eq!(nodes.len(), l.len() + 1, "one landmark + N links");
         assert_eq!(nodes[0].role, AriaRole::Navigation);
         assert_eq!(nodes[0].name.as_deref(), Some("Breadcrumb"));
-        assert_eq!(nodes[0].children.len(), l.len(), "landmark references every link");
+        assert_eq!(
+            nodes[0].children.len(),
+            l.len(),
+            "landmark references every link"
+        );
         for (i, node) in nodes[1..].iter().enumerate() {
             assert_eq!(node.role, AriaRole::Link, "child is a link");
             assert_eq!(node.name.as_deref(), Some(l[i].label));
@@ -107,7 +129,11 @@ mod tests {
         let nodes = navigation_link_nodes("nav", "Primary", &links());
         assert_eq!(nodes[1].current, None, "link 0 not current");
         assert_eq!(nodes[2].current, None, "link 1 not current");
-        assert_eq!(nodes[3].current, Some(AriaCurrent::Page), "link 2 is current");
+        assert_eq!(
+            nodes[3].current,
+            Some(AriaCurrent::Page),
+            "link 2 is current"
+        );
     }
 
     #[test]

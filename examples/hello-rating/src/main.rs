@@ -52,19 +52,19 @@
 //! wrap), `Home` / `End` jump to 1 / N stars, and the digit keys
 //! `1`..`5` set that many stars directly.
 
+use pinion_a11y::{
+    AccessAction, AccessFocus, AccessNode, RadioCell, WidgetA11y, radiogroup_radio_nodes,
+};
 use pinion_core::external::External;
 use pinion_core::scene::{ContainerNode, Rect, TextNode, TextRole};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widgets::radio::{RadioEvent, RadioState};
 use pinion_core::widgets::radio_group::RadioGroupExternal;
 use pinion_core::{Color, Frame, Scene, WidgetCore};
-use pinion_a11y::{
-    radiogroup_radio_nodes, AccessAction, AccessFocus, AccessNode, RadioCell, WidgetA11y,
-};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::radio_composite as rc;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -115,8 +115,9 @@ impl RatingState {
 /// the row the **committed** selection drives the fill. `None` ⇒ no star
 /// is filled (an unrated, un-hovered row).
 fn fill_extent(rows: &[(RadioState, bool); N]) -> Option<usize> {
-    if let Some(hovered) =
-        rows.iter().position(|(s, _)| matches!(s, RadioState::Hover | RadioState::Pressed))
+    if let Some(hovered) = rows
+        .iter()
+        .position(|(s, _)| matches!(s, RadioState::Hover | RadioState::Pressed))
     {
         return Some(hovered);
     }
@@ -133,15 +134,13 @@ fn view(state: RatingState, _frame: &Frame) -> Scene {
         .map(|i| star(i, extent.is_some_and(|e| i <= e), &theme))
         .collect();
     let row = Scene::Container(
-        ContainerNode::new(stars)
-            .with_tag(PRIMARY_TAG)
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Row)
-                    .with_align_items(AlignItems::Center)
-                    .with_justify(JustifyContent::Center)
-                    .with_gap(4),
-            ),
+        ContainerNode::new(stars).with_tag(PRIMARY_TAG).with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Row)
+                .with_align_items(AlignItems::Center)
+                .with_justify(JustifyContent::Center)
+                .with_gap(4),
+        ),
     );
     Scene::Container(
         ContainerNode::new(vec![row])
@@ -274,7 +273,11 @@ impl WidgetCore for RatingView {
             .iter()
             .enumerate()
             .map(|(i, (s, sel))| {
-                format!("{i}={}{}", radio_state_short(*s), if *sel { "+" } else { "-" })
+                format!(
+                    "{i}={}{}",
+                    radio_state_short(*s),
+                    if *sel { "+" } else { "-" }
+                )
             })
             .collect::<Vec<_>>()
             .join(" ");
@@ -343,7 +346,10 @@ impl WidgetView for RatingView {
     type Renderer = HelloRatingRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 }
 
@@ -404,7 +410,11 @@ mod tests {
     #[test]
     fn fill_follows_committed_selection_when_no_hover() {
         assert_eq!(fill_extent(&rows_with(Some(2), None)), Some(2));
-        assert_eq!(fill_extent(&rows_with(None, None)), None, "unrated + un-hovered = empty");
+        assert_eq!(
+            fill_extent(&rows_with(None, None)),
+            None,
+            "unrated + un-hovered = empty"
+        );
     }
 
     #[test]
@@ -431,7 +441,10 @@ mod tests {
         let scene = pinion_core::Owner::new().run(|| view(RatingState::idle(), &Frame::new()));
         assert!(scene.contains_tag(PRIMARY_TAG));
         for i in 0..N {
-            assert!(scene.contains_tag(&format!("{PRIMARY_TAG}#{i}")), "star {i} tagged");
+            assert!(
+                scene.contains_tag(&format!("{PRIMARY_TAG}#{i}")),
+                "star {i} tagged"
+            );
         }
     }
 
@@ -454,10 +467,13 @@ mod tests {
         let Scene::External(node) = scene else {
             return None;
         };
-        node.handle.introspect()?.query("selected_index").and_then(|v| match v {
-            IntrospectValue::Int(i) => Some(i),
-            _ => None,
-        })
+        node.handle
+            .introspect()?
+            .query("selected_index")
+            .and_then(|v| match v {
+                IntrospectValue::Int(i) => Some(i),
+                _ => None,
+            })
     }
 
     #[test]
@@ -477,9 +493,19 @@ mod tests {
     #[test]
     fn arrow_up_raises_and_arrow_down_lowers_the_rating() {
         let mut s = scene();
-        assert!(RatingView::apply_key(&mut s, Some(PRIMARY_TAG), "3", pinion_core::Modifiers::empty()));
+        assert!(RatingView::apply_key(
+            &mut s,
+            Some(PRIMARY_TAG),
+            "3",
+            pinion_core::Modifiers::empty()
+        ));
         assert_eq!(selected_index(&s), Some(2));
-        assert!(RatingView::apply_key(&mut s, Some(PRIMARY_TAG), "ArrowUp", pinion_core::Modifiers::empty()));
+        assert!(RatingView::apply_key(
+            &mut s,
+            Some(PRIMARY_TAG),
+            "ArrowUp",
+            pinion_core::Modifiers::empty()
+        ));
         assert_eq!(selected_index(&s), Some(3), "ArrowUp raises to 4 stars");
         assert!(RatingView::apply_key(
             &mut s,
@@ -493,16 +519,31 @@ mod tests {
     #[test]
     fn home_and_end_jump_to_one_and_five_stars() {
         let mut s = scene();
-        assert!(RatingView::apply_key(&mut s, Some(PRIMARY_TAG), "End", pinion_core::Modifiers::empty()));
+        assert!(RatingView::apply_key(
+            &mut s,
+            Some(PRIMARY_TAG),
+            "End",
+            pinion_core::Modifiers::empty()
+        ));
         assert_eq!(selected_index(&s), Some(i64::try_from(N - 1).unwrap()));
-        assert!(RatingView::apply_key(&mut s, Some(PRIMARY_TAG), "Home", pinion_core::Modifiers::empty()));
+        assert!(RatingView::apply_key(
+            &mut s,
+            Some(PRIMARY_TAG),
+            "Home",
+            pinion_core::Modifiers::empty()
+        ));
         assert_eq!(selected_index(&s), Some(0));
     }
 
     #[test]
     fn keys_ignored_when_rating_not_focused() {
         let mut s = scene();
-        assert!(!RatingView::apply_key(&mut s, None, "3", pinion_core::Modifiers::empty()));
+        assert!(!RatingView::apply_key(
+            &mut s,
+            None,
+            "3",
+            pinion_core::Modifiers::empty()
+        ));
         assert!(!RatingView::apply_key(
             &mut s,
             Some("other_widget"),
@@ -561,8 +602,17 @@ mod tests {
     #[test]
     fn access_child_invoke_click_selects_addressed_star() {
         let mut s = scene();
-        assert!(RatingView::access_child_invoke(&mut s, PRIMARY_TAG, "3", AccessAction::Click));
-        assert_eq!(selected_index(&s), Some(3), "AT click on 4th star = 4 stars");
+        assert!(RatingView::access_child_invoke(
+            &mut s,
+            PRIMARY_TAG,
+            "3",
+            AccessAction::Click
+        ));
+        assert_eq!(
+            selected_index(&s),
+            Some(3),
+            "AT click on 4th star = 4 stars"
+        );
     }
 
     // ── helpers ───────────────────────────────────────────────────────

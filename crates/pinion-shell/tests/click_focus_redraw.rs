@@ -27,13 +27,13 @@
 //! redraw is attributable to the focus change and not to some unconditional
 //! side effect of the press itself.
 
+use pinion_a11y::WidgetA11y;
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, RepaintOwner, ThreadOwnership,
 };
 use pinion_core::scene::ContainerNode;
 use pinion_core::style::{FlexDirection, LayoutStyle, Size};
 use pinion_core::{Frame, Scene, WidgetCore};
-use pinion_a11y::WidgetA11y;
 use pinion_runtime::PointerId;
 use pinion_shell::test_fixtures::TestRenderer;
 use pinion_shell::{ShellCore, SizeStrategy, WidgetView};
@@ -105,8 +105,12 @@ impl WidgetCore for ClickFocusView {
             )
         };
         Scene::Container(
-            ContainerNode::new(vec![cell(PANE0, true), cell(PANE1, true), cell(DECO, false)])
-                .with_layout(LayoutStyle::new().flex(FlexDirection::Row)),
+            ContainerNode::new(vec![
+                cell(PANE0, true),
+                cell(PANE1, true),
+                cell(DECO, false),
+            ])
+            .with_layout(LayoutStyle::new().flex(FlexDirection::Row)),
         )
     }
 
@@ -125,7 +129,10 @@ impl WidgetView for ClickFocusView {
     type Renderer = TestRenderer;
 
     fn initial_size_strategy() -> SizeStrategy {
-        SizeStrategy::Fixed { width: W, height: H }
+        SizeStrategy::Fixed {
+            width: W,
+            height: H,
+        }
     }
 }
 
@@ -157,12 +164,18 @@ fn click_at(core: &mut ShellCore<ClickFocusView>, x: f64, y: f64) -> bool {
 
 #[test]
 fn click_moving_focus_from_none_requests_a_redraw() {
-    let _g = TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _g = TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut core = booted();
     assert_eq!(core.focus().focused(), None, "boot focus is unset");
 
     let redraw = click_at(&mut core, 50.0, 50.0);
-    assert_eq!(core.focus().focused(), Some(PANE0), "click landed focus on pane#0");
+    assert_eq!(
+        core.focus().focused(),
+        Some(PANE0),
+        "click landed focus on pane#0"
+    );
     assert!(
         redraw,
         "a click that moves focus None -> pane#0 must request a redraw (R13.1)",
@@ -171,7 +184,9 @@ fn click_moving_focus_from_none_requests_a_redraw() {
 
 #[test]
 fn click_moving_focus_between_panes_requests_a_redraw() {
-    let _g = TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _g = TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut core = booted();
     click_at(&mut core, 50.0, 50.0);
     assert_eq!(core.focus().focused(), Some(PANE0));
@@ -186,7 +201,9 @@ fn click_moving_focus_between_panes_requests_a_redraw() {
 
 #[test]
 fn reclicking_the_focused_pane_requests_no_redraw() {
-    let _g = TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _g = TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut core = booted();
     click_at(&mut core, 150.0, 50.0);
     assert_eq!(core.focus().focused(), Some(PANE1));
@@ -204,14 +221,20 @@ fn reclicking_the_focused_pane_requests_no_redraw() {
 
 #[test]
 fn background_click_clearing_focus_requests_a_redraw() {
-    let _g = TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _g = TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut core = booted();
     click_at(&mut core, 150.0, 50.0);
     assert_eq!(core.focus().focused(), Some(PANE1));
 
     // A click past both panes resolves to no target -> focus_clear.
     let redraw = click_at(&mut core, 500.0, 50.0);
-    assert_eq!(core.focus().focused(), None, "background click cleared focus");
+    assert_eq!(
+        core.focus().focused(),
+        None,
+        "background click cleared focus"
+    );
     assert!(
         redraw,
         "a background click that clears focus must request a redraw (R13.2)",
@@ -220,7 +243,9 @@ fn background_click_clearing_focus_requests_a_redraw() {
 
 #[test]
 fn clicking_a_nonfocusable_decoration_requests_no_redraw() {
-    let _g = TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _g = TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut core = booted();
     click_at(&mut core, 50.0, 50.0);
     assert_eq!(core.focus().focused(), Some(PANE0));
@@ -242,7 +267,9 @@ fn clicking_a_nonfocusable_decoration_requests_no_redraw() {
 
 #[test]
 fn background_click_while_unfocused_requests_no_redraw() {
-    let _g = TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _g = TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut core = booted();
     assert_eq!(core.focus().focused(), None);
 

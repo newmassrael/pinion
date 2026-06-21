@@ -25,12 +25,8 @@ pub(crate) struct NormalizationCase {
 /// row is parsed into a [`NormalizationCase`] with five decoded
 /// columns.
 pub(crate) fn load_normalization_test() -> Vec<NormalizationCase> {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/ucd/NormalizationTest.txt"
-    );
-    let text = std::fs::read_to_string(path)
-        .expect("NormalizationTest.txt must be vendored");
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/ucd/NormalizationTest.txt");
+    let text = std::fs::read_to_string(path).expect("NormalizationTest.txt must be vendored");
     parse(&text)
 }
 
@@ -113,12 +109,8 @@ pub(crate) struct BidiCharacterCase {
 /// vector set (~96 K rows) is decoded into memory in one pass — the
 /// conformance harness then filters the subset it wants to exercise.
 pub(crate) fn load_bidi_character_test() -> Vec<BidiCharacterCase> {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/ucd/BidiCharacterTest.txt"
-    );
-    let text = std::fs::read_to_string(path)
-        .expect("BidiCharacterTest.txt must be vendored");
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/ucd/BidiCharacterTest.txt");
+    let text = std::fs::read_to_string(path).expect("BidiCharacterTest.txt must be vendored");
     parse_bidi_character_test(&text)
 }
 
@@ -139,10 +131,9 @@ fn parse_bidi_character_test(text: &str) -> Vec<BidiCharacterCase> {
         let codepoints: Vec<char> = cols[0]
             .split_whitespace()
             .map(|hex| {
-                let cp = u32::from_str_radix(hex, 16)
-                    .expect("BidiCharacterTest field 0: hex codepoint");
-                char::from_u32(cp)
-                    .expect("BidiCharacterTest field 0: valid Unicode scalar")
+                let cp =
+                    u32::from_str_radix(hex, 16).expect("BidiCharacterTest field 0: hex codepoint");
+                char::from_u32(cp).expect("BidiCharacterTest field 0: valid Unicode scalar")
             })
             .collect();
         let dir_input = match cols[1].trim() {
@@ -166,9 +157,8 @@ fn parse_bidi_character_test(text: &str) -> Vec<BidiCharacterCase> {
                     None
                 } else {
                     Some(
-                        tok.parse::<u8>().expect(
-                            "BidiCharacterTest field 3: level u8 or 'x'",
-                        ),
+                        tok.parse::<u8>()
+                            .expect("BidiCharacterTest field 3: level u8 or 'x'"),
                     )
                 }
             })
@@ -228,12 +218,8 @@ pub(crate) struct BidiTestCase {
 /// anchors. Forward-compatible: `@` directives other than `@Levels` /
 /// `@Reorder` are skipped per the UCD header guidance.
 pub(crate) fn load_bidi_test() -> Vec<BidiTestCase> {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/ucd/BidiTest.txt"
-    );
-    let text = std::fs::read_to_string(path)
-        .expect("BidiTest.txt must be vendored");
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/ucd/BidiTest.txt");
+    let text = std::fs::read_to_string(path).expect("BidiTest.txt must be vendored");
     parse_bidi_test(&text)
 }
 
@@ -255,9 +241,8 @@ fn parse_bidi_test(text: &str) -> Vec<BidiTestCase> {
                         None
                     } else {
                         Some(
-                            tok.parse::<u8>().expect(
-                                "BidiTest @Levels: level u8 or 'x'",
-                            ),
+                            tok.parse::<u8>()
+                                .expect("BidiTest @Levels: level u8 or 'x'"),
                         )
                     }
                 })
@@ -268,9 +253,8 @@ fn parse_bidi_test(text: &str) -> Vec<BidiTestCase> {
             current_reorder = rest
                 .split_whitespace()
                 .map(|tok| {
-                    tok.parse::<usize>().expect(
-                        "BidiTest @Reorder: visual index usize",
-                    )
+                    tok.parse::<usize>()
+                        .expect("BidiTest @Reorder: visual index usize")
                 })
                 .collect();
             continue;
@@ -281,11 +265,8 @@ fn parse_bidi_test(text: &str) -> Vec<BidiTestCase> {
             // compatibility)."
             continue;
         }
-        let Some((classes_part, bitset_part)) = trimmed.split_once(';')
-        else {
-            panic!(
-                "BidiTest.txt:{line_no}: data line missing ';': {trimmed:?}"
-            );
+        let Some((classes_part, bitset_part)) = trimmed.split_once(';') else {
+            panic!("BidiTest.txt:{line_no}: data line missing ';': {trimmed:?}");
         };
         let classes: Vec<crate::bidi::BidiClass> = classes_part
             .split_whitespace()
@@ -309,10 +290,7 @@ fn parse_bidi_test(text: &str) -> Vec<BidiTestCase> {
     cases
 }
 
-fn parse_bidi_class_token(
-    token: &str,
-    line_no: usize,
-) -> crate::bidi::BidiClass {
+fn parse_bidi_class_token(token: &str, line_no: usize) -> crate::bidi::BidiClass {
     use crate::bidi::BidiClass;
     match token {
         "L" => BidiClass::L,
@@ -338,8 +316,6 @@ fn parse_bidi_class_token(
         "RLI" => BidiClass::RLI,
         "FSI" => BidiClass::FSI,
         "PDI" => BidiClass::PDI,
-        other => panic!(
-            "BidiTest.txt:{line_no}: unknown Bidi_Class token {other:?}"
-        ),
+        other => panic!("BidiTest.txt:{line_no}: unknown Bidi_Class token {other:?}"),
     }
 }

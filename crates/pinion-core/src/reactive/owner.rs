@@ -1114,9 +1114,10 @@ impl Owner {
         // `cache`'s factory is `FnOnce` and only runs when the slot is empty, so
         // a plain move closure seeds on the first call; a later call drops its
         // `sink` unused (first-write-wins), no panic path.
-        self.cache::<super::repaint::RepaintSinkHolder, _>(super::repaint::REPAINT_SINK_KEY, move || {
-            super::repaint::RepaintSinkHolder(sink)
-        });
+        self.cache::<super::repaint::RepaintSinkHolder, _>(
+            super::repaint::REPAINT_SINK_KEY,
+            move || super::repaint::RepaintSinkHolder(sink),
+        );
     }
 
     /// R1003 §5.36 — the owner-scoped
@@ -1535,9 +1536,8 @@ mod tests {
     fn r605_cache_get_by_str_returns_cached_value() {
         let owner = Owner::new();
         let inserted = owner.cache::<CacheProbe, _>("widget", || CacheProbe(42));
-        let looked_up: Rc<CacheProbe> = owner
-            .cache_get_by_str("widget")
-            .expect("slot must resolve");
+        let looked_up: Rc<CacheProbe> =
+            owner.cache_get_by_str("widget").expect("slot must resolve");
         assert!(Rc::ptr_eq(&inserted, &looked_up), "same Rc back");
         assert_eq!(looked_up.0, 42);
     }
@@ -1627,8 +1627,7 @@ mod tests {
         // Cow::Owned compare + hash by value, not by provenance.
         let owner = Owner::new();
         let from_static = owner.cache::<CacheProbe, _>("shared_key", || CacheProbe(1));
-        let from_owned =
-            owner.cache::<CacheProbe, _>(String::from("shared_key"), || CacheProbe(2));
+        let from_owned = owner.cache::<CacheProbe, _>(String::from("shared_key"), || CacheProbe(2));
         assert!(
             Rc::ptr_eq(&from_static, &from_owned),
             "static literal + equal owned String resolve to one slot",
@@ -1785,8 +1784,9 @@ mod tests {
         {
             let o = Owner::new();
             let counter_clone = Rc::clone(&counter);
-            o.inner
-                .add_subscription_cleanup(Box::new(move || counter_clone.set(counter_clone.get() + 1)));
+            o.inner.add_subscription_cleanup(Box::new(move || {
+                counter_clone.set(counter_clone.get() + 1);
+            }));
             assert_eq!(counter.get(), 0);
         }
         assert_eq!(counter.get(), 1);
@@ -2058,7 +2058,11 @@ mod tests {
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].0, b.id());
         assert_eq!(a.get(), 10, "a must roll back even though b failed");
-        assert_eq!(b.get(), 99, "b stays at post-mutation value on failed restore");
+        assert_eq!(
+            b.get(),
+            99,
+            "b stays at post-mutation value on failed restore"
+        );
     }
 
     #[test]
@@ -2308,10 +2312,14 @@ mod tests {
         }
         impl ProgrammableRest {
             fn at_rest() -> Rc<Self> {
-                Rc::new(Self { at_rest: Cell::new(true) })
+                Rc::new(Self {
+                    at_rest: Cell::new(true),
+                })
             }
             fn active() -> Rc<Self> {
-                Rc::new(Self { at_rest: Cell::new(false) })
+                Rc::new(Self {
+                    at_rest: Cell::new(false),
+                })
             }
         }
         impl Tickable for ProgrammableRest {
@@ -2692,8 +2700,16 @@ mod tests {
             let parent = Owner::new();
             let child = Owner::new_child(&parent);
             let grandchild = Owner::new_child(&child);
-            parent.dispatch_command(Command::new_static("p.cmd", IntrospectValue::Null, parent.id()));
-            child.dispatch_command(Command::new_static("c.cmd", IntrospectValue::Null, child.id()));
+            parent.dispatch_command(Command::new_static(
+                "p.cmd",
+                IntrospectValue::Null,
+                parent.id(),
+            ));
+            child.dispatch_command(Command::new_static(
+                "c.cmd",
+                IntrospectValue::Null,
+                child.id(),
+            ));
             grandchild.dispatch_command(Command::new_static(
                 "gc.cmd",
                 IntrospectValue::Null,
@@ -2721,8 +2737,16 @@ mod tests {
             let parent = Owner::new();
             let child = Owner::new_child(&parent);
             let grandchild = Owner::new_child(&child);
-            parent.dispatch_command(Command::new_static("p.cmd", IntrospectValue::Null, parent.id()));
-            child.dispatch_command(Command::new_static("c.cmd", IntrospectValue::Null, child.id()));
+            parent.dispatch_command(Command::new_static(
+                "p.cmd",
+                IntrospectValue::Null,
+                parent.id(),
+            ));
+            child.dispatch_command(Command::new_static(
+                "c.cmd",
+                IntrospectValue::Null,
+                child.id(),
+            ));
             grandchild.dispatch_command(Command::new_static(
                 "gc.cmd",
                 IntrospectValue::Null,
@@ -2802,7 +2826,11 @@ mod tests {
             // back onto the owner. We confirm those land in the next batch,
             // not the current drain.
             let owner = Owner::new();
-            owner.dispatch_command(Command::new_static("first", IntrospectValue::Null, owner.id()));
+            owner.dispatch_command(Command::new_static(
+                "first",
+                IntrospectValue::Null,
+                owner.id(),
+            ));
             let drained = owner.take_pending_commands_recursive();
             // Simulate a handler enqueueing a follow-up while iterating.
             for _ in &drained {

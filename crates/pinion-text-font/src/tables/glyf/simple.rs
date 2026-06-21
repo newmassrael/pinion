@@ -92,13 +92,14 @@ pub(super) fn parse_simple(
     let last_end_pt = *end_pts_of_contours
         .last()
         .expect("num_contours ≥ 1 — vec non-empty");
-    let num_points = usize::from(last_end_pt).checked_add(1).ok_or(
-        ParseError::InvalidTableField {
-            tag: GLYF_TAG,
-            field: "simple/endPtsOfContours[last]/overflow",
-            value: FieldValue::from_u16(last_end_pt),
-        },
-    )?;
+    let num_points =
+        usize::from(last_end_pt)
+            .checked_add(1)
+            .ok_or(ParseError::InvalidTableField {
+                tag: GLYF_TAG,
+                field: "simple/endPtsOfContours[last]/overflow",
+                value: FieldValue::from_u16(last_end_pt),
+            })?;
     if num_points == 0 {
         return Err(ParseError::InvalidTableField {
             tag: GLYF_TAG,
@@ -117,19 +118,9 @@ pub(super) fn parse_simple(
     let flags = expand_flags(r, num_points)?;
 
     // x coordinates — flag 별 가변 너비. delta 누적 → 절댓값.
-    let xs = read_coordinates(
-        r,
-        &flags,
-        FLAG_X_SHORT_VECTOR,
-        FLAG_X_IS_SAME_OR_POSITIVE,
-    )?;
+    let xs = read_coordinates(r, &flags, FLAG_X_SHORT_VECTOR, FLAG_X_IS_SAME_OR_POSITIVE)?;
     // y coordinates — same logic with Y flag bits.
-    let ys = read_coordinates(
-        r,
-        &flags,
-        FLAG_Y_SHORT_VECTOR,
-        FLAG_Y_IS_SAME_OR_POSITIVE,
-    )?;
+    let ys = read_coordinates(r, &flags, FLAG_Y_SHORT_VECTOR, FLAG_Y_IS_SAME_OR_POSITIVE)?;
 
     let mut points = Vec::with_capacity(num_points);
     for i in 0..num_points {
@@ -248,7 +239,12 @@ mod tests {
     use super::*;
 
     fn header_dummy() -> GlyphHeader {
-        GlyphHeader { x_min: 0, y_min: 0, x_max: 100, y_max: 100 }
+        GlyphHeader {
+            x_min: 0,
+            y_min: 0,
+            x_max: 100,
+            y_max: 100,
+        }
     }
 
     /// 4-point single-contour body (header 제외 — caller 가 이미 소비함).
@@ -449,4 +445,3 @@ mod tests {
         ));
     }
 }
-

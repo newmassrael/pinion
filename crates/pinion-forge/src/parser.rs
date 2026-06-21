@@ -75,7 +75,12 @@ impl<'a> ParseCtx<'a> {
     fn new(xml: &'a str, source_file: PathBuf) -> Self {
         let mut reader = Reader::from_str(xml);
         reader.config_mut().trim_text(false);
-        Self { reader, source_bytes: xml.as_bytes(), source_file, diagnostics: Vec::new() }
+        Self {
+            reader,
+            source_bytes: xml.as_bytes(),
+            source_file,
+            diagnostics: Vec::new(),
+        }
     }
 
     fn parse_document(&mut self) -> Result<PinionDoc, Vec<PinionForgeDiagnostic>> {
@@ -92,8 +97,12 @@ impl<'a> ParseCtx<'a> {
                     }
                     return Err(std::mem::take(&mut self.diagnostics));
                 }
-                Ok(Event::Start(e)) => return self.parse_root_open(&e, /*self_closing=*/ false),
-                Ok(Event::Empty(e)) => return self.parse_root_open(&e, /*self_closing=*/ true),
+                Ok(Event::Start(e)) => {
+                    return self.parse_root_open(&e, /*self_closing=*/ false);
+                }
+                Ok(Event::Empty(e)) => {
+                    return self.parse_root_open(&e, /*self_closing=*/ true);
+                }
                 Ok(Event::Decl(_) | Event::DocType(_) | Event::Comment(_) | Event::PI(_)) => {}
                 Ok(Event::Text(t)) => {
                     // Only whitespace is legal before the root element.
@@ -148,7 +157,10 @@ impl<'a> ParseCtx<'a> {
         let local = local_name(start.name());
         if local != "pinion" {
             let location = self.current_location();
-            self.diagnostics.push(PinionForgeDiagnostic::InvalidRoot { found: local, location });
+            self.diagnostics.push(PinionForgeDiagnostic::InvalidRoot {
+                found: local,
+                location,
+            });
             return Err(std::mem::take(&mut self.diagnostics));
         }
 
@@ -201,7 +213,9 @@ impl<'a> ParseCtx<'a> {
                     let aa = aa.expect(
                         "renderer-ok path must populate aa (validate_renderer_aa defaults to Area)",
                     );
-                    PinionSpec::Renderer { backend: assemble_backend(backend_kind, aa) }
+                    PinionSpec::Renderer {
+                        backend: assemble_backend(backend_kind, aa),
+                    }
                 }
             };
             Ok(PinionDoc { name, spec })
@@ -224,9 +238,10 @@ impl<'a> ParseCtx<'a> {
     ) -> Option<RendererBackendKind> {
         match backend_raw {
             None => {
-                self.diagnostics.push(PinionForgeDiagnostic::MissingBackend {
-                    location: location.clone(),
-                });
+                self.diagnostics
+                    .push(PinionForgeDiagnostic::MissingBackend {
+                        location: location.clone(),
+                    });
                 None
             }
             Some(literal) => {
@@ -234,17 +249,19 @@ impl<'a> ParseCtx<'a> {
                 if trimmed.is_empty() {
                     // Whitespace-only treated as missing — matches the
                     // require_nonempty_attr policy for child elements.
-                    self.diagnostics.push(PinionForgeDiagnostic::MissingBackend {
-                        location: location.clone(),
-                    });
+                    self.diagnostics
+                        .push(PinionForgeDiagnostic::MissingBackend {
+                            location: location.clone(),
+                        });
                     None
                 } else if let Some(b) = RendererBackendKind::from_attr(trimmed) {
                     Some(b)
                 } else {
-                    self.diagnostics.push(PinionForgeDiagnostic::UnknownBackend {
-                        found: literal,
-                        location: location.clone(),
-                    });
+                    self.diagnostics
+                        .push(PinionForgeDiagnostic::UnknownBackend {
+                            found: literal,
+                            location: location.clone(),
+                        });
                     None
                 }
             }
@@ -297,19 +314,15 @@ impl<'a> ParseCtx<'a> {
                 Ok(Event::Start(e)) => {
                     let tag = local_name(e.name());
                     let location = self.current_location();
-                    self.diagnostics.push(PinionForgeDiagnostic::RendererChildNotAllowed {
-                        tag,
-                        location,
-                    });
+                    self.diagnostics
+                        .push(PinionForgeDiagnostic::RendererChildNotAllowed { tag, location });
                     self.skip_subtree();
                 }
                 Ok(Event::Empty(e)) => {
                     let tag = local_name(e.name());
                     let location = self.current_location();
-                    self.diagnostics.push(PinionForgeDiagnostic::RendererChildNotAllowed {
-                        tag,
-                        location,
-                    });
+                    self.diagnostics
+                        .push(PinionForgeDiagnostic::RendererChildNotAllowed { tag, location });
                 }
                 Ok(Event::Eof) => {
                     let location = self.current_location();
@@ -405,8 +418,9 @@ impl<'a> ParseCtx<'a> {
 
         let kind = match kind_raw {
             None => {
-                self.diagnostics
-                    .push(PinionForgeDiagnostic::MissingKind { location: location.clone() });
+                self.diagnostics.push(PinionForgeDiagnostic::MissingKind {
+                    location: location.clone(),
+                });
                 None
             }
             Some(literal) => {
@@ -423,8 +437,9 @@ impl<'a> ParseCtx<'a> {
 
         let name = match name_raw {
             None => {
-                self.diagnostics
-                    .push(PinionForgeDiagnostic::MissingName { location: location.clone() });
+                self.diagnostics.push(PinionForgeDiagnostic::MissingName {
+                    location: location.clone(),
+                });
                 None
             }
             Some(literal) => {
@@ -455,8 +470,12 @@ impl<'a> ParseCtx<'a> {
         loop {
             match self.reader.read_event_into(&mut buf) {
                 Ok(Event::End(_)) => return,
-                Ok(Event::Start(e)) => self.dispatch_child(&e, /*self_closing=*/ false, children),
-                Ok(Event::Empty(e)) => self.dispatch_child(&e, /*self_closing=*/ true, children),
+                Ok(Event::Start(e)) => {
+                    self.dispatch_child(&e, /*self_closing=*/ false, children);
+                }
+                Ok(Event::Empty(e)) => {
+                    self.dispatch_child(&e, /*self_closing=*/ true, children);
+                }
                 Ok(Event::Eof) => {
                     let location = self.current_location();
                     self.diagnostics.push(PinionForgeDiagnostic::XmlParseError {
@@ -522,10 +541,8 @@ impl<'a> ParseCtx<'a> {
             }
             _ => {
                 let location = self.current_location();
-                self.diagnostics.push(PinionForgeDiagnostic::UnsupportedElement {
-                    tag,
-                    location,
-                });
+                self.diagnostics
+                    .push(PinionForgeDiagnostic::UnsupportedElement { tag, location });
                 if !self_closing {
                     self.skip_subtree();
                 }
@@ -536,11 +553,7 @@ impl<'a> ParseCtx<'a> {
     /// Parse one `<signal name="..." ty="...">body</signal>` element.
     /// Returns `None` when any part is malformed — diagnostics
     /// accumulate in `self.diagnostics`.
-    fn parse_signal(
-        &mut self,
-        start: &BytesStart<'_>,
-        self_closing: bool,
-    ) -> Option<SignalDecl> {
+    fn parse_signal(&mut self, start: &BytesStart<'_>, self_closing: bool) -> Option<SignalDecl> {
         self.parse_named_typed_body("signal", start, self_closing)
             .map(|(name, ty, initial)| SignalDecl { name, ty, initial })
     }
@@ -609,9 +622,12 @@ impl<'a> ParseCtx<'a> {
         };
 
         match (name, ty, err, body) {
-            (Some(name), Some(ty), Some(err), Some(body)) => {
-                Some(ResourceDecl { name, ty, err, body })
-            }
+            (Some(name), Some(ty), Some(err), Some(body)) => Some(ResourceDecl {
+                name,
+                ty,
+                err,
+                body,
+            }),
             _ => None,
         }
     }
@@ -688,8 +704,10 @@ impl<'a> ParseCtx<'a> {
         let name = self.require_ident_attr(tag, "name", name_raw, &location);
         let ty = self.require_nonempty_attr(tag, "ty", ty_raw, &location);
         let body = if self_closing {
-            self.diagnostics
-                .push(PinionForgeDiagnostic::EmptyBody { tag: tag.into(), location });
+            self.diagnostics.push(PinionForgeDiagnostic::EmptyBody {
+                tag: tag.into(),
+                location,
+            });
             None
         } else {
             self.scan_text_body(tag)
@@ -732,19 +750,21 @@ impl<'a> ParseCtx<'a> {
                 Ok(Event::Start(e)) => {
                     let nested = local_name(e.name());
                     let loc_nested = self.current_location();
-                    self.diagnostics.push(PinionForgeDiagnostic::UnsupportedElement {
-                        tag: nested,
-                        location: loc_nested,
-                    });
+                    self.diagnostics
+                        .push(PinionForgeDiagnostic::UnsupportedElement {
+                            tag: nested,
+                            location: loc_nested,
+                        });
                     self.skip_subtree();
                 }
                 Ok(Event::Empty(e)) => {
                     let nested = local_name(e.name());
                     let loc_nested = self.current_location();
-                    self.diagnostics.push(PinionForgeDiagnostic::UnsupportedElement {
-                        tag: nested,
-                        location: loc_nested,
-                    });
+                    self.diagnostics
+                        .push(PinionForgeDiagnostic::UnsupportedElement {
+                            tag: nested,
+                            location: loc_nested,
+                        });
                 }
                 Ok(Event::Eof) => {
                     self.diagnostics.push(PinionForgeDiagnostic::XmlParseError {
@@ -795,11 +815,12 @@ impl<'a> ParseCtx<'a> {
     ) -> Option<String> {
         match value {
             None => {
-                self.diagnostics.push(PinionForgeDiagnostic::MissingAttribute {
-                    tag: tag.into(),
-                    attribute: attribute.into(),
-                    location: location.clone(),
-                });
+                self.diagnostics
+                    .push(PinionForgeDiagnostic::MissingAttribute {
+                        tag: tag.into(),
+                        attribute: attribute.into(),
+                        location: location.clone(),
+                    });
                 None
             }
             Some(v) if is_rust_ident(&v) => Some(v),
@@ -828,21 +849,23 @@ impl<'a> ParseCtx<'a> {
     ) -> Option<String> {
         match value {
             None => {
-                self.diagnostics.push(PinionForgeDiagnostic::MissingAttribute {
-                    tag: tag.into(),
-                    attribute: attribute.into(),
-                    location: location.clone(),
-                });
+                self.diagnostics
+                    .push(PinionForgeDiagnostic::MissingAttribute {
+                        tag: tag.into(),
+                        attribute: attribute.into(),
+                        location: location.clone(),
+                    });
                 None
             }
             Some(v) => {
                 let trimmed = v.trim().to_owned();
                 if trimmed.is_empty() {
-                    self.diagnostics.push(PinionForgeDiagnostic::MissingAttribute {
-                        tag: tag.into(),
-                        attribute: attribute.into(),
-                        location: location.clone(),
-                    });
+                    self.diagnostics
+                        .push(PinionForgeDiagnostic::MissingAttribute {
+                            tag: tag.into(),
+                            attribute: attribute.into(),
+                            location: location.clone(),
+                        });
                     None
                 } else {
                     Some(trimmed)
@@ -978,4 +1001,3 @@ fn is_rust_keyword(s: &str) -> bool {
             | "gen"
     )
 }
-

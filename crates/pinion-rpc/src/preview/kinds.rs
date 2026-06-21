@@ -10,11 +10,11 @@
 //! The enum is `#[non_exhaustive]` so adding variants is non-breaking
 //! per Hyrum / Bloch API-evolution conventions.
 
+use pinion_core::Scene;
 use pinion_core::intent::Intent;
 use pinion_core::style::BoxStyle;
-use pinion_core::Scene;
 
-use crate::rewind::{rewind, RewindError};
+use crate::rewind::{RewindError, rewind};
 
 use super::{ApplyContext, Proposal, ViewBlueprint};
 
@@ -175,11 +175,7 @@ fn apply_replace_view(
     Ok(())
 }
 
-fn apply_set_style(
-    scene: &mut Scene,
-    target_path: &str,
-    style: BoxStyle,
-) -> Result<(), String> {
+fn apply_set_style(scene: &mut Scene, target_path: &str, style: BoxStyle) -> Result<(), String> {
     let segments = scene_segments(target_path);
     let Some(node) = scene.lookup_path_mut(&segments) else {
         return Err("UnknownTarget".to_string());
@@ -226,8 +222,8 @@ fn apply_set_signal(
     signal_path: &str,
     value: &serde_json::Value,
 ) -> Result<(), String> {
-    let intro_value = json_to_introspect_value(value)
-        .ok_or_else(|| "UnsupportedValueShape".to_string())?;
+    let intro_value =
+        json_to_introspect_value(value).ok_or_else(|| "UnsupportedValueShape".to_string())?;
     rewind(scene, signal_path, intro_value).map_err(rewind_error_tag)
 }
 
@@ -262,9 +258,9 @@ fn json_to_introspect_value(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_core::Color;
     use pinion_core::external::IntrospectValue;
     use pinion_core::scene::{BoxNode, Rect};
-    use pinion_core::Color;
 
     fn dummy_scene() -> Scene {
         Scene::Box(BoxNode::filled(Rect::default(), Color::default()))
@@ -457,10 +453,10 @@ mod tests {
         // sub-slice rather than a silent corruption.
         use pinion_core::external::StubExternal;
         use pinion_core::scene::ExternalNode;
-        let mut scene = container_with(vec![Scene::External(ExternalNode::new(Box::new(
-            StubExternal::new(),
-        )))
-        .with_tag_unused_placeholder()]);
+        let mut scene = container_with(vec![
+            Scene::External(ExternalNode::new(Box::new(StubExternal::new())))
+                .with_tag_unused_placeholder(),
+        ]);
         // No tag on the ExternalNode → addressed by index "0".
         // (with_tag_unused_placeholder is a fluent no-op; written
         // this way to make the intent clear: the External lacks a
@@ -525,8 +521,10 @@ mod tests {
 
     #[test]
     fn replace_view_swaps_tagged_subtree() {
-        let mut scene =
-            container_with(vec![tagged_box_scene("old_btn", Color::from_argb(0x0000_0000))]);
+        let mut scene = container_with(vec![tagged_box_scene(
+            "old_btn",
+            Color::from_argb(0x0000_0000),
+        )]);
         let mut ctx = ApplyContext::new(&mut scene);
         let p = TypedProposal::ReplaceView {
             target_path: "/old_btn".to_string(),
@@ -572,8 +570,7 @@ mod tests {
 
     #[test]
     fn replace_view_with_nested_container_blueprint_materializes() {
-        let mut scene =
-            container_with(vec![tagged_box_scene("placeholder", Color::default())]);
+        let mut scene = container_with(vec![tagged_box_scene("placeholder", Color::default())]);
         let mut ctx = ApplyContext::new(&mut scene);
         let p = TypedProposal::ReplaceView {
             target_path: "/placeholder".to_string(),

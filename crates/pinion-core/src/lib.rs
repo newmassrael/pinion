@@ -23,6 +23,7 @@ pub mod cell_value;
 pub mod clipboard;
 pub mod command;
 pub mod composite_tag;
+pub mod directory;
 pub mod event;
 pub mod external;
 pub mod file_dialog;
@@ -31,7 +32,6 @@ pub mod frame;
 pub mod input;
 pub mod intent;
 pub mod modal_scope_request;
-pub mod directory;
 pub mod print;
 pub mod reactive;
 pub mod renderer;
@@ -59,38 +59,36 @@ pub mod test_fixtures;
 mod multi_window;
 
 pub use animation::{
-    Animatable, AnimRect, AnimVec2, AnimVec4, Animation, Easing, SpringConfig, SpringState,
-    Tickable, Tween, DEFAULT_REST_EPSILON,
+    AnimRect, AnimVec2, AnimVec4, Animatable, Animation, DEFAULT_REST_EPSILON, Easing,
+    SpringConfig, SpringState, Tickable, Tween,
 };
 pub use cell_metric::CellMetric;
 pub use cell_value::{CellKind, CellValue};
 pub use clipboard::{Clipboard, ClipboardSelection, InMemoryClipboard};
 pub use command::Command;
+pub use directory::{DirEntry, Directory, InMemoryDirectory};
 pub use event::Event;
+pub use external::External;
 pub use file_dialog::{
     DialogKind, FileDialog, FileDialogFuture, FileDialogRequest, FileFilter, ScriptedCall,
     ScriptedFileDialog,
 };
-pub use renderer::WidgetRenderer;
-pub use external::External;
-pub use widget_core::{WidgetCore, WidgetEventName, WidgetStateName, WidgetTag};
 pub use frame::Frame;
 pub use input::{
-    edit_field_keymap, forward_key_to_field, CompositionEvent, DragCalibration, DragLatch, HeldKeys,
-    InputStateSnapshot, Modifiers, SelectionChord, DRAG_CLICK_THRESHOLD_PX,
+    CompositionEvent, DRAG_CLICK_THRESHOLD_PX, DragCalibration, DragLatch, HeldKeys,
+    InputStateSnapshot, Modifiers, SelectionChord, edit_field_keymap, forward_key_to_field,
 };
 pub use intent::{Intent, IntentTag};
 pub use reactive::{
-    is_simulating, measured_monospace_cell, use_local_task_pump, use_pane_viewport_size,
-    use_repaint_sink, use_viewport_size, Computed, DeferredReady, Effect, FetchToken,
-    IntoIntrospectValue, JsonValue,
-    LocalSpawner, LocalTaskPump, MonospaceMetrics, NullMonospaceMetrics, Owner, OwnerSnapshot,
-    NullRepaintSink, RepaintSink, Resource, ResourceCache, ResourceState, Signal, SignalExternal,
-    SimulationGuard, SnapshotRestoreError, SnapshotableSignal, batch,
+    Computed, DeferredReady, Effect, FetchToken, IntoIntrospectValue, JsonValue, LocalSpawner,
+    LocalTaskPump, MonospaceMetrics, NullMonospaceMetrics, NullRepaintSink, Owner, OwnerSnapshot,
+    RepaintSink, Resource, ResourceCache, ResourceState, Signal, SignalExternal, SimulationGuard,
+    SnapshotRestoreError, SnapshotableSignal, batch, is_simulating, measured_monospace_cell,
+    use_local_task_pump, use_pane_viewport_size, use_repaint_sink, use_viewport_size,
 };
+pub use renderer::WidgetRenderer;
 pub use revision::SceneRevision;
 pub use scene::{HitPath, Scene};
-pub use directory::{DirEntry, Directory, InMemoryDirectory};
 pub use storage::{InMemoryStorage, Storage};
 pub use style::{
     Align, AlignItems, Border, BoxStyle, Color, ColorStop, Display, Extend, Fit, FlexDirection,
@@ -98,7 +96,7 @@ pub use style::{
     JustifyContent, LayoutStyle, LineHeight, PathStyle, Size, SizeValue, Stroke, StrokeCap,
     TextAlign, TextDecoration, TextOverflow, TextStyle, scale_normalized_to_px,
 };
-pub use syntax::{highlight_code, SyntaxPalette};
+pub use syntax::{SyntaxPalette, highlight_code};
 pub use term_grid::{
     CellAttrs, CellWidth, ColorTarget, CursorShape, GridBuffer, GridCursor, Palette, ScreenKind,
     TermCell, TermColor,
@@ -107,3 +105,4 @@ pub use theme::{
     ColorRole, SystemColorScheme, THEME_FADE_SPRING, Theme, ThemeMode, ThemeProvider,
     set_system_color_scheme, system_color_scheme, use_theme,
 };
+pub use widget_core::{WidgetCore, WidgetEventName, WidgetStateName, WidgetTag};

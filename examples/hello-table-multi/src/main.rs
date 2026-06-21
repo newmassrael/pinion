@@ -52,8 +52,8 @@
 //! selection is an app-logic refinement over it).
 
 use pinion_a11y::{
-    grid_table_nodes, AccessAction, AccessFocus, AccessNode, GridCell, GridColumn, GridRow,
-    WidgetA11y,
+    AccessAction, AccessFocus, AccessNode, GridCell, GridColumn, GridRow, WidgetA11y,
+    grid_table_nodes,
 };
 // R816 §5.40 — `AriaRole` is now only referenced by the test asserts (the
 // lifted `grid_table_nodes` builder owns role + state tagging in prod).
@@ -61,17 +61,15 @@ use pinion_a11y::{
 use pinion_a11y::AriaRole;
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::scene::ContainerNode;
-use pinion_core::style::{
-    AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle,
-};
-use pinion_core::theme::{use_theme, ColorRole};
+use pinion_core::style::{AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle};
+use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::table::{
-    read_cols, read_focused_col, read_focused_row, read_rows, TableExternal,
+    TableExternal, read_cols, read_focused_col, read_focused_row, read_rows,
 };
 use pinion_core::{Frame, Scene, WidgetCore, WidgetStateName};
-use pinion_shell::{vello_renderer_impl, WidgetView};
-use pinion_widget_paint::table::{view_table, TableData, TableSelection, TableStyle};
+use pinion_shell::{WidgetView, vello_renderer_impl};
+use pinion_widget_paint::table::{TableData, TableSelection, TableStyle, view_table};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloTableMultiRenderer, HelloTableMultiRendererError);
@@ -151,7 +149,10 @@ impl TableMultiState {
     }
 
     fn row_state(&self, row: usize) -> RadioState {
-        self.row_states.get(row).copied().unwrap_or(RadioState::Idle)
+        self.row_states
+            .get(row)
+            .copied()
+            .unwrap_or(RadioState::Idle)
     }
 }
 
@@ -211,7 +212,10 @@ fn set_col(intro: &mut dyn pinion_core::external::ExternalIntrospect, col: usize
         return;
     }
     let clamped = col.min(cols - 1);
-    let _ = intro.intervene("focused_col", IntrospectValue::Int(i64::try_from(clamped).unwrap_or(0)));
+    let _ = intro.intervene(
+        "focused_col",
+        IntrospectValue::Int(i64::try_from(clamped).unwrap_or(0)),
+    );
 }
 
 /// Set the active-descendant row to a specific value (`PageUp` /
@@ -222,7 +226,10 @@ fn set_row(intro: &mut dyn pinion_core::external::ExternalIntrospect, row: usize
         return;
     }
     let clamped = row.min(rows - 1);
-    let _ = intro.intervene("focused_row", IntrospectValue::Int(i64::try_from(clamped).unwrap_or(0)));
+    let _ = intro.intervene(
+        "focused_row",
+        IntrospectValue::Int(i64::try_from(clamped).unwrap_or(0)),
+    );
 }
 
 /// view-fn (§6.3): pure sync mapping [`TableMultiState`] -> [`Scene`].
@@ -239,9 +246,16 @@ fn view(state: &TableMultiState, _frame: &Frame) -> Scene {
     let rows: Vec<&[&str]> = ROWS.iter().map(|r| &r[..]).collect();
     let table = view_table(
         PRIMARY_TAG,
-        TableData { headers: &HEADERS, rows: &rows, row_ids: &[] },
+        TableData {
+            headers: &HEADERS,
+            rows: &rows,
+            row_ids: &[],
+        },
         // R952 — row-multi-select grid: per-row bitmap, no cell range selection.
-        TableSelection { rows: &state.row_selected, cells: None },
+        TableSelection {
+            rows: &state.row_selected,
+            cells: None,
+        },
         &state.row_states,
         None,
         &theme,
@@ -307,7 +321,10 @@ impl WidgetCore for TableMultiView {
         let rows = read_rows(intro);
         for r in 0..rows {
             if let Some(slot) = out.row_selected.get_mut(r) {
-                *slot = matches!(intro.query(&format!("selected.{r}")), Some(IntrospectValue::Bool(true)));
+                *slot = matches!(
+                    intro.query(&format!("selected.{r}")),
+                    Some(IntrospectValue::Bool(true))
+                );
             }
             let st = match intro.query(&format!("state.{r}")) {
                 Some(IntrospectValue::Text(name)) => RadioState::from_name_or_default(&name),
@@ -513,8 +530,8 @@ impl WidgetA11y for TableMultiView {
         match action {
             AccessAction::Click | AccessAction::Default => {
                 for ev in ["PointerEnter", "PointerDown", "PointerUp", "PointerLeave"] {
-                    let _ = intro
-                        .invoke("send", IntrospectValue::Text(format!("{row}_{col}:{ev}")));
+                    let _ =
+                        intro.invoke("send", IntrospectValue::Text(format!("{row}_{col}:{ev}")));
                 }
                 true
             }
@@ -528,7 +545,10 @@ impl WidgetView for TableMultiView {
     type Renderer = HelloTableMultiRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 }
 
@@ -545,9 +565,7 @@ mod tests {
     /// (one composite `Scene::External` at `PRIMARY_TAG`, two rows
     /// boot-seeded selected).
     fn scene_fixture() -> Scene {
-        Scene::External(
-            ExternalNode::new(TableMultiView::create_external()).with_tag(PRIMARY_TAG),
-        )
+        Scene::External(ExternalNode::new(TableMultiView::create_external()).with_tag(PRIMARY_TAG))
     }
 
     fn selected_bits(scene: &Scene) -> Vec<usize> {
@@ -557,7 +575,10 @@ mod tests {
         let intro = node.handle.introspect().expect("introspect");
         (0..NROWS)
             .filter(|&r| {
-                matches!(intro.query(&format!("selected.{r}")), Some(IntrospectValue::Bool(true)))
+                matches!(
+                    intro.query(&format!("selected.{r}")),
+                    Some(IntrospectValue::Bool(true))
+                )
             })
             .collect()
     }
@@ -587,7 +608,9 @@ mod tests {
             "boot frame shows the two seeded selections (live-pixel target)",
         );
         // Multi-mode: `selected_row` is the `-1` sentinel (no single row).
-        let Scene::External(node) = &scene else { panic!("external") };
+        let Scene::External(node) = &scene else {
+            panic!("external")
+        };
         assert_eq!(
             node.handle.introspect().unwrap().query("selected_row"),
             Some(IntrospectValue::Int(-1)),
@@ -604,18 +627,37 @@ mod tests {
         let mut scene = scene_fixture();
         // Navigate to row 4 (unselected) and toggle it on: rows 0, 2 stay.
         for _ in 0..5 {
-            let _ = TableMultiView::apply_key(&mut scene, Some(PRIMARY_TAG), "ArrowDown", pinion_core::Modifiers::default());
+            let _ = TableMultiView::apply_key(
+                &mut scene,
+                Some(PRIMARY_TAG),
+                "ArrowDown",
+                pinion_core::Modifiers::default(),
+            );
         }
         assert_eq!(focused(&scene).0, 4);
-        assert!(TableMultiView::apply_key(&mut scene, Some(PRIMARY_TAG), "Enter", pinion_core::Modifiers::default()));
+        assert!(TableMultiView::apply_key(
+            &mut scene,
+            Some(PRIMARY_TAG),
+            "Enter",
+            pinion_core::Modifiers::default()
+        ));
         assert_eq!(
             selected_bits(&scene),
             vec![0, 2, 4],
             "Enter adds row 4, siblings 0/2 untouched (multi-select)",
         );
         // Toggle row 4 back off.
-        assert!(TableMultiView::apply_key(&mut scene, Some(PRIMARY_TAG), "Space", pinion_core::Modifiers::default()));
-        assert_eq!(selected_bits(&scene), vec![0, 2], "Space toggles row 4 off again");
+        assert!(TableMultiView::apply_key(
+            &mut scene,
+            Some(PRIMARY_TAG),
+            "Space",
+            pinion_core::Modifiers::default()
+        ));
+        assert_eq!(
+            selected_bits(&scene),
+            vec![0, 2],
+            "Space toggles row 4 off again"
+        );
     }
 
     #[test]
@@ -628,35 +670,84 @@ mod tests {
             "0_1",
             AccessAction::Click,
         ));
-        assert_eq!(selected_bits(&scene), vec![2], "clicking selected row 0 toggles it off");
+        assert_eq!(
+            selected_bits(&scene),
+            vec![2],
+            "clicking selected row 0 toggles it off"
+        );
     }
 
     #[test]
     fn arrows_move_2d_active_descendant_clamped() {
         let mut scene = scene_fixture();
-        assert!(TableMultiView::apply_key(&mut scene, Some(PRIMARY_TAG), "ArrowDown", pinion_core::Modifiers::default()));
+        assert!(TableMultiView::apply_key(
+            &mut scene,
+            Some(PRIMARY_TAG),
+            "ArrowDown",
+            pinion_core::Modifiers::default()
+        ));
         assert_eq!(focused(&scene), (0, 0), "first ArrowDown enters at row 0");
-        let _ = TableMultiView::apply_key(&mut scene, Some(PRIMARY_TAG), "ArrowRight", pinion_core::Modifiers::default());
+        let _ = TableMultiView::apply_key(
+            &mut scene,
+            Some(PRIMARY_TAG),
+            "ArrowRight",
+            pinion_core::Modifiers::default(),
+        );
         assert_eq!(focused(&scene), (0, 1), "ArrowRight -> col 1");
-        let _ = TableMultiView::apply_key(&mut scene, Some(PRIMARY_TAG), "PageDown", pinion_core::Modifiers::default());
-        assert_eq!(focused(&scene).0, i64::try_from(NROWS - 1).unwrap(), "PageDown -> last row");
-        let _ = TableMultiView::apply_key(&mut scene, Some(PRIMARY_TAG), "ArrowDown", pinion_core::Modifiers::default());
-        assert_eq!(focused(&scene).0, i64::try_from(NROWS - 1).unwrap(), "ArrowDown clamps at last row");
-        let _ = TableMultiView::apply_key(&mut scene, Some(PRIMARY_TAG), "End", pinion_core::Modifiers::default());
-        assert_eq!(focused(&scene).1, i64::try_from(NCOLS - 1).unwrap(), "End -> last col");
+        let _ = TableMultiView::apply_key(
+            &mut scene,
+            Some(PRIMARY_TAG),
+            "PageDown",
+            pinion_core::Modifiers::default(),
+        );
+        assert_eq!(
+            focused(&scene).0,
+            i64::try_from(NROWS - 1).unwrap(),
+            "PageDown -> last row"
+        );
+        let _ = TableMultiView::apply_key(
+            &mut scene,
+            Some(PRIMARY_TAG),
+            "ArrowDown",
+            pinion_core::Modifiers::default(),
+        );
+        assert_eq!(
+            focused(&scene).0,
+            i64::try_from(NROWS - 1).unwrap(),
+            "ArrowDown clamps at last row"
+        );
+        let _ = TableMultiView::apply_key(
+            &mut scene,
+            Some(PRIMARY_TAG),
+            "End",
+            pinion_core::Modifiers::default(),
+        );
+        assert_eq!(
+            focused(&scene).1,
+            i64::try_from(NCOLS - 1).unwrap(),
+            "End -> last col"
+        );
     }
 
     #[test]
     fn keys_ignored_when_grid_unfocused() {
         let mut scene = scene_fixture();
-        assert!(!TableMultiView::apply_key(&mut scene, None, "ArrowDown", pinion_core::Modifiers::default()));
+        assert!(!TableMultiView::apply_key(
+            &mut scene,
+            None,
+            "ArrowDown",
+            pinion_core::Modifiers::default()
+        ));
     }
 
     #[test]
     fn access_node_grid_is_multiselectable() {
         let nodes = TableMultiView::access_node(&TableMultiState::idle(), None);
         assert_eq!(nodes[0].role, AriaRole::Grid);
-        assert!(nodes[0].multiselectable, "grid root carries aria-multiselectable");
+        assert!(
+            nodes[0].multiselectable,
+            "grid root carries aria-multiselectable"
+        );
     }
 
     #[test]

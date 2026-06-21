@@ -23,7 +23,7 @@
     clippy::style,
     clippy::complexity,
     clippy::pedantic,
-    clippy::all,
+    clippy::all
 )]
 mod sm {
     include!(concat!(env!("OUT_DIR"), "/multi_window_sm.rs"));
@@ -33,8 +33,8 @@ use sce_rust_runtime::StatePolicy;
 
 use crate::topology;
 
-pub use sm::MultiWindowState;
 use sm::MultiWindowPolicy;
+pub use sm::MultiWindowState;
 
 /// Parallel-root window fixture exposing the same topology surface as
 /// `App` but over `MultiWindowPolicy`.

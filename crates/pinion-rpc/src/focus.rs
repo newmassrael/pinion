@@ -206,25 +206,19 @@ pub(crate) fn handle_focus_set(
 }
 
 /// JSON-RPC adapter for `focus/get`.
-pub(crate) fn handle_focus_get(
-    focus: Option<&FocusManager>,
-) -> Result<Value, RpcError> {
+pub(crate) fn handle_focus_get(focus: Option<&FocusManager>) -> Result<Value, RpcError> {
     let focus = focus.ok_or_else(err_focus_unavailable)?;
     state_to_value(focus_get(focus))
 }
 
 /// JSON-RPC adapter for `focus/next` (R51.74 §5.40).
-pub(crate) fn handle_focus_next(
-    focus: Option<&mut FocusManager>,
-) -> Result<Value, RpcError> {
+pub(crate) fn handle_focus_next(focus: Option<&mut FocusManager>) -> Result<Value, RpcError> {
     let focus = focus.ok_or_else(err_focus_unavailable)?;
     state_to_value(focus_next(focus))
 }
 
 /// JSON-RPC adapter for `focus/prev` (R51.74 §5.40).
-pub(crate) fn handle_focus_prev(
-    focus: Option<&mut FocusManager>,
-) -> Result<Value, RpcError> {
+pub(crate) fn handle_focus_prev(focus: Option<&mut FocusManager>) -> Result<Value, RpcError> {
     let focus = focus.ok_or_else(err_focus_unavailable)?;
     state_to_value(focus_prev(focus))
 }
@@ -244,7 +238,9 @@ mod tests {
         let mut fm = fm_with(&["main_btn", "main_cb"]);
         let out = focus_set(
             &mut fm,
-            &FocusSetParams { tag: Some("main_btn".to_owned()) },
+            &FocusSetParams {
+                tag: Some("main_btn".to_owned()),
+            },
         )
         .expect("known tag");
         assert_eq!(out.focused.as_deref(), Some("main_btn"));
@@ -265,7 +261,9 @@ mod tests {
         let mut fm = fm_with(&["main_btn"]);
         let err = focus_set(
             &mut fm,
-            &FocusSetParams { tag: Some("bogus".to_owned()) },
+            &FocusSetParams {
+                tag: Some("bogus".to_owned()),
+            },
         )
         .unwrap_err();
         assert_eq!(err, FocusError::NotFocusable("bogus".to_owned()));
@@ -276,11 +274,15 @@ mod tests {
         let mut fm = fm_with(&["main_btn"]);
         let _ = focus_set(
             &mut fm,
-            &FocusSetParams { tag: Some("main_btn".to_owned()) },
+            &FocusSetParams {
+                tag: Some("main_btn".to_owned()),
+            },
         );
         let out = focus_set(
             &mut fm,
-            &FocusSetParams { tag: Some("main_btn".to_owned()) },
+            &FocusSetParams {
+                tag: Some("main_btn".to_owned()),
+            },
         )
         .unwrap();
         // Repeated set returns the same state, not an error.

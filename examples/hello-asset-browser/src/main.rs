@@ -63,29 +63,29 @@
 //! watch the count, the row order, and the membership change as data. See
 //! `tools/demos/r927_asset_browser.py`.
 
-use pinion_a11y::{windowed_list_nodes, AccessNode, AriaRole, WidgetA11y};
+use pinion_a11y::{AccessNode, AriaRole, WidgetA11y, windowed_list_nodes};
 use pinion_core::external::External;
 use pinion_core::reactive::{
-    batch, DeferredReady, Effect, Owner, Resource, ResourceCache, ResourceState, Signal,
+    DeferredReady, Effect, Owner, Resource, ResourceCache, ResourceState, Signal, batch,
 };
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::aria::apply_aria_activate;
 use pinion_core::widgets::button::{ButtonExternal, ButtonState};
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
-use pinion_core::widgets::virtual_list::{compute_visible_range, pages_in_window, VisibleWindow};
-use pinion_core::{use_local_task_pump, Frame, Scene, WidgetCore};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_core::widgets::virtual_list::{VisibleWindow, compute_visible_range, pages_in_window};
+use pinion_core::{Frame, Scene, WidgetCore, use_local_task_pump};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::button::{
-    button_a11y_state, button_scene, read_button_focused, read_button_state, ButtonColors,
-    ButtonStyle,
+    ButtonColors, ButtonStyle, button_a11y_state, button_scene, read_button_focused,
+    read_button_state,
 };
-use pinion_widget_paint::scrollbar::{view_vertical_scrollbar, VerticalScrollbarStyle};
+use pinion_widget_paint::scrollbar::{VerticalScrollbarStyle, view_vertical_scrollbar};
 use pinion_widget_paint::virtual_list::view_virtual_list;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -254,7 +254,12 @@ fn matching_count(filter: FilterKey) -> usize {
 /// window — so a page reflects a *global* order, not a per-page sort. `end` is
 /// clamped to the matched count, so the last (partial) page yields exactly its
 /// remaining rows.
-fn ordered_indices_slice(sort: SortMode, filter: FilterKey, start: usize, end: usize) -> Vec<usize> {
+fn ordered_indices_slice(
+    sort: SortMode,
+    filter: FilterKey,
+    start: usize,
+    end: usize,
+) -> Vec<usize> {
     let mut all = matching_indices(filter);
     // `Natural` keeps the source order; the size modes order the whole matched
     // set (a global order the page slice then windows).
@@ -501,7 +506,9 @@ fn row_text(
     Scene::Text(TextNode::styled(
         content,
         Rect::default(),
-        TextStyle::new().with_size_px(14).with_fg(theme.resolve(role)),
+        TextStyle::new()
+            .with_size_px(14)
+            .with_fg(theme.resolve(role)),
     ))
 }
 
@@ -589,7 +596,13 @@ fn view(state: AssetBrowserState, _frame: &Frame) -> Scene {
     let item_count = known_item_count(&count_state);
 
     // Snapshot the visible pages' states once — subscribes the view to each.
-    let window = compute_visible_range(scroll.offset_y(), VIEWPORT_H, item_count, ROW_PITCH, OVERSCAN);
+    let window = compute_visible_range(
+        scroll.offset_y(),
+        VIEWPORT_H,
+        item_count,
+        ROW_PITCH,
+        OVERSCAN,
+    );
     let page_states = resolve_visible_pages(sort, filter, &window, &cache);
 
     let title = Scene::Text(TextNode::styled(
@@ -657,8 +670,12 @@ fn view(state: AssetBrowserState, _frame: &Frame) -> Scene {
 
     let scrollbar_style = VerticalScrollbarStyle::material(VIEWPORT_H, SCROLLBAR_TAG);
     let scrollbar_interaction = use_scrollbar_interaction(SCROLLBAR_TAG);
-    let scrollbar_visual =
-        view_vertical_scrollbar(&scroll, &theme, &scrollbar_style, scrollbar_interaction.get());
+    let scrollbar_visual = view_vertical_scrollbar(
+        &scroll,
+        &theme,
+        &scrollbar_style,
+        scrollbar_interaction.get(),
+    );
 
     let list_root = Scene::Container(
         ContainerNode::new(vec![list, scrollbar_visual])
@@ -734,7 +751,6 @@ impl WidgetCore for AssetBrowserView {
         None
     }
 
-
     fn apply_key(
         scene: &mut Scene,
         focused: Option<&str>,
@@ -789,8 +805,13 @@ impl WidgetA11y for AssetBrowserView {
         let filter = filter_signal().get();
         let count_state = count_resource().state();
         let item_count = known_item_count(&count_state);
-        let window =
-            compute_visible_range(scroll.offset_y(), VIEWPORT_H, item_count, ROW_PITCH, OVERSCAN);
+        let window = compute_visible_range(
+            scroll.offset_y(),
+            VIEWPORT_H,
+            item_count,
+            ROW_PITCH,
+            OVERSCAN,
+        );
 
         let mut nodes = windowed_list_nodes(
             LIST_TAG,
@@ -799,15 +820,18 @@ impl WidgetA11y for AssetBrowserView {
             &window,
         );
         nodes.push(
-            AccessNode::new(COUNT_TAG, AriaRole::Status).with_name(count_line(filter, &count_state)),
+            AccessNode::new(COUNT_TAG, AriaRole::Status)
+                .with_name(count_line(filter, &count_state)),
         );
         nodes.push(
             AccessNode::new(SORT_TAG, AriaRole::Button)
                 .with_state(button_a11y_state(sort_posture, focused == Some(SORT_TAG))),
         );
         nodes.push(
-            AccessNode::new(FILTER_TAG, AriaRole::Button)
-                .with_state(button_a11y_state(filter_posture, focused == Some(FILTER_TAG))),
+            AccessNode::new(FILTER_TAG, AriaRole::Button).with_state(button_a11y_state(
+                filter_posture,
+                focused == Some(FILTER_TAG),
+            )),
         );
         nodes
     }
@@ -917,9 +941,16 @@ mod tests {
         assert_eq!(rows[0].name, "asset_00001.obj");
         assert_eq!(rows[1].name, "asset_00007.obj");
         assert_eq!(rows[2].name, "asset_00013.obj");
-        assert!(rows.iter().all(|r| r.kind == "Mesh"), "filtered page is all Mesh");
+        assert!(
+            rows.iter().all(|r| r.kind == "Mesh"),
+            "filtered page is all Mesh"
+        );
         let last = page_rows(SortMode::Natural, Some(1), 16);
-        assert_eq!(last.len(), matching_count(Some(1)) - 16 * PAGE_SIZE, "partial last page");
+        assert_eq!(
+            last.len(),
+            matching_count(Some(1)) - 16 * PAGE_SIZE,
+            "partial last page"
+        );
     }
 
     #[test]
@@ -932,14 +963,20 @@ mod tests {
             assert!(w[0].size_kb <= w[1].size_kb, "ascending size order");
         }
         let global_min = (0..N_TOTAL).map(size_kb_of).min().unwrap();
-        assert_eq!(asc[0].size_kb, global_min, "page 0 starts at the global minimum");
+        assert_eq!(
+            asc[0].size_kb, global_min,
+            "page 0 starts at the global minimum"
+        );
 
         let desc = page_rows(SortMode::SizeDesc, None, 0);
         for w in desc.windows(2) {
             assert!(w[0].size_kb >= w[1].size_kb, "descending size order");
         }
         let global_max = (0..N_TOTAL).map(size_kb_of).max().unwrap();
-        assert_eq!(desc[0].size_kb, global_max, "page 0 starts at the global maximum");
+        assert_eq!(
+            desc[0].size_kb, global_max,
+            "page 0 starts at the global maximum"
+        );
     }
 
     #[test]
@@ -962,7 +999,10 @@ mod tests {
             // Before the pump runs, the count is still in flight → no rows.
             let loading = view(idle(), &Frame::default());
             assert_eq!(count_text(&loading).as_deref(), Some("Counting\u{2026}"));
-            assert!(row_text_of(&loading, 0).is_none(), "no rows until the count resolves");
+            assert!(
+                row_text_of(&loading, 0).is_none(),
+                "no rows until the count resolves"
+            );
             drain_pump();
             view(idle(), &Frame::default())
         });
@@ -983,7 +1023,10 @@ mod tests {
             // The boot window touches page 0 only → exactly one resident page.
             assert_eq!(page_cache().len(), 1, "only the visible page fetched");
             assert!(page_cache().contains(&(SortMode::Natural, None, 0)));
-            assert!(!page_cache().contains(&(SortMode::Natural, None, 50)), "far pages not fetched");
+            assert!(
+                !page_cache().contains(&(SortMode::Natural, None, 50)),
+                "far pages not fetched"
+            );
         });
     }
 
@@ -1004,13 +1047,20 @@ mod tests {
                 matches!(count_resource().state(), ResourceState::Error(_)),
                 "count resolved to Error",
             );
-            assert_eq!(page_cache().len(), 0, "no pages fetched while the count errored");
+            assert_eq!(
+                page_cache().len(),
+                0,
+                "no pages fetched while the count errored"
+            );
             let scene = view(idle(), &Frame::default());
             assert_eq!(
                 count_text(&scene).as_deref(),
                 Some("count error: source unreachable"),
             );
-            assert!(row_text_of(&scene, 0).is_none(), "no rows under a count error");
+            assert!(
+                row_text_of(&scene, 0).is_none(),
+                "no rows under a count error"
+            );
         });
     }
 
@@ -1022,7 +1072,10 @@ mod tests {
             drain_pump();
             // Scroll deep (set a bound first, as a direct view() skips layout).
             let scroll = use_scroll_state(SCROLL_KEY);
-            scroll.set_max(0, i32::try_from(N_TOTAL).unwrap() * i32::try_from(ROW_PITCH).unwrap());
+            scroll.set_max(
+                0,
+                i32::try_from(N_TOTAL).unwrap() * i32::try_from(ROW_PITCH).unwrap(),
+            );
             scroll.scroll_to(0, 3000 * i32::try_from(ROW_PITCH).unwrap());
             assert!(scroll.offset_y() > 0, "scrolled away from the top");
             // Filter to Texture (kind 0): the reducer resets the scroll and the
@@ -1093,7 +1146,9 @@ mod tests {
             "aria-setsize is the filtered count",
         );
         assert!(
-            nodes.iter().any(|n| n.tag == COUNT_TAG && n.role == AriaRole::Status),
+            nodes
+                .iter()
+                .any(|n| n.tag == COUNT_TAG && n.role == AriaRole::Status),
             "count status node present",
         );
         assert_eq!(

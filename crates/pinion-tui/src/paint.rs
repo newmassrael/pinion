@@ -47,10 +47,10 @@
 //! The column cursor advances by the cluster width so wide graphemes
 //! reserve their second cell implicitly.
 
+use pinion_core::CellMetric;
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, Scene, TextGridNode, TextNode};
 use pinion_core::style::{BoxStyle, Color};
 use pinion_core::term_grid::{CellAttrs, CellWidth, TermColor};
-use pinion_core::CellMetric;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect as TuiRect;
 use ratatui::style::{Color as TuiColor, Modifier, Style};
@@ -227,12 +227,8 @@ fn to_buffer_inner(scene: &Scene, buf: &mut Buffer, clip: CellClip, offset_px: (
             // (0, 0) lands at `(viewport.x - scroll.offset_x,
             //  viewport.y - scroll.offset_y)` in the parent frame,
             // then the parent offset shifts it to screen.
-            let cx = i64::from(offset_px.0)
-                + i64::from(s.viewport.x)
-                - i64::from(s.offset_x);
-            let cy = i64::from(offset_px.1)
-                + i64::from(s.viewport.y)
-                - i64::from(s.offset_y);
+            let cx = i64::from(offset_px.0) + i64::from(s.viewport.x) - i64::from(s.offset_x);
+            let cy = i64::from(offset_px.1) + i64::from(s.viewport.y) - i64::from(s.offset_y);
             let child_offset = (clamp_to_i32(cx), clamp_to_i32(cy));
             to_buffer_inner(&s.content, buf, new_clip, child_offset);
         }
@@ -366,8 +362,24 @@ fn paint_box_style(
         }
         write_border_cell(buf, buf_area, clip, edge_left, edge_top, BOX_TOP_LEFT, fg);
         write_border_cell(buf, buf_area, clip, edge_right, edge_top, BOX_TOP_RIGHT, fg);
-        write_border_cell(buf, buf_area, clip, edge_left, edge_bottom, BOX_BOTTOM_LEFT, fg);
-        write_border_cell(buf, buf_area, clip, edge_right, edge_bottom, BOX_BOTTOM_RIGHT, fg);
+        write_border_cell(
+            buf,
+            buf_area,
+            clip,
+            edge_left,
+            edge_bottom,
+            BOX_BOTTOM_LEFT,
+            fg,
+        );
+        write_border_cell(
+            buf,
+            buf_area,
+            clip,
+            edge_right,
+            edge_bottom,
+            BOX_BOTTOM_RIGHT,
+            fg,
+        );
     }
 }
 
@@ -621,7 +633,6 @@ fn paint_text_grid_inner(
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -909,8 +920,8 @@ mod tests {
         content.rect = Rect::new(0, 0, 100, 64);
         content.children.push(Scene::Text(row0));
         content.children.push(Scene::Text(row1));
-        let scroll = ScrollNode::new(Rect::new(0, 0, 80, 32), Scene::Container(content))
-            .with_offset(0, 16);
+        let scroll =
+            ScrollNode::new(Rect::new(0, 0, 80, 32), Scene::Container(content)).with_offset(0, 16);
         let scene = Scene::Scroll(scroll);
         let mut buf = Buffer::empty(TuiRect::new(0, 0, 20, 5));
         to_buffer(&scene, &mut buf);
@@ -937,15 +948,9 @@ mod tests {
             Color::rgb(0x99, 0x99, 0x99),
         ));
         // Inner viewport (0, 0, 160, 160) = cell rect (0, 0, 20, 10).
-        let inner_scroll = Scene::Scroll(ScrollNode::new(
-            Rect::new(0, 0, 160, 160),
-            inner_box,
-        ));
+        let inner_scroll = Scene::Scroll(ScrollNode::new(Rect::new(0, 0, 160, 160), inner_box));
         // Outer viewport (0, 0, 32, 32) = cell rect (0, 0, 4, 2).
-        let outer_scroll = Scene::Scroll(ScrollNode::new(
-            Rect::new(0, 0, 32, 32),
-            inner_scroll,
-        ));
+        let outer_scroll = Scene::Scroll(ScrollNode::new(Rect::new(0, 0, 32, 32), inner_scroll));
         to_buffer(&outer_scroll, &mut buf);
         let expected = ratatui::style::Color::Rgb(0x99, 0x99, 0x99);
         // Inside outer viewport — must be filled (inner permits it).
@@ -972,8 +977,8 @@ mod tests {
             Rect::new(0, 0, 50, 50),
             Color::rgb(0, 0xff, 0),
         ));
-        let scroll = ScrollNode::new(Rect::new(0, 0, 32, 32), content)
-            .with_offset(i32::MAX, i32::MAX);
+        let scroll =
+            ScrollNode::new(Rect::new(0, 0, 32, 32), content).with_offset(i32::MAX, i32::MAX);
         let scene = Scene::Scroll(scroll);
         to_buffer(&scene, &mut buf);
         // Content scrolled past the viewport entirely — every cell
@@ -1008,10 +1013,10 @@ mod tests {
     /// modifiers, wide-char spill-over, and a reverse-block cursor.
     #[test]
     fn r994_text_grid_paints_cells_attrs_wide_cursor() {
+        use pinion_core::CellMetric;
         use pinion_core::scene::TextGridNode;
         use pinion_core::style::Color;
         use pinion_core::term_grid::{CursorShape, GridBuffer, GridCursor, TermCell, TermColor};
-        use pinion_core::CellMetric;
 
         // 한 (U+D55C) — a wide cluster; escaped per the non-ASCII source rule.
         const HAN: &str = "\u{D55C}";
@@ -1025,8 +1030,12 @@ mod tests {
                 [
                     TermCell::new("A", TermColor::Indexed(1), TermColor::Indexed(0))
                         .with_attrs(e().with_bold(true)),
-                    TermCell::new("B", TermColor::Rgb(Color::rgb(0xff, 0, 0)), TermColor::Default)
-                        .with_attrs(e().with_italic(true).with_underline(true)),
+                    TermCell::new(
+                        "B",
+                        TermColor::Rgb(Color::rgb(0xff, 0, 0)),
+                        TermColor::Default,
+                    )
+                    .with_attrs(e().with_italic(true).with_underline(true)),
                     TermCell::new(" ", TermColor::Default, TermColor::Default)
                         .with_attrs(e().with_reverse(true)),
                     TermCell::new("D", TermColor::Default, TermColor::Default)
@@ -1059,7 +1068,11 @@ mod tests {
         // (1,0) italic + underline 'B'; truecolor fg passes through; the
         // default bg maps to the terminal's Reset (its own default).
         assert_eq!(buf[(1, 0)].symbol(), "B");
-        assert!(buf[(1, 0)].modifier.contains(Modifier::ITALIC | Modifier::UNDERLINED));
+        assert!(
+            buf[(1, 0)]
+                .modifier
+                .contains(Modifier::ITALIC | Modifier::UNDERLINED)
+        );
         assert_eq!(buf[(1, 0)].fg, TuiColor::Rgb(0xff, 0, 0));
         assert_eq!(buf[(1, 0)].bg, TuiColor::Reset);
 
@@ -1109,11 +1122,11 @@ mod tests {
     ///   a grid `(col, row)` is a later input slice; not part of paint.
     #[test]
     fn r995_text_grid_cross_consistency_tui() {
+        use pinion_core::CellMetric;
         use pinion_core::scene::TextGridNode;
         use pinion_core::test_fixtures::{
             TEXT_GRID_WIDE_HEAD, expected_text_grid_cell_facts, text_grid_consistency_buffer,
         };
-        use pinion_core::CellMetric;
 
         let buffer = text_grid_consistency_buffer();
         // 8×16 default metric, rect (0,0,32,48) → 4 cols × 3 rows, origin cell
@@ -1131,10 +1144,11 @@ mod tests {
                 let f = expected_text_grid_cell_facts(&buffer, col, row);
                 let bcell = &buf[(col, row)];
                 // Visible ink: a non-blank symbol the terminal does not conceal.
-                let observed_ink = !bcell.modifier.contains(Modifier::HIDDEN)
-                    && !bcell.symbol().trim().is_empty();
+                let observed_ink =
+                    !bcell.modifier.contains(Modifier::HIDDEN) && !bcell.symbol().trim().is_empty();
                 assert_eq!(
-                    observed_ink, f.inks_glyph,
+                    observed_ink,
+                    f.inks_glyph,
                     "cell ({col},{row}) inks_glyph: symbol {:?} hidden={}",
                     bcell.symbol(),
                     bcell.modifier.contains(Modifier::HIDDEN),
@@ -1156,20 +1170,31 @@ mod tests {
         // them) — pin the representative set the fixture carries.
         assert!(buf[(0, 0)].modifier.contains(Modifier::BOLD), "(0,0) bold");
         assert!(
-            buf[(1, 0)].modifier.contains(Modifier::ITALIC | Modifier::UNDERLINED),
+            buf[(1, 0)]
+                .modifier
+                .contains(Modifier::ITALIC | Modifier::UNDERLINED),
             "(1,0) italic+underline",
         );
         assert!(
-            buf[(3, 0)].modifier.contains(Modifier::SLOW_BLINK | Modifier::CROSSED_OUT),
+            buf[(3, 0)]
+                .modifier
+                .contains(Modifier::SLOW_BLINK | Modifier::CROSSED_OUT),
             "(3,0) blink+strikethrough",
         );
-        assert!(buf[(2, 1)].modifier.contains(Modifier::HIDDEN), "(2,1) hidden");
+        assert!(
+            buf[(2, 1)].modifier.contains(Modifier::HIDDEN),
+            "(2,1) hidden"
+        );
 
         // Indexed / truecolor / default colours pass through to the host
         // terminal verbatim (the documented backend divergence — Vello would
         // palette-resolve these instead).
         assert_eq!(buf[(2, 0)].fg, TuiColor::Indexed(2), "(2,0) indexed fg");
-        assert_eq!(buf[(1, 0)].fg, TuiColor::Rgb(0xff, 0, 0), "(1,0) truecolor fg");
+        assert_eq!(
+            buf[(1, 0)].fg,
+            TuiColor::Rgb(0xff, 0, 0),
+            "(1,0) truecolor fg"
+        );
         assert_eq!(buf[(3, 0)].fg, TuiColor::Reset, "(3,0) default fg → Reset");
     }
 }

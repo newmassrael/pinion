@@ -46,7 +46,10 @@ fn sni_backend_registers_and_serves_the_model() {
         ]);
 
     let backend = SniTrayBackend::new(&model).expect("SNI service starts on the session bus");
-    assert!(backend.is_available(), "a StatusNotifierWatcher is present on this bus");
+    assert!(
+        backend.is_available(),
+        "a StatusNotifierWatcher is present on this bus"
+    );
 
     let conn = zbus::blocking::Connection::session().expect("session bus");
 
@@ -57,7 +60,10 @@ fn sni_backend_registers_and_serves_the_model() {
         if let Some(name) = sni_name_for_this_process(&conn) {
             break name;
         }
-        assert!(Instant::now() < deadline, "the SNI item registered a well-known name");
+        assert!(
+            Instant::now() < deadline,
+            "the SNI item registered a well-known name"
+        );
         std::thread::sleep(Duration::from_millis(50));
     };
 
@@ -75,7 +81,10 @@ fn sni_backend_registers_and_serves_the_model() {
 
     // A live model update round-trips over real D-Bus.
     let updated = model.with_status(TrayStatus::NeedsAttention);
-    assert!(backend.publish(&updated).is_ok(), "publish updates the live item");
+    assert!(
+        backend.publish(&updated).is_ok(),
+        "publish updates the live item"
+    );
     // No icon / menu clicks were issued, so no events are queued.
     assert!(backend.poll_events().is_empty(), "no spurious events");
 }

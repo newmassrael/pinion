@@ -65,36 +65,36 @@ use std::cell::RefCell;
 use std::time::Instant;
 
 use pinion_a11y::{
-    listbox_option_nodes, AccessAction, AccessFocus, AccessNode, ListOption, WidgetA11y,
+    AccessAction, AccessFocus, AccessNode, ListOption, WidgetA11y, listbox_option_nodes,
 };
 // R814 §5.40 — `AriaRole` is now only referenced by the test asserts (the
 // lifted `listbox_option_nodes` builder owns the role tagging in prod).
 #[cfg(test)]
 use pinion_a11y::AriaRole;
+use pinion_core::WidgetStateName;
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::scene::{ContainerNode, Rect, ScrollNode, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::listbox::ListBoxExternal;
 use pinion_core::widgets::listbox_item::ListboxItemState;
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
-use pinion_core::theme::{use_theme, ColorRole, Theme};
-use pinion_core::WidgetStateName;
 // R659 §5.45 — `build_scrollbar_visual` lifted to
 // `pinion_widget_paint::scrollbar` after the 2nd-consumer signal
 // fired with the R659 todomvc scrollbar peer wire. The local helper
 // + (`SCROLLBAR_W`, `MIN_THUMB`) constants are retired —
 // `VerticalScrollbarStyle::material` carries the M3-canonical
 // defaults the R55.D.4 first-client established.
-use pinion_widget_paint::scrollbar::{view_vertical_scrollbar, VerticalScrollbarStyle};
 #[cfg(test)]
 use pinion_core::theme::ThemeMode;
 use pinion_core::{Frame, Owner, Scene, WidgetCore};
-use pinion_shell::typeahead::{is_typeahead_char, TypeaheadCursor};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_shell::typeahead::{TypeaheadCursor, is_typeahead_char};
+use pinion_shell::{WidgetView, vello_renderer_impl};
+use pinion_widget_paint::scrollbar::{VerticalScrollbarStyle, view_vertical_scrollbar};
 
 use pinion_widget_paint::state_layer::{HOVER, PRESSED};
 
@@ -227,7 +227,15 @@ fn view(state: ListState, _frame: &Frame) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
 
     let rows: Vec<Scene> = (0..N)
-        .map(|i| listbox_row(i, state.rows[i].0, state.rows[i].1, Some(i) == Some(active), &theme))
+        .map(|i| {
+            listbox_row(
+                i,
+                state.rows[i].0,
+                state.rows[i].1,
+                Some(i) == Some(active),
+                &theme,
+            )
+        })
         .collect();
     let content = Scene::Container(
         ContainerNode::new(rows).with_layout(
@@ -476,7 +484,10 @@ impl WidgetCore for ListBoxView {
         // `scrollbar_extra_external` substrate; the interaction Signal it
         // attaches is the same one the view fn reads every paint for the
         // live Hover / Dragging state-layer.
-        vec![scrollbar_extra_external(use_scroll_state(SCROLL_KEY), SCROLLBAR_TAG)]
+        vec![scrollbar_extra_external(
+            use_scroll_state(SCROLL_KEY),
+            SCROLLBAR_TAG,
+        )]
     }
 
     fn tag() -> &'static str {
@@ -562,7 +573,12 @@ impl WidgetCore for ListBoxView {
     ///
     /// Unrecognised keys return `false` so the shell's swallow path
     /// matches the unrecognised-keybinding contract.
-    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, _modifiers: pinion_core::Modifiers) -> bool {
+    fn apply_key(
+        scene: &mut Scene,
+        focused: Option<&str>,
+        key: &str,
+        _modifiers: pinion_core::Modifiers,
+    ) -> bool {
         // ARIA Listbox roving tabindex: the composite is a single
         // tab stop. Keys only route when the listbox itself is
         // focused (no sibling-widget aliasing).
@@ -657,10 +673,7 @@ impl WidgetA11y for ListBoxView {
     /// is focused, return [`AccessFocus::composite`] with the parent
     /// tag as the `TreeUpdate::focus` target and the active option's
     /// sub-tag as the `aria-activedescendant`.
-    fn access_focus_target(
-        state: &ListState,
-        focused: Option<&str>,
-    ) -> Option<AccessFocus> {
+    fn access_focus_target(state: &ListState, focused: Option<&str>) -> Option<AccessFocus> {
         if focused == Some(<Self as WidgetCore>::tag()) {
             let idx = active_option_index(*state);
             Some(AccessFocus::composite(
@@ -673,7 +686,12 @@ impl WidgetA11y for ListBoxView {
     }
 
     /// R51.70 §5.40 — composite child action dispatch.
-    fn access_child_invoke(scene: &mut Scene, _parent_tag: &str, sub_tag: &str, action: AccessAction) -> bool {
+    fn access_child_invoke(
+        scene: &mut Scene,
+        _parent_tag: &str,
+        sub_tag: &str,
+        action: AccessAction,
+    ) -> bool {
         let Ok(idx) = sub_tag.parse::<usize>() else {
             return false;
         };
@@ -692,25 +710,17 @@ impl WidgetA11y for ListBoxView {
         match action {
             AccessAction::Click | AccessAction::Default => {
                 for ev in ["PointerEnter", "PointerDown", "PointerUp", "PointerLeave"] {
-                    let _ = intro.invoke(
-                        "send",
-                        IntrospectValue::Text(format!("{idx}:{ev}")),
-                    );
+                    let _ = intro.invoke("send", IntrospectValue::Text(format!("{idx}:{ev}")));
                 }
                 true
             }
             AccessAction::Focus => {
                 if let Ok(i) = i64::try_from(idx) {
-                    let _ = intro.intervene(
-                        "focused_index",
-                        IntrospectValue::Int(i),
-                    );
+                    let _ = intro.intervene("focused_index", IntrospectValue::Int(i));
                 }
                 true
             }
-            AccessAction::Increment | AccessAction::Decrement | AccessAction::Other => {
-                false
-            }
+            AccessAction::Increment | AccessAction::Decrement | AccessAction::Other => false,
         }
     }
 }
@@ -719,7 +729,10 @@ impl WidgetView for ListBoxView {
     type Renderer = HelloListboxRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 }
 
@@ -727,10 +740,7 @@ impl WidgetView for ListBoxView {
 /// Right, `-1` for Up / Left). Wraps cyclically. When no focus is
 /// set yet, lands on `0` for forward direction and `N - 1` for
 /// reverse direction (W3C ARIA Listbox first-Arrow boundary).
-fn move_focus(
-    node: &mut pinion_core::scene::ExternalNode,
-    direction: i32,
-) -> bool {
+fn move_focus(node: &mut pinion_core::scene::ExternalNode, direction: i32) -> bool {
     let current: Option<usize> = node
         .handle
         .introspect()
@@ -836,10 +846,7 @@ fn commit_focused(node: &mut pinion_core::scene::ExternalNode) -> bool {
         return false;
     };
     for ev in ["PointerEnter", "PointerDown", "PointerUp", "PointerLeave"] {
-        let _ = intro.invoke(
-            "send",
-            IntrospectValue::Text(format!("{idx}:{ev}")),
-        );
+        let _ = intro.invoke("send", IntrospectValue::Text(format!("{idx}:{ev}")));
     }
     true
 }
@@ -917,7 +924,10 @@ mod a11y_tests {
         assert_eq!(parent.children.len(), N);
         for i in 0..N {
             assert!(
-                parent.children.iter().any(|c| c == &format!("{PRIMARY_TAG}#{i}")),
+                parent
+                    .children
+                    .iter()
+                    .any(|c| c == &format!("{PRIMARY_TAG}#{i}")),
                 "listbox parent must claim {PRIMARY_TAG}#{i}",
             );
         }
@@ -958,11 +968,8 @@ mod a11y_tests {
 
     #[test]
     fn focused_listbox_returns_composite_focus_with_active_descendant() {
-        let target = ListBoxView::access_focus_target(
-            &focused_state(2),
-            Some(ListBoxView::tag()),
-        )
-        .expect("listbox focused → composite focus");
+        let target = ListBoxView::access_focus_target(&focused_state(2), Some(ListBoxView::tag()))
+            .expect("listbox focused → composite focus");
         assert_eq!(target.focus_tag, ListBoxView::tag());
         assert_eq!(
             target.active_descendant.as_deref(),
@@ -972,11 +979,8 @@ mod a11y_tests {
 
     #[test]
     fn unfocused_listbox_returns_atomic_for_sibling_tag() {
-        let target = ListBoxView::access_focus_target(
-            &unselected_state(),
-            Some("other_widget"),
-        )
-        .expect("sibling-focused → atomic focus on the sibling");
+        let target = ListBoxView::access_focus_target(&unselected_state(), Some("other_widget"))
+            .expect("sibling-focused → atomic focus on the sibling");
         assert_eq!(target.focus_tag, "other_widget");
         assert!(target.active_descendant.is_none());
     }
@@ -1077,7 +1081,8 @@ mod a11y_tests {
         // Pre-layout rects are default zeros — proves view fn no
         // longer sets `rect.y` by hand.
         assert_eq!(
-            content.rect, Rect::default(),
+            content.rect,
+            Rect::default(),
             "content rect must be layout-derived (was hand-set pre-R55.G.2)"
         );
         for (i, child) in content.children.iter().enumerate() {
@@ -1085,14 +1090,16 @@ mod a11y_tests {
                 panic!("row {i} must be a Container");
             };
             assert_eq!(
-                row.rect, Rect::default(),
+                row.rect,
+                Rect::default(),
                 "row {i} rect must be layout-derived"
             );
             // Each row declares its intrinsic size + flex Row + 12-px
             // horizontal padding — the layout pass converts this
             // into `rect`.
             assert_eq!(
-                row.layout.flex_direction, FlexDirection::Row,
+                row.layout.flex_direction,
+                FlexDirection::Row,
                 "row {i} flex Row"
             );
             assert_eq!(
@@ -1113,7 +1120,10 @@ mod a11y_tests {
     ) -> Option<&'a pinion_core::scene::ContainerNode> {
         match scene {
             Scene::Container(c) if c.tag.as_deref() == Some(tag) => Some(c),
-            Scene::Container(c) => c.children.iter().find_map(|s| find_container_with_tag(s, tag)),
+            Scene::Container(c) => c
+                .children
+                .iter()
+                .find_map(|s| find_container_with_tag(s, tag)),
             Scene::Scroll(s) => find_container_with_tag(s.content.as_ref(), tag),
             _ => None,
         }

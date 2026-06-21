@@ -279,7 +279,10 @@ mod tests {
     fn toggle_off_completes_multi_reselection() {
         let mut leaf = Bit(true); // leaf edge set it true again
         toggle_off_if_reselected(&mut leaf, /* was */ true, /* activation */ true);
-        assert!(!leaf.0, "re-activating a selected multi leaf toggles it off");
+        assert!(
+            !leaf.0,
+            "re-activating a selected multi leaf toggles it off"
+        );
     }
 
     #[test]
@@ -291,8 +294,14 @@ mod tests {
 
     #[test]
     fn detect_multi_emits_every_flip() {
-        let before = SelectionSnapshot { multiselect: true, bits: vec![false, true, false] };
-        let after = SelectionSnapshot { multiselect: true, bits: vec![true, false, false] };
+        let before = SelectionSnapshot {
+            multiselect: true,
+            bits: vec![false, true, false],
+        };
+        let after = SelectionSnapshot {
+            multiselect: true,
+            bits: vec![true, false, false],
+        };
         let intents = detect_intents(&before, &after);
         // bit 0 false->true, bit 1 true->false: two flips, two intents.
         assert_eq!(intents.len(), 2);
@@ -300,8 +309,14 @@ mod tests {
 
     #[test]
     fn detect_single_emits_only_gains() {
-        let before = SelectionSnapshot { multiselect: false, bits: vec![true, false] };
-        let after = SelectionSnapshot { multiselect: false, bits: vec![false, true] };
+        let before = SelectionSnapshot {
+            multiselect: false,
+            bits: vec![true, false],
+        };
+        let after = SelectionSnapshot {
+            multiselect: false,
+            bits: vec![false, true],
+        };
         let intents = detect_intents(&before, &after);
         // bit 0 lost, bit 1 gained: single-select emits only the gain.
         assert_eq!(intents.len(), 1);
@@ -309,7 +324,10 @@ mod tests {
 
     #[test]
     fn detect_no_change_is_silent() {
-        let s = SelectionSnapshot { multiselect: true, bits: vec![true, false] };
+        let s = SelectionSnapshot {
+            multiselect: true,
+            bits: vec![true, false],
+        };
         assert!(detect_intents(&s, &s).is_empty());
     }
 

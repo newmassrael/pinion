@@ -148,13 +148,22 @@ impl fmt::Display for RasterError {
         match self {
             Self::GlyphNotFound(gid) => write!(f, "glyph id {gid} out of range"),
             Self::PointMatchUnsupported(gid) => {
-                write!(f, "composite glyph id {gid} uses point-matched components (unsupported)")
+                write!(
+                    f,
+                    "composite glyph id {gid} uses point-matched components (unsupported)"
+                )
             }
             Self::CompositeCycle(gid) => {
-                write!(f, "composite glyph id {gid} forms a component reference cycle")
+                write!(
+                    f,
+                    "composite glyph id {gid} forms a component reference cycle"
+                )
             }
             Self::SizeExceeded { width, height } => {
-                write!(f, "rasterized size {width}x{height}px exceeds the {MAX_DIM} px limit")
+                write!(
+                    f,
+                    "rasterized size {width}x{height}px exceeds the {MAX_DIM} px limit"
+                )
             }
         }
     }
@@ -251,7 +260,10 @@ fn rasterize_with(
     if w_f > MAX_DIM || h_f > MAX_DIM {
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         // positive floats; the cast only builds the diagnostic payload.
-        return Err(RasterError::SizeExceeded { width: w_f as u32, height: h_f as u32 });
+        return Err(RasterError::SizeExceeded {
+            width: w_f as u32,
+            height: h_f as u32,
+        });
     }
 
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
@@ -332,7 +344,12 @@ struct Raster {
 impl Raster {
     fn new(w: usize, h: usize) -> Self {
         let stride = w + 2;
-        Self { w, h, stride, a: vec![0.0; stride * h] }
+        Self {
+            w,
+            h,
+            stride,
+            a: vec![0.0; stride * h],
+        }
     }
 
     /// Deposit one line segment's signed-area contribution.
@@ -362,7 +379,11 @@ impl Raster {
             return; // horizontal: no vertical winding, no area.
         }
         // Orient top→bottom (increasing y), remembering winding direction.
-        let (dir, p0, p1) = if p0.y < p1.y { (1.0_f32, p0, p1) } else { (-1.0, p1, p0) };
+        let (dir, p0, p1) = if p0.y < p1.y {
+            (1.0_f32, p0, p1)
+        } else {
+            (-1.0, p1, p0)
+        };
         let dxdy = (p1.x - p0.x) / (p1.y - p0.y);
 
         let mut x = p0.x;
@@ -432,7 +453,13 @@ impl Raster {
                 alpha[dst + x] = (v * 255.0 + 0.5) as u8;
             }
         }
-        Coverage { width: self.w, height: self.h, left, top, alpha }
+        Coverage {
+            width: self.w,
+            height: self.h,
+            left,
+            top,
+            alpha,
+        }
     }
 }
 
@@ -450,9 +477,19 @@ mod tests {
     }
 
     /// Fallible single-simple-glyph rasterization (for the size-limit assertion).
-    fn raster_try(g: &SimpleGlyph, units_per_em: u16, px_per_em: f32) -> Result<Coverage, RasterError> {
+    fn raster_try(
+        g: &SimpleGlyph,
+        units_per_em: u16,
+        px_per_em: f32,
+    ) -> Result<Coverage, RasterError> {
         let glyphs = [Glyph::Simple(g.clone())];
-        rasterize_glyph_outline(0, &glyphs[0], &|gid| glyphs.get(usize::from(gid)), units_per_em, px_per_em)
+        rasterize_glyph_outline(
+            0,
+            &glyphs[0],
+            &|gid| glyphs.get(usize::from(gid)),
+            units_per_em,
+            px_per_em,
+        )
     }
 
     /// Rasterize glyph `top` from a synthetic glyph table (composite recursion
@@ -476,7 +513,12 @@ mod tests {
     /// and unused — the rasterizer measures bounds).
     fn composite(components: Vec<Component>) -> Glyph {
         Glyph::Composite(CompositeGlyph {
-            header: GlyphHeader { x_min: 0, y_min: 0, x_max: 0, y_max: 0 },
+            header: GlyphHeader {
+                x_min: 0,
+                y_min: 0,
+                x_max: 0,
+                y_max: 0,
+            },
             raw_body: Vec::new(),
             components,
             instructions: Vec::new(),
@@ -497,14 +539,35 @@ mod tests {
     /// Build an axis-aligned rectangle contour (clockwise in font y-up).
     fn rect_glyph(x_min: i16, y_min: i16, x_max: i16, y_max: i16) -> SimpleGlyph {
         SimpleGlyph {
-            header: GlyphHeader { x_min, y_min, x_max, y_max },
+            header: GlyphHeader {
+                x_min,
+                y_min,
+                x_max,
+                y_max,
+            },
             end_pts_of_contours: vec![3],
             instructions: vec![],
             points: vec![
-                GlyphPoint { x: x_min, y: y_min, on_curve: true },
-                GlyphPoint { x: x_min, y: y_max, on_curve: true },
-                GlyphPoint { x: x_max, y: y_max, on_curve: true },
-                GlyphPoint { x: x_max, y: y_min, on_curve: true },
+                GlyphPoint {
+                    x: x_min,
+                    y: y_min,
+                    on_curve: true,
+                },
+                GlyphPoint {
+                    x: x_min,
+                    y: y_max,
+                    on_curve: true,
+                },
+                GlyphPoint {
+                    x: x_max,
+                    y: y_max,
+                    on_curve: true,
+                },
+                GlyphPoint {
+                    x: x_max,
+                    y: y_min,
+                    on_curve: true,
+                },
             ],
         }
     }
@@ -517,7 +580,11 @@ mod tests {
         // with zero partial pixels, inside a 7×12 (5×10 + 1px margin) bitmap.
         let g = rect_glyph(0, 0, 5, 10);
         let cov = raster(&g, 100, 100.0);
-        assert_eq!((cov.width, cov.height), (7, 12), "measured bounds + 1px margin");
+        assert_eq!(
+            (cov.width, cov.height),
+            (7, 12),
+            "measured bounds + 1px margin"
+        );
         let full = cov.alpha.iter().filter(|&&a| a == 255).count();
         assert_eq!(full, 50, "exactly 5×10 fully-opaque pixels, got {full}");
         let partial = cov.alpha.iter().filter(|&&a| a > 0 && a < 255).count();
@@ -562,20 +629,40 @@ mod tests {
 
         // Right triangle (0,0)-(1000,0)-(1000,1000): half the square.
         let tri = SimpleGlyph {
-            header: GlyphHeader { x_min: 0, y_min: 0, x_max: 1000, y_max: 1000 },
+            header: GlyphHeader {
+                x_min: 0,
+                y_min: 0,
+                x_max: 1000,
+                y_max: 1000,
+            },
             end_pts_of_contours: vec![2],
             instructions: vec![],
             points: vec![
-                GlyphPoint { x: 0, y: 0, on_curve: true },
-                GlyphPoint { x: 1000, y: 0, on_curve: true },
-                GlyphPoint { x: 1000, y: 1000, on_curve: true },
+                GlyphPoint {
+                    x: 0,
+                    y: 0,
+                    on_curve: true,
+                },
+                GlyphPoint {
+                    x: 1000,
+                    y: 0,
+                    on_curve: true,
+                },
+                GlyphPoint {
+                    x: 1000,
+                    y: 1000,
+                    on_curve: true,
+                },
             ],
         };
         let tri_cov = raster(&tri, 1000, 40.0);
 
         #[allow(clippy::cast_precision_loss)] // ink sums are small, well under 2^52.
         let ratio = tri_cov.ink_sum() as f64 / sq_cov.ink_sum() as f64;
-        assert!((0.45..=0.55).contains(&ratio), "triangle/square ink ratio = {ratio}");
+        assert!(
+            (0.45..=0.55).contains(&ratio),
+            "triangle/square ink ratio = {ratio}"
+        );
     }
 
     #[test]
@@ -583,20 +670,57 @@ mod tests {
         // Outer rect CW + inner rect CCW (opposite winding) → nonzero-winding
         // hole: the ring is inked, the centre is transparent.
         let g = SimpleGlyph {
-            header: GlyphHeader { x_min: 0, y_min: 0, x_max: 1000, y_max: 1000 },
+            header: GlyphHeader {
+                x_min: 0,
+                y_min: 0,
+                x_max: 1000,
+                y_max: 1000,
+            },
             end_pts_of_contours: vec![3, 7],
             instructions: vec![],
             points: vec![
                 // outer, clockwise in y-up
-                GlyphPoint { x: 0, y: 0, on_curve: true },
-                GlyphPoint { x: 0, y: 1000, on_curve: true },
-                GlyphPoint { x: 1000, y: 1000, on_curve: true },
-                GlyphPoint { x: 1000, y: 0, on_curve: true },
+                GlyphPoint {
+                    x: 0,
+                    y: 0,
+                    on_curve: true,
+                },
+                GlyphPoint {
+                    x: 0,
+                    y: 1000,
+                    on_curve: true,
+                },
+                GlyphPoint {
+                    x: 1000,
+                    y: 1000,
+                    on_curve: true,
+                },
+                GlyphPoint {
+                    x: 1000,
+                    y: 0,
+                    on_curve: true,
+                },
                 // inner, counter-clockwise (reverse traversal)
-                GlyphPoint { x: 300, y: 300, on_curve: true },
-                GlyphPoint { x: 700, y: 300, on_curve: true },
-                GlyphPoint { x: 700, y: 700, on_curve: true },
-                GlyphPoint { x: 300, y: 700, on_curve: true },
+                GlyphPoint {
+                    x: 300,
+                    y: 300,
+                    on_curve: true,
+                },
+                GlyphPoint {
+                    x: 700,
+                    y: 300,
+                    on_curve: true,
+                },
+                GlyphPoint {
+                    x: 700,
+                    y: 700,
+                    on_curve: true,
+                },
+                GlyphPoint {
+                    x: 300,
+                    y: 700,
+                    on_curve: true,
+                },
             ],
         };
         let cov = raster(&g, 1000, 40.0);
@@ -621,20 +745,49 @@ mod tests {
         // oracle that de Casteljau flattening truly curves — a straight-vertex
         // fallback bug would make the two ink masses equal.
         let curved = SimpleGlyph {
-            header: GlyphHeader { x_min: 0, y_min: 0, x_max: 1000, y_max: 1000 },
+            header: GlyphHeader {
+                x_min: 0,
+                y_min: 0,
+                x_max: 1000,
+                y_max: 1000,
+            },
             end_pts_of_contours: vec![2],
             instructions: vec![],
             points: vec![
-                GlyphPoint { x: 0, y: 0, on_curve: true },
-                GlyphPoint { x: 1000, y: 1000, on_curve: false }, // quadratic control
-                GlyphPoint { x: 0, y: 1000, on_curve: true },
+                GlyphPoint {
+                    x: 0,
+                    y: 0,
+                    on_curve: true,
+                },
+                GlyphPoint {
+                    x: 1000,
+                    y: 1000,
+                    on_curve: false,
+                }, // quadratic control
+                GlyphPoint {
+                    x: 0,
+                    y: 1000,
+                    on_curve: true,
+                },
             ],
         };
         let straight = SimpleGlyph {
             points: vec![
-                GlyphPoint { x: 0, y: 0, on_curve: true },
-                GlyphPoint { x: 1000, y: 1000, on_curve: true }, // straight vertex
-                GlyphPoint { x: 0, y: 1000, on_curve: true },
+                GlyphPoint {
+                    x: 0,
+                    y: 0,
+                    on_curve: true,
+                },
+                GlyphPoint {
+                    x: 1000,
+                    y: 1000,
+                    on_curve: true,
+                }, // straight vertex
+                GlyphPoint {
+                    x: 0,
+                    y: 1000,
+                    on_curve: true,
+                },
             ],
             ..curved.clone()
         };
@@ -653,7 +806,10 @@ mod tests {
         // (a wrong subdivision/midpoint would shift the area measurably).
         #[allow(clippy::cast_precision_loss)] // ink sum well under 2^52.
         let ratio = curved_ink as f64 / (333_333.0 * (64.0_f64 / 1000.0).powi(2) * 255.0);
-        assert!((0.95..=1.05).contains(&ratio), "quad area ratio {ratio} off closed form");
+        assert!(
+            (0.95..=1.05).contains(&ratio),
+            "quad area ratio {ratio} off closed form"
+        );
     }
 
     #[test]
@@ -664,20 +820,57 @@ mod tests {
         // fill rule is NONZERO, not even-odd — which the opposite-wound hole
         // test alone cannot distinguish (nested opposite rects hole under both).
         let same = SimpleGlyph {
-            header: GlyphHeader { x_min: 0, y_min: 0, x_max: 1000, y_max: 1000 },
+            header: GlyphHeader {
+                x_min: 0,
+                y_min: 0,
+                x_max: 1000,
+                y_max: 1000,
+            },
             end_pts_of_contours: vec![3, 7],
             instructions: vec![],
             points: vec![
                 // outer (clockwise in y-up)
-                GlyphPoint { x: 0, y: 0, on_curve: true },
-                GlyphPoint { x: 0, y: 1000, on_curve: true },
-                GlyphPoint { x: 1000, y: 1000, on_curve: true },
-                GlyphPoint { x: 1000, y: 0, on_curve: true },
+                GlyphPoint {
+                    x: 0,
+                    y: 0,
+                    on_curve: true,
+                },
+                GlyphPoint {
+                    x: 0,
+                    y: 1000,
+                    on_curve: true,
+                },
+                GlyphPoint {
+                    x: 1000,
+                    y: 1000,
+                    on_curve: true,
+                },
+                GlyphPoint {
+                    x: 1000,
+                    y: 0,
+                    on_curve: true,
+                },
                 // inner — SAME traversal direction → same winding
-                GlyphPoint { x: 300, y: 300, on_curve: true },
-                GlyphPoint { x: 300, y: 700, on_curve: true },
-                GlyphPoint { x: 700, y: 700, on_curve: true },
-                GlyphPoint { x: 700, y: 300, on_curve: true },
+                GlyphPoint {
+                    x: 300,
+                    y: 300,
+                    on_curve: true,
+                },
+                GlyphPoint {
+                    x: 300,
+                    y: 700,
+                    on_curve: true,
+                },
+                GlyphPoint {
+                    x: 700,
+                    y: 700,
+                    on_curve: true,
+                },
+                GlyphPoint {
+                    x: 700,
+                    y: 300,
+                    on_curve: true,
+                },
             ],
         };
         let cov = raster(&same, 1000, 40.0);
@@ -702,12 +895,25 @@ mod tests {
         }
         // A zero-extent outline (all points colinear → zero area) inks nothing.
         let line = SimpleGlyph {
-            header: GlyphHeader { x_min: 0, y_min: 0, x_max: 1000, y_max: 0 },
+            header: GlyphHeader {
+                x_min: 0,
+                y_min: 0,
+                x_max: 1000,
+                y_max: 0,
+            },
             end_pts_of_contours: vec![1],
             instructions: vec![],
             points: vec![
-                GlyphPoint { x: 0, y: 0, on_curve: true },
-                GlyphPoint { x: 1000, y: 0, on_curve: true },
+                GlyphPoint {
+                    x: 0,
+                    y: 0,
+                    on_curve: true,
+                },
+                GlyphPoint {
+                    x: 1000,
+                    y: 0,
+                    on_curve: true,
+                },
             ],
         };
         assert!(raster(&line, 1000, 40.0).is_empty(), "horizontal line");
@@ -719,7 +925,10 @@ mod tests {
         // empty (a giant glyph silently vanishing would be a debugging trap).
         let g = rect_glyph(0, 0, 1000, 1000);
         let err = raster_try(&g, 1000, 100_000.0).unwrap_err();
-        assert!(matches!(err, RasterError::SizeExceeded { .. }), "got {err:?}");
+        assert!(
+            matches!(err, RasterError::SizeExceeded { .. }),
+            "got {err:?}"
+        );
     }
 
     #[test]
@@ -732,13 +941,30 @@ mod tests {
         // strictly-monotonic AA gradient across ≥3 columns; a mis-distributed ramp
         // (wrong a1/a2 coefficient) would break monotonicity or collapse it.
         let tri = SimpleGlyph {
-            header: GlyphHeader { x_min: 0, y_min: 0, x_max: 200, y_max: 40 },
+            header: GlyphHeader {
+                x_min: 0,
+                y_min: 0,
+                x_max: 200,
+                y_max: 40,
+            },
             end_pts_of_contours: vec![2],
             instructions: vec![],
             points: vec![
-                GlyphPoint { x: 0, y: 0, on_curve: true },
-                GlyphPoint { x: 200, y: 0, on_curve: true },
-                GlyphPoint { x: 0, y: 40, on_curve: true },
+                GlyphPoint {
+                    x: 0,
+                    y: 0,
+                    on_curve: true,
+                },
+                GlyphPoint {
+                    x: 200,
+                    y: 0,
+                    on_curve: true,
+                },
+                GlyphPoint {
+                    x: 0,
+                    y: 40,
+                    on_curve: true,
+                },
             ],
         };
         let cov = raster(&tri, 200, 200.0);
@@ -773,8 +999,14 @@ mod tests {
         let single = raster_composite(&glyphs, 1, 1000, 100.0).unwrap();
         let pair = raster_composite(&glyphs, 2, 1000, 100.0).unwrap();
         let ratio = pair.ink_sum() as f64 / single.ink_sum() as f64;
-        assert!((1.9..=2.1).contains(&ratio), "two copies ink ~2x, got {ratio}");
-        assert!(pair.width > single.width, "the offset copy widens the bitmap");
+        assert!(
+            (1.9..=2.1).contains(&ratio),
+            "two copies ink ~2x, got {ratio}"
+        );
+        assert!(
+            pair.width > single.width,
+            "the offset copy widens the bitmap"
+        );
         // Sign oracle: a copy at +x offset sits to the RIGHT of the pen origin,
         // so its bitmap `left` exceeds the unoffset copy's — a -x offset would
         // make it smaller. Pins offset direction, not just magnitude.
@@ -806,14 +1038,27 @@ mod tests {
             0,
             0,
             0,
-            ComponentTransform::Matrix { xx: 16384, xy: 0, yx: 8192, yy: 16384 }, // 1,0,0.5,1
+            ComponentTransform::Matrix {
+                xx: 16384,
+                xy: 0,
+                yx: 8192,
+                yy: 16384,
+            }, // 1,0,0.5,1
         )]);
         let glyphs = vec![rect, plain, sheared];
         let a = raster_composite(&glyphs, 1, 1000, 64.0).unwrap();
         let b = raster_composite(&glyphs, 2, 1000, 64.0).unwrap();
         let ratio = b.ink_sum() as f64 / a.ink_sum() as f64;
-        assert!((0.9..=1.1).contains(&ratio), "unit-det shear preserves area, got {ratio}");
-        assert!(b.width > a.width, "horizontal shear widens: {} vs {}", b.width, a.width);
+        assert!(
+            (0.9..=1.1).contains(&ratio),
+            "unit-det shear preserves area, got {ratio}"
+        );
+        assert!(
+            b.width > a.width,
+            "horizontal shear widens: {} vs {}",
+            b.width,
+            a.width
+        );
         assert!(
             b.height <= a.height + 1,
             "horizontal shear keeps height ~equal: {} vs {}",
@@ -839,8 +1084,14 @@ mod tests {
         let a = raster_composite(&glyphs, 1, 1000, 80.0).unwrap();
         let b = raster_composite(&glyphs, 2, 1000, 80.0).unwrap();
         let ratio = b.ink_sum() as f64 / a.ink_sum() as f64;
-        assert!((2.05..=2.45).contains(&ratio), "1.5x scale → ~2.25x ink, got {ratio}");
-        assert!(b.width > a.width && b.height > a.height, "scaled bitmap is larger");
+        assert!(
+            (2.05..=2.45).contains(&ratio),
+            "1.5x scale → ~2.25x ink, got {ratio}"
+        );
+        assert!(
+            b.width > a.width && b.height > a.height,
+            "scaled bitmap is larger"
+        );
     }
 
     #[test]
@@ -855,14 +1106,25 @@ mod tests {
             0,
             0,
             0,
-            ComponentTransform::Matrix { xx: -16384, xy: 0, yx: 0, yy: 16384 }, // -1,0,0,1
+            ComponentTransform::Matrix {
+                xx: -16384,
+                xy: 0,
+                yx: 0,
+                yy: 16384,
+            }, // -1,0,0,1
         )]);
         let glyphs = vec![rect, plain, flipped];
         let a = raster_composite(&glyphs, 1, 1000, 64.0).unwrap();
         let b = raster_composite(&glyphs, 2, 1000, 64.0).unwrap();
-        assert!(b.ink_sum() > 0, "flipped component still inks (nonzero winding)");
+        assert!(
+            b.ink_sum() > 0,
+            "flipped component still inks (nonzero winding)"
+        );
         let ratio = b.ink_sum() as f64 / a.ink_sum() as f64;
-        assert!((0.95..=1.05).contains(&ratio), "flip preserves area, got {ratio}");
+        assert!(
+            (0.95..=1.05).contains(&ratio),
+            "flip preserves area, got {ratio}"
+        );
     }
 
     #[test]
@@ -880,7 +1142,12 @@ mod tests {
     #[test]
     fn composite_self_reference_is_a_cycle() {
         // glyph 0 references itself → detected at the top of the chain.
-        let glyphs = vec![composite(vec![xy_component(0, 0, 0, ComponentTransform::Identity)])];
+        let glyphs = vec![composite(vec![xy_component(
+            0,
+            0,
+            0,
+            ComponentTransform::Identity,
+        )])];
         assert_eq!(
             raster_composite(&glyphs, 0, 1000, 32.0),
             Err(RasterError::CompositeCycle(0)),
@@ -906,12 +1173,20 @@ mod tests {
         // silently-misplaced subglyph.
         let rect = Glyph::Simple(rect_glyph(0, 0, 500, 500));
         let pm = Glyph::Composite(CompositeGlyph {
-            header: GlyphHeader { x_min: 0, y_min: 0, x_max: 0, y_max: 0 },
+            header: GlyphHeader {
+                x_min: 0,
+                y_min: 0,
+                x_max: 0,
+                y_max: 0,
+            },
             raw_body: Vec::new(),
             components: vec![Component {
                 flags: 0,
                 glyph_index: 0,
-                args: ComponentArgs::PointMatch { parent: 0, child: 0 },
+                args: ComponentArgs::PointMatch {
+                    parent: 0,
+                    child: 0,
+                },
                 transform: ComponentTransform::Identity,
             }],
             instructions: Vec::new(),
@@ -926,7 +1201,12 @@ mod tests {
     #[test]
     fn composite_missing_component_reports_not_found() {
         // A component referencing a non-existent subglyph id is fail-loud.
-        let glyphs = vec![composite(vec![xy_component(5, 0, 0, ComponentTransform::Identity)])];
+        let glyphs = vec![composite(vec![xy_component(
+            5,
+            0,
+            0,
+            ComponentTransform::Identity,
+        )])];
         assert_eq!(
             raster_composite(&glyphs, 0, 1000, 32.0),
             Err(RasterError::GlyphNotFound(5)),

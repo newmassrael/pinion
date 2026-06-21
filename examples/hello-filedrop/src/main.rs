@@ -33,9 +33,9 @@ use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, Color, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole};
+use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::{Frame, Scene, WidgetCore};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloFileDropRenderer, HelloFileDropRendererError);
@@ -99,7 +99,10 @@ fn view(_state: (), _frame: &Frame) -> Scene {
     // Zone fill diverges idle vs hovering so the hover state is
     // introspectable as scene data (no pixels needed) and visible.
     let (zone_fill, body_fg) = if hovering {
-        (theme.resolve(ColorRole::Accent), theme.resolve(ColorRole::OnAccent))
+        (
+            theme.resolve(ColorRole::Accent),
+            theme.resolve(ColorRole::OnAccent),
+        )
     } else {
         (
             theme.resolve(ColorRole::SurfaceContainerHighest),
@@ -110,7 +113,10 @@ fn view(_state: (), _frame: &Frame) -> Scene {
     let zone_children: Vec<Scene> = if hovering {
         vec![zone_text("Release to drop", body_fg)]
     } else if paths.is_empty() {
-        vec![zone_text("Drag a file here", theme.resolve(ColorRole::OnSurfaceMuted))]
+        vec![zone_text(
+            "Drag a file here",
+            theme.resolve(ColorRole::OnSurfaceMuted),
+        )]
     } else {
         paths.iter().map(|p| zone_text(p, body_fg)).collect()
     };
@@ -251,7 +257,7 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{use_drop_state, view, FileDropView, DROP_KEY};
+    use super::{DROP_KEY, FileDropView, use_drop_state, view};
     use pinion_core::reactive::Owner;
     use pinion_core::{Frame, Scene};
     use pinion_shell::WidgetView;
@@ -286,7 +292,11 @@ mod tests {
             assert!(FileDropView::on_file_hover(&(), "/tmp/a.txt"));
             assert!(drop.hovering.get(), "hover lights the zone");
             assert!(FileDropView::on_file_drop(&(), "/tmp/a.txt"));
-            assert_eq!(drop.paths.get(), vec!["/tmp/a.txt".to_string()], "path appended");
+            assert_eq!(
+                drop.paths.get(),
+                vec!["/tmp/a.txt".to_string()],
+                "path appended"
+            );
             assert!(!drop.hovering.get(), "drop clears the hover state");
         });
     }

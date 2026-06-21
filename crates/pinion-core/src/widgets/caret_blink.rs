@@ -237,7 +237,7 @@ mod tests {
     //! semantics, `Tickable::is_at_rest` reporting, and the
     //! `use_caret_blink` hook's first-time-only registration.
 
-    use super::{use_caret_blink, CaretBlink};
+    use super::{CaretBlink, use_caret_blink};
     use crate::animation::Tickable;
     use crate::reactive::Owner;
     use std::rc::Rc;
@@ -375,7 +375,10 @@ mod tests {
         b.reset();
         assert!(b.visible(), "reset surfaces caret");
         b.tick(CaretBlink::PERIOD_SECS / 2.0);
-        assert!(b.visible(), "phase fresh after reset; mid-phase still visible");
+        assert!(
+            b.visible(),
+            "phase fresh after reset; mid-phase still visible"
+        );
         b.tick(CaretBlink::PERIOD_SECS / 2.0);
         assert!(!b.visible(), "next flip lands at PERIOD after reset");
     }

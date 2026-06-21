@@ -23,30 +23,33 @@
     clippy::style,
     clippy::complexity,
     clippy::pedantic,
-    clippy::all,
+    clippy::all
 )]
 mod sm {
     include!(concat!(env!("OUT_DIR"), "/checkbox_sm.rs"));
 }
 
-pub use sm::{CheckboxEvent, CheckboxState};
 use sm::CheckboxPolicy;
+pub use sm::{CheckboxEvent, CheckboxState};
 
 // R698 §5.16 — route the CheckboxState <-> SCXML-id mapping through the
 // R643 `WidgetStateName` SSOT primitive (one variant list emits both
 // `as_name` and `from_name_or_default`), replacing the hand-written
 // `checkbox_state_name` fn. Mirrors the R696.A Disclosure adoption; the
 // introspect path below calls `self.state().as_name()`.
-crate::widget_state_name!(CheckboxState, default = Idle, [
-    Idle, Hover, Pressed, Disabled,
-]);
+crate::widget_state_name!(
+    CheckboxState,
+    default = Idle,
+    [Idle, Hover, Pressed, Disabled,]
+);
 // R699 §5.16 — route the CheckboxEvent <-> SCXML-name mapping through
 // the `WidgetEventName` SSOT primitive (two-group macro emits the total
 // `as_name` + the external-only fallible `from_name`), replacing the
 // hand-written `parse_checkbox_event`. `CheckboxActivate` (internal
 // raise) + `Null` (SCXML 3.13) stay out of `from_name` so an RPC
 // `invoke("send", …)` cannot forge them.
-crate::widget_event_name!(CheckboxEvent,
+crate::widget_event_name!(
+    CheckboxEvent,
     external = [
         PointerEnter,
         PointerLeave,
@@ -61,9 +64,8 @@ crate::widget_event_name!(CheckboxEvent,
 );
 
 use crate::external::{
-    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner,
-    ThreadOwnership,
+    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
 use crate::intent::Intent;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
@@ -83,7 +85,10 @@ impl Checkbox {
     /// Construct an unchecked Checkbox in the `Idle` state.
     #[must_use]
     pub fn new() -> Self {
-        Self { inner: Widget::new(), value: false }
+        Self {
+            inner: Widget::new(),
+            value: false,
+        }
     }
 
     /// Drive a [`CheckboxEvent`] through the SCXML. The `value`
@@ -103,8 +108,7 @@ impl Checkbox {
         let after = self.state();
         let pointer_activate =
             matches!(before, CheckboxState::Pressed) && matches!(after, CheckboxState::Hover);
-        let keyboard_activate =
-            is_keyboard_activate && !matches!(before, CheckboxState::Disabled);
+        let keyboard_activate = is_keyboard_activate && !matches!(before, CheckboxState::Disabled);
         if pointer_activate || keyboard_activate {
             self.value = !self.value;
         }
@@ -153,11 +157,7 @@ impl WidgetTransition for Checkbox {
         self.send(event);
     }
 
-    fn detect(
-        before: Self::Snapshot,
-        event: Self::Event,
-        after: Self::Snapshot,
-    ) -> Vec<Intent> {
+    fn detect(before: Self::Snapshot, event: Self::Event, after: Self::Snapshot) -> Vec<Intent> {
         let (before_state, before_value) = before;
         let (after_state, after_value) = after;
         let pointer_check = matches!(before_state, CheckboxState::Pressed)
@@ -191,7 +191,9 @@ pub struct CheckboxExternal {
 impl CheckboxExternal {
     #[must_use]
     pub fn new() -> Self {
-        Self { em: IntentEmitter::default() }
+        Self {
+            em: IntentEmitter::default(),
+        }
     }
 
     /// Drive a [`CheckboxEvent`] and queue any `"checked"` intent the
@@ -276,28 +278,18 @@ impl External for CheckboxExternal {
 
 impl ExternalIntrospect for CheckboxExternal {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[
-            ("state", "string"),
-            ("checked", "bool"),
-            ("send", "string"),
-        ])
+        IntrospectSchema::new(&[("state", "string"), ("checked", "bool"), ("send", "string")])
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
         match path {
-            "state" => Some(IntrospectValue::Text(
-                self.state().as_name().to_string(),
-            )),
+            "state" => Some(IntrospectValue::Text(self.state().as_name().to_string())),
             "checked" => Some(IntrospectValue::Bool(self.is_checked())),
             _ => None,
         }
     }
 
-    fn intervene(
-        &mut self,
-        path: &str,
-        value: IntrospectValue,
-    ) -> Result<(), InterveneError> {
+    fn intervene(&mut self, path: &str, value: IntrospectValue) -> Result<(), InterveneError> {
         match path {
             "state" => Err(InterveneError::ReadOnly),
             "checked" => match value {
@@ -319,12 +311,9 @@ impl ExternalIntrospect for CheckboxExternal {
         match path {
             "send" => match args {
                 IntrospectValue::Text(ref name) => {
-                    let ev =
-                        CheckboxEvent::from_name(name).ok_or(InvokeError::Rejected)?;
+                    let ev = CheckboxEvent::from_name(name).ok_or(InvokeError::Rejected)?;
                     self.send(ev);
-                    Ok(IntrospectValue::Text(
-                        self.state().as_name().to_string(),
-                    ))
+                    Ok(IntrospectValue::Text(self.state().as_name().to_string()))
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
@@ -378,7 +367,10 @@ mod tests {
         assert_eq!(CheckboxEvent::from_name("Bogus"), None);
         // R699 — `as_name` is total: internal variants get canonical
         // names (not the pre-R643 `__internal__` catch-all).
-        assert_eq!(CheckboxEvent::CheckboxActivate.as_name(), "CheckboxActivate");
+        assert_eq!(
+            CheckboxEvent::CheckboxActivate.as_name(),
+            "CheckboxActivate"
+        );
     }
 
     #[test]
@@ -516,7 +508,10 @@ mod tests {
     fn keyboard_activate_via_invoke_send_flips() {
         let mut bx = CheckboxExternal::new();
         let _ = bx
-            .invoke("send", IntrospectValue::Text("KeyboardActivate".to_string()))
+            .invoke(
+                "send",
+                IntrospectValue::Text("KeyboardActivate".to_string()),
+            )
             .unwrap();
         assert!(bx.is_checked());
     }

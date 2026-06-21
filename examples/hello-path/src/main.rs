@@ -62,18 +62,16 @@
 //!   live-pixel guard a structural query cannot replace
 //!   ([[introspection-from-paint-not-screen]], R706/R707.3 precedent).
 
+#[cfg(test)]
+use pinion_a11y::{AriaRole, WidgetA11y};
 use pinion_core::external::IntrospectValue;
-use pinion_core::scene::{
-    ContainerNode, PathCommand, PathNode, PathPoint, Rect, TextNode,
-};
+use pinion_core::scene::{ContainerNode, PathCommand, PathNode, PathPoint, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, Color, FlexDirection, Gradient, JustifyContent, LayoutStyle, PathStyle,
     Size, Stroke, StrokeCap, TextStyle,
 };
 use pinion_core::widgets::toggle::{ToggleEvent, ToggleExternal, ToggleState};
 use pinion_core::{ColorRole, Frame, Scene, WidgetCore, WidgetStateName, use_theme};
-#[cfg(test)]
-use pinion_a11y::{AriaRole, WidgetA11y};
 use pinion_derive::widget;
 use pinion_shell::vello_renderer_impl;
 
@@ -138,8 +136,12 @@ const CHEVRON: [(f32, f32); 3] = [(160.0, 150.0), (210.0, 90.0), (260.0, 150.0)]
 
 /// Diamond vertices (window-absolute px). Centre (160, 270) is the
 /// Toggle-witness anchor: `PATH_BLUE` (Off) vs `DEMO_ON_FILL` (On).
-const DIAMOND: [(f32, f32); 4] =
-    [(160.0, 230.0), (210.0, 270.0), (160.0, 310.0), (110.0, 270.0)];
+const DIAMOND: [(f32, f32); 4] = [
+    (160.0, 230.0),
+    (210.0, 270.0),
+    (160.0, 310.0),
+    (110.0, 270.0),
+];
 
 fn pt(p: (f32, f32)) -> PathPoint {
     PathPoint::new(p.0, p.1)
@@ -248,7 +250,12 @@ fn gradient_paths() -> Vec<Scene> {
         "grad_radial",
         (267, 160),
         (76, 70),
-        closed_polygon(&[(305.0, 160.0), (343.0, 195.0), (305.0, 230.0), (267.0, 195.0)]),
+        closed_polygon(&[
+            (305.0, 160.0),
+            (343.0, 195.0),
+            (305.0, 230.0),
+            (267.0, 195.0),
+        ]),
         PathStyle::default().with_gradient(
             Gradient::radial((0.5, 0.5), 0.5)
                 .with_stop(0.0, GRAD_B)
@@ -400,10 +407,18 @@ fn view(state: ToggleState, on: bool, _frame: &Frame) -> Scene {
 
     Scene::Container(
         ContainerNode::new(vec![
-            title, tri, chevron, arc, demo_path, grad_linear, grad_radial, mode_chip, status,
+            title,
+            tri,
+            chevron,
+            arc,
+            demo_path,
+            grad_linear,
+            grad_radial,
+            mode_chip,
+            status,
         ])
-            .with_style(BoxStyle::filled(surface))
-            .with_layout(LayoutStyle::new().with_size(Size::px(WIN_W, WIN_H))),
+        .with_style(BoxStyle::filled(surface))
+        .with_layout(LayoutStyle::new().with_size(Size::px(WIN_W, WIN_H))),
     )
 }
 
@@ -589,7 +604,11 @@ mod tests {
         let scene = rendered(ToggleState::Idle, false);
         let g = find_path(&scene, "grad_linear").expect("grad_linear present");
         assert!(g.style.fill.is_none(), "gradient path has no solid fill");
-        let gradient = g.style.gradient.as_ref().expect("grad_linear has a gradient");
+        let gradient = g
+            .style
+            .gradient
+            .as_ref()
+            .expect("grad_linear has a gradient");
         assert!(matches!(gradient.kind, GradientKind::Linear { .. }));
         assert_eq!(gradient.stops.len(), 3);
         assert_eq!(gradient.stops[0].color, GRAD_A);
@@ -602,7 +621,11 @@ mod tests {
         use pinion_core::style::GradientKind;
         let scene = rendered(ToggleState::Idle, false);
         let g = find_path(&scene, "grad_radial").expect("grad_radial present");
-        let gradient = g.style.gradient.as_ref().expect("grad_radial has a gradient");
+        let gradient = g
+            .style
+            .gradient
+            .as_ref()
+            .expect("grad_radial has a gradient");
         assert!(matches!(gradient.kind, GradientKind::Radial { .. }));
         assert_eq!(gradient.stops.len(), 2);
         // The centre (offset 0) stop is the exact-pixel anchor.
@@ -616,8 +639,11 @@ mod tests {
         // A gradient path must hash differently from the same shape with
         // a solid fill, or the §5.16 R682 paint-cache would replay a
         // stale solid fragment. Exercises `Hash for PathStyle`.
-        let g = PathStyle::default()
-            .with_gradient(Gradient::horizontal().with_stop(0.0, GRAD_A).with_stop(1.0, GRAD_B));
+        let g = PathStyle::default().with_gradient(
+            Gradient::horizontal()
+                .with_stop(0.0, GRAD_A)
+                .with_stop(1.0, GRAD_B),
+        );
         let solid = PathStyle::filled(GRAD_A);
         let h = |s: &PathStyle| {
             let mut hasher = std::hash::DefaultHasher::new();

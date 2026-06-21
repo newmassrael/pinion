@@ -456,7 +456,10 @@ mod tests {
         assert_eq!(name.records.len(), 1);
         assert_eq!(name.records[0].name_id, 1);
         assert_eq!(name.records[0].platform_id, 3);
-        assert_eq!(name.find_string(NameId::FontFamily).as_deref(), Some("Test Family"));
+        assert_eq!(
+            name.find_string(NameId::FontFamily).as_deref(),
+            Some("Test Family")
+        );
     }
 
     #[test]

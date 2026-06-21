@@ -220,7 +220,7 @@ fn verify_search_params(
 #[cfg(test)]
 mod tests {
     use super::super::test_helpers::*;
-    use super::super::{Cmap, CMAP_TAG};
+    use super::super::{CMAP_TAG, Cmap};
     use super::*;
 
     #[test]

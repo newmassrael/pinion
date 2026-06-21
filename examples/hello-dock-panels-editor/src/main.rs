@@ -48,18 +48,16 @@ use pinion_core::external::IntrospectValue;
 use pinion_core::intent::Intent;
 use pinion_core::intent_tag;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
-use pinion_core::style::{
-    AlignItems, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
-};
-use pinion_core::theme::{use_theme, ColorRole, Theme};
-use pinion_core::undo::{use_undo_stack, UndoStack, UndoStackExternal};
+use pinion_core::style::{AlignItems, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
+use pinion_core::undo::{UndoStack, UndoStackExternal, use_undo_stack};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
 use pinion_core::{Frame, Owner, Scene, Signal, WidgetCore};
-use pinion_shell::{vello_renderer_impl, SizeStrategy, WidgetView};
-use pinion_widget_paint::button::{view_button, ButtonColors, ButtonStyle};
+use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
+use pinion_widget_paint::button::{ButtonColors, ButtonStyle, view_button};
 use pinion_widget_paint::dock::{
-    view_dock_surface, DockNode, DockReorganizeExternal, DockSplitState, DockTopology,
+    DockNode, DockReorganizeExternal, DockSplitState, DockTopology, view_dock_surface,
 };
 use pinion_widget_paint::splitter::SplitterExternal;
 use std::rc::Rc;
@@ -679,7 +677,12 @@ mod tests {
         let topology = build_editor_topology();
         assert_eq!(
             topology.split_ids(),
-            vec![SPLIT_OUTER_TAG, SPLIT_INNER_V_TAG, SPLIT_MIDDLE_H_TAG, SPLIT_INNER_H_TAG],
+            vec![
+                SPLIT_OUTER_TAG,
+                SPLIT_INNER_V_TAG,
+                SPLIT_MIDDLE_H_TAG,
+                SPLIT_INNER_H_TAG
+            ],
             "split_ids walk in pre-order: outer → inner_v → middle_h → inner_h",
         );
     }
@@ -866,7 +869,10 @@ mod tests {
         run_in_owner(|| {
             let a = use_editor_topology();
             let b = use_editor_topology();
-            assert!(Rc::ptr_eq(&a, &b), "Owner::cache memoises the topology signal");
+            assert!(
+                Rc::ptr_eq(&a, &b),
+                "Owner::cache memoises the topology signal"
+            );
             assert_eq!(
                 a.get().panel_ids(),
                 vec!["toolbar", "outliner", "viewport", "properties", "console"],
@@ -939,8 +945,7 @@ mod tests {
                 tag: Cow::Borrowed(VIEWPORT_BTN_CLICK_INTENT_TAG),
                 payload: IntrospectValue::Null,
             };
-            let commands =
-                <DockPanelsEditorView as WidgetCore>::update(ButtonState::Idle, &intent);
+            let commands = <DockPanelsEditorView as WidgetCore>::update(ButtonState::Idle, &intent);
             assert!(commands.is_empty(), "no Commands emitted for click");
             assert_eq!(counter.get(), before + 1);
         });
@@ -1036,7 +1041,10 @@ mod tests {
         // 12-13 sp. Pin the editor binding stays in the dense range
         // even if PANEL_BODY_FONT_PX is bumped in a future round.
         let px = PANEL_BODY_FONT_PX;
-        assert!((12..=14).contains(&px), "PANEL_BODY_FONT_PX {px} not in [12,14]");
+        assert!(
+            (12..=14).contains(&px),
+            "PANEL_BODY_FONT_PX {px} not in [12,14]"
+        );
     }
 
     #[test]

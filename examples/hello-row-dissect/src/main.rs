@@ -40,8 +40,8 @@
 //! and driveable without a pixel (see `tools/demos/r1007_row_dissect.py`).
 
 use pinion_a11y::{
-    listbox_option_nodes, tree_access_nodes, AccessAction, AccessNode, AriaRole, ListOption,
-    WidgetA11y,
+    AccessAction, AccessNode, AriaRole, ListOption, WidgetA11y, listbox_option_nodes,
+    tree_access_nodes,
 };
 use pinion_core::command::Command;
 use pinion_core::external::{External, IntrospectValue};
@@ -51,21 +51,21 @@ use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, LayoutStyle, Size, SizeValue, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
 use pinion_core::widgets::listbox_item::ListboxItemState;
 use pinion_core::widgets::row_dissect::{
-    use_row_dissection, DissectNode, RowDissectionExternal, RowDissectionState,
+    DissectNode, RowDissectionExternal, RowDissectionState, use_row_dissection,
 };
 use pinion_core::widgets::tree_nav::flat_visible;
 use pinion_core::{Frame, Scene, WidgetCore};
-use pinion_shell::{vello_renderer_impl, SizeStrategy, WidgetView};
+use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
 use pinion_widget_paint::tree_view::{
-    composite_row_tag, view_tree_focused, TreeItem, TreeRowClickExternal, TreeViewFocus,
-    TreeViewStyle,
+    TreeItem, TreeRowClickExternal, TreeViewFocus, TreeViewStyle, composite_row_tag,
+    view_tree_focused,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::rc::Rc;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -158,7 +158,12 @@ fn to_tree_items(nodes: &[DissectNode]) -> Vec<TreeItem> {
             if n.children.is_empty() {
                 TreeItem::leaf(n.path.clone(), n.display())
             } else {
-                TreeItem::branch(n.path.clone(), n.display(), n.expanded, to_tree_items(&n.children))
+                TreeItem::branch(
+                    n.path.clone(),
+                    n.display(),
+                    n.expanded,
+                    to_tree_items(&n.children),
+                )
             }
         })
         .collect()
@@ -175,7 +180,9 @@ fn master_list(state: &RowDissectionState, theme: &Theme) -> Scene {
     let header = Scene::Text(TextNode::styled(
         "Records",
         Rect::default(),
-        TextStyle::new().with_size_px(HEADER_FONT_PX).with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+        TextStyle::new()
+            .with_size_px(HEADER_FONT_PX)
+            .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
     ));
 
     let mut children = vec![header];
@@ -223,16 +230,27 @@ fn detail_panel(state: &RowDissectionState, theme: &Theme) -> Scene {
     let on_muted = theme.resolve(ColorRole::OnSurfaceMuted);
     let header = Scene::Text(TextNode::styled(
         match state.selected() {
-            Some(i) => format!("Detail \u{00B7} row {i} \u{00B7} {} nodes", state.node_count()),
+            Some(i) => format!(
+                "Detail \u{00B7} row {i} \u{00B7} {} nodes",
+                state.node_count()
+            ),
             None => "Detail \u{00B7} (no selection)".to_owned(),
         },
         Rect::default(),
-        TextStyle::new().with_size_px(HEADER_FONT_PX).with_fg(on_muted),
+        TextStyle::new()
+            .with_size_px(HEADER_FONT_PX)
+            .with_fg(on_muted),
     ));
 
     let body = if state.selected().is_some() {
         let items = to_tree_items(&state.tree());
-        view_tree_focused(TREE_TAG, &items, theme, &TreeViewStyle::m3_default(), &TreeViewFocus { focused_id: None })
+        view_tree_focused(
+            TREE_TAG,
+            &items,
+            theme,
+            &TreeViewStyle::m3_default(),
+            &TreeViewFocus { focused_id: None },
+        )
     } else {
         Scene::Text(TextNode::styled(
             "Click a record to dissect its payload",
@@ -269,20 +287,27 @@ fn view(_state: ButtonState, _frame: &Frame) -> Scene {
     );
 
     let split = Scene::Container(
-        ContainerNode::new(vec![master_list(&state, &theme), detail_panel(&state, &theme)])
-            .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Row)
-                    .with_align_items(AlignItems::Stretch)
-                    .with_flex_grow(1.0),
-            ),
+        ContainerNode::new(vec![
+            master_list(&state, &theme),
+            detail_panel(&state, &theme),
+        ])
+        .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
+        .with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Row)
+                .with_align_items(AlignItems::Stretch)
+                .with_flex_grow(1.0),
+        ),
     );
 
     Scene::Container(
         ContainerNode::new(vec![split, invisible_root])
             .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
-            .with_layout(LayoutStyle::new().flex(FlexDirection::Column).with_align_items(AlignItems::Stretch)),
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Column)
+                    .with_align_items(AlignItems::Stretch),
+            ),
     )
 }
 
@@ -370,12 +395,16 @@ impl WidgetA11y for RowDissectView {
     /// the same [`flat_visible`] SSOT the painter walks). The list / tree row
     /// tags equal the painted composite tags, so an AT `Click` resolves to the
     /// painted row's bounds and routes through [`access_child_invoke`](RowDissectView::access_child_invoke).
-    fn access_node(_state: &<Self as WidgetCore>::State, _focused: Option<&str>) -> Vec<AccessNode> {
+    fn access_node(
+        _state: &<Self as WidgetCore>::State,
+        _focused: Option<&str>,
+    ) -> Vec<AccessNode> {
         let state = use_dissection();
         let selected = state.selected();
         let data = rows();
-        let tags: Vec<String> =
-            (0..data.len()).map(|i| composite_row_tag(MASTER_TAG, &i.to_string())).collect();
+        let tags: Vec<String> = (0..data.len())
+            .map(|i| composite_row_tag(MASTER_TAG, &i.to_string()))
+            .collect();
         let labels: Vec<String> = data.iter().map(row_summary).collect();
         let options: Vec<ListOption<'_>> = (0..data.len())
             .map(|i| ListOption {
@@ -387,10 +416,12 @@ impl WidgetA11y for RowDissectView {
             })
             .collect();
 
-        let mut nodes = vec![AccessNode::new(ROOT_TAG, AriaRole::Group)
-            .with_name("Request dissection")
-            .with_child(MASTER_TAG)
-            .with_child(TREE_TAG)];
+        let mut nodes = vec![
+            AccessNode::new(ROOT_TAG, AriaRole::Group)
+                .with_name("Request dissection")
+                .with_child(MASTER_TAG)
+                .with_child(TREE_TAG),
+        ];
         nodes.extend(listbox_option_nodes(MASTER_TAG, "Records", false, &options));
         // Flatten the SAME TreeItem list the painter walks (R809.1 single
         // flattening), so each treeitem's AT name is the painted "name: value"
@@ -447,7 +478,10 @@ impl WidgetView for RowDissectView {
     type Renderer = HelloRowDissectRenderer;
 
     fn initial_size_strategy() -> SizeStrategy {
-        SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 }
 
@@ -503,7 +537,11 @@ mod tests {
                 IntrospectValue::Text("headers".to_owned()),
             );
             let _ = RowDissectView::update(ButtonState::Idle, &intent);
-            assert_eq!(state.node_count(), full - 2, "collapsing headers hides its 2 children");
+            assert_eq!(
+                state.node_count(),
+                full - 2,
+                "collapsing headers hides its 2 children"
+            );
         });
     }
 

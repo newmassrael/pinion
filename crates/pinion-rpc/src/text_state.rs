@@ -87,7 +87,7 @@ use pinion_core::reactive::Owner;
 use pinion_core::widgets::text_edit::TextEditState;
 use serde::Serialize;
 
-use crate::substrate_introspect::{lookup, SubstrateIntrospectError};
+use crate::substrate_introspect::{SubstrateIntrospectError, lookup};
 
 /// Typed errors the [`text_state`] dispatcher can return. R607
 /// §5.7 §5.22 aliased to [`SubstrateIntrospectError`]. See the
@@ -150,14 +150,7 @@ impl TextStateOutcome {
         let (selection, has_selection) = match state.selection_range() {
             Some((start, end)) => {
                 let anchor = state.selection_anchor().unwrap_or(start);
-                (
-                    Some(TextSelectionView {
-                        start,
-                        end,
-                        anchor,
-                    }),
-                    true,
-                )
+                (Some(TextSelectionView { start, end, anchor }), true)
             }
             None => (None, false),
         };
@@ -606,8 +599,8 @@ mod tests {
     fn r610_set_text_writes_text_and_returns_post_state() {
         let owner = Owner::new();
         let state = bind_state(&owner, "field");
-        let outcome = set_text(Some(&owner), &set_text_params("field", "Hello, world!"))
-            .expect("happy path");
+        let outcome =
+            set_text(Some(&owner), &set_text_params("field", "Hello, world!")).expect("happy path");
         assert_eq!(outcome.tag, "field");
         assert_eq!(outcome.text, "Hello, world!");
         // Pre-existing caret 0 stays 0 (within bounds for new text).
@@ -627,8 +620,8 @@ mod tests {
         state.set_text("Old text here".to_owned());
         state.set_selection(0, 5);
         assert!(state.selection_range().is_some(), "precondition");
-        let outcome = set_text(Some(&owner), &set_text_params("field", "Brand new"))
-            .expect("happy path");
+        let outcome =
+            set_text(Some(&owner), &set_text_params("field", "Brand new")).expect("happy path");
         assert!(!outcome.has_selection);
         assert!(outcome.selection.is_none());
         assert!(state.selection_range().is_none());
@@ -643,8 +636,8 @@ mod tests {
         state.preedit_start();
         state.preedit_update("한");
         assert!(state.is_composing(), "precondition");
-        let outcome = set_text(Some(&owner), &set_text_params("field", "fresh"))
-            .expect("happy path");
+        let outcome =
+            set_text(Some(&owner), &set_text_params("field", "fresh")).expect("happy path");
         assert!(!outcome.is_composing);
         assert!(outcome.preedit.is_none());
     }
@@ -659,8 +652,8 @@ mod tests {
         state.set_text("A long original string".to_owned());
         state.set_caret(15);
         assert_eq!(state.caret(), 15, "precondition");
-        let outcome = set_text(Some(&owner), &set_text_params("field", "short"))
-            .expect("happy path");
+        let outcome =
+            set_text(Some(&owner), &set_text_params("field", "short")).expect("happy path");
         assert_eq!(outcome.text, "short");
         // Caret clamped to text.len() = 5.
         assert_eq!(outcome.caret, 5);
@@ -689,7 +682,8 @@ mod tests {
         // Initial text long enough to seed a non-zero caret.
         state.set_text("0123456789".to_owned());
         state.set_caret(10);
-        let outcome = set_text(Some(&owner), &set_text_params("field", "안녕")).expect("happy path");
+        let outcome =
+            set_text(Some(&owner), &set_text_params("field", "안녕")).expect("happy path");
         assert_eq!(outcome.text, "안녕");
         // "안녕" = 6 bytes (3 + 3). Caret clamped to byte 6 (end of
         // text); ends are always char boundaries.
@@ -707,8 +701,8 @@ mod tests {
     fn r610_set_text_outcome_serializes_to_full_text_state_shape() {
         let owner = Owner::new();
         let _state = bind_state(&owner, "field");
-        let outcome = set_text(Some(&owner), &set_text_params("field", "Hello"))
-            .expect("happy path");
+        let outcome =
+            set_text(Some(&owner), &set_text_params("field", "Hello")).expect("happy path");
         let json = serde_json::to_value(&outcome).unwrap();
         assert_eq!(json["tag"], "field");
         assert_eq!(json["text"], "Hello");
@@ -899,7 +893,10 @@ mod tests {
         let state = bind_state(&owner, "field");
         state.set_text("안녕".to_owned());
         let outcome = set_caret(Some(&owner), &caret_params("field", 1)).unwrap();
-        assert_eq!(outcome.caret, 0, "mid-codepoint snaps to preceding boundary");
+        assert_eq!(
+            outcome.caret, 0,
+            "mid-codepoint snaps to preceding boundary"
+        );
         let outcome = set_caret(Some(&owner), &caret_params("field", 4)).unwrap();
         assert_eq!(outcome.caret, 3);
     }

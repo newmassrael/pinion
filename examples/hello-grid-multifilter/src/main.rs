@@ -46,27 +46,30 @@
 //! the lifted `windowed_grid_nodes_sorted` assumes, so the tree is built inline
 //! (the view-order-permutation carve-out shared with `hello-grid-filter`).
 
-use pinion_a11y::{windowed_grid_nodes_sorted, AccessNode, WidgetA11y};
+use pinion_a11y::{AccessNode, WidgetA11y, windowed_grid_nodes_sorted};
 use pinion_core::external::External;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, LayoutStyle, Size, SizeValue, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::grid_sort::{
-    grid_filter_str, grid_sort_str, use_grid_sort, GridFilter, GridSortExternal, GridSortState,
+    GridFilter, GridSortExternal, GridSortState, grid_filter_str, grid_sort_str, use_grid_sort,
 };
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::virtual_list::compute_visible_range;
-use pinion_core::widgets::virtual_select::{read_selected, VirtualSelectExternal};
+use pinion_core::widgets::virtual_select::{VirtualSelectExternal, read_selected};
 use pinion_core::{Frame, Scene, WidgetCore};
-use pinion_shell::{vello_renderer_impl, WidgetView};
-use pinion_widget_paint::table::{view_virtual_table, GridScroll, TableStyle, VirtualTableData};
+use pinion_shell::{WidgetView, vello_renderer_impl};
+use pinion_widget_paint::table::{GridScroll, TableStyle, VirtualTableData, view_virtual_table};
 use std::rc::Rc;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
-vello_renderer_impl!(HelloGridMultiFilterRenderer, HelloGridMultiFilterRendererError);
+vello_renderer_impl!(
+    HelloGridMultiFilterRenderer,
+    HelloGridMultiFilterRendererError
+);
 
 /// Initial window size — freely resizable; the grid body re-windows on every
 /// `Resized` event. Wide enough that `NCOLS × COL_W` fits.
@@ -177,7 +180,9 @@ fn status_bar(
     );
     Scene::Container(
         ContainerNode::new(vec![text])
-            .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh)))
+            .with_style(BoxStyle::filled(
+                theme.resolve(ColorRole::SurfaceContainerHigh),
+            ))
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Row)
@@ -207,7 +212,10 @@ fn view(selected: Option<usize>, _frame: &Frame) -> Scene {
 
     let table = view_virtual_table(
         GRID_TAG,
-        GridScroll { body: &scroll, horizontal: &h_scroll },
+        GridScroll {
+            body: &scroll,
+            horizontal: &h_scroll,
+        },
         VirtualTableData {
             headers: &HEADERS,
             item_count: N,
@@ -227,9 +235,12 @@ fn view(selected: Option<usize>, _frame: &Frame) -> Scene {
     );
 
     Scene::Container(
-        ContainerNode::new(vec![status_bar(&theme, sort, filter.as_ref(), order.len()), table])
-            .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
-            .with_layout(LayoutStyle::new().flex(FlexDirection::Column)),
+        ContainerNode::new(vec![
+            status_bar(&theme, sort, filter.as_ref(), order.len()),
+            table,
+        ])
+        .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
+        .with_layout(LayoutStyle::new().flex(FlexDirection::Column)),
     )
 }
 
@@ -254,7 +265,10 @@ impl WidgetCore for GridMultiFilterView {
     /// clicks cycle its sort; `invoke "set_filter"` drives its multi-facet
     /// conjunction (sort ⊥ filter ⊥ selection).
     fn create_extra_externals() -> Vec<ExtraExternal> {
-        vec![ExtraExternal::new(SORT_TAG, Box::new(GridSortExternal::new(use_grid_data())))]
+        vec![ExtraExternal::new(
+            SORT_TAG,
+            Box::new(GridSortExternal::new(use_grid_data())),
+        )]
     }
 
     fn tag() -> &'static str {
@@ -303,7 +317,8 @@ impl WidgetA11y for GridMultiFilterView {
         let sort = grid.sort();
         let order = grid.order();
         let (_, measured_h) = scroll.measured_viewport();
-        let window = compute_visible_range(scroll.offset_y(), measured_h, order.len(), ROW_H, OVERSCAN);
+        let window =
+            compute_visible_range(scroll.offset_y(), measured_h, order.len(), ROW_H, OVERSCAN);
         windowed_grid_nodes_sorted(
             GRID_TAG,
             "Multi-facet filterable data grid",
@@ -334,8 +349,8 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pinion_core::widgets::grid_sort::{ColumnFacet, FilterOp};
     use pinion_core::Owner;
+    use pinion_core::widgets::grid_sort::{ColumnFacet, FilterOp};
 
     // The facet ops, conjunction, and wire round-trip are unit-tested in
     // `pinion_core::widgets::grid_sort`; these cover the binding's data model
@@ -366,7 +381,10 @@ mod tests {
             let grid = use_grid_data();
             assert_eq!(grid.view_len(), N, "unfiltered view is the full dataset");
             let kept = grid.set_filter(Some(demo_filter()));
-            assert!(kept > 0 && kept < N, "the conjunction keeps a strict subset, got {kept}");
+            assert!(
+                kept > 0 && kept < N,
+                "the conjunction keeps a strict subset, got {kept}"
+            );
             let order = grid.order();
             assert_eq!(order.len(), kept, "view len equals the order length");
             for &id in order.iter() {
@@ -388,7 +406,10 @@ mod tests {
                 ColumnFacet::new(NAME_COL, FilterOp::Contains, "Alpha"),
                 ColumnFacet::new(STATUS_COL, FilterOp::Eq, "Active"),
             ])));
-            assert!(relaxed > strict, "relaxing a facet grows the view: {relaxed} > {strict}");
+            assert!(
+                relaxed > strict,
+                "relaxing a facet grows the view: {relaxed} > {strict}"
+            );
             // A back-compat single Eq facet ("2=Active") is the widest of the three.
             let single = grid.set_filter(Some(GridFilter::eq(STATUS_COL, "Active")));
             assert!(single >= relaxed, "fewer facets keep at least as many rows");
@@ -403,7 +424,10 @@ mod tests {
             grid.set_sort(Some((SCORE_COL, true))); // numeric Score ascending over survivors
             let order = grid.order();
             for &id in order.iter() {
-                assert!(satisfies_demo(id), "survivors still satisfy the conjunction after sort");
+                assert!(
+                    satisfies_demo(id),
+                    "survivors still satisfy the conjunction after sort"
+                );
             }
             for pair in order.windows(2) {
                 assert!(
@@ -428,8 +452,15 @@ mod tests {
             let filtered = GridMultiFilterView::access_node(&None, None)[0].size_of_set;
             (full, filtered)
         });
-        assert_eq!(full, Some(u32::try_from(N).unwrap()), "unfiltered grid setsize = N");
+        assert_eq!(
+            full,
+            Some(u32::try_from(N).unwrap()),
+            "unfiltered grid setsize = N"
+        );
         let filtered = filtered.unwrap();
-        assert!(filtered > 0 && filtered < u32::try_from(N).unwrap(), "setsize shrinks under filter");
+        assert!(
+            filtered > 0 && filtered < u32::try_from(N).unwrap(),
+            "setsize shrinks under filter"
+        );
     }
 }

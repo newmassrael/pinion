@@ -22,7 +22,9 @@
 //!
 //! [`ButtonFixture`]: pinion_core::test_fixtures::ButtonFixture
 
-use pinion_core::test_fixtures::{ButtonFixture, ContextMenuFixture, EchoButtonFixture, ScrollbarMultiFixture};
+use pinion_core::test_fixtures::{
+    ButtonFixture, ContextMenuFixture, EchoButtonFixture, ScrollbarMultiFixture,
+};
 
 use crate::widget_a11y::WidgetA11y;
 

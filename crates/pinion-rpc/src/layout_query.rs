@@ -179,8 +179,7 @@ where
             if viewport.width == 0 || viewport.height == 0 {
                 return Err(LayoutQueryError::InvalidViewport);
             }
-            let producer =
-                paint_producer.ok_or(LayoutQueryError::PaintProducerUnavailable)?;
+            let producer = paint_producer.ok_or(LayoutQueryError::PaintProducerUnavailable)?;
             let scene = producer(viewport.width, viewport.height);
             Ok(project_layout(&scene))
         }
@@ -300,7 +299,12 @@ fn describe_scene(scene: &Scene) -> SceneProjection<'_> {
         },
         Scene::Effect(_) => SceneProjection {
             kind: LayoutKind::Effect,
-            rect: LayoutRect { x: 0, y: 0, w: 0, h: 0 },
+            rect: LayoutRect {
+                x: 0,
+                y: 0,
+                w: 0,
+                h: 0,
+            },
             tag: None,
             content: None,
             line_count: 0,
@@ -311,7 +315,12 @@ fn describe_scene(scene: &Scene) -> SceneProjection<'_> {
         // AI client can detect newer-than-known variants explicitly.
         _ => SceneProjection {
             kind: LayoutKind::Unknown,
-            rect: LayoutRect { x: 0, y: 0, w: 0, h: 0 },
+            rect: LayoutRect {
+                x: 0,
+                y: 0,
+                w: 0,
+                h: 0,
+            },
             tag: None,
             content: None,
             line_count: 0,
@@ -337,7 +346,10 @@ mod tests {
 
     fn make_params(w: u32, h: u32) -> LayoutQueryParams {
         LayoutQueryParams {
-            viewport: Some(ViewportSize { width: w, height: h }),
+            viewport: Some(ViewportSize {
+                width: w,
+                height: h,
+            }),
             path: None,
         }
     }
@@ -345,20 +357,21 @@ mod tests {
     #[test]
     fn layout_query_requires_paint_producer_for_hypothetical_path() {
         let params = make_params(320, 200);
-        let err =
-            layout_query::<dyn FnMut(u32, u32) -> Scene>(&params, None, None).unwrap_err();
+        let err = layout_query::<dyn FnMut(u32, u32) -> Scene>(&params, None, None).unwrap_err();
         assert_eq!(err, LayoutQueryError::PaintProducerUnavailable);
     }
 
     #[test]
     fn layout_query_rejects_zero_viewport() {
         let params = LayoutQueryParams {
-            viewport: Some(ViewportSize { width: 0, height: 200 }),
+            viewport: Some(ViewportSize {
+                width: 0,
+                height: 200,
+            }),
             path: None,
         };
-        let mut producer = |_w: u32, _h: u32| -> Scene {
-            Scene::Container(ContainerNode::new(vec![]))
-        };
+        let mut producer =
+            |_w: u32, _h: u32| -> Scene { Scene::Container(ContainerNode::new(vec![])) };
         let err = layout_query(&params, Some(&mut producer), None).unwrap_err();
         assert_eq!(err, LayoutQueryError::InvalidViewport);
     }
@@ -383,7 +396,15 @@ mod tests {
         assert_eq!(child.path, "/0/0");
         assert_eq!(child.kind, LayoutKind::Box);
         assert_eq!(child.tag.as_deref(), Some("button"));
-        assert_eq!(child.rect, LayoutRect { x: 10, y: 20, w: 30, h: 40 });
+        assert_eq!(
+            child.rect,
+            LayoutRect {
+                x: 10,
+                y: 20,
+                w: 30,
+                h: 40
+            }
+        );
     }
 
     #[test]
@@ -410,7 +431,15 @@ mod tests {
         let text = &node.children[0];
         assert_eq!(text.kind, LayoutKind::Text);
         assert_eq!(text.content.as_deref(), Some("Click me!"));
-        assert_eq!(text.rect, LayoutRect { x: 50, y: 30, w: 60, h: 22 });
+        assert_eq!(
+            text.rect,
+            LayoutRect {
+                x: 50,
+                y: 30,
+                w: 60,
+                h: 22
+            }
+        );
         assert_eq!(text.tag.as_deref(), Some("label"));
         assert_eq!(text.line_count, 0, "raw Scene::Text default");
     }
@@ -432,9 +461,7 @@ mod tests {
         measured_text.line_count = 1;
         let params = make_params(320, 200);
         let mut producer = |_w: u32, _h: u32| -> Scene {
-            Scene::Container(ContainerNode::new(vec![Scene::Text(
-                measured_text.clone(),
-            )]))
+            Scene::Container(ContainerNode::new(vec![Scene::Text(measured_text.clone())]))
         };
         let node = layout_query(&params, Some(&mut producer), None).unwrap();
         let text = &node.children[0];
@@ -472,9 +499,10 @@ mod tests {
         let captured = std::cell::Cell::new((0_u32, 0_u32));
         let mut producer = |w: u32, h: u32| -> Scene {
             captured.set((w, h));
-            Scene::Container(ContainerNode::new(vec![]).with_layout(
-                LayoutStyle::new().with_size(Size::px(w, h)),
-            ))
+            Scene::Container(
+                ContainerNode::new(vec![])
+                    .with_layout(LayoutStyle::new().with_size(Size::px(w, h))),
+            )
         };
         let _ = layout_query(&params, Some(&mut producer), None).unwrap();
         assert_eq!(captured.get(), (345, 200));
@@ -487,7 +515,10 @@ mod tests {
         // winit-actual frame). The paint_producer closure is not
         // invoked — viewport=None is the actual-frame path, not the
         // hypothetical path.
-        let params = LayoutQueryParams { viewport: None, path: None };
+        let params = LayoutQueryParams {
+            viewport: None,
+            path: None,
+        };
         let mut stored_container = ContainerNode::new(vec![]);
         stored_container.rect = pinion_core::scene::Rect::new(0, 0, 320, 200);
         let stored = Scene::Container(stored_container);
@@ -498,7 +529,11 @@ mod tests {
         };
         let node = layout_query(&params, Some(&mut producer), Some(&stored)).unwrap();
         assert_eq!(node.path, "/0", "canonical projection root");
-        assert_eq!((node.rect.w, node.rect.h), (320, 200), "stored frame's geometry");
+        assert_eq!(
+            (node.rect.w, node.rect.h),
+            (320, 200),
+            "stored frame's geometry"
+        );
         assert!(!producer_called);
     }
 
@@ -508,9 +543,11 @@ mod tests {
         // rendered a frame (or before the application registered the
         // cache surface), surface NoLastPaintLayout so the AI client
         // can retry after `scene/resize` + tick.
-        let params = LayoutQueryParams { viewport: None, path: None };
-        let err = layout_query::<dyn FnMut(u32, u32) -> Scene>(&params, None, None)
-            .unwrap_err();
+        let params = LayoutQueryParams {
+            viewport: None,
+            path: None,
+        };
+        let err = layout_query::<dyn FnMut(u32, u32) -> Scene>(&params, None, None).unwrap_err();
         assert_eq!(err, LayoutQueryError::NoLastPaintLayout);
     }
 }

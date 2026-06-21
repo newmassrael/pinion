@@ -48,8 +48,8 @@
 //! commands and the list with `aria-selected` per row (§2 invariant #7).
 
 use pinion_a11y::{
-    listbox_option_nodes, toolbar_button_nodes, AccessAction, AccessFocus, AccessNode, ListOption,
-    ToolbarControl, WidgetA11y,
+    AccessAction, AccessFocus, AccessNode, ListOption, ToolbarControl, WidgetA11y,
+    listbox_option_nodes, toolbar_button_nodes,
 };
 use pinion_core::composite_tag::parse_send_payload;
 use pinion_core::external::{
@@ -62,18 +62,21 @@ use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, FlexDirection, LayoutStyle, Size, SizeValue, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::listbox_item::ListboxItemState;
-use pinion_core::widgets::toolbar::{read_roving_focus, ToolItem, ToolbarExternal};
+use pinion_core::widgets::toolbar::{ToolItem, ToolbarExternal, read_roving_focus};
 use pinion_core::widgets::virtual_select::clamp_nav;
 use pinion_core::{Color, Command, Frame, Modifiers, Scene, WidgetCore};
-use pinion_shell::{vello_renderer_impl, WidgetView};
-use pinion_widget_paint::toolbar::{composite_item_tag as action_tag, view_toolbar, ToolbarStyle};
+use pinion_shell::{WidgetView, vello_renderer_impl};
+use pinion_widget_paint::toolbar::{ToolbarStyle, composite_item_tag as action_tag, view_toolbar};
 use std::rc::Rc;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
-vello_renderer_impl!(HelloSelectionToolbarRenderer, HelloSelectionToolbarRendererError);
+vello_renderer_impl!(
+    HelloSelectionToolbarRenderer,
+    HelloSelectionToolbarRendererError
+);
 
 /// Window size: fixed, tall enough that the toolbar + count + all rows + the
 /// status bar are visible without scrolling.
@@ -130,8 +133,14 @@ struct SelItem {
 /// The seed dataset — eight rows, none selected.
 fn seed_items() -> Vec<SelItem> {
     const LABELS: [&str; 8] = [
-        "Mesh: Crate", "Mesh: Barrel", "Light: Sun", "Light: Fill", "Camera: Main", "Sprite: Hero",
-        "Audio: Theme", "Script: AI",
+        "Mesh: Crate",
+        "Mesh: Barrel",
+        "Light: Sun",
+        "Light: Fill",
+        "Camera: Main",
+        "Sprite: Hero",
+        "Audio: Theme",
+        "Script: AI",
     ];
     LABELS
         .iter()
@@ -176,12 +185,24 @@ fn action_disabled(selected: usize, total: usize) -> [bool; ACTION_COUNT] {
 /// selects all. The caller has already confirmed the action is operable.
 fn apply_action(action: usize, items: &Signal<Vec<SelItem>>) {
     match action {
-        ACTION_DELETE => items.set_with(|prev| prev.iter().filter(|i| !i.selected).cloned().collect()),
+        ACTION_DELETE => {
+            items.set_with(|prev| prev.iter().filter(|i| !i.selected).cloned().collect());
+        }
         ACTION_CLEAR => items.set_with(|prev| {
-            prev.iter().map(|i| SelItem { selected: false, ..i.clone() }).collect()
+            prev.iter()
+                .map(|i| SelItem {
+                    selected: false,
+                    ..i.clone()
+                })
+                .collect()
         }),
         ACTION_SELECT_ALL => items.set_with(|prev| {
-            prev.iter().map(|i| SelItem { selected: true, ..i.clone() }).collect()
+            prev.iter()
+                .map(|i| SelItem {
+                    selected: true,
+                    ..i.clone()
+                })
+                .collect()
         }),
         _ => {}
     }
@@ -203,7 +224,11 @@ struct SelRowExternal {
 
 impl SelRowExternal {
     fn new(items: Rc<Signal<Vec<SelItem>>>) -> Self {
-        Self { items, focus: 0, group_focused: false }
+        Self {
+            items,
+            focus: 0,
+            group_focused: false,
+        }
     }
 
     fn count(&self) -> usize {
@@ -225,7 +250,10 @@ impl SelRowExternal {
                 prev.iter()
                     .map(|i| {
                         if i.id == target_id {
-                            SelItem { selected: !i.selected, ..i.clone() }
+                            SelItem {
+                                selected: !i.selected,
+                                ..i.clone()
+                            }
                         } else {
                             i.clone()
                         }
@@ -321,10 +349,12 @@ impl ExternalIntrospect for SelRowExternal {
         let snap = self.items.get();
         match path {
             "count" => Some(IntrospectValue::Int(i64::try_from(snap.len()).ok()?)),
-            "selected_count" => {
-                Some(IntrospectValue::Int(i64::try_from(selected_count(&snap)).ok()?))
-            }
-            "focus" => Some(IntrospectValue::Int(i64::try_from(self.effective_focus()).ok()?)),
+            "selected_count" => Some(IntrospectValue::Int(
+                i64::try_from(selected_count(&snap)).ok()?,
+            )),
+            "focus" => Some(IntrospectValue::Int(
+                i64::try_from(self.effective_focus()).ok()?,
+            )),
             "focused" => Some(IntrospectValue::Bool(self.group_focused)),
             "ids_selected" => {
                 let arr: Vec<serde_json::Value> = snap
@@ -336,13 +366,19 @@ impl ExternalIntrospect for SelRowExternal {
             }
             _ => {
                 if let Some(s) = path.strip_prefix("selected.") {
-                    return Some(IntrospectValue::Bool(snap.get(s.parse::<usize>().ok()?)?.selected));
+                    return Some(IntrospectValue::Bool(
+                        snap.get(s.parse::<usize>().ok()?)?.selected,
+                    ));
                 }
                 if let Some(s) = path.strip_prefix("label.") {
-                    return Some(IntrospectValue::Text(snap.get(s.parse::<usize>().ok()?)?.label.clone()));
+                    return Some(IntrospectValue::Text(
+                        snap.get(s.parse::<usize>().ok()?)?.label.clone(),
+                    ));
                 }
                 if let Some(s) = path.strip_prefix("id.") {
-                    return Some(IntrospectValue::Int(i64::try_from(snap.get(s.parse::<usize>().ok()?)?.id).ok()?));
+                    return Some(IntrospectValue::Int(
+                        i64::try_from(snap.get(s.parse::<usize>().ok()?)?.id).ok()?,
+                    ));
                 }
                 None
             }
@@ -386,7 +422,10 @@ impl ExternalIntrospect for SelRowExternal {
                         .enumerate()
                         .map(|(i, it)| {
                             if i == idx {
-                                SelItem { selected: want, ..it.clone() }
+                                SelItem {
+                                    selected: want,
+                                    ..it.clone()
+                                }
                             } else {
                                 it.clone()
                             }
@@ -398,7 +437,11 @@ impl ExternalIntrospect for SelRowExternal {
         }
     }
 
-    fn invoke(&mut self, path: &str, args: IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+    fn invoke(
+        &mut self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
         match path {
             // Pointer: "<id>:<Event>" — a row release toggles its membership.
             "send" => match args {
@@ -436,7 +479,11 @@ fn list_style_fill(theme: &Theme, selected: bool, focused: bool) -> (Color, Colo
         (fill, theme.resolve(ColorRole::OnSurface), border)
     } else {
         let border = focused.then(|| Border::new(theme.resolve(ColorRole::Accent), 2));
-        (Color::TRANSPARENT, theme.resolve(ColorRole::OnSurface), border)
+        (
+            Color::TRANSPARENT,
+            theme.resolve(ColorRole::OnSurface),
+            border,
+        )
     }
 }
 
@@ -444,7 +491,11 @@ fn list_style_fill(theme: &Theme, selected: bool, focused: bool) -> (Color, Colo
 /// label. Tag `sel_list#<id>` routes a click to [`SelRowExternal`].
 fn list_row(theme: &Theme, item: &SelItem, focused: bool) -> Scene {
     let (fill, fg, border) = list_style_fill(theme, item.selected, focused);
-    let glyph = if item.selected { CHECK_MARK } else { CHECK_EMPTY };
+    let glyph = if item.selected {
+        CHECK_MARK
+    } else {
+        CHECK_EMPTY
+    };
     let mut box_style = BoxStyle::filled(fill).with_corner_radius(6);
     if let Some(b) = border {
         box_style = box_style.with_border(b);
@@ -452,7 +503,9 @@ fn list_row(theme: &Theme, item: &SelItem, focused: bool) -> Scene {
     let check = Scene::Text(TextNode::styled(
         glyph,
         Rect::default(),
-        TextStyle::new().with_size_px(18).with_fg(theme.resolve(ColorRole::Accent)),
+        TextStyle::new()
+            .with_size_px(18)
+            .with_fg(theme.resolve(ColorRole::Accent)),
     ));
     let label = Scene::Text(TextNode::styled(
         item.label.clone(),
@@ -477,8 +530,14 @@ fn list_row(theme: &Theme, item: &SelItem, focused: bool) -> Scene {
 /// A scene-as-data text line, tagged for RPC introspection.
 fn data_line(theme: &Theme, tag: &'static str, text: String, size: u32, role: ColorRole) -> Scene {
     Scene::Text(
-        TextNode::styled(text, Rect::default(), TextStyle::new().with_size_px(size).with_fg(theme.resolve(role)))
-            .with_tag(tag),
+        TextNode::styled(
+            text,
+            Rect::default(),
+            TextStyle::new()
+                .with_size_px(size)
+                .with_fg(theme.resolve(role)),
+        )
+        .with_tag(tag),
     )
 }
 
@@ -524,7 +583,10 @@ fn view(state: SelState, _frame: &Frame) -> Scene {
     let list = Scene::Container(
         ContainerNode::new(rows)
             .with_tag(LIST_TAG)
-            .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerLow)).with_corner_radius(8))
+            .with_style(
+                BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerLow))
+                    .with_corner_radius(8),
+            )
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Column)
@@ -539,7 +601,11 @@ fn view(state: SelState, _frame: &Frame) -> Scene {
     );
 
     // The full selection state as scene-as-data for AI clients.
-    let ids: Vec<String> = items.iter().filter(|i| i.selected).map(|i| i.id.to_string()).collect();
+    let ids: Vec<String> = items
+        .iter()
+        .filter(|i| i.selected)
+        .map(|i| i.id.to_string())
+        .collect();
     let status = data_line(
         &theme,
         STATUS_TAG,
@@ -610,10 +676,16 @@ impl WidgetCore for SelectionToolbarView {
         // R990.1 — both roving externals decode through the lifted
         // `read_roving_focus` reader (the list mirrors the same focus/focused
         // slots as the toolbar, so the one reader serves both).
-        if let Some(intro) = scene.find_external_with_tag(LIST_TAG).and_then(|n| n.handle.introspect()) {
+        if let Some(intro) = scene
+            .find_external_with_tag(LIST_TAG)
+            .and_then(|n| n.handle.introspect())
+        {
             (out.row_focus, out.list_focused) = read_roving_focus(intro);
         }
-        if let Some(intro) = scene.find_external_with_tag(ACTIONS_TAG).and_then(|n| n.handle.introspect()) {
+        if let Some(intro) = scene
+            .find_external_with_tag(ACTIONS_TAG)
+            .and_then(|n| n.handle.introspect())
+        {
             (out.actions_focus, out.actions_focused) = read_roving_focus(intro);
         }
         out
@@ -639,7 +711,12 @@ impl WidgetCore for SelectionToolbarView {
     /// (R804/R834 `forward_key_to_field`): the boot scene is a `Container`, so
     /// the default `forward_key_to_external` (bare-`External` root only) would
     /// not reach either widget.
-    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, modifiers: Modifiers) -> bool {
+    fn apply_key(
+        scene: &mut Scene,
+        focused: Option<&str>,
+        key: &str,
+        modifiers: Modifiers,
+    ) -> bool {
         let Some(tag) = focused else {
             return false;
         };
@@ -692,7 +769,9 @@ impl WidgetA11y for SelectionToolbarView {
         let disabled = action_disabled(selected_count(&items), total);
 
         // Toolbar nodes — reflective disabled lowered to aria-disabled.
-        let action_tags: Vec<String> = (0..ACTION_COUNT).map(|i| action_tag(ACTIONS_TAG, i)).collect();
+        let action_tags: Vec<String> = (0..ACTION_COUNT)
+            .map(|i| action_tag(ACTIONS_TAG, i))
+            .collect();
         let controls: Vec<ToolbarControl<'_>> = (0..ACTION_COUNT)
             .map(|i| ToolbarControl {
                 tag: &action_tags[i],
@@ -702,10 +781,14 @@ impl WidgetA11y for SelectionToolbarView {
             })
             .collect();
         let actions_focus = state.actions_focused.then_some(state.actions_focus);
-        let mut nodes = toolbar_button_nodes(ACTIONS_TAG, "Selection actions", &controls, actions_focus);
+        let mut nodes =
+            toolbar_button_nodes(ACTIONS_TAG, "Selection actions", &controls, actions_focus);
 
         // Listbox nodes — multiselectable, each row aria-selected.
-        let row_tags: Vec<String> = items.iter().map(|i| format!("{LIST_TAG}#{}", i.id)).collect();
+        let row_tags: Vec<String> = items
+            .iter()
+            .map(|i| format!("{LIST_TAG}#{}", i.id))
+            .collect();
         let focus_pos = state.row_focus.min(total.saturating_sub(1));
         let list_focused = focused == Some(LIST_TAG);
         let options: Vec<ListOption<'_>> = items
@@ -719,7 +802,12 @@ impl WidgetA11y for SelectionToolbarView {
                 focused: list_focused && pos == focus_pos,
             })
             .collect();
-        nodes.extend(listbox_option_nodes(LIST_TAG, "Selectable items", true, &options));
+        nodes.extend(listbox_option_nodes(
+            LIST_TAG,
+            "Selectable items",
+            true,
+            &options,
+        ));
         nodes
     }
 
@@ -732,7 +820,10 @@ impl WidgetA11y for SelectionToolbarView {
                     return Some(AccessFocus::atomic(LIST_TAG));
                 }
                 let pos = state.row_focus.min(items.len() - 1);
-                Some(AccessFocus::composite(LIST_TAG, format!("{LIST_TAG}#{}", items[pos].id)))
+                Some(AccessFocus::composite(
+                    LIST_TAG,
+                    format!("{LIST_TAG}#{}", items[pos].id),
+                ))
             }
             Some(ACTIONS_TAG) => Some(AccessFocus::composite(
                 ACTIONS_TAG,
@@ -744,7 +835,12 @@ impl WidgetA11y for SelectionToolbarView {
 
     /// AT child activation: a row `Click` toggles it; a toolbar action `Click`
     /// runs it. `Focus` records the AT-side active descendant on either widget.
-    fn access_child_invoke(scene: &mut Scene, parent_tag: &str, sub_tag: &str, action: AccessAction) -> bool {
+    fn access_child_invoke(
+        scene: &mut Scene,
+        parent_tag: &str,
+        sub_tag: &str,
+        action: AccessAction,
+    ) -> bool {
         let dispatch_tag = match parent_tag {
             LIST_TAG => LIST_TAG,
             ACTIONS_TAG => ACTIONS_TAG,
@@ -758,7 +854,10 @@ impl WidgetA11y for SelectionToolbarView {
         };
         match action {
             AccessAction::Click | AccessAction::Default => {
-                let _ = intro.invoke("send", IntrospectValue::Text(format!("{sub_tag}:PointerUp")));
+                let _ = intro.invoke(
+                    "send",
+                    IntrospectValue::Text(format!("{sub_tag}:PointerUp")),
+                );
                 true
             }
             AccessAction::Focus => {
@@ -776,7 +875,10 @@ impl WidgetView for SelectionToolbarView {
     type Renderer = HelloSelectionToolbarRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 }
 
@@ -819,14 +921,23 @@ mod tests {
             let items = use_items();
             items.set_with(|prev| {
                 prev.iter()
-                    .map(|i| SelItem { selected: i.id == 2 || i.id == 5, ..i.clone() })
+                    .map(|i| SelItem {
+                        selected: i.id == 2 || i.id == 5,
+                        ..i.clone()
+                    })
                     .collect()
             });
             let _ = SelectionToolbarView::update(SelState::default(), &cmd(ACTION_DELETE));
             let after = items.get();
             assert_eq!(after.len(), 6, "two selected rows deleted");
-            assert!(!after.iter().any(|i| i.id == 2 || i.id == 5), "the selected ids are gone");
-            assert!(after.iter().any(|i| i.id == 1), "survivors keep their stable ids");
+            assert!(
+                !after.iter().any(|i| i.id == 2 || i.id == 5),
+                "the selected ids are gone"
+            );
+            assert!(
+                after.iter().any(|i| i.id == 1),
+                "survivors keep their stable ids"
+            );
         });
     }
 
@@ -835,7 +946,11 @@ mod tests {
         Owner::new().run(|| {
             let items = use_items();
             let _ = SelectionToolbarView::update(SelState::default(), &cmd(ACTION_SELECT_ALL));
-            assert_eq!(selected_count(&items.get()), 8, "select all selects every row");
+            assert_eq!(
+                selected_count(&items.get()),
+                8,
+                "select all selects every row"
+            );
             let _ = SelectionToolbarView::update(SelState::default(), &cmd(ACTION_CLEAR));
             assert_eq!(selected_count(&items.get()), 0, "clear deselects every row");
         });
@@ -855,7 +970,11 @@ mod tests {
             // All selected -> Select all is disabled and must not error / change.
             let _ = SelectionToolbarView::update(SelState::default(), &cmd(ACTION_SELECT_ALL));
             let _ = SelectionToolbarView::update(SelState::default(), &cmd(ACTION_SELECT_ALL));
-            assert_eq!(selected_count(&items.get()), 8, "select all is idempotent + then gated");
+            assert_eq!(
+                selected_count(&items.get()),
+                8,
+                "select all is idempotent + then gated"
+            );
         });
     }
 
@@ -865,13 +984,19 @@ mod tests {
     fn row_send_toggles_membership() {
         Owner::new().run(|| {
             let mut ext = SelRowExternal::new(use_items());
-            assert_eq!(ext.invoke("send", IntrospectValue::Text("3:PointerUp".into())), Ok(IntrospectValue::Bool(true)));
+            assert_eq!(
+                ext.invoke("send", IntrospectValue::Text("3:PointerUp".into())),
+                Ok(IntrospectValue::Bool(true))
+            );
             assert_eq!(ext.query("selected_count"), Some(IntrospectValue::Int(1)));
             // A second release toggles it back off.
             let _ = ext.invoke("send", IntrospectValue::Text("3:PointerUp".into()));
             assert_eq!(ext.query("selected_count"), Some(IntrospectValue::Int(0)));
             // A stale id is a no-op reported as Bool(false).
-            assert_eq!(ext.invoke("send", IntrospectValue::Text("999:PointerUp".into())), Ok(IntrospectValue::Bool(false)));
+            assert_eq!(
+                ext.invoke("send", IntrospectValue::Text("999:PointerUp".into())),
+                Ok(IntrospectValue::Bool(false))
+            );
         });
     }
 
@@ -880,16 +1005,33 @@ mod tests {
         Owner::new().run(|| {
             let mut ext = SelRowExternal::new(use_items());
             // Absolute set (the write mirror of the `selected.<i>` read).
-            ext.intervene("selected.1", IntrospectValue::Bool(true)).unwrap();
-            assert_eq!(ext.query("selected.1"), Some(IntrospectValue::Bool(true)), "read mirrors write");
+            ext.intervene("selected.1", IntrospectValue::Bool(true))
+                .unwrap();
+            assert_eq!(
+                ext.query("selected.1"),
+                Some(IntrospectValue::Bool(true)),
+                "read mirrors write"
+            );
             // Idempotent: setting true again leaves it set (not a toggle).
-            ext.intervene("selected.1", IntrospectValue::Bool(true)).unwrap();
-            assert_eq!(ext.query("selected_count"), Some(IntrospectValue::Int(1)), "set is not a toggle");
-            ext.intervene("selected.1", IntrospectValue::Bool(false)).unwrap();
+            ext.intervene("selected.1", IntrospectValue::Bool(true))
+                .unwrap();
+            assert_eq!(
+                ext.query("selected_count"),
+                Some(IntrospectValue::Int(1)),
+                "set is not a toggle"
+            );
+            ext.intervene("selected.1", IntrospectValue::Bool(false))
+                .unwrap();
             assert_eq!(ext.query("selected_count"), Some(IntrospectValue::Int(0)));
             // Out-of-range / type errors are reported, not silently dropped.
-            assert_eq!(ext.intervene("selected.99", IntrospectValue::Bool(true)), Err(InterveneError::OutOfRange));
-            assert_eq!(ext.intervene("selected.0", IntrospectValue::Int(1)), Err(InterveneError::TypeMismatch));
+            assert_eq!(
+                ext.intervene("selected.99", IntrospectValue::Bool(true)),
+                Err(InterveneError::OutOfRange)
+            );
+            assert_eq!(
+                ext.intervene("selected.0", IntrospectValue::Int(1)),
+                Err(InterveneError::TypeMismatch)
+            );
         });
     }
 
@@ -907,7 +1049,11 @@ mod tests {
             assert!(ext.apply_key("End"));
             assert_eq!(ext.query("focus"), Some(IntrospectValue::Int(7)));
             assert!(ext.apply_key("ArrowDown"));
-            assert_eq!(ext.query("focus"), Some(IntrospectValue::Int(7)), "no wrap past the last row");
+            assert_eq!(
+                ext.query("focus"),
+                Some(IntrospectValue::Int(7)),
+                "no wrap past the last row"
+            );
         });
     }
 
@@ -917,11 +1063,14 @@ mod tests {
             let mut ext = SelRowExternal::new(use_items());
             let _ = ext.apply_key("End"); // focus the last row (7)
             // Select + delete several rows so the list shrinks under the cursor.
-            ext.items.set_with(|prev| {
-                prev.iter().filter(|i| i.id <= 3).cloned().collect()
-            });
+            ext.items
+                .set_with(|prev| prev.iter().filter(|i| i.id <= 3).cloned().collect());
             assert_eq!(ext.query("count"), Some(IntrospectValue::Int(3)));
-            assert_eq!(ext.query("focus"), Some(IntrospectValue::Int(2)), "stale focus clamps to the new last row");
+            assert_eq!(
+                ext.query("focus"),
+                Some(IntrospectValue::Int(2)),
+                "stale focus clamps to the new last row"
+            );
         });
     }
 
@@ -929,14 +1078,28 @@ mod tests {
 
     #[test]
     fn a11y_toolbar_disabled_reflects_empty_selection() {
-        let nodes = Owner::new().run(|| {
-            SelectionToolbarView::access_node(&SelState::default(), Some(ACTIONS_TAG))
-        });
+        let nodes = Owner::new()
+            .run(|| SelectionToolbarView::access_node(&SelState::default(), Some(ACTIONS_TAG)));
         let toolbar = by_tag(&nodes, ACTIONS_TAG);
         assert_eq!(toolbar.role, AriaRole::Toolbar);
-        assert!(by_tag(&nodes, &action_tag(ACTIONS_TAG, ACTION_DELETE)).state.disabled, "Delete disabled when empty");
-        assert!(by_tag(&nodes, &action_tag(ACTIONS_TAG, ACTION_CLEAR)).state.disabled, "Clear disabled when empty");
-        assert!(!by_tag(&nodes, &action_tag(ACTIONS_TAG, ACTION_SELECT_ALL)).state.disabled, "Select all operable");
+        assert!(
+            by_tag(&nodes, &action_tag(ACTIONS_TAG, ACTION_DELETE))
+                .state
+                .disabled,
+            "Delete disabled when empty"
+        );
+        assert!(
+            by_tag(&nodes, &action_tag(ACTIONS_TAG, ACTION_CLEAR))
+                .state
+                .disabled,
+            "Clear disabled when empty"
+        );
+        assert!(
+            !by_tag(&nodes, &action_tag(ACTIONS_TAG, ACTION_SELECT_ALL))
+                .state
+                .disabled,
+            "Select all operable"
+        );
     }
 
     #[test]
@@ -944,7 +1107,12 @@ mod tests {
         let nodes = Owner::new().run(|| {
             let items = use_items();
             items.set_with(|prev| {
-                prev.iter().map(|i| SelItem { selected: i.id == 4, ..i.clone() }).collect()
+                prev.iter()
+                    .map(|i| SelItem {
+                        selected: i.id == 4,
+                        ..i.clone()
+                    })
+                    .collect()
             });
             SelectionToolbarView::access_node(&SelState::default(), Some(LIST_TAG))
         });
@@ -956,7 +1124,11 @@ mod tests {
             .filter(|n| n.role == AriaRole::ListBoxOption && n.selected == Some(true))
             .map(|n| n.tag.as_str())
             .collect();
-        assert_eq!(selected, vec!["sel_list#4"], "exactly the selected row is aria-selected");
+        assert_eq!(
+            selected,
+            vec!["sel_list#4"],
+            "exactly the selected row is aria-selected"
+        );
     }
 
     #[test]
@@ -964,24 +1136,42 @@ mod tests {
         let nodes = Owner::new().run(|| {
             let items = use_items();
             items.set_with(|prev| {
-                prev.iter().map(|i| SelItem { selected: i.id == 1, ..i.clone() }).collect()
+                prev.iter()
+                    .map(|i| SelItem {
+                        selected: i.id == 1,
+                        ..i.clone()
+                    })
+                    .collect()
             });
             SelectionToolbarView::access_node(&SelState::default(), Some(ACTIONS_TAG))
         });
-        assert!(!by_tag(&nodes, &action_tag(ACTIONS_TAG, ACTION_DELETE)).state.disabled, "Delete operable with a selection");
+        assert!(
+            !by_tag(&nodes, &action_tag(ACTIONS_TAG, ACTION_DELETE))
+                .state
+                .disabled,
+            "Delete operable with a selection"
+        );
     }
 
     #[test]
     fn a11y_focus_target_follows_the_focused_widget() {
         Owner::new().run(|| {
             let list = SelectionToolbarView::access_focus_target(
-                &SelState { row_focus: 2, list_focused: true, ..SelState::default() },
+                &SelState {
+                    row_focus: 2,
+                    list_focused: true,
+                    ..SelState::default()
+                },
                 Some(LIST_TAG),
             )
             .expect("list focused");
             assert_eq!(list.active_descendant.as_deref(), Some("sel_list#3"));
             let actions = SelectionToolbarView::access_focus_target(
-                &SelState { actions_focus: 1, actions_focused: true, ..SelState::default() },
+                &SelState {
+                    actions_focus: 1,
+                    actions_focused: true,
+                    ..SelState::default()
+                },
                 Some(ACTIONS_TAG),
             )
             .expect("toolbar focused");

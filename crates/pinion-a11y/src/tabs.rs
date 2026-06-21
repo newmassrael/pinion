@@ -91,9 +91,24 @@ mod tests {
 
     fn tabs() -> [TabCell<'static>; 3] {
         [
-            TabCell { tag: "t#0", label: Some("General"), selected: true, focused: true },
-            TabCell { tag: "t#1", label: Some("Network"), selected: false, focused: false },
-            TabCell { tag: "t#2", label: None, selected: false, focused: false },
+            TabCell {
+                tag: "t#0",
+                label: Some("General"),
+                selected: true,
+                focused: true,
+            },
+            TabCell {
+                tag: "t#1",
+                label: Some("Network"),
+                selected: false,
+                focused: false,
+            },
+            TabCell {
+                tag: "t#2",
+                label: None,
+                selected: false,
+                focused: false,
+            },
         ]
     }
 
@@ -104,7 +119,11 @@ mod tests {
         assert_eq!(nodes.len(), t.len() + 2, "tablist + N tabs + one panel");
         assert_eq!(nodes[0].role, AriaRole::TabList);
         assert_eq!(nodes[0].name.as_deref(), Some("Sections"));
-        assert_eq!(nodes[0].children.len(), t.len(), "tablist references every tab");
+        assert_eq!(
+            nodes[0].children.len(),
+            t.len(),
+            "tablist references every tab"
+        );
         for node in &nodes[1..=t.len()] {
             assert_eq!(node.role, AriaRole::Tab);
         }
@@ -142,7 +161,10 @@ mod tests {
     #[test]
     fn focused_tab_carries_focused_state() {
         let nodes = tablist_tab_nodes("tl", "Sections", &tabs(), "panel", "General");
-        assert!(nodes[1].state.focused, "tab 0 is the roving active descendant");
+        assert!(
+            nodes[1].state.focused,
+            "tab 0 is the roving active descendant"
+        );
         assert!(!nodes[2].state.focused, "tab 1 not the active descendant");
         // Tabs use aria-selected, never aria-checked.
         assert!(nodes[1..=3].iter().all(|n| n.state.checked.is_none()));
@@ -151,7 +173,11 @@ mod tests {
     #[test]
     fn explicit_label_set_and_none_left_for_enrichment() {
         let nodes = tablist_tab_nodes("tl", "Sections", &tabs(), "panel", "General");
-        assert_eq!(nodes[1].name.as_deref(), Some("General"), "explicit label applied");
+        assert_eq!(
+            nodes[1].name.as_deref(),
+            Some("General"),
+            "explicit label applied"
+        );
         assert_eq!(nodes[3].name, None, "label None left to scene enrichment");
     }
 }

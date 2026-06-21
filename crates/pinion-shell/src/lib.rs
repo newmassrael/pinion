@@ -57,8 +57,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use pinion_core::{Intent, Scene, Signal, WidgetCore};
-use vello::peniko::Color as PenikoColor;
 use vello::Scene as VelloScene;
+use vello::peniko::Color as PenikoColor;
 use winit::window::Window;
 
 mod app;
@@ -78,8 +78,8 @@ pub mod typeahead;
 #[cfg(any(test, feature = "test-fixtures"))]
 pub mod test_fixtures;
 
-pub use app::{run, run_with_handlers, AppShell};
-pub use executor::{build_executor_and_sink, ProxyIntentSink, ProxyRepaintSink, TokioExecutor};
+pub use app::{AppShell, run, run_with_handlers};
+pub use executor::{ProxyIntentSink, ProxyRepaintSink, TokioExecutor, build_executor_and_sink};
 pub use headless_screenshot::{HeadlessScreenshot, HeadlessScreenshotError};
 pub use substrate::{AccessEmitDecision, FragmentCacheStats, ShellCore};
 
@@ -733,7 +733,10 @@ pub trait WidgetView: pinion_a11y::WidgetA11y {
     /// every single + multi-window binding.
     #[must_use]
     fn windows() -> Vec<WindowSpec> {
-        vec![WindowSpec::main(Self::title(), Self::initial_size_strategy())]
+        vec![WindowSpec::main(
+            Self::title(),
+            Self::initial_size_strategy(),
+        )]
     }
 
     /// R683 §5.16 §5.41 — opt-in runtime window-list lift.
@@ -798,7 +801,7 @@ pub trait WidgetView: pinion_a11y::WidgetA11y {
     /// scope from inside the per-window body.
     #[allow(
         clippy::trivially_copy_pass_by_ref,
-        reason = "view-fn signature contract: &Frame per §6.3 even for ZST today",
+        reason = "view-fn signature contract: &Frame per §6.3 even for ZST today"
     )]
     #[must_use]
     fn view_for_window(
@@ -880,7 +883,10 @@ mod tests {
 
     #[test]
     fn r668_size_strategy_fixed_round_trips_through_initial_logical_size() {
-        let s = SizeStrategy::Fixed { width: 800, height: 600 };
+        let s = SizeStrategy::Fixed {
+            width: 800,
+            height: 600,
+        };
         assert_eq!(s.initial_logical_size(), (800, 600));
     }
 
@@ -910,7 +916,10 @@ mod tests {
         // primary spec's `id` is exactly `"main"`.
         let spec = WindowSpec::main(
             "Test Title",
-            SizeStrategy::Fixed { width: 320, height: 200 },
+            SizeStrategy::Fixed {
+                width: 320,
+                height: 200,
+            },
         );
         // R683 §5.16 — `id` is now `Cow<'static, str>`; the literal
         // primary id stays `Cow::Borrowed("main")` (alloc-free) so
@@ -921,7 +930,10 @@ mod tests {
         assert_eq!(spec.title, "Test Title");
         assert!(matches!(
             spec.strategy,
-            SizeStrategy::Fixed { width: 320, height: 200 }
+            SizeStrategy::Fixed {
+                width: 320,
+                height: 200
+            }
         ));
     }
 
@@ -933,7 +945,10 @@ mod tests {
         let spec = WindowSpec::new(
             "inspector",
             String::from("Inspector"),
-            SizeStrategy::Fixed { width: 280, height: 360 },
+            SizeStrategy::Fixed {
+                width: 280,
+                height: 360,
+            },
         );
         assert_eq!(spec.id, Cow::Borrowed("inspector"));
         assert_eq!(spec.title, "Inspector");
@@ -959,7 +974,10 @@ mod tests {
         let spec = WindowSpec::new(
             runtime_id,
             "Torn Panel #7",
-            SizeStrategy::Fixed { width: 320, height: 200 },
+            SizeStrategy::Fixed {
+                width: 320,
+                height: 200,
+            },
         );
         assert_eq!(spec.id, Cow::Borrowed("torn-panel-7"));
         // The owned vs borrowed distinction is preserved across
@@ -979,12 +997,18 @@ mod tests {
         let borrowed = WindowSpec::new(
             "panel-3",
             "P3",
-            SizeStrategy::Fixed { width: 100, height: 100 },
+            SizeStrategy::Fixed {
+                width: 100,
+                height: 100,
+            },
         );
         let owned = WindowSpec::new(
             String::from("panel-3"),
             "P3",
-            SizeStrategy::Fixed { width: 100, height: 100 },
+            SizeStrategy::Fixed {
+                width: 100,
+                height: 100,
+            },
         );
         assert_eq!(borrowed, owned);
         assert_eq!(borrowed.id, owned.id);
@@ -997,23 +1021,44 @@ mod tests {
         // diff Effect relies on this contract so a binding that
         // re-emits an unchanged `Vec<WindowSpec>` short-circuits the
         // diff via `Vec`'s element-wise equality.
-        let canon = WindowSpec::main("T", SizeStrategy::Fixed { width: 320, height: 200 });
-        let same = WindowSpec::main("T", SizeStrategy::Fixed { width: 320, height: 200 });
+        let canon = WindowSpec::main(
+            "T",
+            SizeStrategy::Fixed {
+                width: 320,
+                height: 200,
+            },
+        );
+        let same = WindowSpec::main(
+            "T",
+            SizeStrategy::Fixed {
+                width: 320,
+                height: 200,
+            },
+        );
         assert_eq!(canon, same);
         let diff_strategy = WindowSpec::main(
             "T",
-            SizeStrategy::Fixed { width: 321, height: 200 },
+            SizeStrategy::Fixed {
+                width: 321,
+                height: 200,
+            },
         );
         assert_ne!(canon, diff_strategy);
         let diff_title = WindowSpec::main(
             "Different Title",
-            SizeStrategy::Fixed { width: 320, height: 200 },
+            SizeStrategy::Fixed {
+                width: 320,
+                height: 200,
+            },
         );
         assert_ne!(canon, diff_title);
         let diff_id = WindowSpec::new(
             "secondary",
             "T",
-            SizeStrategy::Fixed { width: 320, height: 200 },
+            SizeStrategy::Fixed {
+                width: 320,
+                height: 200,
+            },
         );
         assert_ne!(canon, diff_id);
     }
@@ -1052,7 +1097,10 @@ mod tests {
         let spec = WindowSpec::new(
             format!("torn-panel-{}", 42_u32),
             "Torn",
-            SizeStrategy::Fixed { width: 200, height: 150 },
+            SizeStrategy::Fixed {
+                width: 200,
+                height: 150,
+            },
         );
         let json = serde_json::to_string(&spec).expect("serialise");
         let restored: WindowSpec = serde_json::from_str(&json).expect("deserialise");
@@ -1076,7 +1124,10 @@ mod tests {
         // no reactive substrate.
         let initial = vec![WindowSpec::main(
             "Dock Test",
-            SizeStrategy::Fixed { width: 800, height: 600 },
+            SizeStrategy::Fixed {
+                width: 800,
+                height: 600,
+            },
         )];
         let signal: Signal<Vec<WindowSpec>> = Signal::new(initial.clone());
         // `get()` should hand back a clone equal to the initial.
@@ -1091,15 +1142,27 @@ mod tests {
         // appends one spec; a dock-back drops one.
         let signal: Signal<Vec<WindowSpec>> = Signal::new(vec![WindowSpec::main(
             "Initial",
-            SizeStrategy::Fixed { width: 320, height: 200 },
+            SizeStrategy::Fixed {
+                width: 320,
+                height: 200,
+            },
         )]);
         let rev0 = signal.revision();
         signal.set(vec![
-            WindowSpec::main("Initial", SizeStrategy::Fixed { width: 320, height: 200 }),
+            WindowSpec::main(
+                "Initial",
+                SizeStrategy::Fixed {
+                    width: 320,
+                    height: 200,
+                },
+            ),
             WindowSpec::new(
                 "torn-panel-1",
                 "Torn #1",
-                SizeStrategy::Fixed { width: 200, height: 150 },
+                SizeStrategy::Fixed {
+                    width: 200,
+                    height: 150,
+                },
             ),
         ]);
         // Value actually changed → revision must advance.
@@ -1117,7 +1180,10 @@ mod tests {
         // the revision counter pinned.
         let initial = vec![WindowSpec::main(
             "Dock",
-            SizeStrategy::Fixed { width: 800, height: 600 },
+            SizeStrategy::Fixed {
+                width: 800,
+                height: 600,
+            },
         )];
         let signal: Signal<Vec<WindowSpec>> = Signal::new(initial.clone());
         let rev0 = signal.revision();
@@ -1177,7 +1243,10 @@ mod windows_signal_default_tests {
                 .cache::<Signal<Vec<WindowSpec>>, _>("test_dock_windows", || {
                     Signal::new(vec![WindowSpec::main(
                         "Test Dock",
-                        SizeStrategy::Fixed { width: 800, height: 600 },
+                        SizeStrategy::Fixed {
+                            width: 800,
+                            height: 600,
+                        },
                     )])
                 })
         });

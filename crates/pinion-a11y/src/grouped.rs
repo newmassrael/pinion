@@ -75,9 +75,13 @@ pub fn grouped_focus_target(
     if focused != Some(tag) {
         return focused.map(AccessFocus::atomic);
     }
-    let cursor_tag =
-        cursor.and_then(|pos| groups.row_at(pos)).map(|row| row.composite_tag(group_prefix, tag));
-    Some(cursor_tag.map_or_else(|| AccessFocus::atomic(tag), |t| AccessFocus::composite(tag, t)))
+    let cursor_tag = cursor
+        .and_then(|pos| groups.row_at(pos))
+        .map(|row| row.composite_tag(group_prefix, tag));
+    Some(cursor_tag.map_or_else(
+        || AccessFocus::atomic(tag),
+        |t| AccessFocus::composite(tag, t),
+    ))
 }
 
 /// The addressing config of a grouped **list** (`tree`) a11y tree. The labels
@@ -143,17 +147,21 @@ pub fn grouped_tree_access_nodes(
     nodes.push(tree);
 
     for view_pos in window.indices() {
-        let Some(row) = rows.get(view_pos) else { continue };
+        let Some(row) = rows.get(view_pos) else {
+            continue;
+        };
         let posinset = u32::try_from(view_pos + 1).unwrap_or(u32::MAX);
         let node = match *row {
-            GroupRow::Header { group, member_count, collapsed } => {
-                AccessNode::new(row_tag(row), AriaRole::TreeItem)
-                    .with_name(format!("{} ({member_count})", group_label(group)))
-                    .with_level(1)
-                    .with_position_in_set(posinset)
-                    .with_size_of_set(total)
-                    .with_expanded(!collapsed)
-            }
+            GroupRow::Header {
+                group,
+                member_count,
+                collapsed,
+            } => AccessNode::new(row_tag(row), AriaRole::TreeItem)
+                .with_name(format!("{} ({member_count})", group_label(group)))
+                .with_level(1)
+                .with_position_in_set(posinset)
+                .with_size_of_set(total)
+                .with_expanded(!collapsed),
             GroupRow::Data { source } => AccessNode::new(row_tag(row), AriaRole::TreeItem)
                 .with_name(data_label(source))
                 .with_level(2)
@@ -260,7 +268,8 @@ pub fn grouped_grid_access_nodes(
 ) -> Vec<AccessNode> {
     let total = u32::try_from(rows.len()).unwrap_or(u32::MAX);
 
-    let mut nodes: Vec<AccessNode> = Vec::with_capacity(window.count * (spec.columns.len() + 1) + 2);
+    let mut nodes: Vec<AccessNode> =
+        Vec::with_capacity(window.count * (spec.columns.len() + 1) + 2);
 
     // TreeGrid root: header row then every windowed row.
     let mut grid = AccessNode::new(spec.grid_tag, AriaRole::TreeGrid);
@@ -282,7 +291,8 @@ pub fn grouped_grid_access_nodes(
     }
     nodes.push(header_row);
     for column in spec.columns {
-        let mut col = AccessNode::new(column.tag.as_str(), AriaRole::ColumnHeader).with_name(&column.label);
+        let mut col =
+            AccessNode::new(column.tag.as_str(), AriaRole::ColumnHeader).with_name(&column.label);
         if let Some(dir) = column.sort {
             col = col.with_sort(dir);
         }
@@ -291,13 +301,19 @@ pub fn grouped_grid_access_nodes(
 
     // Windowed rows: spanning group headers + data rows with gridcells.
     for view_pos in window.indices() {
-        let Some(row) = rows.get(view_pos) else { continue };
+        let Some(row) = rows.get(view_pos) else {
+            continue;
+        };
         let posinset = u32::try_from(view_pos + 1).unwrap_or(u32::MAX);
         // The roving cursor's row (header or data) carries the active-descendant
         // `focused` state; the gridcells under a data row do not.
         let focused = spec.focused_view_pos == Some(view_pos);
         match *row {
-            GroupRow::Header { group, member_count, collapsed } => {
+            GroupRow::Header {
+                group,
+                member_count,
+                collapsed,
+            } => {
                 // Group header = level-1 expandable branch row (WAI-ARIA 6.6.8).
                 nodes.push(
                     AccessNode::new(row_tag(row), AriaRole::Row)
@@ -348,12 +364,12 @@ pub fn grouped_grid_access_nodes(
 #[cfg(test)]
 mod tests {
     use super::{
-        grouped_focus_target, grouped_grid_access_nodes, grouped_tree_access_nodes,
-        GroupedGridSelection, GroupedGridSpec, GroupedTreeSpec,
+        GroupedGridSelection, GroupedGridSpec, GroupedTreeSpec, grouped_focus_target,
+        grouped_grid_access_nodes, grouped_tree_access_nodes,
     };
     use crate::grid::GridColumn;
     use crate::role::{AriaRole, SortDirection};
-    use pinion_core::widgets::group_order::{group_rows, GroupRow};
+    use pinion_core::widgets::group_order::{GroupRow, group_rows};
     use pinion_core::widgets::virtual_list::compute_visible_range;
 
     // A small 2-group flatten: group 0 = sources 0,2; group 1 = source 1.
@@ -389,9 +405,15 @@ mod tests {
         );
         // Root tree.
         assert_eq!(nodes[0].role, AriaRole::Tree);
-        assert_eq!(nodes[0].size_of_set, Some(u32::try_from(rows.len()).unwrap()));
+        assert_eq!(
+            nodes[0].size_of_set,
+            Some(u32::try_from(rows.len()).unwrap())
+        );
         // Group 0 header: treeitem, level 1, expanded, name "G0 (2)".
-        let h0 = nodes.iter().find(|n| n.tag == "grp#0").expect("group 0 header");
+        let h0 = nodes
+            .iter()
+            .find(|n| n.tag == "grp#0")
+            .expect("group 0 header");
         assert_eq!(h0.role, AriaRole::TreeItem);
         assert_eq!(h0.level, Some(1));
         assert_eq!(h0.expanded, Some(true));
@@ -415,8 +437,16 @@ mod tests {
 
     fn grid_columns() -> [GridColumn; 2] {
         [
-            GridColumn { tag: "c0".into(), label: "Name".into(), sort: Some(SortDirection::Ascending) },
-            GridColumn { tag: "c1".into(), label: "Size".into(), sort: None },
+            GridColumn {
+                tag: "c0".into(),
+                label: "Name".into(),
+                sort: Some(SortDirection::Ascending),
+            },
+            GridColumn {
+                tag: "c1".into(),
+                label: "Size".into(),
+                sort: None,
+            },
         ]
     }
 
@@ -455,7 +485,10 @@ mod tests {
         assert_eq!(c1.sort, None);
         // Group 0 header is an expandable level-1 Row, and the cursor (visual
         // pos 0) rests on it → focused (active descendant); a data row is not.
-        let h0 = nodes.iter().find(|n| n.tag == "grp#0").expect("group 0 header");
+        let h0 = nodes
+            .iter()
+            .find(|n| n.tag == "grp#0")
+            .expect("group 0 header");
         assert_eq!(h0.role, AriaRole::Row);
         assert_eq!(h0.level, Some(1), "group header is aria-level 1");
         assert_eq!(h0.expanded, Some(true));
@@ -467,10 +500,16 @@ mod tests {
         assert_eq!(d0.level, Some(2), "data row is aria-level 2");
         assert_eq!(d0.selected, Some(true));
         assert!(!d0.state.focused, "a data row is not the cursor here");
-        let cell00 = nodes.iter().find(|n| n.tag == "cell_0_0").expect("cell 0,0");
+        let cell00 = nodes
+            .iter()
+            .find(|n| n.tag == "cell_0_0")
+            .expect("cell 0,0");
         assert_eq!(cell00.role, AriaRole::GridCell);
         assert_eq!(cell00.name.as_deref(), Some("v00"));
-        let cell01 = nodes.iter().find(|n| n.tag == "cell_0_1").expect("cell 0,1");
+        let cell01 = nodes
+            .iter()
+            .find(|n| n.tag == "cell_0_1")
+            .expect("cell 0,1");
         assert_eq!(cell01.name.as_deref(), Some("v01"));
     }
 
@@ -508,14 +547,35 @@ mod tests {
             },
         );
         // The bespoke row tags are honored (the consumer owns the tag).
-        assert!(nodes.iter().any(|n| n.tag == "grid#g0"), "bespoke header tag");
-        let d0 = nodes.iter().find(|n| n.tag == "drow.0").expect("bespoke data-row tag");
+        assert!(
+            nodes.iter().any(|n| n.tag == "grid#g0"),
+            "bespoke header tag"
+        );
+        let d0 = nodes
+            .iter()
+            .find(|n| n.tag == "drow.0")
+            .expect("bespoke data-row tag");
         // Cell-focus: the row is NOT the active descendant; its column-1 cell is.
-        assert!(!d0.state.focused, "cell-focus: the row is not the active descendant");
-        let cell01 = nodes.iter().find(|n| n.tag == "cell_0_1").expect("cell 0,1");
-        assert!(cell01.state.focused, "the focused column's gridcell is the active descendant");
-        let cell00 = nodes.iter().find(|n| n.tag == "cell_0_0").expect("cell 0,0");
-        assert!(!cell00.state.focused, "an unfocused column's gridcell is not");
+        assert!(
+            !d0.state.focused,
+            "cell-focus: the row is not the active descendant"
+        );
+        let cell01 = nodes
+            .iter()
+            .find(|n| n.tag == "cell_0_1")
+            .expect("cell 0,1");
+        assert!(
+            cell01.state.focused,
+            "the focused column's gridcell is the active descendant"
+        );
+        let cell00 = nodes
+            .iter()
+            .find(|n| n.tag == "cell_0_0")
+            .expect("cell 0,0");
+        assert!(
+            !cell00.state.focused,
+            "an unfocused column's gridcell is not"
+        );
     }
 
     #[test]
@@ -546,13 +606,25 @@ mod tests {
             |r| r.composite_tag("grp", "row"),
         );
         for tag in ["row#0", "row#1", "row#2"] {
-            let d = nodes.iter().find(|n| n.tag == tag).unwrap_or_else(|| panic!("{tag}"));
-            assert_eq!(d.selected, None, "{tag} carries no aria-selected under Display");
+            let d = nodes
+                .iter()
+                .find(|n| n.tag == tag)
+                .unwrap_or_else(|| panic!("{tag}"));
+            assert_eq!(
+                d.selected, None,
+                "{tag} carries no aria-selected under Display"
+            );
         }
         // The cursor row (visual pos 1 = data source 0) is still the active
         // descendant — focus is orthogonal to the absent selection axis.
-        let cursor = nodes.iter().find(|n| n.tag == "row#0").expect("cursor data row");
-        assert!(cursor.state.focused, "Display still conveys the roving cursor via focus");
+        let cursor = nodes
+            .iter()
+            .find(|n| n.tag == "row#0")
+            .expect("cursor data row");
+        assert!(
+            cursor.state.focused,
+            "Display still conveys the roving cursor via focus"
+        );
     }
 
     #[test]
@@ -561,7 +633,8 @@ mod tests {
         // 3 sources over 2 groups (0,1,0): rows = [Header0, Data0, Data2, Header1, Data1].
         let s = GroupOrderState::new(vec![0, 1, 0], vec!["A".into(), "B".into()]);
         // Unfocused → the focused tag passes through atomic (no active descendant).
-        let other = grouped_focus_target(&s, "list", "grp", Some(0), Some("other")).expect("atomic");
+        let other =
+            grouped_focus_target(&s, "list", "grp", Some(0), Some("other")).expect("atomic");
         assert_eq!(other.focus_tag, "other");
         assert_eq!(other.active_descendant, None);
         // Focused, cursor on pos 0 (group-0 header) → composite(list, grp#0).
@@ -574,7 +647,11 @@ mod tests {
         // No cursor (or out-of-range) → ring the container, no active descendant.
         let none = grouped_focus_target(&s, "list", "grp", None, Some("list")).expect("container");
         assert_eq!(none.active_descendant, None);
-        let stale = grouped_focus_target(&s, "list", "grp", Some(999), Some("list")).expect("container");
-        assert_eq!(stale.active_descendant, None, "out-of-range cursor rings the container");
+        let stale =
+            grouped_focus_target(&s, "list", "grp", Some(999), Some("list")).expect("container");
+        assert_eq!(
+            stale.active_descendant, None,
+            "out-of-range cursor rings the container"
+        );
     }
 }

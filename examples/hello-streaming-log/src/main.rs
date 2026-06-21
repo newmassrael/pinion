@@ -56,7 +56,7 @@
 //! `stream_emit` button to append; `scene/scroll` to pause / resume follow.
 //! See `tools/demos/r996_streaming_log.py`.
 
-use pinion_a11y::{windowed_list_nodes, AccessNode, AccessState, AriaRole, WidgetA11y};
+use pinion_a11y::{AccessNode, AccessState, AriaRole, WidgetA11y, windowed_list_nodes};
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::intent::Intent;
 use pinion_core::reactive::{Owner, Signal};
@@ -64,15 +64,15 @@ use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
-use pinion_core::widgets::scroll::{use_scroll_state, ScrollState};
+use pinion_core::widgets::scroll::{ScrollState, use_scroll_state};
 use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
 use pinion_core::widgets::virtual_list::{at_bottom, compute_visible_range, follow_tail};
 use pinion_core::{Command, Frame, Scene, WidgetCore, WidgetStateName};
-use pinion_shell::{vello_renderer_impl, WidgetView};
-use pinion_widget_paint::scrollbar::{view_vertical_scrollbar, VerticalScrollbarStyle};
+use pinion_shell::{WidgetView, vello_renderer_impl};
+use pinion_widget_paint::scrollbar::{VerticalScrollbarStyle, view_vertical_scrollbar};
 use pinion_widget_paint::virtual_list::view_virtual_list;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -174,11 +174,21 @@ fn apply_emit(src: &LogSource, scroll: &ScrollState) {
     // fixed-size window, which is load-bearing: `follow_tail`'s bound below must
     // equal the bound the layout pass will write from `s.viewport.h`.
     let measured_h = scroll.measured_viewport().1;
-    let viewport_h = if measured_h == 0 { VIEWPORT_H } else { measured_h };
+    let viewport_h = if measured_h == 0 {
+        VIEWPORT_H
+    } else {
+        measured_h
+    };
     // Decide BEFORE appending: was the viewport already at the newest line?
     let was_following = at_bottom(scroll.offset_y(), scroll.max().1);
     src.emit(BATCH);
-    follow_tail(scroll, src.count.get(), ROW_PITCH, viewport_h, was_following);
+    follow_tail(
+        scroll,
+        src.count.get(),
+        ROW_PITCH,
+        viewport_h,
+        was_following,
+    );
 }
 
 // ─── view ──────────────────────────────────────────────────────────────────
@@ -323,8 +333,12 @@ fn view(state: ButtonState, _frame: &Frame) -> Scene {
     // `ScrollState::max_y`, sharing the same `Rc`.
     let scrollbar_style = VerticalScrollbarStyle::material(VIEWPORT_H, SCROLLBAR_TAG);
     let scrollbar_interaction = use_scrollbar_interaction(SCROLLBAR_TAG);
-    let scrollbar_visual =
-        view_vertical_scrollbar(&scroll, &theme, &scrollbar_style, scrollbar_interaction.get());
+    let scrollbar_visual = view_vertical_scrollbar(
+        &scroll,
+        &theme,
+        &scrollbar_style,
+        scrollbar_interaction.get(),
+    );
 
     let list_root = Scene::Container(
         ContainerNode::new(vec![list, scrollbar_visual])
@@ -361,7 +375,10 @@ impl WidgetCore for StreamingLogView {
         // exist before the first paint / dispatch (the view + reducer both
         // resolve the same `Rc`). The scrollbar peer shares the scroll state.
         let _src = use_source();
-        vec![scrollbar_extra_external(use_scroll_state(SCROLL_KEY), SCROLLBAR_TAG)]
+        vec![scrollbar_extra_external(
+            use_scroll_state(SCROLL_KEY),
+            SCROLLBAR_TAG,
+        )]
     }
 
     fn tag() -> &'static str {
@@ -438,7 +455,8 @@ impl WidgetA11y for StreamingLogView {
     fn access_node(state: &ButtonState, focused: Option<&str>) -> Vec<AccessNode> {
         let scroll = use_scroll_state(SCROLL_KEY);
         let count = use_source().count.get();
-        let window = compute_visible_range(scroll.offset_y(), VIEWPORT_H, count, ROW_PITCH, OVERSCAN);
+        let window =
+            compute_visible_range(scroll.offset_y(), VIEWPORT_H, count, ROW_PITCH, OVERSCAN);
 
         let button = AccessNode::new(EMIT_TAG, AriaRole::Button)
             .with_name("Emit log lines")
@@ -451,8 +469,8 @@ impl WidgetA11y for StreamingLogView {
         // AT (and an AI agent) is announced the growing line count and whether
         // the view is following the tail, not just the focused button + rows.
         let following = at_bottom(scroll.offset_y(), scroll.max().1);
-        let status = AccessNode::new(STATUS_TAG, AriaRole::Status)
-            .with_name(status_line(count, following));
+        let status =
+            AccessNode::new(STATUS_TAG, AriaRole::Status).with_name(status_line(count, following));
 
         let mut nodes = vec![button, status];
         nodes.extend(windowed_list_nodes(
@@ -502,7 +520,10 @@ mod tests {
         fn walk(scene: &Scene, n: &mut usize) {
             match scene {
                 Scene::Container(c) => {
-                    if c.tag.as_deref().is_some_and(|t| t.starts_with("streamlog#")) {
+                    if c.tag
+                        .as_deref()
+                        .is_some_and(|t| t.starts_with("streamlog#"))
+                    {
                         *n += 1;
                     }
                     for child in &c.children {
@@ -552,7 +573,11 @@ mod tests {
             apply_emit(&src, &scroll);
             assert_eq!(src.count.get(), BATCH, "one batch appended");
             apply_emit(&src, &scroll);
-            assert_eq!(src.count.get(), 2 * BATCH, "second batch appends at the tail");
+            assert_eq!(
+                src.count.get(),
+                2 * BATCH,
+                "second batch appends at the tail"
+            );
             // Line 0 is stable across appends; line 50 is the second batch's head.
             assert_eq!(
                 src.lines.borrow()[0],
@@ -578,7 +603,10 @@ mod tests {
             assert!(bottom > 0, "50 rows exceed the 14-row viewport");
             // Still at the bottom → the next batch follows again.
             apply_emit(&src, &scroll);
-            assert_eq!(scroll.offset_y(), max_scroll_offset(content_height(src.count.get(), ROW_PITCH), VIEWPORT_H));
+            assert_eq!(
+                scroll.offset_y(),
+                max_scroll_offset(content_height(src.count.get(), ROW_PITCH), VIEWPORT_H)
+            );
         });
     }
 
@@ -594,9 +622,16 @@ mod tests {
             let paused_offset = scroll.offset_y();
             apply_emit(&src, &scroll); // 100 rows now
             assert_eq!(src.count.get(), 2 * BATCH, "rows still appended");
-            assert_eq!(scroll.offset_y(), paused_offset, "paused: viewport stays put");
+            assert_eq!(
+                scroll.offset_y(),
+                paused_offset,
+                "paused: viewport stays put"
+            );
             // The extent grew underneath the paused viewport.
-            assert_eq!(scroll.max().1, max_scroll_offset(content_height(src.count.get(), ROW_PITCH), VIEWPORT_H));
+            assert_eq!(
+                scroll.max().1,
+                max_scroll_offset(content_height(src.count.get(), ROW_PITCH), VIEWPORT_H)
+            );
         });
     }
 
@@ -612,7 +647,11 @@ mod tests {
             scroll.scroll_to(0, scroll.max().1);
             assert!(at_bottom(scroll.offset_y(), scroll.max().1));
             apply_emit(&src, &scroll);
-            assert_eq!(scroll.offset_y(), max_scroll_offset(content_height(src.count.get(), ROW_PITCH), VIEWPORT_H), "follow resumed");
+            assert_eq!(
+                scroll.offset_y(),
+                max_scroll_offset(content_height(src.count.get(), ROW_PITCH), VIEWPORT_H),
+                "follow resumed"
+            );
         });
     }
 
@@ -627,7 +666,10 @@ mod tests {
             let scene = view(ButtonState::Idle, &Frame::default());
             let rendered = count_row_tags(&scene);
             // 14-row viewport + OVERSCAN above & below + a straddling partial.
-            assert!(rendered <= 14 + 2 * OVERSCAN + 1, "virtualized window stays bounded, got {rendered} of 1000");
+            assert!(
+                rendered <= 14 + 2 * OVERSCAN + 1,
+                "virtualized window stays bounded, got {rendered} of 1000"
+            );
             assert!(rendered >= 14, "must cover the 14-row viewport");
         });
     }
@@ -644,7 +686,10 @@ mod tests {
                 row_text_of(&scene, BATCH - 1).is_some(),
                 "newest line is visible when following",
             );
-            assert!(row_text_of(&scene, 0).is_none(), "oldest line is off the top");
+            assert!(
+                row_text_of(&scene, 0).is_none(),
+                "oldest line is off the top"
+            );
             assert_eq!(
                 status_text(&scene).as_deref(),
                 Some("50 lines \u{00b7} Following (newest)"),
@@ -692,9 +737,15 @@ mod tests {
             );
             // Node 2 is the list; its setsize is the current count.
             assert_eq!(nodes[2].role, AriaRole::List);
-            assert_eq!(nodes[2].size_of_set, Some(u32::try_from(4 * BATCH).unwrap()));
+            assert_eq!(
+                nodes[2].size_of_set,
+                Some(u32::try_from(4 * BATCH).unwrap())
+            );
             // Only the window is materialized as listitems (button + status + list + items).
-            assert!(nodes.len() - 3 <= 14 + 2 * OVERSCAN + 1, "only the rendered window has listitems");
+            assert!(
+                nodes.len() - 3 <= 14 + 2 * OVERSCAN + 1,
+                "only the rendered window has listitems"
+            );
             for item in &nodes[3..] {
                 assert_eq!(item.role, AriaRole::ListItem);
                 assert_eq!(item.size_of_set, Some(u32::try_from(4 * BATCH).unwrap()));

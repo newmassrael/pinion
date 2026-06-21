@@ -85,7 +85,7 @@ use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::rc::Rc;
 
-use pinion_a11y::{tree_access_nodes, AccessFocus, AccessNode, WidgetA11y};
+use pinion_a11y::{AccessFocus, AccessNode, WidgetA11y, tree_access_nodes};
 use pinion_core::external::IntrospectValue;
 use pinion_core::intent::Intent;
 use pinion_core::intent_tag;
@@ -93,27 +93,27 @@ use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
-use pinion_core::widgets::tree_nav::{effective_cursor, flat_visible, resolve_tree_key, TreeKey};
+use pinion_core::widgets::tree_nav::{TreeKey, effective_cursor, flat_visible, resolve_tree_key};
 use pinion_core::{Color, Frame, Owner, Scene, Signal, WidgetCore};
 use pinion_shell::typeahead::tree_typeahead_jump;
-use pinion_shell::{vello_renderer_impl, SizeStrategy, WidgetView, WindowSpec};
+use pinion_shell::{SizeStrategy, WidgetView, WindowSpec, vello_renderer_impl};
 use pinion_widget_paint::devtools::{
-    find_node_at_path, rebuild_with_highlight_at_path, scene_root_path_segment, scene_to_tree_item,
-    scene_type_name, ClickRouter,
+    ClickRouter, find_node_at_path, rebuild_with_highlight_at_path, scene_root_path_segment,
+    scene_to_tree_item, scene_type_name,
 };
 use pinion_widget_paint::dock::{
-    view_dock_panel, view_floating_placeholder, DockPanelExternal, DockPanelStyle,
-    FloatingPlaceholderStyle,
+    DockPanelExternal, DockPanelStyle, FloatingPlaceholderStyle, view_dock_panel,
+    view_floating_placeholder,
 };
 use pinion_widget_paint::splitter::{
-    view_splitter, SplitterExternal, SplitterOrientation, SplitterStyle,
+    SplitterExternal, SplitterOrientation, SplitterStyle, view_splitter,
 };
 use pinion_widget_paint::tree_view::{
-    composite_row_tag, view_tree_focused, TreeItem, TreeRowClickExternal, TreeViewFocus,
-    TreeViewStyle,
+    TreeItem, TreeRowClickExternal, TreeViewFocus, TreeViewStyle, composite_row_tag,
+    view_tree_focused,
 };
 
 use pinion_widget_paint::state_layer::{HOVER, PRESSED};
@@ -220,8 +220,7 @@ const INSPECTOR_HOVER_INTENT_TAG: &str = intent_tag!("inspector_tree", "hover");
 /// `scene/invoke /viewport_click_router/external/click {Text(path)}`
 /// to drive the cross-panel select arc; the dotted intent the
 /// reducer matches against is `viewport_click_router.click`.
-const VIEWPORT_CLICK_ROUTER_INTENT_TAG: &str =
-    intent_tag!("viewport_click_router", "click");
+const VIEWPORT_CLICK_ROUTER_INTENT_TAG: &str = intent_tag!("viewport_click_router", "click");
 /// Viewport Button's `click` intent. The `ButtonExternal`'s SCXML
 /// `Pressed → Hover` transition emits a `Null`-payload `click` event
 /// on every completed user click; the reducer mirrors the button's
@@ -366,7 +365,10 @@ const INSPECTOR_TYPEAHEAD_KEY: &str = "hello_dock_panels::inspector_typeahead";
 fn use_collapsed_paths() -> Rc<Signal<BTreeSet<String>>> {
     Owner::current()
         .expect("hello-dock-panels: view fn runs inside the substrate root owner scope")
-        .cache("hello_dock_collapsed_paths", || Signal::new(BTreeSet::new()))
+        .cache(
+            "hello_dock_collapsed_paths",
+            || Signal::new(BTreeSet::new()),
+        )
 }
 
 /// R811 §5.50 — set branch `id`'s collapsed flag, writing the Signal
@@ -550,9 +552,7 @@ fn view_viewport_raw(state: ButtonState, theme: &Theme) -> Scene {
     let header = Scene::Text(TextNode::styled(
         VIEWPORT_HEADER_TEXT,
         Rect::default(),
-        TextStyle::new()
-            .with_size_px(14)
-            .with_fg(on_surface_muted),
+        TextStyle::new().with_size_px(14).with_fg(on_surface_muted),
     ));
     let button = Scene::Container(
         ContainerNode::new(vec![Scene::Text(TextNode::styled(
@@ -669,7 +669,9 @@ fn view_property_content(state: ButtonState, theme: &Theme) -> Scene {
             property_row(
                 format!(
                     "path: {}",
-                    selected.as_deref().unwrap_or(PROPERTY_PANE_NO_SELECTION_TEXT)
+                    selected
+                        .as_deref()
+                        .unwrap_or(PROPERTY_PANE_NO_SELECTION_TEXT)
                 ),
                 theme,
             ),
@@ -724,7 +726,12 @@ where
         view_floating_placeholder_for(panel_id, theme)
     } else {
         let style = DockPanelStyle::m3_default(panel_id);
-        view_dock_panel(panel_title_for(panel_id), content_fn(state, theme), theme, &style)
+        view_dock_panel(
+            panel_title_for(panel_id),
+            content_fn(state, theme),
+            theme,
+            &style,
+        )
     }
 }
 
@@ -740,8 +747,7 @@ fn view_floating_placeholder_for(panel_id: &str, theme: &Theme) -> Scene {
     view_floating_placeholder(
         panel_id,
         theme,
-        &FloatingPlaceholderStyle::m3_default()
-            .with_label_font_size_px(PROPERTY_PANE_FONT_PX),
+        &FloatingPlaceholderStyle::m3_default().with_label_font_size_px(PROPERTY_PANE_FONT_PX),
     )
 }
 
@@ -750,24 +756,12 @@ fn view_floating_placeholder_for(panel_id: &str, theme: &Theme) -> Scene {
 /// dock-or-placeholder substitution per panel.
 fn view_main_dock(state: ButtonState) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
-    let inspector_pane = dock_or_placeholder(
-        state,
-        &theme,
-        INSPECTOR_PANEL_TAG,
-        view_inspector_content,
-    );
-    let property_pane = dock_or_placeholder(
-        state,
-        &theme,
-        PROPERTY_PANEL_TAG,
-        view_property_content,
-    );
-    let viewport_pane = dock_or_placeholder(
-        state,
-        &theme,
-        VIEWPORT_PANEL_TAG,
-        view_viewport_content,
-    );
+    let inspector_pane =
+        dock_or_placeholder(state, &theme, INSPECTOR_PANEL_TAG, view_inspector_content);
+    let property_pane =
+        dock_or_placeholder(state, &theme, PROPERTY_PANEL_TAG, view_property_content);
+    let viewport_pane =
+        dock_or_placeholder(state, &theme, VIEWPORT_PANEL_TAG, view_viewport_content);
 
     let left_ratio = use_left_split_ratio();
     let main_ratio = use_main_split_ratio();
@@ -896,25 +890,17 @@ impl WidgetCore for DockPanelsView {
             ExtraExternal::new(
                 MAIN_SPLITTER_TAG,
                 Box::new(
-                    SplitterExternal::new(SplitterOrientation::Horizontal)
-                        .attach_ratio(main_ratio),
+                    SplitterExternal::new(SplitterOrientation::Horizontal).attach_ratio(main_ratio),
                 ),
             ),
             ExtraExternal::new(
                 LEFT_SPLITTER_TAG,
                 Box::new(
-                    SplitterExternal::new(SplitterOrientation::Vertical)
-                        .attach_ratio(left_ratio),
+                    SplitterExternal::new(SplitterOrientation::Vertical).attach_ratio(left_ratio),
                 ),
             ),
-            ExtraExternal::new(
-                INSPECTOR_TREE_TAG,
-                Box::new(TreeRowClickExternal::new()),
-            ),
-            ExtraExternal::new(
-                VIEWPORT_CLICK_ROUTER_TAG,
-                Box::new(ClickRouter::new()),
-            ),
+            ExtraExternal::new(INSPECTOR_TREE_TAG, Box::new(TreeRowClickExternal::new())),
+            ExtraExternal::new(VIEWPORT_CLICK_ROUTER_TAG, Box::new(ClickRouter::new())),
         ]
     }
 
@@ -927,9 +913,7 @@ impl WidgetCore for DockPanelsView {
             && let Some(intro) = node.handle.introspect()
             && let Some(IntrospectValue::Text(name)) = intro.query("state")
         {
-            return <Self::State as pinion_core::WidgetStateName>::from_name_or_default(
-                &name,
-            );
+            return <Self::State as pinion_core::WidgetStateName>::from_name_or_default(&name);
         }
         ButtonState::Idle
     }
@@ -950,10 +934,7 @@ impl WidgetCore for DockPanelsView {
 
     /// R683.C §5.16 §5.20 §5.45 §5.49 — reducer arms for the
     /// dock + cross-panel select arc.
-    fn update(
-        _state: Self::State,
-        intent: &Intent,
-    ) -> Vec<pinion_core::command::Command> {
+    fn update(_state: Self::State, intent: &Intent) -> Vec<pinion_core::command::Command> {
         match intent.tag_str() {
             // Tear-off arms — one per panel. Payload carries the
             // panel id the DockPanelExternal was constructed with.
@@ -1329,7 +1310,11 @@ mod tests {
             // Second toggle: inspector docks back.
             toggle_panel_floating("inspector");
             let after_dock = signal.get();
-            assert_eq!(after_dock.len(), 1, "dock-back must remove the floating spec");
+            assert_eq!(
+                after_dock.len(),
+                1,
+                "dock-back must remove the floating spec"
+            );
             assert!(after_dock.iter().all(|w| w.id != "torn-inspector"));
         });
     }
@@ -1348,7 +1333,10 @@ mod tests {
                 &ButtonState::Idle,
                 None,
             );
-            assert!(!main.is_empty(), "docked inspector emits its tree for the main window");
+            assert!(
+                !main.is_empty(),
+                "docked inspector emits its tree for the main window"
+            );
             assert_eq!(main[0].role, AriaRole::Tree, "root node is role=tree");
             assert_eq!(main[0].tag, INSPECTOR_TREE_TAG);
             // A non-host sibling window carries no ghost inspector nodes.
@@ -1357,7 +1345,10 @@ mod tests {
                 &ButtonState::Idle,
                 None,
             );
-            assert!(sibling.is_empty(), "non-host window AT tree has no inspector ghost nodes");
+            assert!(
+                sibling.is_empty(),
+                "non-host window AT tree has no inspector ghost nodes"
+            );
 
             // Float the inspector: the host moves to its floating window.
             toggle_panel_floating(INSPECTOR_PANEL_TAG);
@@ -1366,13 +1357,19 @@ mod tests {
                 &ButtonState::Idle,
                 None,
             );
-            assert!(main_after.is_empty(), "floated inspector leaves no ghosts in the main window");
+            assert!(
+                main_after.is_empty(),
+                "floated inspector leaves no ghosts in the main window"
+            );
             let floating = <DockPanelsView as WidgetView>::access_node_for_window(
                 &floating_window_id(INSPECTOR_PANEL_TAG),
                 &ButtonState::Idle,
                 None,
             );
-            assert!(!floating.is_empty(), "the floating inspector window now carries the tree");
+            assert!(
+                !floating.is_empty(),
+                "the floating inspector window now carries the tree"
+            );
             assert_eq!(floating[0].role, AriaRole::Tree);
         });
     }
@@ -1573,10 +1570,7 @@ mod tests {
             // Pre-condition: clear the slot so the assertion is
             // self-contained.
             signal.set(None);
-            let intent = Intent::new_static(
-                VIEWPORT_BTN_CLICK_INTENT_TAG,
-                IntrospectValue::Null,
-            );
+            let intent = Intent::new_static(VIEWPORT_BTN_CLICK_INTENT_TAG, IntrospectValue::Null);
             let _ = <DockPanelsView as WidgetCore>::update(ButtonState::Idle, &intent);
             assert_eq!(signal.get().as_deref(), Some(VIEWPORT_BTN_RAW_PATH));
         });
@@ -1587,10 +1581,8 @@ mod tests {
         Owner::new().run(|| {
             let signal = use_selected_path();
             signal.set(Some("primed".into()));
-            let intent = Intent::new_static(
-                VIEWPORT_CLICK_ROUTER_INTENT_TAG,
-                IntrospectValue::Null,
-            );
+            let intent =
+                Intent::new_static(VIEWPORT_CLICK_ROUTER_INTENT_TAG, IntrospectValue::Null);
             let _ = <DockPanelsView as WidgetCore>::update(ButtonState::Idle, &intent);
             assert_eq!(signal.get(), None, "Null payload deselects");
         });
@@ -1608,10 +1600,7 @@ mod tests {
             let _ = <DockPanelsView as WidgetCore>::update(ButtonState::Idle, &intent);
             assert_eq!(signal.get().as_deref(), Some("Container"));
 
-            let leave = Intent::new_static(
-                INSPECTOR_HOVER_INTENT_TAG,
-                IntrospectValue::Null,
-            );
+            let leave = Intent::new_static(INSPECTOR_HOVER_INTENT_TAG, IntrospectValue::Null);
             let _ = <DockPanelsView as WidgetCore>::update(ButtonState::Idle, &leave);
             assert_eq!(signal.get(), None, "PointerLeave clears hover");
         });
@@ -1681,13 +1670,17 @@ mod tests {
         Owner::new().run(|| {
             let theme = use_theme(THEME_TAG).theme_animated();
             let rows = flat_visible(&inspector_tree_items(ButtonState::Idle, &theme));
-            assert!(rows.len() > 1, "inspector boots with a populated, expanded tree");
+            assert!(
+                rows.len() > 1,
+                "inspector boots with a populated, expanded tree"
+            );
 
             // (1) A selection on a visible row → composite naming that row.
             let visible = rows[0].id.clone();
             use_selected_path().set(Some(visible.clone()));
-            let af = DockPanelsView::access_focus_target(&ButtonState::Idle, Some(INSPECTOR_TREE_TAG))
-                .expect("a focused inspector yields a focus target");
+            let af =
+                DockPanelsView::access_focus_target(&ButtonState::Idle, Some(INSPECTOR_TREE_TAG))
+                    .expect("a focused inspector yields a focus target");
             assert_eq!(
                 af.active_descendant.as_deref(),
                 Some(composite_row_tag(INSPECTOR_TREE_TAG, &visible).as_str()),
@@ -1696,10 +1689,17 @@ mod tests {
 
             // (2) An off-tree selection never produces a dangling composite.
             use_selected_path().set(Some("ghost/path/never/in/the/tree".to_owned()));
-            let af = DockPanelsView::access_focus_target(&ButtonState::Idle, Some(INSPECTOR_TREE_TAG))
-                .expect("focus target present");
-            assert_eq!(af.active_descendant, None, "off-tree selection drops to atomic");
-            assert_eq!(af.focus_tag, INSPECTOR_TREE_TAG, "focus stays on the tree, atomic");
+            let af =
+                DockPanelsView::access_focus_target(&ButtonState::Idle, Some(INSPECTOR_TREE_TAG))
+                    .expect("focus target present");
+            assert_eq!(
+                af.active_descendant, None,
+                "off-tree selection drops to atomic"
+            );
+            assert_eq!(
+                af.focus_tag, INSPECTOR_TREE_TAG,
+                "focus stays on the tree, atomic"
+            );
 
             // (3) The realistic trigger: select a child, then collapse its parent
             // so the child leaves the visible set → the gate drops to atomic.
@@ -1713,9 +1713,11 @@ mod tests {
                     !after.iter().any(|r| r.id == child),
                     "the collapse hid the selected child",
                 );
-                let af =
-                    DockPanelsView::access_focus_target(&ButtonState::Idle, Some(INSPECTOR_TREE_TAG))
-                        .expect("focus target present");
+                let af = DockPanelsView::access_focus_target(
+                    &ButtonState::Idle,
+                    Some(INSPECTOR_TREE_TAG),
+                )
+                .expect("focus target present");
                 assert_eq!(
                     af.active_descendant, None,
                     "a selection under a collapsed branch never dangles the active descendant",

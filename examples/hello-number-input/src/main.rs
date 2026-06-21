@@ -97,14 +97,14 @@ use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::button::{ButtonExternal, ButtonState};
 use pinion_core::widgets::caret_blink::use_caret_blink;
 use pinion_core::widgets::text_edit::use_text_edit_state;
 use pinion_core::widgets::text_field::{TextFieldExternal, TextFieldState};
 use pinion_core::{Frame, Scene, WidgetCore, WidgetStateName};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::text_field as tf_paint;
 
 use pinion_widget_paint::state_layer::{HOVER, PRESSED};
@@ -152,11 +152,7 @@ const PLUS_GLYPH: &str = "+";
 /// every commit funnels through here, mirroring `SpinButtonExternal`'s
 /// internal re-clamp (R734) without owning a separate value store.
 fn clamp(v: f32) -> f32 {
-    if v.is_nan() {
-        MIN
-    } else {
-        v.clamp(MIN, MAX)
-    }
+    if v.is_nan() { MIN } else { v.clamp(MIN, MAX) }
 }
 
 /// Format a committed value as the canonical field text. Integer display
@@ -280,9 +276,7 @@ fn stepper(tag: &'static str, glyph: &str, state: ButtonState, theme: &Theme) ->
                 .with_fg(theme.resolve(ColorRole::OnSurface)),
         ))])
         .with_tag(tag)
-        .with_style(
-            BoxStyle::filled(stepper_fill(theme, state)).with_corner_radius(FIELD_H / 2),
-        )
+        .with_style(BoxStyle::filled(stepper_fill(theme, state)).with_corner_radius(FIELD_H / 2))
         .with_layout(
             LayoutStyle::new()
                 .flex(FlexDirection::Row)
@@ -436,7 +430,6 @@ impl WidgetCore for NumberView {
         None
     }
 
-
     /// WAI-ARIA editable-spinbutton keyboard model. Up/Down step, Page
     /// keys page-step, Enter normalises the typed text; caret / edit keys
     /// flow to the field; non-numeric printable keys are dropped.
@@ -507,7 +500,10 @@ impl WidgetCore for NumberView {
     }
 
     fn fmt_state_log(state: &NumberViewState) -> String {
-        format!("input={:?} caret={} dec={:?} inc={:?}", state.input, state.caret, state.dec, state.inc)
+        format!(
+            "input={:?} caret={} dec={:?} inc={:?}",
+            state.input, state.caret, state.dec, state.inc
+        )
     }
 }
 
@@ -521,13 +517,19 @@ impl WidgetA11y for NumberView {
     /// Decrement actions the arrow keys drive.
     fn access_node(_state: &NumberViewState, focused: Option<&str>) -> Vec<AccessNode> {
         let value = current_value();
-        vec![AccessNode::new(INPUT_TAG, AriaRole::SpinButton)
-            .with_name("Font size")
-            .with_value(AccessValue::Float { value, min: MIN, max: MAX })
-            .with_state(AccessState {
-                focused: focused == Some(INPUT_TAG),
-                ..AccessState::default()
-            })]
+        vec![
+            AccessNode::new(INPUT_TAG, AriaRole::SpinButton)
+                .with_name("Font size")
+                .with_value(AccessValue::Float {
+                    value,
+                    min: MIN,
+                    max: MAX,
+                })
+                .with_state(AccessState {
+                    focused: focused == Some(INPUT_TAG),
+                    ..AccessState::default()
+                }),
+        ]
     }
 }
 
@@ -535,7 +537,10 @@ impl WidgetView for NumberView {
     type Renderer = HelloNumberInputRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 }
 
@@ -577,19 +582,40 @@ mod tests {
     fn r736_clamp_bounds_and_nan() {
         assert!((clamp(5.0) - MIN).abs() < f32::EPSILON, "below min → min");
         assert!((clamp(100.0) - MAX).abs() < f32::EPSILON, "above max → max");
-        assert!((clamp(20.0) - 20.0).abs() < f32::EPSILON, "in range unchanged");
+        assert!(
+            (clamp(20.0) - 20.0).abs() < f32::EPSILON,
+            "in range unchanged"
+        );
         assert!((clamp(f32::NAN) - MIN).abs() < f32::EPSILON, "NaN → min");
     }
 
     #[test]
     fn r736_parse_clamp_handles_garbage_and_range() {
-        assert!((parse_clamp("16") - 16.0).abs() < f32::EPSILON, "plain integer");
-        assert!((parse_clamp("  24 ") - 24.0).abs() < f32::EPSILON, "whitespace trimmed");
-        assert!((parse_clamp("007") - 7.0).abs() > f32::EPSILON, "007 = 7, clamped to min 8");
-        assert!((parse_clamp("007") - MIN).abs() < f32::EPSILON, "7 clamps up to min 8");
-        assert!((parse_clamp("999") - MAX).abs() < f32::EPSILON, "over-max clamps to max");
+        assert!(
+            (parse_clamp("16") - 16.0).abs() < f32::EPSILON,
+            "plain integer"
+        );
+        assert!(
+            (parse_clamp("  24 ") - 24.0).abs() < f32::EPSILON,
+            "whitespace trimmed"
+        );
+        assert!(
+            (parse_clamp("007") - 7.0).abs() > f32::EPSILON,
+            "007 = 7, clamped to min 8"
+        );
+        assert!(
+            (parse_clamp("007") - MIN).abs() < f32::EPSILON,
+            "7 clamps up to min 8"
+        );
+        assert!(
+            (parse_clamp("999") - MAX).abs() < f32::EPSILON,
+            "over-max clamps to max"
+        );
         assert!((parse_clamp("") - MIN).abs() < f32::EPSILON, "empty → min");
-        assert!((parse_clamp("abc") - MIN).abs() < f32::EPSILON, "garbage → min");
+        assert!(
+            (parse_clamp("abc") - MIN).abs() < f32::EPSILON,
+            "garbage → min"
+        );
     }
 
     #[test]
@@ -617,8 +643,15 @@ mod tests {
         Owner::new().run(|| {
             // Build the external (seeds the field text).
             let _ = boot_scene();
-            assert_eq!(use_text_edit_state(INPUT_TAG).text(), "16", "field seeded to START");
-            assert!((current_value() - START).abs() < f32::EPSILON, "value reads START");
+            assert_eq!(
+                use_text_edit_state(INPUT_TAG).text(),
+                "16",
+                "field seeded to START"
+            );
+            assert!(
+                (current_value() - START).abs() < f32::EPSILON,
+                "value reads START"
+            );
         });
     }
 
@@ -629,7 +662,11 @@ mod tests {
             commit_value(30.0);
             assert_eq!(use_text_edit_state(INPUT_TAG).text(), "30");
             commit_value(999.0);
-            assert_eq!(use_text_edit_state(INPUT_TAG).text(), "72", "clamped to max");
+            assert_eq!(
+                use_text_edit_state(INPUT_TAG).text(),
+                "72",
+                "clamped to max"
+            );
             commit_value(1.0);
             assert_eq!(use_text_edit_state(INPUT_TAG).text(), "8", "clamped to min");
         });
@@ -641,11 +678,20 @@ mod tests {
     fn r736_stepper_clicks_step_the_value() {
         Owner::new().run(|| {
             let _ = boot_scene();
-            let _ = NumberView::update(idle(), &intent_with("num_inc.click", IntrospectValue::Null));
-            assert!((current_value() - 17.0).abs() < f32::EPSILON, "inc click 16 → 17");
-            let _ = NumberView::update(idle(), &intent_with("num_dec.click", IntrospectValue::Null));
-            let _ = NumberView::update(idle(), &intent_with("num_dec.click", IntrospectValue::Null));
-            assert!((current_value() - 15.0).abs() < f32::EPSILON, "dec ×2 17 → 15");
+            let _ =
+                NumberView::update(idle(), &intent_with("num_inc.click", IntrospectValue::Null));
+            assert!(
+                (current_value() - 17.0).abs() < f32::EPSILON,
+                "inc click 16 → 17"
+            );
+            let _ =
+                NumberView::update(idle(), &intent_with("num_dec.click", IntrospectValue::Null));
+            let _ =
+                NumberView::update(idle(), &intent_with("num_dec.click", IntrospectValue::Null));
+            assert!(
+                (current_value() - 15.0).abs() < f32::EPSILON,
+                "dec ×2 17 → 15"
+            );
         });
     }
 
@@ -654,11 +700,19 @@ mod tests {
         Owner::new().run(|| {
             let _ = boot_scene();
             commit_value(MAX);
-            let _ = NumberView::update(idle(), &intent_with("num_inc.click", IntrospectValue::Null));
-            assert!((current_value() - MAX).abs() < f32::EPSILON, "inc at max clamps");
+            let _ =
+                NumberView::update(idle(), &intent_with("num_inc.click", IntrospectValue::Null));
+            assert!(
+                (current_value() - MAX).abs() < f32::EPSILON,
+                "inc at max clamps"
+            );
             commit_value(MIN);
-            let _ = NumberView::update(idle(), &intent_with("num_dec.click", IntrospectValue::Null));
-            assert!((current_value() - MIN).abs() < f32::EPSILON, "dec at min clamps");
+            let _ =
+                NumberView::update(idle(), &intent_with("num_dec.click", IntrospectValue::Null));
+            assert!(
+                (current_value() - MIN).abs() < f32::EPSILON,
+                "dec at min clamps"
+            );
         });
     }
 
@@ -669,14 +723,46 @@ mod tests {
         Owner::new().run(|| {
             let mut scene = boot_scene();
             let m = pinion_core::Modifiers::empty();
-            assert!(NumberView::apply_key(&mut scene, Some(INPUT_TAG), "ArrowUp", m));
-            assert!((current_value() - 17.0).abs() < f32::EPSILON, "ArrowUp 16 → 17");
-            assert!(NumberView::apply_key(&mut scene, Some(INPUT_TAG), "ArrowDown", m));
-            assert!((current_value() - 16.0).abs() < f32::EPSILON, "ArrowDown → 16");
-            assert!(NumberView::apply_key(&mut scene, Some(INPUT_TAG), "PageUp", m));
-            assert!((current_value() - 28.0).abs() < f32::EPSILON, "PageUp +12 → 28");
-            assert!(NumberView::apply_key(&mut scene, Some(INPUT_TAG), "PageDown", m));
-            assert!((current_value() - 16.0).abs() < f32::EPSILON, "PageDown -12 → 16");
+            assert!(NumberView::apply_key(
+                &mut scene,
+                Some(INPUT_TAG),
+                "ArrowUp",
+                m
+            ));
+            assert!(
+                (current_value() - 17.0).abs() < f32::EPSILON,
+                "ArrowUp 16 → 17"
+            );
+            assert!(NumberView::apply_key(
+                &mut scene,
+                Some(INPUT_TAG),
+                "ArrowDown",
+                m
+            ));
+            assert!(
+                (current_value() - 16.0).abs() < f32::EPSILON,
+                "ArrowDown → 16"
+            );
+            assert!(NumberView::apply_key(
+                &mut scene,
+                Some(INPUT_TAG),
+                "PageUp",
+                m
+            ));
+            assert!(
+                (current_value() - 28.0).abs() < f32::EPSILON,
+                "PageUp +12 → 28"
+            );
+            assert!(NumberView::apply_key(
+                &mut scene,
+                Some(INPUT_TAG),
+                "PageDown",
+                m
+            ));
+            assert!(
+                (current_value() - 16.0).abs() < f32::EPSILON,
+                "PageDown -12 → 16"
+            );
         });
     }
 
@@ -692,7 +778,11 @@ mod tests {
                 "Enter",
                 pinion_core::Modifiers::empty(),
             ));
-            assert_eq!(use_text_edit_state(INPUT_TAG).text(), "72", "Enter clamps 99 → max + reformats");
+            assert_eq!(
+                use_text_edit_state(INPUT_TAG).text(),
+                "72",
+                "Enter clamps 99 → max + reformats"
+            );
         });
     }
 
@@ -703,11 +793,28 @@ mod tests {
             use_text_edit_state(INPUT_TAG).set_text(String::new());
             use_text_edit_state(INPUT_TAG).set_caret(0);
             let m = pinion_core::Modifiers::empty();
-            assert!(NumberView::apply_key(&mut scene, Some(INPUT_TAG), "2", m), "digit consumed");
-            assert!(NumberView::apply_key(&mut scene, Some(INPUT_TAG), "4", m), "digit consumed");
-            assert_eq!(use_text_edit_state(INPUT_TAG).text(), "24", "digits inserted");
-            assert!(!NumberView::apply_key(&mut scene, Some(INPUT_TAG), "x", m), "letter dropped");
-            assert_eq!(use_text_edit_state(INPUT_TAG).text(), "24", "letter did not insert");
+            assert!(
+                NumberView::apply_key(&mut scene, Some(INPUT_TAG), "2", m),
+                "digit consumed"
+            );
+            assert!(
+                NumberView::apply_key(&mut scene, Some(INPUT_TAG), "4", m),
+                "digit consumed"
+            );
+            assert_eq!(
+                use_text_edit_state(INPUT_TAG).text(),
+                "24",
+                "digits inserted"
+            );
+            assert!(
+                !NumberView::apply_key(&mut scene, Some(INPUT_TAG), "x", m),
+                "letter dropped"
+            );
+            assert_eq!(
+                use_text_edit_state(INPUT_TAG).text(),
+                "24",
+                "letter did not insert"
+            );
         });
     }
 
@@ -721,7 +828,10 @@ mod tests {
                 "ArrowUp",
                 pinion_core::Modifiers::empty(),
             ));
-            assert!((current_value() - START).abs() < f32::EPSILON, "value unchanged");
+            assert!(
+                (current_value() - START).abs() < f32::EPSILON,
+                "value unchanged"
+            );
         });
     }
 
@@ -744,7 +854,11 @@ mod tests {
             assert_eq!(nodes[0].name.as_deref(), Some("Font size"));
             assert_eq!(
                 nodes[0].value,
-                Some(AccessValue::Float { value: START, min: MIN, max: MAX }),
+                Some(AccessValue::Float {
+                    value: START,
+                    min: MIN,
+                    max: MAX
+                }),
                 "aria-valuenow / valuemin / valuemax",
             );
         });
@@ -754,7 +868,11 @@ mod tests {
     fn r736_focused_flag_tracks_the_input_tag() {
         Owner::new().run(|| {
             let _ = boot_scene();
-            assert!(NumberView::access_node(&idle(), Some(INPUT_TAG))[0].state.focused);
+            assert!(
+                NumberView::access_node(&idle(), Some(INPUT_TAG))[0]
+                    .state
+                    .focused
+            );
             assert!(!NumberView::access_node(&idle(), None)[0].state.focused);
         });
     }

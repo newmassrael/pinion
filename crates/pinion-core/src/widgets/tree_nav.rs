@@ -30,14 +30,14 @@ use std::rc::Rc;
 use super::scroll::ScrollState;
 use super::virtual_list::scroll_offset_to_reveal;
 use super::virtual_select::clamp_nav;
+use crate::Signal;
 use crate::external::{
-    at_index, IntrospectSchema, IntrospectValue, QueryOnlyIntrospect, QuerySource,
+    IntrospectSchema, IntrospectValue, QueryOnlyIntrospect, QuerySource, at_index,
 };
 use crate::reactive::batch;
 use crate::widget_core::ExtraExternal;
-use crate::Signal;
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 /// A node in a navigable tree. The substrate reads only the four facets
 /// WAI-ARIA tree navigation needs — a stable id, the visible label,
@@ -128,7 +128,10 @@ pub fn insert_subtree<N: MutableTreeNode>(
                 let i = index.min(children.len());
                 children.insert(i, node);
             } else {
-                debug_assert!(false, "insert_subtree: parent '{pid}' not found in the tree");
+                debug_assert!(
+                    false,
+                    "insert_subtree: parent '{pid}' not found in the tree"
+                );
                 nodes.push(node);
             }
         }
@@ -305,7 +308,9 @@ fn walk_filtered<N: TreeNode, F: Fn(&N) -> bool>(
 #[must_use]
 pub fn parent_row(rows: &[VisibleRow], index: usize) -> Option<usize> {
     let parent_depth = rows[index].depth.checked_sub(1)?;
-    rows[..index].iter().rposition(|row| row.depth == parent_depth)
+    rows[..index]
+        .iter()
+        .rposition(|row| row.depth == parent_depth)
 }
 
 /// The outcome of resolving one key against the visible rows, decoupled
@@ -361,7 +366,9 @@ pub fn resolve_tree_key(
             }
         }
         "ArrowRight" => {
-            let Some(i) = cursor else { return TreeKey::Consumed };
+            let Some(i) = cursor else {
+                return TreeKey::Consumed;
+            };
             let row = &rows[i];
             if !row.has_children {
                 TreeKey::Consumed // leaf
@@ -377,7 +384,9 @@ pub fn resolve_tree_key(
             }
         }
         "ArrowLeft" => {
-            let Some(i) = cursor else { return TreeKey::Consumed };
+            let Some(i) = cursor else {
+                return TreeKey::Consumed;
+            };
             let row = &rows[i];
             if row.has_children && row.expanded {
                 TreeKey::Collapse(row.id.clone()) // expanded branch → collapse
@@ -390,7 +399,9 @@ pub fn resolve_tree_key(
             }
         }
         "Space" | "Enter" => {
-            let Some(i) = cursor else { return TreeKey::Consumed };
+            let Some(i) = cursor else {
+                return TreeKey::Consumed;
+            };
             if rows[i].has_children {
                 TreeKey::Toggle(rows[i].id.clone())
             } else {
@@ -569,9 +580,16 @@ where
 ///
 /// `rows` is the visible flattening, `cursor` the focused row id, `scroll` the
 /// vertical body scroll, `pitch` the uniform row height.
-pub fn reveal_row_cursor(rows: &[VisibleRow], cursor: Option<&str>, scroll: &ScrollState, pitch: u32) {
+pub fn reveal_row_cursor(
+    rows: &[VisibleRow],
+    cursor: Option<&str>,
+    scroll: &ScrollState,
+    pitch: u32,
+) {
     let Some(id) = cursor else { return };
-    let Some(index) = rows.iter().position(|row| row.id == id) else { return };
+    let Some(index) = rows.iter().position(|row| row.id == id) else {
+        return;
+    };
     let (_, measured_h) = scroll.measured_viewport();
     let offset = scroll_offset_to_reveal(index, scroll.offset_y(), measured_h, pitch);
     scroll.scroll_to(0, offset);
@@ -633,7 +651,10 @@ impl TreeViewIntrospect {
         rows: impl Fn() -> Vec<VisibleRow> + 'static,
         cursor: impl Fn() -> Option<String> + 'static,
     ) -> Self {
-        Self { rows: Box::new(rows), cursor: Box::new(cursor) }
+        Self {
+            rows: Box::new(rows),
+            cursor: Box::new(cursor),
+        }
     }
 }
 
@@ -674,19 +695,29 @@ impl QuerySource for TreeViewIntrospect {
             return Some(row_at(rest, &rows, |r| IntrospectValue::Text(r.id.clone())));
         }
         if let Some(rest) = path.strip_prefix("label_at.") {
-            return Some(row_at(rest, &rows, |r| IntrospectValue::Text(r.label.clone())));
+            return Some(row_at(rest, &rows, |r| {
+                IntrospectValue::Text(r.label.clone())
+            }));
         }
         if let Some(rest) = path.strip_prefix("level_at.") {
-            return Some(row_at(rest, &rows, |r| IntrospectValue::Int(i64::from(r.depth) + 1)));
+            return Some(row_at(rest, &rows, |r| {
+                IntrospectValue::Int(i64::from(r.depth) + 1)
+            }));
         }
         if let Some(rest) = path.strip_prefix("expanded_at.") {
             return Some(row_at(rest, &rows, |r| {
                 // aria-expanded is undefined (Null) for a leaf, Bool for a branch.
-                if r.has_children { IntrospectValue::Bool(r.expanded) } else { IntrospectValue::Null }
+                if r.has_children {
+                    IntrospectValue::Bool(r.expanded)
+                } else {
+                    IntrospectValue::Null
+                }
             }));
         }
         match path {
-            "row_count" => Some(IntrospectValue::Int(i64::try_from(rows.len()).unwrap_or(i64::MAX))),
+            "row_count" => Some(IntrospectValue::Int(
+                i64::try_from(rows.len()).unwrap_or(i64::MAX),
+            )),
             "cursor" => Some((self.cursor)().map_or(IntrospectValue::Null, IntrospectValue::Text)),
             "cursor_index" => {
                 let index = (self.cursor)().and_then(|id| rows.iter().position(|r| r.id == id));
@@ -712,7 +743,12 @@ pub fn tree_view_introspection_extra(
     rows: impl Fn() -> Vec<VisibleRow> + 'static,
     cursor: impl Fn() -> Option<String> + 'static,
 ) -> ExtraExternal {
-    ExtraExternal::new(tag, Box::new(QueryOnlyIntrospect::new(Rc::new(TreeViewIntrospect::new(rows, cursor)))))
+    ExtraExternal::new(
+        tag,
+        Box::new(QueryOnlyIntrospect::new(Rc::new(TreeViewIntrospect::new(
+            rows, cursor,
+        )))),
+    )
 }
 
 #[cfg(test)]
@@ -725,12 +761,12 @@ mod tests {
     //! its `FileNode` [`TreeNode`] glue.
 
     use super::{
-        apply_tree_key, effective_cursor, find_node, find_node_mut, flat_visible,
-        flat_visible_filtered, insert_subtree, parent_row, remove_subtree, resolve_tree_key,
-        set_expanded_in, toggle_expanded, MutableTreeNode, TreeKey, TreeNode, VisibleRow,
+        MutableTreeNode, TreeKey, TreeNode, VisibleRow, apply_tree_key, effective_cursor,
+        find_node, find_node_mut, flat_visible, flat_visible_filtered, insert_subtree, parent_row,
+        remove_subtree, resolve_tree_key, set_expanded_in, toggle_expanded,
     };
-    use crate::reactive::Owner;
     use crate::Signal;
+    use crate::reactive::Owner;
 
     /// Page jump used by the tree consumers (mirrors `hello-tree-view`'s
     /// `NAV_PAGE`); larger than the sample listing so the page arm
@@ -852,11 +888,21 @@ mod tests {
         let ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
         assert_eq!(
             ids,
-            ["src", "src/main.rs", "src/lib.rs", "src/widgets", "tests", "docs"],
+            [
+                "src",
+                "src/main.rs",
+                "src/lib.rs",
+                "src/widgets",
+                "tests",
+                "docs"
+            ],
             "flat visible order = depth-first preorder over expanded branches",
         );
         let labels: Vec<&str> = rows.iter().map(|r| r.label.as_str()).collect();
-        assert_eq!(labels, ["src", "main.rs", "lib.rs", "widgets", "tests", "docs"]);
+        assert_eq!(
+            labels,
+            ["src", "main.rs", "lib.rs", "widgets", "tests", "docs"]
+        );
     }
 
     #[test]
@@ -870,8 +916,14 @@ mod tests {
         assert_eq!((lib.depth, lib.position_in_set, lib.size_of_set), (1, 2, 3));
         assert!(!lib.has_children, "a leaf reports no children");
         let docs = by_id("docs");
-        assert_eq!((docs.depth, docs.position_in_set, docs.size_of_set), (0, 3, 3));
-        assert!(docs.has_children && !docs.expanded, "docs is a collapsed branch");
+        assert_eq!(
+            (docs.depth, docs.position_in_set, docs.size_of_set),
+            (0, 3, 3)
+        );
+        assert!(
+            docs.has_children && !docs.expanded,
+            "docs is a collapsed branch"
+        );
     }
 
     #[test]
@@ -886,17 +938,26 @@ mod tests {
 
     #[test]
     fn arrow_down_moves_to_next_visible_row() {
-        assert_eq!(key(Some("src"), "ArrowDown"), TreeKey::Focus("src/main.rs".into()));
+        assert_eq!(
+            key(Some("src"), "ArrowDown"),
+            TreeKey::Focus("src/main.rs".into())
+        );
     }
 
     #[test]
     fn arrow_up_moves_to_previous_visible_row() {
-        assert_eq!(key(Some("src/lib.rs"), "ArrowUp"), TreeKey::Focus("src/main.rs".into()));
+        assert_eq!(
+            key(Some("src/lib.rs"), "ArrowUp"),
+            TreeKey::Focus("src/main.rs".into())
+        );
     }
 
     #[test]
     fn arrow_down_clamps_at_last_row_no_wrap() {
-        assert_eq!(key(Some("docs"), "ArrowDown"), TreeKey::Focus("docs".into()));
+        assert_eq!(
+            key(Some("docs"), "ArrowDown"),
+            TreeKey::Focus("docs".into())
+        );
     }
 
     #[test]
@@ -918,12 +979,18 @@ mod tests {
 
     #[test]
     fn arrow_right_on_collapsed_branch_expands() {
-        assert_eq!(key(Some("tests"), "ArrowRight"), TreeKey::Expand("tests".into()));
+        assert_eq!(
+            key(Some("tests"), "ArrowRight"),
+            TreeKey::Expand("tests".into())
+        );
     }
 
     #[test]
     fn arrow_right_on_expanded_branch_descends_to_first_child() {
-        assert_eq!(key(Some("src"), "ArrowRight"), TreeKey::Focus("src/main.rs".into()));
+        assert_eq!(
+            key(Some("src"), "ArrowRight"),
+            TreeKey::Focus("src/main.rs".into())
+        );
     }
 
     #[test]
@@ -933,17 +1000,26 @@ mod tests {
 
     #[test]
     fn arrow_left_on_expanded_branch_collapses() {
-        assert_eq!(key(Some("src"), "ArrowLeft"), TreeKey::Collapse("src".into()));
+        assert_eq!(
+            key(Some("src"), "ArrowLeft"),
+            TreeKey::Collapse("src".into())
+        );
     }
 
     #[test]
     fn arrow_left_on_collapsed_branch_ascends_to_parent() {
-        assert_eq!(key(Some("src/widgets"), "ArrowLeft"), TreeKey::Focus("src".into()));
+        assert_eq!(
+            key(Some("src/widgets"), "ArrowLeft"),
+            TreeKey::Focus("src".into())
+        );
     }
 
     #[test]
     fn arrow_left_on_leaf_ascends_to_parent() {
-        assert_eq!(key(Some("src/main.rs"), "ArrowLeft"), TreeKey::Focus("src".into()));
+        assert_eq!(
+            key(Some("src/main.rs"), "ArrowLeft"),
+            TreeKey::Focus("src".into())
+        );
     }
 
     #[test]
@@ -996,7 +1072,10 @@ mod tests {
             find_node_mut(&mut nodes, "src/widgets").unwrap().expanded(),
             "set_expanded mutation persists"
         );
-        assert!(find_node_mut(&mut nodes, "absent").is_none(), "missing id -> None");
+        assert!(
+            find_node_mut(&mut nodes, "absent").is_none(),
+            "missing id -> None"
+        );
     }
 
     // ── `flat_visible_filtered` recursive path-to-match proxy (R821) ──
@@ -1012,7 +1091,14 @@ mod tests {
     fn shape(rows: &[VisibleRow]) -> Vec<(&str, u32, u32, u32, bool, bool)> {
         rows.iter()
             .map(|r| {
-                (r.id.as_str(), r.depth, r.position_in_set, r.size_of_set, r.has_children, r.expanded)
+                (
+                    r.id.as_str(),
+                    r.depth,
+                    r.position_in_set,
+                    r.size_of_set,
+                    r.has_children,
+                    r.expanded,
+                )
             })
             .collect()
     }
@@ -1044,7 +1130,13 @@ mod tests {
         // so the branch shows as a filtered leaf (has_children = false) and
         // the `tests` / `docs` siblings are pruned.
         let rows = flat_visible_filtered(&sample(), label_contains("widgets"));
-        assert_eq!(shape(&rows), [("src", 0, 1, 1, true, true), ("src/widgets", 1, 1, 1, false, false)]);
+        assert_eq!(
+            shape(&rows),
+            [
+                ("src", 0, 1, 1, true, true),
+                ("src/widgets", 1, 1, 1, false, false)
+            ]
+        );
     }
 
     #[test]
@@ -1054,7 +1146,10 @@ mod tests {
         let upper = flat_visible_filtered(&sample(), label_contains("MAIN"));
         assert_eq!(
             shape(&upper),
-            [("src", 0, 1, 1, true, true), ("src/main.rs", 1, 1, 1, false, false)],
+            [
+                ("src", 0, 1, 1, true, true),
+                ("src/main.rs", 1, 1, 1, false, false)
+            ],
         );
     }
 
@@ -1072,16 +1167,29 @@ mod tests {
             let nodes = Signal::new(sample());
             // `tests` boots collapsed → toggling reveals its child row.
             toggle_expanded(&nodes, "tests");
-            let ids: Vec<String> = flat_visible(&nodes.get()).iter().map(|r| r.id.clone()).collect();
-            assert!(ids.iter().any(|id| id == "tests/it.rs"), "toggled branch reveals its child");
+            let ids: Vec<String> = flat_visible(&nodes.get())
+                .iter()
+                .map(|r| r.id.clone())
+                .collect();
+            assert!(
+                ids.iter().any(|id| id == "tests/it.rs"),
+                "toggled branch reveals its child"
+            );
             // Toggling back hides it again.
             toggle_expanded(&nodes, "tests");
             let after = flat_visible(&nodes.get());
-            assert!(after.iter().all(|r| r.id != "tests/it.rs"), "second toggle re-collapses");
+            assert!(
+                after.iter().all(|r| r.id != "tests/it.rs"),
+                "second toggle re-collapses"
+            );
             // A leaf toggle is a no-op: no value change, so no revision bump.
             let rev = nodes.revision();
             toggle_expanded(&nodes, "src/main.rs");
-            assert_eq!(nodes.revision(), rev, "toggling a leaf does not write the signal");
+            assert_eq!(
+                nodes.revision(),
+                rev,
+                "toggling a leaf does not write the signal"
+            );
         });
     }
 
@@ -1091,12 +1199,23 @@ mod tests {
             let nodes = Signal::new(sample());
             // `src` boots expanded → collapsing hides every descendant.
             set_expanded_in(&nodes, "src", false);
-            let ids: Vec<String> = flat_visible(&nodes.get()).iter().map(|r| r.id.clone()).collect();
-            assert_eq!(ids, ["src", "tests", "docs"], "collapsed branch hides its subtree");
+            let ids: Vec<String> = flat_visible(&nodes.get())
+                .iter()
+                .map(|r| r.id.clone())
+                .collect();
+            assert_eq!(
+                ids,
+                ["src", "tests", "docs"],
+                "collapsed branch hides its subtree"
+            );
             // Re-collapsing an already-collapsed branch is a no-op.
             let rev = nodes.revision();
             set_expanded_in(&nodes, "src", false);
-            assert_eq!(nodes.revision(), rev, "redundant set does not write the signal");
+            assert_eq!(
+                nodes.revision(),
+                rev,
+                "redundant set does not write the signal"
+            );
         });
     }
 
@@ -1128,23 +1247,59 @@ mod tests {
         use crate::external::{IntrospectValue, QuerySource};
         // sample() visible order: src, src/main.rs, src/lib.rs, src/widgets,
         // tests, docs (6 rows); cursor parked on src/lib.rs.
-        let src = TreeViewIntrospect::new(|| flat_visible(&sample()), || Some(String::from("src/lib.rs")));
-        assert_eq!(src.introspect_query("row_count"), Some(IntrospectValue::Int(6)));
-        assert_eq!(src.introspect_query("cursor"), Some(IntrospectValue::Text("src/lib.rs".into())));
-        assert_eq!(src.introspect_query("cursor_index"), Some(IntrospectValue::Int(2)));
+        let src = TreeViewIntrospect::new(
+            || flat_visible(&sample()),
+            || Some(String::from("src/lib.rs")),
+        );
+        assert_eq!(
+            src.introspect_query("row_count"),
+            Some(IntrospectValue::Int(6))
+        );
+        assert_eq!(
+            src.introspect_query("cursor"),
+            Some(IntrospectValue::Text("src/lib.rs".into()))
+        );
+        assert_eq!(
+            src.introspect_query("cursor_index"),
+            Some(IntrospectValue::Int(2))
+        );
         // Per-position id / label.
-        assert_eq!(src.introspect_query("id_at.0"), Some(IntrospectValue::Text("src".into())));
-        assert_eq!(src.introspect_query("label_at.1"), Some(IntrospectValue::Text("main.rs".into())));
+        assert_eq!(
+            src.introspect_query("id_at.0"),
+            Some(IntrospectValue::Text("src".into()))
+        );
+        assert_eq!(
+            src.introspect_query("label_at.1"),
+            Some(IntrospectValue::Text("main.rs".into()))
+        );
         // aria-level = depth + 1; aria-expanded = Bool for a branch.
-        assert_eq!(src.introspect_query("level_at.0"), Some(IntrospectValue::Int(1)));
-        assert_eq!(src.introspect_query("expanded_at.0"), Some(IntrospectValue::Bool(true)));
+        assert_eq!(
+            src.introspect_query("level_at.0"),
+            Some(IntrospectValue::Int(1))
+        );
+        assert_eq!(
+            src.introspect_query("expanded_at.0"),
+            Some(IntrospectValue::Bool(true))
+        );
         // src/widgets is a collapsed branch one level deeper.
-        assert_eq!(src.introspect_query("level_at.3"), Some(IntrospectValue::Int(2)));
-        assert_eq!(src.introspect_query("expanded_at.3"), Some(IntrospectValue::Bool(false)));
+        assert_eq!(
+            src.introspect_query("level_at.3"),
+            Some(IntrospectValue::Int(2))
+        );
+        assert_eq!(
+            src.introspect_query("expanded_at.3"),
+            Some(IntrospectValue::Bool(false))
+        );
         // A leaf's aria-expanded is undefined (Null).
-        assert_eq!(src.introspect_query("expanded_at.1"), Some(IntrospectValue::Null));
+        assert_eq!(
+            src.introspect_query("expanded_at.1"),
+            Some(IntrospectValue::Null)
+        );
         // Out-of-range position is present-but-empty; undeclared path is absent.
-        assert_eq!(src.introspect_query("id_at.99"), Some(IntrospectValue::Null));
+        assert_eq!(
+            src.introspect_query("id_at.99"),
+            Some(IntrospectValue::Null)
+        );
         assert_eq!(src.introspect_query("nope"), None);
     }
 
@@ -1155,8 +1310,16 @@ mod tests {
         // never present) returns None so the binding never advertises a
         // dangling aria-activedescendant.
         let rows = flat_visible(&sample()); // src, src/main.rs, src/lib.rs, src/widgets, tests, docs
-        assert_eq!(effective_cursor(&rows, Some("src/lib.rs")), Some("src/lib.rs"), "visible passes");
-        assert_eq!(effective_cursor(&rows, Some("ghost")), None, "off-list cursor gates to None");
+        assert_eq!(
+            effective_cursor(&rows, Some("src/lib.rs")),
+            Some("src/lib.rs"),
+            "visible passes"
+        );
+        assert_eq!(
+            effective_cursor(&rows, Some("ghost")),
+            None,
+            "off-list cursor gates to None"
+        );
         assert_eq!(effective_cursor(&rows, None), None, "no cursor → None");
     }
 
@@ -1166,12 +1329,23 @@ mod tests {
         use crate::external::{IntrospectValue, QuerySource};
         let none = TreeViewIntrospect::new(|| flat_visible(&sample()), || None);
         assert_eq!(none.introspect_query("cursor"), Some(IntrospectValue::Null));
-        assert_eq!(none.introspect_query("cursor_index"), Some(IntrospectValue::Null));
+        assert_eq!(
+            none.introspect_query("cursor_index"),
+            Some(IntrospectValue::Null)
+        );
         // A cursor on a collapsed-away id is reported but has no visible index.
-        let hidden =
-            TreeViewIntrospect::new(|| flat_visible(&sample()), || Some(String::from("tests/it.rs")));
-        assert_eq!(hidden.introspect_query("cursor"), Some(IntrospectValue::Text("tests/it.rs".into())));
-        assert_eq!(hidden.introspect_query("cursor_index"), Some(IntrospectValue::Null));
+        let hidden = TreeViewIntrospect::new(
+            || flat_visible(&sample()),
+            || Some(String::from("tests/it.rs")),
+        );
+        assert_eq!(
+            hidden.introspect_query("cursor"),
+            Some(IntrospectValue::Text("tests/it.rs".into()))
+        );
+        assert_eq!(
+            hidden.introspect_query("cursor_index"),
+            Some(IntrospectValue::Null)
+        );
     }
 
     #[test]
@@ -1179,10 +1353,23 @@ mod tests {
         use super::TreeViewIntrospect;
         use crate::external::QuerySource;
         let src = TreeViewIntrospect::new(Vec::new, || None);
-        let names: Vec<&str> = src.introspect_schema().fields.iter().map(|(n, _)| *n).collect();
+        let names: Vec<&str> = src
+            .introspect_schema()
+            .fields
+            .iter()
+            .map(|(n, _)| *n)
+            .collect();
         assert_eq!(
             names,
-            ["row_count", "cursor", "cursor_index", "id_at", "label_at", "level_at", "expanded_at"],
+            [
+                "row_count",
+                "cursor",
+                "cursor_index",
+                "id_at",
+                "label_at",
+                "level_at",
+                "expanded_at"
+            ],
         );
     }
 
@@ -1249,7 +1436,10 @@ mod tests {
     fn find_node_locates_at_any_depth_immutably() {
         let tree = sample();
         assert_eq!(find_node(&tree, "src").map(TreeNode::id), Some("src"));
-        assert_eq!(find_node(&tree, "src/widgets/mod.rs").map(TreeNode::id), Some("src/widgets/mod.rs"));
+        assert_eq!(
+            find_node(&tree, "src/widgets/mod.rs").map(TreeNode::id),
+            Some("src/widgets/mod.rs")
+        );
         assert!(find_node(&tree, "no-such-id").is_none());
     }
 
@@ -1258,10 +1448,23 @@ mod tests {
         let mut tree = sample();
         let taken = remove_subtree(&mut tree, "src/widgets").expect("widgets removed");
         assert_eq!(taken.id, "src/widgets");
-        assert_eq!(taken.children.len(), 1, "the subtree's child travels with it");
-        assert!(!all_ids(&tree).contains(&"src/widgets".to_owned()), "gone from the tree");
-        assert!(!all_ids(&tree).contains(&"src/widgets/mod.rs".to_owned()), "and its descendant");
-        assert!(remove_subtree(&mut tree, "no-such-id").is_none(), "absent id → None");
+        assert_eq!(
+            taken.children.len(),
+            1,
+            "the subtree's child travels with it"
+        );
+        assert!(
+            !all_ids(&tree).contains(&"src/widgets".to_owned()),
+            "gone from the tree"
+        );
+        assert!(
+            !all_ids(&tree).contains(&"src/widgets/mod.rs".to_owned()),
+            "and its descendant"
+        );
+        assert!(
+            remove_subtree(&mut tree, "no-such-id").is_none(),
+            "absent id → None"
+        );
     }
 
     #[test]
@@ -1270,11 +1473,23 @@ mod tests {
         let node = TestNode::leaf("src/new.rs", "new.rs");
         insert_subtree(&mut tree, Some("src"), 1, node);
         let src = find_node_mut(&mut tree, "src").expect("src present");
-        assert_eq!(src.children[1].id, "src/new.rs", "inserted at index 1 under src");
+        assert_eq!(
+            src.children[1].id, "src/new.rs",
+            "inserted at index 1 under src"
+        );
         // An over-range index clamps to the end rather than panicking.
-        insert_subtree(&mut tree, Some("src"), 999, TestNode::leaf("src/end.rs", "end.rs"));
+        insert_subtree(
+            &mut tree,
+            Some("src"),
+            999,
+            TestNode::leaf("src/end.rs", "end.rs"),
+        );
         let src = find_node_mut(&mut tree, "src").expect("src present");
-        assert_eq!(src.children.last().unwrap().id, "src/end.rs", "over-range index clamps to end");
+        assert_eq!(
+            src.children.last().unwrap().id,
+            "src/end.rs",
+            "over-range index clamps to end"
+        );
         // parent = None inserts at root.
         insert_subtree(&mut tree, None, 0, TestNode::leaf("root.rs", "root.rs"));
         assert_eq!(tree[0].id, "root.rs", "None parent inserts at root");
@@ -1287,10 +1502,19 @@ mod tests {
         let moved = remove_subtree(&mut tree, "src/widgets").expect("removed");
         insert_subtree(&mut tree, Some("docs"), 0, moved);
         let docs = find_node_mut(&mut tree, "docs").expect("docs present");
-        assert_eq!(docs.children[0].id, "src/widgets", "subtree reparented under docs");
-        assert_eq!(docs.children[0].children[0].id, "src/widgets/mod.rs", "with its child");
+        assert_eq!(
+            docs.children[0].id, "src/widgets",
+            "subtree reparented under docs"
+        );
+        assert_eq!(
+            docs.children[0].children[0].id, "src/widgets/mod.rs",
+            "with its child"
+        );
         // src no longer holds it.
         let src = find_node_mut(&mut tree, "src").expect("src present");
-        assert!(src.children.iter().all(|c| c.id != "src/widgets"), "removed from old parent");
+        assert!(
+            src.children.iter().all(|c| c.id != "src/widgets"),
+            "removed from old parent"
+        );
     }
 }

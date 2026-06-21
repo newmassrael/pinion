@@ -63,12 +63,12 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::external::{
-    query_proxy_external_impl, ExternalIntrospect, InterveneError, IntrospectSchema,
-    IntrospectValue, InvokeError,
+    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
+    query_proxy_external_impl,
 };
 use crate::reactive::{Owner, Signal};
 use crate::undo::{UndoCommand, UndoStack};
-use crate::widgets::order_memo::{source_at_value, OrderMemo};
+use crate::widgets::order_memo::{OrderMemo, source_at_value};
 use crate::widgets::table::{cell_cmp, cycle_col_sort, grid_order_by};
 use crate::widgets::view_order::{sort_dir_from_str, sort_dir_str};
 
@@ -169,7 +169,9 @@ impl FilterOp {
             ("<", FilterOp::Lt),
             (">", FilterOp::Gt),
         ];
-        TOKENS.iter().find_map(|&(tok, op)| s.strip_prefix(tok).map(|rest| (op, rest)))
+        TOKENS
+            .iter()
+            .find_map(|&(tok, op)| s.strip_prefix(tok).map(|rest| (op, rest)))
     }
 
     /// Whether `cell` text satisfies `self <value>`. Ordered ops route the
@@ -231,7 +233,11 @@ impl ColumnFacet {
     /// A facet `col op value`.
     #[must_use]
     pub fn new(col: usize, op: FilterOp, value: impl Into<String>) -> Self {
-        Self { col, op, value: value.into() }
+        Self {
+            col,
+            op,
+            value: value.into(),
+        }
     }
 
     /// Render as the wire form `"<col><op><value>"` (e.g. `"1>=500"`,
@@ -257,7 +263,11 @@ impl ColumnFacet {
         }
         let col = s[..split].parse::<usize>().ok()?;
         let (op, value) = FilterOp::parse_prefix(&s[split..])?;
-        Some(Self { col, op, value: value.to_string() })
+        Some(Self {
+            col,
+            op,
+            value: value.to_string(),
+        })
     }
 }
 
@@ -283,13 +293,17 @@ impl GridFilter {
     /// "Active")` replaces the former `GridFilter{col:2, value:"Active".into()}`).
     #[must_use]
     pub fn eq(col: usize, value: impl Into<String>) -> Self {
-        Self { facets: vec![ColumnFacet::new(col, FilterOp::Eq, value)] }
+        Self {
+            facets: vec![ColumnFacet::new(col, FilterOp::Eq, value)],
+        }
     }
 
     /// A single facet with an explicit op.
     #[must_use]
     pub fn single(facet: ColumnFacet) -> Self {
-        Self { facets: vec![facet] }
+        Self {
+            facets: vec![facet],
+        }
     }
 
     /// A conjunction of facets (combined with logical AND). An empty vec =
@@ -306,7 +320,9 @@ impl GridFilter {
     /// the consumer's policy" ruling). An empty conjunction passes vacuously.
     #[must_use]
     pub fn matches<'a, F: Fn(usize) -> &'a str>(&self, cell: F) -> bool {
-        self.facets.iter().all(|f| f.op.matches(cell(f.col), &f.value))
+        self.facets
+            .iter()
+            .all(|f| f.op.matches(cell(f.col), &f.value))
     }
 
     /// Drop any facet whose column is out of range for a `col_count`-wide grid;
@@ -333,9 +349,12 @@ impl GridFilter {
 #[must_use]
 pub fn grid_filter_str(filter: Option<&GridFilter>) -> String {
     match filter {
-        Some(f) if !f.facets.is_empty() => {
-            f.facets.iter().map(ColumnFacet::to_wire).collect::<Vec<_>>().join("&")
-        }
+        Some(f) if !f.facets.is_empty() => f
+            .facets
+            .iter()
+            .map(ColumnFacet::to_wire)
+            .collect::<Vec<_>>()
+            .join("&"),
         _ => "none".to_string(),
     }
 }
@@ -407,7 +426,10 @@ impl GridSortState {
     /// symmetry with [`ScrollState::with_tag`](crate::widgets::scroll::ScrollState::with_tag).
     #[must_use]
     pub fn with_tag(key: &'static str, col_count: usize, cells: Vec<Vec<String>>) -> Self {
-        Self { tag: Some(key), ..Self::new(col_count, cells) }
+        Self {
+            tag: Some(key),
+            ..Self::new(col_count, cells)
+        }
     }
 
     /// The `use_grid_sort` cache key, or `None` when constructed directly.
@@ -431,7 +453,10 @@ impl GridSortState {
     /// The cell text at `(row, col)`, or `""` out of range.
     #[must_use]
     pub fn cell(&self, row: usize, col: usize) -> &str {
-        self.cells.get(row).and_then(|r| r.get(col)).map_or("", String::as_str)
+        self.cells
+            .get(row)
+            .and_then(|r| r.get(col))
+            .map_or("", String::as_str)
     }
 
     /// Active sort key `(col, ascending)`, or `None` when unsorted.
@@ -506,7 +531,8 @@ impl GridSortState {
     /// ascending) via the [`cycle_col_sort`] SSOT. Out-of-range `col` is a
     /// silent no-op.
     pub fn cycle_sort(&self, col: usize) {
-        self.sort.set(cycle_col_sort(self.sort.get(), col, self.col_count));
+        self.sort
+            .set(cycle_col_sort(self.sort.get(), col, self.col_count));
     }
 
     /// R783 §5.40 — set the column filter directly (`None` clears). A
@@ -584,7 +610,12 @@ impl GridSortEdit {
         after: Option<(usize, bool)>,
         label: impl Into<Cow<'static, str>>,
     ) -> Self {
-        Self { state: Rc::clone(state), before: state.sort(), after, label: label.into() }
+        Self {
+            state: Rc::clone(state),
+            before: state.sort(),
+            after,
+            label: label.into(),
+        }
     }
 }
 
@@ -662,7 +693,11 @@ impl GridSortExternal {
     /// `intervene`) so the undo timeline captures them all.
     fn apply_sort(&self, after: Option<(usize, bool)>) {
         if let Some(stack) = &self.undo {
-            stack.record(GridSortEdit::capture(&self.state, after, format!("Sort {}", grid_sort_str(after))));
+            stack.record(GridSortEdit::capture(
+                &self.state,
+                after,
+                format!("Sort {}", grid_sort_str(after)),
+            ));
         } else {
             self.state.set_sort(after);
         }
@@ -685,8 +720,7 @@ impl GridSortExternal {
         // modifier-held header release ("h1:PointerUp:s") still cycles the
         // sort (the hand-rolled split_once read "PointerUp:s" as the event
         // name and the activation test silently failed).
-        let Some((key, event_name, _mods)) =
-            crate::composite_tag::split_send_payload(payload)
+        let Some((key, event_name, _mods)) = crate::composite_tag::split_send_payload(payload)
         else {
             return;
         };
@@ -760,9 +794,9 @@ impl ExternalIntrospect for GridSortExternal {
             "sort_dir" => Some(IntrospectValue::Text(
                 sort_dir_str(self.state.sort().map(|(_, dir)| dir)).into(),
             )),
-            "filter" => {
-                Some(IntrospectValue::Text(grid_filter_str(self.state.filter().as_ref())))
-            }
+            "filter" => Some(IntrospectValue::Text(grid_filter_str(
+                self.state.filter().as_ref(),
+            ))),
             "view_len" => Some(IntrospectValue::Int(
                 i64::try_from(self.state.view_len()).unwrap_or(i64::MAX),
             )),
@@ -807,7 +841,11 @@ impl ExternalIntrospect for GridSortExternal {
         }
     }
 
-    fn invoke(&mut self, path: &str, args: IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+    fn invoke(
+        &mut self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
         match path {
             // AI-first sort cycle on a column — returns the resulting compound
             // sort string in one round-trip.
@@ -829,7 +867,9 @@ impl ExternalIntrospect for GridSortExternal {
                     IntrospectValue::Null => self.apply_set_filter(None),
                     _ => return Err(InvokeError::TypeMismatch),
                 };
-                Ok(IntrospectValue::Int(i64::try_from(view_len).unwrap_or(i64::MAX)))
+                Ok(IntrospectValue::Int(
+                    i64::try_from(view_len).unwrap_or(i64::MAX),
+                ))
             }
             // R51.42 §5.35 composite pointer channel: a clicked column header
             // routes the pointer arc here as `<key>:<EventName>`.
@@ -970,7 +1010,10 @@ mod tests {
             let out = ext.invoke("cycle_sort", IntrospectValue::Int(0)).unwrap();
             assert_eq!(out, IntrospectValue::Text("0:ascending".into()));
             assert_eq!(ext.query("sort_col"), Some(IntrospectValue::Int(0)));
-            assert_eq!(ext.query("sort"), Some(IntrospectValue::Text("0:ascending".into())));
+            assert_eq!(
+                ext.query("sort"),
+                Some(IntrospectValue::Text("0:ascending".into()))
+            );
         });
     }
 
@@ -980,11 +1023,16 @@ mod tests {
         owner.run(|| {
             let st = Rc::new(state());
             let mut ext = GridSortExternal::new(Rc::clone(&st));
-            ext.intervene("sort", IntrospectValue::Text("1:descending".into())).unwrap();
+            ext.intervene("sort", IntrospectValue::Text("1:descending".into()))
+                .unwrap();
             assert_eq!(st.sort(), Some((1, false)));
-            ext.intervene("sort", IntrospectValue::Text("none".into())).unwrap();
+            ext.intervene("sort", IntrospectValue::Text("none".into()))
+                .unwrap();
             assert_eq!(st.sort(), None);
-            assert_eq!(ext.intervene("count", IntrospectValue::Int(0)), Err(InterveneError::ReadOnly));
+            assert_eq!(
+                ext.intervene("count", IntrospectValue::Int(0)),
+                Err(InterveneError::ReadOnly)
+            );
         });
     }
 
@@ -998,7 +1046,11 @@ mod tests {
         edit.redo();
         assert_eq!(st.sort(), Some((1, false)), "redo applies the after sort");
         edit.undo();
-        assert_eq!(st.sort(), Some((0, true)), "undo restores the captured before sort");
+        assert_eq!(
+            st.sort(),
+            Some((0, true)),
+            "undo restores the captured before sort"
+        );
         assert_eq!(edit.label(), "Sort 1:descending");
     }
 
@@ -1011,8 +1063,13 @@ mod tests {
         owner.run(|| {
             let st = Rc::new(state());
             let mut ext = GridSortExternal::new(Rc::clone(&st));
-            ext.invoke("send", IntrospectValue::Text("h0:PointerUp:s".into())).unwrap();
-            assert_eq!(st.sort(), Some((0, true)), "Shift+click still cycles the sort");
+            ext.invoke("send", IntrospectValue::Text("h0:PointerUp:s".into()))
+                .unwrap();
+            assert_eq!(
+                st.sort(),
+                Some((0, true)),
+                "Shift+click still cycles the sort"
+            );
         });
     }
 
@@ -1025,14 +1082,21 @@ mod tests {
             let mut ext = GridSortExternal::new(Rc::clone(&st)).with_undo(Rc::clone(&stack));
 
             // Header click cycles + records.
-            ext.invoke("send", IntrospectValue::Text(format!("h0:{}", PointerWireEvent::Up.as_wire_name())))
-                .unwrap();
+            ext.invoke(
+                "send",
+                IntrospectValue::Text(format!("h0:{}", PointerWireEvent::Up.as_wire_name())),
+            )
+            .unwrap();
             assert_eq!(st.sort(), Some((0, true)));
-            assert!(stack.can_undo(), "the header-click sort is on the undo timeline");
+            assert!(
+                stack.can_undo(),
+                "the header-click sort is on the undo timeline"
+            );
 
             // invoke + intervene also record onto the same timeline.
             ext.invoke("cycle_sort", IntrospectValue::Int(0)).unwrap(); // 0:desc
-            ext.intervene("sort", IntrospectValue::Text("1:ascending".into())).unwrap();
+            ext.intervene("sort", IntrospectValue::Text("1:ascending".into()))
+                .unwrap();
             assert_eq!(st.sort(), Some((1, true)));
 
             // Unwind the whole timeline: 1:asc -> 0:desc -> 0:asc -> none.
@@ -1044,7 +1108,11 @@ mod tests {
             assert_eq!(st.sort(), None, "undo the header click → unsorted");
             // Redo re-applies forward.
             stack.redo();
-            assert_eq!(st.sort(), Some((0, true)), "redo re-applies the header click");
+            assert_eq!(
+                st.sort(),
+                Some((0, true)),
+                "redo re-applies the header click"
+            );
         });
     }
 
@@ -1055,7 +1123,11 @@ mod tests {
             let st = Rc::new(state());
             let mut ext = GridSortExternal::new(Rc::clone(&st));
             ext.invoke("cycle_sort", IntrospectValue::Int(1)).unwrap();
-            assert_eq!(st.sort(), Some((1, true)), "no undo stack → direct mutation (unchanged behaviour)");
+            assert_eq!(
+                st.sort(),
+                Some((1, true)),
+                "no undo stack → direct mutation (unchanged behaviour)"
+            );
         });
     }
 
@@ -1084,9 +1156,16 @@ mod tests {
         assert_eq!(grid_filter_str(None), "none");
         assert_eq!(grid_filter_str(Some(&GridFilter::eq(2, "Done"))), "2=Done");
         assert_eq!(grid_filter_from_str("none"), None, "no facet → unfiltered");
-        assert_eq!(grid_filter_from_str("x=Done"), None, "non-numeric column → unfiltered");
+        assert_eq!(
+            grid_filter_from_str("x=Done"),
+            None,
+            "non-numeric column → unfiltered"
+        );
         // The value half is verbatim, even if it contains '=' (back-compat).
-        assert_eq!(grid_filter_from_str("1=a=b"), Some(GridFilter::eq(1, "a=b")));
+        assert_eq!(
+            grid_filter_from_str("1=a=b"),
+            Some(GridFilter::eq(1, "a=b"))
+        );
     }
 
     #[test]
@@ -1118,13 +1197,29 @@ mod tests {
             FilterOp::Ge,
         ] {
             let facet = ColumnFacet::new(3, op, "500");
-            assert_eq!(ColumnFacet::from_wire(&facet.to_wire()), Some(facet), "{op:?} round-trips");
+            assert_eq!(
+                ColumnFacet::from_wire(&facet.to_wire()),
+                Some(facet),
+                "{op:?} round-trips"
+            );
         }
         // A two-char op decodes before its single-char prefix.
-        assert_eq!(ColumnFacet::from_wire("1>=5"), Some(ColumnFacet::new(1, FilterOp::Ge, "5")));
-        assert_eq!(ColumnFacet::from_wire("1>5"), Some(ColumnFacet::new(1, FilterOp::Gt, "5")));
-        assert_eq!(ColumnFacet::from_wire("1<=5"), Some(ColumnFacet::new(1, FilterOp::Le, "5")));
-        assert_eq!(ColumnFacet::from_wire("1!=x"), Some(ColumnFacet::new(1, FilterOp::Ne, "x")));
+        assert_eq!(
+            ColumnFacet::from_wire("1>=5"),
+            Some(ColumnFacet::new(1, FilterOp::Ge, "5"))
+        );
+        assert_eq!(
+            ColumnFacet::from_wire("1>5"),
+            Some(ColumnFacet::new(1, FilterOp::Gt, "5"))
+        );
+        assert_eq!(
+            ColumnFacet::from_wire("1<=5"),
+            Some(ColumnFacet::new(1, FilterOp::Le, "5"))
+        );
+        assert_eq!(
+            ColumnFacet::from_wire("1!=x"),
+            Some(ColumnFacet::new(1, FilterOp::Ne, "x"))
+        );
         // Malformed: no leading column digits, all digits (no op), or empty.
         assert_eq!(ColumnFacet::from_wire("=x"), None);
         assert_eq!(ColumnFacet::from_wire("12"), None);
@@ -1136,7 +1231,11 @@ mod tests {
         let s = GridSortState::new(2, cat_cells());
         assert_eq!(s.view_len(), 6, "unfiltered view is the full dataset");
         assert_eq!(s.set_filter(Some(GridFilter::eq(0, "A"))), 3);
-        assert_eq!(*s.order(), vec![0, 2, 4], "only category-A rows, in source order");
+        assert_eq!(
+            *s.order(),
+            vec![0, 2, 4],
+            "only category-A rows, in source order"
+        );
         assert_eq!(s.set_filter(None), 6, "clearing restores the full view");
         assert_eq!(*s.order(), vec![0, 1, 2, 3, 4, 5]);
     }
@@ -1147,7 +1246,11 @@ mod tests {
         s.set_filter(Some(GridFilter::eq(0, "A")));
         // Survivors are ids 0,2,4 with numeric col-1 values 30,20,9.
         s.cycle_sort(1); // ascending numeric over the FILTERED set
-        assert_eq!(*s.order(), vec![4, 2, 0], "filter shrinks, then survivors sort: 9 < 20 < 30");
+        assert_eq!(
+            *s.order(),
+            vec![4, 2, 0],
+            "filter shrinks, then survivors sort: 9 < 20 < 30"
+        );
         assert_eq!(s.view_len(), 3, "the sort does not change the view size");
     }
 
@@ -1175,8 +1278,15 @@ mod tests {
             ColumnFacet::new(2, FilterOp::Eq, "Active"),
         ]);
         let wire = grid_filter_str(Some(&f));
-        assert_eq!(wire, "0~Al&1>=20&2=Active", "facets joined by '&' in the wire form");
-        assert_eq!(grid_filter_from_str(&wire), Some(f), "the conjunction round-trips");
+        assert_eq!(
+            wire, "0~Al&1>=20&2=Active",
+            "facets joined by '&' in the wire form"
+        );
+        assert_eq!(
+            grid_filter_from_str(&wire),
+            Some(f),
+            "the conjunction round-trips"
+        );
     }
 
     #[test]
@@ -1188,7 +1298,11 @@ mod tests {
             ColumnFacet::new(0, FilterOp::Eq, "A"),
             ColumnFacet::new(9, FilterOp::Eq, "x"),
         ]);
-        assert_eq!(s.set_filter(Some(mixed)), 3, "phantom facet dropped, col0=A kept");
+        assert_eq!(
+            s.set_filter(Some(mixed)),
+            3,
+            "phantom facet dropped, col0=A kept"
+        );
         assert_eq!(s.filter(), Some(GridFilter::eq(0, "A")));
         // An all-phantom conjunction clamps to unfiltered (the R783 single-
         // phantom-column clamp, generalized).
@@ -1203,26 +1317,39 @@ mod tests {
             let st = Rc::new(GridSortState::new(2, cat_cells()));
             let mut ext = GridSortExternal::new(Rc::clone(&st));
             // Boot: unfiltered, full view.
-            assert_eq!(ext.query("filter"), Some(IntrospectValue::Text("none".into())));
+            assert_eq!(
+                ext.query("filter"),
+                Some(IntrospectValue::Text("none".into()))
+            );
             assert_eq!(ext.query("view_len"), Some(IntrospectValue::Int(6)));
             // invoke set_filter returns the resulting view length in one trip.
             assert_eq!(
                 ext.invoke("set_filter", IntrospectValue::Text("0=A".into())),
                 Ok(IntrospectValue::Int(3)),
             );
-            assert_eq!(ext.query("filter"), Some(IntrospectValue::Text("0=A".into())));
+            assert_eq!(
+                ext.query("filter"),
+                Some(IntrospectValue::Text("0=A".into()))
+            );
             assert_eq!(ext.query("view_len"), Some(IntrospectValue::Int(3)));
             // A multi-facet conjunction over the wire (col0=A AND col1>=20).
             assert_eq!(
                 ext.invoke("set_filter", IntrospectValue::Text("0=A&1>=20".into())),
                 Ok(IntrospectValue::Int(2)),
             );
-            assert_eq!(ext.query("filter"), Some(IntrospectValue::Text("0=A&1>=20".into())));
+            assert_eq!(
+                ext.query("filter"),
+                Some(IntrospectValue::Text("0=A&1>=20".into()))
+            );
             // Null clears via invoke.
-            assert_eq!(ext.invoke("set_filter", IntrospectValue::Null), Ok(IntrospectValue::Int(6)));
+            assert_eq!(
+                ext.invoke("set_filter", IntrospectValue::Null),
+                Ok(IntrospectValue::Int(6))
+            );
             assert_eq!(st.filter(), None);
             // intervene sets + clears (admin / restore path).
-            ext.intervene("filter", IntrospectValue::Text("0=B".into())).unwrap();
+            ext.intervene("filter", IntrospectValue::Text("0=B".into()))
+                .unwrap();
             assert_eq!(st.filter(), Some(GridFilter::eq(0, "B")));
             ext.intervene("filter", IntrospectValue::Null).unwrap();
             assert_eq!(st.filter(), None);

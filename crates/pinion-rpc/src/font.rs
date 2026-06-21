@@ -23,8 +23,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, RwLock};
 
 use pinion_text_font::{
-    Component, ComponentArgs, ComponentTransform, Font, Glyph, GlyphHeader, GlyphPoint,
-    ParseError,
+    Component, ComponentArgs, ComponentTransform, Font, Glyph, GlyphHeader, GlyphPoint, ParseError,
 };
 use serde::{Deserialize, Serialize};
 
@@ -157,10 +156,7 @@ pub struct ParseOutcome {
 /// * [`FontError::Parse`] — malformed OpenType binary.
 /// * [`FontError::RegistryExhausted`] — counter wraps at `u32::MAX`.
 /// * [`FontError::RegistryPoisoned`] — internal lock poisoned.
-pub fn parse(
-    registry: &FontRegistry,
-    bytes: Vec<u8>,
-) -> Result<ParseOutcome, FontError> {
+pub fn parse(registry: &FontRegistry, bytes: Vec<u8>) -> Result<ParseOutcome, FontError> {
     let font = Font::from_bytes(bytes)?;
     let font_id = registry.insert(font)?;
     Ok(ParseOutcome { font_id })
@@ -184,10 +180,7 @@ pub struct FamilyNameOutcome {
 /// # Errors
 ///
 /// [`FontError::NotFound`] when `font_id` is `0` or unknown.
-pub fn family_name(
-    registry: &FontRegistry,
-    font_id: u32,
-) -> Result<FamilyNameOutcome, FontError> {
+pub fn family_name(registry: &FontRegistry, font_id: u32) -> Result<FamilyNameOutcome, FontError> {
     let font = lookup(registry, font_id)?;
     Ok(FamilyNameOutcome {
         name: font.family_name(),
@@ -231,9 +224,7 @@ fn lookup(registry: &FontRegistry, font_id: u32) -> Result<Arc<Font>, FontError>
     if font_id == 0 {
         return Err(FontError::NotFound { font_id: 0 });
     }
-    registry
-        .get(font_id)
-        .ok_or(FontError::NotFound { font_id })
+    registry.get(font_id).ok_or(FontError::NotFound { font_id })
 }
 
 // ─── R50.X.2 extended methods (§5.37.2 R50.X.2) ────────────────────────────
@@ -319,13 +310,22 @@ pub enum ComponentTransformInfo {
 
 impl From<&GlyphHeader> for GlyphHeaderInfo {
     fn from(h: &GlyphHeader) -> Self {
-        Self { x_min: h.x_min, y_min: h.y_min, x_max: h.x_max, y_max: h.y_max }
+        Self {
+            x_min: h.x_min,
+            y_min: h.y_min,
+            x_max: h.x_max,
+            y_max: h.y_max,
+        }
     }
 }
 
 impl From<&GlyphPoint> for GlyphPointInfo {
     fn from(p: &GlyphPoint) -> Self {
-        Self { x: p.x, y: p.y, on_curve: p.on_curve }
+        Self {
+            x: p.x,
+            y: p.y,
+            on_curve: p.on_curve,
+        }
     }
 }
 
@@ -333,9 +333,7 @@ impl From<&ComponentArgs> for ComponentArgsInfo {
     fn from(a: &ComponentArgs) -> Self {
         match *a {
             ComponentArgs::Offset { x, y } => Self::Offset { x, y },
-            ComponentArgs::PointMatch { parent, child } => {
-                Self::PointMatch { parent, child }
-            }
+            ComponentArgs::PointMatch { parent, child } => Self::PointMatch { parent, child },
         }
     }
 }
@@ -346,9 +344,7 @@ impl From<&ComponentTransform> for ComponentTransformInfo {
             ComponentTransform::Identity => Self::Identity,
             ComponentTransform::Scale { scale } => Self::Scale { scale },
             ComponentTransform::XYScale { x, y } => Self::XYScale { x, y },
-            ComponentTransform::Matrix { xx, xy, yx, yy } => {
-                Self::Matrix { xx, xy, yx, yy }
-            }
+            ComponentTransform::Matrix { xx, xy, yx, yy } => Self::Matrix { xx, xy, yx, yy },
         }
     }
 }
@@ -396,10 +392,12 @@ pub fn glyph_outline(
 ) -> Result<GlyphOutlineOutcome, FontError> {
     let font = lookup(registry, font_id)?;
     let num_glyphs = font.num_glyphs();
-    let glyph = font.glyph_outline(glyph_id).ok_or(FontError::GlyphIdOutOfRange {
-        glyph_id,
-        num_glyphs,
-    })?;
+    let glyph = font
+        .glyph_outline(glyph_id)
+        .ok_or(FontError::GlyphIdOutOfRange {
+            glyph_id,
+            num_glyphs,
+        })?;
     Ok(glyph.into())
 }
 
@@ -456,7 +454,10 @@ pub fn cmap_subtables(
                 .is_some(),
         })
         .collect();
-    Ok(CmapSubtablesOutcome { version: font.cmap.version, subtables })
+    Ok(CmapSubtablesOutcome {
+        version: font.cmap.version,
+        subtables,
+    })
 }
 
 /// JSON wire shape for `font/metrics` params.
@@ -484,10 +485,7 @@ pub struct MetricsOutcome {
 /// # Errors
 ///
 /// [`FontError::NotFound`] — `font_id` is `0` or unknown.
-pub fn metrics(
-    registry: &FontRegistry,
-    font_id: u32,
-) -> Result<MetricsOutcome, FontError> {
+pub fn metrics(registry: &FontRegistry, font_id: u32) -> Result<MetricsOutcome, FontError> {
     let font = lookup(registry, font_id)?;
     Ok(MetricsOutcome {
         units_per_em: font.units_per_em(),
@@ -521,7 +519,9 @@ pub fn subfamily_name(
     font_id: u32,
 ) -> Result<SubfamilyNameOutcome, FontError> {
     let font = lookup(registry, font_id)?;
-    Ok(SubfamilyNameOutcome { name: font.subfamily_name() })
+    Ok(SubfamilyNameOutcome {
+        name: font.subfamily_name(),
+    })
 }
 
 /// Outcome for `font/full_name` — Name id 4 (full font name).
@@ -535,12 +535,11 @@ pub struct FullNameOutcome {
 /// # Errors
 ///
 /// [`FontError::NotFound`] — `font_id` is `0` or unknown.
-pub fn full_name(
-    registry: &FontRegistry,
-    font_id: u32,
-) -> Result<FullNameOutcome, FontError> {
+pub fn full_name(registry: &FontRegistry, font_id: u32) -> Result<FullNameOutcome, FontError> {
     let font = lookup(registry, font_id)?;
-    Ok(FullNameOutcome { name: font.full_name() })
+    Ok(FullNameOutcome {
+        name: font.full_name(),
+    })
 }
 
 /// Outcome for `font/postscript_name` — Name id 6 (PostScript name).
@@ -559,7 +558,9 @@ pub fn postscript_name(
     font_id: u32,
 ) -> Result<PostscriptNameOutcome, FontError> {
     let font = lookup(registry, font_id)?;
-    Ok(PostscriptNameOutcome { name: font.postscript_name() })
+    Ok(PostscriptNameOutcome {
+        name: font.postscript_name(),
+    })
 }
 
 // ─── R50.X.3 lifecycle methods (§5.37.2 R50.X.3) ───────────────────────────
@@ -585,11 +586,10 @@ pub struct DisposeOutcome {
 /// # Errors
 ///
 /// [`FontError::RegistryPoisoned`] — internal lock poisoned.
-pub fn dispose(
-    registry: &FontRegistry,
-    font_id: u32,
-) -> Result<DisposeOutcome, FontError> {
-    Ok(DisposeOutcome { existed: registry.remove(font_id)? })
+pub fn dispose(registry: &FontRegistry, font_id: u32) -> Result<DisposeOutcome, FontError> {
+    Ok(DisposeOutcome {
+        existed: registry.remove(font_id)?,
+    })
 }
 
 /// Outcome for `font/list`.
@@ -607,7 +607,9 @@ pub struct ListOutcome {
 ///
 /// [`FontError::RegistryPoisoned`] — internal lock poisoned.
 pub fn list(registry: &FontRegistry) -> Result<ListOutcome, FontError> {
-    Ok(ListOutcome { font_ids: registry.snapshot_ids()? })
+    Ok(ListOutcome {
+        font_ids: registry.snapshot_ids()?,
+    })
 }
 
 #[cfg(test)]
@@ -731,7 +733,11 @@ mod tests {
             .glyph_id
             .unwrap();
         let outcome = glyph_outline(&registry, id, gid).unwrap();
-        let GlyphOutlineOutcome::Simple { points, end_pts_of_contours, .. } = outcome
+        let GlyphOutlineOutcome::Simple {
+            points,
+            end_pts_of_contours,
+            ..
+        } = outcome
         else {
             panic!("'A' should be a simple glyph in Noto Sans, got non-simple");
         };
@@ -771,7 +777,10 @@ mod tests {
         );
         // Noto Sans must carry a supported (Format 0 / 4 / 12) subtable.
         let any_supported = outcome.subtables.iter().any(|s| s.supported);
-        assert!(any_supported, "Noto Sans must have a parser-supported cmap subtable");
+        assert!(
+            any_supported,
+            "Noto Sans must have a parser-supported cmap subtable"
+        );
     }
 
     #[test]

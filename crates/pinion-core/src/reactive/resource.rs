@@ -22,8 +22,8 @@ use std::pin::Pin;
 use std::rc::Rc;
 use std::task::{Context, Poll, Waker};
 
-use serde::{Deserialize, Serialize};
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 
 use super::signal::Signal;
 
@@ -383,8 +383,8 @@ impl<T: Unpin> Future for DeferredReady<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::owner::Owner;
+    use super::*;
     use std::task::{Context, Poll, Waker};
 
     /// Minimal `LocalSpawner` for tests: polls the future to completion on
@@ -531,11 +531,13 @@ mod tests {
     #[test]
     fn fetch_with_err_future_transitions_to_error() {
         let r = Resource::<i32, String>::loading();
-        r.fetch_with(
-            &BlockingSpawner,
-            async { Err::<i32, _>(String::from("network down")) },
+        r.fetch_with(&BlockingSpawner, async {
+            Err::<i32, _>(String::from("network down"))
+        });
+        assert_eq!(
+            r.state(),
+            ResourceState::Error(String::from("network down"))
         );
-        assert_eq!(r.state(), ResourceState::Error(String::from("network down")));
     }
 
     /// Test-only spawner that queues futures without polling them, so the
@@ -596,10 +598,15 @@ mod tests {
         let pump = LocalTaskPump::new();
         let flag = Rc::new(Cell::new(false));
         let f = Rc::clone(&flag);
-        pump.spawn_local(Box::pin(async move { f.set(true); }));
+        pump.spawn_local(Box::pin(async move {
+            f.set(true);
+        }));
         assert!(pump.has_pending());
         assert_eq!(pump.len(), 1);
-        assert!(!pump.poll(), "an immediately-ready future completes in one poll");
+        assert!(
+            !pump.poll(),
+            "an immediately-ready future completes in one poll"
+        );
         assert!(pump.is_empty());
         assert!(flag.get(), "the task body ran");
     }
@@ -635,7 +642,11 @@ mod tests {
             let v = DeferredReady::new(1, 7).await;
             Ok::<i32, String>(v)
         });
-        assert_eq!(r.state(), ResourceState::Loading, "fetch_with marks Loading");
+        assert_eq!(
+            r.state(),
+            ResourceState::Loading,
+            "fetch_with marks Loading"
+        );
         assert_eq!(pump.len(), 1);
         assert!(pump.poll(), "Defer still pending after poll 1");
         assert_eq!(r.state(), ResourceState::Loading);
@@ -655,9 +666,14 @@ mod tests {
             r1.set(r1.get() + 1);
             // Spawn a follow-up while this task is being polled — must
             // not re-entrantly borrow the queue.
-            inner.spawn_local(Box::pin(async move { r2.set(r2.get() + 1); }));
+            inner.spawn_local(Box::pin(async move {
+                r2.set(r2.get() + 1);
+            }));
         }));
-        assert!(pump.poll(), "follow-up task queued during poll stays pending");
+        assert!(
+            pump.poll(),
+            "follow-up task queued during poll stays pending"
+        );
         assert_eq!(ran.get(), 1);
         assert!(!pump.poll(), "follow-up task runs on the next poll");
         assert_eq!(ran.get(), 2);

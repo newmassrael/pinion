@@ -24,7 +24,7 @@
     clippy::style,
     clippy::complexity,
     clippy::pedantic,
-    clippy::all,
+    clippy::all
 )]
 mod sm {
     include!(concat!(env!("OUT_DIR"), "/radio_sm.rs"));
@@ -36,13 +36,16 @@ pub use sm::{RadioEvent, RadioState};
 // `WidgetStateName` SSOT primitive, replacing the hand-written
 // `radio_state_name` fn (mirrors the R696.A Disclosure adoption).
 // radio_group.rs calls `self.state(idx).as_name()` via the trait too.
-crate::widget_state_name!(RadioState, default = Idle, [
-    Idle, Hover, Pressed, Disabled,
-]);
+crate::widget_state_name!(
+    RadioState,
+    default = Idle,
+    [Idle, Hover, Pressed, Disabled,]
+);
 // R699 §5.16 — RadioEvent <-> SCXML-name mapping through the
 // `WidgetEventName` SSOT primitive, replacing `parse_radio_event`.
 // radio_group.rs drives selection through `RadioEvent::from_name` too.
-crate::widget_event_name!(RadioEvent,
+crate::widget_event_name!(
+    RadioEvent,
     external = [
         PointerEnter,
         PointerLeave,
@@ -58,9 +61,8 @@ crate::widget_event_name!(RadioEvent,
 use sm::RadioPolicy;
 
 use crate::external::{
-    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner,
-    ThreadOwnership,
+    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
 use crate::intent::Intent;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
@@ -80,7 +82,10 @@ impl Radio {
     /// Construct an unselected Radio in the `Idle` state.
     #[must_use]
     pub fn new() -> Self {
-        Self { inner: Widget::new(), selected: false }
+        Self {
+            inner: Widget::new(),
+            selected: false,
+        }
     }
 
     /// Drive a [`RadioEvent`] through the SCXML. `selected` is set
@@ -103,8 +108,7 @@ impl Radio {
         let after = self.state();
         let pointer_activate =
             matches!(before, RadioState::Pressed) && matches!(after, RadioState::Hover);
-        let keyboard_activate =
-            is_keyboard_activate && !matches!(before, RadioState::Disabled);
+        let keyboard_activate = is_keyboard_activate && !matches!(before, RadioState::Disabled);
         if pointer_activate || keyboard_activate {
             self.selected = true;
         }
@@ -158,11 +162,7 @@ impl WidgetTransition for Radio {
         self.send(event);
     }
 
-    fn detect(
-        before: Self::Snapshot,
-        event: Self::Event,
-        after: Self::Snapshot,
-    ) -> Vec<Intent> {
+    fn detect(before: Self::Snapshot, event: Self::Event, after: Self::Snapshot) -> Vec<Intent> {
         let (before_state, before_value) = before;
         let (after_state, after_value) = after;
         let pointer_select = matches!(before_state, RadioState::Pressed)
@@ -173,9 +173,8 @@ impl WidgetTransition for Radio {
         // internal transition. !before_value && after_value covers
         // disabled (mutation skipped in send) and already-selected
         // (idempotent set-not-flip) both silently.
-        let keyboard_select = matches!(event, RadioEvent::KeyboardActivate)
-            && !before_value
-            && after_value;
+        let keyboard_select =
+            matches!(event, RadioEvent::KeyboardActivate) && !before_value && after_value;
         if pointer_select || keyboard_select {
             vec![Intent::new_static("selected", IntrospectValue::Null)]
         } else {
@@ -196,7 +195,9 @@ pub struct RadioExternal {
 impl RadioExternal {
     #[must_use]
     pub fn new() -> Self {
-        Self { em: IntentEmitter::default() }
+        Self {
+            em: IntentEmitter::default(),
+        }
     }
 
     /// Drive a [`RadioEvent`] and queue a `"selected"` intent only on
@@ -293,19 +294,13 @@ impl ExternalIntrospect for RadioExternal {
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
         match path {
-            "state" => Some(IntrospectValue::Text(
-                self.state().as_name().to_string(),
-            )),
+            "state" => Some(IntrospectValue::Text(self.state().as_name().to_string())),
             "selected" => Some(IntrospectValue::Bool(self.is_selected())),
             _ => None,
         }
     }
 
-    fn intervene(
-        &mut self,
-        path: &str,
-        value: IntrospectValue,
-    ) -> Result<(), InterveneError> {
+    fn intervene(&mut self, path: &str, value: IntrospectValue) -> Result<(), InterveneError> {
         match path {
             "state" => Err(InterveneError::ReadOnly),
             "selected" => match value {
@@ -327,12 +322,9 @@ impl ExternalIntrospect for RadioExternal {
         match path {
             "send" => match args {
                 IntrospectValue::Text(ref name) => {
-                    let ev =
-                        RadioEvent::from_name(name).ok_or(InvokeError::Rejected)?;
+                    let ev = RadioEvent::from_name(name).ok_or(InvokeError::Rejected)?;
                     self.send(ev);
-                    Ok(IntrospectValue::Text(
-                        self.state().as_name().to_string(),
-                    ))
+                    Ok(IntrospectValue::Text(self.state().as_name().to_string()))
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
@@ -340,7 +332,6 @@ impl ExternalIntrospect for RadioExternal {
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -456,17 +447,11 @@ mod tests {
     #[test]
     fn external_query_state_and_selected() {
         let mut rx = RadioExternal::new();
-        assert_eq!(
-            rx.query("selected").unwrap(),
-            IntrospectValue::Bool(false)
-        );
+        assert_eq!(rx.query("selected").unwrap(), IntrospectValue::Bool(false));
         rx.send(RadioEvent::PointerEnter);
         rx.send(RadioEvent::PointerDown);
         rx.send(RadioEvent::PointerUp);
-        assert_eq!(
-            rx.query("selected").unwrap(),
-            IntrospectValue::Bool(true)
-        );
+        assert_eq!(rx.query("selected").unwrap(), IntrospectValue::Bool(true));
     }
 
     #[test]
@@ -500,7 +485,11 @@ mod tests {
         let schema = rx.schema();
         assert_eq!(
             schema.fields,
-            &[("state", "string"), ("selected", "bool"), ("send", "string")]
+            &[
+                ("state", "string"),
+                ("selected", "bool"),
+                ("send", "string")
+            ]
         );
     }
 

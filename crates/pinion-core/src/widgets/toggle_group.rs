@@ -20,12 +20,12 @@
 //! `pinion_a11y::toggle_group` because it needs `AccessNode`; this module
 //! is paint-free and a11y-free pure interaction.
 
+use crate::WidgetStateName;
 use crate::external::IntrospectValue;
 use crate::focus_request;
 use crate::scene::Scene;
 use crate::widget_core::ExtraExternal;
 use crate::widgets::toggle::{ToggleEvent, ToggleExternal, ToggleState};
-use crate::WidgetStateName;
 
 /// Seed a [`ToggleExternal`] to `on` without leaving a hover / pressed
 /// residue: a `KeyboardActivate` flips the value Off → On while the
@@ -51,7 +51,10 @@ pub fn boot_toggle(on: bool) -> ToggleExternal {
 /// Panics if `boot.len() < tags.len()` (every tag needs a boot default).
 #[must_use]
 pub fn extra_toggles(tags: &[&'static str], boot: &[bool]) -> Vec<ExtraExternal> {
-    assert!(boot.len() >= tags.len(), "every segment tag needs a boot default");
+    assert!(
+        boot.len() >= tags.len(),
+        "every segment tag needs a boot default"
+    );
     tags.iter()
         .enumerate()
         .skip(1)
@@ -94,7 +97,12 @@ pub fn read_toggle(scene: &Scene, tag: &str) -> (ToggleState, bool) {
 /// R664 [`focus_request`] mailbox. Keys route only when one of `tags` owns
 /// focus (the roving-tabindex `apply_key` discipline), so a key arriving
 /// while a sibling widget is focused returns `false` untouched.
-pub fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, tags: &[&'static str]) -> bool {
+pub fn apply_key(
+    scene: &mut Scene,
+    focused: Option<&str>,
+    key: &str,
+    tags: &[&'static str],
+) -> bool {
     let Some(focused_tag) = focused else {
         return false;
     };
@@ -111,7 +119,10 @@ pub fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, tags: &[&'
                 return false;
             };
             intro
-                .invoke("send", IntrospectValue::Text("KeyboardActivate".to_string()))
+                .invoke(
+                    "send",
+                    IntrospectValue::Text("KeyboardActivate".to_string()),
+                )
                 .is_ok()
         }
         "ArrowRight" | "ArrowDown" => {
@@ -201,8 +212,14 @@ mod tests {
     fn enter_is_independent_not_exclusive() {
         let mut scene = fixture([true, true, false]);
         assert!(apply_key(&mut scene, Some(TAGS[0]), "Enter", &TAGS));
-        assert!(!read_toggle(&scene, TAGS[0]).1, "Enter toggled segment 0 Off");
-        assert!(read_toggle(&scene, TAGS[1]).1, "segment 1 stays On — not exclusive");
+        assert!(
+            !read_toggle(&scene, TAGS[0]).1,
+            "Enter toggled segment 0 Off"
+        );
+        assert!(
+            read_toggle(&scene, TAGS[1]).1,
+            "segment 1 stays On — not exclusive"
+        );
     }
 
     #[test]
@@ -210,9 +227,17 @@ mod tests {
         let mut scene = fixture([false, false, false]);
         let _ = focus_request::drain();
         assert!(apply_key(&mut scene, Some(TAGS[2]), "ArrowRight", &TAGS));
-        assert_eq!(focus_request::drain().as_deref(), Some(TAGS[0]), "wraps last -> first");
+        assert_eq!(
+            focus_request::drain().as_deref(),
+            Some(TAGS[0]),
+            "wraps last -> first"
+        );
         assert!(apply_key(&mut scene, Some(TAGS[0]), "ArrowLeft", &TAGS));
-        assert_eq!(focus_request::drain().as_deref(), Some(TAGS[2]), "wraps first -> last");
+        assert_eq!(
+            focus_request::drain().as_deref(),
+            Some(TAGS[2]),
+            "wraps first -> last"
+        );
     }
 
     #[test]

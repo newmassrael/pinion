@@ -39,17 +39,13 @@
 
 use std::path::PathBuf;
 
-use criterion::{
-    black_box, criterion_group, criterion_main, BenchmarkId, Criterion,
-    Throughput,
-};
-use pinion_text_unicode::{normalize, NormForm};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use pinion_text_unicode::{NormForm, normalize};
 
 fn ascii_fast_path(c: &mut Criterion) {
     // ~990 bytes of pangram ASCII — well above L1 cache line yet small
     // enough that criterion's iter loop stays in single-digit ns/byte.
-    let input: String =
-        "The quick brown fox jumps over the lazy dog. ".repeat(22);
+    let input: String = "The quick brown fox jumps over the lazy dog. ".repeat(22);
     let mut group = c.benchmark_group("ascii_fast_path");
     group.throughput(Throughput::Bytes(input.len() as u64));
     group.bench_function(BenchmarkId::from_parameter("nfc"), |b| {
@@ -131,8 +127,8 @@ fn load_sample(limit: usize) -> Vec<String> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("ucd")
         .join("NormalizationTest.txt");
-    let text = std::fs::read_to_string(&path)
-        .expect("NormalizationTest.txt must be vendored at ucd/");
+    let text =
+        std::fs::read_to_string(&path).expect("NormalizationTest.txt must be vendored at ucd/");
     let mut out = Vec::with_capacity(limit);
     for raw in text.lines() {
         if out.len() >= limit {

@@ -63,14 +63,14 @@
 
 use std::rc::Rc;
 
+use pinion_core::Scene;
 use pinion_core::scene::{ContainerNode, Rect, ScrollNode};
 use pinion_core::style::{LayoutStyle, Size};
 use pinion_core::widgets::scroll::ScrollState;
 use pinion_core::widgets::virtual_list::{
-    compute_visible_range, compute_visible_range_variable, content_height, RowOffsets,
-    VisibleWindow,
+    RowOffsets, VisibleWindow, compute_visible_range, compute_visible_range_variable,
+    content_height,
 };
-use pinion_core::Scene;
 
 /// R744 §5.27 — assemble a virtualized vertical list as a [`ScrollNode`].
 ///
@@ -99,8 +99,13 @@ pub fn view_virtual_list(
     overscan: usize,
     build_row: impl FnMut(usize) -> Scene,
 ) -> Scene {
-    let window: VisibleWindow =
-        compute_visible_range(scroll.offset_y(), viewport.h, item_count, row_pitch, overscan);
+    let window: VisibleWindow = compute_visible_range(
+        scroll.offset_y(),
+        viewport.h,
+        item_count,
+        row_pitch,
+        overscan,
+    );
     let total_h = content_height(item_count, row_pitch);
     let slots = uniform_slots(&window, viewport.w, row_pitch, build_row);
     assemble_windowed(scroll, viewport, total_h, slots)
@@ -199,8 +204,13 @@ pub fn view_flex_virtual_list(
     build_row: impl FnMut(usize) -> Scene,
 ) -> Scene {
     let (measured_w, measured_h) = scroll.measured_viewport();
-    let window: VisibleWindow =
-        compute_visible_range(scroll.offset_y(), measured_h, item_count, row_pitch, overscan);
+    let window: VisibleWindow = compute_visible_range(
+        scroll.offset_y(),
+        measured_h,
+        item_count,
+        row_pitch,
+        overscan,
+    );
     let total_h = content_height(item_count, row_pitch);
     let slots = uniform_slots(&window, measured_w, row_pitch, build_row);
     assemble_windowed_flex(scroll, measured_w, total_h, slots, false)
@@ -283,8 +293,8 @@ pub(crate) fn uniform_slots(
         // Slot top = index · pitch. `content_height`'s saturation logic
         // keeps the total in `u32`; an individual slot top is always below
         // that total, so the same saturating cast is safe.
-        let top = u32::try_from((index as u64).saturating_mul(u64::from(row_pitch)))
-            .unwrap_or(u32::MAX);
+        let top =
+            u32::try_from((index as u64).saturating_mul(u64::from(row_pitch))).unwrap_or(u32::MAX);
         slots.push(positioned_slot(row, width, top, row_pitch));
     }
     slots
@@ -306,7 +316,8 @@ pub(crate) fn uniform_slots(
 /// (fixed clip window vs flex-grow).
 fn windowed_content(width: u32, total_h: u32, slots: Vec<Scene>) -> Scene {
     let sizer = Scene::Container(
-        ContainerNode::new(slots).with_layout(LayoutStyle::new().with_size(Size::px(width, total_h))),
+        ContainerNode::new(slots)
+            .with_layout(LayoutStyle::new().with_size(Size::px(width, total_h))),
     );
     Scene::Container(ContainerNode::new(vec![sizer]))
 }
@@ -331,9 +342,9 @@ fn assemble_windowed(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_core::Owner;
     use pinion_core::scene::TextNode;
     use pinion_core::style::TextStyle;
-    use pinion_core::Owner;
 
     const PITCH: u32 = 40;
     const VIEWPORT: Rect = Rect::new(0, 0, 200, 200);
@@ -423,8 +434,8 @@ mod tests {
     #[test]
     fn empty_dataset_yields_empty_sizer() {
         let state = Rc::new(ScrollState::new());
-        let scene = Owner::new()
-            .run(|| view_virtual_list(&state, VIEWPORT, 0, PITCH, 2, build_row));
+        let scene =
+            Owner::new().run(|| view_virtual_list(&state, VIEWPORT, 0, PITCH, 2, build_row));
         let sizer = unwrap_sizer(&scene);
         assert!(sizer.children.is_empty(), "no rows for an empty dataset");
         assert_eq!(sizer.layout.size, Size::px(VIEWPORT.w, 0));
@@ -436,7 +447,9 @@ mod tests {
     // per pair). Total for `N` rows = N/2 * 80.
     fn var_offsets(n: usize) -> RowOffsets {
         RowOffsets::from_heights(
-            &(0..n).map(|i| if i % 2 == 0 { 20 } else { 60 }).collect::<Vec<_>>(),
+            &(0..n)
+                .map(|i| if i % 2 == 0 { 20 } else { 60 })
+                .collect::<Vec<_>>(),
         )
     }
 
@@ -446,8 +459,7 @@ mod tests {
         let state = Rc::new(ScrollState::new());
         state.set_max(0, total);
         state.scroll_to(0, offset_y);
-        Owner::new()
-            .run(|| view_variable_virtual_list(&state, VIEWPORT, &offsets, 2, build_row))
+        Owner::new().run(|| view_variable_virtual_list(&state, VIEWPORT, &offsets, 2, build_row))
     }
 
     #[test]

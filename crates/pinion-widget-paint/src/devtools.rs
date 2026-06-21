@@ -51,6 +51,7 @@
 
 use std::collections::HashMap;
 
+use pinion_core::Color;
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
@@ -58,7 +59,6 @@ use pinion_core::external::{
 use pinion_core::intent::Intent;
 use pinion_core::scene::{ContainerNode, Scene};
 use pinion_core::style::{Border, BoxStyle};
-use pinion_core::Color;
 
 use crate::tree_view::TreeItem;
 
@@ -204,9 +204,10 @@ pub fn find_child_in_container<'s>(
     disambiguator: &PathDisambiguator<'_>,
 ) -> Option<&'s Scene> {
     match disambiguator {
-        PathDisambiguator::Tag(tag) => container.children.iter().find(|child| {
-            scene_type_name(child) == ty && scene_tag(child) == Some(*tag)
-        }),
+        PathDisambiguator::Tag(tag) => container
+            .children
+            .iter()
+            .find(|child| scene_type_name(child) == ty && scene_tag(child) == Some(*tag)),
         PathDisambiguator::NthOfType(idx) => container
             .children
             .iter()
@@ -389,9 +390,10 @@ pub fn descend_and_wrap(scene: Scene, segments: &[&str], color: Color) -> Scene 
         return Scene::Container(c);
     };
     let matching_idx: Option<usize> = match &disambiguator {
-        PathDisambiguator::Tag(tag) => c.children.iter().position(|child| {
-            scene_type_name(child) == ty && scene_tag(child) == Some(*tag)
-        }),
+        PathDisambiguator::Tag(tag) => c
+            .children
+            .iter()
+            .position(|child| scene_type_name(child) == ty && scene_tag(child) == Some(*tag)),
         PathDisambiguator::NthOfType(idx) => {
             let mut count = 0_usize;
             c.children.iter().position(|child| {
@@ -767,11 +769,7 @@ impl ExternalIntrospect for ClickRouter {
         None
     }
 
-    fn intervene(
-        &mut self,
-        path: &str,
-        _value: IntrospectValue,
-    ) -> Result<(), InterveneError> {
+    fn intervene(&mut self, path: &str, _value: IntrospectValue) -> Result<(), InterveneError> {
         if path == CLICK_ROUTER_LAST_CLICKED_SLOT {
             return Err(InterveneError::ReadOnly);
         }
@@ -817,9 +815,9 @@ mod tests {
     //! so every future `DevTools` consumer inherits coverage.
 
     use super::*;
+    use pinion_core::Color;
     use pinion_core::scene::{ContainerNode, ExternalNode, Rect, TextNode};
     use pinion_core::style::TextStyle;
-    use pinion_core::Color;
 
     fn tagged_container(tag: &'static str, children: Vec<Scene>) -> Scene {
         Scene::Container(ContainerNode::new(children).with_tag(tag))
@@ -830,11 +828,7 @@ mod tests {
     }
 
     fn text_node(content: &str) -> Scene {
-        Scene::Text(TextNode::styled(
-            content,
-            Rect::default(),
-            TextStyle::new(),
-        ))
+        Scene::Text(TextNode::styled(content, Rect::default(), TextStyle::new()))
     }
 
     // ---------- scene_type_name / scene_tag ----------
@@ -1085,9 +1079,8 @@ mod tests {
 
     #[test]
     fn r678_scene_to_tree_item_external_leaf_carries_tag() {
-        let ext = Scene::External(
-            ExternalNode::new(Box::new(NoopExternal)).with_tag("inspector_tree"),
-        );
+        let ext =
+            Scene::External(ExternalNode::new(Box::new(NoopExternal)).with_tag("inspector_tree"));
         let scene = untagged_container(vec![ext]);
         let tree = scene_to_tree_item(&scene, "Container");
         assert_eq!(tree.children[0].id, "Container/External[inspector_tree]");
@@ -1286,8 +1279,7 @@ mod tests {
         );
         let path = path_for_paint_hit(&scene, 10, 10).expect("must hit");
         assert_eq!(
-            path,
-            "Container[outer]/Container[inner]",
+            path, "Container[outer]/Container[inner]",
             "deepest tagged ancestor at hit point wins",
         );
         assert!(find_node_at_path(&scene, &path).is_some());
@@ -1491,8 +1483,8 @@ mod tests {
     // inherits coverage.
     mod r683_click_router_tests {
         use super::super::{
-            ClickRouter, CLICK_ROUTER_EVENT, CLICK_ROUTER_INVOKE_PATH,
-            CLICK_ROUTER_LAST_CLICKED_SLOT,
+            CLICK_ROUTER_EVENT, CLICK_ROUTER_INVOKE_PATH, CLICK_ROUTER_LAST_CLICKED_SLOT,
+            ClickRouter,
         };
         use pinion_core::external::{
             Backend, External, ExternalIntrospect, InterveneError, IntrospectValue, InvokeError,
@@ -1545,7 +1537,10 @@ mod tests {
         fn r683_invoke_click_with_text_records_path_and_enqueues_intent() {
             let mut router = ClickRouter::new();
             let res = router
-                .invoke(CLICK_ROUTER_INVOKE_PATH, IntrospectValue::Text("foo/bar".into()))
+                .invoke(
+                    CLICK_ROUTER_INVOKE_PATH,
+                    IntrospectValue::Text("foo/bar".into()),
+                )
                 .expect("invoke must succeed for Text payload");
             assert_eq!(res, IntrospectValue::Bool(true));
             assert_eq!(router.last_clicked(), Some("foo/bar"));
@@ -1563,7 +1558,10 @@ mod tests {
             let mut router = ClickRouter::new();
             // Prime the mirror by selecting first.
             router
-                .invoke(CLICK_ROUTER_INVOKE_PATH, IntrospectValue::Text("primed".into()))
+                .invoke(
+                    CLICK_ROUTER_INVOKE_PATH,
+                    IntrospectValue::Text("primed".into()),
+                )
                 .unwrap();
             // Drain so the next emit isolates the deselect intent.
             router.drain_intents(&mut |_| {});
@@ -1585,7 +1583,11 @@ mod tests {
             let mut router = ClickRouter::new();
             let res = router.invoke(CLICK_ROUTER_INVOKE_PATH, IntrospectValue::Bool(true));
             assert!(matches!(res, Err(InvokeError::TypeMismatch)));
-            assert_eq!(router.last_clicked(), None, "rejected invoke must not mutate state");
+            assert_eq!(
+                router.last_clicked(),
+                None,
+                "rejected invoke must not mutate state"
+            );
         }
 
         #[test]
@@ -1645,7 +1647,10 @@ mod tests {
         fn r683_introspect_query_reflects_recorded_path() {
             let mut router = ClickRouter::new();
             router
-                .invoke(CLICK_ROUTER_INVOKE_PATH, IntrospectValue::Text("p/q".into()))
+                .invoke(
+                    CLICK_ROUTER_INVOKE_PATH,
+                    IntrospectValue::Text("p/q".into()),
+                )
                 .unwrap();
             assert_eq!(
                 router.query(CLICK_ROUTER_LAST_CLICKED_SLOT),

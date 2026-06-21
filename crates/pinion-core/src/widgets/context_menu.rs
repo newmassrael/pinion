@@ -36,11 +36,11 @@ use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
-use crate::intent::Intent;
-use crate::widgets::menu_nav;
 use crate::input::PointerWireEvent;
-use crate::widgets::wire::resolve_index;
+use crate::intent::Intent;
 use crate::widgets::IntentEmitter;
+use crate::widgets::menu_nav;
+use crate::widgets::wire::resolve_index;
 
 /// R772 §5.38 — a logical right-click command popup. See module docs for
 /// the command-vs-selection rationale and the state model.
@@ -418,7 +418,11 @@ impl ExternalIntrospect for ContextMenuExternal {
         }
     }
 
-    fn invoke(&mut self, path: &str, args: IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+    fn invoke(
+        &mut self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
         match path {
             // Mouse: "i<i>:<Event>" / "barrier:<Event>". Returns open flag.
             "send" => match args {
@@ -455,7 +459,10 @@ impl ExternalIntrospect for ContextMenuExternal {
 #[must_use]
 pub fn read_open_state(intro: &dyn ExternalIntrospect) -> (Option<(f32, f32)>, Option<usize>) {
     let open_at = if matches!(intro.query("open"), Some(IntrospectValue::Bool(true))) {
-        Some((query_anchor_axis(intro, "open_x"), query_anchor_axis(intro, "open_y")))
+        Some((
+            query_anchor_axis(intro, "open_x"),
+            query_anchor_axis(intro, "open_y"),
+        ))
     } else {
         None
     };
@@ -703,7 +710,10 @@ mod tests {
         e.dispatch_open_at("0,0").unwrap();
         e.intervene("active", IntrospectValue::Int(3)).unwrap();
         assert_eq!(e.active_item(), Some(3));
-        assert!(drain(&mut e).is_empty(), "intervene restore fires no command");
+        assert!(
+            drain(&mut e).is_empty(),
+            "intervene restore fires no command"
+        );
     }
 
     #[test]
@@ -744,7 +754,11 @@ mod tests {
     #[test]
     fn read_open_state_projects_anchor_and_active() {
         let mut e = ext();
-        assert_eq!(read_open_state(&e), (None, None), "closed -> no anchor, no active");
+        assert_eq!(
+            read_open_state(&e),
+            (None, None),
+            "closed -> no anchor, no active"
+        );
         e.dispatch_open_at("150,90").unwrap();
         assert_eq!(
             read_open_state(&e),
@@ -752,6 +766,10 @@ mod tests {
             "open with no highlight",
         );
         e.intervene("active", IntrospectValue::Int(2)).unwrap();
-        assert_eq!(read_open_state(&e), (Some((150.0, 90.0)), Some(2)), "open + active");
+        assert_eq!(
+            read_open_state(&e),
+            (Some((150.0, 90.0)), Some(2)),
+            "open + active"
+        );
     }
 }

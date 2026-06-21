@@ -61,10 +61,10 @@ use pinion_core::style::{
     AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, SizeValue,
     TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widgets::button::{Button, ButtonEvent, ButtonState};
 use pinion_core::{Color, Frame, Scene, WidgetCore, WidgetEventName, WidgetStateName};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::chip::{self, CHIP_HEIGHT, OUTLINE_W};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -210,14 +210,12 @@ fn view(state: ChipRowState, _frame: &Frame) -> Scene {
     // group) and no fill — a passive container holding the free-standing
     // chips; per-chip clicks route to it via the `chip_delete#<id>` children.
     let row = Scene::Container(
-        ContainerNode::new(chips)
-            .with_tag(DELETE_TAG)
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Row)
-                    .with_align_items(AlignItems::Center)
-                    .with_gap(chip::INNER_GAP),
-            ),
+        ContainerNode::new(chips).with_tag(DELETE_TAG).with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Row)
+                .with_align_items(AlignItems::Center)
+                .with_gap(chip::INNER_GAP),
+        ),
     );
     Scene::Container(
         ContainerNode::new(vec![row])
@@ -269,10 +267,9 @@ fn chip(item: &InputChip, close_state: ButtonState, theme: &Theme) -> Scene {
             // enumeration. Painted in chip-vector (id) order, so the derived
             // order matches the seeded CLOSE_TAGS; a deleted chip simply drops
             // out of both the paint walk and the live enumeration.
-            .with_layout(chip::chip_layout(
-                Size::px(CLOSE_HIT, CLOSE_HIT),
-                None,
-            ).with_focusable(true)),
+            .with_layout(
+                chip::chip_layout(Size::px(CLOSE_HIT, CLOSE_HIT), None).with_focusable(true),
+            ),
     );
 
     // Outlined chip container — `OnSurface`-tinted `Outline` border, no fill
@@ -347,8 +344,12 @@ impl core::fmt::Debug for ChipDeleteExternal {
     // `Button` (the SCXML widget) does not implement `Debug`; surface the
     // observable per-chip posture instead so logs stay useful.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let postures: Vec<&'static str> =
-            self.buttons.borrow().iter().map(|b| b.state().as_name()).collect();
+        let postures: Vec<&'static str> = self
+            .buttons
+            .borrow()
+            .iter()
+            .map(|b| b.state().as_name())
+            .collect();
         f.debug_struct("ChipDeleteExternal")
             .field("count", &self.chips.get().len())
             .field("close_postures", &postures)
@@ -484,7 +485,9 @@ impl ExternalIntrospect for ChipDeleteExternal {
             // `state:<id>` — the per-chip `×` button posture variant name.
             _ => path.strip_prefix("state:").and_then(|id_str| {
                 let id: u64 = id_str.parse().ok()?;
-                Some(IntrospectValue::Text(self.state_of(id).as_name().to_string()))
+                Some(IntrospectValue::Text(
+                    self.state_of(id).as_name().to_string(),
+                ))
             }),
         }
     }
@@ -563,9 +566,7 @@ impl WidgetCore for InputChipView {
             if let Some(intro) = node.handle.introspect() {
                 for (slot, posture) in out.close_states.iter_mut().enumerate() {
                     let id = u64::try_from(slot).expect("slot fits in u64") + 1;
-                    if let Some(IntrospectValue::Text(name)) =
-                        intro.query(&format!("state:{id}"))
-                    {
+                    if let Some(IntrospectValue::Text(name)) = intro.query(&format!("state:{id}")) {
                         *posture = ButtonState::from_name_or_default(&name);
                     }
                 }
@@ -587,7 +588,6 @@ impl WidgetCore for InputChipView {
     fn title() -> &'static str {
         "pinion hello-input-chip (R756 §5.38 Material 3 input chips)"
     }
-
 
     /// WAI-ARIA: `Enter` / `Space` / `Delete` / `Backspace` on a focused `×`
     /// removes that chip. The focused tag is `chip_delete#<id>`; parse the id
@@ -670,7 +670,10 @@ impl WidgetView for InputChipView {
     type Renderer = HelloInputChipRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 }
 
@@ -747,7 +750,10 @@ mod tests {
         let mut texts = Vec::new();
         collect_text(&scene, &mut texts);
         for label in LABELS {
-            assert!(texts.iter().any(|t| t.as_str() == label), "label {label} painted");
+            assert!(
+                texts.iter().any(|t| t.as_str() == label),
+                "label {label} painted"
+            );
         }
         assert_eq!(
             texts.iter().filter(|t| t.as_str() == CLOSE_GLYPH).count(),
@@ -764,9 +770,18 @@ mod tests {
             chips.set_with(|prev| prev.iter().filter(|c| c.id != 2).cloned().collect());
             view(ChipRowState::idle(), &Frame::new())
         });
-        assert!(find_tagged(&scene, &close_tag(2)).is_none(), "deleted chip dropped");
-        assert!(find_tagged(&scene, &close_tag(1)).is_some(), "survivor #1 kept");
-        assert!(find_tagged(&scene, &close_tag(3)).is_some(), "survivor #3 kept");
+        assert!(
+            find_tagged(&scene, &close_tag(2)).is_none(),
+            "deleted chip dropped"
+        );
+        assert!(
+            find_tagged(&scene, &close_tag(1)).is_some(),
+            "survivor #1 kept"
+        );
+        assert!(
+            find_tagged(&scene, &close_tag(3)).is_some(),
+            "survivor #3 kept"
+        );
     }
 
     // ── ChipDeleteExternal (delete machinery + button posture) ────────────
@@ -796,11 +811,17 @@ mod tests {
             assert_eq!(ext.state_of(2), ButtonState::Hover);
             let _ = ext.invoke("send", IntrospectValue::Text("2:PointerDown".into()));
             assert_eq!(ext.state_of(2), ButtonState::Pressed);
-            assert!(chips.get().iter().any(|c| c.id == 2), "still present mid-press");
+            assert!(
+                chips.get().iter().any(|c| c.id == 2),
+                "still present mid-press"
+            );
             // PointerUp on target = click edge → delete.
             let r = ext.invoke("send", IntrospectValue::Text("2:PointerUp".into()));
             assert_eq!(r, Ok(IntrospectValue::Bool(true)), "click committed delete");
-            assert!(!chips.get().iter().any(|c| c.id == 2), "Bob (#2) removed on click");
+            assert!(
+                !chips.get().iter().any(|c| c.id == 2),
+                "Bob (#2) removed on click"
+            );
         });
     }
 
@@ -812,8 +833,15 @@ mod tests {
             let _ = ext.invoke("send", IntrospectValue::Text("1:PointerEnter".into()));
             let _ = ext.invoke("send", IntrospectValue::Text("1:PointerDown".into()));
             let r = ext.invoke("send", IntrospectValue::Text("1:PointerLeave".into()));
-            assert_eq!(r, Ok(IntrospectValue::Bool(false)), "leave is a cancel, not a click");
-            assert!(chips.get().iter().any(|c| c.id == 1), "Alice (#1) survives the cancel");
+            assert_eq!(
+                r,
+                Ok(IntrospectValue::Bool(false)),
+                "leave is a cancel, not a click"
+            );
+            assert!(
+                chips.get().iter().any(|c| c.id == 1),
+                "Alice (#1) survives the cancel"
+            );
         });
     }
 
@@ -847,7 +875,10 @@ mod tests {
             // `ids` no longer lists the removed id.
             let ids = ext.query("ids").expect("ids slot");
             if let IntrospectValue::Json(serde_json::Value::Array(arr)) = ids {
-                assert!(!arr.iter().any(|v| v.as_u64() == Some(5)), "id 5 dropped from ids");
+                assert!(
+                    !arr.iter().any(|v| v.as_u64() == Some(5)),
+                    "id 5 dropped from ids"
+                );
             } else {
                 panic!("ids must be a JSON array");
             }
@@ -862,7 +893,10 @@ mod tests {
         let scene = with_owner(|| view(ChipRowState::idle(), &Frame::new()));
         assert_eq!(
             scene.collect_focusable_tags(),
-            CLOSE_TAGS.iter().map(|t| (*t).to_owned()).collect::<Vec<_>>(),
+            CLOSE_TAGS
+                .iter()
+                .map(|t| (*t).to_owned())
+                .collect::<Vec<_>>(),
         );
     }
 
@@ -894,7 +928,10 @@ mod tests {
                 "Enter",
                 pinion_core::Modifiers::empty(),
             ));
-            assert!(!chips.get().iter().any(|c| c.id == 3), "Carol removed via keyboard");
+            assert!(
+                !chips.get().iter().any(|c| c.id == 3),
+                "Carol removed via keyboard"
+            );
         });
     }
 
@@ -907,7 +944,11 @@ mod tests {
             assert_eq!(nodes.len(), N + 1, "one group + N chips");
             assert_eq!(nodes[0].role, AriaRole::Group);
             assert_eq!(nodes[0].name.as_deref(), Some("Recipients"));
-            assert_eq!(nodes[0].children.len(), N, "group references every present chip");
+            assert_eq!(
+                nodes[0].children.len(),
+                N,
+                "group references every present chip"
+            );
             for (i, node) in nodes[1..].iter().enumerate() {
                 assert_eq!(node.role, AriaRole::Button, "× is a button");
                 assert_eq!(
@@ -928,7 +969,10 @@ mod tests {
             let bob = &nodes[2];
             assert_eq!(bob.name.as_deref(), Some("Remove Bob"));
             assert!(bob.state.focused, "focused × carries aria focus");
-            assert!(bob.state.hovered, "hover posture surfaced from from_interaction");
+            assert!(
+                bob.state.hovered,
+                "hover posture surfaced from from_interaction"
+            );
         });
     }
 

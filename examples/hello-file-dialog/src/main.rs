@@ -42,17 +42,17 @@ use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole};
+use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::aria::apply_aria_activate;
 use pinion_core::widgets::button::{ButtonExternal, ButtonState};
 use pinion_core::{
-    use_local_task_pump, DialogKind, FileDialog, FileDialogRequest, FileFilter, Frame, Scene,
-    ScriptedFileDialog, WidgetCore,
+    DialogKind, FileDialog, FileDialogRequest, FileFilter, Frame, Scene, ScriptedFileDialog,
+    WidgetCore, use_local_task_pump,
 };
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::button::{
-    button_a11y_state, read_button_focused, read_button_state, ButtonColors, ButtonStyle,
+    ButtonColors, ButtonStyle, button_a11y_state, read_button_focused, read_button_state,
 };
 use serde::{Deserialize, Serialize};
 use std::rc::Rc;
@@ -238,9 +238,30 @@ fn view(state: FileDialogViewState, _frame: &Frame) -> Scene {
 
     let buttons = Scene::Container(
         ContainerNode::new(vec![
-            button_scene(OPEN_TAG, "Open", open_state, open_focused, OPEN_HOVER_KEY, &theme),
-            button_scene(SAVE_TAG, "Save", save_state, save_focused, SAVE_HOVER_KEY, &theme),
-            button_scene(PICK_TAG, "Pick folder", pick_state, pick_focused, PICK_HOVER_KEY, &theme),
+            button_scene(
+                OPEN_TAG,
+                "Open",
+                open_state,
+                open_focused,
+                OPEN_HOVER_KEY,
+                &theme,
+            ),
+            button_scene(
+                SAVE_TAG,
+                "Save",
+                save_state,
+                save_focused,
+                SAVE_HOVER_KEY,
+                &theme,
+            ),
+            button_scene(
+                PICK_TAG,
+                "Pick folder",
+                pick_state,
+                pick_focused,
+                PICK_HOVER_KEY,
+                &theme,
+            ),
         ])
         .with_layout(
             LayoutStyle::new()
@@ -330,7 +351,6 @@ impl WidgetCore for FileDialogView {
     fn keybinding(_key: &str) -> Option<()> {
         None
     }
-
 
     fn apply_key(
         scene: &mut Scene,
@@ -511,7 +531,10 @@ mod tests {
             assert_eq!(calls[1].kind, DialogKind::SaveFile);
             assert_eq!(calls[2].kind, DialogKind::PickFolder);
             // Save dialog carries the suggested name.
-            assert_eq!(calls[1].request.suggested_name.as_deref(), Some("untitled.svg"));
+            assert_eq!(
+                calls[1].request.suggested_name.as_deref(),
+                Some("untitled.svg")
+            );
         });
     }
 
@@ -521,7 +544,11 @@ mod tests {
         let scene = Owner::new().run(|| view(idle(), &Frame::new()));
         assert_eq!(
             scene.collect_focusable_tags(),
-            vec![OPEN_TAG.to_owned(), SAVE_TAG.to_owned(), PICK_TAG.to_owned()],
+            vec![
+                OPEN_TAG.to_owned(),
+                SAVE_TAG.to_owned(),
+                PICK_TAG.to_owned()
+            ],
         );
     }
 
@@ -530,13 +557,17 @@ mod tests {
         let owner = Owner::new();
         let nodes = owner.run(|| <FileDialogView as WidgetA11y>::access_node(&idle(), None));
         assert_eq!(nodes.len(), 4);
-        assert!(nodes
-            .iter()
-            .filter(|n| n.role == AriaRole::Button)
-            .count()
-            .eq(&3));
-        assert!(nodes
-            .iter()
-            .any(|n| n.tag == STATUS_TAG && n.role == AriaRole::Status));
+        assert!(
+            nodes
+                .iter()
+                .filter(|n| n.role == AriaRole::Button)
+                .count()
+                .eq(&3)
+        );
+        assert!(
+            nodes
+                .iter()
+                .any(|n| n.tag == STATUS_TAG && n.role == AriaRole::Status)
+        );
     }
 }

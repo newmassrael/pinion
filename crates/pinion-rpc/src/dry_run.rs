@@ -29,8 +29,8 @@ use pinion_core::external::{InterveneError, IntrospectValue};
 use pinion_core::{Scene, SimulationGuard};
 
 use crate::path::PathError;
-use crate::resolve::{resolve_external_introspect_mut, ResolveExternalError};
-use crate::snapshot::{snapshot, SnapshotError, SnapshotNode};
+use crate::resolve::{ResolveExternalError, resolve_external_introspect_mut};
+use crate::snapshot::{SnapshotError, SnapshotNode, snapshot};
 
 /// Reasons [`dry_run`] can fail.
 #[non_exhaustive]
@@ -135,9 +135,9 @@ pub fn dry_run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_core::Color;
     use pinion_core::external::{CountedExternal, StubExternal};
     use pinion_core::scene::{BoxNode, ExternalNode, Rect};
-    use pinion_core::Color;
 
     use crate::query::query;
     use crate::snapshot::ExternalSnapshot;
@@ -198,8 +198,7 @@ mod tests {
     #[test]
     fn type_mismatch_does_not_mutate() {
         let mut scene = counted_scene(11);
-        let err =
-            dry_run(&mut scene, "/external/count", IntrospectValue::Bool(true)).unwrap_err();
+        let err = dry_run(&mut scene, "/external/count", IntrospectValue::Bool(true)).unwrap_err();
         assert_eq!(err, DryRunError::Intervene(InterveneError::TypeMismatch));
         // Scene state unchanged.
         assert_eq!(
@@ -258,9 +257,7 @@ mod tests {
     fn r666_dry_run_extra_external_by_composite_tag_rolls_back() {
         // Hypothetical write on the composite-tagged extra sibling;
         // post-call, both siblings retain their original values.
-        let mut scene = container_with_two_counted_siblings(
-            "todo_list", 100, "todo_toggle#1", 0,
-        );
+        let mut scene = container_with_two_counted_siblings("todo_list", 100, "todo_toggle#1", 0);
         let snap = dry_run(
             &mut scene,
             "/todo_toggle#1/external/count",
@@ -307,15 +304,9 @@ mod tests {
 
     #[test]
     fn r666_dry_run_unknown_segment_is_no_external() {
-        let mut scene = container_with_two_counted_siblings(
-            "primary", 0, "extra", 0,
-        );
-        let err = dry_run(
-            &mut scene,
-            "/ghost/external/count",
-            IntrospectValue::Int(0),
-        )
-        .unwrap_err();
+        let mut scene = container_with_two_counted_siblings("primary", 0, "extra", 0);
+        let err =
+            dry_run(&mut scene, "/ghost/external/count", IntrospectValue::Int(0)).unwrap_err();
         assert_eq!(err, DryRunError::NoExternalAtPath);
     }
 }

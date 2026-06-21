@@ -30,8 +30,8 @@ use pinion_core::external::{
 use pinion_core::scene::{ContainerNode, TextGridNode};
 use pinion_core::style::{AlignItems, FlexDirection, LayoutStyle, Size, SizeValue};
 use pinion_core::{
-    use_pane_viewport_size, use_viewport_size, CellMetric, Effect, Frame, GridBuffer, Owner, Scene,
-    Signal, WidgetCore,
+    CellMetric, Effect, Frame, GridBuffer, Owner, Scene, Signal, WidgetCore,
+    use_pane_viewport_size, use_viewport_size,
 };
 use pinion_shell::test_fixtures::TestRenderer;
 use pinion_shell::{ShellCore, SizeStrategy, WidgetView};
@@ -202,7 +202,10 @@ impl WidgetView for PaneView {
     type Renderer = TestRenderer;
 
     fn initial_size_strategy() -> SizeStrategy {
-        SizeStrategy::Fixed { width: 640, height: 384 }
+        SizeStrategy::Fixed {
+            width: 640,
+            height: 384,
+        }
     }
 
     /// R1021 — a torn-off (undock) secondary window hosting ONLY the left pane.
@@ -235,8 +238,13 @@ fn painted_grid_dims(scene: &Scene, tag: &str) -> Option<(u16, u16)> {
 
 #[test]
 fn each_pane_reflows_to_its_own_measured_rect() {
-    let _g = TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    PTY_LOG.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clear();
+    let _g = TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    PTY_LOG
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clear();
 
     let mut core = ShellCore::<PaneView>::new();
     // A 640×384 window: the 3:5 split is 240px : 400px wide, both 384px tall =>
@@ -249,7 +257,10 @@ fn each_pane_reflows_to_its_own_measured_rect() {
     let right = core.root_owner().run(|| pty_dims(RIGHT_TAG).get());
     assert_eq!(left, (30, 24), "left pane: 240/8 x 384/16");
     assert_eq!(right, (50, 24), "right pane: 400/8 x 384/16");
-    assert_ne!(left, right, "panes reflow independently, not to the window size");
+    assert_ne!(
+        left, right,
+        "panes reflow independently, not to the window size"
+    );
 
     // (2) the painted grids reflect the post-reflow dims on THIS paint (the
     // same-frame re-pass the pane-dirty bit drove), not one frame late.
@@ -259,20 +270,35 @@ fn each_pane_reflows_to_its_own_measured_rect() {
     // The reflow log holds exactly one reflow per pane for this first paint.
     // Snapshot to a local Vec so the guard is not held across an assert (a
     // panic mid-assert must not poison the mutex for the sibling tests).
-    let log = PTY_LOG.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+    let log = PTY_LOG
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
     assert!(log.contains(&(LEFT_TAG.to_owned(), (30, 24))));
     assert!(log.contains(&(RIGHT_TAG.to_owned(), (50, 24))));
-    assert_eq!(log.len(), 2, "one reflow per pane, no spurious (0,0) reflow");
+    assert_eq!(
+        log.len(),
+        2,
+        "one reflow per pane, no spurious (0,0) reflow"
+    );
 }
 
 #[test]
 fn resize_redivides_and_refires_each_pane() {
-    let _g = TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    PTY_LOG.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clear();
+    let _g = TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    PTY_LOG
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clear();
 
     let mut core = ShellCore::<PaneView>::new();
     core.compute_paint_scene(640, 384);
-    PTY_LOG.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clear(); // drop the first-paint reflows
+    PTY_LOG
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clear(); // drop the first-paint reflows
 
     // Resize to 800×384: 3:5 of 800 = 300px : 500px => 37×24 and 62×24 cells
     // (300/8 = 37.5 floors to 37; 500/8 = 62.5 floors to 62).
@@ -286,20 +312,35 @@ fn resize_redivides_and_refires_each_pane() {
 
     // Snapshot to a local Vec so the guard is not held across an assert (a
     // panic mid-assert must not poison the mutex for the sibling tests).
-    let log = PTY_LOG.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+    let log = PTY_LOG
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
     assert!(log.contains(&(LEFT_TAG.to_owned(), (37, 24))));
     assert!(log.contains(&(RIGHT_TAG.to_owned(), (62, 24))));
-    assert_eq!(log.len(), 2, "each pane re-fires exactly once on the resize");
+    assert_eq!(
+        log.len(),
+        2,
+        "each pane re-fires exactly once on the resize"
+    );
 }
 
 #[test]
 fn unchanged_repaint_is_inert() {
-    let _g = TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    PTY_LOG.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clear();
+    let _g = TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    PTY_LOG
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clear();
 
     let mut core = ShellCore::<PaneView>::new();
     core.compute_paint_scene(640, 384);
-    PTY_LOG.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clear(); // drop the first-paint reflows
+    PTY_LOG
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clear(); // drop the first-paint reflows
 
     // Two more paints at the SAME size: the pane signals equality-skip, so no
     // reflow Effect re-fires and the pane-dirty bit floors to false (the single
@@ -307,7 +348,10 @@ fn unchanged_repaint_is_inert() {
     // idempotent steady state).
     core.compute_paint_scene(640, 384);
     core.compute_paint_scene(640, 384);
-    let reflowed = PTY_LOG.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+    let reflowed = PTY_LOG
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
     assert!(
         reflowed.is_empty(),
         "an unchanged repaint publishes the same pane rects (no re-fire)"
@@ -322,8 +366,13 @@ fn nondivisible_width_floors_each_pane_independently() {
     // is not 8-divisible after the split: 3:5 of 638 lays out to 239px : 399px,
     // and cols_for floors a partial trailing cell => 29 and 49 cols (not 30/50).
     // This pins the flex-round x winsize-floor interaction at a boundary width.
-    let _g = TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    PTY_LOG.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clear();
+    let _g = TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    PTY_LOG
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clear();
 
     let mut core = ShellCore::<PaneView>::new();
     let scene = core.compute_paint_scene(638, 384);
@@ -342,8 +391,13 @@ fn secondary_window_publishes_its_pane_without_clobbering_absent_tags() {
     // R1021 §5.23 §5.16 — the per-window pane publish (the DEFAULT_WINDOW gate on
     // `publish_pane_viewports` removed). The forcing case: sprag R37 undock, where
     // a pane torn off into its own OS window must reflow to THAT window's size.
-    let _g = TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    PTY_LOG.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clear();
+    let _g = TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    PTY_LOG
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clear();
 
     let mut core = ShellCore::<PaneView>::new();
 
@@ -351,8 +405,14 @@ fn secondary_window_publishes_its_pane_without_clobbering_absent_tags() {
     //     split rects (the docked baseline).
     core.compute_paint_scene(640, 384);
     assert_eq!(core.root_owner().run(|| pty_dims(LEFT_TAG).get()), (30, 24));
-    assert_eq!(core.root_owner().run(|| pty_dims(RIGHT_TAG).get()), (50, 24));
-    PTY_LOG.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clear(); // drop first-paint reflows
+    assert_eq!(
+        core.root_owner().run(|| pty_dims(RIGHT_TAG).get()),
+        (50, 24)
+    );
+    PTY_LOG
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clear(); // drop first-paint reflows
 
     // (2) The left pane is torn off into its own 320×192 secondary window. Before
     //     R1021 this published nothing (gated to DEFAULT_WINDOW); now the secondary
@@ -378,7 +438,10 @@ fn secondary_window_publishes_its_pane_without_clobbering_absent_tags() {
     );
 
     // Only the drawn pane re-fires; the absent pane is inert.
-    let log = PTY_LOG.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+    let log = PTY_LOG
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
     assert_eq!(log, vec![(LEFT_TAG.to_owned(), (40, 12))]);
 }
 
@@ -394,8 +457,13 @@ fn same_tag_in_two_windows_is_last_writer_wins() {
     // explicit: the dock/tear-off model avoids it by drawing each tag in exactly
     // one window (the primary drops a pane when it floats); a future "mirror one
     // pane in N windows" feature cannot use this seam as-is.
-    let _g = TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    PTY_LOG.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clear();
+    let _g = TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    PTY_LOG
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clear();
 
     let mut core = ShellCore::<PaneView>::new();
 

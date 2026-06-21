@@ -37,28 +37,28 @@
 use std::rc::Rc;
 
 use pinion_a11y::{
-    grouped_focus_target, grouped_tree_access_nodes, AccessFocus, AccessNode, GroupedTreeSpec,
-    WidgetA11y,
+    AccessFocus, AccessNode, GroupedTreeSpec, WidgetA11y, grouped_focus_target,
+    grouped_tree_access_nodes,
 };
 use pinion_core::external::External;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::group_order::{
-    group_nav_key, read_cursor, use_group_order, GroupOrderExternal, GroupOrderState, GroupRow,
+    GroupOrderExternal, GroupOrderState, GroupRow, group_nav_key, read_cursor, use_group_order,
 };
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
 use pinion_core::widgets::virtual_list::compute_visible_range;
-use pinion_core::widgets::virtual_select::{read_selected, VirtualSelectExternal};
+use pinion_core::widgets::virtual_select::{VirtualSelectExternal, read_selected};
 use pinion_core::{Frame, Scene, WidgetCore};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::group_header::group_header_row;
-use pinion_widget_paint::scrollbar::{view_vertical_scrollbar, VerticalScrollbarStyle};
+use pinion_widget_paint::scrollbar::{VerticalScrollbarStyle, view_vertical_scrollbar};
 use pinion_widget_paint::virtual_list::view_virtual_list;
-use pinion_shell::{vello_renderer_impl, WidgetView};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloGroupedListRenderer, HelloGroupedListRendererError);
@@ -124,7 +124,10 @@ fn row_label(i: usize) -> String {
 fn use_list_groups() -> Rc<GroupOrderState> {
     use_group_order(GROUP_TAG, || {
         let groups = (0..N).map(row_group).collect::<Vec<usize>>();
-        let labels = GROUPS.iter().map(|&g| g.to_string()).collect::<Vec<String>>();
+        let labels = GROUPS
+            .iter()
+            .map(|&g| g.to_string())
+            .collect::<Vec<String>>();
         (groups, labels)
     })
 }
@@ -155,7 +158,10 @@ fn build_header(group: usize, member_count: usize, collapsed: bool, theme: &Them
 fn build_data_row(source: usize, theme: &Theme, selected: Option<usize>) -> Scene {
     let is_selected = selected == Some(source);
     let (fill, fg) = if is_selected {
-        (theme.resolve(ColorRole::Accent), theme.resolve(ColorRole::OnAccent))
+        (
+            theme.resolve(ColorRole::Accent),
+            theme.resolve(ColorRole::OnAccent),
+        )
     } else {
         let stripe = if source % 2 == 0 {
             ColorRole::SurfaceContainerLow
@@ -206,9 +212,11 @@ fn view(selected: Option<usize>, _frame: &Frame) -> Scene {
         ROW_PITCH,
         OVERSCAN,
         |view_pos| match rows[view_pos] {
-            GroupRow::Header { group, member_count, collapsed } => {
-                build_header(group, member_count, collapsed, &theme)
-            }
+            GroupRow::Header {
+                group,
+                member_count,
+                collapsed,
+            } => build_header(group, member_count, collapsed, &theme),
             GroupRow::Data { source } => build_data_row(source, &theme, selected),
         },
     );
@@ -230,7 +238,11 @@ fn view(selected: Option<usize>, _frame: &Frame) -> Scene {
     let list_root = Scene::Container(
         ContainerNode::new(vec![list_row])
             .with_tag(LIST_TAG)
-            .with_layout(LayoutStyle::new().flex(FlexDirection::Column).with_focusable(true)),
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Column)
+                    .with_focusable(true),
+            ),
     );
 
     Scene::Container(
@@ -267,7 +279,10 @@ impl WidgetCore for GroupedListView {
     /// scrollbar peer.
     fn create_extra_externals() -> Vec<ExtraExternal> {
         vec![
-            ExtraExternal::new(GROUP_TAG, Box::new(GroupOrderExternal::new(use_list_groups()))),
+            ExtraExternal::new(
+                GROUP_TAG,
+                Box::new(GroupOrderExternal::new(use_list_groups())),
+            ),
             scrollbar_extra_external(use_scroll_state(SCROLL_KEY), SCROLLBAR_TAG),
         ]
     }
@@ -333,8 +348,12 @@ impl WidgetCore for GroupedListView {
     fn fmt_state_log(state: &ListState) -> String {
         format!(
             "selected={} cursor={}",
-            state.selected.map_or_else(|| "none".to_string(), |i| format!("source {i}")),
-            state.cursor.map_or_else(|| "none".to_string(), |c| c.to_string()),
+            state
+                .selected
+                .map_or_else(|| "none".to_string(), |i| format!("source {i}")),
+            state
+                .cursor
+                .map_or_else(|| "none".to_string(), |c| c.to_string()),
         )
     }
 }
@@ -353,8 +372,13 @@ impl WidgetA11y for GroupedListView {
         let scroll_state = use_scroll_state(SCROLL_KEY);
         let groups = use_list_groups();
         let rows = groups.rows();
-        let window =
-            compute_visible_range(scroll_state.offset_y(), VIEWPORT_H, rows.len(), ROW_PITCH, OVERSCAN);
+        let window = compute_visible_range(
+            scroll_state.offset_y(),
+            VIEWPORT_H,
+            rows.len(),
+            ROW_PITCH,
+            OVERSCAN,
+        );
         let spec = GroupedTreeSpec {
             tree_tag: LIST_TAG,
             name: Some("Grouped asset list"),
@@ -377,7 +401,13 @@ impl WidgetA11y for GroupedListView {
     /// [`grouped_focus_target`] SSOT (shared with `hello-grouped-grid`) so the
     /// ring policy is one source of truth across both grouped presentations.
     fn access_focus_target(state: &ListState, focused: Option<&str>) -> Option<AccessFocus> {
-        grouped_focus_target(&use_list_groups(), LIST_TAG, GROUP_TAG, state.cursor, focused)
+        grouped_focus_target(
+            &use_list_groups(),
+            LIST_TAG,
+            GROUP_TAG,
+            state.cursor,
+            focused,
+        )
     }
 }
 
@@ -385,7 +415,10 @@ impl WidgetView for GroupedListView {
     type Renderer = HelloGroupedListRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 }
 
@@ -483,7 +516,11 @@ mod tests {
         let headers = present_headers(&scene);
         assert_eq!(headers.first(), Some(&0), "group 0 header leads the view");
         let sources = present_sources(&scene);
-        assert!(sources.len() < 30, "virtualized: small window, got {}", sources.len());
+        assert!(
+            sources.len() < 30,
+            "virtualized: small window, got {}",
+            sources.len()
+        );
         // group 0 = source indices 0,6,12,… (every 6th); the first data rows
         // under the Mesh header are those.
         assert_eq!(&sources[..3], &[0, 6, 12], "Mesh group's first members");
@@ -492,8 +529,15 @@ mod tests {
     #[test]
     fn collapse_all_leaves_only_headers_no_data_rows() {
         let scene = render(None, GroupOrderState::collapse_all);
-        assert_eq!(present_headers(&scene), vec![0, 1, 2, 3, 4, 5], "all six headers, no data");
-        assert!(present_sources(&scene).is_empty(), "collapsed: no data rows rendered");
+        assert_eq!(
+            present_headers(&scene),
+            vec![0, 1, 2, 3, 4, 5],
+            "all six headers, no data"
+        );
+        assert!(
+            present_sources(&scene).is_empty(),
+            "collapsed: no data rows rendered"
+        );
     }
 
     #[test]
@@ -502,7 +546,11 @@ mod tests {
         let accent = theme.resolve(ColorRole::Accent);
         // Select source 6 (a Mesh = group 0 row). Expanded it is rendered Accent.
         let expanded = render(Some(6), |_| {});
-        assert_eq!(row_fill(&expanded, 6), Some(accent), "source 6 selected, group expanded");
+        assert_eq!(
+            row_fill(&expanded, 6),
+            Some(accent),
+            "source 6 selected, group expanded"
+        );
         // Collapse group 0: source 6's row vanishes from the window, but the
         // selection (held by source index) is untouched.
         let collapsed = render(Some(6), |g| g.set_collapsed(0, true));
@@ -512,7 +560,11 @@ mod tests {
         );
         // Re-expanding reveals it, still Accent (selection survived the collapse).
         let reexpanded = render(Some(6), |g| g.set_collapsed(0, false));
-        assert_eq!(row_fill(&reexpanded, 6), Some(accent), "source 6 still selected after expand");
+        assert_eq!(
+            row_fill(&reexpanded, 6),
+            Some(accent),
+            "source 6 still selected after expand"
+        );
     }
 
     #[test]
@@ -520,7 +572,13 @@ mod tests {
         // Selection on data source 6; cursor on visual pos 0 (the group-0
         // header) — cursor ⊥ selection.
         let nodes = Owner::new().run(|| {
-            GroupedListView::access_node(&ListState { selected: Some(6), cursor: Some(0) }, None)
+            GroupedListView::access_node(
+                &ListState {
+                    selected: Some(6),
+                    cursor: Some(0),
+                },
+                None,
+            )
         });
         // nodes[0] = tree container.
         assert_eq!(nodes[0].role, AriaRole::Tree);
@@ -532,7 +590,11 @@ mod tests {
             .expect("rendered group 0 header");
         assert_eq!(header.role, AriaRole::TreeItem);
         assert_eq!(header.level, Some(1));
-        assert_eq!(header.expanded, Some(true), "expanded group header carries aria-expanded");
+        assert_eq!(
+            header.expanded,
+            Some(true),
+            "expanded group header carries aria-expanded"
+        );
         assert!(header.state.focused, "the cursor rests on the header");
         // The selected data row (source 6) is a level-2 TreeItem with
         // aria-selected, and is *not* the cursor (cursor ⊥ selection).
@@ -541,8 +603,15 @@ mod tests {
             .find(|n| n.tag == format!("{LIST_TAG}#6"))
             .expect("rendered data row for source 6");
         assert_eq!(item.level, Some(2));
-        assert_eq!(item.selected, Some(true), "selected data row carries aria-selected");
-        assert!(!item.state.focused, "the selected row is not the cursor here");
+        assert_eq!(
+            item.selected,
+            Some(true),
+            "selected data row carries aria-selected"
+        );
+        assert!(
+            !item.state.focused,
+            "the selected row is not the cursor here"
+        );
     }
 
     #[test]
@@ -551,18 +620,30 @@ mod tests {
             let _ = use_list_groups(); // build the shared holder (all groups expanded)
             // Cursor on visual pos 0 = the group-0 header.
             let af = GroupedListView::access_focus_target(
-                &ListState { selected: None, cursor: Some(0) },
+                &ListState {
+                    selected: None,
+                    cursor: Some(0),
+                },
                 Some(LIST_TAG),
             )
             .expect("list focused returns Some");
-            assert_eq!(af.active_descendant.as_deref(), Some(&*format!("{GROUP_TAG}#0")));
+            assert_eq!(
+                af.active_descendant.as_deref(),
+                Some(&*format!("{GROUP_TAG}#0"))
+            );
             // Cursor on visual pos 1 = the first Mesh data row (source 0).
             let af1 = GroupedListView::access_focus_target(
-                &ListState { selected: None, cursor: Some(1) },
+                &ListState {
+                    selected: None,
+                    cursor: Some(1),
+                },
                 Some(LIST_TAG),
             )
             .expect("list focused returns Some");
-            assert_eq!(af1.active_descendant.as_deref(), Some(&*format!("{LIST_TAG}#0")));
+            assert_eq!(
+                af1.active_descendant.as_deref(),
+                Some(&*format!("{LIST_TAG}#0"))
+            );
             // No cursor → ring the container (no active descendant).
             let af_none =
                 GroupedListView::access_focus_target(&ListState::default(), Some(LIST_TAG))

@@ -68,11 +68,11 @@ use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::button::{ButtonExternal, ButtonState};
 use pinion_core::{Frame, Scene, WidgetCore, WidgetStateName};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::button::{button_a11y_state, read_button_state};
 use pinion_widget_paint::{elevation, state_layer};
 
@@ -114,8 +114,11 @@ enum CardVariant {
     Outlined,
 }
 
-const VARIANTS: [CardVariant; N] =
-    [CardVariant::Elevated, CardVariant::Filled, CardVariant::Outlined];
+const VARIANTS: [CardVariant; N] = [
+    CardVariant::Elevated,
+    CardVariant::Filled,
+    CardVariant::Outlined,
+];
 
 /// Per-card surface dispatch tags. `&'static str` (not `format!`)
 /// because each card's outer container marks its tag `.with_focusable(true)`
@@ -180,8 +183,10 @@ fn card_surface_style(variant: CardVariant, state: ButtonState, theme: &Theme) -
             style = style.with_shadows(elevation::elevation(elevated_level(state)));
         }
         CardVariant::Outlined => {
-            style = style
-                .with_border(Border::new(theme.resolve(ColorRole::Outline), CARD_OUTLINE_W));
+            style = style.with_border(Border::new(
+                theme.resolve(ColorRole::Outline),
+                CARD_OUTLINE_W,
+            ));
         }
         CardVariant::Filled => {}
     }
@@ -370,7 +375,10 @@ impl WidgetView for CardView {
     type Renderer = HelloCardRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 }
 
@@ -408,7 +416,10 @@ mod tests {
         let scene = pinion_core::Owner::new().run(|| view(&idle(), &Frame::new()));
         for (tag, title) in CARD_TAGS.iter().zip(TITLES) {
             assert!(scene.contains_tag(tag), "card surface tag {tag} present");
-            assert!(scene_contains_text(&scene, title), "headline {title} painted");
+            assert!(
+                scene_contains_text(&scene, title),
+                "headline {title} painted"
+            );
         }
     }
 
@@ -423,14 +434,25 @@ mod tests {
         let filled = card_surface_style(CardVariant::Filled, ButtonState::Idle, &theme).fill;
         let elevated = card_surface_style(CardVariant::Elevated, ButtonState::Idle, &theme).fill;
         let outlined = card_surface_style(CardVariant::Outlined, ButtonState::Idle, &theme).fill;
-        assert_eq!(elevated, theme.resolve(ColorRole::Surface), "elevated rests on Surface");
-        assert_eq!(outlined, theme.resolve(ColorRole::Surface), "outlined rests on Surface");
+        assert_eq!(
+            elevated,
+            theme.resolve(ColorRole::Surface),
+            "elevated rests on Surface"
+        );
+        assert_eq!(
+            outlined,
+            theme.resolve(ColorRole::Surface),
+            "outlined rests on Surface"
+        );
         assert_eq!(
             filled,
             theme.resolve(ColorRole::SurfaceContainerHighest),
             "filled rests on SurfaceContainerHighest",
         );
-        assert_ne!(filled, elevated, "filled tone is distinct from the Surface base");
+        assert_ne!(
+            filled, elevated,
+            "filled tone is distinct from the Surface base"
+        );
     }
 
     #[test]
@@ -438,11 +460,21 @@ mod tests {
         let theme = Theme::light();
         let idle = ButtonState::Idle;
         assert!(
-            card_surface_style(CardVariant::Outlined, idle, &theme).border.is_some(),
+            card_surface_style(CardVariant::Outlined, idle, &theme)
+                .border
+                .is_some(),
             "outlined card carries the outline border",
         );
-        assert!(card_surface_style(CardVariant::Elevated, idle, &theme).border.is_none());
-        assert!(card_surface_style(CardVariant::Filled, idle, &theme).border.is_none());
+        assert!(
+            card_surface_style(CardVariant::Elevated, idle, &theme)
+                .border
+                .is_none()
+        );
+        assert!(
+            card_surface_style(CardVariant::Filled, idle, &theme)
+                .border
+                .is_none()
+        );
     }
 
     #[test]
@@ -450,18 +482,25 @@ mod tests {
         let theme = Theme::light();
         let idle = card_surface_style(CardVariant::Elevated, ButtonState::Idle, &theme);
         let hover = card_surface_style(CardVariant::Elevated, ButtonState::Hover, &theme);
-        assert!(!idle.shadows.is_empty(), "elevated card casts a resting shadow");
+        assert!(
+            !idle.shadows.is_empty(),
+            "elevated card casts a resting shadow"
+        );
         // Hover bumps Level 1 → Level 2, so the hovered shadow is larger.
         assert!(
             hover.shadows[0].blur > idle.shadows[0].blur,
             "hover bumps the elevation (larger blur)",
         );
         assert!(
-            card_surface_style(CardVariant::Filled, ButtonState::Idle, &theme).shadows.is_empty(),
+            card_surface_style(CardVariant::Filled, ButtonState::Idle, &theme)
+                .shadows
+                .is_empty(),
             "filled card is flat",
         );
         assert!(
-            card_surface_style(CardVariant::Outlined, ButtonState::Idle, &theme).shadows.is_empty(),
+            card_surface_style(CardVariant::Outlined, ButtonState::Idle, &theme)
+                .shadows
+                .is_empty(),
             "outlined card is flat",
         );
     }
@@ -472,7 +511,10 @@ mod tests {
         for variant in VARIANTS {
             let idle = card_surface_style(variant, ButtonState::Idle, &theme).fill;
             let hover = card_surface_style(variant, ButtonState::Hover, &theme).fill;
-            assert_ne!(idle, hover, "{variant:?} hover is tinted by the state layer");
+            assert_ne!(
+                idle, hover,
+                "{variant:?} hover is tinted by the state layer"
+            );
         }
     }
 
@@ -492,7 +534,10 @@ mod tests {
         let scene = pinion_core::Owner::new().run(|| view(&idle(), &Frame::new()));
         assert_eq!(
             scene.collect_focusable_tags(),
-            CARD_TAGS.iter().map(|t| (*t).to_owned()).collect::<Vec<_>>(),
+            CARD_TAGS
+                .iter()
+                .map(|t| (*t).to_owned())
+                .collect::<Vec<_>>(),
         );
     }
 
@@ -506,7 +551,10 @@ mod tests {
             "ArrowRight",
             pinion_core::Modifiers::empty(),
         ));
-        assert_eq!(pinion_core::focus_request::drain().as_deref(), Some(CARD_TAGS[0]));
+        assert_eq!(
+            pinion_core::focus_request::drain().as_deref(),
+            Some(CARD_TAGS[0])
+        );
     }
 
     #[test]
@@ -519,7 +567,10 @@ mod tests {
             "ArrowLeft",
             pinion_core::Modifiers::empty(),
         ));
-        assert_eq!(pinion_core::focus_request::drain().as_deref(), Some(CARD_TAGS[N - 1]));
+        assert_eq!(
+            pinion_core::focus_request::drain().as_deref(),
+            Some(CARD_TAGS[N - 1])
+        );
     }
 
     #[test]
@@ -532,14 +583,20 @@ mod tests {
             "Home",
             pinion_core::Modifiers::empty(),
         ));
-        assert_eq!(pinion_core::focus_request::drain().as_deref(), Some(CARD_TAGS[0]));
+        assert_eq!(
+            pinion_core::focus_request::drain().as_deref(),
+            Some(CARD_TAGS[0])
+        );
         assert!(CardView::apply_key(
             &mut scene,
             Some(CARD_TAGS[1]),
             "End",
             pinion_core::Modifiers::empty(),
         ));
-        assert_eq!(pinion_core::focus_request::drain().as_deref(), Some(CARD_TAGS[N - 1]));
+        assert_eq!(
+            pinion_core::focus_request::drain().as_deref(),
+            Some(CARD_TAGS[N - 1])
+        );
     }
 
     #[test]
@@ -558,7 +615,11 @@ mod tests {
             "ArrowRight",
             pinion_core::Modifiers::empty(),
         ));
-        assert_eq!(pinion_core::focus_request::drain(), None, "no focus request emitted");
+        assert_eq!(
+            pinion_core::focus_request::drain(),
+            None,
+            "no focus request emitted"
+        );
     }
 
     #[test]
@@ -639,9 +700,8 @@ mod tests {
     /// the live topology.
     fn scene_fixture() -> Scene {
         use pinion_core::scene::ExternalNode;
-        let primary = Scene::External(
-            ExternalNode::new(CardView::create_external()).with_tag(CARD_TAGS[0]),
-        );
+        let primary =
+            Scene::External(ExternalNode::new(CardView::create_external()).with_tag(CARD_TAGS[0]));
         let mut children = vec![primary];
         for extra in CardView::create_extra_externals() {
             children.push(Scene::External(

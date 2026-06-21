@@ -314,9 +314,10 @@ impl Scene {
                     None
                 }
             }
-            Scene::Container(c) => {
-                c.children.iter().find_map(|s| s.find_external_with_tag(target))
-            }
+            Scene::Container(c) => c
+                .children
+                .iter()
+                .find_map(|s| s.find_external_with_tag(target)),
             Scene::Scroll(s) => s.content.find_external_with_tag(target),
             Scene::Box(_)
             | Scene::Text(_)
@@ -348,9 +349,10 @@ impl Scene {
                     None
                 }
             }
-            Scene::Container(c) => {
-                c.children.iter().find_map(|s| s.find_immediate_with_tag(target))
-            }
+            Scene::Container(c) => c
+                .children
+                .iter()
+                .find_map(|s| s.find_immediate_with_tag(target)),
             Scene::Scroll(s) => s.content.find_immediate_with_tag(target),
             Scene::Box(_)
             | Scene::Text(_)
@@ -464,9 +466,7 @@ impl Scene {
     pub fn has_immediate_mode_subtree(&self) -> bool {
         match self {
             Scene::ImmediateModeNode(_) => true,
-            Scene::Container(c) => {
-                c.children.iter().any(Self::has_immediate_mode_subtree)
-            }
+            Scene::Container(c) => c.children.iter().any(Self::has_immediate_mode_subtree),
             Scene::Scroll(s) => s.content.has_immediate_mode_subtree(),
             Scene::Box(_)
             | Scene::Text(_)
@@ -634,9 +634,7 @@ impl Scene {
             | Scene::Path(_)
             | Scene::Image(_)
             | Scene::Effect(_) => true,
-            Scene::Container(c) => {
-                c.children.iter().all(Self::is_cacheable_for_paint)
-            }
+            Scene::Container(c) => c.children.iter().all(Self::is_cacheable_for_paint),
             Scene::Scroll(s) => s.content.is_cacheable_for_paint(),
             // R974.1/R991 §5.41 — TextGrid is uncacheable (see the doc
             // above): a terminal projection is replaced wholesale each
@@ -708,10 +706,7 @@ impl Scene {
     /// [`ExternalIntrospect::intervene`](crate::external::ExternalIntrospect::intervene)
     /// or [`ExternalIntrospect::invoke`](crate::external::ExternalIntrospect::invoke)
     /// on the primary widget reach for the mutable borrow.
-    pub fn find_external_with_tag_mut(
-        &mut self,
-        target: &str,
-    ) -> Option<&mut ExternalNode> {
+    pub fn find_external_with_tag_mut(&mut self, target: &str) -> Option<&mut ExternalNode> {
         match self {
             Scene::External(n) => {
                 if n.tag.as_deref() == Some(target) {
@@ -771,9 +766,7 @@ impl Scene {
                     continue;
                 }
                 if let Some(mut child_hit) = child.hit_test(x, y) {
-                    let seg = child
-                        .tag()
-                        .map_or_else(|| idx.to_string(), String::from);
+                    let seg = child.tag().map_or_else(|| idx.to_string(), String::from);
                     child_hit.segments.insert(0, seg);
                     return Some(child_hit);
                 }
@@ -810,7 +803,10 @@ impl Scene {
             // itself reported no hit) — return the scroll container
             // as the deepest hit.
         }
-        Some(HitPath { segments: Vec::new(), bbox: self.rect() })
+        Some(HitPath {
+            segments: Vec::new(),
+            bbox: self.rect(),
+        })
     }
 
     /// (§5.32 R39.2 v0) Collect every primitive whose rect intersects
@@ -1096,24 +1092,20 @@ impl Scene {
 
     /// Recursive helper for [`Self::hit_test_region`]. Maintains a
     /// segment stack representing the current path from the root.
-    fn collect_intersections(
-        &self,
-        query: Rect,
-        path: &mut Vec<String>,
-        out: &mut Vec<HitPath>,
-    ) {
+    fn collect_intersections(&self, query: Rect, path: &mut Vec<String>, out: &mut Vec<HitPath>) {
         if matches!(self, Scene::Effect(_)) {
             return;
         }
         if !rects_intersect(self.rect(), query) {
             return;
         }
-        out.push(HitPath { segments: path.clone(), bbox: self.rect() });
+        out.push(HitPath {
+            segments: path.clone(),
+            bbox: self.rect(),
+        });
         if let Scene::Container(c) = self {
             for (idx, child) in c.children.iter().enumerate() {
-                let seg = child
-                    .tag()
-                    .map_or_else(|| idx.to_string(), String::from);
+                let seg = child.tag().map_or_else(|| idx.to_string(), String::from);
                 path.push(seg);
                 child.collect_intersections(query, path, out);
                 path.pop();
@@ -1150,7 +1142,12 @@ impl Scene {
     clippy::cast_possible_truncation,
     reason = "u32 <-> i64 <-> u32 round-trip on bounded scene coords; saturate at 0 below"
 )]
-fn translate_rect_into_clip(rect: Rect, x_off: i64, y_off: i64, clip: Option<Rect>) -> Option<Rect> {
+fn translate_rect_into_clip(
+    rect: Rect,
+    x_off: i64,
+    y_off: i64,
+    clip: Option<Rect>,
+) -> Option<Rect> {
     let rect_left = i64::from(rect.x) + x_off;
     let rect_top = i64::from(rect.y) + y_off;
     let rect_right = rect_left + i64::from(rect.w);
@@ -1446,12 +1443,7 @@ impl Rect {
         let self_empty = self.w == 0 || self.h == 0;
         let other_empty = other.w == 0 || other.h == 0;
         match (self_empty, other_empty) {
-            (true, true) => Rect::new(
-                self.x.min(other.x),
-                self.y.min(other.y),
-                0,
-                0,
-            ),
+            (true, true) => Rect::new(self.x.min(other.x), self.y.min(other.y), 0, 0),
             (true, false) => other,
             (false, true) => self,
             (false, false) => {
@@ -2799,25 +2791,13 @@ pub trait ImmediatePainter {
     /// Fill a triangle defined by three viewport-local points with
     /// `color`. Winding order is irrelevant at this layer (impls
     /// rasterise both clockwise and counter-clockwise the same way).
-    fn fill_triangle(
-        &mut self,
-        p1: (f32, f32),
-        p2: (f32, f32),
-        p3: (f32, f32),
-        color: Color,
-    );
+    fn fill_triangle(&mut self, p1: (f32, f32), p2: (f32, f32), p3: (f32, f32), color: Color);
 
     /// Stroke a line between two viewport-local points with the
     /// given pixel `width` and `color`. Line caps / joins are
     /// backend-default (Vello rounds caps; the future GPU pipeline
     /// may differ).
-    fn stroke_line(
-        &mut self,
-        p1: (f32, f32),
-        p2: (f32, f32),
-        width: f32,
-        color: Color,
-    );
+    fn stroke_line(&mut self, p1: (f32, f32), p2: (f32, f32), width: f32, color: Color);
 }
 
 /// R681 §2 #4 — paint-tree carrier for an [`ImmediateMode`] driver.
@@ -3223,10 +3203,28 @@ pub struct RecordingImmediatePainter {
 /// the dispatch shape.
 #[derive(Debug, Clone, PartialEq)]
 pub enum RecordedPaintCall {
-    Clear { color: Color },
-    FillRect { x: f32, y: f32, w: f32, h: f32, color: Color },
-    FillTriangle { p1: (f32, f32), p2: (f32, f32), p3: (f32, f32), color: Color },
-    StrokeLine { p1: (f32, f32), p2: (f32, f32), width: f32, color: Color },
+    Clear {
+        color: Color,
+    },
+    FillRect {
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        color: Color,
+    },
+    FillTriangle {
+        p1: (f32, f32),
+        p2: (f32, f32),
+        p3: (f32, f32),
+        color: Color,
+    },
+    StrokeLine {
+        p1: (f32, f32),
+        p2: (f32, f32),
+        width: f32,
+        color: Color,
+    },
 }
 
 impl RecordingImmediatePainter {
@@ -3251,36 +3249,27 @@ impl ImmediatePainter for RecordingImmediatePainter {
         self.calls.push(RecordedPaintCall::Clear { color });
     }
     fn fill_rect(&mut self, x: f32, y: f32, w: f32, h: f32, color: Color) {
-        self.calls.push(RecordedPaintCall::FillRect { x, y, w, h, color });
+        self.calls
+            .push(RecordedPaintCall::FillRect { x, y, w, h, color });
     }
-    fn fill_triangle(
-        &mut self,
-        p1: (f32, f32),
-        p2: (f32, f32),
-        p3: (f32, f32),
-        color: Color,
-    ) {
+    fn fill_triangle(&mut self, p1: (f32, f32), p2: (f32, f32), p3: (f32, f32), color: Color) {
         self.calls
             .push(RecordedPaintCall::FillTriangle { p1, p2, p3, color });
     }
-    fn stroke_line(
-        &mut self,
-        p1: (f32, f32),
-        p2: (f32, f32),
-        width: f32,
-        color: Color,
-    ) {
-        self.calls
-            .push(RecordedPaintCall::StrokeLine { p1, p2, width, color });
+    fn stroke_line(&mut self, p1: (f32, f32), p2: (f32, f32), width: f32, color: Color) {
+        self.calls.push(RecordedPaintCall::StrokeLine {
+            p1,
+            p2,
+            width,
+            color,
+        });
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::external::{
-        Backend, CountedExternal, External, IntrospectValue, StubExternal,
-    };
+    use crate::external::{Backend, CountedExternal, External, IntrospectValue, StubExternal};
 
     fn stub_handle() -> Box<dyn External> {
         Box::new(StubExternal::new())
@@ -3445,9 +3434,8 @@ mod tests {
         // builders switch to flex.
         use crate::style::{Display, FlexDirection};
         let layout = LayoutStyle::new().flex(FlexDirection::Column);
-        let scene = Scene::Box(
-            BoxNode::filled(Rect::default(), Color::default()).with_layout(layout),
-        );
+        let scene =
+            Scene::Box(BoxNode::filled(Rect::default(), Color::default()).with_layout(layout));
         match scene {
             Scene::Box(node) => {
                 assert_eq!(node.layout.display, Display::Flex);
@@ -3506,7 +3494,8 @@ mod tests {
     fn box_node_with_tag_round_trips_through_scene() {
         // §5.20 intent tag persistence: attaching `"save_btn"` on a
         // BoxNode survives the Scene::Box wrap and pattern-match.
-        let scene = Scene::Box(BoxNode::filled(Rect::default(), Color::default()).with_tag("save_btn"));
+        let scene =
+            Scene::Box(BoxNode::filled(Rect::default(), Color::default()).with_tag("save_btn"));
         match scene {
             Scene::Box(node) => assert_eq!(node.tag.as_deref(), Some("save_btn")),
             _ => panic!("expected Box variant"),
@@ -3527,7 +3516,8 @@ mod tests {
     fn container_tag_persists_with_tagged_box_child() {
         // §5.20 nesting: a tagged Box inside a tagged Container
         // round-trips both tags through pattern-match.
-        let inner = Scene::Box(BoxNode::filled(Rect::default(), Color::default()).with_tag("inner_btn"));
+        let inner =
+            Scene::Box(BoxNode::filled(Rect::default(), Color::default()).with_tag("inner_btn"));
         let scene = Scene::Container(ContainerNode::new(vec![inner]).with_tag("toolbar"));
         match scene {
             Scene::Container(c) => {
@@ -3577,7 +3567,10 @@ mod tests {
     #[test]
     fn hit_test_zero_area_rect_never_hits() {
         let s = Scene::Box(BoxNode::filled(Rect::new(10, 10, 0, 0), Color::default()));
-        assert!(s.hit_test(10, 10).is_none(), "zero-area rect cannot contain");
+        assert!(
+            s.hit_test(10, 10).is_none(),
+            "zero-area rect cannot contain"
+        );
     }
 
     #[test]
@@ -3585,13 +3578,7 @@ mod tests {
         // Container at (0,0,100,100); child at (200,200,10,10) — point
         // inside container but outside all children. Hit returns the
         // container itself (empty segments).
-        let s = container_at(
-            0,
-            0,
-            100,
-            100,
-            vec![box_at(200, 200, 10, 10)],
-        );
+        let s = container_at(0, 0, 100, 100, vec![box_at(200, 200, 10, 10)]);
         let hit = s.hit_test(50, 50).expect("inside container");
         assert!(hit.segments.is_empty(), "container itself is the hit");
     }
@@ -3624,7 +3611,10 @@ mod tests {
         ring.tag = Some("ai-overlay/focus-ring".into());
         let s = container_at(0, 0, 100, 100, vec![Scene::Box(ring)]);
         let hit = s.hit_test(50, 50).expect("inside container");
-        assert!(hit.segments.is_empty(), "ring skipped → container is the hit");
+        assert!(
+            hit.segments.is_empty(),
+            "ring skipped → container is the hit"
+        );
     }
 
     #[test]
@@ -3645,7 +3635,13 @@ mod tests {
 
     #[test]
     fn hit_test_tagged_child_uses_tag_in_segment() {
-        let s = container_at(0, 0, 200, 200, vec![tagged_box_at(10, 10, 50, 50, "save_btn")]);
+        let s = container_at(
+            0,
+            0,
+            200,
+            200,
+            vec![tagged_box_at(10, 10, 50, 50, "save_btn")],
+        );
         let hit = s.hit_test(20, 20).expect("on tagged child");
         assert_eq!(hit.segments, vec!["save_btn".to_string()]);
     }
@@ -3701,7 +3697,10 @@ mod tests {
     #[test]
     fn hit_test_region_empty_query_returns_empty() {
         let s = container_at(
-            0, 0, 200, 200,
+            0,
+            0,
+            200,
+            200,
             vec![box_at(10, 10, 50, 50), box_at(100, 100, 30, 30)],
         );
         // Zero-area query never intersects.
@@ -3711,7 +3710,10 @@ mod tests {
     #[test]
     fn hit_test_region_covering_everything_returns_root_plus_children() {
         let s = container_at(
-            0, 0, 200, 200,
+            0,
+            0,
+            200,
+            200,
             vec![box_at(10, 10, 50, 50), box_at(100, 100, 30, 30)],
         );
         let hits = s.hit_test_region(0, 0, 200, 200);
@@ -3727,7 +3729,10 @@ mod tests {
     #[test]
     fn hit_test_region_partial_overlap_returns_only_intersecting() {
         let s = container_at(
-            0, 0, 200, 200,
+            0,
+            0,
+            200,
+            200,
             vec![box_at(10, 10, 50, 50), box_at(100, 100, 30, 30)],
         );
         // Region covers only the second child + container.
@@ -3740,7 +3745,10 @@ mod tests {
     #[test]
     fn hit_test_region_skips_effect_variant() {
         let s = container_at(
-            0, 0, 100, 100,
+            0,
+            0,
+            100,
+            100,
             vec![Scene::Effect(EffectNode::new()), box_at(10, 10, 20, 20)],
         );
         let hits = s.hit_test_region(0, 0, 100, 100);
@@ -3760,16 +3768,25 @@ mod tests {
     #[test]
     fn lookup_path_resolves_index_segment() {
         let s = container_at(
-            0, 0, 200, 200,
+            0,
+            0,
+            200,
+            200,
             vec![box_at(10, 10, 20, 20), box_at(50, 50, 30, 30)],
         );
-        assert_eq!(s.lookup_path(&["1".to_string()]), Some(Rect::new(50, 50, 30, 30)));
+        assert_eq!(
+            s.lookup_path(&["1".to_string()]),
+            Some(Rect::new(50, 50, 30, 30))
+        );
     }
 
     #[test]
     fn lookup_path_resolves_tag_segment() {
         let s = container_at(0, 0, 200, 200, vec![tagged_box_at(10, 10, 20, 20, "btn")]);
-        assert_eq!(s.lookup_path(&["btn".to_string()]), Some(Rect::new(10, 10, 20, 20)));
+        assert_eq!(
+            s.lookup_path(&["btn".to_string()]),
+            Some(Rect::new(10, 10, 20, 20))
+        );
     }
 
     #[test]
@@ -3820,13 +3837,19 @@ mod tests {
             }
         }
         // Confirm the mutation landed via the immutable counterpart.
-        assert_eq!(s.lookup_path(&["btn".to_string()]), Some(Rect::new(99, 99, 99, 99)));
+        assert_eq!(
+            s.lookup_path(&["btn".to_string()]),
+            Some(Rect::new(99, 99, 99, 99))
+        );
     }
 
     #[test]
     fn lookup_path_mut_resolves_index_segment() {
         let mut s = container_at(
-            0, 0, 200, 200,
+            0,
+            0,
+            200,
+            200,
             vec![box_at(10, 10, 20, 20), box_at(50, 50, 30, 30)],
         );
         let node = s
@@ -3861,7 +3884,10 @@ mod tests {
     #[test]
     fn lookup_path_mut_skips_effect_variant() {
         let mut s = Scene::Effect(EffectNode::new());
-        assert!(s.lookup_path_mut(&[]).is_none(), "Effect never resolves, even at root");
+        assert!(
+            s.lookup_path_mut(&[]).is_none(),
+            "Effect never resolves, even at root"
+        );
     }
 
     // ---- §5.34 R42: Scene::lookup_path_ref ----
@@ -3906,7 +3932,10 @@ mod tests {
     #[test]
     fn hit_test_region_uses_tag_in_path() {
         let s = container_at(
-            0, 0, 200, 200,
+            0,
+            0,
+            200,
+            200,
             vec![tagged_box_at(10, 10, 50, 50, "save_btn")],
         );
         let hits = s.hit_test_region(0, 0, 200, 200);
@@ -3972,11 +4001,8 @@ mod tests {
         // R51.122 input router resolves wheel / arrow / page events
         // to the scroll container the same way it resolves clicks to
         // a tagged ContainerNode.
-        let scroll = ScrollNode::new(
-            Rect::new(0, 0, 50, 50),
-            box_at(0, 0, 200, 200),
-        )
-        .with_tag("scroll_box");
+        let scroll =
+            ScrollNode::new(Rect::new(0, 0, 50, 50), box_at(0, 0, 200, 200)).with_tag("scroll_box");
         let scene = Scene::Scroll(scroll);
         assert_eq!(scene.tag(), Some("scroll_box"));
     }
@@ -3987,11 +4013,8 @@ mod tests {
         // verbatim. The substrate-side clamp lives on the scroll
         // dispatch path (R55.B carry); construction itself is
         // verbatim.
-        let scroll = ScrollNode::new(
-            Rect::new(0, 0, 100, 100),
-            box_at(0, 0, 400, 800),
-        )
-        .with_offset(40, 250);
+        let scroll =
+            ScrollNode::new(Rect::new(0, 0, 100, 100), box_at(0, 0, 400, 800)).with_offset(40, 250);
         assert_eq!(scroll.offset_x, 40);
         assert_eq!(scroll.offset_y, 250);
     }
@@ -4000,10 +4023,7 @@ mod tests {
     fn r55_a_scroll_node_default_offset_is_zero() {
         // R55.A — `ScrollNode::new` starts at (0, 0) so the content's
         // top-left aligns with the viewport's top-left by default.
-        let scroll = ScrollNode::new(
-            Rect::new(0, 0, 100, 100),
-            box_at(0, 0, 400, 800),
-        );
+        let scroll = ScrollNode::new(Rect::new(0, 0, 100, 100), box_at(0, 0, 400, 800));
         assert_eq!(scroll.offset_x, 0);
         assert_eq!(scroll.offset_y, 0);
         assert!(scroll.tag.is_none());
@@ -4017,8 +4037,7 @@ mod tests {
         // so a viewport-relative (5, 10) lands at content
         // intrinsic (5, 110) — inside the content box.
         let content = box_at(0, 0, 200, 400);
-        let scroll =
-            ScrollNode::new(Rect::new(50, 60, 100, 100), content).with_offset(0, 100);
+        let scroll = ScrollNode::new(Rect::new(50, 60, 100, 100), content).with_offset(0, 100);
         let scene = Scene::Scroll(scroll);
         // Pick a point inside the viewport: viewport.x=50, vx=5 →
         // content_x = 5 + 0 = 5; viewport.y=60, vy=10 →
@@ -4034,10 +4053,7 @@ mod tests {
         // The content's intrinsic geometry exceeds the viewport but
         // is hidden by the clip.
         let content = box_at(0, 0, 500, 500);
-        let scene = Scene::Scroll(ScrollNode::new(
-            Rect::new(10, 10, 50, 50),
-            content,
-        ));
+        let scene = Scene::Scroll(ScrollNode::new(Rect::new(10, 10, 50, 50), content));
         // Inside content intrinsic (200, 200) but outside viewport.
         assert!(scene.hit_test(200, 200).is_none());
     }
@@ -4049,8 +4065,7 @@ mod tests {
         // scroll container itself is then the deepest hit (same
         // fallback as a Container with no matching child).
         let content = box_at(0, 0, 10, 10);
-        let scroll =
-            ScrollNode::new(Rect::new(0, 0, 100, 100), content).with_offset(50, 50);
+        let scroll = ScrollNode::new(Rect::new(0, 0, 100, 100), content).with_offset(50, 50);
         let scene = Scene::Scroll(scroll);
         // viewport-local (5, 5) + offset (50, 50) = (55, 55),
         // outside the 10×10 content box.
@@ -4067,8 +4082,7 @@ mod tests {
         // (idx or tag) prepended. End-to-end:
         // Container("root") > Scroll(viewport=10..60) > Box(...)
         let inner = box_at(0, 0, 100, 100);
-        let scroll = ScrollNode::new(Rect::new(10, 10, 50, 50), inner)
-            .with_tag("scroll_box");
+        let scroll = ScrollNode::new(Rect::new(10, 10, 50, 50), inner).with_tag("scroll_box");
         let scene = container_at(0, 0, 100, 100, vec![Scene::Scroll(scroll)]);
         // Hit at (20, 20): inside root container, inside scroll
         // viewport (vx=10, vy=10), inside content (0, 0) + (10, 10)
@@ -4094,8 +4108,7 @@ mod tests {
         // shape as `Self::rect`). Transparency only fires for
         // non-empty paths; this guard is the boundary case.
         let viewport = Rect::new(10, 20, 100, 200);
-        let scene =
-            Scene::Scroll(ScrollNode::new(viewport, box_at(0, 0, 500, 1000)));
+        let scene = Scene::Scroll(ScrollNode::new(viewport, box_at(0, 0, 500, 1000)));
         assert_eq!(scene.lookup_path(&[]), Some(viewport));
     }
 
@@ -4107,8 +4120,7 @@ mod tests {
         // Scroll were not in the chain.
         let inner = tagged_box_at(0, 0, 200, 100, "inner_btn");
         let content = container_at(0, 0, 400, 400, vec![inner]);
-        let scene =
-            Scene::Scroll(ScrollNode::new(Rect::new(0, 0, 200, 200), content));
+        let scene = Scene::Scroll(ScrollNode::new(Rect::new(0, 0, 200, 200), content));
         assert_eq!(
             scene.lookup_path(&["inner_btn".to_string()]),
             Some(Rect::new(0, 0, 200, 100))
@@ -4123,8 +4135,7 @@ mod tests {
         // segment to short-circuit the lookup.
         let inner = tagged_box_at(0, 0, 50, 50, "inner");
         let content = container_at(0, 0, 200, 200, vec![inner]);
-        let scene =
-            Scene::Scroll(ScrollNode::new(Rect::new(0, 0, 100, 100), content));
+        let scene = Scene::Scroll(ScrollNode::new(Rect::new(0, 0, 100, 100), content));
         assert_eq!(scene.lookup_path(&["nope".to_string()]), None);
     }
 
@@ -4136,8 +4147,7 @@ mod tests {
         // shape to reach an `ExternalNode` inside a scroll.
         let inner = tagged_box_at(0, 0, 80, 40, "inner_btn");
         let content = container_at(0, 0, 300, 300, vec![inner]);
-        let scene =
-            Scene::Scroll(ScrollNode::new(Rect::new(0, 0, 200, 200), content));
+        let scene = Scene::Scroll(ScrollNode::new(Rect::new(0, 0, 200, 200), content));
         let resolved = scene
             .lookup_path_ref(&["inner_btn".to_string()])
             .expect("inner_btn resolves through scroll");
@@ -4154,8 +4164,7 @@ mod tests {
         // `TypedProposal::SetStyle` / `ReplaceView` need.
         let inner = tagged_box_at(0, 0, 50, 50, "inner");
         let content = container_at(0, 0, 200, 200, vec![inner]);
-        let mut scene =
-            Scene::Scroll(ScrollNode::new(Rect::new(0, 0, 100, 100), content));
+        let mut scene = Scene::Scroll(ScrollNode::new(Rect::new(0, 0, 100, 100), content));
         let resolved = scene
             .lookup_path_mut(&["inner".to_string()])
             .expect("inner resolves through scroll");
@@ -4166,8 +4175,9 @@ mod tests {
             _ => panic!("expected Box leaf"),
         }
         // Re-resolve to confirm the mutation stuck.
-        let after =
-            scene.lookup_path(&["inner".to_string()]).expect("still resolves");
+        let after = scene
+            .lookup_path(&["inner".to_string()])
+            .expect("still resolves");
         assert_eq!(after, Rect::new(5, 5, 80, 80));
     }
 
@@ -4181,8 +4191,7 @@ mod tests {
         // R51.181 hit_test_through_container_into_scroll path.
         let inner = tagged_box_at(0, 0, 50, 50, "inner");
         let content = container_at(0, 0, 200, 200, vec![inner]);
-        let scroll = ScrollNode::new(Rect::new(10, 10, 100, 100), content)
-            .with_tag("scroll_box");
+        let scroll = ScrollNode::new(Rect::new(10, 10, 100, 100), content).with_tag("scroll_box");
         let scene = container_at(0, 0, 200, 200, vec![Scene::Scroll(scroll)]);
         assert_eq!(
             scene.lookup_path(&["scroll_box".to_string(), "inner".to_string()]),
@@ -4207,9 +4216,7 @@ mod tests {
         // next test). Mirrors the container-level behaviour from
         // §5.32 R39.2 v0.
         let content = box_at(0, 0, 200, 200);
-        let scene = Scene::Scroll(
-            ScrollNode::new(Rect::new(10, 10, 50, 50), content),
-        );
+        let scene = Scene::Scroll(ScrollNode::new(Rect::new(10, 10, 50, 50), content));
         let hits = scene.hit_test_region(0, 0, 100, 100);
         assert_eq!(hits[0].bbox, Rect::new(10, 10, 50, 50));
         assert!(hits[0].segments.is_empty());
@@ -4223,9 +4230,7 @@ mod tests {
         // (10,10,50,50) translates to content-intrinsic
         // (10,10,50,50) unchanged.
         let inner = box_at(0, 0, 200, 200);
-        let scene = Scene::Scroll(
-            ScrollNode::new(Rect::new(0, 0, 100, 100), inner),
-        );
+        let scene = Scene::Scroll(ScrollNode::new(Rect::new(0, 0, 100, 100), inner));
         let hits = scene.hit_test_region(10, 10, 50, 50);
         // hits[0] = scroll viewport; hits[1] = scrolled content box.
         assert_eq!(hits.len(), 2);
@@ -4245,14 +4250,10 @@ mod tests {
         // segment.
         let inner = tagged_box_at(0, 100, 30, 30, "shifted");
         let content = container_at(0, 0, 200, 400, vec![inner]);
-        let scene = Scene::Scroll(
-            ScrollNode::new(Rect::new(0, 0, 100, 100), content)
-                .with_offset(0, 100),
-        );
+        let scene =
+            Scene::Scroll(ScrollNode::new(Rect::new(0, 0, 100, 100), content).with_offset(0, 100));
         let hits = scene.hit_test_region(0, 0, 50, 50);
-        let found = hits
-            .iter()
-            .any(|h| h.segments == ["shifted".to_string()]);
+        let found = hits.iter().any(|h| h.segments == ["shifted".to_string()]);
         assert!(found, "shifted box must surface at intrinsic-shifted path");
     }
 
@@ -4263,9 +4264,7 @@ mod tests {
         // viewport from descending. Even content that would
         // intrinsically overlap stays hidden by the clip.
         let inner = tagged_box_at(0, 0, 500, 500, "huge");
-        let scene = Scene::Scroll(
-            ScrollNode::new(Rect::new(50, 50, 30, 30), inner),
-        );
+        let scene = Scene::Scroll(ScrollNode::new(Rect::new(50, 50, 30, 30), inner));
         let hits = scene.hit_test_region(100, 100, 10, 10);
         assert!(hits.is_empty(), "viewport-disjoint query yields no hits");
     }
@@ -4284,9 +4283,7 @@ mod tests {
         // content returns itself as the wheel target for any
         // (x, y) inside the viewport.
         let content = box_at(0, 0, 200, 400);
-        let scene = Scene::Scroll(
-            ScrollNode::new(Rect::new(10, 10, 100, 100), content),
-        );
+        let scene = Scene::Scroll(ScrollNode::new(Rect::new(10, 10, 100, 100), content));
         let target = scene.scroll_target_at(50, 50).expect("inside viewport");
         assert_eq!(target.viewport, Rect::new(10, 10, 100, 100));
     }
@@ -4294,9 +4291,10 @@ mod tests {
     #[test]
     fn r55_c2_scroll_target_at_outside_viewport_returns_none() {
         // R55.C.2 — (x, y) outside the viewport never matches.
-        let scene = Scene::Scroll(
-            ScrollNode::new(Rect::new(50, 50, 30, 30), box_at(0, 0, 100, 100)),
-        );
+        let scene = Scene::Scroll(ScrollNode::new(
+            Rect::new(50, 50, 30, 30),
+            box_at(0, 0, 100, 100),
+        ));
         assert!(scene.scroll_target_at(0, 0).is_none());
         assert!(scene.scroll_target_at(100, 100).is_none());
     }
@@ -4305,10 +4303,7 @@ mod tests {
     fn r55_c2_scroll_target_at_finds_inside_container() {
         // R55.C.2 — Container > Scroll. The walk descends through
         // the container and returns the Scroll's ref.
-        let scroll = ScrollNode::new(
-            Rect::new(20, 20, 100, 100),
-            box_at(0, 0, 200, 200),
-        );
+        let scroll = ScrollNode::new(Rect::new(20, 20, 100, 100), box_at(0, 0, 200, 200));
         let scene = container_at(0, 0, 200, 200, vec![Scene::Scroll(scroll)]);
         let target = scene.scroll_target_at(50, 50).expect("hits inner scroll");
         assert_eq!(target.viewport, Rect::new(20, 20, 100, 100));
@@ -4323,12 +4318,8 @@ mod tests {
         // root-local (20, 20) maps to content-intrinsic (20, 20) —
         // inside the inner viewport.
         let inner_content = box_at(0, 0, 100, 100);
-        let inner_scroll = Scene::Scroll(
-            ScrollNode::new(Rect::new(10, 10, 50, 50), inner_content),
-        );
-        let outer = Scene::Scroll(
-            ScrollNode::new(Rect::new(0, 0, 200, 200), inner_scroll),
-        );
+        let inner_scroll = Scene::Scroll(ScrollNode::new(Rect::new(10, 10, 50, 50), inner_content));
+        let outer = Scene::Scroll(ScrollNode::new(Rect::new(0, 0, 200, 200), inner_scroll));
         let target = outer.scroll_target_at(20, 20).expect("hits inner");
         assert_eq!(target.viewport, Rect::new(10, 10, 50, 50));
     }
@@ -4339,13 +4330,9 @@ mod tests {
         // → the outer scroll is the deepest match. Mirrors the
         // `hit_test` fallback shape.
         let inner_content = box_at(0, 0, 50, 50);
-        let inner_scroll = Scene::Scroll(
-            ScrollNode::new(Rect::new(60, 60, 20, 20), inner_content),
-        );
+        let inner_scroll = Scene::Scroll(ScrollNode::new(Rect::new(60, 60, 20, 20), inner_content));
         let outer_content = container_at(0, 0, 200, 200, vec![inner_scroll]);
-        let outer = Scene::Scroll(
-            ScrollNode::new(Rect::new(0, 0, 200, 200), outer_content),
-        );
+        let outer = Scene::Scroll(ScrollNode::new(Rect::new(0, 0, 200, 200), outer_content));
         // (10, 10) is inside outer (0..200) but outside inner (60..80).
         let target = outer.scroll_target_at(10, 10).expect("outer");
         assert_eq!(target.viewport, Rect::new(0, 0, 200, 200));
@@ -4374,9 +4361,10 @@ mod tests {
         // R55.C.2 — a declarative-only ScrollNode (no `with_state`
         // call) silently returns `None` — the router drops the
         // wheel input rather than panic.
-        let scene = Scene::Scroll(
-            ScrollNode::new(Rect::new(0, 0, 100, 100), box_at(0, 0, 200, 200)),
-        );
+        let scene = Scene::Scroll(ScrollNode::new(
+            Rect::new(0, 0, 100, 100),
+            box_at(0, 0, 200, 200),
+        ));
         assert!(scene.scroll_state_at(50, 50).is_none());
     }
 
@@ -4398,8 +4386,7 @@ mod tests {
         // the inner Container surfaces the leaf's own tag.
         let leaf = tagged_box_at(0, 0, 50, 50, "leaf");
         let inner_container = container_at(0, 0, 200, 200, vec![leaf]);
-        let scroll = ScrollNode::new(Rect::new(10, 10, 100, 100), inner_container)
-            .with_tag("sb");
+        let scroll = ScrollNode::new(Rect::new(10, 10, 100, 100), inner_container).with_tag("sb");
         let scene = container_at(0, 0, 200, 200, vec![Scene::Scroll(scroll)]);
         let hits = scene.hit_test_region(0, 0, 200, 200);
         let leaf_hit = hits
@@ -4429,10 +4416,7 @@ mod tests {
         state.set_max(500, 500);
         state.scroll_to(40, 90);
         let viewport = Rect::new(0, 0, 100, 100);
-        let content = Scene::Box(BoxNode::filled(
-            Rect::new(0, 0, 200, 200),
-            Color::default(),
-        ));
+        let content = Scene::Box(BoxNode::filled(Rect::new(0, 0, 200, 200), Color::default()));
         let node = ScrollNode::from_state(state, viewport, content);
         assert_eq!(node.offset_x, 40);
         assert_eq!(node.offset_y, 90);
@@ -4446,10 +4430,7 @@ mod tests {
         // no caller-side string repeat.
         let state = Rc::new(ScrollState::with_tag("main_scroll"));
         let viewport = Rect::new(0, 0, 100, 100);
-        let content = Scene::Box(BoxNode::filled(
-            Rect::new(0, 0, 200, 200),
-            Color::default(),
-        ));
+        let content = Scene::Box(BoxNode::filled(Rect::new(0, 0, 200, 200), Color::default()));
         let node = ScrollNode::from_state(state, viewport, content);
         assert_eq!(node.tag.as_deref(), Some("main_scroll"));
     }
@@ -4463,10 +4444,7 @@ mod tests {
         // caller skipped `.with_tag(...)`.
         let state = Rc::new(ScrollState::new());
         let viewport = Rect::new(0, 0, 100, 100);
-        let content = Scene::Box(BoxNode::filled(
-            Rect::new(0, 0, 200, 200),
-            Color::default(),
-        ));
+        let content = Scene::Box(BoxNode::filled(Rect::new(0, 0, 200, 200), Color::default()));
         let node = ScrollNode::from_state(state, viewport, content);
         assert!(node.tag.is_none());
     }
@@ -4480,10 +4458,7 @@ mod tests {
         let state = Rc::new(ScrollState::with_tag("router_target"));
         let original = Rc::clone(&state);
         let viewport = Rect::new(0, 0, 100, 100);
-        let content = Scene::Box(BoxNode::filled(
-            Rect::new(0, 0, 200, 200),
-            Color::default(),
-        ));
+        let content = Scene::Box(BoxNode::filled(Rect::new(0, 0, 200, 200), Color::default()));
         let node = ScrollNode::from_state(state, viewport, content);
         let attached = node.state.as_ref().expect("state must attach");
         assert!(Rc::ptr_eq(&original, attached));
@@ -4497,12 +4472,8 @@ mod tests {
         // semantics (later call wins).
         let state = Rc::new(ScrollState::with_tag("derived"));
         let viewport = Rect::new(0, 0, 100, 100);
-        let content = Scene::Box(BoxNode::filled(
-            Rect::new(0, 0, 200, 200),
-            Color::default(),
-        ));
-        let node = ScrollNode::from_state(state, viewport, content)
-            .with_tag("override");
+        let content = Scene::Box(BoxNode::filled(Rect::new(0, 0, 200, 200), Color::default()));
+        let node = ScrollNode::from_state(state, viewport, content).with_tag("override");
         assert_eq!(node.tag.as_deref(), Some("override"));
     }
 
@@ -4534,8 +4505,8 @@ mod tests {
         // confirming the primitive surface is uniform across the
         // seven layout-bearing nodes.
         use crate::style::{Display, FlexDirection};
-        let c = ContainerNode::new(vec![])
-            .map_layout(|l| l.flex(FlexDirection::Column).with_gap(12));
+        let c =
+            ContainerNode::new(vec![]).map_layout(|l| l.flex(FlexDirection::Column).with_gap(12));
         assert_eq!(c.layout.display, Display::Flex);
         assert_eq!(c.layout.flex_direction, FlexDirection::Column);
         assert_eq!(c.layout.gap, 12);
@@ -4549,9 +4520,8 @@ mod tests {
 
     #[test]
     fn r55_g19_contains_tag_finds_root_match() {
-        let scene = Scene::Box(
-            BoxNode::filled(Rect::new(0, 0, 10, 10), Color::default()).with_tag("root"),
-        );
+        let scene =
+            Scene::Box(BoxNode::filled(Rect::new(0, 0, 10, 10), Color::default()).with_tag("root"));
         assert!(scene.contains_tag("root"));
         assert!(!scene.contains_tag("absent"));
     }
@@ -4599,9 +4569,8 @@ mod tests {
         // R55.D.5 — single-External state scene shape: the bare
         // `Scene::External` resolves its own tag.
         use crate::external::StubExternal;
-        let scene = Scene::External(
-            ExternalNode::new(Box::new(StubExternal::new())).with_tag("primary"),
-        );
+        let scene =
+            Scene::External(ExternalNode::new(Box::new(StubExternal::new())).with_tag("primary"));
         assert!(scene.find_external_with_tag("primary").is_some());
         assert!(scene.find_external_with_tag("absent").is_none());
     }
@@ -4611,12 +4580,10 @@ mod tests {
         // R55.D.5 — multi-External shape composed by the substrate.
         // Both externals resolve by their tags.
         use crate::external::StubExternal;
-        let primary = Scene::External(
-            ExternalNode::new(Box::new(StubExternal::new())).with_tag("primary"),
-        );
-        let extra = Scene::External(
-            ExternalNode::new(Box::new(StubExternal::new())).with_tag("extra"),
-        );
+        let primary =
+            Scene::External(ExternalNode::new(Box::new(StubExternal::new())).with_tag("primary"));
+        let extra =
+            Scene::External(ExternalNode::new(Box::new(StubExternal::new())).with_tag("extra"));
         let scene = Scene::Container(ContainerNode::new(vec![primary, extra]));
         assert!(scene.find_external_with_tag("primary").is_some());
         assert!(scene.find_external_with_tag("extra").is_some());
@@ -4628,9 +4595,8 @@ mod tests {
         // R55.D.5 — the walker mirrors `contains_tag` / `hit_test`:
         // it descends through `Scroll.content`.
         use crate::external::StubExternal;
-        let buried = Scene::External(
-            ExternalNode::new(Box::new(StubExternal::new())).with_tag("buried"),
-        );
+        let buried =
+            Scene::External(ExternalNode::new(Box::new(StubExternal::new())).with_tag("buried"));
         let scroll = ScrollNode::new(Rect::new(0, 0, 100, 100), buried);
         let scene = Scene::Scroll(scroll);
         assert!(scene.find_external_with_tag("buried").is_some());
@@ -4640,9 +4606,8 @@ mod tests {
     fn r55_d5_primary_external_returns_self_on_bare_external() {
         // R55.D.5 — `Scene::External(primary)` resolves to itself.
         use crate::external::StubExternal;
-        let scene = Scene::External(
-            ExternalNode::new(Box::new(StubExternal::new())).with_tag("only"),
-        );
+        let scene =
+            Scene::External(ExternalNode::new(Box::new(StubExternal::new())).with_tag("only"));
         let node = scene.primary_external().expect("must resolve");
         assert_eq!(node.tag.as_deref(), Some("only"));
     }
@@ -4653,12 +4618,10 @@ mod tests {
         // matching the substrate's "primary is first in declaration
         // order" composition convention.
         use crate::external::StubExternal;
-        let first = Scene::External(
-            ExternalNode::new(Box::new(StubExternal::new())).with_tag("first"),
-        );
-        let second = Scene::External(
-            ExternalNode::new(Box::new(StubExternal::new())).with_tag("second"),
-        );
+        let first =
+            Scene::External(ExternalNode::new(Box::new(StubExternal::new())).with_tag("first"));
+        let second =
+            Scene::External(ExternalNode::new(Box::new(StubExternal::new())).with_tag("second"));
         let scene = Scene::Container(ContainerNode::new(vec![first, second]));
         let node = scene.primary_external().expect("must resolve");
         assert_eq!(node.tag.as_deref(), Some("first"));
@@ -4668,9 +4631,10 @@ mod tests {
     fn r55_d5_primary_external_returns_none_when_no_external() {
         // R55.D.5 — a Container of Boxes resolves to None; the RPC
         // primitives surface this as `NoExternalAtPath`.
-        let scene = Scene::Container(ContainerNode::new(vec![Scene::Box(
-            BoxNode::filled(Rect::new(0, 0, 10, 10), Color::default()),
-        )]));
+        let scene = Scene::Container(ContainerNode::new(vec![Scene::Box(BoxNode::filled(
+            Rect::new(0, 0, 10, 10),
+            Color::default(),
+        ))]));
         assert!(scene.primary_external().is_none());
     }
 
@@ -4680,11 +4644,9 @@ mod tests {
         // the shared accessor would, but yields `&mut`, enabling
         // `intro.invoke` / `intro.intervene` on the primary widget.
         use crate::external::StubExternal;
-        let mut scene = Scene::Container(ContainerNode::new(vec![
-            Scene::External(
-                ExternalNode::new(Box::new(StubExternal::new())).with_tag("primary"),
-            ),
-        ]));
+        let mut scene = Scene::Container(ContainerNode::new(vec![Scene::External(
+            ExternalNode::new(Box::new(StubExternal::new())).with_tag("primary"),
+        )]));
         let node = scene.primary_external_mut().expect("must resolve");
         assert_eq!(node.tag.as_deref(), Some("primary"));
         // Mutable borrow lets us reach `introspect_mut` (StubExternal
@@ -4711,7 +4673,10 @@ mod tests {
         // Single leaf at (10, 20) sized 160 × 80 → bbox extends to
         // (170, 100). The walker uses `x + w` / `y + h` (right edge,
         // bottom edge) rather than the rect width alone.
-        let scene = Scene::Box(BoxNode::filled(Rect::new(10, 20, 160, 80), Color::default()));
+        let scene = Scene::Box(BoxNode::filled(
+            Rect::new(10, 20, 160, 80),
+            Color::default(),
+        ));
         assert_eq!(scene.intrinsic_content_size(), (170, 100));
     }
 
@@ -4722,7 +4687,10 @@ mod tests {
         // Container-walk descent.
         let scene = Scene::Container(ContainerNode::new(vec![
             Scene::Box(BoxNode::filled(Rect::new(0, 0, 100, 40), Color::default())),
-            Scene::Box(BoxNode::filled(Rect::new(120, 60, 50, 30), Color::default())),
+            Scene::Box(BoxNode::filled(
+                Rect::new(120, 60, 50, 30),
+                Color::default(),
+            )),
         ]));
         // Container.rect defaults to (0,0,0,0) so the children dominate.
         assert_eq!(scene.intrinsic_content_size(), (170, 90));
@@ -4739,10 +4707,7 @@ mod tests {
             Rect::new(0, 0, 9999, 9999),
             Color::default(),
         ));
-        let scroll = Scene::Scroll(ScrollNode::new(
-            Rect::new(0, 0, 200, 150),
-            inner,
-        ));
+        let scroll = Scene::Scroll(ScrollNode::new(Rect::new(0, 0, 200, 150), inner));
         assert_eq!(scroll.intrinsic_content_size(), (200, 150));
     }
 
@@ -4861,9 +4826,8 @@ mod tests {
             ImmediateModeNode::from_driver(StubImmediateMode::new(), Rect::default())
                 .with_tag("canvas"),
         );
-        let external = Scene::External(
-            ExternalNode::new(Box::new(StubExternal::new())).with_tag("real_ext"),
-        );
+        let external =
+            Scene::External(ExternalNode::new(Box::new(StubExternal::new())).with_tag("real_ext"));
         let container = Scene::Container(ContainerNode::new(vec![immediate, external]));
         // ImmediateModeNode does NOT respond to External lookups; the
         // sibling External does.
@@ -4887,9 +4851,8 @@ mod tests {
             ImmediateModeNode::from_driver(StubImmediateMode::new(), Rect::default())
                 .with_tag("ball"),
         );
-        let external = Scene::External(
-            ExternalNode::new(Box::new(StubExternal::new())).with_tag("real_ext"),
-        );
+        let external =
+            Scene::External(ExternalNode::new(Box::new(StubExternal::new())).with_tag("real_ext"));
         let container = Scene::Container(ContainerNode::new(vec![immediate, external]));
         assert!(
             container.find_immediate_with_tag("ball").is_some(),
@@ -4921,13 +4884,14 @@ mod tests {
     fn r681_hit_test_descends_container_to_immediate_with_tag_path() {
         let viewport = Rect::new(20, 20, 40, 40);
         let inner = Scene::ImmediateModeNode(
-            ImmediateModeNode::from_driver(StubImmediateMode::new(), viewport)
-                .with_tag("game"),
+            ImmediateModeNode::from_driver(StubImmediateMode::new(), viewport).with_tag("game"),
         );
         let mut container_node = ContainerNode::new(vec![inner]);
         container_node.rect = Rect::new(0, 0, 80, 80);
         let scene = Scene::Container(container_node);
-        let hit = scene.hit_test(30, 30).expect("inside viewport via container");
+        let hit = scene
+            .hit_test(30, 30)
+            .expect("inside viewport via container");
         assert_eq!(hit.bbox, viewport, "deepest hit is the immediate viewport");
         assert_eq!(hit.segments, vec!["game".to_string()], "tag path segment");
     }
@@ -4976,10 +4940,7 @@ mod tests {
     #[test]
     fn r681_intrinsic_content_size_unions_immediate_with_box() {
         let scene = Scene::Container(ContainerNode::new(vec![
-            Scene::Box(BoxNode::filled(
-                Rect::new(0, 0, 100, 50),
-                Color::default(),
-            )),
+            Scene::Box(BoxNode::filled(Rect::new(0, 0, 100, 50), Color::default())),
             Scene::ImmediateModeNode(ImmediateModeNode::from_driver(
                 StubImmediateMode::new(),
                 Rect::new(0, 50, 320, 240),
@@ -4992,11 +4953,8 @@ mod tests {
     #[test]
     fn r681_hit_test_region_collects_immediate_as_leaf() {
         let immediate = Scene::ImmediateModeNode(
-            ImmediateModeNode::from_driver(
-                StubImmediateMode::new(),
-                Rect::new(0, 0, 50, 50),
-            )
-            .with_tag("game"),
+            ImmediateModeNode::from_driver(StubImmediateMode::new(), Rect::new(0, 0, 50, 50))
+                .with_tag("game"),
         );
         let mut container_node = ContainerNode::new(vec![immediate]);
         container_node.rect = Rect::new(0, 0, 100, 100);
@@ -5013,8 +4971,7 @@ mod tests {
     fn r681_immediate_mode_trait_is_dyn_safe() {
         // Compile-time guard: any future change that loses dyn-safety
         // (associated consts, Self-returning methods) breaks this.
-        let _: Rc<RefCell<dyn ImmediateMode>> =
-            Rc::new(RefCell::new(StubImmediateMode::new()));
+        let _: Rc<RefCell<dyn ImmediateMode>> = Rc::new(RefCell::new(StubImmediateMode::new()));
     }
 
     #[test]
@@ -5089,20 +5046,14 @@ mod tests {
         }
         let driver = CountedDriver { count: 5 };
         let introspect = driver.introspect().expect("opt-in declared");
-        assert_eq!(
-            introspect.query("count"),
-            Some(IntrospectValue::Int(5)),
-        );
+        assert_eq!(introspect.query("count"), Some(IntrospectValue::Int(5)),);
     }
 
     // ── ImmediateModeNode helper API ───────────────────────────────
 
     #[test]
     fn r681_immediate_mode_node_last_dt_publish_read_round_trip() {
-        let node = ImmediateModeNode::from_driver(
-            StubImmediateMode::new(),
-            Rect::default(),
-        );
+        let node = ImmediateModeNode::from_driver(StubImmediateMode::new(), Rect::default());
         assert_eq!(node.last_dt(), Duration::ZERO, "no tick yet sentinel");
         node.set_last_dt(Duration::from_millis(16));
         assert_eq!(node.last_dt(), Duration::from_millis(16));
@@ -5113,11 +5064,8 @@ mod tests {
     #[test]
     fn r681_immediate_mode_node_with_layout_replaces_sidecar() {
         let custom = LayoutStyle::new().with_size(Size::px(640, 480));
-        let node = ImmediateModeNode::from_driver(
-            StubImmediateMode::new(),
-            Rect::default(),
-        )
-        .with_layout(custom);
+        let node = ImmediateModeNode::from_driver(StubImmediateMode::new(), Rect::default())
+            .with_layout(custom);
         // Reading the layout back via the public field confirms the
         // builder did not silently drop the override.
         assert_eq!(node.layout.size, Size::px(640, 480));
@@ -5128,11 +5076,8 @@ mod tests {
         // `with_layout` is full-replace; `map_layout` lets the caller
         // chain a single override while preserving any constructor-
         // supplied default. Mirrors R55.G.6 idiom for Scroll.
-        let node = ImmediateModeNode::from_driver(
-            StubImmediateMode::new(),
-            Rect::default(),
-        )
-        .map_layout(|l| l.with_size(Size::px(100, 100)));
+        let node = ImmediateModeNode::from_driver(StubImmediateMode::new(), Rect::default())
+            .map_layout(|l| l.with_size(Size::px(100, 100)));
         assert_eq!(node.layout.size, Size::px(100, 100));
     }
 
@@ -5142,10 +5087,8 @@ mod tests {
         // drivers; pins that the concrete type is correctly boxed
         // into `Rc<RefCell<dyn ImmediateMode>>` without an explicit
         // type annotation at the call site.
-        let node = ImmediateModeNode::from_driver(
-            StubImmediateMode::new(),
-            Rect::new(0, 0, 50, 50),
-        );
+        let node =
+            ImmediateModeNode::from_driver(StubImmediateMode::new(), Rect::new(0, 0, 50, 50));
         // Mutable borrow drives one tick; observe via the field.
         node.handle.borrow_mut().tick(Duration::from_millis(16));
         // Read back the concrete state via the same trait surface
@@ -5200,8 +5143,7 @@ mod tests {
     fn r681_immediate_painter_trait_is_dyn_safe() {
         // Compile-time guard against losing dyn-safety on the
         // painter surface (associated items, Self-return, etc.).
-        let _: Box<dyn ImmediatePainter> =
-            Box::new(RecordingImmediatePainter::new((100, 50), 1.0));
+        let _: Box<dyn ImmediatePainter> = Box::new(RecordingImmediatePainter::new((100, 50), 1.0));
     }
 
     #[test]
@@ -5218,21 +5160,22 @@ mod tests {
         let mut painter = RecordingImmediatePainter::new((100, 100), 1.0);
         painter.clear(Color::default());
         painter.fill_rect(1.0, 2.0, 3.0, 4.0, Color::default());
-        painter.fill_triangle(
-            (0.0, 0.0),
-            (10.0, 0.0),
-            (5.0, 8.66),
-            Color::default(),
-        );
+        painter.fill_triangle((0.0, 0.0), (10.0, 0.0), (5.0, 8.66), Color::default());
         painter.stroke_line((0.0, 0.0), (10.0, 10.0), 2.0, Color::default());
         assert_eq!(painter.calls.len(), 4);
         assert!(matches!(painter.calls[0], RecordedPaintCall::Clear { .. }));
-        assert!(matches!(painter.calls[1], RecordedPaintCall::FillRect { .. }));
+        assert!(matches!(
+            painter.calls[1],
+            RecordedPaintCall::FillRect { .. }
+        ));
         assert!(matches!(
             painter.calls[2],
             RecordedPaintCall::FillTriangle { .. }
         ));
-        assert!(matches!(painter.calls[3], RecordedPaintCall::StrokeLine { .. }));
+        assert!(matches!(
+            painter.calls[3],
+            RecordedPaintCall::StrokeLine { .. }
+        ));
     }
 
     #[test]
@@ -5262,7 +5205,10 @@ mod tests {
         // Stub paint emits clear + fill_rect (sentinel dispatch).
         assert_eq!(painter.calls.len(), 2);
         assert!(matches!(painter.calls[0], RecordedPaintCall::Clear { .. }));
-        assert!(matches!(painter.calls[1], RecordedPaintCall::FillRect { .. }));
+        assert!(matches!(
+            painter.calls[1],
+            RecordedPaintCall::FillRect { .. }
+        ));
     }
 
     #[test]
@@ -5299,9 +5245,8 @@ mod tests {
         // after the dyn walk advances it.
         let driver = Rc::new(RefCell::new(StubImmediateMode::new()));
         let handle: Rc<RefCell<dyn ImmediateMode>> = driver.clone();
-        let scene = Scene::ImmediateModeNode(
-            ImmediateModeNode::new(handle, Rect::new(0, 0, 100, 100)),
-        );
+        let scene =
+            Scene::ImmediateModeNode(ImmediateModeNode::new(handle, Rect::new(0, 0, 100, 100)));
         let count = scene.tick_immediate_mode(Duration::from_millis(16));
         assert_eq!(count, 1, "one node ticked");
         assert_eq!(driver.borrow().tick_count, 1);
@@ -5316,10 +5261,7 @@ mod tests {
 
     #[test]
     fn r681_tick_immediate_mode_zero_on_non_immediate_scene() {
-        let scene = Scene::Box(BoxNode::filled(
-            Rect::new(0, 0, 100, 100),
-            Color::default(),
-        ));
+        let scene = Scene::Box(BoxNode::filled(Rect::new(0, 0, 100, 100), Color::default()));
         assert_eq!(scene.tick_immediate_mode(Duration::from_millis(16)), 0);
     }
 
@@ -5329,17 +5271,11 @@ mod tests {
         let driver_b = Rc::new(RefCell::new(StubImmediateMode::new()));
         let inner_a: Rc<RefCell<dyn ImmediateMode>> = driver_a.clone();
         let inner_b: Rc<RefCell<dyn ImmediateMode>> = driver_b.clone();
-        let scroll_immediate = Scene::ImmediateModeNode(
-            ImmediateModeNode::new(inner_b, Rect::new(0, 0, 50, 50)),
-        );
-        let scroll = Scene::Scroll(ScrollNode::new(
-            Rect::new(0, 0, 100, 100),
-            scroll_immediate,
-        ));
+        let scroll_immediate =
+            Scene::ImmediateModeNode(ImmediateModeNode::new(inner_b, Rect::new(0, 0, 50, 50)));
+        let scroll = Scene::Scroll(ScrollNode::new(Rect::new(0, 0, 100, 100), scroll_immediate));
         let container = Scene::Container(ContainerNode::new(vec![
-            Scene::ImmediateModeNode(
-                ImmediateModeNode::new(inner_a, Rect::new(0, 0, 50, 50)),
-            ),
+            Scene::ImmediateModeNode(ImmediateModeNode::new(inner_a, Rect::new(0, 0, 50, 50))),
             scroll,
         ]));
         let count = container.tick_immediate_mode(Duration::from_millis(16));
@@ -5352,16 +5288,12 @@ mod tests {
     fn r681_tick_immediate_mode_two_calls_accumulate_per_driver() {
         let driver = Rc::new(RefCell::new(StubImmediateMode::new()));
         let handle: Rc<RefCell<dyn ImmediateMode>> = driver.clone();
-        let scene = Scene::ImmediateModeNode(
-            ImmediateModeNode::new(handle, Rect::new(0, 0, 100, 100)),
-        );
+        let scene =
+            Scene::ImmediateModeNode(ImmediateModeNode::new(handle, Rect::new(0, 0, 100, 100)));
         scene.tick_immediate_mode(Duration::from_millis(16));
         scene.tick_immediate_mode(Duration::from_millis(17));
         assert_eq!(driver.borrow().tick_count, 2);
-        assert_eq!(
-            driver.borrow().accumulated_dt,
-            Duration::from_millis(33),
-        );
+        assert_eq!(driver.borrow().accumulated_dt, Duration::from_millis(33),);
         if let Scene::ImmediateModeNode(n) = &scene {
             assert_eq!(n.last_dt(), Duration::from_millis(17), "latest wins");
         }
@@ -5529,12 +5461,8 @@ mod tests {
     fn r682_paint_hash_unchanged_when_only_aria_label_changes() {
         // R51.69 aria_label feeds the access tree, not the paint
         // adapter. Cache must hit.
-        let a = Scene::Container(
-            ContainerNode::new(vec![]).with_aria_label("Save"),
-        );
-        let b = Scene::Container(
-            ContainerNode::new(vec![]).with_aria_label("Cancel"),
-        );
+        let a = Scene::Container(ContainerNode::new(vec![]).with_aria_label("Save"));
+        let b = Scene::Container(ContainerNode::new(vec![]).with_aria_label("Cancel"));
         assert_eq!(a.paint_hash(), b.paint_hash());
     }
 
@@ -5545,7 +5473,10 @@ mod tests {
         // the stored value (Cell::set side-effect observable by
         // checking the field is `Some(_)` after the call).
         let c = ContainerNode::new(vec![box_a(), box_b()]);
-        assert!(c.paint_hash.get().is_none(), "fresh container has no memoised hash");
+        assert!(
+            c.paint_hash.get().is_none(),
+            "fresh container has no memoised hash"
+        );
         let h1 = c.paint_hash();
         assert_eq!(c.paint_hash.get(), Some(h1), "first call stores into Cell");
         let h2 = c.paint_hash();
@@ -5620,9 +5551,7 @@ mod tests {
 
         // Offset shift surfaces at Scroll's hash (content scrolled
         // to a different position → different painted pixels).
-        let shifted = Scene::Scroll(
-            ScrollNode::new(rect_a(), box_a()).with_offset(5, 7),
-        );
+        let shifted = Scene::Scroll(ScrollNode::new(rect_a(), box_a()).with_offset(5, 7));
         let pristine = Scene::Scroll(ScrollNode::new(rect_a(), box_a()));
         assert_ne!(shifted.paint_hash(), pristine.paint_hash());
     }

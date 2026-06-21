@@ -43,21 +43,21 @@
 //! addressable list anchor and the only interactive peer is the
 //! scrollbar.
 
-use pinion_a11y::{windowed_list_nodes, AccessNode, WidgetA11y};
+use pinion_a11y::{AccessNode, WidgetA11y, windowed_list_nodes};
 use pinion_core::external::{External, StubExternal};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
 use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::{Frame, Scene, WidgetCore};
-use pinion_widget_paint::scrollbar::{view_vertical_scrollbar, VerticalScrollbarStyle};
+use pinion_shell::{WidgetView, vello_renderer_impl};
+use pinion_widget_paint::scrollbar::{VerticalScrollbarStyle, view_vertical_scrollbar};
 use pinion_widget_paint::virtual_list::view_virtual_list;
-use pinion_shell::{vello_renderer_impl, WidgetView};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloVirtualListRenderer, HelloVirtualListRendererError);
@@ -139,7 +139,10 @@ fn build_row(index: usize, theme: &Theme) -> Scene {
 /// scrolling.
 fn row_label(index: usize) -> String {
     const CATEGORIES: [&str; 5] = ["Alpha", "Bravo", "Charlie", "Delta", "Echo"];
-    format!("Item {index:05} \u{00B7} {}", CATEGORIES[index % CATEGORIES.len()])
+    format!(
+        "Item {index:05} \u{00B7} {}",
+        CATEGORIES[index % CATEGORIES.len()]
+    )
 }
 
 /// view-fn (§6.3): pure sync mapping (stateless) `() -> Scene`. The dataset
@@ -219,7 +222,10 @@ impl WidgetCore for VirtualListView {
     /// `Rc<ScrollState>` — drag the gutter to scroll. Mirrors the
     /// `hello-listbox` multi-External composition (R55.D.5).
     fn create_extra_externals() -> Vec<ExtraExternal> {
-        vec![scrollbar_extra_external(use_scroll_state(SCROLL_KEY), SCROLLBAR_TAG)]
+        vec![scrollbar_extra_external(
+            use_scroll_state(SCROLL_KEY),
+            SCROLLBAR_TAG,
+        )]
     }
 
     fn tag() -> &'static str {
@@ -264,8 +270,14 @@ impl WidgetA11y for VirtualListView {
         // display-only shape lifted to `pinion_a11y::windowed_list_nodes`
         // (R774; shared with hello-variable-list + hello-flex-virtual-list).
         let scroll_state = use_scroll_state(SCROLL_KEY);
-        let window = compute_visible_range(scroll_state.offset_y(), VIEWPORT_H, N, ROW_PITCH, OVERSCAN);
-        windowed_list_nodes(LIST_TAG, "Virtual item list", u32::try_from(N).unwrap_or(u32::MAX), &window)
+        let window =
+            compute_visible_range(scroll_state.offset_y(), VIEWPORT_H, N, ROW_PITCH, OVERSCAN);
+        windowed_list_nodes(
+            LIST_TAG,
+            "Virtual item list",
+            u32::try_from(N).unwrap_or(u32::MAX),
+            &window,
+        )
     }
 }
 
@@ -360,14 +372,24 @@ mod tests {
         );
         // The rest are the rendered listitems — a small window, each
         // with an absolute posinset.
-        assert!(nodes.len() - 1 < 30, "only the rendered window has listitem nodes");
+        assert!(
+            nodes.len() - 1 < 30,
+            "only the rendered window has listitem nodes"
+        );
         for item in &nodes[1..] {
             assert_eq!(item.role, AriaRole::ListItem);
-            assert!(item.position_in_set.is_some(), "each row carries aria-posinset");
+            assert!(
+                item.position_in_set.is_some(),
+                "each row carries aria-posinset"
+            );
             assert_eq!(item.size_of_set, Some(u32::try_from(N).unwrap()));
         }
         // Posinset is 1-based and matches the first rendered index + 1.
-        assert_eq!(nodes[1].position_in_set, Some(1), "top window starts at posinset 1");
+        assert_eq!(
+            nodes[1].position_in_set,
+            Some(1),
+            "top window starts at posinset 1"
+        );
     }
 
     #[test]

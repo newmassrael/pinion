@@ -25,7 +25,11 @@ fn main() {
             for d in &diags {
                 eprintln!("{d}");
             }
-            panic!("pinion-forge: {} diagnostic(s) in {}", diags.len(), input.display());
+            panic!(
+                "pinion-forge: {} diagnostic(s) in {}",
+                diags.len(),
+                input.display()
+            );
         }
         Err(other) => panic!("pinion-forge: {other}"),
     }

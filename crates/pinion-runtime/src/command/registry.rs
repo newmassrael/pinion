@@ -109,9 +109,9 @@ mod tests {
 
     fn echo_handler() -> Arc<dyn Handler> {
         Arc::new(|cmd: Command| -> HandlerFuture {
-            Box::pin(async move {
-                Intent::new_owned(format!("echo.{}", cmd.kind_str()), cmd.payload)
-            })
+            Box::pin(
+                async move { Intent::new_owned(format!("echo.{}", cmd.kind_str()), cmd.payload) },
+            )
         })
     }
 
@@ -199,8 +199,14 @@ mod tests {
         registry.register("b", const_intent_handler("intent.b"));
         let cmd_a = Command::new_static("a", IntrospectValue::Null, 0);
         let cmd_b = Command::new_static("b", IntrospectValue::Null, 0);
-        assert_eq!(block_on(registry.dispatch(cmd_a).unwrap()).tag_str(), "intent.a");
-        assert_eq!(block_on(registry.dispatch(cmd_b).unwrap()).tag_str(), "intent.b");
+        assert_eq!(
+            block_on(registry.dispatch(cmd_a).unwrap()).tag_str(),
+            "intent.a"
+        );
+        assert_eq!(
+            block_on(registry.dispatch(cmd_b).unwrap()).tag_str(),
+            "intent.b"
+        );
     }
 
     #[test]

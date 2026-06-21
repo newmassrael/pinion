@@ -198,7 +198,10 @@ mod tests {
     #[test]
     fn split_at_external_missing_separator_returns_none() {
         assert!(split_at_external("/some/other/path").is_none());
-        assert!(split_at_external("/external").is_none(), "needs trailing slash");
+        assert!(
+            split_at_external("/external").is_none(),
+            "needs trailing slash"
+        );
         assert!(split_at_external("").is_none());
     }
 

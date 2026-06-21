@@ -130,7 +130,12 @@ impl CaretRect {
     /// the window-coord variant by hand.
     #[must_use]
     pub const fn new(x: f32, y: f32, width: f32, height: f32) -> Self {
-        Self { x, y, width, height }
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 }
 
@@ -481,9 +486,9 @@ mod tests {
     //! geometry produced by the closed-form helper.
 
     use super::{
-        byte_offset_for_line_boundary, byte_offset_for_line_move, byte_offset_for_point,
-        caret_rect_for_byte_offset, logical_line_span, selection_rects_for_range,
-        visual_line_metrics, CaretRect, VisualLineMetric,
+        CaretRect, VisualLineMetric, byte_offset_for_line_boundary, byte_offset_for_line_move,
+        byte_offset_for_point, caret_rect_for_byte_offset, logical_line_span,
+        selection_rects_for_range, visual_line_metrics,
     };
     use crate::LayoutCache;
     use pinion_core::style::TextStyle;
@@ -567,7 +572,10 @@ mod tests {
         let mut cache = shape("abc\nxyz");
         let layout = layout_for(&mut cache, "abc\nxyz");
         let (moved, _) = byte_offset_for_line_move(layout, 5, -1, None);
-        assert!(moved <= 3, "ArrowUp from line 1 lands on line 0 (byte {moved} <= 3)");
+        assert!(
+            moved <= 3,
+            "ArrowUp from line 1 lands on line 0 (byte {moved} <= 3)"
+        );
     }
 
     #[test]
@@ -683,7 +691,10 @@ mod tests {
         let layout = layout_for(&mut cache, "hello");
         let lines = visual_line_metrics(layout);
         assert_eq!(lines.len(), 1, "one visual line for unwrapped single line");
-        assert!(lines[0].starts_logical_line, "the only line opens logical line 0");
+        assert!(
+            lines[0].starts_logical_line,
+            "the only line opens logical line 0"
+        );
         assert!(lines[0].height > 0.0, "line box has positive height");
     }
 
@@ -707,7 +718,12 @@ mod tests {
         let lines = visual_line_metrics(layout);
         assert_eq!(lines.len(), 2, "two hard lines = two visual lines");
         assert!(lines[0].starts_logical_line && lines[1].starts_logical_line);
-        assert!(lines[1].y > lines[0].y, "the second line sits lower (y {} > {})", lines[1].y, lines[0].y);
+        assert!(
+            lines[1].y > lines[0].y,
+            "the second line sits lower (y {} > {})",
+            lines[1].y,
+            lines[0].y
+        );
     }
 
     #[test]
@@ -717,7 +733,11 @@ mod tests {
         let mut cache = shape("a\n\nb");
         let layout = layout_for(&mut cache, "a\n\nb");
         let lines = visual_line_metrics(layout);
-        assert_eq!(lines.len(), 3, "the blank middle line is its own visual line");
+        assert_eq!(
+            lines.len(),
+            3,
+            "the blank middle line is its own visual line"
+        );
         assert!(
             lines.iter().all(|l| l.starts_logical_line),
             "every hard-break line opens a logical line",
@@ -735,14 +755,24 @@ mod tests {
         let _ = cache.layout(text, &style, Some(90));
         let layout = cache.layout(text, &style, Some(90));
         let lines = visual_line_metrics(layout);
-        assert!(lines.len() >= 2, "the long line wraps onto ≥2 rows (got {})", lines.len());
-        assert!(lines[0].starts_logical_line, "the first row opens the logical line");
+        assert!(
+            lines.len() >= 2,
+            "the long line wraps onto ≥2 rows (got {})",
+            lines.len()
+        );
+        assert!(
+            lines[0].starts_logical_line,
+            "the first row opens the logical line"
+        );
         assert!(
             lines[1..].iter().all(|l| !l.starts_logical_line),
             "soft-wrapped continuation rows do not open a new logical line",
         );
         let logical = lines.iter().filter(|l| l.starts_logical_line).count();
-        assert_eq!(logical, 1, "the whole wrapped paragraph is exactly one logical line");
+        assert_eq!(
+            logical, 1,
+            "the whole wrapped paragraph is exactly one logical line"
+        );
     }
 
     #[test]
@@ -784,7 +814,10 @@ mod tests {
         spec.iter()
             .enumerate()
             .map(|(i, &starts)| VisualLineMetric {
-                #[allow(clippy::cast_precision_loss, reason = "small test indices are exact as f32")]
+                #[allow(
+                    clippy::cast_precision_loss,
+                    reason = "small test indices are exact as f32"
+                )]
                 y: (i as f32) * 10.0,
                 height: 10.0,
                 starts_logical_line: starts,
@@ -809,29 +842,53 @@ mod tests {
     fn r987_logical_line_span_isolates_each_hard_line() {
         // Two logical lines, each a single visual row.
         let m = rows(&[true, true]);
-        assert_eq!(logical_line_span(&m, 5.0), Some((0.0, 10.0)), "caret on line 0");
-        assert_eq!(logical_line_span(&m, 15.0), Some((10.0, 10.0)), "caret on line 1");
+        assert_eq!(
+            logical_line_span(&m, 5.0),
+            Some((0.0, 10.0)),
+            "caret on line 0"
+        );
+        assert_eq!(
+            logical_line_span(&m, 15.0),
+            Some((10.0, 10.0)),
+            "caret on line 1"
+        );
     }
 
     #[test]
     fn r987_logical_line_span_groups_only_the_caret_line() {
         // Logical line 0 wraps rows 0..1; logical line 1 is row 2.
         let m = rows(&[true, false, true]);
-        assert_eq!(logical_line_span(&m, 15.0), Some((0.0, 20.0)), "wrapped line 0 = rows 0..1");
-        assert_eq!(logical_line_span(&m, 25.0), Some((20.0, 10.0)), "line 1 = row 2 only");
+        assert_eq!(
+            logical_line_span(&m, 15.0),
+            Some((0.0, 20.0)),
+            "wrapped line 0 = rows 0..1"
+        );
+        assert_eq!(
+            logical_line_span(&m, 25.0),
+            Some((20.0, 10.0)),
+            "line 1 = row 2 only"
+        );
     }
 
     #[test]
     fn r987_logical_line_span_boundary_belongs_to_lower_row() {
         // A caret_y exactly at a row boundary lands on the lower row.
         let m = rows(&[true, true]);
-        assert_eq!(logical_line_span(&m, 10.0), Some((10.0, 10.0)), "y=10 is row 1's top");
+        assert_eq!(
+            logical_line_span(&m, 10.0),
+            Some((10.0, 10.0)),
+            "y=10 is row 1's top"
+        );
     }
 
     #[test]
     fn r987_logical_line_span_empty_or_miss_is_none() {
         assert_eq!(logical_line_span(&[], 5.0), None, "no rows");
-        assert_eq!(logical_line_span(&rows(&[true]), 50.0), None, "caret below all rows");
+        assert_eq!(
+            logical_line_span(&rows(&[true]), 50.0),
+            None,
+            "caret below all rows"
+        );
     }
 
     #[test]
@@ -855,11 +912,7 @@ mod tests {
         let layout = layout_for(&mut cache, "hello");
         let r = caret_rect_for_byte_offset(layout, 0, 1.0);
         // Byte 0 = before the first glyph = layout x origin.
-        assert!(
-            r.x.abs() < 0.5,
-            "caret at byte 0 sits at x≈0 (got {})",
-            r.x,
-        );
+        assert!(r.x.abs() < 0.5, "caret at byte 0 sits at x≈0 (got {})", r.x,);
     }
 
     #[test]
@@ -1059,7 +1112,10 @@ mod tests {
         let y = mid_y(layout);
         let a = caret_rect_for_byte_offset(layout, 1, 1.0); // after 'a'
         let near_start = byte_offset_for_point(layout, a.x - a.height * 0.1, y);
-        assert!(near_start <= 1, "left-of-boundary hit stays <= 1 (got {near_start})");
+        assert!(
+            near_start <= 1,
+            "left-of-boundary hit stays <= 1 (got {near_start})"
+        );
     }
 
     #[test]

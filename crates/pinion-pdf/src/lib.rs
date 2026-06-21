@@ -103,20 +103,32 @@ pub struct PageSize {
 
 impl PageSize {
     /// US Letter, portrait: 8.5 × 11 in = 612 × 792 pt.
-    pub const LETTER: Self = Self { width_pt: 612, height_pt: 792 };
+    pub const LETTER: Self = Self {
+        width_pt: 612,
+        height_pt: 792,
+    };
     /// ISO A4, portrait: 210 × 297 mm ≈ 595 × 842 pt.
-    pub const A4: Self = Self { width_pt: 595, height_pt: 842 };
+    pub const A4: Self = Self {
+        width_pt: 595,
+        height_pt: 842,
+    };
 
     /// Construct an explicit page size.
     #[must_use]
     pub const fn new(width_pt: u32, height_pt: u32) -> Self {
-        Self { width_pt, height_pt }
+        Self {
+            width_pt,
+            height_pt,
+        }
     }
 
     /// The landscape form (width and height swapped).
     #[must_use]
     pub const fn landscape(self) -> Self {
-        Self { width_pt: self.height_pt, height_pt: self.width_pt }
+        Self {
+            width_pt: self.height_pt,
+            height_pt: self.width_pt,
+        }
     }
 
     /// A page sized to the scene's own pixel bounds — the WYSIWYG
@@ -128,7 +140,10 @@ impl PageSize {
         if r.w == 0 || r.h == 0 {
             Self::LETTER
         } else {
-            Self { width_pt: r.w, height_pt: r.h }
+            Self {
+                width_pt: r.w,
+                height_pt: r.h,
+            }
         }
     }
 }
@@ -201,7 +216,12 @@ struct ContentBuilder {
 
 impl ContentBuilder {
     fn new(page_h: f64) -> Self {
-        Self { ops: String::new(), page_h, alpha_gs: BTreeMap::new(), current_alpha: 0xff }
+        Self {
+            ops: String::new(),
+            page_h,
+            alpha_gs: BTreeMap::new(),
+            current_alpha: 0xff,
+        }
     }
 
     /// Depth-first walk mirroring `pinion_runtime::paint_adapter`: the
@@ -350,25 +370,45 @@ impl ContentBuilder {
         let _ = writeln!(
             self.ops,
             "{} {} {} {} {} {} c",
-            nf(x1 - rad + kr), nf(y0), nf(x1), nf(y0 + rad - kr), nf(x1), nf(y0 + rad),
+            nf(x1 - rad + kr),
+            nf(y0),
+            nf(x1),
+            nf(y0 + rad - kr),
+            nf(x1),
+            nf(y0 + rad),
         );
         let _ = writeln!(self.ops, "{} {} l", nf(x1), nf(y1 - rad));
         let _ = writeln!(
             self.ops,
             "{} {} {} {} {} {} c",
-            nf(x1), nf(y1 - rad + kr), nf(x1 - rad + kr), nf(y1), nf(x1 - rad), nf(y1),
+            nf(x1),
+            nf(y1 - rad + kr),
+            nf(x1 - rad + kr),
+            nf(y1),
+            nf(x1 - rad),
+            nf(y1),
         );
         let _ = writeln!(self.ops, "{} {} l", nf(x0 + rad), nf(y1));
         let _ = writeln!(
             self.ops,
             "{} {} {} {} {} {} c",
-            nf(x0 + rad - kr), nf(y1), nf(x0), nf(y1 - rad + kr), nf(x0), nf(y1 - rad),
+            nf(x0 + rad - kr),
+            nf(y1),
+            nf(x0),
+            nf(y1 - rad + kr),
+            nf(x0),
+            nf(y1 - rad),
         );
         let _ = writeln!(self.ops, "{} {} l", nf(x0), nf(y0 + rad));
         let _ = writeln!(
             self.ops,
             "{} {} {} {} {} {} c",
-            nf(x0), nf(y0 + rad - kr), nf(x0 + rad - kr), nf(y0), nf(x0 + rad), nf(y0),
+            nf(x0),
+            nf(y0 + rad - kr),
+            nf(x0 + rad - kr),
+            nf(y0),
+            nf(x0 + rad),
+            nf(y0),
         );
         self.ops.push_str("h\n");
     }
@@ -431,8 +471,12 @@ fn font_resource(weight: FontWeight, style: FontStyle) -> &'static str {
 }
 
 /// The base font that `F1`..`F4` resolve to, in order.
-const FONT_BASE_NAMES: [&str; 4] =
-    ["Helvetica", "Helvetica-Bold", "Helvetica-Oblique", "Helvetica-BoldOblique"];
+const FONT_BASE_NAMES: [&str; 4] = [
+    "Helvetica",
+    "Helvetica-Bold",
+    "Helvetica-Oblique",
+    "Helvetica-BoldOblique",
+];
 
 /// sRGB channels normalized to PDF's `0.0..=1.0` `DeviceRGB` range. No
 /// linearization — `DeviceRGB` values are device (sRGB-ish) intensities,
@@ -533,7 +577,11 @@ fn assemble(content: &ContentBuilder, page: PageSize) -> RenderedPdf {
     };
 
     push_obj(&mut out, &mut offsets, "<< /Type /Catalog /Pages 2 0 R >>");
-    push_obj(&mut out, &mut offsets, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
+    push_obj(
+        &mut out,
+        &mut offsets,
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    );
     push_obj(
         &mut out,
         &mut offsets,
@@ -597,8 +645,11 @@ fn assemble(content: &ContentBuilder, page: PageSize) -> RenderedPdf {
 /// alpha value, so both Resources references and object emission must
 /// walk this same index order to agree.
 fn alpha_gs_in_index_order(content: &ContentBuilder) -> Vec<(u32, u8)> {
-    let mut pairs: Vec<(u32, u8)> =
-        content.alpha_gs.iter().map(|(alpha, idx)| (*idx, *alpha)).collect();
+    let mut pairs: Vec<(u32, u8)> = content
+        .alpha_gs
+        .iter()
+        .map(|(alpha, idx)| (*idx, *alpha))
+        .collect();
     pairs.sort_unstable_by_key(|(idx, _)| *idx);
     pairs
 }
@@ -661,8 +712,14 @@ mod tests {
         // red fill: 1 0 0 rg.
         assert!(pdf.document.contains("1 0 0 rg"), "red fill color set");
         // sharp rect with y-flip: page_h(200) - y(20) - h(40) = 140.
-        assert!(pdf.document.contains("10 140 30 40 re"), "y-flipped rect path");
-        assert!(pdf.document.contains("re\nf\n"), "fill operator follows the path");
+        assert!(
+            pdf.document.contains("10 140 30 40 re"),
+            "y-flipped rect path"
+        );
+        assert!(
+            pdf.document.contains("re\nf\n"),
+            "fill operator follows the path"
+        );
     }
 
     #[test]
@@ -698,8 +755,14 @@ mod tests {
         // GS1 (a=100) to the next — a regression pin for the index-order
         // vs emission-order alignment.
         let scene = Scene::Container(ContainerNode::new(vec![
-            Scene::Box(BoxNode::filled(Rect::new(0, 0, 10, 10), Color::rgba(0, 0, 0, 200))),
-            Scene::Box(BoxNode::filled(Rect::new(0, 0, 10, 10), Color::rgba(0, 0, 0, 100))),
+            Scene::Box(BoxNode::filled(
+                Rect::new(0, 0, 10, 10),
+                Color::rgba(0, 0, 0, 200),
+            )),
+            Scene::Box(BoxNode::filled(
+                Rect::new(0, 0, 10, 10),
+                Color::rgba(0, 0, 0, 100),
+            )),
         ]));
         let pdf = render_scene(&scene, PageSize::new(20, 20));
         let doc = &pdf.document;
@@ -722,19 +785,30 @@ mod tests {
         // *next* opaque fill would inherit it (PDF state persists; sibling
         // boxes are not q/Q-wrapped). The opaque draw must re-assert ca=1.
         let scene = Scene::Container(ContainerNode::new(vec![
-            Scene::Box(BoxNode::filled(Rect::new(0, 0, 10, 10), Color::rgba(0xff, 0, 0, 0x80))),
-            Scene::Box(BoxNode::filled(Rect::new(20, 0, 10, 10), Color::rgb(0, 0, 0xff))),
+            Scene::Box(BoxNode::filled(
+                Rect::new(0, 0, 10, 10),
+                Color::rgba(0xff, 0, 0, 0x80),
+            )),
+            Scene::Box(BoxNode::filled(
+                Rect::new(20, 0, 10, 10),
+                Color::rgb(0, 0, 0xff),
+            )),
         ]));
         let pdf = render_scene(&scene, PageSize::new(40, 40));
         let doc = &pdf.document;
         // Two ExtGStates: the 0x80 (ca~=0.5) and the 0xff reset (ca=1).
         assert_eq!(pdf.object_count, 10, "8 base + half-alpha + opaque-reset");
         assert!(doc.contains("/ca 0.502"), "sub-opaque fill alpha present");
-        assert!(doc.contains("/ca 1 /CA 1"), "an opaque-reset ExtGState exists");
+        assert!(
+            doc.contains("/ca 1 /CA 1"),
+            "an opaque-reset ExtGState exists"
+        );
         // The reset gs must appear before the opaque blue fill so blue is
         // not painted at the translucent alpha.
         let blue = doc.find("0 0 1 rg").expect("opaque blue fill");
-        let reset_gs = doc[..blue].rfind(" gs\n").expect("a gs precedes the blue fill");
+        let reset_gs = doc[..blue]
+            .rfind(" gs\n")
+            .expect("a gs precedes the blue fill");
         // The gs immediately governing the blue fill is the reset one
         // (its index maps to the ca=1 ExtGState).
         assert!(reset_gs < blue, "alpha reset precedes the opaque fill");
@@ -745,8 +819,14 @@ mod tests {
         // The current-alpha tracker starts at 255, so a fully opaque scene
         // never emits a `gs` or registers an ExtGState.
         let scene = Scene::Container(ContainerNode::new(vec![
-            Scene::Box(BoxNode::filled(Rect::new(0, 0, 10, 10), Color::rgb(1, 2, 3))),
-            Scene::Box(BoxNode::filled(Rect::new(0, 0, 10, 10), Color::rgb(4, 5, 6))),
+            Scene::Box(BoxNode::filled(
+                Rect::new(0, 0, 10, 10),
+                Color::rgb(1, 2, 3),
+            )),
+            Scene::Box(BoxNode::filled(
+                Rect::new(0, 0, 10, 10),
+                Color::rgb(4, 5, 6),
+            )),
         ]));
         let pdf = render_scene(&scene, PageSize::new(40, 40));
         assert_eq!(pdf.object_count, 8, "no ExtGState for an all-opaque scene");
@@ -758,7 +838,10 @@ mod tests {
         let scene = text_node("Invoice", 12, 12, 18, Color::rgb(0, 0, 0));
         let pdf = render_scene(&scene, PageSize::new(300, 300));
         assert!(pdf.document.contains("BT\n"), "text object opens");
-        assert!(pdf.document.contains("/F1 18 Tf"), "regular Helvetica at 18pt");
+        assert!(
+            pdf.document.contains("/F1 18 Tf"),
+            "regular Helvetica at 18pt"
+        );
         assert!(pdf.document.contains("(Invoice) Tj"), "text shown");
         assert!(pdf.document.contains("ET\n"), "text object closes");
     }
@@ -766,13 +849,33 @@ mod tests {
     #[test]
     fn r908_bold_italic_select_the_right_standard_font() {
         use pinion_core::style::FontStyle;
-        let bold = TextStyle::new().with_size_px(12).with_weight(FontWeight::BOLD);
-        let scene = Scene::Text(TextNode::styled("B".to_owned(), Rect::new(0, 0, 50, 12), bold));
-        assert!(render_scene(&scene, PageSize::LETTER).document.contains("/F2 12 Tf"));
+        let bold = TextStyle::new()
+            .with_size_px(12)
+            .with_weight(FontWeight::BOLD);
+        let scene = Scene::Text(TextNode::styled(
+            "B".to_owned(),
+            Rect::new(0, 0, 50, 12),
+            bold,
+        ));
+        assert!(
+            render_scene(&scene, PageSize::LETTER)
+                .document
+                .contains("/F2 12 Tf")
+        );
 
-        let italic = TextStyle::new().with_size_px(12).with_style(FontStyle::Italic);
-        let scene = Scene::Text(TextNode::styled("I".to_owned(), Rect::new(0, 0, 50, 12), italic));
-        assert!(render_scene(&scene, PageSize::LETTER).document.contains("/F3 12 Tf"));
+        let italic = TextStyle::new()
+            .with_size_px(12)
+            .with_style(FontStyle::Italic);
+        let scene = Scene::Text(TextNode::styled(
+            "I".to_owned(),
+            Rect::new(0, 0, 50, 12),
+            italic,
+        ));
+        assert!(
+            render_scene(&scene, PageSize::LETTER)
+                .document
+                .contains("/F3 12 Tf")
+        );
     }
 
     #[test]
@@ -780,10 +883,19 @@ mod tests {
         let style = BoxStyle::filled(Color::rgb(0, 0, 0)).with_corner_radius(8);
         let scene = Scene::Box(BoxNode::new(Rect::new(0, 0, 60, 60), style));
         let pdf = render_scene(&scene, PageSize::new(60, 60));
-        assert!(pdf.document.contains(" c\n"), "bezier corner operator present");
+        assert!(
+            pdf.document.contains(" c\n"),
+            "bezier corner operator present"
+        );
         assert!(pdf.document.contains(" m\n"), "path moveto present");
-        assert!(pdf.document.contains("c\nh\n"), "path closed after final curve");
-        assert!(!pdf.document.contains(" re\n"), "rounded path uses curves, not re");
+        assert!(
+            pdf.document.contains("c\nh\n"),
+            "path closed after final curve"
+        );
+        assert!(
+            !pdf.document.contains(" re\n"),
+            "rounded path uses curves, not re"
+        );
     }
 
     #[test]
@@ -794,7 +906,10 @@ mod tests {
         let pdf = render_scene(&scene, PageSize::new(40, 40));
         assert!(pdf.document.contains("0 0 0 RG"), "stroke color set");
         assert!(pdf.document.contains("2 w"), "line width set");
-        assert!(pdf.document.contains("re\nS\n"), "stroke operator follows the path");
+        assert!(
+            pdf.document.contains("re\nS\n"),
+            "stroke operator follows the path"
+        );
     }
 
     #[test]
@@ -811,7 +926,10 @@ mod tests {
     #[test]
     fn r908_render_is_deterministic() {
         let scene = Scene::Container(ContainerNode::new(vec![
-            Scene::Box(BoxNode::filled(Rect::new(0, 0, 50, 50), Color::rgba(1, 2, 3, 0x80))),
+            Scene::Box(BoxNode::filled(
+                Rect::new(0, 0, 50, 50),
+                Color::rgba(1, 2, 3, 0x80),
+            )),
             text_node("Deterministic", 4, 4, 11, Color::rgb(9, 8, 7)),
         ]));
         let a = render_scene(&scene, PageSize::A4);
@@ -824,7 +942,10 @@ mod tests {
         assert_eq!(PageSize::LETTER, PageSize::new(612, 792));
         assert_eq!(PageSize::A4, PageSize::new(595, 842));
         assert_eq!(PageSize::LETTER.landscape(), PageSize::new(792, 612));
-        let scene = Scene::Box(BoxNode::filled(Rect::new(0, 0, 320, 240), Color::rgb(0, 0, 0)));
+        let scene = Scene::Box(BoxNode::filled(
+            Rect::new(0, 0, 320, 240),
+            Color::rgb(0, 0, 0),
+        ));
         assert_eq!(PageSize::from_scene_bounds(&scene), PageSize::new(320, 240));
         let empty = Scene::Box(BoxNode::filled(Rect::new(0, 0, 0, 0), Color::rgb(0, 0, 0)));
         assert_eq!(PageSize::from_scene_bounds(&empty), PageSize::LETTER);
@@ -832,7 +953,10 @@ mod tests {
 
     #[test]
     fn r908_xref_offsets_point_at_obj_headers() {
-        let scene = Scene::Box(BoxNode::filled(Rect::new(0, 0, 10, 10), Color::rgb(0, 0, 0)));
+        let scene = Scene::Box(BoxNode::filled(
+            Rect::new(0, 0, 10, 10),
+            Color::rgb(0, 0, 0),
+        ));
         let pdf = render_scene(&scene, PageSize::new(10, 10));
         let doc = &pdf.document;
         // Each xref 'n' entry's 10-digit offset must land on "<n> 0 obj".
@@ -841,19 +965,27 @@ mod tests {
         // The first in-use entry (object 1) must point at "1 0 obj".
         let obj1_off = doc.find("1 0 obj").expect("object 1 present");
         let needle = format!("{obj1_off:010} 00000 n");
-        assert!(table.contains(&needle), "xref offset for obj 1 is byte-correct");
+        assert!(
+            table.contains(&needle),
+            "xref offset for obj 1 is byte-correct"
+        );
     }
 
     #[test]
     fn r908_scroll_clips_and_translates_content() {
         use pinion_core::scene::ScrollNode;
         let inner = text_node("Scrolled", 0, 0, 12, Color::rgb(0, 0, 0));
-        let scroll = Scene::Scroll(
-            ScrollNode::new(Rect::new(10, 10, 80, 80), inner).with_offset(0, 20),
-        );
+        let scroll =
+            Scene::Scroll(ScrollNode::new(Rect::new(10, 10, 80, 80), inner).with_offset(0, 20));
         let pdf = render_scene(&scroll, PageSize::new(200, 200));
         assert!(pdf.document.contains("W n"), "viewport clip emitted");
-        assert!(pdf.document.contains("q\n") && pdf.document.contains("Q\n"), "save/restore");
-        assert!(pdf.document.contains("(Scrolled) Tj"), "clipped content rendered");
+        assert!(
+            pdf.document.contains("q\n") && pdf.document.contains("Q\n"),
+            "save/restore"
+        );
+        assert!(
+            pdf.document.contains("(Scrolled) Tj"),
+            "clipped content rendered"
+        );
     }
 }

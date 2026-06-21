@@ -16,7 +16,10 @@ fn r600_scene_animation_state_without_runtime_owner_errors() {
     let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
     let err = resp.error.expect("missing runtime_owner must error");
     assert_eq!(err.code, -32602);
-    assert_eq!(err.data, Some(Value::String("RuntimeOwnerUnavailable".into())));
+    assert_eq!(
+        err.data,
+        Some(Value::String("RuntimeOwnerUnavailable".into()))
+    );
 }
 
 #[test]
@@ -35,7 +38,8 @@ fn r600_scene_animation_state_empty_owner_reports_inactive() {
 fn r600_scene_animation_state_custom_epsilon_echoed() {
     let mut scene = counted_scene(0);
     let owner = Owner::new();
-    let req = r#"{"jsonrpc":"2.0","method":"scene/animation_state","params":{"epsilon":0.05},"id":3}"#;
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/animation_state","params":{"epsilon":0.05},"id":3}"#;
     let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
     assert!(resp.error.is_none());
     let echoed = resp.result.unwrap()["epsilon"].as_f64().unwrap();
@@ -46,7 +50,8 @@ fn r600_scene_animation_state_custom_epsilon_echoed() {
 fn r600_scene_animation_state_rejects_negative_epsilon_with_typed_data() {
     let mut scene = counted_scene(0);
     let owner = Owner::new();
-    let req = r#"{"jsonrpc":"2.0","method":"scene/animation_state","params":{"epsilon":-0.1},"id":4}"#;
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/animation_state","params":{"epsilon":-0.1},"id":4}"#;
     let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
     let err = resp.error.expect("negative epsilon must error");
     assert_eq!(err.code, -32602);
@@ -57,7 +62,8 @@ fn r600_scene_animation_state_rejects_negative_epsilon_with_typed_data() {
 fn r600_scene_animation_state_rejects_non_numeric_epsilon() {
     let mut scene = counted_scene(0);
     let owner = Owner::new();
-    let req = r#"{"jsonrpc":"2.0","method":"scene/animation_state","params":{"epsilon":"fast"},"id":5}"#;
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/animation_state","params":{"epsilon":"fast"},"id":5}"#;
     let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
     let err = resp.error.expect("non-numeric epsilon must error");
     assert_eq!(err.code, -32602);
@@ -136,7 +142,10 @@ fn r629_scene_animate_settle_walks_real_animation() {
     let req = r#"{"jsonrpc":"2.0","method":"scene/animate_settle","id":5}"#;
     let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
     assert!(resp.error.is_none());
-    assert_eq!(resp.result.unwrap().get("visited"), Some(&Value::from(1_u64)));
+    assert_eq!(
+        resp.result.unwrap().get("visited"),
+        Some(&Value::from(1_u64))
+    );
     assert!((a.value() - 7.0).abs() < f32::EPSILON);
     assert!(a.is_at_rest());
 }
@@ -159,7 +168,10 @@ fn r629_scene_animate_cancel_walks_real_animation() {
     let req = r#"{"jsonrpc":"2.0","method":"scene/animate_cancel","id":6}"#;
     let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
     assert!(resp.error.is_none());
-    assert_eq!(resp.result.unwrap().get("visited"), Some(&Value::from(1_u64)));
+    assert_eq!(
+        resp.result.unwrap().get("visited"),
+        Some(&Value::from(1_u64))
+    );
     assert!((a.value() - mid).abs() < f32::EPSILON);
     assert!(a.is_at_rest());
 }
@@ -193,4 +205,3 @@ fn r629_scene_animate_cancel_bumps_revision_on_success() {
         "animate_cancel must bump the OCC token (before={before}, after={after})",
     );
 }
-

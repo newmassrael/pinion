@@ -77,36 +77,39 @@
 //! deferred axis); the modal trap over the action buttons is real and
 //! observable (`focus/get` shows it confined to `[Cancel, OK]`).
 
-use pinion_a11y::{windowed_list_nodes_selected, AccessFocus, AccessNode, AriaRole, WidgetA11y};
+use pinion_a11y::{AccessFocus, AccessNode, AriaRole, WidgetA11y, windowed_list_nodes_selected};
 use pinion_core::directory::{Directory, InMemoryDirectory};
 use pinion_core::external::External;
-use pinion_core::reactive::{batch, Owner, Signal};
+use pinion_core::reactive::{Owner, Signal, batch};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::aria::apply_aria_activate;
 use pinion_core::widgets::button::{ButtonExternal, ButtonState};
 use pinion_core::widgets::file_browser::{
-    dir_nav_key_selecting, use_directory_state, DirectoryExternal, DirectoryState,
+    DirectoryExternal, DirectoryState, dir_nav_key_selecting, use_directory_state,
 };
-use pinion_core::widgets::modal::{modal_introspection_extra, use_modal, ModalState};
+use pinion_core::widgets::modal::{ModalState, modal_introspection_extra, use_modal};
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::{DirEntry, Frame, Scene, WidgetCore};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::button::{
-    button_a11y_state, button_scene, read_button_focused, read_button_state, ButtonColors,
-    ButtonStyle,
+    ButtonColors, ButtonStyle, button_a11y_state, button_scene, read_button_focused,
+    read_button_state,
 };
-use pinion_widget_paint::dialog::{view_dialog, DialogContent, DialogStyle};
-use pinion_widget_paint::file_browser::{file_browser_pane, FileBrowserMetrics};
+use pinion_widget_paint::dialog::{DialogContent, DialogStyle, view_dialog};
+use pinion_widget_paint::file_browser::{FileBrowserMetrics, file_browser_pane};
 use std::rc::Rc;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
-vello_renderer_impl!(HelloFileOpenDialogRenderer, HelloFileOpenDialogRendererError);
+vello_renderer_impl!(
+    HelloFileOpenDialogRenderer,
+    HelloFileOpenDialogRendererError
+);
 
 const WIN_W: u32 = 600;
 const WIN_H: u32 = 600;
@@ -162,12 +165,19 @@ const OVERSCAN: usize = 3;
 /// list → Cancel → Open and wraps. The list is a single Tab stop with an
 /// internal roving cursor (`aria-activedescendant`), not one stop per row.
 fn dialog_members() -> Vec<String> {
-    vec![DIR_TAG.to_string(), CANCEL_TAG.to_string(), OK_TAG.to_string()]
+    vec![
+        DIR_TAG.to_string(),
+        CANCEL_TAG.to_string(),
+        OK_TAG.to_string(),
+    ]
 }
 
 /// The R788 modal panel style: the M3 default widened to hold the browser.
 fn dialog_style() -> DialogStyle {
-    DialogStyle { panel_width: PANEL_W, ..DialogStyle::m3_default() }
+    DialogStyle {
+        panel_width: PANEL_W,
+        ..DialogStyle::m3_default()
+    }
 }
 
 /// The shared [`ModalState`] (R788 lifted open-lifecycle SSOT). One `Rc`
@@ -207,9 +217,22 @@ fn seed_directory() -> Rc<dyn Directory> {
             DirEntry::file(".gitignore"),
         ],
     );
-    d.insert("/proj/src", vec![DirEntry::dir("ui"), DirEntry::file("main.rs"), DirEntry::file("lib.rs")]);
-    d.insert("/proj/src/ui", vec![DirEntry::file("button.rs"), DirEntry::file("list.rs")]);
-    d.insert("/proj/assets", vec![DirEntry::file("logo.png"), DirEntry::file("icon.svg")]);
+    d.insert(
+        "/proj/src",
+        vec![
+            DirEntry::dir("ui"),
+            DirEntry::file("main.rs"),
+            DirEntry::file("lib.rs"),
+        ],
+    );
+    d.insert(
+        "/proj/src/ui",
+        vec![DirEntry::file("button.rs"), DirEntry::file("list.rs")],
+    );
+    d.insert(
+        "/proj/assets",
+        vec![DirEntry::file("logo.png"), DirEntry::file("icon.svg")],
+    );
     Rc::new(d)
 }
 
@@ -249,7 +272,13 @@ fn browser_pane(
         dir,
         scroll,
         theme,
-        FileBrowserMetrics { list_width: LIST_W, list_height: LIST_H, row_pitch: ROW_PITCH, overscan: OVERSCAN, focusable: false },
+        FileBrowserMetrics {
+            list_width: LIST_W,
+            list_height: LIST_H,
+            row_pitch: ROW_PITCH,
+            overscan: OVERSCAN,
+            focusable: false,
+        },
         None,
     )
 }
@@ -311,7 +340,9 @@ fn view(state: FileOpenViewState, _frame: &Frame) -> Scene {
             None => "Chosen: (none)".to_string(),
         },
         Rect::default(),
-        TextStyle::new().with_size_px(14).with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+        TextStyle::new()
+            .with_size_px(14)
+            .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
     ));
     let content = Scene::Container(
         ContainerNode::new(vec![trigger, status]).with_layout(
@@ -341,7 +372,11 @@ fn view(state: FileOpenViewState, _frame: &Frame) -> Scene {
             &ButtonColors::filled_tonal(&theme),
         );
         // OK gated on a selection: with none, paint the Disabled posture.
-        let ok_posture = if has_selection { ok_state } else { ButtonState::Disabled };
+        let ok_posture = if has_selection {
+            ok_state
+        } else {
+            ButtonState::Disabled
+        };
         let ok = action_button(
             OK_TAG,
             "Open",
@@ -354,7 +389,11 @@ fn view(state: FileOpenViewState, _frame: &Frame) -> Scene {
         children.push(view_dialog(
             SCRIM_TAG,
             PANEL_TAG,
-            DialogContent { title: "Open file", message: "", body: Some(pane) },
+            DialogContent {
+                title: "Open file",
+                message: "",
+                body: Some(pane),
+            },
             vec![cancel, ok],
             (WIN_W, WIN_H),
             &theme,
@@ -431,7 +470,6 @@ impl WidgetCore for FileOpenView {
         None
     }
 
-
     /// R788 §5.39 — Escape dismisses the open dialog as a cancel (the shell
     /// routes Escape here only while the trap is active). Enter / Space on a
     /// focused action button activate it through the shared ARIA helper.
@@ -500,7 +538,10 @@ impl WidgetCore for FileOpenView {
     }
 
     fn fmt_state_log(state: &FileOpenViewState) -> String {
-        format!("trigger={:?} ok={:?} cancel={:?}", state.0, state.1, state.2)
+        format!(
+            "trigger={:?} ok={:?} cancel={:?}",
+            state.0, state.1, state.2
+        )
     }
 }
 
@@ -516,8 +557,10 @@ impl WidgetA11y for FileOpenView {
     /// single source of truth.
     fn access_node(state: &FileOpenViewState, focused: Option<&str>) -> Vec<AccessNode> {
         if !modal().is_open() {
-            return vec![AccessNode::new(TRIGGER_TAG, AriaRole::Button)
-                .with_state(button_a11y_state(state.0, focused == Some(TRIGGER_TAG)))];
+            return vec![
+                AccessNode::new(TRIGGER_TAG, AriaRole::Button)
+                    .with_state(button_a11y_state(state.0, focused == Some(TRIGGER_TAG))),
+            ];
         }
         let dir = directory();
         let scroll = use_scroll_state(SCROLL_KEY);
@@ -538,8 +581,11 @@ impl WidgetA11y for FileOpenView {
             dir.selected_index(),
         ));
         // OK reflects the selection gate (aria-disabled until a pick).
-        let ok_posture =
-            if dir.selected().is_some() { state.1 } else { ButtonState::Disabled };
+        let ok_posture = if dir.selected().is_some() {
+            state.1
+        } else {
+            ButtonState::Disabled
+        };
         nodes.push(
             AccessNode::new(CANCEL_TAG, AriaRole::Button)
                 .with_state(button_a11y_state(state.2, focused == Some(CANCEL_TAG)))
@@ -561,10 +607,16 @@ impl WidgetA11y for FileOpenView {
     /// list container, so the painted ring follows the arrow keys. Mirrors
     /// the file-manager / file-browser roving-cursor wiring (R792). Any other
     /// focus is the atomic focused tag.
-    fn access_focus_target(_state: &FileOpenViewState, focused: Option<&str>) -> Option<AccessFocus> {
+    fn access_focus_target(
+        _state: &FileOpenViewState,
+        focused: Option<&str>,
+    ) -> Option<AccessFocus> {
         if focused == Some(DIR_TAG) && modal().is_open() {
             if let Some(cursor) = directory().cursor() {
-                return Some(AccessFocus::composite(DIR_TAG, format!("{DIR_TAG}#{cursor}")));
+                return Some(AccessFocus::composite(
+                    DIR_TAG,
+                    format!("{DIR_TAG}#{cursor}"),
+                ));
             }
         }
         focused.map(AccessFocus::atomic)
@@ -575,7 +627,10 @@ impl WidgetView for FileOpenView {
     type Renderer = HelloFileOpenDialogRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 }
 
@@ -589,11 +644,19 @@ mod tests {
     use pinion_core::modal_scope_request::{self, ModalRequest};
 
     fn idle() -> FileOpenViewState {
-        (ButtonState::Idle, ButtonState::Idle, ButtonState::Idle, [false; 3])
+        (
+            ButtonState::Idle,
+            ButtonState::Idle,
+            ButtonState::Idle,
+            [false; 3],
+        )
     }
 
     fn intent(tag: &str) -> pinion_core::Intent {
-        pinion_core::Intent::new_owned(tag.to_string(), pinion_core::external::IntrospectValue::Null)
+        pinion_core::Intent::new_owned(
+            tag.to_string(),
+            pinion_core::external::IntrospectValue::Null,
+        )
     }
 
     // ----- reducer + signals -----
@@ -612,7 +675,9 @@ mod tests {
             assert_eq!(dir.selected(), None, "open clears any prior selection");
             assert_eq!(
                 modal_scope_request::drain(),
-                Some(ModalRequest::Open { members: dialog_members() }),
+                Some(ModalRequest::Open {
+                    members: dialog_members()
+                }),
                 "modal trap requested over the action buttons",
             );
         });
@@ -626,9 +691,16 @@ mod tests {
             let _ = modal_scope_request::drain();
             // No file picked: OK must not close or choose.
             let _ = FileOpenView::update(idle(), &intent("fileopen_ok.click"));
-            assert!(modal().is_open(), "OK with no selection keeps the dialog open");
+            assert!(
+                modal().is_open(),
+                "OK with no selection keeps the dialog open"
+            );
             assert_eq!(use_chosen().get(), None, "nothing chosen");
-            assert_eq!(modal_scope_request::drain(), None, "no modal lifecycle change");
+            assert_eq!(
+                modal_scope_request::drain(),
+                None,
+                "no modal lifecycle change"
+            );
         });
     }
 
@@ -728,8 +800,14 @@ mod tests {
             assert!(scene.contains_tag(OK_TAG), "Open action painted");
             assert!(scene.contains_tag(CANCEL_TAG), "Cancel action painted");
             // The browser pane's rows live in the dialog body.
-            assert!(scene.contains_tag(&format!("{DIR_TAG}#0")), "row 0 painted in body");
-            assert!(scene.contains_tag(&format!("{DIR_TAG}#up")), "parent affordance painted");
+            assert!(
+                scene.contains_tag(&format!("{DIR_TAG}#0")),
+                "row 0 painted in body"
+            );
+            assert!(
+                scene.contains_tag(&format!("{DIR_TAG}#up")),
+                "parent affordance painted"
+            );
         });
     }
 
@@ -755,7 +833,10 @@ mod tests {
             let accent = Theme::light().resolve(ColorRole::Accent);
             let scene = view(idle(), &Frame::new());
             let ok_no_sel = find_tagged(&scene, OK_TAG).expect("ok painted").style.fill;
-            assert_ne!(ok_no_sel, accent, "OK is not Accent with no selection (disabled gate)");
+            assert_ne!(
+                ok_no_sel, accent,
+                "OK is not Accent with no selection (disabled gate)"
+            );
             // Select a file: OK paints its Accent (enabled) fill.
             directory().select("Cargo.toml");
             let scene = view(idle(), &Frame::new());
@@ -785,12 +866,18 @@ mod tests {
             assert!(nodes[0].modal, "dialog root carries aria-modal");
             assert_eq!(nodes[0].children, vec![DIR_TAG, CANCEL_TAG, OK_TAG]);
             // The file list (shared windowed_list_nodes_selected) is present.
-            let list = nodes.iter().find(|n| n.tag == DIR_TAG).expect("file list node");
+            let list = nodes
+                .iter()
+                .find(|n| n.tag == DIR_TAG)
+                .expect("file list node");
             assert_eq!(list.role, AriaRole::List);
             assert_eq!(list.size_of_set, Some(5), "five entries in /proj");
             // OK carries aria-disabled with no selection.
             let ok = nodes.iter().find(|n| n.tag == OK_TAG).expect("ok node");
-            assert!(ok.state.disabled, "OK is aria-disabled until a file is picked");
+            assert!(
+                ok.state.disabled,
+                "OK is aria-disabled until a file is picked"
+            );
         });
     }
 
@@ -806,7 +893,11 @@ mod tests {
                 .iter()
                 .find(|n| n.position_in_set == Some(4) && n.role == AriaRole::ListItem)
                 .expect("listitem for the picked row");
-            assert_eq!(item.selected, Some(true), "picked file carries aria-selected");
+            assert_eq!(
+                item.selected,
+                Some(true),
+                "picked file carries aria-selected"
+            );
         });
     }
 
@@ -818,7 +909,10 @@ mod tests {
             let mut nodes = FileOpenView::access_node(&idle(), Some(CANCEL_TAG));
             pinion_a11y::enrich_names_from_scene(&mut nodes, &scene);
             let name = |t: &str| {
-                nodes.iter().find(|n| n.tag == t).and_then(|n| n.name.as_deref())
+                nodes
+                    .iter()
+                    .find(|n| n.tag == t)
+                    .and_then(|n| n.name.as_deref())
             };
             assert_eq!(name(PANEL_TAG), Some("Open file"), "dialog name from title");
             assert_eq!(name(CANCEL_TAG), Some("Cancel"));
@@ -843,7 +937,9 @@ mod tests {
             ExternalNode::new(FileOpenView::create_external()).with_tag(TRIGGER_TAG),
         )];
         for extra in FileOpenView::create_extra_externals() {
-            children.push(Scene::External(ExternalNode::new(extra.handle).with_tag(extra.tag)));
+            children.push(Scene::External(
+                ExternalNode::new(extra.handle).with_tag(extra.tag),
+            ));
         }
         Scene::Container(ContainerNode::new(children))
     }

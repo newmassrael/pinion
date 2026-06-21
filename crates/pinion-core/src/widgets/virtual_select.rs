@@ -37,14 +37,14 @@
 //! `List` (no `aria-multiselectable`) — exactly the windowed-AT model the
 //! R744/R745 lists already use for `aria-setsize` / `aria-posinset`.
 
+use crate::Scene;
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
 use crate::intent::Intent;
-use crate::widgets::scroll::ScrollState;
 use crate::widgets::IntentEmitter;
-use crate::Scene;
+use crate::widgets::scroll::ScrollState;
 use std::collections::BTreeSet;
 
 /// R780 §5.40 — selection cardinality policy for [`VirtualSelect`], the
@@ -165,7 +165,9 @@ impl VirtualSelect {
         if index >= self.item_count {
             return false;
         }
-        if self.cursor == Some(index) && self.selection.len() == 1 && self.selection.contains(&index)
+        if self.cursor == Some(index)
+            && self.selection.len() == 1
+            && self.selection.contains(&index)
         {
             return false;
         }
@@ -214,7 +216,11 @@ impl VirtualSelect {
         let Some(anchor) = self.anchor else {
             return self.select(index);
         };
-        let (lo, hi) = if anchor <= index { (anchor, index) } else { (index, anchor) };
+        let (lo, hi) = if anchor <= index {
+            (anchor, index)
+        } else {
+            (index, anchor)
+        };
         let next: BTreeSet<usize> = (lo..=hi).collect();
         let changed = next != self.selection || self.cursor != Some(index);
         self.selection = next;
@@ -271,7 +277,11 @@ impl VirtualSelect {
     /// greatest selected index (or `None` when empty). Returns `true` if the
     /// set changed.
     pub fn set_selection(&mut self, indices: &BTreeSet<usize>) -> bool {
-        let next: BTreeSet<usize> = indices.iter().copied().filter(|&i| i < self.item_count).collect();
+        let next: BTreeSet<usize> = indices
+            .iter()
+            .copied()
+            .filter(|&i| i < self.item_count)
+            .collect();
         if next == self.selection {
             return false;
         }
@@ -329,7 +339,9 @@ impl VirtualSelectExternal {
     /// consumer keeps its exact behaviour).
     #[must_use]
     pub fn new(item_count: usize) -> Self {
-        Self { em: IntentEmitter::new(VirtualSelect::new(item_count, SelectionMode::Single)) }
+        Self {
+            em: IntentEmitter::new(VirtualSelect::new(item_count, SelectionMode::Single)),
+        }
     }
 
     /// Construct a **multi-select** coordinator (R780): `Shift`-range,
@@ -338,7 +350,9 @@ impl VirtualSelectExternal {
     /// analogue.
     #[must_use]
     pub fn new_multi(item_count: usize) -> Self {
-        Self { em: IntentEmitter::new(VirtualSelect::new(item_count, SelectionMode::Multi)) }
+        Self {
+            em: IntentEmitter::new(VirtualSelect::new(item_count, SelectionMode::Multi)),
+        }
     }
 
     /// The active row (the `query("selected")` value, the
@@ -492,8 +506,7 @@ impl VirtualSelectExternal {
     /// structure, so it falls back to a plain integer parse: one
     /// coordinator, both collection shapes, one wire grammar.
     fn handle_send(&mut self, payload: &str) {
-        let Some((key, event_name, modifiers)) =
-            crate::composite_tag::split_send_payload(payload)
+        let Some((key, event_name, modifiers)) = crate::composite_tag::split_send_payload(payload)
         else {
             return;
         };
@@ -676,7 +689,11 @@ impl ExternalIntrospect for VirtualSelectExternal {
         }
     }
 
-    fn invoke(&mut self, path: &str, args: IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+    fn invoke(
+        &mut self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
         match path {
             // AI-first direct selection — returns the resulting selected
             // index (or Null) so the caller sees the outcome in one
@@ -796,7 +813,10 @@ pub fn read_selected(intro: &dyn ExternalIntrospect) -> Option<usize> {
 #[must_use]
 pub fn selection_to_value(selection: &BTreeSet<usize>) -> IntrospectValue {
     IntrospectValue::Json(serde_json::Value::Array(
-        selection.iter().map(|&i| serde_json::Value::from(i)).collect(),
+        selection
+            .iter()
+            .map(|&i| serde_json::Value::from(i))
+            .collect(),
     ))
 }
 
@@ -828,7 +848,12 @@ pub fn selected_to_value(cursor: Option<usize>) -> IntrospectValue {
 /// different mechanism) can reuse it. A *cyclic* peer is a later additive
 /// policy when a wrapping virtualized collection needs one.
 #[must_use]
-pub fn clamp_nav(current: Option<usize>, key: &str, item_count: usize, page: usize) -> Option<usize> {
+pub fn clamp_nav(
+    current: Option<usize>,
+    key: &str,
+    item_count: usize,
+    page: usize,
+) -> Option<usize> {
     let last = item_count.checked_sub(1)?;
     let next = match key {
         "ArrowDown" => current.map_or(0, |i| (i + 1).min(last)),
@@ -904,7 +929,10 @@ pub fn nav_select_key(
     modifiers: crate::input::Modifiers,
     metrics: RowMetrics,
 ) -> bool {
-    let RowMetrics { item_count, row_pitch } = metrics;
+    let RowMetrics {
+        item_count,
+        row_pitch,
+    } = metrics;
     if focused != Some(tag) {
         return false;
     }
@@ -954,7 +982,11 @@ pub fn nav_select_key(
     // Shift+nav extends the range (multi only); everything else moves +
     // replaces. The coordinator collapses `extend_to` to a plain move in a
     // single-select model, so the branch is harmless there.
-    let action = if multi && modifiers.shift { "extend_to" } else { "select" };
+    let action = if multi && modifiers.shift {
+        "extend_to"
+    } else {
+        "select"
+    };
     if let (Some(intro), Ok(t)) = (node.handle.introspect_mut(), i64::try_from(target)) {
         let _ = intro.invoke(action, IntrospectValue::Int(t));
     }
@@ -1040,7 +1072,11 @@ mod tests {
         s.handle_send("noseparator");
         s.handle_send("4:");
         s.handle_send("9999:PointerUp");
-        assert_eq!(s.selected(), Some(9), "no-op payloads leave selection intact");
+        assert_eq!(
+            s.selected(),
+            Some(9),
+            "no-op payloads leave selection intact"
+        );
     }
 
     #[test]
@@ -1068,7 +1104,11 @@ mod tests {
         let mut s = VirtualSelectExternal::new(100);
         s.select(5);
         s.handle_send("h2:PointerUp");
-        assert_eq!(s.selected(), Some(5), "header click leaves the selection intact");
+        assert_eq!(
+            s.selected(),
+            Some(5),
+            "header click leaves the selection intact"
+        );
     }
 
     #[test]
@@ -1082,15 +1122,21 @@ mod tests {
         assert_eq!(s.query("item_count"), Some(IntrospectValue::Int(50)));
         s.select(12);
         assert_eq!(s.query("selected"), Some(IntrospectValue::Int(12)));
-        assert_eq!(s.query("nope"), None, "an undeclared path is genuinely absent");
+        assert_eq!(
+            s.query("nope"),
+            None,
+            "an undeclared path is genuinely absent"
+        );
     }
 
     #[test]
     fn intervene_selected_sets_clears_and_guards() {
         let mut s = VirtualSelectExternal::new(50);
-        s.intervene("selected", IntrospectValue::Int(20)).expect("int selects");
+        s.intervene("selected", IntrospectValue::Int(20))
+            .expect("int selects");
         assert_eq!(s.selected(), Some(20));
-        s.intervene("selected", IntrospectValue::Null).expect("null clears");
+        s.intervene("selected", IntrospectValue::Null)
+            .expect("null clears");
         assert_eq!(s.selected(), None);
         assert_eq!(
             s.intervene("item_count", IntrospectValue::Int(1)),
@@ -1119,19 +1165,35 @@ mod tests {
         assert!(s.select(7));
         let intents = drained(&mut s);
         assert_eq!(intents.len(), 1, "one selected intent per interaction");
-        assert_eq!(intents[0], Intent::new_static("selected", IntrospectValue::Int(7)));
-        assert!(drained(&mut s).is_empty(), "drain is idempotent (queue emptied)");
+        assert_eq!(
+            intents[0],
+            Intent::new_static("selected", IntrospectValue::Int(7))
+        );
+        assert!(
+            drained(&mut s).is_empty(),
+            "drain is idempotent (queue emptied)"
+        );
         // A no-op re-select emits nothing.
         assert!(!s.select(7));
-        assert!(drained(&mut s).is_empty(), "unchanged selection emits nothing");
+        assert!(
+            drained(&mut s).is_empty(),
+            "unchanged selection emits nothing"
+        );
         // Composite send (the click wire) is also an interaction → emits.
         s.handle_send("9:PointerUp");
-        assert_eq!(drained(&mut s).len(), 1, "composite send emits on activation");
+        assert_eq!(
+            drained(&mut s).len(),
+            1,
+            "composite send emits on activation"
+        );
         // Admin paths (intervene / set_selected / clear) are SILENT.
         s.intervene("selected", IntrospectValue::Int(3)).unwrap();
         s.set_selected(Some(5));
         s.clear();
-        assert!(drained(&mut s).is_empty(), "admin restore/clear is silent on §5.20");
+        assert!(
+            drained(&mut s).is_empty(),
+            "admin restore/clear is silent on §5.20"
+        );
     }
 
     #[test]
@@ -1147,13 +1209,22 @@ mod tests {
     #[test]
     fn invoke_select_clear_send_return_outcome() {
         let mut s = VirtualSelectExternal::new(100);
-        assert_eq!(s.invoke("select", IntrospectValue::Int(7)), Ok(IntrospectValue::Int(7)));
-        assert_eq!(s.invoke("clear", IntrospectValue::Null), Ok(IntrospectValue::Null));
+        assert_eq!(
+            s.invoke("select", IntrospectValue::Int(7)),
+            Ok(IntrospectValue::Int(7))
+        );
+        assert_eq!(
+            s.invoke("clear", IntrospectValue::Null),
+            Ok(IntrospectValue::Null)
+        );
         assert_eq!(
             s.invoke("send", IntrospectValue::Text("3:PointerUp".into())),
             Ok(IntrospectValue::Int(3)),
         );
-        assert_eq!(s.invoke("bogus", IntrospectValue::Null), Err(InvokeError::UnknownPath));
+        assert_eq!(
+            s.invoke("bogus", IntrospectValue::Null),
+            Err(InvokeError::UnknownPath)
+        );
         assert_eq!(
             s.invoke("select", IntrospectValue::Text("x".into())),
             Err(InvokeError::TypeMismatch),
@@ -1167,8 +1238,16 @@ mod tests {
         // Arrows step one, clamped at both ends (no wrap).
         assert_eq!(clamp_nav(Some(5), "ArrowDown", 100, 12), Some(6));
         assert_eq!(clamp_nav(Some(5), "ArrowUp", 100, 12), Some(4));
-        assert_eq!(clamp_nav(Some(0), "ArrowUp", 100, 12), Some(0), "top clamps, no wrap");
-        assert_eq!(clamp_nav(Some(99), "ArrowDown", 100, 12), Some(99), "bottom clamps");
+        assert_eq!(
+            clamp_nav(Some(0), "ArrowUp", 100, 12),
+            Some(0),
+            "top clamps, no wrap"
+        );
+        assert_eq!(
+            clamp_nav(Some(99), "ArrowDown", 100, 12),
+            Some(99),
+            "bottom clamps"
+        );
         // Home / End.
         assert_eq!(clamp_nav(Some(50), "Home", 100, 12), Some(0));
         assert_eq!(clamp_nav(Some(50), "End", 100, 12), Some(99));
@@ -1182,17 +1261,39 @@ mod tests {
     #[test]
     fn clamp_nav_from_none_lands_on_first_and_rejects_unknown() {
         for key in ["ArrowDown", "ArrowUp", "PageDown", "PageUp"] {
-            assert_eq!(clamp_nav(None, key, 100, 12), Some(0), "{key} from None -> 0");
+            assert_eq!(
+                clamp_nav(None, key, 100, 12),
+                Some(0),
+                "{key} from None -> 0"
+            );
         }
-        assert_eq!(clamp_nav(Some(3), "Tab", 100, 12), None, "unhandled key -> None");
-        assert_eq!(clamp_nav(Some(0), "ArrowDown", 0, 12), None, "empty collection -> None");
+        assert_eq!(
+            clamp_nav(Some(3), "Tab", 100, 12),
+            None,
+            "unhandled key -> None"
+        );
+        assert_eq!(
+            clamp_nav(Some(0), "ArrowDown", 0, 12),
+            None,
+            "empty collection -> None"
+        );
     }
 
     use crate::input::Modifiers;
 
     const NONE: Modifiers = Modifiers::empty();
-    const SHIFT: Modifiers = Modifiers { shift: true, ctrl: false, alt: false, meta: false };
-    const CTRL: Modifiers = Modifiers { shift: false, ctrl: true, alt: false, meta: false };
+    const SHIFT: Modifiers = Modifiers {
+        shift: true,
+        ctrl: false,
+        alt: false,
+        meta: false,
+    };
+    const CTRL: Modifiers = Modifiers {
+        shift: false,
+        ctrl: true,
+        alt: false,
+        meta: false,
+    };
 
     fn grid_scene(tag: &str) -> Scene {
         Scene::External(
@@ -1242,10 +1343,32 @@ mod tests {
         scroll.set_max(0, 320_000);
         scroll.set_measured_viewport(360, 384);
         // Not focused → ignored.
-        assert!(!nav_select_key(&mut scene, &scroll, "vlist", Some("other"), "End", NONE, RowMetrics { item_count: 10_000, row_pitch: 32 }));
+        assert!(!nav_select_key(
+            &mut scene,
+            &scroll,
+            "vlist",
+            Some("other"),
+            "End",
+            NONE,
+            RowMetrics {
+                item_count: 10_000,
+                row_pitch: 32
+            }
+        ));
         assert_eq!(selected_of(&scene, "vlist"), None);
         // Focused but a non-nav key → ignored.
-        assert!(!nav_select_key(&mut scene, &scroll, "vlist", Some("vlist"), "Tab", NONE, RowMetrics { item_count: 10_000, row_pitch: 32 }));
+        assert!(!nav_select_key(
+            &mut scene,
+            &scroll,
+            "vlist",
+            Some("vlist"),
+            "Tab",
+            NONE,
+            RowMetrics {
+                item_count: 10_000,
+                row_pitch: 32
+            }
+        ));
         assert_eq!(selected_of(&scene, "vlist"), None);
     }
 
@@ -1257,11 +1380,37 @@ mod tests {
         scroll.set_measured_viewport(360, 384);
         // End selects the last row and scrolls the offset deep so the row
         // is revealed (a row never materialized at offset 0).
-        assert!(nav_select_key(&mut scene, &scroll, "vlist", Some("vlist"), "End", NONE, RowMetrics { item_count: 10_000, row_pitch: 32 }));
+        assert!(nav_select_key(
+            &mut scene,
+            &scroll,
+            "vlist",
+            Some("vlist"),
+            "End",
+            NONE,
+            RowMetrics {
+                item_count: 10_000,
+                row_pitch: 32
+            }
+        ));
         assert_eq!(selected_of(&scene, "vlist"), Some(9_999));
-        assert!(scroll.offset_y() > 300_000, "End scrolled deep, offset {}", scroll.offset_y());
+        assert!(
+            scroll.offset_y() > 300_000,
+            "End scrolled deep, offset {}",
+            scroll.offset_y()
+        );
         // Home brings selection + scroll back to the top.
-        assert!(nav_select_key(&mut scene, &scroll, "vlist", Some("vlist"), "Home", NONE, RowMetrics { item_count: 10_000, row_pitch: 32 }));
+        assert!(nav_select_key(
+            &mut scene,
+            &scroll,
+            "vlist",
+            Some("vlist"),
+            "Home",
+            NONE,
+            RowMetrics {
+                item_count: 10_000,
+                row_pitch: 32
+            }
+        ));
         assert_eq!(selected_of(&scene, "vlist"), Some(0));
         assert_eq!(scroll.offset_y(), 0, "Home revealed the top");
     }
@@ -1295,7 +1444,11 @@ mod tests {
         assert!(s.is_selected(5));
         assert!(s.toggle(5), "toggling a selected row removes it");
         assert_eq!(s.selection(), vec![2, 9]);
-        assert_eq!(s.selected(), Some(5), "the toggled row stays the active row");
+        assert_eq!(
+            s.selected(),
+            Some(5),
+            "the toggled row stays the active row"
+        );
         assert_eq!(s.anchor(), Some(5));
     }
 
@@ -1316,7 +1469,11 @@ mod tests {
         // Shift-click extends the range from the anchor (now 4, the last
         // toggled row) to the clicked row.
         s.handle_send("6:PointerUp:s");
-        assert_eq!(s.selection(), vec![4, 5, 6], "Shift-click extends from anchor 4");
+        assert_eq!(
+            s.selection(),
+            vec![4, 5, 6],
+            "Shift-click extends from anchor 4"
+        );
     }
 
     #[test]
@@ -1338,7 +1495,11 @@ mod tests {
         );
         let empty = VirtualSelectExternal::new_multi(10);
         let empty_intro: &dyn ExternalIntrospect = &empty;
-        assert_eq!(read_selection(empty_intro), Vec::<usize>::new(), "empty selection decodes to []");
+        assert_eq!(
+            read_selection(empty_intro),
+            Vec::<usize>::new(),
+            "empty selection decodes to []"
+        );
     }
 
     #[test]
@@ -1348,7 +1509,11 @@ mod tests {
         // a selected index decodes back to itself, and an empty selection
         // decodes to `None`.
         let mut s = VirtualSelectExternal::new(10_000);
-        assert_eq!(read_selected(&s as &dyn ExternalIntrospect), None, "empty → None");
+        assert_eq!(
+            read_selected(&s as &dyn ExternalIntrospect),
+            None,
+            "empty → None"
+        );
         s.select(4_200);
         assert_eq!(
             read_selected(&s as &dyn ExternalIntrospect),
@@ -1366,7 +1531,11 @@ mod tests {
         s.handle_send("4:PointerUp:s");
         assert_eq!(s.selection(), vec![4]);
         s.handle_send("9:PointerUp:c");
-        assert_eq!(s.selection(), vec![9], "single-select replaces, never accumulates");
+        assert_eq!(
+            s.selection(),
+            vec![9],
+            "single-select replaces, never accumulates"
+        );
     }
 
     #[test]
@@ -1374,10 +1543,18 @@ mod tests {
         let mut s = VirtualSelectExternal::new_multi(100);
         s.select(10); // anchor = 10
         assert!(s.extend_to(13));
-        assert_eq!(s.selection(), vec![10, 11, 12, 13], "range grows down from anchor");
+        assert_eq!(
+            s.selection(),
+            vec![10, 11, 12, 13],
+            "range grows down from anchor"
+        );
         // Re-extend the other side: anchor unchanged, range replaced.
         assert!(s.extend_to(8));
-        assert_eq!(s.selection(), vec![8, 9, 10], "range grows up, anchor stays at 10");
+        assert_eq!(
+            s.selection(),
+            vec![8, 9, 10],
+            "range grows up, anchor stays at 10"
+        );
         assert_eq!(s.anchor(), Some(10));
         assert_eq!(s.selected(), Some(8), "the navigated end is the active row");
     }
@@ -1424,16 +1601,30 @@ mod tests {
             Some(IntrospectValue::Json(serde_json::json!([]))),
             "empty selection is an empty array, never Null",
         );
-        s.intervene("selection", IntrospectValue::Json(serde_json::json!([3, 8, 800])))
-            .expect("array replaces selection");
-        assert_eq!(s.selection(), vec![3, 8], "out-of-range index 800 is dropped");
+        s.intervene(
+            "selection",
+            IntrospectValue::Json(serde_json::json!([3, 8, 800])),
+        )
+        .expect("array replaces selection");
+        assert_eq!(
+            s.selection(),
+            vec![3, 8],
+            "out-of-range index 800 is dropped"
+        );
         assert_eq!(s.query("anchor"), Some(IntrospectValue::Int(8)));
         // Null clears.
-        s.intervene("selection", IntrospectValue::Null).expect("null clears");
+        s.intervene("selection", IntrospectValue::Null)
+            .expect("null clears");
         assert!(s.selection().is_empty());
         // mode / anchor / item_count are read-only.
-        assert_eq!(s.intervene("mode", IntrospectValue::Text("single".into())), Err(InterveneError::ReadOnly));
-        assert_eq!(s.intervene("anchor", IntrospectValue::Int(0)), Err(InterveneError::ReadOnly));
+        assert_eq!(
+            s.intervene("mode", IntrospectValue::Text("single".into())),
+            Err(InterveneError::ReadOnly)
+        );
+        assert_eq!(
+            s.intervene("anchor", IntrospectValue::Int(0)),
+            Err(InterveneError::ReadOnly)
+        );
     }
 
     #[test]
@@ -1461,14 +1652,66 @@ mod tests {
         scroll.set_max(0, 320_000);
         scroll.set_measured_viewport(360, 384);
         // Plain ArrowDown from nothing lands on row 0 (anchor = 0).
-        assert!(nav_select_key(&mut scene, &scroll, "vlist", Some("vlist"), "ArrowDown", NONE, RowMetrics { item_count: 10_000, row_pitch: 32 }));
+        assert!(nav_select_key(
+            &mut scene,
+            &scroll,
+            "vlist",
+            Some("vlist"),
+            "ArrowDown",
+            NONE,
+            RowMetrics {
+                item_count: 10_000,
+                row_pitch: 32
+            }
+        ));
         assert_eq!(selection_of(&scene, "vlist"), vec![0]);
         // Shift+End extends the range to the last row.
-        assert!(nav_select_key(&mut scene, &scroll, "vlist", Some("vlist"), "ArrowDown", NONE, RowMetrics { item_count: 10_000, row_pitch: 32 }));
-        assert_eq!(selected_of(&scene, "vlist"), Some(1), "plain move resets the anchor to 1");
-        assert!(nav_select_key(&mut scene, &scroll, "vlist", Some("vlist"), "ArrowDown", SHIFT, RowMetrics { item_count: 10_000, row_pitch: 32 }));
-        assert_eq!(selection_of(&scene, "vlist"), vec![1, 2], "Shift extends from anchor 1");
-        assert!(nav_select_key(&mut scene, &scroll, "vlist", Some("vlist"), "ArrowDown", SHIFT, RowMetrics { item_count: 10_000, row_pitch: 32 }));
+        assert!(nav_select_key(
+            &mut scene,
+            &scroll,
+            "vlist",
+            Some("vlist"),
+            "ArrowDown",
+            NONE,
+            RowMetrics {
+                item_count: 10_000,
+                row_pitch: 32
+            }
+        ));
+        assert_eq!(
+            selected_of(&scene, "vlist"),
+            Some(1),
+            "plain move resets the anchor to 1"
+        );
+        assert!(nav_select_key(
+            &mut scene,
+            &scroll,
+            "vlist",
+            Some("vlist"),
+            "ArrowDown",
+            SHIFT,
+            RowMetrics {
+                item_count: 10_000,
+                row_pitch: 32
+            }
+        ));
+        assert_eq!(
+            selection_of(&scene, "vlist"),
+            vec![1, 2],
+            "Shift extends from anchor 1"
+        );
+        assert!(nav_select_key(
+            &mut scene,
+            &scroll,
+            "vlist",
+            Some("vlist"),
+            "ArrowDown",
+            SHIFT,
+            RowMetrics {
+                item_count: 10_000,
+                row_pitch: 32
+            }
+        ));
         assert_eq!(selection_of(&scene, "vlist"), vec![1, 2, 3]);
     }
 
@@ -1479,13 +1722,53 @@ mod tests {
         scroll.set_max(0, 320_000);
         scroll.set_measured_viewport(360, 384);
         // Move to a row so there is an active row to toggle.
-        assert!(nav_select_key(&mut scene, &scroll, "vlist", Some("vlist"), "ArrowDown", NONE, RowMetrics { item_count: 10_000, row_pitch: 32 }));
+        assert!(nav_select_key(
+            &mut scene,
+            &scroll,
+            "vlist",
+            Some("vlist"),
+            "ArrowDown",
+            NONE,
+            RowMetrics {
+                item_count: 10_000,
+                row_pitch: 32
+            }
+        ));
         // Ctrl+Space toggles the active row OFF (it was selected by the move).
-        assert!(nav_select_key(&mut scene, &scroll, "vlist", Some("vlist"), "Space", CTRL, RowMetrics { item_count: 10_000, row_pitch: 32 }));
-        assert!(selection_of(&scene, "vlist").is_empty(), "Ctrl+Space toggled row 0 off");
+        assert!(nav_select_key(
+            &mut scene,
+            &scroll,
+            "vlist",
+            Some("vlist"),
+            "Space",
+            CTRL,
+            RowMetrics {
+                item_count: 10_000,
+                row_pitch: 32
+            }
+        ));
+        assert!(
+            selection_of(&scene, "vlist").is_empty(),
+            "Ctrl+Space toggled row 0 off"
+        );
         // Ctrl+A selects every row.
-        assert!(nav_select_key(&mut scene, &scroll, "vlist", Some("vlist"), "a", CTRL, RowMetrics { item_count: 10_000, row_pitch: 32 }));
-        assert_eq!(selection_of(&scene, "vlist").len(), 10_000, "Ctrl+A selects all");
+        assert!(nav_select_key(
+            &mut scene,
+            &scroll,
+            "vlist",
+            Some("vlist"),
+            "a",
+            CTRL,
+            RowMetrics {
+                item_count: 10_000,
+                row_pitch: 32
+            }
+        ));
+        assert_eq!(
+            selection_of(&scene, "vlist").len(),
+            10_000,
+            "Ctrl+A selects all"
+        );
     }
 
     #[test]
@@ -1495,11 +1778,48 @@ mod tests {
         let scroll = ScrollState::new();
         scroll.set_max(0, 320_000);
         scroll.set_measured_viewport(360, 384);
-        assert!(nav_select_key(&mut scene, &scroll, "vlist", Some("vlist"), "ArrowDown", NONE, RowMetrics { item_count: 10_000, row_pitch: 32 }));
-        assert!(nav_select_key(&mut scene, &scroll, "vlist", Some("vlist"), "ArrowDown", SHIFT, RowMetrics { item_count: 10_000, row_pitch: 32 }));
-        assert_eq!(selection_of(&scene, "vlist"), vec![1], "single mode never accumulates");
+        assert!(nav_select_key(
+            &mut scene,
+            &scroll,
+            "vlist",
+            Some("vlist"),
+            "ArrowDown",
+            NONE,
+            RowMetrics {
+                item_count: 10_000,
+                row_pitch: 32
+            }
+        ));
+        assert!(nav_select_key(
+            &mut scene,
+            &scroll,
+            "vlist",
+            Some("vlist"),
+            "ArrowDown",
+            SHIFT,
+            RowMetrics {
+                item_count: 10_000,
+                row_pitch: 32
+            }
+        ));
+        assert_eq!(
+            selection_of(&scene, "vlist"),
+            vec![1],
+            "single mode never accumulates"
+        );
         // Ctrl+A is inert in single mode.
-        assert!(!nav_select_key(&mut scene, &scroll, "vlist", Some("vlist"), "a", CTRL, RowMetrics { item_count: 10_000, row_pitch: 32 }));
+        assert!(!nav_select_key(
+            &mut scene,
+            &scroll,
+            "vlist",
+            Some("vlist"),
+            "a",
+            CTRL,
+            RowMetrics {
+                item_count: 10_000,
+                row_pitch: 32
+            }
+        ));
         assert_eq!(selection_of(&scene, "vlist"), vec![1]);
     }
 }

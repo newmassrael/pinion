@@ -23,7 +23,7 @@
 use pinion_core::scene::Rect;
 use pinion_core::{Owner, Scene};
 
-use crate::{enrich_names_from_scene, AccessFocus, AccessNode};
+use crate::{AccessFocus, AccessNode, enrich_names_from_scene};
 
 /// Assemble the enriched accessibility node list + AT focus target.
 ///
@@ -74,8 +74,8 @@ pub fn resolve_access_bounds(nodes: &mut [AccessNode], resolver: impl Fn(&str) -
 mod tests {
     use super::{build_access_tree, resolve_access_bounds};
     use crate::{AccessNode, AriaRole};
-    use pinion_core::scene::Rect;
     use pinion_core::Owner;
+    use pinion_core::scene::Rect;
 
     #[test]
     fn build_runs_closures_and_returns_nodes_and_focus() {
@@ -97,11 +97,14 @@ mod tests {
         // R984.1 — covers `build_access_tree`'s enrich branch (the prior test
         // passed `None` paint, so name enrichment was never exercised — the H1
         // gap on the shared SSOT every backend, including the TUI, runs).
-        use pinion_core::scene::{ContainerNode, Rect, TextNode};
         use pinion_core::Scene;
+        use pinion_core::scene::{ContainerNode, Rect, TextNode};
         let paint = Scene::Container(
-            ContainerNode::new(vec![Scene::Text(TextNode::new("Save", Rect::new(0, 0, 40, 16)))])
-                .with_tag("btn".to_owned()),
+            ContainerNode::new(vec![Scene::Text(TextNode::new(
+                "Save",
+                Rect::new(0, 0, 40, 16),
+            ))])
+            .with_tag("btn".to_owned()),
         );
         let owner = Owner::new();
         let (nodes, focus) = build_access_tree(
@@ -132,12 +135,19 @@ mod tests {
             _ => None,
         };
         resolve_access_bounds(&mut nodes, rects);
-        assert_eq!(nodes[0].bounds, Some(Rect::new(0, 0, 10, 4)), "solo node takes its own rect");
+        assert_eq!(
+            nodes[0].bounds,
+            Some(Rect::new(0, 0, 10, 4)),
+            "solo node takes its own rect"
+        );
         assert_eq!(
             nodes[1].bounds,
             Some(Rect::new(0, 0, 16, 4)),
             "a multi-fragment row unions its own rect with the fragment's",
         );
-        assert_eq!(nodes[2].bounds, None, "a tag the resolver cannot place stays unresolved");
+        assert_eq!(
+            nodes[2].bounds, None,
+            "a tag the resolver cannot place stays unresolved"
+        );
     }
 }

@@ -196,10 +196,7 @@ impl SplitterStyle {
     /// flow via `Cow::Owned`. Same conversion contract every
     /// `with_tag` setter on Scene variants ships.
     #[must_use]
-    pub fn m3_default(
-        orientation: SplitterOrientation,
-        tag: impl Into<Cow<'static, str>>,
-    ) -> Self {
+    pub fn m3_default(orientation: SplitterOrientation, tag: impl Into<Cow<'static, str>>) -> Self {
         Self {
             orientation,
             handle_extent_px: 4,
@@ -257,7 +254,6 @@ fn handle_fill_for_dragging(theme: &Theme, dragging: bool) -> Color {
         base
     }
 }
-
 
 /// (R685 §5.21 §5.16) Apply the CSS-canonical
 /// `flex-basis: 0; flex-grow: <ratio>` flex-item idiom **directly**
@@ -741,8 +737,9 @@ impl External for SplitterExternal {
         };
         // R914 — the first move calibrates (snapshot `ratio_at_press` + the
         // cursor anchor, no mutation); each later move yields the fraction delta.
-        if let Some((ratio_at_press, delta)) =
-            self.drag.drive(f64::from(cursor_fraction), || Some(ratio_handle.get()))
+        if let Some((ratio_at_press, delta)) = self
+            .drag
+            .drive(f64::from(cursor_fraction), || Some(ratio_handle.get()))
         {
             ratio_handle.set(self.project_ratio(ratio_at_press, delta as f32));
         }
@@ -789,17 +786,16 @@ impl ExternalIntrospect for SplitterExternal {
                 SplitterOrientation::Horizontal => "horizontal".to_string(),
                 SplitterOrientation::Vertical => "vertical".to_string(),
             })),
-            "ratio" => self.ratio.as_ref().map(|r| IntrospectValue::Float(f64::from(r.get()))),
+            "ratio" => self
+                .ratio
+                .as_ref()
+                .map(|r| IntrospectValue::Float(f64::from(r.get()))),
             "dragging" => Some(IntrospectValue::Bool(self.is_dragging())),
             _ => None,
         }
     }
 
-    fn intervene(
-        &mut self,
-        path: &str,
-        _value: IntrospectValue,
-    ) -> Result<(), InterveneError> {
+    fn intervene(&mut self, path: &str, _value: IntrospectValue) -> Result<(), InterveneError> {
         match path {
             // `orientation` is construction-time fixed (the SCXML +
             // ARIA semantics differ between axes — a runtime flip
@@ -887,8 +883,8 @@ mod tests {
     //!    `ratio_signal` is inert (no panic on pointer events).
 
     use super::{
-        apply_flex_main, handle_fill_for_dragging, view_splitter, SplitterExternal,
-        SplitterOrientation, SplitterStyle,
+        SplitterExternal, SplitterOrientation, SplitterStyle, apply_flex_main,
+        handle_fill_for_dragging, view_splitter,
     };
     use pinion_core::external::{External, ExternalIntrospect, IntrospectValue};
     use pinion_core::reactive::{Owner, Signal};
@@ -931,7 +927,9 @@ mod tests {
                 &style,
                 false,
             );
-            let Scene::Container(outer) = &scene else { panic!() };
+            let Scene::Container(outer) = &scene else {
+                panic!()
+            };
             assert_eq!(
                 outer.style.fill,
                 theme.resolve(ColorRole::Surface),
@@ -969,7 +967,9 @@ mod tests {
                 &style,
                 false,
             );
-            let Scene::Container(outer) = &scene else { panic!() };
+            let Scene::Container(outer) = &scene else {
+                panic!()
+            };
             let Scene::Container(handle) = &outer.children[1] else {
                 panic!("middle child should be the handle Container");
             };
@@ -1081,7 +1081,9 @@ mod tests {
                 false,
             );
             let extract_grow = |s: &Scene, idx: usize| {
-                let Scene::Container(c) = s else { panic!("outer must be Container") };
+                let Scene::Container(c) = s else {
+                    panic!("outer must be Container")
+                };
                 let Scene::Container(child) = &c.children[idx] else {
                     panic!("flex wrapper must be Container")
                 };
@@ -1132,7 +1134,9 @@ mod tests {
                 true,
             );
             let handle_fill = |s: &Scene| {
-                let Scene::Container(c) = s else { panic!("outer must be Container") };
+                let Scene::Container(c) = s else {
+                    panic!("outer must be Container")
+                };
                 let Scene::Container(handle) = &c.children[1] else {
                     panic!("handle must be Container")
                 };
@@ -1211,8 +1215,8 @@ mod tests {
         // unchanged because the user has not dragged yet (just
         // pressed). Subsequent moves apply the delta.
         let ratio: Rc<Signal<f32>> = Rc::new(Signal::new(0.5));
-        let mut ext = SplitterExternal::new(SplitterOrientation::Horizontal)
-            .attach_ratio(Rc::clone(&ratio));
+        let mut ext =
+            SplitterExternal::new(SplitterOrientation::Horizontal).attach_ratio(Rc::clone(&ratio));
         assert!(!ext.is_dragging());
         ext.pointer_move(0.5, 0.0);
         assert!(ext.is_dragging(), "first pointer_move arms is_dragging");
@@ -1225,8 +1229,8 @@ mod tests {
     #[test]
     fn r683_splitter_external_subsequent_pointer_move_applies_delta() {
         let ratio: Rc<Signal<f32>> = Rc::new(Signal::new(0.5));
-        let mut ext = SplitterExternal::new(SplitterOrientation::Horizontal)
-            .attach_ratio(Rc::clone(&ratio));
+        let mut ext =
+            SplitterExternal::new(SplitterOrientation::Horizontal).attach_ratio(Rc::clone(&ratio));
         ext.pointer_move(0.5, 0.0);
         // Cursor moves +0.2 along x — ratio becomes 0.5 + 0.2 = 0.7.
         ext.pointer_move(0.7, 0.0);
@@ -1240,8 +1244,8 @@ mod tests {
     #[test]
     fn r683_splitter_external_clamps_to_max_bound() {
         let ratio: Rc<Signal<f32>> = Rc::new(Signal::new(0.5));
-        let mut ext = SplitterExternal::new(SplitterOrientation::Horizontal)
-            .attach_ratio(Rc::clone(&ratio));
+        let mut ext =
+            SplitterExternal::new(SplitterOrientation::Horizontal).attach_ratio(Rc::clone(&ratio));
         ext.pointer_move(0.5, 0.0);
         // Cursor strays past the right edge under capture lock —
         // x_rel reaches 1.5 (0.5 + 1.0). Ratio should saturate at
@@ -1257,8 +1261,8 @@ mod tests {
     #[test]
     fn r683_splitter_external_clamps_to_min_bound() {
         let ratio: Rc<Signal<f32>> = Rc::new(Signal::new(0.5));
-        let mut ext = SplitterExternal::new(SplitterOrientation::Horizontal)
-            .attach_ratio(Rc::clone(&ratio));
+        let mut ext =
+            SplitterExternal::new(SplitterOrientation::Horizontal).attach_ratio(Rc::clone(&ratio));
         ext.pointer_move(0.5, 0.0);
         // Cursor strays past the left edge — x_rel reaches -0.5.
         // Ratio = 0.5 + (-0.5 - 0.5) = -0.5 → clamps to min 0.05.
@@ -1273,8 +1277,8 @@ mod tests {
     #[test]
     fn r683_splitter_external_pointer_up_clears_drag_state() {
         let ratio: Rc<Signal<f32>> = Rc::new(Signal::new(0.5));
-        let mut ext = SplitterExternal::new(SplitterOrientation::Horizontal)
-            .attach_ratio(Rc::clone(&ratio));
+        let mut ext =
+            SplitterExternal::new(SplitterOrientation::Horizontal).attach_ratio(Rc::clone(&ratio));
         ext.pointer_move(0.5, 0.0);
         assert!(ext.is_dragging());
         // PointerUp clears via the framework's invoke("send", ...)
@@ -1296,8 +1300,8 @@ mod tests {
     #[test]
     fn r683_splitter_external_pointer_cancel_also_clears() {
         let ratio: Rc<Signal<f32>> = Rc::new(Signal::new(0.5));
-        let mut ext = SplitterExternal::new(SplitterOrientation::Horizontal)
-            .attach_ratio(Rc::clone(&ratio));
+        let mut ext =
+            SplitterExternal::new(SplitterOrientation::Horizontal).attach_ratio(Rc::clone(&ratio));
         ext.pointer_move(0.5, 0.0);
         assert!(ext.is_dragging());
         ext.invoke("send", IntrospectValue::Text("PointerCancel".to_string()))
@@ -1336,15 +1340,18 @@ mod tests {
     #[test]
     fn r683_splitter_external_invoke_unknown_event_returns_err() {
         let mut ext = SplitterExternal::new(SplitterOrientation::Horizontal);
-        let res = ext.invoke("send", IntrospectValue::Text("UnknownPointerEvent".to_string()));
+        let res = ext.invoke(
+            "send",
+            IntrospectValue::Text("UnknownPointerEvent".to_string()),
+        );
         assert!(res.is_err());
     }
 
     #[test]
     fn r683_splitter_external_vertical_uses_y_axis() {
         let ratio: Rc<Signal<f32>> = Rc::new(Signal::new(0.5));
-        let mut ext = SplitterExternal::new(SplitterOrientation::Vertical)
-            .attach_ratio(Rc::clone(&ratio));
+        let mut ext =
+            SplitterExternal::new(SplitterOrientation::Vertical).attach_ratio(Rc::clone(&ratio));
         // Press with y_rel = 0.5; x_rel ignored.
         ext.pointer_move(0.0, 0.5);
         // Move y_rel to 0.8 — ratio = 0.5 + 0.3 = 0.8.
@@ -1359,8 +1366,8 @@ mod tests {
     #[test]
     fn r683_splitter_external_horizontal_ignores_y_axis() {
         let ratio: Rc<Signal<f32>> = Rc::new(Signal::new(0.5));
-        let mut ext = SplitterExternal::new(SplitterOrientation::Horizontal)
-            .attach_ratio(Rc::clone(&ratio));
+        let mut ext =
+            SplitterExternal::new(SplitterOrientation::Horizontal).attach_ratio(Rc::clone(&ratio));
         // Press with x_rel = 0.5.
         ext.pointer_move(0.5, 0.5);
         // Cursor jitters along y only — ratio stays at 0.5.
@@ -1425,11 +1432,7 @@ mod tests {
     // observably fail.
     // ─────────────────────────────────────────────────────────────────
 
-    fn lay_out_splitter(
-        ratio_value: f32,
-        parent_w: u32,
-        parent_h: u32,
-    ) -> Scene {
+    fn lay_out_splitter(ratio_value: f32, parent_w: u32, parent_h: u32) -> Scene {
         use pinion_runtime::layout::compute_layout;
         use pinion_text::LayoutCache;
         let ratio: Rc<Signal<f32>> = Rc::new(Signal::new(ratio_value));
@@ -1464,9 +1467,15 @@ mod tests {
             let parent_w: u32 = 1000;
             let style = SplitterStyle::m3_default(SplitterOrientation::Horizontal, TEST_TAG);
             let scene = lay_out_splitter(0.80, parent_w, 300);
-            let Scene::Container(outer) = &scene else { panic!() };
-            let Scene::Container(left_wrap) = &outer.children[0] else { panic!() };
-            let Scene::Container(right_wrap) = &outer.children[2] else { panic!() };
+            let Scene::Container(outer) = &scene else {
+                panic!()
+            };
+            let Scene::Container(left_wrap) = &outer.children[0] else {
+                panic!()
+            };
+            let Scene::Container(right_wrap) = &outer.children[2] else {
+                panic!()
+            };
             // The 4-px handle occupies its own main-axis slice; the
             // flexible width budget the wrappers share is
             // `parent_w - handle_extent_px`.
@@ -1497,9 +1506,15 @@ mod tests {
             let parent_w: u32 = 1000;
             let style = SplitterStyle::m3_default(SplitterOrientation::Horizontal, TEST_TAG);
             let scene = lay_out_splitter(0.20, parent_w, 300);
-            let Scene::Container(outer) = &scene else { panic!() };
-            let Scene::Container(left_wrap) = &outer.children[0] else { panic!() };
-            let Scene::Container(right_wrap) = &outer.children[2] else { panic!() };
+            let Scene::Container(outer) = &scene else {
+                panic!()
+            };
+            let Scene::Container(left_wrap) = &outer.children[0] else {
+                panic!()
+            };
+            let Scene::Container(right_wrap) = &outer.children[2] else {
+                panic!()
+            };
             let flexible_w = parent_w - style.handle_extent_px;
             let expected_left = expected_ratio_width(0.20, flexible_w);
             // Minimum-tolerance floor of 5 px so the 5% rule does

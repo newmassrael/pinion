@@ -31,10 +31,10 @@ use crate::external::{
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
 use crate::intent::Intent;
+use crate::widgets::WidgetTransition;
 use crate::widgets::button::{Button, ButtonEvent, ButtonState};
 use crate::widgets::radio::{RadioEvent, RadioState};
 use crate::widgets::radio_group::RadioGroupExternal;
-use crate::widgets::WidgetTransition;
 use crate::{WidgetEventName, WidgetStateName};
 
 /// A pagination coordinator: N page cells (a [`RadioGroupExternal`]) plus
@@ -76,7 +76,12 @@ impl PaginationExternal {
         if count > 0 {
             pages.send(current.min(count - 1), RadioEvent::KeyboardActivate);
         }
-        let mut me = Self { pages, prev: Button::new(), next: Button::new(), count };
+        let mut me = Self {
+            pages,
+            prev: Button::new(),
+            next: Button::new(),
+            count,
+        };
         me.sync_enabled();
         me
     }
@@ -197,11 +202,15 @@ impl PaginationExternal {
     }
 
     fn pages_introspect(&self) -> &dyn ExternalIntrospect {
-        self.pages.introspect().expect("RadioGroupExternal always introspects")
+        self.pages
+            .introspect()
+            .expect("RadioGroupExternal always introspects")
     }
 
     fn pages_introspect_mut(&mut self) -> &mut dyn ExternalIntrospect {
-        self.pages.introspect_mut().expect("RadioGroupExternal always introspects")
+        self.pages
+            .introspect_mut()
+            .expect("RadioGroupExternal always introspects")
     }
 }
 
@@ -259,8 +268,12 @@ impl ExternalIntrospect for PaginationExternal {
         match path {
             "can_prev" => Some(IntrospectValue::Bool(self.can_prev())),
             "can_next" => Some(IntrospectValue::Bool(self.can_next())),
-            "prev.state" => Some(IntrospectValue::Text(self.prev.state().as_name().to_string())),
-            "next.state" => Some(IntrospectValue::Text(self.next.state().as_name().to_string())),
+            "prev.state" => Some(IntrospectValue::Text(
+                self.prev.state().as_name().to_string(),
+            )),
+            "next.state" => Some(IntrospectValue::Text(
+                self.next.state().as_name().to_string(),
+            )),
             // count / selected_index / focused_index / state.<i> /
             // selected.<i> are the page group's surface verbatim.
             _ => self.pages_introspect().query(path),
@@ -277,7 +290,11 @@ impl ExternalIntrospect for PaginationExternal {
         outcome
     }
 
-    fn invoke(&mut self, path: &str, args: IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+    fn invoke(
+        &mut self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
         match path {
             "send" => match args {
                 IntrospectValue::Text(s) => {
@@ -301,8 +318,9 @@ impl ExternalIntrospect for PaginationExternal {
                     // Page cell `"<i>:<Event>"` — delegate to the group,
                     // then re-sync the chevrons (the current page may have
                     // moved to / from an end).
-                    let outcome =
-                        self.pages_introspect_mut().invoke("send", IntrospectValue::Text(s));
+                    let outcome = self
+                        .pages_introspect_mut()
+                        .invoke("send", IntrospectValue::Text(s));
                     self.sync_enabled();
                     outcome
                 }
@@ -413,9 +431,17 @@ mod tests {
     fn disabled_chevron_ignores_pointer_no_hover_no_step() {
         // Page 0: prev is at the clamped end -> Disabled.
         let mut p = PaginationExternal::new(5, 0);
-        assert_eq!(p.prev_state(), ButtonState::Disabled, "prev disabled on page 0");
+        assert_eq!(
+            p.prev_state(),
+            ButtonState::Disabled,
+            "prev disabled on page 0"
+        );
         let _ = p.invoke("send", IntrospectValue::Text("prev:PointerEnter".into()));
-        assert_eq!(p.prev_state(), ButtonState::Disabled, "disabled prev does not hover");
+        assert_eq!(
+            p.prev_state(),
+            ButtonState::Disabled,
+            "disabled prev does not hover"
+        );
         click_chevron(&mut p, "prev");
         assert_eq!(p.current(), 0, "disabled prev does not step");
     }
@@ -426,7 +452,11 @@ mod tests {
         assert_eq!(p.next_state(), ButtonState::Idle, "next enabled mid-range");
         click_chevron(&mut p, "next"); // -> page 2 (last)
         assert_eq!(p.current(), 2);
-        assert_eq!(p.next_state(), ButtonState::Disabled, "next disabled at the last page");
+        assert_eq!(
+            p.next_state(),
+            ButtonState::Disabled,
+            "next disabled at the last page"
+        );
         assert_ne!(p.prev_state(), ButtonState::Disabled, "prev now enabled");
     }
 
@@ -437,8 +467,14 @@ mod tests {
         assert_eq!(p.query("selected_index"), Some(IntrospectValue::Int(0)));
         assert_eq!(p.query("can_prev"), Some(IntrospectValue::Bool(false)));
         assert_eq!(p.query("can_next"), Some(IntrospectValue::Bool(true)));
-        assert_eq!(p.query("prev.state"), Some(IntrospectValue::Text("Disabled".into())));
-        assert_eq!(p.query("next.state"), Some(IntrospectValue::Text("Idle".into())));
+        assert_eq!(
+            p.query("prev.state"),
+            Some(IntrospectValue::Text("Disabled".into()))
+        );
+        assert_eq!(
+            p.query("next.state"),
+            Some(IntrospectValue::Text("Idle".into()))
+        );
         assert_eq!(p.query("selected.0"), Some(IntrospectValue::Bool(true)));
     }
 

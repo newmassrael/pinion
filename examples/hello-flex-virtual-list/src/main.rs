@@ -38,24 +38,27 @@
 //! changes how many `listitem` nodes the AT tree exposes — exactly the
 //! visible set, exactly as a sighted user sees.
 
-use pinion_a11y::{windowed_list_nodes, AccessNode, WidgetA11y};
+use pinion_a11y::{AccessNode, WidgetA11y, windowed_list_nodes};
 use pinion_core::external::{External, StubExternal};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, LayoutStyle, Size, SizeValue, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
 use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::{Frame, Scene, WidgetCore};
-use pinion_widget_paint::scrollbar::{view_vertical_scrollbar, VerticalScrollbarStyle};
+use pinion_shell::{WidgetView, vello_renderer_impl};
+use pinion_widget_paint::scrollbar::{VerticalScrollbarStyle, view_vertical_scrollbar};
 use pinion_widget_paint::virtual_list::view_flex_virtual_list;
-use pinion_shell::{vello_renderer_impl, WidgetView};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
-vello_renderer_impl!(HelloFlexVirtualListRenderer, HelloFlexVirtualListRendererError);
+vello_renderer_impl!(
+    HelloFlexVirtualListRenderer,
+    HelloFlexVirtualListRendererError
+);
 
 /// Initial window size — the window is freely resizable (OS chrome +
 /// `scene/resize`), and the list re-windows on every `Resized` event.
@@ -127,7 +130,10 @@ fn build_row(index: usize, theme: &Theme, width: u32) -> Scene {
 /// same width and makes the index unambiguous in a `scene/snapshot`.
 fn row_label(index: usize) -> String {
     const CATEGORIES: [&str; 5] = ["Alpha", "Bravo", "Charlie", "Delta", "Echo"];
-    format!("Item {index:05} \u{00B7} {}", CATEGORIES[index % CATEGORIES.len()])
+    format!(
+        "Item {index:05} \u{00B7} {}",
+        CATEGORIES[index % CATEGORIES.len()]
+    )
 }
 
 /// Header-bar status line: the rendered row count + the measured
@@ -140,7 +146,10 @@ fn header(scroll: &std::rc::Rc<pinion_core::widgets::scroll::ScrollState>, theme
     let window = compute_visible_range(scroll.offset_y(), mh, N, ROW_PITCH, OVERSCAN);
     let text = Scene::Text(
         TextNode::styled(
-            format!("rows {} / {N} \u{00B7} viewport {mw}\u{00D7}{mh}", window.count),
+            format!(
+                "rows {} / {N} \u{00B7} viewport {mw}\u{00D7}{mh}",
+                window.count
+            ),
             Rect::default(),
             TextStyle::new()
                 .with_size_px(13)
@@ -150,7 +159,9 @@ fn header(scroll: &std::rc::Rc<pinion_core::widgets::scroll::ScrollState>, theme
     );
     Scene::Container(
         ContainerNode::new(vec![text])
-            .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh)))
+            .with_style(BoxStyle::filled(
+                theme.resolve(ColorRole::SurfaceContainerHigh),
+            ))
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Row)
@@ -238,7 +249,10 @@ impl WidgetCore for FlexVirtualListView {
 
     /// Sibling `ScrollBarExternal` sharing the list's `Rc<ScrollState>`.
     fn create_extra_externals() -> Vec<ExtraExternal> {
-        vec![scrollbar_extra_external(use_scroll_state(SCROLL_KEY), SCROLLBAR_TAG)]
+        vec![scrollbar_extra_external(
+            use_scroll_state(SCROLL_KEY),
+            SCROLLBAR_TAG,
+        )]
     }
 
     fn tag() -> &'static str {
@@ -284,7 +298,12 @@ impl WidgetA11y for FlexVirtualListView {
         let scroll = use_scroll_state(SCROLL_KEY);
         let (_, measured_h) = scroll.measured_viewport();
         let window = compute_visible_range(scroll.offset_y(), measured_h, N, ROW_PITCH, OVERSCAN);
-        windowed_list_nodes(LIST_TAG, "Virtual item list", u32::try_from(N).unwrap_or(u32::MAX), &window)
+        windowed_list_nodes(
+            LIST_TAG,
+            "Virtual item list",
+            u32::try_from(N).unwrap_or(u32::MAX),
+            &window,
+        )
     }
 }
 
@@ -307,8 +326,8 @@ fn main() {
 mod tests {
     use super::*;
     use pinion_a11y::AriaRole;
-    use pinion_core::widgets::scroll::ScrollState;
     use pinion_core::Owner;
+    use pinion_core::widgets::scroll::ScrollState;
     use std::rc::Rc;
 
     /// Seed a `ScrollState` with a measured viewport (the runtime layout
@@ -377,7 +396,10 @@ mod tests {
             tall > short,
             "taller viewport must render more rows: {tall} (768px) vs {short} (384px)",
         );
-        assert!(tall < 40, "still a small window, not the whole dataset: {tall}");
+        assert!(
+            tall < 40,
+            "still a small window, not the whole dataset: {tall}"
+        );
     }
 
     #[test]
@@ -407,10 +429,16 @@ mod tests {
             Some(u32::try_from(N).unwrap()),
             "aria-setsize conveys the FULL dataset size",
         );
-        assert!(nodes.len() - 1 < 40, "only the rendered window has listitem nodes");
+        assert!(
+            nodes.len() - 1 < 40,
+            "only the rendered window has listitem nodes"
+        );
         for item in &nodes[1..] {
             assert_eq!(item.role, AriaRole::ListItem);
-            assert!(item.position_in_set.is_some(), "each row carries aria-posinset");
+            assert!(
+                item.position_in_set.is_some(),
+                "each row carries aria-posinset"
+            );
         }
     }
 
@@ -435,9 +463,18 @@ mod tests {
         // warmup: first non-zero write flips it, an idempotent re-write
         // does not.
         let s = Rc::new(ScrollState::new());
-        assert!(s.set_measured_viewport(360, 384), "first measure flips dirty");
-        assert!(!s.set_measured_viewport(360, 384), "idempotent re-write is a no-op");
-        assert!(s.set_measured_viewport(360, 768), "a resize flips dirty again");
+        assert!(
+            s.set_measured_viewport(360, 384),
+            "first measure flips dirty"
+        );
+        assert!(
+            !s.set_measured_viewport(360, 384),
+            "idempotent re-write is a no-op"
+        );
+        assert!(
+            s.set_measured_viewport(360, 768),
+            "a resize flips dirty again"
+        );
         assert_eq!(s.measured_viewport(), (360, 768));
     }
 

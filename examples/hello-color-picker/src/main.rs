@@ -41,15 +41,13 @@ use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
 use pinion_core::style::{
-    scale_normalized_to_px, AlignItems, BoxStyle, Border, Color, FlexDirection, Gradient,
-    JustifyContent, LayoutStyle, Size, TextStyle,
+    AlignItems, Border, BoxStyle, Color, FlexDirection, Gradient, JustifyContent, LayoutStyle,
+    Size, TextStyle, scale_normalized_to_px,
 };
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::color_area::{ColorAreaExternal, ColorAreaState};
 use pinion_core::widgets::slider::SliderExternal;
-use pinion_core::{
-    ColorRole, Frame, Modifiers, Scene, WidgetCore, WidgetStateName, use_theme,
-};
+use pinion_core::{ColorRole, Frame, Modifiers, Scene, WidgetCore, WidgetStateName, use_theme};
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
 
 // pinion-forge codegen: `pub struct HelloColorPickerRenderer` + async
@@ -200,7 +198,9 @@ fn view(state: PickerState, _frame: &Frame) -> Scene {
     let title = Scene::Text(TextNode::styled(
         "Colour picker",
         Rect::default(),
-        TextStyle::new().with_size_px(TITLE_FONT_PX).with_fg(on_surface),
+        TextStyle::new()
+            .with_size_px(TITLE_FONT_PX)
+            .with_fg(on_surface),
     ));
 
     // ── SV pad: pure-hue base + saturation + value overlays + thumb ──
@@ -231,7 +231,11 @@ fn view(state: PickerState, _frame: &Frame) -> Scene {
         .with_style(BoxStyle::filled(pure_hue))
         // R1020 §5.39 — the SV pad is a Tab stop (painted before the hue bar,
         // matching the [SV_TAG, HUE_TAG] order); opt it into the enumeration.
-        .with_layout(LayoutStyle::new().with_focusable(true).with_size(Size::px(SV_SIZE, SV_SIZE))),
+        .with_layout(
+            LayoutStyle::new()
+                .with_focusable(true)
+                .with_size(Size::px(SV_SIZE, SV_SIZE)),
+        ),
     );
 
     // ── Hue bar: rainbow gradient track + leading thumb ─────────────
@@ -258,7 +262,11 @@ fn view(state: PickerState, _frame: &Frame) -> Scene {
             )
             // R1020 §5.39 — the hue bar is a Tab stop; opt it into the
             // scene-derived enumeration.
-            .with_layout(LayoutStyle::new().with_focusable(true).with_size(Size::px(HUE_W, HUE_H))),
+            .with_layout(
+                LayoutStyle::new()
+                    .with_focusable(true)
+                    .with_size(Size::px(HUE_W, HUE_H)),
+            ),
     );
 
     let controls = Scene::Container(
@@ -284,10 +292,17 @@ fn view(state: PickerState, _frame: &Frame) -> Scene {
     let hex = Scene::Text(TextNode::styled(
         hex_label(selected),
         Rect::default(),
-        TextStyle::new().with_size_px(LABEL_FONT_PX).with_fg(on_surface),
+        TextStyle::new()
+            .with_size_px(LABEL_FONT_PX)
+            .with_fg(on_surface),
     ));
     let hsv_label = Scene::Text(TextNode::styled(
-        format!("H {:.0}\u{00b0}  S {:.0}%  V {:.0}%", deg, saturation * 100.0, value * 100.0),
+        format!(
+            "H {:.0}\u{00b0}  S {:.0}%  V {:.0}%",
+            deg,
+            saturation * 100.0,
+            value * 100.0
+        ),
         Rect::default(),
         TextStyle::new()
             .with_size_px(LABEL_FONT_PX)
@@ -435,11 +450,11 @@ impl WidgetCore for ColorPickerView {
     }
 
     fn fmt_state_log(state: &PickerState) -> String {
-        format!("{} | {}", state.0.as_name(), hex_label(Color::from_hsv(
-            hue_degrees(state.3),
-            state.1,
-            state.2,
-        )))
+        format!(
+            "{} | {}",
+            state.0.as_name(),
+            hex_label(Color::from_hsv(hue_degrees(state.3), state.1, state.2,))
+        )
     }
 }
 
@@ -463,7 +478,9 @@ fn nudge_sv(scene: &mut Scene, key: &str) -> bool {
         "End" => ("x", 1.0),
         _ => return false,
     };
-    intro.intervene(axis, IntrospectValue::Float(f64::from(next))).is_ok()
+    intro
+        .intervene(axis, IntrospectValue::Float(f64::from(next)))
+        .is_ok()
 }
 
 /// Nudge a single-axis slider-class external (the hue bar). Mirrors the
@@ -486,7 +503,9 @@ fn nudge_axis(scene: &mut Scene, tag: &str, path: &str, key: &str) -> bool {
         "PageUp" => (cur + 0.10).clamp(0.0, 1.0),
         _ => return false,
     };
-    intro.intervene(path, IntrospectValue::Float(f64::from(next))).is_ok()
+    intro
+        .intervene(path, IntrospectValue::Float(f64::from(next)))
+        .is_ok()
 }
 
 impl WidgetA11y for ColorPickerView {
@@ -509,7 +528,11 @@ impl WidgetA11y for ColorPickerView {
             });
         let hue_node = AccessNode::new(HUE_TAG, AriaRole::Slider)
             .with_name("Hue")
-            .with_value(AccessValue::Float { value: hue, min: 0.0, max: 1.0 })
+            .with_value(AccessValue::Float {
+                value: hue,
+                min: 0.0,
+                max: 1.0,
+            })
             .with_state(AccessState {
                 focused: focused == Some(HUE_TAG),
                 ..AccessState::default()
@@ -566,9 +589,15 @@ mod tests {
     #[test]
     fn from_hsv_preview_matches_axes() {
         // Fully saturated, bright red.
-        assert_eq!(Color::from_hsv(hue_degrees(0.0), 1.0, 1.0), Color::rgb(255, 0, 0));
+        assert_eq!(
+            Color::from_hsv(hue_degrees(0.0), 1.0, 1.0),
+            Color::rgb(255, 0, 0)
+        );
         // Bottom of the SV square (value 0) is always black.
-        assert_eq!(Color::from_hsv(hue_degrees(0.33), 1.0, 0.0), Color::rgb(0, 0, 0));
+        assert_eq!(
+            Color::from_hsv(hue_degrees(0.33), 1.0, 0.0),
+            Color::rgb(0, 0, 0)
+        );
         // Left of the SV square (saturation 0) is the grey value ramp.
         assert_eq!(
             Color::from_hsv(hue_degrees(0.5), 0.0, 1.0),

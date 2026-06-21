@@ -36,7 +36,7 @@ use pinion_core::style::{
 };
 use pinion_core::widgets::toggle::{ToggleEvent, ToggleExternal, ToggleState};
 use pinion_core::{
-    Command, ColorRole, Frame, Scene, Theme, ThemeMode, WidgetCore, WidgetStateName, use_theme,
+    ColorRole, Command, Frame, Scene, Theme, ThemeMode, WidgetCore, WidgetStateName, use_theme,
 };
 use pinion_derive::widget;
 use pinion_shell::vello_renderer_impl;
@@ -502,7 +502,11 @@ impl HelloThemeView {
         if intent.tag.as_ref() == TOGGLE_INTENT_TAG_FULL {
             if let IntrospectValue::Bool(on) = intent.payload {
                 let provider = use_theme(THEME_TAG);
-                provider.set_mode(if on { ThemeMode::Dark } else { ThemeMode::Light });
+                provider.set_mode(if on {
+                    ThemeMode::Dark
+                } else {
+                    ThemeMode::Light
+                });
             }
         }
         Vec::new()
@@ -531,8 +535,8 @@ mod tests {
     //! resolves to this binding.
 
     use super::*;
-    use pinion_core::test_fixtures::assert_widget_view_carries_tag;
     use pinion_core::Owner;
+    use pinion_core::test_fixtures::assert_widget_view_carries_tag;
 
     #[test]
     fn r55_g20_view_contains_composite_paint_root_tag() {
@@ -542,10 +546,7 @@ mod tests {
         // The framework helper wraps the call in a fresh Owner so
         // the inner use_theme resolves under the canonical
         // root_owner.run discipline.
-        assert_widget_view_carries_tag::<HelloThemeView>(
-            (ToggleState::Idle, false),
-            &Frame::new(),
-        );
+        assert_widget_view_carries_tag::<HelloThemeView>((ToggleState::Idle, false), &Frame::new());
     }
 
     #[test]
@@ -590,7 +591,10 @@ mod tests {
         match scene {
             Scene::Container(node) => {
                 node.style.fill == target
-                    || node.children.iter().any(|c| scene_contains_surface(c, target))
+                    || node
+                        .children
+                        .iter()
+                        .any(|c| scene_contains_surface(c, target))
             }
             Scene::Box(node) => node.style.fill == target,
             _ => false,
@@ -612,8 +616,10 @@ mod tests {
         let owner = Owner::new();
         owner.run(|| {
             let scene = view(ToggleState::Idle, false, &Frame::new());
-            assert!(scene.contains_tag(HINT_TAG),
-                "scene must carry the palette_cycle_hint tag for AT + RPC discovery");
+            assert!(
+                scene.contains_tag(HINT_TAG),
+                "scene must carry the palette_cycle_hint tag for AT + RPC discovery"
+            );
         });
     }
 
@@ -634,18 +640,26 @@ mod tests {
             let provider = use_theme(THEME_TAG);
             // Seed 0 -> seed 1: Green tonal pair.
             cycle_palette_pair();
-            assert_eq!(provider.light_palette().accent,
+            assert_eq!(
+                provider.light_palette().accent,
                 pinion_core::style::Color::rgb(0x2e, 0x7d, 0x32),
-                "light accent advanced to Green");
-            assert_eq!(provider.dark_palette().accent,
+                "light accent advanced to Green"
+            );
+            assert_eq!(
+                provider.dark_palette().accent,
                 pinion_core::style::Color::rgb(0x81, 0xc7, 0x84),
-                "dark accent advanced to Green (lifted tone)");
+                "dark accent advanced to Green (lifted tone)"
+            );
             // Seed 1 -> seed 2: Magenta tonal pair.
             cycle_palette_pair();
-            assert_eq!(provider.light_palette().accent,
-                pinion_core::style::Color::rgb(0xc2, 0x18, 0x5b));
-            assert_eq!(provider.dark_palette().accent,
-                pinion_core::style::Color::rgb(0xec, 0x40, 0x7a));
+            assert_eq!(
+                provider.light_palette().accent,
+                pinion_core::style::Color::rgb(0xc2, 0x18, 0x5b)
+            );
+            assert_eq!(
+                provider.dark_palette().accent,
+                pinion_core::style::Color::rgb(0xec, 0x40, 0x7a)
+            );
             // Seed 2 -> seed 0: baseline Blue (Theme::light/dark defaults).
             cycle_palette_pair();
             assert_eq!(provider.light_palette().accent, Theme::light().accent);
@@ -686,8 +700,11 @@ mod tests {
                 pinion_core::Modifiers::default(),
             );
             assert!(!consumed_blurred, "blurred 'r' must not consume");
-            assert_eq!(provider.light_palette().accent, Theme::light().accent,
-                "blurred 'r' must not mutate the palette");
+            assert_eq!(
+                provider.light_palette().accent,
+                Theme::light().accent,
+                "blurred 'r' must not mutate the palette"
+            );
         });
     }
 

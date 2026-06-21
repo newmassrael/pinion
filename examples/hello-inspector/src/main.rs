@@ -71,25 +71,25 @@
 use std::collections::BTreeSet;
 use std::rc::Rc;
 
+use pinion_a11y::{AccessNode, AriaRole, ListOption, WidgetA11y, listbox_option_nodes};
 use pinion_core::cell_value::CellValue;
 use pinion_core::composite_tag::split_send_payload;
 use pinion_core::external::query_proxy_external_impl;
 use pinion_core::external::{
     ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
 };
-use pinion_core::input::{is_activation_event, Modifiers, MultiSelectKeyOp, SelectionChord};
+use pinion_core::input::{Modifiers, MultiSelectKeyOp, SelectionChord, is_activation_event};
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, Color, FlexDirection, FontWeight, JustifyContent, LayoutStyle,
     Size, TextStyle,
 };
+use pinion_core::widgets::listbox_item::ListboxItemState;
 use pinion_core::widgets::virtual_select::{
-    clamp_nav, read_selected, read_selection, selected_to_value, selection_to_value, SelectionMode,
-    VirtualSelect,
+    SelectionMode, VirtualSelect, clamp_nav, read_selected, read_selection, selected_to_value,
+    selection_to_value,
 };
 use pinion_core::{ColorRole, Frame, Owner, Scene, Signal, use_theme};
-use pinion_a11y::{listbox_option_nodes, AccessNode, AriaRole, ListOption, WidgetA11y};
-use pinion_core::widgets::listbox_item::ListboxItemState;
 use pinion_derive::widget;
 use pinion_shell::vello_renderer_impl;
 
@@ -133,7 +133,10 @@ struct Property {
 
 impl Property {
     fn new(name: &str, value: CellValue) -> Self {
-        Self { name: name.to_owned(), value }
+        Self {
+            name: name.to_owned(),
+            value,
+        }
     }
 }
 
@@ -146,7 +149,10 @@ struct ObjectData {
 
 impl ObjectData {
     fn new(name: &str, properties: Vec<Property>) -> Self {
-        Self { name: name.to_owned(), properties }
+        Self {
+            name: name.to_owned(),
+            properties,
+        }
     }
 }
 
@@ -314,7 +320,11 @@ fn common_properties(objects: &[ObjectData], selection: &BTreeSet<usize>) -> Vec
             continue;
         }
         let mixed = values.iter().any(|v| !v.value_eq(&prop.value));
-        rows.push(CommonProperty { name: prop.name.clone(), value: prop.value.clone(), mixed });
+        rows.push(CommonProperty {
+            name: prop.name.clone(),
+            value: prop.value.clone(),
+            mixed,
+        });
     }
     rows
 }
@@ -339,8 +349,12 @@ fn property_modified_from_default(
     name: &str,
 ) -> bool {
     selection.iter().any(|&j| {
-        let cur = objects.get(j).and_then(|o| o.properties.iter().find(|p| p.name == name));
-        let def = defaults.get(j).and_then(|o| o.properties.iter().find(|p| p.name == name));
+        let cur = objects
+            .get(j)
+            .and_then(|o| o.properties.iter().find(|p| p.name == name));
+        let def = defaults
+            .get(j)
+            .and_then(|o| o.properties.iter().find(|p| p.name == name));
         matches!((cur, def), (Some(c), Some(d)) if !c.value.value_eq(&d.value))
     })
 }
@@ -363,8 +377,9 @@ fn reset_names_to_default(
                 .and_then(|o| o.properties.iter().find(|p| &p.name == name))
                 .map(|p| p.value.clone());
             if let Some(defv) = def {
-                if let Some(p) =
-                    next.get_mut(j).and_then(|o| o.properties.iter_mut().find(|p| &p.name == name))
+                if let Some(p) = next
+                    .get_mut(j)
+                    .and_then(|o| o.properties.iter_mut().find(|p| &p.name == name))
                 {
                     p.value = defv;
                 }
@@ -376,7 +391,11 @@ fn reset_names_to_default(
 /// The Details header text for a selection: the lone object's name when one
 /// is selected, "N objects selected" for several, "No selection" for none.
 fn selection_summary(objects: &[ObjectData], selection: &BTreeSet<usize>) -> String {
-    let live: Vec<usize> = selection.iter().copied().filter(|&i| i < objects.len()).collect();
+    let live: Vec<usize> = selection
+        .iter()
+        .copied()
+        .filter(|&i| i < objects.len())
+        .collect();
     match live.as_slice() {
         [] => "No selection".to_owned(),
         [only] => objects[*only].name.clone(),
@@ -406,7 +425,11 @@ impl InspectorExternal {
         selection: Rc<Signal<VirtualSelect>>,
         defaults: Rc<Vec<ObjectData>>,
     ) -> Self {
-        Self { objects, selection, defaults }
+        Self {
+            objects,
+            selection,
+            defaults,
+        }
     }
 
     /// R958 — is common property `idx` modified from default in any selected
@@ -442,8 +465,9 @@ impl InspectorExternal {
         // modified, then write — not the prior common()-twice rebuild.
         let objects = self.objects.get();
         let selection = self.selection_set();
-        let Some(name) =
-            common_properties(&objects, &selection).get(idx).map(|p| p.name.clone())
+        let Some(name) = common_properties(&objects, &selection)
+            .get(idx)
+            .map(|p| p.name.clone())
         else {
             return false;
         };
@@ -695,18 +719,20 @@ impl ExternalIntrospect for InspectorExternal {
             "selected" => Some(selected_to_value(self.cursor())),
             "selection" => Some(selection_to_value(&selection)),
             "selection_count" => Some(IntrospectValue::Int(i64::try_from(selection.len()).ok()?)),
-            "selection_summary" => {
-                Some(IntrospectValue::Text(selection_summary(&objects, &selection)))
-            }
+            "selection_summary" => Some(IntrospectValue::Text(selection_summary(
+                &objects, &selection,
+            ))),
             "mode" => Some(IntrospectValue::Text("multi".to_owned())),
-            "row_count" => {
-                Some(IntrospectValue::Int(i64::try_from(common_properties(&objects, &selection).len()).ok()?))
-            }
+            "row_count" => Some(IntrospectValue::Int(
+                i64::try_from(common_properties(&objects, &selection).len()).ok()?,
+            )),
             "any_modified" => Some(IntrospectValue::Bool(self.any_modified())),
             _ => {
                 if let Some(j) = path.strip_prefix("object_name.") {
                     let j: usize = j.parse().ok()?;
-                    return objects.get(j).map(|o| IntrospectValue::Text(o.name.clone()));
+                    return objects
+                        .get(j)
+                        .map(|o| IntrospectValue::Text(o.name.clone()));
                 }
                 let common = common_properties(&objects, &selection);
                 if let Some(i) = path.strip_prefix("name.") {
@@ -715,7 +741,9 @@ impl ExternalIntrospect for InspectorExternal {
                 }
                 if let Some(i) = path.strip_prefix("kind.") {
                     let i: usize = i.parse().ok()?;
-                    return common.get(i).map(|c| IntrospectValue::Text(c.value.kind().name().to_owned()));
+                    return common
+                        .get(i)
+                        .map(|c| IntrospectValue::Text(c.value.kind().name().to_owned()));
                 }
                 if let Some(i) = path.strip_prefix("value.") {
                     let i: usize = i.parse().ok()?;
@@ -727,7 +755,8 @@ impl ExternalIntrospect for InspectorExternal {
                 }
                 if let Some(i) = path.strip_prefix("modified.") {
                     let i: usize = i.parse().ok()?;
-                    return (i < common.len()).then(|| IntrospectValue::Bool(self.common_modified(i)));
+                    return (i < common.len())
+                        .then(|| IntrospectValue::Bool(self.common_modified(i)));
                 }
                 None
             }
@@ -791,7 +820,11 @@ impl ExternalIntrospect for InspectorExternal {
         }
     }
 
-    fn invoke(&mut self, path: &str, args: IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+    fn invoke(
+        &mut self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
         let int_arg = |a: IntrospectValue| match a {
             IntrospectValue::Int(n) => usize::try_from(n).map_err(|_| InvokeError::TypeMismatch),
             _ => Err(InvokeError::TypeMismatch),
@@ -931,7 +964,9 @@ fn value_visual(value: &CellValue, fg: Color, accent: Color, muted: Color) -> Sc
                 ContainerNode::new(vec![Scene::Text(TextNode::styled(
                     bool_label(*b),
                     Rect::default(),
-                    TextStyle::new().with_size_px(ROW_FONT_PX).with_fg(Color::rgb(0xff, 0xff, 0xff)),
+                    TextStyle::new()
+                        .with_size_px(ROW_FONT_PX)
+                        .with_fg(Color::rgb(0xff, 0xff, 0xff)),
                 ))])
                 .with_style(BoxStyle::filled(fill).with_corner_radius(8))
                 .with_layout(
@@ -1019,13 +1054,16 @@ fn property_row(
         // reset" mark. Absolutely positioned (out of the SpaceBetween flow) so
         // the name / value layout is byte-identical to an unmodified row.
         children.push(Scene::Box(
-            BoxNode::new(Rect::default(), BoxStyle::filled(accent).with_corner_radius(RESET_DOT / 2))
-                .with_tag(format!("{INSPECTOR_TAG}#{RESET_PREFIX}{index}"))
-                .with_layout(
-                    LayoutStyle::new()
-                        .with_size(Size::px(RESET_DOT, RESET_DOT))
-                        .with_absolute_position(DETAIL_ROW_W - RESET_DOT, (ROW_H - RESET_DOT) / 2),
-                ),
+            BoxNode::new(
+                Rect::default(),
+                BoxStyle::filled(accent).with_corner_radius(RESET_DOT / 2),
+            )
+            .with_tag(format!("{INSPECTOR_TAG}#{RESET_PREFIX}{index}"))
+            .with_layout(
+                LayoutStyle::new()
+                    .with_size(Size::px(RESET_DOT, RESET_DOT))
+                    .with_absolute_position(DETAIL_ROW_W - RESET_DOT, (ROW_H - RESET_DOT) / 2),
+            ),
         ));
     }
     Scene::Container(
@@ -1045,9 +1083,20 @@ fn property_row(
 /// active (cursor) row additionally carries a light border — the paint peer
 /// of the a11y `aria-selected` (fill) and active descendant (`focused`,
 /// border).
-fn object_row(index: usize, name: &str, selected: bool, is_cursor: bool, fg: Color, accent: Color) -> Scene {
+fn object_row(
+    index: usize,
+    name: &str,
+    selected: bool,
+    is_cursor: bool,
+    fg: Color,
+    accent: Color,
+) -> Scene {
     let fill = if selected { accent } else { Color::TRANSPARENT };
-    let text_fg = if selected { Color::rgb(0xff, 0xff, 0xff) } else { fg };
+    let text_fg = if selected {
+        Color::rgb(0xff, 0xff, 0xff)
+    } else {
+        fg
+    };
     let mut style = BoxStyle::filled(fill).with_corner_radius(5);
     if is_cursor {
         style = style.with_border(Border::new(Color::rgb(0xff, 0xff, 0xff), 2));
@@ -1090,14 +1139,26 @@ fn view(state: &InspectorState, _frame: &Frame) -> Scene {
     let title = Scene::Text(TextNode::styled(
         "Scene Inspector",
         Rect::default(),
-        TextStyle::new().with_size_px(TITLE_FONT_PX).with_weight(FontWeight::BOLD).with_fg(on_surface),
+        TextStyle::new()
+            .with_size_px(TITLE_FONT_PX)
+            .with_weight(FontWeight::BOLD)
+            .with_fg(on_surface),
     ));
 
     // Left: the multi-select object list.
     let list_rows: Vec<Scene> = objects
         .iter()
         .enumerate()
-        .map(|(i, o)| object_row(i, &o.name, state.is_selected(i), state.cursor == Some(i), on_surface, accent))
+        .map(|(i, o)| {
+            object_row(
+                i,
+                &o.name,
+                state.is_selected(i),
+                state.cursor == Some(i),
+                on_surface,
+                accent,
+            )
+        })
         .collect();
     let list = Scene::Container(
         ContainerNode::new(list_rows)
@@ -1115,7 +1176,10 @@ fn view(state: &InspectorState, _frame: &Frame) -> Scene {
     let header = Scene::Text(TextNode::styled(
         selection_summary(&objects, &selection),
         Rect::default(),
-        TextStyle::new().with_size_px(HEADER_FONT_PX).with_weight(FontWeight::BOLD).with_fg(on_surface),
+        TextStyle::new()
+            .with_size_px(HEADER_FONT_PX)
+            .with_weight(FontWeight::BOLD)
+            .with_fg(on_surface),
     ));
     let mut detail_children = vec![header];
     // R958 — the frozen defaults the per-row reset arrow compares against
@@ -1138,7 +1202,10 @@ fn view(state: &InspectorState, _frame: &Frame) -> Scene {
 
     let panes = Scene::Container(
         ContainerNode::new(vec![list, detail]).with_layout(
-            LayoutStyle::new().flex(FlexDirection::Row).with_gap(16).with_align_items(AlignItems::Start),
+            LayoutStyle::new()
+                .flex(FlexDirection::Row)
+                .with_gap(16)
+                .with_align_items(AlignItems::Start),
         ),
     );
 
@@ -1203,7 +1270,12 @@ impl InspectorView {
     /// Home / End navigate ([`clamp_nav`]) and, with `Shift`, extend the
     /// range. Every op goes through the External's `select` / `toggle` /
     /// `extend_to` / `select_all` funnel — keyboard and RPC are one path.
-    fn apply_key(scene: &mut Scene, _focused: Option<&str>, key: &str, modifiers: Modifiers) -> bool {
+    fn apply_key(
+        scene: &mut Scene,
+        _focused: Option<&str>,
+        key: &str,
+        modifiers: Modifiers,
+    ) -> bool {
         let Scene::External(node) = scene else {
             return false;
         };
@@ -1236,7 +1308,11 @@ impl InspectorView {
         let Some(target) = clamp_nav(cursor, key, count, count) else {
             return false;
         };
-        let action = if modifiers.shift_key() { "extend_to" } else { "select" };
+        let action = if modifiers.shift_key() {
+            "extend_to"
+        } else {
+            "select"
+        };
         if let (Some(intro), Ok(t)) = (node.handle.introspect_mut(), i64::try_from(target)) {
             let _ = intro.invoke(action, IntrospectValue::Int(t));
         }
@@ -1274,7 +1350,9 @@ impl WidgetA11y for InspectorView {
     fn access_node(state: &InspectorState, _focused: Option<&str>) -> Vec<AccessNode> {
         let objects = use_objects().get();
         let selection = state.selection_set();
-        let tags: Vec<String> = (0..objects.len()).map(|i| format!("{INSPECTOR_TAG}#{i}")).collect();
+        let tags: Vec<String> = (0..objects.len())
+            .map(|i| format!("{INSPECTOR_TAG}#{i}"))
+            .collect();
         let options: Vec<ListOption<'_>> = objects
             .iter()
             .enumerate()
@@ -1293,7 +1371,12 @@ impl WidgetA11y for InspectorView {
                 .with_child(OBJECTS_TAG)
                 .with_child(DETAIL_TAG),
         ];
-        nodes.extend(listbox_option_nodes(OBJECTS_TAG, "Scene objects", true, &options));
+        nodes.extend(listbox_option_nodes(
+            OBJECTS_TAG,
+            "Scene objects",
+            true,
+            &options,
+        ));
 
         // The Details panel: a `list` named by the selection summary, one
         // `listitem` per common property (tagged `prop_<i>`, the same tag the
@@ -1307,8 +1390,11 @@ impl WidgetA11y for InspectorView {
         nodes.push(panel);
         for (i, prop) in rows.iter().enumerate() {
             nodes.push(
-                AccessNode::new(format!("prop_{i}"), AriaRole::ListItem)
-                    .with_name(format!("{}: {}", prop.name, common_value_label(prop))),
+                AccessNode::new(format!("prop_{i}"), AriaRole::ListItem).with_name(format!(
+                    "{}: {}",
+                    prop.name,
+                    common_value_label(prop)
+                )),
             );
         }
         nodes
@@ -1342,7 +1428,10 @@ mod tests {
         let mut e = ext();
         e.invoke("select_all", IntrospectValue::Null).unwrap();
         // Common base across all three: Visible(0), Layer(1), Locked(2).
-        assert_eq!(e.query("name.1"), Some(IntrospectValue::Text("Layer".to_owned())));
+        assert_eq!(
+            e.query("name.1"),
+            Some(IntrospectValue::Text("Layer".to_owned()))
+        );
         assert_eq!(
             e.query("modified.1"),
             Some(IntrospectValue::Bool(false)),
@@ -1350,11 +1439,22 @@ mod tests {
         );
         // Edit Layer to 5 across all three -> each diverges from its own default.
         e.intervene("value.1", IntrospectValue::Int(5)).unwrap();
-        assert_eq!(e.query("modified.1"), Some(IntrospectValue::Bool(true)), "edited Layer is modified");
+        assert_eq!(
+            e.query("modified.1"),
+            Some(IntrospectValue::Bool(true)),
+            "edited Layer is modified"
+        );
         assert_eq!(e.query("any_modified"), Some(IntrospectValue::Bool(true)));
         // Reset Layer -> each object restores its OWN default (1, 1, 2).
-        assert_eq!(e.invoke("reset", IntrospectValue::Int(1)).unwrap(), IntrospectValue::Bool(true));
-        assert_eq!(e.query("modified.1"), Some(IntrospectValue::Bool(false)), "reset clears modified");
+        assert_eq!(
+            e.invoke("reset", IntrospectValue::Int(1)).unwrap(),
+            IntrospectValue::Bool(true)
+        );
+        assert_eq!(
+            e.query("modified.1"),
+            Some(IntrospectValue::Bool(false)),
+            "reset clears modified"
+        );
         // The per-object defaults differ (1, 1, 2), so the selection now reads
         // "Multiple Values" — reset-to-default is per object, not to a shared value.
         assert_eq!(
@@ -1363,19 +1463,26 @@ mod tests {
             "per-object defaults -> mixed after reset",
         );
         // Idempotent: a reset on an at-default row changes nothing.
-        assert_eq!(e.invoke("reset", IntrospectValue::Int(1)).unwrap(), IntrospectValue::Bool(false));
+        assert_eq!(
+            e.invoke("reset", IntrospectValue::Int(1)).unwrap(),
+            IntrospectValue::Bool(false)
+        );
     }
 
     #[test]
     fn r958_reset_all_clears_every_modified_property() {
         let mut e = ext();
         e.invoke("select_all", IntrospectValue::Null).unwrap();
-        e.intervene("value.0", IntrospectValue::Bool(false)).unwrap(); // Visible
+        e.intervene("value.0", IntrospectValue::Bool(false))
+            .unwrap(); // Visible
         e.intervene("value.1", IntrospectValue::Int(9)).unwrap(); // Layer
         assert_eq!(e.query("any_modified"), Some(IntrospectValue::Bool(true)));
         // reset_all returns the count of modified properties it cleared (Locked
         // was never touched, so only Visible + Layer = 2).
-        assert_eq!(e.invoke("reset_all", IntrospectValue::Null).unwrap(), IntrospectValue::Int(2));
+        assert_eq!(
+            e.invoke("reset_all", IntrospectValue::Null).unwrap(),
+            IntrospectValue::Int(2)
+        );
         assert_eq!(e.query("any_modified"), Some(IntrospectValue::Bool(false)));
         assert_eq!(e.query("modified.0"), Some(IntrospectValue::Bool(false)));
         assert_eq!(e.query("modified.1"), Some(IntrospectValue::Bool(false)));
@@ -1403,15 +1510,28 @@ mod tests {
         });
     }
 
-    const SHIFT: Modifiers = Modifiers { shift: true, ctrl: false, alt: false, meta: false };
-    const CTRL: Modifiers = Modifiers { shift: false, ctrl: true, alt: false, meta: false };
+    const SHIFT: Modifiers = Modifiers {
+        shift: true,
+        ctrl: false,
+        alt: false,
+        meta: false,
+    };
+    const CTRL: Modifiers = Modifiers {
+        shift: false,
+        ctrl: true,
+        alt: false,
+        meta: false,
+    };
 
     #[test]
     fn r909_default_selection_is_first_object() {
         let e = ext();
         assert_eq!(e.object_count(), 3);
         assert_eq!(e.cursor(), Some(0));
-        assert!(e.query("selected_name").is_none(), "no selected_name slot (use selection_summary)");
+        assert!(
+            e.query("selected_name").is_none(),
+            "no selected_name slot (use selection_summary)"
+        );
         assert_eq!(
             e.query("selection_summary"),
             Some(IntrospectValue::Text("Player".to_owned()))
@@ -1427,15 +1547,25 @@ mod tests {
         e.invoke("select", IntrospectValue::Int(1)).unwrap();
         assert_eq!(e.cursor(), Some(1));
         assert_eq!(e.query("row_count"), Some(IntrospectValue::Int(5)));
-        assert_eq!(e.query("selection_summary"), Some(IntrospectValue::Text("Main Camera".to_owned())));
-        assert_eq!(e.query("name.0"), Some(IntrospectValue::Text("Visible".to_owned())));
+        assert_eq!(
+            e.query("selection_summary"),
+            Some(IntrospectValue::Text("Main Camera".to_owned()))
+        );
+        assert_eq!(
+            e.query("name.0"),
+            Some(IntrospectValue::Text("Visible".to_owned()))
+        );
     }
 
     #[test]
     fn r909_select_out_of_range_is_rejected() {
         let mut e = ext();
         assert!(e.invoke("select", IntrospectValue::Int(9)).is_err());
-        assert_eq!(e.cursor(), Some(0), "selection unchanged after a rejected select");
+        assert_eq!(
+            e.cursor(),
+            Some(0),
+            "selection unchanged after a rejected select"
+        );
     }
 
     #[test]
@@ -1462,13 +1592,26 @@ mod tests {
         e.invoke("toggle", IntrospectValue::Int(1)).unwrap();
         assert_eq!(json_indices(&e.query("selection").unwrap()), vec![0, 1]);
         assert_eq!(e.query("row_count"), Some(IntrospectValue::Int(3)));
-        assert_eq!(e.query("name.0"), Some(IntrospectValue::Text("Visible".to_owned())));
-        assert_eq!(e.query("name.1"), Some(IntrospectValue::Text("Layer".to_owned())));
-        assert_eq!(e.query("name.2"), Some(IntrospectValue::Text("Locked".to_owned())));
+        assert_eq!(
+            e.query("name.0"),
+            Some(IntrospectValue::Text("Visible".to_owned()))
+        );
+        assert_eq!(
+            e.query("name.1"),
+            Some(IntrospectValue::Text("Layer".to_owned()))
+        );
+        assert_eq!(
+            e.query("name.2"),
+            Some(IntrospectValue::Text("Locked".to_owned()))
+        );
         // Player + Camera agree on every base property.
         assert_eq!(e.query("mixed.0"), Some(IntrospectValue::Bool(false)));
         assert_eq!(e.query("mixed.1"), Some(IntrospectValue::Bool(false)));
-        assert_eq!(e.query("value.1"), Some(IntrospectValue::Int(1)), "both Layer 1");
+        assert_eq!(
+            e.query("value.1"),
+            Some(IntrospectValue::Int(1)),
+            "both Layer 1"
+        );
     }
 
     #[test]
@@ -1476,10 +1619,21 @@ mod tests {
         let mut e = ext();
         e.invoke("select_all", IntrospectValue::Null).unwrap();
         assert_eq!(json_indices(&e.query("selection").unwrap()), vec![0, 1, 2]);
-        assert_eq!(e.query("selection_summary"), Some(IntrospectValue::Text("3 objects selected".to_owned())));
+        assert_eq!(
+            e.query("selection_summary"),
+            Some(IntrospectValue::Text("3 objects selected".to_owned()))
+        );
         // All three: Visible (true,true,false) and Layer (1,1,2) differ.
-        assert_eq!(e.query("mixed.0"), Some(IntrospectValue::Bool(true)), "Visible mixed");
-        assert_eq!(e.query("mixed.1"), Some(IntrospectValue::Bool(true)), "Layer mixed");
+        assert_eq!(
+            e.query("mixed.0"),
+            Some(IntrospectValue::Bool(true)),
+            "Visible mixed"
+        );
+        assert_eq!(
+            e.query("mixed.1"),
+            Some(IntrospectValue::Bool(true)),
+            "Layer mixed"
+        );
     }
 
     #[test]
@@ -1494,7 +1648,11 @@ mod tests {
         // Each object individually carries Layer 5.
         for obj in 0..3 {
             e.invoke("select", IntrospectValue::Int(obj)).unwrap();
-            assert_eq!(e.query("value.1"), Some(IntrospectValue::Int(5)), "object {obj} Layer == 5");
+            assert_eq!(
+                e.query("value.1"),
+                Some(IntrospectValue::Int(5)),
+                "object {obj} Layer == 5"
+            );
         }
     }
 
@@ -1502,11 +1660,20 @@ mod tests {
     fn r922_shift_extend_and_ctrl_toggle() {
         let mut e = ext();
         // Plain select 0, Shift-extend to 2 → {0,1,2}.
-        e.invoke("send", IntrospectValue::Text("0:PointerUp".to_owned())).unwrap();
-        e.invoke("send", IntrospectValue::Text(format!("2:PointerUp:{}", SHIFT.as_wire_token()))).unwrap();
+        e.invoke("send", IntrospectValue::Text("0:PointerUp".to_owned()))
+            .unwrap();
+        e.invoke(
+            "send",
+            IntrospectValue::Text(format!("2:PointerUp:{}", SHIFT.as_wire_token())),
+        )
+        .unwrap();
         assert_eq!(json_indices(&e.query("selection").unwrap()), vec![0, 1, 2]);
         // Ctrl-toggle 1 out → {0,2}.
-        e.invoke("send", IntrospectValue::Text(format!("1:PointerUp:{}", CTRL.as_wire_token()))).unwrap();
+        e.invoke(
+            "send",
+            IntrospectValue::Text(format!("1:PointerUp:{}", CTRL.as_wire_token())),
+        )
+        .unwrap();
         assert_eq!(json_indices(&e.query("selection").unwrap()), vec![0, 2]);
     }
 
@@ -1515,16 +1682,26 @@ mod tests {
         let mut e = ext();
         e.invoke("select_all", IntrospectValue::Null).unwrap();
         e.invoke("clear", IntrospectValue::Null).unwrap();
-        assert_eq!(json_indices(&e.query("selection").unwrap()), Vec::<u64>::new());
+        assert_eq!(
+            json_indices(&e.query("selection").unwrap()),
+            Vec::<u64>::new()
+        );
         assert_eq!(e.query("selected"), Some(IntrospectValue::Null));
         assert_eq!(e.query("row_count"), Some(IntrospectValue::Int(0)));
-        assert_eq!(e.query("selection_summary"), Some(IntrospectValue::Text("No selection".to_owned())));
+        assert_eq!(
+            e.query("selection_summary"),
+            Some(IntrospectValue::Text("No selection".to_owned()))
+        );
     }
 
     #[test]
     fn r922_selection_intervene_restores_a_set() {
         let mut e = ext();
-        e.intervene("selection", IntrospectValue::Json(serde_json::json!([2, 0]))).unwrap();
+        e.intervene(
+            "selection",
+            IntrospectValue::Json(serde_json::json!([2, 0])),
+        )
+        .unwrap();
         assert_eq!(json_indices(&e.query("selection").unwrap()), vec![0, 2]);
         // Player + Light share the base; Layer is 1 vs 2 → mixed.
         assert_eq!(e.query("mixed.1"), Some(IntrospectValue::Bool(true)));
@@ -1533,29 +1710,50 @@ mod tests {
     #[test]
     fn r910_send_wire_selects_on_activation_edge() {
         let mut e = ext();
-        e.invoke("send", IntrospectValue::Text("2:PointerEnter".to_owned())).unwrap();
+        e.invoke("send", IntrospectValue::Text("2:PointerEnter".to_owned()))
+            .unwrap();
         assert_eq!(e.cursor(), Some(0), "hover (PointerEnter) must not select");
-        e.invoke("send", IntrospectValue::Text("2:PointerDown".to_owned())).unwrap();
+        e.invoke("send", IntrospectValue::Text("2:PointerDown".to_owned()))
+            .unwrap();
         assert_eq!(e.cursor(), Some(0), "press (PointerDown) must not select");
-        e.invoke("send", IntrospectValue::Text("2:PointerUp".to_owned())).unwrap();
+        e.invoke("send", IntrospectValue::Text("2:PointerUp".to_owned()))
+            .unwrap();
         assert_eq!(e.cursor(), Some(2), "release (PointerUp) selects");
     }
 
     #[test]
     fn r909_object_names_addressable_regardless_of_selection() {
         let e = ext();
-        assert_eq!(e.query("object_name.0"), Some(IntrospectValue::Text("Player".to_owned())));
-        assert_eq!(e.query("object_name.2"), Some(IntrospectValue::Text("Sun Light".to_owned())));
+        assert_eq!(
+            e.query("object_name.0"),
+            Some(IntrospectValue::Text("Player".to_owned()))
+        );
+        assert_eq!(
+            e.query("object_name.2"),
+            Some(IntrospectValue::Text("Sun Light".to_owned()))
+        );
         assert_eq!(e.query("object_name.9"), None);
     }
 
     #[test]
     fn r909_read_only_axes_reject_intervene() {
         let mut e = ext();
-        assert_eq!(e.intervene("object_count", IntrospectValue::Int(1)), Err(InterveneError::ReadOnly));
-        assert_eq!(e.intervene("row_count", IntrospectValue::Int(1)), Err(InterveneError::ReadOnly));
-        assert_eq!(e.intervene("mixed.0", IntrospectValue::Bool(true)), Err(InterveneError::ReadOnly));
-        assert_eq!(e.intervene("selection_summary", IntrospectValue::Text("x".to_owned())), Err(InterveneError::ReadOnly));
+        assert_eq!(
+            e.intervene("object_count", IntrospectValue::Int(1)),
+            Err(InterveneError::ReadOnly)
+        );
+        assert_eq!(
+            e.intervene("row_count", IntrospectValue::Int(1)),
+            Err(InterveneError::ReadOnly)
+        );
+        assert_eq!(
+            e.intervene("mixed.0", IntrospectValue::Bool(true)),
+            Err(InterveneError::ReadOnly)
+        );
+        assert_eq!(
+            e.intervene("selection_summary", IntrospectValue::Text("x".to_owned())),
+            Err(InterveneError::ReadOnly)
+        );
     }
 
     fn has_text(scene: &Scene, needle: &str) -> bool {
@@ -1568,18 +1766,31 @@ mod tests {
 
     #[test]
     fn default_object_count_matches_state_bitmap() {
-        assert_eq!(default_objects().len(), N_OBJECTS, "the bitmap N must track the object roster");
+        assert_eq!(
+            default_objects().len(),
+            N_OBJECTS,
+            "the bitmap N must track the object roster"
+        );
     }
 
     #[test]
     fn view_reflects_multi_selection_with_mixed_placeholder() {
         let owner = Owner::new();
         let scene = owner.run(|| {
-            view(&InspectorState::from_parts(&[0, 1, 2], Some(2)), &Frame::new())
+            view(
+                &InspectorState::from_parts(&[0, 1, 2], Some(2)),
+                &Frame::new(),
+            )
         });
-        assert!(has_text(&scene, "3 objects selected"), "header summarises the selection");
+        assert!(
+            has_text(&scene, "3 objects selected"),
+            "header summarises the selection"
+        );
         assert!(has_text(&scene, "Layer"), "common property shown");
-        assert!(has_text(&scene, "Multiple Values"), "mixed property shows the placeholder");
+        assert!(
+            has_text(&scene, "Multiple Values"),
+            "mixed property shows the placeholder"
+        );
     }
 
     #[test]
@@ -1593,14 +1804,28 @@ mod tests {
         // [root Group, listbox, option_0, option_1, option_2]
         assert_eq!(nodes[0].role, AriaRole::Group);
         assert_eq!(nodes[0].tag, INSPECTOR_TAG);
-        let listbox = nodes.iter().find(|n| n.tag == OBJECTS_TAG).expect("listbox node");
+        let listbox = nodes
+            .iter()
+            .find(|n| n.tag == OBJECTS_TAG)
+            .expect("listbox node");
         assert_eq!(listbox.role, AriaRole::Listbox);
-        assert!(listbox.multiselectable, "object list is aria-multiselectable");
-        let opt = |i: usize| nodes.iter().find(|n| n.tag == format!("{INSPECTOR_TAG}#{i}")).unwrap();
+        assert!(
+            listbox.multiselectable,
+            "object list is aria-multiselectable"
+        );
+        let opt = |i: usize| {
+            nodes
+                .iter()
+                .find(|n| n.tag == format!("{INSPECTOR_TAG}#{i}"))
+                .unwrap()
+        };
         assert_eq!(opt(0).selected, Some(true), "object 0 selected");
         assert_eq!(opt(1).selected, Some(false), "object 1 not selected");
         assert_eq!(opt(2).selected, Some(true), "object 2 selected");
-        assert!(opt(2).state.focused, "cursor object is the active descendant");
+        assert!(
+            opt(2).state.focused,
+            "cursor object is the active descendant"
+        );
     }
 
     #[test]
@@ -1682,7 +1907,11 @@ mod tests {
         e.invoke("select", IntrospectValue::Int(0)).unwrap();
         assert_eq!(selected_index(&e), Some(2), "object 0 written to option 2");
         e.invoke("select", IntrospectValue::Int(1)).unwrap();
-        assert_eq!(selected_index(&e), Some(2), "object 1 also written to option 2");
+        assert_eq!(
+            selected_index(&e),
+            Some(2),
+            "object 1 also written to option 2"
+        );
     }
 
     #[test]
@@ -1701,11 +1930,20 @@ mod tests {
             nodes[0].children.iter().any(|c| c.as_str() == DETAIL_TAG),
             "root references the Details panel"
         );
-        let panel = nodes.iter().find(|n| n.tag == DETAIL_TAG).expect("detail panel node");
+        let panel = nodes
+            .iter()
+            .find(|n| n.tag == DETAIL_TAG)
+            .expect("detail panel node");
         assert_eq!(panel.role, AriaRole::List);
         assert_eq!(panel.name.as_deref(), Some("3 objects selected"));
-        let items: Vec<&AccessNode> = nodes.iter().filter(|n| n.role == AriaRole::ListItem).collect();
-        assert!(!items.is_empty(), "common properties are AT-reachable listitems");
+        let items: Vec<&AccessNode> = nodes
+            .iter()
+            .filter(|n| n.role == AriaRole::ListItem)
+            .collect();
+        assert!(
+            !items.is_empty(),
+            "common properties are AT-reachable listitems"
+        );
         // "Visible" is (true, true, false) across the trio → mixed.
         let visible = items
             .iter()

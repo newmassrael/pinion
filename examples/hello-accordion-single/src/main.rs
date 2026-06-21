@@ -70,15 +70,18 @@ use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole};
+use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::widgets::disclosure::DisclosureState;
 use pinion_core::widgets::disclosure_group::DisclosureGroupExternal;
 use pinion_core::{Frame, Scene, WidgetCore, WidgetStateName};
-use pinion_shell::{vello_renderer_impl, WidgetView};
-use pinion_widget_paint::disclosure::{view_disclosure, DisclosureStyle};
+use pinion_shell::{WidgetView, vello_renderer_impl};
+use pinion_widget_paint::disclosure::{DisclosureStyle, view_disclosure};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
-vello_renderer_impl!(HelloAccordionSingleRenderer, HelloAccordionSingleRendererError);
+vello_renderer_impl!(
+    HelloAccordionSingleRenderer,
+    HelloAccordionSingleRendererError
+);
 
 const WIN_W: u32 = 420;
 const WIN_H: u32 = 440;
@@ -102,8 +105,11 @@ const PRIMARY_TAG: &str = "accordion_single";
 /// scene-derived §5.39 Tab stops, so all N are stops). Each lands on one
 /// section header via [`view_disclosure`], and the input router
 /// hit-tests a click on header `i` straight to this composite tag.
-const ROW_TAGS: [&str; N] =
-    ["accordion_single#0", "accordion_single#1", "accordion_single#2"];
+const ROW_TAGS: [&str; N] = [
+    "accordion_single#0",
+    "accordion_single#1",
+    "accordion_single#2",
+];
 
 /// Header summary labels — double as each section's AT accessible name
 /// (the disclosure twisty is presentational, so name-from-contents
@@ -120,8 +126,11 @@ const BODIES: [&str; N] = [
 /// Paint tags on the per-section panel bodies so the AI-first demo can
 /// confirm — via `scene/bbox` — that section `i`'s body is present in
 /// the scene only while that section is expanded.
-const BODY_TAGS: [&str; N] =
-    ["accordion_single_body_0", "accordion_single_body_1", "accordion_single_body_2"];
+const BODY_TAGS: [&str; N] = [
+    "accordion_single_body_0",
+    "accordion_single_body_1",
+    "accordion_single_body_2",
+];
 
 /// Cached projection: one `(DisclosureState, expanded)` pair per
 /// section, read from the single [`DisclosureGroupExternal`]'s per-
@@ -260,7 +269,6 @@ impl WidgetCore for AccordionSingleView {
         "pinion hello-accordion-single (R701 §5.38 single-open APG accordion)"
     }
 
-
     /// WAI-ARIA APG accordion keyboard model, gated on the focused
     /// header (roving-tabindex `apply_key` discipline — keys route only
     /// when one of our headers owns focus):
@@ -298,7 +306,10 @@ impl WidgetCore for AccordionSingleView {
                 return false;
             };
             return intro
-                .invoke("send", IntrospectValue::Text(format!("{idx}:KeyboardActivate")))
+                .invoke(
+                    "send",
+                    IntrospectValue::Text(format!("{idx}:KeyboardActivate")),
+                )
                 .is_ok();
         }
         // R757 §5.39 — the WAI-ARIA roving-tabindex navigation is the
@@ -393,7 +404,10 @@ impl WidgetView for AccordionSingleView {
     type Renderer = HelloAccordionSingleRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 }
 
@@ -457,9 +471,18 @@ mod tests {
     fn collapsed_section_omits_its_body_expanded_section_includes_it() {
         // Only section 1 expanded: body 1 present, bodies 0 and 2 absent.
         let scene = pinion_core::Owner::new().run(|| view(&with_expanded(1), &Frame::new()));
-        assert!(!scene.contains_tag(BODY_TAGS[0]), "collapsed section 0 hides body");
-        assert!(scene.contains_tag(BODY_TAGS[1]), "expanded section 1 shows body");
-        assert!(!scene.contains_tag(BODY_TAGS[2]), "collapsed section 2 hides body");
+        assert!(
+            !scene.contains_tag(BODY_TAGS[0]),
+            "collapsed section 0 hides body"
+        );
+        assert!(
+            scene.contains_tag(BODY_TAGS[1]),
+            "expanded section 1 shows body"
+        );
+        assert!(
+            !scene.contains_tag(BODY_TAGS[2]),
+            "collapsed section 2 hides body"
+        );
     }
 
     // ── focus model ───────────────────────────────────────────────
@@ -517,14 +540,20 @@ mod tests {
             "Home",
             pinion_core::Modifiers::empty(),
         ));
-        assert_eq!(pinion_core::focus_request::drain().as_deref(), Some(ROW_TAGS[0]));
+        assert_eq!(
+            pinion_core::focus_request::drain().as_deref(),
+            Some(ROW_TAGS[0])
+        );
         assert!(AccordionSingleView::apply_key(
             &mut scene,
             Some(ROW_TAGS[1]),
             "End",
             pinion_core::Modifiers::empty(),
         ));
-        assert_eq!(pinion_core::focus_request::drain().as_deref(), Some(ROW_TAGS[N - 1]));
+        assert_eq!(
+            pinion_core::focus_request::drain().as_deref(),
+            Some(ROW_TAGS[N - 1])
+        );
     }
 
     #[test]
@@ -543,7 +572,11 @@ mod tests {
             "ArrowDown",
             pinion_core::Modifiers::empty(),
         ));
-        assert_eq!(pinion_core::focus_request::drain(), None, "no focus request emitted");
+        assert_eq!(
+            pinion_core::focus_request::drain(),
+            None,
+            "no focus request emitted"
+        );
     }
 
     // ── single-open exclusion via keyboard ────────────────────────
@@ -572,7 +605,10 @@ mod tests {
             "Enter",
             pinion_core::Modifiers::empty(),
         ));
-        assert!(AccordionSingleView::read_state(&scene)[0].1, "Enter expands section 0");
+        assert!(
+            AccordionSingleView::read_state(&scene)[0].1,
+            "Enter expands section 0"
+        );
     }
 
     #[test]
@@ -608,7 +644,10 @@ mod tests {
         for node in &nodes {
             assert_eq!(node.role, AriaRole::Button);
             assert_eq!(node.expanded, Some(false));
-            assert_eq!(node.state.checked, None, "a disclosure carries no aria-checked");
+            assert_eq!(
+                node.state.checked, None,
+                "a disclosure carries no aria-checked"
+            );
         }
     }
 
@@ -660,7 +699,10 @@ mod tests {
         assert_eq!(expanded_index(&scene), Some(0));
         AccordionSingleView::access_child_invoke(&mut scene, PRIMARY_TAG, "2", AccessAction::Click);
         assert_eq!(expanded_index(&scene), Some(2));
-        assert!(!AccordionSingleView::read_state(&scene)[0].1, "AT click enforces single-open");
+        assert!(
+            !AccordionSingleView::read_state(&scene)[0].1,
+            "AT click enforces single-open"
+        );
     }
 
     #[test]
@@ -674,7 +716,11 @@ mod tests {
             "0",
             AccessAction::Focus,
         ));
-        assert_eq!(expanded_index(&scene), before, "Focus does not toggle expansion");
+        assert_eq!(
+            expanded_index(&scene),
+            before,
+            "Focus does not toggle expansion"
+        );
     }
 
     #[test]

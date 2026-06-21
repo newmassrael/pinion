@@ -52,17 +52,20 @@ use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widgets::slider::{SliderExternal, SliderState};
-use pinion_core::{scale_normalized_to_px, Frame, Scene, WidgetCore, WidgetStateName};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_core::{Frame, Scene, WidgetCore, WidgetStateName, scale_normalized_to_px};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::slider::{
     read_slider_state, slider_accent_for, slider_apply_key, slider_thumb_fill,
     slider_track_inactive,
 };
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
-vello_renderer_impl!(HelloSliderDiscreteRenderer, HelloSliderDiscreteRendererError);
+vello_renderer_impl!(
+    HelloSliderDiscreteRenderer,
+    HelloSliderDiscreteRendererError
+);
 
 const WIN_W: u32 = 360;
 const WIN_H: u32 = 220;
@@ -106,7 +109,10 @@ impl DiscState {
     /// real posture from the external via [`read_disc`].
     #[cfg(test)]
     fn boot() -> Self {
-        Self { interaction: SliderState::Idle, value: START }
+        Self {
+            interaction: SliderState::Idle,
+            value: START,
+        }
     }
 }
 
@@ -168,7 +174,8 @@ fn view(state: &DiscState, _frame: &Frame) -> Scene {
     let filled = Scene::Box(
         BoxNode::new(
             Rect::default(),
-            BoxStyle::filled(slider_accent_for(&theme, interaction)).with_corner_radius(TRACK_RADIUS),
+            BoxStyle::filled(slider_accent_for(&theme, interaction))
+                .with_corner_radius(TRACK_RADIUS),
         )
         .with_layout(
             LayoutStyle::new()
@@ -219,7 +226,11 @@ fn view(state: &DiscState, _frame: &Frame) -> Scene {
     let stop_index = (value / STEP).round() as usize;
     let status = Scene::Text(
         TextNode::styled(
-            format!("{} | {value:.1} (stop {stop_index}/{})", interaction.as_name(), STOPS - 1),
+            format!(
+                "{} | {value:.1} (stop {stop_index}/{})",
+                interaction.as_name(),
+                STOPS - 1
+            ),
             Rect::default(),
             TextStyle::new()
                 .with_size_px(12)
@@ -246,8 +257,7 @@ fn view(state: &DiscState, _frame: &Frame) -> Scene {
 /// `hello-slider` / `hello-slider-vertical` / `settings-panel`). The
 /// missing-external fallback is this binding's own boot tick.
 fn read_disc(scene: &Scene) -> DiscState {
-    let (interaction, value) =
-        read_slider_state(scene, TAG).unwrap_or((SliderState::Idle, START));
+    let (interaction, value) = read_slider_state(scene, TAG).unwrap_or((SliderState::Idle, START));
     DiscState { interaction, value }
 }
 
@@ -321,12 +331,18 @@ impl WidgetA11y for DiscView {
     /// `aria-valuemax`). No new a11y axis — the same lowering the
     /// continuous slider uses.
     fn access_node(state: &DiscState, focused: Option<&str>) -> Vec<AccessNode> {
-        vec![AccessNode::new(TAG, AriaRole::Slider)
-            .with_value(AccessValue::Float { value: state.value, min: 0.0, max: 1.0 })
-            .with_state(AccessState {
-                focused: focused == Some(TAG),
-                ..AccessState::from_interaction(state.interaction, None)
-            })]
+        vec![
+            AccessNode::new(TAG, AriaRole::Slider)
+                .with_value(AccessValue::Float {
+                    value: state.value,
+                    min: 0.0,
+                    max: 1.0,
+                })
+                .with_state(AccessState {
+                    focused: focused == Some(TAG),
+                    ..AccessState::from_interaction(state.interaction, None)
+                }),
+        ]
     }
 }
 
@@ -334,7 +350,10 @@ impl WidgetView for DiscView {
     type Renderer = HelloSliderDiscreteRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 }
 
@@ -376,13 +395,18 @@ mod tests {
     fn boot_value_sits_on_a_tick() {
         let scene = scene_fixture();
         // START seeded through with_step → snapped; 0.4 is already a tick.
-        assert!((value_of(&scene) - START).abs() < 1e-5, "boot on the START tick");
+        assert!(
+            (value_of(&scene) - START).abs() < 1e-5,
+            "boot on the START tick"
+        );
     }
 
     #[test]
     fn external_reports_the_step() {
         let scene = scene_fixture();
-        let Scene::External(node) = &scene else { panic!() };
+        let Scene::External(node) = &scene else {
+            panic!()
+        };
         let intro = node.handle.introspect().unwrap();
         match intro.query("step") {
             Some(IntrospectValue::Float(v)) => assert!((v - f64::from(STEP)).abs() < 1e-6),
@@ -393,40 +417,93 @@ mod tests {
     #[test]
     fn arrow_right_advances_one_tick() {
         let mut scene = scene_fixture(); // boot 0.4
-        assert!(DiscView::apply_key(&mut scene, Some(TAG), "ArrowRight", pinion_core::Modifiers::empty()));
-        assert!((value_of(&scene) - 0.6).abs() < 1e-5, "0.4 -> 0.6 (one tick)");
-        assert!(DiscView::apply_key(&mut scene, Some(TAG), "ArrowLeft", pinion_core::Modifiers::empty()));
+        assert!(DiscView::apply_key(
+            &mut scene,
+            Some(TAG),
+            "ArrowRight",
+            pinion_core::Modifiers::empty()
+        ));
+        assert!(
+            (value_of(&scene) - 0.6).abs() < 1e-5,
+            "0.4 -> 0.6 (one tick)"
+        );
+        assert!(DiscView::apply_key(
+            &mut scene,
+            Some(TAG),
+            "ArrowLeft",
+            pinion_core::Modifiers::empty()
+        ));
         assert!((value_of(&scene) - 0.4).abs() < 1e-5, "0.6 -> 0.4");
     }
 
     #[test]
     fn arrows_clamp_at_extreme_stops() {
         let mut scene = scene_fixture();
-        assert!(DiscView::apply_key(&mut scene, Some(TAG), "End", pinion_core::Modifiers::empty()));
+        assert!(DiscView::apply_key(
+            &mut scene,
+            Some(TAG),
+            "End",
+            pinion_core::Modifiers::empty()
+        ));
         assert!((value_of(&scene) - 1.0).abs() < 1e-5, "End -> 1.0");
-        assert!(DiscView::apply_key(&mut scene, Some(TAG), "ArrowRight", pinion_core::Modifiers::empty()));
-        assert!((value_of(&scene) - 1.0).abs() < 1e-5, "ArrowRight at max clamps");
-        assert!(DiscView::apply_key(&mut scene, Some(TAG), "Home", pinion_core::Modifiers::empty()));
+        assert!(DiscView::apply_key(
+            &mut scene,
+            Some(TAG),
+            "ArrowRight",
+            pinion_core::Modifiers::empty()
+        ));
+        assert!(
+            (value_of(&scene) - 1.0).abs() < 1e-5,
+            "ArrowRight at max clamps"
+        );
+        assert!(DiscView::apply_key(
+            &mut scene,
+            Some(TAG),
+            "Home",
+            pinion_core::Modifiers::empty()
+        ));
         assert!((value_of(&scene) - 0.0).abs() < 1e-5, "Home -> 0.0");
-        assert!(DiscView::apply_key(&mut scene, Some(TAG), "ArrowLeft", pinion_core::Modifiers::empty()));
-        assert!((value_of(&scene) - 0.0).abs() < 1e-5, "ArrowLeft at min clamps");
+        assert!(DiscView::apply_key(
+            &mut scene,
+            Some(TAG),
+            "ArrowLeft",
+            pinion_core::Modifiers::empty()
+        ));
+        assert!(
+            (value_of(&scene) - 0.0).abs() < 1e-5,
+            "ArrowLeft at min clamps"
+        );
     }
 
     #[test]
     fn off_grid_intervene_snaps_to_nearest_tick() {
         let mut scene = scene_fixture();
-        let Scene::External(node) = &mut scene else { panic!() };
+        let Scene::External(node) = &mut scene else {
+            panic!()
+        };
         let intro = node.handle.introspect_mut().unwrap();
         // An AI client writing an off-grid value is snapped by the substrate.
-        intro.intervene("value", IntrospectValue::Float(0.71)).unwrap();
+        intro
+            .intervene("value", IntrospectValue::Float(0.71))
+            .unwrap();
         assert!((value_of(&scene) - 0.8).abs() < 1e-5, "0.71 snaps to 0.8");
     }
 
     #[test]
     fn keys_ignored_when_not_focused() {
         let mut scene = scene_fixture();
-        assert!(!DiscView::apply_key(&mut scene, None, "ArrowRight", pinion_core::Modifiers::empty()));
-        assert!(!DiscView::apply_key(&mut scene, Some("other"), "ArrowRight", pinion_core::Modifiers::empty()));
+        assert!(!DiscView::apply_key(
+            &mut scene,
+            None,
+            "ArrowRight",
+            pinion_core::Modifiers::empty()
+        ));
+        assert!(!DiscView::apply_key(
+            &mut scene,
+            Some("other"),
+            "ArrowRight",
+            pinion_core::Modifiers::empty()
+        ));
         assert!((value_of(&scene) - START).abs() < 1e-5, "value unchanged");
     }
 

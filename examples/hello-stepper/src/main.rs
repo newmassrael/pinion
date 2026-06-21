@@ -40,20 +40,20 @@
 //! tree (`group` > `button` with `aria-current="step"`) all converge on
 //! the same `RadioGroupExternal` statechart.
 
-use pinion_core::external::External;
-use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
-use pinion_core::style::{
-    AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
-};
-use pinion_core::style::Border;
-use pinion_core::theme::{use_theme, ColorRole, Theme};
-use pinion_core::widgets::radio::{RadioEvent, RadioState};
-use pinion_core::widgets::radio_group::RadioGroupExternal;
-use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_a11y::{
     AccessAction, AccessFocus, AccessNode, AccessState, AriaCurrent, AriaRole, WidgetA11y,
 };
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_core::external::External;
+use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
+use pinion_core::style::Border;
+use pinion_core::style::{
+    AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
+};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
+use pinion_core::widgets::radio::{RadioEvent, RadioState};
+use pinion_core::widgets::radio_group::RadioGroupExternal;
+use pinion_core::{Frame, Scene, WidgetCore};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::radio_composite as rc;
 use pinion_widget_paint::state_layer::state_layer;
 
@@ -148,13 +148,11 @@ fn view(state: StepperState, _frame: &Frame) -> Scene {
     // PRIMARY_TAG on the strip so `{path:"stepper"}` AI routing +
     // `rect_for_tag` AT bounds attach to the Group.
     let strip = Scene::Container(
-        ContainerNode::new(row)
-            .with_tag(PRIMARY_TAG)
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Row)
-                    .with_align_items(AlignItems::Center),
-            ),
+        ContainerNode::new(row).with_tag(PRIMARY_TAG).with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Row)
+                .with_align_items(AlignItems::Center),
+        ),
     );
     Scene::Container(
         ContainerNode::new(vec![strip])
@@ -204,7 +202,9 @@ fn step(index: usize, phase: Phase, state: RadioState, theme: &Theme) -> Scene {
         ContainerNode::new(vec![Scene::Text(TextNode::styled(
             glyph,
             Rect::default(),
-            TextStyle::new().with_size_px(NUM_FONT_PX).with_fg(glyph_color),
+            TextStyle::new()
+                .with_size_px(NUM_FONT_PX)
+                .with_fg(glyph_color),
         ))])
         .with_style(circle_style)
         .with_layout(
@@ -219,7 +219,9 @@ fn step(index: usize, phase: Phase, state: RadioState, theme: &Theme) -> Scene {
     let label = Scene::Text(TextNode::styled(
         STEPS[index],
         Rect::default(),
-        TextStyle::new().with_size_px(LABEL_FONT_PX).with_fg(label_color),
+        TextStyle::new()
+            .with_size_px(LABEL_FONT_PX)
+            .with_fg(label_color),
     ));
 
     Scene::Container(
@@ -328,8 +330,8 @@ impl WidgetA11y for StepperView {
         let group_focused = focused == Some(<Self as WidgetCore>::tag());
         let active_idx = rc::active_index(&state.rows, state.focused);
         let mut nodes: Vec<AccessNode> = Vec::with_capacity(N + 1);
-        let mut group = AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::Group)
-            .with_name("Progress");
+        let mut group =
+            AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::Group).with_name("Progress");
         for i in 0..N {
             group = group.with_child(format!("{PRIMARY_TAG}#{i}"));
         }
@@ -431,8 +433,15 @@ mod tests {
     #[test]
     fn current_step_carries_aria_current_step() {
         let nodes = StepperView::access_node(&selected_state(2), None);
-        assert_eq!(nodes[3].current, Some(AriaCurrent::Step), "step 2 is current");
-        assert!(nodes[1].current.is_none(), "non-current step has no aria-current");
+        assert_eq!(
+            nodes[3].current,
+            Some(AriaCurrent::Step),
+            "step 2 is current"
+        );
+        assert!(
+            nodes[1].current.is_none(),
+            "non-current step has no aria-current"
+        );
         assert!(nodes[2].current.is_none());
         assert!(nodes[4].current.is_none());
     }
@@ -469,11 +478,16 @@ mod tests {
     }
 
     fn current_index(scene: &Scene) -> Option<i64> {
-        let Scene::External(node) = scene else { return None };
-        node.handle.introspect()?.query("selected_index").and_then(|v| match v {
-            IntrospectValue::Int(i) => Some(i),
-            _ => None,
-        })
+        let Scene::External(node) = scene else {
+            return None;
+        };
+        node.handle
+            .introspect()?
+            .query("selected_index")
+            .and_then(|v| match v {
+                IntrospectValue::Int(i) => Some(i),
+                _ => None,
+            })
     }
 
     #[test]
@@ -493,23 +507,43 @@ mod tests {
     #[test]
     fn home_end_jump_to_edges() {
         let mut s = scene();
-        assert!(StepperView::apply_key(&mut s, Some(PRIMARY_TAG), "End", pinion_core::Modifiers::empty()));
+        assert!(StepperView::apply_key(
+            &mut s,
+            Some(PRIMARY_TAG),
+            "End",
+            pinion_core::Modifiers::empty()
+        ));
         assert_eq!(current_index(&s), Some(i64::try_from(N - 1).unwrap()));
-        assert!(StepperView::apply_key(&mut s, Some(PRIMARY_TAG), "Home", pinion_core::Modifiers::empty()));
+        assert!(StepperView::apply_key(
+            &mut s,
+            Some(PRIMARY_TAG),
+            "Home",
+            pinion_core::Modifiers::empty()
+        ));
         assert_eq!(current_index(&s), Some(0));
     }
 
     #[test]
     fn unfocused_swallows_arrow() {
         let mut s = scene();
-        assert!(!StepperView::apply_key(&mut s, None, "ArrowRight", pinion_core::Modifiers::empty()));
+        assert!(!StepperView::apply_key(
+            &mut s,
+            None,
+            "ArrowRight",
+            pinion_core::Modifiers::empty()
+        ));
         assert_eq!(current_index(&s), None);
     }
 
     #[test]
     fn at_click_navigates_to_step() {
         let mut s = scene();
-        assert!(StepperView::access_child_invoke(&mut s, PRIMARY_TAG, "1", AccessAction::Click));
+        assert!(StepperView::access_child_invoke(
+            &mut s,
+            PRIMARY_TAG,
+            "1",
+            AccessAction::Click
+        ));
         assert_eq!(current_index(&s), Some(1));
     }
 

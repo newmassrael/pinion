@@ -71,18 +71,18 @@
 //! `invoke("key", "<W3CKeyName>")` drives the keyboard model.
 
 use pinion_a11y::{
-    toolbar_button_nodes, AccessAction, AccessFocus, AccessNode, ToolbarControl, WidgetA11y,
+    AccessAction, AccessFocus, AccessNode, ToolbarControl, WidgetA11y, toolbar_button_nodes,
 };
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole};
-use pinion_core::widgets::toolbar::{read_roving_focus, ToolItem, ToolbarExternal};
+use pinion_core::theme::{ColorRole, use_theme};
+use pinion_core::widgets::toolbar::{ToolItem, ToolbarExternal, read_roving_focus};
 use pinion_core::{Frame, Scene, WidgetCore};
-use pinion_shell::{vello_renderer_impl, WidgetView};
-use pinion_widget_paint::toolbar::{composite_item_tag, view_toolbar, ToolbarStyle};
+use pinion_shell::{WidgetView, vello_renderer_impl};
+use pinion_widget_paint::toolbar::{ToolbarStyle, composite_item_tag, view_toolbar};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloToolbarRenderer, HelloToolbarRendererError);
@@ -224,7 +224,10 @@ impl WidgetCore for ToolbarView {
         // `read_roving_focus` reader (the toolbar peer of `read_selected`).
         (out.focus, out.group_focused) = read_roving_focus(intro);
         for (i, slot) in out.pressed.iter_mut().enumerate() {
-            *slot = matches!(intro.query(&format!("pressed.{i}")), Some(IntrospectValue::Bool(true)));
+            *slot = matches!(
+                intro.query(&format!("pressed.{i}")),
+                Some(IntrospectValue::Bool(true))
+            );
         }
         out
     }
@@ -279,8 +282,9 @@ impl WidgetA11y for ToolbarView {
         // root + one `aria-pressed` button per control). Names enrich from
         // the painted glyphs, so each control leaves `name: None`. The
         // roving cursor rings only while the strip owns the shell focus.
-        let tags: Vec<String> =
-            (0..CONTROL_COUNT).map(|i| composite_item_tag(TOOLBAR_TAG, i)).collect();
+        let tags: Vec<String> = (0..CONTROL_COUNT)
+            .map(|i| composite_item_tag(TOOLBAR_TAG, i))
+            .collect();
         let controls: Vec<ToolbarControl<'_>> = (0..CONTROL_COUNT)
             .map(|i| ToolbarControl {
                 tag: &tags[i],
@@ -415,7 +419,10 @@ mod a11y_tests {
     fn r692_posinset_setsize() {
         let nodes = ToolbarView::access_node(&ToolbarState::default(), None);
         for i in 0..CONTROL_COUNT {
-            assert_eq!(nodes[i + 1].position_in_set, Some(u32::try_from(i + 1).unwrap()));
+            assert_eq!(
+                nodes[i + 1].position_in_set,
+                Some(u32::try_from(i + 1).unwrap())
+            );
             assert_eq!(nodes[i + 1].size_of_set, Some(5));
         }
     }
@@ -448,8 +455,9 @@ mod a11y_tests {
 
     #[test]
     fn r692_focus_target_composite_points_to_roving_control() {
-        let target = ToolbarView::access_focus_target(&state(3, [false; CONTROL_COUNT]), Some("toolbar"))
-            .expect("focused toolbar returns Some");
+        let target =
+            ToolbarView::access_focus_target(&state(3, [false; CONTROL_COUNT]), Some("toolbar"))
+                .expect("focused toolbar returns Some");
         assert_eq!(target.focus_tag, "toolbar");
         assert_eq!(target.active_descendant.as_deref(), Some("toolbar#3"));
     }
@@ -466,7 +474,9 @@ mod key_tests {
     use pinion_core::scene::ExternalNode;
 
     fn scene() -> Scene {
-        Scene::External(ExternalNode::new(Box::new(ToolbarExternal::new(KINDS.to_vec()))).with_tag(TOOLBAR_TAG))
+        Scene::External(
+            ExternalNode::new(Box::new(ToolbarExternal::new(KINDS.to_vec()))).with_tag(TOOLBAR_TAG),
+        )
     }
 
     fn focus_of(scene: &Scene) -> Option<i64> {

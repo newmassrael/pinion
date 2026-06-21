@@ -80,7 +80,9 @@ pub fn apply_preview(
     let now = Instant::now();
     let proposal = ledger.apply_extract(id, current, now)?;
     let mut ctx = ApplyContext::new(scene);
-    proposal.apply(&mut ctx).map_err(ApplyError::ApplyRejected)?;
+    proposal
+        .apply(&mut ctx)
+        .map_err(ApplyError::ApplyRejected)?;
     let new_revision = revision.bump();
     Ok(ApplyOutcome {
         preview_id: id,
@@ -92,10 +94,10 @@ pub fn apply_preview(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::preview::{propose_change, TypedProposal};
+    use crate::preview::{TypedProposal, propose_change};
+    use pinion_core::Scene;
     use pinion_core::external::{CountedExternal, IntrospectValue};
     use pinion_core::scene::ExternalNode;
-    use pinion_core::Scene;
 
     fn counted_scene(n: i64) -> Scene {
         Scene::External(ExternalNode::new(Box::new(CountedExternal::new(n))))
@@ -114,16 +116,14 @@ mod tests {
         let mut scene = counted_scene(0);
         let ledger = PreviewLedger::default();
         let revision = SceneRevision::default();
-        let outcome =
-            propose_change(&ledger, &revision, set_count_proposal(serde_json::json!(99)), None)
-                .unwrap();
-        let applied = apply_preview(
-            &mut scene,
-            &revision,
+        let outcome = propose_change(
             &ledger,
-            outcome.preview_id,
+            &revision,
+            set_count_proposal(serde_json::json!(99)),
+            None,
         )
         .unwrap();
+        let applied = apply_preview(&mut scene, &revision, &ledger, outcome.preview_id).unwrap();
         assert_eq!(applied.preview_id, outcome.preview_id);
         assert_eq!(applied.new_revision, 1, "apply bumps revision exactly once");
         assert!(
@@ -142,9 +142,13 @@ mod tests {
         let mut scene = counted_scene(0);
         let ledger = PreviewLedger::default();
         let revision = SceneRevision::default();
-        let outcome =
-            propose_change(&ledger, &revision, set_count_proposal(serde_json::json!(1)), None)
-                .unwrap();
+        let outcome = propose_change(
+            &ledger,
+            &revision,
+            set_count_proposal(serde_json::json!(1)),
+            None,
+        )
+        .unwrap();
         // Cancel it manually so the id becomes unknown.
         assert!(crate::preview::cancel_preview(&ledger, outcome.preview_id));
         let err = apply_preview(&mut scene, &revision, &ledger, outcome.preview_id).unwrap_err();
@@ -156,9 +160,13 @@ mod tests {
         let mut scene = counted_scene(0);
         let ledger = PreviewLedger::default();
         let revision = SceneRevision::default();
-        let outcome =
-            propose_change(&ledger, &revision, set_count_proposal(serde_json::json!(7)), None)
-                .unwrap();
+        let outcome = propose_change(
+            &ledger,
+            &revision,
+            set_count_proposal(serde_json::json!(7)),
+            None,
+        )
+        .unwrap();
         // Scene mutates underneath the preview.
         revision.bump();
         let err = apply_preview(&mut scene, &revision, &ledger, outcome.preview_id).unwrap_err();
@@ -232,11 +240,13 @@ mod tests {
             None,
         )
         .unwrap();
-        let applied =
-            apply_preview(&mut scene, &revision, &ledger, outcome.preview_id).unwrap();
+        let applied = apply_preview(&mut scene, &revision, &ledger, outcome.preview_id).unwrap();
         assert_eq!(applied.emitted_intents.len(), 1);
         assert_eq!(applied.emitted_intents[0].tag_str(), "save_btn.click");
-        assert_eq!(applied.new_revision, 1, "apply bumps revision even for non-scene side-effects");
+        assert_eq!(
+            applied.new_revision, 1,
+            "apply bumps revision even for non-scene side-effects"
+        );
         assert!(ledger.is_empty(), "DispatchIntent apply consumes the entry");
     }
 }

@@ -30,20 +30,20 @@
 
 use std::borrow::Cow;
 
+use pinion_a11y::{AccessAction, AccessFocus, AccessNode, AccessState, AriaRole, WidgetA11y};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, DragPayload, DropPoint, External, ExternalIntrospect,
-    IntrospectSchema, IntrospectValue, InterveneError, InvokeError, RepaintOwner, ThreadOwnership,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, Color, FlexDirection, JustifyContent, LayoutStyle, Size,
     TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole};
-use pinion_core::widgets::reorder::{read_reorder, DragPreview, ReorderAxis, ReorderModel};
+use pinion_core::theme::{ColorRole, use_theme};
+use pinion_core::widgets::reorder::{DragPreview, ReorderAxis, ReorderModel, read_reorder};
 use pinion_core::{Frame, Scene, WidgetCore};
-use pinion_a11y::{AccessAction, AccessFocus, AccessNode, AccessState, AriaRole, WidgetA11y};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloDndRenderer, HelloDndRendererError);
@@ -317,22 +317,27 @@ fn view(state: ListState) -> Scene {
     for k in 0..N {
         let dim = state.preview.is_some_and(|p| p.from_visual == k);
         let focused = state.focused == Some(k);
-        kids.push(row(k, state.order[k], dim, focused, focused && state.grabbed, &theme));
+        kids.push(row(
+            k,
+            state.order[k],
+            dim,
+            focused,
+            focused && state.grabbed,
+            &theme,
+        ));
     }
     if let Some(p) = state.preview {
         kids.push(insertion_line(p.insert_at, &theme));
     }
     let list = Scene::Container(
-        ContainerNode::new(kids)
-            .with_tag(TAG)
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Column)
-                    .with_align_items(AlignItems::Center)
-                    .with_gap(GAP)
-                    .with_size(Size::px(ROW_W, LIST_H))
-                    .with_focusable(true),
-            ),
+        ContainerNode::new(kids).with_tag(TAG).with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Column)
+                .with_align_items(AlignItems::Center)
+                .with_gap(GAP)
+                .with_size(Size::px(ROW_W, LIST_H))
+                .with_focusable(true),
+        ),
     );
     Scene::Container(
         ContainerNode::new(vec![list])
@@ -357,7 +362,10 @@ fn cursor(node: &pinion_core::scene::ExternalNode) -> Option<usize> {
 /// Set the keyboard cursor to `idx` via the `focused_index` slot.
 fn set_cursor(node: &mut pinion_core::scene::ExternalNode, idx: usize) -> bool {
     if let Some(intro) = node.handle.introspect_mut() {
-        let _ = intro.intervene("focused_index", IntrospectValue::Int(i64::try_from(idx).unwrap_or(0)));
+        let _ = intro.intervene(
+            "focused_index",
+            IntrospectValue::Int(i64::try_from(idx).unwrap_or(0)),
+        );
     }
     true
 }
@@ -579,7 +587,10 @@ impl WidgetA11y for DndView {
     /// `aria-activedescendant`.
     fn access_focus_target(state: &ListState, focused: Option<&str>) -> Option<AccessFocus> {
         if focused == Some(TAG) {
-            Some(AccessFocus::composite(TAG, row_tag(state.focused.unwrap_or(0))))
+            Some(AccessFocus::composite(
+                TAG,
+                row_tag(state.focused.unwrap_or(0)),
+            ))
         } else {
             focused.map(AccessFocus::atomic)
         }
@@ -604,7 +615,9 @@ impl WidgetA11y for DndView {
             return false;
         };
         match action {
-            AccessAction::Focus | AccessAction::Click | AccessAction::Default => set_cursor(node, idx),
+            AccessAction::Focus | AccessAction::Click | AccessAction::Default => {
+                set_cursor(node, idx)
+            }
             AccessAction::Increment => {
                 set_cursor(node, idx);
                 move_item(node, 1)
@@ -636,8 +649,8 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pinion_core::scene::ExternalNode;
     use pinion_core::Modifiers;
+    use pinion_core::scene::ExternalNode;
 
     /// `apply_key` is deliberately modifier-free; `NONE` stands in for the
     /// (ignored) modifier argument.
@@ -675,7 +688,11 @@ mod tests {
             .expect("send accepted");
         let p = ext.begin_drag().expect("armed");
         assert_eq!(p.kind, Cow::Borrowed("dnd-row"), "list kind");
-        assert_eq!(p.value.as_usize(), Some(2), "payload carries item id at visual 2");
+        assert_eq!(
+            p.value.as_usize(),
+            Some(2),
+            "payload carries item id at visual 2"
+        );
     }
 
     #[test]
@@ -691,7 +708,10 @@ mod tests {
         );
         ext.drag_release(&pl, Some(drop_at(2, 0.8)));
         assert_eq!(ext.model.order(), [1, 2, 0, 3], "row 0 dropped below row 2");
-        assert!(matches!(ext.query("preview"), Some(IntrospectValue::Null)), "preview cleared");
+        assert!(
+            matches!(ext.query("preview"), Some(IntrospectValue::Null)),
+            "preview cleared"
+        );
         assert!(ext.begin_drag().is_none(), "press cleared on drop");
     }
 
@@ -736,10 +756,17 @@ mod tests {
         assert_eq!(DndView::read_state(&scene).focused, Some(0));
         assert!(DndView::apply_key(&mut scene, Some(TAG), "End", NONE));
         assert_eq!(DndView::read_state(&scene).focused, Some(N - 1));
-        assert_eq!(DndView::read_state(&scene).order, IDENTITY, "navigation does not reorder");
+        assert_eq!(
+            DndView::read_state(&scene).order,
+            IDENTITY,
+            "navigation does not reorder"
+        );
         // Space picks up the focused (last) row.
         assert!(DndView::apply_key(&mut scene, Some(TAG), " ", NONE));
-        assert!(DndView::read_state(&scene).grabbed, "Space grabs the focused row");
+        assert!(
+            DndView::read_state(&scene).grabbed,
+            "Space grabs the focused row"
+        );
         // While grabbed, ArrowUp MOVES the row; the cursor follows.
         assert!(DndView::apply_key(&mut scene, Some(TAG), "ArrowUp", NONE));
         let st = DndView::read_state(&scene);
@@ -771,7 +798,10 @@ mod tests {
         let tops: Vec<u32> = (0..=N).map(gap_line_top).collect();
         assert_eq!(tops[0], 0, "gap 0 sits at the top edge");
         for w in tops.windows(2) {
-            assert!(w[1] >= w[0], "insertion line moves down as the gap index grows");
+            assert!(
+                w[1] >= w[0],
+                "insertion line moves down as the gap index grows"
+            );
         }
         for &t in &tops {
             assert!(t <= LIST_H - LINE_H, "line stays inside the list container");
@@ -803,7 +833,10 @@ mod a11y_tests {
             grabbed: false,
         };
         let nodes = DndView::access_node(&state, None);
-        let names: Vec<&str> = nodes[1..].iter().filter_map(|n| n.name.as_deref()).collect();
+        let names: Vec<&str> = nodes[1..]
+            .iter()
+            .filter_map(|n| n.name.as_deref())
+            .collect();
         assert_eq!(names, ["Charlie", "Alpha", "Delta", "Bravo"]);
     }
 

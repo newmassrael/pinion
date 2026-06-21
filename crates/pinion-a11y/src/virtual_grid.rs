@@ -56,7 +56,15 @@ pub fn windowed_grid_nodes(
     set_size: u32,
     window: &VisibleWindow,
 ) -> Vec<AccessNode> {
-    grid_nodes(grid_tag, grid_name, headers, set_size, window, GridSelection::Display, false)
+    grid_nodes(
+        grid_tag,
+        grid_name,
+        headers,
+        set_size,
+        window,
+        GridSelection::Display,
+        false,
+    )
 }
 
 /// R863 §5.40 §5.27 §5.45 — build a **frozen-split** virtualized `grid`: the
@@ -85,7 +93,15 @@ pub fn windowed_grid_nodes_frozen(
     set_size: u32,
     window: &VisibleWindow,
 ) -> Vec<AccessNode> {
-    grid_nodes(grid_tag, grid_name, headers, set_size, window, GridSelection::Display, true)
+    grid_nodes(
+        grid_tag,
+        grid_name,
+        headers,
+        set_size,
+        window,
+        GridSelection::Display,
+        true,
+    )
 }
 
 /// Whether the grid exposes an `aria-selected` axis on its data rows, and
@@ -125,8 +141,7 @@ fn grid_nodes(
     let ncols = headers.len();
     // grid + header row + ncols columnheaders + per windowed row (1 row +
     // ncols cells).
-    let mut nodes: Vec<AccessNode> =
-        Vec::with_capacity(window.count * (ncols + 1) + ncols + 2);
+    let mut nodes: Vec<AccessNode> = Vec::with_capacity(window.count * (ncols + 1) + ncols + 2);
 
     let mut grid = AccessNode::new(grid_tag, AriaRole::Grid)
         .with_name(grid_name)
@@ -187,7 +202,10 @@ fn grid_nodes(
         }
         nodes.push(row);
         for col in 0..ncols {
-            nodes.push(AccessNode::new(cell_tag(grid_tag, id, col), AriaRole::GridCell));
+            nodes.push(AccessNode::new(
+                cell_tag(grid_tag, id, col),
+                AriaRole::GridCell,
+            ));
         }
     }
     nodes
@@ -220,7 +238,15 @@ pub fn windowed_grid_nodes_selected(
     window: &VisibleWindow,
     selected: Option<usize>,
 ) -> Vec<AccessNode> {
-    grid_nodes(grid_tag, grid_name, headers, set_size, window, GridSelection::Single(selected), false)
+    grid_nodes(
+        grid_tag,
+        grid_name,
+        headers,
+        set_size,
+        window,
+        GridSelection::Single(selected),
+        false,
+    )
 }
 
 /// Build a **multi-select** virtualized `grid` (R782 §5.40): the same
@@ -255,7 +281,15 @@ pub fn windowed_grid_nodes_multiselected(
     window: &VisibleWindow,
     selection: &std::collections::BTreeSet<usize>,
 ) -> Vec<AccessNode> {
-    grid_nodes(grid_tag, grid_name, headers, set_size, window, GridSelection::Multi(selection), false)
+    grid_nodes(
+        grid_tag,
+        grid_name,
+        headers,
+        set_size,
+        window,
+        GridSelection::Multi(selection),
+        false,
+    )
 }
 
 /// Build a **sorted / filtered** virtualized `grid` (R783 §5.40, lifted from
@@ -295,8 +329,7 @@ pub fn windowed_grid_nodes_sorted(
 ) -> Vec<AccessNode> {
     let ncols = headers.len();
     let total = u32::try_from(order.len()).unwrap_or(u32::MAX);
-    let mut nodes: Vec<AccessNode> =
-        Vec::with_capacity(window.count * (ncols + 1) + ncols + 2);
+    let mut nodes: Vec<AccessNode> = Vec::with_capacity(window.count * (ncols + 1) + ncols + 2);
 
     // Grid container: header row + the windowed data rows (by source id). The
     // setsize is the *view* length (the filtered/sorted row count).
@@ -334,7 +367,9 @@ pub fn windowed_grid_nodes_sorted(
     // Windowed data rows: posinset = **visual** position (within the view),
     // tag + selection by **source** id.
     for view_pos in window.indices() {
-        let Some(&source) = order.get(view_pos) else { continue };
+        let Some(&source) = order.get(view_pos) else {
+            continue;
+        };
         let posinset = u32::try_from(view_pos + 1).unwrap_or(u32::MAX);
         let mut row = AccessNode::new(GridTag::data_row(grid_tag, source), AriaRole::Row)
             .with_position_in_set(posinset)
@@ -345,7 +380,10 @@ pub fn windowed_grid_nodes_sorted(
         }
         nodes.push(row);
         for col in 0..ncols {
-            nodes.push(AccessNode::new(cell_tag(grid_tag, source, col), AriaRole::GridCell));
+            nodes.push(AccessNode::new(
+                cell_tag(grid_tag, source, col),
+                AriaRole::GridCell,
+            ));
         }
     }
     nodes
@@ -366,13 +404,20 @@ mod tests {
         let nodes = windowed_grid_nodes("vtbl", "Data grid", &HEADERS, 10_000, &window(0, 2));
         assert_eq!(nodes[0].role, AriaRole::Grid);
         assert_eq!(nodes[0].name.as_deref(), Some("Data grid"));
-        assert_eq!(nodes[0].size_of_set, Some(10_000), "grid setsize = FULL dataset");
+        assert_eq!(
+            nodes[0].size_of_set,
+            Some(10_000),
+            "grid setsize = FULL dataset"
+        );
         // grid claims the header row + the 2 windowed data rows.
         assert_eq!(nodes[0].children.len(), 3);
         // header row + 3 columnheaders.
         assert_eq!(nodes[1].role, AriaRole::Row);
         assert_eq!(nodes[1].tag, "vtbl_hrow");
-        let columnheaders = nodes.iter().filter(|n| n.role == AriaRole::ColumnHeader).count();
+        let columnheaders = nodes
+            .iter()
+            .filter(|n| n.role == AriaRole::ColumnHeader)
+            .count();
         assert_eq!(columnheaders, 3, "one columnheader per column");
         // 2 windowed data rows, each with 3 gridcells.
         let data_rows = nodes
@@ -380,7 +425,10 @@ mod tests {
             .filter(|n| n.role == AriaRole::Row && n.tag != "vtbl_hrow")
             .count();
         assert_eq!(data_rows, 2);
-        let cells = nodes.iter().filter(|n| n.role == AriaRole::GridCell).count();
+        let cells = nodes
+            .iter()
+            .filter(|n| n.role == AriaRole::GridCell)
+            .count();
         assert_eq!(cells, 2 * 3, "NCOLS gridcells per windowed row");
     }
 
@@ -398,8 +446,14 @@ mod tests {
     #[test]
     fn display_only_omits_aria_selected() {
         let nodes = windowed_grid_nodes("vtbl", "G", &HEADERS, 10_000, &window(0, 2));
-        for n in nodes.iter().filter(|n| n.role == AriaRole::Row && n.tag != "vtbl_hrow") {
-            assert_eq!(n.selected, None, "display-only data rows omit aria-selected");
+        for n in nodes
+            .iter()
+            .filter(|n| n.role == AriaRole::Row && n.tag != "vtbl_hrow")
+        {
+            assert_eq!(
+                n.selected, None,
+                "display-only data rows omit aria-selected"
+            );
         }
     }
 
@@ -411,7 +465,11 @@ mod tests {
         // a single-pane row resolves bounds from its own tag alone.
         let nodes = windowed_grid_nodes("vtbl", "G", &HEADERS, 10_000, &window(0, 2));
         for n in nodes.iter().filter(|n| n.role == AriaRole::Row) {
-            assert!(n.bounds_union_tags.is_empty(), "unsplit Row {} has no union", n.tag);
+            assert!(
+                n.bounds_union_tags.is_empty(),
+                "unsplit Row {} has no union",
+                n.tag
+            );
         }
     }
 
@@ -419,7 +477,8 @@ mod tests {
     fn frozen_grid_rows_union_the_frozen_pane_strip() {
         // The frozen builder makes the header Row + each data Row span both
         // panes: the scrolling-pane strip (own tag) ∪ the frozen-pane strip.
-        let nodes = windowed_grid_nodes_frozen("gfz", "Frozen grid", &HEADERS, 10_000, &window(0, 2));
+        let nodes =
+            windowed_grid_nodes_frozen("gfz", "Frozen grid", &HEADERS, 10_000, &window(0, 2));
         let hrow = nodes.iter().find(|n| n.tag == "gfz_hrow").unwrap();
         assert_eq!(
             hrow.bounds_union_tags,
@@ -427,7 +486,11 @@ mod tests {
             "header Row unions the frozen header band",
         );
         let row0 = nodes.iter().find(|n| n.tag == "gfz_row0").unwrap();
-        assert_eq!(row0.bounds_union_tags, vec!["gfz_frow0"], "data Row unions its frozen strip");
+        assert_eq!(
+            row0.bounds_union_tags,
+            vec!["gfz_frow0"],
+            "data Row unions its frozen strip"
+        );
         let row1 = nodes.iter().find(|n| n.tag == "gfz_row1").unwrap();
         assert_eq!(row1.bounds_union_tags, vec!["gfz_frow1"]);
     }
@@ -450,7 +513,11 @@ mod tests {
         // Only the Row nodes gain a union fragment; gridcells / columnheaders
         // stay single-fragment.
         for n in frozen.iter().filter(|n| n.role != AriaRole::Row) {
-            assert!(n.bounds_union_tags.is_empty(), "{} is single-fragment", n.tag);
+            assert!(
+                n.bounds_union_tags.is_empty(),
+                "{} is single-fragment",
+                n.tag
+            );
         }
     }
 
@@ -484,14 +551,21 @@ mod tests {
         }
         // Only the per-data-row aria-selected axis is added.
         let d_row = decorated.iter().find(|n| n.tag == "vtbl_row0").unwrap();
-        assert_eq!(d_row.selected, Some(false), "decorated row sets aria-selected");
+        assert_eq!(
+            d_row.selected,
+            Some(false),
+            "decorated row sets aria-selected"
+        );
     }
 
     #[test]
     fn selected_outside_window_marks_no_visible_row() {
         let nodes =
             windowed_grid_nodes_selected("vtbl", "G", &HEADERS, 10_000, &window(0, 2), Some(9_999));
-        for n in nodes.iter().filter(|n| n.role == AriaRole::Row && n.tag != "vtbl_hrow") {
+        for n in nodes
+            .iter()
+            .filter(|n| n.role == AriaRole::Row && n.tag != "vtbl_hrow")
+        {
             assert_eq!(n.selected, Some(false));
         }
     }
@@ -511,13 +585,24 @@ mod tests {
             &window(100, 4),
             &selection,
         );
-        assert!(nodes[0].multiselectable, "multi-select grid is aria-multiselectable");
+        assert!(
+            nodes[0].multiselectable,
+            "multi-select grid is aria-multiselectable"
+        );
         let row101 = nodes.iter().find(|n| n.tag == "vtbl_row101").unwrap();
         let row103 = nodes.iter().find(|n| n.tag == "vtbl_row103").unwrap();
         let row102 = nodes.iter().find(|n| n.tag == "vtbl_row102").unwrap();
         assert_eq!(row101.selected, Some(true), "member row is aria-selected");
-        assert_eq!(row103.selected, Some(true), "a second member is aria-selected at once");
-        assert_eq!(row102.selected, Some(false), "a non-member between them is not");
+        assert_eq!(
+            row103.selected,
+            Some(true),
+            "a second member is aria-selected at once"
+        );
+        assert_eq!(
+            row102.selected,
+            Some(false),
+            "a non-member between them is not"
+        );
         // The header row never gets a selected axis.
         let hrow = nodes.iter().find(|n| n.tag == "vtbl_hrow").unwrap();
         assert_eq!(hrow.selected, None, "header row carries no aria-selected");
@@ -544,7 +629,11 @@ mod tests {
         assert!(!plain[0].multiselectable);
         assert!(decorated[0].multiselectable);
         let d_row = decorated.iter().find(|n| n.tag == "vtbl_row0").unwrap();
-        assert_eq!(d_row.selected, Some(false), "decorated row sets aria-selected");
+        assert_eq!(
+            d_row.selected,
+            Some(false),
+            "decorated row sets aria-selected"
+        );
     }
 
     // ── R783 permuted (sorted / filtered) variant ───────────────────
@@ -573,8 +662,16 @@ mod tests {
         assert_eq!(ch0.sort, None, "inactive column has no aria-sort");
         // Visual position 1 is source 2 (order[1]) → posinset 2, selected.
         let src2 = nodes.iter().find(|n| n.tag == "vtbl_row2").unwrap();
-        assert_eq!(src2.position_in_set, Some(2), "posinset = visual position + 1");
-        assert_eq!(src2.selected, Some(true), "the selected SOURCE row is aria-selected");
+        assert_eq!(
+            src2.position_in_set,
+            Some(2),
+            "posinset = visual position + 1"
+        );
+        assert_eq!(
+            src2.selected,
+            Some(true),
+            "the selected SOURCE row is aria-selected"
+        );
         // Source 3 sits at visual 0 → posinset 1, not selected.
         let src3 = nodes.iter().find(|n| n.tag == "vtbl_row3").unwrap();
         assert_eq!(src3.position_in_set, Some(1));
@@ -587,17 +684,37 @@ mod tests {
         // those 2 source ids. setsize conveys the VIEW length (2), not the
         // dataset size, and only the surviving sources get rows.
         let order = [7usize, 4];
-        let nodes =
-            windowed_grid_nodes_sorted("vtbl", "Filtered grid", &HEADERS, &order, None, None, &window(0, 2));
-        assert_eq!(nodes[0].size_of_set, Some(2), "setsize = filtered view length");
+        let nodes = windowed_grid_nodes_sorted(
+            "vtbl",
+            "Filtered grid",
+            &HEADERS,
+            &order,
+            None,
+            None,
+            &window(0, 2),
+        );
+        assert_eq!(
+            nodes[0].size_of_set,
+            Some(2),
+            "setsize = filtered view length"
+        );
         let data_rows: Vec<&str> = nodes
             .iter()
             .filter(|n| n.role == AriaRole::Row && n.tag != "vtbl_hrow")
             .map(|n| n.tag.as_str())
             .collect();
-        assert_eq!(data_rows, vec!["vtbl_row7", "vtbl_row4"], "only surviving sources, in view order");
+        assert_eq!(
+            data_rows,
+            vec!["vtbl_row7", "vtbl_row4"],
+            "only surviving sources, in view order"
+        );
         // No active sort → no aria-sort on any header.
-        assert!(nodes.iter().filter(|n| n.role == AriaRole::ColumnHeader).all(|n| n.sort.is_none()));
+        assert!(
+            nodes
+                .iter()
+                .filter(|n| n.role == AriaRole::ColumnHeader)
+                .all(|n| n.sort.is_none())
+        );
     }
 
     #[test]

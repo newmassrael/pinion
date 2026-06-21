@@ -48,20 +48,20 @@ use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
+use pinion_core::undo::{UndoStack, UndoStackExternal, use_undo_stack};
 use pinion_core::widget_core::ExtraExternal;
-use pinion_core::undo::{use_undo_stack, UndoStack, UndoStackExternal};
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
 use pinion_core::widgets::view_order::{
-    sort_dir_str, use_view_order, ViewOrderState, ViewSortFilterExternal,
+    ViewOrderState, ViewSortFilterExternal, sort_dir_str, use_view_order,
 };
 use pinion_core::widgets::virtual_list::compute_visible_range;
-use pinion_core::widgets::virtual_select::{read_selected, VirtualSelectExternal};
+use pinion_core::widgets::virtual_select::{VirtualSelectExternal, read_selected};
 use pinion_core::{Frame, Scene, WidgetCore};
-use pinion_widget_paint::scrollbar::{view_vertical_scrollbar, VerticalScrollbarStyle};
+use pinion_shell::{WidgetView, vello_renderer_impl};
+use pinion_widget_paint::scrollbar::{VerticalScrollbarStyle, view_vertical_scrollbar};
 use pinion_widget_paint::virtual_list::view_virtual_list;
-use pinion_shell::{vello_renderer_impl, WidgetView};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloVirtualSortRenderer, HelloVirtualSortRendererError);
@@ -143,7 +143,10 @@ fn use_sort_undo() -> Rc<UndoStack> {
 fn build_row(source: usize, theme: &Theme, selected: Option<usize>) -> Scene {
     let is_selected = selected == Some(source);
     let (fill, fg) = if is_selected {
-        (theme.resolve(ColorRole::Accent), theme.resolve(ColorRole::OnAccent))
+        (
+            theme.resolve(ColorRole::Accent),
+            theme.resolve(ColorRole::OnAccent),
+        )
     } else {
         let stripe = if source % 2 == 0 {
             ColorRole::SurfaceContainerLow
@@ -193,7 +196,9 @@ fn sort_header(sort: Option<bool>, filter: Option<usize>, theme: &Theme) -> Scen
     Scene::Container(
         ContainerNode::new(vec![label])
             .with_tag(format!("{SORT_TAG}#{SORT_REGION}"))
-            .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh)))
+            .with_style(BoxStyle::filled(
+                theme.resolve(ColorRole::SurfaceContainerHigh),
+            ))
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Row)
@@ -290,7 +295,10 @@ impl WidgetCore for VirtualSortView {
                 SORT_TAG,
                 Box::new(ViewSortFilterExternal::new(use_list_order()).with_undo(use_sort_undo())),
             ),
-            ExtraExternal::new(UNDO_STACK_TAG, Box::new(UndoStackExternal::new(use_sort_undo()))),
+            ExtraExternal::new(
+                UNDO_STACK_TAG,
+                Box::new(UndoStackExternal::new(use_sort_undo())),
+            ),
             scrollbar_extra_external(use_scroll_state(SCROLL_KEY), SCROLLBAR_TAG),
         ]
     }
@@ -343,8 +351,13 @@ impl WidgetA11y for VirtualSortView {
         let sort = view_order.sort();
         let order = view_order.order();
         let view_len = order.len();
-        let window =
-            compute_visible_range(scroll_state.offset_y(), VIEWPORT_H, view_len, ROW_PITCH, OVERSCAN);
+        let window = compute_visible_range(
+            scroll_state.offset_y(),
+            VIEWPORT_H,
+            view_len,
+            ROW_PITCH,
+            OVERSCAN,
+        );
 
         let total = u32::try_from(view_len).unwrap_or(u32::MAX);
         let mut nodes: Vec<AccessNode> = Vec::with_capacity(window.count + 2);
@@ -380,7 +393,10 @@ impl WidgetView for VirtualSortView {
     type Renderer = HelloVirtualSortRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 }
 
@@ -450,7 +466,11 @@ mod tests {
     fn boot_renders_small_window_in_source_order() {
         let scene = render(None, None, None);
         let sources = present_sources(&scene);
-        assert!(sources.len() < 30, "virtualized: small window, got {}", sources.len());
+        assert!(
+            sources.len() < 30,
+            "virtualized: small window, got {}",
+            sources.len()
+        );
         // Unsorted: visual order == source order at the top.
         assert_eq!(&sources[..5], &[0, 1, 2, 3, 4]);
     }
@@ -461,7 +481,11 @@ mod tests {
         let sources = present_sources(&scene);
         // Ascending by "Alpha · …": the first visible sources are the
         // Alpha rows 0,5,10,15,… (category 0 = every 5th source index).
-        assert_eq!(&sources[..4], &[0, 5, 10, 15], "Alpha block leads the ascending view");
+        assert_eq!(
+            &sources[..4],
+            &[0, 5, 10, 15],
+            "Alpha block leads the ascending view"
+        );
     }
 
     #[test]
@@ -472,9 +496,17 @@ mod tests {
         // ascending it jumps to visual pos 1 — but it is the SAME data row,
         // still Accent in both.
         let unsorted = render(Some(5), None, None);
-        assert_eq!(row_fill(&unsorted, 5), Some(accent), "source 5 selected unsorted");
+        assert_eq!(
+            row_fill(&unsorted, 5),
+            Some(accent),
+            "source 5 selected unsorted"
+        );
         let sorted = render(Some(5), Some(true), None);
-        assert_eq!(row_fill(&sorted, 5), Some(accent), "source 5 still selected after sort");
+        assert_eq!(
+            row_fill(&sorted, 5),
+            Some(accent),
+            "source 5 still selected after sort"
+        );
         // Its visual position moved: now second in the Alpha block.
         assert_eq!(present_sources(&sorted)[1], 5);
     }
@@ -508,7 +540,15 @@ mod tests {
             .iter()
             .find(|n| n.tag == format!("{LIST_TAG}#5"))
             .expect("rendered listitem for source 5");
-        assert_eq!(item.selected, Some(true), "selected source carries aria-selected");
-        assert_eq!(item.position_in_set, Some(2), "source 5 is visual position 2 ascending");
+        assert_eq!(
+            item.selected,
+            Some(true),
+            "selected source carries aria-selected"
+        );
+        assert_eq!(
+            item.position_in_set,
+            Some(2),
+            "source 5 is visual position 2 ascending"
+        );
     }
 }

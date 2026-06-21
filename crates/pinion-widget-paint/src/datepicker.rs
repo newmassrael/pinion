@@ -28,16 +28,14 @@
 //!   click on day `d` to the picker's `"<d>:<EventName>"` send). Blank
 //!   cells are untagged, non-interactive spacers.
 
+use pinion_core::Scene;
 use pinion_core::scene::{ContainerNode, Rect, TextNode, TextRole};
 use pinion_core::style::{
     AlignItems, BoxStyle, Color, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme};
-use pinion_core::widgets::datepicker::{
-    days_in_month, weekday_of_first, CivilDate,
-};
+use pinion_core::widgets::datepicker::{CivilDate, days_in_month, weekday_of_first};
 use pinion_core::widgets::radio::RadioState;
-use pinion_core::Scene;
 
 /// R704 §5.50 — full weekday names (Sunday-first), used by the binding's
 /// `access_node` walker for each `columnheader`'s accessible name.
@@ -183,9 +181,8 @@ pub fn day_cell_fill(theme: &Theme, state: RadioState, selected: bool) -> Color 
 /// One blank (non-interactive) grid cell — a fixed-size transparent box.
 fn blank_cell(style: &DatePickerStyle) -> Scene {
     Scene::Container(
-        ContainerNode::new(Vec::new()).with_layout(
-            LayoutStyle::new().with_size(Size::px(style.cell_size, style.cell_size)),
-        ),
+        ContainerNode::new(Vec::new())
+            .with_layout(LayoutStyle::new().with_size(Size::px(style.cell_size, style.cell_size))),
     )
 }
 
@@ -219,7 +216,9 @@ fn day_cell(
         ContainerNode::new(vec![Scene::Text(TextNode::styled(
             day.to_string(),
             Rect::default(),
-            TextStyle::new().with_size_px(style.label_size_px).with_fg(fg),
+            TextStyle::new()
+                .with_size_px(style.label_size_px)
+                .with_fg(fg),
         ))])
         .with_tag(tag.to_string())
         .with_style(box_style)
@@ -486,16 +485,28 @@ mod tests {
         let scene = Owner::new().run(|| {
             view_datepicker(
                 "datepicker",
-                DisplayedMonth { year: 2026, month: 5 },
+                DisplayedMonth {
+                    year: 2026,
+                    month: 5,
+                },
                 None,
                 &all_idle(),
                 &light(),
                 &DatePickerStyle::m3(),
             )
         });
-        assert!(scene.contains_tag("datepicker"), "composite root tag present");
-        assert!(scene.contains_tag("datepicker#prev"), "prev nav tag present");
-        assert!(scene.contains_tag("datepicker#next"), "next nav tag present");
+        assert!(
+            scene.contains_tag("datepicker"),
+            "composite root tag present"
+        );
+        assert!(
+            scene.contains_tag("datepicker#prev"),
+            "prev nav tag present"
+        );
+        assert!(
+            scene.contains_tag("datepicker#next"),
+            "next nav tag present"
+        );
         for col in 0..7 {
             assert!(
                 scene.contains_tag(&format!("datepicker_wh{col}")),
@@ -510,7 +521,10 @@ mod tests {
         let scene = Owner::new().run(|| {
             view_datepicker(
                 "datepicker",
-                DisplayedMonth { year: 2026, month: 5 },
+                DisplayedMonth {
+                    year: 2026,
+                    month: 5,
+                },
                 None,
                 &all_idle(),
                 &light(),

@@ -58,9 +58,9 @@
 //! nor schedules a repaint; like `scene/layout` it is a pure projection
 //! of the stored frame.
 
-use pinion_core::print::Orientation;
 use pinion_core::Scene;
-use pinion_pdf::{render_scene, PageSize, RenderedPdf};
+use pinion_core::print::Orientation;
+use pinion_pdf::{PageSize, RenderedPdf, render_scene};
 use serde::{Deserialize, Serialize};
 
 /// Request params for `scene/export_pdf`. Both fields optional; an empty
@@ -171,7 +171,10 @@ mod tests {
     use pinion_core::style::Color;
 
     fn boxed_scene() -> Scene {
-        Scene::Box(BoxNode::filled(Rect::new(0, 0, 320, 240), Color::rgb(0xff, 0xff, 0xff)))
+        Scene::Box(BoxNode::filled(
+            Rect::new(0, 0, 320, 240),
+            Color::rgb(0xff, 0xff, 0xff),
+        ))
     }
 
     #[test]
@@ -198,14 +201,20 @@ mod tests {
         let scene = boxed_scene();
         let letter = export_pdf(
             Some(&scene),
-            &ExportPdfParams { page: Some("letter".into()), orientation: None },
+            &ExportPdfParams {
+                page: Some("letter".into()),
+                orientation: None,
+            },
         )
         .unwrap();
         assert_eq!((letter.page_width_pt, letter.page_height_pt), (612, 792));
 
         let a4 = export_pdf(
             Some(&scene),
-            &ExportPdfParams { page: Some("A4".into()), orientation: None },
+            &ExportPdfParams {
+                page: Some("A4".into()),
+                orientation: None,
+            },
         )
         .unwrap();
         assert_eq!((a4.page_width_pt, a4.page_height_pt), (595, 842));
@@ -231,7 +240,10 @@ mod tests {
         assert_eq!(
             export_pdf(
                 Some(&scene),
-                &ExportPdfParams { page: Some("tabloid".into()), orientation: None },
+                &ExportPdfParams {
+                    page: Some("tabloid".into()),
+                    orientation: None
+                },
             )
             .unwrap_err(),
             ExportPdfError::UnknownPageSize("tabloid".into()),
@@ -256,7 +268,10 @@ mod tests {
         let scene = boxed_scene();
         let out = export_pdf(
             Some(&scene),
-            &ExportPdfParams { page: None, orientation: Some("landscape".into()) },
+            &ExportPdfParams {
+                page: None,
+                orientation: Some("landscape".into()),
+            },
         )
         .unwrap();
         assert_eq!((out.page_width_pt, out.page_height_pt), (320, 240));

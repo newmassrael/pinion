@@ -24,7 +24,7 @@
 //! once a third backend lands; at two backends, duplication is the
 //! Rule-of-Three threshold — wait for the third consumer.
 
-use std::sync::{mpsc, Arc};
+use std::sync::{Arc, mpsc};
 
 use pinion_core::Intent;
 use pinion_runtime::{BoxFuture, CommandTaskHandle, Executor, IntentSink};
@@ -171,9 +171,9 @@ pub fn build_executor_and_sink() -> std::io::Result<ExecutorSinkBundle> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core::sync::atomic::{AtomicBool, Ordering};
-    use core::pin::Pin;
     use core::future::Future;
+    use core::pin::Pin;
+    use core::sync::atomic::{AtomicBool, Ordering};
     use pinion_core::external::IntrospectValue;
 
     type LocalBoxFuture = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
@@ -242,7 +242,10 @@ mod tests {
         sink.send(Intent::new_static("b", IntrospectValue::Int(2)));
         sink.send(Intent::new_static("c", IntrospectValue::Int(3)));
         let tags: Vec<String> = (0..3)
-            .map(|_| rx.recv_timeout(std::time::Duration::from_millis(100)).unwrap())
+            .map(|_| {
+                rx.recv_timeout(std::time::Duration::from_millis(100))
+                    .unwrap()
+            })
             .map(|i| i.tag_str().to_string())
             .collect();
         assert_eq!(tags, vec!["a", "b", "c"]);
@@ -259,7 +262,6 @@ mod tests {
 
     #[test]
     fn build_executor_and_sink_returns_triple() {
-        let (_exec, _sink, _rx) =
-            build_executor_and_sink().expect("tokio runtime + channel build");
+        let (_exec, _sink, _rx) = build_executor_and_sink().expect("tokio runtime + channel build");
     }
 }

@@ -65,11 +65,17 @@ impl DecodedImage {
     /// upload relies on).
     #[must_use]
     pub fn from_rgba8(width: u32, height: u32, pixels: Vec<u8>) -> Option<Self> {
-        let expected = (width as usize).checked_mul(height as usize)?.checked_mul(4)?;
+        let expected = (width as usize)
+            .checked_mul(height as usize)?
+            .checked_mul(4)?;
         if pixels.len() != expected {
             return None;
         }
-        Some(Self { width, height, pixels: Arc::new(pixels) })
+        Some(Self {
+            width,
+            height,
+            pixels: Arc::new(pixels),
+        })
     }
 }
 
@@ -115,8 +121,7 @@ pub fn decode_image(bytes: &[u8]) -> Result<DecodedImage, DecodeError> {
     let decoded = image::load_from_memory(bytes).map_err(|e| DecodeError::Decode(e.to_string()))?;
     let rgba = decoded.to_rgba8();
     let (width, height) = rgba.dimensions();
-    DecodedImage::from_rgba8(width, height, rgba.into_raw())
-        .ok_or(DecodeError::DimensionOverflow)
+    DecodedImage::from_rgba8(width, height, rgba.into_raw()).ok_or(DecodeError::DimensionOverflow)
 }
 
 #[cfg(test)]
@@ -160,7 +165,10 @@ mod tests {
     #[test]
     fn rejects_non_image_bytes() {
         let err = decode_image(b"not an image at all").unwrap_err();
-        assert!(matches!(err, DecodeError::Decode(_)), "garbage bytes → Decode error");
+        assert!(
+            matches!(err, DecodeError::Decode(_)),
+            "garbage bytes → Decode error"
+        );
     }
 
     #[test]

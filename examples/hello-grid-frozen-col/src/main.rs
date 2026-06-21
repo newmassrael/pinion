@@ -50,16 +50,16 @@
 //! pane's strip). This is the first `bounds_union_tags` substrate consumer
 //! (the R860 tree-grid `row` is the second).
 
-use pinion_a11y::{windowed_grid_nodes_frozen, AccessNode, WidgetA11y};
+use pinion_a11y::{AccessNode, WidgetA11y, windowed_grid_nodes_frozen};
 use pinion_core::external::{External, StubExternal};
 use pinion_core::scene::ContainerNode;
 use pinion_core::style::{BoxStyle, FlexDirection, LayoutStyle};
-use pinion_core::theme::{use_theme, ColorRole};
+use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::{Frame, Scene, WidgetCore};
-use pinion_shell::{vello_renderer_impl, WidgetView};
-use pinion_widget_paint::table::{view_virtual_table, GridScroll, TableStyle, VirtualTableData};
+use pinion_shell::{WidgetView, vello_renderer_impl};
+use pinion_widget_paint::table::{GridScroll, TableStyle, VirtualTableData, view_virtual_table};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloGridFrozenColRenderer, HelloGridFrozenColRendererError);
@@ -88,8 +88,9 @@ const ROW_H: u32 = 36;
 const OVERSCAN: usize = 3;
 /// Column header labels — a process-table-style wide row; the first two
 /// (PID, Name) are the frozen identity columns.
-const HEADERS: [&str; NCOLS] =
-    ["PID", "Name", "CPU%", "Memory", "Threads", "Status", "User", "Started"];
+const HEADERS: [&str; NCOLS] = [
+    "PID", "Name", "CPU%", "Memory", "Threads", "Status", "User", "Started",
+];
 /// Paint-root + a11y `grid` tag, and the [`StubExternal`] anchor tag.
 const TABLE_TAG: &str = "gfz";
 /// Cache key (and input-router tag) for the vertical body `ScrollState`,
@@ -145,7 +146,10 @@ fn view(_state: (), _frame: &Frame) -> Scene {
 
     let grid = view_virtual_table(
         TABLE_TAG,
-        GridScroll { body: &scroll, horizontal: &h_scroll },
+        GridScroll {
+            body: &scroll,
+            horizontal: &h_scroll,
+        },
         VirtualTableData {
             headers: &HEADERS,
             item_count: N,
@@ -279,7 +283,10 @@ mod tests {
     fn row_cells_fill_all_columns() {
         let cells = row_cells(42);
         assert_eq!(cells.len(), NCOLS, "one cell per column");
-        assert_eq!(cells[0], "00042", "PID is the zero-padded index (frozen col 0)");
+        assert_eq!(
+            cells[0], "00042",
+            "PID is the zero-padded index (frozen col 0)"
+        );
     }
 
     #[test]
@@ -299,6 +306,9 @@ mod tests {
             .iter()
             .filter(|n| n.role == AriaRole::ColumnHeader)
             .count();
-        assert_eq!(columnheaders, NCOLS, "one columnheader per column across the split");
+        assert_eq!(
+            columnheaders, NCOLS,
+            "one columnheader per column across the split"
+        );
     }
 }

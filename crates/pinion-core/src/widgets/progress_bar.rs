@@ -109,7 +109,11 @@ impl ProgressBarExternal {
     /// Setting a fraction also clears [`Self::indeterminate`] — reporting
     /// a concrete value *is* the determinate signal.
     pub fn set_value(&mut self, value: f32) {
-        self.value = if value.is_nan() { 0.0 } else { value.clamp(0.0, 1.0) };
+        self.value = if value.is_nan() {
+            0.0
+        } else {
+            value.clamp(0.0, 1.0)
+        };
         self.indeterminate = false;
     }
 }
@@ -370,16 +374,19 @@ mod tests {
     #[test]
     fn intervene_value_float_sets_and_clamps() {
         let mut p = ProgressBarExternal::new();
-        p.intervene("value", IntrospectValue::Float(0.6)).expect("float accepted");
+        p.intervene("value", IntrospectValue::Float(0.6))
+            .expect("float accepted");
         assert!((p.value() - 0.6).abs() < f32::EPSILON);
-        p.intervene("value", IntrospectValue::Float(2.0)).expect("clamps in set_value");
+        p.intervene("value", IntrospectValue::Float(2.0))
+            .expect("clamps in set_value");
         assert!((p.value() - 1.0).abs() < f32::EPSILON);
     }
 
     #[test]
     fn intervene_value_int_coerces() {
         let mut p = ProgressBarExternal::new();
-        p.intervene("value", IntrospectValue::Int(1)).expect("int coerced to 1.0");
+        p.intervene("value", IntrospectValue::Int(1))
+            .expect("int coerced to 1.0");
         assert!((p.value() - 1.0).abs() < f32::EPSILON);
     }
 
@@ -424,7 +431,8 @@ mod tests {
     #[test]
     fn intervene_indeterminate_toggles_and_set_value_clears_it() {
         let mut p = ProgressBarExternal::new();
-        p.intervene("indeterminate", IntrospectValue::Bool(true)).expect("bool accepted");
+        p.intervene("indeterminate", IntrospectValue::Bool(true))
+            .expect("bool accepted");
         assert!(p.indeterminate());
         assert_eq!(p.query("indeterminate"), Some(IntrospectValue::Bool(true)));
         // Reporting a concrete fraction returns to determinate.
@@ -449,7 +457,10 @@ mod tests {
         assert!(!s.active());
         assert!(s.is_at_rest(0.0), "parked sweep is at rest");
         s.tick(1.0);
-        assert!((s.position() - 0.0).abs() < f32::EPSILON, "parked sweep does not advance");
+        assert!(
+            (s.position() - 0.0).abs() < f32::EPSILON,
+            "parked sweep does not advance"
+        );
     }
 
     #[test]
@@ -458,7 +469,10 @@ mod tests {
         s.set_active(true);
         assert!(!s.is_at_rest(0.0), "an active sweep never settles");
         s.tick(IndeterminateSweep::PERIOD_SECS / 2.0);
-        assert!((s.position() - 0.5).abs() < 1e-5, "half a period -> phase 0.5");
+        assert!(
+            (s.position() - 0.5).abs() < 1e-5,
+            "half a period -> phase 0.5"
+        );
         // Wraps past the period (sawtooth).
         s.tick(IndeterminateSweep::PERIOD_SECS);
         assert!(s.position() < 1.0, "phase stays in [0,1) after wrap");
@@ -471,7 +485,10 @@ mod tests {
         s.tick(IndeterminateSweep::PERIOD_SECS / 3.0);
         s.set_active(false);
         assert!(s.is_at_rest(0.0));
-        assert!((s.position() - 0.0).abs() < f32::EPSILON, "park snaps phase to 0");
+        assert!(
+            (s.position() - 0.0).abs() < f32::EPSILON,
+            "park snaps phase to 0"
+        );
     }
 
     #[test]

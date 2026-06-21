@@ -30,26 +30,26 @@ use std::rc::Rc;
 
 use pinion_a11y::{AccessNode, AccessState, AriaRole, WidgetA11y};
 use pinion_core::external::{
-    int_of, External, IntrospectSchema, IntrospectValue, QueryOnlyIntrospect, QuerySource,
+    External, IntrospectSchema, IntrospectValue, QueryOnlyIntrospect, QuerySource, int_of,
 };
 use pinion_core::intent::Intent;
 use pinion_core::print::{
     InMemoryPrintBackend, PrintBackend, PrintError, PrintJob, PrintReceipt, PrinterInfo,
 };
-use pinion_core::reactive::{batch, Owner, Signal};
+use pinion_core::reactive::{Owner, Signal, batch};
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, Color, FlexDirection, FontWeight, JustifyContent, LayoutStyle, Size,
     SizeValue, TextStyle,
 };
-use pinion_pdf::{render_scene, PageSize};
-use pinion_core::theme::{use_theme, ColorRole};
+use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::button::{ButtonExternal, ButtonState};
-use pinion_core::{intent_tag, Command, Frame, Scene, WidgetCore};
-use pinion_shell::{vello_renderer_impl, WidgetView};
-use pinion_platform_print::{cups_available, CupsPrintBackend};
-use pinion_widget_paint::button::{read_button_state, view_button, ButtonColors, ButtonStyle};
+use pinion_core::{Command, Frame, Scene, WidgetCore, intent_tag};
+use pinion_pdf::{PageSize, render_scene};
+use pinion_platform_print::{CupsPrintBackend, cups_available};
+use pinion_shell::{WidgetView, vello_renderer_impl};
+use pinion_widget_paint::button::{ButtonColors, ButtonStyle, read_button_state, view_button};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloPrintRenderer, HelloPrintRendererError);
@@ -107,7 +107,10 @@ fn document_scene() -> Scene {
     children.push(Scene::Text(TextNode::styled(
         DOC_TITLE,
         Rect::new(DOC_MARGIN, DOC_MARGIN, body_w, 28),
-        TextStyle::new().with_size_px(24).with_weight(FontWeight::BOLD).with_fg(ink),
+        TextStyle::new()
+            .with_size_px(24)
+            .with_weight(FontWeight::BOLD)
+            .with_fg(ink),
     )));
     // An accent rule under the title.
     children.push(Scene::Box(BoxNode::filled(
@@ -195,12 +198,19 @@ impl QuerySource for PrintIntrospect {
             "printer_count" => Some(IntrospectValue::Int(int_of(printers.len()))),
             "selected" => Some(IntrospectValue::Int(int_of(selected))),
             "selected_id" => Some(IntrospectValue::Text(
-                printers.get(selected).map(|p| p.id.clone()).unwrap_or_default(),
+                printers
+                    .get(selected)
+                    .map(|p| p.id.clone())
+                    .unwrap_or_default(),
             )),
             "copies" => Some(IntrospectValue::Int(i64::from(self.model.copies.get()))),
-            "submit_count" => Some(IntrospectValue::Int(i64::from(self.model.submit_count.get()))),
+            "submit_count" => Some(IntrospectValue::Int(i64::from(
+                self.model.submit_count.get(),
+            ))),
             "last_printer" => Some(IntrospectValue::Text(self.model.last_printer.get())),
-            "last_copies" => Some(IntrospectValue::Int(i64::from(self.model.last_copies.get()))),
+            "last_copies" => Some(IntrospectValue::Int(i64::from(
+                self.model.last_copies.get(),
+            ))),
             "last_job" => Some(IntrospectValue::Text(self.model.last_job.get())),
             "last_content" => Some(IntrospectValue::Text(self.model.last_content.get())),
             _ => None,
@@ -243,7 +253,10 @@ impl PrintBackend for AppPrintBackend {
 fn build_print_backend() -> AppPrintBackend {
     let forced = std::env::var("PINION_PRINT_BACKEND").ok();
     match forced.as_deref() {
-        Some("cups") => AppPrintBackend { inner: Box::new(CupsPrintBackend::new()), kind: "cups" },
+        Some("cups") => AppPrintBackend {
+            inner: Box::new(CupsPrintBackend::new()),
+            kind: "cups",
+        },
         Some("memory") => AppPrintBackend {
             inner: Box::new(InMemoryPrintBackend::with_sample_printers()),
             kind: "memory",
@@ -251,7 +264,10 @@ fn build_print_backend() -> AppPrintBackend {
         _ => {
             let cups = CupsPrintBackend::new();
             if cups_available() && !cups.enumerate_printers().is_empty() {
-                AppPrintBackend { inner: Box::new(cups), kind: "cups" }
+                AppPrintBackend {
+                    inner: Box::new(cups),
+                    kind: "cups",
+                }
             } else {
                 AppPrintBackend {
                     inner: Box::new(InMemoryPrintBackend::with_sample_printers()),
@@ -297,7 +313,10 @@ fn button(label: &str, tag: &'static str, state: ButtonState, colors: &ButtonCol
     view_button(label, state, 0.0, false, colors, &style)
 }
 
-#[allow(clippy::trivially_copy_pass_by_ref)]
+// R1026 — rustfmt's reflow pushed this example view over the workspace
+// too_many_lines (100) ceiling; an example scene-builder is declarative and
+// long by nature.
+#[allow(clippy::trivially_copy_pass_by_ref, clippy::too_many_lines)]
 fn view(state: PrintState, _frame: &Frame) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
     let on_surface = theme.resolve(ColorRole::OnSurface);
@@ -323,7 +342,11 @@ fn view(state: PrintState, _frame: &Frame) -> Scene {
         } else {
             p.name.clone()
         };
-        let row_fg = if chosen { theme.resolve(ColorRole::OnSurface) } else { on_surface_muted };
+        let row_fg = if chosen {
+            theme.resolve(ColorRole::OnSurface)
+        } else {
+            on_surface_muted
+        };
         let mut row = ContainerNode::new(vec![Scene::Text(TextNode::styled(
             &label,
             Rect::default(),
@@ -335,23 +358,29 @@ fn view(state: PrintState, _frame: &Frame) -> Scene {
                 .with_size(Size::auto().with_width(SizeValue::Px(WIN_W - 48))),
         );
         if chosen {
-            row = row.with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh)));
+            row = row.with_style(BoxStyle::filled(
+                theme.resolve(ColorRole::SurfaceContainerHigh),
+            ));
         }
         printer_rows.push(Scene::Container(row));
     }
     let printer_list = Scene::Container(
-        ContainerNode::new(printer_rows).with_tag("printers").with_layout(
-            LayoutStyle::new()
-                .flex(FlexDirection::Column)
-                .with_align_items(AlignItems::Stretch)
-                .with_gap(2),
-        ),
+        ContainerNode::new(printer_rows)
+            .with_tag("printers")
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Column)
+                    .with_align_items(AlignItems::Stretch)
+                    .with_gap(2),
+            ),
     );
 
     let copies_label = Scene::Text(TextNode::styled(
         format!("Copies: {copies}"),
         Rect::default(),
-        TextStyle::new().with_size_px(BODY_FONT_PX).with_fg(on_surface),
+        TextStyle::new()
+            .with_size_px(BODY_FONT_PX)
+            .with_fg(on_surface),
     ));
 
     let tonal = ButtonColors::filled_tonal(&theme);
@@ -375,7 +404,11 @@ fn view(state: PrintState, _frame: &Frame) -> Scene {
         format!(
             "Sent {} cop{} to {} (job {})",
             model.last_copies.get(),
-            if model.last_copies.get() == 1 { "y" } else { "ies" },
+            if model.last_copies.get() == 1 {
+                "y"
+            } else {
+                "ies"
+            },
             model.last_printer.get(),
             model.last_job.get(),
         )
@@ -385,20 +418,28 @@ fn view(state: PrintState, _frame: &Frame) -> Scene {
     let status_line = Scene::Text(TextNode::styled(
         &status,
         Rect::default(),
-        TextStyle::new().with_size_px(STATUS_FONT_PX).with_fg(on_surface_muted),
+        TextStyle::new()
+            .with_size_px(STATUS_FONT_PX)
+            .with_fg(on_surface_muted),
     ));
 
     Scene::Container(
-        ContainerNode::new(vec![title, printer_list, copies_label, controls, status_line])
-            .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Column)
-                    .with_align_items(AlignItems::Start)
-                    .with_justify(JustifyContent::Start)
-                    .with_gap(14)
-                    .with_padding(Rect::new(24, 24, 24, 24)),
-            ),
+        ContainerNode::new(vec![
+            title,
+            printer_list,
+            copies_label,
+            controls,
+            status_line,
+        ])
+        .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
+        .with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Column)
+                .with_align_items(AlignItems::Start)
+                .with_justify(JustifyContent::Start)
+                .with_gap(14)
+                .with_padding(Rect::new(24, 24, 24, 24)),
+        ),
     )
 }
 
@@ -484,7 +525,9 @@ impl WidgetCore for PrintView {
                 model.selected.set((model.selected.get() + 1) % count);
             }
         } else if tag == DEC_CLICK {
-            model.copies.set(model.copies.get().saturating_sub(1).max(1));
+            model
+                .copies
+                .set(model.copies.get().saturating_sub(1).max(1));
         } else if tag == INC_CLICK {
             model.copies.set(model.copies.get() + 1);
         } else if tag == PRINT_CLICK {
@@ -536,10 +579,13 @@ impl WidgetA11y for PrintView {
         let mut nodes = vec![group];
         for (tag, name) in buttons {
             nodes.push(
-                AccessNode::new(tag, AriaRole::Button).with_name(name).with_state(AccessState {
-                    focused: focused == Some(tag) || (tag == group_tag && focused == Some(group_tag)),
-                    ..AccessState::default()
-                }),
+                AccessNode::new(tag, AriaRole::Button)
+                    .with_name(name)
+                    .with_state(AccessState {
+                        focused: focused == Some(tag)
+                            || (tag == group_tag && focused == Some(group_tag)),
+                        ..AccessState::default()
+                    }),
             );
         }
         nodes
@@ -586,13 +632,19 @@ mod tests {
     fn r911_print_payload_is_a_pdf_carrying_the_document() {
         // The print job content is now the own-rendered PDF, not text.
         let pdf = render_print_pdf();
-        assert!(pdf.starts_with("%PDF-1.7"), "print payload is a PDF document");
+        assert!(
+            pdf.starts_with("%PDF-1.7"),
+            "print payload is a PDF document"
+        );
         assert!(pdf.trim_end().ends_with("%%EOF"), "PDF trailer present");
         // US Letter MediaBox.
         assert!(pdf.contains("/MediaBox [0 0 612 792]"), "Letter page box");
         // The title + a body line are embedded as text-show operators.
         assert!(pdf.contains(&format!("({DOC_TITLE}) Tj")), "title embedded");
-        assert!(pdf.contains(&format!("({}) Tj", DOC_BODY[0])), "first body line embedded");
+        assert!(
+            pdf.contains(&format!("({}) Tj", DOC_BODY[0])),
+            "first body line embedded"
+        );
         // The accent rule fills a rect.
         assert!(pdf.contains("re\nf\n"), "accent rule filled");
     }
@@ -609,8 +661,14 @@ mod tests {
             submit_current_job(&backend, &model);
             assert_eq!(model.submit_count.get(), 1);
             let content = model.last_content.get();
-            assert!(content.starts_with("%PDF-1.7"), "recorded content is the rendered PDF");
-            assert!(content.contains(&format!("({DOC_TITLE}) Tj")), "PDF carries the title");
+            assert!(
+                content.starts_with("%PDF-1.7"),
+                "recorded content is the rendered PDF"
+            );
+            assert!(
+                content.contains(&format!("({DOC_TITLE}) Tj")),
+                "PDF carries the title"
+            );
         });
     }
 }

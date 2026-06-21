@@ -82,13 +82,14 @@ impl Loca {
     /// * [`ParseError::InvalidTableField`] — entry 가 단조 비감소 위반.
     pub fn parse(bytes: &[u8], format: LocaFormat, num_glyphs: u16) -> Result<Self, ParseError> {
         let expected_entries = usize::from(num_glyphs) + 1;
-        let expected_len = expected_entries
-            .checked_mul(format.entry_size())
-            .ok_or(ParseError::TableTooShort {
-                tag: LOCA_TAG,
-                needed: usize::MAX,
-                available: bytes.len(),
-            })?;
+        let expected_len =
+            expected_entries
+                .checked_mul(format.entry_size())
+                .ok_or(ParseError::TableTooShort {
+                    tag: LOCA_TAG,
+                    needed: usize::MAX,
+                    available: bytes.len(),
+                })?;
         if bytes.len() < expected_len {
             return Err(ParseError::TableTooShort {
                 tag: LOCA_TAG,

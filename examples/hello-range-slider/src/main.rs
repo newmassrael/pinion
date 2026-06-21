@@ -59,11 +59,11 @@ use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widgets::range_slider::{RangeSliderExternal, ThumbId};
 use pinion_core::widgets::slider::SliderState;
-use pinion_core::{scale_normalized_to_px, Frame, Scene, WidgetCore, WidgetStateName};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_core::{Frame, Scene, WidgetCore, WidgetStateName, scale_normalized_to_px};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::slider::{slider_accent_for, slider_thumb_fill, slider_track_inactive};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -141,13 +141,24 @@ fn read_range(scene: &Scene) -> RangeState {
         Some(IntrospectValue::Text(name)) => SliderState::from_name_or_default(&name),
         _ => SliderState::Idle,
     };
-    let low = intro.query("low").and_then(|v| v.as_f32()).unwrap_or(START_LOW);
-    let high = intro.query("high").and_then(|v| v.as_f32()).unwrap_or(START_HIGH);
+    let low = intro
+        .query("low")
+        .and_then(|v| v.as_f32())
+        .unwrap_or(START_LOW);
+    let high = intro
+        .query("high")
+        .and_then(|v| v.as_f32())
+        .unwrap_or(START_HIGH);
     let active = match intro.query("active") {
         Some(IntrospectValue::Text(name)) => ThumbId::from_name(&name).unwrap_or(ThumbId::High),
         _ => ThumbId::High,
     };
-    RangeState { interaction, low, high, active }
+    RangeState {
+        interaction,
+        low,
+        high,
+        active,
+    }
 }
 
 /// A thumb box at normalised position `value`, tagged with its composite
@@ -228,7 +239,8 @@ fn view(state: &RangeState, _frame: &Frame) -> Scene {
     let fill = Scene::Box(
         BoxNode::new(
             Rect::default(),
-            BoxStyle::filled(slider_accent_for(&theme, interaction)).with_corner_radius(TRACK_RADIUS),
+            BoxStyle::filled(slider_accent_for(&theme, interaction))
+                .with_corner_radius(TRACK_RADIUS),
         )
         .with_layout(
             LayoutStyle::new()
@@ -299,7 +311,6 @@ impl WidgetCore for RangeView {
     fn tag() -> &'static str {
         TAG
     }
-
 
     fn read_state(scene: &Scene) -> RangeState {
         read_range(scene)
@@ -379,11 +390,19 @@ impl WidgetA11y for RangeView {
             .with_child(HIGH_TAG);
         let low = AccessNode::new(LOW_TAG, AriaRole::Slider)
             .with_name("Minimum")
-            .with_value(AccessValue::Float { value: state.low, min: 0.0, max: state.high })
+            .with_value(AccessValue::Float {
+                value: state.low,
+                min: 0.0,
+                max: state.high,
+            })
             .with_state(thumb_state(state, focused, LOW_TAG, ThumbId::Low));
         let high = AccessNode::new(HIGH_TAG, AriaRole::Slider)
             .with_name("Maximum")
-            .with_value(AccessValue::Float { value: state.high, min: state.low, max: 1.0 })
+            .with_value(AccessValue::Float {
+                value: state.high,
+                min: state.low,
+                max: 1.0,
+            })
             .with_state(thumb_state(state, focused, HIGH_TAG, ThumbId::High));
         vec![group, low, high]
     }
@@ -410,7 +429,10 @@ impl WidgetView for RangeView {
     type Renderer = HelloRangeSliderRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 }
 
@@ -487,15 +509,28 @@ mod tests {
         let mut scene = scene_fixture();
         assert!(key(&mut scene, HIGH_TAG, "Home"));
         let (low, high) = vals(&scene);
-        assert!((high - 0.25).abs() < 1e-5, "high clamps at low (0.25), not 0.0");
+        assert!(
+            (high - 0.25).abs() < 1e-5,
+            "high clamps at low (0.25), not 0.0"
+        );
         assert!((low - 0.25).abs() < 1e-5);
     }
 
     #[test]
     fn keys_ignored_when_no_thumb_focused() {
         let mut scene = scene_fixture();
-        assert!(!RangeView::apply_key(&mut scene, None, "ArrowRight", pinion_core::Modifiers::empty()));
-        assert!(!RangeView::apply_key(&mut scene, Some(TAG), "ArrowRight", pinion_core::Modifiers::empty()));
+        assert!(!RangeView::apply_key(
+            &mut scene,
+            None,
+            "ArrowRight",
+            pinion_core::Modifiers::empty()
+        ));
+        assert!(!RangeView::apply_key(
+            &mut scene,
+            Some(TAG),
+            "ArrowRight",
+            pinion_core::Modifiers::empty()
+        ));
         let (low, high) = vals(&scene);
         assert!((low - START_LOW).abs() < 1e-5 && (high - START_HIGH).abs() < 1e-5);
     }
@@ -504,7 +539,10 @@ mod tests {
     fn view_carries_track_and_thumb_tags() {
         let scene = pinion_core::Owner::new().run(|| view(&RangeState::boot(), &Frame::new()));
         assert!(scene.contains_tag(TAG), "track tag painted");
-        assert!(scene.contains_tag(LOW_TAG), "low thumb tag painted (clickable/focusable)");
+        assert!(
+            scene.contains_tag(LOW_TAG),
+            "low thumb tag painted (clickable/focusable)"
+        );
         assert!(scene.contains_tag(HIGH_TAG), "high thumb tag painted");
         assert!(scene.contains_tag("range_status"), "status tag painted");
     }
@@ -532,8 +570,14 @@ mod tests {
                 Some(AccessValue::Float { max: low_max, .. }),
                 Some(AccessValue::Float { min: high_min, .. }),
             ) => {
-                assert!((low_max - START_HIGH).abs() < f32::EPSILON, "low max = high value");
-                assert!((high_min - START_LOW).abs() < f32::EPSILON, "high min = low value");
+                assert!(
+                    (low_max - START_HIGH).abs() < f32::EPSILON,
+                    "low max = high value"
+                );
+                assert!(
+                    (high_min - START_LOW).abs() < f32::EPSILON,
+                    "high min = low value"
+                );
             }
             other => panic!("expected Float values, got {other:?}"),
         }

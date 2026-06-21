@@ -22,12 +22,12 @@
 //! Transport (JSON-RPC 2.0 framing per §5.7) is a separate slice — this
 //! module exposes the typed dispatcher only.
 
-use pinion_core::external::{ExternalIntrospect, IntrospectValue};
 use pinion_core::Scene;
-use serde_json::{json, Value};
+use pinion_core::external::{ExternalIntrospect, IntrospectValue};
+use serde_json::{Value, json};
 
 use crate::path::PathError;
-use crate::resolve::{introspect_at, resolve_external_path, ResolveExternalError};
+use crate::resolve::{ResolveExternalError, introspect_at, resolve_external_path};
 
 /// R825 §5.12 — reserved introspect path that returns an external's
 /// **declared schema** (every queryable path + its type tag) instead of a
@@ -155,9 +155,9 @@ pub fn query(scene: &Scene, raw_path: &str) -> Result<IntrospectValue, QueryErro
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_core::Color;
     use pinion_core::external::{CountedExternal, StubExternal};
     use pinion_core::scene::{BoxNode, ExternalNode, Rect};
-    use pinion_core::Color;
 
     fn counted_scene(n: i64) -> Scene {
         Scene::External(ExternalNode::new(Box::new(CountedExternal::new(n))))
@@ -230,9 +230,8 @@ mod tests {
 
     fn container_with_nested_counted(tag: &'static str, count: i64) -> Scene {
         use pinion_core::scene::{ContainerNode, Rect};
-        let ext = Scene::External(
-            ExternalNode::new(Box::new(CountedExternal::new(count))).with_tag(tag),
-        );
+        let ext =
+            Scene::External(ExternalNode::new(Box::new(CountedExternal::new(count))).with_tag(tag));
         let mut c = ContainerNode::new(vec![ext]);
         c.rect = Rect::new(0, 0, 100, 100);
         Scene::Container(c)
@@ -357,9 +356,7 @@ mod tests {
     fn query_nested_non_external_target_is_no_external_at_path() {
         // Walk lands on a Box (not External) → reject.
         use pinion_core::scene::{BoxNode, ContainerNode, Rect};
-        let child = Scene::Box(
-            BoxNode::filled(Rect::default(), Color::default()).with_tag("info"),
-        );
+        let child = Scene::Box(BoxNode::filled(Rect::default(), Color::default()).with_tag("info"));
         let mut c = ContainerNode::new(vec![child]);
         c.rect = Rect::new(0, 0, 100, 100);
         let scene = Scene::Container(c);
@@ -436,7 +433,10 @@ mod tests {
     impl ImmediateMode for OpaqueDriver {}
 
     fn immediate_root(pos: f64) -> Scene {
-        Scene::ImmediateModeNode(ImmediateModeNode::from_driver(PosDriver { pos }, Rect::default()))
+        Scene::ImmediateModeNode(ImmediateModeNode::from_driver(
+            PosDriver { pos },
+            Rect::default(),
+        ))
     }
 
     #[test]
@@ -451,7 +451,8 @@ mod tests {
     #[test]
     fn immediate_driver_query_via_tagged_descendant() {
         let node = Scene::ImmediateModeNode(
-            ImmediateModeNode::from_driver(PosDriver { pos: 0.25 }, Rect::default()).with_tag("ball"),
+            ImmediateModeNode::from_driver(PosDriver { pos: 0.25 }, Rect::default())
+                .with_tag("ball"),
         );
         let scene = Scene::Container(ContainerNode::new(vec![node]));
         assert_eq!(

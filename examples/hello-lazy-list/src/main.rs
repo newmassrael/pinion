@@ -52,21 +52,21 @@
 //! present rows shift to a higher band that starts as skeletons and resolves to
 //! data. See `tools/demos/r924_lazy_list.py`.
 
-use pinion_a11y::{windowed_list_nodes, AccessNode, WidgetA11y};
+use pinion_a11y::{AccessNode, WidgetA11y, windowed_list_nodes};
 use pinion_core::external::{External, StubExternal};
 use pinion_core::reactive::{DeferredReady, Effect, Owner, ResourceCache, ResourceState};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
-use pinion_core::widgets::virtual_list::{compute_visible_range, pages_in_window, VisibleWindow};
-use pinion_core::{use_local_task_pump, Frame, LocalTaskPump, Scene, WidgetCore};
-use pinion_shell::{vello_renderer_impl, WidgetView};
-use pinion_widget_paint::scrollbar::{view_vertical_scrollbar, VerticalScrollbarStyle};
+use pinion_core::widgets::virtual_list::{VisibleWindow, compute_visible_range, pages_in_window};
+use pinion_core::{Frame, LocalTaskPump, Scene, WidgetCore, use_local_task_pump};
+use pinion_shell::{WidgetView, vello_renderer_impl};
+use pinion_widget_paint::scrollbar::{VerticalScrollbarStyle, view_vertical_scrollbar};
 use pinion_widget_paint::virtual_list::view_virtual_list;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -234,7 +234,11 @@ fn status_line(window: &VisibleWindow, page_states: &PageStates) -> String {
         .any(|p| !matches!(page_states.get(&p), Some(ResourceState::Ready(_))));
     let last = window.first + window.count.saturating_sub(1);
     if loading {
-        format!("Loading rows {}\u{2013}{}\u{2026}", window.first + 1, last + 1)
+        format!(
+            "Loading rows {}\u{2013}{}\u{2026}",
+            window.first + 1,
+            last + 1
+        )
     } else {
         format!("Rows {}\u{2013}{} of {N}", window.first + 1, last + 1)
     }
@@ -249,7 +253,11 @@ fn zebra_fill(index: usize, theme: &Theme) -> pinion_core::style::Color {
 }
 
 /// One row's inner text node, by the visible page's resolved state.
-fn row_text(page_state: Option<&ResourceState<Vec<AssetRow>, String>>, off: usize, theme: &Theme) -> Scene {
+fn row_text(
+    page_state: Option<&ResourceState<Vec<AssetRow>, String>>,
+    off: usize,
+    theme: &Theme,
+) -> Scene {
     let (content, role) = match page_state {
         Some(ResourceState::Ready(rows)) => match rows.get(off) {
             Some(row) => (row_label(row), ColorRole::OnSurface),
@@ -262,7 +270,9 @@ fn row_text(page_state: Option<&ResourceState<Vec<AssetRow>, String>>, off: usiz
     Scene::Text(TextNode::styled(
         content,
         Rect::default(),
-        TextStyle::new().with_size_px(14).with_fg(theme.resolve(role)),
+        TextStyle::new()
+            .with_size_px(14)
+            .with_fg(theme.resolve(role)),
     ))
 }
 
@@ -337,8 +347,12 @@ fn view(_state: (), _frame: &Frame) -> Scene {
     // layout pass wrote into `ScrollState::max_y`), sharing the same `Rc`.
     let scrollbar_style = VerticalScrollbarStyle::material(VIEWPORT_H, SCROLLBAR_TAG);
     let scrollbar_interaction = use_scrollbar_interaction(SCROLLBAR_TAG);
-    let scrollbar_visual =
-        view_vertical_scrollbar(&scroll, &theme, &scrollbar_style, scrollbar_interaction.get());
+    let scrollbar_visual = view_vertical_scrollbar(
+        &scroll,
+        &theme,
+        &scrollbar_style,
+        scrollbar_interaction.get(),
+    );
 
     let list_root = Scene::Container(
         ContainerNode::new(vec![list, scrollbar_visual])
@@ -375,7 +389,10 @@ impl WidgetCore for LazyListView {
         // fetch the initially visible pages) so the data layer is live before
         // the first paint, and the side-effecting fetch never runs in `view`.
         let _loader = install_loader();
-        vec![scrollbar_extra_external(use_scroll_state(SCROLL_KEY), SCROLLBAR_TAG)]
+        vec![scrollbar_extra_external(
+            use_scroll_state(SCROLL_KEY),
+            SCROLLBAR_TAG,
+        )]
     }
 
     fn tag() -> &'static str {
@@ -410,7 +427,12 @@ impl WidgetA11y for LazyListView {
     fn access_node(_state: &(), _focused: Option<&str>) -> Vec<AccessNode> {
         let scroll = use_scroll_state(SCROLL_KEY);
         let window = compute_visible_range(scroll.offset_y(), VIEWPORT_H, N, ROW_PITCH, OVERSCAN);
-        windowed_list_nodes(LIST_TAG, "Asset index", u32::try_from(N).unwrap_or(u32::MAX), &window)
+        windowed_list_nodes(
+            LIST_TAG,
+            "Asset index",
+            u32::try_from(N).unwrap_or(u32::MAX),
+            &window,
+        )
     }
 }
 
@@ -501,7 +523,10 @@ mod tests {
             drain_pump();
             count_row_tags(&view((), &Frame::default()))
         });
-        assert!(rendered < 30, "virtualized: small window, got {rendered} of {N}");
+        assert!(
+            rendered < 30,
+            "virtualized: small window, got {rendered} of {N}"
+        );
         assert!(rendered >= 12, "must cover the 12-row viewport");
     }
 
@@ -521,7 +546,10 @@ mod tests {
             row_text_of(&scene, 0).as_deref(),
             Some("asset_00000.png (Texture, 19 KB)"),
         );
-        assert_eq!(status_text(&scene).as_deref(), Some(format!("Rows 1\u{2013}16 of {N}").as_str()));
+        assert_eq!(
+            status_text(&scene).as_deref(),
+            Some(format!("Rows 1\u{2013}16 of {N}").as_str())
+        );
     }
 
     #[test]
@@ -547,14 +575,20 @@ mod tests {
             // `ScrollState::max_y`; a direct `view()` call skips layout, so set
             // a bound here or `scroll_to` clamps to 0.
             let scroll = use_scroll_state(SCROLL_KEY);
-            scroll.set_max(0, i32::try_from(N).unwrap() * i32::try_from(ROW_PITCH).unwrap());
+            scroll.set_max(
+                0,
+                i32::try_from(N).unwrap() * i32::try_from(ROW_PITCH).unwrap(),
+            );
             // Scroll far down to row ~5000 (page 50). The Effect (subscribed to
             // the scroll offset) fetches the newly-visible page.
             scroll.scroll_to(0, 5000 * i32::try_from(ROW_PITCH).unwrap());
             // Mid-flight: the new page is Loading.
             assert!(page_cache().contains(&50), "page 50 requested on scroll");
             let loading_scene = view((), &Frame::default());
-            assert_eq!(row_text_of(&loading_scene, 5000).as_deref(), Some("Loading\u{2026}"));
+            assert_eq!(
+                row_text_of(&loading_scene, 5000).as_deref(),
+                Some("Loading\u{2026}")
+            );
             drain_pump();
             let scene = view((), &Frame::default());
             // i=5000 → KINDS[5000 % 6 = 2] = Audio/wav; size=(5000*37+11)%900+8=519.
@@ -563,7 +597,10 @@ mod tests {
                 Some("asset_05000.wav (Audio, 519 KB)"),
             );
             // Window advanced: top-of-dataset rows are no longer rendered.
-            assert!(row_text_of(&scene, 0).is_none(), "row 0 outside the window after scroll");
+            assert!(
+                row_text_of(&scene, 0).is_none(),
+                "row 0 outside the window after scroll"
+            );
         });
     }
 
@@ -577,10 +614,7 @@ mod tests {
                 DeferredReady::new(0, Err::<Vec<AssetRow>, String>("boom".to_owned()))
             });
             drain_pump();
-            let states = resolve_visible_pages(
-                &VisibleWindow { first: 0, count: 4 },
-                &cache,
-            );
+            let states = resolve_visible_pages(&VisibleWindow { first: 0, count: 4 }, &cache);
             // Row 0 (page 0) is in the Error arm → "Unavailable".
             let scene = build_row(0, &states, &use_theme(THEME_TAG).theme_animated());
             assert_eq!(
@@ -607,9 +641,20 @@ mod tests {
             LazyListView::access_node(&(), None)
         });
         assert_eq!(nodes[0].role, AriaRole::List);
-        assert_eq!(nodes[0].size_of_set, Some(u32::try_from(N).unwrap()), "aria-setsize=N");
-        assert!(nodes.len() - 1 < 30, "only the rendered window has listitems");
-        assert_eq!(nodes[1].position_in_set, Some(1), "top window starts at posinset 1");
+        assert_eq!(
+            nodes[0].size_of_set,
+            Some(u32::try_from(N).unwrap()),
+            "aria-setsize=N"
+        );
+        assert!(
+            nodes.len() - 1 < 30,
+            "only the rendered window has listitems"
+        );
+        assert_eq!(
+            nodes[1].position_in_set,
+            Some(1),
+            "top window starts at posinset 1"
+        );
         for item in &nodes[1..] {
             assert_eq!(item.role, AriaRole::ListItem);
             assert_eq!(item.size_of_set, Some(u32::try_from(N).unwrap()));
@@ -623,7 +668,10 @@ mod tests {
         let mut states = PageStates::new();
         states.insert(0, ResourceState::Ready(page_rows(0)));
         states.insert(1, ResourceState::Loading);
-        let window = VisibleWindow { first: 96, count: 8 }; // rows 96..103 → pages 0+1
+        let window = VisibleWindow {
+            first: 96,
+            count: 8,
+        }; // rows 96..103 → pages 0+1
         assert!(
             status_line(&window, &states).starts_with("Loading rows"),
             "page 1 still Loading → band is loading",

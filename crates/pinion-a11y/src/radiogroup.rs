@@ -83,9 +83,27 @@ mod tests {
 
     fn cells() -> [RadioCell<'static>; 3] {
         [
-            RadioCell { tag: "g#0", label: Some("One"), state: RadioState::Idle, selected: false, focused: false },
-            RadioCell { tag: "g#1", label: Some("Two"), state: RadioState::Hover, selected: true, focused: true },
-            RadioCell { tag: "g#2", label: None, state: RadioState::Idle, selected: false, focused: false },
+            RadioCell {
+                tag: "g#0",
+                label: Some("One"),
+                state: RadioState::Idle,
+                selected: false,
+                focused: false,
+            },
+            RadioCell {
+                tag: "g#1",
+                label: Some("Two"),
+                state: RadioState::Hover,
+                selected: true,
+                focused: true,
+            },
+            RadioCell {
+                tag: "g#2",
+                label: None,
+                state: RadioState::Idle,
+                selected: false,
+                focused: false,
+            },
         ]
     }
 
@@ -96,7 +114,11 @@ mod tests {
         assert_eq!(nodes.len(), c.len() + 1, "one group + N radios");
         assert_eq!(nodes[0].role, AriaRole::RadioGroup);
         assert_eq!(nodes[0].name.as_deref(), Some("Choice"));
-        assert_eq!(nodes[0].children.len(), c.len(), "group references every radio");
+        assert_eq!(
+            nodes[0].children.len(),
+            c.len(),
+            "group references every radio"
+        );
         for node in &nodes[1..] {
             assert_eq!(node.role, AriaRole::RadioButton);
         }
@@ -114,8 +136,15 @@ mod tests {
     #[test]
     fn explicit_label_set_and_none_left_for_enrichment() {
         let nodes = radiogroup_radio_nodes("g", "Choice", &cells());
-        assert_eq!(nodes[1].name.as_deref(), Some("One"), "explicit label applied");
-        assert!(nodes[3].name.is_none(), "None label left for name-from-contents");
+        assert_eq!(
+            nodes[1].name.as_deref(),
+            Some("One"),
+            "explicit label applied"
+        );
+        assert!(
+            nodes[3].name.is_none(),
+            "None label left for name-from-contents"
+        );
     }
 
     #[test]

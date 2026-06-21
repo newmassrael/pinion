@@ -134,8 +134,7 @@ fn build_initial_scene() -> Scene {
         // the visible colour tracks the External's state without
         // needing per-frame BoxStyle mutation.
         Scene::Box(
-            BoxNode::filled(Rect::new(60, 200, 520, 100), palette_color(0))
-                .with_tag("info_panel"),
+            BoxNode::filled(Rect::new(60, 200, 520, 100), palette_color(0)).with_tag("info_panel"),
         ),
         // counter: invisible ExternalNode the RPC layer addresses as
         // `/counter/external/count`. Zero-rect because the demo does
@@ -252,10 +251,9 @@ impl App {
     fn refresh_overlays(&mut self) {
         let taken = std::mem::replace(&mut self.scene, Scene::Effect(EffectNode::new()));
         let cleared = clear_highlights(taken);
-        let with_locate = self
-            .locate_highlights
-            .iter()
-            .fold(cleared, |s, path| inject_highlight(s, path, HighlightStyle::default()));
+        let with_locate = self.locate_highlights.iter().fold(cleared, |s, path| {
+            inject_highlight(s, path, HighlightStyle::default())
+        });
         let with_preview = if self.last_preview.is_some() {
             inject_highlight(with_locate, "info_panel", PENDING_HIGHLIGHT)
         } else {
@@ -374,9 +372,7 @@ impl App {
             return;
         };
         let removed = cancel_preview(&self.ledger, id);
-        println!(
-            "→ scene/cancel_preview\n  preview_id: {id}\n  removed: {removed}"
-        );
+        println!("→ scene/cancel_preview\n  preview_id: {id}\n  removed: {removed}");
         self.last_preview = None;
         self.refresh_overlays();
         self.request_redraw();
@@ -452,7 +448,9 @@ impl App {
     /// piece: the palette-indexed fill for the `info_panel` tag.
     /// R46.3.4 — render is a no-op while the app is suspended.
     fn render(&mut self) {
-        let RenderState::Active { renderer, .. } = &mut self.state else { return };
+        let RenderState::Active { renderer, .. } = &mut self.state else {
+            return;
+        };
         self.vello_scene.reset();
         let count = read_count(&self.scene);
         let base = paint_adapter::root_background(&self.scene);
@@ -528,9 +526,7 @@ impl ApplicationHandler for App {
             window,
             renderer: Box::new(renderer),
         };
-        println!(
-            "R46.3.4 §5.16 Vello dogfood — §5.32 locate + §5.33 overlay + §5.34 lifecycle"
-        );
+        println!("R46.3.4 §5.16 Vello dogfood — §5.32 locate + §5.33 overlay + §5.34 lifecycle");
         println!("  right-click: locate + red highlight");
         println!("  left-click / Esc: clear highlights (Esc×2 exits)");
         println!("  R: print scene tree");

@@ -79,7 +79,7 @@
 //! wall-clock race — `wait_snap` on the skeleton is guaranteed to catch it
 //! before the children resolve (same discipline as the R923 deferred demo).
 
-use pinion_a11y::{tree_access_nodes, tree_row_tag, AccessFocus, AccessNode, AriaRole, WidgetA11y};
+use pinion_a11y::{AccessFocus, AccessNode, AriaRole, WidgetA11y, tree_access_nodes, tree_row_tag};
 use pinion_core::command::Command;
 use pinion_core::external::{External, IntrospectValue, StubExternal};
 use pinion_core::intent::Intent;
@@ -89,20 +89,20 @@ use pinion_core::scene::{ContainerNode, Rect, TextNode, TextRole};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
-use pinion_core::widgets::scroll::{use_scroll_state, ScrollState};
+use pinion_core::widgets::scroll::{ScrollState, use_scroll_state};
 use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
 use pinion_core::widgets::tree_nav::{
-    resolve_tree_key, tree_view_introspection_extra, TreeKey, VisibleRow,
+    TreeKey, VisibleRow, resolve_tree_key, tree_view_introspection_extra,
 };
 use pinion_core::widgets::virtual_list::{compute_visible_range, scroll_offset_to_reveal};
-use pinion_core::{use_local_task_pump, Frame, LocalTaskPump, Scene, Signal, WidgetCore};
+use pinion_core::{Frame, LocalTaskPump, Scene, Signal, WidgetCore, use_local_task_pump};
 use pinion_shell::typeahead::tree_typeahead_jump;
-use pinion_shell::{vello_renderer_impl, SizeStrategy, WidgetView};
+use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
 use pinion_widget_paint::glyph::{DISCLOSURE_COLLAPSED, DISCLOSURE_EXPANDED};
-use pinion_widget_paint::scrollbar::{view_vertical_scrollbar, VerticalScrollbarStyle};
-use pinion_widget_paint::tree_view::{row_focus_bg, TreeRowClickExternal, TreeViewStyle};
+use pinion_widget_paint::scrollbar::{VerticalScrollbarStyle, view_vertical_scrollbar};
+use pinion_widget_paint::tree_view::{TreeRowClickExternal, TreeViewStyle, row_focus_bg};
 use pinion_widget_paint::virtual_list::view_flex_virtual_list;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap};
@@ -190,8 +190,14 @@ const LOADING_LABEL: &str = "Loading\u{2026}";
 /// Conceptual label of the synthetic root, used in the boot status line.
 const ROOT_LABEL: &str = "assets";
 
-const FOLDER_WORDS: [&str; 6] =
-    ["Scenes", "Models", "Textures", "Materials", "Audio", "Prefabs"];
+const FOLDER_WORDS: [&str; 6] = [
+    "Scenes",
+    "Models",
+    "Textures",
+    "Materials",
+    "Audio",
+    "Prefabs",
+];
 const FILE_WORDS: [&str; 6] = ["mesh", "albedo", "normal", "clip", "shader", "rig"];
 const FILE_EXT: [&str; 6] = ["scene", "fbx", "png", "wav", "wgsl", "anim"];
 
@@ -288,7 +294,11 @@ fn child_nodes(parent_id: &str) -> Vec<LazyChild> {
             };
             let is_branch = id_is_branch(&id);
             let label = node_label(parent_id, index, is_branch);
-            LazyChild { id, label, is_branch }
+            LazyChild {
+                id,
+                label,
+                is_branch,
+            }
         })
         .collect()
 }
@@ -537,9 +547,10 @@ fn row_cells(
     let indent_px = depth * style.indent_step;
     if indent_px > 0 {
         // Presentational depth-indent spacer (no tag → AT-invisible).
-        cells.push(Scene::Container(ContainerNode::new(Vec::new()).with_layout(
-            LayoutStyle::new().with_size(Size::px(indent_px, style.row_height)),
-        )));
+        cells.push(Scene::Container(
+            ContainerNode::new(Vec::new())
+                .with_layout(LayoutStyle::new().with_size(Size::px(indent_px, style.row_height))),
+        ));
     }
     // Fixed-width glyph column so leaf rows (narrow placeholder) and branch
     // rows (triangle) line up their labels; presentational so the row's AT
@@ -554,13 +565,15 @@ fn row_cells(
         )
         .with_role(TextRole::Presentational),
     );
-    cells.push(Scene::Container(ContainerNode::new(vec![glyph_node]).with_layout(
-        LayoutStyle::new()
-            .flex(FlexDirection::Row)
-            .with_align_items(AlignItems::Center)
-            .with_justify(JustifyContent::Center)
-            .with_size(Size::px(style.glyph_size_px, style.row_height)),
-    )));
+    cells.push(Scene::Container(
+        ContainerNode::new(vec![glyph_node]).with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Row)
+                .with_align_items(AlignItems::Center)
+                .with_justify(JustifyContent::Center)
+                .with_size(Size::px(style.glyph_size_px, style.row_height)),
+        ),
+    ));
     cells.push(Scene::Text(TextNode::styled(
         label,
         Rect::default(),
@@ -694,8 +707,12 @@ fn view(_state: (), _frame: &Frame) -> Scene {
     let (_, measured_h) = scroll.measured_viewport();
     let scrollbar_style = VerticalScrollbarStyle::material(measured_h, SCROLLBAR_TAG);
     let scrollbar_interaction = use_scrollbar_interaction(SCROLLBAR_TAG);
-    let scrollbar_visual =
-        view_vertical_scrollbar(&scroll, &theme, &scrollbar_style, scrollbar_interaction.get());
+    let scrollbar_visual = view_vertical_scrollbar(
+        &scroll,
+        &theme,
+        &scrollbar_style,
+        scrollbar_interaction.get(),
+    );
 
     // Row band: the windowed tree beside its scrollbar peer, flex-grow so it
     // fills the window below the title + status. The measured-viewport
@@ -778,7 +795,12 @@ fn apply_key_impl(key: &str) -> bool {
             // R946 — keyboard ⊥ virtualization: a roving move may target a row
             // outside the rendered window; scroll it in so the cursor (and its
             // `aria-activedescendant`) stays realized.
-            reveal_lazy_cursor(&all, cursor.get().as_deref(), &use_scroll_state(SCROLL_KEY), tree_pitch());
+            reveal_lazy_cursor(
+                &all,
+                cursor.get().as_deref(),
+                &use_scroll_state(SCROLL_KEY),
+                tree_pitch(),
+            );
             true
         }
         TreeKey::Expand(id) => {
@@ -975,8 +997,13 @@ impl WidgetA11y for LazyTreeView {
         let cursor = effective_cursor(&node_rows(&all), &use_cursor());
         let scroll = use_scroll_state(SCROLL_KEY);
         let (_, measured_h) = scroll.measured_viewport();
-        let window =
-            compute_visible_range(scroll.offset_y(), measured_h, all.len(), tree_pitch(), OVERSCAN);
+        let window = compute_visible_range(
+            scroll.offset_y(),
+            measured_h,
+            all.len(),
+            tree_pitch(),
+            OVERSCAN,
+        );
         let windowed: Vec<VisibleRow> = all[window.first..window.first + window.count]
             .iter()
             .filter_map(|r| match r {
@@ -1006,7 +1033,10 @@ impl WidgetA11y for LazyTreeView {
         if focused == Some(ROOT_TAG) {
             let rows = node_rows(&compute_rows(&use_expanded(), &use_children_cache()));
             if let Some(cursor) = effective_cursor(&rows, &use_cursor()) {
-                return Some(AccessFocus::composite(ROOT_TAG, tree_row_tag(ROW_PREFIX, &cursor)));
+                return Some(AccessFocus::composite(
+                    ROOT_TAG,
+                    tree_row_tag(ROW_PREFIX, &cursor),
+                ));
             }
         }
         focused.map(AccessFocus::atomic)
@@ -1067,7 +1097,11 @@ mod tests {
         assert!(!id_is_branch("0/0/0/0"), "depth-3 node is a leaf");
         // child_nodes stamps is_branch from the same SSOT.
         for child in child_nodes("0") {
-            assert_eq!(child.is_branch, id_is_branch(&child.id), "stamp matches SSOT");
+            assert_eq!(
+                child.is_branch,
+                id_is_branch(&child.id),
+                "stamp matches SSOT"
+            );
         }
     }
 
@@ -1079,8 +1113,14 @@ mod tests {
             // Before the pump drains, the root is Loading → one skeleton, no
             // loaded rows.
             let pending = rows_now();
-            assert!(any_skeleton(&pending), "root loads behind a skeleton at boot");
-            assert!(node_rows(&pending).is_empty(), "no loaded rows while root loads");
+            assert!(
+                any_skeleton(&pending),
+                "root loads behind a skeleton at boot"
+            );
+            assert!(
+                node_rows(&pending).is_empty(),
+                "no loaded rows while root loads"
+            );
 
             drain_pump();
             let ready = rows_now();
@@ -1204,26 +1244,53 @@ mod tests {
             // expand-set the click path drives → the fetch-on-expand Effect
             // fires, so the children load behind a skeleton.
             assert!(apply_key_impl("ArrowRight"), "ArrowRight is a nav key");
-            assert!(use_expanded().get().contains("0"), "branch added to expand set");
-            assert!(any_skeleton(&rows_now()), "keyboard expand shows the loading skeleton");
-            assert_eq!(cursor_now().as_deref(), Some("0"), "cursor stays on the branch");
+            assert!(
+                use_expanded().get().contains("0"),
+                "branch added to expand set"
+            );
+            assert!(
+                any_skeleton(&rows_now()),
+                "keyboard expand shows the loading skeleton"
+            );
+            assert_eq!(
+                cursor_now().as_deref(),
+                Some("0"),
+                "cursor stays on the branch"
+            );
 
             drain_pump();
-            assert!(!any_skeleton(&rows_now()), "children resolved → skeleton gone");
-            assert!(visible_ids().iter().any(|id| id == "0/0"), "children lazy-loaded");
+            assert!(
+                !any_skeleton(&rows_now()),
+                "children resolved → skeleton gone"
+            );
+            assert!(
+                visible_ids().iter().any(|id| id == "0/0"),
+                "children lazy-loaded"
+            );
 
             // Arrow Right again (now expanded) descends to the first child.
             apply_key_impl("ArrowRight");
-            assert_eq!(cursor_now().as_deref(), Some("0/0"), "descends to first child");
+            assert_eq!(
+                cursor_now().as_deref(),
+                Some("0/0"),
+                "descends to first child"
+            );
 
             // Arrow Left on the expanded child's branch collapses; here the
             // child "0/0" is itself a branch but collapsed, so Arrow Left
             // ascends to its parent "0".
             apply_key_impl("ArrowLeft");
-            assert_eq!(cursor_now().as_deref(), Some("0"), "ArrowLeft ascends to parent");
+            assert_eq!(
+                cursor_now().as_deref(),
+                Some("0"),
+                "ArrowLeft ascends to parent"
+            );
             // Arrow Left on the expanded parent collapses it.
             apply_key_impl("ArrowLeft");
-            assert!(!use_expanded().get().contains("0"), "ArrowLeft collapses the branch");
+            assert!(
+                !use_expanded().get().contains("0"),
+                "ArrowLeft collapses the branch"
+            );
             assert!(
                 !visible_ids().iter().any(|id| id.starts_with("0/")),
                 "collapsed branch hides its children",
@@ -1254,7 +1321,11 @@ mod tests {
             // Once the children resolve, ArrowRight descends to the first child.
             drain_pump();
             apply_key_impl("ArrowRight");
-            assert_eq!(cursor_now().as_deref(), Some("0/0"), "descends once children load");
+            assert_eq!(
+                cursor_now().as_deref(),
+                Some("0/0"),
+                "descends once children load"
+            );
         });
     }
 
@@ -1266,10 +1337,16 @@ mod tests {
             drain_pump();
             apply_key_impl("ArrowDown"); // cursor → "0"
             apply_key_impl("Enter"); // toggle expand
-            assert!(use_expanded().get().contains("0"), "Enter expands the branch");
+            assert!(
+                use_expanded().get().contains("0"),
+                "Enter expands the branch"
+            );
             drain_pump();
             apply_key_impl("Space"); // toggle collapse
-            assert!(!use_expanded().get().contains("0"), "Space collapses the branch");
+            assert!(
+                !use_expanded().get().contains("0"),
+                "Space collapses the branch"
+            );
         });
     }
 
@@ -1287,16 +1364,27 @@ mod tests {
 
             // A click-path collapse of the ancestor hides the cursor's row.
             toggle_expanded(&use_expanded(), "0");
-            assert!(!visible_ids().iter().any(|id| id == "0/0"), "child row hidden");
+            assert!(
+                !visible_ids().iter().any(|id| id == "0/0"),
+                "child row hidden"
+            );
             // The raw cursor is unchanged, but the gated cursor is None — so the
             // paint highlight + aria-activedescendant never dangle.
             assert_eq!(cursor_now().as_deref(), Some("0/0"), "raw cursor unchanged");
-            assert_eq!(effective_cursor_now(), None, "gated cursor reanchors to none");
+            assert_eq!(
+                effective_cursor_now(),
+                None,
+                "gated cursor reanchors to none"
+            );
 
             // The next vertical key restarts navigation at the first row (the
             // resolver treats an off-list cursor as no current row).
             apply_key_impl("ArrowDown");
-            assert_eq!(cursor_now().as_deref(), Some("0"), "self-heals to first row");
+            assert_eq!(
+                cursor_now().as_deref(),
+                Some("0"),
+                "self-heals to first row"
+            );
         });
     }
 
@@ -1310,15 +1398,31 @@ mod tests {
             // The trait gate: a key while a sibling (or nothing) holds focus
             // must not navigate (routing ⊥ focus); the focused branch is the
             // demo's end-to-end coverage of the same gate via `focus/set`.
-            let handled =
-                LazyTreeView::apply_key(&mut scene, None, "ArrowDown", pinion_core::Modifiers::default());
+            let handled = LazyTreeView::apply_key(
+                &mut scene,
+                None,
+                "ArrowDown",
+                pinion_core::Modifiers::default(),
+            );
             assert!(!handled, "no focus → key not handled");
-            assert_eq!(cursor_now(), None, "an unfocused key leaves the cursor untouched");
+            assert_eq!(
+                cursor_now(),
+                None,
+                "an unfocused key leaves the cursor untouched"
+            );
 
-            let handled =
-                LazyTreeView::apply_key(&mut scene, Some(ROOT_TAG), "ArrowDown", pinion_core::Modifiers::default());
+            let handled = LazyTreeView::apply_key(
+                &mut scene,
+                Some(ROOT_TAG),
+                "ArrowDown",
+                pinion_core::Modifiers::default(),
+            );
             assert!(handled, "focus on the tree root → the key navigates");
-            assert_eq!(cursor_now().as_deref(), Some("0"), "focused key lands on the first row");
+            assert_eq!(
+                cursor_now().as_deref(),
+                Some("0"),
+                "focused key lands on the first row"
+            );
         });
     }
 
@@ -1357,7 +1461,10 @@ mod tests {
             // A ~10-row window over the large folder.
             use_scroll_state(SCROLL_KEY).set_measured_viewport(WIN_W, 10 * tree_pitch());
             let nodes = LazyTreeView::access_node(&(), None);
-            let treeitems = nodes.iter().filter(|n| n.role == AriaRole::TreeItem).count();
+            let treeitems = nodes
+                .iter()
+                .filter(|n| n.role == AriaRole::TreeItem)
+                .count();
             assert!(treeitems > 0, "some treeitems exposed");
             assert!(
                 treeitems < 32,
@@ -1367,12 +1474,18 @@ mod tests {
             // flatten (posinset/setsize correct even when the window cuts a
             // sibling group).
             for item in nodes.iter().filter(|n| n.role == AriaRole::TreeItem) {
-                assert!(item.position_in_set.is_some(), "treeitem carries aria-posinset");
+                assert!(
+                    item.position_in_set.is_some(),
+                    "treeitem carries aria-posinset"
+                );
                 assert!(item.size_of_set.is_some(), "treeitem carries aria-setsize");
             }
             // The introspection surface reads the FULL flattening (`node_rows`),
             // not the window — the AI-omniscient structure.
-            assert!(loaded > treeitems, "query sees the whole tree, AT sees the window");
+            assert!(
+                loaded > treeitems,
+                "query sees the whole tree, AT sees the window"
+            );
         });
     }
 
@@ -1409,7 +1522,8 @@ mod tests {
                 .position(|r| matches!(r, LazyRow::Node(vr) if vr.id == cursor))
                 .expect("cursor row in the flatten");
             let (_, mh) = scroll.measured_viewport();
-            let window = compute_visible_range(scroll.offset_y(), mh, all.len(), tree_pitch(), OVERSCAN);
+            let window =
+                compute_visible_range(scroll.offset_y(), mh, all.len(), tree_pitch(), OVERSCAN);
             assert!(
                 idx >= window.first && idx < window.first + window.count,
                 "cursor row {idx} stays within the revealed window {window:?}",

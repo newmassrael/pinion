@@ -73,7 +73,12 @@ fn lower_item(item: &TrayMenuItem) -> ksni::MenuItem<SniState> {
             }
             .into()
         }
-        TrayMenuItem::Check { id, label, checked, enabled } => {
+        TrayMenuItem::Check {
+            id,
+            label,
+            checked,
+            enabled,
+        } => {
             let id = id.clone();
             ksni::menu::CheckmarkItem {
                 label: label.clone(),
@@ -112,7 +117,10 @@ impl ksni::Tray for SniState {
     }
 
     fn tool_tip(&self) -> ksni::ToolTip {
-        ksni::ToolTip { title: self.model.tooltip.clone(), ..Default::default() }
+        ksni::ToolTip {
+            title: self.model.tooltip.clone(),
+            ..Default::default()
+        }
     }
 
     fn activate(&mut self, _x: i32, _y: i32) {
@@ -148,8 +156,13 @@ impl SniTrayBackend {
     /// session bus is reachable).
     pub fn new(initial: &TrayModel) -> Result<Self, TrayError> {
         let events: EventSink = Arc::new(Mutex::new(Vec::new()));
-        let state = SniState { model: initial.clone(), events: Arc::clone(&events) };
-        let handle = state.spawn().map_err(|e| TrayError::Backend(e.to_string()))?;
+        let state = SniState {
+            model: initial.clone(),
+            events: Arc::clone(&events),
+        };
+        let handle = state
+            .spawn()
+            .map_err(|e| TrayError::Backend(e.to_string()))?;
         Ok(Self { handle, events })
     }
 }
@@ -177,13 +190,19 @@ impl TrayBackend for SniTrayBackend {
         // SNI item itself is always registered while the service is alive, so
         // a live publish never reports `Unavailable` (that is the watcher's
         // business, read via `is_available`).
-        match self.handle.update(move |state: &mut SniState| state.model = next.clone()) {
+        match self
+            .handle
+            .update(move |state: &mut SniState| state.model = next.clone())
+        {
             Some(()) => Ok(()),
             None => Err(TrayError::Backend("tray service has shut down".to_owned())),
         }
     }
 
     fn poll_events(&self) -> Vec<TrayEvent> {
-        self.events.lock().map(|mut q| std::mem::take(&mut *q)).unwrap_or_default()
+        self.events
+            .lock()
+            .map(|mut q| std::mem::take(&mut *q))
+            .unwrap_or_default()
     }
 }

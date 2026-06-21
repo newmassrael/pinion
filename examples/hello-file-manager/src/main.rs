@@ -52,20 +52,20 @@
 //! `pinion-platform-storage`.
 
 use pinion_a11y::{
-    windowed_list_nodes_selected, AccessAction, AccessFocus, AccessNode, AriaRole, WidgetA11y,
+    AccessAction, AccessFocus, AccessNode, AriaRole, WidgetA11y, windowed_list_nodes_selected,
 };
 use pinion_core::directory::{Directory, InMemoryDirectory};
 use pinion_core::external::{External, IntrospectValue};
-use pinion_core::reactive::{batch, Owner, Signal};
+use pinion_core::reactive::{Owner, Signal, batch};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{AlignItems, BoxStyle, FlexDirection, LayoutStyle, Size, TextStyle};
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::aria::apply_aria_activate;
 use pinion_core::widgets::button::{ButtonExternal, ButtonState};
 use pinion_core::widgets::caret_blink::use_caret_blink;
 use pinion_core::widgets::file_browser::{
-    dir_nav_key, use_directory_state, DirectoryExternal, DirectoryState,
+    DirectoryExternal, DirectoryState, dir_nav_key, use_directory_state,
 };
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::text_edit::use_text_edit_state;
@@ -73,13 +73,13 @@ use pinion_core::widgets::text_field::{TextFieldExternal, TextFieldState};
 use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::{DirEntry, Frame, Scene, WidgetCore};
 use pinion_platform_clipboard::use_app_clipboard;
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_text::CaretRect;
 use pinion_widget_paint::button::{
-    button_a11y_state, button_scene, read_button_focused, read_button_state, ButtonColors,
-    ButtonStyle,
+    ButtonColors, ButtonStyle, button_a11y_state, button_scene, read_button_focused,
+    read_button_state,
 };
-use pinion_widget_paint::file_browser::{file_browser_pane, EditingRow, FileBrowserMetrics};
+use pinion_widget_paint::file_browser::{EditingRow, FileBrowserMetrics, file_browser_pane};
 use pinion_widget_paint::text_field as tf_paint;
 use std::rc::Rc;
 
@@ -127,7 +127,12 @@ fn seed_directory() -> Rc<dyn Directory> {
     let d = InMemoryDirectory::new();
     d.insert(
         "/proj",
-        vec![DirEntry::dir("src"), DirEntry::dir("assets"), DirEntry::file("Cargo.toml"), DirEntry::file("README.md")],
+        vec![
+            DirEntry::dir("src"),
+            DirEntry::dir("assets"),
+            DirEntry::file("Cargo.toml"),
+            DirEntry::file("README.md"),
+        ],
     );
     // `src` carries more rows than the 9-row list viewport so keyboard
     // navigation (End / PageDown) scrolls a never-materialized row into view
@@ -240,29 +245,56 @@ fn toolbar_button(
         focused,
         hover_key,
         &ButtonColors::filled_tonal(theme),
-        &ButtonStyle::m3_default(tag).with_size(Size::px(BTN_W, BTN_H)).with_label_font_size_px(14).with_focusable(true),
+        &ButtonStyle::m3_default(tag)
+            .with_size(Size::px(BTN_W, BTN_H))
+            .with_label_font_size_px(14)
+            .with_focusable(true),
     )
 }
 
 /// The rename field's paint style — the M3 filled `TextField` sized to fill
 /// the list row it replaces (`width` × `pitch` from the pane).
 fn rename_field_style(width: u32, pitch: u32) -> tf_paint::TextFieldStyle {
-    tf_paint::TextFieldStyle { field_w: width, field_h: pitch, ..tf_paint::TextFieldStyle::m3_filled() }
+    tf_paint::TextFieldStyle {
+        field_w: width,
+        field_h: pitch,
+        ..tf_paint::TextFieldStyle::m3_filled()
+    }
 }
 
 /// Cached posture for the paint fn: `[newdir, newfile, rename, delete]`
 /// states + focus flags, then the rename field's interaction + caret.
-type FmViewState =
-    (ButtonState, ButtonState, ButtonState, ButtonState, [bool; 4], TextFieldState, u32);
+type FmViewState = (
+    ButtonState,
+    ButtonState,
+    ButtonState,
+    ButtonState,
+    [bool; 4],
+    TextFieldState,
+    u32,
+);
 
 /// view-fn (§6.3): pure sync mapping `(postures) -> Scene`, reading the
 /// shared [`DirectoryState`] + the `renaming` flag so a create / delete /
 /// rename / navigate / edit-toggle repaints.
-#[allow(clippy::trivially_copy_pass_by_ref)]
+// R1026 — rustfmt's reflow pushed this example view past too_many_lines (100).
+#[allow(clippy::trivially_copy_pass_by_ref, clippy::too_many_lines)]
 fn view(state: FmViewState, _frame: &Frame) -> Scene {
-    let (newdir_state, newfile_state, rename_state_btn, delete_state, focus, tf_interaction, tf_caret) =
-        state;
-    let [newdir_focused, newfile_focused, rename_focused, delete_focused] = focus;
+    let (
+        newdir_state,
+        newfile_state,
+        rename_state_btn,
+        delete_state,
+        focus,
+        tf_interaction,
+        tf_caret,
+    ) = state;
+    let [
+        newdir_focused,
+        newfile_focused,
+        rename_focused,
+        delete_focused,
+    ] = focus;
     let theme = use_theme(THEME_TAG).theme_animated();
     let dir = directory();
     let scroll = use_scroll_state(SCROLL_KEY);
@@ -271,17 +303,58 @@ fn view(state: FmViewState, _frame: &Frame) -> Scene {
     let item_count = dir.entries().len();
 
     // ── toolbar ──────────────────────────────────────────────────
-    let newdir = toolbar_button(NEWDIR_TAG, "New Folder", newdir_state, newdir_focused, NEWDIR_HOVER_KEY, &theme);
-    let newfile = toolbar_button(NEWFILE_TAG, "New File", newfile_state, newfile_focused, NEWFILE_HOVER_KEY, &theme);
+    let newdir = toolbar_button(
+        NEWDIR_TAG,
+        "New Folder",
+        newdir_state,
+        newdir_focused,
+        NEWDIR_HOVER_KEY,
+        &theme,
+    );
+    let newfile = toolbar_button(
+        NEWFILE_TAG,
+        "New File",
+        newfile_state,
+        newfile_focused,
+        NEWFILE_HOVER_KEY,
+        &theme,
+    );
     // Rename + Delete gated on a selection (the R788 OK-gate pattern).
-    let rename_posture = if has_selection { rename_state_btn } else { ButtonState::Disabled };
-    let rename_btn = toolbar_button(RENAME_TAG, "Rename", rename_posture, rename_focused, RENAME_HOVER_KEY, &theme);
-    let delete_posture = if has_selection { delete_state } else { ButtonState::Disabled };
-    let delete = toolbar_button(DELETE_TAG, "Delete", delete_posture, delete_focused, DELETE_HOVER_KEY, &theme);
+    let rename_posture = if has_selection {
+        rename_state_btn
+    } else {
+        ButtonState::Disabled
+    };
+    let rename_btn = toolbar_button(
+        RENAME_TAG,
+        "Rename",
+        rename_posture,
+        rename_focused,
+        RENAME_HOVER_KEY,
+        &theme,
+    );
+    let delete_posture = if has_selection {
+        delete_state
+    } else {
+        ButtonState::Disabled
+    };
+    let delete = toolbar_button(
+        DELETE_TAG,
+        "Delete",
+        delete_posture,
+        delete_focused,
+        DELETE_HOVER_KEY,
+        &theme,
+    );
     let toolbar = Scene::Container(
         ContainerNode::new(vec![newdir, newfile, rename_btn, delete])
             .with_tag("fm_toolbar")
-            .with_layout(LayoutStyle::new().flex(FlexDirection::Row).with_align_items(AlignItems::Center).with_gap(6)),
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Row)
+                    .with_align_items(AlignItems::Center)
+                    .with_gap(6),
+            ),
     );
 
     // ── the file-browser pane, with the editing row when renaming ──
@@ -297,13 +370,22 @@ fn view(state: FmViewState, _frame: &Frame) -> Scene {
             "Rename",
         )
     };
-    let editing = editing_index.map(|index| EditingRow { index, build: &build_field });
+    let editing = editing_index.map(|index| EditingRow {
+        index,
+        build: &build_field,
+    });
     let pane = file_browser_pane(
         DIR_TAG,
         &dir,
         &scroll,
         &theme,
-        FileBrowserMetrics { list_width: LIST_W, list_height: LIST_H, row_pitch: ROW_PITCH, overscan: OVERSCAN, focusable: true },
+        FileBrowserMetrics {
+            list_width: LIST_W,
+            list_height: LIST_H,
+            row_pitch: ROW_PITCH,
+            overscan: OVERSCAN,
+            focusable: true,
+        },
         editing,
     );
 
@@ -315,7 +397,9 @@ fn view(state: FmViewState, _frame: &Frame) -> Scene {
                 None => format!("{item_count} items"),
             },
             Rect::default(),
-            TextStyle::new().with_size_px(14).with_fg(theme.resolve(ColorRole::OnSurface)),
+            TextStyle::new()
+                .with_size_px(14)
+                .with_fg(theme.resolve(ColorRole::OnSurface)),
         )
         .with_tag("fm_status"),
     );
@@ -324,7 +408,10 @@ fn view(state: FmViewState, _frame: &Frame) -> Scene {
         ContainerNode::new(vec![toolbar, pane, status])
             .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
             .with_layout(
-                LayoutStyle::new().flex(FlexDirection::Column).with_gap(8).with_padding(Rect::new(12, 12, 12, 12)),
+                LayoutStyle::new()
+                    .flex(FlexDirection::Column)
+                    .with_gap(8)
+                    .with_padding(Rect::new(12, 12, 12, 12)),
             ),
     )
 }
@@ -422,7 +509,9 @@ impl WidgetCore for FileManagerView {
                     cancel_rename();
                     return true;
                 }
-                _ => return pinion_core::forward_key_to_field(scene, RENAME_TF_TAG, key, modifiers),
+                _ => {
+                    return pinion_core::forward_key_to_field(scene, RENAME_TF_TAG, key, modifiers);
+                }
             }
         }
         // R792 — while the file list owns focus, arrows move the roving
@@ -430,7 +519,14 @@ impl WidgetCore for FileManagerView {
         // (navigate a folder / pick a file). The `dir_nav_key` controller
         // reuses the shared `clamp_nav` policy + scroll-into-view.
         if focused == Some(DIR_TAG) {
-            return dir_nav_key(&directory(), &use_scroll_state(SCROLL_KEY), focused, DIR_TAG, key, ROW_PITCH);
+            return dir_nav_key(
+                &directory(),
+                &use_scroll_state(SCROLL_KEY),
+                focused,
+                DIR_TAG,
+                key,
+                ROW_PITCH,
+            );
         }
         apply_aria_activate(scene, focused, key, NEWDIR_TAG)
             || apply_aria_activate(scene, focused, key, NEWFILE_TAG)
@@ -489,7 +585,10 @@ impl WidgetCore for FileManagerView {
     }
 
     fn fmt_state_log(state: &FmViewState) -> String {
-        format!("newdir={:?} newfile={:?} rename={:?} delete={:?}", state.0, state.1, state.2, state.3)
+        format!(
+            "newdir={:?} newfile={:?} rename={:?} delete={:?}",
+            state.0, state.1, state.2, state.3
+        )
     }
 }
 
@@ -507,17 +606,29 @@ impl WidgetA11y for FileManagerView {
         let renaming = use_renaming().get();
         let window = compute_visible_range(scroll.offset_y(), LIST_H, count, ROW_PITCH, OVERSCAN);
 
-        let rename_posture = if has_selection { state.2 } else { ButtonState::Disabled };
-        let delete_posture = if has_selection { state.3 } else { ButtonState::Disabled };
+        let rename_posture = if has_selection {
+            state.2
+        } else {
+            ButtonState::Disabled
+        };
+        let delete_posture = if has_selection {
+            state.3
+        } else {
+            ButtonState::Disabled
+        };
         let mut nodes = vec![
             AccessNode::new(NEWDIR_TAG, AriaRole::Button)
                 .with_state(button_a11y_state(state.0, focused == Some(NEWDIR_TAG))),
             AccessNode::new(NEWFILE_TAG, AriaRole::Button)
                 .with_state(button_a11y_state(state.1, focused == Some(NEWFILE_TAG))),
-            AccessNode::new(RENAME_TAG, AriaRole::Button)
-                .with_state(button_a11y_state(rename_posture, focused == Some(RENAME_TAG))),
-            AccessNode::new(DELETE_TAG, AriaRole::Button)
-                .with_state(button_a11y_state(delete_posture, focused == Some(DELETE_TAG))),
+            AccessNode::new(RENAME_TAG, AriaRole::Button).with_state(button_a11y_state(
+                rename_posture,
+                focused == Some(RENAME_TAG),
+            )),
+            AccessNode::new(DELETE_TAG, AriaRole::Button).with_state(button_a11y_state(
+                delete_posture,
+                focused == Some(DELETE_TAG),
+            )),
         ];
         nodes.extend(windowed_list_nodes_selected(
             DIR_TAG,
@@ -559,7 +670,10 @@ impl WidgetA11y for FileManagerView {
         let _ = state;
         if focused == Some(DIR_TAG) {
             if let Some(cursor) = directory().cursor() {
-                return Some(AccessFocus::composite(DIR_TAG, format!("{DIR_TAG}#{cursor}")));
+                return Some(AccessFocus::composite(
+                    DIR_TAG,
+                    format!("{DIR_TAG}#{cursor}"),
+                ));
             }
         }
         focused.map(AccessFocus::atomic)
@@ -590,7 +704,10 @@ impl WidgetA11y for FileManagerView {
             return false;
         };
         intro
-            .invoke("send", IntrospectValue::Text(format!("{sub_tag}:KeyboardActivate")))
+            .invoke(
+                "send",
+                IntrospectValue::Text(format!("{sub_tag}:KeyboardActivate")),
+            )
             .is_ok()
     }
 }
@@ -599,7 +716,10 @@ impl WidgetView for FileManagerView {
     type Renderer = HelloFileManagerRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 
     /// R791 §5.13 — publish the rename field's caret rect to the platform
@@ -648,7 +768,10 @@ mod tests {
     }
 
     fn intent(tag: &str) -> pinion_core::Intent {
-        pinion_core::Intent::new_owned(tag.to_string(), pinion_core::external::IntrospectValue::Null)
+        pinion_core::Intent::new_owned(
+            tag.to_string(),
+            pinion_core::external::IntrospectValue::Null,
+        )
     }
 
     #[test]
@@ -656,18 +779,36 @@ mod tests {
         let entries = vec![DirEntry::dir("New Folder"), DirEntry::file("untitled.txt")];
         assert_eq!(unique_name(&entries, "New Folder", ""), "New Folder 2");
         assert_eq!(unique_name(&entries, "untitled", ".txt"), "untitled 2.txt");
-        assert_eq!(unique_name(&entries, "src", ""), "src", "free base used verbatim");
+        assert_eq!(
+            unique_name(&entries, "src", ""),
+            "src",
+            "free base used verbatim"
+        );
     }
 
     #[test]
     fn r789_new_folder_click_creates_and_lists() {
         Owner::new().run(|| {
             let _ = FileManagerView::update(idle(), &intent("fm_newdir.click"));
-            let names: Vec<String> = directory().entries().iter().map(|e| e.name.clone()).collect();
-            assert!(names.contains(&"New Folder".to_string()), "new folder appears: {names:?}");
+            let names: Vec<String> = directory()
+                .entries()
+                .iter()
+                .map(|e| e.name.clone())
+                .collect();
+            assert!(
+                names.contains(&"New Folder".to_string()),
+                "new folder appears: {names:?}"
+            );
             let _ = FileManagerView::update(idle(), &intent("fm_newdir.click"));
-            let names: Vec<String> = directory().entries().iter().map(|e| e.name.clone()).collect();
-            assert!(names.contains(&"New Folder 2".to_string()), "second click = New Folder 2");
+            let names: Vec<String> = directory()
+                .entries()
+                .iter()
+                .map(|e| e.name.clone())
+                .collect();
+            assert!(
+                names.contains(&"New Folder 2".to_string()),
+                "second click = New Folder 2"
+            );
         });
     }
 
@@ -676,7 +817,10 @@ mod tests {
         Owner::new().run(|| {
             let _ = FileManagerView::update(idle(), &intent("fm_newfile.click"));
             assert!(
-                directory().entries().iter().any(|e| e.name == "untitled.txt" && !e.is_dir),
+                directory()
+                    .entries()
+                    .iter()
+                    .any(|e| e.name == "untitled.txt" && !e.is_dir),
                 "new file appears",
             );
         });
@@ -688,11 +832,18 @@ mod tests {
             let dir = directory();
             dir.select("README.md");
             let _ = FileManagerView::update(idle(), &intent("fm_delete.click"));
-            assert!(!dir.entries().iter().any(|e| e.name == "README.md"), "README.md removed");
+            assert!(
+                !dir.entries().iter().any(|e| e.name == "README.md"),
+                "README.md removed"
+            );
             assert_eq!(dir.selected(), None, "selection cleared");
             let before = dir.entries().len();
             let _ = FileManagerView::update(idle(), &intent("fm_delete.click"));
-            assert_eq!(dir.entries().len(), before, "delete with no selection is a no-op");
+            assert_eq!(
+                dir.entries().len(),
+                before,
+                "delete with no selection is a no-op"
+            );
         });
     }
 
@@ -700,16 +851,34 @@ mod tests {
     fn r789_rename_delete_disabled_without_selection_enabled_with() {
         Owner::new().run(|| {
             let nodes = FileManagerView::access_node(&idle(), None);
-            let del = nodes.iter().find(|n| n.tag == DELETE_TAG).expect("delete node");
-            let ren = nodes.iter().find(|n| n.tag == RENAME_TAG).expect("rename node");
+            let del = nodes
+                .iter()
+                .find(|n| n.tag == DELETE_TAG)
+                .expect("delete node");
+            let ren = nodes
+                .iter()
+                .find(|n| n.tag == RENAME_TAG)
+                .expect("rename node");
             assert!(del.state.disabled, "Delete aria-disabled with no selection");
             assert!(ren.state.disabled, "Rename aria-disabled with no selection");
             directory().select("Cargo.toml");
             let nodes = FileManagerView::access_node(&idle(), None);
-            let del = nodes.iter().find(|n| n.tag == DELETE_TAG).expect("delete node");
-            let ren = nodes.iter().find(|n| n.tag == RENAME_TAG).expect("rename node");
-            assert!(!del.state.disabled, "Delete enabled once an entry is selected");
-            assert!(!ren.state.disabled, "Rename enabled once an entry is selected");
+            let del = nodes
+                .iter()
+                .find(|n| n.tag == DELETE_TAG)
+                .expect("delete node");
+            let ren = nodes
+                .iter()
+                .find(|n| n.tag == RENAME_TAG)
+                .expect("rename node");
+            assert!(
+                !del.state.disabled,
+                "Delete enabled once an entry is selected"
+            );
+            assert!(
+                !ren.state.disabled,
+                "Rename enabled once an entry is selected"
+            );
         });
     }
 
@@ -721,12 +890,19 @@ mod tests {
             let _ = pinion_core::focus_request::drain();
             // No selection: Rename is a no-op.
             let _ = FileManagerView::update(idle(), &intent("fm_rename.click"));
-            assert!(!use_renaming().get(), "rename with no selection does nothing");
+            assert!(
+                !use_renaming().get(),
+                "rename with no selection does nothing"
+            );
             // Select, then Rename → edit mode, field pre-filled, focus queued.
             directory().select("README.md");
             let _ = FileManagerView::update(idle(), &intent("fm_rename.click"));
             assert!(use_renaming().get(), "Rename enters edit mode");
-            assert_eq!(rename_state().text(), "README.md", "field pre-filled with the current name");
+            assert_eq!(
+                rename_state().text(),
+                "README.md",
+                "field pre-filled with the current name"
+            );
             assert_eq!(rename_state().caret(), "README.md".len(), "caret at end");
             assert_eq!(
                 pinion_core::focus_request::drain(),
@@ -753,11 +929,25 @@ mod tests {
                 pinion_core::Modifiers::empty(),
             ));
             assert!(!use_renaming().get(), "Enter exits edit mode");
-            assert!(dir.entries().iter().any(|e| e.name == "NOTES.md"), "file renamed");
-            assert!(!dir.entries().iter().any(|e| e.name == "README.md"), "old name gone");
-            assert_eq!(dir.selected(), Some("/proj/NOTES.md".to_string()), "selection follows");
+            assert!(
+                dir.entries().iter().any(|e| e.name == "NOTES.md"),
+                "file renamed"
+            );
+            assert!(
+                !dir.entries().iter().any(|e| e.name == "README.md"),
+                "old name gone"
+            );
+            assert_eq!(
+                dir.selected(),
+                Some("/proj/NOTES.md".to_string()),
+                "selection follows"
+            );
             assert_eq!(rename_state().text(), "", "field wiped on exit");
-            assert_eq!(pinion_core::focus_request::drain(), Some(RENAME_TAG.to_string()), "focus restored");
+            assert_eq!(
+                pinion_core::focus_request::drain(),
+                Some(RENAME_TAG.to_string()),
+                "focus restored"
+            );
         });
     }
 
@@ -777,8 +967,14 @@ mod tests {
                 pinion_core::Modifiers::empty(),
             ));
             assert!(!use_renaming().get(), "Escape exits edit mode");
-            assert!(dir.entries().iter().any(|e| e.name == "README.md"), "name unchanged");
-            assert!(!dir.entries().iter().any(|e| e.name == "WONT.md"), "nothing renamed");
+            assert!(
+                dir.entries().iter().any(|e| e.name == "README.md"),
+                "name unchanged"
+            );
+            assert!(
+                !dir.entries().iter().any(|e| e.name == "WONT.md"),
+                "nothing renamed"
+            );
         });
     }
 
@@ -791,7 +987,10 @@ mod tests {
             rename_state().set_text("   ".to_owned());
             commit_rename(true);
             assert!(!use_renaming().get(), "blank commit exits edit mode");
-            assert!(dir.entries().iter().any(|e| e.name == "README.md"), "blank name does not rename");
+            assert!(
+                dir.entries().iter().any(|e| e.name == "README.md"),
+                "blank name does not rename"
+            );
         });
     }
 
@@ -807,8 +1006,14 @@ mod tests {
             // The rename field lost focus → the "blur" intent commits the edit.
             let _ = FileManagerView::update(idle(), &intent("fm_rename_tf.blur"));
             assert!(!use_renaming().get(), "blur exits edit mode");
-            assert!(dir.entries().iter().any(|e| e.name == "NOTES.md"), "rename committed on blur");
-            assert!(!dir.entries().iter().any(|e| e.name == "README.md"), "old name gone");
+            assert!(
+                dir.entries().iter().any(|e| e.name == "NOTES.md"),
+                "rename committed on blur"
+            );
+            assert!(
+                !dir.entries().iter().any(|e| e.name == "README.md"),
+                "old name gone"
+            );
             assert_eq!(
                 pinion_core::focus_request::drain(),
                 None,
@@ -826,7 +1031,11 @@ mod tests {
             let before = dir.entries().len();
             let _ = FileManagerView::update(idle(), &intent("fm_rename_tf.blur"));
             assert!(!use_renaming().get());
-            assert_eq!(dir.entries().len(), before, "blur with no edit in progress does nothing");
+            assert_eq!(
+                dir.entries().len(),
+                before,
+                "blur with no edit in progress does nothing"
+            );
         });
     }
 
@@ -863,12 +1072,21 @@ mod tests {
             dir.select("Cargo.toml");
             enter_rename();
             let scene = view(idle(), &Frame::new());
-            assert!(scene.contains_tag(RENAME_TF_TAG), "the rename field paints in the row");
+            assert!(
+                scene.contains_tag(RENAME_TF_TAG),
+                "the rename field paints in the row"
+            );
             // The selected row's plain file_row is replaced by the field.
             let idx = dir.selected_index().expect("a selection has a row");
-            assert!(!scene.contains_tag(&format!("{DIR_TAG}#{idx}")), "selected file_row replaced");
+            assert!(
+                !scene.contains_tag(&format!("{DIR_TAG}#{idx}")),
+                "selected file_row replaced"
+            );
             // Another row stays a plain file_row.
-            assert!(scene.contains_tag(&format!("{DIR_TAG}#0")) || idx == 0, "non-edited rows remain");
+            assert!(
+                scene.contains_tag(&format!("{DIR_TAG}#0")) || idx == 0,
+                "non-edited rows remain"
+            );
         });
     }
 
@@ -890,8 +1108,15 @@ mod tests {
             directory().select("Cargo.toml");
             enter_rename();
             let nodes = FileManagerView::access_node(&idle(), Some(RENAME_TF_TAG));
-            let tb = nodes.iter().find(|n| n.tag == RENAME_TF_TAG).expect("textbox node");
-            assert_eq!(tb.role, AriaRole::TextInput, "the rename field is announced as a textbox");
+            let tb = nodes
+                .iter()
+                .find(|n| n.tag == RENAME_TF_TAG)
+                .expect("textbox node");
+            assert_eq!(
+                tb.role,
+                AriaRole::TextInput,
+                "the rename field is announced as a textbox"
+            );
         });
     }
 
@@ -902,7 +1127,11 @@ mod tests {
         Owner::new().run(|| {
             let mut scene = boot_scene();
             let dir = directory();
-            assert_eq!(dir.cursor(), Some(0), "boot cursor defaults to the first row");
+            assert_eq!(
+                dir.cursor(),
+                Some(0),
+                "boot cursor defaults to the first row"
+            );
             // A key while a toolbar button owns focus does not move the list.
             assert!(!FileManagerView::apply_key(
                 &mut scene,
@@ -941,7 +1170,11 @@ mod tests {
                 "Enter",
                 pinion_core::Modifiers::empty(),
             ));
-            assert_eq!(dir.cwd(), "/proj/assets", "Enter on a folder row navigates into it");
+            assert_eq!(
+                dir.cwd(),
+                "/proj/assets",
+                "Enter on a folder row navigates into it"
+            );
             // In /proj/assets the cursor defaults to row 0 (logo.png, a file);
             // Enter picks it.
             assert!(FileManagerView::apply_key(
@@ -964,7 +1197,10 @@ mod tests {
             directory().set_cursor(Some(1));
             let target = FileManagerView::access_focus_target(&idle(), Some(DIR_TAG))
                 .expect("the focused list reports a focus target");
-            assert_eq!(target.focus_tag, DIR_TAG, "focus stays on the list container");
+            assert_eq!(
+                target.focus_tag, DIR_TAG,
+                "focus stays on the list container"
+            );
             assert_eq!(
                 target.active_descendant.as_deref(),
                 Some("fb_dir#1"),
@@ -982,14 +1218,29 @@ mod tests {
         Owner::new().run(|| {
             directory().set_cursor(Some(2));
             let nodes = FileManagerView::access_node(&idle(), Some(DIR_TAG));
-            let cursor_row = nodes.iter().find(|n| n.tag == "fb_dir#2").expect("cursor row node");
-            assert!(cursor_row.state.focused, "the cursor row is aria-active (focused)");
-            let other = nodes.iter().find(|n| n.tag == "fb_dir#0").expect("row 0 node");
+            let cursor_row = nodes
+                .iter()
+                .find(|n| n.tag == "fb_dir#2")
+                .expect("cursor row node");
+            assert!(
+                cursor_row.state.focused,
+                "the cursor row is aria-active (focused)"
+            );
+            let other = nodes
+                .iter()
+                .find(|n| n.tag == "fb_dir#0")
+                .expect("row 0 node");
             assert!(!other.state.focused, "a non-cursor row is not focused");
             // Unfocused list → no row is marked active.
             let unfocused = FileManagerView::access_node(&idle(), None);
-            let row2 = unfocused.iter().find(|n| n.tag == "fb_dir#2").expect("row node");
-            assert!(!row2.state.focused, "no active row when the list is not focused");
+            let row2 = unfocused
+                .iter()
+                .find(|n| n.tag == "fb_dir#2")
+                .expect("row node");
+            assert!(
+                !row2.state.focused,
+                "no active row when the list is not focused"
+            );
         });
     }
 
@@ -999,10 +1250,20 @@ mod tests {
             let mut scene = boot_scene();
             let dir = directory();
             // AT Click on row 0 (assets dir, dirs-first sort) navigates into it.
-            assert!(FileManagerView::access_child_invoke(&mut scene, DIR_TAG, "0", AccessAction::Click));
+            assert!(FileManagerView::access_child_invoke(
+                &mut scene,
+                DIR_TAG,
+                "0",
+                AccessAction::Click
+            ));
             assert_eq!(dir.cwd(), "/proj/assets");
             // A non-list parent declines (shell keeps its fallback chain).
-            assert!(!FileManagerView::access_child_invoke(&mut scene, NEWDIR_TAG, "x", AccessAction::Click));
+            assert!(!FileManagerView::access_child_invoke(
+                &mut scene,
+                NEWDIR_TAG,
+                "x",
+                AccessAction::Click
+            ));
         });
     }
 
@@ -1022,7 +1283,9 @@ mod tests {
             ExternalNode::new(FileManagerView::create_external()).with_tag(NEWDIR_TAG),
         )];
         for extra in FileManagerView::create_extra_externals() {
-            children.push(Scene::External(ExternalNode::new(extra.handle).with_tag(extra.tag)));
+            children.push(Scene::External(
+                ExternalNode::new(extra.handle).with_tag(extra.tag),
+            ));
         }
         Scene::Container(ContainerNode::new(children))
     }

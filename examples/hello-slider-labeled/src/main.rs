@@ -43,10 +43,10 @@ use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widgets::slider::{SliderExternal, SliderState};
-use pinion_core::{scale_normalized_to_px, Frame, Scene, WidgetCore, WidgetStateName};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_core::{Frame, Scene, WidgetCore, WidgetStateName, scale_normalized_to_px};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::slider::{
     read_slider_state, slider_accent_for, slider_apply_key, slider_thumb_fill,
     slider_track_inactive,
@@ -128,7 +128,10 @@ impl LabeledState {
     /// posture from the external via [`read_labeled`].
     #[cfg(test)]
     fn boot() -> Self {
-        Self { interaction: SliderState::Idle, value: START }
+        Self {
+            interaction: SliderState::Idle,
+            value: START,
+        }
     }
 }
 
@@ -166,7 +169,10 @@ fn stop_label_row(theme: &Theme, interaction: SliderState, active: usize) -> Sce
             } else if i == STOPS - 1 {
                 (TRACK_W - LABEL_W, JustifyContent::End)
             } else {
-                (stop_centre_x(i).saturating_sub(LABEL_W / 2), JustifyContent::Center)
+                (
+                    stop_centre_x(i).saturating_sub(LABEL_W / 2),
+                    JustifyContent::Center,
+                )
             };
             Scene::Container(
                 ContainerNode::new(vec![Scene::Text(TextNode::styled(
@@ -308,8 +314,7 @@ fn view(state: &LabeledState, _frame: &Frame) -> Scene {
 /// `hello-range-slider` / `settings-panel`). The missing-external
 /// fallback is this binding's own boot stop.
 fn read_labeled(scene: &Scene) -> LabeledState {
-    let (interaction, value) =
-        read_slider_state(scene, TAG).unwrap_or((SliderState::Idle, START));
+    let (interaction, value) = read_slider_state(scene, TAG).unwrap_or((SliderState::Idle, START));
     LabeledState { interaction, value }
 }
 
@@ -371,7 +376,12 @@ impl WidgetCore for LabeledView {
     }
 
     fn fmt_state_log(state: &LabeledState) -> String {
-        format!("{} / {} ({:.2})", state.interaction.as_name(), label_for(state.value), state.value)
+        format!(
+            "{} / {} ({:.2})",
+            state.interaction.as_name(),
+            label_for(state.value),
+            state.value
+        )
     }
 }
 
@@ -383,13 +393,19 @@ impl WidgetA11y for LabeledView {
     /// but retains the numeric range for context. The label comes from the
     /// same [`label_for`] the visible readout uses.
     fn access_node(state: &LabeledState, focused: Option<&str>) -> Vec<AccessNode> {
-        vec![AccessNode::new(TAG, AriaRole::Slider)
-            .with_value(AccessValue::Float { value: state.value, min: 0.0, max: 1.0 })
-            .with_value_text(label_for(state.value))
-            .with_state(AccessState {
-                focused: focused == Some(TAG),
-                ..AccessState::from_interaction(state.interaction, None)
-            })]
+        vec![
+            AccessNode::new(TAG, AriaRole::Slider)
+                .with_value(AccessValue::Float {
+                    value: state.value,
+                    min: 0.0,
+                    max: 1.0,
+                })
+                .with_value_text(label_for(state.value))
+                .with_state(AccessState {
+                    focused: focused == Some(TAG),
+                    ..AccessState::from_interaction(state.interaction, None)
+                }),
+        ]
     }
 }
 
@@ -397,7 +413,10 @@ impl WidgetView for LabeledView {
     type Renderer = HelloSliderLabeledRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 }
 
@@ -454,14 +473,19 @@ mod tests {
     fn boot_value_sits_on_the_medium_stop() {
         let scene = scene_fixture();
         // START seeded through with_step → snapped; 0.5 is already a stop.
-        assert!((value_of(&scene) - START).abs() < 1e-5, "boot on the START stop");
+        assert!(
+            (value_of(&scene) - START).abs() < 1e-5,
+            "boot on the START stop"
+        );
         assert_eq!(label_for(value_of(&scene)), "Medium", "boot stop is Medium");
     }
 
     #[test]
     fn external_reports_the_step() {
         let scene = scene_fixture();
-        let Scene::External(node) = &scene else { panic!() };
+        let Scene::External(node) = &scene else {
+            panic!()
+        };
         let intro = node.handle.introspect().unwrap();
         match intro.query("step") {
             Some(IntrospectValue::Float(v)) => assert!((v - f64::from(STEP)).abs() < 1e-6),
@@ -472,10 +496,23 @@ mod tests {
     #[test]
     fn arrow_right_advances_one_stop() {
         let mut scene = scene_fixture(); // boot 0.5 (Medium)
-        assert!(LabeledView::apply_key(&mut scene, Some(TAG), "ArrowRight", pinion_core::Modifiers::empty()));
-        assert!((value_of(&scene) - 0.75).abs() < 1e-5, "0.5 -> 0.75 (one stop)");
+        assert!(LabeledView::apply_key(
+            &mut scene,
+            Some(TAG),
+            "ArrowRight",
+            pinion_core::Modifiers::empty()
+        ));
+        assert!(
+            (value_of(&scene) - 0.75).abs() < 1e-5,
+            "0.5 -> 0.75 (one stop)"
+        );
         assert_eq!(label_for(value_of(&scene)), "High");
-        assert!(LabeledView::apply_key(&mut scene, Some(TAG), "ArrowLeft", pinion_core::Modifiers::empty()));
+        assert!(LabeledView::apply_key(
+            &mut scene,
+            Some(TAG),
+            "ArrowLeft",
+            pinion_core::Modifiers::empty()
+        ));
         assert!((value_of(&scene) - 0.5).abs() < 1e-5, "0.75 -> 0.5");
         assert_eq!(label_for(value_of(&scene)), "Medium");
     }
@@ -483,25 +520,55 @@ mod tests {
     #[test]
     fn arrows_clamp_at_extreme_stops() {
         let mut scene = scene_fixture();
-        assert!(LabeledView::apply_key(&mut scene, Some(TAG), "End", pinion_core::Modifiers::empty()));
+        assert!(LabeledView::apply_key(
+            &mut scene,
+            Some(TAG),
+            "End",
+            pinion_core::Modifiers::empty()
+        ));
         assert!((value_of(&scene) - 1.0).abs() < 1e-5, "End -> 1.0 (Max)");
         assert_eq!(label_for(value_of(&scene)), "Max");
-        assert!(LabeledView::apply_key(&mut scene, Some(TAG), "ArrowRight", pinion_core::Modifiers::empty()));
-        assert!((value_of(&scene) - 1.0).abs() < 1e-5, "ArrowRight at max clamps");
-        assert!(LabeledView::apply_key(&mut scene, Some(TAG), "Home", pinion_core::Modifiers::empty()));
+        assert!(LabeledView::apply_key(
+            &mut scene,
+            Some(TAG),
+            "ArrowRight",
+            pinion_core::Modifiers::empty()
+        ));
+        assert!(
+            (value_of(&scene) - 1.0).abs() < 1e-5,
+            "ArrowRight at max clamps"
+        );
+        assert!(LabeledView::apply_key(
+            &mut scene,
+            Some(TAG),
+            "Home",
+            pinion_core::Modifiers::empty()
+        ));
         assert!((value_of(&scene) - 0.0).abs() < 1e-5, "Home -> 0.0 (Off)");
         assert_eq!(label_for(value_of(&scene)), "Off");
-        assert!(LabeledView::apply_key(&mut scene, Some(TAG), "ArrowLeft", pinion_core::Modifiers::empty()));
-        assert!((value_of(&scene) - 0.0).abs() < 1e-5, "ArrowLeft at min clamps");
+        assert!(LabeledView::apply_key(
+            &mut scene,
+            Some(TAG),
+            "ArrowLeft",
+            pinion_core::Modifiers::empty()
+        ));
+        assert!(
+            (value_of(&scene) - 0.0).abs() < 1e-5,
+            "ArrowLeft at min clamps"
+        );
     }
 
     #[test]
     fn off_grid_intervene_snaps_to_nearest_stop() {
         let mut scene = scene_fixture();
-        let Scene::External(node) = &mut scene else { panic!() };
+        let Scene::External(node) = &mut scene else {
+            panic!()
+        };
         let intro = node.handle.introspect_mut().unwrap();
         // An AI client writing an off-grid value is snapped by the substrate.
-        intro.intervene("value", IntrospectValue::Float(0.66)).unwrap();
+        intro
+            .intervene("value", IntrospectValue::Float(0.66))
+            .unwrap();
         assert!((value_of(&scene) - 0.75).abs() < 1e-5, "0.66 snaps to 0.75");
         assert_eq!(label_for(value_of(&scene)), "High");
     }
@@ -509,8 +576,18 @@ mod tests {
     #[test]
     fn keys_ignored_when_not_focused() {
         let mut scene = scene_fixture();
-        assert!(!LabeledView::apply_key(&mut scene, None, "ArrowRight", pinion_core::Modifiers::empty()));
-        assert!(!LabeledView::apply_key(&mut scene, Some("other"), "ArrowRight", pinion_core::Modifiers::empty()));
+        assert!(!LabeledView::apply_key(
+            &mut scene,
+            None,
+            "ArrowRight",
+            pinion_core::Modifiers::empty()
+        ));
+        assert!(!LabeledView::apply_key(
+            &mut scene,
+            Some("other"),
+            "ArrowRight",
+            pinion_core::Modifiers::empty()
+        ));
         assert!((value_of(&scene) - START).abs() < 1e-5, "value unchanged");
     }
 
@@ -538,7 +615,11 @@ mod tests {
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].role, AriaRole::Slider);
         assert!(nodes[0].state.focused);
-        assert_eq!(nodes[0].value_text.as_deref(), Some("Medium"), "boot valuetext = Medium");
+        assert_eq!(
+            nodes[0].value_text.as_deref(),
+            Some("Medium"),
+            "boot valuetext = Medium"
+        );
         match nodes[0].value {
             Some(AccessValue::Float { value, min, max }) => {
                 assert!((value - START).abs() < f32::EPSILON);
@@ -555,10 +636,19 @@ mod tests {
         // tracks label_for — the announced label twins the visible readout.
         let mut scene = scene_fixture();
         for (key, expected) in [("End", "Max"), ("Home", "Off")] {
-            assert!(LabeledView::apply_key(&mut scene, Some(TAG), key, pinion_core::Modifiers::empty()));
+            assert!(LabeledView::apply_key(
+                &mut scene,
+                Some(TAG),
+                key,
+                pinion_core::Modifiers::empty()
+            ));
             let st = LabeledView::read_state(&scene);
             let nodes = LabeledView::access_node(&st, Some(TAG));
-            assert_eq!(nodes[0].value_text.as_deref(), Some(expected), "{key} -> {expected}");
+            assert_eq!(
+                nodes[0].value_text.as_deref(),
+                Some(expected),
+                "{key} -> {expected}"
+            );
         }
     }
 }

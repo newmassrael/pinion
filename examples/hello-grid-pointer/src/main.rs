@@ -42,7 +42,7 @@ use pinion_core::external::{
 use pinion_core::scene::{ContainerNode, TextGridNode};
 use pinion_core::style::{AlignItems, FlexDirection, LayoutStyle, Size};
 use pinion_core::{CellMetric, Frame, GridBuffer, Scene, TermCell, TermColor, WidgetCore};
-use pinion_shell::{vello_renderer_impl, SizeStrategy, WidgetView};
+use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloGridPointerRenderer, HelloGridPointerRendererError);
@@ -99,7 +99,10 @@ impl GridPointerExternal {
     /// [`px_to_cell`]: CellMetric::px_to_cell
     fn cell_at_px(&self, x_px: u32, y_px: u32) -> (u16, u16) {
         let (c, r) = self.metric.px_to_cell(x_px, y_px);
-        (c.min(self.cols.saturating_sub(1)), r.min(self.rows.saturating_sub(1)))
+        (
+            c.min(self.cols.saturating_sub(1)),
+            r.min(self.rows.saturating_sub(1)),
+        )
     }
 
     /// Reconstruct a window-relative pixel from a `[0, 1]` axis fraction,
@@ -190,14 +193,12 @@ impl ExternalIntrospect for GridPointerExternal {
     fn query(&self, path: &str) -> Option<IntrospectValue> {
         match path {
             "cell" => Some(self.cell_text()),
-            "cell_col" => Some(
-                self.cell
-                    .map_or(IntrospectValue::Null, |(c, _)| IntrospectValue::Int(i64::from(c))),
-            ),
-            "cell_row" => Some(
-                self.cell
-                    .map_or(IntrospectValue::Null, |(_, r)| IntrospectValue::Int(i64::from(r))),
-            ),
+            "cell_col" => Some(self.cell.map_or(IntrospectValue::Null, |(c, _)| {
+                IntrospectValue::Int(i64::from(c))
+            })),
+            "cell_row" => Some(self.cell.map_or(IntrospectValue::Null, |(_, r)| {
+                IntrospectValue::Int(i64::from(r))
+            })),
             "cols" => Some(IntrospectValue::Int(i64::from(self.cols))),
             "rows" => Some(IntrospectValue::Int(i64::from(self.rows))),
             "last_key" => Some(self.last_key_text()),
@@ -214,7 +215,11 @@ impl ExternalIntrospect for GridPointerExternal {
         }
     }
 
-    fn invoke(&mut self, path: &str, args: IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+    fn invoke(
+        &mut self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
         match path {
             // Pure px→cell oracle: "x,y" window pixels → the clamped in-grid
             // "col,row". Deterministic (no pointer state), so an AI client reads
@@ -380,7 +385,10 @@ impl WidgetView for GridPointerView {
     type Renderer = HelloGridPointerRenderer;
 
     fn initial_size_strategy() -> SizeStrategy {
-        SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 
     /// R1010 §5.39 — a terminal pane owns its focus indicator (the text cursor),
@@ -486,21 +494,48 @@ mod tests {
     #[test]
     fn invoke_cell_at_is_a_pure_px_to_cell_oracle() {
         let mut e = ext();
-        assert_eq!(e.invoke("cell_at", IntrospectValue::Text("0,0".into())), Ok(IntrospectValue::Text("0,0".into())));
-        assert_eq!(e.invoke("cell_at", IntrospectValue::Text("320,192".into())), Ok(IntrospectValue::Text("40,12".into())));
-        assert_eq!(e.invoke("cell_at", IntrospectValue::Text("639,383".into())), Ok(IntrospectValue::Text("79,23".into())));
+        assert_eq!(
+            e.invoke("cell_at", IntrospectValue::Text("0,0".into())),
+            Ok(IntrospectValue::Text("0,0".into()))
+        );
+        assert_eq!(
+            e.invoke("cell_at", IntrospectValue::Text("320,192".into())),
+            Ok(IntrospectValue::Text("40,12".into()))
+        );
+        assert_eq!(
+            e.invoke("cell_at", IntrospectValue::Text("639,383".into())),
+            Ok(IntrospectValue::Text("79,23".into()))
+        );
         // Off-grid clamps to the last cell.
-        assert_eq!(e.invoke("cell_at", IntrospectValue::Text("640,384".into())), Ok(IntrospectValue::Text("79,23".into())));
-        assert_eq!(e.invoke("cell_at", IntrospectValue::Int(3)), Err(InvokeError::TypeMismatch));
-        assert_eq!(e.invoke("bogus", IntrospectValue::Null), Err(InvokeError::UnknownPath));
+        assert_eq!(
+            e.invoke("cell_at", IntrospectValue::Text("640,384".into())),
+            Ok(IntrospectValue::Text("79,23".into()))
+        );
+        assert_eq!(
+            e.invoke("cell_at", IntrospectValue::Int(3)),
+            Err(InvokeError::TypeMismatch)
+        );
+        assert_eq!(
+            e.invoke("bogus", IntrospectValue::Null),
+            Err(InvokeError::UnknownPath)
+        );
     }
 
     #[test]
     fn intervene_guards_readonly() {
         let mut e = ext();
-        assert_eq!(e.intervene("cell", IntrospectValue::Text("1,1".into())), Err(InterveneError::ReadOnly));
-        assert_eq!(e.intervene("last_key", IntrospectValue::Text("x".into())), Err(InterveneError::ReadOnly));
-        assert_eq!(e.intervene("nope", IntrospectValue::Null), Err(InterveneError::UnknownPath));
+        assert_eq!(
+            e.intervene("cell", IntrospectValue::Text("1,1".into())),
+            Err(InterveneError::ReadOnly)
+        );
+        assert_eq!(
+            e.intervene("last_key", IntrospectValue::Text("x".into())),
+            Err(InterveneError::ReadOnly)
+        );
+        assert_eq!(
+            e.intervene("nope", IntrospectValue::Null),
+            Err(InterveneError::UnknownPath)
+        );
     }
 
     #[test]
@@ -513,13 +548,27 @@ mod tests {
     #[test]
     fn key_invoke_records_the_last_forwarded_key() {
         let mut e = ext();
-        assert_eq!(e.query("last_key"), Some(IntrospectValue::Text("none".into())), "no key yet");
+        assert_eq!(
+            e.query("last_key"),
+            Some(IntrospectValue::Text("none".into())),
+            "no key yet"
+        );
         // The editing + function keys R1009 added to named_key_str arrive here
         // as their W3C strings (the binding's apply_key forwards them).
-        e.invoke("key", IntrospectValue::Text("Backspace".into())).unwrap();
-        assert_eq!(e.query("last_key"), Some(IntrospectValue::Text("Backspace".into())));
+        e.invoke("key", IntrospectValue::Text("Backspace".into()))
+            .unwrap();
+        assert_eq!(
+            e.query("last_key"),
+            Some(IntrospectValue::Text("Backspace".into()))
+        );
         e.invoke("key", IntrospectValue::Text("F5".into())).unwrap();
-        assert_eq!(e.query("last_key"), Some(IntrospectValue::Text("F5".into())));
-        assert_eq!(e.invoke("key", IntrospectValue::Int(3)), Err(InvokeError::TypeMismatch));
+        assert_eq!(
+            e.query("last_key"),
+            Some(IntrospectValue::Text("F5".into()))
+        );
+        assert_eq!(
+            e.invoke("key", IntrospectValue::Int(3)),
+            Err(InvokeError::TypeMismatch)
+        );
     }
 }

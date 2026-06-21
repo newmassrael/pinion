@@ -15,14 +15,14 @@
     clippy::style,
     clippy::complexity,
     clippy::pedantic,
-    clippy::all,
+    clippy::all
 )]
 mod sm {
     include!(concat!(env!("OUT_DIR"), "/button_sm.rs"));
 }
 
-pub use sm::{ButtonEvent, ButtonState};
 use sm::ButtonPolicy;
+pub use sm::{ButtonEvent, ButtonState};
 
 // R643 §5.16 — bidirectional `&'static str` mapping for the
 // sce-build-emitted enums. vendor/sce templates emit no pinion
@@ -32,10 +32,13 @@ use sm::ButtonPolicy;
 // `WidgetCore::read_state` + `WidgetCore::event_name` via the
 // `state_name_derive` flag on `#[pinion_derive::widget]` instead of
 // hand-writing 30+ LOC of `match` arms per binding.
-crate::widget_state_name!(ButtonState, default = Idle, [
-    Idle, Hover, Pressed, Disabled,
-]);
-crate::widget_event_name!(ButtonEvent,
+crate::widget_state_name!(
+    ButtonState,
+    default = Idle,
+    [Idle, Hover, Pressed, Disabled,]
+);
+crate::widget_event_name!(
+    ButtonEvent,
     external = [
         PointerEnter,
         PointerLeave,
@@ -50,9 +53,8 @@ crate::widget_event_name!(ButtonEvent,
 );
 
 use crate::external::{
-    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner,
-    ThreadOwnership,
+    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
 use crate::intent::Intent;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
@@ -99,11 +101,7 @@ impl WidgetTransition for Button {
     /// focused button has the same effect as a click — the two paths
     /// converge on the same intent kind precisely because the spec
     /// equates them.
-    fn detect(
-        before: Self::Snapshot,
-        event: Self::Event,
-        after: Self::Snapshot,
-    ) -> Vec<Intent> {
+    fn detect(before: Self::Snapshot, event: Self::Event, after: Self::Snapshot) -> Vec<Intent> {
         let pointer_click =
             matches!(before, ButtonState::Pressed) && matches!(after, ButtonState::Hover);
         let keyboard_click = matches!(event, ButtonEvent::KeyboardActivate)
@@ -248,29 +246,19 @@ impl ExternalIntrospect for ButtonExternal {
         // accepting a `ButtonEvent` variant name (invoke); §5.15
         // schema does not yet distinguish state slots from actions
         // syntactically, that classification lands with §5.3 DSL.
-        IntrospectSchema::new(&[
-            ("state", "string"),
-            ("focused", "bool"),
-            ("send", "string"),
-        ])
+        IntrospectSchema::new(&[("state", "string"), ("focused", "bool"), ("send", "string")])
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
         match path {
-            "state" => Some(IntrospectValue::Text(
-                self.state().as_name().to_string(),
-            )),
+            "state" => Some(IntrospectValue::Text(self.state().as_name().to_string())),
             // R694 §5.39 — keyboard-focus posture for the focus-ring read.
             "focused" => Some(IntrospectValue::Bool(self.focused)),
             _ => None,
         }
     }
 
-    fn intervene(
-        &mut self,
-        path: &str,
-        _value: IntrospectValue,
-    ) -> Result<(), InterveneError> {
+    fn intervene(&mut self, path: &str, _value: IntrospectValue) -> Result<(), InterveneError> {
         // State is observed-only via intervene; mutation flows through
         // the `send` action on the invoke channel (R17 bidirectional
         // RPC spec round) — see `invoke` below.
@@ -292,12 +280,9 @@ impl ExternalIntrospect for ButtonExternal {
             // outcome in a single round-trip.
             "send" => match args {
                 IntrospectValue::Text(ref name) => {
-                    let ev =
-                        ButtonEvent::from_name(name).ok_or(InvokeError::Rejected)?;
+                    let ev = ButtonEvent::from_name(name).ok_or(InvokeError::Rejected)?;
                     self.send(ev);
-                    Ok(IntrospectValue::Text(
-                        self.state().as_name().to_string(),
-                    ))
+                    Ok(IntrospectValue::Text(self.state().as_name().to_string()))
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
@@ -376,18 +361,12 @@ impl ExternalIntrospect for ButtonStateSnapshot {
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
         match path {
-            "state" => Some(IntrospectValue::Text(
-                self.state.as_name().to_string(),
-            )),
+            "state" => Some(IntrospectValue::Text(self.state.as_name().to_string())),
             _ => None,
         }
     }
 
-    fn intervene(
-        &mut self,
-        _path: &str,
-        _value: IntrospectValue,
-    ) -> Result<(), InterveneError> {
+    fn intervene(&mut self, _path: &str, _value: IntrospectValue) -> Result<(), InterveneError> {
         // Snapshot is observation-only by design — see type doc.
         Err(InterveneError::ReadOnly)
     }
@@ -509,11 +488,26 @@ mod tests {
         // either side fails at test time instead of silently desyncing
         // the router from the statechart (`as_name` is the SCXML canon).
         use crate::input::PointerWireEvent;
-        assert_eq!(PointerWireEvent::Enter.as_wire_name(), ButtonEvent::PointerEnter.as_name());
-        assert_eq!(PointerWireEvent::Down.as_wire_name(), ButtonEvent::PointerDown.as_name());
-        assert_eq!(PointerWireEvent::Up.as_wire_name(), ButtonEvent::PointerUp.as_name());
-        assert_eq!(PointerWireEvent::Leave.as_wire_name(), ButtonEvent::PointerLeave.as_name());
-        assert_eq!(PointerWireEvent::Cancel.as_wire_name(), ButtonEvent::PointerCancel.as_name());
+        assert_eq!(
+            PointerWireEvent::Enter.as_wire_name(),
+            ButtonEvent::PointerEnter.as_name()
+        );
+        assert_eq!(
+            PointerWireEvent::Down.as_wire_name(),
+            ButtonEvent::PointerDown.as_name()
+        );
+        assert_eq!(
+            PointerWireEvent::Up.as_wire_name(),
+            ButtonEvent::PointerUp.as_name()
+        );
+        assert_eq!(
+            PointerWireEvent::Leave.as_wire_name(),
+            ButtonEvent::PointerLeave.as_name()
+        );
+        assert_eq!(
+            PointerWireEvent::Cancel.as_wire_name(),
+            ButtonEvent::PointerCancel.as_name()
+        );
     }
 
     #[test]
@@ -822,7 +816,10 @@ mod tests {
         // event-name string round-trips through `ButtonEvent::from_name`.
         let mut bx = ButtonExternal::new();
         let _ = bx
-            .invoke("send", IntrospectValue::Text("KeyboardActivate".to_string()))
+            .invoke(
+                "send",
+                IntrospectValue::Text("KeyboardActivate".to_string()),
+            )
             .unwrap();
         let mut harvested: Vec<Intent> = Vec::new();
         bx.drain_intents(&mut |i| harvested.push(i));

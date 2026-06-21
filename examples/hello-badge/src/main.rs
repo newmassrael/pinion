@@ -56,17 +56,17 @@
 //! describedby link and the Status node are both omitted — no dangling
 //! reference (the `hello-tooltip` "no describedby when hidden" rule).
 
-use pinion_a11y::{describedby_region, AccessNode, AriaRole, WidgetA11y};
+use pinion_a11y::{AccessNode, AriaRole, WidgetA11y, describedby_region};
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, Scene, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::badge::BadgeExternal;
 use pinion_core::{Frame, WidgetCore};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloBadgeRenderer, HelloBadgeRendererError);
@@ -239,9 +239,8 @@ fn view_anchor(i: usize, data: BadgeData, theme: &Theme) -> Scene {
     }
 
     Scene::Container(
-        ContainerNode::new(children).with_layout(
-            LayoutStyle::new().with_size(Size::px(ANCHOR_SIZE, ANCHOR_SIZE)),
-        ),
+        ContainerNode::new(children)
+            .with_layout(LayoutStyle::new().with_size(Size::px(ANCHOR_SIZE, ANCHOR_SIZE))),
     )
 }
 
@@ -299,7 +298,11 @@ fn read_badge(scene: &Scene, tag: &str) -> BadgeData {
         .find_external_with_tag(tag)
         .and_then(|node| node.handle.introspect())
     else {
-        return BadgeData { count: 0, max: BadgeExternal::DEFAULT_MAX, dot: false };
+        return BadgeData {
+            count: 0,
+            max: BadgeExternal::DEFAULT_MAX,
+            dot: false,
+        };
     };
     let u32_slot = |path: &str, default: u32| {
         intro
@@ -361,7 +364,6 @@ impl WidgetCore for BadgeView {
         "pinion hello-badge (R759 §5.38 count / dot badge)"
     }
 
-
     fn fmt_state_log(state: &BadgeStates) -> String {
         let b0 = badge_of(state[COUNT]);
         let b1 = badge_of(state[DOT]);
@@ -387,8 +389,8 @@ impl WidgetA11y for BadgeView {
         let mut nodes = Vec::with_capacity(N * 2);
         for i in 0..N {
             let badge = badge_of(state[i]);
-            let anchor = AccessNode::new(ANCHOR_TAGS[i], AriaRole::Generic)
-                .with_name(ANCHOR_NAMES[i]);
+            let anchor =
+                AccessNode::new(ANCHOR_TAGS[i], AriaRole::Generic).with_name(ANCHOR_NAMES[i]);
             nodes.extend(describedby_region(
                 anchor,
                 BADGE_TAGS[i],
@@ -417,7 +419,10 @@ impl WidgetView for BadgeView {
     type Renderer = HelloBadgeRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 }
 
@@ -431,11 +436,19 @@ mod tests {
     use pinion_core::scene::ExternalNode;
 
     fn count_data(count: u32) -> BadgeData {
-        BadgeData { count, max: BadgeExternal::DEFAULT_MAX, dot: false }
+        BadgeData {
+            count,
+            max: BadgeExternal::DEFAULT_MAX,
+            dot: false,
+        }
     }
 
     fn dot_data() -> BadgeData {
-        BadgeData { count: 0, max: BadgeExternal::DEFAULT_MAX, dot: true }
+        BadgeData {
+            count: 0,
+            max: BadgeExternal::DEFAULT_MAX,
+            dot: true,
+        }
     }
 
     /// Build a fresh badge scene mirroring the shell's boot composition
@@ -476,12 +489,19 @@ mod tests {
         }
         let state = BadgeView::read_state(&scene);
         assert_eq!(state[COUNT].count, 150, "raw count round-trips uncapped");
-        assert_eq!(badge_of(state[COUNT]).label(), "99+", "label caps at the overflow");
+        assert_eq!(
+            badge_of(state[COUNT]).label(),
+            "99+",
+            "label caps at the overflow"
+        );
     }
 
     #[test]
     fn read_state_defaults_without_external() {
-        let data = read_badge(&Scene::Container(ContainerNode::new(vec![])), BADGE_TAGS[COUNT]);
+        let data = read_badge(
+            &Scene::Container(ContainerNode::new(vec![])),
+            BADGE_TAGS[COUNT],
+        );
         assert_eq!(data.count, 0);
         assert_eq!(data.max, BadgeExternal::DEFAULT_MAX);
         assert!(!data.dot);
@@ -510,10 +530,16 @@ mod tests {
     fn view_omits_count_pill_when_hidden() {
         // count 0, non-dot -> hidden: no pill in the paint scene (the
         // anchor surface still paints).
-        let scene = pinion_core::Owner::new()
-            .run(|| view(&[count_data(0), dot_data()], &Frame::new()));
-        assert!(!scene.contains_tag(BADGE_TAGS[COUNT]), "hidden count badge paints no pill");
-        assert!(scene.contains_tag(ANCHOR_TAGS[COUNT]), "the anchor surface still paints");
+        let scene =
+            pinion_core::Owner::new().run(|| view(&[count_data(0), dot_data()], &Frame::new()));
+        assert!(
+            !scene.contains_tag(BADGE_TAGS[COUNT]),
+            "hidden count badge paints no pill"
+        );
+        assert!(
+            scene.contains_tag(ANCHOR_TAGS[COUNT]),
+            "the anchor surface still paints"
+        );
     }
 
     fn scene_contains_text(scene: &Scene, needle: &str) -> bool {
@@ -530,22 +556,36 @@ mod a11y_tests {
     use super::*;
 
     fn count_data(count: u32) -> BadgeData {
-        BadgeData { count, max: BadgeExternal::DEFAULT_MAX, dot: false }
+        BadgeData {
+            count,
+            max: BadgeExternal::DEFAULT_MAX,
+            dot: false,
+        }
     }
 
     fn dot_data() -> BadgeData {
-        BadgeData { count: 0, max: BadgeExternal::DEFAULT_MAX, dot: true }
+        BadgeData {
+            count: 0,
+            max: BadgeExternal::DEFAULT_MAX,
+            dot: true,
+        }
     }
 
     #[test]
     fn anchor_describes_visible_badge_status_region() {
         let nodes = BadgeView::access_node(&[count_data(3), dot_data()], None);
         // anchor[0] -> describedby -> Status, anchor[1] -> describedby -> Status.
-        let inbox = nodes.iter().find(|n| n.tag == ANCHOR_TAGS[COUNT]).expect("inbox anchor");
+        let inbox = nodes
+            .iter()
+            .find(|n| n.tag == ANCHOR_TAGS[COUNT])
+            .expect("inbox anchor");
         assert_eq!(inbox.role, AriaRole::Generic);
         assert_eq!(inbox.name.as_deref(), Some("Inbox"));
         assert_eq!(inbox.described_by.as_deref(), Some(BADGE_TAGS[COUNT]));
-        let badge = nodes.iter().find(|n| n.tag == BADGE_TAGS[COUNT]).expect("count badge node");
+        let badge = nodes
+            .iter()
+            .find(|n| n.tag == BADGE_TAGS[COUNT])
+            .expect("count badge node");
         assert_eq!(badge.role, AriaRole::Status);
         assert_eq!(badge.name.as_deref(), Some("3 unread"));
     }
@@ -553,7 +593,10 @@ mod a11y_tests {
     #[test]
     fn dot_badge_status_announces_presence() {
         let nodes = BadgeView::access_node(&[count_data(3), dot_data()], None);
-        let badge = nodes.iter().find(|n| n.tag == BADGE_TAGS[DOT]).expect("dot badge node");
+        let badge = nodes
+            .iter()
+            .find(|n| n.tag == BADGE_TAGS[DOT])
+            .expect("dot badge node");
         assert_eq!(badge.role, AriaRole::Status);
         assert_eq!(badge.name.as_deref(), Some("New activity"));
     }
@@ -562,8 +605,14 @@ mod a11y_tests {
     fn hidden_badge_drops_describedby_and_status_node() {
         // count 0, non-dot -> hidden.
         let nodes = BadgeView::access_node(&[count_data(0), dot_data()], None);
-        let inbox = nodes.iter().find(|n| n.tag == ANCHOR_TAGS[COUNT]).expect("inbox anchor");
-        assert!(inbox.described_by.is_none(), "no dangling describedby when hidden");
+        let inbox = nodes
+            .iter()
+            .find(|n| n.tag == ANCHOR_TAGS[COUNT])
+            .expect("inbox anchor");
+        assert!(
+            inbox.described_by.is_none(),
+            "no dangling describedby when hidden"
+        );
         assert!(
             !nodes.iter().any(|n| n.tag == BADGE_TAGS[COUNT]),
             "no Status node for a hidden badge",

@@ -40,7 +40,7 @@
 //! the partial tail page re-fetches with the grown rows. See
 //! `tools/demos/r1005_paged_stream.py`.
 
-use pinion_a11y::{windowed_list_nodes, AccessNode, AccessState, AriaRole, WidgetA11y};
+use pinion_a11y::{AccessNode, AccessState, AriaRole, WidgetA11y, windowed_list_nodes};
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::intent::Intent;
 use pinion_core::reactive::{DeferredReady, Effect, Owner, ResourceCache, ResourceState, Signal};
@@ -48,19 +48,19 @@ use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
-use pinion_core::widgets::scroll::{use_scroll_state, ScrollState};
+use pinion_core::widgets::scroll::{ScrollState, use_scroll_state};
 use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
 use pinion_core::widgets::virtual_list::{
     at_bottom, compute_visible_range, follow_tail, pages_in_window,
 };
 use pinion_core::{
-    use_local_task_pump, Command, Frame, LocalTaskPump, Scene, WidgetCore, WidgetStateName,
+    Command, Frame, LocalTaskPump, Scene, WidgetCore, WidgetStateName, use_local_task_pump,
 };
-use pinion_shell::{vello_renderer_impl, WidgetView};
-use pinion_widget_paint::scrollbar::{view_vertical_scrollbar, VerticalScrollbarStyle};
+use pinion_shell::{WidgetView, vello_renderer_impl};
+use pinion_widget_paint::scrollbar::{VerticalScrollbarStyle, view_vertical_scrollbar};
 use pinion_widget_paint::virtual_list::view_virtual_list;
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
@@ -134,7 +134,9 @@ struct StreamSource {
 
 impl StreamSource {
     fn new() -> Self {
-        Self { count: Signal::new(0) }
+        Self {
+            count: Signal::new(0),
+        }
     }
 
     /// Total rows produced so far (reactive read).
@@ -245,7 +247,11 @@ fn install_loader() -> Rc<LoaderMarker> {
 /// bottom when following.
 fn apply_emit(src: &StreamSource, scroll: &ScrollState, cache: &PageCache) {
     let measured_h = scroll.measured_viewport().1;
-    let viewport_h = if measured_h == 0 { VIEWPORT_H } else { measured_h };
+    let viewport_h = if measured_h == 0 {
+        VIEWPORT_H
+    } else {
+        measured_h
+    };
     let was_following = at_bottom(scroll.offset_y(), scroll.max().1);
 
     // The page holding the last row gains rows iff it was partial; a full page
@@ -295,7 +301,9 @@ fn build_row(index: usize, page_states: &PageStates, theme: &Theme) -> Scene {
         ContainerNode::new(vec![Scene::Text(TextNode::styled(
             content,
             Rect::default(),
-            TextStyle::new().with_size_px(13).with_fg(theme.resolve(role)),
+            TextStyle::new()
+                .with_size_px(13)
+                .with_fg(theme.resolve(role)),
         ))])
         .with_tag(format!("{LIST_TAG}#{index}"))
         .with_style(BoxStyle::filled(zebra_fill(index, theme)))
@@ -341,7 +349,9 @@ fn emit_button(state: ButtonState, theme: &Theme) -> Scene {
         ContainerNode::new(vec![Scene::Text(TextNode::styled(
             format!("Emit {BATCH} lines"),
             Rect::default(),
-            TextStyle::new().with_size_px(14).with_fg(theme.resolve(ColorRole::OnAccent)),
+            TextStyle::new()
+                .with_size_px(14)
+                .with_fg(theme.resolve(ColorRole::OnAccent)),
         ))])
         .with_tag(EMIT_TAG)
         .with_aria_label("Emit log lines")
@@ -362,7 +372,9 @@ fn centered_text(content: String, tag: &str, size: u32, role: ColorRole, theme: 
         ContainerNode::new(vec![Scene::Text(TextNode::styled(
             content,
             Rect::default(),
-            TextStyle::new().with_size_px(size).with_fg(theme.resolve(role)),
+            TextStyle::new()
+                .with_size_px(size)
+                .with_fg(theme.resolve(role)),
         ))])
         .with_tag(tag.to_owned())
         .with_layout(
@@ -393,7 +405,9 @@ fn view(state: ButtonState, _frame: &Frame) -> Scene {
     let title = Scene::Text(TextNode::styled(
         "Paged streaming log (out-of-memory, LRU-bounded, tail-follow)",
         Rect::default(),
-        TextStyle::new().with_size_px(15).with_fg(theme.resolve(ColorRole::OnSurface)),
+        TextStyle::new()
+            .with_size_px(15)
+            .with_fg(theme.resolve(ColorRole::OnSurface)),
     ));
     let status = centered_text(
         status_line(count, following),
@@ -421,8 +435,12 @@ fn view(state: ButtonState, _frame: &Frame) -> Scene {
 
     let scrollbar_style = VerticalScrollbarStyle::material(VIEWPORT_H, SCROLLBAR_TAG);
     let scrollbar_interaction = use_scrollbar_interaction(SCROLLBAR_TAG);
-    let scrollbar_visual =
-        view_vertical_scrollbar(&scroll, &theme, &scrollbar_style, scrollbar_interaction.get());
+    let scrollbar_visual = view_vertical_scrollbar(
+        &scroll,
+        &theme,
+        &scrollbar_style,
+        scrollbar_interaction.get(),
+    );
 
     let list_root = Scene::Container(
         ContainerNode::new(vec![list, scrollbar_visual])
@@ -431,16 +449,22 @@ fn view(state: ButtonState, _frame: &Frame) -> Scene {
     );
 
     Scene::Container(
-        ContainerNode::new(vec![title, emit_button(state, &theme), status, cache_info, list_root])
-            .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Column)
-                    .with_align_items(AlignItems::Center)
-                    .with_justify(JustifyContent::Center)
-                    .with_size(Size::px(WIN_W, WIN_H))
-                    .with_gap(10),
-            ),
+        ContainerNode::new(vec![
+            title,
+            emit_button(state, &theme),
+            status,
+            cache_info,
+            list_root,
+        ])
+        .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
+        .with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Column)
+                .with_align_items(AlignItems::Center)
+                .with_justify(JustifyContent::Center)
+                .with_size(Size::px(WIN_W, WIN_H))
+                .with_gap(10),
+        ),
     )
 }
 
@@ -458,7 +482,10 @@ impl WidgetCore for PagedStreamView {
         // Install the prefetch Effect FIRST (boot eager run → fetch the
         // initially visible pages) so the data layer is live before first paint.
         let _loader = install_loader();
-        vec![scrollbar_extra_external(use_scroll_state(SCROLL_KEY), SCROLLBAR_TAG)]
+        vec![scrollbar_extra_external(
+            use_scroll_state(SCROLL_KEY),
+            SCROLLBAR_TAG,
+        )]
     }
 
     fn tag() -> &'static str {
@@ -528,7 +555,8 @@ impl WidgetA11y for PagedStreamView {
     fn access_node(state: &ButtonState, focused: Option<&str>) -> Vec<AccessNode> {
         let scroll = use_scroll_state(SCROLL_KEY);
         let count = use_source().count();
-        let window = compute_visible_range(scroll.offset_y(), VIEWPORT_H, count, ROW_PITCH, OVERSCAN);
+        let window =
+            compute_visible_range(scroll.offset_y(), VIEWPORT_H, count, ROW_PITCH, OVERSCAN);
 
         let button = AccessNode::new(EMIT_TAG, AriaRole::Button)
             .with_name("Emit log lines")
@@ -537,7 +565,8 @@ impl WidgetA11y for PagedStreamView {
                 ..AccessState::from_interaction(*state, None)
             });
         let following = at_bottom(scroll.offset_y(), scroll.max().1);
-        let status = AccessNode::new(STATUS_TAG, AriaRole::Status).with_name(status_line(count, following));
+        let status =
+            AccessNode::new(STATUS_TAG, AriaRole::Status).with_name(status_line(count, following));
 
         let mut nodes = vec![button, status];
         nodes.extend(windowed_list_nodes(
@@ -554,7 +583,10 @@ impl WidgetView for PagedStreamView {
     type Renderer = HelloPagedStreamRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 }
 
@@ -596,7 +628,10 @@ mod tests {
         fn walk(scene: &Scene, n: &mut usize) {
             match scene {
                 Scene::Container(c) => {
-                    if c.tag.as_deref().is_some_and(|t| t.starts_with("pagedstream#")) {
+                    if c.tag
+                        .as_deref()
+                        .is_some_and(|t| t.starts_with("pagedstream#"))
+                    {
                         *n += 1;
                     }
                     for child in &c.children {
@@ -637,9 +672,17 @@ mod tests {
     fn page_lines_partial_tail_then_full_after_more_count() {
         // Page 0 with only 50 rows produced is partial; with 100 it is full.
         assert_eq!(page_lines(0, 50).len(), 50, "partial tail page");
-        assert_eq!(page_lines(0, 100).len(), PAGE_SIZE, "page 0 full once count passes it");
+        assert_eq!(
+            page_lines(0, 100).len(),
+            PAGE_SIZE,
+            "page 0 full once count passes it"
+        );
         assert_eq!(page_lines(0, 50)[0], synth_line(0));
-        assert_eq!(page_lines(1, 100)[0], synth_line(PAGE_SIZE), "page 1 starts at row 64");
+        assert_eq!(
+            page_lines(1, 100)[0],
+            synth_line(PAGE_SIZE),
+            "page 1 starts at row 64"
+        );
     }
 
     #[test]
@@ -654,7 +697,10 @@ mod tests {
             }
             assert_eq!(src.count(), 40 * BATCH);
             let rendered = count_row_tags(&view(ButtonState::Idle, &Frame::default()));
-            assert!(rendered <= 14 + 2 * OVERSCAN + 1, "virtualized window stays bounded: {rendered}");
+            assert!(
+                rendered <= 14 + 2 * OVERSCAN + 1,
+                "virtualized window stays bounded: {rendered}"
+            );
             assert!(rendered >= 14, "covers the 14-row viewport");
         });
     }
@@ -669,7 +715,10 @@ mod tests {
             assert_eq!(src.count(), 50);
             let scene = view(ButtonState::Idle, &Frame::default());
             // Following → window is at the tail; row 49 is the newest.
-            assert_eq!(row_text_of(&scene, 49).as_deref(), Some(synth_line(49).as_str()));
+            assert_eq!(
+                row_text_of(&scene, 49).as_deref(),
+                Some(synth_line(49).as_str())
+            );
             // Row 50 does not exist yet.
             assert_eq!(page_lines(0, 50).get(50), None);
             // Second batch: count 100. Page 0 is now full (64 rows) — row 50
@@ -685,7 +734,11 @@ mod tests {
             // invalidated + re-fetched, so it now holds the full 64 rows incl 50.
             match page_cache().state(&0) {
                 Some(ResourceState::Ready(rows)) => {
-                    assert_eq!(rows.len(), PAGE_SIZE, "partial tail page re-fetched to full");
+                    assert_eq!(
+                        rows.len(),
+                        PAGE_SIZE,
+                        "partial tail page re-fetched to full"
+                    );
                     assert_eq!(rows[50], synth_line(50), "row 50 now present on page 0");
                 }
                 other => panic!("page 0 should be Ready after refetch, got {other:?}"),
@@ -712,14 +765,21 @@ mod tests {
             // Scroll across far bands so many distinct pages are touched. Row 0
             // (page 0) is touched first, then four far bands.
             for row in [0usize, 2_000, 5_000, 8_000, 9_900] {
-                scroll.scroll_to(0, i32::try_from(row).unwrap() * i32::try_from(ROW_PITCH).unwrap());
+                scroll.scroll_to(
+                    0,
+                    i32::try_from(row).unwrap() * i32::try_from(ROW_PITCH).unwrap(),
+                );
                 drain();
             }
             // `len() <= cap` alone is structurally guaranteed by the LRU; the
             // real witness that eviction HAPPENS (memory stays flat over an
             // unbounded stream) is that page 0 — touched first, then five bands
             // ago — is actually gone, not merely that the count is capped.
-            assert!(cache.len() <= CACHE_PAGES.get(), "resident pages capped at {}", CACHE_PAGES.get());
+            assert!(
+                cache.len() <= CACHE_PAGES.get(),
+                "resident pages capped at {}",
+                CACHE_PAGES.get()
+            );
             assert!(
                 !cache.contains(&0),
                 "page 0 was evicted after far scrolling (eviction happens, not just the cap holds)",
@@ -757,7 +817,10 @@ mod tests {
             let (src, scroll, cache) = boot();
             drain();
             let empty = view(ButtonState::Idle, &Frame::default());
-            assert_eq!(text_of(&empty, STATUS_TAG).as_deref(), Some("0 lines \u{00b7} click Emit to stream"));
+            assert_eq!(
+                text_of(&empty, STATUS_TAG).as_deref(),
+                Some("0 lines \u{00b7} click Emit to stream")
+            );
             for _ in 0..3 {
                 emit(&src, &scroll, &cache); // 150 rows
             }
@@ -768,7 +831,10 @@ mod tests {
             );
             // Resident pages are bounded — the out-of-memory witness.
             let info = text_of(&scene, CACHEINFO_TAG).unwrap();
-            assert!(info.starts_with("Resident pages: "), "cacheinfo present: {info}");
+            assert!(
+                info.starts_with("Resident pages: "),
+                "cacheinfo present: {info}"
+            );
             assert!(cache.len() <= CACHE_PAGES.get());
         });
     }
@@ -786,8 +852,14 @@ mod tests {
             assert!(nodes[0].state.focused);
             assert_eq!(nodes[1].role, AriaRole::Status);
             assert_eq!(nodes[2].role, AriaRole::List);
-            assert_eq!(nodes[2].size_of_set, Some(u32::try_from(4 * BATCH).unwrap()));
-            assert!(nodes.len() - 3 <= 14 + 2 * OVERSCAN + 1, "only the window has listitems");
+            assert_eq!(
+                nodes[2].size_of_set,
+                Some(u32::try_from(4 * BATCH).unwrap())
+            );
+            assert!(
+                nodes.len() - 3 <= 14 + 2 * OVERSCAN + 1,
+                "only the window has listitems"
+            );
             for item in &nodes[3..] {
                 assert_eq!(item.role, AriaRole::ListItem);
                 assert_eq!(item.size_of_set, Some(u32::try_from(4 * BATCH).unwrap()));

@@ -144,7 +144,10 @@ impl WidgetView for PaneFocusView {
     type Renderer = TestRenderer;
 
     fn initial_size_strategy() -> SizeStrategy {
-        SizeStrategy::Fixed { width: 640, height: 384 }
+        SizeStrategy::Fixed {
+            width: 640,
+            height: 384,
+        }
     }
 }
 
@@ -155,7 +158,9 @@ fn tab_order(core: &ShellCore<PaneFocusView>) -> Vec<String> {
 
 #[test]
 fn paint_enumerates_the_painted_focusable_panes() {
-    let _g = TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _g = TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let core = ShellCore::<PaneFocusView>::new();
 
     // The boot seed is scene-derived (collected from the first view), not a
@@ -173,7 +178,9 @@ fn paint_enumerates_the_painted_focusable_panes() {
 
 #[test]
 fn adding_a_pane_makes_it_focus_reachable() {
-    let _g = TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _g = TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut core = ShellCore::<PaneFocusView>::new();
     core.compute_paint_scene(640, 384);
     assert_eq!(tab_order(&core).len(), 2, "two panes at boot");
@@ -184,7 +191,11 @@ fn adding_a_pane_makes_it_focus_reachable() {
     core.compute_paint_scene(640, 384);
     assert_eq!(
         tab_order(&core),
-        vec!["pane#0".to_owned(), "pane#1".to_owned(), "pane#2".to_owned()],
+        vec![
+            "pane#0".to_owned(),
+            "pane#1".to_owned(),
+            "pane#2".to_owned()
+        ],
         "the runtime-added pane joins the Tab order",
     );
     // Membership in `tab_order` is exactly the gate `FocusManager::focus_set` /
@@ -198,7 +209,9 @@ fn adding_a_pane_makes_it_focus_reachable() {
 
 #[test]
 fn removing_the_focused_pane_drops_focus_safely() {
-    let _g = TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _g = TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut core = ShellCore::<PaneFocusView>::new();
     core.root_owner().run(|| pane_count().set(3));
     core.compute_paint_scene(640, 384);
@@ -222,7 +235,9 @@ fn removing_the_focused_pane_drops_focus_safely() {
 
 #[test]
 fn focus_request_to_a_just_painted_node_re_derives() {
-    let _g = TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _g = TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut core = ShellCore::<PaneFocusView>::new();
     let scene = core.compute_paint_scene(640, 384);
     assert!(

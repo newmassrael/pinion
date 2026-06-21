@@ -313,7 +313,9 @@ mod tests {
         assert_eq!(node.query("remaining"), Some(IntrospectValue::Float(0.0)));
         assert_eq!(
             node.query("duration"),
-            Some(IntrospectValue::Float(f64::from(SnackbarTimer::DEFAULT_DURATION_SECS))),
+            Some(IntrospectValue::Float(f64::from(
+                SnackbarTimer::DEFAULT_DURATION_SECS
+            ))),
         );
         // Shown: visible flips and the countdown starts at the full duration.
         timer.show(4.0);
@@ -359,7 +361,11 @@ mod tests {
     #[test]
     fn r810_introspect_unknown_query_path_is_none() {
         let node = SnackbarIntrospect::new(Rc::new(SnackbarTimer::new()));
-        assert_eq!(node.query("elapsed"), None, "only visible/remaining/duration are query slots");
+        assert_eq!(
+            node.query("elapsed"),
+            None,
+            "only visible/remaining/duration are query slots"
+        );
     }
 
     #[test]
@@ -367,7 +373,11 @@ mod tests {
         let node = SnackbarIntrospect::new(Rc::new(SnackbarTimer::new()));
         assert_eq!(
             node.schema().fields,
-            &[("visible", "bool"), ("remaining", "float"), ("duration", "float")],
+            &[
+                ("visible", "bool"),
+                ("remaining", "float"),
+                ("duration", "float")
+            ],
         );
     }
 
@@ -375,12 +385,18 @@ mod tests {
     fn r810_introspection_extra_carries_tag_and_shared_timer() {
         let timer = Rc::new(SnackbarTimer::new());
         let extra = snackbar_introspection_extra("snackbar_state", timer.clone());
-        assert_eq!(extra.tag, "snackbar_state", "the helper registers under the given tag");
+        assert_eq!(
+            extra.tag, "snackbar_state",
+            "the helper registers under the given tag"
+        );
         let introspect = extra
             .handle
             .introspect()
             .expect("the snackbar node exposes a query-only introspection face");
-        assert_eq!(introspect.query("visible"), Some(IntrospectValue::Bool(false)));
+        assert_eq!(
+            introspect.query("visible"),
+            Some(IntrospectValue::Bool(false))
+        );
         timer.show(4.0);
         assert_eq!(
             introspect.query("visible"),

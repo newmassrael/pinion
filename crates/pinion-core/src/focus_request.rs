@@ -245,18 +245,34 @@ mod tests {
     fn rove_arrow_next_wraps_past_the_last() {
         let _ = drain();
         assert!(rove(&TAGS, "c", "ArrowRight"));
-        assert_eq!(drain(), Some("a".to_string()), "ArrowRight from last wraps to first");
+        assert_eq!(
+            drain(),
+            Some("a".to_string()),
+            "ArrowRight from last wraps to first"
+        );
         assert!(rove(&TAGS, "a", "ArrowDown"));
-        assert_eq!(drain(), Some("b".to_string()), "ArrowDown is the same next move");
+        assert_eq!(
+            drain(),
+            Some("b".to_string()),
+            "ArrowDown is the same next move"
+        );
     }
 
     #[test]
     fn rove_arrow_prev_wraps_before_the_first() {
         let _ = drain();
         assert!(rove(&TAGS, "a", "ArrowLeft"));
-        assert_eq!(drain(), Some("c".to_string()), "ArrowLeft from first wraps to last");
+        assert_eq!(
+            drain(),
+            Some("c".to_string()),
+            "ArrowLeft from first wraps to last"
+        );
         assert!(rove(&TAGS, "c", "ArrowUp"));
-        assert_eq!(drain(), Some("b".to_string()), "ArrowUp is the same previous move");
+        assert_eq!(
+            drain(),
+            Some("b".to_string()),
+            "ArrowUp is the same previous move"
+        );
     }
 
     #[test]
@@ -271,7 +287,10 @@ mod tests {
     #[test]
     fn rove_ignores_non_navigation_keys_and_emits_nothing() {
         let _ = drain();
-        assert!(!rove(&TAGS, "b", "Space"), "activation keys are not roving keys");
+        assert!(
+            !rove(&TAGS, "b", "Space"),
+            "activation keys are not roving keys"
+        );
         assert!(!rove(&TAGS, "b", "x"), "arbitrary keys are not roving keys");
         assert_eq!(drain(), None, "a non-navigation key emits no focus request");
     }
@@ -280,7 +299,11 @@ mod tests {
     fn rove_returns_false_when_focused_tag_is_absent() {
         let _ = drain();
         assert!(!rove(&TAGS, "not_here", "ArrowRight"));
-        assert_eq!(drain(), None, "an unknown focused tag emits no focus request");
+        assert_eq!(
+            drain(),
+            None,
+            "an unknown focused tag emits no focus request"
+        );
     }
 
     // ── activate_or_rove (R760 button-cluster keyboard SSOT) ──────────
@@ -295,7 +318,9 @@ mod tests {
     fn button_cluster() -> Scene {
         let children = BTN_TAGS
             .iter()
-            .map(|t| Scene::External(ExternalNode::new(Box::new(ButtonExternal::new())).with_tag(*t)))
+            .map(|t| {
+                Scene::External(ExternalNode::new(Box::new(ButtonExternal::new())).with_tag(*t))
+            })
             .collect();
         Scene::Container(ContainerNode::new(children))
     }
@@ -348,7 +373,11 @@ mod tests {
             activate_or_rove(&mut scene, &BTN_TAGS, Some("b0"), "ArrowRight"),
             "an arrow key roves",
         );
-        assert_eq!(drain().as_deref(), Some("b1"), "rove emitted the next-sibling focus request");
+        assert_eq!(
+            drain().as_deref(),
+            Some("b1"),
+            "rove emitted the next-sibling focus request"
+        );
     }
 
     #[test]

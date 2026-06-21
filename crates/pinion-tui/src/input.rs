@@ -140,44 +140,86 @@ mod tests {
         // R51.111 — `KeyCode::Char(' ')` must become `"Space"`, not
         // a single space character, so widget `apply_key` impls
         // matching against W3C `"Space"` work across both backends.
-        assert_eq!(key_str_from_event(&ev(KeyCode::Char(' '))).as_deref(), Some("Space"));
+        assert_eq!(
+            key_str_from_event(&ev(KeyCode::Char(' '))).as_deref(),
+            Some("Space")
+        );
     }
 
     #[test]
     fn enter_key_maps_to_w3c_enter() {
-        assert_eq!(key_str_from_event(&ev(KeyCode::Enter)).as_deref(), Some("Enter"));
+        assert_eq!(
+            key_str_from_event(&ev(KeyCode::Enter)).as_deref(),
+            Some("Enter")
+        );
     }
 
     #[test]
     fn arrow_keys_map_to_w3c_strings() {
         // ARIA Authoring Practices Slider / Listbox / Tabs all match
         // against `"ArrowLeft"`-style names; the TUI path must agree.
-        assert_eq!(key_str_from_event(&ev(KeyCode::Left)).as_deref(), Some("ArrowLeft"));
-        assert_eq!(key_str_from_event(&ev(KeyCode::Right)).as_deref(), Some("ArrowRight"));
-        assert_eq!(key_str_from_event(&ev(KeyCode::Up)).as_deref(), Some("ArrowUp"));
-        assert_eq!(key_str_from_event(&ev(KeyCode::Down)).as_deref(), Some("ArrowDown"));
+        assert_eq!(
+            key_str_from_event(&ev(KeyCode::Left)).as_deref(),
+            Some("ArrowLeft")
+        );
+        assert_eq!(
+            key_str_from_event(&ev(KeyCode::Right)).as_deref(),
+            Some("ArrowRight")
+        );
+        assert_eq!(
+            key_str_from_event(&ev(KeyCode::Up)).as_deref(),
+            Some("ArrowUp")
+        );
+        assert_eq!(
+            key_str_from_event(&ev(KeyCode::Down)).as_deref(),
+            Some("ArrowDown")
+        );
     }
 
     #[test]
     fn navigation_keys_map_to_w3c_strings() {
-        assert_eq!(key_str_from_event(&ev(KeyCode::Home)).as_deref(), Some("Home"));
-        assert_eq!(key_str_from_event(&ev(KeyCode::End)).as_deref(), Some("End"));
-        assert_eq!(key_str_from_event(&ev(KeyCode::PageUp)).as_deref(), Some("PageUp"));
-        assert_eq!(key_str_from_event(&ev(KeyCode::PageDown)).as_deref(), Some("PageDown"));
+        assert_eq!(
+            key_str_from_event(&ev(KeyCode::Home)).as_deref(),
+            Some("Home")
+        );
+        assert_eq!(
+            key_str_from_event(&ev(KeyCode::End)).as_deref(),
+            Some("End")
+        );
+        assert_eq!(
+            key_str_from_event(&ev(KeyCode::PageUp)).as_deref(),
+            Some("PageUp")
+        );
+        assert_eq!(
+            key_str_from_event(&ev(KeyCode::PageDown)).as_deref(),
+            Some("PageDown")
+        );
     }
 
     #[test]
     fn character_keys_round_trip_through_their_glyph() {
         // Letter keys (no modifier) — apply_key impls speak the literal
         // glyph, e.g. `"d"` for the Vello hello-button's Disable keybinding.
-        assert_eq!(key_str_from_event(&ev(KeyCode::Char('d'))).as_deref(), Some("d"));
-        assert_eq!(key_str_from_event(&ev(KeyCode::Char('A'))).as_deref(), Some("A"));
+        assert_eq!(
+            key_str_from_event(&ev(KeyCode::Char('d'))).as_deref(),
+            Some("d")
+        );
+        assert_eq!(
+            key_str_from_event(&ev(KeyCode::Char('A'))).as_deref(),
+            Some("A")
+        );
     }
 
     #[test]
     fn function_keys_map_to_fn_names() {
-        assert_eq!(key_str_from_event(&ev(KeyCode::F(1))).as_deref(), Some("F1"));
-        assert_eq!(key_str_from_event(&ev(KeyCode::F(12))).as_deref(), Some("F12"));
+        assert_eq!(
+            key_str_from_event(&ev(KeyCode::F(1))).as_deref(),
+            Some("F1")
+        );
+        assert_eq!(
+            key_str_from_event(&ev(KeyCode::F(12))).as_deref(),
+            Some("F12")
+        );
     }
 
     #[test]

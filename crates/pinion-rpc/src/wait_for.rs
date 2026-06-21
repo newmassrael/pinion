@@ -10,11 +10,11 @@
 //! async boundary lands (§6.3) and external state arrival can land
 //! between polls.
 
-use pinion_core::external::IntrospectValue;
 use pinion_core::Scene;
+use pinion_core::external::IntrospectValue;
 
 use crate::path::PathError;
-use crate::query::{query, QueryError};
+use crate::query::{QueryError, query};
 
 /// Outcome of [`wait_for`].
 #[non_exhaustive]
@@ -128,8 +128,7 @@ mod tests {
     #[test]
     fn query_error_propagates() {
         let scene = Scene::External(ExternalNode::new(Box::new(StubExternal::new())));
-        let err =
-            wait_for(&scene, "/external/anything", &IntrospectValue::Null, 3).unwrap_err();
+        let err = wait_for(&scene, "/external/anything", &IntrospectValue::Null, 3).unwrap_err();
         assert_eq!(err, WaitForError::Query(QueryError::IntrospectionOptedOut));
     }
 

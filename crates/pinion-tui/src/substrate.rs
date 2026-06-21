@@ -56,11 +56,9 @@ use std::time::Instant;
 use pinion_core::event::WheelDelta;
 use pinion_core::intent::Intent;
 use pinion_core::{Frame, Owner, Scene, SceneRevision};
-use pinion_rpc::{
-    dispatch_parsed, DeferredInput, DispatchContext, PreviewLedger,
-};
+use pinion_rpc::{DeferredInput, DispatchContext, PreviewLedger, dispatch_parsed};
 use pinion_runtime::{
-    clamp_frame_dt, CommandExecutor, CoreShell, DispatchTail, FocusManager, PointerId,
+    CommandExecutor, CoreShell, DispatchTail, FocusManager, PointerId, clamp_frame_dt,
 };
 
 use crate::WidgetViewTui;
@@ -324,9 +322,7 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         // [`pinion_core::Owner`] argument land on the framework-owned
         // scope, dropping together with this substrate.
         let cached_state = *self.core.cached_state();
-        self.core
-            .root_owner()
-            .run(|| V::view(cached_state, &frame))
+        self.core.root_owner().run(|| V::view(cached_state, &frame))
     }
 
     /// Hand a freshly-painted scene to the substrate's
@@ -344,7 +340,8 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         //
         // A binding with no focus stops paints no focusable node, so the
         // enumeration is correctly empty.
-        self.focus.update_focusable_tags(paint_scene.collect_focusable_tags());
+        self.focus
+            .update_focusable_tags(paint_scene.collect_focusable_tags());
         self.core.update_paint_scene(paint_scene);
     }
 
@@ -591,10 +588,7 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     /// argument onto the `Key` / `CharacterKey` variants when the
     /// first AI-driver use-case (e.g. Shift+Arrow text-selection
     /// macro) lands.
-    pub fn drain_deferred_inputs(
-        &mut self,
-        inputs: &[pinion_rpc::DeferredInput],
-    ) -> bool {
+    pub fn drain_deferred_inputs(&mut self, inputs: &[pinion_rpc::DeferredInput]) -> bool {
         let mut state_changed = false;
         for input in inputs {
             match *input {
@@ -634,7 +628,12 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
                 // R882 §5.49 §5.39 — `state` carries the keyboard edge;
                 // the shared edge policy (cache update / dispatch /
                 // cursor move) lives in `drain_key_edge`.
-                pinion_rpc::DeferredInput::Key { x, y, ref key, state } => {
+                pinion_rpc::DeferredInput::Key {
+                    x,
+                    y,
+                    ref key,
+                    state,
+                } => {
                     state_changed |= self.drain_key_edge((x, y), key, state);
                 }
                 pinion_rpc::DeferredInput::CharacterKey {
@@ -842,11 +841,9 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     fn refresh_focusable_from_view(&mut self) {
         let cached_state = *self.core.cached_state();
         let frame = Frame::with_dt(0.0);
-        let scene = self
-            .core
-            .root_owner()
-            .run(|| V::view(cached_state, &frame));
-        self.focus.update_focusable_tags(scene.collect_focusable_tags());
+        let scene = self.core.root_owner().run(|| V::view(cached_state, &frame));
+        self.focus
+            .update_focusable_tags(scene.collect_focusable_tags());
     }
 
     /// R693 §5.39 — pop one pending
@@ -943,15 +940,15 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         // unavailable. Held keys are real (the RPC-owned `HeldKeys`
         // cache, R882); the TUI's single `DEFAULT_WINDOW` router is
         // seeded at construction, so the snapshot is always `Some`.
-        let input_state_snapshot =
-            self.core.input_state_snapshot(pinion_runtime::DEFAULT_WINDOW, None);
+        let input_state_snapshot = self
+            .core
+            .input_state_snapshot(pinion_runtime::DEFAULT_WINDOW, None);
         let resp_pair = {
             // Disjoint-field split mutable borrows. Mirror of the
             // pinion-shell substrate's `dispatch_rpc` borrow split.
             let cached_state = *self.core.cached_state();
             let root_owner = self.core.root_owner().clone();
-            let executor_for_rpc: Option<Arc<CommandExecutor>> =
-                self.core.executor().cloned();
+            let executor_for_rpc: Option<Arc<CommandExecutor>> = self.core.executor().cloned();
             // R890.1 §5.12 §2 #6 — same disjoint split the GUI shell
             // uses: mutable state scene + the stored paint scene of
             // the single terminal window. Threading the stored scene
@@ -1664,8 +1661,8 @@ mod tests {
         use pinion_core::external::IntrospectValue;
         use pinion_core::{Command, Intent};
         use pinion_runtime::{
-            BlockOnExecutor, CommandExecutor, Executor, HandlerFuture, HandlerRegistry,
-            IntentSink, VecSink,
+            BlockOnExecutor, CommandExecutor, Executor, HandlerFuture, HandlerRegistry, IntentSink,
+            VecSink,
         };
 
         use super::super::ShellCoreTui;
@@ -1674,17 +1671,12 @@ mod tests {
         fn echo_handler() -> Arc<dyn pinion_runtime::Handler> {
             Arc::new(|cmd: Command| -> HandlerFuture {
                 Box::pin(async move {
-                    Intent::new_owned(
-                        format!("echo.{}", cmd.kind_str()),
-                        cmd.payload,
-                    )
+                    Intent::new_owned(format!("echo.{}", cmd.kind_str()), cmd.payload)
                 })
             })
         }
 
-        fn build_executor(
-            kinds: &[&'static str],
-        ) -> (Arc<CommandExecutor>, Arc<VecSink>) {
+        fn build_executor(kinds: &[&'static str]) -> (Arc<CommandExecutor>, Arc<VecSink>) {
             let mut reg = HandlerRegistry::new();
             for k in kinds {
                 reg.register(*k, echo_handler());
@@ -1954,15 +1946,17 @@ mod tests {
 
             // Carrier intent (incoming) payload — the tag we passed.
             assert!(
-                pending.iter().any(|c| c.payload
-                    == IntrospectValue::Text("KeyboardActivate".to_string())),
+                pending
+                    .iter()
+                    .any(|c| c.payload == IntrospectValue::Text("KeyboardActivate".to_string())),
                 "incoming intent reducer must observe `KeyboardActivate`",
             );
             // Drained click intent payload — `<tag>.<kind>`
             // (R51.122 reference).
             assert!(
-                pending.iter().any(|c| c.payload
-                    == IntrospectValue::Text("echo_btn.click".to_string())),
+                pending
+                    .iter()
+                    .any(|c| c.payload == IntrospectValue::Text("echo_btn.click".to_string())),
                 "drained intent reducer must observe `echo_btn.click`",
             );
         }

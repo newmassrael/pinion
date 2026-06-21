@@ -61,8 +61,8 @@
 //! second consumer.
 
 use pinion_a11y::{
-    grid_table_nodes, AccessAction, AccessFocus, AccessNode, GridCell, GridColumn, GridRow,
-    SortDirection, WidgetA11y,
+    AccessAction, AccessFocus, AccessNode, GridCell, GridColumn, GridRow, SortDirection,
+    WidgetA11y, grid_table_nodes,
 };
 // R816 §5.40 — `AriaRole` is now only referenced by the test asserts (the
 // lifted `grid_table_nodes` builder owns role + state tagging in prod).
@@ -70,18 +70,16 @@ use pinion_a11y::{
 use pinion_a11y::AriaRole;
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::scene::ContainerNode;
-use pinion_core::style::{
-    AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle,
-};
-use pinion_core::theme::{use_theme, ColorRole};
+use pinion_core::style::{AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle};
+use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::widgets::grid_sort::col_sort_dir;
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::table::{
-    read_cols, read_focused_col, read_focused_row, read_rows, TableExternal,
+    TableExternal, read_cols, read_focused_col, read_focused_row, read_rows,
 };
 use pinion_core::{Frame, Scene, WidgetCore, WidgetStateName};
-use pinion_shell::{vello_renderer_impl, WidgetView};
-use pinion_widget_paint::table::{view_table, TableData, TableSelection, TableStyle};
+use pinion_shell::{WidgetView, vello_renderer_impl};
+use pinion_widget_paint::table::{TableData, TableSelection, TableStyle, view_table};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloTableRenderer, HelloTableRendererError);
@@ -165,7 +163,10 @@ impl TableState {
     }
 
     fn row_state(&self, row: usize) -> RadioState {
-        self.row_states.get(row).copied().unwrap_or(RadioState::Idle)
+        self.row_states
+            .get(row)
+            .copied()
+            .unwrap_or(RadioState::Idle)
     }
 }
 
@@ -208,7 +209,10 @@ fn set_visual_row(intro: &mut dyn pinion_core::external::ExternalIntrospect, vis
     }
     let order = read_order(intro, rows);
     let data = order.get(visual.min(rows - 1)).copied().unwrap_or(0);
-    let _ = intro.intervene("focused_row", IntrospectValue::Int(i64::try_from(data).unwrap_or(0)));
+    let _ = intro.intervene(
+        "focused_row",
+        IntrospectValue::Int(i64::try_from(data).unwrap_or(0)),
+    );
 }
 
 /// Establish the active-descendant row if none is set yet (a horizontal
@@ -231,14 +235,17 @@ fn move_row(intro: &mut dyn pinion_core::external::ExternalIntrospect, delta: i6
     }
     let order = read_order(intro, rows);
     let max = i64::try_from(rows - 1).unwrap_or(0);
-    let next_visual = match read_focused_row(intro).and_then(|d| order.iter().position(|&x| x == d)) {
+    let next_visual = match read_focused_row(intro).and_then(|d| order.iter().position(|&x| x == d))
+    {
         None => 0,
         Some(v) => (i64::try_from(v).unwrap_or(0) + delta).clamp(0, max),
     };
     let next_visual = usize::try_from(next_visual).unwrap_or(0);
     let next_data = order.get(next_visual).copied().unwrap_or(0);
-    let _ =
-        intro.intervene("focused_row", IntrospectValue::Int(i64::try_from(next_data).unwrap_or(0)));
+    let _ = intro.intervene(
+        "focused_row",
+        IntrospectValue::Int(i64::try_from(next_data).unwrap_or(0)),
+    );
 }
 
 /// Move the active-descendant column by `delta`, clamped within the
@@ -263,7 +270,10 @@ fn set_col(intro: &mut dyn pinion_core::external::ExternalIntrospect, col: usize
         return;
     }
     let clamped = col.min(cols - 1);
-    let _ = intro.intervene("focused_col", IntrospectValue::Int(i64::try_from(clamped).unwrap_or(0)));
+    let _ = intro.intervene(
+        "focused_col",
+        IntrospectValue::Int(i64::try_from(clamped).unwrap_or(0)),
+    );
 }
 
 /// view-fn (§6.3): pure sync mapping [`TableState`] -> [`Scene`]. Wraps
@@ -285,15 +295,21 @@ fn view(state: &TableState, _frame: &Frame) -> Scene {
     // R735 §5.38 — `view_table` takes a data-indexed selection bitmap
     // (uniform with `row_states`); single-select projects its one
     // `selected_row` into the bitmap.
-    let row_selected: [bool; NROWS] =
-        core::array::from_fn(|i| state.selected_row == Some(i));
+    let row_selected: [bool; NROWS] = core::array::from_fn(|i| state.selected_row == Some(i));
     let table = view_table(
         PRIMARY_TAG,
-        TableData { headers: &HEADERS, rows: &rows, row_ids: &state.order },
+        TableData {
+            headers: &HEADERS,
+            rows: &rows,
+            row_ids: &state.order,
+        },
         // Single-row selection only; the spreadsheet cell range selection is
         // the dedicated `hello-cell-select` grid's model (R953 — one selection
         // model per example, Excel / Qt `SelectRows` vs `SelectItems`).
-        TableSelection { rows: &row_selected, cells: None },
+        TableSelection {
+            rows: &row_selected,
+            cells: None,
+        },
         &state.row_states,
         state.sort,
         &theme,
@@ -369,8 +385,7 @@ impl WidgetCore for TableView {
             _ => None,
         };
         if let Some(col) = sort_col {
-            let ascending =
-                matches!(intro.query("sort_dir"), Some(IntrospectValue::Text(d)) if d == "ascending");
+            let ascending = matches!(intro.query("sort_dir"), Some(IntrospectValue::Text(d)) if d == "ascending");
             out.sort = Some((col, ascending));
         }
         out.order = core::array::from_fn(|v| match intro.query(&format!("order.{v}")) {
@@ -584,8 +599,8 @@ impl WidgetA11y for TableView {
         match action {
             AccessAction::Click | AccessAction::Default => {
                 for ev in ["PointerEnter", "PointerDown", "PointerUp", "PointerLeave"] {
-                    let _ = intro
-                        .invoke("send", IntrospectValue::Text(format!("{row}_{col}:{ev}")));
+                    let _ =
+                        intro.invoke("send", IntrospectValue::Text(format!("{row}_{col}:{ev}")));
                 }
                 true
             }
@@ -599,7 +614,10 @@ impl WidgetView for TableView {
     type Renderer = HelloTableRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 }
 
@@ -616,9 +634,7 @@ mod tests {
     /// `apply_key` / `access_child_invoke` walk the live shell's exact
     /// topology (one composite `Scene::External` at `PRIMARY_TAG`).
     fn scene_fixture() -> Scene {
-        Scene::External(
-            ExternalNode::new(TableView::create_external()).with_tag(PRIMARY_TAG),
-        )
+        Scene::External(ExternalNode::new(TableView::create_external()).with_tag(PRIMARY_TAG))
     }
 
     fn selected_row(scene: &Scene) -> Option<i64> {
@@ -658,38 +674,105 @@ mod tests {
     fn arrows_move_2d_active_descendant_clamped() {
         let mut scene = scene_fixture();
         // First vertical arrow enters the grid at row 0.
-        assert!(TableView::apply_key(&mut scene, Some(PRIMARY_TAG), "ArrowDown", pinion_core::Modifiers::default()));
+        assert!(TableView::apply_key(
+            &mut scene,
+            Some(PRIMARY_TAG),
+            "ArrowDown",
+            pinion_core::Modifiers::default()
+        ));
         assert_eq!(focused(&scene), (0, 0), "first ArrowDown enters at row 0");
-        let _ = TableView::apply_key(&mut scene, Some(PRIMARY_TAG), "ArrowDown", pinion_core::Modifiers::default());
+        let _ = TableView::apply_key(
+            &mut scene,
+            Some(PRIMARY_TAG),
+            "ArrowDown",
+            pinion_core::Modifiers::default(),
+        );
         assert_eq!(focused(&scene), (1, 0), "ArrowDown -> row 1");
-        let _ = TableView::apply_key(&mut scene, Some(PRIMARY_TAG), "ArrowRight", pinion_core::Modifiers::default());
+        let _ = TableView::apply_key(
+            &mut scene,
+            Some(PRIMARY_TAG),
+            "ArrowRight",
+            pinion_core::Modifiers::default(),
+        );
         assert_eq!(focused(&scene), (1, 1), "ArrowRight -> col 1");
         // PageDown jumps to the last row; ArrowDown then clamps.
-        let _ = TableView::apply_key(&mut scene, Some(PRIMARY_TAG), "PageDown", pinion_core::Modifiers::default());
-        assert_eq!(focused(&scene).0, i64::try_from(NROWS - 1).unwrap(), "PageDown -> last row");
-        let _ = TableView::apply_key(&mut scene, Some(PRIMARY_TAG), "ArrowDown", pinion_core::Modifiers::default());
-        assert_eq!(focused(&scene).0, i64::try_from(NROWS - 1).unwrap(), "ArrowDown clamps at last row");
+        let _ = TableView::apply_key(
+            &mut scene,
+            Some(PRIMARY_TAG),
+            "PageDown",
+            pinion_core::Modifiers::default(),
+        );
+        assert_eq!(
+            focused(&scene).0,
+            i64::try_from(NROWS - 1).unwrap(),
+            "PageDown -> last row"
+        );
+        let _ = TableView::apply_key(
+            &mut scene,
+            Some(PRIMARY_TAG),
+            "ArrowDown",
+            pinion_core::Modifiers::default(),
+        );
+        assert_eq!(
+            focused(&scene).0,
+            i64::try_from(NROWS - 1).unwrap(),
+            "ArrowDown clamps at last row"
+        );
         // End jumps to the last column.
-        let _ = TableView::apply_key(&mut scene, Some(PRIMARY_TAG), "End", pinion_core::Modifiers::default());
-        assert_eq!(focused(&scene).1, i64::try_from(NCOLS - 1).unwrap(), "End -> last col");
+        let _ = TableView::apply_key(
+            &mut scene,
+            Some(PRIMARY_TAG),
+            "End",
+            pinion_core::Modifiers::default(),
+        );
+        assert_eq!(
+            focused(&scene).1,
+            i64::try_from(NCOLS - 1).unwrap(),
+            "End -> last col"
+        );
     }
 
     #[test]
     fn enter_activates_active_descendant_row() {
         let mut scene = scene_fixture();
         // Three ArrowDowns: enter at row 0, then advance to row 2.
-        let _ = TableView::apply_key(&mut scene, Some(PRIMARY_TAG), "ArrowDown", pinion_core::Modifiers::default());
-        let _ = TableView::apply_key(&mut scene, Some(PRIMARY_TAG), "ArrowDown", pinion_core::Modifiers::default());
-        let _ = TableView::apply_key(&mut scene, Some(PRIMARY_TAG), "ArrowDown", pinion_core::Modifiers::default());
+        let _ = TableView::apply_key(
+            &mut scene,
+            Some(PRIMARY_TAG),
+            "ArrowDown",
+            pinion_core::Modifiers::default(),
+        );
+        let _ = TableView::apply_key(
+            &mut scene,
+            Some(PRIMARY_TAG),
+            "ArrowDown",
+            pinion_core::Modifiers::default(),
+        );
+        let _ = TableView::apply_key(
+            &mut scene,
+            Some(PRIMARY_TAG),
+            "ArrowDown",
+            pinion_core::Modifiers::default(),
+        );
         assert_eq!(focused(&scene), (2, 0));
-        assert!(TableView::apply_key(&mut scene, Some(PRIMARY_TAG), "Enter", pinion_core::Modifiers::default()));
+        assert!(TableView::apply_key(
+            &mut scene,
+            Some(PRIMARY_TAG),
+            "Enter",
+            pinion_core::Modifiers::default()
+        ));
         assert_eq!(selected_row(&scene), Some(2), "Enter selects active row 2");
     }
 
     #[test]
     fn keys_ignored_when_grid_unfocused() {
         let mut scene = scene_fixture();
-        assert!(!TableView::apply_key(&mut scene, None, "ArrowDown", pinion_core::Modifiers::default()));
+        assert!(!TableView::apply_key(
+            &mut scene,
+            None,
+            "ArrowDown",
+            pinion_core::Modifiers::default()
+        ));
         assert_eq!(focused(&scene), (-1, 0));
     }
 
@@ -734,12 +817,20 @@ mod tests {
             .iter()
             .find(|n| n.tag == format!("{PRIMARY_TAG}_row3"))
             .expect("data row 3");
-        assert_eq!(row3.selected, Some(true), "selected row reports aria-selected");
+        assert_eq!(
+            row3.selected,
+            Some(true),
+            "selected row reports aria-selected"
+        );
         let row0 = nodes
             .iter()
             .find(|n| n.tag == format!("{PRIMARY_TAG}_row0"))
             .expect("data row 0");
-        assert_eq!(row0.selected, Some(false), "unselected row is aria-selected=false");
+        assert_eq!(
+            row0.selected,
+            Some(false),
+            "unselected row is aria-selected=false"
+        );
     }
 
     #[test]
@@ -762,7 +853,11 @@ mod tests {
             "1_2",
             AccessAction::Click,
         ));
-        assert_eq!(selected_row(&scene), Some(1), "AT click on cell 1_2 selects row 1");
+        assert_eq!(
+            selected_row(&scene),
+            Some(1),
+            "AT click on cell 1_2 selects row 1"
+        );
     }
 
     #[test]

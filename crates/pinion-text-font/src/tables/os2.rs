@@ -331,10 +331,7 @@ mod tests {
         let err = Os2::parse(&bytes).unwrap_err();
         assert!(matches!(
             err,
-            ParseError::TableTooShort {
-                tag: OS2_TAG,
-                ..
-            }
+            ParseError::TableTooShort { tag: OS2_TAG, .. }
         ));
     }
 }

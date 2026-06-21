@@ -483,9 +483,7 @@ mod tests {
         use pinion_runtime::compute_layout;
         use pinion_runtime::paint_adapter::{FragmentCache, root_background, to_vello_cached};
         use pinion_text::LayoutCache;
-        use pinion_widget_paint::datepicker::{
-            DatePickerStyle, DisplayedMonth, view_datepicker,
-        };
+        use pinion_widget_paint::datepicker::{DatePickerStyle, DisplayedMonth, view_datepicker};
 
         // Live binding window size (examples/hello-datepicker WIN_W/H).
         const W: u32 = 360;
@@ -503,7 +501,10 @@ mod tests {
         let mut scene = Owner::new().run(|| {
             let picker = view_datepicker(
                 "datepicker",
-                DisplayedMonth { year: 2026, month: 5 },
+                DisplayedMonth {
+                    year: 2026,
+                    month: 5,
+                },
                 None,
                 &[RadioState::Idle; 31],
                 &theme,
@@ -536,7 +537,12 @@ mod tests {
 
         // Inject the focus ring at the active-descendant cell, then
         // rasterize through the cached (live) path.
-        let scene = inject_focus_ring(scene, Some(FOCUSED_TAG), FocusRingStyle::default(), Some((W, H)));
+        let scene = inject_focus_ring(
+            scene,
+            Some(FOCUSED_TAG),
+            FocusRingStyle::default(),
+            Some((W, H)),
+        );
         let base = root_background(&scene);
         let mut cache = FragmentCache::new();
         let mut image_cache = pinion_runtime::image_cache::ImageCache::new();
@@ -685,12 +691,18 @@ mod tests {
         // centre alone) inset from the cell edges to dodge antialiasing.
         for &(x, y) in &[(CW / 2, CH / 2), (5, 6)] {
             let (r, g, b) = at(x, y);
-            assert!(r > 200 && g < 50 && b < 50, "cell(0,0) Rgb red bg, got ({r},{g},{b})");
+            assert!(
+                r > 200 && g < 50 && b < 50,
+                "cell(0,0) Rgb red bg, got ({r},{g},{b})"
+            );
         }
         // (1,0) Indexed(4) = ANSI blue (#0000ee).
         for &(x, y) in &[(CW + CW / 2, CH / 2), (CW + 5, 6)] {
             let (r, g, b) = at(x, y);
-            assert!(b > 180 && r < 50 && g < 50, "cell(1,0) Indexed(4) blue bg, got ({r},{g},{b})");
+            assert!(
+                b > 180 && r < 50 && g < 50,
+                "cell(1,0) Indexed(4) blue bg, got ({r},{g},{b})"
+            );
         }
         // (2,0) "A" glyph present: bright pixels on the black default bg.
         let mut a_glyph = false;
@@ -701,12 +713,18 @@ mod tests {
                 }
             }
         }
-        assert!(a_glyph, "cell(2,0) 'A' glyph must paint bright pixels on black");
+        assert!(
+            a_glyph,
+            "cell(2,0) 'A' glyph must paint bright pixels on black"
+        );
 
         // (0,1) reverse — the effective background is the green foreground.
         for &(x, y) in &[(CW / 2, CH + CH / 2), (5, CH + 6)] {
             let (r, g, b) = at(x, y);
-            assert!(g > 200 && r < 50 && b < 50, "cell(0,1) reverse swaps fg->bg green, got ({r},{g},{b})");
+            assert!(
+                g > 200 && r < 50 && b < 50,
+                "cell(0,1) reverse swaps fg->bg green, got ({r},{g},{b})"
+            );
         }
         // (1,1) hidden — the teal bg paints; the white "X" glyph does not.
         let (r, g, b) = at(CW + CW / 2, CH + CH / 2);
@@ -723,7 +741,10 @@ mod tests {
                 }
             }
         }
-        assert!(!hidden_glyph, "cell(1,1) hidden must suppress the white 'X' glyph");
+        assert!(
+            !hidden_glyph,
+            "cell(1,1) hidden must suppress the white 'X' glyph"
+        );
 
         // (cols 0..1, row 2) wide head + Trailer — the magenta bg must span
         // BOTH columns (the trailer carries the head's colours), and the
@@ -741,7 +762,10 @@ mod tests {
                 }
             }
         }
-        assert!(head_magenta > 20, "wide head bg magenta missing (head_magenta={head_magenta})");
+        assert!(
+            head_magenta > 20,
+            "wide head bg magenta missing (head_magenta={head_magenta})"
+        );
         assert!(
             trailer_magenta > 20,
             "Trailer cell must carry the wide head's magenta bg across both columns \
@@ -805,8 +829,11 @@ mod tests {
             cell(e().with_underline(true).with_strikethrough(true)),
         ];
 
-        let buffer = GridBuffer::new(COLS, ROWS).with_row(0, row0).with_row(1, row1);
-        let mut node = TextGridNode::new(CellMetric::new(CW, CH).expect("non-zero")).with_cells(buffer);
+        let buffer = GridBuffer::new(COLS, ROWS)
+            .with_row(0, row0)
+            .with_row(1, row1);
+        let mut node =
+            TextGridNode::new(CellMetric::new(CW, CH).expect("non-zero")).with_cells(buffer);
         node.rect = Rect::new(0, 0, W, H);
         let scene = Scene::TextGrid(node);
 
@@ -869,12 +896,24 @@ mod tests {
         // mid-cell (blank cell, so the rule is the only ink). The full-alpha
         // 1.5-px white rule over a ~12-px interior integrates to ~4.5k.
         let full_underline = underline_ink(0, 0);
-        assert!(full_underline > 2000, "cell(0,0) underline rule must ink, sum={full_underline}");
-        assert!(strike_ink(0, 0) < 500, "cell(0,0) underline must not ink mid-cell");
+        assert!(
+            full_underline > 2000,
+            "cell(0,0) underline rule must ink, sum={full_underline}"
+        );
+        assert!(
+            strike_ink(0, 0) < 500,
+            "cell(0,0) underline must not ink mid-cell"
+        );
 
         // (1,0) strikethrough — an inked rule at mid-cell, nothing at the bottom.
-        assert!(strike_ink(1, 0) > 2000, "cell(1,0) strikethrough rule must ink");
-        assert!(underline_ink(1, 0) < 500, "cell(1,0) strikethrough must not ink the bottom");
+        assert!(
+            strike_ink(1, 0) > 2000,
+            "cell(1,0) strikethrough rule must ink"
+        );
+        assert!(
+            underline_ink(1, 0) < 500,
+            "cell(1,0) strikethrough must not ink the bottom"
+        );
 
         // (2,0) underline + dim — the bottom rule still inks but at ~half the
         // area (SGR 2 halves the foreground alpha over the black bg). A ratio
@@ -888,12 +927,24 @@ mod tests {
 
         // (0,1) bold 'A' / (1,1) italic 'A' — the glyph still paints (presence,
         // not shape: bold / italic change the glyph outline font-dependently).
-        assert!(glyph_peak(0, 1) > 120, "cell(0,1) bold 'A' glyph must paint");
-        assert!(glyph_peak(1, 1) > 120, "cell(1,1) italic 'A' glyph must paint");
+        assert!(
+            glyph_peak(0, 1) > 120,
+            "cell(0,1) bold 'A' glyph must paint"
+        );
+        assert!(
+            glyph_peak(1, 1) > 120,
+            "cell(1,1) italic 'A' glyph must paint"
+        );
 
         // (2,1) underline + strikethrough — both rules ink on the one cell.
-        assert!(underline_ink(2, 1) > 2000, "cell(2,1) combo underline rule must ink");
-        assert!(strike_ink(2, 1) > 2000, "cell(2,1) combo strikethrough rule must ink");
+        assert!(
+            underline_ink(2, 1) > 2000,
+            "cell(2,1) combo underline rule must ink"
+        );
+        assert!(
+            strike_ink(2, 1) > 2000,
+            "cell(2,1) combo strikethrough rule must ink"
+        );
     }
 
     /// R993 §5.41 — deterministic guard for the cell-grid [`GridCursor`]
@@ -908,6 +959,8 @@ mod tests {
     /// tests; run with `--ignored`.
     #[test]
     #[ignore = "wgpu adapter cold-boot too slow for default test suite; run with --ignored"]
+    // R1026 — rustfmt's reflow pushed this past the workspace too_many_lines (100).
+    #[allow(clippy::too_many_lines)]
     fn r993_text_grid_paints_cursor_shapes() {
         use pinion_core::cell_metric::CellMetric;
         use pinion_core::scene::{Rect, Scene, TextGridNode};
@@ -933,7 +986,13 @@ mod tests {
         // sits on (0,0) with the given shape / visibility.
         let buf = |glyph: &'static str, shape: CursorShape, visible: bool| -> GridBuffer {
             GridBuffer::new(COLS, ROWS)
-                .with_row(0, [TermCell::new(glyph, white, black), TermCell::new(" ", white, black)])
+                .with_row(
+                    0,
+                    [
+                        TermCell::new(glyph, white, black),
+                        TermCell::new(" ", white, black),
+                    ],
+                )
                 .with_cursor(GridCursor::new(0, 0, shape, visible))
         };
 
@@ -954,22 +1013,33 @@ mod tests {
                 &mut cache,
                 &mut vello,
             );
-            shot.render_to_rgba8(&vello, W, H, vello::peniko::Color::BLACK).expect("render")
+            shot.render_to_rgba8(&vello, W, H, vello::peniko::Color::BLACK)
+                .expect("render")
         };
 
         // Red channel at (x, y) (white ink ⇒ r≈g≈b, so red tracks luminance).
-        let red = |img: &[u8], x: u32, y: u32| -> i64 { i64::from(img[((y * W + x) * 4) as usize]) };
+        let red =
+            |img: &[u8], x: u32, y: u32| -> i64 { i64::from(img[((y * W + x) * 4) as usize]) };
 
         // Block over a blank cell — the whole cell fills with the cursor colour
         // (white); the neighbour cell stays unlit.
         let filled = render(buf(" ", CursorShape::Block, true));
-        assert!(red(&filled, CW / 2, CH / 2) > 200, "block cursor fills its cell white");
-        assert!(red(&filled, CW + CW / 2, CH / 2) < 60, "neighbour cell has no cursor");
+        assert!(
+            red(&filled, CW / 2, CH / 2) > 200,
+            "block cursor fills its cell white"
+        );
+        assert!(
+            red(&filled, CW + CW / 2, CH / 2) < 60,
+            "neighbour cell has no cursor"
+        );
 
         // Block over 'A' — the cell still fills (corner is white) and the glyph
         // reads through inverse (dark pixels appear inside the bright block).
         let inverse = render(buf("A", CursorShape::Block, true));
-        assert!(red(&inverse, 2, 2) > 200, "block-over-glyph corner is the cursor fill");
+        assert!(
+            red(&inverse, 2, 2) > 200,
+            "block-over-glyph corner is the cursor fill"
+        );
         let mut inverse_glyph = false;
         for y in 2..(CH - 2) {
             for x in 2..(CW - 2) {
@@ -978,24 +1048,42 @@ mod tests {
                 }
             }
         }
-        assert!(inverse_glyph, "block cursor must redraw the glyph inverse (dark ink in the block)");
+        assert!(
+            inverse_glyph,
+            "block cursor must redraw the glyph inverse (dark ink in the block)"
+        );
 
         // Bar over a blank cell — a vertical beam at the leading edge; the cell
         // interior stays black.
         let bar = render(buf(" ", CursorShape::Bar, true));
-        assert!(red(&bar, 0, CH / 2) > 200, "bar cursor inks the leading edge");
-        assert!(red(&bar, CW / 2, CH / 2) < 60, "bar cursor leaves the interior blank");
+        assert!(
+            red(&bar, 0, CH / 2) > 200,
+            "bar cursor inks the leading edge"
+        );
+        assert!(
+            red(&bar, CW / 2, CH / 2) < 60,
+            "bar cursor leaves the interior blank"
+        );
 
         // Underline over a blank cell — a solid bottom bar >= 2px thick (so it
         // reads distinctly from the thin SGR underline); the cell middle blank.
         let underline = render(buf(" ", CursorShape::Underline, true));
-        assert!(red(&underline, CW / 2, CH - 1) > 200, "underline cursor inks the cell bottom");
-        assert!(red(&underline, CW / 2, CH / 2) < 60, "underline cursor leaves the middle blank");
+        assert!(
+            red(&underline, CW / 2, CH - 1) > 200,
+            "underline cursor inks the cell bottom"
+        );
+        assert!(
+            red(&underline, CW / 2, CH / 2) < 60,
+            "underline cursor leaves the middle blank"
+        );
         let mut thickness = 0u32;
         while thickness < CH && red(&underline, CW / 2, CH - 1 - thickness) > 200 {
             thickness += 1;
         }
-        assert!(thickness >= 2, "cursor underline is a thick bar (>= 2px), got {thickness}");
+        assert!(
+            thickness >= 2,
+            "cursor underline is a thick bar (>= 2px), got {thickness}"
+        );
 
         // Block over a WIDE head — the fill spans BOTH columns (matching the
         // wide glyph and the TUI reversed head). The trailer column thus shows
@@ -1017,11 +1105,17 @@ mod tests {
                 }
             }
         }
-        assert!(trailer_filled, "block cursor on a wide head must fill the trailer column too");
+        assert!(
+            trailer_filled,
+            "block cursor on a wide head must fill the trailer column too"
+        );
 
         // Invisible cursor — nothing paints; the cell stays its background.
         let hidden = render(buf(" ", CursorShape::Block, false));
-        assert!(red(&hidden, CW / 2, CH / 2) < 60, "an invisible cursor paints nothing");
+        assert!(
+            red(&hidden, CW / 2, CH / 2) < 60,
+            "an invisible cursor paints nothing"
+        );
     }
 
     /// R995 §5.41 §2 #6 — cross-backend consistency (Vello half). Renders the
@@ -1071,14 +1165,27 @@ mod tests {
         let mut cache = FragmentCache::new();
         let mut image_cache = pinion_runtime::image_cache::ImageCache::new();
         let mut vello = VelloScene::new();
-        to_vello_cached(&scene, &|_| None, &mut text_cache, &mut image_cache, &mut cache, &mut vello);
+        to_vello_cached(
+            &scene,
+            &|_| None,
+            &mut text_cache,
+            &mut image_cache,
+            &mut cache,
+            &mut vello,
+        );
 
         let mut shot = HeadlessScreenshot::new().expect("headless screenshot bootstrap");
-        let rgba8 = shot.render_to_rgba8(&vello, W, H, vello::peniko::Color::BLACK).expect("render");
+        let rgba8 = shot
+            .render_to_rgba8(&vello, W, H, vello::peniko::Color::BLACK)
+            .expect("render");
 
         let at = |x: u32, y: u32| -> (i64, i64, i64) {
             let i = ((y * W + x) * 4) as usize;
-            (i64::from(rgba8[i]), i64::from(rgba8[i + 1]), i64::from(rgba8[i + 2]))
+            (
+                i64::from(rgba8[i]),
+                i64::from(rgba8[i + 1]),
+                i64::from(rgba8[i + 2]),
+            )
         };
         // A cell inks iff some interior pixel differs strongly (channel-sum > 90)
         // from the cell's own background corner — colour-independent, so it holds
@@ -1146,7 +1253,10 @@ mod tests {
                 }
             }
         }
-        assert!(head_blue > 20, "wide head ANSI-blue bg missing (head_blue={head_blue})");
+        assert!(
+            head_blue > 20,
+            "wide head ANSI-blue bg missing (head_blue={head_blue})"
+        );
         assert!(
             trailer_blue > 20,
             "trailer must carry the wide head's blue bg across both columns \
@@ -1186,10 +1296,10 @@ mod tests {
     fn r1013_text_grid_wide_head_glyph_survives_trailer_bg() {
         use pinion_core::cell_metric::CellMetric;
         use pinion_core::scene::{Rect, Scene, TextGridNode};
+        use pinion_core::style::Color as PinColor;
         use pinion_core::term_grid::{GridBuffer, TermCell, TermColor};
         use pinion_runtime::paint_adapter::{FragmentCache, to_vello_cached};
         use pinion_text::LayoutCache;
-        use pinion_core::style::Color as PinColor;
 
         const CW: u32 = 12;
         const CH: u32 = 44;
@@ -1205,7 +1315,9 @@ mod tests {
         let head = TermCell::new("W", white, black).wide();
         let buffer = GridBuffer::new(2, 1).with_row(0, [head.clone(), head.trailer()]);
         let metric = CellMetric::new(CW, CH).expect("non-zero cell metric");
-        let mut node = TextGridNode::new(metric).with_cells(buffer).with_font_size_px(FONT);
+        let mut node = TextGridNode::new(metric)
+            .with_cells(buffer)
+            .with_font_size_px(FONT);
         node.rect = Rect::new(0, 0, W, H);
         let scene = Scene::TextGrid(node);
 
@@ -1213,17 +1325,27 @@ mod tests {
         let mut cache = FragmentCache::new();
         let mut image_cache = pinion_runtime::image_cache::ImageCache::new();
         let mut vello = VelloScene::new();
-        to_vello_cached(&scene, &|_| None, &mut text_cache, &mut image_cache, &mut cache, &mut vello);
+        to_vello_cached(
+            &scene,
+            &|_| None,
+            &mut text_cache,
+            &mut image_cache,
+            &mut cache,
+            &mut vello,
+        );
 
         let mut shot = HeadlessScreenshot::new().expect("headless screenshot bootstrap");
-        let rgba8 = shot.render_to_rgba8(&vello, W, H, vello::peniko::Color::BLACK).expect("render");
+        let rgba8 = shot
+            .render_to_rgba8(&vello, W, H, vello::peniko::Color::BLACK)
+            .expect("render");
 
         // White glyph ink on an all-black base: any bright pixel is glyph ink.
         let has_ink = |x0: u32, x1: u32| -> bool {
             for y in 6..(H - 6) {
                 for x in x0..x1 {
                     let i = ((y * W + x) * 4) as usize;
-                    let sum = u32::from(rgba8[i]) + u32::from(rgba8[i + 1]) + u32::from(rgba8[i + 2]);
+                    let sum =
+                        u32::from(rgba8[i]) + u32::from(rgba8[i + 1]) + u32::from(rgba8[i + 2]);
                     if sum > 150 {
                         return true;
                     }
@@ -1268,8 +1390,8 @@ mod tests {
     fn r806_focus_ring_top_edge_rasterizes_two_px_not_thick() {
         use pinion_core::scene::{BoxNode, ContainerNode, Rect, Scene};
         use pinion_core::style::{Border, BoxStyle, Color};
-        use pinion_overlay::{inject_focus_ring, FocusRingStyle};
-        use pinion_runtime::paint_adapter::{root_background, to_vello_cached, FragmentCache};
+        use pinion_overlay::{FocusRingStyle, inject_focus_ring};
+        use pinion_runtime::paint_adapter::{FragmentCache, root_background, to_vello_cached};
         use pinion_text::LayoutCache;
 
         const W: u32 = 520;
@@ -1290,8 +1412,11 @@ mod tests {
             let rgba8 = shot.render_to_rgba8(&vello, W, H, base).expect("render");
             let is_blue = |x: u32, y: u32| {
                 let i = ((y * W + x) * 4) as usize;
-                let (r, g, b) =
-                    (i64::from(rgba8[i]), i64::from(rgba8[i + 1]), i64::from(rgba8[i + 2]));
+                let (r, g, b) = (
+                    i64::from(rgba8[i]),
+                    i64::from(rgba8[i + 1]),
+                    i64::from(rgba8[i + 2]),
+                );
                 (r - 26).abs() <= 45 && (g - 115).abs() <= 45 && (b - 232).abs() <= 45
             };
             let mut started = false;
@@ -1320,8 +1445,10 @@ mod tests {
         // injector frames it; the ring's top stroke must rasterise ~2px, not
         // the ~16px vello top-tile flood. scene/snapshot cannot see this — the
         // scene always carries a 2px Inside border (the structural point).
-        let mut title =
-            BoxNode::new(Rect::new(96, 0, 96, 40), BoxStyle::filled(Color::TRANSPARENT));
+        let mut title = BoxNode::new(
+            Rect::new(96, 0, 96, 40),
+            BoxStyle::filled(Color::TRANSPARENT),
+        );
         title.tag = Some("menu#t1".into());
         let framed = inject_focus_ring(
             white_root(Scene::Box(title)),
@@ -1341,8 +1468,10 @@ mod tests {
         // Inside border drawn flush on the y=0 row (no inset) DOES flood
         // ~16px. If this ever stops flooding, the upstream vello bug is fixed
         // and build_focus_ring_box::TOP_EDGE_INSET can be retired.
-        let mut flush =
-            BoxNode::new(Rect::new(94, 0, 100, 42), BoxStyle::filled(Color::TRANSPARENT));
+        let mut flush = BoxNode::new(
+            Rect::new(94, 0, 100, 42),
+            BoxStyle::filled(Color::TRANSPARENT),
+        );
         flush.style = flush.style.with_border(Border::new(BLUE, 2));
         let flood = top_run(&mut shot, &white_root(Scene::Box(flush)), 94 + 50);
         assert!(
@@ -1424,15 +1553,18 @@ mod tests {
     fn r807_highlight_top_edge_flood_safe() {
         use pinion_core::scene::{BoxNode, ContainerNode, Rect, Scene};
         use pinion_core::style::{BoxStyle, Color};
-        use pinion_overlay::{inject_highlight, HighlightStyle};
-        use pinion_runtime::paint_adapter::{root_background, to_vello_cached, FragmentCache};
+        use pinion_overlay::{HighlightStyle, inject_highlight};
+        use pinion_runtime::paint_adapter::{FragmentCache, root_background, to_vello_cached};
         use pinion_text::LayoutCache;
         const W: u32 = 520;
         const H: u32 = 320;
         // Opaque red stroke so the readback is unambiguous (the default
         // highlight colour's alpha makes pixel detection fiddly).
         let red = Color::rgb(220, 0, 40);
-        let mut title = BoxNode::new(Rect::new(96, 0, 96, 40), BoxStyle::filled(Color::rgb(255, 255, 255)));
+        let mut title = BoxNode::new(
+            Rect::new(96, 0, 96, 40),
+            BoxStyle::filled(Color::rgb(255, 255, 255)),
+        );
         title.tag = Some("title".into());
         let mut root = ContainerNode::new(vec![Scene::Box(title)]);
         root.rect = Rect::new(0, 0, W, H);
@@ -1440,7 +1572,9 @@ mod tests {
         let scene = inject_highlight(
             Scene::Container(root),
             "title",
-            HighlightStyle::default().with_stroke(red).with_stroke_width(2),
+            HighlightStyle::default()
+                .with_stroke(red)
+                .with_stroke_width(2),
         );
         let base = root_background(&scene);
         let mut tc = LayoutCache::new();
@@ -1491,7 +1625,7 @@ mod tests {
         use pinion_core::cell_metric::CellMetric;
         use pinion_core::scene::{Rect, Scene, TextGridNode};
         use pinion_core::term_grid::{GridBuffer, TermCell, TermColor};
-        use pinion_runtime::paint_adapter::{to_vello_cached, FragmentCache};
+        use pinion_runtime::paint_adapter::{FragmentCache, to_vello_cached};
         use pinion_text::LayoutCache;
 
         const CW: u32 = 16;
@@ -1536,7 +1670,10 @@ mod tests {
             .flat_map(|y| (0..CW).map(move |x| (x, y)))
             .filter(|&(x, y)| bright(x, y))
             .count();
-        assert!(in_cell > 10, "'g' must ink within its cell (in_cell={in_cell})");
+        assert!(
+            in_cell > 10,
+            "'g' must ink within its cell (in_cell={in_cell})"
+        );
 
         // ...and nothing spills past the cell's lower edge into [CH, 2·CH): the
         // descender stays inside the cell. (`<= 1` tolerates a lone boundary AA
@@ -1562,14 +1699,18 @@ mod tests {
     ) -> (Vec<u8>, u32, u32) {
         use pinion_core::scene::{Rect, Scene, TextGridNode};
         use pinion_core::term_grid::{GridBuffer, TermCell, TermColor};
-        use pinion_runtime::paint_adapter::{to_vello_cached, FragmentCache};
+        use pinion_runtime::paint_adapter::{FragmentCache, to_vello_cached};
         use pinion_text::LayoutCache;
 
         let cw = metric.cell_w();
         let ch = metric.cell_h();
         let buffer = GridBuffer::new(1, 1).with_row(
             0,
-            vec![TermCell::new(glyph.to_owned(), TermColor::Default, TermColor::Default)],
+            vec![TermCell::new(
+                glyph.to_owned(),
+                TermColor::Default,
+                TermColor::Default,
+            )],
         );
         let mut node = TextGridNode::new(metric).with_cells(buffer);
         if let Some(s) = font_size_px {
@@ -1635,7 +1776,10 @@ mod tests {
         let (left, right, span) = glyph_gutters(&rgba8, cw, ch);
         // Wide ink (>= 40% of cell_w) and near-balanced gutters (no left-jam).
         // (× 10 keeps the comparisons integral.)
-        assert!(span * 10 >= cw * 4, "measured: 'M' ink must span >= 40% of cell_w: span={span} cw={cw}");
+        assert!(
+            span * 10 >= cw * 4,
+            "measured: 'M' ink must span >= 40% of cell_w: span={span} cw={cw}"
+        );
         assert!(
             left.abs_diff(right) * 10 <= cw * 3,
             "measured: 'M' must sit roughly centred, not left-jammed: left={left} right={right} cw={cw}",

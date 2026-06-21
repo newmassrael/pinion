@@ -92,7 +92,10 @@ mod tests {
     #[test]
     fn resize_requires_closure() {
         let err = resize::<dyn FnMut(u32, u32)>(
-            ResizeParams { width: 320, height: 200 },
+            ResizeParams {
+                width: 320,
+                height: 200,
+            },
             None,
         )
         .unwrap_err();
@@ -103,7 +106,10 @@ mod tests {
     fn resize_rejects_zero_size() {
         let mut closure = |_w: u32, _h: u32| {};
         let err = resize(
-            ResizeParams { width: 0, height: 200 },
+            ResizeParams {
+                width: 0,
+                height: 200,
+            },
             Some(&mut closure),
         )
         .unwrap_err();
@@ -117,7 +123,10 @@ mod tests {
             captured.set((w, h));
         };
         let outcome = resize(
-            ResizeParams { width: 345, height: 211 },
+            ResizeParams {
+                width: 345,
+                height: 211,
+            },
             Some(&mut closure),
         )
         .unwrap();

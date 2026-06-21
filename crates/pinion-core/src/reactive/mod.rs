@@ -19,16 +19,16 @@ pub mod viewport;
 
 pub use computed::Computed;
 pub use effect::Effect;
-pub use font_metrics::{measured_monospace_cell, MonospaceMetrics, NullMonospaceMetrics};
+pub use font_metrics::{MonospaceMetrics, NullMonospaceMetrics, measured_monospace_cell};
 pub use introspect::{IntoIntrospectValue, JsonValue, SignalExternal};
 pub use owner::{Owner, OwnerSnapshot, SnapshotRestoreError, SnapshotableSignal, batch};
 pub use pane_viewport::use_pane_viewport_size;
-pub use repaint::{use_repaint_sink, NullRepaintSink, RepaintSink};
+pub use repaint::{NullRepaintSink, RepaintSink, use_repaint_sink};
 pub use resource::{
-    use_local_task_pump, DeferredReady, FetchToken, LocalSpawner, LocalTaskPump, Resource,
-    ResourceState,
+    DeferredReady, FetchToken, LocalSpawner, LocalTaskPump, Resource, ResourceState,
+    use_local_task_pump,
 };
 pub use resource_cache::ResourceCache;
 pub use signal::Signal;
-pub use simulation::{is_simulating, SimulationGuard};
+pub use simulation::{SimulationGuard, is_simulating};
 pub use viewport::use_viewport_size;

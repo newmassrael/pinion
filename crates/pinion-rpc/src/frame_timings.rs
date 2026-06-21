@@ -230,7 +230,10 @@ mod tests {
         snapshot_with_budget(samples, None)
     }
 
-    fn snapshot_with_budget(samples: &[FrameTiming], budget_us: Option<u64>) -> FrameTimingsSnapshot {
+    fn snapshot_with_budget(
+        samples: &[FrameTiming],
+        budget_us: Option<u64>,
+    ) -> FrameTimingsSnapshot {
         let mut stats = FrameTimingStats::new();
         for s in samples {
             stats.record(*s);
@@ -337,8 +340,16 @@ mod tests {
         );
         // The jank fields are always present (not skipped) so a client
         // can read them unconditionally.
-        assert_eq!(json.get("over_budget_frames").and_then(serde_json::Value::as_u64), Some(0));
-        assert_eq!(json.get("worst_overrun_us").and_then(serde_json::Value::as_u64), Some(0));
+        assert_eq!(
+            json.get("over_budget_frames")
+                .and_then(serde_json::Value::as_u64),
+            Some(0)
+        );
+        assert_eq!(
+            json.get("worst_overrun_us")
+                .and_then(serde_json::Value::as_u64),
+            Some(0)
+        );
         assert!(json.get("jank_ratio").is_some());
     }
 
@@ -375,7 +386,8 @@ mod tests {
         );
         // 16_666µs frame meets a 16_666µs budget exactly -> not over.
         assert_eq!(
-            json.get("over_budget_frames").and_then(serde_json::Value::as_u64),
+            json.get("over_budget_frames")
+                .and_then(serde_json::Value::as_u64),
             Some(0),
         );
     }

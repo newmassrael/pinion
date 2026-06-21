@@ -66,14 +66,14 @@ use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextAlign, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::aria::apply_aria_activate;
 use pinion_core::widgets::button::{ButtonExternal, ButtonState};
-use pinion_core::{use_local_task_pump, Frame, Scene, WidgetCore};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_core::{Frame, Scene, WidgetCore, use_local_task_pump};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::button::{
-    button_a11y_state, read_button_focused, read_button_state, ButtonColors, ButtonStyle,
+    ButtonColors, ButtonStyle, button_a11y_state, read_button_focused, read_button_state,
 };
 use serde::{Deserialize, Serialize};
 use std::rc::Rc;
@@ -269,7 +269,10 @@ fn pager_line(page: usize, state: &ResourceState<Vec<AssetRow>, String>) -> Stri
     match state {
         ResourceState::Loading => format!("Loading page {human} of {TOTAL_PAGES}\u{2026}"),
         ResourceState::Ready(rows) => {
-            format!("Page {human} of {TOTAL_PAGES} \u{2014} {} assets", rows.len())
+            format!(
+                "Page {human} of {TOTAL_PAGES} \u{2014} {} assets",
+                rows.len()
+            )
         }
         ResourceState::Error(err) => {
             format!("Page {human} of {TOTAL_PAGES} \u{2014} error: {err}")
@@ -532,7 +535,6 @@ impl WidgetCore for AsyncDataView {
         None
     }
 
-
     fn apply_key(
         scene: &mut Scene,
         focused: Option<&str>,
@@ -618,8 +620,10 @@ impl WidgetA11y for AsyncDataView {
                 .with_state(button_a11y_state(next_state, focused == Some(NEXT_TAG))),
         );
         nodes.push(
-            AccessNode::new(RELOAD_TAG, AriaRole::Button)
-                .with_state(button_a11y_state(reload_posture, focused == Some(RELOAD_TAG))),
+            AccessNode::new(RELOAD_TAG, AriaRole::Button).with_state(button_a11y_state(
+                reload_posture,
+                focused == Some(RELOAD_TAG),
+            )),
         );
         nodes
     }
@@ -731,7 +735,10 @@ mod tests {
             Some("Page 2 of 5 \u{2014} 6 assets"),
         );
         // Page-2 rows present, page-1 rows gone.
-        assert!(find_container(&scene, &row_tag(PAGE_SIZE)).is_some(), "row 6 present");
+        assert!(
+            find_container(&scene, &row_tag(PAGE_SIZE)).is_some(),
+            "row 6 present"
+        );
         assert!(find_container(&scene, &row_tag(0)).is_none(), "row 0 gone");
     }
 
@@ -754,7 +761,8 @@ mod tests {
             "ERROR_PAGE resolves to Error, got {state:?}",
         );
         assert!(
-            note.as_deref().is_some_and(|n| n.contains("Could not load")),
+            note.as_deref()
+                .is_some_and(|n| n.contains("Could not load")),
             "list shows the error note, got {note:?}",
         );
     }
@@ -856,7 +864,10 @@ mod tests {
         assert_eq!(list.role, AriaRole::List);
         assert_eq!(list.children.len(), PAGE_SIZE, "six child rows claimed");
         assert_eq!(
-            nodes.iter().filter(|n| n.role == AriaRole::ListItem).count(),
+            nodes
+                .iter()
+                .filter(|n| n.role == AriaRole::ListItem)
+                .count(),
             PAGE_SIZE,
         );
         // First listitem name == its painted SSOT row label.
@@ -865,8 +876,15 @@ mod tests {
             .find(|n| n.tag == row_tag(0))
             .expect("first row node");
         assert_eq!(first.position_in_set, Some(1));
-        assert_eq!(first.size_of_set, Some(u32::try_from(TOTAL_ASSETS).unwrap()));
-        assert!(nodes.iter().any(|n| n.tag == STATUS_TAG && n.role == AriaRole::Status));
+        assert_eq!(
+            first.size_of_set,
+            Some(u32::try_from(TOTAL_ASSETS).unwrap())
+        );
+        assert!(
+            nodes
+                .iter()
+                .any(|n| n.tag == STATUS_TAG && n.role == AriaRole::Status)
+        );
         assert_eq!(
             nodes.iter().filter(|n| n.role == AriaRole::Button).count(),
             3,
@@ -879,7 +897,11 @@ mod tests {
         let scene = Owner::new().run(|| view(idle(), &Frame::new()));
         assert_eq!(
             scene.collect_focusable_tags(),
-            vec![PREV_TAG.to_owned(), NEXT_TAG.to_owned(), RELOAD_TAG.to_owned()],
+            vec![
+                PREV_TAG.to_owned(),
+                NEXT_TAG.to_owned(),
+                RELOAD_TAG.to_owned()
+            ],
         );
     }
 
@@ -895,10 +917,7 @@ mod tests {
 
     /// Build a click intent for the given dotted tag.
     fn intent(tag: &str) -> pinion_core::Intent {
-        pinion_core::Intent::new_owned(
-            tag.to_owned(),
-            pinion_core::external::IntrospectValue::Null,
-        )
+        pinion_core::Intent::new_owned(tag.to_owned(), pinion_core::external::IntrospectValue::Null)
     }
 
     /// Dispatch a click intent for its side-effect (the empty command list is

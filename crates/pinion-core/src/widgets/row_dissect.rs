@@ -54,11 +54,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::external::{
-    query_proxy_external_impl, ExternalIntrospect, InterveneError, IntrospectSchema,
-    IntrospectValue, InvokeError,
+    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
+    query_proxy_external_impl,
 };
-use crate::reactive::{batch, Owner, Signal};
-use crate::widgets::tree_nav::{set_expanded_in, toggle_expanded, TreeNode};
+use crate::reactive::{Owner, Signal, batch};
+use crate::widgets::tree_nav::{TreeNode, set_expanded_in, toggle_expanded};
 
 /// R1007 §5.27 §5.40 — the structural class of a dissected value, so a
 /// consumer can render or color a node by its kind (a string leaf differently
@@ -347,7 +347,10 @@ impl RowDissectionState {
     /// As [`new`](Self::new) but records the [`use_row_dissection`] cache key.
     #[must_use]
     pub fn with_tag(key: &'static str, rows: Vec<Value>) -> Self {
-        Self { tag: Some(key), ..Self::new(rows) }
+        Self {
+            tag: Some(key),
+            ..Self::new(rows)
+        }
     }
 
     /// The [`use_row_dissection`] cache key, or `None` when constructed
@@ -403,7 +406,9 @@ impl RowDissectionState {
         let valid = row.filter(|&r| r < self.rows.len());
         batch(|| {
             self.selected.set(valid);
-            let tree = valid.map(|r| dissect_row(&self.rows[r])).unwrap_or_default();
+            let tree = valid
+                .map(|r| dissect_row(&self.rows[r]))
+                .unwrap_or_default();
             self.tree.set(tree);
         });
     }
@@ -486,7 +491,11 @@ impl RowDissectionExternal {
     /// Resolve a `path.<i>` / `name.<i>` / … query: the `pick` of the i-th
     /// visible detail row, or `Null` (present-but-empty) when `i` is malformed
     /// or out of range.
-    fn flat_field(&self, rest: &str, pick: impl Fn(&DissectRow) -> IntrospectValue) -> IntrospectValue {
+    fn flat_field(
+        &self,
+        rest: &str,
+        pick: impl Fn(&DissectRow) -> IntrospectValue,
+    ) -> IntrospectValue {
         rest.parse::<usize>()
             .ok()
             .and_then(|i| self.state.flat().get(i).map(&pick))
@@ -535,7 +544,9 @@ impl ExternalIntrospect for RowDissectionExternal {
             return Some(self.flat_field(rest, |r| IntrospectValue::Text(r.value.clone())));
         }
         if let Some(rest) = path.strip_prefix("kind.") {
-            return Some(self.flat_field(rest, |r| IntrospectValue::Text(r.kind.as_str().to_owned())));
+            return Some(
+                self.flat_field(rest, |r| IntrospectValue::Text(r.kind.as_str().to_owned())),
+            );
         }
         if let Some(rest) = path.strip_prefix("depth.") {
             return Some(self.flat_field(rest, |r| IntrospectValue::Int(i64::from(r.depth))));
@@ -576,7 +587,11 @@ impl ExternalIntrospect for RowDissectionExternal {
         }
     }
 
-    fn invoke(&mut self, path: &str, args: IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+    fn invoke(
+        &mut self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
         match path {
             // Select a master row and re-dissect; returns the new node_count.
             "select" => match args {
@@ -639,7 +654,11 @@ mod tests {
     }
 
     fn rows() -> Vec<Value> {
-        vec![request_row(), json!({ "method": "POST", "status": 404 }), json!([1, 2, 3])]
+        vec![
+            request_row(),
+            json!({ "method": "POST", "status": 404 }),
+            json!([1, 2, 3]),
+        ]
     }
 
     fn ext() -> RowDissectionExternal {
@@ -665,7 +684,13 @@ mod tests {
         let nodes = dissect_row(&request_row());
         // serde_json::Map preserves insertion order (preserve_order is off by
         // default → BTreeMap-ish alphabetical); assert by lookup, not position.
-        let by_name = |name: &str| nodes.iter().find(|n| n.name == name).expect("field present").clone();
+        let by_name = |name: &str| {
+            nodes
+                .iter()
+                .find(|n| n.name == name)
+                .expect("field present")
+                .clone()
+        };
 
         let method = by_name("method");
         assert_eq!(method.kind, DissectKind::Text);
@@ -679,7 +704,10 @@ mod tests {
 
         let headers = by_name("headers");
         assert_eq!(headers.kind, DissectKind::Object);
-        assert!(headers.expanded, "a top-level (depth 0) branch starts expanded");
+        assert!(
+            headers.expanded,
+            "a top-level (depth 0) branch starts expanded"
+        );
         let host = headers.children.iter().find(|n| n.name == "host").unwrap();
         assert_eq!(host.path, "headers.host", "child path is parent.field");
         assert_eq!(host.value, "example.com");
@@ -713,7 +741,11 @@ mod tests {
         let method = nodes.iter().find(|n| n.name == "method").unwrap();
         assert_eq!(method.display(), "method: GET");
         let headers = nodes.iter().find(|n| n.name == "headers").unwrap();
-        assert_eq!(headers.display(), "headers  (2)", "branch shows its child count");
+        assert_eq!(
+            headers.display(),
+            "headers  (2)",
+            "branch shows its child count"
+        );
     }
 
     #[test]
@@ -758,10 +790,20 @@ mod tests {
         assert_agrees(&nodes);
         // Collapse the headers branch and re-check: both flattens must drop its
         // two children (the collapsed-descend path), and still agree.
-        let headers = nodes.iter_mut().find(|n| n.name == "headers").expect("headers branch");
-        assert!(headers.expanded && !headers.children.is_empty(), "headers is an expanded branch");
+        let headers = nodes
+            .iter_mut()
+            .find(|n| n.name == "headers")
+            .expect("headers branch");
+        assert!(
+            headers.expanded && !headers.children.is_empty(),
+            "headers is an expanded branch"
+        );
         headers.set_expanded(false);
-        assert_eq!(dissect_flat(&nodes).len(), full - 2, "collapsing headers drops its 2 children");
+        assert_eq!(
+            dissect_flat(&nodes).len(),
+            full - 2,
+            "collapsing headers drops its 2 children"
+        );
         assert_agrees(&nodes);
     }
 
@@ -800,7 +842,11 @@ mod tests {
             let full = s.node_count();
             // Collapse the headers branch → its 2 children drop out.
             s.toggle_path("headers");
-            assert_eq!(s.node_count(), full - 2, "collapsing headers hides its children");
+            assert_eq!(
+                s.node_count(),
+                full - 2,
+                "collapsing headers hides its children"
+            );
             // Re-expand → back to full.
             s.toggle_path("headers");
             assert_eq!(s.node_count(), full);
@@ -828,12 +874,24 @@ mod tests {
 
             // Row 0, alphabetical field order: headers, latency, method, note,
             // secure, status, tags. headers is index 0 and is expanded.
-            assert_eq!(e.query("name.0"), Some(IntrospectValue::Text("headers".into())));
-            assert_eq!(e.query("kind.0"), Some(IntrospectValue::Text("object".into())));
+            assert_eq!(
+                e.query("name.0"),
+                Some(IntrospectValue::Text("headers".into()))
+            );
+            assert_eq!(
+                e.query("kind.0"),
+                Some(IntrospectValue::Text("object".into()))
+            );
             assert_eq!(e.query("depth.0"), Some(IntrospectValue::Int(0)));
-            assert_eq!(e.query("path.1"), Some(IntrospectValue::Text("headers.accept".into())));
+            assert_eq!(
+                e.query("path.1"),
+                Some(IntrospectValue::Text("headers.accept".into()))
+            );
             assert_eq!(e.query("depth.1"), Some(IntrospectValue::Int(1)));
-            assert_eq!(e.query("value.1"), Some(IntrospectValue::Text("*/*".into())));
+            assert_eq!(
+                e.query("value.1"),
+                Some(IntrospectValue::Text("*/*".into()))
+            );
             assert_eq!(
                 e.query("name.99"),
                 Some(IntrospectValue::Null),
@@ -872,7 +930,10 @@ mod tests {
                 "clear deselects",
             );
             assert_eq!(e.query("selected"), Some(IntrospectValue::Null));
-            assert_eq!(e.invoke("bogus", IntrospectValue::Null), Err(InvokeError::UnknownPath));
+            assert_eq!(
+                e.invoke("bogus", IntrospectValue::Null),
+                Err(InvokeError::UnknownPath)
+            );
             assert_eq!(
                 e.invoke("select", IntrospectValue::Text("x".into())),
                 Err(InvokeError::TypeMismatch),
@@ -884,11 +945,13 @@ mod tests {
     fn external_intervene_selects_and_guards_readonly() {
         Owner::new().run(|| {
             let mut e = ext();
-            e.intervene("selected", IntrospectValue::Int(1)).expect("select row 1");
+            e.intervene("selected", IntrospectValue::Int(1))
+                .expect("select row 1");
             assert_eq!(e.state().selected(), Some(1));
             // Row 1 is { method, status } → 2 visible nodes.
             assert_eq!(e.query("node_count"), Some(IntrospectValue::Int(2)));
-            e.intervene("selected", IntrospectValue::Null).expect("deselect");
+            e.intervene("selected", IntrospectValue::Null)
+                .expect("deselect");
             assert_eq!(e.state().selected(), None);
             assert_eq!(
                 e.intervene("node_count", IntrospectValue::Int(1)),

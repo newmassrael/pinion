@@ -496,8 +496,7 @@ fn snapshot_root(scene: &Scene) -> SnapshotNode {
             // `dt` against the §5.28 `MAX_FRAME_DT_SECS` ceiling
             // (~33 ms) before reaching the immediate-mode tick, so
             // the realistic range is `[0, 33333]` micros.
-            let micros = u64::try_from(node.last_dt().as_micros())
-                .unwrap_or(u64::MAX);
+            let micros = u64::try_from(node.last_dt().as_micros()).unwrap_or(u64::MAX);
             SnapshotNode::ImmediateModeNode(ImmediateModeSnapshot {
                 tag: cow_to_owned(node.tag.as_ref()),
                 viewport: node.viewport,
@@ -643,9 +642,9 @@ fn screen_wire(screen: ScreenKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_core::Color;
     use pinion_core::external::{CountedExternal, StubExternal};
     use pinion_core::scene::{BoxNode, ExternalNode, Rect};
-    use pinion_core::Color;
 
     fn counted_scene(n: i64) -> Scene {
         Scene::External(ExternalNode::new(Box::new(CountedExternal::new(n))))
@@ -705,8 +704,8 @@ mod tests {
             .with_row_generation(0, 10)
             .with_row_generation(1, 20)
             .with_row_generation(2, 30);
-        let mut node = pinion_core::scene::TextGridNode::new(pinion_core::CellMetric::DEFAULT)
-            .with_cells(buf);
+        let mut node =
+            pinion_core::scene::TextGridNode::new(pinion_core::CellMetric::DEFAULT).with_cells(buf);
         node.rect = Rect::new(0, 0, 32, 48); // 4 × 3 @ 8×16
         match snapshot(&Scene::TextGrid(node), "").unwrap() {
             SnapshotNode::TextGrid(snap) => {
@@ -732,8 +731,8 @@ mod tests {
         // the alternate-screen kind, reported verbatim on the wire.
         use pinion_core::{GridBuffer, ScreenKind};
         let buf = GridBuffer::new(4, 1).with_screen(ScreenKind::Alternate);
-        let mut node = pinion_core::scene::TextGridNode::new(pinion_core::CellMetric::DEFAULT)
-            .with_cells(buf);
+        let mut node =
+            pinion_core::scene::TextGridNode::new(pinion_core::CellMetric::DEFAULT).with_cells(buf);
         node.rect = Rect::new(0, 0, 32, 16); // 4 × 1 @ 8×16
         match snapshot(&Scene::TextGrid(node), "").unwrap() {
             SnapshotNode::TextGrid(snap) => assert_eq!(snap.screen, "alternate"),
@@ -757,14 +756,18 @@ mod tests {
                 TermCell::new("x", TermColor::Default, TermColor::Default),
             ],
         );
-        let mut node = pinion_core::scene::TextGridNode::new(pinion_core::CellMetric::DEFAULT)
-            .with_cells(buf);
+        let mut node =
+            pinion_core::scene::TextGridNode::new(pinion_core::CellMetric::DEFAULT).with_cells(buf);
         node.rect = Rect::new(0, 0, 24, 16); // 3 × 1 @ 8×16
         match snapshot(&Scene::TextGrid(node), "").unwrap() {
             SnapshotNode::TextGrid(snap) => {
                 let row = &snap.grid_rows[0];
                 assert_eq!(row.text, format!("{shi}x"), "wide glyph once, then narrow");
-                assert_eq!(row.runs.len(), 3, "head / trailer / narrow are distinct runs");
+                assert_eq!(
+                    row.runs.len(),
+                    3,
+                    "head / trailer / narrow are distinct runs"
+                );
                 assert_eq!((row.runs[0].start, row.runs[0].len), (0, 1));
                 assert_eq!(row.runs[0].width, "wide");
                 assert_eq!(row.runs[0].fg.index, Some(1)); // head keeps its colour
@@ -784,8 +787,8 @@ mod tests {
         // position, the shape's wire string, and visibility.
         use pinion_core::{CursorShape, GridBuffer, GridCursor};
         let buf = GridBuffer::new(8, 2).with_cursor(GridCursor::new(2, 1, CursorShape::Bar, true));
-        let mut node = pinion_core::scene::TextGridNode::new(pinion_core::CellMetric::DEFAULT)
-            .with_cells(buf);
+        let mut node =
+            pinion_core::scene::TextGridNode::new(pinion_core::CellMetric::DEFAULT).with_cells(buf);
         node.rect = Rect::new(0, 0, 64, 32); // 8 × 2 @ 8×16
         match snapshot(&Scene::TextGrid(node), "").unwrap() {
             SnapshotNode::TextGrid(snap) => {
@@ -811,15 +814,15 @@ mod tests {
         let buf = GridBuffer::new(5, 1).with_row(
             0,
             [
-                red(),                                                          // col0 fg1
-                red(),                                                          // col1 fg1 (coalesce)
-                TermCell::new("y", TermColor::Indexed(2), TermColor::Default),  // col2 fg2 (new run)
-                red(),                                                          // col3 fg1 (new run: non-adjacent)
-                red().with_attrs(CellAttrs::empty().with_bold(true)),           // col4 fg1+bold (new run: attrs)
+                red(),                                                         // col0 fg1
+                red(), // col1 fg1 (coalesce)
+                TermCell::new("y", TermColor::Indexed(2), TermColor::Default), // col2 fg2 (new run)
+                red(), // col3 fg1 (new run: non-adjacent)
+                red().with_attrs(CellAttrs::empty().with_bold(true)), // col4 fg1+bold (new run: attrs)
             ],
         );
-        let mut node = pinion_core::scene::TextGridNode::new(pinion_core::CellMetric::DEFAULT)
-            .with_cells(buf);
+        let mut node =
+            pinion_core::scene::TextGridNode::new(pinion_core::CellMetric::DEFAULT).with_cells(buf);
         node.rect = Rect::new(0, 0, 40, 16); // 5 × 1 @ 8×16
         match snapshot(&Scene::TextGrid(node), "").unwrap() {
             SnapshotNode::TextGrid(snap) => {
@@ -827,7 +830,11 @@ mod tests {
                 assert_eq!(snap.grid_rows.len(), 1);
                 let runs = &snap.grid_rows[0].runs;
                 // [A,A,B,A,A+bold] -> 4 runs.
-                assert_eq!(runs.len(), 4, "coalesce adjacent; split on colour/attrs/gap");
+                assert_eq!(
+                    runs.len(),
+                    4,
+                    "coalesce adjacent; split on colour/attrs/gap"
+                );
                 assert_eq!((runs[0].start, runs[0].len), (0, 2)); // A,A merged
                 assert_eq!((runs[1].start, runs[1].len), (2, 1)); // B
                 assert_eq!((runs[2].start, runs[2].len), (3, 1)); // A again (not merged with run 0)
@@ -911,8 +918,7 @@ mod tests {
         #[test]
         fn container_root_dumps_tag_and_children() {
             let scene = Scene::Container(
-                ContainerNode::new(vec![leaf_box(None), leaf_box(Some("inner"))])
-                    .with_tag("root"),
+                ContainerNode::new(vec![leaf_box(None), leaf_box(Some("inner"))]).with_tag("root"),
             );
             match snapshot(&scene, "").unwrap() {
                 SnapshotNode::Container(snap) => {
@@ -939,7 +945,8 @@ mod tests {
 
         #[test]
         fn nested_container_recurses_depth_first() {
-            let inner = Scene::Container(ContainerNode::new(vec![leaf_box(None)]).with_tag("inner"));
+            let inner =
+                Scene::Container(ContainerNode::new(vec![leaf_box(None)]).with_tag("inner"));
             let scene = Scene::Container(ContainerNode::new(vec![inner]).with_tag("outer"));
             match snapshot(&scene, "").unwrap() {
                 SnapshotNode::Container(outer) => {
@@ -961,8 +968,8 @@ mod tests {
         #[test]
         fn scroll_root_dumps_viewport_offset_tag_content() {
             let content = Scene::Text(TextNode::new("row".to_string(), Rect::new(0, 0, 50, 200)));
-            let scroll = ScrollNode::new(Rect::new(0, 0, 50, 80), content)
-                .with_tag("listbox_scroll");
+            let scroll =
+                ScrollNode::new(Rect::new(0, 0, 50, 80), content).with_tag("listbox_scroll");
             let scene = Scene::Scroll(scroll.with_offset(0, 120));
             match snapshot(&scene, "").unwrap() {
                 SnapshotNode::Scroll(snap) => {
@@ -989,7 +996,10 @@ mod tests {
                 .with_offset(80, 0);
             match snapshot(&Scene::Scroll(scroll), "").unwrap() {
                 SnapshotNode::Scroll(snap) => {
-                    assert_eq!(snap.axis, "horizontal", "horizontal scroll surfaces its axis");
+                    assert_eq!(
+                        snap.axis, "horizontal",
+                        "horizontal scroll surfaces its axis"
+                    );
                     assert_eq!(snap.offset_x, 80);
                     assert_eq!(snap.offset_y, 0);
                 }
@@ -1019,9 +1029,8 @@ mod tests {
                 Scene::Container(ContainerNode::new(vec![row]).with_tag("rows")),
             )
             .with_tag("scroll");
-            let scene = Scene::Container(
-                ContainerNode::new(vec![Scene::Scroll(scroll)]).with_tag("root"),
-            );
+            let scene =
+                Scene::Container(ContainerNode::new(vec![Scene::Scroll(scroll)]).with_tag("root"));
             let SnapshotNode::Container(outer) = snapshot(&scene, "").unwrap() else {
                 panic!("expected outer Container");
             };
@@ -1074,8 +1083,8 @@ mod tests {
 
         #[test]
         fn box_carries_rect_and_tag() {
-            let node = BoxNode::filled(Rect::new(10, 20, 30, 40), Color::default())
-                .with_tag("box_tag");
+            let node =
+                BoxNode::filled(Rect::new(10, 20, 30, 40), Color::default()).with_tag("box_tag");
             let scene = Scene::Box(node);
             let SnapshotNode::Box(snap) = snapshot(&scene, "").unwrap() else {
                 panic!("expected Box");
@@ -1086,8 +1095,8 @@ mod tests {
 
         #[test]
         fn text_carries_rect_tag_and_content() {
-            let node = TextNode::new("hello".to_string(), Rect::new(5, 6, 50, 14))
-                .with_tag("greeting");
+            let node =
+                TextNode::new("hello".to_string(), Rect::new(5, 6, 50, 14)).with_tag("greeting");
             let scene = Scene::Text(node);
             let SnapshotNode::Text(snap) = snapshot(&scene, "").unwrap() else {
                 panic!("expected Text");
@@ -1132,8 +1141,7 @@ mod tests {
 
         #[test]
         fn image_carries_rect_tag_and_source() {
-            let node = ImageNode::new("icon.png", Rect::new(8, 8, 16, 16))
-                .with_tag("logo");
+            let node = ImageNode::new("icon.png", Rect::new(8, 8, 16, 16)).with_tag("logo");
             let scene = Scene::Image(node);
             let SnapshotNode::Image(snap) = snapshot(&scene, "").unwrap() else {
                 panic!("expected Image");
@@ -1171,7 +1179,9 @@ mod tests {
             };
             assert_eq!(snap.rect, Rect::new(100, 50, 64, 32));
             assert_eq!(snap.tag.as_deref(), Some("main_toggle"));
-            let fields = snap.introspect.expect("CountedExternal opts into introspect");
+            let fields = snap
+                .introspect
+                .expect("CountedExternal opts into introspect");
             assert_eq!(fields[0].0, "count");
             assert_eq!(fields[0].1, IntrospectValue::Int(5));
         }
@@ -1248,8 +1258,7 @@ mod tests {
                 PathStyle::default(),
             );
             node.style = PathStyle::stroked(
-                Stroke::new(Color::rgba(0x11, 0x22, 0x33, 0xff), 4)
-                    .with_cap(StrokeCap::Round),
+                Stroke::new(Color::rgba(0x11, 0x22, 0x33, 0xff), 4).with_cap(StrokeCap::Round),
             )
             .with_fill(Color::rgba(0xaa, 0xbb, 0xcc, 0xff));
             let scene = Scene::Path(node);
@@ -1267,10 +1276,7 @@ mod tests {
         fn image_carries_full_style_with_fit_and_tint() {
             use pinion_core::scene::ImageNode;
             use pinion_core::style::{Fit, ImageStyle};
-            let mut node = ImageNode::new(
-                "asset://icon.png".to_string(),
-                Rect::new(0, 0, 64, 64),
-            );
+            let mut node = ImageNode::new("asset://icon.png".to_string(), Rect::new(0, 0, 64, 64));
             node.style = ImageStyle::default()
                 .with_fit(Fit::Cover)
                 .with_tint(Color::rgba(0x12, 0x34, 0x56, 0xff));
@@ -1285,8 +1291,8 @@ mod tests {
         #[test]
         fn container_carries_style_alongside_children() {
             let mut node = ContainerNode::new(vec![]).with_tag("frame");
-            node.style = BoxStyle::filled(Color::rgba(0x12, 0x34, 0x56, 0x78))
-                .with_corner_radius(4);
+            node.style =
+                BoxStyle::filled(Color::rgba(0x12, 0x34, 0x56, 0x78)).with_corner_radius(4);
             let scene = Scene::Container(node);
             let SnapshotNode::Container(snap) = snapshot(&scene, "").unwrap() else {
                 panic!("expected Container");
@@ -1311,9 +1317,7 @@ mod tests {
 
         use super::*;
         use pinion_core::scene::TextNode;
-        use pinion_core::style::{
-            LineHeight, TextAlign, TextDecoration, TextOverflow, TextStyle,
-        };
+        use pinion_core::style::{LineHeight, TextAlign, TextDecoration, TextOverflow, TextStyle};
 
         #[test]
         fn text_layout_axis_survives_snapshot() {
@@ -1344,8 +1348,7 @@ mod tests {
             // letter_spacing is `i32`; both signs survive the snapshot
             // pass intact (no `u32` widening or clamping).
             for px in [-8_i32, 0, 4] {
-                let mut node =
-                    TextNode::new("x".to_string(), Rect::new(0, 0, 8, 8));
+                let mut node = TextNode::new("x".to_string(), Rect::new(0, 0, 8, 8));
                 node.style = TextStyle::new().with_letter_spacing(px);
                 let scene = Scene::Text(node);
                 let SnapshotNode::Text(snap) = snapshot(&scene, "").unwrap() else {
@@ -1365,8 +1368,7 @@ mod tests {
                 LineHeight::Px(20),
                 LineHeight::MultiplierX100(150),
             ] {
-                let mut node =
-                    TextNode::new("x".to_string(), Rect::new(0, 0, 8, 8));
+                let mut node = TextNode::new("x".to_string(), Rect::new(0, 0, 8, 8));
                 node.style = TextStyle::new().with_line_height(lh);
                 let scene = Scene::Text(node);
                 let SnapshotNode::Text(snap) = snapshot(&scene, "").unwrap() else {

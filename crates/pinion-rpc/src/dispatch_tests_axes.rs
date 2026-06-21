@@ -16,7 +16,10 @@ fn r602_scene_scroll_state_without_runtime_owner_errors() {
     let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
     let err = resp.error.expect("missing runtime_owner must error");
     assert_eq!(err.code, -32602);
-    assert_eq!(err.data, Some(Value::String("RuntimeOwnerUnavailable".into())));
+    assert_eq!(
+        err.data,
+        Some(Value::String("RuntimeOwnerUnavailable".into()))
+    );
 }
 
 #[test]
@@ -77,14 +80,18 @@ fn r609_scene_set_scroll_offset_without_runtime_owner_errors() {
     let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
     let err = resp.error.expect("missing runtime_owner must error");
     assert_eq!(err.code, -32602);
-    assert_eq!(err.data, Some(Value::String("RuntimeOwnerUnavailable".into())));
+    assert_eq!(
+        err.data,
+        Some(Value::String("RuntimeOwnerUnavailable".into()))
+    );
 }
 
 #[test]
 fn r609_scene_set_scroll_offset_missing_tag_errors_with_typed_data() {
     let mut scene = counted_scene(0);
     let owner = Owner::new();
-    let req = r#"{"jsonrpc":"2.0","method":"scene/set_scroll_offset","params":{"x":0,"y":240},"id":2}"#;
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/set_scroll_offset","params":{"x":0,"y":240},"id":2}"#;
     let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
     let err = resp.error.expect("missing tag must error");
     assert_eq!(err.code, -32602);
@@ -205,7 +212,10 @@ fn r603_scene_text_state_without_runtime_owner_errors() {
     let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
     let err = resp.error.expect("missing runtime_owner must error");
     assert_eq!(err.code, -32602);
-    assert_eq!(err.data, Some(Value::String("RuntimeOwnerUnavailable".into())));
+    assert_eq!(
+        err.data,
+        Some(Value::String("RuntimeOwnerUnavailable".into()))
+    );
 }
 
 #[test]
@@ -246,7 +256,10 @@ fn r610_scene_set_text_without_runtime_owner_errors() {
     let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
     let err = resp.error.expect("missing runtime_owner must error");
     assert_eq!(err.code, -32602);
-    assert_eq!(err.data, Some(Value::String("RuntimeOwnerUnavailable".into())));
+    assert_eq!(
+        err.data,
+        Some(Value::String("RuntimeOwnerUnavailable".into()))
+    );
 }
 
 #[test]
@@ -277,7 +290,8 @@ fn r610_scene_set_text_rejects_non_string_text() {
     let mut scene = counted_scene(0);
     let owner = Owner::new();
     let _state = owner.run(|| pinion_core::widgets::text_edit::use_text_edit_state("field"));
-    let req = r#"{"jsonrpc":"2.0","method":"scene/set_text","params":{"tag":"field","text":42},"id":4}"#;
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/set_text","params":{"tag":"field","text":42},"id":4}"#;
     let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
     let err = resp.error.expect("non-string text must error");
     assert_eq!(err.code, -32602);
@@ -332,7 +346,8 @@ fn r610_scene_set_text_does_not_bump_revision_on_failure() {
     let owner = Owner::new();
     let revision = SceneRevision::default();
     let before = revision.current();
-    let req = r#"{"jsonrpc":"2.0","method":"scene/set_text","params":{"tag":"ghost","text":"x"},"id":8}"#;
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/set_text","params":{"tag":"ghost","text":"x"},"id":8}"#;
     let _ = dispatch_with_runtime_owner_and_revision(&mut scene, &owner, &revision, req);
     assert_eq!(
         revision.current(),
@@ -358,7 +373,10 @@ fn r611_scene_set_selection_without_runtime_owner_errors() {
     let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
     let err = resp.error.expect("missing runtime_owner must error");
     assert_eq!(err.code, -32602);
-    assert_eq!(err.data, Some(Value::String("RuntimeOwnerUnavailable".into())));
+    assert_eq!(
+        err.data,
+        Some(Value::String("RuntimeOwnerUnavailable".into()))
+    );
 }
 
 #[test]
@@ -482,11 +500,15 @@ fn r611_scene_set_selection_does_not_bump_revision_on_failure() {
 #[test]
 fn r612_scene_set_caret_without_runtime_owner_errors() {
     let mut scene = counted_scene(0);
-    let req = r#"{"jsonrpc":"2.0","method":"scene/set_caret","params":{"tag":"field","pos":3},"id":1}"#;
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/set_caret","params":{"tag":"field","pos":3},"id":1}"#;
     let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
     let err = resp.error.expect("missing runtime_owner must error");
     assert_eq!(err.code, -32602);
-    assert_eq!(err.data, Some(Value::String("RuntimeOwnerUnavailable".into())));
+    assert_eq!(
+        err.data,
+        Some(Value::String("RuntimeOwnerUnavailable".into()))
+    );
 }
 
 #[test]
@@ -517,7 +539,8 @@ fn r612_scene_set_caret_rejects_negative_pos() {
     let mut scene = counted_scene(0);
     let owner = Owner::new();
     let _state = owner.run(|| pinion_core::widgets::text_edit::use_text_edit_state("field"));
-    let req = r#"{"jsonrpc":"2.0","method":"scene/set_caret","params":{"tag":"field","pos":-1},"id":4}"#;
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/set_caret","params":{"tag":"field","pos":-1},"id":4}"#;
     let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
     let err = resp.error.expect("negative pos must error");
     assert_eq!(err.code, -32602);
@@ -528,7 +551,8 @@ fn r612_scene_set_caret_rejects_negative_pos() {
 fn r612_scene_set_caret_unbound_tag_errors_with_typed_data() {
     let mut scene = counted_scene(0);
     let owner = Owner::new();
-    let req = r#"{"jsonrpc":"2.0","method":"scene/set_caret","params":{"tag":"ghost","pos":3},"id":5}"#;
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/set_caret","params":{"tag":"ghost","pos":3},"id":5}"#;
     let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
     let err = resp.error.expect("unbound tag must error");
     assert_eq!(err.code, -32602);
@@ -541,7 +565,8 @@ fn r612_scene_set_caret_happy_path_returns_post_state() {
     let owner = Owner::new();
     let state = owner.run(|| pinion_core::widgets::text_edit::use_text_edit_state("field"));
     state.set_text("Hello world".to_owned());
-    let req = r#"{"jsonrpc":"2.0","method":"scene/set_caret","params":{"tag":"field","pos":5},"id":6}"#;
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/set_caret","params":{"tag":"field","pos":5},"id":6}"#;
     let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
     assert!(resp.error.is_none(), "happy path must not error");
     let result = resp.result.expect("result present");
@@ -559,7 +584,8 @@ fn r612_scene_set_caret_bumps_revision_on_success() {
     state.set_text("Hello".to_owned());
     let revision = SceneRevision::default();
     let before = revision.current();
-    let req = r#"{"jsonrpc":"2.0","method":"scene/set_caret","params":{"tag":"field","pos":3},"id":7}"#;
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/set_caret","params":{"tag":"field","pos":3},"id":7}"#;
     let _ = dispatch_with_runtime_owner_and_revision(&mut scene, &owner, &revision, req);
     let after = revision.current();
     assert!(
@@ -574,7 +600,8 @@ fn r612_scene_set_caret_does_not_bump_revision_on_failure() {
     let owner = Owner::new();
     let revision = SceneRevision::default();
     let before = revision.current();
-    let req = r#"{"jsonrpc":"2.0","method":"scene/set_caret","params":{"tag":"ghost","pos":3},"id":8}"#;
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/set_caret","params":{"tag":"ghost","pos":3},"id":8}"#;
     let _ = dispatch_with_runtime_owner_and_revision(&mut scene, &owner, &revision, req);
     assert_eq!(
         revision.current(),
@@ -594,7 +621,10 @@ fn r604_scene_caret_state_without_runtime_owner_errors() {
     let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
     let err = resp.error.expect("missing runtime_owner must error");
     assert_eq!(err.code, -32602);
-    assert_eq!(err.data, Some(Value::String("RuntimeOwnerUnavailable".into())));
+    assert_eq!(
+        err.data,
+        Some(Value::String("RuntimeOwnerUnavailable".into()))
+    );
 }
 
 #[test]
@@ -627,8 +657,7 @@ fn r604_scene_caret_state_happy_path_returns_projection() {
 fn r603_scene_text_state_happy_path_with_selection_returns_full_projection() {
     let mut scene = counted_scene(0);
     let owner = Owner::new();
-    let state =
-        owner.run(|| pinion_core::widgets::text_edit::use_text_edit_state("field"));
+    let state = owner.run(|| pinion_core::widgets::text_edit::use_text_edit_state("field"));
     state.set_text("Hello".to_owned());
     // set_selection(anchor, focus) leaves caret at focus = 3
     // per the W3C Selection canonical contract.

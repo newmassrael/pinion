@@ -60,27 +60,25 @@
 use std::borrow::Cow;
 use std::cell::Cell;
 
-use pinion_a11y::{
-    tablist_tab_nodes, AccessAction, AccessFocus, AccessNode, TabCell, WidgetA11y,
-};
+use pinion_a11y::{AccessAction, AccessFocus, AccessNode, TabCell, WidgetA11y, tablist_tab_nodes};
 // R815 §5.40 — `AriaRole` is now only referenced by the test asserts (the
 // lifted `tablist_tab_nodes` builder owns the role + state tagging in prod).
 #[cfg(test)]
 use pinion_a11y::AriaRole;
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, DragPayload, DropPoint, External, ExternalIntrospect,
-    IntrospectSchema, IntrospectValue, InterveneError, InvokeError, RepaintOwner, ThreadOwnership,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, Color, FlexDirection, JustifyContent, LayoutStyle, Size,
     SizeValue, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole};
-use pinion_core::widgets::reorder::{read_reorder, ReorderAxis, ReorderModel};
+use pinion_core::theme::{ColorRole, use_theme};
+use pinion_core::widgets::reorder::{ReorderAxis, ReorderModel, read_reorder};
 use pinion_core::{Frame, Scene, WidgetCore};
-use pinion_shell::{vello_renderer_impl, WidgetView};
-use pinion_widget_paint::tabs::{composite_tab_tag, TabsStyle};
+use pinion_shell::{WidgetView, vello_renderer_impl};
+use pinion_widget_paint::tabs::{TabsStyle, composite_tab_tag};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloTabReorderRenderer, HelloTabReorderRendererError);
@@ -117,10 +115,26 @@ const FOOTER_FONT_PX: u32 = 12;
 /// wherever it now sits, the same witness `hello-dnd` gets from full-row
 /// fills. Strong, well-separated hues keep the live-pixel guard robust.
 const TABS: [(&str, Color, &str); N] = [
-    ("Scene", Color::rgb(0x43, 0xA0, 0x47), "3-D scene graph: nodes, transforms, and gizmos."),
-    ("Script", Color::rgb(0x1E, 0x88, 0xE5), "Gameplay scripts and visual-script graphs."),
-    ("Shader", Color::rgb(0xFB, 0xC0, 0x2D), "Material editor and shader-graph nodes."),
-    ("Assets", Color::rgb(0xE5, 0x39, 0x35), "Asset browser: meshes, textures, and audio."),
+    (
+        "Scene",
+        Color::rgb(0x43, 0xA0, 0x47),
+        "3-D scene graph: nodes, transforms, and gizmos.",
+    ),
+    (
+        "Script",
+        Color::rgb(0x1E, 0x88, 0xE5),
+        "Gameplay scripts and visual-script graphs.",
+    ),
+    (
+        "Shader",
+        Color::rgb(0xFB, 0xC0, 0x2D),
+        "Material editor and shader-graph nodes.",
+    ),
+    (
+        "Assets",
+        Color::rgb(0xE5, 0x39, 0x35),
+        "Asset browser: meshes, textures, and audio.",
+    ),
 ];
 
 /// Boot order — tabs in declaration order.
@@ -209,11 +223,7 @@ impl ReorderableTabsExternal {
     /// Labels in current visual order — the AI-readable observable
     /// (`query("labels")`) and the AT name source.
     fn labels(&self) -> Vec<&'static str> {
-        self.reorder
-            .order()
-            .iter()
-            .map(|&id| TABS[id].0)
-            .collect()
+        self.reorder.order().iter().map(|&id| TABS[id].0).collect()
     }
 
     /// Keyboard navigation policy (tab-specific, *not* part of the shared
@@ -222,7 +232,10 @@ impl ReorderableTabsExternal {
     /// at the ends. Selecting writes the tab **id** at the new visual
     /// position so the indicator follows. Returns the new cursor.
     fn navigate(&self, dir: i32) -> usize {
-        let cur = self.reorder.focused().unwrap_or_else(|| self.selected_visual());
+        let cur = self
+            .reorder
+            .focused()
+            .unwrap_or_else(|| self.selected_visual());
         let next = match dir {
             1 => (cur + 1) % N,
             -1 => (cur + N - 1) % N,
@@ -323,10 +336,12 @@ impl ExternalIntrospect for ReorderableTabsExternal {
                     .collect();
                 Some(IntrospectValue::Json(serde_json::Value::Array(arr)))
             }
-            "selected_id" => Some(IntrospectValue::Int(i64::try_from(self.selected.get()).unwrap_or(0))),
-            "selected_visual" => {
-                Some(IntrospectValue::Int(i64::try_from(self.selected_visual()).unwrap_or(0)))
-            }
+            "selected_id" => Some(IntrospectValue::Int(
+                i64::try_from(self.selected.get()).unwrap_or(0),
+            )),
+            "selected_visual" => Some(IntrospectValue::Int(
+                i64::try_from(self.selected_visual()).unwrap_or(0),
+            )),
             // Reorder-owned slots: order / preview / focused_index /
             // grabbed. The model returns `None` for anything else, so the
             // tab-specific slots above take precedence.
@@ -474,7 +489,11 @@ fn tab_node(
                 LayoutStyle::new()
                     .flex(FlexDirection::Column)
                     .with_align_items(AlignItems::Stretch)
-                    .with_size(Size::auto().with_width(SizeValue::Px(TAB_W)).with_height(SizeValue::Px(style.tab_height))),
+                    .with_size(
+                        Size::auto()
+                            .with_width(SizeValue::Px(TAB_W))
+                            .with_height(SizeValue::Px(style.tab_height)),
+                    ),
             ),
     )
 }
@@ -532,7 +551,9 @@ fn view(state: TabsState) -> Scene {
         ContainerNode::new(vec![Scene::Text(TextNode::styled(
             TABS[state.selected].2,
             Rect::default(),
-            TextStyle::new().with_size_px(PANEL_FONT_PX).with_fg(on_surface),
+            TextStyle::new()
+                .with_size_px(PANEL_FONT_PX)
+                .with_fg(on_surface),
         ))])
         .with_tag(PANEL_TAG)
         .with_layout(
@@ -548,7 +569,9 @@ fn view(state: TabsState) -> Scene {
     let footer = Scene::Text(TextNode::styled(
         "drag a tab to reorder   \u{2190}/\u{2192} switch   Space grab \u{2192} \u{2190}/\u{2192} move",
         Rect::default(),
-        TextStyle::new().with_size_px(FOOTER_FONT_PX).with_fg(on_surface_muted),
+        TextStyle::new()
+            .with_size_px(FOOTER_FONT_PX)
+            .with_fg(on_surface_muted),
     ));
 
     Scene::Container(
@@ -710,7 +733,11 @@ impl WidgetA11y for TabReorderView {
         // derives `aria-posinset` / `aria-setsize` from the slice.
         let list_focused = focused == Some(<Self as WidgetCore>::tag());
         let active_cursor = state.focused.unwrap_or_else(|| {
-            state.order.iter().position(|&id| id == state.selected).unwrap_or(0)
+            state
+                .order
+                .iter()
+                .position(|&id| id == state.selected)
+                .unwrap_or(0)
         });
         let tab_tags: Vec<String> = (0..N).map(tab_tag).collect();
         let tabs: Vec<TabCell<'_>> = (0..N)
@@ -739,9 +766,16 @@ impl WidgetA11y for TabReorderView {
     fn access_focus_target(state: &TabsState, focused: Option<&str>) -> Option<AccessFocus> {
         if focused == Some(<Self as WidgetCore>::tag()) {
             let cursor = state.focused.unwrap_or_else(|| {
-                state.order.iter().position(|&id| id == state.selected).unwrap_or(0)
+                state
+                    .order
+                    .iter()
+                    .position(|&id| id == state.selected)
+                    .unwrap_or(0)
             });
-            Some(AccessFocus::composite(<Self as WidgetCore>::tag(), tab_tag(cursor)))
+            Some(AccessFocus::composite(
+                <Self as WidgetCore>::tag(),
+                tab_tag(cursor),
+            ))
         } else {
             focused.map(AccessFocus::atomic)
         }
@@ -805,8 +839,8 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pinion_core::scene::ExternalNode;
     use pinion_core::Modifiers;
+    use pinion_core::scene::ExternalNode;
 
     const NONE: Modifiers = Modifiers::empty();
 
@@ -847,8 +881,16 @@ mod tests {
         ext.drag_release(&pl, Some(drop_at(2, 0.75)));
         // [0,1,2,3] move 0 → gap 3 → [1,2,0,3]; Scene (id 0) now at visual 2.
         assert_eq!(ext.reorder.order(), [1, 2, 0, 3]);
-        assert_eq!(ext.selected.get(), 0, "selection follows the dragged tab id");
-        assert_eq!(ext.selected_visual(), 2, "selected tab now sits at visual 2");
+        assert_eq!(
+            ext.selected.get(),
+            0,
+            "selection follows the dragged tab id"
+        );
+        assert_eq!(
+            ext.selected_visual(),
+            2,
+            "selected tab now sits at visual 2"
+        );
     }
 
     #[test]
@@ -867,12 +909,14 @@ mod tests {
     fn r743_reorder_is_pure_permutation_selection_id_stable() {
         let mut ext = fresh();
         // Select Shader (id 2) by clicking visual 2.
-        ext.invoke("send", IntrospectValue::Text("2:PointerDown".into())).expect("press");
+        ext.invoke("send", IntrospectValue::Text("2:PointerDown".into()))
+            .expect("press");
         ext.drag_release(&ext.begin_drag().expect("armed"), Some(drop_at(2, 0.25)));
         assert_eq!(ext.selected.get(), 2);
         // Now drag a *different* tab (visual 0, id 0) elsewhere; the
         // selection id must stay 2 and visually follow.
-        ext.invoke("send", IntrospectValue::Text("0:PointerDown".into())).expect("press");
+        ext.invoke("send", IntrospectValue::Text("0:PointerDown".into()))
+            .expect("press");
         let pl = ext.begin_drag().expect("armed");
         ext.drag_to(&pl, Some(drop_at(3, 0.75)));
         ext.drag_release(&pl, Some(drop_at(3, 0.75)));
@@ -884,7 +928,8 @@ mod tests {
     #[test]
     fn r743_query_order_labels_selected_round_trip() {
         let mut ext = fresh();
-        ext.invoke("send", IntrospectValue::Text("0:PointerDown".into())).expect("press");
+        ext.invoke("send", IntrospectValue::Text("0:PointerDown".into()))
+            .expect("press");
         ext.drag_release(&ext.begin_drag().expect("armed"), Some(drop_at(2, 0.75)));
         match ext.query("labels") {
             Some(IntrospectValue::Json(serde_json::Value::Array(a))) => {
@@ -900,7 +945,8 @@ mod tests {
     #[test]
     fn r743_intervene_selected_id_clamps_and_rejects() {
         let mut ext = fresh();
-        ext.intervene("selected_id", IntrospectValue::Int(3)).expect("in range");
+        ext.intervene("selected_id", IntrospectValue::Int(3))
+            .expect("in range");
         assert_eq!(ext.selected.get(), 3);
         assert!(matches!(
             ext.intervene("selected_id", IntrospectValue::Int(9)),
@@ -915,24 +961,53 @@ mod tests {
     #[test]
     fn r743_keyboard_arrow_navigates_and_activates() {
         let mut scene = scene_of(fresh());
-        assert!(!TabReorderView::apply_key(&mut scene, None, "ArrowRight", NONE));
-        assert!(TabReorderView::apply_key(&mut scene, Some(TAG), "ArrowRight", NONE));
+        assert!(!TabReorderView::apply_key(
+            &mut scene,
+            None,
+            "ArrowRight",
+            NONE
+        ));
+        assert!(TabReorderView::apply_key(
+            &mut scene,
+            Some(TAG),
+            "ArrowRight",
+            NONE
+        ));
         let st = TabReorderView::read_state(&scene);
         assert_eq!(st.selected, 1, "ArrowRight activates the next tab");
         assert_eq!(st.focused, Some(1), "cursor follows");
         assert_eq!(st.order, IDENTITY, "navigation does not reorder");
-        assert!(TabReorderView::apply_key(&mut scene, Some(TAG), "End", NONE));
-        assert_eq!(TabReorderView::read_state(&scene).selected, 3, "End → last tab");
+        assert!(TabReorderView::apply_key(
+            &mut scene,
+            Some(TAG),
+            "End",
+            NONE
+        ));
+        assert_eq!(
+            TabReorderView::read_state(&scene).selected,
+            3,
+            "End → last tab"
+        );
     }
 
     #[test]
     fn r743_keyboard_grab_then_arrow_reorders_cursor_follows() {
         let mut scene = scene_of(fresh());
         // Cursor to visual 0, grab, move right.
-        assert!(TabReorderView::apply_key(&mut scene, Some(TAG), "Home", NONE));
+        assert!(TabReorderView::apply_key(
+            &mut scene,
+            Some(TAG),
+            "Home",
+            NONE
+        ));
         assert!(TabReorderView::apply_key(&mut scene, Some(TAG), " ", NONE));
         assert!(TabReorderView::read_state(&scene).grabbed, "Space grabs");
-        assert!(TabReorderView::apply_key(&mut scene, Some(TAG), "ArrowRight", NONE));
+        assert!(TabReorderView::apply_key(
+            &mut scene,
+            Some(TAG),
+            "ArrowRight",
+            NONE
+        ));
         let st = TabReorderView::read_state(&scene);
         assert_eq!(st.order, [1, 0, 2, 3], "grabbed tab moved one slot right");
         assert_eq!(st.focused, Some(1), "cursor follows the grabbed tab");
@@ -946,11 +1021,30 @@ mod tests {
     #[test]
     fn r743_keyboard_escape_cancels_grab_reverts_order() {
         let mut scene = scene_of(fresh());
-        assert!(TabReorderView::apply_key(&mut scene, Some(TAG), "Home", NONE));
+        assert!(TabReorderView::apply_key(
+            &mut scene,
+            Some(TAG),
+            "Home",
+            NONE
+        ));
         assert!(TabReorderView::apply_key(&mut scene, Some(TAG), " ", NONE));
-        assert!(TabReorderView::apply_key(&mut scene, Some(TAG), "End", NONE));
-        assert_ne!(TabReorderView::read_state(&scene).order, IDENTITY, "grabbed End moved it");
-        assert!(TabReorderView::apply_key(&mut scene, Some(TAG), "Escape", NONE));
+        assert!(TabReorderView::apply_key(
+            &mut scene,
+            Some(TAG),
+            "End",
+            NONE
+        ));
+        assert_ne!(
+            TabReorderView::read_state(&scene).order,
+            IDENTITY,
+            "grabbed End moved it"
+        );
+        assert!(TabReorderView::apply_key(
+            &mut scene,
+            Some(TAG),
+            "Escape",
+            NONE
+        ));
         let st = TabReorderView::read_state(&scene);
         assert!(!st.grabbed);
         assert_eq!(st.order, IDENTITY, "Escape reverts to the pre-grab order");
@@ -993,12 +1087,19 @@ mod a11y_tests {
             ..TabsState::default()
         };
         let nodes = TabReorderView::access_node(&state, None);
-        let names: Vec<&str> = nodes[1..=N].iter().filter_map(|n| n.name.as_deref()).collect();
+        let names: Vec<&str> = nodes[1..=N]
+            .iter()
+            .filter_map(|n| n.name.as_deref())
+            .collect();
         assert_eq!(names, ["Shader", "Scene", "Assets", "Script"]);
         // Selected id 3 (Assets) sits at visual 2 → that Tab is selected.
         assert_eq!(nodes[1].selected, Some(false));
         assert_eq!(nodes[3].selected, Some(true));
-        assert_eq!(nodes[N + 1].name.as_deref(), Some("Assets"), "panel = active tab label");
+        assert_eq!(
+            nodes[N + 1].name.as_deref(),
+            Some("Assets"),
+            "panel = active tab label"
+        );
     }
 
     #[test]
@@ -1007,7 +1108,12 @@ mod a11y_tests {
             pinion_core::scene::ExternalNode::new(Box::new(ReorderableTabsExternal::new()))
                 .with_tag(TAG),
         );
-        assert!(TabReorderView::access_child_invoke(&mut scene, TAG, "2", AccessAction::Click));
+        assert!(TabReorderView::access_child_invoke(
+            &mut scene,
+            TAG,
+            "2",
+            AccessAction::Click
+        ));
         assert_eq!(TabReorderView::read_state(&scene).selected, 2);
     }
 

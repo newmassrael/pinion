@@ -131,7 +131,9 @@ mod tests {
     fn emits_constructor_for_empty_doc() {
         let doc = PinionDoc {
             name: "Foo".into(),
-            spec: PinionSpec::Reactive { children: Vec::new() },
+            spec: PinionSpec::Reactive {
+                children: Vec::new(),
+            },
         };
         let rust = emit_rust(&doc);
         assert!(rust.contains("pub struct Foo;"));
@@ -177,7 +179,10 @@ mod tests {
     fn rejects_wrong_xmlns() {
         let xml = r#"<pinion xmlns="https://example.com/other" kind="reactive" name="X"/>"#;
         let diags = parse_err(xml);
-        let wrong = diags.iter().find(|d| d.code() == "dsl/wrong-xmlns").expect("wrong-xmlns");
+        let wrong = diags
+            .iter()
+            .find(|d| d.code() == "dsl/wrong-xmlns")
+            .expect("wrong-xmlns");
         let PinionForgeDiagnostic::WrongXmlns { found, .. } = wrong else {
             panic!("variant mismatch");
         };
@@ -195,7 +200,10 @@ mod tests {
     fn rejects_unknown_kind() {
         let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="view-fn" name="X"/>"#;
         let diags = parse_err(xml);
-        let bad = diags.iter().find(|d| d.code() == "dsl/unknown-kind").expect("unknown-kind");
+        let bad = diags
+            .iter()
+            .find(|d| d.code() == "dsl/unknown-kind")
+            .expect("unknown-kind");
         let PinionForgeDiagnostic::UnknownKind { found, .. } = bad else {
             panic!("variant mismatch");
         };
@@ -213,7 +221,10 @@ mod tests {
     fn rejects_invalid_name_keyword() {
         let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="impl"/>"#;
         let diags = parse_err(xml);
-        let bad = diags.iter().find(|d| d.code() == "dsl/invalid-name").expect("invalid-name");
+        let bad = diags
+            .iter()
+            .find(|d| d.code() == "dsl/invalid-name")
+            .expect("invalid-name");
         let PinionForgeDiagnostic::InvalidName { found, .. } = bad else {
             panic!("variant mismatch");
         };
@@ -351,8 +362,17 @@ mod tests {
             <signal name="impl" ty="i32"><![CDATA[0]]></signal>
         </pinion>"#;
         let diags = parse_err(xml);
-        let bad = diags.iter().find(|d| d.code() == "dsl/invalid-ident").expect("invalid-ident");
-        let PinionForgeDiagnostic::InvalidIdent { tag, attribute, found, .. } = bad else {
+        let bad = diags
+            .iter()
+            .find(|d| d.code() == "dsl/invalid-ident")
+            .expect("invalid-ident");
+        let PinionForgeDiagnostic::InvalidIdent {
+            tag,
+            attribute,
+            found,
+            ..
+        } = bad
+        else {
             panic!("variant mismatch");
         };
         assert_eq!(tag, "signal");
@@ -366,7 +386,10 @@ mod tests {
             <signal name="count" ty="i32"/>
         </pinion>"#;
         let diags = parse_err(xml);
-        let bad = diags.iter().find(|d| d.code() == "dsl/empty-body").expect("empty-body");
+        let bad = diags
+            .iter()
+            .find(|d| d.code() == "dsl/empty-body")
+            .expect("empty-body");
         let PinionForgeDiagnostic::EmptyBody { tag, .. } = bad else {
             panic!("variant mismatch");
         };
@@ -412,7 +435,13 @@ mod tests {
         // Both signal-parse-success and effect-unsupported diagnostics
         // are visible from a single run.
         assert!(diags.iter().any(|d| d.code() == "dsl/unsupported-element"));
-        assert_eq!(diags.iter().filter(|d| d.code() == "dsl/unsupported-element").count(), 1);
+        assert_eq!(
+            diags
+                .iter()
+                .filter(|d| d.code() == "dsl/unsupported-element")
+                .count(),
+            1
+        );
     }
 
     // ---- R38.2b: <computed> child element ----
@@ -463,7 +492,9 @@ mod tests {
         // Single-name tuple form
         assert!(rust.contains("let (count,) = (count.clone(),);"));
         // Closure wraps user body verbatim
-        assert!(rust.contains("::pinion_core::reactive::Computed::new(move || { count.get() * 2 })"));
+        assert!(
+            rust.contains("::pinion_core::reactive::Computed::new(move || { count.get() * 2 })")
+        );
     }
 
     #[test]
@@ -486,9 +517,11 @@ mod tests {
             <computed name="forty_two" ty="i32"><![CDATA[42]]></computed>
         </pinion>"#;
         let rust = compile_str(xml, "c.pinion.xml").expect("compile");
-        assert!(rust.contains(
-            "let forty_two = ::pinion_core::reactive::Computed::new(move || { 42 });"
-        ));
+        assert!(
+            rust.contains(
+                "let forty_two = ::pinion_core::reactive::Computed::new(move || { 42 });"
+            )
+        );
         // No shadow block when no priors
         assert!(!rust.contains("let (forty_two,)"));
         assert!(!rust.contains("#[allow(unused_variables"));
@@ -546,7 +579,10 @@ mod tests {
             <computed name="c" ty="i32"/>
         </pinion>"#;
         let diags = parse_err(xml);
-        let bad = diags.iter().find(|d| d.code() == "dsl/empty-body").expect("empty-body");
+        let bad = diags
+            .iter()
+            .find(|d| d.code() == "dsl/empty-body")
+            .expect("empty-body");
         let PinionForgeDiagnostic::EmptyBody { tag, .. } = bad else {
             panic!("variant mismatch");
         };
@@ -603,7 +639,9 @@ mod tests {
         </pinion>"#;
         let rust = compile_str(xml, "imports.pinion.xml").expect("compile");
         // `use` statement must come before `pub struct`.
-        let use_pos = rust.find("use my_crate::widgets::Button;").expect("use emitted");
+        let use_pos = rust
+            .find("use my_crate::widgets::Button;")
+            .expect("use emitted");
         let struct_pos = rust.find("pub struct Imports").expect("struct emitted");
         assert!(use_pos < struct_pos, "use must precede struct");
     }
@@ -728,7 +766,9 @@ mod tests {
         </pinion>"#;
         let rust = compile_str(xml, "u.pinion.xml").expect("compile");
         // Signature must mention the generic + bound + spawner parameter.
-        assert!(rust.contains("pub fn new<S>(_owner: &::pinion_core::reactive::Owner, spawner: &S) -> Self"));
+        assert!(rust.contains(
+            "pub fn new<S>(_owner: &::pinion_core::reactive::Owner, spawner: &S) -> Self"
+        ));
         assert!(rust.contains("S: ::pinion_core::reactive::LocalSpawner"));
     }
 
@@ -800,7 +840,10 @@ mod tests {
             <resource name="r" ty="i32" err="String"/>
         </pinion>"#;
         let diags = parse_err(xml);
-        let bad = diags.iter().find(|d| d.code() == "dsl/empty-body").expect("empty-body");
+        let bad = diags
+            .iter()
+            .find(|d| d.code() == "dsl/empty-body")
+            .expect("empty-body");
         let PinionForgeDiagnostic::EmptyBody { tag, .. } = bad else {
             panic!("variant mismatch");
         };
@@ -844,7 +887,9 @@ mod tests {
         let by_tag: std::collections::BTreeSet<_> = diags
             .iter()
             .filter_map(|d| match d {
-                PinionForgeDiagnostic::MissingAttribute { tag, .. } => Some(("missing", tag.as_str())),
+                PinionForgeDiagnostic::MissingAttribute { tag, .. } => {
+                    Some(("missing", tag.as_str()))
+                }
                 PinionForgeDiagnostic::InvalidIdent { tag, .. } => Some(("invalid", tag.as_str())),
                 _ => None,
             })
@@ -896,16 +941,27 @@ mod tests {
     fn wire_record_has_required_fields() {
         let xml = r#"<pinion kind="reactive" name="X"/>"#;
         let diags = parse_err(xml);
-        let diag = diags.iter().find(|d| d.code() == "dsl/missing-xmlns").unwrap();
+        let diag = diags
+            .iter()
+            .find(|d| d.code() == "dsl/missing-xmlns")
+            .unwrap();
         let line = to_ndjson_line(diag);
         let value: Value = serde_json::from_str(&line).expect("valid JSON");
         let obj = value.as_object().expect("object");
         assert_eq!(obj.get("v"), Some(&Value::from(1)));
-        assert!(obj.get("id").and_then(Value::as_str).unwrap().starts_with("fnv1a:"));
+        assert!(
+            obj.get("id")
+                .and_then(Value::as_str)
+                .unwrap()
+                .starts_with("fnv1a:")
+        );
         assert_eq!(obj.get("code"), Some(&Value::from("dsl/missing-xmlns")));
         assert_eq!(obj.get("stage"), Some(&Value::from("validate")));
         assert!(obj.get("message").is_some());
-        let loc = obj.get("location").and_then(Value::as_object).expect("location");
+        let loc = obj
+            .get("location")
+            .and_then(Value::as_object)
+            .expect("location");
         assert!(loc.get("file").is_some());
     }
 
@@ -955,7 +1011,12 @@ mod tests {
         let PinionSpec::Renderer { backend } = doc.spec else {
             panic!("expected Renderer variant");
         };
-        assert_eq!(backend, RendererBackend::Vello { aa: VelloAaMode::Area });
+        assert_eq!(
+            backend,
+            RendererBackend::Vello {
+                aa: VelloAaMode::Area
+            }
+        );
         assert_eq!(backend.kind(), RendererBackendKind::Vello);
     }
 
@@ -969,7 +1030,11 @@ mod tests {
         assert_eq!(doc.name, "Scene");
         assert!(matches!(
             doc.spec,
-            PinionSpec::Renderer { backend: RendererBackend::Vello { aa: VelloAaMode::Area } }
+            PinionSpec::Renderer {
+                backend: RendererBackend::Vello {
+                    aa: VelloAaMode::Area
+                }
+            }
         ));
     }
 
@@ -977,7 +1042,10 @@ mod tests {
     fn rejects_renderer_missing_backend() {
         let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="Scene"/>"#;
         let diags = parse_err(xml);
-        let bad = diags.iter().find(|d| d.code() == "dsl/missing-backend").expect("missing-backend");
+        let bad = diags
+            .iter()
+            .find(|d| d.code() == "dsl/missing-backend")
+            .expect("missing-backend");
         assert!(matches!(bad, PinionForgeDiagnostic::MissingBackend { .. }));
         assert_eq!(bad.stage(), Stage::Validate);
     }
@@ -986,7 +1054,10 @@ mod tests {
     fn rejects_renderer_unknown_backend() {
         let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="Scene" backend="wgpu"/>"#;
         let diags = parse_err(xml);
-        let bad = diags.iter().find(|d| d.code() == "dsl/unknown-backend").expect("unknown-backend");
+        let bad = diags
+            .iter()
+            .find(|d| d.code() == "dsl/unknown-backend")
+            .expect("unknown-backend");
         let PinionForgeDiagnostic::UnknownBackend { found, .. } = bad else {
             panic!("variant mismatch");
         };
@@ -1029,7 +1100,11 @@ mod tests {
             <effect name="e"/>
         </pinion>"#;
         let diags = parse_err(xml);
-        assert!(diags.iter().any(|d| d.code() == "dsl/renderer-child-not-allowed"));
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.code() == "dsl/renderer-child-not-allowed")
+        );
         assert!(!diags.iter().any(|d| d.code() == "dsl/unsupported-element"));
     }
 
@@ -1091,7 +1166,10 @@ mod tests {
         let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="X" backend="vello"/>"#;
         let rust = compile_str(xml, "x.pinion.xml").expect("compile");
         // No `use vello::*` items — R46.3.3 namespace contract.
-        assert!(!rust.contains("use vello::"), "R46.3.3: no `use vello::*` imports in emitted code");
+        assert!(
+            !rust.contains("use vello::"),
+            "R46.3.3: no `use vello::*` imports in emitted code"
+        );
         // Vello 0.9 canonical pattern markers (fully-qualified)
         assert!(rust.contains("::vello::util::RenderContext::new()"));
         assert!(rust.contains("render_to_texture("));
@@ -1116,7 +1194,12 @@ mod tests {
         let PinionSpec::Renderer { backend } = doc.spec else {
             panic!("expected Renderer variant");
         };
-        assert_eq!(backend, RendererBackend::Vello { aa: VelloAaMode::Msaa8 });
+        assert_eq!(
+            backend,
+            RendererBackend::Vello {
+                aa: VelloAaMode::Msaa8
+            }
+        );
     }
 
     #[test]
@@ -1126,7 +1209,12 @@ mod tests {
         let PinionSpec::Renderer { backend } = doc.spec else {
             panic!("expected Renderer variant");
         };
-        assert_eq!(backend, RendererBackend::Vello { aa: VelloAaMode::Msaa16 });
+        assert_eq!(
+            backend,
+            RendererBackend::Vello {
+                aa: VelloAaMode::Msaa16
+            }
+        );
     }
 
     #[test]
@@ -1138,7 +1226,12 @@ mod tests {
         let PinionSpec::Renderer { backend } = doc.spec else {
             panic!("expected Renderer variant");
         };
-        assert_eq!(backend, RendererBackend::Vello { aa: VelloAaMode::Area });
+        assert_eq!(
+            backend,
+            RendererBackend::Vello {
+                aa: VelloAaMode::Area
+            }
+        );
     }
 
     #[test]
@@ -1150,7 +1243,12 @@ mod tests {
         let PinionSpec::Renderer { backend } = doc.spec else {
             panic!("expected Renderer variant");
         };
-        assert_eq!(backend, RendererBackend::Vello { aa: VelloAaMode::Area });
+        assert_eq!(
+            backend,
+            RendererBackend::Vello {
+                aa: VelloAaMode::Area
+            }
+        );
     }
 
     #[test]
@@ -1163,14 +1261,22 @@ mod tests {
         let PinionSpec::Renderer { backend } = doc.spec else {
             panic!("expected Renderer variant");
         };
-        assert_eq!(backend, RendererBackend::Vello { aa: VelloAaMode::Area });
+        assert_eq!(
+            backend,
+            RendererBackend::Vello {
+                aa: VelloAaMode::Area
+            }
+        );
     }
 
     #[test]
     fn rejects_renderer_unknown_aa() {
         let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="Scene" backend="vello" aa="fxaa"/>"#;
         let diags = parse_err(xml);
-        let bad = diags.iter().find(|d| d.code() == "dsl/unknown-aa").expect("unknown-aa");
+        let bad = diags
+            .iter()
+            .find(|d| d.code() == "dsl/unknown-aa")
+            .expect("unknown-aa");
         let PinionForgeDiagnostic::UnknownAa { found, .. } = bad else {
             panic!("variant mismatch");
         };
@@ -1185,7 +1291,10 @@ mod tests {
         // the message text.
         let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="X" backend="vello" aa="taa"/>"#;
         let diags = parse_err(xml);
-        let bad = diags.iter().find(|d| d.code() == "dsl/unknown-aa").expect("unknown-aa");
+        let bad = diags
+            .iter()
+            .find(|d| d.code() == "dsl/unknown-aa")
+            .expect("unknown-aa");
         let value = to_json_value(bad);
         assert_eq!(value["actual"], Value::from("taa"));
     }
@@ -1251,7 +1360,10 @@ mod tests {
         let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="Y" backend="vello"/>"#;
         let rust = compile_str(xml, "y.pinion.xml").expect("compile");
         assert!(rust.starts_with("// Generated by pinion-forge"));
-        assert!(!rust.starts_with("//!"), "header must be regular `//`, not inner-doc `//!`");
+        assert!(
+            !rust.starts_with("//!"),
+            "header must be regular `//`, not inner-doc `//!`"
+        );
         assert!(rust.contains("DO NOT EDIT"));
         assert!(rust.contains("R46.2 §5.16 Vello first emit template"));
         // No leftover placeholders — the .replace() chain in
@@ -1269,9 +1381,13 @@ mod tests {
         // UnknownBackend should surface the offending literal in the
         // wire `actual` field so an agent can repair it without
         // re-parsing the message text.
-        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="X" backend="ash"/>"#;
+        let xml =
+            r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="X" backend="ash"/>"#;
         let diags = parse_err(xml);
-        let bad = diags.iter().find(|d| d.code() == "dsl/unknown-backend").expect("unknown-backend");
+        let bad = diags
+            .iter()
+            .find(|d| d.code() == "dsl/unknown-backend")
+            .expect("unknown-backend");
         let value = to_json_value(bad);
         assert_eq!(value["actual"], Value::from("ash"));
     }
@@ -1282,9 +1398,15 @@ mod tests {
         // renderer as a supported value alongside reactive.
         let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="view-fn" name="X"/>"#;
         let diags = parse_err(xml);
-        let bad = diags.iter().find(|d| d.code() == "dsl/unknown-kind").expect("unknown-kind");
+        let bad = diags
+            .iter()
+            .find(|d| d.code() == "dsl/unknown-kind")
+            .expect("unknown-kind");
         let msg = bad.to_string();
-        assert!(msg.contains("reactive"), "message should still list reactive");
+        assert!(
+            msg.contains("reactive"),
+            "message should still list reactive"
+        );
         assert!(msg.contains("renderer"), "message should list renderer");
     }
 }

@@ -40,11 +40,11 @@
 //! as the disclosure's accessible name, and the panel's text never
 //! leaks into the header's name.
 
-use crate::glyph::{DISCLOSURE_COLLAPSED as GLYPH_COLLAPSED, DISCLOSURE_EXPANDED as GLYPH_EXPANDED};
-use pinion_core::scene::{ContainerNode, Rect, TextNode, TextRole};
-use pinion_core::style::{
-    AlignItems, BoxStyle, FlexDirection, LayoutStyle, Size, TextStyle,
+use crate::glyph::{
+    DISCLOSURE_COLLAPSED as GLYPH_COLLAPSED, DISCLOSURE_EXPANDED as GLYPH_EXPANDED,
 };
+use pinion_core::scene::{ContainerNode, Rect, TextNode, TextRole};
+use pinion_core::style::{AlignItems, BoxStyle, FlexDirection, LayoutStyle, Size, TextStyle};
 use pinion_core::theme::{ColorRole, Theme};
 use pinion_core::widgets::disclosure::DisclosureState;
 use pinion_core::{Color, Scene};
@@ -176,7 +176,11 @@ pub fn view_disclosure(
     } else {
         theme.resolve(ColorRole::OnSurface)
     };
-    let glyph = if expanded { GLYPH_EXPANDED } else { GLYPH_COLLAPSED };
+    let glyph = if expanded {
+        GLYPH_EXPANDED
+    } else {
+        GLYPH_COLLAPSED
+    };
     let chevron = Scene::Text(
         TextNode::styled(
             glyph,
@@ -221,7 +225,9 @@ pub fn view_disclosure(
     if expanded {
         let panel = Scene::Container(
             ContainerNode::new(vec![content])
-                .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerLow)))
+                .with_style(BoxStyle::filled(
+                    theme.resolve(ColorRole::SurfaceContainerLow),
+                ))
                 .with_layout(
                     LayoutStyle::new()
                         .flex(FlexDirection::Column)
@@ -246,7 +252,6 @@ pub fn view_disclosure(
         ),
     )
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -379,9 +384,15 @@ mod tests {
     }
 
     fn header_twisty_glyph(scene: &Scene) -> &str {
-        let Scene::Container(root) = scene else { panic!("root container") };
-        let Scene::Container(header) = &root.children[0] else { panic!("header container") };
-        let Scene::Text(t) = &header.children[0] else { panic!("twisty text") };
+        let Scene::Container(root) = scene else {
+            panic!("root container")
+        };
+        let Scene::Container(header) = &root.children[0] else {
+            panic!("header container")
+        };
+        let Scene::Text(t) = &header.children[0] else {
+            panic!("twisty text")
+        };
         // Twisty is Presentational so the AT name lands on the summary.
         assert_eq!(t.role, Some(TextRole::Presentational));
         // Borrow the glyph string slice out of the TextNode content.
@@ -415,6 +426,9 @@ mod tests {
         let expected = theme
             .resolve(ColorRole::SurfaceContainerHigh)
             .lerp(theme.resolve(ColorRole::OnSurface), 0.08);
-        assert_eq!(disclosure_header_for(&theme, DisclosureState::Hover), expected);
+        assert_eq!(
+            disclosure_header_for(&theme, DisclosureState::Hover),
+            expected
+        );
     }
 }

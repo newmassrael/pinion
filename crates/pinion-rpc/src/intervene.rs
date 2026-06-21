@@ -36,11 +36,11 @@
 //! Transport (JSON-RPC 2.0 framing per §5.7) is handled by
 //! [`crate::dispatch`]; this module exposes the typed dispatcher only.
 
-use pinion_core::external::{InterveneError as TraitInterveneError, IntrospectValue};
 use pinion_core::Scene;
+use pinion_core::external::{InterveneError as TraitInterveneError, IntrospectValue};
 
 use crate::path::PathError;
-use crate::resolve::{resolve_external_introspect_mut, ResolveExternalError};
+use crate::resolve::{ResolveExternalError, resolve_external_introspect_mut};
 
 /// Reasons the typed [`intervene`] dispatcher can fail.
 #[non_exhaustive]
@@ -137,9 +137,9 @@ pub fn intervene(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_core::Color;
     use pinion_core::external::{CountedExternal, StubExternal};
     use pinion_core::scene::{BoxNode, ExternalNode, Rect};
-    use pinion_core::Color;
 
     fn counted_scene(n: i64) -> Scene {
         Scene::External(ExternalNode::new(Box::new(CountedExternal::new(n))))
@@ -194,8 +194,7 @@ mod tests {
     #[test]
     fn unsupported_path_shape_rejects() {
         let mut scene = counted_scene(0);
-        let err =
-            intervene(&mut scene, "/state/count", IntrospectValue::Int(0)).unwrap_err();
+        let err = intervene(&mut scene, "/state/count", IntrospectValue::Int(0)).unwrap_err();
         assert_eq!(err, InterveneError::UnsupportedPath);
     }
 
@@ -246,9 +245,7 @@ mod tests {
     fn r666_intervene_extra_external_by_composite_tag() {
         // Write only to the composite-tagged extra sibling; primary
         // untouched.
-        let mut scene = container_with_two_counted_siblings(
-            "todo_list", 100, "todo_toggle#1", 0,
-        );
+        let mut scene = container_with_two_counted_siblings("todo_list", 100, "todo_toggle#1", 0);
         intervene(
             &mut scene,
             "/todo_toggle#1/external/count",
@@ -261,9 +258,7 @@ mod tests {
 
     #[test]
     fn r666_intervene_extra_external_with_window_prefix() {
-        let mut scene = container_with_two_counted_siblings(
-            "primary", 0, "todo_delete#7", 0,
-        );
+        let mut scene = container_with_two_counted_siblings("primary", 0, "todo_delete#7", 0);
         intervene(
             &mut scene,
             "/window[main]/todo_delete#7/external/count",
@@ -276,12 +271,8 @@ mod tests {
     #[test]
     fn r666_intervene_unknown_segment_is_no_external() {
         let mut scene = container_with_two_counted_siblings("a", 0, "b", 0);
-        let err = intervene(
-            &mut scene,
-            "/ghost/external/count",
-            IntrospectValue::Int(0),
-        )
-        .unwrap_err();
+        let err =
+            intervene(&mut scene, "/ghost/external/count", IntrospectValue::Int(0)).unwrap_err();
         assert_eq!(err, InterveneError::NoExternalAtPath);
     }
 }

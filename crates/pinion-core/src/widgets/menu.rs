@@ -116,11 +116,11 @@ use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
-use crate::intent::Intent;
-use crate::widgets::menu_nav;
 use crate::input::PointerWireEvent;
-use crate::widgets::wire::resolve_index;
+use crate::intent::Intent;
 use crate::widgets::IntentEmitter;
+use crate::widgets::menu_nav;
+use crate::widgets::wire::resolve_index;
 
 /// R805 §5.40 — one dropdown item: the WAI-ARIA 1.2 menu-item taxonomy.
 /// A sum type so illegal states are unrepresentable (R805.1 audit: the
@@ -177,7 +177,10 @@ impl MenuItem {
     /// An enabled checkbox item with the given initial checked state.
     #[must_use]
     pub const fn checkbox(checked: bool) -> Self {
-        Self::Checkbox { checked, enabled: true }
+        Self::Checkbox {
+            checked,
+            enabled: true,
+        }
     }
 
     /// A non-interactive divider.
@@ -189,7 +192,10 @@ impl MenuItem {
     /// R985 — an enabled submenu carrying the given nested item list.
     #[must_use]
     pub fn submenu(items: Vec<MenuItem>) -> Self {
-        Self::Submenu { enabled: true, items }
+        Self::Submenu {
+            enabled: true,
+            items,
+        }
     }
 
     /// Builder: mark this item disabled (greyed, skipped, non-activatable).
@@ -198,9 +204,15 @@ impl MenuItem {
     pub fn disabled(self) -> Self {
         match self {
             Self::Command { .. } => Self::Command { enabled: false },
-            Self::Checkbox { checked, .. } => Self::Checkbox { checked, enabled: false },
+            Self::Checkbox { checked, .. } => Self::Checkbox {
+                checked,
+                enabled: false,
+            },
             Self::Separator => Self::Separator,
-            Self::Submenu { items, .. } => Self::Submenu { enabled: false, items },
+            Self::Submenu { items, .. } => Self::Submenu {
+                enabled: false,
+                items,
+            },
         }
     }
 
@@ -293,7 +305,13 @@ impl MenuBar {
             .into_iter()
             .map(|count| vec![MenuItem::command(); count])
             .collect();
-        Self { menus, open: None, open_path: Vec::new(), active: None, bar_focus: 0 }
+        Self {
+            menus,
+            open: None,
+            open_path: Vec::new(),
+            active: None,
+            bar_focus: 0,
+        }
     }
 
     /// R805 — construct a menubar from explicit per-menu [`MenuItem`]
@@ -301,7 +319,13 @@ impl MenuBar {
     /// closed.
     #[must_use]
     pub fn with_items(menus: Vec<Vec<MenuItem>>) -> Self {
-        Self { menus, open: None, open_path: Vec::new(), active: None, bar_focus: 0 }
+        Self {
+            menus,
+            open: None,
+            open_path: Vec::new(),
+            active: None,
+            bar_focus: 0,
+        }
     }
 
     /// Number of top-level menus.
@@ -442,7 +466,9 @@ impl MenuBar {
     /// below it) and highlights the target if navigable. Inert for an
     /// unreachable / non-navigable target.
     fn point_to(&mut self, rel_path: &[usize]) {
-        let Some((&last, prefix)) = rel_path.split_last() else { return };
+        let Some((&last, prefix)) = rel_path.split_last() else {
+            return;
+        };
         let nav = self
             .rel_items_at(prefix)
             .is_some_and(|items| items.get(last).is_some_and(MenuItem::is_navigable));
@@ -609,8 +635,12 @@ impl MenuBar {
     /// the current (deepest open) menu.
     fn move_active(&mut self, forward: bool) {
         let next = {
-            let Some(items) = self.current_items() else { return };
-            menu_nav::nav_move_skip(self.active, items.len(), forward, |i| items[i].is_navigable())
+            let Some(items) = self.current_items() else {
+                return;
+            };
+            menu_nav::nav_move_skip(self.active, items.len(), forward, |i| {
+                items[i].is_navigable()
+            })
         };
         self.active = next;
     }
@@ -619,7 +649,9 @@ impl MenuBar {
     /// **navigable** entry of the current menu (Home / End).
     fn active_edge(&mut self, last: bool) {
         let edge = {
-            let Some(items) = self.current_items() else { return };
+            let Some(items) = self.current_items() else {
+                return;
+            };
             menu_nav::nav_edge_skip(items.len(), last, |i| items[i].is_navigable())
         };
         if let Some(a) = edge {
@@ -644,7 +676,10 @@ impl MenuBar {
         };
         for &idx in path {
             match items.get(idx) {
-                Some(MenuItem::Submenu { enabled: true, items: sub }) => items = sub,
+                Some(MenuItem::Submenu {
+                    enabled: true,
+                    items: sub,
+                }) => items = sub,
                 _ => return false,
             }
         }
@@ -866,7 +901,10 @@ impl MenuBarExternal {
     /// dot-joined absolute path (`"<menu>.<item>"`, R985 `"<menu>.<item>.<sub>"`
     /// for a nested leaf).
     fn emit_command(&mut self, path: &[usize]) {
-        self.em.push(Intent::new_static("command", IntrospectValue::Text(path_text(path))));
+        self.em.push(Intent::new_static(
+            "command",
+            IntrospectValue::Text(path_text(path)),
+        ));
     }
 
     /// Shared parse for the `send` wire payload `"<sub>:<EventName>"`
@@ -985,7 +1023,10 @@ fn open_value(idx: Option<usize>) -> IntrospectValue {
 /// composite-tag builder, a binding) — the inverse of [`parse_path`].
 #[must_use]
 pub fn path_text(path: &[usize]) -> String {
-    path.iter().map(usize::to_string).collect::<Vec<_>>().join(".")
+    path.iter()
+        .map(usize::to_string)
+        .collect::<Vec<_>>()
+        .join(".")
 }
 
 impl Default for MenuBarExternal {
@@ -1201,7 +1242,11 @@ impl ExternalIntrospect for MenuBarExternal {
         }
     }
 
-    fn invoke(&mut self, path: &str, args: IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+    fn invoke(
+        &mut self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
         match path {
             // Mouse: "t<m>:<Event>" / "i<i>:<Event>". Returns open index.
             "send" => match args {
@@ -1493,10 +1538,17 @@ mod tests {
         assert_eq!(e.open_menu(), Some(2), "menu 2 open");
         // A click-outside on the transparent dismiss barrier closes it.
         let out = e
-            .invoke("send", IntrospectValue::Text("barrier:PointerUp".to_string()))
+            .invoke(
+                "send",
+                IntrospectValue::Text("barrier:PointerUp".to_string()),
+            )
             .unwrap();
         assert_eq!(e.open_menu(), None, "barrier PointerUp dismisses");
-        assert_eq!(out, IntrospectValue::Null, "send returns the (now None) open index");
+        assert_eq!(
+            out,
+            IntrospectValue::Null,
+            "send returns the (now None) open index"
+        );
         // Barrier dismiss emits no command intent (it is not an activation).
         assert!(!e.is_dirty(), "click-outside fires no command");
     }
@@ -1505,7 +1557,12 @@ mod tests {
     fn r715_barrier_non_up_events_are_inert() {
         let mut e = ext();
         click_title(&mut e, 0);
-        for ev in ["PointerEnter", "PointerDown", "PointerLeave", "PointerCancel"] {
+        for ev in [
+            "PointerEnter",
+            "PointerDown",
+            "PointerLeave",
+            "PointerCancel",
+        ] {
             e.invoke("send", IntrospectValue::Text(format!("barrier:{ev}")))
                 .unwrap();
             assert_eq!(e.open_menu(), Some(0), "{ev} over barrier does not dismiss");
@@ -1741,7 +1798,10 @@ mod tests {
         assert_eq!(m.open_menu(), None, "activation closes");
         // Reopen: the checked state survived.
         m.toggle_title(0);
-        assert!(m.item(0, 1).unwrap().checked(), "checked persists across reopen");
+        assert!(
+            m.item(0, 1).unwrap().checked(),
+            "checked persists across reopen"
+        );
         // Toggle it back off.
         assert_eq!(m.activate_item(1), Some(vec![0, 1]));
         assert!(!m.item(0, 1).unwrap().checked(), "checkbox toggled off");
@@ -1782,7 +1842,11 @@ mod tests {
         assert_eq!(m.active_item(), Some(0), "skips disabled 4, wraps to 0");
         // Up from 0 wraps backward past the disabled tail to item 3.
         m.move_active(false);
-        assert_eq!(m.active_item(), Some(3), "Up wraps past disabled to last navigable");
+        assert_eq!(
+            m.active_item(),
+            Some(3),
+            "Up wraps past disabled to last navigable"
+        );
     }
 
     #[test]
@@ -1790,7 +1854,11 @@ mod tests {
         let mut m = rich();
         m.toggle_title(0);
         m.active_edge(true);
-        assert_eq!(m.active_item(), Some(3), "End -> last navigable (3, not disabled 4)");
+        assert_eq!(
+            m.active_item(),
+            Some(3),
+            "End -> last navigable (3, not disabled 4)"
+        );
         m.active_edge(false);
         assert_eq!(m.active_item(), Some(0), "Home -> first navigable (0)");
     }
@@ -1804,7 +1872,11 @@ mod tests {
             MenuItem::command(),
         ]]);
         m.open_focused();
-        assert_eq!(m.active_item(), Some(2), "first navigable skips leading non-nav rows");
+        assert_eq!(
+            m.active_item(),
+            Some(2),
+            "first navigable skips leading non-nav rows"
+        );
     }
 
     #[test]
@@ -1815,9 +1887,18 @@ mod tests {
             MenuItem::separator(),
             MenuItem::command().disabled(),
         ]]);
-        assert_eq!(e.query("item_kind.0.0"), Some(IntrospectValue::Text("command".into())));
-        assert_eq!(e.query("item_kind.0.1"), Some(IntrospectValue::Text("checkbox".into())));
-        assert_eq!(e.query("item_kind.0.2"), Some(IntrospectValue::Text("separator".into())));
+        assert_eq!(
+            e.query("item_kind.0.0"),
+            Some(IntrospectValue::Text("command".into()))
+        );
+        assert_eq!(
+            e.query("item_kind.0.1"),
+            Some(IntrospectValue::Text("checkbox".into()))
+        );
+        assert_eq!(
+            e.query("item_kind.0.2"),
+            Some(IntrospectValue::Text("separator".into()))
+        );
         assert_eq!(e.query("checked.0.1"), Some(IntrospectValue::Bool(true)));
         assert_eq!(e.query("checked.0.0"), Some(IntrospectValue::Bool(false)));
         assert_eq!(e.query("enabled.0.0"), Some(IntrospectValue::Bool(true)));
@@ -1829,7 +1910,8 @@ mod tests {
     #[test]
     fn r805_external_intervene_checked_round_trip() {
         let mut e = MenuBarExternal::with_items(vec![vec![MenuItem::checkbox(false)]]);
-        e.intervene("checked.0.0", IntrospectValue::Bool(true)).unwrap();
+        e.intervene("checked.0.0", IntrospectValue::Bool(true))
+            .unwrap();
         assert_eq!(e.query("checked.0.0"), Some(IntrospectValue::Bool(true)));
         assert!(!e.is_dirty(), "intervene fires no command intent");
         assert_eq!(
@@ -1867,22 +1949,26 @@ mod tests {
         assert_eq!(e.query("checked.0.0"), Some(IntrospectValue::Bool(false)));
         assert_eq!(e.query("checked.0.1"), Some(IntrospectValue::Bool(false)));
         // The checkbox accepts it.
-        e.intervene("checked.0.2", IntrospectValue::Bool(true)).unwrap();
+        e.intervene("checked.0.2", IntrospectValue::Bool(true))
+            .unwrap();
         assert_eq!(e.query("checked.0.2"), Some(IntrospectValue::Bool(true)));
     }
 
     #[test]
     fn r805_external_send_checkbox_activation_toggles_and_emits() {
-        let mut e = MenuBarExternal::with_items(vec![vec![
-            MenuItem::command(),
-            MenuItem::checkbox(false),
-        ]]);
-        e.invoke("send", IntrospectValue::Text("t0:PointerUp".into())).unwrap();
+        let mut e =
+            MenuBarExternal::with_items(vec![vec![MenuItem::command(), MenuItem::checkbox(false)]]);
+        e.invoke("send", IntrospectValue::Text("t0:PointerUp".into()))
+            .unwrap();
         // Click the checkbox (item 1).
         for ev in ["PointerEnter", "PointerDown", "PointerUp", "PointerLeave"] {
-            e.invoke("send", IntrospectValue::Text(format!("i1:{ev}"))).unwrap();
+            e.invoke("send", IntrospectValue::Text(format!("i1:{ev}")))
+                .unwrap();
         }
-        assert!(e.item(0, 1).unwrap().checked(), "checkbox toggled on via send");
+        assert!(
+            e.item(0, 1).unwrap().checked(),
+            "checkbox toggled on via send"
+        );
         assert_eq!(e.open_menu(), None, "activation closes");
         let mut got = Vec::new();
         e.drain_intents(&mut |i| got.push(i));
@@ -1897,9 +1983,11 @@ mod tests {
         // as the event name, so a Ctrl+click outside the open dropdown
         // failed to dismiss it.
         let mut e = MenuBarExternal::with_items(vec![vec![MenuItem::command()]]);
-        e.invoke("send", IntrospectValue::Text("t0:PointerUp".into())).unwrap();
+        e.invoke("send", IntrospectValue::Text("t0:PointerUp".into()))
+            .unwrap();
         assert_eq!(e.open_menu(), Some(0), "dropdown open");
-        e.invoke("send", IntrospectValue::Text("barrier:PointerUp:c".into())).unwrap();
+        e.invoke("send", IntrospectValue::Text("barrier:PointerUp:c".into()))
+            .unwrap();
         assert_eq!(e.open_menu(), None, "Ctrl+click outside dismisses");
     }
 
@@ -1954,7 +2042,11 @@ mod tests {
         assert!(m.active_is_submenu());
         m.descend_active();
         assert_eq!(m.open_path(), &[1], "descended into submenu 1");
-        assert_eq!(m.active_item(), Some(0), "submenu highlights its first item");
+        assert_eq!(
+            m.active_item(),
+            Some(0),
+            "submenu highlights its first item"
+        );
         assert!(m.in_submenu());
     }
 
@@ -1975,18 +2067,27 @@ mod tests {
     #[test]
     fn r985_descend_then_activate_leaf_emits_full_path() {
         let mut e = nested_ext();
-        e.invoke("send", IntrospectValue::Text("t0:PointerUp".into())).unwrap();
+        e.invoke("send", IntrospectValue::Text("t0:PointerUp".into()))
+            .unwrap();
         // Open submenu 1 and activate its leaf 0 via the keyboard.
-        e.invoke("key", IntrospectValue::Text("ArrowDown".into())).unwrap(); // active 0
-        e.invoke("key", IntrospectValue::Text("ArrowDown".into())).unwrap(); // active 1 (submenu)
-        e.invoke("key", IntrospectValue::Text("ArrowRight".into())).unwrap(); // descend
+        e.invoke("key", IntrospectValue::Text("ArrowDown".into()))
+            .unwrap(); // active 0
+        e.invoke("key", IntrospectValue::Text("ArrowDown".into()))
+            .unwrap(); // active 1 (submenu)
+        e.invoke("key", IntrospectValue::Text("ArrowRight".into()))
+            .unwrap(); // descend
         assert_eq!(e.open_path(), &[1]);
         assert_eq!(e.active_item(), Some(0));
         assert!(matches!(
-            e.invoke("key", IntrospectValue::Text("Enter".into())).unwrap(),
+            e.invoke("key", IntrospectValue::Text("Enter".into()))
+                .unwrap(),
             IntrospectValue::Bool(true)
         ));
-        assert_eq!(e.open_menu(), None, "activating a nested leaf closes the whole menu");
+        assert_eq!(
+            e.open_menu(),
+            None,
+            "activating a nested leaf closes the whole menu"
+        );
         let mut got = Vec::new();
         e.drain_intents(&mut |i| got.push(i));
         assert_eq!(got.len(), 1);
@@ -2007,38 +2108,53 @@ mod tests {
         m.menu_switch(true);
         assert_eq!(m.open_menu(), Some(1));
         assert!(m.open_path().is_empty());
-        assert_eq!(m.active_item(), Some(0), "next menu highlights its first item");
+        assert_eq!(
+            m.active_item(),
+            Some(0),
+            "next menu highlights its first item"
+        );
     }
 
     #[test]
     fn r985_escape_collapses_one_level_at_a_time() {
         let mut e = nested_ext();
-        e.invoke("send", IntrospectValue::Text("t0:PointerUp".into())).unwrap();
-        e.invoke("send", IntrospectValue::Text("i1:PointerUp".into())).unwrap(); // open submenu 1
+        e.invoke("send", IntrospectValue::Text("t0:PointerUp".into()))
+            .unwrap();
+        e.invoke("send", IntrospectValue::Text("i1:PointerUp".into()))
+            .unwrap(); // open submenu 1
         assert_eq!(e.open_path(), &[1]);
         // Escape inside the submenu collapses just that level.
-        e.invoke("key", IntrospectValue::Text("Escape".into())).unwrap();
+        e.invoke("key", IntrospectValue::Text("Escape".into()))
+            .unwrap();
         assert!(e.open_path().is_empty(), "submenu collapsed");
         assert_eq!(e.open_menu(), Some(0), "top dropdown still open");
         // A second Escape closes the top dropdown.
-        e.invoke("key", IntrospectValue::Text("Escape".into())).unwrap();
+        e.invoke("key", IntrospectValue::Text("Escape".into()))
+            .unwrap();
         assert_eq!(e.open_menu(), None);
     }
 
     #[test]
     fn r985_pointer_open_and_collapse_via_send_path() {
         let mut e = nested_ext();
-        e.invoke("send", IntrospectValue::Text("t0:PointerUp".into())).unwrap();
+        e.invoke("send", IntrospectValue::Text("t0:PointerUp".into()))
+            .unwrap();
         // Click the submenu parent (rel path [1]) opens it.
-        e.invoke("send", IntrospectValue::Text("i1:PointerUp".into())).unwrap();
+        e.invoke("send", IntrospectValue::Text("i1:PointerUp".into()))
+            .unwrap();
         assert_eq!(e.open_path(), &[1], "click opened the submenu");
         // Hover a nested item (rel path [1, 1]) highlights it, keeping it open.
-        e.invoke("send", IntrospectValue::Text("i1.1:PointerEnter".into())).unwrap();
+        e.invoke("send", IntrospectValue::Text("i1.1:PointerEnter".into()))
+            .unwrap();
         assert_eq!(e.open_path(), &[1]);
         assert_eq!(e.active_item(), Some(1));
         // Hover a top-level item (rel path [0]) collapses back to the top.
-        e.invoke("send", IntrospectValue::Text("i0:PointerEnter".into())).unwrap();
-        assert!(e.open_path().is_empty(), "moving to a top item collapsed the submenu");
+        e.invoke("send", IntrospectValue::Text("i0:PointerEnter".into()))
+            .unwrap();
+        assert!(
+            e.open_path().is_empty(),
+            "moving to a top item collapsed the submenu"
+        );
         assert_eq!(e.active_item(), Some(0));
     }
 
@@ -2054,21 +2170,39 @@ mod tests {
         );
         // Nested submenu structure (path descends into the submenu).
         assert_eq!(e.query("item_count.0.1"), Some(IntrospectValue::Int(2)));
-        assert_eq!(e.query("item_kind.0.1.0"), Some(IntrospectValue::Text("command".into())));
-        assert_eq!(e.query("item_kind.0.1.1"), Some(IntrospectValue::Text("checkbox".into())));
+        assert_eq!(
+            e.query("item_kind.0.1.0"),
+            Some(IntrospectValue::Text("command".into()))
+        );
+        assert_eq!(
+            e.query("item_kind.0.1.1"),
+            Some(IntrospectValue::Text("checkbox".into()))
+        );
         assert_eq!(e.query("checked.0.1.1"), Some(IntrospectValue::Bool(false)));
         assert_eq!(e.query("item_kind.0.9"), None, "out-of-range item");
-        assert_eq!(e.query("item_count.0.0"), None, "a non-submenu has no item list");
+        assert_eq!(
+            e.query("item_count.0.0"),
+            None,
+            "a non-submenu has no item list"
+        );
     }
 
     #[test]
     fn r985_query_open_path_and_active_path() {
         let mut e = nested_ext();
-        assert_eq!(e.query("open_path"), Some(IntrospectValue::Text(String::new())));
+        assert_eq!(
+            e.query("open_path"),
+            Some(IntrospectValue::Text(String::new()))
+        );
         assert_eq!(e.query("active_path"), Some(IntrospectValue::Null));
-        e.invoke("send", IntrospectValue::Text("t0:PointerUp".into())).unwrap();
-        e.invoke("send", IntrospectValue::Text("i1:PointerUp".into())).unwrap(); // open submenu 1
-        assert_eq!(e.query("open_path"), Some(IntrospectValue::Text("1".into())));
+        e.invoke("send", IntrospectValue::Text("t0:PointerUp".into()))
+            .unwrap();
+        e.invoke("send", IntrospectValue::Text("i1:PointerUp".into()))
+            .unwrap(); // open submenu 1
+        assert_eq!(
+            e.query("open_path"),
+            Some(IntrospectValue::Text("1".into()))
+        );
         assert_eq!(
             e.query("active_path"),
             Some(IntrospectValue::Text("0.1.0".into())),
@@ -2080,7 +2214,8 @@ mod tests {
     fn r985_intervene_open_path_round_trip() {
         let mut e = nested_ext();
         e.intervene("open", IntrospectValue::Int(0)).unwrap();
-        e.intervene("open_path", IntrospectValue::Text("1".into())).unwrap();
+        e.intervene("open_path", IntrospectValue::Text("1".into()))
+            .unwrap();
         assert_eq!(e.open_path(), &[1]);
         assert!(!e.is_dirty(), "intervene fires no command intent");
         // An index that is not a submenu is rejected.
@@ -2090,14 +2225,16 @@ mod tests {
             "item 0 is a command, not a submenu",
         );
         // Empty string collapses to the top dropdown.
-        e.intervene("open_path", IntrospectValue::Text(String::new())).unwrap();
+        e.intervene("open_path", IntrospectValue::Text(String::new()))
+            .unwrap();
         assert!(e.open_path().is_empty());
     }
 
     #[test]
     fn r985_intervene_nested_checkbox() {
         let mut e = nested_ext();
-        e.intervene("checked.0.1.1", IntrospectValue::Bool(true)).unwrap();
+        e.intervene("checked.0.1.1", IntrospectValue::Bool(true))
+            .unwrap();
         assert_eq!(e.query("checked.0.1.1"), Some(IntrospectValue::Bool(true)));
         // A nested command has no writable checked slot.
         assert_eq!(
@@ -2114,11 +2251,17 @@ mod tests {
     #[test]
     fn r985_activating_submenu_parent_opens_not_commands() {
         let mut e = nested_ext();
-        e.invoke("send", IntrospectValue::Text("t0:PointerUp".into())).unwrap();
+        e.invoke("send", IntrospectValue::Text("t0:PointerUp".into()))
+            .unwrap();
         // PointerUp on the submenu parent opens it and emits NO command.
-        e.invoke("send", IntrospectValue::Text("i1:PointerUp".into())).unwrap();
+        e.invoke("send", IntrospectValue::Text("i1:PointerUp".into()))
+            .unwrap();
         assert_eq!(e.open_path(), &[1]);
-        assert_eq!(e.open_menu(), Some(0), "menu stays open (submenu, not a command)");
+        assert_eq!(
+            e.open_menu(),
+            Some(0),
+            "menu stays open (submenu, not a command)"
+        );
         assert!(!e.is_dirty(), "opening a submenu fires no command");
     }
 
@@ -2129,13 +2272,24 @@ mod tests {
         // (`i1.99`, when Open Recent has 2 items) must be inert — NOT collapse
         // the cascade to `[1]` as a side-effect (validate-before-mutate).
         let mut e = nested_ext();
-        e.invoke("send", IntrospectValue::Text("t0:PointerUp".into())).unwrap();
-        e.invoke("send", IntrospectValue::Text("i0:PointerEnter".into())).unwrap(); // highlight top item 0
+        e.invoke("send", IntrospectValue::Text("t0:PointerUp".into()))
+            .unwrap();
+        e.invoke("send", IntrospectValue::Text("i0:PointerEnter".into()))
+            .unwrap(); // highlight top item 0
         let open_before = e.open_path().to_vec();
         let active_before = e.active_item();
-        e.invoke("send", IntrospectValue::Text("i1.99:PointerUp".into())).unwrap();
-        assert_eq!(e.open_path(), open_before.as_slice(), "malformed send left open_path untouched");
-        assert_eq!(e.active_item(), active_before, "malformed send left active untouched");
+        e.invoke("send", IntrospectValue::Text("i1.99:PointerUp".into()))
+            .unwrap();
+        assert_eq!(
+            e.open_path(),
+            open_before.as_slice(),
+            "malformed send left open_path untouched"
+        );
+        assert_eq!(
+            e.active_item(),
+            active_before,
+            "malformed send left active untouched"
+        );
         assert_eq!(e.open_menu(), Some(0), "the top menu is still open");
         assert!(!e.is_dirty(), "a malformed send fires no command");
     }

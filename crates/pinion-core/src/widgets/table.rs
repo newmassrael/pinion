@@ -46,9 +46,8 @@
 //! [`IntrospectValue::Int`].
 
 use crate::external::{
-    int_of, Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner,
-    ThreadOwnership,
+    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership, int_of,
 };
 use crate::input::PointerWireEvent;
 use crate::intent::Intent;
@@ -396,7 +395,10 @@ impl Table {
             return;
         }
         if self.cell_anchor.is_none() {
-            self.cell_anchor = Some(self.focused_row.map_or((row, col), |r| (r, self.focused_col)));
+            self.cell_anchor = Some(
+                self.focused_row
+                    .map_or((row, col), |r| (r, self.focused_col)),
+            );
         }
         self.focused_row = Some(row);
         self.focused_col = col;
@@ -635,11 +637,7 @@ pub fn grid_order_by(
     };
     idx.sort_by(|&a, &b| {
         let ord = cell_cmp_at(col, a, b);
-        if ascending {
-            ord
-        } else {
-            ord.reverse()
-        }
+        if ascending { ord } else { ord.reverse() }
     });
     idx
 }
@@ -682,11 +680,7 @@ impl WidgetTransition for Table {
         self.send_cell(row, col, ev);
     }
 
-    fn detect(
-        before: Self::Snapshot,
-        _event: Self::Event,
-        after: Self::Snapshot,
-    ) -> Vec<Intent> {
+    fn detect(before: Self::Snapshot, _event: Self::Event, after: Self::Snapshot) -> Vec<Intent> {
         // R735.1 §5.38 — shared multi-capable bitmap diff (single: gain
         // only; multi: every flip).
         selection::detect_intents(&before, &after)
@@ -706,7 +700,9 @@ impl TableExternal {
     /// of cell text.
     #[must_use]
     pub fn new(headers: Vec<String>, rows: Vec<Vec<String>>) -> Self {
-        Self { em: IntentEmitter::new(Table::new(headers, rows)) }
+        Self {
+            em: IntentEmitter::new(Table::new(headers, rows)),
+        }
     }
 
     /// R735 §5.38 — construct a **multi-select** table (the WAI-ARIA
@@ -714,7 +710,9 @@ impl TableExternal {
     /// that row; siblings are untouched.
     #[must_use]
     pub fn with_multiselect(headers: Vec<String>, rows: Vec<Vec<String>>) -> Self {
-        Self { em: IntentEmitter::new(Table::with_multiselect(headers, rows)) }
+        Self {
+            em: IntentEmitter::new(Table::with_multiselect(headers, rows)),
+        }
     }
 
     /// R954 §5.38 — construct a **cell-range** (`SelectItems`) table: a
@@ -723,7 +721,9 @@ impl TableExternal {
     /// selection is never washed.
     #[must_use]
     pub fn with_select_items(headers: Vec<String>, rows: Vec<Vec<String>>) -> Self {
-        Self { em: IntentEmitter::new(Table::with_select_items(headers, rows)) }
+        Self {
+            em: IntentEmitter::new(Table::with_select_items(headers, rows)),
+        }
     }
 
     /// R735 §5.38 — `true` if this table was constructed via
@@ -1045,9 +1045,7 @@ impl ExternalIntrospect for TableExternal {
             } else {
                 self.selected_row().map_or(-1, int_of)
             })),
-            "focused_row" => Some(IntrospectValue::Int(
-                self.focused_row().map_or(-1, int_of),
-            )),
+            "focused_row" => Some(IntrospectValue::Int(self.focused_row().map_or(-1, int_of))),
             "focused_col" => Some(IntrospectValue::Int(int_of(self.focused_col()))),
             // R952 §5.38 — the selected cell rectangle as "row0,col0,row1,col1"
             // (data coords, inclusive), or `Null` when no cell selection is
@@ -1080,9 +1078,7 @@ impl ExternalIntrospect for TableExternal {
                     if col >= self.col_count() {
                         return None;
                     }
-                    return Some(IntrospectValue::Text(
-                        self.em.inner.header(col).to_string(),
-                    ));
+                    return Some(IntrospectValue::Text(self.em.inner.header(col).to_string()));
                 }
                 // Per-cell text: `cell.<row>.<col>`.
                 if let Some(rest) = path.strip_prefix("cell.") {
@@ -1102,9 +1098,7 @@ impl ExternalIntrospect for TableExternal {
                     if row >= self.row_count() {
                         return None;
                     }
-                    return Some(IntrospectValue::Text(
-                        self.state(row).as_name().to_string(),
-                    ));
+                    return Some(IntrospectValue::Text(self.state(row).as_name().to_string()));
                 }
                 // Per-row selected bit: `selected.<row>`.
                 if let Some(row_str) = path.strip_prefix("selected.") {
@@ -1126,11 +1120,7 @@ impl ExternalIntrospect for TableExternal {
         }
     }
 
-    fn intervene(
-        &mut self,
-        path: &str,
-        value: IntrospectValue,
-    ) -> Result<(), InterveneError> {
+    fn intervene(&mut self, path: &str, value: IntrospectValue) -> Result<(), InterveneError> {
         match path {
             // R707 §5.40 — the 2-D roving active descendant is the
             // writable surface: AT `Focus` actions + the binding's
@@ -1170,8 +1160,7 @@ impl ExternalIntrospect for TableExternal {
                     return Err(InterveneError::ReadOnly);
                 }
                 let row_str = other.strip_prefix("selected.").unwrap_or("");
-                let row: usize =
-                    row_str.parse().map_err(|_| InterveneError::UnknownPath)?;
+                let row: usize = row_str.parse().map_err(|_| InterveneError::UnknownPath)?;
                 if row >= self.row_count() {
                     return Err(InterveneError::OutOfRange);
                 }
@@ -1197,9 +1186,7 @@ impl ExternalIntrospect for TableExternal {
             // direct slot assignment; the data is immutable. This mirrors
             // the `RadioGroup` / `DatePicker` convention where the
             // commit-class paths fire the `"selected"` intent.
-            "rows" | "cols" | "selected" | "selected_row" => {
-                Err(InterveneError::ReadOnly)
-            }
+            "rows" | "cols" | "selected" | "selected_row" => Err(InterveneError::ReadOnly),
             _ => Err(InterveneError::UnknownPath),
         }
     }
@@ -1221,8 +1208,7 @@ impl ExternalIntrospect for TableExternal {
                     // split_once read "PointerUp:c" as the event name and
                     // a Ctrl+click on a cell/header was silently rejected).
                     let (key, event_name, mods) =
-                        crate::composite_tag::split_send_payload(s)
-                            .ok_or(InvokeError::Rejected)?;
+                        crate::composite_tag::split_send_payload(s).ok_or(InvokeError::Rejected)?;
                     // R730 §5.40 / R777.1 — the `'#'`-split sub-key is
                     // decoded by the shared `GridSendKey` SSOT (the same
                     // grammar the paint producer encodes and
@@ -1270,8 +1256,8 @@ impl ExternalIntrospect for TableExternal {
                                 }
                                 return Ok(IntrospectValue::Null);
                             }
-                            let ev = RadioEvent::from_name(event_name)
-                                .ok_or(InvokeError::Rejected)?;
+                            let ev =
+                                RadioEvent::from_name(event_name).ok_or(InvokeError::Rejected)?;
                             self.send_cell(row, col, ev);
                             // R735 §5.38 — single returns the (possibly new)
                             // `selected_row`; multi returns Null (no single
@@ -1490,13 +1476,19 @@ mod tests {
     fn intervene_focus_then_query() {
         let mut ext = TableExternal::new(
             vec!["A".to_string(), "B".to_string()],
-            vec![vec!["1".to_string(), "2".to_string()], vec![
-                "3".to_string(),
-                "4".to_string(),
-            ]],
+            vec![
+                vec!["1".to_string(), "2".to_string()],
+                vec!["3".to_string(), "4".to_string()],
+            ],
         );
-        assert!(ext.intervene("focused_row", IntrospectValue::Int(1)).is_ok());
-        assert!(ext.intervene("focused_col", IntrospectValue::Int(1)).is_ok());
+        assert!(
+            ext.intervene("focused_row", IntrospectValue::Int(1))
+                .is_ok()
+        );
+        assert!(
+            ext.intervene("focused_col", IntrospectValue::Int(1))
+                .is_ok()
+        );
         assert_eq!(ext.query("focused_row"), Some(IntrospectValue::Int(1)));
         assert_eq!(ext.query("focused_col"), Some(IntrospectValue::Int(1)));
         // Out-of-range rejected.
@@ -1518,10 +1510,10 @@ mod tests {
     fn invoke_send_wire_selects_row() {
         let mut ext = TableExternal::new(
             vec!["A".to_string(), "B".to_string()],
-            vec![vec!["1".to_string(), "2".to_string()], vec![
-                "3".to_string(),
-                "4".to_string(),
-            ]],
+            vec![
+                vec!["1".to_string(), "2".to_string()],
+                vec!["3".to_string(), "4".to_string()],
+            ],
         );
         for ev in ["PointerEnter", "PointerDown", "PointerUp"] {
             let _ = ext.invoke("send", IntrospectValue::Text(format!("1_1:{ev}")));
@@ -1641,7 +1633,10 @@ mod tests {
             Ok(IntrospectValue::Text("ascending".to_string())),
         );
         assert_eq!(ext.query("sort_col"), Some(IntrospectValue::Int(1)));
-        assert_eq!(ext.query("sort_dir"), Some(IntrospectValue::Text("ascending".to_string())));
+        assert_eq!(
+            ext.query("sort_dir"),
+            Some(IntrospectValue::Text("ascending".to_string()))
+        );
         // Out-of-range column rejects.
         assert_eq!(
             ext.invoke("sort", IntrospectValue::Int(9)),
@@ -1686,7 +1681,10 @@ mod tests {
     #[test]
     fn multiselect_flag_is_set_by_constructor() {
         assert!(!sample().is_multiselect(), "new() is single-select");
-        assert!(multi_sample().is_multiselect(), "with_multiselect() is multi");
+        assert!(
+            multi_sample().is_multiselect(),
+            "with_multiselect() is multi"
+        );
     }
 
     #[test]
@@ -1710,7 +1708,11 @@ mod tests {
         t.send_cell(1, 0, RadioEvent::KeyboardActivate);
         assert_eq!(t.selected_rows(), vec![1]);
         t.send_cell(1, 0, RadioEvent::KeyboardActivate);
-        assert_eq!(t.selected_rows(), Vec::<usize>::new(), "2nd KeyboardActivate toggles off");
+        assert_eq!(
+            t.selected_rows(),
+            Vec::<usize>::new(),
+            "2nd KeyboardActivate toggles off"
+        );
     }
 
     #[test]
@@ -1745,19 +1747,25 @@ mod tests {
         }
         let mut intents = Vec::new();
         ext.drain_intents(&mut |i| intents.push(i));
-        let selected: Vec<_> =
-            intents.iter().filter(|i| i.tag_str() == "selected").collect();
-        assert_eq!(selected.len(), 2, "toggle-on + toggle-off each emit an intent");
+        let selected: Vec<_> = intents
+            .iter()
+            .filter(|i| i.tag_str() == "selected")
+            .collect();
+        assert_eq!(
+            selected.len(),
+            2,
+            "toggle-on + toggle-off each emit an intent"
+        );
     }
 
     #[test]
     fn multi_external_query_surface() {
         let mut ext = TableExternal::with_multiselect(
             vec!["A".to_string(), "B".to_string()],
-            vec![vec!["1".to_string(), "2".to_string()], vec![
-                "3".to_string(),
-                "4".to_string(),
-            ]],
+            vec![
+                vec!["1".to_string(), "2".to_string()],
+                vec!["3".to_string(), "4".to_string()],
+            ],
         );
         assert_eq!(ext.query("multiselect"), Some(IntrospectValue::Bool(true)));
         // No selection yet.
@@ -1790,21 +1798,38 @@ mod tests {
             let r = ext.invoke("send", IntrospectValue::Text(format!("1_0:{ev}")));
             assert_eq!(r, Ok(IntrospectValue::Null), "{ev} accepted");
         }
-        assert_eq!(ext.selected_rows(), vec![1], "Ctrl+click still toggles the row");
+        assert_eq!(
+            ext.selected_rows(),
+            vec![1],
+            "Ctrl+click still toggles the row"
+        );
     }
 
     #[test]
     fn multi_intervene_per_row_selected_bit() {
         let mut ext = TableExternal::with_multiselect(
             vec!["A".to_string()],
-            vec![vec!["1".to_string()], vec!["2".to_string()], vec!["3".to_string()]],
+            vec![
+                vec!["1".to_string()],
+                vec!["2".to_string()],
+                vec!["3".to_string()],
+            ],
         );
         // Per-row write is enabled in multi-mode (persisted restore path).
-        assert!(ext.intervene("selected.0", IntrospectValue::Bool(true)).is_ok());
-        assert!(ext.intervene("selected.2", IntrospectValue::Bool(true)).is_ok());
+        assert!(
+            ext.intervene("selected.0", IntrospectValue::Bool(true))
+                .is_ok()
+        );
+        assert!(
+            ext.intervene("selected.2", IntrospectValue::Bool(true))
+                .is_ok()
+        );
         assert_eq!(ext.selected_rows(), vec![0, 2]);
         // Clearing a bit removes only that row.
-        assert!(ext.intervene("selected.0", IntrospectValue::Bool(false)).is_ok());
+        assert!(
+            ext.intervene("selected.0", IntrospectValue::Bool(false))
+                .is_ok()
+        );
         assert_eq!(ext.selected_rows(), vec![2]);
         // Out-of-range row rejects.
         assert_eq!(
@@ -1848,9 +1873,17 @@ mod tests {
         t.extend_cell(2, 1);
         // The bounds = bbox(anchor (0,0), cursor (2,1)); a `(0,0)` lower corner
         // proves the anchor stayed pinned while the cursor moved to the extent.
-        assert_eq!(t.cell_selection_bounds(), Some((0, 0, 2, 1)), "anchor (0,0) -> cursor (2,1)");
+        assert_eq!(
+            t.cell_selection_bounds(),
+            Some((0, 0, 2, 1)),
+            "anchor (0,0) -> cursor (2,1)"
+        );
         assert_eq!(t.cell_selection_count(), 6, "3 rows x 2 cols");
-        assert_eq!(t.focused_row(), Some(2), "the cursor moved to the extent (row)");
+        assert_eq!(
+            t.focused_row(),
+            Some(2),
+            "the cursor moved to the extent (row)"
+        );
         assert_eq!(t.focused_col(), 1, "the cursor moved to the extent (col)");
     }
 
@@ -1859,7 +1892,11 @@ mod tests {
         let mut t = sample();
         t.select_cell(2, 1);
         t.extend_cell(0, 0); // extend toward the top-left
-        assert_eq!(t.cell_selection_bounds(), Some((0, 0, 2, 1)), "bounds normalize regardless of order");
+        assert_eq!(
+            t.cell_selection_bounds(),
+            Some((0, 0, 2, 1)),
+            "bounds normalize regardless of order"
+        );
         assert_eq!(t.cell_selection_count(), 6);
     }
 
@@ -1870,13 +1907,21 @@ mod tests {
         // makes the target itself the anchor — a single cell that later
         // extensions grow.
         t.extend_cell(1, 0);
-        assert_eq!(t.cell_selection_bounds(), Some((1, 0, 1, 0)), "anchor pins to (1,0), a single cell");
+        assert_eq!(
+            t.cell_selection_bounds(),
+            Some((1, 0, 1, 0)),
+            "anchor pins to (1,0), a single cell"
+        );
         // A pre-existing cursor (no anchor) becomes the anchor on first extend.
         let mut t2 = sample();
         t2.set_focused_row(Some(0));
         t2.set_focused_col(0);
         t2.extend_cell(1, 1);
-        assert_eq!(t2.cell_selection_bounds(), Some((0, 0, 1, 1)), "old cursor (0,0) anchors the rect");
+        assert_eq!(
+            t2.cell_selection_bounds(),
+            Some((0, 0, 1, 1)),
+            "old cursor (0,0) anchors the rect"
+        );
     }
 
     #[test]
@@ -1886,7 +1931,11 @@ mod tests {
         t.clear_cell_selection();
         assert_eq!(t.cell_selection_bounds(), None);
         assert_eq!(t.cell_selection_count(), 0);
-        assert_eq!(t.focused_row(), Some(1), "the cursor survives a selection clear");
+        assert_eq!(
+            t.focused_row(),
+            Some(1),
+            "the cursor survives a selection clear"
+        );
         assert_eq!(t.focused_col(), 1);
     }
 
@@ -1894,10 +1943,18 @@ mod tests {
     fn r952_out_of_range_cell_select_is_a_no_op() {
         let mut t = sample();
         t.select_cell(9, 9);
-        assert_eq!(t.cell_selection_bounds(), None, "out-of-range select is ignored");
+        assert_eq!(
+            t.cell_selection_bounds(),
+            None,
+            "out-of-range select is ignored"
+        );
         t.select_cell(0, 0);
         t.extend_cell(9, 0);
-        assert_eq!(t.cell_selection_bounds(), Some((0, 0, 0, 0)), "out-of-range extend is ignored");
+        assert_eq!(
+            t.cell_selection_bounds(),
+            Some((0, 0, 0, 0)),
+            "out-of-range extend is ignored"
+        );
     }
 
     fn cell_sample_ext() -> TableExternal {
@@ -1914,8 +1971,15 @@ mod tests {
     #[test]
     fn r952_rpc_cell_selection_round_trip() {
         let mut ext = cell_sample_ext();
-        assert_eq!(ext.query("cell_selection"), Some(IntrospectValue::Null), "no selection at boot");
-        assert_eq!(ext.query("cell_selection_count"), Some(IntrospectValue::Int(0)));
+        assert_eq!(
+            ext.query("cell_selection"),
+            Some(IntrospectValue::Null),
+            "no selection at boot"
+        );
+        assert_eq!(
+            ext.query("cell_selection_count"),
+            Some(IntrospectValue::Int(0))
+        );
         assert_eq!(
             ext.invoke("select-cell", IntrospectValue::Text("1,1".to_string())),
             Ok(IntrospectValue::Bool(true)),
@@ -1924,7 +1988,10 @@ mod tests {
             ext.query("cell_selection"),
             Some(IntrospectValue::Text("1,1,1,1".to_string())),
         );
-        assert_eq!(ext.query("cell_selection_count"), Some(IntrospectValue::Int(1)));
+        assert_eq!(
+            ext.query("cell_selection_count"),
+            Some(IntrospectValue::Int(1))
+        );
         assert_eq!(
             ext.invoke("extend-cell", IntrospectValue::Text("2,1".to_string())),
             Ok(IntrospectValue::Bool(true)),
@@ -1934,12 +2001,19 @@ mod tests {
             Some(IntrospectValue::Text("1,1,2,1".to_string())),
             "the rectangle grew from (1,1) to (2,1)",
         );
-        assert_eq!(ext.query("cell_selection_count"), Some(IntrospectValue::Int(2)));
+        assert_eq!(
+            ext.query("cell_selection_count"),
+            Some(IntrospectValue::Int(2))
+        );
         assert_eq!(
             ext.invoke("clear-cell-selection", IntrospectValue::Null),
             Ok(IntrospectValue::Bool(true)),
         );
-        assert_eq!(ext.query("cell_selection"), Some(IntrospectValue::Null), "cleared");
+        assert_eq!(
+            ext.query("cell_selection"),
+            Some(IntrospectValue::Null),
+            "cleared"
+        );
     }
 
     #[test]
@@ -1956,7 +2030,10 @@ mod tests {
             Err(InvokeError::TypeMismatch),
         ));
         assert!(matches!(
-            ext.invoke("clear-cell-selection", IntrospectValue::Text("x".to_string())),
+            ext.invoke(
+                "clear-cell-selection",
+                IntrospectValue::Text("x".to_string())
+            ),
             Err(InvokeError::TypeMismatch),
         ));
     }
@@ -1997,7 +2074,11 @@ mod tests {
             Some(IntrospectValue::Int(-1)),
             "no row was washed (SelectItems, not SelectRows)",
         );
-        assert_eq!(ext.query("focused_row"), Some(IntrospectValue::Int(1)), "cursor followed click");
+        assert_eq!(
+            ext.query("focused_row"),
+            Some(IntrospectValue::Int(1)),
+            "cursor followed click"
+        );
         assert_eq!(ext.query("focused_col"), Some(IntrospectValue::Int(1)));
     }
 
@@ -2013,7 +2094,10 @@ mod tests {
         let shift = compose_send_payload(
             Some("2_1"),
             "PointerUp",
-            Modifiers { shift: true, ..Default::default() },
+            Modifiers {
+                shift: true,
+                ..Default::default()
+            },
         );
         assert_eq!(
             ext.invoke("send", IntrospectValue::Text(shift)),
@@ -2025,7 +2109,10 @@ mod tests {
             Some(IntrospectValue::Text("0,0,2,1".to_string())),
             "Shift+click grew the rectangle (0,0)->(2,1) from the pinned anchor",
         );
-        assert_eq!(ext.query("cell_selection_count"), Some(IntrospectValue::Int(6)));
+        assert_eq!(
+            ext.query("cell_selection_count"),
+            Some(IntrospectValue::Int(6))
+        );
     }
 
     /// R954 §5.38 — only the activate edge (`PointerUp`) selects; the other
@@ -2037,14 +2124,21 @@ mod tests {
         let mut ext = cell_select_items_ext();
         for ev in ["PointerEnter", "PointerDown", "PointerLeave"] {
             let wire = compose_send_payload(Some("1_1"), ev, Modifiers::default());
-            assert_eq!(ext.invoke("send", IntrospectValue::Text(wire)), Ok(IntrospectValue::Null));
+            assert_eq!(
+                ext.invoke("send", IntrospectValue::Text(wire)),
+                Ok(IntrospectValue::Null)
+            );
         }
         assert_eq!(
             ext.query("cell_selection"),
             Some(IntrospectValue::Null),
             "hover / press / leave selected nothing — only PointerUp activates",
         );
-        assert_eq!(ext.query("selected_row"), Some(IntrospectValue::Int(-1)), "no row washed");
+        assert_eq!(
+            ext.query("selected_row"),
+            Some(IntrospectValue::Int(-1)),
+            "no row washed"
+        );
     }
 
     /// R954 §5.38 — the default `SelectRows` behavior is unaffected: a click
@@ -2067,8 +2161,16 @@ mod tests {
                 up_ret = r;
             }
         }
-        assert_eq!(up_ret, Ok(IntrospectValue::Int(1)), "SelectRows click washes + returns row 1");
-        assert_eq!(ext.query("selected_row"), Some(IntrospectValue::Int(1)), "row 1 washed");
+        assert_eq!(
+            up_ret,
+            Ok(IntrospectValue::Int(1)),
+            "SelectRows click washes + returns row 1"
+        );
+        assert_eq!(
+            ext.query("selected_row"),
+            Some(IntrospectValue::Int(1)),
+            "row 1 washed"
+        );
         assert_eq!(
             ext.query("cell_selection"),
             Some(IntrospectValue::Null),
@@ -2104,7 +2206,11 @@ mod tests {
         assert_eq!(read_focused_row(&ext), None, "no cursor at boot");
         assert_eq!(read_focused_col(&ext), 0);
         let _ = ext.invoke("select-cell", IntrospectValue::Text("2,1".to_string()));
-        assert_eq!(read_focused_row(&ext), Some(2), "reader reflects the moved cursor");
+        assert_eq!(
+            read_focused_row(&ext),
+            Some(2),
+            "reader reflects the moved cursor"
+        );
         assert_eq!(read_focused_col(&ext), 1);
     }
 }

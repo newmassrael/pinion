@@ -465,7 +465,10 @@ mod tests {
         let mut prev_end: Option<u32> = None;
         for &(start, end, idx) in ranges {
             assert!(start <= end, "range start..end inverted at 0x{start:04X}");
-            assert!(idx < 48, "class index {idx} out of enum range at 0x{start:04X}");
+            assert!(
+                idx < 48,
+                "class index {idx} out of enum range at 0x{start:04X}"
+            );
             // from_index must accept every emitted index (no skew).
             let _ = LineBreak::from_index(idx);
             if let Some(pe) = prev_end {

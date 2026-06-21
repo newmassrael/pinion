@@ -95,8 +95,8 @@ pub fn use_repaint_sink() -> Arc<dyn RepaintSink> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::owner::Owner;
+    use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// Recording sink: counts `request_repaint` calls so a test can assert the
@@ -138,7 +138,11 @@ mod tests {
         owner.provide_repaint_sink(Arc::new(CountingSink(Arc::clone(&second))));
         owner.repaint_sink().request_repaint();
         assert_eq!(first.load(Ordering::SeqCst), 1, "first provide wins");
-        assert_eq!(second.load(Ordering::SeqCst), 0, "second provide is a no-op");
+        assert_eq!(
+            second.load(Ordering::SeqCst),
+            0,
+            "second provide is a no-op"
+        );
     }
 
     #[test]

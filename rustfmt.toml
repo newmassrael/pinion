@@ -1,0 +1,15 @@
+# R1026 — pinion adopts rustfmt (the formatting gate was clippy-only).
+#
+# `max_width = 100` (rustfmt's default) is the MINIMUM-churn choice over the
+# prior hand-narrow style: reformatting the existing tree at width 80 / 90
+# rewrites MORE, not less (16457 / 10566 hunks vs 6344 at 100) — the code
+# already sits well at 100, so the default disturbs the least history.
+#
+# `wrap_comments` is left at its default (off) so the hand-wrapped doc
+# comments are preserved verbatim; only code layout and import order are
+# normalised by the reformat.
+#
+# Enforced by .githooks/pre-commit (staged *.rs) and .githooks/pre-push
+# (unconditional) via `cargo fmt --all --check`. The reformat commit is
+# listed in .git-blame-ignore-revs so `git blame` skips it.
+max_width = 100

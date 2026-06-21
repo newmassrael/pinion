@@ -19,7 +19,10 @@ fn r598_scene_theme_tokens_without_runtime_owner_errors() {
     let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
     let err = resp.error.expect("missing runtime_owner must error");
     assert_eq!(err.code, -32602);
-    assert_eq!(err.data, Some(Value::String("RuntimeOwnerUnavailable".into())));
+    assert_eq!(
+        err.data,
+        Some(Value::String("RuntimeOwnerUnavailable".into()))
+    );
 }
 
 #[test]
@@ -68,7 +71,8 @@ fn r598_scene_theme_tokens_custom_tag_round_trips() {
     let mut scene = counted_scene(0);
     let owner = Owner::new();
     let _provider = owner.run(|| pinion_core::theme::use_theme("custom-scope"));
-    let req = r#"{"jsonrpc":"2.0","method":"scene/theme_tokens","params":{"tag":"custom-scope"},"id":5}"#;
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/theme_tokens","params":{"tag":"custom-scope"},"id":5}"#;
     let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
     assert!(resp.error.is_none());
     assert_eq!(
@@ -91,11 +95,15 @@ fn r598_scene_theme_tokens_custom_tag_round_trips() {
 #[test]
 fn r599_scene_set_theme_mode_without_runtime_owner_errors() {
     let mut scene = counted_scene(0);
-    let req = r#"{"jsonrpc":"2.0","method":"scene/set_theme_mode","params":{"mode":"dark"},"id":1}"#;
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/set_theme_mode","params":{"mode":"dark"},"id":1}"#;
     let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
     let err = resp.error.expect("missing runtime_owner must error");
     assert_eq!(err.code, -32602);
-    assert_eq!(err.data, Some(Value::String("RuntimeOwnerUnavailable".into())));
+    assert_eq!(
+        err.data,
+        Some(Value::String("RuntimeOwnerUnavailable".into()))
+    );
 }
 
 #[test]
@@ -114,7 +122,8 @@ fn r599_scene_set_theme_mode_rejects_unknown_mode_slug() {
     let mut scene = counted_scene(0);
     let owner = Owner::new();
     let _provider = owner.run(|| pinion_core::theme::use_theme("app"));
-    let req = r#"{"jsonrpc":"2.0","method":"scene/set_theme_mode","params":{"mode":"AUTO"},"id":3}"#;
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/set_theme_mode","params":{"mode":"AUTO"},"id":3}"#;
     let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
     let err = resp.error.expect("unknown mode slug must error");
     assert_eq!(err.code, -32602);
@@ -126,7 +135,8 @@ fn r599_scene_set_theme_mode_happy_path_returns_post_state() {
     let owner = Owner::new();
     let provider = owner.run(|| pinion_core::theme::use_theme("app"));
     provider.set_mode(pinion_core::theme::ThemeMode::Light);
-    let req = r#"{"jsonrpc":"2.0","method":"scene/set_theme_mode","params":{"mode":"dark"},"id":4}"#;
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/set_theme_mode","params":{"mode":"dark"},"id":4}"#;
     let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
     assert!(resp.error.is_none());
     let result = resp.result.expect("result present");
@@ -142,7 +152,8 @@ fn r599_scene_set_theme_mode_unbound_tag_errors_with_typed_data() {
     let mut scene = counted_scene(0);
     let owner = Owner::new();
     // No `use_theme` binding — the cache_contains gate trips.
-    let req = r#"{"jsonrpc":"2.0","method":"scene/set_theme_mode","params":{"mode":"dark"},"id":5}"#;
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/set_theme_mode","params":{"mode":"dark"},"id":5}"#;
     let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
     let err = resp.error.expect("unbound tag must error");
     assert_eq!(err.code, -32602);
@@ -156,7 +167,8 @@ fn r599_scene_set_theme_mode_bumps_revision_on_success() {
     let _provider = owner.run(|| pinion_core::theme::use_theme("app"));
     let revision = SceneRevision::default();
     let before = revision.current();
-    let req = r#"{"jsonrpc":"2.0","method":"scene/set_theme_mode","params":{"mode":"dark"},"id":6}"#;
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/set_theme_mode","params":{"mode":"dark"},"id":6}"#;
     let _ = dispatch_with_runtime_owner_and_revision(&mut scene, &owner, &revision, req);
     let after = revision.current();
     assert!(
@@ -173,7 +185,8 @@ fn r599_scene_set_theme_mode_does_not_bump_revision_on_failure() {
     // HandlerKind::Mutate arm only bumps on Ok; Err must not.
     let revision = SceneRevision::default();
     let before = revision.current();
-    let req = r#"{"jsonrpc":"2.0","method":"scene/set_theme_mode","params":{"mode":"dark"},"id":7}"#;
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/set_theme_mode","params":{"mode":"dark"},"id":7}"#;
     let _ = dispatch_with_runtime_owner_and_revision(&mut scene, &owner, &revision, req);
     assert_eq!(
         revision.current(),
@@ -254,7 +267,10 @@ fn r608_scene_set_theme_palettes_without_runtime_owner_errors() {
     let resp = parse_response(&dispatch_t(&mut scene, &req).unwrap());
     let err = resp.error.expect("missing runtime_owner must error");
     assert_eq!(err.code, -32602);
-    assert_eq!(err.data, Some(Value::String("RuntimeOwnerUnavailable".into())));
+    assert_eq!(
+        err.data,
+        Some(Value::String("RuntimeOwnerUnavailable".into()))
+    );
 }
 
 #[test]
@@ -400,7 +416,12 @@ fn r608_scene_set_theme_palettes_happy_path_returns_post_state() {
     assert_eq!(result.get("mode").and_then(Value::as_str), Some("dark"));
     assert_eq!(result.get("active").and_then(Value::as_str), Some("dark"));
     assert_eq!(result.get("tag").and_then(Value::as_str), Some("app"));
-    assert!(result.get("system_scheme").and_then(Value::as_str).is_some());
+    assert!(
+        result
+            .get("system_scheme")
+            .and_then(Value::as_str)
+            .is_some()
+    );
 }
 
 #[test]

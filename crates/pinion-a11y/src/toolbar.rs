@@ -105,10 +105,30 @@ mod tests {
 
     fn controls() -> [ToolbarControl<'static>; 4] {
         [
-            ToolbarControl { tag: "bar#0", name: Some("Bold"), checked: Some(true), disabled: false },
-            ToolbarControl { tag: "bar#1", name: Some("Italic"), checked: Some(false), disabled: false },
-            ToolbarControl { tag: "bar#2", name: Some("Red"), checked: None, disabled: false },
-            ToolbarControl { tag: "bar#3", name: None, checked: None, disabled: false },
+            ToolbarControl {
+                tag: "bar#0",
+                name: Some("Bold"),
+                checked: Some(true),
+                disabled: false,
+            },
+            ToolbarControl {
+                tag: "bar#1",
+                name: Some("Italic"),
+                checked: Some(false),
+                disabled: false,
+            },
+            ToolbarControl {
+                tag: "bar#2",
+                name: Some("Red"),
+                checked: None,
+                disabled: false,
+            },
+            ToolbarControl {
+                tag: "bar#3",
+                name: None,
+                checked: None,
+                disabled: false,
+            },
         ]
     }
 
@@ -119,7 +139,11 @@ mod tests {
         assert_eq!(nodes.len(), c.len() + 1, "one toolbar + N controls");
         assert_eq!(nodes[0].role, AriaRole::Toolbar);
         assert_eq!(nodes[0].name.as_deref(), Some("Formatting"));
-        assert_eq!(nodes[0].children.len(), c.len(), "toolbar references every control");
+        assert_eq!(
+            nodes[0].children.len(),
+            c.len(),
+            "toolbar references every control"
+        );
         for node in &nodes[1..] {
             assert_eq!(node.role, AriaRole::Button, "control is a button");
         }
@@ -128,16 +152,34 @@ mod tests {
     #[test]
     fn aria_pressed_only_on_toggle_controls() {
         let nodes = toolbar_button_nodes("bar", "Formatting", &controls(), None);
-        assert_eq!(nodes[1].state.checked, Some(true), "Bold reflects aria-pressed = true");
-        assert_eq!(nodes[2].state.checked, Some(false), "Italic reflects aria-pressed = false");
-        assert_eq!(nodes[3].state.checked, None, "a command swatch carries no aria-pressed");
+        assert_eq!(
+            nodes[1].state.checked,
+            Some(true),
+            "Bold reflects aria-pressed = true"
+        );
+        assert_eq!(
+            nodes[2].state.checked,
+            Some(false),
+            "Italic reflects aria-pressed = false"
+        );
+        assert_eq!(
+            nodes[3].state.checked, None,
+            "a command swatch carries no aria-pressed"
+        );
     }
 
     #[test]
     fn explicit_name_set_else_left_for_enrichment() {
         let nodes = toolbar_button_nodes("bar", "Formatting", &controls(), None);
-        assert_eq!(nodes[1].name.as_deref(), Some("Bold"), "explicit name is set");
-        assert_eq!(nodes[4].name, None, "a None name is left for scene enrichment");
+        assert_eq!(
+            nodes[1].name.as_deref(),
+            Some("Bold"),
+            "explicit name is set"
+        );
+        assert_eq!(
+            nodes[4].name, None,
+            "a None name is left for scene enrichment"
+        );
     }
 
     #[test]
@@ -147,7 +189,11 @@ mod tests {
         for (i, node) in nodes[1..].iter().enumerate() {
             assert_eq!(node.position_in_set, Some(u32::try_from(i + 1).unwrap()));
             assert_eq!(node.size_of_set, Some(4));
-            assert_eq!(node.state.focused, i == 2, "only the roving cursor is focused");
+            assert_eq!(
+                node.state.focused,
+                i == 2,
+                "only the roving cursor is focused"
+            );
         }
     }
 
@@ -155,7 +201,10 @@ mod tests {
     fn no_focus_when_strip_unfocused() {
         let nodes = toolbar_button_nodes("bar", "Formatting", &controls(), None);
         for node in &nodes[1..] {
-            assert!(!node.state.focused, "a non-focusable strip rings no control");
+            assert!(
+                !node.state.focused,
+                "a non-focusable strip rings no control"
+            );
         }
     }
 
@@ -163,10 +212,30 @@ mod tests {
     fn r989_disabled_control_lowers_aria_disabled() {
         // Controls 0 and 2 disabled, 1 and 3 operable.
         let c = [
-            ToolbarControl { tag: "a#0", name: Some("Delete"), checked: None, disabled: true },
-            ToolbarControl { tag: "a#1", name: Some("Clear"), checked: None, disabled: false },
-            ToolbarControl { tag: "a#2", name: Some("Tag"), checked: None, disabled: true },
-            ToolbarControl { tag: "a#3", name: Some("Select all"), checked: None, disabled: false },
+            ToolbarControl {
+                tag: "a#0",
+                name: Some("Delete"),
+                checked: None,
+                disabled: true,
+            },
+            ToolbarControl {
+                tag: "a#1",
+                name: Some("Clear"),
+                checked: None,
+                disabled: false,
+            },
+            ToolbarControl {
+                tag: "a#2",
+                name: Some("Tag"),
+                checked: None,
+                disabled: true,
+            },
+            ToolbarControl {
+                tag: "a#3",
+                name: Some("Select all"),
+                checked: None,
+                disabled: false,
+            },
         ];
         let nodes = toolbar_button_nodes("a", "Selection actions", &c, None);
         assert!(nodes[1].state.disabled, "Delete lowers aria-disabled");

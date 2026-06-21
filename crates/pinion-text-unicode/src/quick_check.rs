@@ -20,12 +20,10 @@
 
 use crate::ordering::combining_class;
 use crate::tables::{
-    NFC_QC_FIRST_NON_YES_CP, NFC_QC_NON_YES_BMP_DATA,
-    NFC_QC_NON_YES_BMP_INDEX, NFC_QC_NON_YES_SUPPLEMENTARY,
-    NFD_QC_FIRST_NO_CP, NFD_QC_NO_BMP_DATA, NFD_QC_NO_BMP_INDEX,
-    NFD_QC_NO_SUPPLEMENTARY, NFKC_QC_FIRST_NON_YES_CP,
-    NFKC_QC_NON_YES_BMP_DATA, NFKC_QC_NON_YES_BMP_INDEX,
-    NFKC_QC_NON_YES_SUPPLEMENTARY, NFKD_QC_FIRST_NO_CP,
+    NFC_QC_FIRST_NON_YES_CP, NFC_QC_NON_YES_BMP_DATA, NFC_QC_NON_YES_BMP_INDEX,
+    NFC_QC_NON_YES_SUPPLEMENTARY, NFD_QC_FIRST_NO_CP, NFD_QC_NO_BMP_DATA, NFD_QC_NO_BMP_INDEX,
+    NFD_QC_NO_SUPPLEMENTARY, NFKC_QC_FIRST_NON_YES_CP, NFKC_QC_NON_YES_BMP_DATA,
+    NFKC_QC_NON_YES_BMP_INDEX, NFKC_QC_NON_YES_SUPPLEMENTARY, NFKD_QC_FIRST_NO_CP,
     NFKD_QC_NO_BMP_DATA, NFKD_QC_NO_BMP_INDEX, NFKD_QC_NO_SUPPLEMENTARY,
 };
 
@@ -117,9 +115,7 @@ fn quick_check_ynm(
         if last_class > class && class != 0 {
             return QuickCheck::No;
         }
-        if let Some(qc) =
-            lookup_u8_trie(index, data, supplementary, anchor, cp)
-        {
+        if let Some(qc) = lookup_u8_trie(index, data, supplementary, anchor, cp) {
             match qc {
                 1 => return QuickCheck::No,
                 2 => result = QuickCheck::Maybe,
@@ -173,10 +169,7 @@ pub(crate) fn nfkd_quick_check(s: &str) -> QuickCheck {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        nfc_quick_check, nfd_quick_check, nfkc_quick_check,
-        nfkd_quick_check, QuickCheck,
-    };
+    use super::{QuickCheck, nfc_quick_check, nfd_quick_check, nfkc_quick_check, nfkd_quick_check};
 
     #[test]
     fn ascii_is_yes_for_all_forms() {

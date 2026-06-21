@@ -20,13 +20,13 @@
 //! leading check-mark column convention, the label ink, the active-descendant
 //! accent border, and the cell flex layout / radius / gap / padding tokens.
 
+use pinion_core::Scene;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, FlexDirection, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme};
 use pinion_core::widgets::listbox_item::ListboxItemState;
-use pinion_core::Scene;
 
 /// The check-mark glyph drawn in the leading column of the selected option.
 const CHECK_MARK: &str = "\u{2713}";
@@ -67,12 +67,16 @@ pub fn view_option(row: &OptionRow<'_>, width: u32, height: u32, theme: &Theme) 
     let mark = Scene::Text(TextNode::styled(
         if row.selected { CHECK_MARK } else { " " },
         Rect::default(),
-        TextStyle::new().with_size_px(OPTION_TEXT_PX).with_fg(theme.resolve(ColorRole::Accent)),
+        TextStyle::new()
+            .with_size_px(OPTION_TEXT_PX)
+            .with_fg(theme.resolve(ColorRole::Accent)),
     ));
     let label = Scene::Text(TextNode::styled(
         row.label,
         Rect::default(),
-        TextStyle::new().with_size_px(OPTION_TEXT_PX).with_fg(theme.resolve(ColorRole::OnSurface)),
+        TextStyle::new()
+            .with_size_px(OPTION_TEXT_PX)
+            .with_fg(theme.resolve(ColorRole::OnSurface)),
     ));
     let mut style = BoxStyle::filled(fill).with_corner_radius(4);
     if row.active {
@@ -117,26 +121,47 @@ mod tests {
     #[test]
     fn paints_tagged_cell_with_mark_and_label() {
         let scene = option(false, false);
-        let Scene::Container(node) = &scene else { panic!("option is a container") };
-        assert_eq!(node.tag.as_deref(), Some("opt#1"), "cell carries its routing tag");
+        let Scene::Container(node) = &scene else {
+            panic!("option is a container")
+        };
+        assert_eq!(
+            node.tag.as_deref(),
+            Some("opt#1"),
+            "cell carries its routing tag"
+        );
         assert_eq!(node.children.len(), 2, "leading mark column + label");
     }
 
     #[test]
     fn selected_option_draws_the_check_mark() {
-        let Scene::Container(node) = option(false, true) else { panic!("container") };
-        let Scene::Text(mark) = &node.children[0] else { panic!("leading mark is text") };
+        let Scene::Container(node) = option(false, true) else {
+            panic!("container")
+        };
+        let Scene::Text(mark) = &node.children[0] else {
+            panic!("leading mark is text")
+        };
         assert_eq!(mark.content, CHECK_MARK, "selected option shows the check");
-        let Scene::Container(node) = option(false, false) else { panic!("container") };
-        let Scene::Text(mark) = &node.children[0] else { panic!("leading mark is text") };
+        let Scene::Container(node) = option(false, false) else {
+            panic!("container")
+        };
+        let Scene::Text(mark) = &node.children[0] else {
+            panic!("leading mark is text")
+        };
         assert_eq!(mark.content, " ", "unselected keeps the blank column");
     }
 
     #[test]
     fn active_option_gets_the_accent_border() {
-        let Scene::Container(active) = option(true, false) else { panic!("container") };
-        assert!(active.style.border.is_some(), "active descendant has the accent ring");
-        let Scene::Container(idle) = option(false, false) else { panic!("container") };
+        let Scene::Container(active) = option(true, false) else {
+            panic!("container")
+        };
+        assert!(
+            active.style.border.is_some(),
+            "active descendant has the accent ring"
+        );
+        let Scene::Container(idle) = option(false, false) else {
+            panic!("container")
+        };
         assert!(idle.style.border.is_none(), "idle option has no ring");
     }
 }

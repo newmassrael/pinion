@@ -31,8 +31,8 @@ use std::collections::HashMap;
 
 use accesskit::{Action, ActionRequest, NodeId, TreeId};
 use pinion_a11y::{
-    tag_to_node_id, translate_action, AccessAction, AccessNode, AccessState, AccessTreeBuilder,
-    AccessValue, AriaRole, ROOT_NODE_ID,
+    AccessAction, AccessNode, AccessState, AccessTreeBuilder, AccessValue, AriaRole, ROOT_NODE_ID,
+    tag_to_node_id, translate_action,
 };
 use pinion_core::scene::Rect;
 
@@ -45,16 +45,26 @@ fn mixed_scene() -> Vec<AccessNode> {
     vec![
         AccessNode::new("main_btn", AriaRole::Button)
             .with_name("Save")
-            .with_state(AccessState { focused: true, ..AccessState::default() })
+            .with_state(AccessState {
+                focused: true,
+                ..AccessState::default()
+            })
             .with_bounds(Rect::new(10, 10, 100, 30)),
         AccessNode::new("dark_toggle", AriaRole::Switch)
             .with_name("Dark mode")
             .with_value(AccessValue::Bool(true))
-            .with_state(AccessState { checked: Some(true), ..AccessState::default() })
+            .with_state(AccessState {
+                checked: Some(true),
+                ..AccessState::default()
+            })
             .with_bounds(Rect::new(10, 50, 100, 30)),
         AccessNode::new("volume", AriaRole::Slider)
             .with_name("Volume")
-            .with_value(AccessValue::Float { value: 0.5, min: 0.0, max: 1.0 })
+            .with_value(AccessValue::Float {
+                value: 0.5,
+                min: 0.0,
+                max: 1.0,
+            })
             .with_bounds(Rect::new(10, 90, 200, 30)),
         AccessNode::new("tier_group", AriaRole::RadioGroup)
             .with_name("Subscription tier")
@@ -65,17 +75,26 @@ fn mixed_scene() -> Vec<AccessNode> {
         AccessNode::new("tier_group#0", AriaRole::RadioButton)
             .with_name("Tier 0")
             .with_value(AccessValue::Bool(false))
-            .with_state(AccessState { checked: Some(false), ..AccessState::default() })
+            .with_state(AccessState {
+                checked: Some(false),
+                ..AccessState::default()
+            })
             .with_bounds(Rect::new(20, 140, 180, 24)),
         AccessNode::new("tier_group#1", AriaRole::RadioButton)
             .with_name("Tier 1")
             .with_value(AccessValue::Bool(true))
-            .with_state(AccessState { checked: Some(true), ..AccessState::default() })
+            .with_state(AccessState {
+                checked: Some(true),
+                ..AccessState::default()
+            })
             .with_bounds(Rect::new(20, 170, 180, 24)),
         AccessNode::new("tier_group#2", AriaRole::RadioButton)
             .with_name("Tier 2")
             .with_value(AccessValue::Bool(false))
-            .with_state(AccessState { checked: Some(false), ..AccessState::default() })
+            .with_state(AccessState {
+                checked: Some(false),
+                ..AccessState::default()
+            })
             .with_bounds(Rect::new(20, 200, 180, 24)),
     ]
 }
@@ -260,8 +279,9 @@ fn action_request_on_unknown_node_returns_none() {
 
 #[test]
 fn unmapped_action_lifts_to_other_variant() {
-    let map: HashMap<NodeId, String> =
-        [(tag_to_node_id("main_btn"), "main_btn".to_owned())].into_iter().collect();
+    let map: HashMap<NodeId, String> = [(tag_to_node_id("main_btn"), "main_btn".to_owned())]
+        .into_iter()
+        .collect();
     let req = ActionRequest {
         action: Action::ScrollDown,
         target_tree: TreeId::ROOT,
@@ -306,8 +326,7 @@ fn incremental_emit_carries_only_dirty_widget() {
     for node in mixed_scene() {
         builder.add(&node);
     }
-    let dirty: std::collections::HashSet<String> =
-        ["dark_toggle".to_owned()].into_iter().collect();
+    let dirty: std::collections::HashSet<String> = ["dark_toggle".to_owned()].into_iter().collect();
     builder.dirty_tags(dirty);
     let update = builder.build(Some(Rect::new(0, 0, 480, 320)));
     // 1 root + 1 dirty widget = 2 nodes. The other 6 (button +

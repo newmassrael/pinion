@@ -185,35 +185,37 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 use pinion_a11y::{
-    toolbar_button_nodes, AccessNode, AccessState, AriaRole, ToolbarControl, WidgetA11y,
+    AccessNode, AccessState, AriaRole, ToolbarControl, WidgetA11y, toolbar_button_nodes,
 };
+use pinion_core::cell_value::{CellKind, CellValue};
 use pinion_core::composite_tag::{split_send_payload, split_subindex};
 use pinion_core::event::LINE_HEIGHT_PX;
 use pinion_core::external::{
-    int_of, Backend, BackendFallback, BackendSupport, CaptureNormalize, DragPayload, DropPoint,
-    External, ExternalIntrospect, IntrospectSchema, IntrospectValue, InterveneError, InvokeError,
-    RepaintOwner, ThreadOwnership,
+    Backend, BackendFallback, BackendSupport, CaptureNormalize, DragPayload, DropPoint, External,
+    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
+    RepaintOwner, ThreadOwnership, int_of,
 };
-use pinion_core::cell_value::{CellKind, CellValue};
-use pinion_core::reactive::{batch, Owner, Signal};
+use pinion_core::reactive::{Owner, Signal, batch};
 use pinion_core::scene::{
     ContainerNode, PathCommand, PathNode, PathPoint, Rect, ScrollAxis, ScrollNode, TextNode,
 };
 use pinion_core::storage::Storage;
-use pinion_core::widgets::caret_blink::use_caret_blink;
-use pinion_core::widgets::scroll::ScrollState;
-use pinion_core::widgets::text_edit::{use_text_edit_state, TextEditState};
-use pinion_core::widgets::text_field::{TextFieldExternal, TextFieldState};
-use pinion_core::undo::{undo_redo_verb, use_undo_stack, UndoCommand, UndoStack, UndoStackExternal};
-use pinion_core::widget_core::ExtraExternal;
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, PathStyle, Size,
     Stroke, StrokeCap, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
+use pinion_core::undo::{
+    UndoCommand, UndoStack, UndoStackExternal, undo_redo_verb, use_undo_stack,
+};
+use pinion_core::widget_core::ExtraExternal;
+use pinion_core::widgets::caret_blink::use_caret_blink;
+use pinion_core::widgets::scroll::ScrollState;
+use pinion_core::widgets::text_edit::{TextEditState, use_text_edit_state};
+use pinion_core::widgets::text_field::{TextFieldExternal, TextFieldState};
 use pinion_core::{Color, Command, DragLatch, Frame, Modifiers, Scene, SelectionChord, WidgetCore};
-use pinion_platform_storage::{use_app_storage, AppStorage};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_platform_storage::{AppStorage, use_app_storage};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::text_field as tf_paint;
 use serde::{Deserialize, Serialize};
 
@@ -241,15 +243,27 @@ const GRAPH_TAG: &str = "node_graph";
 const PALETTE: &[(&str, &[PortType], &[PortType])] = &[
     ("Texture", &[], &[PortType::Vector]),
     ("Color", &[], &[PortType::Vector]),
-    ("Multiply", &[PortType::Vector, PortType::Vector], &[PortType::Vector]),
-    ("Add", &[PortType::Vector, PortType::Vector], &[PortType::Vector]),
+    (
+        "Multiply",
+        &[PortType::Vector, PortType::Vector],
+        &[PortType::Vector],
+    ),
+    (
+        "Add",
+        &[PortType::Vector, PortType::Vector],
+        &[PortType::Vector],
+    ),
     ("Output", &[PortType::Vector], &[]),
     // R898 — a scalar source: its `Float` output broadcasts into a `Vector`
     // input (accepted) but a `Vector` never narrows into it (rejected).
     ("Scalar", &[], &[PortType::Float]),
     // R898 — a 3-input op whose last input is a `Float` factor, so a
     // `Color`/`Texture` (`Vector`) wired to it is type-rejected.
-    ("Lerp", &[PortType::Vector, PortType::Vector, PortType::Float], &[PortType::Vector]),
+    (
+        "Lerp",
+        &[PortType::Vector, PortType::Vector, PortType::Float],
+        &[PortType::Vector],
+    ),
 ];
 
 /// R849 — sidebar width for the node palette. The canvas keeps its
@@ -531,7 +545,14 @@ struct GraphNode {
 }
 
 impl GraphNode {
-    fn new(id: u32, title: &str, x: i32, y: i32, inputs: &[PortType], outputs: &[PortType]) -> Self {
+    fn new(
+        id: u32,
+        title: &str,
+        x: i32,
+        y: i32,
+        inputs: &[PortType],
+        outputs: &[PortType],
+    ) -> Self {
         Self {
             id: NodeId(id),
             title: title.to_owned(),
@@ -701,14 +722,22 @@ impl Selection {
 /// Derived (not a hand-maintained const) so it can never drift out of sync
 /// with the defaults — adding a seed edge cannot silently collide a minted id.
 fn first_dynamic_edge_id() -> u32 {
-    default_edges().iter().map(|e| e.id.raw()).max().map_or(0, |m| m + 1)
+    default_edges()
+        .iter()
+        .map(|e| e.id.raw())
+        .max()
+        .map_or(0, |m| m + 1)
 }
 
 /// R849 — the id new nodes mint from: one past the highest [`default_nodes`]
 /// id. Derived (mirroring [`first_dynamic_edge_id`]) so adding a seed node
 /// cannot silently collide a minted id.
 fn first_dynamic_node_id() -> u32 {
-    default_nodes().iter().map(|n| n.id.raw()).max().map_or(0, |m| m + 1)
+    default_nodes()
+        .iter()
+        .map(|n| n.id.raw())
+        .max()
+        .map_or(0, |m| m + 1)
 }
 
 /// First-paint graph — a tiny material graph (`Texture` × `Color` →
@@ -725,9 +754,27 @@ fn default_nodes() -> Vec<GraphNode> {
 
 fn default_edges() -> Vec<Edge> {
     vec![
-        Edge { id: EdgeId(0), from_node: NodeId(0), from_port: 0, to_node: NodeId(2), to_port: 0 },
-        Edge { id: EdgeId(1), from_node: NodeId(1), from_port: 0, to_node: NodeId(2), to_port: 1 },
-        Edge { id: EdgeId(2), from_node: NodeId(2), from_port: 0, to_node: NodeId(3), to_port: 0 },
+        Edge {
+            id: EdgeId(0),
+            from_node: NodeId(0),
+            from_port: 0,
+            to_node: NodeId(2),
+            to_port: 0,
+        },
+        Edge {
+            id: EdgeId(1),
+            from_node: NodeId(1),
+            from_port: 0,
+            to_node: NodeId(2),
+            to_port: 1,
+        },
+        Edge {
+            id: EdgeId(2),
+            from_node: NodeId(2),
+            from_port: 0,
+            to_node: NodeId(3),
+            to_port: 0,
+        },
     ]
 }
 
@@ -757,12 +804,18 @@ fn port_row_top(row: usize) -> i32 {
 
 /// Centre of input port `i` of `node`, in window coordinates.
 fn input_port_center(node: &GraphNode, i: usize) -> (i32, i32) {
-    (node.x + PORT_SIZE / 2, node.y + port_row_top(i) + PORT_SIZE / 2)
+    (
+        node.x + PORT_SIZE / 2,
+        node.y + port_row_top(i) + PORT_SIZE / 2,
+    )
 }
 
 /// Centre of output port `j` of `node`, in window coordinates.
 fn output_port_center(node: &GraphNode, j: usize) -> (i32, i32) {
-    (node.right() - PORT_SIZE / 2, node.y + port_row_top(j) + PORT_SIZE / 2)
+    (
+        node.right() - PORT_SIZE / 2,
+        node.y + port_row_top(j) + PORT_SIZE / 2,
+    )
 }
 
 /// Cubic-bezier control points for a wire from output `from` to input `to`.
@@ -776,13 +829,7 @@ fn edge_curve(from: (i32, i32), to: (i32, i32)) -> ((i32, i32), (i32, i32)) {
 
 /// A point on the cubic bezier at parameter `t` (Bernstein form). `f64::from`
 /// is lossless for the small integer coordinates, so no precision cast.
-fn cubic_at(
-    p0: (f64, f64),
-    p1: (f64, f64),
-    p2: (f64, f64),
-    p3: (f64, f64),
-    t: f64,
-) -> (f64, f64) {
+fn cubic_at(p0: (f64, f64), p1: (f64, f64), p2: (f64, f64), p3: (f64, f64), t: f64) -> (f64, f64) {
     let mt = 1.0 - t;
     let w0 = mt * mt * mt;
     let w1 = 3.0 * mt * mt * t;
@@ -799,7 +846,11 @@ fn point_seg_dist2(point: (f64, f64), seg_a: (f64, f64), seg_b: (f64, f64)) -> f
     let (vx, vy) = (seg_b.0 - seg_a.0, seg_b.1 - seg_a.1);
     let (wx, wy) = (point.0 - seg_a.0, point.1 - seg_a.1);
     let len2 = vx * vx + vy * vy;
-    let t = if len2 <= 0.0 { 0.0 } else { ((wx * vx + wy * vy) / len2).clamp(0.0, 1.0) };
+    let t = if len2 <= 0.0 {
+        0.0
+    } else {
+        ((wx * vx + wy * vy) / len2).clamp(0.0, 1.0)
+    };
     let (cx, cy) = (seg_a.0 + t * vx, seg_a.1 + t * vy);
     let (dx, dy) = (point.0 - cx, point.1 - cy);
     dx * dx + dy * dy
@@ -1012,7 +1063,9 @@ fn use_active_edit() -> Rc<Signal<Option<ActiveEdit>>> {
 #[must_use]
 fn use_next_edge_id() -> Rc<Cell<u32>> {
     let owner = Owner::current().expect("use_next_edge_id requires an active Owner scope");
-    owner.cache("node_graph.next_edge_id", || Cell::new(first_dynamic_edge_id()))
+    owner.cache("node_graph.next_edge_id", || {
+        Cell::new(first_dynamic_edge_id())
+    })
 }
 
 /// R849 — the monotonic [`NodeId`] source for newly created nodes (mirrors
@@ -1020,7 +1073,9 @@ fn use_next_edge_id() -> Rc<Cell<u32>> {
 /// never reused, even across deletes.
 fn use_next_node_id() -> Rc<Cell<u32>> {
     let owner = Owner::current().expect("use_next_node_id requires an active Owner scope");
-    owner.cache("node_graph.next_node_id", || Cell::new(first_dynamic_node_id()))
+    owner.cache("node_graph.next_node_id", || {
+        Cell::new(first_dynamic_node_id())
+    })
 }
 
 /// R877 — the canvas zoom (shared coordinator ↔ view): the view fn projects
@@ -1092,7 +1147,11 @@ fn detail_edit_target(id: NodeId, field: &str) -> Option<EditTarget> {
         "title" => Some(EditTarget::Title(id)),
         "x" => Some(EditTarget::PosX(id)),
         "y" => Some(EditTarget::PosY(id)),
-        _ => field.strip_prefix("in_")?.parse().ok().map(|port| EditTarget::PortDefault { node: id, port }),
+        _ => field
+            .strip_prefix("in_")?
+            .parse()
+            .ok()
+            .map(|port| EditTarget::PortDefault { node: id, port }),
     }
 }
 
@@ -1318,16 +1377,22 @@ impl GraphEdit {
     ) {
         if !rm_nodes.is_empty() || !add_nodes.is_empty() {
             self.nodes.set_with(|prev| {
-                let mut next: Vec<GraphNode> =
-                    prev.iter().filter(|n| !rm_nodes.iter().any(|r| r.id == n.id)).cloned().collect();
+                let mut next: Vec<GraphNode> = prev
+                    .iter()
+                    .filter(|n| !rm_nodes.iter().any(|r| r.id == n.id))
+                    .cloned()
+                    .collect();
                 next.extend(add_nodes.iter().cloned());
                 next
             });
         }
         if !rm_edges.is_empty() || !add_edges.is_empty() {
             self.edges.set_with(|prev| {
-                let mut next: Vec<Edge> =
-                    prev.iter().copied().filter(|e| !rm_edges.iter().any(|r| r.id == e.id)).collect();
+                let mut next: Vec<Edge> = prev
+                    .iter()
+                    .copied()
+                    .filter(|e| !rm_edges.iter().any(|r| r.id == e.id))
+                    .collect();
                 next.extend(add_edges.iter().copied());
                 next
             });
@@ -1343,12 +1408,24 @@ impl UndoCommand for GraphEdit {
 
     fn redo(&self) {
         let d = &self.delta;
-        self.apply(&d.removed_nodes, &d.added_nodes, &d.removed_edges, &d.added_edges, self.sel_after.clone());
+        self.apply(
+            &d.removed_nodes,
+            &d.added_nodes,
+            &d.removed_edges,
+            &d.added_edges,
+            self.sel_after.clone(),
+        );
     }
 
     fn undo(&self) {
         let d = &self.delta;
-        self.apply(&d.added_nodes, &d.removed_nodes, &d.added_edges, &d.removed_edges, self.sel_before.clone());
+        self.apply(
+            &d.added_nodes,
+            &d.removed_nodes,
+            &d.added_edges,
+            &d.removed_edges,
+            self.sel_before.clone(),
+        );
     }
 }
 
@@ -1546,7 +1623,12 @@ fn apply_rename(
     if trimmed.is_empty() {
         return false;
     }
-    let Some(before) = nodes.get().into_iter().find(|n| n.id == id).map(|n| n.title) else {
+    let Some(before) = nodes
+        .get()
+        .into_iter()
+        .find(|n| n.id == id)
+        .map(|n| n.title)
+    else {
         return false;
     };
     if before == trimmed {
@@ -1593,8 +1675,10 @@ impl SetPortDefaultCmd {
     fn set_default(&self, value: &CellValue) {
         self.nodes.set_with(|prev| {
             let mut next = prev.clone();
-            if let Some(slot) =
-                next.iter_mut().find(|n| n.id == self.id).and_then(|n| n.input_defaults.get_mut(self.port))
+            if let Some(slot) = next
+                .iter_mut()
+                .find(|n| n.id == self.id)
+                .and_then(|n| n.input_defaults.get_mut(self.port))
             {
                 *slot = value.clone();
             }
@@ -1633,8 +1717,11 @@ fn apply_set_default(
     port: usize,
     value: CellValue,
 ) -> bool {
-    let Some(before) =
-        nodes.get().into_iter().find(|n| n.id == id).and_then(|n| n.input_defaults.get(port).cloned())
+    let Some(before) = nodes
+        .get()
+        .into_iter()
+        .find(|n| n.id == id)
+        .and_then(|n| n.input_defaults.get(port).cloned())
     else {
         return false;
     };
@@ -1647,7 +1734,13 @@ fn apply_set_default(
     if before.value_eq(&value) {
         return true;
     }
-    let cmd = SetPortDefaultCmd { nodes: Rc::clone(nodes), id, port, before, after: value };
+    let cmd = SetPortDefaultCmd {
+        nodes: Rc::clone(nodes),
+        id,
+        port,
+        before,
+        after: value,
+    };
     cmd.redo();
     undo.push_applied(cmd);
     true
@@ -1686,7 +1779,13 @@ fn set_pos_clamped(
 /// discipline). The ONE position-commit funnel the panel's PosX/PosY inline
 /// editor and the `intervene node.<id>.{x,y}` arm share, so a panel edit and an
 /// RPC move are one undoable mutation path ([[setter-wire-returns-read-outcome]]).
-fn apply_set_pos(nodes: &Rc<Signal<Vec<GraphNode>>>, undo: &UndoStack, id: NodeId, x: i32, y: i32) -> bool {
+fn apply_set_pos(
+    nodes: &Rc<Signal<Vec<GraphNode>>>,
+    undo: &UndoStack,
+    id: NodeId,
+    x: i32,
+    y: i32,
+) -> bool {
     let Some((before, after)) = set_pos_clamped(nodes, id, x, y) else {
         return false;
     };
@@ -1705,7 +1804,11 @@ fn apply_set_pos(nodes: &Rc<Signal<Vec<GraphNode>>>, undo: &UndoStack, id: NodeI
 /// gate (a `Float` accepts digits / sign / `.`, a `Color` hex digits + `#`)
 /// and its commit parse — the one place a port default's editor type is read.
 fn port_default_kind(nodes: &[GraphNode], node: NodeId, port: usize) -> Option<CellKind> {
-    nodes.iter().find(|n| n.id == node)?.input_default(port).map(CellValue::kind)
+    nodes
+        .iter()
+        .find(|n| n.id == node)?
+        .input_default(port)
+        .map(CellValue::kind)
 }
 
 /// R901 — commit inline-editor `text` into `target` through the matching
@@ -1727,7 +1830,8 @@ fn apply_edit_commit(
             let _ = apply_rename(nodes, undo, id, text);
         }
         EditTarget::PortDefault { node, port } => {
-            if let Some(value) = port_default_kind(&nodes.get(), node, port).and_then(|k| k.parse(text))
+            if let Some(value) =
+                port_default_kind(&nodes.get(), node, port).and_then(|k| k.parse(text))
             {
                 let _ = apply_set_default(nodes, undo, node, port, value);
             }
@@ -1737,16 +1841,18 @@ fn apply_edit_commit(
         // position (no data loss — the `CellKind::Int` keystroke gate already
         // bars non-numeric input, this guards a lone `-` or empty field).
         EditTarget::PosX(id) => {
-            if let (Ok(coord), Some(node)) =
-                (text.trim().parse::<i32>(), nodes.get().into_iter().find(|n| n.id == id))
-            {
+            if let (Ok(coord), Some(node)) = (
+                text.trim().parse::<i32>(),
+                nodes.get().into_iter().find(|n| n.id == id),
+            ) {
                 let _ = apply_set_pos(nodes, undo, id, coord, node.y);
             }
         }
         EditTarget::PosY(id) => {
-            if let (Ok(coord), Some(node)) =
-                (text.trim().parse::<i32>(), nodes.get().into_iter().find(|n| n.id == id))
-            {
+            if let (Ok(coord), Some(node)) = (
+                text.trim().parse::<i32>(),
+                nodes.get().into_iter().find(|n| n.id == id),
+            ) {
                 let _ = apply_set_pos(nodes, undo, id, node.x, coord);
             }
         }
@@ -1892,7 +1998,10 @@ impl NodeGraphExternal {
     /// `detail` query (read) and the `detail` intervene (write) delegate through,
     /// so the panel's read and write address the identical node.
     fn selected_node_path(&self, field: &str) -> Option<String> {
-        self.selection.get().node().map(|id| format!("node.{}.{field}", id.raw()))
+        self.selection
+            .get()
+            .node()
+            .map(|id| format!("node.{}.{field}", id.raw()))
     }
 
     // ── R877 viewport (pan = scroll offset, zoom = shared Signal) ──
@@ -1970,7 +2079,10 @@ impl NodeGraphExternal {
         let fit_w = f64::from(i32::try_from(WIN_W).unwrap_or(0) - 2 * FRAME_MARGIN) / bw;
         let fit_h = f64::from(i32::try_from(WIN_H).unwrap_or(0) - 2 * FRAME_MARGIN) / bh;
         let zoom = fit_w.min(fit_h).clamp(ZOOM_MIN, ZOOM_MAX);
-        let (cx, cy) = (f64::from(min_x + max_x) / 2.0, f64::from(min_y + max_y) / 2.0);
+        let (cx, cy) = (
+            f64::from(min_x + max_x) / 2.0,
+            f64::from(min_y + max_y) / 2.0,
+        );
         self.apply_viewport(
             zoom,
             cx * zoom - f64::from(WIN_W) / 2.0,
@@ -2008,16 +2120,16 @@ impl NodeGraphExternal {
     /// without re-applying; the stack's coalescing folds a contiguous
     /// `coalescable` same-member run (a nudge burst) into one step.
     /// Unmoved members are dropped; an all-unmoved set journals nothing.
-    fn record_moves(
-        &self,
-        mut moves: Vec<NodeMove>,
-        coalescable: bool,
-    ) {
+    fn record_moves(&self, mut moves: Vec<NodeMove>, coalescable: bool) {
         moves.retain(|(_, before, after)| before != after);
         if moves.is_empty() {
             return;
         }
-        self.undo.push_applied(MoveNodesCmd { nodes: Rc::clone(&self.nodes), moves, coalescable });
+        self.undo.push_applied(MoveNodesCmd {
+            nodes: Rc::clone(&self.nodes),
+            moves,
+            coalescable,
+        });
     }
 
     /// R852 — snapshot the persistable graph (nodes + edges + the monotonic id
@@ -2142,7 +2254,10 @@ impl NodeGraphExternal {
         // (the prior direct writes) — so a single Ctrl+Z removes it again.
         self.record_edit(
             format!("Add {title}"),
-            GraphDelta { added_nodes: vec![node], ..GraphDelta::default() },
+            GraphDelta {
+                added_nodes: vec![node],
+                ..GraphDelta::default()
+            },
             sel_before,
             Selection::single(id),
         );
@@ -2228,19 +2343,35 @@ impl NodeGraphExternal {
     ) {
         let id = EdgeId(self.next_edge_id.get());
         self.next_edge_id.set(id.raw() + 1);
-        let new_edge = Edge { id, from_node, from_port, to_node, to_port };
+        let new_edge = Edge {
+            id,
+            from_node,
+            from_port,
+            to_node,
+            to_port,
+        };
         let sel_before = self.selection.get();
         let removed_ids: Vec<EdgeId> = removed.iter().map(|e| e.id).collect();
         let sel_after = validate_after(sel_before.clone(), &[], &removed_ids);
         self.record_edit(
             label,
-            GraphDelta { added_edges: vec![new_edge], removed_edges: removed, ..GraphDelta::default() },
+            GraphDelta {
+                added_edges: vec![new_edge],
+                removed_edges: removed,
+                ..GraphDelta::default()
+            },
             sel_before,
             sel_after,
         );
     }
 
-    fn add_edge(&self, from_node: NodeId, from_port: usize, to_node: NodeId, to_port: usize) -> bool {
+    fn add_edge(
+        &self,
+        from_node: NodeId,
+        from_port: usize,
+        to_node: NodeId,
+        to_port: usize,
+    ) -> bool {
         let Some(replaced) = self.validate_connection(from_node, from_port, to_node, to_port, None)
         else {
             return false;
@@ -2302,7 +2433,9 @@ impl NodeGraphExternal {
         field: &str,
         value: IntrospectValue,
     ) -> Result<(), InterveneError> {
-        let Some(port) = field.strip_prefix("input_default.").and_then(|p| p.parse::<usize>().ok())
+        let Some(port) = field
+            .strip_prefix("input_default.")
+            .and_then(|p| p.parse::<usize>().ok())
         else {
             return Err(InterveneError::UnknownPath);
         };
@@ -2331,7 +2464,10 @@ impl NodeGraphExternal {
         let sel_after = validate_after(sel_before.clone(), &[], &[id]);
         self.record_edit(
             "Disconnect",
-            GraphDelta { removed_edges: vec![edge], ..GraphDelta::default() },
+            GraphDelta {
+                removed_edges: vec![edge],
+                ..GraphDelta::default()
+            },
             sel_before,
             sel_after,
         );
@@ -2351,8 +2487,13 @@ impl NodeGraphExternal {
     /// stable ids — the multi-select `Delete` contract). Unknown ids are
     /// skipped; an all-unknown set is a no-op `false`.
     fn delete_nodes(&self, ids: &BTreeSet<NodeId>) -> bool {
-        let removed: Vec<GraphNode> =
-            self.nodes.get().iter().filter(|n| ids.contains(&n.id)).cloned().collect();
+        let removed: Vec<GraphNode> = self
+            .nodes
+            .get()
+            .iter()
+            .filter(|n| ids.contains(&n.id))
+            .cloned()
+            .collect();
         if removed.is_empty() {
             return false;
         }
@@ -2374,7 +2515,11 @@ impl NodeGraphExternal {
         };
         self.record_edit(
             label,
-            GraphDelta { removed_nodes: removed, removed_edges: incident, ..GraphDelta::default() },
+            GraphDelta {
+                removed_nodes: removed,
+                removed_edges: incident,
+                ..GraphDelta::default()
+            },
             sel_before,
             sel_after,
         );
@@ -2383,7 +2528,11 @@ impl NodeGraphExternal {
         // R920 — cancel an in-flight edit of a deleted node (card or panel): the
         // node is gone, so committing would be a no-op and `query editing` would
         // otherwise keep advertising an edit on an absent node.
-        if self.editing.get().is_some_and(|a| removed_ids.contains(&a.target.node())) {
+        if self
+            .editing
+            .get()
+            .is_some_and(|a| removed_ids.contains(&a.target.node()))
+        {
             self.editing.set(None);
             self.edit_buffer.set_text(String::new());
         }
@@ -2466,7 +2615,11 @@ impl NodeGraphExternal {
     fn selected_nodes(&self) -> Vec<GraphNode> {
         let members = self.selection.get().nodes();
         let nodes = self.nodes.get();
-        nodes.iter().filter(|n| members.contains(&n.id)).cloned().collect()
+        nodes
+            .iter()
+            .filter(|n| members.contains(&n.id))
+            .cloned()
+            .collect()
     }
 
     /// Nudge the selected node by `(dx, dy)` (the arrow-key path). R853 — each
@@ -2538,9 +2691,7 @@ impl NodeGraphExternal {
             .map(|(i, n)| {
                 let c2 = first_c + span * f64::from(i32::try_from(i).unwrap_or(0)) / denom;
                 let pos = match axis {
-                    DistributeAxis::Horizontal => {
-                        (round_i32((c2 - f64::from(NODE_W)) / 2.0), n.y)
-                    }
+                    DistributeAxis::Horizontal => (round_i32((c2 - f64::from(NODE_W)) / 2.0), n.y),
                     DistributeAxis::Vertical => {
                         (n.x, round_i32((c2 - f64::from(n.height())) / 2.0))
                     }
@@ -2548,7 +2699,9 @@ impl NodeGraphExternal {
                 (n.id, pos)
             })
             .collect();
-        self.apply_node_moves(&sel, false, |n| targets.get(&n.id).copied().unwrap_or((n.x, n.y)))
+        self.apply_node_moves(&sel, false, |n| {
+            targets.get(&n.id).copied().unwrap_or((n.x, n.y))
+        })
     }
 
     /// Select a node by id (must exist). The sum type makes any prior edge
@@ -2669,7 +2822,10 @@ impl NodeGraphExternal {
         }
         let mut members = BTreeSet::new();
         for token in trimmed.split(',') {
-            let raw: u32 = token.trim().parse().map_err(|_| InterveneError::TypeMismatch)?;
+            let raw: u32 = token
+                .trim()
+                .parse()
+                .map_err(|_| InterveneError::TypeMismatch)?;
             let id = NodeId(raw);
             if !self.nodes.get().iter().any(|n| n.id == id) {
                 return Err(InterveneError::OutOfRange);
@@ -2789,7 +2945,10 @@ impl NodeGraphExternal {
     /// predicate that gates the inline editor to the same ports whose default
     /// label paints, so `editing` can never point at an unpainted field.
     fn input_wired(&self, node: NodeId, port: usize) -> bool {
-        self.edges.get().iter().any(|e| e.to_node == node && e.to_port == port)
+        self.edges
+            .get()
+            .iter()
+            .any(|e| e.to_node == node && e.to_port == port)
     }
 
     /// Pointer `send` wire (the same channel the router and RPC share).
@@ -2934,7 +3093,10 @@ impl NodeGraphExternal {
     /// contract predicate, so this binding and the router can never
     /// disagree on what a click is.
     fn gesture_moved(&self) -> bool {
-        self.node_drag.borrow().as_ref().is_some_and(|start| start.latch.live())
+        self.node_drag
+            .borrow()
+            .as_ref()
+            .is_some_and(|start| start.latch.live())
     }
 
     /// R880 — the marquee rect to apply at a background release: `Some` only
@@ -2943,7 +3105,12 @@ impl NodeGraphExternal {
     /// release applies an area" can never disagree; the in-place click path
     /// runs otherwise).
     fn live_marquee_rect(&self) -> Option<MarqueeRect> {
-        if self.marquee.borrow().as_ref().is_some_and(|m| m.latch.live()) {
+        if self
+            .marquee
+            .borrow()
+            .as_ref()
+            .is_some_and(|m| m.latch.live())
+        {
             self.marquee_rect.get()
         } else {
             None
@@ -3000,7 +3167,10 @@ impl core::fmt::Debug for NodeGraphExternal {
 
 impl External for NodeGraphExternal {
     fn backends(&self) -> BackendSupport {
-        BackendSupport::new(&[Backend::Gui, Backend::Tui, Backend::Rpc], BackendFallback::Skip)
+        BackendSupport::new(
+            &[Backend::Gui, Backend::Tui, Backend::Rpc],
+            BackendFallback::Skip,
+        )
     }
 
     fn repaint_ownership(&self) -> RepaintOwner {
@@ -3041,7 +3211,10 @@ impl External for NodeGraphExternal {
         let (gx, gy) = self.cursor_graph(f64::from(x_rel), f64::from(y_rel));
         // The cursor in screen px (the dead-zone metric space — the same
         // logical-pixel space the router's click-vs-drag latch measures).
-        let screen = (f64::from(x_rel) * f64::from(WIN_W), f64::from(y_rel) * f64::from(WIN_H));
+        let screen = (
+            f64::from(x_rel) * f64::from(WIN_W),
+            f64::from(y_rel) * f64::from(WIN_H),
+        );
         let Some(node) = self.grabbed_node.get() else {
             // Not dragging a node. A background press drives the marquee
             // gesture; every other non-drag press (port / palette) is
@@ -3069,7 +3242,8 @@ impl External for NodeGraphExternal {
                         }
                         // Live rubber band: publish the normalised
                         // graph-space corners for the view fn's paint.
-                        self.marquee_rect.set(Some(corner_rect(start.press_graph, (gx, gy))));
+                        self.marquee_rect
+                            .set(Some(corner_rect(start.press_graph, (gx, gy))));
                     }
                 }
             }
@@ -3097,8 +3271,10 @@ impl External for NodeGraphExternal {
                 })
                 .collect();
             if !snapshot.is_empty() {
-                *self.node_drag.borrow_mut() =
-                    Some(NodeDragStart { members: snapshot, latch: DragLatch::new(screen) });
+                *self.node_drag.borrow_mut() = Some(NodeDragStart {
+                    members: snapshot,
+                    latch: DragLatch::new(screen),
+                });
             }
             return;
         }
@@ -3154,7 +3330,8 @@ impl External for NodeGraphExternal {
             return true;
         }
         if modifiers.shift_key() {
-            self.scroll.scroll_by(round_i32(f64::from(dy) + f64::from(dx)), 0);
+            self.scroll
+                .scroll_by(round_i32(f64::from(dy) + f64::from(dx)), 0);
             return true;
         }
         false
@@ -3165,7 +3342,11 @@ impl External for NodeGraphExternal {
     /// so a node-body press falls through to the capture-drag move path.
     fn begin_drag(&self) -> Option<DragPayload> {
         if let PendingPress::OutputPort(n, j) = self.pending_press.get() {
-            self.preview.set(Some(Preview { from_node: n, from_port: j, to: None }));
+            self.preview.set(Some(Preview {
+                from_node: n,
+                from_port: j,
+                to: None,
+            }));
             return Some(DragPayload {
                 kind: Cow::Borrowed("node-edge"),
                 value: IntrospectValue::Text(format!("{n}_{j}")),
@@ -3178,14 +3359,16 @@ impl External for NodeGraphExternal {
     /// port (if any) so the connection target reads from the router hit-test.
     fn drag_to(&mut self, _payload: &DragPayload, over: Option<DropPoint>) {
         let target = over.and_then(|dp| parse_input_port_tag(&dp.tag));
-        self.preview.set_with(|prev| (*prev).map(|p| Preview { to: target, ..p }));
+        self.preview
+            .set_with(|prev| (*prev).map(|p| Preview { to: target, ..p }));
     }
 
     /// Commit the edge if the drop landed on an input port.
     fn drag_release(&mut self, payload: &DragPayload, over: Option<DropPoint>) {
-        if let (IntrospectValue::Text(src), Some((to_node, to_port))) =
-            (&payload.value, over.as_ref().and_then(|dp| parse_input_port_tag(&dp.tag)))
-        {
+        if let (IntrospectValue::Text(src), Some((to_node, to_port))) = (
+            &payload.value,
+            over.as_ref().and_then(|dp| parse_input_port_tag(&dp.tag)),
+        ) {
             if let Some((from_node, from_port)) = split_node_port(src) {
                 self.add_edge(from_node, from_port, to_node, to_port);
             }
@@ -3312,9 +3495,10 @@ impl ExternalIntrospect for NodeGraphExternal {
             // [[wire-form-read-write-symmetry]], the representation-richer-but-
             // old-contract-preserved discipline).
             "renaming" => Some(match self.editing.get() {
-                Some(ActiveEdit { target: EditTarget::Title(id), .. }) => {
-                    IntrospectValue::Int(i64::from(id.raw()))
-                }
+                Some(ActiveEdit {
+                    target: EditTarget::Title(id),
+                    ..
+                }) => IntrospectValue::Int(i64::from(id.raw())),
                 _ => IntrospectValue::Null,
             }),
             // R901 / R918 — the in-flight inline edit, the honest generalised
@@ -3322,20 +3506,22 @@ impl ExternalIntrospect for NodeGraphExternal {
             // `kind` is `title` / `port_default` / `pos_x` / `pos_y` and `surface`
             // is `card` / `panel` (the read twin of the `begin_*` invokes + the
             // double-click / panel-row-click entries).
-            "editing" => {
-                Some(self.editing.get().map_or(IntrospectValue::Null, active_edit_introspect))
-            }
+            "editing" => Some(
+                self.editing
+                    .get()
+                    .map_or(IntrospectValue::Null, active_edit_introspect),
+            ),
             // R852 — the whole graph as one JSON blob (the AI-first read; its
             // write-twin is `invoke set_graph`).
             "serialized" => Some(IntrospectValue::Text(self.serialized_json())),
             // R877 — the viewport, in zoom-independent graph units (pan) +
             // the zoom factor. Write-twins: `intervene viewport.{x,y,zoom}`.
-            "viewport.x" => {
-                Some(IntrospectValue::Float(f64::from(self.scroll.offset().0) / self.zoom.get()))
-            }
-            "viewport.y" => {
-                Some(IntrospectValue::Float(f64::from(self.scroll.offset().1) / self.zoom.get()))
-            }
+            "viewport.x" => Some(IntrospectValue::Float(
+                f64::from(self.scroll.offset().0) / self.zoom.get(),
+            )),
+            "viewport.y" => Some(IntrospectValue::Float(
+                f64::from(self.scroll.offset().1) / self.zoom.get(),
+            )),
             "viewport.zoom" => Some(IntrospectValue::Float(self.zoom.get())),
             // R916 — `detail.node` is the single selected node id (the alias the
             // Details panel addresses against, same answer as `selected`).
@@ -3366,7 +3552,9 @@ impl ExternalIntrospect for NodeGraphExternal {
                         // R898 — the typed-port read twins: CSV of the port
                         // types in port order ("" for a source / sink). The
                         // arity reads above stay the byte-stable count contract.
-                        "input_types" => Some(IntrospectValue::Text(port_types_csv(&node.input_ports))),
+                        "input_types" => {
+                            Some(IntrospectValue::Text(port_types_csv(&node.input_ports)))
+                        }
                         "output_types" => {
                             Some(IntrospectValue::Text(port_types_csv(&node.output_ports)))
                         }
@@ -3377,7 +3565,9 @@ impl ExternalIntrospect for NodeGraphExternal {
                         other => other
                             .strip_prefix("input_default.")
                             .and_then(|p| p.parse::<usize>().ok())
-                            .and_then(|port| node.input_default(port).map(CellValue::to_introspect)),
+                            .and_then(|port| {
+                                node.input_default(port).map(CellValue::to_introspect)
+                            }),
                     };
                 }
                 if let Some(id_str) = path.strip_prefix("edge.") {
@@ -3460,7 +3650,9 @@ impl ExternalIntrospect for NodeGraphExternal {
         // are one mutation path. Rejected (`UnknownPath`) when the selection is
         // not exactly one node — there is no unambiguous "the" node to edit.
         if let Some(field) = path.strip_prefix("detail.") {
-            let node_path = self.selected_node_path(field).ok_or(InterveneError::UnknownPath)?;
+            let node_path = self
+                .selected_node_path(field)
+                .ok_or(InterveneError::UnknownPath)?;
             return self.intervene(&node_path, value);
         }
         let Some(rest) = path.strip_prefix("node.") else {
@@ -3483,7 +3675,11 @@ impl ExternalIntrospect for NodeGraphExternal {
                 // coalescable journal), the SAME path the Details panel's PosX/PosY
                 // inline editor commits through, so an RPC move and a panel edit are
                 // one undoable mutation. `x` then `y` still fold into one undo step.
-                let (x, y) = if field == "x" { (coord, node.y) } else { (node.x, coord) };
+                let (x, y) = if field == "x" {
+                    (coord, node.y)
+                } else {
+                    (node.x, coord)
+                };
                 apply_set_pos(&self.nodes, &self.undo, id, x, y);
                 Ok(())
             }
@@ -3505,9 +3701,7 @@ impl ExternalIntrospect for NodeGraphExternal {
             },
             // R898 — port arity and the typed-port lists are read-only: ports
             // are defined by the node kind, edited only by add/remove edges.
-            "inputs" | "outputs" | "input_types" | "output_types" => {
-                Err(InterveneError::ReadOnly)
-            }
+            "inputs" | "outputs" | "input_types" | "output_types" => Err(InterveneError::ReadOnly),
             // R899 — set an input port's typed default (the write twin of
             // `query node.<id>.input_default.<port>`); routed through the
             // type-checking [`Self::intervene_input_default`] helper.
@@ -3515,7 +3709,11 @@ impl ExternalIntrospect for NodeGraphExternal {
         }
     }
 
-    fn invoke(&mut self, path: &str, args: IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+    fn invoke(
+        &mut self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
         match path {
             "send" => match args {
                 IntrospectValue::Text(s) => Ok(self.handle_send(&s)),
@@ -3539,7 +3737,9 @@ impl ExternalIntrospect for NodeGraphExternal {
                 IntrospectValue::Text(s) => {
                     let (fnode, fport, tnode, tport) =
                         parse_quad(&s).ok_or(InvokeError::Rejected)?;
-                    Ok(IntrospectValue::Bool(self.add_edge(fnode, fport, tnode, tport)))
+                    Ok(IntrospectValue::Bool(
+                        self.add_edge(fnode, fport, tnode, tport),
+                    ))
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
@@ -3556,7 +3756,9 @@ impl ExternalIntrospect for NodeGraphExternal {
             "reconnect_edge" => match args {
                 IntrospectValue::Text(s) => {
                     let (edge, tnode, tport) = parse_reconnect(&s).ok_or(InvokeError::Rejected)?;
-                    Ok(IntrospectValue::Bool(self.reconnect_edge(edge, tnode, tport)))
+                    Ok(IntrospectValue::Bool(
+                        self.reconnect_edge(edge, tnode, tport),
+                    ))
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
@@ -3766,7 +3968,9 @@ fn end_edit_mode(restore_focus: bool) {
 /// accepts digits / sign / `.`, a `Color` hex digits + `#`). Stray named keys
 /// defer — inert while the field owns focus.
 fn apply_key_edit(scene: &mut Scene, key: &str, modifiers: Modifiers) -> bool {
-    let kind = use_active_edit().get().map_or(CellKind::Text, |a| edit_target_kind(a.target));
+    let kind = use_active_edit()
+        .get()
+        .map_or(CellKind::Text, |a| edit_target_kind(a.target));
     pinion_core::edit_field_keymap(
         scene,
         EDIT_TF_TAG,
@@ -3836,7 +4040,11 @@ fn apply_key_graph(scene: &mut Scene, key: &str, modifiers: Modifiers) -> bool {
                 let Some(IntrospectValue::Float(zoom)) = intro.query("viewport.zoom") else {
                     return false;
                 };
-                if verb == ZoomKey::In { zoom * ZOOM_STEP } else { zoom / ZOOM_STEP }
+                if verb == ZoomKey::In {
+                    zoom * ZOOM_STEP
+                } else {
+                    zoom / ZOOM_STEP
+                }
             }
         };
         let _ = intro.intervene("viewport.zoom", IntrospectValue::Float(target));
@@ -3890,7 +4098,14 @@ fn apply_key_graph(scene: &mut Scene, key: &str, modifiers: Modifiers) -> bool {
 /// One cubic-bezier edge path between two window-space port centres. An
 /// S-curve: control points offset horizontally so wires leave / enter ports
 /// level (the canonical node-graph wire shape).
-fn view_edge(tag: String, from: (i32, i32), to: (i32, i32), color: Color, width: u32, zoom: f64) -> Scene {
+fn view_edge(
+    tag: String,
+    from: (i32, i32),
+    to: (i32, i32),
+    color: Color,
+    width: u32,
+    zoom: f64,
+) -> Scene {
     // R877 — the curve is *computed* in graph space (the same
     // `edge_curve` SSOT the hit-test samples) and *projected* per control
     // point: pan + zoom is affine, so scaling the four control points
@@ -3899,11 +4114,18 @@ fn view_edge(tag: String, from: (i32, i32), to: (i32, i32), color: Color, width:
     let (c1, c2) = edge_curve(from, to);
     let from = (wpx(from.0, zoom), wpx(from.1, zoom));
     let to = (wpx(to.0, zoom), wpx(to.1, zoom));
-    let (c1, c2) = ((wpx(c1.0, zoom), wpx(c1.1, zoom)), (wpx(c2.0, zoom), wpx(c2.1, zoom)));
+    let (c1, c2) = (
+        (wpx(c1.0, zoom), wpx(c1.1, zoom)),
+        (wpx(c2.0, zoom), wpx(c2.1, zoom)),
+    );
     let width = wstroke(width, zoom);
     let commands = vec![
         PathCommand::MoveTo(ppt(from.0, from.1)),
-        PathCommand::CurveTo { c1: ppt(c1.0, c1.1), c2: ppt(c2.0, c2.1), end: ppt(to.0, to.1) },
+        PathCommand::CurveTo {
+            c1: ppt(c1.0, c1.1),
+            c2: ppt(c2.0, c2.1),
+            end: ppt(to.0, to.1),
+        },
     ];
     // Bounding box over ALL four control points (the curve bows outside the
     // endpoint box, so a snapshot bbox from endpoints alone understates the
@@ -3959,7 +4181,14 @@ fn view_edges(
             } else {
                 (color, EDGE_W)
             };
-            Some(view_edge(format!("{GRAPH_TAG}#edge_{}", e.id), from, to, c, w, zoom))
+            Some(view_edge(
+                format!("{GRAPH_TAG}#edge_{}", e.id),
+                from,
+                to,
+                c,
+                w,
+                zoom,
+            ))
         })
         .collect()
 }
@@ -3989,17 +4218,17 @@ fn view_input_default(tag: String, text: &str, top: i32, theme: &Theme, zoom: f6
     let label = Scene::Text(TextNode::styled(
         text.to_owned(),
         Rect::default(),
-        TextStyle::new().with_size_px(wfont(11, zoom)).with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+        TextStyle::new()
+            .with_size_px(wfont(11, zoom))
+            .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
     ));
     Scene::Container(
-        ContainerNode::new(vec![label])
-            .with_tag(tag)
-            .with_layout(
-                LayoutStyle::new()
-                    .with_absolute_position(upx(wpx(PORT_SIZE + 4, zoom)), upx(wpx(top, zoom)))
-                    .flex(FlexDirection::Row)
-                    .with_align_items(AlignItems::Center),
-            ),
+        ContainerNode::new(vec![label]).with_tag(tag).with_layout(
+            LayoutStyle::new()
+                .with_absolute_position(upx(wpx(PORT_SIZE + 4, zoom)), upx(wpx(top, zoom)))
+                .flex(FlexDirection::Row)
+                .with_align_items(AlignItems::Center),
+        ),
     )
 }
 
@@ -4017,7 +4246,14 @@ fn view_port_default_field(edit_field: RootState, top: i32, theme: &Theme, zoom:
         font_size_px: wfont(11, zoom),
         ..tf_paint::TextFieldStyle::m3_filled()
     };
-    let field = tf_paint::view_field(EDIT_TF_TAG, edit_field.0, edit_field.1, theme, &style, "value");
+    let field = tf_paint::view_field(
+        EDIT_TF_TAG,
+        edit_field.0,
+        edit_field.1,
+        theme,
+        &style,
+        "value",
+    );
     Scene::Container(
         ContainerNode::new(vec![field]).with_layout(
             LayoutStyle::new()
@@ -4053,7 +4289,14 @@ fn view_node(
             font_size_px: wfont(NODE_TITLE_PX, zoom),
             ..tf_paint::TextFieldStyle::m3_filled()
         };
-        tf_paint::view_field(EDIT_TF_TAG, edit_field.0, edit_field.1, theme, &style, "Rename node")
+        tf_paint::view_field(
+            EDIT_TF_TAG,
+            edit_field.0,
+            edit_field.1,
+            theme,
+            &style,
+            "Rename node",
+        )
     } else {
         Scene::Text(TextNode::styled(
             node.title.clone(),
@@ -4065,7 +4308,9 @@ fn view_node(
     };
     let header = Scene::Container(
         ContainerNode::new(vec![head_inner])
-            .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHighest)))
+            .with_style(BoxStyle::filled(
+                theme.resolve(ColorRole::SurfaceContainerHighest),
+            ))
             .with_layout(
                 LayoutStyle::new()
                     .with_absolute_position(0, 0)
@@ -4097,7 +4342,12 @@ fn view_node(
             // its static value label for the ONE shared inline field (the
             // header's title-or-field switch, applied to the pin default).
             if card_edit == Some(EditTarget::PortDefault { node: id, port: i }) {
-                children.push(view_port_default_field(edit_field, port_row_top(i), theme, zoom));
+                children.push(view_port_default_field(
+                    edit_field,
+                    port_row_top(i),
+                    theme,
+                    zoom,
+                ));
             } else if let Some(val) = node.input_default(i) {
                 children.push(view_input_default(
                     format!("{GRAPH_TAG}#idefault_{id}_{i}"),
@@ -4131,7 +4381,10 @@ fn view_node(
             .with_layout(
                 LayoutStyle::new()
                     .with_absolute_position(upx(wpx(node.x, zoom)), upx(wpx(node.y, zoom)))
-                    .with_size(Size::px(upx(wpx(NODE_W, zoom)), upx(wpx(node.height(), zoom)))),
+                    .with_size(Size::px(
+                        upx(wpx(NODE_W, zoom)),
+                        upx(wpx(node.height(), zoom)),
+                    )),
             ),
     )
 }
@@ -4146,7 +4399,10 @@ fn view_node(
 fn view_marquee(rect: MarqueeRect, theme: &Theme, zoom: f64) -> Scene {
     let (x0, y0, x1, y1) = rect;
     let accent = theme.resolve(ColorRole::Accent);
-    let fill = Color { a: MARQUEE_FILL_ALPHA, ..accent };
+    let fill = Color {
+        a: MARQUEE_FILL_ALPHA,
+        ..accent
+    };
     Scene::Container(
         ContainerNode::new(Vec::new())
             .with_tag(format!("{GRAPH_TAG}#marquee"))
@@ -4175,7 +4431,9 @@ fn view_palette(theme: &Theme) -> Scene {
         TextNode::styled(
             "Add node",
             Rect::default(),
-            TextStyle::new().with_size_px(NODE_TITLE_PX).with_fg(theme.resolve(ColorRole::OnSurface)),
+            TextStyle::new()
+                .with_size_px(NODE_TITLE_PX)
+                .with_fg(theme.resolve(ColorRole::OnSurface)),
         )
         .with_layout(LayoutStyle::new().with_padding(Rect::new(12, 12, 12, 4))),
     ));
@@ -4183,12 +4441,16 @@ fn view_palette(theme: &Theme) -> Scene {
         let label = Scene::Text(TextNode::styled(
             format!("{title} ({}/{})", input_ports.len(), output_ports.len()),
             Rect::default(),
-            TextStyle::new().with_size_px(13).with_fg(theme.resolve(ColorRole::OnSurface)),
+            TextStyle::new()
+                .with_size_px(13)
+                .with_fg(theme.resolve(ColorRole::OnSurface)),
         ));
         items.push(Scene::Container(
             ContainerNode::new(vec![label])
                 .with_tag(format!("{GRAPH_TAG}#palette_{idx}"))
-                .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh)))
+                .with_style(BoxStyle::filled(
+                    theme.resolve(ColorRole::SurfaceContainerHigh),
+                ))
                 .with_layout(
                     LayoutStyle::new()
                         .flex(FlexDirection::Row)
@@ -4201,7 +4463,9 @@ fn view_palette(theme: &Theme) -> Scene {
     Scene::Container(
         ContainerNode::new(items)
             .with_tag(PALETTE_TAG)
-            .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerLow)))
+            .with_style(BoxStyle::filled(
+                theme.resolve(ColorRole::SurfaceContainerLow),
+            ))
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Column)
@@ -4221,11 +4485,19 @@ fn view_palette(theme: &Theme) -> Scene {
 /// row. A non-edited row stays a read reflection of the model (edits also arrive
 /// via the node card, a drag, or `intervene detail.<field>`, and the reactive
 /// view re-reflects them).
-fn detail_row(key: &str, label: &str, value: &str, editing: Option<RootState>, theme: &Theme) -> Scene {
+fn detail_row(
+    key: &str,
+    label: &str,
+    value: &str,
+    editing: Option<RootState>,
+    theme: &Theme,
+) -> Scene {
     let name = Scene::Text(TextNode::styled(
         label.to_owned(),
         Rect::default(),
-        TextStyle::new().with_size_px(12).with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+        TextStyle::new()
+            .with_size_px(12)
+            .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
     ));
     let val = match editing {
         Some(field) => {
@@ -4241,7 +4513,9 @@ fn detail_row(key: &str, label: &str, value: &str, editing: Option<RootState>, t
         None => Scene::Text(TextNode::styled(
             value.to_owned(),
             Rect::default(),
-            TextStyle::new().with_size_px(13).with_fg(theme.resolve(ColorRole::OnSurface)),
+            TextStyle::new()
+                .with_size_px(13)
+                .with_fg(theme.resolve(ColorRole::OnSurface)),
         )),
     };
     Scene::Container(
@@ -4279,15 +4553,32 @@ struct DetailRow {
 fn detail_rows(node: &GraphNode) -> Vec<DetailRow> {
     let id = node.id;
     let mut rows = vec![
-        DetailRow { key: "title".to_owned(), label: "Title".to_owned(), value: node.title.clone(), target: EditTarget::Title(id) },
-        DetailRow { key: "x".to_owned(), label: "Position X".to_owned(), value: node.x.to_string(), target: EditTarget::PosX(id) },
-        DetailRow { key: "y".to_owned(), label: "Position Y".to_owned(), value: node.y.to_string(), target: EditTarget::PosY(id) },
+        DetailRow {
+            key: "title".to_owned(),
+            label: "Title".to_owned(),
+            value: node.title.clone(),
+            target: EditTarget::Title(id),
+        },
+        DetailRow {
+            key: "x".to_owned(),
+            label: "Position X".to_owned(),
+            value: node.x.to_string(),
+            target: EditTarget::PosX(id),
+        },
+        DetailRow {
+            key: "y".to_owned(),
+            label: "Position Y".to_owned(),
+            value: node.y.to_string(),
+            target: EditTarget::PosY(id),
+        },
     ];
     for (port, ty) in node.input_ports.iter().enumerate() {
         rows.push(DetailRow {
             key: format!("in_{port}"),
             label: format!("In {port} · {}", ty.name()),
-            value: node.input_default(port).map_or_else(String::new, CellValue::display),
+            value: node
+                .input_default(port)
+                .map_or_else(String::new, CellValue::display),
             target: EditTarget::PortDefault { node: id, port },
         });
     }
@@ -4309,20 +4600,30 @@ fn view_details_panel(
 ) -> Scene {
     // R918 — the target (if any) the panel is editing: a `Panel`-surface edit
     // whose target's row swaps its value display for the shared field.
-    let panel_edit = active.filter(|a| a.surface == EditSurface::Panel).map(|a| a.target);
+    let panel_edit = active
+        .filter(|a| a.surface == EditSurface::Panel)
+        .map(|a| a.target);
     let row_field = |target: EditTarget| (panel_edit == Some(target)).then_some(edit_field);
     let mut items: Vec<Scene> = vec![Scene::Text(
         TextNode::styled(
             "Details",
             Rect::default(),
-            TextStyle::new().with_size_px(NODE_TITLE_PX).with_fg(theme.resolve(ColorRole::OnSurface)),
+            TextStyle::new()
+                .with_size_px(NODE_TITLE_PX)
+                .with_fg(theme.resolve(ColorRole::OnSurface)),
         )
         .with_layout(LayoutStyle::new().with_padding(Rect::new(12, 12, 12, 4))),
     )];
 
     if let Some(node) = selection.node().and_then(|id| node_ref(nodes, id)) {
         for row in detail_rows(node) {
-            items.push(detail_row(&row.key, &row.label, &row.value, row_field(row.target), theme));
+            items.push(detail_row(
+                &row.key,
+                &row.label,
+                &row.value,
+                row_field(row.target),
+                theme,
+            ));
         }
     } else {
         let placeholder = if selection.nodes().len() > 1 {
@@ -4334,7 +4635,9 @@ fn view_details_panel(
             TextNode::styled(
                 placeholder.to_owned(),
                 Rect::default(),
-                TextStyle::new().with_size_px(12).with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+                TextStyle::new()
+                    .with_size_px(12)
+                    .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
             )
             .with_layout(LayoutStyle::new().with_padding(Rect::new(12, 4, 12, 4))),
         ));
@@ -4344,7 +4647,9 @@ fn view_details_panel(
         ContainerNode::new(items)
             .with_tag(DETAIL_TAG)
             .with_aria_label("Details")
-            .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerLow)))
+            .with_style(BoxStyle::filled(
+                theme.resolve(ColorRole::SurfaceContainerLow),
+            ))
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Column)
@@ -4374,12 +4679,17 @@ fn view_node_cards(
 ) -> Vec<Scene> {
     // R918 — only a *card*-surface edit paints over a node card; a panel-surface
     // edit hosts the field in the Details panel instead.
-    let card_edit_target = active.filter(|a| a.surface == EditSurface::Card).map(|a| a.target);
+    let card_edit_target = active
+        .filter(|a| a.surface == EditSurface::Card)
+        .map(|a| a.target);
     nodes
         .iter()
         .map(|node| {
-            let wired_inputs: BTreeSet<usize> =
-                edges.iter().filter(|e| e.to_node == node.id).map(|e| e.to_port).collect();
+            let wired_inputs: BTreeSet<usize> = edges
+                .iter()
+                .filter(|e| e.to_node == node.id)
+                .map(|e| e.to_port)
+                .collect();
             // R901 — only the card hosting the in-flight edit paints the shared
             // field (a title or one pin default); every other card paints
             // statically. `None` once the target's node is a different card.
@@ -4399,7 +4709,8 @@ fn view_node_cards(
 
 // The `&Frame` mirrors the `WidgetCore::view` trait signature (the data-grid
 // free-view idiom).
-#[allow(clippy::trivially_copy_pass_by_ref)]
+// R1026 — rustfmt's reflow pushed this example view past too_many_lines (100).
+#[allow(clippy::trivially_copy_pass_by_ref, clippy::too_many_lines)]
 fn view(state: RootState, _frame: &Frame) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
     let nodes = use_nodes().get();
@@ -4427,10 +4738,9 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
     if let Some(p) = preview {
         if let Some(from_node) = node_ref(&nodes, p.from_node) {
             let from = output_port_center(from_node, p.from_port);
-            let to = p
-                .to
-                .and_then(|(tn, tp)| Some(input_port_center(node_ref(&nodes, tn)?, tp)))
-                .unwrap_or(from);
+            let to =
+                p.to.and_then(|(tn, tp)| Some(input_port_center(node_ref(&nodes, tn)?, tp)))
+                    .unwrap_or(from);
             world_children.push(view_edge(
                 format!("{GRAPH_TAG}#preview"),
                 from,
@@ -4442,7 +4752,9 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
         }
     }
 
-    world_children.extend(view_node_cards(&nodes, &edges, &selected, active, state, &theme, zoom));
+    world_children.extend(view_node_cards(
+        &nodes, &edges, &selected, active, state, &theme, zoom,
+    ));
 
     // R880 — the live marquee rubber band layers over everything in the
     // world (reading the Signal subscribes the paint Effect, so each drag
@@ -4473,7 +4785,9 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
         TextNode::styled(
             "Node graph",
             Rect::default(),
-            TextStyle::new().with_size_px(TITLE_PX).with_fg(theme.resolve(ColorRole::OnSurface)),
+            TextStyle::new()
+                .with_size_px(TITLE_PX)
+                .with_fg(theme.resolve(ColorRole::OnSurface)),
         )
         .with_layout(LayoutStyle::new().with_absolute_position(16, 12)),
     ));
@@ -4481,7 +4795,10 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
     let sel_label = if selected.len() > 1 {
         format!("{} nodes", selected.len())
     } else if let Some(id) = selected.first() {
-        format!("node {}", node_ref(&nodes, *id).map_or("—", |n| n.title.as_str()))
+        format!(
+            "node {}",
+            node_ref(&nodes, *id).map_or("—", |n| n.title.as_str())
+        )
     } else if let Some(e) = selected_edge {
         format!("edge {e}")
     } else {
@@ -4507,7 +4824,10 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
                 .with_size_px(STATUS_PX)
                 .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
         )
-        .with_layout(LayoutStyle::new().with_absolute_position(16, i32::try_from(WIN_H).map_or(0, |h| upx(h - 26)))),
+        .with_layout(
+            LayoutStyle::new()
+                .with_absolute_position(16, i32::try_from(WIN_H).map_or(0, |h| upx(h - 26))),
+        ),
     ));
 
     let canvas = Scene::Container(
@@ -4515,7 +4835,11 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
             .with_tag(GRAPH_TAG)
             .with_aria_label("Node graph")
             .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
-            .with_layout(LayoutStyle::new().with_size(Size::px(WIN_W, WIN_H)).with_focusable(true)),
+            .with_layout(
+                LayoutStyle::new()
+                    .with_size(Size::px(WIN_W, WIN_H))
+                    .with_focusable(true),
+            ),
     );
     // R849 — palette sidebar beside the canvas. R916 — Details panel sidebar on
     // the right. The canvas keeps its `WIN_W × WIN_H` coordinate system (its rect
@@ -4674,15 +4998,17 @@ fn details_access_nodes(
     focused: Option<&str>,
 ) -> Vec<AccessNode> {
     let mut group = AccessNode::new(DETAIL_TAG, AriaRole::Group).with_name("Details");
-    let panel_edit = active.filter(|a| a.surface == EditSurface::Panel).map(|a| a.target);
+    let panel_edit = active
+        .filter(|a| a.surface == EditSurface::Panel)
+        .map(|a| a.target);
     let mut rows_out: Vec<AccessNode> = Vec::new();
     let mut editor: Option<AccessNode> = None;
     if let Some(node) = selection.node().and_then(|id| node_ref(nodes, id)) {
         for row in detail_rows(node) {
             let tag = format!("{GRAPH_TAG}#detail_{}", row.key);
             group = group.with_child(tag.clone());
-            let mut entry =
-                AccessNode::new(tag, AriaRole::Generic).with_name(format!("{}: {}", row.label, row.value));
+            let mut entry = AccessNode::new(tag, AriaRole::Generic)
+                .with_name(format!("{}: {}", row.label, row.value));
             if panel_edit == Some(row.target) {
                 entry = entry.with_child(EDIT_TF_TAG);
                 editor = Some(
@@ -4724,7 +5050,9 @@ impl WidgetA11y for NodeEditorView {
         let active = use_active_edit().get();
         // R918 — only a card-surface edit hosts the field on a node card; a
         // panel-surface edit hosts it in the Details panel subtree instead.
-        let card_edit = active.filter(|a| a.surface == EditSurface::Card).map(|a| a.target);
+        let card_edit = active
+            .filter(|a| a.surface == EditSurface::Card)
+            .map(|a| a.target);
         // R849/R850 / R918 — the editor lowers to a root with three regions: the
         // add-node palette (a `toolbar` of `button`s), the graph canvas (the R840
         // unordered `group` of node `generic`s), and the Details panel `group`.
@@ -4740,9 +5068,13 @@ impl WidgetA11y for NodeEditorView {
         // `.with_focusable(true)`) — a
         // mouse/RPC-driven toolbar, the `hello-textarea` NoFocus-toolbar
         // precedent. Keyboard roving over the palette is a documented carry.
-        let palette_tags: Vec<String> =
-            (0..PALETTE.len()).map(|i| format!("{GRAPH_TAG}#palette_{i}")).collect();
-        let palette_names: Vec<String> = PALETTE.iter().map(|&(t, _, _)| format!("Add {t}")).collect();
+        let palette_tags: Vec<String> = (0..PALETTE.len())
+            .map(|i| format!("{GRAPH_TAG}#palette_{i}"))
+            .collect();
+        let palette_names: Vec<String> = PALETTE
+            .iter()
+            .map(|&(t, _, _)| format!("Add {t}"))
+            .collect();
         let controls: Vec<ToolbarControl> = palette_tags
             .iter()
             .zip(&palette_names)
@@ -4754,22 +5086,36 @@ impl WidgetA11y for NodeEditorView {
             })
             .collect();
         let mut out = vec![root];
-        out.extend(toolbar_button_nodes(PALETTE_TAG, "Add node", &controls, None));
+        out.extend(toolbar_button_nodes(
+            PALETTE_TAG,
+            "Add node",
+            &controls,
+            None,
+        ));
         // R879 — the canvas owns a multi-selection set; announce it
         // (`aria-multiselectable`) so per-node `aria-selected` flags read
         // as set membership, not a single highlight.
         let mut group = AccessNode::new(GRAPH_TAG, AriaRole::Group)
             .with_name("Node graph")
             .with_multiselectable()
-            .with_state(AccessState { focused: focused == Some(GRAPH_TAG), ..AccessState::default() });
+            .with_state(AccessState {
+                focused: focused == Some(GRAPH_TAG),
+                ..AccessState::default()
+            });
         for node in &nodes {
             group = group.with_child(format!("{GRAPH_TAG}#node_{}", node.id));
         }
         out.push(group);
         for node in &nodes {
-            let mut entry = AccessNode::new(format!("{GRAPH_TAG}#node_{}", node.id), AriaRole::Generic)
-                .with_name(format!("{} ({} in, {} out)", node.title, node.inputs(), node.outputs()))
-                .with_selected(selected.contains(&node.id));
+            let mut entry =
+                AccessNode::new(format!("{GRAPH_TAG}#node_{}", node.id), AriaRole::Generic)
+                    .with_name(format!(
+                        "{} ({} in, {} out)",
+                        node.title,
+                        node.inputs(),
+                        node.outputs()
+                    ))
+                    .with_selected(selected.contains(&node.id));
             // R878 / R901 — while this node hosts a *card*-surface inline edit,
             // the shared field is its child textbox (the lifted
             // `text_field_a11y_node` SSOT), named for the edit kind ("Rename
@@ -4797,7 +5143,9 @@ impl WidgetA11y for NodeEditorView {
         }
         // R918 — the Details panel subtree (rows + the in-panel editor when a
         // panel edit is in flight).
-        out.extend(details_access_nodes(&nodes, &selection, active, state.0, focused));
+        out.extend(details_access_nodes(
+            &nodes, &selection, active, state.0, focused,
+        ));
         out
     }
 }
@@ -4810,7 +5158,10 @@ impl WidgetView for NodeEditorView {
         // ([`TOTAL_W`], the same value the root container declares), so the flex
         // row never shrinks: the canvas keeps its `WIN_W` width at the
         // `PALETTE_W` offset, so the node / wire geometry is unchanged.
-        pinion_shell::SizeStrategy::Fixed { width: TOTAL_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: TOTAL_W,
+            height: WIN_H,
+        }
     }
 }
 
@@ -4830,7 +5181,9 @@ mod tests {
         // Build the primary from `coordinator()` (in-memory storage) rather than
         // `create_external` so a unit test never spins up the real `FileStorage`
         // (which eagerly create_dir_all's the OS data dir).
-        Scene::External(ExternalNode::new(Box::new(coordinator()) as Box<dyn External>).with_tag(GRAPH_TAG))
+        Scene::External(
+            ExternalNode::new(Box::new(coordinator()) as Box<dyn External>).with_tag(GRAPH_TAG),
+        )
     }
 
     fn graph_intro(scene: &Scene) -> &dyn ExternalIntrospect {
@@ -4850,7 +5203,9 @@ mod tests {
     /// Send a pointer wire event through the coordinator (a borrow-scoped
     /// helper so the `&mut scene` borrow ends before the next read).
     fn send(scene: &mut Scene, wire: &str) {
-        let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
+        let node = scene
+            .find_external_with_tag_mut(GRAPH_TAG)
+            .expect("present");
         let intro = node.handle.introspect_mut().expect("introspectable");
         let _ = intro.invoke("send", IntrospectValue::Text(wire.to_owned()));
     }
@@ -4862,13 +5217,19 @@ mod tests {
     /// R901 surface), the expected `use_active_edit()` value for a card edit.
     #[allow(clippy::unnecessary_wraps)]
     fn card(target: EditTarget) -> Option<ActiveEdit> {
-        Some(ActiveEdit { target, surface: EditSurface::Card })
+        Some(ActiveEdit {
+            target,
+            surface: EditSurface::Card,
+        })
     }
 
     /// R918 — an in-flight edit on `target` hosted by the Details panel row.
     #[allow(clippy::unnecessary_wraps)]
     fn panel(target: EditTarget) -> Option<ActiveEdit> {
-        Some(ActiveEdit { target, surface: EditSurface::Panel })
+        Some(ActiveEdit {
+            target,
+            surface: EditSurface::Panel,
+        })
     }
 
     #[test]
@@ -4881,10 +5242,16 @@ mod tests {
             assert_eq!(intro.query("node_count"), Some(IntrospectValue::Int(4)));
             assert_eq!(intro.query("edge_count"), Some(IntrospectValue::Int(3)));
             assert_eq!(intro.query("selected"), Some(IntrospectValue::Null));
-            assert_eq!(intro.query("node.2.title"), Some(IntrospectValue::Text("Multiply".to_owned())));
+            assert_eq!(
+                intro.query("node.2.title"),
+                Some(IntrospectValue::Text("Multiply".to_owned()))
+            );
             assert_eq!(intro.query("node.2.inputs"), Some(IntrospectValue::Int(2)));
             assert_eq!(intro.query("node.3.outputs"), Some(IntrospectValue::Int(0)));
-            assert_eq!(intro.query("edge.0"), Some(IntrospectValue::Text("0:0->2:0".to_owned())));
+            assert_eq!(
+                intro.query("edge.0"),
+                Some(IntrospectValue::Text("0:0->2:0".to_owned()))
+            );
             assert_eq!(intro.query("node.9.title"), None, "out-of-range -> None");
         });
     }
@@ -4897,22 +5264,45 @@ mod tests {
         Owner::new().run(|| {
             let mut scene = boot_scene();
             // Nothing selected at boot -> the panel has no node to inspect.
-            assert_eq!(graph_intro(&scene).query("detail.node"), Some(IntrospectValue::Null));
-            assert_eq!(graph_intro(&scene).query("detail.title"), Some(IntrospectValue::Null));
+            assert_eq!(
+                graph_intro(&scene).query("detail.node"),
+                Some(IntrospectValue::Null)
+            );
+            assert_eq!(
+                graph_intro(&scene).query("detail.title"),
+                Some(IntrospectValue::Null)
+            );
             // Select node 2 (Multiply, 2 Vector inputs at x=250).
             {
-                let intro = scene.find_external_with_tag_mut(GRAPH_TAG).unwrap().handle.introspect_mut().unwrap();
-                intro.intervene("selected_ids", IntrospectValue::Text("2".to_owned())).unwrap();
+                let intro = scene
+                    .find_external_with_tag_mut(GRAPH_TAG)
+                    .unwrap()
+                    .handle
+                    .introspect_mut()
+                    .unwrap();
+                intro
+                    .intervene("selected_ids", IntrospectValue::Text("2".to_owned()))
+                    .unwrap();
             }
             let intro = graph_intro(&scene);
-            assert_eq!(intro.query("detail.node"), Some(IntrospectValue::Int(2)), "the single selected id");
-            assert_eq!(intro.query("detail.title"), Some(IntrospectValue::Text("Multiply".to_owned())));
+            assert_eq!(
+                intro.query("detail.node"),
+                Some(IntrospectValue::Int(2)),
+                "the single selected id"
+            );
+            assert_eq!(
+                intro.query("detail.title"),
+                Some(IntrospectValue::Text("Multiply".to_owned()))
+            );
             assert_eq!(intro.query("detail.x"), Some(IntrospectValue::Int(250)));
             assert_eq!(intro.query("detail.inputs"), Some(IntrospectValue::Int(2)));
             // The alias equals the absolute address of the selected node.
             assert_eq!(intro.query("detail.title"), intro.query("node.2.title"));
             assert_eq!(intro.query("detail.x"), intro.query("node.2.x"));
-            assert_eq!(intro.query("detail.input_default.0"), intro.query("node.2.input_default.0"));
+            assert_eq!(
+                intro.query("detail.input_default.0"),
+                intro.query("node.2.input_default.0")
+            );
         });
     }
 
@@ -4923,14 +5313,28 @@ mod tests {
         Owner::new().run(|| {
             let mut scene = boot_scene();
             {
-                let intro = scene.find_external_with_tag_mut(GRAPH_TAG).unwrap().handle.introspect_mut().unwrap();
-                intro.intervene("selected_ids", IntrospectValue::Text("0, 2".to_owned())).unwrap();
+                let intro = scene
+                    .find_external_with_tag_mut(GRAPH_TAG)
+                    .unwrap()
+                    .handle
+                    .introspect_mut()
+                    .unwrap();
+                intro
+                    .intervene("selected_ids", IntrospectValue::Text("0, 2".to_owned()))
+                    .unwrap();
             }
             let intro = graph_intro(&scene);
-            assert_eq!(intro.query("detail.node"), Some(IntrospectValue::Null), "multi-select has no single detail node");
+            assert_eq!(
+                intro.query("detail.node"),
+                Some(IntrospectValue::Null),
+                "multi-select has no single detail node"
+            );
             assert_eq!(intro.query("detail.title"), Some(IntrospectValue::Null));
             assert_eq!(intro.query("detail.x"), Some(IntrospectValue::Null));
-            assert_eq!(intro.query("detail.input_default.0"), Some(IntrospectValue::Null));
+            assert_eq!(
+                intro.query("detail.input_default.0"),
+                Some(IntrospectValue::Null)
+            );
         });
     }
 
@@ -4942,21 +5346,51 @@ mod tests {
         Owner::new().run(|| {
             let mut scene = boot_scene();
             {
-                let intro = scene.find_external_with_tag_mut(GRAPH_TAG).unwrap().handle.introspect_mut().unwrap();
-                intro.intervene("selected_ids", IntrospectValue::Text("0".to_owned())).unwrap();
+                let intro = scene
+                    .find_external_with_tag_mut(GRAPH_TAG)
+                    .unwrap()
+                    .handle
+                    .introspect_mut()
+                    .unwrap();
+                intro
+                    .intervene("selected_ids", IntrospectValue::Text("0".to_owned()))
+                    .unwrap();
                 // The Details panel's AI-first edits route to node 0.
-                assert!(intro.intervene("detail.title", IntrospectValue::Text("Albedo".to_owned())).is_ok());
-                assert!(intro.intervene("detail.x", IntrospectValue::Int(88)).is_ok());
+                assert!(
+                    intro
+                        .intervene("detail.title", IntrospectValue::Text("Albedo".to_owned()))
+                        .is_ok()
+                );
+                assert!(
+                    intro
+                        .intervene("detail.x", IntrospectValue::Int(88))
+                        .is_ok()
+                );
             }
             {
                 let intro = graph_intro(&scene);
-                assert_eq!(intro.query("node.0.title"), Some(IntrospectValue::Text("Albedo".to_owned())), "detail.title wrote node 0");
+                assert_eq!(
+                    intro.query("node.0.title"),
+                    Some(IntrospectValue::Text("Albedo".to_owned())),
+                    "detail.title wrote node 0"
+                );
                 assert_eq!(intro.query("node.0.x"), Some(IntrospectValue::Int(88)));
-                assert_eq!(intro.query("detail.title"), Some(IntrospectValue::Text("Albedo".to_owned())), "the panel reflects the edit");
+                assert_eq!(
+                    intro.query("detail.title"),
+                    Some(IntrospectValue::Text("Albedo".to_owned())),
+                    "the panel reflects the edit"
+                );
             }
             // Clearing the single-selection makes a detail write unaddressable.
-            let intro = scene.find_external_with_tag_mut(GRAPH_TAG).unwrap().handle.introspect_mut().unwrap();
-            intro.intervene("selected_ids", IntrospectValue::Text("0, 1".to_owned())).unwrap();
+            let intro = scene
+                .find_external_with_tag_mut(GRAPH_TAG)
+                .unwrap()
+                .handle
+                .introspect_mut()
+                .unwrap();
+            intro
+                .intervene("selected_ids", IntrospectValue::Text("0, 1".to_owned()))
+                .unwrap();
             assert_eq!(
                 intro.intervene("detail.title", IntrospectValue::Text("X".to_owned())),
                 Err(InterveneError::UnknownPath),
@@ -4975,23 +5409,52 @@ mod tests {
         Owner::new().run(|| {
             let mut scene = boot_scene();
             {
-                let intro = scene.find_external_with_tag_mut(GRAPH_TAG).unwrap().handle.introspect_mut().unwrap();
-                intro.intervene("selected_ids", IntrospectValue::Text("2".to_owned())).unwrap(); // Multiply
+                let intro = scene
+                    .find_external_with_tag_mut(GRAPH_TAG)
+                    .unwrap()
+                    .handle
+                    .introspect_mut()
+                    .unwrap();
+                intro
+                    .intervene("selected_ids", IntrospectValue::Text("2".to_owned()))
+                    .unwrap(); // Multiply
             }
             let intro = graph_intro(&scene);
             // Parity: the previously-undeclared fields resolve and match the
             // absolute address of the selected node.
             assert_eq!(intro.query("detail.outputs"), intro.query("node.2.outputs"));
-            assert_eq!(intro.query("detail.input_types"), intro.query("node.2.input_types"));
-            assert_eq!(intro.query("detail.output_types"), intro.query("node.2.output_types"));
-            assert_eq!(intro.query("detail.outputs"), Some(IntrospectValue::Int(1)), "Multiply has 1 output");
+            assert_eq!(
+                intro.query("detail.input_types"),
+                intro.query("node.2.input_types")
+            );
+            assert_eq!(
+                intro.query("detail.output_types"),
+                intro.query("node.2.output_types")
+            );
+            assert_eq!(
+                intro.query("detail.outputs"),
+                Some(IntrospectValue::Int(1)),
+                "Multiply has 1 output"
+            );
             // The schema declares the full mirror (no undeclared-but-resolvable path).
             let fields: Vec<&str> = intro.schema().fields.iter().map(|(p, _)| *p).collect();
-            for f in ["detail.outputs", "detail.input_types", "detail.output_types"] {
-                assert!(fields.contains(&f), "{f} must be schema-declared (mirrors node.<id>.*)");
+            for f in [
+                "detail.outputs",
+                "detail.input_types",
+                "detail.output_types",
+            ] {
+                assert!(
+                    fields.contains(&f),
+                    "{f} must be schema-declared (mirrors node.<id>.*)"
+                );
             }
             // `detail.node` is read-only: write the selection via `selected_ids`.
-            let intro = scene.find_external_with_tag_mut(GRAPH_TAG).unwrap().handle.introspect_mut().unwrap();
+            let intro = scene
+                .find_external_with_tag_mut(GRAPH_TAG)
+                .unwrap()
+                .handle
+                .introspect_mut()
+                .unwrap();
             assert_eq!(
                 intro.intervene("detail.node", IntrospectValue::Int(0)),
                 Err(InterveneError::UnknownPath),
@@ -5004,17 +5467,34 @@ mod tests {
     fn r838_intervene_moves_node_clamped() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
+            let node = scene
+                .find_external_with_tag_mut(GRAPH_TAG)
+                .expect("present");
             let intro = node.handle.introspect_mut().expect("introspectable");
-            assert!(intro.intervene("node.0.x", IntrospectValue::Int(120)).is_ok());
-            assert!(intro.intervene("node.0.y", IntrospectValue::Int(90)).is_ok());
+            assert!(
+                intro
+                    .intervene("node.0.x", IntrospectValue::Int(120))
+                    .is_ok()
+            );
+            assert!(
+                intro
+                    .intervene("node.0.y", IntrospectValue::Int(90))
+                    .is_ok()
+            );
             assert_eq!(intro.query("node.0.x"), Some(IntrospectValue::Int(120)));
             assert_eq!(intro.query("node.0.y"), Some(IntrospectValue::Int(90)));
             // An out-of-world request clamps to the WORLD extent (R877: the
             // canvas pans, so the clamp is the world edge, not the window).
-            assert!(intro.intervene("node.0.x", IntrospectValue::Int(99999)).is_ok());
+            assert!(
+                intro
+                    .intervene("node.0.x", IntrospectValue::Int(99999))
+                    .is_ok()
+            );
             let x = intro.query("node.0.x");
-            assert_eq!(x, Some(IntrospectValue::Int(i64::from(clamp_node_x(99999)))));
+            assert_eq!(
+                x,
+                Some(IntrospectValue::Int(i64::from(clamp_node_x(99999))))
+            );
         });
     }
 
@@ -5022,7 +5502,9 @@ mod tests {
     fn r838_intervene_readonly_and_typed() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
+            let node = scene
+                .find_external_with_tag_mut(GRAPH_TAG)
+                .expect("present");
             let intro = node.handle.introspect_mut().expect("introspectable");
             // R878 — `title` became the undoable rename write-twin; the
             // structural port arity stays read-only.
@@ -5045,7 +5527,9 @@ mod tests {
     fn r838_add_edge_validates_and_dedups_input() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
+            let node = scene
+                .find_external_with_tag_mut(GRAPH_TAG)
+                .expect("present");
             let intro = node.handle.introspect_mut().expect("introspectable");
             // Self-loop rejected.
             assert_eq!(
@@ -5066,7 +5550,10 @@ mod tests {
             // Input (3,0) now has exactly one wire — still 3 edges total.
             assert_eq!(intro.query("edge_count"), Some(IntrospectValue::Int(3)));
             assert_eq!(intro.query("edge.2"), None, "old wire id 2 was replaced");
-            assert_eq!(intro.query("edge.3"), Some(IntrospectValue::Text("0:0->3:0".to_owned())));
+            assert_eq!(
+                intro.query("edge.3"),
+                Some(IntrospectValue::Text("0:0->3:0".to_owned()))
+            );
         });
     }
 
@@ -5076,8 +5563,14 @@ mod tests {
         // there is no narrowing, so the relation is asymmetric.
         assert!(PortType::Float.is_assignable_to(PortType::Float));
         assert!(PortType::Vector.is_assignable_to(PortType::Vector));
-        assert!(PortType::Float.is_assignable_to(PortType::Vector), "scalar broadcast");
-        assert!(!PortType::Vector.is_assignable_to(PortType::Float), "no vector->scalar narrowing");
+        assert!(
+            PortType::Float.is_assignable_to(PortType::Vector),
+            "scalar broadcast"
+        );
+        assert!(
+            !PortType::Vector.is_assignable_to(PortType::Float),
+            "no vector->scalar narrowing"
+        );
     }
 
     #[test]
@@ -5091,14 +5584,27 @@ mod tests {
             let lerp = coord.add_node(6).expect("Lerp is a valid kind");
             let before = coord.edges.get().len();
             // Float -> Float (Lerp's factor input): exact, accepted.
-            assert!(coord.add_edge(scalar, 0, lerp, 2), "Float -> Float exact is accepted");
+            assert!(
+                coord.add_edge(scalar, 0, lerp, 2),
+                "Float -> Float exact is accepted"
+            );
             // Float -> Vector (Lerp's colour input): scalar broadcast, accepted.
-            assert!(coord.add_edge(scalar, 0, lerp, 0), "Float -> Vector broadcast is accepted");
+            assert!(
+                coord.add_edge(scalar, 0, lerp, 0),
+                "Float -> Vector broadcast is accepted"
+            );
             // Vector -> Float (Texture's colour into the factor input): narrowing,
             // REJECTED — the typed gate the pre-R898 arity check could not make.
-            assert!(!coord.add_edge(NodeId(0), 0, lerp, 2), "Vector -> Float narrowing is rejected");
+            assert!(
+                !coord.add_edge(NodeId(0), 0, lerp, 2),
+                "Vector -> Float narrowing is rejected"
+            );
             // Only the two accepted wires were added.
-            assert_eq!(coord.edges.get().len(), before + 2, "exactly the compatible wires landed");
+            assert_eq!(
+                coord.edges.get().len(),
+                before + 2,
+                "exactly the compatible wires landed"
+            );
         });
     }
 
@@ -5106,7 +5612,9 @@ mod tests {
     fn r898_typed_ports_are_ai_readable_and_read_only() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
+            let node = scene
+                .find_external_with_tag_mut(GRAPH_TAG)
+                .expect("present");
             let intro = node.handle.introspect_mut().expect("introspectable");
             // Multiply (node 2): two `Vector` inputs, one `Vector` output.
             assert_eq!(
@@ -5124,7 +5632,10 @@ mod tests {
             );
             // The typed-port lists are read-only (ports are the node kind's).
             assert_eq!(
-                intro.intervene("node.2.input_types", IntrospectValue::Text("Float".to_owned())),
+                intro.intervene(
+                    "node.2.input_types",
+                    IntrospectValue::Text("Float".to_owned())
+                ),
                 Err(InterveneError::ReadOnly),
             );
         });
@@ -5133,18 +5644,28 @@ mod tests {
     #[test]
     fn r899_input_port_default_is_typed_by_port_type() {
         // A Vector port defaults to a colour, a Float port to a scalar.
-        assert!(matches!(PortType::Vector.default_value(), CellValue::Color(_)));
+        assert!(matches!(
+            PortType::Vector.default_value(),
+            CellValue::Color(_)
+        ));
         assert_eq!(PortType::Float.default_value(), CellValue::Float(0.0));
         Owner::new().run(|| {
             let _ = boot_scene();
             let coord = coordinator();
             // Multiply (node 2) input 0 is a Vector port -> a Color default.
             let n = coord.node_by_id(NodeId(2)).expect("node 2");
-            assert!(matches!(n.input_default(0), Some(CellValue::Color(_))), "Vector input default is a Color");
+            assert!(
+                matches!(n.input_default(0), Some(CellValue::Color(_))),
+                "Vector input default is a Color"
+            );
             // Lerp's input 2 is the Float factor -> a Float default.
             let lerp = coord.add_node(6).expect("Lerp");
             let l = coord.node_by_id(lerp).expect("lerp");
-            assert_eq!(l.input_default(2), Some(&CellValue::Float(0.0)), "Float input default is 0.0");
+            assert_eq!(
+                l.input_default(2),
+                Some(&CellValue::Float(0.0)),
+                "Float input default is 0.0"
+            );
         });
     }
 
@@ -5152,23 +5673,40 @@ mod tests {
     fn r899_input_default_is_ai_read_write_and_type_checked() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
+            let node = scene
+                .find_external_with_tag_mut(GRAPH_TAG)
+                .expect("present");
             let intro = node.handle.introspect_mut().expect("introspectable");
             // The Vector input's default reads as a Color object.
             let Some(IntrospectValue::Json(j)) = intro.query("node.2.input_default.0") else {
                 panic!("Vector default reads as a JSON colour object");
             };
-            assert_eq!(j.get("r").and_then(serde_json::Value::as_u64), Some(0x80), "default grey r=0x80");
+            assert_eq!(
+                j.get("r").and_then(serde_json::Value::as_u64),
+                Some(0x80),
+                "default grey r=0x80"
+            );
             // A typed write takes a hex string and reads back the parsed channels.
             assert_eq!(
-                intro.intervene("node.2.input_default.0", IntrospectValue::Text("#3366cc".to_owned())),
+                intro.intervene(
+                    "node.2.input_default.0",
+                    IntrospectValue::Text("#3366cc".to_owned())
+                ),
                 Ok(()),
             );
             let Some(IntrospectValue::Json(j)) = intro.query("node.2.input_default.0") else {
                 panic!("re-read after the typed write");
             };
-            assert_eq!(j.get("r").and_then(serde_json::Value::as_u64), Some(0x33), "written r");
-            assert_eq!(j.get("b").and_then(serde_json::Value::as_u64), Some(0xcc), "written b");
+            assert_eq!(
+                j.get("r").and_then(serde_json::Value::as_u64),
+                Some(0x33),
+                "written r"
+            );
+            assert_eq!(
+                j.get("b").and_then(serde_json::Value::as_u64),
+                Some(0xcc),
+                "written b"
+            );
             // The wrong value type for a Color port is rejected (no float into a colour).
             assert_eq!(
                 intro.intervene("node.2.input_default.0", IntrospectValue::Float(1.0)),
@@ -5177,7 +5715,10 @@ mod tests {
             // An out-of-range port: query is absent, write is UnknownPath.
             assert_eq!(intro.query("node.2.input_default.9"), None);
             assert_eq!(
-                intro.intervene("node.2.input_default.9", IntrospectValue::Text("#000000".to_owned())),
+                intro.intervene(
+                    "node.2.input_default.9",
+                    IntrospectValue::Text("#000000".to_owned())
+                ),
                 Err(InterveneError::UnknownPath),
             );
         });
@@ -5190,17 +5731,41 @@ mod tests {
             let coord = coordinator();
             let stack = use_undo();
             let red = CellValue::Color(Color::rgb(0xff, 0x00, 0x00));
-            let grey = coord.node_by_id(NodeId(2)).and_then(|n| n.input_default(0).cloned()).expect("default");
-            assert!(apply_set_default(&use_nodes(), &use_undo(), NodeId(2), 0, red.clone()));
+            let grey = coord
+                .node_by_id(NodeId(2))
+                .and_then(|n| n.input_default(0).cloned())
+                .expect("default");
+            assert!(apply_set_default(
+                &use_nodes(),
+                &use_undo(),
+                NodeId(2),
+                0,
+                red.clone()
+            ));
             assert_eq!(stack.len(), 1, "a default change is one undo step");
-            assert_eq!(coord.node_by_id(NodeId(2)).unwrap().input_default(0), Some(&red));
+            assert_eq!(
+                coord.node_by_id(NodeId(2)).unwrap().input_default(0),
+                Some(&red)
+            );
             // Re-setting the same value is a no-op (no extra undo step).
-            assert!(apply_set_default(&use_nodes(), &use_undo(), NodeId(2), 0, red.clone()));
+            assert!(apply_set_default(
+                &use_nodes(),
+                &use_undo(),
+                NodeId(2),
+                0,
+                red.clone()
+            ));
             assert_eq!(stack.len(), 1, "an unchanged write journals nothing");
             assert!(stack.undo(), "undo restores the prior default");
-            assert_eq!(coord.node_by_id(NodeId(2)).unwrap().input_default(0), Some(&grey));
+            assert_eq!(
+                coord.node_by_id(NodeId(2)).unwrap().input_default(0),
+                Some(&grey)
+            );
             assert!(stack.redo(), "redo re-applies it");
-            assert_eq!(coord.node_by_id(NodeId(2)).unwrap().input_default(0), Some(&red));
+            assert_eq!(
+                coord.node_by_id(NodeId(2)).unwrap().input_default(0),
+                Some(&red)
+            );
         });
     }
 
@@ -5216,10 +5781,20 @@ mod tests {
             let stack = use_undo();
             let lerp = coord.add_node(6).expect("Lerp"); // input 2 is a Float port
             let nan = CellValue::Float(f64::NAN);
-            assert!(apply_set_default(&use_nodes(), &use_undo(), lerp, 2, nan.clone()), "first NaN set journals");
+            assert!(
+                apply_set_default(&use_nodes(), &use_undo(), lerp, 2, nan.clone()),
+                "first NaN set journals"
+            );
             let after_first = stack.len();
-            assert!(apply_set_default(&use_nodes(), &use_undo(), lerp, 2, nan), "repeat NaN is a no-op");
-            assert_eq!(stack.len(), after_first, "an unchanged NaN write journals nothing");
+            assert!(
+                apply_set_default(&use_nodes(), &use_undo(), lerp, 2, nan),
+                "repeat NaN is a no-op"
+            );
+            assert_eq!(
+                stack.len(),
+                after_first,
+                "an unchanged NaN write journals nothing"
+            );
         });
     }
 
@@ -5237,26 +5812,48 @@ mod tests {
             let coord = coordinator();
             let stack = use_undo();
             let lerp = coord.add_node(6).expect("Lerp"); // input 2 = Float port
-            assert!(coord.begin_edit_default(lerp, 2), "the Float pin default opens for edit");
+            assert!(
+                coord.begin_edit_default(lerp, 2),
+                "the Float pin default opens for edit"
+            );
             assert_eq!(
                 use_active_edit().get(),
-                card(EditTarget::PortDefault { node: lerp, port: 2 }),
+                card(EditTarget::PortDefault {
+                    node: lerp,
+                    port: 2
+                }),
                 "the editor targets the Float pin default",
             );
-            assert_eq!(use_text_edit_state(EDIT_TF_TAG).text(), "0", "seeded with the current default");
+            assert_eq!(
+                use_text_edit_state(EDIT_TF_TAG).text(),
+                "0",
+                "seeded with the current default"
+            );
             use_text_edit_state(EDIT_TF_TAG).set_text("0.75".to_owned());
             commit_edit(true);
             assert_eq!(use_active_edit().get(), None, "commit leaves edit mode");
             assert_eq!(
-                coord.node_by_id(lerp).and_then(|n| n.input_default(2).cloned()),
+                coord
+                    .node_by_id(lerp)
+                    .and_then(|n| n.input_default(2).cloned()),
                 Some(CellValue::Float(0.75)),
                 "the typed value parsed and applied",
             );
-            assert_eq!(use_text_edit_state(EDIT_TF_TAG).text(), "", "field wiped for the next edit");
-            assert_eq!(stack.undo_label().as_deref(), Some("Set port default"), "journaled undoably");
+            assert_eq!(
+                use_text_edit_state(EDIT_TF_TAG).text(),
+                "",
+                "field wiped for the next edit"
+            );
+            assert_eq!(
+                stack.undo_label().as_deref(),
+                Some("Set port default"),
+                "journaled undoably"
+            );
             assert!(stack.undo());
             assert_eq!(
-                coord.node_by_id(lerp).and_then(|n| n.input_default(2).cloned()),
+                coord
+                    .node_by_id(lerp)
+                    .and_then(|n| n.input_default(2).cloned()),
                 Some(CellValue::Float(0.0)),
                 "undo restores the prior default",
             );
@@ -5273,14 +5870,24 @@ mod tests {
             let _scene = boot_scene();
             let coord = coordinator();
             let lerp = coord.add_node(6).expect("Lerp"); // ports [Vector, Vector, Float]
-            assert_eq!(edit_target_kind(EditTarget::Title(NodeId(2))), CellKind::Text, "a title is plain text");
             assert_eq!(
-                edit_target_kind(EditTarget::PortDefault { node: lerp, port: 2 }),
+                edit_target_kind(EditTarget::Title(NodeId(2))),
+                CellKind::Text,
+                "a title is plain text"
+            );
+            assert_eq!(
+                edit_target_kind(EditTarget::PortDefault {
+                    node: lerp,
+                    port: 2
+                }),
                 CellKind::Float,
                 "a Float pin is number-gated",
             );
             assert_eq!(
-                edit_target_kind(EditTarget::PortDefault { node: lerp, port: 0 }),
+                edit_target_kind(EditTarget::PortDefault {
+                    node: lerp,
+                    port: 0
+                }),
                 CellKind::Color,
                 "a Vector pin is hex-gated",
             );
@@ -5305,7 +5912,9 @@ mod tests {
             use_text_edit_state(EDIT_TF_TAG).set_text("#3366cc".to_owned());
             commit_edit(true);
             assert_eq!(
-                coord.node_by_id(lerp).and_then(|n| n.input_default(0).cloned()),
+                coord
+                    .node_by_id(lerp)
+                    .and_then(|n| n.input_default(0).cloned()),
                 Some(CellValue::Color(Color::rgb(0x33, 0x66, 0xcc))),
                 "the typed hex parsed into the colour default",
             );
@@ -5330,7 +5939,9 @@ mod tests {
             use_text_edit_state(EDIT_TF_TAG).set_text("abc".to_owned());
             commit_edit(true);
             assert_eq!(
-                coord.node_by_id(lerp).and_then(|n| n.input_default(2).cloned()),
+                coord
+                    .node_by_id(lerp)
+                    .and_then(|n| n.input_default(2).cloned()),
                 Some(CellValue::Float(0.0)),
                 "a malformed commit keeps the prior default",
             );
@@ -5347,32 +5958,60 @@ mod tests {
         Owner::new().run(|| {
             let mut scene = boot_scene();
             // Idle: both reads are Null.
-            assert_eq!(graph_intro(&scene).query("editing"), Some(IntrospectValue::Null));
-            assert_eq!(graph_intro(&scene).query("renaming"), Some(IntrospectValue::Null));
+            assert_eq!(
+                graph_intro(&scene).query("editing"),
+                Some(IntrospectValue::Null)
+            );
+            assert_eq!(
+                graph_intro(&scene).query("renaming"),
+                Some(IntrospectValue::Null)
+            );
             // A title edit: `editing` is a title object, `renaming` is the id.
             {
-                let intro = scene.find_external_with_tag_mut(GRAPH_TAG).unwrap().handle.introspect_mut().unwrap();
-                assert_eq!(intro.invoke("begin_rename", IntrospectValue::Int(2)), Ok(IntrospectValue::Bool(true)));
+                let intro = scene
+                    .find_external_with_tag_mut(GRAPH_TAG)
+                    .unwrap()
+                    .handle
+                    .introspect_mut()
+                    .unwrap();
+                assert_eq!(
+                    intro.invoke("begin_rename", IntrospectValue::Int(2)),
+                    Ok(IntrospectValue::Bool(true))
+                );
             }
             let Some(IntrospectValue::Json(j)) = graph_intro(&scene).query("editing") else {
                 panic!("editing reads as a JSON object for a title edit");
             };
-            assert_eq!(j.get("kind").and_then(serde_json::Value::as_str), Some("title"));
+            assert_eq!(
+                j.get("kind").and_then(serde_json::Value::as_str),
+                Some("title")
+            );
             assert_eq!(j.get("node").and_then(serde_json::Value::as_u64), Some(2));
-            assert_eq!(graph_intro(&scene).query("renaming"), Some(IntrospectValue::Int(2)));
+            assert_eq!(
+                graph_intro(&scene).query("renaming"),
+                Some(IntrospectValue::Int(2))
+            );
             // A port-default edit: `editing` is a port_default object, but
             // `renaming` is Null (the degenerate projection). R901.1 — a wired
             // pin rejects the inline editor, so edit a fresh Lerp's UNWIRED
             // Float pin (node 2's pins are both wired in the seed graph).
             let lerp = {
-                let intro = scene.find_external_with_tag_mut(GRAPH_TAG).unwrap().handle.introspect_mut().unwrap();
+                let intro = scene
+                    .find_external_with_tag_mut(GRAPH_TAG)
+                    .unwrap()
+                    .handle
+                    .introspect_mut()
+                    .unwrap();
                 let Ok(IntrospectValue::Int(id)) =
                     intro.invoke("add_node", IntrospectValue::Text("Lerp".to_owned()))
                 else {
                     panic!("add_node returns the new id");
                 };
                 assert_eq!(
-                    intro.invoke("begin_edit_default", IntrospectValue::Text(format!("{id}.2"))),
+                    intro.invoke(
+                        "begin_edit_default",
+                        IntrospectValue::Text(format!("{id}.2"))
+                    ),
                     Ok(IntrospectValue::Bool(true)),
                 );
                 id
@@ -5380,8 +6019,14 @@ mod tests {
             let Some(IntrospectValue::Json(j)) = graph_intro(&scene).query("editing") else {
                 panic!("editing reads as a JSON object for a port-default edit");
             };
-            assert_eq!(j.get("kind").and_then(serde_json::Value::as_str), Some("port_default"));
-            assert_eq!(j.get("node").and_then(serde_json::Value::as_u64), u64::try_from(lerp).ok());
+            assert_eq!(
+                j.get("kind").and_then(serde_json::Value::as_str),
+                Some("port_default")
+            );
+            assert_eq!(
+                j.get("node").and_then(serde_json::Value::as_u64),
+                u64::try_from(lerp).ok()
+            );
             assert_eq!(j.get("port").and_then(serde_json::Value::as_u64), Some(2));
             assert_eq!(
                 graph_intro(&scene).query("renaming"),
@@ -5403,18 +6048,32 @@ mod tests {
             let lerp = coord.add_node(6).expect("Lerp"); // a fresh node: its pins are unwired
             // Invoke entry: a valid pin opens, a bad node / port is rejected.
             {
-                let intro = scene.find_external_with_tag_mut(GRAPH_TAG).unwrap().handle.introspect_mut().unwrap();
+                let intro = scene
+                    .find_external_with_tag_mut(GRAPH_TAG)
+                    .unwrap()
+                    .handle
+                    .introspect_mut()
+                    .unwrap();
                 assert_eq!(
-                    intro.invoke("begin_edit_default", IntrospectValue::Text(format!("{}.2", lerp.raw()))),
+                    intro.invoke(
+                        "begin_edit_default",
+                        IntrospectValue::Text(format!("{}.2", lerp.raw()))
+                    ),
                     Ok(IntrospectValue::Bool(true)),
                 );
                 assert_eq!(
-                    intro.invoke("begin_edit_default", IntrospectValue::Text("99.0".to_owned())),
+                    intro.invoke(
+                        "begin_edit_default",
+                        IntrospectValue::Text("99.0".to_owned())
+                    ),
                     Ok(IntrospectValue::Bool(false)),
                     "an unknown node is rejected",
                 );
                 assert_eq!(
-                    intro.invoke("begin_edit_default", IntrospectValue::Text(format!("{}.9", lerp.raw()))),
+                    intro.invoke(
+                        "begin_edit_default",
+                        IntrospectValue::Text(format!("{}.9", lerp.raw()))
+                    ),
                     Ok(IntrospectValue::Bool(false)),
                     "an out-of-range port is rejected",
                 );
@@ -5422,19 +6081,35 @@ mod tests {
             // The open field paints over the pin and lowers to a textbox named
             // "Port default" (the paint gate == the a11y gate).
             let painted = view((TextFieldState::Editing, 0), &Frame::new());
-            assert!(painted.contains_tag(EDIT_TF_TAG), "the shared field paints over the pin default");
-            let a11y = NodeEditorView::access_node(&(TextFieldState::Editing, 0), Some(EDIT_TF_TAG));
-            let textbox =
-                a11y.iter().find(|n| n.tag == EDIT_TF_TAG).expect("the pin default lowers to a textbox");
+            assert!(
+                painted.contains_tag(EDIT_TF_TAG),
+                "the shared field paints over the pin default"
+            );
+            let a11y =
+                NodeEditorView::access_node(&(TextFieldState::Editing, 0), Some(EDIT_TF_TAG));
+            let textbox = a11y
+                .iter()
+                .find(|n| n.tag == EDIT_TF_TAG)
+                .expect("the pin default lowers to a textbox");
             assert_eq!(textbox.role, AriaRole::TextInput);
-            assert_eq!(textbox.name.as_deref(), Some("Port default"), "named for the port-default edit kind");
+            assert_eq!(
+                textbox.name.as_deref(),
+                Some("Port default"),
+                "named for the port-default edit kind"
+            );
             // Cancel, then a double-click on the pin's default label re-opens it.
             cancel_edit();
             assert_eq!(use_active_edit().get(), None);
-            send(&mut scene, &format!("idefault_{}_2:DoubleClick", lerp.raw()));
+            send(
+                &mut scene,
+                &format!("idefault_{}_2:DoubleClick", lerp.raw()),
+            );
             assert_eq!(
                 use_active_edit().get(),
-                card(EditTarget::PortDefault { node: lerp, port: 2 }),
+                card(EditTarget::PortDefault {
+                    node: lerp,
+                    port: 2
+                }),
                 "double-clicking the pin default opens its editor",
             );
         });
@@ -5455,7 +6130,9 @@ mod tests {
             // Opening a title rename commits the in-flight port default first.
             assert!(coord.begin_rename(NodeId(2)));
             assert_eq!(
-                coord.node_by_id(lerp).and_then(|n| n.input_default(2).cloned()),
+                coord
+                    .node_by_id(lerp)
+                    .and_then(|n| n.input_default(2).cloned()),
                 Some(CellValue::Float(1.5)),
                 "the in-flight port default committed on migration",
             );
@@ -5464,7 +6141,11 @@ mod tests {
                 card(EditTarget::Title(NodeId(2))),
                 "the editor migrated to the title target",
             );
-            assert_eq!(use_text_edit_state(EDIT_TF_TAG).text(), "Multiply", "reseeded from the new target");
+            assert_eq!(
+                use_text_edit_state(EDIT_TF_TAG).text(),
+                "Multiply",
+                "reseeded from the new target"
+            );
         });
     }
 
@@ -5479,20 +6160,42 @@ mod tests {
             let _scene = boot_scene();
             let coord = coordinator();
             // Seed graph: node 2 (Multiply) input 0 is wired by edge 0 (0:0->2:0).
-            assert!(coord.input_wired(NodeId(2), 0), "node 2 port 0 is wired in the seed graph");
-            assert!(!coord.begin_edit_default(NodeId(2), 0), "a wired port rejects the inline editor");
-            assert_eq!(use_active_edit().get(), None, "the rejected begin left no edit in flight");
+            assert!(
+                coord.input_wired(NodeId(2), 0),
+                "node 2 port 0 is wired in the seed graph"
+            );
+            assert!(
+                !coord.begin_edit_default(NodeId(2), 0),
+                "a wired port rejects the inline editor"
+            );
+            assert_eq!(
+                use_active_edit().get(),
+                None,
+                "the rejected begin left no edit in flight"
+            );
             // The a11y tree advertises no textbox while idle (the gate that the
             // wired-port begin must not falsely trip).
             let a11y = NodeEditorView::access_node(&IDLE_TF, Some(GRAPH_TAG));
-            assert!(a11y.iter().all(|n| n.tag != EDIT_TF_TAG), "no unpainted textbox advertised");
+            assert!(
+                a11y.iter().all(|n| n.tag != EDIT_TF_TAG),
+                "no unpainted textbox advertised"
+            );
             // An UNWIRED port (a fresh Lerp's pin) still opens normally.
             let lerp = coord.add_node(6).expect("Lerp");
-            assert!(!coord.input_wired(lerp, 2), "the fresh Lerp's pin is unwired");
-            assert!(coord.begin_edit_default(lerp, 2), "an unwired port opens the editor");
+            assert!(
+                !coord.input_wired(lerp, 2),
+                "the fresh Lerp's pin is unwired"
+            );
+            assert!(
+                coord.begin_edit_default(lerp, 2),
+                "an unwired port opens the editor"
+            );
             assert_eq!(
                 use_active_edit().get(),
-                card(EditTarget::PortDefault { node: lerp, port: 2 }),
+                card(EditTarget::PortDefault {
+                    node: lerp,
+                    port: 2
+                }),
             );
         });
     }
@@ -5505,9 +6208,20 @@ mod tests {
         assert_eq!(detail_edit_target(id, "title"), Some(EditTarget::Title(id)));
         assert_eq!(detail_edit_target(id, "x"), Some(EditTarget::PosX(id)));
         assert_eq!(detail_edit_target(id, "y"), Some(EditTarget::PosY(id)));
-        assert_eq!(detail_edit_target(id, "in_3"), Some(EditTarget::PortDefault { node: id, port: 3 }));
-        assert_eq!(detail_edit_target(id, "bogus"), None, "an unknown key rejects");
-        assert_eq!(detail_edit_target(id, "in_x"), None, "a non-numeric port rejects");
+        assert_eq!(
+            detail_edit_target(id, "in_3"),
+            Some(EditTarget::PortDefault { node: id, port: 3 })
+        );
+        assert_eq!(
+            detail_edit_target(id, "bogus"),
+            None,
+            "an unknown key rejects"
+        );
+        assert_eq!(
+            detail_edit_target(id, "in_x"),
+            None,
+            "a non-numeric port rejects"
+        );
     }
 
     /// R918 — a position edit is integer-gated and seeds from the node's current
@@ -5522,11 +6236,19 @@ mod tests {
             coord.select_node(Some(NodeId(2))); // Multiply, at (250, 110)
             assert!(coord.begin_edit_detail("x"));
             assert_eq!(use_active_edit().get(), panel(EditTarget::PosX(NodeId(2))));
-            assert_eq!(use_text_edit_state(EDIT_TF_TAG).text(), "250", "seeded from node.x");
+            assert_eq!(
+                use_text_edit_state(EDIT_TF_TAG).text(),
+                "250",
+                "seeded from node.x"
+            );
             cancel_edit();
             assert!(coord.begin_edit_detail("y"));
             assert_eq!(use_active_edit().get(), panel(EditTarget::PosY(NodeId(2))));
-            assert_eq!(use_text_edit_state(EDIT_TF_TAG).text(), "110", "seeded from node.y");
+            assert_eq!(
+                use_text_edit_state(EDIT_TF_TAG).text(),
+                "110",
+                "seeded from node.y"
+            );
         });
     }
 
@@ -5538,20 +6260,38 @@ mod tests {
         Owner::new().run(|| {
             let mut scene = boot_scene();
             {
-                let intro = scene.find_external_with_tag_mut(GRAPH_TAG).unwrap().handle.introspect_mut().unwrap();
-                intro.intervene("selected_ids", IntrospectValue::Text("2".to_owned())).unwrap();
+                let intro = scene
+                    .find_external_with_tag_mut(GRAPH_TAG)
+                    .unwrap()
+                    .handle
+                    .introspect_mut()
+                    .unwrap();
+                intro
+                    .intervene("selected_ids", IntrospectValue::Text("2".to_owned()))
+                    .unwrap();
             }
             send(&mut scene, "detail_x:PointerDown");
             send(&mut scene, "detail_x:PointerUp");
-            assert_eq!(use_active_edit().get(), panel(EditTarget::PosX(NodeId(2))), "the panel row opened a PosX edit");
+            assert_eq!(
+                use_active_edit().get(),
+                panel(EditTarget::PosX(NodeId(2))),
+                "the panel row opened a PosX edit"
+            );
             let Some(IntrospectValue::Json(j)) = graph_intro(&scene).query("editing") else {
                 panic!("editing reads as json while an edit is in flight");
             };
             assert_eq!(j["kind"], serde_json::json!("pos_x"));
-            assert_eq!(j["surface"], serde_json::json!("panel"), "the surface is the Details panel");
+            assert_eq!(
+                j["surface"],
+                serde_json::json!("panel"),
+                "the surface is the Details panel"
+            );
             assert_eq!(j["node"], serde_json::json!(2));
             let painted = view((TextFieldState::Editing, 0), &Frame::new());
-            assert!(painted.contains_tag(EDIT_TF_TAG), "the shared field paints (in the panel row)");
+            assert!(
+                painted.contains_tag(EDIT_TF_TAG),
+                "the shared field paints (in the panel row)"
+            );
         });
     }
 
@@ -5567,13 +6307,24 @@ mod tests {
             assert!(coord.begin_edit_detail("x"));
             use_text_edit_state(EDIT_TF_TAG).set_text("400".to_owned());
             commit_edit(true);
-            assert_eq!(coord.node_by_id(NodeId(2)).map(|n| n.x), Some(400), "the panel x edit moved the node");
+            assert_eq!(
+                coord.node_by_id(NodeId(2)).map(|n| n.x),
+                Some(400),
+                "the panel x edit moved the node"
+            );
             assert_eq!(use_active_edit().get(), None, "commit leaves edit mode");
-            assert_eq!(use_undo().undo_label().as_deref(), Some("Move node"), "the panel move is undoable");
+            assert_eq!(
+                use_undo().undo_label().as_deref(),
+                Some("Move node"),
+                "the panel move is undoable"
+            );
             assert!(coord.begin_edit_detail("y"));
             use_text_edit_state(EDIT_TF_TAG).set_text("200".to_owned());
             commit_edit(true);
-            assert_eq!(coord.node_by_id(NodeId(2)).map(|n| (n.x, n.y)), Some((400, 200)));
+            assert_eq!(
+                coord.node_by_id(NodeId(2)).map(|n| (n.x, n.y)),
+                Some((400, 200))
+            );
             // One undo reverts BOTH axes — the two single-axis commits coalesced,
             // exactly like `intervene x` then `intervene y` (the shared funnel).
             assert!(use_undo().undo(), "undo the coalesced move");
@@ -5582,7 +6333,10 @@ mod tests {
                 Some((250, 110)),
                 "x and y reverted in one undo step",
             );
-            assert!(!use_undo().can_undo(), "the two panel edits coalesced into one undo step");
+            assert!(
+                !use_undo().can_undo(),
+                "the two panel edits coalesced into one undo step"
+            );
         });
     }
 
@@ -5597,7 +6351,11 @@ mod tests {
             assert!(coord.begin_edit_detail("x"));
             use_text_edit_state(EDIT_TF_TAG).set_text("-".to_owned()); // a lone sign: not an i32
             commit_edit(true);
-            assert_eq!(coord.node_by_id(NodeId(2)).map(|n| n.x), Some(250), "the position is unchanged");
+            assert_eq!(
+                coord.node_by_id(NodeId(2)).map(|n| n.x),
+                Some(250),
+                "the position is unchanged"
+            );
             assert!(!use_undo().can_undo(), "no undo step for a rejected value");
         });
     }
@@ -5615,15 +6373,27 @@ mod tests {
             assert_eq!(use_active_edit().get(), panel(EditTarget::Title(NodeId(2))));
             use_text_edit_state(EDIT_TF_TAG).set_text("Albedo".to_owned());
             commit_edit(true);
-            assert_eq!(coord.node_by_id(NodeId(2)).map(|n| n.title.clone()), Some("Albedo".to_owned()));
+            assert_eq!(
+                coord.node_by_id(NodeId(2)).map(|n| n.title.clone()),
+                Some("Albedo".to_owned())
+            );
             // Node 2 port 0 is wired (edge 0: 0:0->2:0): the CARD rejects it...
             assert!(coord.input_wired(NodeId(2), 0));
-            assert!(!coord.begin_edit_default(NodeId(2), 0), "the card rejects a wired pin");
+            assert!(
+                !coord.begin_edit_default(NodeId(2), 0),
+                "the card rejects a wired pin"
+            );
             // ...but the PANEL edits it (the row paints regardless of wiring).
-            assert!(coord.begin_edit_detail("in_0"), "the panel edits a wired port default");
+            assert!(
+                coord.begin_edit_detail("in_0"),
+                "the panel edits a wired port default"
+            );
             assert_eq!(
                 use_active_edit().get(),
-                panel(EditTarget::PortDefault { node: NodeId(2), port: 0 }),
+                panel(EditTarget::PortDefault {
+                    node: NodeId(2),
+                    port: 0
+                }),
             );
         });
     }
@@ -5637,9 +6407,15 @@ mod tests {
             assert!(!coord.begin_edit_detail("title"), "no selection rejects");
             coord.select_node(Some(NodeId(2)));
             coord.add_node_to_selection(NodeId(0));
-            assert!(!coord.begin_edit_detail("title"), "a multi-selection has no single node");
+            assert!(
+                !coord.begin_edit_detail("title"),
+                "a multi-selection has no single node"
+            );
             coord.select_node(Some(NodeId(2)));
-            assert!(!coord.begin_edit_detail("bogus"), "an unknown field key rejects");
+            assert!(
+                !coord.begin_edit_detail("bogus"),
+                "an unknown field key rejects"
+            );
             assert_eq!(use_active_edit().get(), None, "no edit left in flight");
         });
     }
@@ -5654,8 +6430,15 @@ mod tests {
         Owner::new().run(|| {
             let mut scene = boot_scene();
             {
-                let intro = scene.find_external_with_tag_mut(GRAPH_TAG).unwrap().handle.introspect_mut().unwrap();
-                intro.intervene("selected_ids", IntrospectValue::Text("2".to_owned())).unwrap();
+                let intro = scene
+                    .find_external_with_tag_mut(GRAPH_TAG)
+                    .unwrap()
+                    .handle
+                    .introspect_mut()
+                    .unwrap();
+                intro
+                    .intervene("selected_ids", IntrospectValue::Text("2".to_owned()))
+                    .unwrap();
                 assert_eq!(
                     intro.invoke("begin_edit_detail", IntrospectValue::Text("y".to_owned())),
                     Ok(IntrospectValue::Bool(true)),
@@ -5666,16 +6449,31 @@ mod tests {
             let Some(IntrospectValue::Json(j)) = graph_intro(&scene).query("editing") else {
                 panic!("editing reads as json");
             };
-            assert_eq!(j["surface"], serde_json::json!("panel"), "the RPC-opened edit reads as the panel surface");
+            assert_eq!(
+                j["surface"],
+                serde_json::json!("panel"),
+                "the RPC-opened edit reads as the panel surface"
+            );
             // An unknown field key is Rejected (`false`); a non-Text arg is a type
             // mismatch — the `begin_rename` / `begin_edit_default` reject shape.
-            let intro = scene.find_external_with_tag_mut(GRAPH_TAG).unwrap().handle.introspect_mut().unwrap();
+            let intro = scene
+                .find_external_with_tag_mut(GRAPH_TAG)
+                .unwrap()
+                .handle
+                .introspect_mut()
+                .unwrap();
             assert_eq!(
-                intro.invoke("begin_edit_detail", IntrospectValue::Text("bogus".to_owned())),
+                intro.invoke(
+                    "begin_edit_detail",
+                    IntrospectValue::Text("bogus".to_owned())
+                ),
                 Ok(IntrospectValue::Bool(false)),
                 "an unknown field key is rejected",
             );
-            assert_eq!(intro.invoke("begin_edit_detail", IntrospectValue::Int(2)), Err(InvokeError::TypeMismatch));
+            assert_eq!(
+                intro.invoke("begin_edit_detail", IntrospectValue::Int(2)),
+                Err(InvokeError::TypeMismatch)
+            );
         });
     }
 
@@ -5689,12 +6487,22 @@ mod tests {
             let coord = coordinator();
             coord.select_node(Some(NodeId(2)));
             assert!(coord.begin_edit_detail("x"));
-            let a11y = NodeEditorView::access_node(&(TextFieldState::Editing, 0), Some(EDIT_TF_TAG));
-            let textbox = a11y.iter().find(|n| n.tag == EDIT_TF_TAG).expect("the panel hosts the editor textbox");
+            let a11y =
+                NodeEditorView::access_node(&(TextFieldState::Editing, 0), Some(EDIT_TF_TAG));
+            let textbox = a11y
+                .iter()
+                .find(|n| n.tag == EDIT_TF_TAG)
+                .expect("the panel hosts the editor textbox");
             assert_eq!(textbox.role, AriaRole::TextInput);
             let row_tag = format!("{GRAPH_TAG}#detail_x");
-            let row = a11y.iter().find(|n| n.tag == row_tag).expect("the Position X row node");
-            assert!(row.children.iter().any(|c| c.as_str() == EDIT_TF_TAG), "the editor is the panel row's child");
+            let row = a11y
+                .iter()
+                .find(|n| n.tag == row_tag)
+                .expect("the Position X row node");
+            assert!(
+                row.children.iter().any(|c| c.as_str() == EDIT_TF_TAG),
+                "the editor is the panel row's child"
+            );
             let card = a11y
                 .iter()
                 .find(|n| n.tag == format!("{GRAPH_TAG}#node_2"))
@@ -5703,7 +6511,10 @@ mod tests {
                 !card.children.iter().any(|c| c.as_str() == EDIT_TF_TAG),
                 "the card does not host the editor while the panel does",
             );
-            let group = a11y.iter().find(|n| n.tag == DETAIL_TAG).expect("the Details group");
+            let group = a11y
+                .iter()
+                .find(|n| n.tag == DETAIL_TAG)
+                .expect("the Details group");
             assert!(group.children.contains(&row_tag), "the group lists the row");
         });
     }
@@ -5722,11 +6533,23 @@ mod tests {
             use_text_edit_state(EDIT_TF_TAG).set_text("333".to_owned());
             // Re-selecting the same node does NOT orphan the edit.
             coord.select_node(Some(NodeId(2)));
-            assert_eq!(use_active_edit().get(), panel(EditTarget::PosX(NodeId(2))), "same selection keeps the edit");
+            assert_eq!(
+                use_active_edit().get(),
+                panel(EditTarget::PosX(NodeId(2))),
+                "same selection keeps the edit"
+            );
             // Changing selection commits the panel edit to node 2 and ends it.
             coord.select_node(Some(NodeId(0)));
-            assert_eq!(use_active_edit().get(), None, "selection change ended the orphaned panel edit");
-            assert_eq!(coord.node_by_id(NodeId(2)).map(|n| n.x), Some(333), "the orphaned edit committed to node 2");
+            assert_eq!(
+                use_active_edit().get(),
+                None,
+                "selection change ended the orphaned panel edit"
+            );
+            assert_eq!(
+                coord.node_by_id(NodeId(2)).map(|n| n.x),
+                Some(333),
+                "the orphaned edit committed to node 2"
+            );
             // A CARD edit survives a selection change (its card always paints).
             coord.select_node(Some(NodeId(2)));
             assert!(coord.begin_rename(NodeId(2)));
@@ -5751,7 +6574,11 @@ mod tests {
             assert!(coord.begin_rename(NodeId(2))); // Card, Title(2), seeds "Multiply"
             use_text_edit_state(EDIT_TF_TAG).set_text("Foo".to_owned());
             assert!(coord.begin_edit_detail("title")); // Panel, Title(2) -> migration
-            assert_eq!(use_active_edit().get(), panel(EditTarget::Title(NodeId(2))), "migrated to the panel surface");
+            assert_eq!(
+                use_active_edit().get(),
+                panel(EditTarget::Title(NodeId(2))),
+                "migrated to the panel surface"
+            );
             assert_eq!(
                 use_text_edit_state(EDIT_TF_TAG).text(),
                 "Foo",
@@ -5770,7 +6597,11 @@ mod tests {
             coord.select_node(Some(NodeId(2)));
             assert!(coord.begin_rename(NodeId(2)));
             assert!(coord.delete_node(NodeId(2)));
-            assert_eq!(use_active_edit().get(), None, "deleting the edited node cancelled the edit");
+            assert_eq!(
+                use_active_edit().get(),
+                None,
+                "deleting the edited node cancelled the edit"
+            );
         });
     }
 
@@ -5778,7 +6609,9 @@ mod tests {
     fn r838_remove_edge_by_id() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
+            let node = scene
+                .find_external_with_tag_mut(GRAPH_TAG)
+                .expect("present");
             let intro = node.handle.introspect_mut().expect("introspectable");
             assert_eq!(
                 intro.invoke("remove_edge", IntrospectValue::Int(0)),
@@ -5796,7 +6629,9 @@ mod tests {
     fn r841_delete_node_keeps_stable_ids_over_rpc() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
+            let node = scene
+                .find_external_with_tag_mut(GRAPH_TAG)
+                .expect("present");
             let intro = node.handle.introspect_mut().expect("introspectable");
             let _ = intro.intervene("selected", IntrospectValue::Int(3)); // Output
             // Delete node id 1 (Color): drops only edge 1:0->2:1. NO reindex.
@@ -5807,9 +6642,19 @@ mod tests {
             assert_eq!(intro.query("node_count"), Some(IntrospectValue::Int(3)));
             assert_eq!(intro.query("edge_count"), Some(IntrospectValue::Int(2)));
             // Multiply is STILL id 2; edge id 0 still reads 0:0->2:0 (not renumbered).
-            assert_eq!(intro.query("node.2.title"), Some(IntrospectValue::Text("Multiply".to_owned())));
-            assert_eq!(intro.query("node.1.title"), None, "id 1 is gone, not reused");
-            assert_eq!(intro.query("edge.0"), Some(IntrospectValue::Text("0:0->2:0".to_owned())));
+            assert_eq!(
+                intro.query("node.2.title"),
+                Some(IntrospectValue::Text("Multiply".to_owned()))
+            );
+            assert_eq!(
+                intro.query("node.1.title"),
+                None,
+                "id 1 is gone, not reused"
+            );
+            assert_eq!(
+                intro.query("edge.0"),
+                Some(IntrospectValue::Text("0:0->2:0".to_owned()))
+            );
             // Selection (Output id 3) is untouched — it did not shift to 2.
             assert_eq!(intro.query("selected"), Some(IntrospectValue::Int(3)));
         });
@@ -5819,9 +6664,14 @@ mod tests {
     fn r838_send_selects_node_on_release() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
+            let node = scene
+                .find_external_with_tag_mut(GRAPH_TAG)
+                .expect("present");
             let intro = node.handle.introspect_mut().expect("introspectable");
-            let _ = intro.invoke("send", IntrospectValue::Text("node_2:PointerDown".to_owned()));
+            let _ = intro.invoke(
+                "send",
+                IntrospectValue::Text("node_2:PointerDown".to_owned()),
+            );
             let _ = intro.invoke("send", IntrospectValue::Text("node_2:PointerUp".to_owned()));
             assert_eq!(intro.query("selected"), Some(IntrospectValue::Int(2)));
             // Background release deselects.
@@ -5838,12 +6688,17 @@ mod tests {
             send(&mut scene, "node_0:PointerDown");
             let x0 = query_int(&scene, "node.0.x");
             {
-                let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
+                let node = scene
+                    .find_external_with_tag_mut(GRAPH_TAG)
+                    .expect("present");
                 node.handle.pointer_move(0.10, 0.10); // anchor
                 node.handle.pointer_move(0.30, 0.10); // +0.20 * WIN_W to the right
             }
             let x1 = query_int(&scene, "node.0.x");
-            assert!(x1 > x0, "node moved right under the capture drag ({x0} -> {x1})");
+            assert!(
+                x1 > x0,
+                "node moved right under the capture drag ({x0} -> {x1})"
+            );
         });
     }
 
@@ -5854,7 +6709,9 @@ mod tests {
             // Remove the existing wire into Multiply input 1, then re-make it
             // by dragging from Color's output port onto it.
             {
-                let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
+                let node = scene
+                    .find_external_with_tag_mut(GRAPH_TAG)
+                    .expect("present");
                 let intro = node.handle.introspect_mut().expect("introspectable");
                 let _ = intro.invoke("remove_edge", IntrospectValue::Int(1));
             }
@@ -5862,11 +6719,19 @@ mod tests {
             // Press Color's output port (node 1, port 0) → begin_drag arms.
             send(&mut scene, "oport_1_0:PointerDown");
             {
-                let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
-                let payload = node.handle.begin_drag().expect("output-port press arms a drag");
+                let node = scene
+                    .find_external_with_tag_mut(GRAPH_TAG)
+                    .expect("present");
+                let payload = node
+                    .handle
+                    .begin_drag()
+                    .expect("output-port press arms a drag");
                 assert_eq!(payload.kind.as_ref(), "node-edge");
-                let drop =
-                    DropPoint { tag: format!("{GRAPH_TAG}#iport_2_1"), x_rel: 0.5, y_rel: 0.5 };
+                let drop = DropPoint {
+                    tag: format!("{GRAPH_TAG}#iport_2_1"),
+                    x_rel: 0.5,
+                    y_rel: 0.5,
+                };
                 node.handle.drag_release(&payload, Some(drop));
             }
             assert_eq!(query_int(&scene, "edge_count"), 3);
@@ -5879,10 +6744,17 @@ mod tests {
             let mut scene = boot_scene();
             let m = Modifiers::empty();
             // No selection → arrow keys are a no-op.
-            assert!(!NodeEditorView::apply_key(&mut scene, Some(GRAPH_TAG), "ArrowRight", m));
+            assert!(!NodeEditorView::apply_key(
+                &mut scene,
+                Some(GRAPH_TAG),
+                "ArrowRight",
+                m
+            ));
             // Select node 0, nudge right, verify it moved by NUDGE_STEP.
             {
-                let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
+                let node = scene
+                    .find_external_with_tag_mut(GRAPH_TAG)
+                    .expect("present");
                 let _ = node
                     .handle
                     .introspect_mut()
@@ -5890,13 +6762,29 @@ mod tests {
                     .intervene("selected", IntrospectValue::Int(0));
             }
             let x0 = query_int(&scene, "node.0.x");
-            assert!(NodeEditorView::apply_key(&mut scene, Some(GRAPH_TAG), "ArrowRight", m));
+            assert!(NodeEditorView::apply_key(
+                &mut scene,
+                Some(GRAPH_TAG),
+                "ArrowRight",
+                m
+            ));
             let x1 = query_int(&scene, "node.0.x");
             assert_eq!(x1 - x0, i64::from(NUDGE_STEP));
             // Delete removes the selected node.
-            assert!(NodeEditorView::apply_key(&mut scene, Some(GRAPH_TAG), "Delete", m));
-            assert_eq!(graph_intro(&scene).query("node_count"), Some(IntrospectValue::Int(3)));
-            assert_eq!(graph_intro(&scene).query("selected"), Some(IntrospectValue::Null));
+            assert!(NodeEditorView::apply_key(
+                &mut scene,
+                Some(GRAPH_TAG),
+                "Delete",
+                m
+            ));
+            assert_eq!(
+                graph_intro(&scene).query("node_count"),
+                Some(IntrospectValue::Int(3))
+            );
+            assert_eq!(
+                graph_intro(&scene).query("selected"),
+                Some(IntrospectValue::Null)
+            );
         });
     }
 
@@ -5904,11 +6792,25 @@ mod tests {
     fn r838_escape_clears_selection() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
-            let _ = node.handle.introspect_mut().unwrap().intervene("selected", IntrospectValue::Int(2));
+            let node = scene
+                .find_external_with_tag_mut(GRAPH_TAG)
+                .expect("present");
+            let _ = node
+                .handle
+                .introspect_mut()
+                .unwrap()
+                .intervene("selected", IntrospectValue::Int(2));
             let m = Modifiers::empty();
-            assert!(NodeEditorView::apply_key(&mut scene, Some(GRAPH_TAG), "Escape", m));
-            assert_eq!(graph_intro(&scene).query("selected"), Some(IntrospectValue::Null));
+            assert!(NodeEditorView::apply_key(
+                &mut scene,
+                Some(GRAPH_TAG),
+                "Escape",
+                m
+            ));
+            assert_eq!(
+                graph_intro(&scene).query("selected"),
+                Some(IntrospectValue::Null)
+            );
         });
     }
 
@@ -5962,7 +6864,10 @@ mod tests {
             "end on curve",
         );
         // A point far above the wire is not near it.
-        assert!(!point_near_edge(210.0, 30.0, from, to, thr), "far point misses");
+        assert!(
+            !point_near_edge(210.0, 30.0, from, to, thr),
+            "far point misses"
+        );
     }
 
     #[test]
@@ -5988,7 +6893,11 @@ mod tests {
             );
             let coord = coordinator();
             assert_eq!(coord.hit_test_edge(mid.0, mid.1), Some(EdgeId(0)));
-            assert_eq!(coord.hit_test_edge(10.0, 10.0), None, "empty corner hits nothing");
+            assert_eq!(
+                coord.hit_test_edge(10.0, 10.0),
+                None,
+                "empty corner hits nothing"
+            );
         });
     }
 
@@ -6018,7 +6927,11 @@ mod tests {
             // selected one (the whole point — no index shift).
             coord.select_edge(Some(EdgeId(2)));
             assert!(coord.remove_edge(EdgeId(0)), "remove edge id 0");
-            assert_eq!(use_selection().get(), Selection::Edge(EdgeId(2)), "id 2 still selected");
+            assert_eq!(
+                use_selection().get(),
+                Selection::Edge(EdgeId(2)),
+                "id 2 still selected"
+            );
             // Removing the selected edge itself prunes the selection.
             assert!(coord.remove_edge(EdgeId(2)), "remove the selected edge");
             assert_eq!(use_selection().get(), Selection::None);
@@ -6046,11 +6959,18 @@ mod tests {
             coord.select_node(Some(NodeId(3)));
             assert!(coord.delete_node(NodeId(1)), "delete node id 1");
             // No reindex: Multiply is STILL id 2; its edges keep their ids.
-            assert_eq!(coord.node_by_id(NodeId(2)).map(|n| n.title), Some("Multiply".to_owned()));
+            assert_eq!(
+                coord.node_by_id(NodeId(2)).map(|n| n.title),
+                Some("Multiply".to_owned())
+            );
             assert!(coord.node_by_id(NodeId(1)).is_none(), "Color is gone");
             let edges = use_edges().get();
             assert_eq!(edges.len(), 2, "Color's incident edge dropped");
-            assert!(edges.iter().any(|e| e.id == EdgeId(0) && e.from_node == NodeId(0) && e.to_node == NodeId(2)));
+            assert!(
+                edges.iter().any(|e| e.id == EdgeId(0)
+                    && e.from_node == NodeId(0)
+                    && e.to_node == NodeId(2))
+            );
             // The selection (Output id 3) is untouched — it did not shift.
             assert_eq!(use_selection().get(), Selection::single(NodeId(3)));
         });
@@ -6068,9 +6988,16 @@ mod tests {
             assert!(coord.add_edge(NodeId(0), 0, NodeId(3), 0), "add a new edge");
             let default_ids: Vec<u32> = default_edges().iter().map(|e| e.id.raw()).collect();
             let live_ids = live_edge_ids(&coord);
-            let minted: Vec<u32> = live_ids.iter().copied().filter(|id| !default_ids.contains(id)).collect();
+            let minted: Vec<u32> = live_ids
+                .iter()
+                .copied()
+                .filter(|id| !default_ids.contains(id))
+                .collect();
             assert_eq!(minted.len(), 1, "exactly one minted id");
-            assert!(minted[0] > max_default, "minted id is above all default ids");
+            assert!(
+                minted[0] > max_default,
+                "minted id is above all default ids"
+            );
         });
     }
 
@@ -6092,7 +7019,11 @@ mod tests {
             let id = coord.add_node(2).expect("Multiply is a valid kind");
             assert_eq!(id, NodeId(first_dynamic_node_id()));
             assert_eq!(coord.node_count(), 5);
-            assert_eq!(use_selection().get(), Selection::single(id), "the new node is selected");
+            assert_eq!(
+                use_selection().get(),
+                Selection::single(id),
+                "the new node is selected"
+            );
             let n = coord.node_by_id(id).expect("new node present");
             assert_eq!(n.title, "Multiply");
             assert_eq!((n.inputs(), n.outputs()), (2, 1));
@@ -6110,7 +7041,10 @@ mod tests {
             let a = coord.add_node(0).expect("Texture"); // first dynamic id
             assert!(coord.delete_node(a), "remove the just-added node");
             let b = coord.add_node(0).expect("Texture again");
-            assert!(b.raw() > a.raw(), "a deleted id is never reused (monotonic mint)");
+            assert!(
+                b.raw() > a.raw(),
+                "a deleted id is never reused (monotonic mint)"
+            );
         });
     }
 
@@ -6118,7 +7052,9 @@ mod tests {
     fn r849_add_node_rpc_returns_the_new_id_and_rejects_unknown_kinds() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
+            let node = scene
+                .find_external_with_tag_mut(GRAPH_TAG)
+                .expect("present");
             let intro = node.handle.introspect_mut().expect("introspect");
             // Create by kind NAME; returns the new stable id (AI-first one-shot).
             let id = match intro.invoke("add_node", IntrospectValue::Text("Add".to_owned())) {
@@ -6131,7 +7067,10 @@ mod tests {
                 intro.query(&format!("node.{id}.title")),
                 Some(IntrospectValue::Text("Add".to_owned())),
             );
-            assert_eq!(intro.query(&format!("node.{id}.inputs")), Some(IntrospectValue::Int(2)));
+            assert_eq!(
+                intro.query(&format!("node.{id}.inputs")),
+                Some(IntrospectValue::Int(2))
+            );
             // An unknown kind is Rejected; the graph is unchanged.
             assert_eq!(
                 intro.invoke("add_node", IntrospectValue::Text("Bogus".to_owned())),
@@ -6141,7 +7080,10 @@ mod tests {
             // node_ids enumerates the new sparse id (read/write symmetry).
             match intro.query("node_ids") {
                 Some(IntrospectValue::Text(s)) => {
-                    assert!(s.split(',').any(|t| t == id.to_string()), "node_ids lists the added id: {s}");
+                    assert!(
+                        s.split(',').any(|t| t == id.to_string()),
+                        "node_ids lists the added id: {s}"
+                    );
                 }
                 other => panic!("expected node_ids string, got {other:?}"),
             }
@@ -6159,7 +7101,11 @@ mod tests {
             coord.handle_send("palette_2:PointerDown");
             assert_eq!(coord.node_count(), 4, "the press alone adds nothing");
             coord.handle_send("palette_2:PointerUp");
-            assert_eq!(coord.node_count(), 5, "releasing the palette card created a node");
+            assert_eq!(
+                coord.node_count(),
+                5,
+                "releasing the palette card created a node"
+            );
             let id = use_selection().get().node().expect("new node selected");
             assert_eq!(coord.node_by_id(id).expect("present").title, "Multiply");
         });
@@ -6179,8 +7125,14 @@ mod tests {
     fn r841_node_ids_and_edge_ids_enumerate_the_sparse_space() {
         Owner::new().run(|| {
             let coord = coordinator();
-            assert_eq!(coord.query("node_ids"), Some(IntrospectValue::Text("0,1,2,3".to_owned())));
-            assert_eq!(coord.query("edge_ids"), Some(IntrospectValue::Text("0,1,2".to_owned())));
+            assert_eq!(
+                coord.query("node_ids"),
+                Some(IntrospectValue::Text("0,1,2,3".to_owned()))
+            );
+            assert_eq!(
+                coord.query("edge_ids"),
+                Some(IntrospectValue::Text("0,1,2".to_owned()))
+            );
             // Delete node id 1 → the id space stays sparse, no renumber.
             coord.delete_node(NodeId(1));
             assert_eq!(
@@ -6199,20 +7151,30 @@ mod tests {
             // midpoint, then a bare release selects that wire.
             send(&mut scene, "PointerDown");
             {
-                let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
+                let node = scene
+                    .find_external_with_tag_mut(GRAPH_TAG)
+                    .expect("present");
                 node.handle.pointer_move(0.328_125, 0.319); // ~ (210, 134) = edge 0 midpoint
             }
             send(&mut scene, "PointerUp");
             assert_eq!(query_int(&scene, "selected_edge"), 0, "wire selected");
-            assert_eq!(graph_intro(&scene).query("selected"), Some(IntrospectValue::Null));
+            assert_eq!(
+                graph_intro(&scene).query("selected"),
+                Some(IntrospectValue::Null)
+            );
             // A bare press on empty space deselects.
             send(&mut scene, "PointerDown");
             {
-                let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
+                let node = scene
+                    .find_external_with_tag_mut(GRAPH_TAG)
+                    .expect("present");
                 node.handle.pointer_move(0.95, 0.95); // empty corner
             }
             send(&mut scene, "PointerUp");
-            assert_eq!(graph_intro(&scene).query("selected_edge"), Some(IntrospectValue::Null));
+            assert_eq!(
+                graph_intro(&scene).query("selected_edge"),
+                Some(IntrospectValue::Null)
+            );
         });
     }
 
@@ -6220,9 +7182,13 @@ mod tests {
     /// (zoom 1, pan 0: rel = graph / canvas).
     #[allow(clippy::cast_possible_truncation)]
     fn bg_move(scene: &mut Scene, gx: f64, gy: f64) {
-        let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
-        node.handle
-            .pointer_move((gx / f64::from(WIN_W)) as f32, (gy / f64::from(WIN_H)) as f32);
+        let node = scene
+            .find_external_with_tag_mut(GRAPH_TAG)
+            .expect("present");
+        node.handle.pointer_move(
+            (gx / f64::from(WIN_W)) as f32,
+            (gy / f64::from(WIN_H)) as f32,
+        );
     }
 
     fn selected_ids_of(scene: &Scene) -> String {
@@ -6313,7 +7279,12 @@ mod tests {
     fn r880_select_all_via_invoke_and_ctrl_a() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            let ctrl = Modifiers { shift: false, ctrl: true, alt: false, meta: false };
+            let ctrl = Modifiers {
+                shift: false,
+                ctrl: true,
+                alt: false,
+                meta: false,
+            };
             assert!(apply_key_graph(&mut scene, "a", ctrl), "Ctrl+A consumed");
             assert_eq!(selected_ids_of(&scene), "0,1,2,3", "every node selected");
             // Escape clears (the existing single-selection escape).
@@ -6321,7 +7292,9 @@ mod tests {
             assert_eq!(selected_ids_of(&scene), "");
             // The invoke twin answers false on an empty graph.
             use_nodes().set(Vec::new());
-            let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
+            let node = scene
+                .find_external_with_tag_mut(GRAPH_TAG)
+                .expect("present");
             let intro = node.handle.introspect_mut().expect("introspectable");
             assert_eq!(
                 intro.invoke("select_all", IntrospectValue::Null),
@@ -6392,10 +7365,22 @@ mod tests {
             let _ = boot_scene();
             let scene = view(IDLE_TF, &Frame::new());
             assert!(scene.contains_tag(GRAPH_TAG), "graph root painted");
-            assert!(scene.contains_tag(&format!("{GRAPH_TAG}#node_0")), "node 0 painted");
-            assert!(scene.contains_tag(&format!("{GRAPH_TAG}#oport_0_0")), "node 0 output port painted");
-            assert!(scene.contains_tag(&format!("{GRAPH_TAG}#iport_2_0")), "node 2 input port painted");
-            assert!(scene.contains_tag(&format!("{GRAPH_TAG}#edge_0")), "edge 0 painted");
+            assert!(
+                scene.contains_tag(&format!("{GRAPH_TAG}#node_0")),
+                "node 0 painted"
+            );
+            assert!(
+                scene.contains_tag(&format!("{GRAPH_TAG}#oport_0_0")),
+                "node 0 output port painted"
+            );
+            assert!(
+                scene.contains_tag(&format!("{GRAPH_TAG}#iport_2_0")),
+                "node 2 input port painted"
+            );
+            assert!(
+                scene.contains_tag(&format!("{GRAPH_TAG}#edge_0")),
+                "edge 0 painted"
+            );
         });
     }
 
@@ -6408,21 +7393,33 @@ mod tests {
             // R849 / R918 — root + palette toolbar + 5 palette buttons + graph
             // group + one generic per node (4) + the Details group + its 5 rows
             // (title / x / y + node 2's 2 input ports; no editor — idle).
-            assert_eq!(nodes.len(), 1 + 1 + PALETTE.len() + 1 + 4 + 1 + 5, "root + palette + graph + details");
+            assert_eq!(
+                nodes.len(),
+                1 + 1 + PALETTE.len() + 1 + 4 + 1 + 5,
+                "root + palette + graph + details"
+            );
             // R918 — the Details panel lowers to a `group` listing the selected
             // node's property rows.
-            let details = nodes.iter().find(|n| n.tag == DETAIL_TAG).expect("Details group present");
+            let details = nodes
+                .iter()
+                .find(|n| n.tag == DETAIL_TAG)
+                .expect("Details group present");
             assert_eq!(details.role, AriaRole::Group);
             assert_eq!(details.name.as_deref(), Some("Details"));
             assert!(
-                nodes.iter().any(|n| n.tag == format!("{GRAPH_TAG}#detail_x")),
+                nodes
+                    .iter()
+                    .any(|n| n.tag == format!("{GRAPH_TAG}#detail_x")),
                 "the Position X row lowers to a node",
             );
             // The root wraps the palette + the canvas; the focusable canvas is
             // the graph group (found by tag, not position).
             assert_eq!(nodes[0].role, AriaRole::Group, "editor root is a group");
             assert_eq!(nodes[0].tag, ROOT_TAG);
-            let palette = nodes.iter().find(|n| n.tag == PALETTE_TAG).expect("palette toolbar present");
+            let palette = nodes
+                .iter()
+                .find(|n| n.tag == PALETTE_TAG)
+                .expect("palette toolbar present");
             assert_eq!(palette.role, AriaRole::Toolbar);
             let add_texture = nodes
                 .iter()
@@ -6438,7 +7435,10 @@ mod tests {
                 Some(u32::try_from(PALETTE.len()).unwrap()),
                 "setsize = palette length",
             );
-            let graph = nodes.iter().find(|n| n.tag == GRAPH_TAG).expect("graph group present");
+            let graph = nodes
+                .iter()
+                .find(|n| n.tag == GRAPH_TAG)
+                .expect("graph group present");
             // R840 audit fix: a graph is an unordered set, so Group/Generic —
             // never List/ListItem with a false aria-posinset.
             assert_eq!(graph.role, AriaRole::Group);
@@ -6450,7 +7450,10 @@ mod tests {
             assert_eq!(multiply.role, AriaRole::Generic);
             assert_eq!(multiply.name.as_deref(), Some("Multiply (2 in, 1 out)"));
             assert_eq!(multiply.selected, Some(true));
-            assert_eq!(multiply.position_in_set, None, "no false ordered-set position");
+            assert_eq!(
+                multiply.position_in_set, None,
+                "no false ordered-set position"
+            );
         });
     }
 
@@ -6466,7 +7469,12 @@ mod tests {
 
     /// Modifier state for a held-`Ctrl` (optionally `Shift`) keystroke.
     fn mods(ctrl: bool, shift: bool) -> Modifiers {
-        Modifiers { shift, ctrl, alt: false, meta: false }
+        Modifiers {
+            shift,
+            ctrl,
+            alt: false,
+            meta: false,
+        }
     }
 
     /// A scene with the primary coordinator **and** the [`UndoStackExternal`]
@@ -6474,8 +7482,9 @@ mod tests {
     /// `create_external` + `create_extra_externals` wire, so the keyboard /
     /// RPC undo path (which finds [`UNDO_TAG`]) can be exercised in a unit test.
     fn boot_full_scene() -> Scene {
-        let primary =
-            Scene::External(ExternalNode::new(Box::new(coordinator()) as Box<dyn External>).with_tag(GRAPH_TAG));
+        let primary = Scene::External(
+            ExternalNode::new(Box::new(coordinator()) as Box<dyn External>).with_tag(GRAPH_TAG),
+        );
         let undo = Scene::External(
             ExternalNode::new(Box::new(UndoStackExternal::new(use_undo()))).with_tag(UNDO_TAG),
         );
@@ -6494,7 +7503,11 @@ mod tests {
     fn r851_r878_create_extra_externals_wires_undo_surface_and_rename_field() {
         Owner::new().run(|| {
             let extras = NodeEditorView::create_extra_externals();
-            assert_eq!(extras.len(), 2, "the undo surface + the shared rename field");
+            assert_eq!(
+                extras.len(),
+                2,
+                "the undo surface + the shared rename field"
+            );
             assert_eq!(extras[0].tag, UNDO_TAG, "the undo-history surface");
             assert_eq!(extras[1].tag, EDIT_TF_TAG, "the R878 inline rename field");
         });
@@ -6520,8 +7533,16 @@ mod tests {
 
             assert!(stack.redo(), "redo the add");
             assert_eq!(coord.node_count(), 5, "the node is back");
-            assert_eq!(use_selection().get(), Selection::single(id), "and re-selected");
-            assert_eq!(coord.node_by_id(id).expect("present").id, id, "with the SAME stable id");
+            assert_eq!(
+                use_selection().get(),
+                Selection::single(id),
+                "and re-selected"
+            );
+            assert_eq!(
+                coord.node_by_id(id).expect("present").id,
+                id,
+                "with the SAME stable id"
+            );
         });
     }
 
@@ -6534,11 +7555,19 @@ mod tests {
             // Node 2 (Multiply) is incident to all three seed edges (0, 1, 2).
             assert!(coord.delete_node(NodeId(2)), "delete the central node");
             assert_eq!(coord.node_count(), 3, "node removed");
-            assert_eq!(coord.edges.get().len(), 0, "all three incident edges removed");
+            assert_eq!(
+                coord.edges.get().len(),
+                0,
+                "all three incident edges removed"
+            );
 
             assert!(stack.undo(), "undo the delete");
             assert_eq!(coord.node_count(), 4, "the node is restored");
-            assert_eq!(coord.edges.get().len(), 3, "every incident edge is restored");
+            assert_eq!(
+                coord.edges.get().len(),
+                3,
+                "every incident edge is restored"
+            );
             assert_eq!(
                 coord.query("edge.0"),
                 Some(IntrospectValue::Text("0:0->2:0".to_owned())),
@@ -6572,7 +7601,10 @@ mod tests {
             assert!(stack.redo(), "redo the disconnect");
             assert_eq!(coord.edges.get().len(), 2);
             let before = coord.edges.get().len();
-            assert!(coord.add_edge(NodeId(1), 0, NodeId(2), 1), "reconnect 1:0 -> 2:1");
+            assert!(
+                coord.add_edge(NodeId(1), 0, NodeId(2), 1),
+                "reconnect 1:0 -> 2:1"
+            );
             assert_eq!(coord.edges.get().len(), before + 1);
             assert_eq!(stack.undo_label().as_deref(), Some("Connect"));
             assert!(stack.undo(), "undo the connect");
@@ -6588,8 +7620,15 @@ mod tests {
             let stack = use_undo();
             // Seed edge 0 = 0:0 -> 2:0. Connecting 1:0 -> 2:0 (single-wire input
             // rule) displaces edge 0; one undo restores it.
-            assert!(coord.add_edge(NodeId(1), 0, NodeId(2), 0), "connect into an occupied input");
-            assert_eq!(coord.edges.get().len(), 3, "one in, one out: count unchanged");
+            assert!(
+                coord.add_edge(NodeId(1), 0, NodeId(2), 0),
+                "connect into an occupied input"
+            );
+            assert_eq!(
+                coord.edges.get().len(),
+                3,
+                "one in, one out: count unchanged"
+            );
             assert_eq!(coord.query("edge.0"), None, "edge 0 was displaced");
 
             assert!(stack.undo(), "undo the displacing connect");
@@ -6609,22 +7648,67 @@ mod tests {
             let coord = coordinator();
             let stack = use_undo();
             let scalar = coord.add_node(5).expect("Scalar (Float source)");
-            let lerp = coord.add_node(6).expect("Lerp ([Vector, Vector, Float] in)");
+            let lerp = coord
+                .add_node(6)
+                .expect("Lerp ([Vector, Vector, Float] in)");
             // Wire scalar.0 (Float) -> lerp.2 (Float factor).
-            assert!(coord.add_edge(scalar, 0, lerp, 2), "seed the wire to reconnect");
-            let edge = coord.edges.get().iter().copied().find(|e| e.from_node == scalar).unwrap();
+            assert!(
+                coord.add_edge(scalar, 0, lerp, 2),
+                "seed the wire to reconnect"
+            );
+            let edge = coord
+                .edges
+                .get()
+                .iter()
+                .copied()
+                .find(|e| e.from_node == scalar)
+                .unwrap();
             let count = coord.edges.get().len();
             // Reconnect its target to lerp.0 (Vector; Float broadcasts -> valid).
-            assert!(coord.reconnect_edge(edge.id, lerp, 0), "reconnect to a valid input");
-            assert_eq!(coord.edges.get().len(), count, "a rewire keeps the edge count");
-            let now = coord.edges.get().iter().copied().find(|e| e.from_node == scalar).unwrap();
-            assert_eq!((now.from_node, now.from_port), (scalar, 0), "the source output is preserved");
-            assert_eq!((now.to_node, now.to_port), (lerp, 0), "the target moved to the new input");
-            assert_ne!(now.id, edge.id, "a reconnect mints a fresh edge id (remove+add model)");
-            assert_eq!(stack.undo_label().as_deref(), Some("Reconnect"), "one Reconnect undo step");
+            assert!(
+                coord.reconnect_edge(edge.id, lerp, 0),
+                "reconnect to a valid input"
+            );
+            assert_eq!(
+                coord.edges.get().len(),
+                count,
+                "a rewire keeps the edge count"
+            );
+            let now = coord
+                .edges
+                .get()
+                .iter()
+                .copied()
+                .find(|e| e.from_node == scalar)
+                .unwrap();
+            assert_eq!(
+                (now.from_node, now.from_port),
+                (scalar, 0),
+                "the source output is preserved"
+            );
+            assert_eq!(
+                (now.to_node, now.to_port),
+                (lerp, 0),
+                "the target moved to the new input"
+            );
+            assert_ne!(
+                now.id, edge.id,
+                "a reconnect mints a fresh edge id (remove+add model)"
+            );
+            assert_eq!(
+                stack.undo_label().as_deref(),
+                Some("Reconnect"),
+                "one Reconnect undo step"
+            );
             // One Ctrl+Z restores the original wiring verbatim (old id + old target).
             assert!(stack.undo(), "undo the reconnect");
-            let back = coord.edges.get().iter().copied().find(|e| e.from_node == scalar).unwrap();
+            let back = coord
+                .edges
+                .get()
+                .iter()
+                .copied()
+                .find(|e| e.from_node == scalar)
+                .unwrap();
             assert_eq!(
                 (back.id, back.to_node, back.to_port),
                 (edge.id, lerp, 2),
@@ -6632,7 +7716,13 @@ mod tests {
             );
             assert!(stack.redo(), "redo re-wires it");
             assert_eq!(
-                coord.edges.get().iter().find(|e| e.from_node == scalar).unwrap().to_port,
+                coord
+                    .edges
+                    .get()
+                    .iter()
+                    .find(|e| e.from_node == scalar)
+                    .unwrap()
+                    .to_port,
                 0,
             );
         });
@@ -6646,18 +7736,43 @@ mod tests {
             let lerp = coord.add_node(6).expect("Lerp (input 2 is Float)");
             // Boot edge 0 = 0:0 -> 2:0; node 0 (Texture) outputs a Vector.
             let edge0 = "0:0->2:0";
-            assert_eq!(coord.query("edge.0"), Some(IntrospectValue::Text(edge0.to_owned())));
+            assert_eq!(
+                coord.query("edge.0"),
+                Some(IntrospectValue::Text(edge0.to_owned()))
+            );
             // Vector source -> lerp.2 (Float): narrowing, rejected; edge unchanged.
-            assert!(!coord.reconnect_edge(EdgeId(0), lerp, 2), "Vector -> Float reconnect rejected");
-            assert_eq!(coord.query("edge.0"), Some(IntrospectValue::Text(edge0.to_owned())));
+            assert!(
+                !coord.reconnect_edge(EdgeId(0), lerp, 2),
+                "Vector -> Float reconnect rejected"
+            );
+            assert_eq!(
+                coord.query("edge.0"),
+                Some(IntrospectValue::Text(edge0.to_owned()))
+            );
             // Self-loop: reconnect onto an input of the edge's own source node.
-            assert!(!coord.reconnect_edge(EdgeId(0), NodeId(0), 0), "self-loop reconnect rejected");
-            assert_eq!(coord.query("edge.0"), Some(IntrospectValue::Text(edge0.to_owned())));
+            assert!(
+                !coord.reconnect_edge(EdgeId(0), NodeId(0), 0),
+                "self-loop reconnect rejected"
+            );
+            assert_eq!(
+                coord.query("edge.0"),
+                Some(IntrospectValue::Text(edge0.to_owned()))
+            );
             // Re-dropping on its own input is a no-op success (no graph change).
-            assert!(coord.reconnect_edge(EdgeId(0), NodeId(2), 0), "same target is a no-op true");
-            assert_eq!(coord.query("edge.0"), Some(IntrospectValue::Text(edge0.to_owned())), "still the same wire");
+            assert!(
+                coord.reconnect_edge(EdgeId(0), NodeId(2), 0),
+                "same target is a no-op true"
+            );
+            assert_eq!(
+                coord.query("edge.0"),
+                Some(IntrospectValue::Text(edge0.to_owned())),
+                "still the same wire"
+            );
             // An unknown edge id is a no-op false.
-            assert!(!coord.reconnect_edge(EdgeId(999), NodeId(2), 1), "unknown edge id rejected");
+            assert!(
+                !coord.reconnect_edge(EdgeId(999), NodeId(2), 1),
+                "unknown edge id rejected"
+            );
         });
     }
 
@@ -6672,19 +7787,55 @@ mod tests {
             let lerp = coord.add_node(6).expect("Lerp");
             assert!(coord.add_edge(s1, 0, lerp, 0), "s1 -> lerp.0 (broadcast)");
             assert!(coord.add_edge(s2, 0, lerp, 2), "s2 -> lerp.2 (exact)");
-            let e2 = coord.edges.get().iter().copied().find(|e| e.from_node == s2).unwrap();
+            let e2 = coord
+                .edges
+                .get()
+                .iter()
+                .copied()
+                .find(|e| e.from_node == s2)
+                .unwrap();
             let count = coord.edges.get().len();
             // Reconnect e2 onto lerp.0 (occupied by s1's wire) -> displaces it.
-            assert!(coord.reconnect_edge(e2.id, lerp, 0), "reconnect onto an occupied input");
-            assert_eq!(coord.edges.get().len(), count - 1, "old e2 + displaced s1 wire removed, one added");
-            assert!(!coord.edges.get().iter().any(|e| e.from_node == s1), "s1's wire was displaced");
+            assert!(
+                coord.reconnect_edge(e2.id, lerp, 0),
+                "reconnect onto an occupied input"
+            );
+            assert_eq!(
+                coord.edges.get().len(),
+                count - 1,
+                "old e2 + displaced s1 wire removed, one added"
+            );
+            assert!(
+                !coord.edges.get().iter().any(|e| e.from_node == s1),
+                "s1's wire was displaced"
+            );
             // One undo restores BOTH the reconnected wire's old target and the displaced wire.
             assert!(stack.undo(), "one undo reverses the whole reconnect");
             assert_eq!(coord.edges.get().len(), count);
-            let s1e = coord.edges.get().iter().copied().find(|e| e.from_node == s1).unwrap();
-            assert_eq!((s1e.to_node, s1e.to_port), (lerp, 0), "displaced wire restored");
-            let s2e = coord.edges.get().iter().copied().find(|e| e.from_node == s2).unwrap();
-            assert_eq!((s2e.to_node, s2e.to_port), (lerp, 2), "reconnected wire restored to its original input");
+            let s1e = coord
+                .edges
+                .get()
+                .iter()
+                .copied()
+                .find(|e| e.from_node == s1)
+                .unwrap();
+            assert_eq!(
+                (s1e.to_node, s1e.to_port),
+                (lerp, 0),
+                "displaced wire restored"
+            );
+            let s2e = coord
+                .edges
+                .get()
+                .iter()
+                .copied()
+                .find(|e| e.from_node == s2)
+                .unwrap();
+            assert_eq!(
+                (s2e.to_node, s2e.to_port),
+                (lerp, 2),
+                "reconnected wire restored to its original input"
+            );
         });
     }
 
@@ -6705,7 +7856,10 @@ mod tests {
             assert!(!stack.can_redo(), "the redo branch was dropped");
             assert_eq!(coord.node_count(), 6, "default 4 + a + c");
             assert!(coord.node_by_id(a).is_some() && coord.node_by_id(c).is_some());
-            assert!(c.raw() > b.raw(), "ids stay monotonic across the truncation");
+            assert!(
+                c.raw() > b.raw(),
+                "ids stay monotonic across the truncation"
+            );
         });
     }
 
@@ -6713,28 +7867,55 @@ mod tests {
     fn r851_undo_external_query_and_invoke_round_trip() {
         Owner::new().run(|| {
             let mut scene = boot_full_scene();
-            assert_eq!(undo_ext_query(&scene, "can_undo"), Some(IntrospectValue::Bool(false)));
+            assert_eq!(
+                undo_ext_query(&scene, "can_undo"),
+                Some(IntrospectValue::Bool(false))
+            );
             // Add a node through the primary coordinator.
             send(&mut scene, "palette_2:PointerDown");
             send(&mut scene, "palette_2:PointerUp");
             assert_eq!(query_int(&scene, "node_count"), 5);
             // The undo surface observes the history as data.
-            assert_eq!(undo_ext_query(&scene, "can_undo"), Some(IntrospectValue::Bool(true)));
-            assert_eq!(undo_ext_query(&scene, "index"), Some(IntrospectValue::Int(1)));
-            assert_eq!(undo_ext_query(&scene, "count"), Some(IntrospectValue::Int(1)));
+            assert_eq!(
+                undo_ext_query(&scene, "can_undo"),
+                Some(IntrospectValue::Bool(true))
+            );
+            assert_eq!(
+                undo_ext_query(&scene, "index"),
+                Some(IntrospectValue::Int(1))
+            );
+            assert_eq!(
+                undo_ext_query(&scene, "count"),
+                Some(IntrospectValue::Int(1))
+            );
             assert_eq!(
                 undo_ext_query(&scene, "undo_label"),
                 Some(IntrospectValue::Text("Add Multiply".to_owned())),
             );
             // invoke undo on the external reverts the graph the coordinator reads.
             {
-                let node = scene.find_external_with_tag_mut(UNDO_TAG).expect("undo external");
+                let node = scene
+                    .find_external_with_tag_mut(UNDO_TAG)
+                    .expect("undo external");
                 let intro = node.handle.introspect_mut().expect("introspect");
-                assert_eq!(intro.invoke("undo", IntrospectValue::Null), Ok(IntrospectValue::Bool(true)));
+                assert_eq!(
+                    intro.invoke("undo", IntrospectValue::Null),
+                    Ok(IntrospectValue::Bool(true))
+                );
             }
-            assert_eq!(query_int(&scene, "node_count"), 4, "RPC undo reverted the add");
-            assert_eq!(undo_ext_query(&scene, "can_undo"), Some(IntrospectValue::Bool(false)));
-            assert_eq!(undo_ext_query(&scene, "can_redo"), Some(IntrospectValue::Bool(true)));
+            assert_eq!(
+                query_int(&scene, "node_count"),
+                4,
+                "RPC undo reverted the add"
+            );
+            assert_eq!(
+                undo_ext_query(&scene, "can_undo"),
+                Some(IntrospectValue::Bool(false))
+            );
+            assert_eq!(
+                undo_ext_query(&scene, "can_redo"),
+                Some(IntrospectValue::Bool(true))
+            );
         });
     }
 
@@ -6752,18 +7933,37 @@ mod tests {
             );
             assert_eq!(query_int(&scene, "node_count"), 4, "Ctrl+Z undid the add");
             // Ctrl+Y redoes.
-            assert!(NodeEditorView::apply_key(&mut scene, Some(GRAPH_TAG), "y", mods(true, false)));
+            assert!(NodeEditorView::apply_key(
+                &mut scene,
+                Some(GRAPH_TAG),
+                "y",
+                mods(true, false)
+            ));
             assert_eq!(query_int(&scene, "node_count"), 5, "Ctrl+Y redid the add");
             // Ctrl+Shift+Z undoes again (the redo-pairing alternative is undo's twin).
-            assert!(NodeEditorView::apply_key(&mut scene, Some(GRAPH_TAG), "z", mods(true, false)));
+            assert!(NodeEditorView::apply_key(
+                &mut scene,
+                Some(GRAPH_TAG),
+                "z",
+                mods(true, false)
+            ));
             assert_eq!(query_int(&scene, "node_count"), 4, "Ctrl+Z undid once more");
             assert!(
                 NodeEditorView::apply_key(&mut scene, Some(GRAPH_TAG), "Z", mods(true, true)),
                 "Ctrl+Shift+Z is handled",
             );
-            assert_eq!(query_int(&scene, "node_count"), 5, "Ctrl+Shift+Z redid the add");
+            assert_eq!(
+                query_int(&scene, "node_count"),
+                5,
+                "Ctrl+Shift+Z redid the add"
+            );
             // A plain 'z' (no Ctrl) is not an undo gesture — falls through.
-            assert!(!NodeEditorView::apply_key(&mut scene, Some(GRAPH_TAG), "z", mods(false, false)));
+            assert!(!NodeEditorView::apply_key(
+                &mut scene,
+                Some(GRAPH_TAG),
+                "z",
+                mods(false, false)
+            ));
         });
     }
 
@@ -6806,7 +8006,11 @@ mod tests {
             assert!(coord.load_json(&snap), "set_graph applies the snapshot");
             assert_eq!(coord.node_count(), 4, "the graph reverted to the snapshot");
             assert_eq!(coord.edges.get().len(), 3);
-            assert_eq!(use_selection().get(), Selection::None, "selection dropped on load");
+            assert_eq!(
+                use_selection().get(),
+                Selection::None,
+                "selection dropped on load"
+            );
         });
     }
 
@@ -6856,7 +8060,10 @@ mod tests {
     fn r852_set_graph_rejects_malformed_and_version_mismatch() {
         Owner::new().run(|| {
             let coord = coordinator();
-            assert!(!coord.load_json("not json at all"), "malformed JSON rejected");
+            assert!(
+                !coord.load_json("not json at all"),
+                "malformed JSON rejected"
+            );
             assert_eq!(coord.node_count(), 4, "graph unchanged on malformed");
             // Valid JSON, wrong schema version.
             let bad = serde_json::to_string(&SerializedGraph {
@@ -6885,7 +8092,11 @@ mod tests {
             // node) was discarded by the load, so reusing its number is correct
             // monotonic-from-the-saved-state, never an id live in the graph.
             let c = coord.add_node(0).expect("Texture");
-            assert_eq!(c.raw(), a.raw() + 1, "next id resumes at the saved next_node_id");
+            assert_eq!(
+                c.raw(),
+                a.raw() + 1,
+                "next id resumes at the saved next_node_id"
+            );
         });
     }
 
@@ -6898,38 +8109,63 @@ mod tests {
                 Some(IntrospectValue::Text(s)) => s,
                 other => panic!("expected serialized JSON, got {other:?}"),
             };
-            assert!(json.contains("schema_version"), "serialized is the snapshot JSON");
+            assert!(
+                json.contains("schema_version"),
+                "serialized is the snapshot JSON"
+            );
             // Mutate, save, mutate again, load -> reverts.
             send(&mut scene, "palette_2:PointerDown");
             send(&mut scene, "palette_2:PointerUp");
             assert_eq!(query_int(&scene, "node_count"), 5);
             {
-                let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
+                let node = scene
+                    .find_external_with_tag_mut(GRAPH_TAG)
+                    .expect("present");
                 let intro = node.handle.introspect_mut().expect("introspect");
-                assert_eq!(intro.invoke("save", IntrospectValue::Null), Ok(IntrospectValue::Bool(true)));
+                assert_eq!(
+                    intro.invoke("save", IntrospectValue::Null),
+                    Ok(IntrospectValue::Bool(true))
+                );
             }
             send(&mut scene, "palette_0:PointerDown");
             send(&mut scene, "palette_0:PointerUp");
             assert_eq!(query_int(&scene, "node_count"), 6);
             {
-                let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
+                let node = scene
+                    .find_external_with_tag_mut(GRAPH_TAG)
+                    .expect("present");
                 let intro = node.handle.introspect_mut().expect("introspect");
-                assert_eq!(intro.invoke("load", IntrospectValue::Null), Ok(IntrospectValue::Bool(true)));
+                assert_eq!(
+                    intro.invoke("load", IntrospectValue::Null),
+                    Ok(IntrospectValue::Bool(true))
+                );
             }
-            assert_eq!(query_int(&scene, "node_count"), 5, "RPC load reverted to the saved graph");
+            assert_eq!(
+                query_int(&scene, "node_count"),
+                5,
+                "RPC load reverted to the saved graph"
+            );
             // set_graph with the boot snapshot reverts all the way to 4 nodes.
             {
-                let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
+                let node = scene
+                    .find_external_with_tag_mut(GRAPH_TAG)
+                    .expect("present");
                 let intro = node.handle.introspect_mut().expect("introspect");
                 assert_eq!(
                     intro.invoke("set_graph", IntrospectValue::Text(json)),
                     Ok(IntrospectValue::Bool(true)),
                 );
             }
-            assert_eq!(query_int(&scene, "node_count"), 4, "set_graph restored the boot snapshot");
+            assert_eq!(
+                query_int(&scene, "node_count"),
+                4,
+                "set_graph restored the boot snapshot"
+            );
             // A malformed set_graph is Rejected.
             {
-                let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
+                let node = scene
+                    .find_external_with_tag_mut(GRAPH_TAG)
+                    .expect("present");
                 let intro = node.handle.introspect_mut().expect("introspect");
                 assert_eq!(
                     intro.invoke("set_graph", IntrospectValue::Text("garbage".to_owned())),
@@ -6943,7 +8179,10 @@ mod tests {
 
     /// Position of node `id` (panics if absent).
     fn pos_of(coord: &NodeGraphExternal, id: NodeId) -> (i32, i32) {
-        coord.node_by_id(id).map(|n| (n.x, n.y)).expect("node present")
+        coord
+            .node_by_id(id)
+            .map(|n| (n.x, n.y))
+            .expect("node present")
     }
 
     /// R880 — a [`DragLatch`] already past its dead zone (the synthetic
@@ -6980,7 +8219,11 @@ mod tests {
             assert!(coord.nudge_selected(NUDGE_STEP, 0));
             assert!(coord.nudge_selected(NUDGE_STEP, 0));
             assert_eq!(stack.len(), 1, "the nudge burst is one coalesced undo step");
-            assert_eq!(pos_of(&coord, id), (start.0 + 3 * NUDGE_STEP, start.1), "moved 3 steps");
+            assert_eq!(
+                pos_of(&coord, id),
+                (start.0 + 3 * NUDGE_STEP, start.1),
+                "moved 3 steps"
+            );
             assert!(stack.undo(), "one undo reverts the whole burst");
             assert_eq!(pos_of(&coord, id), start, "back to the start");
             assert!(stack.redo(), "one redo re-applies the whole burst");
@@ -7008,7 +8251,11 @@ mod tests {
             assert!(stack.undo());
             assert_eq!(pos_of(&coord, id), before, "undo reverts the drag");
             assert!(stack.redo());
-            assert_eq!(pos_of(&coord, id), (before.0 + 50, before.1 + 30), "redo re-applies it");
+            assert_eq!(
+                pos_of(&coord, id),
+                (before.0 + 50, before.1 + 30),
+                "redo re-applies it"
+            );
         });
     }
 
@@ -7023,7 +8270,11 @@ mod tests {
             assert!(coord.nudge_selected(NUDGE_STEP, 0), "a coalescable nudge");
             let pos = pos_of(&coord, id);
             synth_drag(&coord, id, pos, 40, 0); // a non-coalescable drag
-            assert_eq!(stack.len(), 2, "the drag is a fresh step, not folded into the nudge");
+            assert_eq!(
+                stack.len(),
+                2,
+                "the drag is a fresh step, not folded into the nudge"
+            );
         });
     }
 
@@ -7047,8 +8298,15 @@ mod tests {
             });
             coord.set_node_pos(id, before.0 + 40, before.1);
             assert!(coord.load_json(&snap), "load the snapshot mid-drag");
-            assert!(!stack.can_undo(), "the opened document has a clean undo history");
-            assert_eq!(stack.len(), 0, "no spurious MoveNodesCmd was journaled across the load");
+            assert!(
+                !stack.can_undo(),
+                "the opened document has a clean undo history"
+            );
+            assert_eq!(
+                stack.len(),
+                0,
+                "no spurious MoveNodesCmd was journaled across the load"
+            );
         });
     }
 
@@ -7081,12 +8339,22 @@ mod tests {
             let before_x = query_int(&scene, "node.0.x");
             let before_y = query_int(&scene, "node.0.y");
             {
-                let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
+                let node = scene
+                    .find_external_with_tag_mut(GRAPH_TAG)
+                    .expect("present");
                 let intro = node.handle.introspect_mut().expect("introspect");
-                intro.intervene("node.0.x", IntrospectValue::Int(200)).expect("x ok");
-                intro.intervene("node.0.y", IntrospectValue::Int(150)).expect("y ok");
+                intro
+                    .intervene("node.0.x", IntrospectValue::Int(200))
+                    .expect("x ok");
+                intro
+                    .intervene("node.0.y", IntrospectValue::Int(150))
+                    .expect("y ok");
             }
-            assert_eq!(stack.len(), 1, "x then y on the same node coalesce to one move");
+            assert_eq!(
+                stack.len(),
+                1,
+                "x then y on the same node coalesce to one move"
+            );
             assert_eq!(query_int(&scene, "node.0.x"), 200);
             assert!(stack.undo(), "one undo reverts both axes");
             assert_eq!(query_int(&scene, "node.0.x"), before_x, "x restored");
@@ -7102,18 +8370,37 @@ mod tests {
             let stack = use_undo();
             let id = coord.add_node(0).expect("Texture"); // structural step
             let add_pos = pos_of(&coord, id);
-            assert!(coord.nudge_selected(NUDGE_STEP, NUDGE_STEP), "move the new node");
+            assert!(
+                coord.nudge_selected(NUDGE_STEP, NUDGE_STEP),
+                "move the new node"
+            );
             let moved_pos = pos_of(&coord, id);
             assert_ne!(add_pos, moved_pos);
-            assert_eq!(stack.len(), 2, "add + move are two steps (move not folded into add)");
+            assert_eq!(
+                stack.len(),
+                2,
+                "add + move are two steps (move not folded into add)"
+            );
             assert!(stack.undo(), "undo the move");
-            assert_eq!(pos_of(&coord, id), add_pos, "node back at its add-time position");
+            assert_eq!(
+                pos_of(&coord, id),
+                add_pos,
+                "node back at its add-time position"
+            );
             assert!(stack.undo(), "undo the add");
             assert!(coord.node_by_id(id).is_none(), "the node is gone");
             assert!(stack.redo(), "redo the add");
-            assert_eq!(pos_of(&coord, id), add_pos, "re-added at the add-time position");
+            assert_eq!(
+                pos_of(&coord, id),
+                add_pos,
+                "re-added at the add-time position"
+            );
             assert!(stack.redo(), "redo the move");
-            assert_eq!(pos_of(&coord, id), moved_pos, "redo restores the moved position");
+            assert_eq!(
+                pos_of(&coord, id),
+                moved_pos,
+                "redo restores the moved position"
+            );
         });
     }
 
@@ -7125,15 +8412,34 @@ mod tests {
             send(&mut scene, "palette_2:PointerUp");
             assert_eq!(query_int(&scene, "node_count"), 5);
             // Ctrl+S saves the 5-node graph.
-            assert!(NodeEditorView::apply_key(&mut scene, Some(GRAPH_TAG), "s", mods(true, false)));
+            assert!(NodeEditorView::apply_key(
+                &mut scene,
+                Some(GRAPH_TAG),
+                "s",
+                mods(true, false)
+            ));
             // Add another, then Ctrl+O reverts to the saved graph.
             send(&mut scene, "palette_0:PointerDown");
             send(&mut scene, "palette_0:PointerUp");
             assert_eq!(query_int(&scene, "node_count"), 6);
-            assert!(NodeEditorView::apply_key(&mut scene, Some(GRAPH_TAG), "o", mods(true, false)));
-            assert_eq!(query_int(&scene, "node_count"), 5, "Ctrl+O loaded the saved graph");
+            assert!(NodeEditorView::apply_key(
+                &mut scene,
+                Some(GRAPH_TAG),
+                "o",
+                mods(true, false)
+            ));
+            assert_eq!(
+                query_int(&scene, "node_count"),
+                5,
+                "Ctrl+O loaded the saved graph"
+            );
             // Plain 's' (no Ctrl) is not a save gesture.
-            assert!(!NodeEditorView::apply_key(&mut scene, Some(GRAPH_TAG), "s", mods(false, false)));
+            assert!(!NodeEditorView::apply_key(
+                &mut scene,
+                Some(GRAPH_TAG),
+                "s",
+                mods(false, false)
+            ));
         });
     }
 
@@ -7149,9 +8455,15 @@ mod tests {
             let (ax, ay) = (0.25_f32, 0.25_f32);
             let before = coord.cursor_graph(f64::from(ax), f64::from(ay));
             // One notch in: dy = -16 px -> factor ZOOM_STEP.
-            assert!(coord.wheel(ax, ay, 0.0, -16.0, mods(true, false)), "ctrl-wheel consumed");
+            assert!(
+                coord.wheel(ax, ay, 0.0, -16.0, mods(true, false)),
+                "ctrl-wheel consumed"
+            );
             let zoom = coord.zoom.get();
-            assert!((zoom - ZOOM_STEP).abs() < 1e-9, "one notch = one ZOOM_STEP, got {zoom}");
+            assert!(
+                (zoom - ZOOM_STEP).abs() < 1e-9,
+                "one notch = one ZOOM_STEP, got {zoom}"
+            );
             let after = coord.cursor_graph(f64::from(ax), f64::from(ay));
             // The scroll offset quantises to whole px, so the anchor holds to
             // sub-pixel-per-zoom tolerance (< 1 graph unit).
@@ -7170,7 +8482,10 @@ mod tests {
             // No modifiers: the External declines and the router's native
             // Scroll fallback owns the pan (zero canvas code).
             assert!(!coord.wheel(0.5, 0.5, 0.0, 32.0, mods(false, false)));
-            assert!((coord.zoom.get() - 1.0).abs() < f64::EPSILON, "zoom untouched");
+            assert!(
+                (coord.zoom.get() - 1.0).abs() < f64::EPSILON,
+                "zoom untouched"
+            );
         });
     }
 
@@ -7182,8 +8497,15 @@ mod tests {
             // Give the pan some range first (the layout pass does this in the
             // running app; unit tests write the world maxima directly).
             coord.scroll.set_max(WORLD, WORLD);
-            assert!(coord.wheel(0.5, 0.5, 0.0, 48.0, mods(false, true)), "shift-wheel consumed");
-            assert_eq!(coord.scroll.offset(), (48, 0), "vertical notches drive the x offset");
+            assert!(
+                coord.wheel(0.5, 0.5, 0.0, 48.0, mods(false, true)),
+                "shift-wheel consumed"
+            );
+            assert_eq!(
+                coord.scroll.offset(),
+                (48, 0),
+                "vertical notches drive the x offset"
+            );
         });
     }
 
@@ -7195,7 +8517,10 @@ mod tests {
             // A palette-card wheel routes here via the shared primary but
             // normalises outside [0, 1] (the palette is left of the canvas).
             assert!(!coord.wheel(-0.2, 0.5, 0.0, -16.0, mods(true, false)));
-            assert!((coord.zoom.get() - 1.0).abs() < f64::EPSILON, "zoom untouched");
+            assert!(
+                (coord.zoom.get() - 1.0).abs() < f64::EPSILON,
+                "zoom untouched"
+            );
         });
     }
 
@@ -7203,15 +8528,38 @@ mod tests {
     fn r877_viewport_zoom_intervene_clamps_and_round_trips() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
+            let node = scene
+                .find_external_with_tag_mut(GRAPH_TAG)
+                .expect("present");
             let intro = node.handle.introspect_mut().expect("introspectable");
-            assert!(intro.intervene("viewport.zoom", IntrospectValue::Float(2.0)).is_ok());
-            assert_eq!(intro.query("viewport.zoom"), Some(IntrospectValue::Float(2.0)));
+            assert!(
+                intro
+                    .intervene("viewport.zoom", IntrospectValue::Float(2.0))
+                    .is_ok()
+            );
+            assert_eq!(
+                intro.query("viewport.zoom"),
+                Some(IntrospectValue::Float(2.0))
+            );
             // Out-of-range writes clamp (the setter-returns-outcome read-back).
-            assert!(intro.intervene("viewport.zoom", IntrospectValue::Float(99.0)).is_ok());
-            assert_eq!(intro.query("viewport.zoom"), Some(IntrospectValue::Float(ZOOM_MAX)));
-            assert!(intro.intervene("viewport.zoom", IntrospectValue::Float(0.01)).is_ok());
-            assert_eq!(intro.query("viewport.zoom"), Some(IntrospectValue::Float(ZOOM_MIN)));
+            assert!(
+                intro
+                    .intervene("viewport.zoom", IntrospectValue::Float(99.0))
+                    .is_ok()
+            );
+            assert_eq!(
+                intro.query("viewport.zoom"),
+                Some(IntrospectValue::Float(ZOOM_MAX))
+            );
+            assert!(
+                intro
+                    .intervene("viewport.zoom", IntrospectValue::Float(0.01))
+                    .is_ok()
+            );
+            assert_eq!(
+                intro.query("viewport.zoom"),
+                Some(IntrospectValue::Float(ZOOM_MIN))
+            );
             // Type mismatch is rejected.
             assert_eq!(
                 intro.intervene("viewport.zoom", IntrospectValue::Text("big".into())),
@@ -7224,19 +8572,43 @@ mod tests {
     fn r877_viewport_pan_intervene_is_graph_units_and_clamps() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
+            let node = scene
+                .find_external_with_tag_mut(GRAPH_TAG)
+                .expect("present");
             let intro = node.handle.introspect_mut().expect("introspectable");
             // Zoom to 2x first: set_zoom writes the world maxima, exactly as
             // the layout pass does on every painted frame.
-            assert!(intro.intervene("viewport.zoom", IntrospectValue::Float(2.0)).is_ok());
+            assert!(
+                intro
+                    .intervene("viewport.zoom", IntrospectValue::Float(2.0))
+                    .is_ok()
+            );
             // Pan to graph (100, 50): the query twin reads back in graph units
             // (zoom-independent), the wire shape an AI client can reason in.
-            assert!(intro.intervene("viewport.x", IntrospectValue::Float(100.0)).is_ok());
-            assert!(intro.intervene("viewport.y", IntrospectValue::Float(50.0)).is_ok());
-            assert_eq!(intro.query("viewport.x"), Some(IntrospectValue::Float(100.0)));
-            assert_eq!(intro.query("viewport.y"), Some(IntrospectValue::Float(50.0)));
+            assert!(
+                intro
+                    .intervene("viewport.x", IntrospectValue::Float(100.0))
+                    .is_ok()
+            );
+            assert!(
+                intro
+                    .intervene("viewport.y", IntrospectValue::Float(50.0))
+                    .is_ok()
+            );
+            assert_eq!(
+                intro.query("viewport.x"),
+                Some(IntrospectValue::Float(100.0))
+            );
+            assert_eq!(
+                intro.query("viewport.y"),
+                Some(IntrospectValue::Float(50.0))
+            );
             // A huge pan clamps against the world maxima.
-            assert!(intro.intervene("viewport.x", IntrospectValue::Float(1.0e9)).is_ok());
+            assert!(
+                intro
+                    .intervene("viewport.x", IntrospectValue::Float(1.0e9))
+                    .is_ok()
+            );
             let clamped = match intro.query("viewport.x") {
                 Some(IntrospectValue::Float(v)) => v,
                 other => panic!("expected Float, got {other:?}"),
@@ -7265,13 +8637,20 @@ mod tests {
             let zoom = coord.zoom.get();
             // Boot bbox: x 40..600, y 70..~318 -> fit is width-bound:
             // (640 - 48) / 560 ~= 1.057.
-            assert!(zoom > 1.0 && zoom < 1.2, "fit zoom in the expected band, got {zoom}");
+            assert!(
+                zoom > 1.0 && zoom < 1.2,
+                "fit zoom in the expected band, got {zoom}"
+            );
             // Every node's projected position lies inside the canvas.
             let (ox, oy) = coord.scroll.offset();
             for n in &coord.nodes.get() {
                 let sx = wpx(n.x, zoom) - ox;
                 let sy = wpx(n.y, zoom) - oy;
-                assert!(sx >= 0 && sy >= 0, "node {} on-canvas, got ({sx}, {sy})", n.id);
+                assert!(
+                    sx >= 0 && sy >= 0,
+                    "node {} on-canvas, got ({sx}, {sy})",
+                    n.id
+                );
                 assert!(
                     sx + wpx(NODE_W, zoom) <= i32::try_from(WIN_W).unwrap_or(0)
                         && sy + wpx(n.height(), zoom) <= i32::try_from(WIN_H).unwrap_or(0),
@@ -7290,7 +8669,10 @@ mod tests {
             coord.nodes.set(Vec::new());
             coord.edges.set(Vec::new());
             assert!(!coord.frame_all(), "nothing to frame");
-            assert!((coord.zoom.get() - 1.0).abs() < f64::EPSILON, "viewport untouched");
+            assert!(
+                (coord.zoom.get() - 1.0).abs() < f64::EPSILON,
+                "viewport untouched"
+            );
         });
     }
 
@@ -7298,28 +8680,54 @@ mod tests {
     fn r877_keyboard_zoom_steps_and_resets() {
         Owner::new().run(|| {
             let mut scene = boot_full_scene();
-            assert!(NodeEditorView::apply_key(&mut scene, Some(GRAPH_TAG), "=", mods(true, false)));
+            assert!(NodeEditorView::apply_key(
+                &mut scene,
+                Some(GRAPH_TAG),
+                "=",
+                mods(true, false)
+            ));
             let intro = graph_intro(&scene);
             let zoomed = match intro.query("viewport.zoom") {
                 Some(IntrospectValue::Float(v)) => v,
                 other => panic!("expected Float, got {other:?}"),
             };
-            assert!((zoomed - ZOOM_STEP).abs() < 1e-9, "Ctrl+= one step in, got {zoomed}");
-            assert!(NodeEditorView::apply_key(&mut scene, Some(GRAPH_TAG), "0", mods(true, false)));
+            assert!(
+                (zoomed - ZOOM_STEP).abs() < 1e-9,
+                "Ctrl+= one step in, got {zoomed}"
+            );
+            assert!(NodeEditorView::apply_key(
+                &mut scene,
+                Some(GRAPH_TAG),
+                "0",
+                mods(true, false)
+            ));
             assert_eq!(
                 graph_intro(&scene).query("viewport.zoom"),
                 Some(IntrospectValue::Float(1.0)),
                 "Ctrl+0 resets to 100%",
             );
             // 'f' frames the graph (zoom moves off 1.0).
-            assert!(NodeEditorView::apply_key(&mut scene, Some(GRAPH_TAG), "f", mods(false, false)));
+            assert!(NodeEditorView::apply_key(
+                &mut scene,
+                Some(GRAPH_TAG),
+                "f",
+                mods(false, false)
+            ));
             let framed = match graph_intro(&scene).query("viewport.zoom") {
                 Some(IntrospectValue::Float(v)) => v,
                 other => panic!("expected Float, got {other:?}"),
             };
-            assert!((framed - 1.0).abs() > 1e-3, "f framed the graph, got {framed}");
+            assert!(
+                (framed - 1.0).abs() > 1e-3,
+                "f framed the graph, got {framed}"
+            );
             // Plain '=' (no Ctrl) is not a zoom gesture.
-            assert!(!NodeEditorView::apply_key(&mut scene, Some(GRAPH_TAG), "=", mods(false, false)));
+            assert!(!NodeEditorView::apply_key(
+                &mut scene,
+                Some(GRAPH_TAG),
+                "=",
+                mods(false, false)
+            ));
         });
     }
 
@@ -7338,7 +8746,11 @@ mod tests {
             coord.pointer_move(0.1, 0.1);
             coord.pointer_move(0.2, 0.1);
             let after = pos_of(&coord, id);
-            assert_eq!(after.0 - before.0, 32, "64 screen px / 2x zoom = 32 graph units");
+            assert_eq!(
+                after.0 - before.0,
+                32,
+                "64 screen px / 2x zoom = 32 graph units"
+            );
             assert_eq!(after.1, before.1);
             coord.end_gesture();
         });
@@ -7369,9 +8781,17 @@ mod tests {
             // outside the (8 / 2 = 4)-unit halo at zoom 2 — the on-screen
             // tolerance stays 8 px in both cases.
             let probe = (mid.0, mid.1 - 6.0);
-            assert_eq!(coord.hit_test_edge(probe.0, probe.1), Some(EdgeId(0)), "hit at zoom 1");
+            assert_eq!(
+                coord.hit_test_edge(probe.0, probe.1),
+                Some(EdgeId(0)),
+                "hit at zoom 1"
+            );
             coord.set_zoom_centered(2.0);
-            assert_eq!(coord.hit_test_edge(probe.0, probe.1), None, "missed at zoom 2");
+            assert_eq!(
+                coord.hit_test_edge(probe.0, probe.1),
+                None,
+                "missed at zoom 2"
+            );
         });
     }
 
@@ -7419,13 +8839,19 @@ mod tests {
             // The canvas contains a Both-axis Scroll (the pannable world).
             let scroll = find_scroll(&scene).expect("the canvas hosts a world Scroll");
             assert_eq!(scroll.axis, ScrollAxis::Both, "2-D pan needs both axes");
-            assert!(scroll.state.is_some(), "the pan state is wired for wheel routing");
+            assert!(
+                scroll.state.is_some(),
+                "the pan state is wired for wheel routing"
+            );
             // The status line (chrome) is NOT inside the scroll content.
             assert!(
                 !text_in(scroll.content.as_ref(), "zoom"),
                 "status chrome must not pan away with the world",
             );
-            assert!(text_in(&scene, "zoom 100%"), "the status line surfaces the zoom");
+            assert!(
+                text_in(&scene, "zoom 100%"),
+                "the status line surfaces the zoom"
+            );
         });
     }
 
@@ -7468,7 +8894,9 @@ mod tests {
         Owner::new().run(|| {
             let mut scene = boot_scene();
             {
-                let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
+                let node = scene
+                    .find_external_with_tag_mut(GRAPH_TAG)
+                    .expect("present");
                 let intro = node.handle.introspect_mut().expect("introspectable");
                 // Unknown id → false, nothing armed.
                 assert_eq!(
@@ -7497,10 +8925,15 @@ mod tests {
                 "the read twin reports the in-flight target",
             );
             end_edit_mode(false);
-            assert_eq!(graph_intro(&scene).query("renaming"), Some(IntrospectValue::Null));
+            assert_eq!(
+                graph_intro(&scene).query("renaming"),
+                Some(IntrospectValue::Null)
+            );
             // Null with a selection → the F2 path.
             use_selection().set(Selection::single(NodeId(3)));
-            let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
+            let node = scene
+                .find_external_with_tag_mut(GRAPH_TAG)
+                .expect("present");
             let intro = node.handle.introspect_mut().expect("introspectable");
             assert_eq!(
                 intro.invoke("begin_rename", IntrospectValue::Null),
@@ -7525,12 +8958,28 @@ mod tests {
                 "Mix",
                 "the title is applied",
             );
-            assert_eq!(use_text_edit_state(EDIT_TF_TAG).text(), "", "editor wiped for the next rename");
-            assert_eq!(stack.undo_label().as_deref(), Some("Rename node"), "journaled undoably");
+            assert_eq!(
+                use_text_edit_state(EDIT_TF_TAG).text(),
+                "",
+                "editor wiped for the next rename"
+            );
+            assert_eq!(
+                stack.undo_label().as_deref(),
+                Some("Rename node"),
+                "journaled undoably"
+            );
             assert!(stack.undo());
-            assert_eq!(coord.node_by_id(NodeId(2)).expect("present").title, "Multiply", "undo restores");
+            assert_eq!(
+                coord.node_by_id(NodeId(2)).expect("present").title,
+                "Multiply",
+                "undo restores"
+            );
             assert!(stack.redo());
-            assert_eq!(coord.node_by_id(NodeId(2)).expect("present").title, "Mix", "redo re-applies");
+            assert_eq!(
+                coord.node_by_id(NodeId(2)).expect("present").title,
+                "Mix",
+                "redo re-applies"
+            );
         });
     }
 
@@ -7544,7 +8993,11 @@ mod tests {
             assert!(coord.begin_rename(NodeId(1)));
             use_text_edit_state(EDIT_TF_TAG).set_text("   ".to_owned());
             commit_edit(false);
-            assert_eq!(coord.node_by_id(NodeId(1)).expect("present").title, "Color", "whitespace kept");
+            assert_eq!(
+                coord.node_by_id(NodeId(1)).expect("present").title,
+                "Color",
+                "whitespace kept"
+            );
             assert_eq!(use_active_edit().get(), None);
             assert!(!stack.can_undo(), "no spurious undo step");
             // Unchanged commit: successful no-op, still no undo step.
@@ -7561,10 +9014,15 @@ mod tests {
             let mut scene = boot_scene();
             let stack = use_undo();
             {
-                let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
+                let node = scene
+                    .find_external_with_tag_mut(GRAPH_TAG)
+                    .expect("present");
                 let intro = node.handle.introspect_mut().expect("introspectable");
                 assert_eq!(
-                    intro.intervene("node.2.title", IntrospectValue::Text("  Blend  ".to_owned())),
+                    intro.intervene(
+                        "node.2.title",
+                        IntrospectValue::Text("  Blend  ".to_owned())
+                    ),
                     Ok(()),
                     "a Text write renames (trimmed)",
                 );
@@ -7612,7 +9070,10 @@ mod tests {
             // Double-clicking node 1 while node 0's editor is open commits
             // node 0's typed text first (the Qt item-view discipline).
             assert!(coord.begin_rename(NodeId(1)));
-            assert_eq!(coord.node_by_id(NodeId(0)).expect("present").title, "Albedo");
+            assert_eq!(
+                coord.node_by_id(NodeId(0)).expect("present").title,
+                "Albedo"
+            );
             assert_eq!(use_active_edit().get(), card(EditTarget::Title(NodeId(1))));
             assert_eq!(
                 use_text_edit_state(EDIT_TF_TAG).text(),
@@ -7623,7 +9084,11 @@ mod tests {
             // todomvc restart-editing UX).
             use_text_edit_state(EDIT_TF_TAG).set_text("Tint".to_owned());
             assert!(coord.begin_rename(NodeId(1)));
-            assert_eq!(coord.node_by_id(NodeId(1)).expect("present").title, "Color", "no self-commit");
+            assert_eq!(
+                coord.node_by_id(NodeId(1)).expect("present").title,
+                "Color",
+                "no self-commit"
+            );
             assert_eq!(use_text_edit_state(EDIT_TF_TAG).text(), "Color", "reseeded");
         });
     }
@@ -7641,7 +9106,11 @@ mod tests {
                 "Enter",
                 Modifiers::empty()
             ));
-            assert_eq!(coord.node_by_id(NodeId(3)).expect("present").title, "Result", "Enter commits");
+            assert_eq!(
+                coord.node_by_id(NodeId(3)).expect("present").title,
+                "Result",
+                "Enter commits"
+            );
             assert_eq!(use_active_edit().get(), None);
             // Escape cancels without touching the title.
             assert!(coord.begin_rename(NodeId(3)));
@@ -7652,7 +9121,11 @@ mod tests {
                 "Escape",
                 Modifiers::empty()
             ));
-            assert_eq!(coord.node_by_id(NodeId(3)).expect("present").title, "Result", "Escape cancels");
+            assert_eq!(
+                coord.node_by_id(NodeId(3)).expect("present").title,
+                "Result",
+                "Escape cancels"
+            );
             assert_eq!(use_active_edit().get(), None);
         });
     }
@@ -7664,10 +9137,16 @@ mod tests {
             let coord = coordinator();
             assert!(coord.begin_rename(NodeId(0)));
             use_text_edit_state(EDIT_TF_TAG).set_text("Diffuse".to_owned());
-            let intent =
-                pinion_core::Intent::new_owned(EDIT_TF_BLUR_INTENT_TAG.to_owned(), IntrospectValue::Null);
+            let intent = pinion_core::Intent::new_owned(
+                EDIT_TF_BLUR_INTENT_TAG.to_owned(),
+                IntrospectValue::Null,
+            );
             let _ = NodeEditorView::update(IDLE_TF, &intent);
-            assert_eq!(coord.node_by_id(NodeId(0)).expect("present").title, "Diffuse", "blur commits");
+            assert_eq!(
+                coord.node_by_id(NodeId(0)).expect("present").title,
+                "Diffuse",
+                "blur commits"
+            );
             assert_eq!(use_active_edit().get(), None);
             // A blur with no rename in flight is a no-op (the post-commit blur).
             let _ = NodeEditorView::update(IDLE_TF, &intent);
@@ -7681,10 +9160,16 @@ mod tests {
             let _scene = boot_scene();
             let coord = coordinator();
             let idle = view(IDLE_TF, &Frame::new());
-            assert!(!idle.contains_tag(EDIT_TF_TAG), "no editor painted while idle");
+            assert!(
+                !idle.contains_tag(EDIT_TF_TAG),
+                "no editor painted while idle"
+            );
             assert!(coord.begin_rename(NodeId(2)));
             let editing = view((TextFieldState::Editing, 0), &Frame::new());
-            assert!(editing.contains_tag(EDIT_TF_TAG), "the shared field paints over the title");
+            assert!(
+                editing.contains_tag(EDIT_TF_TAG),
+                "the shared field paints over the title"
+            );
         });
     }
 
@@ -7699,10 +9184,8 @@ mod tests {
                 "no textbox advertised while idle (paint gate == a11y gate)",
             );
             assert!(coord.begin_rename(NodeId(2)));
-            let editing = NodeEditorView::access_node(
-                &(TextFieldState::Editing, 0),
-                Some(EDIT_TF_TAG),
-            );
+            let editing =
+                NodeEditorView::access_node(&(TextFieldState::Editing, 0), Some(EDIT_TF_TAG));
             let textbox = editing
                 .iter()
                 .find(|n| n.tag == EDIT_TF_TAG)
@@ -7739,7 +9222,11 @@ mod tests {
             // Ctrl+click on a member toggles it back out.
             send(&mut scene, "node_0:PointerDown:c");
             send(&mut scene, "node_0:PointerUp:c");
-            assert_eq!(use_selection().get(), Selection::single(NodeId(2)), "Ctrl toggles out");
+            assert_eq!(
+                use_selection().get(),
+                Selection::single(NodeId(2)),
+                "Ctrl toggles out"
+            );
             // Shift+click adds (an unordered graph has no range).
             send(&mut scene, "node_1:PointerDown:s");
             send(&mut scene, "node_1:PointerUp:s");
@@ -7747,15 +9234,27 @@ mod tests {
             // Shift+click on a member is idempotent (add, not toggle).
             send(&mut scene, "node_1:PointerDown:s");
             send(&mut scene, "node_1:PointerUp:s");
-            assert_eq!(use_selection().get(), sel_set(&[1, 2]), "Shift re-add is a no-op");
+            assert_eq!(
+                use_selection().get(),
+                sel_set(&[1, 2]),
+                "Shift re-add is a no-op"
+            );
             // Plain click collapses back to a single.
             send(&mut scene, "node_3:PointerDown");
             send(&mut scene, "node_3:PointerUp");
-            assert_eq!(use_selection().get(), Selection::single(NodeId(3)), "plain replaces");
+            assert_eq!(
+                use_selection().get(),
+                Selection::single(NodeId(3)),
+                "plain replaces"
+            );
             // Toggling the last member out empties to None.
             send(&mut scene, "node_3:PointerDown:c");
             send(&mut scene, "node_3:PointerUp:c");
-            assert_eq!(use_selection().get(), Selection::None, "empty set collapses to None");
+            assert_eq!(
+                use_selection().get(),
+                Selection::None,
+                "empty set collapses to None"
+            );
         });
     }
 
@@ -7859,8 +9358,16 @@ mod tests {
                 "an unselected grab drags just the grabbed node",
             );
             coord.pointer_move(0.6, 0.6);
-            assert_eq!(pos_of(&coord, NodeId(1)), a1, "members of the selection stay put");
-            assert_eq!(use_selection().get(), sel_set(&[0, 1]), "the selection is untouched");
+            assert_eq!(
+                pos_of(&coord, NodeId(1)),
+                a1,
+                "members of the selection stay put"
+            );
+            assert_eq!(
+                use_selection().get(),
+                sel_set(&[0, 1]),
+                "the selection is untouched"
+            );
             coord.handle_send("PointerUp");
         });
     }
@@ -7883,7 +9390,10 @@ mod tests {
             );
             use_selection().set(Selection::single(NodeId(2)));
             assert_eq!(intro.query("selected"), Some(IntrospectValue::Int(2)));
-            assert_eq!(intro.query("selected_ids"), Some(IntrospectValue::Text("2".to_owned())));
+            assert_eq!(
+                intro.query("selected_ids"),
+                Some(IntrospectValue::Text("2".to_owned()))
+            );
         });
     }
 
@@ -7891,22 +9401,42 @@ mod tests {
     fn r879_intervene_selected_ids_is_the_strict_write_twin() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
+            let node = scene
+                .find_external_with_tag_mut(GRAPH_TAG)
+                .expect("present");
             let intro = node.handle.introspect_mut().expect("introspectable");
-            assert_eq!(intro.intervene("selected_ids", IntrospectValue::Text("0, 2".to_owned())), Ok(()));
-            assert_eq!(use_selection().get(), sel_set(&[0, 2]), "CSV writes the set");
+            assert_eq!(
+                intro.intervene("selected_ids", IntrospectValue::Text("0, 2".to_owned())),
+                Ok(())
+            );
+            assert_eq!(
+                use_selection().get(),
+                sel_set(&[0, 2]),
+                "CSV writes the set"
+            );
             assert_eq!(
                 intro.intervene("selected_ids", IntrospectValue::Text("0,99".to_owned())),
                 Err(InterveneError::OutOfRange),
                 "an unknown member rejects the whole write",
             );
-            assert_eq!(use_selection().get(), sel_set(&[0, 2]), "the rejected write changed nothing");
+            assert_eq!(
+                use_selection().get(),
+                sel_set(&[0, 2]),
+                "the rejected write changed nothing"
+            );
             assert_eq!(
                 intro.intervene("selected_ids", IntrospectValue::Int(3)),
                 Err(InterveneError::TypeMismatch)
             );
-            assert_eq!(intro.intervene("selected_ids", IntrospectValue::Text(String::new())), Ok(()));
-            assert_eq!(use_selection().get(), Selection::None, "an empty CSV clears");
+            assert_eq!(
+                intro.intervene("selected_ids", IntrospectValue::Text(String::new())),
+                Ok(())
+            );
+            assert_eq!(
+                use_selection().get(),
+                Selection::None,
+                "an empty CSV clears"
+            );
         });
     }
 
@@ -7930,7 +9460,9 @@ mod tests {
         Owner::new().run(|| {
             let mut scene = boot_scene();
             use_selection().set(sel_set(&[0, 1]));
-            let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
+            let node = scene
+                .find_external_with_tag_mut(GRAPH_TAG)
+                .expect("present");
             let intro = node.handle.introspect_mut().expect("introspectable");
             assert_eq!(
                 intro.invoke("begin_rename", IntrospectValue::Null),
@@ -7954,11 +9486,22 @@ mod tests {
             coord.grabbed_node.set(Some(NodeId(0)));
             coord.pointer_move(0.5, 0.5); // capture seed (press point)
             coord.pointer_move(0.503, 0.5); // ~1.9 px — inside the dead zone
-            assert_eq!(pos_of(&coord, NodeId(0)), p0, "a jitter never displaces the node");
-            assert!(!coord.gesture_moved(), "inside the dead zone = still a click");
+            assert_eq!(
+                pos_of(&coord, NodeId(0)),
+                p0,
+                "a jitter never displaces the node"
+            );
+            assert!(
+                !coord.gesture_moved(),
+                "inside the dead zone = still a click"
+            );
             coord.handle_send("node_0:PointerUp");
             assert_eq!(stack.len(), 0, "no move was journaled");
-            assert_eq!(use_selection().get(), Selection::single(NodeId(0)), "the click selects");
+            assert_eq!(
+                use_selection().get(),
+                Selection::single(NodeId(0)),
+                "the click selects"
+            );
         });
     }
 
@@ -8010,10 +9553,17 @@ mod tests {
                 coord.nudge_selected(NUDGE_STEP, 0),
                 "a clamped nudge of a selection is still handled (must not fall through to pan)",
             );
-            assert_eq!(pos_of(&coord, NodeId(0)), before, "the node did not actually move (walled)");
+            assert_eq!(
+                pos_of(&coord, NodeId(0)),
+                before,
+                "the node did not actually move (walled)"
+            );
             // With no selection the arrow is unhandled -> the shell pans.
             use_selection().set(Selection::None);
-            assert!(!coord.nudge_selected(NUDGE_STEP, 0), "no selection -> unhandled (canvas pans)");
+            assert!(
+                !coord.nudge_selected(NUDGE_STEP, 0),
+                "no selection -> unhandled (canvas pans)"
+            );
         });
     }
 
@@ -8035,15 +9585,27 @@ mod tests {
             setup(&coord);
             assert!(coord.align_selected(AlignSpec::Right));
             for id in [0u32, 1, 2] {
-                assert_eq!(pos_of(&coord, NodeId(id)).0, 300, "right: x -> bbox right - w (430-130)");
+                assert_eq!(
+                    pos_of(&coord, NodeId(id)).0,
+                    300,
+                    "right: x -> bbox right - w (430-130)"
+                );
             }
             setup(&coord);
             assert!(coord.align_selected(AlignSpec::CenterH));
             for id in [0u32, 1, 2] {
                 // midpoint(100, 430) - NODE_W/2 = 265 - 65 = 200.
-                assert_eq!(pos_of(&coord, NodeId(id)).0, 200, "centre_h: centres on the bbox mid");
+                assert_eq!(
+                    pos_of(&coord, NodeId(id)).0,
+                    200,
+                    "centre_h: centres on the bbox mid"
+                );
             }
-            assert_eq!(pos_of(&coord, NodeId(0)).1, 50, "a horizontal align never touches y");
+            assert_eq!(
+                pos_of(&coord, NodeId(0)).1,
+                50,
+                "a horizontal align never touches y"
+            );
         });
     }
 
@@ -8063,18 +9625,41 @@ mod tests {
             };
             setup(&coord);
             assert!(coord.align_selected(AlignSpec::Top));
-            assert_eq!(pos_of(&coord, NodeId(0)).1, 50, "top: both y -> bbox top (min)");
-            assert_eq!(pos_of(&coord, NodeId(2)).1, 50, "top: both y -> bbox top (min)");
+            assert_eq!(
+                pos_of(&coord, NodeId(0)).1,
+                50,
+                "top: both y -> bbox top (min)"
+            );
+            assert_eq!(
+                pos_of(&coord, NodeId(2)).1,
+                50,
+                "top: both y -> bbox top (min)"
+            );
             setup(&coord);
             assert!(coord.align_selected(AlignSpec::Bottom));
             let (b0, b2) = (pos_of(&coord, NodeId(0)), pos_of(&coord, NodeId(2)));
-            assert_eq!(b0.1 + h0, b2.1 + h2, "bottom: bottom EDGES align (per-node height)");
-            assert_eq!(b2.1, 200, "the lowest card is the anchor (it does not move)");
-            assert_eq!(b0.1, 200 + h2 - h0, "the short card drops so its bottom matches");
+            assert_eq!(
+                b0.1 + h0,
+                b2.1 + h2,
+                "bottom: bottom EDGES align (per-node height)"
+            );
+            assert_eq!(
+                b2.1, 200,
+                "the lowest card is the anchor (it does not move)"
+            );
+            assert_eq!(
+                b0.1,
+                200 + h2 - h0,
+                "the short card drops so its bottom matches"
+            );
             setup(&coord);
             assert!(coord.align_selected(AlignSpec::CenterV));
             let (c0, c2) = (pos_of(&coord, NodeId(0)), pos_of(&coord, NodeId(2)));
-            assert_eq!(c0.1 + h0 / 2, c2.1 + h2 / 2, "centre_v: vertical centres coincide");
+            assert_eq!(
+                c0.1 + h0 / 2,
+                c2.1 + h2 / 2,
+                "centre_v: vertical centres coincide"
+            );
             assert_eq!(c0.0, 40, "a vertical align never touches x");
         });
     }
@@ -8086,13 +9671,22 @@ mod tests {
             let coord = coordinator();
             let stack = use_undo();
             use_selection().set(sel_set(&[0]));
-            assert!(!coord.align_selected(AlignSpec::Left), "one node has nothing to align to");
+            assert!(
+                !coord.align_selected(AlignSpec::Left),
+                "one node has nothing to align to"
+            );
             use_selection().set(Selection::None);
-            assert!(!coord.align_selected(AlignSpec::Top), "an empty selection -> false");
+            assert!(
+                !coord.align_selected(AlignSpec::Top),
+                "an empty selection -> false"
+            );
             assert_eq!(stack.len(), 0, "no undo step from a too-small align");
             // An already-aligned selection moves nothing and journals nothing.
             place_and_select(&coord, &[(0, 100, 50), (1, 100, 200)]);
-            assert!(!coord.align_selected(AlignSpec::Left), "already left-aligned -> no move");
+            assert!(
+                !coord.align_selected(AlignSpec::Left),
+                "already left-aligned -> no move"
+            );
             assert_eq!(stack.len(), 0, "an idempotent align journals nothing");
         });
     }
@@ -8131,10 +9725,22 @@ mod tests {
             // Centres (x + NODE_W/2 = x + 65): 165 / 215 / 565 (uneven).
             place_and_select(&coord, &[(0, 100, 50), (1, 150, 50), (2, 500, 50)]);
             assert!(coord.distribute_selected(DistributeAxis::Horizontal));
-            assert_eq!(pos_of(&coord, NodeId(0)).0, 100, "leftmost extreme stays fixed");
-            assert_eq!(pos_of(&coord, NodeId(2)).0, 500, "rightmost extreme stays fixed");
+            assert_eq!(
+                pos_of(&coord, NodeId(0)).0,
+                100,
+                "leftmost extreme stays fixed"
+            );
+            assert_eq!(
+                pos_of(&coord, NodeId(2)).0,
+                500,
+                "rightmost extreme stays fixed"
+            );
             // Middle centre -> midpoint(165, 565) = 365 -> x = 365 - 65 = 300.
-            assert_eq!(pos_of(&coord, NodeId(1)).0, 300, "middle centre evenly spaced");
+            assert_eq!(
+                pos_of(&coord, NodeId(1)).0,
+                300,
+                "middle centre evenly spaced"
+            );
             assert_eq!(stack.len(), 1, "one undo step");
         });
     }
@@ -8148,9 +9754,21 @@ mod tests {
             // centre spacing is clean y arithmetic.
             place_and_select(&coord, &[(0, 40, 100), (1, 40, 150), (3, 40, 500)]);
             assert!(coord.distribute_selected(DistributeAxis::Vertical));
-            assert_eq!(pos_of(&coord, NodeId(0)).1, 100, "topmost extreme stays fixed");
-            assert_eq!(pos_of(&coord, NodeId(3)).1, 500, "bottommost extreme stays fixed");
-            assert_eq!(pos_of(&coord, NodeId(1)).1, 300, "middle centre evenly spaced (y)");
+            assert_eq!(
+                pos_of(&coord, NodeId(0)).1,
+                100,
+                "topmost extreme stays fixed"
+            );
+            assert_eq!(
+                pos_of(&coord, NodeId(3)).1,
+                500,
+                "bottommost extreme stays fixed"
+            );
+            assert_eq!(
+                pos_of(&coord, NodeId(1)).1,
+                300,
+                "middle centre evenly spaced (y)"
+            );
         });
     }
 
@@ -8166,7 +9784,10 @@ mod tests {
                 "two nodes have no middle to space",
             );
             use_selection().set(sel_set(&[0]));
-            assert!(!coord.distribute_selected(DistributeAxis::Vertical), "one node -> false");
+            assert!(
+                !coord.distribute_selected(DistributeAxis::Vertical),
+                "one node -> false"
+            );
             assert_eq!(stack.len(), 0, "no undo step from a too-small distribute");
         });
     }

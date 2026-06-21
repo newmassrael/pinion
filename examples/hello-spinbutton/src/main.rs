@@ -40,11 +40,11 @@ use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widgets::button::ButtonState;
 use pinion_core::widgets::spin_button::SpinButtonExternal;
 use pinion_core::{Color, Frame, Scene, WidgetCore, WidgetStateName};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloSpinButtonRenderer, HelloSpinButtonRendererError);
@@ -93,7 +93,13 @@ struct SpinState {
 
 impl SpinState {
     fn boot() -> Self {
-        Self { value: START, min: MIN, max: MAX, dec: ButtonState::Idle, inc: ButtonState::Idle }
+        Self {
+            value: START,
+            min: MIN,
+            max: MAX,
+            dec: ButtonState::Idle,
+            inc: ButtonState::Idle,
+        }
     }
 }
 
@@ -144,13 +150,12 @@ fn stepper(tag: &'static str, glyph: &str, state: ButtonState, theme: &Theme) ->
         ContainerNode::new(vec![Scene::Text(TextNode::styled(
             glyph,
             Rect::default(),
-            TextStyle::new().with_size_px(GLYPH_PX).with_fg(theme.resolve(ColorRole::OnSurface)),
+            TextStyle::new()
+                .with_size_px(GLYPH_PX)
+                .with_fg(theme.resolve(ColorRole::OnSurface)),
         ))])
         .with_tag(tag)
-        .with_style(
-            BoxStyle::filled(stepper_fill(theme, state))
-                .with_corner_radius(FIELD_H / 2),
-        )
+        .with_style(BoxStyle::filled(stepper_fill(theme, state)).with_corner_radius(FIELD_H / 2))
         .with_layout(
             LayoutStyle::new()
                 .flex(FlexDirection::Row)
@@ -181,7 +186,9 @@ fn readout(value: f32, theme: &Theme) -> Scene {
         ContainerNode::new(vec![Scene::Text(TextNode::styled(
             format!("{value:.0}"),
             Rect::default(),
-            TextStyle::new().with_size_px(READOUT_PX).with_fg(theme.resolve(ColorRole::OnSurface)),
+            TextStyle::new()
+                .with_size_px(READOUT_PX)
+                .with_fg(theme.resolve(ColorRole::OnSurface)),
         ))])
         .with_layout(
             LayoutStyle::new()
@@ -287,14 +294,21 @@ impl WidgetCore for SpinButtonView {
             "ArrowDown" | "ArrowLeft" => intro.invoke("decrement", IntrospectValue::Null).is_ok(),
             "PageUp" => intro.invoke("page_up", IntrospectValue::Null).is_ok(),
             "PageDown" => intro.invoke("page_down", IntrospectValue::Null).is_ok(),
-            "Home" => intro.intervene("value", IntrospectValue::Float(f64::from(MIN))).is_ok(),
-            "End" => intro.intervene("value", IntrospectValue::Float(f64::from(MAX))).is_ok(),
+            "Home" => intro
+                .intervene("value", IntrospectValue::Float(f64::from(MIN)))
+                .is_ok(),
+            "End" => intro
+                .intervene("value", IntrospectValue::Float(f64::from(MAX)))
+                .is_ok(),
             _ => false,
         }
     }
 
     fn fmt_state_log(state: &SpinState) -> String {
-        format!("value={:.0} [{:.0}..{:.0}]", state.value, state.min, state.max)
+        format!(
+            "value={:.0} [{:.0}..{:.0}]",
+            state.value, state.min, state.max
+        )
     }
 }
 
@@ -305,10 +319,19 @@ impl WidgetA11y for SpinButtonView {
     /// AT nodes); the spinbutton's operable role surfaces the Increment /
     /// Decrement AT actions the arrow keys drive.
     fn access_node(state: &SpinState, focused: Option<&str>) -> Vec<AccessNode> {
-        vec![AccessNode::new(TAG, AriaRole::SpinButton)
-            .with_name("Quantity")
-            .with_value(AccessValue::Float { value: state.value, min: state.min, max: state.max })
-            .with_state(AccessState { focused: focused == Some(TAG), ..AccessState::default() })]
+        vec![
+            AccessNode::new(TAG, AriaRole::SpinButton)
+                .with_name("Quantity")
+                .with_value(AccessValue::Float {
+                    value: state.value,
+                    min: state.min,
+                    max: state.max,
+                })
+                .with_state(AccessState {
+                    focused: focused == Some(TAG),
+                    ..AccessState::default()
+                }),
+        ]
     }
 }
 
@@ -316,7 +339,10 @@ impl WidgetView for SpinButtonView {
     type Renderer = HelloSpinButtonRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 }
 
@@ -355,37 +381,103 @@ mod tests {
     #[test]
     fn arrows_step_by_one_and_clamp() {
         let mut scene = scene_fixture();
-        assert!(SpinButtonView::apply_key(&mut scene, Some(TAG), "ArrowUp", pinion_core::Modifiers::empty()));
-        assert!((SpinButtonView::read_state(&scene).value - 4.0).abs() < f32::EPSILON, "3 -> 4");
-        assert!(SpinButtonView::apply_key(&mut scene, Some(TAG), "ArrowDown", pinion_core::Modifiers::empty()));
-        assert!(SpinButtonView::apply_key(&mut scene, Some(TAG), "ArrowDown", pinion_core::Modifiers::empty()));
-        assert!((SpinButtonView::read_state(&scene).value - 2.0).abs() < f32::EPSILON, "4 -> 2");
+        assert!(SpinButtonView::apply_key(
+            &mut scene,
+            Some(TAG),
+            "ArrowUp",
+            pinion_core::Modifiers::empty()
+        ));
+        assert!(
+            (SpinButtonView::read_state(&scene).value - 4.0).abs() < f32::EPSILON,
+            "3 -> 4"
+        );
+        assert!(SpinButtonView::apply_key(
+            &mut scene,
+            Some(TAG),
+            "ArrowDown",
+            pinion_core::Modifiers::empty()
+        ));
+        assert!(SpinButtonView::apply_key(
+            &mut scene,
+            Some(TAG),
+            "ArrowDown",
+            pinion_core::Modifiers::empty()
+        ));
+        assert!(
+            (SpinButtonView::read_state(&scene).value - 2.0).abs() < f32::EPSILON,
+            "4 -> 2"
+        );
     }
 
     #[test]
     fn page_keys_step_by_five() {
         let mut scene = scene_fixture();
-        assert!(SpinButtonView::apply_key(&mut scene, Some(TAG), "PageUp", pinion_core::Modifiers::empty()));
-        assert!((SpinButtonView::read_state(&scene).value - 8.0).abs() < f32::EPSILON, "3 +5 -> 8");
-        assert!(SpinButtonView::apply_key(&mut scene, Some(TAG), "PageDown", pinion_core::Modifiers::empty()));
-        assert!((SpinButtonView::read_state(&scene).value - 3.0).abs() < f32::EPSILON, "8 -5 -> 3");
+        assert!(SpinButtonView::apply_key(
+            &mut scene,
+            Some(TAG),
+            "PageUp",
+            pinion_core::Modifiers::empty()
+        ));
+        assert!(
+            (SpinButtonView::read_state(&scene).value - 8.0).abs() < f32::EPSILON,
+            "3 +5 -> 8"
+        );
+        assert!(SpinButtonView::apply_key(
+            &mut scene,
+            Some(TAG),
+            "PageDown",
+            pinion_core::Modifiers::empty()
+        ));
+        assert!(
+            (SpinButtonView::read_state(&scene).value - 3.0).abs() < f32::EPSILON,
+            "8 -5 -> 3"
+        );
     }
 
     #[test]
     fn home_and_end_jump_to_min_max() {
         let mut scene = scene_fixture();
-        assert!(SpinButtonView::apply_key(&mut scene, Some(TAG), "End", pinion_core::Modifiers::empty()));
-        assert!((SpinButtonView::read_state(&scene).value - MAX).abs() < f32::EPSILON, "End -> max");
-        assert!(SpinButtonView::apply_key(&mut scene, Some(TAG), "Home", pinion_core::Modifiers::empty()));
-        assert!((SpinButtonView::read_state(&scene).value - MIN).abs() < f32::EPSILON, "Home -> min");
+        assert!(SpinButtonView::apply_key(
+            &mut scene,
+            Some(TAG),
+            "End",
+            pinion_core::Modifiers::empty()
+        ));
+        assert!(
+            (SpinButtonView::read_state(&scene).value - MAX).abs() < f32::EPSILON,
+            "End -> max"
+        );
+        assert!(SpinButtonView::apply_key(
+            &mut scene,
+            Some(TAG),
+            "Home",
+            pinion_core::Modifiers::empty()
+        ));
+        assert!(
+            (SpinButtonView::read_state(&scene).value - MIN).abs() < f32::EPSILON,
+            "Home -> min"
+        );
     }
 
     #[test]
     fn keys_ignored_when_not_focused() {
         let mut scene = scene_fixture();
-        assert!(!SpinButtonView::apply_key(&mut scene, None, "ArrowUp", pinion_core::Modifiers::empty()));
-        assert!(!SpinButtonView::apply_key(&mut scene, Some("other"), "ArrowUp", pinion_core::Modifiers::empty()));
-        assert!((SpinButtonView::read_state(&scene).value - START).abs() < f32::EPSILON, "value unchanged");
+        assert!(!SpinButtonView::apply_key(
+            &mut scene,
+            None,
+            "ArrowUp",
+            pinion_core::Modifiers::empty()
+        ));
+        assert!(!SpinButtonView::apply_key(
+            &mut scene,
+            Some("other"),
+            "ArrowUp",
+            pinion_core::Modifiers::empty()
+        ));
+        assert!(
+            (SpinButtonView::read_state(&scene).value - START).abs() < f32::EPSILON,
+            "value unchanged"
+        );
     }
 
     // ── a11y ───────────────────────────────────────────────────────────
@@ -398,14 +490,26 @@ mod tests {
         assert_eq!(nodes[0].name.as_deref(), Some("Quantity"));
         assert_eq!(
             nodes[0].value,
-            Some(AccessValue::Float { value: START, min: MIN, max: MAX }),
+            Some(AccessValue::Float {
+                value: START,
+                min: MIN,
+                max: MAX
+            }),
             "aria-valuenow / valuemin / valuemax",
         );
     }
 
     #[test]
     fn focused_flag_tracks_the_spinbutton_tag() {
-        assert!(SpinButtonView::access_node(&SpinState::boot(), Some(TAG))[0].state.focused);
-        assert!(!SpinButtonView::access_node(&SpinState::boot(), None)[0].state.focused);
+        assert!(
+            SpinButtonView::access_node(&SpinState::boot(), Some(TAG))[0]
+                .state
+                .focused
+        );
+        assert!(
+            !SpinButtonView::access_node(&SpinState::boot(), None)[0]
+                .state
+                .focused
+        );
     }
 }

@@ -49,23 +49,23 @@
 //! visible rows can be `aria-selected` at once). The list container is the
 //! focusable tab stop.
 
-use pinion_a11y::{windowed_list_nodes_multiselected, AccessNode, WidgetA11y};
+use pinion_a11y::{AccessNode, WidgetA11y, windowed_list_nodes_multiselected};
 use pinion_core::external::External;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, LayoutStyle, Size, SizeValue, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
 use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::widgets::virtual_select::{
-    nav_select_key, read_selection, RowMetrics, VirtualSelectExternal,
+    RowMetrics, VirtualSelectExternal, nav_select_key, read_selection,
 };
 use pinion_core::{Frame, Scene, WidgetCore};
-use pinion_shell::{vello_renderer_impl, WidgetView};
-use pinion_widget_paint::scrollbar::{view_vertical_scrollbar, VerticalScrollbarStyle};
+use pinion_shell::{WidgetView, vello_renderer_impl};
+use pinion_widget_paint::scrollbar::{VerticalScrollbarStyle, view_vertical_scrollbar};
 use pinion_widget_paint::virtual_list::view_flex_virtual_list;
 use std::collections::BTreeSet;
 
@@ -110,7 +110,10 @@ struct MultiSelection {
 
 impl MultiSelection {
     fn empty() -> Self {
-        Self { selected: [false; N], total: 0 }
+        Self {
+            selected: [false; N],
+            total: 0,
+        }
     }
 
     /// Build the bitmap from a list of selected data indices (out-of-range
@@ -138,7 +141,10 @@ impl MultiSelection {
 /// protocol) and `rect_for_tag` bounds the `listitem`.
 fn build_row(index: usize, theme: &Theme, width: u32, selection: &MultiSelection) -> Scene {
     let (fill, fg) = if selection.is_selected(index) {
-        (theme.resolve(ColorRole::Accent), theme.resolve(ColorRole::OnAccent))
+        (
+            theme.resolve(ColorRole::Accent),
+            theme.resolve(ColorRole::OnAccent),
+        )
     } else {
         let stripe = if index % 2 == 0 {
             ColorRole::SurfaceContainerLow
@@ -170,7 +176,10 @@ fn build_row(index: usize, theme: &Theme, width: u32, selection: &MultiSelection
 /// `scene/snapshot` readout.
 fn row_label(index: usize) -> String {
     const CATEGORIES: [&str; 5] = ["Alpha", "Bravo", "Charlie", "Delta", "Echo"];
-    format!("Item {index:05} \u{00B7} {}", CATEGORIES[index % CATEGORIES.len()])
+    format!(
+        "Item {index:05} \u{00B7} {}",
+        CATEGORIES[index % CATEGORIES.len()]
+    )
 }
 
 /// Header-bar status line: the selection cardinality + the measured
@@ -196,7 +205,9 @@ fn header(
     );
     Scene::Container(
         ContainerNode::new(vec![text])
-            .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh)))
+            .with_style(BoxStyle::filled(
+                theme.resolve(ColorRole::SurfaceContainerHigh),
+            ))
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Row)
@@ -269,7 +280,10 @@ impl WidgetCore for MultiSelectView {
 
     /// Sibling `ScrollBarExternal` sharing the list's `Rc<ScrollState>`.
     fn create_extra_externals() -> Vec<ExtraExternal> {
-        vec![scrollbar_extra_external(use_scroll_state(SCROLL_KEY), SCROLLBAR_TAG)]
+        vec![scrollbar_extra_external(
+            use_scroll_state(SCROLL_KEY),
+            SCROLLBAR_TAG,
+        )]
     }
 
     fn tag() -> &'static str {
@@ -315,7 +329,10 @@ impl WidgetCore for MultiSelectView {
             focused,
             key,
             modifiers,
-            RowMetrics { item_count: N, row_pitch: ROW_PITCH },
+            RowMetrics {
+                item_count: N,
+                row_pitch: ROW_PITCH,
+            },
         )
     }
 
@@ -341,8 +358,10 @@ impl WidgetA11y for MultiSelectView {
         let scroll = use_scroll_state(SCROLL_KEY);
         let (_, measured_h) = scroll.measured_viewport();
         let window = compute_visible_range(scroll.offset_y(), measured_h, N, ROW_PITCH, OVERSCAN);
-        let windowed_set: BTreeSet<usize> =
-            window.indices().filter(|&i| selection.is_selected(i)).collect();
+        let windowed_set: BTreeSet<usize> = window
+            .indices()
+            .filter(|&i| selection.is_selected(i))
+            .collect();
         windowed_list_nodes_multiselected(
             LIST_TAG,
             "Multi-selectable item list",
@@ -378,7 +397,10 @@ mod tests {
         let owner = Owner::new();
         owner.run(|| {
             let scroll = use_scroll_state(SCROLL_KEY);
-            scroll.set_max(0, i32::try_from(N).unwrap() * i32::try_from(ROW_PITCH).unwrap());
+            scroll.set_max(
+                0,
+                i32::try_from(N).unwrap() * i32::try_from(ROW_PITCH).unwrap(),
+            );
             scroll.set_measured_viewport(360, measured_h);
             scroll.scroll_to(0, offset_y);
             view(&MultiSelection::from_indices(indices), &Frame::default())
@@ -410,7 +432,11 @@ mod tests {
         let scene = run_view_with_measured(&[1, 3], 0, 384);
         assert_eq!(row_fill(&scene, 1), Some(accent), "row 1 is Accent");
         assert_eq!(row_fill(&scene, 3), Some(accent), "row 3 is Accent too");
-        assert_ne!(row_fill(&scene, 2), Some(accent), "row 2 between them is not");
+        assert_ne!(
+            row_fill(&scene, 2),
+            Some(accent),
+            "row 2 between them is not"
+        );
     }
 
     #[test]
@@ -421,8 +447,14 @@ mod tests {
             MultiSelectView::access_node(&MultiSelection::from_indices(&[0, 2]), None)
         });
         assert_eq!(nodes[0].role, AriaRole::List);
-        assert!(nodes[0].multiselectable, "container is aria-multiselectable");
-        let selected_count = nodes[1..].iter().filter(|n| n.selected == Some(true)).count();
+        assert!(
+            nodes[0].multiselectable,
+            "container is aria-multiselectable"
+        );
+        let selected_count = nodes[1..]
+            .iter()
+            .filter(|n| n.selected == Some(true))
+            .count();
         assert_eq!(selected_count, 2, "both members are aria-selected at once");
     }
 }

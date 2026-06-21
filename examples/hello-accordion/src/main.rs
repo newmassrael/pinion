@@ -45,12 +45,12 @@ use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole};
+use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::disclosure::{DisclosureExternal, DisclosureState};
 use pinion_core::{Frame, Scene, WidgetCore, WidgetStateName};
-use pinion_shell::{vello_renderer_impl, WidgetView};
-use pinion_widget_paint::disclosure::{view_disclosure, DisclosureStyle};
+use pinion_shell::{WidgetView, vello_renderer_impl};
+use pinion_widget_paint::disclosure::{DisclosureStyle, view_disclosure};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloAccordionRenderer, HelloAccordionRendererError);
@@ -72,8 +72,7 @@ const N: usize = 3;
 /// `NOTIF_INSTANCE_TAGS`. Each tag lands on one section header via
 /// [`view_disclosure`], so the input router hit-tests a click on
 /// header `i` straight to `accordion_sec_{i}`.
-const SECTION_TAGS: [&str; N] =
-    ["accordion_sec_0", "accordion_sec_1", "accordion_sec_2"];
+const SECTION_TAGS: [&str; N] = ["accordion_sec_0", "accordion_sec_1", "accordion_sec_2"];
 
 /// Header summary labels — double as each section's AT accessible name
 /// (the disclosure twisty is presentational, so name-from-contents
@@ -90,8 +89,7 @@ const BODIES: [&str; N] = [
 /// Paint tags on the per-section panel bodies so the AI-first demo can
 /// confirm — via `scene/bbox` — that section `i`'s body is present in
 /// the scene only while that section is expanded.
-const BODY_TAGS: [&str; N] =
-    ["accordion_body_0", "accordion_body_1", "accordion_body_2"];
+const BODY_TAGS: [&str; N] = ["accordion_body_0", "accordion_body_1", "accordion_body_2"];
 
 /// Cached projection: one `(DisclosureState, expanded)` pair per
 /// section, read from each [`DisclosureExternal`]'s introspect slots.
@@ -228,7 +226,6 @@ impl WidgetCore for AccordionView {
         "pinion hello-accordion (R697 §5.38 multi-open APG accordion)"
     }
 
-
     /// WAI-ARIA APG accordion keyboard model, gated on the focused
     /// header (roving-tabindex `apply_key` discipline — keys route only
     /// when one of our headers owns focus):
@@ -301,7 +298,10 @@ impl WidgetView for AccordionView {
     type Renderer = HelloAccordionRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 }
 
@@ -345,9 +345,18 @@ mod tests {
     fn collapsed_section_omits_its_body_expanded_section_includes_it() {
         // Only section 1 expanded: body 1 present, bodies 0 and 2 absent.
         let scene = pinion_core::Owner::new().run(|| view(&with_expanded(1), &Frame::new()));
-        assert!(!scene.contains_tag(BODY_TAGS[0]), "collapsed section 0 hides body");
-        assert!(scene.contains_tag(BODY_TAGS[1]), "expanded section 1 shows body");
-        assert!(!scene.contains_tag(BODY_TAGS[2]), "collapsed section 2 hides body");
+        assert!(
+            !scene.contains_tag(BODY_TAGS[0]),
+            "collapsed section 0 hides body"
+        );
+        assert!(
+            scene.contains_tag(BODY_TAGS[1]),
+            "expanded section 1 shows body"
+        );
+        assert!(
+            !scene.contains_tag(BODY_TAGS[2]),
+            "collapsed section 2 hides body"
+        );
     }
 
     #[test]
@@ -371,7 +380,10 @@ mod tests {
         let scene = pinion_core::Owner::new().run(|| view(&idle(), &Frame::new()));
         assert_eq!(
             scene.collect_focusable_tags(),
-            SECTION_TAGS.iter().map(|t| (*t).to_owned()).collect::<Vec<_>>(),
+            SECTION_TAGS
+                .iter()
+                .map(|t| (*t).to_owned())
+                .collect::<Vec<_>>(),
         );
     }
 
@@ -418,14 +430,20 @@ mod tests {
             "Home",
             pinion_core::Modifiers::empty(),
         ));
-        assert_eq!(pinion_core::focus_request::drain().as_deref(), Some(SECTION_TAGS[0]));
+        assert_eq!(
+            pinion_core::focus_request::drain().as_deref(),
+            Some(SECTION_TAGS[0])
+        );
         assert!(AccordionView::apply_key(
             &mut scene,
             Some(SECTION_TAGS[1]),
             "End",
             pinion_core::Modifiers::empty(),
         ));
-        assert_eq!(pinion_core::focus_request::drain().as_deref(), Some(SECTION_TAGS[N - 1]));
+        assert_eq!(
+            pinion_core::focus_request::drain().as_deref(),
+            Some(SECTION_TAGS[N - 1])
+        );
     }
 
     #[test]
@@ -444,7 +462,11 @@ mod tests {
             "ArrowDown",
             pinion_core::Modifiers::empty(),
         ));
-        assert_eq!(pinion_core::focus_request::drain(), None, "no focus request emitted");
+        assert_eq!(
+            pinion_core::focus_request::drain(),
+            None,
+            "no focus request emitted"
+        );
     }
 
     #[test]
@@ -471,7 +493,10 @@ mod tests {
             "Enter",
             pinion_core::Modifiers::empty(),
         ));
-        assert!(AccordionView::read_state(&scene)[0].1, "Enter expands section 0");
+        assert!(
+            AccordionView::read_state(&scene)[0].1,
+            "Enter expands section 0"
+        );
     }
 
     // ── a11y ──────────────────────────────────────────────────────
@@ -483,7 +508,10 @@ mod tests {
         for node in &nodes {
             assert_eq!(node.role, AriaRole::Button);
             assert_eq!(node.expanded, Some(false));
-            assert_eq!(node.state.checked, None, "a disclosure carries no aria-checked");
+            assert_eq!(
+                node.state.checked, None,
+                "a disclosure carries no aria-checked"
+            );
         }
     }
 

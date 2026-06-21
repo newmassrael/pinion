@@ -39,9 +39,8 @@
 //! [`IntrospectValue::Int`].
 
 use crate::external::{
-    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner,
-    ThreadOwnership,
+    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
 use crate::intent::Intent;
 use crate::widgets::radio::{Radio, RadioEvent, RadioState};
@@ -268,18 +267,13 @@ impl WidgetTransition for RadioGroup {
         self.send(idx, ev);
     }
 
-    fn detect(
-        before: Self::Snapshot,
-        _event: Self::Event,
-        after: Self::Snapshot,
-    ) -> Vec<Intent> {
+    fn detect(before: Self::Snapshot, _event: Self::Event, after: Self::Snapshot) -> Vec<Intent> {
         if before != after {
             if let Some(idx) = after {
                 return vec![Intent::new_static(
                     "selected",
                     IntrospectValue::Int(
-                        i64::try_from(idx)
-                            .expect("RadioGroup index must fit in i64"),
+                        i64::try_from(idx).expect("RadioGroup index must fit in i64"),
                     ),
                 )];
             }
@@ -301,7 +295,9 @@ impl RadioGroupExternal {
     /// Construct with `count` Radios, all unselected.
     #[must_use]
     pub fn new(count: usize) -> Self {
-        Self { em: IntentEmitter::new(RadioGroup::new(count)) }
+        Self {
+            em: IntentEmitter::new(RadioGroup::new(count)),
+        }
     }
 
     /// Drive `event` to the Radio at `index`. Queues a `"selected"`
@@ -423,22 +419,17 @@ impl ExternalIntrospect for RadioGroupExternal {
     fn query(&self, path: &str) -> Option<IntrospectValue> {
         match path {
             "count" => Some(IntrospectValue::Int(
-                i64::try_from(self.count())
-                    .expect("RadioGroup count must fit in i64"),
+                i64::try_from(self.count()).expect("RadioGroup count must fit in i64"),
             )),
             "selected_index" => Some(match self.selected_index() {
-                Some(idx) => IntrospectValue::Int(
-                    i64::try_from(idx).expect("index fits in i64"),
-                ),
+                Some(idx) => IntrospectValue::Int(i64::try_from(idx).expect("index fits in i64")),
                 None => IntrospectValue::Null,
             }),
             // R51.87 §5.40 — AT-side active descendant. `Null` until
             // a `Focus` action or `intervene "focused_index" = Int(i)`
             // sets it.
             "focused_index" => Some(match self.focused_index() {
-                Some(idx) => IntrospectValue::Int(
-                    i64::try_from(idx).expect("index fits in i64"),
-                ),
+                Some(idx) => IntrospectValue::Int(i64::try_from(idx).expect("index fits in i64")),
                 None => IntrospectValue::Null,
             }),
             _ => {
@@ -455,9 +446,7 @@ impl ExternalIntrospect for RadioGroupExternal {
                     if idx >= self.count() {
                         return None;
                     }
-                    return Some(IntrospectValue::Text(
-                        self.state(idx).as_name().to_string(),
-                    ));
+                    return Some(IntrospectValue::Text(self.state(idx).as_name().to_string()));
                 }
                 if let Some(idx_str) = path.strip_prefix("selected.") {
                     let idx: usize = idx_str.parse().ok()?;
@@ -471,11 +460,7 @@ impl ExternalIntrospect for RadioGroupExternal {
         }
     }
 
-    fn intervene(
-        &mut self,
-        path: &str,
-        value: IntrospectValue,
-    ) -> Result<(), InterveneError> {
+    fn intervene(&mut self, path: &str, value: IntrospectValue) -> Result<(), InterveneError> {
         match path {
             "count" => Err(InterveneError::ReadOnly),
             "selected_index" => match value {
@@ -528,18 +513,16 @@ impl ExternalIntrospect for RadioGroupExternal {
                 IntrospectValue::Text(ref s) => {
                     // R781 — modifiers ignored (no modifier-aware activation).
                     let (idx, event_name, _): (usize, &str, _) =
-                        crate::composite_tag::parse_send_payload(s)
-                            .ok_or(InvokeError::Rejected)?;
+                        crate::composite_tag::parse_send_payload(s).ok_or(InvokeError::Rejected)?;
                     if idx >= self.count() {
                         return Err(InvokeError::Rejected);
                     }
-                    let ev = RadioEvent::from_name(event_name)
-                        .ok_or(InvokeError::Rejected)?;
+                    let ev = RadioEvent::from_name(event_name).ok_or(InvokeError::Rejected)?;
                     self.send(idx, ev);
                     Ok(match self.selected_index() {
-                        Some(i) => IntrospectValue::Int(
-                            i64::try_from(i).expect("index fits in i64"),
-                        ),
+                        Some(i) => {
+                            IntrospectValue::Int(i64::try_from(i).expect("index fits in i64"))
+                        }
                         None => IntrospectValue::Null,
                     })
                 }
@@ -696,15 +679,9 @@ mod tests {
     fn external_query_count_and_selected_index() {
         let mut g = RadioGroupExternal::new(4);
         assert_eq!(g.query("count").unwrap(), IntrospectValue::Int(4));
-        assert_eq!(
-            g.query("selected_index").unwrap(),
-            IntrospectValue::Null
-        );
+        assert_eq!(g.query("selected_index").unwrap(), IntrospectValue::Null);
         activate_ext(&mut g, 3);
-        assert_eq!(
-            g.query("selected_index").unwrap(),
-            IntrospectValue::Int(3)
-        );
+        assert_eq!(g.query("selected_index").unwrap(), IntrospectValue::Int(3));
     }
 
     #[test]
@@ -766,10 +743,7 @@ mod tests {
         // domain error. Stays TypeMismatch (semantic axis preserved).
         let mut g = RadioGroupExternal::new(3);
         assert_eq!(
-            g.intervene(
-                "selected_index",
-                IntrospectValue::Text("zero".to_string())
-            ),
+            g.intervene("selected_index", IntrospectValue::Text("zero".to_string())),
             Err(InterveneError::TypeMismatch)
         );
         assert_eq!(
@@ -782,10 +756,7 @@ mod tests {
     fn r51_91_focused_index_wrong_variant_is_type_mismatch() {
         let mut g = RadioGroupExternal::new(3);
         assert_eq!(
-            g.intervene(
-                "focused_index",
-                IntrospectValue::Float(1.0)
-            ),
+            g.intervene("focused_index", IntrospectValue::Float(1.0)),
             Err(InterveneError::TypeMismatch)
         );
     }
@@ -794,7 +765,8 @@ mod tests {
     fn r51_91_selected_index_at_boundary_is_accepted() {
         // `idx == count - 1` is in range; `idx == count` is OutOfRange.
         let mut g = RadioGroupExternal::new(3);
-        g.intervene("selected_index", IntrospectValue::Int(2)).unwrap();
+        g.intervene("selected_index", IntrospectValue::Int(2))
+            .unwrap();
         assert_eq!(g.selected_index(), Some(2));
         assert_eq!(
             g.intervene("selected_index", IntrospectValue::Int(3)),
@@ -822,13 +794,19 @@ mod tests {
     #[test]
     fn r51_93_composite_pointer_cancel_does_not_select_row() {
         let mut g = RadioGroupExternal::new(3);
-        let _ = g.invoke("send", IntrospectValue::Text("1:PointerEnter".to_string())).unwrap();
-        let _ = g.invoke("send", IntrospectValue::Text("1:PointerDown".to_string())).unwrap();
+        let _ = g
+            .invoke("send", IntrospectValue::Text("1:PointerEnter".to_string()))
+            .unwrap();
+        let _ = g
+            .invoke("send", IntrospectValue::Text("1:PointerDown".to_string()))
+            .unwrap();
         assert_eq!(g.state(1), RadioState::Pressed);
         let before_selected = g.selected_index();
         let before_focused = g.focused_index();
         // Touch revoked mid-press (4-finger gesture / phone call / ...).
-        let _ = g.invoke("send", IntrospectValue::Text("1:PointerCancel".to_string())).unwrap();
+        let _ = g
+            .invoke("send", IntrospectValue::Text("1:PointerCancel".to_string()))
+            .unwrap();
         assert_eq!(g.state(1), RadioState::Idle, "Pressed→Idle on cancel");
         assert_eq!(
             g.selected_index(),
@@ -865,10 +843,7 @@ mod tests {
         let mut g = RadioGroupExternal::new(3);
         for ev in ["PointerEnter", "PointerDown", "PointerUp"] {
             let out = g
-                .invoke(
-                    "send",
-                    IntrospectValue::Text(format!("2:{ev}")),
-                )
+                .invoke("send", IntrospectValue::Text(format!("2:{ev}")))
                 .unwrap();
             // Only the PointerUp activates; the previous two return Null.
             if ev == "PointerUp" {
@@ -983,10 +958,7 @@ mod tests {
     #[test]
     fn r51_87_external_query_focused_index_initially_null() {
         let g = RadioGroupExternal::new(3);
-        assert_eq!(
-            g.query("focused_index").unwrap(),
-            IntrospectValue::Null
-        );
+        assert_eq!(g.query("focused_index").unwrap(), IntrospectValue::Null);
     }
 
     #[test]
@@ -995,10 +967,7 @@ mod tests {
         g.intervene("focused_index", IntrospectValue::Int(2))
             .unwrap();
         assert_eq!(g.focused_index(), Some(2));
-        assert_eq!(
-            g.query("focused_index").unwrap(),
-            IntrospectValue::Int(2)
-        );
+        assert_eq!(g.query("focused_index").unwrap(), IntrospectValue::Int(2));
         // No `"selected"` intent — focused_index is AT navigation,
         // not a commit.
         assert!(!g.is_dirty());
@@ -1121,10 +1090,7 @@ mod tests {
         }
         assert_eq!(g.selected_index(), Some(1));
         assert_eq!(g.focused_index(), Some(1));
-        assert_eq!(
-            g.query("focused_index").unwrap(),
-            IntrospectValue::Int(1)
-        );
+        assert_eq!(g.query("focused_index").unwrap(), IntrospectValue::Int(1));
     }
 
     #[test]

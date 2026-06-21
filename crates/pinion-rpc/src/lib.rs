@@ -47,78 +47,78 @@ pub(crate) mod test_fixtures;
 
 pub use access::access_to_json;
 pub use animate_control::{
-    animate_cancel, animate_settle, AnimateControlError, AnimateControlOutcome,
+    AnimateControlError, AnimateControlOutcome, animate_cancel, animate_settle,
 };
-pub use animation_state::{animation_state, AnimationStateError, AnimationStateOutcome};
-pub use cache_stats::{cache_stats, CacheStatsError, CacheStatsOutcome, CacheStatsRect};
-pub use frame_timings::{
-    frame_timings, FrameTimingsError, FrameTimingsLast, FrameTimingsOutcome, FrameTimingsWindow,
-};
-pub use caret_state::{caret_state, CaretStateError, CaretStateOutcome};
+pub use animation_state::{AnimationStateError, AnimationStateOutcome, animation_state};
+pub use cache_stats::{CacheStatsError, CacheStatsOutcome, CacheStatsRect, cache_stats};
+pub use caret_state::{CaretStateError, CaretStateOutcome, caret_state};
 pub use commands::{
-    list_in_flight_commands, list_pending_commands, CommandsError, PendingCommandView,
+    CommandsError, PendingCommandView, list_in_flight_commands, list_pending_commands,
 };
 pub use dispatch::{
-    dispatch, dispatch_parsed, parse_request, unknown_window_verdict, ClickButton, DeferredInput, DispatchContext, DragButton,
-    KeyWireState, PacingState, Request, RequestId, Response, RpcError,
+    ClickButton, DeferredInput, DispatchContext, DragButton, KeyWireState, PacingState, Request,
+    RequestId, Response, RpcError, dispatch, dispatch_parsed, parse_request,
+    unknown_window_verdict,
 };
-pub use dry_run::{dry_run, DryRunError};
-pub use simulate::{simulate, SimulateError, SimulateStep};
+pub use dry_run::{DryRunError, dry_run};
 pub use focus::{
-    focus_get, focus_next, focus_prev, focus_set, FocusError, FocusSetParams, FocusState,
+    FocusError, FocusSetParams, FocusState, focus_get, focus_next, focus_prev, focus_set,
 };
 pub use font::{
-    cmap_subtables as font_cmap_subtables, dispose as font_dispose,
+    CmapSubtableInfo, CmapSubtablesOutcome, CmapSubtablesParams, ComponentArgsInfo, ComponentInfo,
+    ComponentTransformInfo, DisposeOutcome, DisposeParams, FamilyNameOutcome, FamilyNameParams,
+    FontError, FontRegistry, FullNameOutcome, GlyphHeaderInfo, GlyphIdForOutcome, GlyphIdForParams,
+    GlyphOutlineOutcome, GlyphOutlineParams, GlyphPointInfo, ListOutcome, MetricsOutcome,
+    MetricsParams, NameAccessorParams, ParseOutcome, ParseParams, PostscriptNameOutcome,
+    SubfamilyNameOutcome, cmap_subtables as font_cmap_subtables, dispose as font_dispose,
     family_name as font_family_name, full_name as font_full_name,
-    glyph_id_for as font_glyph_id_for, glyph_outline as font_glyph_outline,
-    list as font_list, metrics as font_metrics, parse as font_parse,
-    postscript_name as font_postscript_name, subfamily_name as font_subfamily_name,
-    CmapSubtableInfo, CmapSubtablesOutcome, CmapSubtablesParams, ComponentArgsInfo,
-    ComponentInfo, ComponentTransformInfo, DisposeOutcome, DisposeParams, FamilyNameOutcome,
-    FamilyNameParams, FontError, FontRegistry, FullNameOutcome, GlyphHeaderInfo,
-    GlyphIdForOutcome, GlyphIdForParams, GlyphOutlineOutcome, GlyphOutlineParams,
-    GlyphPointInfo, ListOutcome, MetricsOutcome, MetricsParams, NameAccessorParams,
-    ParseOutcome, ParseParams, PostscriptNameOutcome, SubfamilyNameOutcome,
+    glyph_id_for as font_glyph_id_for, glyph_outline as font_glyph_outline, list as font_list,
+    metrics as font_metrics, parse as font_parse, postscript_name as font_postscript_name,
+    subfamily_name as font_subfamily_name,
 };
-pub use intents::{drain_intents, IntentsError};
-pub use invoke::{invoke, InvokeError};
+pub use frame_timings::{
+    FrameTimingsError, FrameTimingsLast, FrameTimingsOutcome, FrameTimingsWindow, frame_timings,
+};
+pub use intents::{IntentsError, drain_intents};
+pub use invoke::{InvokeError, invoke};
 pub use layout_query::{
-    build_layout_node, layout_query, project_layout, LayoutKind, LayoutNode, LayoutQueryError,
-    LayoutQueryParams, LayoutRect, ViewportSize,
+    LayoutKind, LayoutNode, LayoutQueryError, LayoutQueryParams, LayoutRect, ViewportSize,
+    build_layout_node, layout_query, project_layout,
 };
 pub use locate::{
-    bbox, locate, locate_region, BboxError, LocateError, LocateOutcome, LocateRegionOutcome,
+    BboxError, LocateError, LocateOutcome, LocateRegionOutcome, bbox, locate, locate_region,
 };
-pub use path::{resolve, PathError, ResolvedPath};
+pub use path::{PathError, ResolvedPath, resolve};
 pub use preview::{
-    apply_preview, cancel_preview, list_previews, propose_change, ApplyContext, ApplyError,
-    ApplyOutcome, Entry as PreviewEntry, PreviewId, PreviewLedger, PreviewView, Proposal,
-    ProposeError, ProposeOutcome, SweepReport, TypedProposal, ViewBlueprint, DEFAULT_CAPACITY,
-    DEFAULT_TTL, MAX_TTL,
+    ApplyContext, ApplyError, ApplyOutcome, DEFAULT_CAPACITY, DEFAULT_TTL, Entry as PreviewEntry,
+    MAX_TTL, PreviewId, PreviewLedger, PreviewView, Proposal, ProposeError, ProposeOutcome,
+    SweepReport, TypedProposal, ViewBlueprint, apply_preview, cancel_preview, list_previews,
+    propose_change,
 };
-pub use query::{query, QueryError};
-pub use resize::{resize, ResizeError, ResizeOutcome, ResizeParams};
+pub use query::{QueryError, query};
+pub use resize::{ResizeError, ResizeOutcome, ResizeParams, resize};
 pub use resolve::{
-    introspect_at, introspect_mut_at, resolve_external_introspect,
-    resolve_external_introspect_mut, resolve_external_path, ResolveExternalError,
+    ResolveExternalError, introspect_at, introspect_mut_at, resolve_external_introspect,
+    resolve_external_introspect_mut, resolve_external_path,
 };
-pub use rewind::{rewind, RewindError};
-pub use screenshot::{screenshot, Screenshot, ScreenshotError};
+pub use rewind::{RewindError, rewind};
+pub use screenshot::{Screenshot, ScreenshotError, screenshot};
 pub use scroll_state::{
-    scroll_state, ScrollAxisPair, ScrollEdges, ScrollStateError, ScrollStateOutcome,
+    ScrollAxisPair, ScrollEdges, ScrollStateError, ScrollStateOutcome, scroll_state,
+};
+pub use simulate::{SimulateError, SimulateStep, simulate};
+pub use snapshot::{
+    BoxSnapshot, ContainerSnapshot, ExternalSnapshot, ImageSnapshot, PathSnapshot, ScrollSnapshot,
+    SnapshotError, SnapshotNode, TextSnapshot, snapshot,
 };
 pub use substrate_introspect::{
-    introspect_error_to_data, lookup as substrate_lookup, SubstrateIntrospectError,
+    SubstrateIntrospectError, introspect_error_to_data, lookup as substrate_lookup,
 };
-pub use snapshot::{
-    snapshot, BoxSnapshot, ContainerSnapshot, ExternalSnapshot, ImageSnapshot, PathSnapshot,
-    ScrollSnapshot, SnapshotError, SnapshotNode, TextSnapshot,
-};
-pub use text::{text_normalize, NormalizeForm, NormalizeOutcome};
-pub use text_state::{text_state, TextSelectionView, TextStateError, TextStateOutcome};
+pub use text::{NormalizeForm, NormalizeOutcome, text_normalize};
+pub use text_state::{TextSelectionView, TextStateError, TextStateOutcome, text_state};
 pub use theme::{
-    set_theme_mode, theme_tokens, PaletteCatalogue, PaletteTokens, SetThemeModeError,
-    SetThemeModeOutcome, SetThemeModeParams, ThemeTokenView, ThemeTokensError,
-    ThemeTokensOutcome, DEFAULT_THEME_TAG,
+    DEFAULT_THEME_TAG, PaletteCatalogue, PaletteTokens, SetThemeModeError, SetThemeModeOutcome,
+    SetThemeModeParams, ThemeTokenView, ThemeTokensError, ThemeTokensOutcome, set_theme_mode,
+    theme_tokens,
 };
-pub use wait_for::{wait_for, WaitForError, WaitOutcome};
+pub use wait_for::{WaitForError, WaitOutcome, wait_for};

@@ -24,9 +24,8 @@
 use crate::hangul::compose_hangul;
 use crate::ordering::combining_class;
 use crate::tables::{
-    PRIMARY_COMPOSITES_BC_DATA, PRIMARY_COMPOSITES_BMP_DATA,
-    PRIMARY_COMPOSITES_BMP_INDEX, PRIMARY_COMPOSITES_FIRST_A_CP,
-    PRIMARY_COMPOSITES_LAST_A_CP, PRIMARY_COMPOSITES_SUPPLEMENTARY,
+    PRIMARY_COMPOSITES_BC_DATA, PRIMARY_COMPOSITES_BMP_DATA, PRIMARY_COMPOSITES_BMP_INDEX,
+    PRIMARY_COMPOSITES_FIRST_A_CP, PRIMARY_COMPOSITES_LAST_A_CP, PRIMARY_COMPOSITES_SUPPLEMENTARY,
 };
 
 /// Attempt to compose `(a, b)` into a single codepoint using
@@ -55,15 +54,12 @@ pub(crate) fn compose_pair(a: u32, b: u32) -> Option<u32> {
     if let Some(h) = compose_hangul(a, b) {
         return Some(h);
     }
-    if !(PRIMARY_COMPOSITES_FIRST_A_CP..=PRIMARY_COMPOSITES_LAST_A_CP)
-        .contains(&a)
-    {
+    if !(PRIMARY_COMPOSITES_FIRST_A_CP..=PRIMARY_COMPOSITES_LAST_A_CP).contains(&a) {
         return None;
     }
     if a < 0x10000 {
         let block = PRIMARY_COMPOSITES_BMP_INDEX[(a >> 8) as usize] as usize;
-        let packed =
-            PRIMARY_COMPOSITES_BMP_DATA[block * 256 + (a & 0xFF) as usize];
+        let packed = PRIMARY_COMPOSITES_BMP_DATA[block * 256 + (a & 0xFF) as usize];
         if packed == 0 {
             return None;
         }
@@ -113,8 +109,7 @@ pub(crate) fn canonical_composition(buf: &mut Vec<u32>) {
     // copied through untouched; composition starts from the first
     // starter.
     let mut first_starter = 0;
-    while first_starter < buf.len() && combining_class(buf[first_starter]) != 0
-    {
+    while first_starter < buf.len() && combining_class(buf[first_starter]) != 0 {
         first_starter += 1;
     }
     if first_starter >= buf.len() {
@@ -134,8 +129,7 @@ pub(crate) fn canonical_composition(buf: &mut Vec<u32>) {
     while read < buf.len() {
         let c = buf[read];
         let c_class = combining_class(c);
-        let blocked =
-            has_intermediate && max_class_since_starter >= c_class;
+        let blocked = has_intermediate && max_class_since_starter >= c_class;
 
         if !blocked {
             if let Some(p) = compose_pair(buf[starter_pos], c) {

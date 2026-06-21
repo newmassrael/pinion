@@ -24,14 +24,14 @@
 //!
 //! Each single-window read is cross-checked against its per-window form.
 
+use pinion_a11y::WidgetA11y;
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, RepaintOwner, ThreadOwnership,
 };
 use pinion_core::scene::ContainerNode;
 use pinion_core::style::{LayoutStyle, Size};
 use pinion_core::{Frame, Scene, WidgetCore};
-use pinion_a11y::WidgetA11y;
-use pinion_runtime::{PointerId, DEFAULT_WINDOW};
+use pinion_runtime::{DEFAULT_WINDOW, PointerId};
 use pinion_shell::test_fixtures::TestRenderer;
 use pinion_shell::{ShellCore, SizeStrategy, WidgetView};
 use std::sync::Mutex;
@@ -119,7 +119,10 @@ impl WidgetView for DragView {
     type Renderer = TestRenderer;
 
     fn initial_size_strategy() -> SizeStrategy {
-        SizeStrategy::Fixed { width: W, height: H }
+        SizeStrategy::Fixed {
+            width: W,
+            height: H,
+        }
     }
 }
 
@@ -133,9 +136,15 @@ fn booted() -> ShellCore<DragView> {
 
 #[test]
 fn hover_target_tracks_the_cursor() {
-    let _g = TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _g = TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut core = booted();
-    assert_eq!(core.hover_target(PointerId::MOUSE), None, "no cursor moved yet");
+    assert_eq!(
+        core.hover_target(PointerId::MOUSE),
+        None,
+        "no cursor moved yet"
+    );
 
     core.cursor_moved(PointerId::MOUSE, 50.0, 50.0);
     assert_eq!(
@@ -160,7 +169,9 @@ fn hover_target_tracks_the_cursor() {
 
 #[test]
 fn captured_target_holds_between_press_and_release() {
-    let _g = TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _g = TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut core = booted();
 
     core.cursor_moved(PointerId::MOUSE, 50.0, 50.0);
@@ -202,12 +213,18 @@ fn captured_target_holds_between_press_and_release() {
 
 #[test]
 fn press_off_target_captures_nothing() {
-    let _g = TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _g = TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut core = booted();
 
     // Hover-miss: a press that hits no widget captures nothing.
     core.cursor_moved(PointerId::MOUSE, 500.0, 300.0);
-    assert_eq!(core.hover_target(PointerId::MOUSE), None, "cursor hit nothing");
+    assert_eq!(
+        core.hover_target(PointerId::MOUSE),
+        None,
+        "cursor hit nothing"
+    );
 
     core.mouse_pressed(PointerId::MOUSE);
     assert_eq!(
@@ -220,7 +237,9 @@ fn press_off_target_captures_nothing() {
 
 #[test]
 fn pressing_a_noncapturing_widget_hovers_but_captures_nothing() {
-    let _g = TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _g = TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut core = booted();
 
     // Capture-miss (distinct from hover-miss): the cursor IS over a widget, but

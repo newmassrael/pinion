@@ -88,12 +88,8 @@ use vello::peniko::{
 ///   via [`paint_path`] (R721).
 /// * [`Scene::External`] / [`Scene::Effect`] / [`Scene::Image`] —
 ///   no-op. The Image paint primitive attaches in a follow-up round.
-pub fn to_vello<F>(
-    scene: &Scene,
-    fill_hook: &F,
-    text_cache: &mut LayoutCache,
-    out: &mut VelloScene,
-) where
+pub fn to_vello<F>(scene: &Scene, fill_hook: &F, text_cache: &mut LayoutCache, out: &mut VelloScene)
+where
     F: Fn(&BoxNode) -> Option<Color>,
 {
     // R740 §5.16 — the uncached walker is the stateless reference /
@@ -102,7 +98,14 @@ pub fn to_vello<F>(
     // public signature stable while still painting `Scene::Image`
     // leaves; there is no cross-call decode reuse here by design.
     let mut image_cache = ImageCache::new();
-    to_vello_inner(scene, fill_hook, text_cache, &mut image_cache, out, Affine::IDENTITY);
+    to_vello_inner(
+        scene,
+        fill_hook,
+        text_cache,
+        &mut image_cache,
+        out,
+        Affine::IDENTITY,
+    );
 }
 
 /// (R51.188 §5.45 R55.E.1) Transform-carrying recursive walker.
@@ -170,7 +173,14 @@ fn to_vello_inner<F>(
             let dx = f64::from(s.viewport.x) - f64::from(s.offset_x);
             let dy = f64::from(s.viewport.y) - f64::from(s.offset_y);
             let child_transform = transform * Affine::translate((dx, dy));
-            to_vello_inner(&s.content, fill_hook, text_cache, image_cache, out, child_transform);
+            to_vello_inner(
+                &s.content,
+                fill_hook,
+                text_cache,
+                image_cache,
+                out,
+                child_transform,
+            );
             out.pop_layer();
         }
         // R681 §2 #4 — ImmediateModeNode paints through the
@@ -491,12 +501,7 @@ impl FragmentCache {
     /// contributes to the per-paint damage accumulator (R682 atomic 2):
     /// a missed Container's bounds is where the painted output may
     /// differ from the previous frame.
-    fn insert_miss(
-        &mut self,
-        hash: u64,
-        fragment: VelloScene,
-        rect: pinion_core::scene::Rect,
-    ) {
+    fn insert_miss(&mut self, hash: u64, fragment: VelloScene, rect: pinion_core::scene::Rect) {
         self.fragments.insert(hash, fragment);
         self.seen_this_paint.insert(hash);
         self.misses = self.misses.saturating_add(1);
@@ -743,8 +748,8 @@ fn paint_immediate_mode_node(
     // Compose `parent_transform * translate(viewport.{x,y})` so
     // viewport-local `(0, 0)` lands at screen-space
     // `(viewport.x, viewport.y)` in the parent frame.
-    let local_transform = parent_transform
-        * Affine::translate((f64::from(viewport.x), f64::from(viewport.y)));
+    let local_transform =
+        parent_transform * Affine::translate((f64::from(viewport.x), f64::from(viewport.y)));
     let mut painter = VelloImmediatePainter {
         out,
         viewport,
@@ -792,13 +797,8 @@ impl ImmediatePainter for VelloImmediatePainter<'_> {
             f64::from(self.viewport.w),
             f64::from(self.viewport.h),
         );
-        self.out.fill(
-            Fill::NonZero,
-            self.transform,
-            to_peniko(color),
-            None,
-            &rect,
-        );
+        self.out
+            .fill(Fill::NonZero, self.transform, to_peniko(color), None, &rect);
     }
 
     fn fill_rect(&mut self, x: f32, y: f32, w: f32, h: f32, color: Color) {
@@ -811,22 +811,11 @@ impl ImmediatePainter for VelloImmediatePainter<'_> {
             f64::from(x) + f64::from(w),
             f64::from(y) + f64::from(h),
         );
-        self.out.fill(
-            Fill::NonZero,
-            self.transform,
-            to_peniko(color),
-            None,
-            &rect,
-        );
+        self.out
+            .fill(Fill::NonZero, self.transform, to_peniko(color), None, &rect);
     }
 
-    fn fill_triangle(
-        &mut self,
-        p1: (f32, f32),
-        p2: (f32, f32),
-        p3: (f32, f32),
-        color: Color,
-    ) {
+    fn fill_triangle(&mut self, p1: (f32, f32), p2: (f32, f32), p3: (f32, f32), color: Color) {
         if color == Color::TRANSPARENT {
             return;
         }
@@ -838,22 +827,11 @@ impl ImmediatePainter for VelloImmediatePainter<'_> {
         ]
         .into_iter()
         .collect();
-        self.out.fill(
-            Fill::NonZero,
-            self.transform,
-            to_peniko(color),
-            None,
-            &path,
-        );
+        self.out
+            .fill(Fill::NonZero, self.transform, to_peniko(color), None, &path);
     }
 
-    fn stroke_line(
-        &mut self,
-        p1: (f32, f32),
-        p2: (f32, f32),
-        width: f32,
-        color: Color,
-    ) {
+    fn stroke_line(&mut self, p1: (f32, f32), p2: (f32, f32), width: f32, color: Color) {
         if color == Color::TRANSPARENT || width <= 0.0 {
             return;
         }
@@ -1378,13 +1356,7 @@ fn paint_text_grid(
 /// binding lands — `kurbo::RoundedRectRadii` already supports the
 /// shape, this slice only wires the single-radius surface
 /// [`BoxStyle.corner_radius`] exposes today.
-fn fill_rect(
-    out: &mut VelloScene,
-    r: Rect,
-    fill: Color,
-    corner_radius: u32,
-    transform: Affine,
-) {
+fn fill_rect(out: &mut VelloScene, r: Rect, fill: Color, corner_radius: u32, transform: Affine) {
     if fill == Color::TRANSPARENT {
         return;
     }
@@ -1482,7 +1454,12 @@ fn to_kurbo_cap(cap: StrokeCap) -> KurboCap {
 /// `style.tint` (a multiply recolour) is a deferred additive axis — it
 /// needs a blend layer and has no consumer yet; the buffer is painted
 /// untinted for now.
-fn paint_image(out: &mut VelloScene, node: &ImageNode, image_cache: &mut ImageCache, transform: Affine) {
+fn paint_image(
+    out: &mut VelloScene,
+    node: &ImageNode,
+    image_cache: &mut ImageCache,
+    transform: Affine,
+) {
     let Some(data) = image_cache.resolve(&node.source) else {
         return;
     };
@@ -1530,7 +1507,11 @@ fn paint_image(out: &mut VelloScene, node: &ImageNode, image_cache: &mut ImageCa
     // Cover overflows the rect → clip so the overflow is cropped.
     let clip = matches!(node.style.fit, Fit::Cover);
     if clip {
-        out.push_clip_layer(Fill::NonZero, transform, &KurboRect::new(rx, ry, rx + rw, ry + rh));
+        out.push_clip_layer(
+            Fill::NonZero,
+            transform,
+            &KurboRect::new(rx, ry, rx + rw, ry + rh),
+        );
     }
     out.draw_image(&ImageBrush::new(data), place);
     if clip {
@@ -1570,9 +1551,14 @@ fn paint_path(out: &mut VelloScene, node: &PathNode, transform: Affine) {
         && stroke.width > 0
         && stroke.color != Color::TRANSPARENT
     {
-        let kurbo_stroke =
-            Stroke::new(f64::from(stroke.width)).with_caps(to_kurbo_cap(stroke.cap));
-        out.stroke(&kurbo_stroke, transform, to_peniko(stroke.color), None, &path);
+        let kurbo_stroke = Stroke::new(f64::from(stroke.width)).with_caps(to_kurbo_cap(stroke.cap));
+        out.stroke(
+            &kurbo_stroke,
+            transform,
+            to_peniko(stroke.color),
+            None,
+            &path,
+        );
     }
 }
 
@@ -1582,13 +1568,7 @@ fn paint_path(out: &mut VelloScene, node: &PathNode, transform: Affine) {
 /// `fill_hook` override or `style.fill`; a `Container`'s `style.fill`),
 /// so a gradient takes precedence over the solid only when explicitly
 /// set — mirroring Flutter's `BoxDecoration { color, gradient }`.
-fn fill_box_bg(
-    out: &mut VelloScene,
-    r: Rect,
-    style: &BoxStyle,
-    solid: Color,
-    transform: Affine,
-) {
+fn fill_box_bg(out: &mut VelloScene, r: Rect, style: &BoxStyle, solid: Color, transform: Affine) {
     if let Some(gradient) = &style.gradient {
         fill_rect_gradient(out, r, gradient, style.corner_radius, transform);
     } else {
@@ -1754,13 +1734,16 @@ fn paint_text(
     // `paint_text` assumed `Affine::IDENTITY` from the caller; the
     // composition keeps that path bit-identical (IDENTITY * T = T)
     // and lets scroll-embedded text track the scroll offset.
-    let transform = parent_transform
-        * Affine::translate((f64::from(t.rect.x), f64::from(t.rect.y)));
+    let transform =
+        parent_transform * Affine::translate((f64::from(t.rect.x), f64::from(t.rect.y)));
     // R47.6 — Clip + Ellipsis (silent fallback to Clip until R47.x
     // ellipsis pass) wrap the emit in a Vello clip layer keyed to
     // `t.rect`. Visible skips the wrap entirely so a freshly-default
     // TextNode pays no per-frame layer cost.
-    let needs_clip = matches!(t.style.overflow, TextOverflow::Clip | TextOverflow::Ellipsis);
+    let needs_clip = matches!(
+        t.style.overflow,
+        TextOverflow::Clip | TextOverflow::Ellipsis
+    );
     if needs_clip {
         // R51.188 §5.45 R55.E.1 — clip-rect lives in the parent
         // frame (not text-local) because the `transform` above
@@ -1777,7 +1760,9 @@ fn paint_text(
     }
     for line in layout.lines() {
         for item in line.items() {
-            let PositionedLayoutItem::GlyphRun(run) = item else { continue };
+            let PositionedLayoutItem::GlyphRun(run) = item else {
+                continue;
+            };
             draw_glyph_run(out, &run, transform, to_peniko(run.style().brush));
             // R47.6 — decoration strokes. parley emits `Some(Decoration)`
             // on `style().underline / strikethrough` whenever the source
@@ -1817,13 +1802,29 @@ fn paint_decorations(
         // baseline, so subtract. The Y advances downward in our coord
         // system, hence the `- offset`.
         let y = f64::from(baseline - offset);
-        stroke_hrule(out, transform, to_peniko(deco.brush), start, end, y, f64::from(size));
+        stroke_hrule(
+            out,
+            transform,
+            to_peniko(deco.brush),
+            start,
+            end,
+            y,
+            f64::from(size),
+        );
     }
     if let Some(deco) = run.style().strikethrough.as_ref() {
         let offset = deco.offset.unwrap_or(metrics.strikethrough_offset);
         let size = deco.size.unwrap_or(metrics.strikethrough_size);
         let y = f64::from(baseline - offset);
-        stroke_hrule(out, transform, to_peniko(deco.brush), start, end, y, f64::from(size));
+        stroke_hrule(
+            out,
+            transform,
+            to_peniko(deco.brush),
+            start,
+            end,
+            y,
+            f64::from(size),
+        );
     }
 }
 
@@ -1870,7 +1871,10 @@ mod tests {
     fn root_background_falls_back_to_black_for_non_container() {
         // Any non-Container root (Box, External, ...) returns BLACK —
         // there's no canonical "scene background" without a Container.
-        let scene = Scene::Box(BoxNode::filled(Rect::new(0, 0, 10, 10), Color::rgb(0xff, 0, 0)));
+        let scene = Scene::Box(BoxNode::filled(
+            Rect::new(0, 0, 10, 10),
+            Color::rgb(0xff, 0, 0),
+        ));
         let bg = root_background(&scene);
         assert_eq!(bg, PenikoColor::BLACK);
     }
@@ -1882,12 +1886,10 @@ mod tests {
         // for test-side state).
         let scene = Scene::Container(ContainerNode::new(vec![
             Scene::Box(
-                BoxNode::filled(Rect::new(0, 0, 10, 10), Color::rgb(0xff, 0, 0))
-                    .with_tag("a"),
+                BoxNode::filled(Rect::new(0, 0, 10, 10), Color::rgb(0xff, 0, 0)).with_tag("a"),
             ),
             Scene::Box(
-                BoxNode::filled(Rect::new(20, 0, 10, 10), Color::rgb(0, 0xff, 0))
-                    .with_tag("b"),
+                BoxNode::filled(Rect::new(20, 0, 10, 10), Color::rgb(0, 0xff, 0)).with_tag("b"),
             ),
         ]));
         let mut vello = VelloScene::new();
@@ -1970,12 +1972,9 @@ mod tests {
     fn to_vello_nested_container_recurses() {
         // Two-level Container nesting: outer + inner + leaf box. The
         // walker must visit the leaf box's hook.
-        let inner = ContainerNode::new(vec![
-            Scene::Box(
-                BoxNode::filled(Rect::new(10, 10, 10, 10), Color::rgb(0, 0xff, 0))
-                    .with_tag("leaf"),
-            ),
-        ]);
+        let inner = ContainerNode::new(vec![Scene::Box(
+            BoxNode::filled(Rect::new(10, 10, 10, 10), Color::rgb(0, 0xff, 0)).with_tag("leaf"),
+        )]);
         let outer = ContainerNode::new(vec![Scene::Container(inner)]);
         let scene = Scene::Container(outer);
         let mut vello = VelloScene::new();
@@ -2074,9 +2073,7 @@ mod tests {
             let scene = Scene::Text(TextNode::styled(
                 "OverflowingContent",
                 Rect::new(0, 0, 50, 16), // intentionally tight
-                TextStyle::new()
-                    .with_size_px(16)
-                    .with_overflow(overflow),
+                TextStyle::new().with_size_px(16).with_overflow(overflow),
             ));
             let mut vello = VelloScene::new();
             let mut cache = LayoutCache::new();
@@ -2131,32 +2128,20 @@ mod tests {
         let empty_content = Scene::Container(
             ContainerNode::new(vec![]).with_style(BoxStyle::filled(Color::default())),
         );
-        let empty_scroll = Scene::Scroll(ScrollNode::new(
-            Rect::new(0, 0, 100, 100),
-            empty_content,
-        ));
+        let empty_scroll = Scene::Scroll(ScrollNode::new(Rect::new(0, 0, 100, 100), empty_content));
 
         let inner_box = Scene::Box(BoxNode::filled(
             Rect::new(0, 0, 200, 200),
             Color::rgb(0xff, 0, 0),
         ));
-        let plain_scroll = Scene::Scroll(ScrollNode::new(
-            Rect::new(0, 0, 100, 100),
-            inner_box,
-        ));
+        let plain_scroll = Scene::Scroll(ScrollNode::new(Rect::new(0, 0, 100, 100), inner_box));
 
         let inner_inner = Scene::Box(BoxNode::filled(
             Rect::new(0, 0, 50, 50),
             Color::rgb(0, 0, 0xff),
         ));
-        let inner_scroll = Scene::Scroll(ScrollNode::new(
-            Rect::new(10, 10, 50, 50),
-            inner_inner,
-        ));
-        let outer_scroll = Scene::Scroll(ScrollNode::new(
-            Rect::new(0, 0, 200, 200),
-            inner_scroll,
-        ));
+        let inner_scroll = Scene::Scroll(ScrollNode::new(Rect::new(10, 10, 50, 50), inner_inner));
+        let outer_scroll = Scene::Scroll(ScrollNode::new(Rect::new(0, 0, 200, 200), inner_scroll));
 
         let mut vello = VelloScene::new();
         let mut cache = LayoutCache::new();
@@ -2177,8 +2162,7 @@ mod tests {
             Rect::new(0, 0, 200, 32),
             TextStyle::new().with_size_px(16),
         ));
-        let scroll = ScrollNode::new(Rect::new(0, 0, 100, 100), text)
-            .with_offset(0, 20);
+        let scroll = ScrollNode::new(Rect::new(0, 0, 100, 100), text).with_offset(0, 20);
         let scene = Scene::Scroll(scroll);
         let mut vello = VelloScene::new();
         let mut cache = LayoutCache::new();
@@ -2212,7 +2196,10 @@ mod tests {
         // The sharp-rect path was the only one before R639; survival
         // through the new dispatch + non-empty vello scene proves
         // the zero-radius arm preserved its legacy behaviour.
-        assert!(vello.encoding().n_paths > 0, "fill emitted at least one path");
+        assert!(
+            vello.encoding().n_paths > 0,
+            "fill emitted at least one path"
+        );
     }
 
     #[test]
@@ -2242,8 +2229,7 @@ mod tests {
         // strictly larger than the sharp one — wire-up evidence
         // independent of internal vello/kurbo version details.
         assert!(
-            rounded_scene.encoding().n_path_segments
-                > sharp_scene.encoding().n_path_segments,
+            rounded_scene.encoding().n_path_segments > sharp_scene.encoding().n_path_segments,
             "rounded path must have more segments than sharp; \
              sharp={}, rounded={}",
             sharp_scene.encoding().n_path_segments,
@@ -2279,8 +2265,8 @@ mod tests {
             Rect::new(0, 0, 50, 50),
             Color::rgb(0, 0xff, 0),
         ));
-        let scroll = ScrollNode::new(Rect::new(0, 0, 100, 100), content)
-            .with_offset(i32::MAX, i32::MAX);
+        let scroll =
+            ScrollNode::new(Rect::new(0, 0, 100, 100), content).with_offset(i32::MAX, i32::MAX);
         let scene = Scene::Scroll(scroll);
         let mut vello = VelloScene::new();
         let mut cache = LayoutCache::new();
@@ -2291,37 +2277,31 @@ mod tests {
     // R682 §5.16 atomic 1 — FragmentCache + to_vello_cached
     // ─────────────────────────────────────────────────────────────
 
-    use pinion_core::scene::{
-        EffectNode, ExternalNode, ImmediateMode, ImmediateModeNode, Scene,
-    };
+    use pinion_core::scene::{EffectNode, ExternalNode, ImmediateMode, ImmediateModeNode, Scene};
 
     fn null_hook<'a>() -> &'a (dyn Fn(&BoxNode) -> Option<Color> + 'a) {
         &|_b: &BoxNode| None
     }
 
     fn simple_container() -> Scene {
-        Scene::Container(
-            ContainerNode::new(vec![
-                Scene::Box(BoxNode::filled(
-                    Rect::new(10, 10, 100, 50),
-                    Color::rgb(0xff, 0, 0),
-                )),
-                Scene::Text(TextNode::new("hi", Rect::new(10, 70, 100, 20))),
-            ]),
-        )
+        Scene::Container(ContainerNode::new(vec![
+            Scene::Box(BoxNode::filled(
+                Rect::new(10, 10, 100, 50),
+                Color::rgb(0xff, 0, 0),
+            )),
+            Scene::Text(TextNode::new("hi", Rect::new(10, 70, 100, 20))),
+        ]))
     }
 
     fn mutated_container() -> Scene {
-        Scene::Container(
-            ContainerNode::new(vec![
-                Scene::Box(BoxNode::filled(
-                    Rect::new(10, 10, 100, 50),
-                    // Color differs from `simple_container`.
-                    Color::rgb(0, 0xff, 0),
-                )),
-                Scene::Text(TextNode::new("hi", Rect::new(10, 70, 100, 20))),
-            ]),
-        )
+        Scene::Container(ContainerNode::new(vec![
+            Scene::Box(BoxNode::filled(
+                Rect::new(10, 10, 100, 50),
+                // Color differs from `simple_container`.
+                Color::rgb(0, 0xff, 0),
+            )),
+            Scene::Text(TextNode::new("hi", Rect::new(10, 70, 100, 20))),
+        ]))
     }
 
     #[test]
@@ -2340,7 +2320,14 @@ mod tests {
         let mut cache = FragmentCache::new();
         let mut text = LayoutCache::new();
         let mut vello = VelloScene::new();
-        to_vello_cached(&scene, &null_hook(), &mut text, &mut ImageCache::new(), &mut cache, &mut vello);
+        to_vello_cached(
+            &scene,
+            &null_hook(),
+            &mut text,
+            &mut ImageCache::new(),
+            &mut cache,
+            &mut vello,
+        );
         assert_eq!(cache.hits(), 0);
         assert_eq!(cache.misses(), 1);
         assert_eq!(cache.entries(), 1, "miss installs the fragment");
@@ -2475,7 +2462,14 @@ mod tests {
         let mut cache = FragmentCache::new();
         let mut text = LayoutCache::new();
         let mut v = VelloScene::new();
-        to_vello_cached(&scene, &null_hook(), &mut text, &mut ImageCache::new(), &mut cache, &mut v);
+        to_vello_cached(
+            &scene,
+            &null_hook(),
+            &mut text,
+            &mut ImageCache::new(),
+            &mut cache,
+            &mut v,
+        );
         // No miss → no install. Cache stays empty.
         assert_eq!(cache.hits(), 0);
         assert_eq!(cache.misses(), 0);
@@ -2496,7 +2490,14 @@ mod tests {
         let mut cache = FragmentCache::new();
         let mut text = LayoutCache::new();
         let mut v = VelloScene::new();
-        to_vello_cached(&scene, &null_hook(), &mut text, &mut ImageCache::new(), &mut cache, &mut v);
+        to_vello_cached(
+            &scene,
+            &null_hook(),
+            &mut text,
+            &mut ImageCache::new(),
+            &mut cache,
+            &mut v,
+        );
         assert_eq!(cache.entries(), 0);
     }
 
@@ -2529,7 +2530,14 @@ mod tests {
         let mut text = LayoutCache::new();
 
         let mut v = VelloScene::new();
-        to_vello_cached(&make_scene(), &null_hook(), &mut text, &mut ImageCache::new(), &mut cache, &mut v);
+        to_vello_cached(
+            &make_scene(),
+            &null_hook(),
+            &mut text,
+            &mut ImageCache::new(),
+            &mut cache,
+            &mut v,
+        );
         // First paint: header Container missed (installed) — root
         // Container is uncacheable so it didn't probe; ImmediateMode
         // doesn't probe.
@@ -2538,7 +2546,14 @@ mod tests {
         assert_eq!(cache.entries(), 1);
 
         let mut v = VelloScene::new();
-        to_vello_cached(&make_scene(), &null_hook(), &mut text, &mut ImageCache::new(), &mut cache, &mut v);
+        to_vello_cached(
+            &make_scene(),
+            &null_hook(),
+            &mut text,
+            &mut ImageCache::new(),
+            &mut cache,
+            &mut v,
+        );
         // Second paint: header hits.
         assert_eq!(cache.hits(), 1);
         assert_eq!(cache.misses(), 1);
@@ -2624,7 +2639,9 @@ mod tests {
                 PathCommand::LineTo(p(90.0, 0.0)),
                 PathCommand::LineTo(p(120.0, 60.0)),
             ],
-            PathStyle::stroked(Stroke::new(Color::rgb(0, 0x96, 0x88), 8).with_cap(StrokeCap::Round)),
+            PathStyle::stroked(
+                Stroke::new(Color::rgb(0, 0x96, 0x88), 8).with_cap(StrokeCap::Round),
+            ),
         ));
         let arc = Scene::Path(PathNode::new(
             Rect::new(120, 0, 60, 60),
@@ -2652,7 +2669,14 @@ mod tests {
         // to_vello, so both arms must reach it without panic.
         let mut cache = FragmentCache::new();
         let mut cached = VelloScene::new();
-        to_vello_cached(&scene, &null_hook(), &mut text, &mut ImageCache::new(), &mut cache, &mut cached);
+        to_vello_cached(
+            &scene,
+            &null_hook(),
+            &mut text,
+            &mut ImageCache::new(),
+            &mut cache,
+            &mut cached,
+        );
         assert_eq!(cache.misses(), 1);
     }
 
@@ -2774,13 +2798,22 @@ mod tests {
         // accumulator captures it. Match against the root container's
         // actual rect (zero rect contributes the zero-rect-at-(0,0)
         // shape per Rect::union semantics — `Some(Rect(0,0,0,0))`).
-        let Scene::Container(ref c) = scene else { unreachable!() };
+        let Scene::Container(ref c) = scene else {
+            unreachable!()
+        };
         let expected_rect = c.rect;
 
         let mut cache = FragmentCache::new();
         let mut text = LayoutCache::new();
         let mut v = VelloScene::new();
-        to_vello_cached(&scene, &null_hook(), &mut text, &mut ImageCache::new(), &mut cache, &mut v);
+        to_vello_cached(
+            &scene,
+            &null_hook(),
+            &mut text,
+            &mut ImageCache::new(),
+            &mut cache,
+            &mut v,
+        );
 
         let dmg = cache.last_damage_region().expect("first paint = damage");
         assert_eq!(dmg, expected_rect);
@@ -2988,7 +3021,14 @@ mod tests {
 
     fn run_paint(scene: &Scene, cache: &mut FragmentCache, text: &mut LayoutCache) {
         let mut v = VelloScene::new();
-        to_vello_cached(scene, &null_hook(), text, &mut ImageCache::new(), cache, &mut v);
+        to_vello_cached(
+            scene,
+            &null_hook(),
+            text,
+            &mut ImageCache::new(),
+            cache,
+            &mut v,
+        );
     }
 
     #[test]
@@ -3003,7 +3043,11 @@ mod tests {
         run_paint(&scene, &mut cache, &mut text);
         assert_eq!(cache.misses(), 100, "100 cacheable rows miss first paint");
         assert_eq!(cache.hits(), 0);
-        assert_eq!(cache.entries(), 100, "row fragments installed; root untracked");
+        assert_eq!(
+            cache.entries(),
+            100,
+            "row fragments installed; root untracked"
+        );
     }
 
     #[test]
@@ -3052,18 +3096,13 @@ mod tests {
         // rows (their fragments will survive). Tags + colours +
         // rects match the originals so the hashes match and the
         // cache hits.
-        let completed_indices: Vec<u32> = (0..100u32)
-            .filter(|i| full_mask[*i as usize])
-            .collect();
+        let completed_indices: Vec<u32> = (0..100u32).filter(|i| full_mask[*i as usize]).collect();
         let completed_n = u32::try_from(completed_indices.len()).expect("≤ 100 fits u32");
         let mut filtered_children: Vec<Scene> = vec![Scene::ImmediateModeNode(
             ImmediateModeNode::from_driver(InertImmediate, Rect::new(0, 0, 100, 1)),
         )];
         for i in &completed_indices {
-            #[allow(
-                clippy::cast_possible_truncation,
-                reason = "i < 100 fits in u8"
-            )]
+            #[allow(clippy::cast_possible_truncation, reason = "i < 100 fits in u8")]
             let g = (*i % 256) as u8;
             filtered_children.push(Scene::Container(
                 ContainerNode::new(vec![Scene::Box(BoxNode::filled(
@@ -3073,9 +3112,8 @@ mod tests {
                 .with_tag(format!("row_{i}")),
             ));
         }
-        let filtered = Scene::Container(
-            ContainerNode::new(filtered_children).with_tag("stress_root"),
-        );
+        let filtered =
+            Scene::Container(ContainerNode::new(filtered_children).with_tag("stress_root"));
 
         let mut cache = FragmentCache::new();
         let mut text = LayoutCache::new();
@@ -3169,7 +3207,10 @@ mod tests {
         let cell_h = 16u32;
         let natural = 19.2_f64; // 1.2 × 16, a typical monospace line box
         let fitted = fit_font_size_to_cell(natural, cell_h);
-        assert!(fitted < cell_h, "an overflowing box must shrink the font: {fitted}");
+        assert!(
+            fitted < cell_h,
+            "an overflowing box must shrink the font: {fitted}"
+        );
         // The line box scales linearly with font size, so the fitted box is
         // `natural × fitted / cell_h` — and it must fit the cell.
         let fitted_box = natural * f64::from(fitted) / f64::from(cell_h);

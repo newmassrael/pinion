@@ -89,8 +89,7 @@ impl WidgetCore for HelloToggleTui {
             } else {
                 ToggleState::Idle
             };
-            let value =
-                matches!(intro.query("value"), Some(IntrospectValue::Bool(true)));
+            let value = matches!(intro.query("value"), Some(IntrospectValue::Bool(true)));
             return (state, value);
         }
         (ToggleState::Idle, false)
@@ -135,8 +134,7 @@ impl WidgetCore for HelloToggleTui {
         // Toggle rect = 10 cells × 3 rows so the border has room.
         toggle_box.rect = Rect::new(16, 32, 80, 48);
         toggle_box.tag = Some(Cow::Borrowed(Self::tag()));
-        toggle_box.style =
-            BoxStyle::filled(bg_fill).with_border(Border::new(border_color, 1));
+        toggle_box.style = BoxStyle::filled(bg_fill).with_border(Border::new(border_color, 1));
         toggle_box.children.push(Scene::Text(label));
 
         let mut status = TextNode::default();
@@ -188,7 +186,12 @@ impl WidgetCore for HelloToggleTui {
     /// `Enter` flip Off ↔ On (toggle buttons accept both; pure ARIA
     /// checkboxes accept only `Space` — Toggle is a toggle button
     /// per WAI-ARIA APG so both keys land here).
-    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, _modifiers: pinion_core::Modifiers) -> bool {
+    fn apply_key(
+        scene: &mut Scene,
+        focused: Option<&str>,
+        key: &str,
+        _modifiers: pinion_core::Modifiers,
+    ) -> bool {
         pinion_core::widgets::aria::apply_aria_activate(scene, focused, key, Self::tag())
     }
 }
@@ -199,18 +202,17 @@ impl WidgetA11y for HelloToggleTui {
     /// On/Off value via [`AccessValue::Bool`]; `state.checked`
     /// mirrors the same boolean so AT clients reading either field
     /// see a consistent on/off state.
-    fn access_node(
-        state: &(ToggleState, bool),
-        focused: Option<&str>,
-    ) -> Vec<AccessNode> {
+    fn access_node(state: &(ToggleState, bool), focused: Option<&str>) -> Vec<AccessNode> {
         let (interaction, on) = *state;
         let access_state = AccessState {
             focused: focused == Some(<Self as WidgetCore>::tag()),
             ..AccessState::from_interaction(interaction, Some(on))
         };
-        vec![AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::Switch)
-            .with_value(AccessValue::Bool(on))
-            .with_state(access_state)]
+        vec![
+            AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::Switch)
+                .with_value(AccessValue::Bool(on))
+                .with_state(access_state),
+        ]
     }
 }
 

@@ -246,7 +246,11 @@ mod tests {
         let mut g = group();
         drive_activate(&mut g, 1);
         assert_eq!(g.selected_index(), Some(1));
-        assert_eq!(g.state(1), RadioState::Idle, "trailing Leave returns to Idle");
+        assert_eq!(
+            g.state(1),
+            RadioState::Idle,
+            "trailing Leave returns to Idle"
+        );
     }
 
     #[test]
@@ -277,7 +281,11 @@ mod tests {
 
     #[test]
     fn active_index_prefers_focused_then_selected_then_zero() {
-        let rows = [(RadioState::Idle, false), (RadioState::Idle, true), (RadioState::Idle, false)];
+        let rows = [
+            (RadioState::Idle, false),
+            (RadioState::Idle, true),
+            (RadioState::Idle, false),
+        ];
         assert_eq!(active_index(&rows, Some(2)), 2, "focused wins");
         assert_eq!(active_index(&rows, None), 1, "else selected");
         let none = [(RadioState::Idle, false); 3];
@@ -324,17 +332,29 @@ mod tests {
         let sibling = composite_focus_target("nav", Some("save_btn"), 0)
             .expect("a focused sibling -> Some(atomic)");
         assert_eq!(sibling.focus_tag, "save_btn");
-        assert!(sibling.active_descendant.is_none(), "atomic carries no descendant");
-        assert!(composite_focus_target("nav", None, 0).is_none(), "no focus -> None");
+        assert!(
+            sibling.active_descendant.is_none(),
+            "atomic carries no descendant"
+        );
+        assert!(
+            composite_focus_target("nav", None, 0).is_none(),
+            "no focus -> None"
+        );
     }
 
     #[test]
     fn composite_child_invoke_descends_external_and_dispatches() {
         use pinion_core::scene::ExternalNode;
-        let mut scene =
-            Scene::External(ExternalNode::new(Box::new(group())).with_tag("nav"));
-        assert!(composite_child_invoke(&mut scene, "2", AccessAction::Click, 3));
-        let Scene::External(node) = &scene else { unreachable!() };
+        let mut scene = Scene::External(ExternalNode::new(Box::new(group())).with_tag("nav"));
+        assert!(composite_child_invoke(
+            &mut scene,
+            "2",
+            AccessAction::Click,
+            3
+        ));
+        let Scene::External(node) = &scene else {
+            unreachable!()
+        };
         assert_eq!(
             node.handle.introspect().and_then(selected_index),
             Some(2),
@@ -346,6 +366,11 @@ mod tests {
     fn composite_child_invoke_declines_non_external_root() {
         use pinion_core::scene::ContainerNode;
         let mut not_external = Scene::Container(ContainerNode::new(vec![]));
-        assert!(!composite_child_invoke(&mut not_external, "0", AccessAction::Click, 3));
+        assert!(!composite_child_invoke(
+            &mut not_external,
+            "0",
+            AccessAction::Click,
+            3
+        ));
     }
 }

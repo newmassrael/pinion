@@ -837,13 +837,13 @@ mod r51_166_tests {
     //! `CoreShell` integration is the R51.167 carry — these tests
     //! pin the trait-side contract only.
     use super::WidgetCore;
+    use crate::Frame;
     use crate::command::Command;
     use crate::external::{External, IntrospectValue};
     use crate::intent::Intent;
     use crate::scene::Scene;
     use crate::test_fixtures::ButtonFixture;
     use crate::widgets::button::ButtonState;
-    use crate::Frame;
 
     #[test]
     fn default_update_returns_empty_vec() {

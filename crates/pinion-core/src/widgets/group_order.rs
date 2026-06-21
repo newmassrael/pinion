@@ -80,8 +80,8 @@ use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
 
 use crate::external::{
-    at_index, query_proxy_external_impl, ExternalIntrospect, InterveneError, IntrospectSchema,
-    IntrospectValue, InvokeError,
+    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError, at_index,
+    query_proxy_external_impl,
 };
 use crate::reactive::{Owner, Signal};
 use crate::scene::Scene;
@@ -210,7 +210,11 @@ pub fn group_rows(
             collapsed: is_collapsed,
         });
         if !is_collapsed {
-            rows.extend(group_members.iter().map(|&source| GroupRow::Data { source }));
+            rows.extend(
+                group_members
+                    .iter()
+                    .map(|&source| GroupRow::Data { source }),
+            );
         }
     }
     rows
@@ -328,7 +332,10 @@ impl GroupOrderState {
             collapsed: Signal::new(BTreeSet::new()),
             cursor: Signal::new(None),
             order_source: OrderSource::Identity(identity),
-            rows: RefCell::new(GroupRowsMemo { key: None, rows: Rc::new(Vec::new()) }),
+            rows: RefCell::new(GroupRowsMemo {
+                key: None,
+                rows: Rc::new(Vec::new()),
+            }),
         }
     }
 
@@ -365,7 +372,10 @@ impl GroupOrderState {
     /// [`ViewOrderState::with_tag`](crate::widgets::view_order::ViewOrderState::with_tag).
     #[must_use]
     pub fn with_tag(key: &'static str, groups: Vec<usize>, group_labels: Vec<String>) -> Self {
-        Self { tag: Some(key), ..Self::new(groups, group_labels) }
+        Self {
+            tag: Some(key),
+            ..Self::new(groups, group_labels)
+        }
     }
 
     /// The [`use_group_order`] cache key, or `None` when constructed directly.
@@ -476,7 +486,11 @@ impl GroupOrderState {
             return;
         }
         let mut set = self.collapsed.get();
-        let changed = if collapsed { set.insert(group) } else { set.remove(&group) };
+        let changed = if collapsed {
+            set.insert(group)
+        } else {
+            set.remove(&group)
+        };
         if changed {
             self.collapsed.set(set);
         }
@@ -676,21 +690,34 @@ pub fn group_nav(
         }
         "ArrowRight" => match current {
             // Collapsed header → expand it (cursor stays on the header).
-            Some((_, GroupRow::Header { group, collapsed: true, .. })) => {
-                Some(GroupNavOutcome::Toggle(group))
-            }
+            Some((
+                _,
+                GroupRow::Header {
+                    group,
+                    collapsed: true,
+                    ..
+                },
+            )) => Some(GroupNavOutcome::Toggle(group)),
             // Expanded header → step into its first child (the next row).
-            Some((pos, GroupRow::Header { collapsed: false, .. })) => {
-                Some(GroupNavOutcome::MoveTo((pos + 1).min(last)))
-            }
+            Some((
+                pos,
+                GroupRow::Header {
+                    collapsed: false, ..
+                },
+            )) => Some(GroupNavOutcome::MoveTo((pos + 1).min(last))),
             // Data row (or no cursor) → no horizontal axis at row scope.
             _ => None,
         },
         "ArrowLeft" => match current {
             // Expanded header → collapse it (cursor stays on the header).
-            Some((_, GroupRow::Header { group, collapsed: false, .. })) => {
-                Some(GroupNavOutcome::Toggle(group))
-            }
+            Some((
+                _,
+                GroupRow::Header {
+                    group,
+                    collapsed: false,
+                    ..
+                },
+            )) => Some(GroupNavOutcome::Toggle(group)),
             // Data row → jump up to its group header (the nearest header above).
             Some((pos, GroupRow::Data { .. })) => (0..pos)
                 .rev()
@@ -881,11 +908,15 @@ impl ExternalIntrospect for GroupOrderExternal {
         let rows = self.state.rows();
         let row_get = |i: usize| rows.get(i).copied();
         if let Some(rest) = path.strip_prefix("kind_at.") {
-            return Some(at_index(rest, row_get, |r| IntrospectValue::Text(r.kind_str().into())));
+            return Some(at_index(rest, row_get, |r| {
+                IntrospectValue::Text(r.kind_str().into())
+            }));
         }
         if let Some(rest) = path.strip_prefix("source_at.") {
             return Some(at_index(rest, row_get, |r| {
-                r.source().and_then(|s| i64::try_from(s).ok()).map_or(IntrospectValue::Null, IntrospectValue::Int)
+                r.source()
+                    .and_then(|s| i64::try_from(s).ok())
+                    .map_or(IntrospectValue::Null, IntrospectValue::Int)
             }));
         }
         if let Some(rest) = path.strip_prefix("group_at.") {
@@ -926,15 +957,19 @@ impl ExternalIntrospect for GroupOrderExternal {
                 rest.parse::<usize>()
                     .ok()
                     .filter(|&g| g < self.state.group_count())
-                    .map_or(IntrospectValue::Null, |g| IntrospectValue::Bool(self.state.is_collapsed(g))),
+                    .map_or(IntrospectValue::Null, |g| {
+                        IntrospectValue::Bool(self.state.is_collapsed(g))
+                    }),
             );
         }
         match path {
             "visible_len" => Some(self.visible_len_value()),
-            "count" => Some(IntrospectValue::Int(i64::try_from(self.state.count()).unwrap_or(i64::MAX))),
-            "group_count" => {
-                Some(IntrospectValue::Int(i64::try_from(self.state.group_count()).unwrap_or(i64::MAX)))
-            }
+            "count" => Some(IntrospectValue::Int(
+                i64::try_from(self.state.count()).unwrap_or(i64::MAX),
+            )),
+            "group_count" => Some(IntrospectValue::Int(
+                i64::try_from(self.state.group_count()).unwrap_or(i64::MAX),
+            )),
             // The roving keyboard cursor's visual position, Null when unset.
             "cursor" => Some(
                 self.state
@@ -992,7 +1027,11 @@ impl ExternalIntrospect for GroupOrderExternal {
         }
     }
 
-    fn invoke(&mut self, path: &str, args: IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+    fn invoke(
+        &mut self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
         match path {
             // AI-first toggle — returns the resulting visible_len in one
             // round-trip; an out-of-range / non-Int group is a no-op / mismatch.
@@ -1049,17 +1088,29 @@ mod tests {
         assert_eq!(
             rows,
             vec![
-                GroupRow::Header { group: 0, member_count: 4, collapsed: false },
+                GroupRow::Header {
+                    group: 0,
+                    member_count: 4,
+                    collapsed: false
+                },
                 GroupRow::Data { source: 0 },
                 GroupRow::Data { source: 3 },
                 GroupRow::Data { source: 6 },
                 GroupRow::Data { source: 9 },
-                GroupRow::Header { group: 1, member_count: 4, collapsed: false },
+                GroupRow::Header {
+                    group: 1,
+                    member_count: 4,
+                    collapsed: false
+                },
                 GroupRow::Data { source: 1 },
                 GroupRow::Data { source: 4 },
                 GroupRow::Data { source: 7 },
                 GroupRow::Data { source: 10 },
-                GroupRow::Header { group: 2, member_count: 4, collapsed: false },
+                GroupRow::Header {
+                    group: 2,
+                    member_count: 4,
+                    collapsed: false
+                },
                 GroupRow::Data { source: 2 },
                 GroupRow::Data { source: 5 },
                 GroupRow::Data { source: 8 },
@@ -1076,10 +1127,20 @@ mod tests {
         let kinds: Vec<&str> = rows.iter().map(GroupRow::kind_str).collect();
         assert_eq!(
             kinds,
-            ["header", "data", "data", "data", "data", "header", "header", "data", "data", "data", "data"],
+            [
+                "header", "data", "data", "data", "data", "header", "header", "data", "data",
+                "data", "data"
+            ],
         );
         // The collapsed flag is reported on the header even while collapsed.
-        assert_eq!(rows[5], GroupRow::Header { group: 1, member_count: 4, collapsed: true });
+        assert_eq!(
+            rows[5],
+            GroupRow::Header {
+                group: 1,
+                member_count: 4,
+                collapsed: true
+            }
+        );
     }
 
     #[test]
@@ -1092,7 +1153,14 @@ mod tests {
         let rows = group_rows(&order, |s| g[s], |_| false);
         // Source 11 (group 2) appears first → group 2 leads; its members in
         // order order are 11,8,5,2.
-        assert_eq!(rows[0], GroupRow::Header { group: 2, member_count: 4, collapsed: false });
+        assert_eq!(
+            rows[0],
+            GroupRow::Header {
+                group: 2,
+                member_count: 4,
+                collapsed: false
+            }
+        );
         assert_eq!(rows[1], GroupRow::Data { source: 11 });
         assert_eq!(rows[2], GroupRow::Data { source: 8 });
     }
@@ -1113,14 +1181,25 @@ mod tests {
         assert_eq!(s.count(), 12);
         assert_eq!(s.group_count(), 3);
         assert_eq!(s.total_member_count(0), 4);
-        assert_eq!(s.total_member_count(99), 0, "out-of-range group has no members");
+        assert_eq!(
+            s.total_member_count(99),
+            0,
+            "out-of-range group has no members"
+        );
         assert_eq!(s.group_label(1), Some("Bravo"));
         assert_eq!(s.group_label(99), None);
         // 3 headers + 12 data rows.
         assert_eq!(s.visible_len(), 15);
         assert!(!s.is_collapsed(0));
         // First row is group 0's header; second is its first member (source 0).
-        assert_eq!(s.row_at(0), Some(GroupRow::Header { group: 0, member_count: 4, collapsed: false }));
+        assert_eq!(
+            s.row_at(0),
+            Some(GroupRow::Header {
+                group: 0,
+                member_count: 4,
+                collapsed: false
+            })
+        );
         assert_eq!(s.source_at(0), None, "a header has no source");
         assert_eq!(s.source_at(1), Some(0));
     }
@@ -1130,13 +1209,19 @@ mod tests {
         let s = state();
         let first = s.rows();
         assert!(Rc::ptr_eq(&first, &s.rows()), "rows memoized across reads");
-        assert!(s.toggle_group(1), "toggle collapses group 1 (returns now-collapsed = true)");
+        assert!(
+            s.toggle_group(1),
+            "toggle collapses group 1 (returns now-collapsed = true)"
+        );
         assert!(s.is_collapsed(1));
         // Group 1's 4 data rows vanish; 15 - 4 = 11.
         assert_eq!(s.visible_len(), 11);
         // A new collapse snapshot recomputes (different Rc).
         assert!(!Rc::ptr_eq(&first, &s.rows()));
-        assert!(!s.toggle_group(1), "toggle expands group 1 again (returns now-collapsed = false)");
+        assert!(
+            !s.toggle_group(1),
+            "toggle expands group 1 again (returns now-collapsed = false)"
+        );
         assert_eq!(s.visible_len(), 15);
     }
 
@@ -1177,20 +1262,44 @@ mod tests {
         assert_eq!(e.query("count"), Some(IntrospectValue::Int(12)));
         assert_eq!(e.query("group_count"), Some(IntrospectValue::Int(3)));
         // pos 0 = group 0 header.
-        assert_eq!(e.query("kind_at.0"), Some(IntrospectValue::Text("header".into())));
+        assert_eq!(
+            e.query("kind_at.0"),
+            Some(IntrospectValue::Text("header".into()))
+        );
         assert_eq!(e.query("group_at.0"), Some(IntrospectValue::Int(0)));
-        assert_eq!(e.query("label_at.0"), Some(IntrospectValue::Text("Alpha".into())));
+        assert_eq!(
+            e.query("label_at.0"),
+            Some(IntrospectValue::Text("Alpha".into()))
+        );
         assert_eq!(e.query("member_count_at.0"), Some(IntrospectValue::Int(4)));
-        assert_eq!(e.query("collapsed_at.0"), Some(IntrospectValue::Bool(false)));
-        assert_eq!(e.query("source_at.0"), Some(IntrospectValue::Null), "a header has no source");
+        assert_eq!(
+            e.query("collapsed_at.0"),
+            Some(IntrospectValue::Bool(false))
+        );
+        assert_eq!(
+            e.query("source_at.0"),
+            Some(IntrospectValue::Null),
+            "a header has no source"
+        );
         // pos 1 = group 0's first data row (source 0).
-        assert_eq!(e.query("kind_at.1"), Some(IntrospectValue::Text("data".into())));
+        assert_eq!(
+            e.query("kind_at.1"),
+            Some(IntrospectValue::Text("data".into()))
+        );
         assert_eq!(e.query("source_at.1"), Some(IntrospectValue::Int(0)));
-        assert_eq!(e.query("group_at.1"), Some(IntrospectValue::Null), "a data row reports no group id");
+        assert_eq!(
+            e.query("group_at.1"),
+            Some(IntrospectValue::Null),
+            "a data row reports no group id"
+        );
         assert_eq!(e.query("label_at.1"), Some(IntrospectValue::Null));
         // Per-group collapse flag.
         assert_eq!(e.query("collapsed.0"), Some(IntrospectValue::Bool(false)));
-        assert_eq!(e.query("collapsed.99"), Some(IntrospectValue::Null), "out-of-range group → Null");
+        assert_eq!(
+            e.query("collapsed.99"),
+            Some(IntrospectValue::Null),
+            "out-of-range group → Null"
+        );
         // Out-of-range position is present-but-empty; undeclared path is absent.
         assert_eq!(e.query("kind_at.999"), Some(IntrospectValue::Null));
         assert_eq!(e.query("nope"), None);
@@ -1199,22 +1308,44 @@ mod tests {
     #[test]
     fn invoke_toggle_collapse_expand_return_visible_len() {
         let mut e = ext();
-        assert_eq!(e.invoke("toggle_group", IntrospectValue::Int(0)), Ok(IntrospectValue::Int(11)));
+        assert_eq!(
+            e.invoke("toggle_group", IntrospectValue::Int(0)),
+            Ok(IntrospectValue::Int(11))
+        );
         assert!(e.state().is_collapsed(0));
-        assert_eq!(e.invoke("collapse_all", IntrospectValue::Null), Ok(IntrospectValue::Int(3)));
-        assert_eq!(e.invoke("expand_all", IntrospectValue::Null), Ok(IntrospectValue::Int(15)));
+        assert_eq!(
+            e.invoke("collapse_all", IntrospectValue::Null),
+            Ok(IntrospectValue::Int(3))
+        );
+        assert_eq!(
+            e.invoke("expand_all", IntrospectValue::Null),
+            Ok(IntrospectValue::Int(15))
+        );
         // An out-of-range group toggle is a harmless no-op.
-        assert_eq!(e.invoke("toggle_group", IntrospectValue::Int(99)), Ok(IntrospectValue::Int(15)));
-        assert_eq!(e.invoke("toggle_group", IntrospectValue::Null), Err(InvokeError::TypeMismatch));
-        assert_eq!(e.invoke("bogus", IntrospectValue::Null), Err(InvokeError::UnknownPath));
+        assert_eq!(
+            e.invoke("toggle_group", IntrospectValue::Int(99)),
+            Ok(IntrospectValue::Int(15))
+        );
+        assert_eq!(
+            e.invoke("toggle_group", IntrospectValue::Null),
+            Err(InvokeError::TypeMismatch)
+        );
+        assert_eq!(
+            e.invoke("bogus", IntrospectValue::Null),
+            Err(InvokeError::UnknownPath)
+        );
     }
 
     #[test]
     fn invoke_send_toggles_on_activation_edge_only() {
         let mut e = ext();
         // Hover (PointerEnter) over group 1's header does not toggle.
-        e.invoke("send", IntrospectValue::Text("1:PointerEnter".into())).expect("enter is a no-op");
-        assert!(!e.state().is_collapsed(1), "hover did not collapse the group");
+        e.invoke("send", IntrospectValue::Text("1:PointerEnter".into()))
+            .expect("enter is a no-op");
+        assert!(
+            !e.state().is_collapsed(1),
+            "hover did not collapse the group"
+        );
         // Release (PointerUp) toggles group 1.
         assert_eq!(
             e.invoke("send", IntrospectValue::Text("1:PointerUp".into())),
@@ -1227,10 +1358,12 @@ mod tests {
     #[test]
     fn intervene_sets_collapse_and_guards_readonly() {
         let mut e = ext();
-        e.intervene("collapsed.2", IntrospectValue::Bool(true)).expect("collapse group 2");
+        e.intervene("collapsed.2", IntrospectValue::Bool(true))
+            .expect("collapse group 2");
         assert!(e.state().is_collapsed(2));
         assert_eq!(e.state().visible_len(), 11);
-        e.intervene("collapsed.2", IntrospectValue::Bool(false)).expect("expand group 2");
+        e.intervene("collapsed.2", IntrospectValue::Bool(false))
+            .expect("expand group 2");
         assert!(!e.state().is_collapsed(2));
         assert_eq!(
             e.intervene("collapsed.2", IntrospectValue::Int(1)),
@@ -1241,15 +1374,28 @@ mod tests {
         // UnknownPath — only a non-numeric suffix is a malformed path.
         e.intervene("collapsed.99", IntrospectValue::Bool(true))
             .expect("out-of-range group is a graceful no-op");
-        assert_eq!(e.state().visible_len(), 15, "out-of-range collapse changed nothing");
+        assert_eq!(
+            e.state().visible_len(),
+            15,
+            "out-of-range collapse changed nothing"
+        );
         assert_eq!(
             e.intervene("collapsed.notanumber", IntrospectValue::Bool(true)),
             Err(InterveneError::UnknownPath),
             "a non-numeric group suffix is a malformed path",
         );
-        assert_eq!(e.intervene("visible_len", IntrospectValue::Int(1)), Err(InterveneError::ReadOnly));
-        assert_eq!(e.intervene("source_at", IntrospectValue::Null), Err(InterveneError::ReadOnly));
-        assert_eq!(e.intervene("nope", IntrospectValue::Null), Err(InterveneError::UnknownPath));
+        assert_eq!(
+            e.intervene("visible_len", IntrospectValue::Int(1)),
+            Err(InterveneError::ReadOnly)
+        );
+        assert_eq!(
+            e.intervene("source_at", IntrospectValue::Null),
+            Err(InterveneError::ReadOnly)
+        );
+        assert_eq!(
+            e.intervene("nope", IntrospectValue::Null),
+            Err(InterveneError::UnknownPath)
+        );
     }
 
     #[test]
@@ -1257,7 +1403,10 @@ mod tests {
         let s = state();
         let mut e = GroupOrderExternal::new(Rc::clone(&s));
         e.invoke("toggle_group", IntrospectValue::Int(0)).unwrap();
-        assert!(s.is_collapsed(0), "external + view share one source of truth");
+        assert!(
+            s.is_collapsed(0),
+            "external + view share one source of truth"
+        );
     }
 
     // ── R844: group over an upstream proxy's order (filter → sort → group) ──
@@ -1267,13 +1416,25 @@ mod tests {
         // Group the 3-group data over a REVERSED order: groups appear by the
         // first (highest) source of each group, members within in that order.
         let order = Rc::new((0..12).rev().collect::<Vec<usize>>()); // 11,10,..,0
-        let s = GroupOrderState::new(groups(), labels()).with_order_source(move || Rc::clone(&order));
+        let s =
+            GroupOrderState::new(groups(), labels()).with_order_source(move || Rc::clone(&order));
         let rows = s.rows();
         // Source 11 is group 2 (11 % 3) → Charlie leads; members 11,8,5,2.
-        assert_eq!(rows[0], GroupRow::Header { group: 2, member_count: 4, collapsed: false });
+        assert_eq!(
+            rows[0],
+            GroupRow::Header {
+                group: 2,
+                member_count: 4,
+                collapsed: false
+            }
+        );
         assert_eq!(rows[1], GroupRow::Data { source: 11 });
         assert_eq!(rows[2], GroupRow::Data { source: 8 });
-        assert_eq!(s.visible_len(), 15, "same rows, regrouped: 3 headers + 12 data");
+        assert_eq!(
+            s.visible_len(),
+            15,
+            "same rows, regrouped: 3 headers + 12 data"
+        );
     }
 
     #[test]
@@ -1284,13 +1445,24 @@ mod tests {
         // mutable upstream (the OrderMemo doc's config-keyed-memo caveat).
         let cell: Rc<RefCell<Rc<Vec<usize>>>> = Rc::new(RefCell::new(Rc::new((0..12).collect())));
         let c2 = Rc::clone(&cell);
-        let s = GroupOrderState::new(groups(), labels()).with_order_source(move || Rc::clone(&c2.borrow()));
+        let s = GroupOrderState::new(groups(), labels())
+            .with_order_source(move || Rc::clone(&c2.borrow()));
         let first = s.rows();
-        assert!(Rc::ptr_eq(&first, &s.rows()), "unchanged upstream order Rc → memo hit");
+        assert!(
+            Rc::ptr_eq(&first, &s.rows()),
+            "unchanged upstream order Rc → memo hit"
+        );
         *cell.borrow_mut() = Rc::new((0..12).rev().collect());
         let second = s.rows();
-        assert!(!Rc::ptr_eq(&first, &second), "re-minted upstream order → recompute");
-        assert_eq!(second[1], GroupRow::Data { source: 11 }, "regrouped over the new order");
+        assert!(
+            !Rc::ptr_eq(&first, &second),
+            "re-minted upstream order → recompute"
+        );
+        assert_eq!(
+            second[1],
+            GroupRow::Data { source: 11 },
+            "regrouped over the new order"
+        );
     }
 
     #[test]
@@ -1299,12 +1471,28 @@ mod tests {
         // grouped view has exactly one header (Bravo) and its 4 members; the
         // emptied groups have no header at all.
         let filtered = Rc::new(vec![1usize, 4, 7, 10]);
-        let s = GroupOrderState::new(groups(), labels()).with_order_source(move || Rc::clone(&filtered));
+        let s = GroupOrderState::new(groups(), labels())
+            .with_order_source(move || Rc::clone(&filtered));
         let rows = s.rows();
-        assert_eq!(rows[0], GroupRow::Header { group: 1, member_count: 4, collapsed: false });
-        assert_eq!(s.visible_len(), 5, "one header + 4 members; emptied groups vanish");
+        assert_eq!(
+            rows[0],
+            GroupRow::Header {
+                group: 1,
+                member_count: 4,
+                collapsed: false
+            }
+        );
+        assert_eq!(
+            s.visible_len(),
+            5,
+            "one header + 4 members; emptied groups vanish"
+        );
         // The dataset-total member_count is order-source-independent.
-        assert_eq!(s.total_member_count(0), 4, "member_count is the dataset total, not the filtered count");
+        assert_eq!(
+            s.total_member_count(0),
+            4,
+            "member_count is the dataset total, not the filtered count"
+        );
     }
 
     // ── R848: roving keyboard cursor + grouped navigation policy ──
@@ -1320,29 +1508,72 @@ mod tests {
     fn nav_arrows_home_end_rove_over_every_visible_row() {
         let rows = flat();
         // From no cursor the first key lands on row 0 (a header).
-        assert_eq!(group_nav(&rows, None, "ArrowDown", 5), Some(GroupNavOutcome::MoveTo(0)));
+        assert_eq!(
+            group_nav(&rows, None, "ArrowDown", 5),
+            Some(GroupNavOutcome::MoveTo(0))
+        );
         // Step down through header → data; clamp at the ends.
-        assert_eq!(group_nav(&rows, Some(0), "ArrowDown", 5), Some(GroupNavOutcome::MoveTo(1)));
-        assert_eq!(group_nav(&rows, Some(1), "ArrowUp", 5), Some(GroupNavOutcome::MoveTo(0)));
-        assert_eq!(group_nav(&rows, Some(0), "ArrowUp", 5), Some(GroupNavOutcome::MoveTo(0)), "clamp at top");
-        assert_eq!(group_nav(&rows, Some(14), "ArrowDown", 5), Some(GroupNavOutcome::MoveTo(14)), "clamp at bottom");
-        assert_eq!(group_nav(&rows, Some(7), "Home", 5), Some(GroupNavOutcome::MoveTo(0)));
-        assert_eq!(group_nav(&rows, Some(0), "End", 5), Some(GroupNavOutcome::MoveTo(14)));
+        assert_eq!(
+            group_nav(&rows, Some(0), "ArrowDown", 5),
+            Some(GroupNavOutcome::MoveTo(1))
+        );
+        assert_eq!(
+            group_nav(&rows, Some(1), "ArrowUp", 5),
+            Some(GroupNavOutcome::MoveTo(0))
+        );
+        assert_eq!(
+            group_nav(&rows, Some(0), "ArrowUp", 5),
+            Some(GroupNavOutcome::MoveTo(0)),
+            "clamp at top"
+        );
+        assert_eq!(
+            group_nav(&rows, Some(14), "ArrowDown", 5),
+            Some(GroupNavOutcome::MoveTo(14)),
+            "clamp at bottom"
+        );
+        assert_eq!(
+            group_nav(&rows, Some(7), "Home", 5),
+            Some(GroupNavOutcome::MoveTo(0))
+        );
+        assert_eq!(
+            group_nav(&rows, Some(0), "End", 5),
+            Some(GroupNavOutcome::MoveTo(14))
+        );
         // PageDown advances by the page size, clamped.
-        assert_eq!(group_nav(&rows, Some(1), "PageDown", 5), Some(GroupNavOutcome::MoveTo(6)));
-        assert_eq!(group_nav(&rows, Some(12), "PageDown", 5), Some(GroupNavOutcome::MoveTo(14)));
+        assert_eq!(
+            group_nav(&rows, Some(1), "PageDown", 5),
+            Some(GroupNavOutcome::MoveTo(6))
+        );
+        assert_eq!(
+            group_nav(&rows, Some(12), "PageDown", 5),
+            Some(GroupNavOutcome::MoveTo(14))
+        );
     }
 
     #[test]
     fn nav_right_expands_or_enters_a_header_left_collapses_or_climbs() {
         let rows = flat();
         // Right on an expanded header steps into its first child (next row).
-        assert_eq!(group_nav(&rows, Some(0), "ArrowRight", 5), Some(GroupNavOutcome::MoveTo(1)));
+        assert_eq!(
+            group_nav(&rows, Some(0), "ArrowRight", 5),
+            Some(GroupNavOutcome::MoveTo(1))
+        );
         // Left on an expanded header collapses it (cursor stays).
-        assert_eq!(group_nav(&rows, Some(0), "ArrowLeft", 5), Some(GroupNavOutcome::Toggle(0)));
+        assert_eq!(
+            group_nav(&rows, Some(0), "ArrowLeft", 5),
+            Some(GroupNavOutcome::Toggle(0))
+        );
         // Left on a data row climbs to its group header.
-        assert_eq!(group_nav(&rows, Some(3), "ArrowLeft", 5), Some(GroupNavOutcome::MoveTo(0)), "data climbs to header");
-        assert_eq!(group_nav(&rows, Some(8), "ArrowLeft", 5), Some(GroupNavOutcome::MoveTo(5)), "group-1 data climbs to group-1 header");
+        assert_eq!(
+            group_nav(&rows, Some(3), "ArrowLeft", 5),
+            Some(GroupNavOutcome::MoveTo(0)),
+            "data climbs to header"
+        );
+        assert_eq!(
+            group_nav(&rows, Some(8), "ArrowLeft", 5),
+            Some(GroupNavOutcome::MoveTo(5)),
+            "group-1 data climbs to group-1 header"
+        );
         // Right on a data row has no row-scope horizontal axis.
         assert_eq!(group_nav(&rows, Some(3), "ArrowRight", 5), None);
     }
@@ -1351,17 +1582,43 @@ mod tests {
     fn nav_right_expands_a_collapsed_header_left_on_it_is_inert() {
         // Group 0 collapsed: pos 0 = collapsed header, pos 1 = group-1 header, …
         let rows = group_rows(&(0..12).collect::<Vec<_>>(), |s| s % 3, |g| g == 0);
-        assert!(matches!(rows[0], GroupRow::Header { group: 0, collapsed: true, .. }));
-        assert_eq!(group_nav(&rows, Some(0), "ArrowRight", 5), Some(GroupNavOutcome::Toggle(0)), "right expands a collapsed header");
-        assert_eq!(group_nav(&rows, Some(0), "ArrowLeft", 5), None, "left on a collapsed header is inert");
+        assert!(matches!(
+            rows[0],
+            GroupRow::Header {
+                group: 0,
+                collapsed: true,
+                ..
+            }
+        ));
+        assert_eq!(
+            group_nav(&rows, Some(0), "ArrowRight", 5),
+            Some(GroupNavOutcome::Toggle(0)),
+            "right expands a collapsed header"
+        );
+        assert_eq!(
+            group_nav(&rows, Some(0), "ArrowLeft", 5),
+            None,
+            "left on a collapsed header is inert"
+        );
     }
 
     #[test]
     fn nav_enter_space_toggle_headers_and_reaffirm_data() {
         let rows = flat();
-        assert_eq!(group_nav(&rows, Some(0), "Enter", 5), Some(GroupNavOutcome::Toggle(0)));
-        assert_eq!(group_nav(&rows, Some(5), " ", 5), Some(GroupNavOutcome::Toggle(1)), "Space toggles a header");
-        assert_eq!(group_nav(&rows, Some(2), "Enter", 5), Some(GroupNavOutcome::MoveTo(2)), "Enter on data re-affirms");
+        assert_eq!(
+            group_nav(&rows, Some(0), "Enter", 5),
+            Some(GroupNavOutcome::Toggle(0))
+        );
+        assert_eq!(
+            group_nav(&rows, Some(5), " ", 5),
+            Some(GroupNavOutcome::Toggle(1)),
+            "Space toggles a header"
+        );
+        assert_eq!(
+            group_nav(&rows, Some(2), "Enter", 5),
+            Some(GroupNavOutcome::MoveTo(2)),
+            "Enter on data re-affirms"
+        );
     }
 
     #[test]
@@ -1369,7 +1626,10 @@ mod tests {
         let rows = flat();
         // A cursor left past the end by an external collapse still navigates
         // sanely: clamp into range (14), then up → 13.
-        assert_eq!(group_nav(&rows, Some(99), "ArrowUp", 5), Some(GroupNavOutcome::MoveTo(13)));
+        assert_eq!(
+            group_nav(&rows, Some(99), "ArrowUp", 5),
+            Some(GroupNavOutcome::MoveTo(13))
+        );
         // An unhandled key falls through.
         assert_eq!(group_nav(&rows, Some(0), "Tab", 5), None);
         // Empty flatten yields None for every key.
@@ -1390,31 +1650,64 @@ mod tests {
     #[test]
     fn external_cursor_query_and_intervene_round_trip() {
         let mut e = ext();
-        assert_eq!(e.query("cursor"), Some(IntrospectValue::Null), "cursor unset at boot");
-        e.intervene("cursor", IntrospectValue::Int(4)).expect("set cursor");
+        assert_eq!(
+            e.query("cursor"),
+            Some(IntrospectValue::Null),
+            "cursor unset at boot"
+        );
+        e.intervene("cursor", IntrospectValue::Int(4))
+            .expect("set cursor");
         assert_eq!(e.query("cursor"), Some(IntrospectValue::Int(4)));
-        assert_eq!(e.state().cursor(), Some(4), "external + view share the cursor");
-        e.intervene("cursor", IntrospectValue::Null).expect("clear cursor");
+        assert_eq!(
+            e.state().cursor(),
+            Some(4),
+            "external + view share the cursor"
+        );
+        e.intervene("cursor", IntrospectValue::Null)
+            .expect("clear cursor");
         assert_eq!(e.query("cursor"), Some(IntrospectValue::Null));
         // A negative Int or a non-Int/Null value is a type mismatch, not a clear.
-        assert_eq!(e.intervene("cursor", IntrospectValue::Int(-1)), Err(InterveneError::TypeMismatch));
-        assert_eq!(e.intervene("cursor", IntrospectValue::Bool(true)), Err(InterveneError::TypeMismatch));
+        assert_eq!(
+            e.intervene("cursor", IntrospectValue::Int(-1)),
+            Err(InterveneError::TypeMismatch)
+        );
+        assert_eq!(
+            e.intervene("cursor", IntrospectValue::Bool(true)),
+            Err(InterveneError::TypeMismatch)
+        );
     }
 
     #[test]
     fn composite_tag_maps_header_and_data_rows() {
         let rows = flat();
         // The SSOT row → tag mapping the a11y builders + access_focus_target share.
-        assert_eq!(rows[0].composite_tag("grp", "row"), "grp#0", "header → {{header}}#{{group}}");
-        assert_eq!(rows[1].composite_tag("grp", "row"), "row#0", "data → {{data}}#{{source}}");
-        assert_eq!(rows[5].composite_tag("grp", "row"), "grp#1", "group-1 header");
+        assert_eq!(
+            rows[0].composite_tag("grp", "row"),
+            "grp#0",
+            "header → {{header}}#{{group}}"
+        );
+        assert_eq!(
+            rows[1].composite_tag("grp", "row"),
+            "row#0",
+            "data → {{data}}#{{source}}"
+        );
+        assert_eq!(
+            rows[5].composite_tag("grp", "row"),
+            "grp#1",
+            "group-1 header"
+        );
     }
 
     #[test]
     fn read_cursor_reads_the_external_cursor_slot() {
         let mut e = ext();
         assert_eq!(read_cursor(&e), None, "unset cursor reads None");
-        e.intervene("cursor", IntrospectValue::Int(5)).expect("set cursor");
-        assert_eq!(read_cursor(&e), Some(5), "read_cursor mirrors the cursor query slot");
+        e.intervene("cursor", IntrospectValue::Int(5))
+            .expect("set cursor");
+        assert_eq!(
+            read_cursor(&e),
+            Some(5),
+            "read_cursor mirrors the cursor query slot"
+        );
     }
 }

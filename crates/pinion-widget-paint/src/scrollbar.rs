@@ -75,9 +75,7 @@ use pinion_core::scene::{ContainerNode, Rect, Scene};
 use pinion_core::style::{BoxStyle, LayoutStyle, Size};
 use pinion_core::theme::{ColorRole, Theme};
 use pinion_core::widgets::scroll::ScrollState;
-use pinion_core::widgets::scrollbar::{
-    scrollbar_thumb_rect, ScrollBarOrientation, ScrollBarState,
-};
+use pinion_core::widgets::scrollbar::{ScrollBarOrientation, ScrollBarState, scrollbar_thumb_rect};
 
 /// (R659 §5.45) Sidecar carrying the binding-local sizing constants
 /// for [`view_vertical_scrollbar`]. `#[non_exhaustive]` so future
@@ -172,12 +170,14 @@ fn thumb_fill_for_state(theme: &Theme, interaction: ScrollBarState) -> pinion_co
         ScrollBarState::Idle => base,
         // Hover is the shared M3 8% token; Dragging (0.16) is the
         // scrollbar-specific dragged opacity, not a shared state-layer token.
-        ScrollBarState::Hover => base.lerp(theme.resolve(ColorRole::OnSurface), crate::state_layer::HOVER),
-        ScrollBarState::Dragging => base.lerp(theme.resolve(ColorRole::OnSurface), 0.16),
-        ScrollBarState::Disabled => base.lerp(
-            theme.resolve(ColorRole::SurfaceContainerHighest),
-            0.62,
+        ScrollBarState::Hover => base.lerp(
+            theme.resolve(ColorRole::OnSurface),
+            crate::state_layer::HOVER,
         ),
+        ScrollBarState::Dragging => base.lerp(theme.resolve(ColorRole::OnSurface), 0.16),
+        ScrollBarState::Disabled => {
+            base.lerp(theme.resolve(ColorRole::SurfaceContainerHighest), 0.62)
+        }
     }
 }
 
@@ -277,8 +277,7 @@ pub fn view_vertical_scrollbar(
     let thumb = Scene::Container(
         ContainerNode::new(vec![])
             .with_style(
-                BoxStyle::filled(thumb_fill_for_state(theme, interaction))
-                    .with_corner_radius(2),
+                BoxStyle::filled(thumb_fill_for_state(theme, interaction)).with_corner_radius(2),
             )
             .with_layout(
                 LayoutStyle::new()
@@ -314,7 +313,7 @@ mod tests {
     //!    palettes so a future palette tweak doesn't regress the role
     //!    pointer.
 
-    use super::{thumb_fill_for_state, view_vertical_scrollbar, VerticalScrollbarStyle};
+    use super::{VerticalScrollbarStyle, thumb_fill_for_state, view_vertical_scrollbar};
     use pinion_core::reactive::Owner;
     use pinion_core::scene::Scene;
     use pinion_core::style::Size;
@@ -341,15 +340,13 @@ mod tests {
 
     #[test]
     fn r659_with_gutter_w_overrides() {
-        let s = VerticalScrollbarStyle::material(TEST_VIEWPORT_H, TEST_TAG)
-            .with_gutter_w(12);
+        let s = VerticalScrollbarStyle::material(TEST_VIEWPORT_H, TEST_TAG).with_gutter_w(12);
         assert_eq!(s.gutter_w, 12);
     }
 
     #[test]
     fn r659_with_min_thumb_overrides() {
-        let s = VerticalScrollbarStyle::material(TEST_VIEWPORT_H, TEST_TAG)
-            .with_min_thumb(48);
+        let s = VerticalScrollbarStyle::material(TEST_VIEWPORT_H, TEST_TAG).with_min_thumb(48);
         assert_eq!(s.min_thumb, 48);
     }
 
@@ -361,14 +358,18 @@ mod tests {
             // → thumb fills the track.
             let theme = Theme::light();
             let style = VerticalScrollbarStyle::material(TEST_VIEWPORT_H, TEST_TAG);
-            let scene = view_vertical_scrollbar(&scroll_state, &theme, &style, ScrollBarState::Idle);
+            let scene =
+                view_vertical_scrollbar(&scroll_state, &theme, &style, ScrollBarState::Idle);
 
             let Scene::Container(track) = scene else {
                 panic!("top-level must be a track Container");
             };
             assert_eq!(track.tag.as_deref(), Some(TEST_TAG));
             assert_eq!(track.children.len(), 1, "track has only the thumb child");
-            assert_eq!(track.layout.size, Size::px(style.gutter_w, style.viewport_h));
+            assert_eq!(
+                track.layout.size,
+                Size::px(style.gutter_w, style.viewport_h)
+            );
 
             let Scene::Container(thumb) = &track.children[0] else {
                 panic!("thumb must be a Container");
@@ -401,7 +402,8 @@ mod tests {
 
             let theme = Theme::light();
             let style = VerticalScrollbarStyle::material(TEST_VIEWPORT_H, TEST_TAG);
-            let scene = view_vertical_scrollbar(&scroll_state, &theme, &style, ScrollBarState::Idle);
+            let scene =
+                view_vertical_scrollbar(&scroll_state, &theme, &style, ScrollBarState::Idle);
 
             let Scene::Container(track) = scene else {
                 panic!("top-level Container expected");
@@ -425,13 +427,13 @@ mod tests {
             let scroll_state = use_scroll_state("r659_scrollbar_test_c");
             let style = VerticalScrollbarStyle::material(TEST_VIEWPORT_H, TEST_TAG);
             for theme in [Theme::light(), Theme::dark()] {
-                let scene = view_vertical_scrollbar(&scroll_state, &theme, &style, ScrollBarState::Idle);
+                let scene =
+                    view_vertical_scrollbar(&scroll_state, &theme, &style, ScrollBarState::Idle);
                 let Scene::Container(track) = &scene else {
                     panic!("track Container");
                 };
                 assert_eq!(
-                    track.style.fill,
-                    theme.surface_container_highest,
+                    track.style.fill, theme.surface_container_highest,
                     "track fill = SurfaceContainerHighest (M3 canonical, both palettes)",
                 );
             }
@@ -444,7 +446,8 @@ mod tests {
             let scroll_state = use_scroll_state("r659_scrollbar_test_d");
             let style = VerticalScrollbarStyle::material(TEST_VIEWPORT_H, TEST_TAG);
             for theme in [Theme::light(), Theme::dark()] {
-                let scene = view_vertical_scrollbar(&scroll_state, &theme, &style, ScrollBarState::Idle);
+                let scene =
+                    view_vertical_scrollbar(&scroll_state, &theme, &style, ScrollBarState::Idle);
                 let Scene::Container(track) = &scene else {
                     panic!("track");
                 };
@@ -452,8 +455,7 @@ mod tests {
                     panic!("thumb");
                 };
                 assert_eq!(
-                    thumb.style.fill,
-                    theme.outline,
+                    thumb.style.fill, theme.outline,
                     "thumb fill = Outline (M3 canonical hairline / divider weight)",
                 );
             }
@@ -464,8 +466,8 @@ mod tests {
     fn r659_custom_gutter_propagates_to_track_size_and_thumb_width() {
         run(|| {
             let scroll_state = use_scroll_state("r659_scrollbar_test_e");
-            let style = VerticalScrollbarStyle::material(TEST_VIEWPORT_H, TEST_TAG)
-                .with_gutter_w(12);
+            let style =
+                VerticalScrollbarStyle::material(TEST_VIEWPORT_H, TEST_TAG).with_gutter_w(12);
             let scene = view_vertical_scrollbar(
                 &scroll_state,
                 &Theme::light(),
@@ -589,12 +591,7 @@ mod tests {
                 ScrollBarState::Dragging,
                 ScrollBarState::Disabled,
             ] {
-                let scene = view_vertical_scrollbar(
-                    &scroll_state,
-                    &Theme::light(),
-                    &style,
-                    state,
-                );
+                let scene = view_vertical_scrollbar(&scroll_state, &Theme::light(), &style, state);
                 let Scene::Container(track) = &scene else {
                     panic!("track");
                 };

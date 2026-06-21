@@ -642,7 +642,11 @@ impl SortDirection {
     /// (hello-table / hello-grouped-grid-sort / hello-data-grid).
     #[must_use]
     pub const fn from_ascending(ascending: bool) -> Self {
-        if ascending { Self::Ascending } else { Self::Descending }
+        if ascending {
+            Self::Ascending
+        } else {
+            Self::Descending
+        }
     }
 
     /// Lower to `accesskit::SortDirection`. The single bridge point so an
@@ -809,7 +813,10 @@ mod tests {
 
     #[test]
     fn r718_progress_bar_lowers_to_progress_indicator() {
-        assert_eq!(AriaRole::ProgressBar.to_accesskit(), Role::ProgressIndicator);
+        assert_eq!(
+            AriaRole::ProgressBar.to_accesskit(),
+            Role::ProgressIndicator
+        );
         assert_eq!(AriaRole::ProgressBar.aria_name(), "progressbar");
     }
 
@@ -844,10 +851,7 @@ mod tests {
 
     #[test]
     fn listbox_option_lowers_to_accesskit_listbox_option() {
-        assert_eq!(
-            AriaRole::ListBoxOption.to_accesskit(),
-            Role::ListBoxOption
-        );
+        assert_eq!(AriaRole::ListBoxOption.to_accesskit(), Role::ListBoxOption);
     }
 
     // R714 §5.40 — ComboBox role lowering + aria literal.
@@ -954,7 +958,10 @@ mod tests {
 
     #[test]
     fn r805_menu_item_checkbox_lowers_and_names() {
-        assert_eq!(AriaRole::MenuItemCheckbox.to_accesskit(), Role::MenuItemCheckBox);
+        assert_eq!(
+            AriaRole::MenuItemCheckbox.to_accesskit(),
+            Role::MenuItemCheckBox
+        );
         assert_eq!(AriaRole::MenuItemCheckbox.aria_name(), "menuitemcheckbox");
     }
 

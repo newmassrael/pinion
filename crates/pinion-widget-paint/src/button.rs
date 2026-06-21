@@ -54,7 +54,10 @@
 use std::borrow::Cow;
 use std::rc::Rc;
 
+use pinion_a11y::AccessState;
+use pinion_core::WidgetStateName;
 use pinion_core::animation::{Animation, SpringConfig};
+use pinion_core::external::IntrospectValue;
 use pinion_core::reactive::Owner;
 use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
 use pinion_core::style::{
@@ -63,9 +66,6 @@ use pinion_core::style::{
 };
 use pinion_core::theme::{ColorRole, Theme};
 use pinion_core::widgets::button::ButtonState;
-use pinion_core::external::IntrospectValue;
-use pinion_core::WidgetStateName;
-use pinion_a11y::AccessState;
 
 // (R686.B → R752 §5.50) The M3 state-layer opacity tokens now live once in
 // the cross-cutting [`crate::state_layer`] SSOT; re-exported here under the
@@ -423,8 +423,9 @@ pub fn view_button(
 pub fn use_hover_progress(is_hover: bool, anim_key: &'static str) -> f32 {
     let owner = Owner::current()
         .expect("use_hover_progress: view fn must run inside ShellCore::root_owner().run(...)");
-    let anim: Rc<Animation<f32>> =
-        owner.cache(anim_key, || Animation::new(&owner, 0.0_f32, SpringConfig::default()));
+    let anim: Rc<Animation<f32>> = owner.cache(anim_key, || {
+        Animation::new(&owner, 0.0_f32, SpringConfig::default())
+    });
     anim.set_target(if is_hover { 1.0 } else { 0.0 });
     anim.value()
 }
@@ -524,9 +525,9 @@ mod tests {
     //! + the composition shape the 3 migrated consumers rely on.
 
     use super::{
+        ButtonColors, ButtonStyle, DISABLED_STATE_LAYER, HOVER_STATE_LAYER, PRESSED_STATE_LAYER,
         button_a11y_state, m3_button_fill, read_button_focused, read_button_state,
-        use_hover_progress, view_button, ButtonColors, ButtonStyle, DISABLED_STATE_LAYER,
-        HOVER_STATE_LAYER, PRESSED_STATE_LAYER,
+        use_hover_progress, view_button,
     };
     use pinion_core::animation::Animation;
     use pinion_core::reactive::Owner;
@@ -614,7 +615,10 @@ mod tests {
         // Disabled ignores hover_progress + the overlay matrix; it
         // uses the explicit fill_disabled (absorbs fade-vs-switch).
         let c = explicit_colors();
-        assert_eq!(m3_button_fill(&c, ButtonState::Disabled, 1.0), c.fill_disabled);
+        assert_eq!(
+            m3_button_fill(&c, ButtonState::Disabled, 1.0),
+            c.fill_disabled
+        );
     }
 
     #[test]
@@ -647,7 +651,10 @@ mod tests {
         assert_eq!(c.base, theme.resolve(ColorRole::Accent));
         assert_eq!(c.state_layer, theme.resolve(ColorRole::OnAccent));
         // Disabled is a distinct tier, not a fade of the base.
-        assert_eq!(c.fill_disabled, theme.resolve(ColorRole::SurfaceContainerHigh));
+        assert_eq!(
+            c.fill_disabled,
+            theme.resolve(ColorRole::SurfaceContainerHigh)
+        );
     }
 
     #[test]
@@ -691,8 +698,13 @@ mod tests {
         let style = ButtonStyle::m3_default("b");
         assert_eq!(style.elevation_level, 0, "the default level is flat");
         let scene = view_button("x", ButtonState::Idle, 0.0, false, &c, &style);
-        let Scene::Container(outer) = &scene else { panic!("Container") };
-        assert!(outer.style.shadows.is_empty(), "a flat button casts no shadow");
+        let Scene::Container(outer) = &scene else {
+            panic!("Container")
+        };
+        assert!(
+            outer.style.shadows.is_empty(),
+            "a flat button casts no shadow"
+        );
     }
 
     #[test]
@@ -700,13 +712,18 @@ mod tests {
         let c = explicit_colors();
         let style = ButtonStyle::m3_default("fab").with_elevation(3);
         let scene = view_button("+", ButtonState::Idle, 0.0, false, &c, &style);
-        let Scene::Container(outer) = &scene else { panic!("Container") };
+        let Scene::Container(outer) = &scene else {
+            panic!("Container")
+        };
         assert_eq!(
             outer.style.shadows,
             crate::elevation::elevation(3),
             "an elevated button casts the shared elevation ramp at its level",
         );
-        assert!(!outer.style.shadows.is_empty(), "level 3 is a non-empty shadow list");
+        assert!(
+            !outer.style.shadows.is_empty(),
+            "level 3 is a non-empty shadow list"
+        );
     }
 
     // R694 §5.16 §5.39 — keyboard-focus ring.
@@ -735,7 +752,10 @@ mod tests {
             panic!("button must be a Container");
         };
         let border = outer.style.border.expect("focused button carries a ring");
-        assert_eq!(border.color, c.focus_ring, "ring uses the focus_ring colour");
+        assert_eq!(
+            border.color, c.focus_ring,
+            "ring uses the focus_ring colour"
+        );
         assert_eq!(border.width, super::FOCUS_RING_WIDTH);
     }
 

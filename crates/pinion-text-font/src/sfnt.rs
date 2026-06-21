@@ -196,7 +196,10 @@ fn verify_search_params(
     entry_selector: u16,
     range_shift: u16,
 ) -> Result<(), ParseError> {
-    debug_assert!(num_tables > 0, "verify_search_params requires num_tables ≥ 1");
+    debug_assert!(
+        num_tables > 0,
+        "verify_search_params requires num_tables ≥ 1"
+    );
 
     let lz = num_tables.leading_zeros();
     let shift = 15u32.saturating_sub(lz);

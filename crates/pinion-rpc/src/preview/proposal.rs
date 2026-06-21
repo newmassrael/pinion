@@ -7,8 +7,8 @@
 //! the R40.7 [`crate::DispatchContext`] decision: take one struct,
 //! grow fields non-breakingly per `#[non_exhaustive]`.
 
-use pinion_core::intent::Intent;
 use pinion_core::Scene;
+use pinion_core::intent::Intent;
 
 /// Per-apply runtime bundle handed to [`Proposal::apply`] (§5.34 R40.9).
 ///

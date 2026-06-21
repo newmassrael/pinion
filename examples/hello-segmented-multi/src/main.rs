@@ -64,22 +64,25 @@
 //! step with wrap, `Home` / `End` jump to first / last — the focus moves
 //! funnel through the R664 [`pinion_core::focus_request`] mailbox.
 
-use pinion_a11y::{toggle_button_group_nodes, AccessNode, ToggleSegment, WidgetA11y};
+use pinion_a11y::{AccessNode, ToggleSegment, WidgetA11y, toggle_button_group_nodes};
 use pinion_core::external::External;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::toggle::ToggleState;
 use pinion_core::widgets::toggle_group;
 use pinion_core::{Color, Frame, Scene, WidgetCore, WidgetStateName};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::state_layer::{HOVER, PRESSED};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
-vello_renderer_impl!(HelloSegmentedMultiRenderer, HelloSegmentedMultiRendererError);
+vello_renderer_impl!(
+    HelloSegmentedMultiRenderer,
+    HelloSegmentedMultiRendererError
+);
 
 const WIN_W: u32 = 420;
 const WIN_H: u32 = 160;
@@ -204,20 +207,23 @@ fn segment(index: usize, state: ToggleState, on: bool, theme: &Theme) -> Scene {
         children.push(Scene::Text(TextNode::styled(
             CHECK_GLYPH,
             Rect::default(),
-            TextStyle::new().with_size_px(CHECK_FONT_PX).with_fg(label_color),
+            TextStyle::new()
+                .with_size_px(CHECK_FONT_PX)
+                .with_fg(label_color),
         )));
     }
     children.push(Scene::Text(TextNode::styled(
         LABELS[index],
         Rect::default(),
-        TextStyle::new().with_size_px(LABEL_FONT_PX).with_fg(label_color),
+        TextStyle::new()
+            .with_size_px(LABEL_FONT_PX)
+            .with_fg(label_color),
     )));
     Scene::Container(
         ContainerNode::new(children)
             .with_tag(SEGMENT_TAGS[index])
             .with_style(
-                BoxStyle::filled(segment_fill(theme, state, on))
-                    .with_corner_radius(PILL_RADIUS),
+                BoxStyle::filled(segment_fill(theme, state, on)).with_corner_radius(PILL_RADIUS),
             )
             .with_layout(
                 LayoutStyle::new()
@@ -311,7 +317,6 @@ impl WidgetCore for SegmentedMultiView {
         "pinion hello-segmented-multi (R733 §5.38 multi-select segmented)"
     }
 
-
     /// WAI-ARIA toggle-button-group keyboard model — delegated wholesale to
     /// the shared [`toggle_group::apply_key`] substrate (Space / Enter
     /// toggle the focused segment; arrows rove with wrap; Home / End jump to
@@ -362,7 +367,10 @@ impl WidgetView for SegmentedMultiView {
     type Renderer = HelloSegmentedMultiRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 }
 
@@ -394,8 +402,7 @@ mod tests {
 
     #[test]
     fn view_carries_every_segment_tag_and_the_group_track() {
-        let scene =
-            pinion_core::Owner::new().run(|| view(state_with(BOOT_ON), &Frame::new()));
+        let scene = pinion_core::Owner::new().run(|| view(state_with(BOOT_ON), &Frame::new()));
         assert!(scene.contains_tag(GROUP_TAG), "track carries the group tag");
         for tag in SEGMENT_TAGS {
             assert!(scene.contains_tag(tag), "segment tag {tag} present");
@@ -410,7 +417,10 @@ mod tests {
             Scene::Container(c) => {
                 if c.tag.as_deref() == Some(tag) {
                     return Some(
-                        c.children.iter().filter(|ch| matches!(ch, Scene::Text(_))).count(),
+                        c.children
+                            .iter()
+                            .filter(|ch| matches!(ch, Scene::Text(_)))
+                            .count(),
                     );
                 }
                 c.children.iter().find_map(|ch| text_child_count(ch, tag))
@@ -421,8 +431,8 @@ mod tests {
 
     #[test]
     fn pressed_segment_has_glyph_plus_label_unpressed_label_only() {
-        let scene = pinion_core::Owner::new()
-            .run(|| view(state_with([true, false, false]), &Frame::new()));
+        let scene =
+            pinion_core::Owner::new().run(|| view(state_with([true, false, false]), &Frame::new()));
         assert_eq!(
             text_child_count(&scene, SEGMENT_TAGS[0]),
             Some(2),
@@ -441,11 +451,13 @@ mod tests {
     #[test]
     fn every_segment_is_a_tab_stop() {
         // §5.39: tree order IS tab order — collected from the paint scene.
-        let scene =
-            pinion_core::Owner::new().run(|| view(state_with(BOOT_ON), &Frame::new()));
+        let scene = pinion_core::Owner::new().run(|| view(state_with(BOOT_ON), &Frame::new()));
         assert_eq!(
             scene.collect_focusable_tags(),
-            SEGMENT_TAGS.iter().map(|t| (*t).to_owned()).collect::<Vec<_>>(),
+            SEGMENT_TAGS
+                .iter()
+                .map(|t| (*t).to_owned())
+                .collect::<Vec<_>>(),
         );
     }
 
@@ -472,12 +484,24 @@ mod tests {
     fn emits_group_parent_plus_n_aria_pressed_buttons() {
         let nodes = SegmentedMultiView::access_node(&state_with(BOOT_ON), None);
         assert_eq!(nodes.len(), N + 1, "one group + N segments");
-        assert_eq!(nodes[0].role, pinion_a11y::AriaRole::Group, "first node is the group");
+        assert_eq!(
+            nodes[0].role,
+            pinion_a11y::AriaRole::Group,
+            "first node is the group"
+        );
         assert_eq!(nodes[0].name.as_deref(), Some("Show"));
         assert_eq!(nodes[0].children.len(), N, "group references every segment");
         for (i, node) in nodes[1..].iter().enumerate() {
-            assert_eq!(node.role, pinion_a11y::AriaRole::Button, "segment is a button");
-            assert_eq!(node.state.checked, Some(BOOT_ON[i]), "aria-pressed mirrors on/off");
+            assert_eq!(
+                node.role,
+                pinion_a11y::AriaRole::Button,
+                "segment is a button"
+            );
+            assert_eq!(
+                node.state.checked,
+                Some(BOOT_ON[i]),
+                "aria-pressed mirrors on/off"
+            );
             assert_eq!(node.name.as_deref(), Some(LABELS[i]));
         }
     }

@@ -35,19 +35,19 @@
 //! `query("selected.<i>")` paths (R51.43), and the same `invoke
 //! "send" → "<i>:<EventName>"` wire format the keyboard path uses.
 
+use pinion_a11y::{
+    AccessAction, AccessFocus, AccessNode, RadioCell, WidgetA11y, radiogroup_radio_nodes,
+};
 use pinion_core::external::External;
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::radio_group::RadioGroupExternal;
 use pinion_core::{Color, Frame, Scene, WidgetCore};
-use pinion_a11y::{
-    radiogroup_radio_nodes, AccessAction, AccessFocus, AccessNode, RadioCell, WidgetA11y,
-};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::radio_composite as rc;
 use pinion_widget_paint::state_layer::state_layer;
 
@@ -109,14 +109,12 @@ fn view(state: GroupState, _frame: &Frame) -> Scene {
         .map(|i| radio_row(i, state.rows[i].0, state.rows[i].1, &theme))
         .collect();
     let column = Scene::Container(
-        ContainerNode::new(rows)
-            .with_tag(PRIMARY_TAG)
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Column)
-                    .with_align_items(AlignItems::Start)
-                    .with_gap(ROW_VERTICAL_GAP),
-            ),
+        ContainerNode::new(rows).with_tag(PRIMARY_TAG).with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Column)
+                .with_align_items(AlignItems::Start)
+                .with_gap(ROW_VERTICAL_GAP),
+        ),
     );
     // R55.G.18 §5.49 — the inner column carries `PRIMARY_TAG` so the
     // composite root is paint-addressable via `{path: "main_group"}`
@@ -280,7 +278,12 @@ impl WidgetCore for RadioGroupView {
         None
     }
 
-    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, _modifiers: pinion_core::Modifiers) -> bool {
+    fn apply_key(
+        scene: &mut Scene,
+        focused: Option<&str>,
+        key: &str,
+        _modifiers: pinion_core::Modifiers,
+    ) -> bool {
         // R51.57 §5.39 — ARIA radio-group roving tabindex through the shared
         // R751 roving-key shell: the group is a single tab stop, and
         // `resolve_target_index` (Arrow / Home / End / a / b / c) routes only
@@ -362,10 +365,7 @@ impl WidgetA11y for RadioGroupView {
     /// shell focus ring and key dispatch continue to address
     /// `"main_group"` itself; only AccessKit consumers see the
     /// descendant hint.
-    fn access_focus_target(
-        state: &GroupState,
-        focused: Option<&str>,
-    ) -> Option<AccessFocus> {
+    fn access_focus_target(state: &GroupState, focused: Option<&str>) -> Option<AccessFocus> {
         rc::composite_focus_target(
             <Self as WidgetCore>::tag(),
             focused,
@@ -388,7 +388,12 @@ impl WidgetA11y for RadioGroupView {
     /// the parent focus + active-descendant model surface the right
     /// active row visually. Other actions decline so the shell
     /// stays in charge of the fallback chain.
-    fn access_child_invoke(scene: &mut Scene, _parent_tag: &str, sub_tag: &str, action: AccessAction) -> bool {
+    fn access_child_invoke(
+        scene: &mut Scene,
+        _parent_tag: &str,
+        sub_tag: &str,
+        action: AccessAction,
+    ) -> bool {
         rc::composite_child_invoke(scene, sub_tag, action, N)
     }
 }
@@ -397,7 +402,10 @@ impl WidgetView for RadioGroupView {
     type Renderer = HelloRadioGroupRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 }
 
@@ -536,11 +544,8 @@ mod a11y_tests {
 
     #[test]
     fn access_focus_target_composite_parent_focus_with_active_radio() {
-        let target = RadioGroupView::access_focus_target(
-            &selected_state(2),
-            Some("main_group"),
-        )
-        .expect("group focused returns Some");
+        let target = RadioGroupView::access_focus_target(&selected_state(2), Some("main_group"))
+            .expect("group focused returns Some");
         // R51.71 §5.40 — focus stays on the parent; active
         // descendant is the selected radio's sub-tag.
         assert_eq!(target.focus_tag, "main_group");
@@ -549,22 +554,16 @@ mod a11y_tests {
 
     #[test]
     fn access_focus_target_unselected_active_descendant_is_first() {
-        let target = RadioGroupView::access_focus_target(
-            &unselected_state(),
-            Some("main_group"),
-        )
-        .expect("group focused returns Some");
+        let target = RadioGroupView::access_focus_target(&unselected_state(), Some("main_group"))
+            .expect("group focused returns Some");
         assert_eq!(target.focus_tag, "main_group");
         assert_eq!(target.active_descendant.as_deref(), Some("main_group#0"));
     }
 
     #[test]
     fn access_focus_target_atomic_when_sibling_focused() {
-        let target = RadioGroupView::access_focus_target(
-            &selected_state(1),
-            Some("save_btn"),
-        )
-        .expect("non-group focused returns Some(atomic)");
+        let target = RadioGroupView::access_focus_target(&selected_state(1), Some("save_btn"))
+            .expect("non-group focused returns Some(atomic)");
         // R51.71 §5.40 — when a different widget owns focus, the
         // composite contributes an atomic pass-through; no active
         // descendant claim.
@@ -587,11 +586,8 @@ mod a11y_tests {
         // reported to AT should be row 2, not row 0.
         let mut state = selected_state(0);
         state.focused = Some(2);
-        let target = RadioGroupView::access_focus_target(
-            &state,
-            Some("main_group"),
-        )
-        .expect("group focused returns Some");
+        let target = RadioGroupView::access_focus_target(&state, Some("main_group"))
+            .expect("group focused returns Some");
         assert_eq!(target.focus_tag, "main_group");
         assert_eq!(
             target.active_descendant.as_deref(),
@@ -604,11 +600,8 @@ mod a11y_tests {
     fn r51_87_active_descendant_falls_back_to_selected_when_focused_none() {
         // Pre-R51.87 behavior — `focused = None` should still resolve
         // active descendant to the selected row.
-        let target = RadioGroupView::access_focus_target(
-            &selected_state(1),
-            Some("main_group"),
-        )
-        .expect("group focused returns Some");
+        let target = RadioGroupView::access_focus_target(&selected_state(1), Some("main_group"))
+            .expect("group focused returns Some");
         assert_eq!(target.active_descendant.as_deref(), Some("main_group#1"));
     }
 
@@ -617,8 +610,7 @@ mod a11y_tests {
         // `access_node` consults `active_radio_index` which now
         // honors `state.focused`. AT-focused row 2 should carry
         // `state.focused = true` in its `AccessNode`.
-        let nodes =
-            RadioGroupView::access_node(&focused_state(2), Some("main_group"));
+        let nodes = RadioGroupView::access_node(&focused_state(2), Some("main_group"));
         assert!(nodes[3].state.focused, "AT-focused radio must mark focused");
         assert!(!nodes[1].state.focused);
         assert!(!nodes[2].state.focused);
@@ -662,8 +654,9 @@ mod tests {
         assert!(RadioGroupView::apply_key(
             &mut s,
             Some("main_group"),
-            "ArrowDown"
-        , pinion_core::Modifiers::empty()));
+            "ArrowDown",
+            pinion_core::Modifiers::empty()
+        ));
         assert_eq!(selected_index(&s), Some(0));
     }
 
@@ -671,7 +664,12 @@ mod tests {
     fn no_focus_swallows_arrow_silently() {
         // Pre-Tab idle state — group must not steal Arrow keys.
         let mut s = scene();
-        assert!(!RadioGroupView::apply_key(&mut s, None, "ArrowDown", pinion_core::Modifiers::empty()));
+        assert!(!RadioGroupView::apply_key(
+            &mut s,
+            None,
+            "ArrowDown",
+            pinion_core::Modifiers::empty()
+        ));
         assert_eq!(selected_index(&s), None);
     }
 
@@ -683,8 +681,9 @@ mod tests {
         assert!(!RadioGroupView::apply_key(
             &mut s,
             Some("volume_slider"),
-            "ArrowDown"
-        , pinion_core::Modifiers::empty()));
+            "ArrowDown",
+            pinion_core::Modifiers::empty()
+        ));
         assert_eq!(selected_index(&s), None);
     }
 
@@ -692,7 +691,12 @@ mod tests {
     fn focused_main_group_routes_home_to_first() {
         let mut s = scene();
         // Step to last first so Home has somewhere to go from.
-        let _ = RadioGroupView::apply_key(&mut s, Some("main_group"), "End", pinion_core::Modifiers::empty());
+        let _ = RadioGroupView::apply_key(
+            &mut s,
+            Some("main_group"),
+            "End",
+            pinion_core::Modifiers::empty(),
+        );
         assert_eq!(
             selected_index(&s),
             Some(i64::try_from(N - 1).expect("N fits in i64"))
@@ -700,8 +704,9 @@ mod tests {
         assert!(RadioGroupView::apply_key(
             &mut s,
             Some("main_group"),
-            "Home"
-        , pinion_core::Modifiers::empty()));
+            "Home",
+            pinion_core::Modifiers::empty()
+        ));
         assert_eq!(selected_index(&s), Some(0));
     }
 
@@ -734,9 +739,19 @@ mod tests {
     #[test]
     fn access_child_invoke_subsequent_click_switches_selection() {
         let mut s = scene();
-        assert!(RadioGroupView::access_child_invoke(&mut s, PRIMARY_TAG, "0", AccessAction::Click));
+        assert!(RadioGroupView::access_child_invoke(
+            &mut s,
+            PRIMARY_TAG,
+            "0",
+            AccessAction::Click
+        ));
         assert_eq!(selected_index(&s), Some(0));
-        assert!(RadioGroupView::access_child_invoke(&mut s, PRIMARY_TAG, "2", AccessAction::Click));
+        assert!(RadioGroupView::access_child_invoke(
+            &mut s,
+            PRIMARY_TAG,
+            "2",
+            AccessAction::Click
+        ));
         assert_eq!(selected_index(&s), Some(2));
     }
 

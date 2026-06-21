@@ -182,7 +182,14 @@ pub fn view_toolbar(
         let is_disabled = disabled.get(i).copied().unwrap_or(false);
         let is_focused = group_focused && focus == i;
         controls.push(build_control(
-            tag, i, label, is_pressed, is_disabled, is_focused, theme, style,
+            tag,
+            i,
+            label,
+            is_pressed,
+            is_disabled,
+            is_focused,
+            theme,
+            style,
         ));
     }
     Scene::Container(
@@ -240,8 +247,10 @@ fn build_control(
     };
     let mut box_style = BoxStyle::filled(fill).with_corner_radius(style.item_radius);
     if is_focused {
-        box_style =
-            box_style.with_border(Border::new(theme.resolve(ColorRole::Accent), style.focus_ring_width));
+        box_style = box_style.with_border(Border::new(
+            theme.resolve(ColorRole::Accent),
+            style.focus_ring_width,
+        ));
     }
     let label_role = if is_disabled {
         ColorRole::OnSurfaceMuted
@@ -376,7 +385,14 @@ mod tests {
         let pressed = [true, true, false, false, false];
         let disabled = [true, false, false, false, false];
         let scene = view_toolbar(
-            "toolbar", &LABELS, &pressed, &disabled, 0, false, &t, &ToolbarStyle::m3_default(),
+            "toolbar",
+            &LABELS,
+            &pressed,
+            &disabled,
+            0,
+            false,
+            &t,
+            &ToolbarStyle::m3_default(),
         );
         assert_eq!(
             tag_label_fg(&scene, "toolbar#0"),
@@ -407,8 +423,16 @@ mod tests {
     fn r989_empty_disabled_slice_leaves_all_enabled() {
         let t = theme();
         let pressed = [false; 5];
-        let scene =
-            view_toolbar("toolbar", &LABELS, &pressed, &[], 0, false, &t, &ToolbarStyle::m3_default());
+        let scene = view_toolbar(
+            "toolbar",
+            &LABELS,
+            &pressed,
+            &[],
+            0,
+            false,
+            &t,
+            &ToolbarStyle::m3_default(),
+        );
         for i in 0..LABELS.len() {
             assert_eq!(
                 tag_label_fg(&scene, &composite_item_tag("toolbar", i)),
@@ -440,7 +464,16 @@ mod tests {
     #[test]
     fn r692_toolbar_tags_and_labels() {
         let pressed = [false; 5];
-        let scene = view_toolbar("toolbar", &LABELS, &pressed, &[],0, false, &theme(), &ToolbarStyle::m3_default());
+        let scene = view_toolbar(
+            "toolbar",
+            &LABELS,
+            &pressed,
+            &[],
+            0,
+            false,
+            &theme(),
+            &ToolbarStyle::m3_default(),
+        );
         assert_eq!(
             collect_tags(&scene),
             vec![
@@ -459,14 +492,35 @@ mod tests {
     fn r692_pressed_toggle_filled_others_transparent() {
         let t = theme();
         let pressed = [true, false, true, false, false];
-        let scene = view_toolbar("toolbar", &LABELS, &pressed, &[],0, false, &t, &ToolbarStyle::m3_default());
+        let scene = view_toolbar(
+            "toolbar",
+            &LABELS,
+            &pressed,
+            &[],
+            0,
+            false,
+            &t,
+            &ToolbarStyle::m3_default(),
+        );
         let expected = t
             .resolve(ColorRole::Surface)
             .lerp(t.resolve(ColorRole::Accent), PRESSED_STATE_LAYER);
-        assert_eq!(tag_fill(&scene, "toolbar#0"), Some(expected), "pressed toggle filled");
-        assert_eq!(tag_fill(&scene, "toolbar#1"), Some(Color::TRANSPARENT), "unpressed transparent");
+        assert_eq!(
+            tag_fill(&scene, "toolbar#0"),
+            Some(expected),
+            "pressed toggle filled"
+        );
+        assert_eq!(
+            tag_fill(&scene, "toolbar#1"),
+            Some(Color::TRANSPARENT),
+            "unpressed transparent"
+        );
         assert_eq!(tag_fill(&scene, "toolbar#2"), Some(expected));
-        assert_eq!(tag_fill(&scene, "toolbar#3"), Some(Color::TRANSPARENT), "command transparent");
+        assert_eq!(
+            tag_fill(&scene, "toolbar#3"),
+            Some(Color::TRANSPARENT),
+            "command transparent"
+        );
     }
 
     #[test]
@@ -474,20 +528,42 @@ mod tests {
         let t = theme();
         let pressed = [false; 5];
         // Focus index 2, group focused → only control 2 has the ring.
-        let scene = view_toolbar("toolbar", &LABELS, &pressed, &[],2, true, &t, &ToolbarStyle::m3_default());
+        let scene = view_toolbar(
+            "toolbar",
+            &LABELS,
+            &pressed,
+            &[],
+            2,
+            true,
+            &t,
+            &ToolbarStyle::m3_default(),
+        );
         assert_eq!(
             tag_border(&scene, "toolbar#2"),
             Some(Border::new(t.resolve(ColorRole::Accent), 2)),
             "focused control draws the accent ring"
         );
-        assert_eq!(tag_border(&scene, "toolbar#0"), None, "non-focused has no ring");
+        assert_eq!(
+            tag_border(&scene, "toolbar#0"),
+            None,
+            "non-focused has no ring"
+        );
         assert_eq!(tag_border(&scene, "toolbar#4"), None);
     }
 
     #[test]
     fn r692_no_focus_ring_when_group_unfocused() {
         let pressed = [false; 5];
-        let scene = view_toolbar("toolbar", &LABELS, &pressed, &[],2, false, &theme(), &ToolbarStyle::m3_default());
+        let scene = view_toolbar(
+            "toolbar",
+            &LABELS,
+            &pressed,
+            &[],
+            2,
+            false,
+            &theme(),
+            &ToolbarStyle::m3_default(),
+        );
         assert_eq!(
             tag_border(&scene, "toolbar#2"),
             None,
@@ -499,7 +575,16 @@ mod tests {
     fn r692_focused_and_pressed_shows_both_fill_and_ring() {
         let t = theme();
         let pressed = [true, false, false, false, false];
-        let scene = view_toolbar("toolbar", &LABELS, &pressed, &[],0, true, &t, &ToolbarStyle::m3_default());
+        let scene = view_toolbar(
+            "toolbar",
+            &LABELS,
+            &pressed,
+            &[],
+            0,
+            true,
+            &t,
+            &ToolbarStyle::m3_default(),
+        );
         let expected_fill = t
             .resolve(ColorRole::Surface)
             .lerp(t.resolve(ColorRole::Accent), PRESSED_STATE_LAYER);

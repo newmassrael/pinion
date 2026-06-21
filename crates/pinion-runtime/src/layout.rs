@@ -33,23 +33,22 @@
 //! adapter translate via `Scroll.viewport.{x,y}` and `offset_{x,y}`
 //! at read time, matching the §5.45 R55 substrate.
 
+use pinion_core::Scene;
 use pinion_core::scene::{
     BoxNode, ContainerNode, ExternalNode, ImageNode, PathNode, Rect, ScrollAxis, TextNode,
 };
 use pinion_core::style::{
     AlignItems, Display, FlexDirection, JustifyContent, LayoutStyle, SizeValue, TextStyle,
 };
-use pinion_core::Scene;
 use pinion_text::LayoutCache;
 use std::collections::HashMap;
 use taffy::prelude::{
-    auto, length, percent, AvailableSpace, FromLength, LengthPercentage, LengthPercentageAuto,
-    NodeId, Rect as TaffyRect, Size as TaffySize, TaffyTree,
+    AvailableSpace, FromLength, LengthPercentage, LengthPercentageAuto, NodeId, Rect as TaffyRect,
+    Size as TaffySize, TaffyTree, auto, length, percent,
 };
 use taffy::style::{
-    AlignItems as TaffyAlign, Dimension, Display as TaffyDisplay,
-    FlexDirection as TaffyFlexDir, JustifyContent as TaffyJustify, Position as TaffyPosition,
-    Style as TaffyStyle,
+    AlignItems as TaffyAlign, Dimension, Display as TaffyDisplay, FlexDirection as TaffyFlexDir,
+    JustifyContent as TaffyJustify, Position as TaffyPosition, Style as TaffyStyle,
 };
 
 /// R47.4 §5.36 — taffy `NodeContext` for leaves that need an intrinsic
@@ -160,10 +159,8 @@ fn compute_layout_inner(
     viewport_h: u32,
     unbounded: Option<ScrollAxis>,
 ) -> bool {
-    let width_unbounded =
-        matches!(unbounded, Some(ScrollAxis::Horizontal | ScrollAxis::Both));
-    let height_unbounded =
-        matches!(unbounded, Some(ScrollAxis::Vertical | ScrollAxis::Both));
+    let width_unbounded = matches!(unbounded, Some(ScrollAxis::Horizontal | ScrollAxis::Both));
+    let height_unbounded = matches!(unbounded, Some(ScrollAxis::Vertical | ScrollAxis::Both));
     let mut tree: TaffyTree<NodeContext> = TaffyTree::new();
     let layout_tree = build(scene, &mut tree);
     // Force the root to fill the viewport. The user's declared size
@@ -238,20 +235,26 @@ fn compute_layout_inner(
         layout_tree.node,
         available,
         |known_dimensions, available_space, node_id, node_context, _style| {
-            if let TaffySize { width: Some(width), height: Some(height) } = known_dimensions {
+            if let TaffySize {
+                width: Some(width),
+                height: Some(height),
+            } = known_dimensions
+            {
                 return TaffySize { width, height };
             }
             match node_context {
-                Some(NodeContext::Text { content, style, runs }) => {
+                Some(NodeContext::Text {
+                    content,
+                    style,
+                    runs,
+                }) => {
                     // available_space.width.Definite → parley wrap point
                     // (multi-line); MinContent / MaxContent → no wrap
                     // (single line / unbounded), matching how taffy
                     // probes the leaf during flex resolution.
                     let max_width = match available_space.width {
                         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                        AvailableSpace::Definite(w) if w.is_finite() && w >= 0.0 => {
-                            Some(w as u32)
-                        }
+                        AvailableSpace::Definite(w) if w.is_finite() && w >= 0.0 => Some(w as u32),
                         _ => None,
                     };
                     let layout = cache.layout_with_runs(content, style, runs, max_width);
@@ -470,9 +473,7 @@ fn apply(
     parent_x: f32,
     parent_y: f32,
 ) {
-    let layout = tree
-        .layout(shadow.node)
-        .expect("taffy layout query failed");
+    let layout = tree.layout(shadow.node).expect("taffy layout query failed");
     let abs_x = parent_x + layout.location.x;
     let abs_y = parent_y + layout.location.y;
     let rect = Rect::new(
@@ -583,7 +584,7 @@ fn assign_rect(scene: &mut Scene, rect: Rect) -> bool {
 #[allow(
     clippy::cast_precision_loss,
     clippy::field_reassign_with_default,
-    clippy::match_same_arms,
+    clippy::match_same_arms
 )]
 fn to_taffy_style(layout: &LayoutStyle) -> TaffyStyle {
     let mut s = TaffyStyle::default();
@@ -736,18 +737,15 @@ mod tests {
     fn flex_column_distributes_two_children() {
         // Column flex with two leaves of fixed height; gap=10.
         // Expected: first child at y=0, second at y=80+10=90.
-        let layout = LayoutStyle::new()
-            .flex(FlexDirection::Column)
-            .with_gap(10);
+        let layout = LayoutStyle::new().flex(FlexDirection::Column).with_gap(10);
         let leaf = |h: u32| {
             Scene::Box(
                 BoxNode::filled(Rect::default(), Color::default())
                     .with_layout(LayoutStyle::new().with_size(Size::px(100, h))),
             )
         };
-        let mut scene = Scene::Container(
-            ContainerNode::new(vec![leaf(80), leaf(60)]).with_layout(layout),
-        );
+        let mut scene =
+            Scene::Container(ContainerNode::new(vec![leaf(80), leaf(60)]).with_layout(layout));
         compute_layout(&mut scene, &mut cache(), 200, 200);
         let Scene::Container(c) = &scene else {
             panic!("container")
@@ -775,8 +773,7 @@ mod tests {
             BoxNode::filled(pinion_core::scene::Rect::default(), Color::default())
                 .with_layout(LayoutStyle::new().with_size(Size::px(50, 30))),
         );
-        let mut scene =
-            Scene::Container(ContainerNode::new(vec![child]).with_layout(layout));
+        let mut scene = Scene::Container(ContainerNode::new(vec![child]).with_layout(layout));
         compute_layout(&mut scene, &mut cache(), 200, 200);
         let Scene::Container(c) = &scene else {
             panic!("container")
@@ -900,8 +897,7 @@ mod tests {
         // jitter on mouse-drag resize.
         for w in 300_u32..=320 {
             let text = Scene::Text(TextNode::styled(label, Rect::default(), style.clone()));
-            let mut scene =
-                Scene::Container(ContainerNode::new(vec![text]).with_layout(layout));
+            let mut scene = Scene::Container(ContainerNode::new(vec![text]).with_layout(layout));
             compute_layout(&mut scene, &mut cache, w, 200);
             let Scene::Container(container) = &scene else {
                 panic!("container");
@@ -927,12 +923,12 @@ mod tests {
         // `line_count > 1` as a real wrap signal.
         let content = "The quick brown fox jumps over the lazy dog";
         let style = TextStyle::new().with_size_px(18);
-        let text = Scene::Text(TextNode::styled(content, Rect::default(), style).with_layout(
-            LayoutStyle::new().with_size(pinion_core::style::Size::px(60, 200)),
-        ));
+        let text = Scene::Text(
+            TextNode::styled(content, Rect::default(), style)
+                .with_layout(LayoutStyle::new().with_size(pinion_core::style::Size::px(60, 200))),
+        );
         let layout = LayoutStyle::new().flex(FlexDirection::Row);
-        let mut scene =
-            Scene::Container(ContainerNode::new(vec![text]).with_layout(layout));
+        let mut scene = Scene::Container(ContainerNode::new(vec![text]).with_layout(layout));
         let mut cache = LayoutCache::new();
         compute_layout(&mut scene, &mut cache, 320, 200);
         let Scene::Container(container) = &scene else {
@@ -957,9 +953,7 @@ mod tests {
 
         use super::*;
         use pinion_core::scene::{ContainerNode, Rect, ScrollAxis, ScrollNode};
-        use pinion_core::style::{
-            Color, FlexDirection, JustifyContent, LayoutStyle, Size,
-        };
+        use pinion_core::style::{Color, FlexDirection, JustifyContent, LayoutStyle, Size};
 
         fn fixed_row(h: u32) -> Scene {
             fixed_row_w(220, h)
@@ -976,9 +970,7 @@ mod tests {
         fn scroll_content_flex_column_lays_out_row_y_positions() {
             // Content = flex Column with gap=6, 3 rows of fixed 220×28.
             // Expected: row[0]@(0,0), row[1]@(0,34), row[2]@(0,68).
-            let content_layout = LayoutStyle::new()
-                .flex(FlexDirection::Column)
-                .with_gap(6);
+            let content_layout = LayoutStyle::new().flex(FlexDirection::Column).with_gap(6);
             let content = Scene::Container(
                 ContainerNode::new(vec![fixed_row(28), fixed_row(28), fixed_row(28)])
                     .with_layout(content_layout),
@@ -988,8 +980,12 @@ mod tests {
 
             compute_layout(&mut scene, &mut cache(), 360, 320);
 
-            let Scene::Container(outer) = &scene else { panic!("outer") };
-            let Scene::Scroll(s) = &outer.children[0] else { panic!("scroll") };
+            let Scene::Container(outer) = &scene else {
+                panic!("outer")
+            };
+            let Scene::Scroll(s) = &outer.children[0] else {
+                panic!("scroll")
+            };
             // R55.G.3 §5.45 — viewport's w/h stay app-set (clip
             // window intent); viewport's x/y are layout-derived.
             // Block-display outer places Scroll at (0, 0).
@@ -998,10 +994,18 @@ mod tests {
             assert_eq!(s.viewport.x, 0);
             assert_eq!(s.viewport.y, 0);
             // Content rects are scroll-local (origin at (0, 0)).
-            let Scene::Container(c) = s.content.as_ref() else { panic!("content") };
-            let Scene::Container(r0) = &c.children[0] else { panic!("row0") };
-            let Scene::Container(r1) = &c.children[1] else { panic!("row1") };
-            let Scene::Container(r2) = &c.children[2] else { panic!("row2") };
+            let Scene::Container(c) = s.content.as_ref() else {
+                panic!("content")
+            };
+            let Scene::Container(r0) = &c.children[0] else {
+                panic!("row0")
+            };
+            let Scene::Container(r1) = &c.children[1] else {
+                panic!("row1")
+            };
+            let Scene::Container(r2) = &c.children[2] else {
+                panic!("row2")
+            };
             assert_eq!(r0.rect, Rect::new(0, 0, 220, 28));
             assert_eq!(r1.rect, Rect::new(0, 34, 220, 28));
             assert_eq!(r2.rect, Rect::new(0, 68, 220, 28));
@@ -1021,26 +1025,22 @@ mod tests {
             // viewport is 164 tall, so the expected max_y = 238.
             let rows: Vec<Scene> = (0..12).map(|_| fixed_row(28)).collect();
             let content = Scene::Container(
-                ContainerNode::new(rows).with_layout(
-                    LayoutStyle::new().flex(FlexDirection::Column).with_gap(6),
-                ),
+                ContainerNode::new(rows)
+                    .with_layout(LayoutStyle::new().flex(FlexDirection::Column).with_gap(6)),
             );
             let state = Rc::new(ScrollState::new());
             // Sanity: bound starts at the `ScrollState::new` default
             // (0) so the test catches a real write, not a no-op.
             assert_eq!(state.max(), (0, 0));
-            let scroll = ScrollNode::new(Rect::new(0, 0, 220, 164), content)
-                .with_state(Rc::clone(&state));
+            let scroll =
+                ScrollNode::new(Rect::new(0, 0, 220, 164), content).with_state(Rc::clone(&state));
             let mut scene = Scene::Container(ContainerNode::new(vec![Scene::Scroll(scroll)]));
 
             compute_layout(&mut scene, &mut cache(), 360, 320);
 
             let (max_x, max_y) = state.max();
             assert_eq!(max_x, 0, "content fits horizontally, no x overflow");
-            assert_eq!(
-                max_y, 238,
-                "max_y = content_h(402) - viewport_h(164)"
-            );
+            assert_eq!(max_y, 238, "max_y = content_h(402) - viewport_h(164)");
         }
 
         #[test]
@@ -1058,14 +1058,13 @@ mod tests {
 
             let rows: Vec<Scene> = (0..12).map(|_| fixed_row(28)).collect();
             let content = Scene::Container(
-                ContainerNode::new(rows).with_layout(
-                    LayoutStyle::new().flex(FlexDirection::Column).with_gap(6),
-                ),
+                ContainerNode::new(rows)
+                    .with_layout(LayoutStyle::new().flex(FlexDirection::Column).with_gap(6)),
             );
             let state = Rc::new(ScrollState::new());
             assert_eq!(state.max(), (0, 0), "pre-condition: fresh ScrollState");
-            let scroll = ScrollNode::new(Rect::new(0, 0, 220, 164), content)
-                .with_state(Rc::clone(&state));
+            let scroll =
+                ScrollNode::new(Rect::new(0, 0, 220, 164), content).with_state(Rc::clone(&state));
             let mut scene = Scene::Container(ContainerNode::new(vec![Scene::Scroll(scroll)]));
 
             let dirty = compute_layout_with_scroll_dirty(&mut scene, &mut cache(), 360, 320);
@@ -1156,8 +1155,8 @@ mod tests {
                 ContainerNode::new(cells).with_layout(LayoutStyle::new().flex(FlexDirection::Row)),
             );
             let state = Rc::new(ScrollState::new());
-            let scroll = ScrollNode::new(Rect::new(0, 0, 300, 40), content)
-                .with_state(Rc::clone(&state));
+            let scroll =
+                ScrollNode::new(Rect::new(0, 0, 300, 40), content).with_state(Rc::clone(&state));
             let mut scene = Scene::Container(ContainerNode::new(vec![Scene::Scroll(scroll)]));
 
             compute_layout(&mut scene, &mut cache(), 360, 320);
@@ -1195,8 +1194,8 @@ mod tests {
 
             let state = Rc::new(ScrollState::new());
             // Primary: the 300-wide scrolling-pane body owns the bounds write.
-            let primary = ScrollNode::new(Rect::new(0, 0, 300, 40), v_col(300))
-                .with_state(Rc::clone(&state));
+            let primary =
+                ScrollNode::new(Rect::new(0, 0, 300, 40), v_col(300)).with_state(Rc::clone(&state));
             // Follower: the 200-wide frozen-pane body slides with the same
             // state but never publishes (different cross-axis width).
             let follower = ScrollNode::new(Rect::new(0, 0, 200, 40), v_col(200))
@@ -1207,11 +1206,9 @@ mod tests {
                 Scene::Scroll(primary),
             ]));
 
-            let dirty_first =
-                compute_layout_with_scroll_dirty(&mut scene, &mut cache(), 360, 320);
+            let dirty_first = compute_layout_with_scroll_dirty(&mut scene, &mut cache(), 360, 320);
             assert!(dirty_first, "prime pass writes the primary's bounds");
-            let dirty_second =
-                compute_layout_with_scroll_dirty(&mut scene, &mut cache(), 360, 320);
+            let dirty_second = compute_layout_with_scroll_dirty(&mut scene, &mut cache(), 360, 320);
             assert!(
                 !dirty_second,
                 "follower suppresses its publish, so the pair settles (no perpetual re-pass)",
@@ -1246,16 +1243,15 @@ mod tests {
             }
 
             let state = Rc::new(ScrollState::new());
-            let a = ScrollNode::new(Rect::new(0, 0, 300, 40), v_col(300))
-                .with_state(Rc::clone(&state));
-            let b = ScrollNode::new(Rect::new(0, 0, 200, 40), v_col(200))
-                .with_state(Rc::clone(&state));
+            let a =
+                ScrollNode::new(Rect::new(0, 0, 300, 40), v_col(300)).with_state(Rc::clone(&state));
+            let b =
+                ScrollNode::new(Rect::new(0, 0, 200, 40), v_col(200)).with_state(Rc::clone(&state));
             let mut scene =
                 Scene::Container(ContainerNode::new(vec![Scene::Scroll(a), Scene::Scroll(b)]));
 
             let _ = compute_layout_with_scroll_dirty(&mut scene, &mut cache(), 360, 320);
-            let dirty_second =
-                compute_layout_with_scroll_dirty(&mut scene, &mut cache(), 360, 320);
+            let dirty_second = compute_layout_with_scroll_dirty(&mut scene, &mut cache(), 360, 320);
             assert!(
                 dirty_second,
                 "two primaries with mismatched widths oscillate measured_w → never settles",
@@ -1277,24 +1273,21 @@ mod tests {
 
             let rows: Vec<Scene> = (0..12).map(|_| fixed_row(28)).collect();
             let content = Scene::Container(
-                ContainerNode::new(rows).with_layout(
-                    LayoutStyle::new().flex(FlexDirection::Column).with_gap(6),
-                ),
+                ContainerNode::new(rows)
+                    .with_layout(LayoutStyle::new().flex(FlexDirection::Column).with_gap(6)),
             );
             let state = Rc::new(ScrollState::new());
-            let scroll = ScrollNode::new(Rect::new(0, 0, 220, 164), content)
-                .with_state(Rc::clone(&state));
+            let scroll =
+                ScrollNode::new(Rect::new(0, 0, 220, 164), content).with_state(Rc::clone(&state));
             let mut scene = Scene::Container(ContainerNode::new(vec![Scene::Scroll(scroll)]));
 
             // Prime: first pass writes max, returns dirty=true.
-            let dirty_first =
-                compute_layout_with_scroll_dirty(&mut scene, &mut cache(), 360, 320);
+            let dirty_first = compute_layout_with_scroll_dirty(&mut scene, &mut cache(), 360, 320);
             assert!(dirty_first, "prime pass must report dirty");
             // Steady state: second pass on the same scene at the
             // same viewport sees an unchanged max bound, no Signal
             // revision advance, dirty=false.
-            let dirty_second =
-                compute_layout_with_scroll_dirty(&mut scene, &mut cache(), 360, 320);
+            let dirty_second = compute_layout_with_scroll_dirty(&mut scene, &mut cache(), 360, 320);
             assert!(
                 !dirty_second,
                 "second pass on a settled ScrollState must report dirty=false (Signal equality-skip)",
@@ -1311,9 +1304,8 @@ mod tests {
             // re-run the view+layout pair pointlessly).
             let rows: Vec<Scene> = (0..12).map(|_| fixed_row(28)).collect();
             let content = Scene::Container(
-                ContainerNode::new(rows).with_layout(
-                    LayoutStyle::new().flex(FlexDirection::Column).with_gap(6),
-                ),
+                ContainerNode::new(rows)
+                    .with_layout(LayoutStyle::new().flex(FlexDirection::Column).with_gap(6)),
             );
             let scroll = ScrollNode::new(Rect::new(0, 0, 220, 164), content);
             let mut scene = Scene::Container(ContainerNode::new(vec![Scene::Scroll(scroll)]));
@@ -1342,8 +1334,12 @@ mod tests {
 
             compute_layout(&mut scene, &mut cache(), 360, 320);
 
-            let Scene::Container(outer) = &scene else { panic!("outer") };
-            let Scene::Scroll(s) = &outer.children[0] else { panic!("scroll") };
+            let Scene::Container(outer) = &scene else {
+                panic!("outer")
+            };
+            let Scene::Scroll(s) = &outer.children[0] else {
+                panic!("scroll")
+            };
             // Scroll grew to the full 360-wide row instead of staying
             // at the 100-wide default `viewport` width — proves the
             // taffy size came from `layout.flex_grow`, not the
@@ -1358,9 +1354,7 @@ mod tests {
             // 360×320 viewport — expected centred at
             // ((360-220)/2, (320-164)/2) = (70, 78). Proves R55.G.3
             // routes Scroll through parent flex.
-            let content_layout = LayoutStyle::new()
-                .flex(FlexDirection::Column)
-                .with_gap(6);
+            let content_layout = LayoutStyle::new().flex(FlexDirection::Column).with_gap(6);
             let content = Scene::Container(
                 ContainerNode::new(vec![fixed_row(28)]).with_layout(content_layout),
             );
@@ -1375,8 +1369,12 @@ mod tests {
 
             compute_layout(&mut scene, &mut cache(), 360, 320);
 
-            let Scene::Container(outer) = &scene else { panic!("outer") };
-            let Scene::Scroll(s) = &outer.children[0] else { panic!("scroll") };
+            let Scene::Container(outer) = &scene else {
+                panic!("outer")
+            };
+            let Scene::Scroll(s) = &outer.children[0] else {
+                panic!("scroll")
+            };
             assert_eq!(s.viewport.x, 70, "viewport.x layout-derived");
             assert_eq!(s.viewport.y, 78, "viewport.y layout-derived");
             assert_eq!(s.viewport.w, 220, "viewport.w app-set");
@@ -1390,21 +1388,28 @@ mod tests {
             // children at their natural heights instead of shrinking.
             let rows: Vec<Scene> = (0..12).map(|_| fixed_row(28)).collect();
             let content = Scene::Container(
-                ContainerNode::new(rows).with_layout(
-                    LayoutStyle::new().flex(FlexDirection::Column).with_gap(6),
-                ),
+                ContainerNode::new(rows)
+                    .with_layout(LayoutStyle::new().flex(FlexDirection::Column).with_gap(6)),
             );
             let scroll = ScrollNode::new(Rect::new(0, 0, 220, 164), content);
             let mut scene = Scene::Container(ContainerNode::new(vec![Scene::Scroll(scroll)]));
 
             compute_layout(&mut scene, &mut cache(), 360, 320);
 
-            let Scene::Container(outer) = &scene else { panic!("outer") };
-            let Scene::Scroll(s) = &outer.children[0] else { panic!("scroll") };
-            let Scene::Container(c) = s.content.as_ref() else { panic!("content") };
+            let Scene::Container(outer) = &scene else {
+                panic!("outer")
+            };
+            let Scene::Scroll(s) = &outer.children[0] else {
+                panic!("scroll")
+            };
+            let Scene::Container(c) = s.content.as_ref() else {
+                panic!("content")
+            };
             // Last row's y = 11 × (28 + 6) = 374, well past the
             // 164-tall viewport — proves flex did not compress.
-            let Scene::Container(last) = c.children.last().unwrap() else { panic!() };
+            let Scene::Container(last) = c.children.last().unwrap() else {
+                panic!()
+            };
             assert_eq!(last.rect.y, 374);
             assert_eq!(last.rect.h, 28);
         }
@@ -1425,22 +1430,31 @@ mod tests {
                 ),
             );
             let content = Scene::Container(
-                ContainerNode::new(vec![stretchy]).with_layout(
-                    LayoutStyle::new().flex(FlexDirection::Column),
-                ),
+                ContainerNode::new(vec![stretchy])
+                    .with_layout(LayoutStyle::new().flex(FlexDirection::Column)),
             );
             let scroll = ScrollNode::new(Rect::new(0, 0, 220, 80), content);
             let mut scene = Scene::Container(ContainerNode::new(vec![Scene::Scroll(scroll)]));
 
             compute_layout(&mut scene, &mut cache(), 360, 320);
 
-            let Scene::Container(outer) = &scene else { panic!("outer") };
-            let Scene::Scroll(s) = &outer.children[0] else { panic!("scroll") };
-            let Scene::Container(c) = s.content.as_ref() else { panic!("content") };
-            let Scene::Container(stretchy) = &c.children[0] else { panic!("stretchy") };
+            let Scene::Container(outer) = &scene else {
+                panic!("outer")
+            };
+            let Scene::Scroll(s) = &outer.children[0] else {
+                panic!("scroll")
+            };
+            let Scene::Container(c) = s.content.as_ref() else {
+                panic!("content")
+            };
+            let Scene::Container(stretchy) = &c.children[0] else {
+                panic!("stretchy")
+            };
             // Stretched to the viewport.w cross-axis bound.
             assert_eq!(stretchy.rect.w, 220);
-            let Scene::Box(b) = &stretchy.children[0] else { panic!("box") };
+            let Scene::Box(b) = &stretchy.children[0] else {
+                panic!("box")
+            };
             // Centered inside the 220-wide stretchy row.
             assert_eq!(b.rect.x, 90);
             assert_eq!(b.rect.w, 40);
@@ -1464,19 +1478,30 @@ mod tests {
             );
             let outer_scroll =
                 Scene::Scroll(ScrollNode::new(Rect::new(0, 0, 220, 160), outer_content));
-            let mut scene =
-                Scene::Container(ContainerNode::new(vec![outer_scroll]));
+            let mut scene = Scene::Container(ContainerNode::new(vec![outer_scroll]));
 
             compute_layout(&mut scene, &mut cache(), 360, 320);
 
-            let Scene::Container(root) = &scene else { panic!("root") };
-            let Scene::Scroll(outer) = &root.children[0] else { panic!("outer scroll") };
-            let Scene::Container(outer_c) = outer.content.as_ref() else { panic!("outer content") };
-            let Scene::Scroll(inner) = &outer_c.children[0] else { panic!("inner scroll") };
-            let Scene::Container(inner_c) = inner.content.as_ref() else { panic!("inner content") };
+            let Scene::Container(root) = &scene else {
+                panic!("root")
+            };
+            let Scene::Scroll(outer) = &root.children[0] else {
+                panic!("outer scroll")
+            };
+            let Scene::Container(outer_c) = outer.content.as_ref() else {
+                panic!("outer content")
+            };
+            let Scene::Scroll(inner) = &outer_c.children[0] else {
+                panic!("inner scroll")
+            };
+            let Scene::Container(inner_c) = inner.content.as_ref() else {
+                panic!("inner content")
+            };
             // Inner content's row was laid out by the nested-scroll
             // recursive pass — rect is non-zero.
-            let Scene::Container(row) = &inner_c.children[0] else { panic!("inner row") };
+            let Scene::Container(row) = &inner_c.children[0] else {
+                panic!("inner row")
+            };
             assert_eq!(row.rect, Rect::new(0, 0, 200, 40));
         }
     }
@@ -1491,11 +1516,13 @@ mod tests {
             Rect::default(),
             TextStyle::new().with_size_px(16),
         ));
-        let mut scene = Scene::Container(ContainerNode::new(vec![text]).with_layout(
-            LayoutStyle::new()
-                .flex(FlexDirection::Row)
-                .with_justify(JustifyContent::Center),
-        ));
+        let mut scene = Scene::Container(
+            ContainerNode::new(vec![text]).with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Row)
+                    .with_justify(JustifyContent::Center),
+            ),
+        );
         let mut c = cache();
         assert_eq!(c.len(), 0, "fresh cache is empty");
         compute_layout(&mut scene, &mut c, 320, 200);
@@ -1533,8 +1560,12 @@ mod tests {
                 .with_layout(LayoutStyle::new().with_size(Size::px(200, 200))),
         );
         compute_layout(&mut scene, &mut cache(), 320, 200);
-        let Scene::Container(c) = &scene else { panic!("container") };
-        let Scene::Box(b) = &c.children[0] else { panic!("box child") };
+        let Scene::Container(c) = &scene else {
+            panic!("container")
+        };
+        let Scene::Box(b) = &c.children[0] else {
+            panic!("box child")
+        };
         assert_eq!(b.rect.x, 40, "absolute left");
         assert_eq!(b.rect.y, 80, "absolute top");
         assert_eq!(b.rect.w, 20, "declared width");
@@ -1566,9 +1597,15 @@ mod tests {
                 .with_layout(LayoutStyle::new().flex(FlexDirection::Column)),
         );
         compute_layout(&mut scene, &mut cache(), 200, 200);
-        let Scene::Container(c) = &scene else { panic!("container") };
-        let Scene::Box(first) = &c.children[0] else { panic!("first") };
-        let Scene::Box(third) = &c.children[2] else { panic!("third") };
+        let Scene::Container(c) = &scene else {
+            panic!("container")
+        };
+        let Scene::Box(first) = &c.children[0] else {
+            panic!("first")
+        };
+        let Scene::Box(third) = &c.children[2] else {
+            panic!("third")
+        };
         assert_eq!(first.rect.y, 0, "first in-flow stays at top");
         assert_eq!(
             third.rect.y, 50,
@@ -1593,9 +1630,15 @@ mod tests {
                 .with_layout(LayoutStyle::new().flex(FlexDirection::Column).with_gap(5)),
         );
         compute_layout(&mut scene, &mut cache(), 200, 200);
-        let Scene::Container(c) = &scene else { panic!("container") };
-        let Scene::Box(a) = &c.children[0] else { panic!("a") };
-        let Scene::Box(b) = &c.children[1] else { panic!("b") };
+        let Scene::Container(c) = &scene else {
+            panic!("container")
+        };
+        let Scene::Box(a) = &c.children[0] else {
+            panic!("a")
+        };
+        let Scene::Box(b) = &c.children[1] else {
+            panic!("b")
+        };
         assert_eq!(a.rect.y, 0);
         assert_eq!(b.rect.y, 45, "gap=5 honored, no absolute interference");
     }
@@ -1630,8 +1673,12 @@ mod tests {
         );
         let mut scene = Scene::Container(ContainerNode::new(vec![child]).with_layout(layout));
         compute_layout(&mut scene, &mut cache(), 360, 200);
-        let Scene::Container(c) = &scene else { panic!("container") };
-        let Scene::Box(b) = &c.children[0] else { panic!("box child") };
+        let Scene::Container(c) = &scene else {
+            panic!("container")
+        };
+        let Scene::Box(b) = &c.children[0] else {
+            panic!("box child")
+        };
         assert_eq!(b.rect.w, 120, "None basis → intrinsic 120 px width");
     }
 
@@ -1655,8 +1702,12 @@ mod tests {
         );
         let mut scene = Scene::Container(ContainerNode::new(vec![child]).with_layout(layout));
         compute_layout(&mut scene, &mut cache(), 360, 200);
-        let Scene::Container(c) = &scene else { panic!("container") };
-        let Scene::Box(b) = &c.children[0] else { panic!("box child") };
+        let Scene::Container(c) = &scene else {
+            panic!("container")
+        };
+        let Scene::Box(b) = &c.children[0] else {
+            panic!("box child")
+        };
         assert_eq!(
             b.rect.w, 360,
             "flex_basis(Px(0)) + flex_grow(1.0) must take the full parent extent",
@@ -1672,14 +1723,17 @@ mod tests {
         // parent.
         let layout = LayoutStyle::new().flex(FlexDirection::Row);
         let child = Scene::Box(
-            BoxNode::filled(Rect::default(), Color::default()).with_layout(
-                LayoutStyle::new().with_flex_basis(SizeValue::Percent(50)),
-            ),
+            BoxNode::filled(Rect::default(), Color::default())
+                .with_layout(LayoutStyle::new().with_flex_basis(SizeValue::Percent(50))),
         );
         let mut scene = Scene::Container(ContainerNode::new(vec![child]).with_layout(layout));
         compute_layout(&mut scene, &mut cache(), 360, 200);
-        let Scene::Container(c) = &scene else { panic!("container") };
-        let Scene::Box(b) = &c.children[0] else { panic!("box child") };
+        let Scene::Container(c) = &scene else {
+            panic!("container")
+        };
+        let Scene::Box(b) = &c.children[0] else {
+            panic!("box child")
+        };
         assert_eq!(b.rect.w, 180, "Percent(50) basis → half-parent width");
     }
 
@@ -1708,12 +1762,17 @@ mod tests {
             ),
         );
         let layout = LayoutStyle::new().flex(FlexDirection::Row);
-        let mut scene =
-            Scene::Container(ContainerNode::new(vec![left, right]).with_layout(layout));
+        let mut scene = Scene::Container(ContainerNode::new(vec![left, right]).with_layout(layout));
         compute_layout(&mut scene, &mut cache(), parent_w, 200);
-        let Scene::Container(c) = &scene else { panic!("container") };
-        let Scene::Box(l) = &c.children[0] else { panic!("left") };
-        let Scene::Box(r) = &c.children[1] else { panic!("right") };
+        let Scene::Container(c) = &scene else {
+            panic!("container")
+        };
+        let Scene::Box(l) = &c.children[0] else {
+            panic!("left")
+        };
+        let Scene::Box(r) = &c.children[1] else {
+            panic!("right")
+        };
         // Allow a 1-px tolerance for rounding (taffy rounds f32
         // pixels to u32 at the layout-apply boundary).
         assert!(
@@ -1748,9 +1807,8 @@ mod tests {
             Scene::Box(BoxNode::filled(Rect::default(), Color::default()).with_layout(ls))
         };
 
-        let mut none_scene = Scene::Container(
-            ContainerNode::new(vec![intrinsic_child(None)]).with_layout(layout),
-        );
+        let mut none_scene =
+            Scene::Container(ContainerNode::new(vec![intrinsic_child(None)]).with_layout(layout));
         let mut some_auto_scene = Scene::Container(
             ContainerNode::new(vec![intrinsic_child(Some(SizeValue::Auto))]).with_layout(layout),
         );
@@ -1758,8 +1816,12 @@ mod tests {
         compute_layout(&mut some_auto_scene, &mut cache(), 360, 200);
 
         let extract_w = |s: &Scene| -> u32 {
-            let Scene::Container(c) = s else { panic!("container") };
-            let Scene::Box(b) = &c.children[0] else { panic!("box") };
+            let Scene::Container(c) = s else {
+                panic!("container")
+            };
+            let Scene::Box(b) = &c.children[0] else {
+                panic!("box")
+            };
             b.rect.w
         };
         assert_eq!(extract_w(&none_scene), extract_w(&some_auto_scene));

@@ -53,20 +53,20 @@
 //! to blur → caret disappears, the SCXML transitions
 //! `Focused → Idle`. Press `d` to disable, `e` to re-enable.
 
+use pinion_a11y::{AccessNode, WidgetA11y};
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
-use pinion_platform_clipboard::use_app_clipboard;
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, TextStyle,
 };
+use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::undo::use_undo_stack;
 use pinion_core::widgets::caret_blink::use_caret_blink;
 use pinion_core::widgets::text_edit::use_text_edit_state;
 use pinion_core::widgets::text_field::{TextFieldEvent, TextFieldExternal, TextFieldState};
-use pinion_core::theme::{use_theme, ColorRole};
 use pinion_core::{Frame, Scene, WidgetCore, WidgetStateName};
-use pinion_a11y::{AccessNode, WidgetA11y};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_platform_clipboard::use_app_clipboard;
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_text::CaretRect;
 // R657 §5.16 §5.38 — lifted TextField paint substrate (view body +
 // IME caret rect + state name lookup + SCXML read helper).
@@ -336,7 +336,12 @@ impl WidgetCore for TextFieldView {
     /// `hello-listbox`: keys only flow when this widget owns focus,
     /// avoiding the broadcast-to-every-widget aliasing that
     /// pre-R51.x `apply_key` suffered.
-    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, modifiers: pinion_core::Modifiers) -> bool {
+    fn apply_key(
+        scene: &mut Scene,
+        focused: Option<&str>,
+        key: &str,
+        modifiers: pinion_core::Modifiers,
+    ) -> bool {
         if focused != Some(TF_TAG) {
             return false;
         }
@@ -435,11 +440,7 @@ impl WidgetCore for TextFieldView {
     }
 
     fn fmt_state_log(state: &(TextFieldState, u32)) -> String {
-        format!(
-            "{} / caret={}",
-            state.0.as_name(),
-            state.1,
-        )
+        format!("{} / caret={}", state.0.as_name(), state.1,)
     }
 }
 
@@ -461,7 +462,12 @@ impl WidgetA11y for TextFieldView {
         let tag = <Self as WidgetCore>::tag();
         // R790 §5.40 — the textbox node mapping is the lifted SSOT shared
         // by every text-field binding (`tf_paint::text_field_a11y_node`).
-        vec![tf_paint::text_field_a11y_node(tag, text, *interaction, focused == Some(tag))]
+        vec![tf_paint::text_field_a11y_node(
+            tag,
+            text,
+            *interaction,
+            focused == Some(tag),
+        )]
     }
 }
 
@@ -469,7 +475,10 @@ impl WidgetView for TextFieldView {
     type Renderer = HelloTextFieldRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 
     /// R56.2.c §5.13 §5.38 — publish the caret rect to the platform
@@ -661,10 +670,10 @@ mod tests {
     // local tests below cover the BINDING contract: view-fn tag
     // presence, access_node shape, caret position smoke, palette-swap
     // reactive wiring through the binding's view fn.
-    use super::{view, TextFieldView, THEME_TAG, TF_TAG};
+    use super::{TF_TAG, THEME_TAG, TextFieldView, view};
     use pinion_a11y::{AccessValue, AriaRole, WidgetA11y};
     use pinion_core::reactive::Owner;
-    use pinion_core::theme::{use_theme, Theme, ThemeMode};
+    use pinion_core::theme::{Theme, ThemeMode, use_theme};
     use pinion_core::widgets::caret_blink::use_caret_blink;
     use pinion_core::widgets::text_edit::use_text_edit_state;
     use pinion_core::widgets::text_field::TextFieldState;
@@ -802,8 +811,8 @@ mod tests {
 
     #[test]
     fn r763_native_shift_arrow_extends_selection() {
-        use pinion_core::scene::ExternalNode;
         use pinion_core::WidgetCore;
+        use pinion_core::scene::ExternalNode;
         with_owner(|| {
             // The External attaches the same `use_text_edit_state(TF_TAG)`
             // Rc this test reads (one owner-cached holder per tag), so
@@ -824,7 +833,12 @@ mod tests {
             // the bare Text invoke shape, so native Shift+ArrowLeft
             // collapsed instead of extending. R763 forwards the Json
             // shape carrying the shift bit.
-            assert!(TextFieldView::apply_key(&mut scene, Some(TF_TAG), "ArrowLeft", shift));
+            assert!(TextFieldView::apply_key(
+                &mut scene,
+                Some(TF_TAG),
+                "ArrowLeft",
+                shift
+            ));
             assert_eq!(
                 edit.selection_range(),
                 Some((4, 5)),
@@ -878,16 +892,10 @@ mod tests {
     #[test]
     fn r56_1_b_1_access_node_focused_flag_mirrors_focus() {
         with_owner(|| {
-            let unfocused = TextFieldView::access_node(
-                &(TextFieldState::Idle, 0),
-                None,
-            );
+            let unfocused = TextFieldView::access_node(&(TextFieldState::Idle, 0), None);
             assert!(!unfocused[0].state.focused);
 
-            let focused = TextFieldView::access_node(
-                &(TextFieldState::Focused, 0),
-                Some(TF_TAG),
-            );
+            let focused = TextFieldView::access_node(&(TextFieldState::Focused, 0), Some(TF_TAG));
             assert!(focused[0].state.focused);
         });
     }
@@ -895,10 +903,7 @@ mod tests {
     #[test]
     fn r56_1_b_1_access_node_disabled_flag_set_when_disabled() {
         with_owner(|| {
-            let nodes = TextFieldView::access_node(
-                &(TextFieldState::Disabled, 0),
-                None,
-            );
+            let nodes = TextFieldView::access_node(&(TextFieldState::Disabled, 0), None);
             assert!(nodes[0].state.disabled);
         });
     }
@@ -963,8 +968,7 @@ mod tests {
     fn scene_contains_fill(scene: &Scene, target: Color) -> bool {
         match scene {
             Scene::Container(n) => {
-                n.style.fill == target
-                    || n.children.iter().any(|c| scene_contains_fill(c, target))
+                n.style.fill == target || n.children.iter().any(|c| scene_contains_fill(c, target))
             }
             Scene::Box(n) => n.style.fill == target,
             _ => false,

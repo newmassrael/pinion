@@ -41,7 +41,7 @@ use std::cell::RefCell;
 use std::time::Instant;
 
 use pinion_a11y::{
-    listbox_option_nodes, AccessAction, AccessFocus, AccessNode, ListOption, WidgetA11y,
+    AccessAction, AccessFocus, AccessNode, ListOption, WidgetA11y, listbox_option_nodes,
 };
 // R814 §5.40 — `AriaRole` is now only referenced by the test asserts (the
 // lifted `listbox_option_nodes` builder owns the role tagging in prod).
@@ -55,8 +55,8 @@ use pinion_core::style::{
 use pinion_core::widgets::listbox::ListBoxExternal;
 use pinion_core::widgets::listbox_item::ListboxItemState;
 use pinion_core::{Color, Frame, Owner, Scene, WidgetCore, WidgetStateName};
-use pinion_shell::typeahead::{is_typeahead_char, TypeaheadCursor};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_shell::typeahead::{TypeaheadCursor, is_typeahead_char};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloListboxMultiRenderer, HelloListboxMultiRendererError);
@@ -93,14 +93,12 @@ fn view(state: ListState, _frame: &Frame) -> Scene {
         .map(|i| listbox_row(i, state.rows[i].0, state.rows[i].1, i == active))
         .collect();
     let column = Scene::Container(
-        ContainerNode::new(rows)
-            .with_tag(PRIMARY_TAG)
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Column)
-                    .with_align_items(AlignItems::Start)
-                    .with_gap(ROW_GAP),
-            ),
+        ContainerNode::new(rows).with_tag(PRIMARY_TAG).with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Column)
+                .with_align_items(AlignItems::Start)
+                .with_gap(ROW_GAP),
+        ),
     );
     // R55.G.18 §5.49 — the inner column carries `PRIMARY_TAG` so the
     // composite root is paint-addressable via
@@ -255,7 +253,12 @@ impl WidgetCore for ListBoxMultiView {
     /// Identical to the single-select sibling for `Arrow*` / `Home` /
     /// `End` / type-ahead; `Space` / `Enter` now toggles the focused
     /// row in place (multi-mode `send` is toggle, not replace).
-    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, _modifiers: pinion_core::Modifiers) -> bool {
+    fn apply_key(
+        scene: &mut Scene,
+        focused: Option<&str>,
+        key: &str,
+        _modifiers: pinion_core::Modifiers,
+    ) -> bool {
         if focused != Some(Self::tag()) {
             return false;
         }
@@ -328,10 +331,7 @@ impl WidgetA11y for ListBoxMultiView {
         )
     }
 
-    fn access_focus_target(
-        state: &ListState,
-        focused: Option<&str>,
-    ) -> Option<AccessFocus> {
+    fn access_focus_target(state: &ListState, focused: Option<&str>) -> Option<AccessFocus> {
         if focused == Some(<Self as WidgetCore>::tag()) {
             let idx = active_option_index(*state);
             Some(AccessFocus::composite(
@@ -343,7 +343,12 @@ impl WidgetA11y for ListBoxMultiView {
         }
     }
 
-    fn access_child_invoke(scene: &mut Scene, _parent_tag: &str, sub_tag: &str, action: AccessAction) -> bool {
+    fn access_child_invoke(
+        scene: &mut Scene,
+        _parent_tag: &str,
+        sub_tag: &str,
+        action: AccessAction,
+    ) -> bool {
         let Ok(idx) = sub_tag.parse::<usize>() else {
             return false;
         };
@@ -359,25 +364,17 @@ impl WidgetA11y for ListBoxMultiView {
         match action {
             AccessAction::Click | AccessAction::Default => {
                 for ev in ["PointerEnter", "PointerDown", "PointerUp", "PointerLeave"] {
-                    let _ = intro.invoke(
-                        "send",
-                        IntrospectValue::Text(format!("{idx}:{ev}")),
-                    );
+                    let _ = intro.invoke("send", IntrospectValue::Text(format!("{idx}:{ev}")));
                 }
                 true
             }
             AccessAction::Focus => {
                 if let Ok(i) = i64::try_from(idx) {
-                    let _ = intro.intervene(
-                        "focused_index",
-                        IntrospectValue::Int(i),
-                    );
+                    let _ = intro.intervene("focused_index", IntrospectValue::Int(i));
                 }
                 true
             }
-            AccessAction::Increment | AccessAction::Decrement | AccessAction::Other => {
-                false
-            }
+            AccessAction::Increment | AccessAction::Decrement | AccessAction::Other => false,
         }
     }
 }
@@ -386,14 +383,14 @@ impl WidgetView for ListBoxMultiView {
     type Renderer = HelloListboxMultiRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 }
 
-fn move_focus(
-    node: &mut pinion_core::scene::ExternalNode,
-    direction: i32,
-) -> bool {
+fn move_focus(node: &mut pinion_core::scene::ExternalNode, direction: i32) -> bool {
     let current: Option<usize> = node
         .handle
         .introspect()
@@ -446,10 +443,7 @@ fn commit_focused(node: &mut pinion_core::scene::ExternalNode) -> bool {
         return false;
     };
     for ev in ["PointerEnter", "PointerDown", "PointerUp", "PointerLeave"] {
-        let _ = intro.invoke(
-            "send",
-            IntrospectValue::Text(format!("{idx}:{ev}")),
-        );
+        let _ = intro.invoke("send", IntrospectValue::Text(format!("{idx}:{ev}")));
     }
     true
 }
@@ -570,11 +564,8 @@ mod a11y_tests {
     fn r51_104_multi_listbox_focus_target_resolves_active_descendant() {
         let mut state = unselected();
         state.focused = Some(3);
-        let target = ListBoxMultiView::access_focus_target(
-            &state,
-            Some(ListBoxMultiView::tag()),
-        )
-        .expect("listbox focused → composite focus");
+        let target = ListBoxMultiView::access_focus_target(&state, Some(ListBoxMultiView::tag()))
+            .expect("listbox focused → composite focus");
         assert_eq!(target.focus_tag, ListBoxMultiView::tag());
         assert_eq!(
             target.active_descendant.as_deref(),
@@ -588,14 +579,8 @@ mod a11y_tests {
         // (multiple `A*`, multiple `B*`) so multi-char prefix match
         // is observable.
         let labels: [&str; N] = std::array::from_fn(option_label);
-        let count_a: usize = labels
-            .iter()
-            .filter(|l| l.starts_with('A'))
-            .count();
-        let count_b: usize = labels
-            .iter()
-            .filter(|l| l.starts_with('B'))
-            .count();
+        let count_a: usize = labels.iter().filter(|l| l.starts_with('A')).count();
+        let count_b: usize = labels.iter().filter(|l| l.starts_with('B')).count();
         assert!(
             count_a >= 2 && count_b >= 2,
             "overlapping prefixes required for multi-char typeahead demo",

@@ -173,11 +173,7 @@ mod tests {
     #[test]
     fn list_does_not_drain_underlying_queues() {
         let owner = Owner::new();
-        owner.dispatch_command(Command::new_static(
-            "x",
-            IntrospectValue::Null,
-            owner.id(),
-        ));
+        owner.dispatch_command(Command::new_static("x", IntrospectValue::Null, owner.id()));
         let _peek_a = list_pending_commands(&owner).unwrap();
         let _peek_b = list_pending_commands(&owner).unwrap();
         let drained = owner.take_pending_commands_recursive();
@@ -206,7 +202,10 @@ mod tests {
             owner.id(),
         ));
         let pending = list_pending_commands(&owner).unwrap();
-        assert_eq!(pending[0].payload, serde_json::Value::String("hello".into()));
+        assert_eq!(
+            pending[0].payload,
+            serde_json::Value::String("hello".into())
+        );
     }
 
     #[test]
@@ -240,10 +239,7 @@ mod tests {
     fn echo_handler() -> Arc<dyn pinion_runtime::Handler> {
         Arc::new(|cmd: Command| -> HandlerFuture {
             Box::pin(async move {
-                pinion_core::Intent::new_owned(
-                    format!("echo.{}", cmd.kind_str()),
-                    cmd.payload,
-                )
+                pinion_core::Intent::new_owned(format!("echo.{}", cmd.kind_str()), cmd.payload)
             })
         })
     }

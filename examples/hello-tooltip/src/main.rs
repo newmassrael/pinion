@@ -72,12 +72,12 @@ use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole};
+use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::tooltip::TooltipExternal;
 use pinion_core::{Frame, Scene, WidgetCore};
-use pinion_shell::{vello_renderer_impl, WidgetView};
-use pinion_widget_paint::tooltip::{view_tooltip, TooltipPlacement, TooltipSide, TooltipStyle};
+use pinion_shell::{WidgetView, vello_renderer_impl};
+use pinion_widget_paint::tooltip::{TooltipPlacement, TooltipSide, TooltipStyle, view_tooltip};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloTooltipRenderer, HelloTooltipRendererError);
@@ -191,7 +191,11 @@ fn control_scene(
                 .with_fg(theme.resolve(ColorRole::OnSurface)),
         ))])
         .with_tag(tag)
-        .with_style(BoxStyle::filled(fill).with_corner_radius(8).with_border(border))
+        .with_style(
+            BoxStyle::filled(fill)
+                .with_corner_radius(8)
+                .with_border(border),
+        )
         .with_layout(
             LayoutStyle::new()
                 .flex(FlexDirection::Row)
@@ -234,7 +238,13 @@ fn view(state: TooltipViewState, _frame: &Frame) -> Scene {
 
     let mut children = vec![
         header,
-        control_scene(AUTOSAVE_TAG, AUTOSAVE_LABEL, AUTOSAVE_RECT, autosave, &theme),
+        control_scene(
+            AUTOSAVE_TAG,
+            AUTOSAVE_LABEL,
+            AUTOSAVE_RECT,
+            autosave,
+            &theme,
+        ),
         control_scene(OFFLINE_TAG, OFFLINE_LABEL, OFFLINE_RECT, offline, &theme),
     ];
     if autosave.visible {
@@ -293,7 +303,10 @@ impl WidgetCore for TooltipView {
     }
 
     fn create_extra_externals() -> Vec<ExtraExternal> {
-        vec![ExtraExternal::new(OFFLINE_TAG, Box::new(TooltipExternal::new()))]
+        vec![ExtraExternal::new(
+            OFFLINE_TAG,
+            Box::new(TooltipExternal::new()),
+        )]
     }
 
     fn tag() -> &'static str {
@@ -345,8 +358,7 @@ impl WidgetCore for TooltipView {
             else {
                 continue;
             };
-            let was_visible =
-                matches!(intro.query("visible"), Some(IntrospectValue::Bool(true)));
+            let was_visible = matches!(intro.query("visible"), Some(IntrospectValue::Bool(true)));
             if was_visible {
                 let _ = intro.invoke("dismiss", IntrospectValue::Null);
                 dismissed_any = true;
@@ -449,8 +461,7 @@ mod tests {
 
     #[test]
     fn r695_hidden_tooltips_not_painted() {
-        let scene = pinion_core::Owner::new()
-            .run(|| view((hidden(), hidden()), &Frame::new()));
+        let scene = pinion_core::Owner::new().run(|| view((hidden(), hidden()), &Frame::new()));
         assert!(find_container(&scene, &pop_tag(AUTOSAVE_TAG)).is_none());
         assert!(find_container(&scene, &pop_tag(OFFLINE_TAG)).is_none());
         // Controls are always present.
@@ -460,8 +471,8 @@ mod tests {
 
     #[test]
     fn r695_visible_tooltip_painted_at_anchored_position() {
-        let scene = pinion_core::Owner::new()
-            .run(|| view((shown(false, true), hidden()), &Frame::new()));
+        let scene =
+            pinion_core::Owner::new().run(|| view((shown(false, true), hidden()), &Frame::new()));
         let tip = find_container(&scene, &pop_tag(AUTOSAVE_TAG)).expect("autosave tooltip painted");
         // autosave sits high -> opens below, flush, no clamp.
         let expected = anchor_position(
@@ -478,8 +489,8 @@ mod tests {
 
     #[test]
     fn r695_offline_tooltip_flips_above_and_clamps() {
-        let scene = pinion_core::Owner::new()
-            .run(|| view((hidden(), shown(true, false)), &Frame::new()));
+        let scene =
+            pinion_core::Owner::new().run(|| view((hidden(), shown(true, false)), &Frame::new()));
         let tip = find_container(&scene, &pop_tag(OFFLINE_TAG)).expect("offline tooltip painted");
         let pos = tip.layout.absolute_position.expect("absolute");
         // offline is low-right: below would overflow (296+44+28=368 > 360)
@@ -492,8 +503,8 @@ mod tests {
 
     #[test]
     fn r695_focused_control_paints_accent_ring() {
-        let scene = pinion_core::Owner::new()
-            .run(|| view((shown(true, false), hidden()), &Frame::new()));
+        let scene =
+            pinion_core::Owner::new().run(|| view((shown(true, false), hidden()), &Frame::new()));
         let autosave = find_container(&scene, AUTOSAVE_TAG).expect("autosave control");
         let border = autosave.style.border.expect("focused control has a ring");
         assert_eq!(border.width, FOCUS_RING_WIDTH);
@@ -547,7 +558,10 @@ mod tests {
             let scene = view(state, &Frame::new());
             let mut nodes = TooltipView::access_node(&state, None);
             let tip = nodes.iter().find(|n| n.role == AriaRole::Tooltip).unwrap();
-            assert!(tip.name.is_none(), "access_node leaves the tooltip name to enrich");
+            assert!(
+                tip.name.is_none(),
+                "access_node leaves the tooltip name to enrich"
+            );
             pinion_a11y::enrich_names_from_scene(&mut nodes, &scene);
             let tip = nodes.iter().find(|n| n.role == AriaRole::Tooltip).unwrap();
             assert_eq!(tip.name.as_deref(), Some(AUTOSAVE_TIP));
@@ -584,7 +598,10 @@ mod tests {
         );
         assert!(handled, "Escape dismissed a visible tooltip");
         let autosave = read_anchor(&scene, AUTOSAVE_TAG);
-        assert!(!autosave.visible, "tooltip hidden after Escape while still hovered");
+        assert!(
+            !autosave.visible,
+            "tooltip hidden after Escape while still hovered"
+        );
     }
 
     #[test]

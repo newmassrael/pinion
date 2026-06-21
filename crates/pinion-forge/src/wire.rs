@@ -68,7 +68,12 @@ fn key_fragments(diag: &PinionForgeDiagnostic) -> String {
         PinionForgeDiagnostic::MissingAttribute { tag, attribute, .. } => {
             format!("{tag}\u{1f}{attribute}")
         }
-        PinionForgeDiagnostic::InvalidIdent { tag, attribute, found, .. } => {
+        PinionForgeDiagnostic::InvalidIdent {
+            tag,
+            attribute,
+            found,
+            ..
+        } => {
             format!("{tag}\u{1f}{attribute}\u{1f}{found}")
         }
         PinionForgeDiagnostic::XmlParseError { .. }
@@ -109,7 +114,10 @@ pub fn to_json_value(diag: &PinionForgeDiagnostic) -> Value {
 
     let loc = diag.location();
     let mut loc_obj = Map::new();
-    loc_obj.insert("file".into(), Value::from(loc.file.to_string_lossy().into_owned()));
+    loc_obj.insert(
+        "file".into(),
+        Value::from(loc.file.to_string_lossy().into_owned()),
+    );
     if let Some(line) = loc.line {
         loc_obj.insert("line".into(), Value::from(line));
     }

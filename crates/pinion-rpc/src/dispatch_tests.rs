@@ -116,7 +116,10 @@ fn r627_read_required_str_missing_errors_with_typed_data() {
     let v = serde_json::json!({});
     let err = read_required_str(&v, "text", "TextRequired").unwrap_err();
     assert_eq!(err.code, -32602);
-    assert_eq!(err.data.as_ref().and_then(Value::as_str), Some("TextRequired"));
+    assert_eq!(
+        err.data.as_ref().and_then(Value::as_str),
+        Some("TextRequired")
+    );
 }
 
 #[test]
@@ -187,7 +190,10 @@ fn r631_substrate_introspect_runtime_owner_unavailable_pinned() {
     let err = introspect_error_to_rpc(&SubstrateIntrospectError::RuntimeOwnerUnavailable);
     assert_eq!(err.code, -32602);
     assert_eq!(err.message, "Invalid params");
-    assert_eq!(err.data, Some(Value::String("RuntimeOwnerUnavailable".into())));
+    assert_eq!(
+        err.data,
+        Some(Value::String("RuntimeOwnerUnavailable".into()))
+    );
 }
 
 #[test]
@@ -213,7 +219,10 @@ fn r631_animation_state_runtime_owner_unavailable_pinned() {
     let err = animation_state_error_to_rpc(&AnimationStateError::RuntimeOwnerUnavailable);
     assert_eq!(err.code, -32602);
     assert_eq!(err.message, "Invalid params");
-    assert_eq!(err.data, Some(Value::String("RuntimeOwnerUnavailable".into())));
+    assert_eq!(
+        err.data,
+        Some(Value::String("RuntimeOwnerUnavailable".into()))
+    );
 }
 
 #[test]
@@ -230,14 +239,20 @@ fn r631_animate_control_runtime_owner_unavailable_pinned() {
     );
     assert_eq!(err.code, -32602);
     assert_eq!(err.message, "Invalid params");
-    assert_eq!(err.data, Some(Value::String("RuntimeOwnerUnavailable".into())));
+    assert_eq!(
+        err.data,
+        Some(Value::String("RuntimeOwnerUnavailable".into()))
+    );
 }
 
 #[test]
 fn r631_theme_tokens_errors_pinned() {
     let err1 = theme_tokens_error_to_rpc(ThemeTokensError::RuntimeOwnerUnavailable);
     assert_eq!(err1.code, -32602);
-    assert_eq!(err1.data, Some(Value::String("RuntimeOwnerUnavailable".into())));
+    assert_eq!(
+        err1.data,
+        Some(Value::String("RuntimeOwnerUnavailable".into()))
+    );
     let err2 = theme_tokens_error_to_rpc(ThemeTokensError::NotBound {
         tag: "app".to_string(),
     });
@@ -249,7 +264,10 @@ fn r631_theme_tokens_errors_pinned() {
 fn r631_set_theme_mode_errors_pinned() {
     let err1 = set_theme_mode_error_to_rpc(SetThemeModeError::RuntimeOwnerUnavailable);
     assert_eq!(err1.code, -32602);
-    assert_eq!(err1.data, Some(Value::String("RuntimeOwnerUnavailable".into())));
+    assert_eq!(
+        err1.data,
+        Some(Value::String("RuntimeOwnerUnavailable".into()))
+    );
     let err2 = set_theme_mode_error_to_rpc(SetThemeModeError::NotBound {
         tag: "app".to_string(),
     });
@@ -261,7 +279,10 @@ fn r631_set_theme_mode_errors_pinned() {
 fn r631_set_theme_palettes_errors_pinned() {
     let err1 = set_theme_palettes_error_to_rpc(SetThemePalettesError::RuntimeOwnerUnavailable);
     assert_eq!(err1.code, -32602);
-    assert_eq!(err1.data, Some(Value::String("RuntimeOwnerUnavailable".into())));
+    assert_eq!(
+        err1.data,
+        Some(Value::String("RuntimeOwnerUnavailable".into()))
+    );
     let err2 = set_theme_palettes_error_to_rpc(SetThemePalettesError::NotBound {
         tag: "app".to_string(),
     });
@@ -369,12 +390,15 @@ fn r889_unknown_window_verdict_extracts_and_judges_the_in_band_param() {
     let req = parse(r#"{"jsonrpc":"2.0","id":1,"method":"scene/query","params":{}}"#);
     assert_eq!(unknown_window_verdict(&req, known), None, "absent param");
     let req = parse(r#"{"jsonrpc":"2.0","id":1,"method":"scene/query"}"#);
-    assert_eq!(unknown_window_verdict(&req, known), None, "absent params object");
+    assert_eq!(
+        unknown_window_verdict(&req, known),
+        None,
+        "absent params object"
+    );
     let req =
         parse(r#"{"jsonrpc":"2.0","id":1,"method":"scene/query","params":{"window":"main"}}"#);
     assert_eq!(unknown_window_verdict(&req, known), None, "known window");
-    let req =
-        parse(r#"{"jsonrpc":"2.0","id":1,"method":"scene/query","params":{"window":42}}"#);
+    let req = parse(r#"{"jsonrpc":"2.0","id":1,"method":"scene/query","params":{"window":42}}"#);
     assert_eq!(
         unknown_window_verdict(&req, known),
         None,
@@ -416,7 +440,8 @@ fn r890_1_non_string_window_param_is_rejected_not_silently_dropped() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let mut ctx = DispatchContext::new(&mut scene, &previews, &revision);
-    let req = r#"{"jsonrpc":"2.0","id":3,"method":"scene/query","params":{"window":42,"path":"/"}}"#;
+    let req =
+        r#"{"jsonrpc":"2.0","id":3,"method":"scene/query","params":{"window":42,"path":"/"}}"#;
     let resp = parse_response(&dispatch(&mut ctx, req).expect("error frame"));
     let err = resp.error.expect("rejected");
     assert_eq!(err.code, -32602);
@@ -463,7 +488,11 @@ fn r890_1_unknown_window_notification_stays_silent() {
     // Type-error variant honors the same silence.
     let mut ctx = DispatchContext::new(&mut scene, &previews, &revision);
     let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"window":42}}"#;
-    assert_eq!(dispatch(&mut ctx, req), None, "type-error notification silent too");
+    assert_eq!(
+        dispatch(&mut ctx, req),
+        None,
+        "type-error notification silent too"
+    );
 }
 
 // ---- R51.25 §5.12 — Response::result nullable_present deserialize ----
@@ -573,7 +602,8 @@ fn invalid_params_when_path_missing() {
 #[test]
 fn success_query_with_id_num() {
     let mut scene = counted_scene(42);
-    let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/count"},"id":4}"#;
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/count"},"id":4}"#;
     let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
     assert!(resp.error.is_none());
     assert_eq!(resp.result.unwrap(), Value::Number(42.into()));
@@ -598,11 +628,15 @@ fn notification_emits_no_response() {
 #[test]
 fn query_error_maps_to_invalid_params_with_variant_tag() {
     let mut scene = Scene::External(ExternalNode::new(Box::new(StubExternal::new())));
-    let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/anything"},"id":7}"#;
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/anything"},"id":7}"#;
     let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
     let err = resp.error.unwrap();
     assert_eq!(err.code, -32602);
-    assert_eq!(err.data, Some(Value::String("IntrospectionOptedOut".to_string())));
+    assert_eq!(
+        err.data,
+        Some(Value::String("IntrospectionOptedOut".to_string()))
+    );
 }
 
 #[test]
@@ -623,14 +657,20 @@ fn scene_key_enqueues_arrow_down_into_inbox() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let mut inbox: Vec<DeferredInput> = Vec::new();
-    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
-        .with_deferred_inputs(&mut inbox);
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
     let req = r#"{"jsonrpc":"2.0","method":"scene/key","params":{"at":{"x":180.0,"y":160.0},"key":"ArrowDown"},"id":300}"#;
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
     assert!(resp.error.is_none(), "{:?}", resp.error);
     assert_eq!(resp.result, Some(Value::Null));
     assert_eq!(inbox.len(), 1);
-    let DeferredInput::Key { x, y, ref key, state } = inbox[0] else {
+    let DeferredInput::Key {
+        x,
+        y,
+        ref key,
+        state,
+    } = inbox[0]
+    else {
         panic!("expected Key variant, got {:?}", inbox[0]);
     };
     assert!((x - 180.0).abs() < f64::EPSILON);
@@ -657,8 +697,8 @@ fn scene_key_empty_string_is_invalid() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let mut inbox: Vec<DeferredInput> = Vec::new();
-    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
-        .with_deferred_inputs(&mut inbox);
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
     let req = r#"{"jsonrpc":"2.0","method":"scene/key","params":{"at":{"x":0.0,"y":0.0},"key":""},"id":302}"#;
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
     let err = resp.error.unwrap();
@@ -674,9 +714,10 @@ fn scene_key_missing_key_is_invalid() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let mut inbox: Vec<DeferredInput> = Vec::new();
-    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
-        .with_deferred_inputs(&mut inbox);
-    let req = r#"{"jsonrpc":"2.0","method":"scene/key","params":{"at":{"x":0.0,"y":0.0}},"id":303}"#;
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/key","params":{"at":{"x":0.0,"y":0.0}},"id":303}"#;
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
     let err = resp.error.unwrap();
     assert_eq!(err.code, -32602);
@@ -696,13 +737,19 @@ fn r666_scene_key_single_codepoint_routes_as_character_key() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let mut inbox: Vec<DeferredInput> = Vec::new();
-    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
-        .with_deferred_inputs(&mut inbox);
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
     let req = r#"{"jsonrpc":"2.0","method":"scene/key","params":{"at":{"x":10.0,"y":20.0},"key":"a"},"id":400}"#;
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
     assert!(resp.error.is_none(), "{:?}", resp.error);
     assert_eq!(inbox.len(), 1);
-    let DeferredInput::CharacterKey { x, y, ref character, state } = inbox[0] else {
+    let DeferredInput::CharacterKey {
+        x,
+        y,
+        ref character,
+        state,
+    } = inbox[0]
+    else {
         panic!("expected CharacterKey, got {:?}", inbox[0]);
     };
     assert!((x - 10.0).abs() < f64::EPSILON);
@@ -723,8 +770,8 @@ fn r666_scene_key_space_codepoint_routes_as_character_key() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let mut inbox: Vec<DeferredInput> = Vec::new();
-    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
-        .with_deferred_inputs(&mut inbox);
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
     let req = r#"{"jsonrpc":"2.0","method":"scene/key","params":{"at":{"x":0.0,"y":0.0},"key":" "},"id":401}"#;
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
     assert!(resp.error.is_none(), "{:?}", resp.error);
@@ -744,8 +791,8 @@ fn r882_scene_key_state_down_enqueues_down_edge() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let mut inbox: Vec<DeferredInput> = Vec::new();
-    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
-        .with_deferred_inputs(&mut inbox);
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
     let req = r#"{"jsonrpc":"2.0","method":"scene/key","params":{"at":{"x":5.0,"y":6.0},"key":"Space","state":"down"},"id":410}"#;
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
     assert!(resp.error.is_none(), "{:?}", resp.error);
@@ -766,8 +813,8 @@ fn r882_scene_key_state_up_enqueues_up_edge() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let mut inbox: Vec<DeferredInput> = Vec::new();
-    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
-        .with_deferred_inputs(&mut inbox);
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
     let req = r#"{"jsonrpc":"2.0","method":"scene/key","params":{"at":{"x":5.0,"y":6.0},"key":"Space","state":"up"},"id":411}"#;
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
     assert!(resp.error.is_none(), "{:?}", resp.error);
@@ -782,12 +829,17 @@ fn r882_scene_key_state_up_enqueues_up_edge() {
     // variant. Fresh context — the dispatcher consumes its inbox
     // handle per call.
     let mut inbox: Vec<DeferredInput> = Vec::new();
-    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
-        .with_deferred_inputs(&mut inbox);
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
     let req = r#"{"jsonrpc":"2.0","method":"scene/key","params":{"at":{"x":5.0,"y":6.0},"key":"a","state":"up"},"id":412}"#;
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
     assert!(resp.error.is_none(), "{:?}", resp.error);
-    let DeferredInput::CharacterKey { ref character, state, .. } = inbox[0] else {
+    let DeferredInput::CharacterKey {
+        ref character,
+        state,
+        ..
+    } = inbox[0]
+    else {
         panic!("expected CharacterKey variant, got {:?}", inbox[0]);
     };
     assert_eq!(character, "a");
@@ -804,9 +856,10 @@ fn r882_1_scene_key_state_up_is_positionless() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let mut inbox: Vec<DeferredInput> = Vec::new();
-    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
-        .with_deferred_inputs(&mut inbox);
-    let req = r#"{"jsonrpc":"2.0","method":"scene/key","params":{"key":"Space","state":"up"},"id":420}"#;
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/key","params":{"key":"Space","state":"up"},"id":420}"#;
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
     assert!(resp.error.is_none(), "{:?}", resp.error);
     let DeferredInput::Key { ref key, state, .. } = inbox[0] else {
@@ -816,11 +869,13 @@ fn r882_1_scene_key_state_up_is_positionless() {
     assert_eq!(state, KeyWireState::Up);
 
     let mut inbox: Vec<DeferredInput> = Vec::new();
-    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
-        .with_deferred_inputs(&mut inbox);
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
     let req = r#"{"jsonrpc":"2.0","method":"scene/key","params":{"key":"Space","state":"down"},"id":421}"#;
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
-    let err = resp.error.expect("a dispatching edge still requires a position");
+    let err = resp
+        .error
+        .expect("a dispatching edge still requires a position");
     assert_eq!(err.code, -32602);
     assert!(inbox.is_empty());
 }
@@ -837,8 +892,8 @@ fn r882_scene_key_state_out_of_vocabulary_rejects() {
         // inbox handle per call, and each rejection must be the
         // vocabulary's, not a missing-inbox artefact.
         let mut inbox: Vec<DeferredInput> = Vec::new();
-        let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
-            .with_deferred_inputs(&mut inbox);
+        let mut ctx =
+            DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
         let req = format!(
             r#"{{"jsonrpc":"2.0","method":"scene/key","params":{{"at":{{"x":0.0,"y":0.0}},"key":"Space","state":{bad}}},"id":413}}"#
         );
@@ -846,7 +901,10 @@ fn r882_scene_key_state_out_of_vocabulary_rejects() {
         let err = resp.error.expect("out-of-vocabulary state must reject");
         assert_eq!(err.code, -32602, "state={bad}");
         let data = err.data.as_ref().and_then(Value::as_str).unwrap_or("");
-        assert!(data.contains("state"), "the rejection names the state param: {data:?}");
+        assert!(
+            data.contains("state"),
+            "the rejection names the state param: {data:?}"
+        );
         assert!(inbox.is_empty(), "rejected requests must enqueue nothing");
     }
 }
@@ -860,7 +918,10 @@ fn r882_key_wire_state_round_trips() {
             Some(state)
         );
     }
-    assert_eq!(KeyWireState::from_wire_param(None), Some(KeyWireState::Press));
+    assert_eq!(
+        KeyWireState::from_wire_param(None),
+        Some(KeyWireState::Press)
+    );
     assert_eq!(KeyWireState::from_wire_param(Some("sideways")), None);
     assert_eq!(KeyWireState::default(), KeyWireState::Press);
 }
@@ -877,8 +938,8 @@ fn r666_scene_key_precomposed_cjk_codepoint_routes_as_character_key() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let mut inbox: Vec<DeferredInput> = Vec::new();
-    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
-        .with_deferred_inputs(&mut inbox);
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
     let req = r#"{"jsonrpc":"2.0","method":"scene/key","params":{"at":{"x":0.0,"y":0.0},"key":"안"},"id":402}"#;
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
     assert!(resp.error.is_none(), "{:?}", resp.error);
@@ -922,8 +983,8 @@ fn r770_scene_drop_file_enqueues_file_drop_with_path() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let mut inbox: Vec<DeferredInput> = Vec::new();
-    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
-        .with_deferred_inputs(&mut inbox);
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
     let req = r#"{"jsonrpc":"2.0","method":"scene/drop_file","params":{"path":"/tmp/report.pdf"},"id":770}"#;
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
     assert!(resp.error.is_none(), "{:?}", resp.error);
@@ -940,9 +1001,10 @@ fn r770_scene_hover_file_enqueues_file_hover_with_path() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let mut inbox: Vec<DeferredInput> = Vec::new();
-    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
-        .with_deferred_inputs(&mut inbox);
-    let req = r#"{"jsonrpc":"2.0","method":"scene/hover_file","params":{"path":"/tmp/a.png"},"id":771}"#;
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/hover_file","params":{"path":"/tmp/a.png"},"id":771}"#;
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
     assert!(resp.error.is_none(), "{:?}", resp.error);
     let DeferredInput::FileHover { ref path } = inbox[0] else {
@@ -957,8 +1019,8 @@ fn r770_scene_hover_file_cancel_enqueues_cancel_without_params() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let mut inbox: Vec<DeferredInput> = Vec::new();
-    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
-        .with_deferred_inputs(&mut inbox);
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
     let req = r#"{"jsonrpc":"2.0","method":"scene/hover_file_cancel","id":772}"#;
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
     assert!(resp.error.is_none(), "{:?}", resp.error);
@@ -971,8 +1033,8 @@ fn r770_scene_drop_file_missing_path_rejects() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let mut inbox: Vec<DeferredInput> = Vec::new();
-    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
-        .with_deferred_inputs(&mut inbox);
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
     let req = r#"{"jsonrpc":"2.0","method":"scene/drop_file","params":{},"id":773}"#;
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
     assert!(resp.error.is_some(), "missing path must reject");
@@ -1005,7 +1067,9 @@ fn r770_1_text_style_json_decode_is_inverse_of_encode() {
     b.line_height = LineHeight::Px(30);
     b.letter_spacing = 3;
     b.text_align = TextAlign::Center;
-    b.decoration = TextDecoration::none().with_underline(true).with_strikethrough(true);
+    b.decoration = TextDecoration::none()
+        .with_underline(true)
+        .with_strikethrough(true);
     b.overflow = TextOverflow::Ellipsis;
     b.font_family = Some(pinion_core::style::FontFamily::Named("Inter".into()));
 
@@ -1023,7 +1087,10 @@ fn r770_1_text_style_json_decode_is_inverse_of_encode() {
     for sample in [TextStyle::new(), a, b, c] {
         let encoded = text_style_to_json(&sample);
         let decoded = json_to_text_style(encoded.as_object().unwrap());
-        assert_eq!(decoded, sample, "json_to_text_style must invert text_style_to_json");
+        assert_eq!(
+            decoded, sample,
+            "json_to_text_style must invert text_style_to_json"
+        );
     }
 }
 
@@ -1035,9 +1102,10 @@ fn scene_click_v1_enqueues_click_at_coordinate() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let mut inbox: Vec<DeferredInput> = Vec::new();
-    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
-        .with_deferred_inputs(&mut inbox);
-    let req = r#"{"jsonrpc":"2.0","method":"scene/click","params":{"at":{"x":120.0,"y":80.0}},"id":9}"#;
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/click","params":{"at":{"x":120.0,"y":80.0}},"id":9}"#;
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
     assert!(resp.error.is_none(), "{:?}", resp.error);
     assert_eq!(resp.result, Some(Value::Null));
@@ -1057,8 +1125,8 @@ fn r887_scene_click_right_button_enqueues_secondary_click() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let mut inbox: Vec<DeferredInput> = Vec::new();
-    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
-        .with_deferred_inputs(&mut inbox);
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
     let req = r#"{"jsonrpc":"2.0","method":"scene/click","params":{"at":{"x":64.0,"y":48.0},"button":"right"},"id":1}"#;
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
     assert!(resp.error.is_none(), "{:?}", resp.error);
@@ -1114,8 +1182,8 @@ fn r887_scene_click_explicit_left_button_enqueues_click() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let mut inbox: Vec<DeferredInput> = Vec::new();
-    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
-        .with_deferred_inputs(&mut inbox);
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
     let req = r#"{"jsonrpc":"2.0","method":"scene/click","params":{"at":{"x":1.0,"y":2.0},"button":"left"},"id":1}"#;
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
     assert!(resp.error.is_none(), "{:?}", resp.error);
@@ -1135,8 +1203,8 @@ fn r887_scene_click_middle_button_redirects_to_drag() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let mut inbox: Vec<DeferredInput> = Vec::new();
-    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
-        .with_deferred_inputs(&mut inbox);
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
     let req = r#"{"jsonrpc":"2.0","method":"scene/click","params":{"at":{"x":1.0,"y":2.0},"button":"middle"},"id":1}"#;
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
     let err = resp.error.expect("middle button must error");
@@ -1156,13 +1224,15 @@ fn r887_scene_click_unknown_or_non_string_button_is_invalid() {
         let previews = PreviewLedger::default();
         let revision = SceneRevision::default();
         let mut inbox: Vec<DeferredInput> = Vec::new();
-        let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
-            .with_deferred_inputs(&mut inbox);
+        let mut ctx =
+            DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
         let req = format!(
             r#"{{"jsonrpc":"2.0","method":"scene/click","params":{{"at":{{"x":1.0,"y":2.0}},"button":{bad}}},"id":1}}"#
         );
         let resp = parse_response(&dispatch(&mut ctx, &req).unwrap());
-        let err = resp.error.unwrap_or_else(|| panic!("button {bad} must error"));
+        let err = resp
+            .error
+            .unwrap_or_else(|| panic!("button {bad} must error"));
         assert_eq!(err.code, -32602, "button {bad}");
         assert!(inbox.is_empty(), "rejected request enqueues nothing");
     }
@@ -1200,8 +1270,8 @@ fn r881_scene_drag_defaults_to_left_button() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let mut inbox: Vec<DeferredInput> = Vec::new();
-    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
-        .with_deferred_inputs(&mut inbox);
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
     let req = r#"{"jsonrpc":"2.0","method":"scene/drag","params":{"from":{"x":10.0,"y":10.0},"to":{"x":50.0,"y":50.0}},"id":1}"#;
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
     assert!(resp.error.is_none(), "{:?}", resp.error);
@@ -1219,8 +1289,8 @@ fn r881_scene_drag_middle_button_enqueues_middle() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let mut inbox: Vec<DeferredInput> = Vec::new();
-    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
-        .with_deferred_inputs(&mut inbox);
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
     let req = r#"{"jsonrpc":"2.0","method":"scene/drag","params":{"from":{"x":10.0,"y":10.0},"to":{"x":50.0,"y":50.0},"button":"middle"},"id":2}"#;
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
     assert!(resp.error.is_none(), "{:?}", resp.error);
@@ -1239,8 +1309,8 @@ fn r881_scene_drag_unknown_button_is_invalid_params() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let mut inbox: Vec<DeferredInput> = Vec::new();
-    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
-        .with_deferred_inputs(&mut inbox);
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
     let req = r#"{"jsonrpc":"2.0","method":"scene/drag","params":{"from":{"x":10.0,"y":10.0},"to":{"x":50.0,"y":50.0},"button":"right"},"id":3}"#;
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
     let err = resp.error.expect("unknown button must error");
@@ -1268,8 +1338,8 @@ fn scene_tick_enqueues_tick_with_dt() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let mut inbox: Vec<DeferredInput> = Vec::new();
-    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
-        .with_deferred_inputs(&mut inbox);
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
     let req = r#"{"jsonrpc":"2.0","method":"scene/tick","params":{"dt":0.25},"id":7}"#;
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
     assert!(resp.error.is_none(), "{:?}", resp.error);
@@ -1287,8 +1357,8 @@ fn scene_tick_missing_dt_errors() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let mut inbox: Vec<DeferredInput> = Vec::new();
-    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
-        .with_deferred_inputs(&mut inbox);
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
     let req = r#"{"jsonrpc":"2.0","method":"scene/tick","params":{},"id":7}"#;
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
     assert!(resp.error.is_some(), "missing dt must error");
@@ -1302,11 +1372,9 @@ fn scene_tick_rejects_negative_and_nan_dt() {
         let previews = PreviewLedger::default();
         let revision = SceneRevision::default();
         let mut inbox: Vec<DeferredInput> = Vec::new();
-        let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
-            .with_deferred_inputs(&mut inbox);
-        let req = format!(
-            r#"{{"jsonrpc":"2.0","method":"scene/tick","params":{bad},"id":7}}"#
-        );
+        let mut ctx =
+            DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
+        let req = format!(r#"{{"jsonrpc":"2.0","method":"scene/tick","params":{bad},"id":7}}"#);
         let resp = parse_response(&dispatch(&mut ctx, &req).unwrap());
         assert!(resp.error.is_some(), "dt {bad} must error");
         assert!(inbox.is_empty(), "no tick enqueued for {bad}");
@@ -1382,8 +1450,8 @@ fn r888_1_set_fps_without_pacing_capability_is_unavailable() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let mut inbox: Vec<DeferredInput> = Vec::new();
-    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
-        .with_deferred_inputs(&mut inbox);
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
     let req = r#"{"jsonrpc":"2.0","method":"scene/set_fps","params":{"fps":30},"id":7}"#;
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
     let err = resp.error.expect("must error without pacing capability");
@@ -1436,14 +1504,17 @@ fn r888_pacing_state_reports_default_policy_as_null_fps() {
 #[test]
 fn r888_pacing_state_reports_override_including_paused_zero() {
     for (state, expect) in [
-        (PacingState::Override(144), serde_json::json!({ "fps": 144 })),
+        (
+            PacingState::Override(144),
+            serde_json::json!({ "fps": 144 }),
+        ),
         (PacingState::Override(0), serde_json::json!({ "fps": 0 })),
     ] {
         let mut scene = counted_scene(0);
         let previews = PreviewLedger::default();
         let revision = SceneRevision::default();
-        let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
-            .with_pacing_state(state);
+        let mut ctx =
+            DispatchContext::new(&mut scene, &previews, &revision).with_pacing_state(state);
         let req = r#"{"jsonrpc":"2.0","method":"scene/pacing_state","id":7}"#;
         let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
         assert!(resp.error.is_none(), "{state:?}: {:?}", resp.error);
@@ -1461,9 +1532,7 @@ fn scene_set_fps_rejects_missing_negative_and_non_integer() {
         let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
             .with_deferred_inputs(&mut inbox)
             .with_pacing_state(PacingState::DefaultPolicy);
-        let req = format!(
-            r#"{{"jsonrpc":"2.0","method":"scene/set_fps","params":{bad},"id":7}}"#
-        );
+        let req = format!(r#"{{"jsonrpc":"2.0","method":"scene/set_fps","params":{bad},"id":7}}"#);
         let resp = parse_response(&dispatch(&mut ctx, &req).unwrap());
         assert!(resp.error.is_some(), "fps {bad} must error");
         assert!(inbox.is_empty(), "no set_fps enqueued for {bad}");
@@ -1478,8 +1547,8 @@ fn scene_modifiers_enqueues_absolute_state() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let mut inbox: Vec<DeferredInput> = Vec::new();
-    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
-        .with_deferred_inputs(&mut inbox);
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
     let req = r#"{"jsonrpc":"2.0","method":"scene/modifiers","params":{"shift":true,"ctrl":true},"id":7}"#;
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
     assert!(resp.error.is_none(), "{:?}", resp.error);
@@ -1507,8 +1576,8 @@ fn scene_modifiers_empty_params_releases_all() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let mut inbox: Vec<DeferredInput> = Vec::new();
-    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
-        .with_deferred_inputs(&mut inbox);
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
     let req = r#"{"jsonrpc":"2.0","method":"scene/modifiers","params":{},"id":7}"#;
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
     assert!(resp.error.is_none(), "{:?}", resp.error);
@@ -1531,12 +1600,15 @@ fn scene_modifiers_rejects_non_boolean() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let mut inbox: Vec<DeferredInput> = Vec::new();
-    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
-        .with_deferred_inputs(&mut inbox);
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
     let req = r#"{"jsonrpc":"2.0","method":"scene/modifiers","params":{"shift":1},"id":7}"#;
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
     assert!(resp.error.is_some(), "non-boolean modifier must error");
-    assert!(inbox.is_empty(), "no SetModifiers enqueued on malformed call");
+    assert!(
+        inbox.is_empty(),
+        "no SetModifiers enqueued on malformed call"
+    );
 }
 
 // ---- R695 §5.49 §5.35 — scene/hover (DeferredInput::Hover) ----
@@ -1547,9 +1619,10 @@ fn scene_hover_enqueues_hover_at_coordinate() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let mut inbox: Vec<DeferredInput> = Vec::new();
-    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
-        .with_deferred_inputs(&mut inbox);
-    let req = r#"{"jsonrpc":"2.0","method":"scene/hover","params":{"at":{"x":64.0,"y":48.0}},"id":91}"#;
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/hover","params":{"at":{"x":64.0,"y":48.0}},"id":91}"#;
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
     assert!(resp.error.is_none(), "{:?}", resp.error);
     assert_eq!(resp.result, Some(Value::Null));
@@ -1564,7 +1637,8 @@ fn scene_hover_enqueues_hover_at_coordinate() {
 #[test]
 fn scene_hover_without_inbox_is_unavailable() {
     let mut scene = counted_scene(0);
-    let req = r#"{"jsonrpc":"2.0","method":"scene/hover","params":{"at":{"x":0.0,"y":0.0}},"id":92}"#;
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/hover","params":{"at":{"x":0.0,"y":0.0}},"id":92}"#;
     let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
     let err = resp.error.unwrap();
     assert_eq!(err.code, -32602);
@@ -1578,8 +1652,8 @@ fn scene_hover_missing_at_is_invalid() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let mut inbox: Vec<DeferredInput> = Vec::new();
-    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
-        .with_deferred_inputs(&mut inbox);
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
     let req = r#"{"jsonrpc":"2.0","method":"scene/hover","params":{},"id":93}"#;
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
     let err = resp.error.unwrap();
@@ -1590,7 +1664,8 @@ fn scene_hover_missing_at_is_invalid() {
 #[test]
 fn scene_click_v1_without_inbox_is_unavailable() {
     let mut scene = counted_scene(0);
-    let req = r#"{"jsonrpc":"2.0","method":"scene/click","params":{"at":{"x":0.0,"y":0.0}},"id":10}"#;
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/click","params":{"at":{"x":0.0,"y":0.0}},"id":10}"#;
     let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
     let err = resp.error.unwrap();
     assert_eq!(err.code, -32602);
@@ -1604,8 +1679,8 @@ fn scene_click_v1_missing_at_is_invalid() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let mut inbox: Vec<DeferredInput> = Vec::new();
-    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
-        .with_deferred_inputs(&mut inbox);
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
     let req = r#"{"jsonrpc":"2.0","method":"scene/click","params":{},"id":11}"#;
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
     let err = resp.error.unwrap();
@@ -1619,8 +1694,8 @@ fn scene_click_v1_at_missing_y_is_invalid() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let mut inbox: Vec<DeferredInput> = Vec::new();
-    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
-        .with_deferred_inputs(&mut inbox);
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
     let req = r#"{"jsonrpc":"2.0","method":"scene/click","params":{"at":{"x":1.0}},"id":12}"#;
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
     let err = resp.error.unwrap();
@@ -1636,7 +1711,8 @@ fn scene_rewind_writes_then_query_observes_new_value() {
     let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
     assert!(resp.error.is_none());
 
-    let req2 = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/count"},"id":12}"#;
+    let req2 =
+        r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/count"},"id":12}"#;
     let resp2 = parse_response(&dispatch_t(&mut scene, req2).unwrap());
     assert_eq!(resp2.result.unwrap(), Value::Number(123.into()));
 }
@@ -1644,7 +1720,8 @@ fn scene_rewind_writes_then_query_observes_new_value() {
 #[test]
 fn scene_rewind_missing_value_param_is_invalid() {
     let mut scene = counted_scene(0);
-    let req = r#"{"jsonrpc":"2.0","method":"scene/rewind","params":{"path":"/external/count"},"id":13}"#;
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/rewind","params":{"path":"/external/count"},"id":13}"#;
     let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
     let err = resp.error.unwrap();
     assert_eq!(err.code, -32602);
@@ -1674,9 +1751,7 @@ fn scene_snapshot_missing_path_is_invalid() {
 #[test]
 fn scene_snapshot_container_wire_carries_tag_and_children_array() {
     use pinion_core::scene::ContainerNode;
-    let mut scene = Scene::Container(
-        ContainerNode::new(vec![counted_scene(7)]).with_tag("root"),
-    );
+    let mut scene = Scene::Container(ContainerNode::new(vec![counted_scene(7)]).with_tag("root"));
     let req = r#"{"jsonrpc":"2.0","method":"scene/snapshot","params":{"path":""},"id":140}"#;
     let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
     assert!(resp.error.is_none(), "{:?}", resp.error);
@@ -1695,7 +1770,7 @@ fn scene_snapshot_container_wire_carries_tag_and_children_array() {
 
 #[test]
 fn scene_snapshot_paint_mode_uses_producer_scene() {
-    use pinion_core::scene::{ContainerNode, ScrollNode, Rect};
+    use pinion_core::scene::{ContainerNode, Rect, ScrollNode};
     let mut state = counted_scene(0);
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
@@ -1711,8 +1786,8 @@ fn scene_snapshot_paint_mode_uses_producer_scene() {
             .with_tag("root"),
         )
     };
-    let mut ctx = DispatchContext::new(&mut state, &previews, &revision)
-        .with_paint_producer(&mut produce);
+    let mut ctx =
+        DispatchContext::new(&mut state, &previews, &revision).with_paint_producer(&mut produce);
     let req = r#"{"jsonrpc":"2.0","method":"scene/snapshot","params":{"path":"","from":"paint","viewport":{"w":360,"h":320}},"id":142}"#;
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
     assert!(resp.error.is_none(), "{:?}", resp.error);
@@ -1735,10 +1810,7 @@ fn scene_snapshot_paint_mode_without_producer_is_unavailable() {
     let err = resp.error.unwrap();
     assert_eq!(err.code, -32602);
     let data = err.data.as_ref().and_then(Value::as_str).unwrap_or("");
-    assert!(
-        data.contains("PaintProducerUnavailable"),
-        "data: {data:?}",
-    );
+    assert!(data.contains("PaintProducerUnavailable"), "data: {data:?}",);
 }
 
 // ---- R51.195 §5.49 §5.45 — scene/wheel injection ----
@@ -1749,8 +1821,8 @@ fn scene_wheel_enqueues_lines_delta_into_inbox() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let mut inbox: Vec<DeferredInput> = Vec::new();
-    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
-        .with_deferred_inputs(&mut inbox);
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
     let req = r#"{"jsonrpc":"2.0","method":"scene/wheel","params":{"at":{"x":180.0,"y":160.0},"delta":{"lines":{"dx":0.0,"dy":3.0}}},"id":200}"#;
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
     assert!(resp.error.is_none(), "{:?}", resp.error);
@@ -1774,8 +1846,8 @@ fn scene_wheel_enqueues_pixels_delta_into_inbox() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let mut inbox: Vec<DeferredInput> = Vec::new();
-    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
-        .with_deferred_inputs(&mut inbox);
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
     let req = r#"{"jsonrpc":"2.0","method":"scene/wheel","params":{"at":{"x":50.0,"y":40.0},"delta":{"pixels":{"dx":0.0,"dy":60.0}}},"id":201}"#;
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
     assert!(resp.error.is_none());
@@ -1807,8 +1879,8 @@ fn scene_wheel_missing_at_is_invalid() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let mut inbox: Vec<DeferredInput> = Vec::new();
-    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
-        .with_deferred_inputs(&mut inbox);
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
     let req = r#"{"jsonrpc":"2.0","method":"scene/wheel","params":{"delta":{"lines":{"dx":0.0,"dy":1.0}}},"id":203}"#;
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
     let err = resp.error.unwrap();
@@ -1824,8 +1896,8 @@ fn scene_wheel_delta_with_both_lines_and_pixels_is_invalid() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let mut inbox: Vec<DeferredInput> = Vec::new();
-    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
-        .with_deferred_inputs(&mut inbox);
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
     let req = r#"{"jsonrpc":"2.0","method":"scene/wheel","params":{"at":{"x":0.0,"y":0.0},"delta":{"lines":{"dx":0.0,"dy":1.0},"pixels":{"dx":0.0,"dy":60.0}}},"id":204}"#;
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
     let err = resp.error.unwrap();
@@ -1840,8 +1912,8 @@ fn scene_wheel_delta_missing_both_is_invalid() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let mut inbox: Vec<DeferredInput> = Vec::new();
-    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
-        .with_deferred_inputs(&mut inbox);
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
     let req = r#"{"jsonrpc":"2.0","method":"scene/wheel","params":{"at":{"x":0.0,"y":0.0},"delta":{}},"id":205}"#;
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
     let err = resp.error.unwrap();
@@ -1863,7 +1935,7 @@ fn scene_snapshot_invalid_from_value_is_rejected() {
 
 #[test]
 fn scene_snapshot_scroll_wire_carries_viewport_offset_tag_content() {
-    use pinion_core::scene::{ContainerNode, ScrollNode, Rect};
+    use pinion_core::scene::{ContainerNode, Rect, ScrollNode};
     let inner = counted_scene(3);
     let mut scene = Scene::Scroll(
         ScrollNode::new(
@@ -1907,10 +1979,9 @@ fn snapshot_request_root_state() -> &'static str {
 
 #[test]
 fn scene_snapshot_box_wire_carries_rect_and_tag() {
-    use pinion_core::scene::{BoxNode, Rect};
     use pinion_core::Color;
-    let node = BoxNode::filled(Rect::new(10, 20, 30, 40), Color::default())
-        .with_tag("box_tag");
+    use pinion_core::scene::{BoxNode, Rect};
+    let node = BoxNode::filled(Rect::new(10, 20, 30, 40), Color::default()).with_tag("box_tag");
     let mut scene = Scene::Box(node);
     let resp = parse_response(&dispatch_t(&mut scene, snapshot_request_root_state()).unwrap());
     assert!(resp.error.is_none(), "{:?}", resp.error);
@@ -1926,8 +1997,8 @@ fn scene_snapshot_box_wire_carries_rect_and_tag() {
 
 #[test]
 fn scene_snapshot_untagged_box_wire_reports_null_tag() {
-    use pinion_core::scene::{BoxNode, Rect};
     use pinion_core::Color;
+    use pinion_core::scene::{BoxNode, Rect};
     let mut scene = Scene::Box(BoxNode::filled(Rect::new(0, 0, 1, 1), Color::default()));
     let resp = parse_response(&dispatch_t(&mut scene, snapshot_request_root_state()).unwrap());
     assert!(resp.error.is_none(), "{:?}", resp.error);
@@ -1941,9 +2012,9 @@ fn r55_g8_scene_snapshot_box_wire_carries_style_object() {
     // round-trips through the wire as a `{fill, border, corner_radius}`
     // JSON object. Border serializes nested with placement variant
     // string. AI clients can verify the painted chrome without OCR.
+    use pinion_core::Color;
     use pinion_core::scene::{BoxNode, Rect};
     use pinion_core::style::{Border, BorderPlacement, BoxStyle};
-    use pinion_core::Color;
     let mut node = BoxNode::filled(Rect::new(0, 0, 50, 50), Color::default());
     node.style = BoxStyle::filled(Color::rgba(0x11, 0x22, 0x33, 0xff))
         .with_border(
@@ -1955,7 +2026,11 @@ fn r55_g8_scene_snapshot_box_wire_carries_style_object() {
     let resp = parse_response(&dispatch_t(&mut scene, snapshot_request_root_state()).unwrap());
     assert!(resp.error.is_none(), "{:?}", resp.error);
     let result = resp.result.unwrap();
-    let style = result.get("style").expect("style field present").as_object().unwrap();
+    let style = result
+        .get("style")
+        .expect("style field present")
+        .as_object()
+        .unwrap();
     let fill = style.get("fill").unwrap().as_object().unwrap();
     assert_eq!(fill.get("r"), Some(&Value::Number(0x11.into())));
     assert_eq!(fill.get("g"), Some(&Value::Number(0x22.into())));
@@ -1964,16 +2039,19 @@ fn r55_g8_scene_snapshot_box_wire_carries_style_object() {
     assert_eq!(style.get("corner_radius"), Some(&Value::Number(6.into())));
     let border = style.get("border").unwrap().as_object().unwrap();
     assert_eq!(border.get("width"), Some(&Value::Number(2.into())));
-    assert_eq!(border.get("placement"), Some(&Value::String("Outside".into())));
+    assert_eq!(
+        border.get("placement"),
+        Some(&Value::String("Outside".into()))
+    );
 }
 
 #[test]
 fn r55_g8_scene_snapshot_text_wire_carries_style_object() {
     // R55.G.8 §5.49 — TextStyle visual axis (family / size / colour /
     // weight / style) round-trips through the wire.
+    use pinion_core::Color;
     use pinion_core::scene::{Rect, TextNode};
     use pinion_core::style::{FontStyle, FontWeight, TextStyle};
-    use pinion_core::Color;
     let mut node = TextNode::new("hi", Rect::new(0, 0, 30, 16));
     node.style = TextStyle::new()
         .with_size_px(18)
@@ -1984,10 +2062,17 @@ fn r55_g8_scene_snapshot_text_wire_carries_style_object() {
     let resp = parse_response(&dispatch_t(&mut scene, snapshot_request_root_state()).unwrap());
     assert!(resp.error.is_none(), "{:?}", resp.error);
     let result = resp.result.unwrap();
-    let style = result.get("style").expect("style field present").as_object().unwrap();
+    let style = result
+        .get("style")
+        .expect("style field present")
+        .as_object()
+        .unwrap();
     assert_eq!(style.get("font_size_px"), Some(&Value::Number(18.into())));
     assert_eq!(style.get("font_weight"), Some(&Value::Number(700.into())));
-    assert_eq!(style.get("font_style"), Some(&Value::String("Italic".into())));
+    assert_eq!(
+        style.get("font_style"),
+        Some(&Value::String("Italic".into()))
+    );
     let fg = style.get("fg_color").unwrap().as_object().unwrap();
     assert_eq!(fg.get("r"), Some(&Value::Number(0x44.into())));
     assert_eq!(fg.get("a"), Some(&Value::Number(0xff.into())));
@@ -2023,15 +2108,18 @@ fn r55_g11_scene_snapshot_path_wire_carries_style() {
         PathStyle::default(),
     );
     node.style = PathStyle::stroked(
-        Stroke::new(Color::rgba(0x10, 0x20, 0x30, 0xff), 5)
-            .with_cap(StrokeCap::Square),
+        Stroke::new(Color::rgba(0x10, 0x20, 0x30, 0xff), 5).with_cap(StrokeCap::Square),
     )
     .with_fill(Color::rgba(0xaa, 0xbb, 0xcc, 0xff));
     let mut scene = Scene::Path(node);
     let resp = parse_response(&dispatch_t(&mut scene, snapshot_request_root_state()).unwrap());
     assert!(resp.error.is_none(), "{:?}", resp.error);
     let result = resp.result.unwrap();
-    let style = result.get("style").expect("style present").as_object().unwrap();
+    let style = result
+        .get("style")
+        .expect("style present")
+        .as_object()
+        .unwrap();
     let stroke = style.get("stroke").unwrap().as_object().unwrap();
     assert_eq!(stroke.get("width"), Some(&Value::Number(5.into())));
     assert_eq!(stroke.get("cap"), Some(&Value::String("Square".into())));
@@ -2068,10 +2156,7 @@ fn r55_g11_scene_snapshot_image_wire_carries_style() {
     // the wire. Optional tint is `null` when absent.
     use pinion_core::scene::{ImageNode, Rect};
     use pinion_core::style::{Fit, ImageStyle};
-    let mut node = ImageNode::new(
-        "asset://icon.png".to_string(),
-        Rect::new(0, 0, 64, 64),
-    );
+    let mut node = ImageNode::new("asset://icon.png".to_string(), Rect::new(0, 0, 64, 64));
     node.style = ImageStyle::default()
         .with_fit(Fit::Cover)
         .with_tint(Color::rgba(0x44, 0x55, 0x66, 0xff));
@@ -2105,9 +2190,7 @@ fn r55_g10_scene_snapshot_text_wire_carries_layout_axis() {
     // decoration / overflow round-trip through the wire alongside
     // the visual-axis fields landed by R55.G.8.
     use pinion_core::scene::{Rect, TextNode};
-    use pinion_core::style::{
-        LineHeight, TextAlign, TextDecoration, TextOverflow, TextStyle,
-    };
+    use pinion_core::style::{LineHeight, TextAlign, TextDecoration, TextOverflow, TextStyle};
     let mut node = TextNode::new("hi", Rect::default());
     node.style = TextStyle::new()
         .with_line_height(LineHeight::MultiplierX100(150))
@@ -2182,8 +2265,8 @@ fn r55_g8_scene_snapshot_box_wire_null_border_when_absent() {
     // R55.G.8 §5.49 — `BoxStyle.border = None` serializes as JSON
     // `null` so wire consumers can distinguish "no border" from a
     // zero-width / transparent border.
-    use pinion_core::scene::{BoxNode, Rect};
     use pinion_core::Color;
+    use pinion_core::scene::{BoxNode, Rect};
     let node = BoxNode::filled(Rect::new(0, 0, 10, 10), Color::default());
     let mut scene = Scene::Box(node);
     let resp = parse_response(&dispatch_t(&mut scene, snapshot_request_root_state()).unwrap());
@@ -2240,18 +2323,9 @@ fn scene_snapshot_path_wire_carries_rect_tag_and_commands() {
     // tagged objects, one per `PathCommand` variant.
     let cmds = result.get("commands").unwrap().as_array().unwrap();
     assert_eq!(cmds.len(), 4);
-    assert_eq!(
-        cmds[0].get("type"),
-        Some(&Value::String("MoveTo".into())),
-    );
-    assert_eq!(
-        cmds[1].get("type"),
-        Some(&Value::String("LineTo".into())),
-    );
-    assert_eq!(
-        cmds[2].get("type"),
-        Some(&Value::String("CurveTo".into())),
-    );
+    assert_eq!(cmds[0].get("type"), Some(&Value::String("MoveTo".into())),);
+    assert_eq!(cmds[1].get("type"), Some(&Value::String("LineTo".into())),);
+    assert_eq!(cmds[2].get("type"), Some(&Value::String("CurveTo".into())),);
     assert!(cmds[2].get("c1").is_some());
     assert!(cmds[2].get("c2").is_some());
     assert!(cmds[2].get("end").is_some());
@@ -2304,7 +2378,10 @@ fn scene_snapshot_external_wire_now_carries_rect_and_tag() {
     assert!(resp.error.is_none(), "{:?}", resp.error);
     let result = resp.result.unwrap();
     assert_eq!(result.get("type"), Some(&Value::String("External".into())));
-    assert_eq!(result.get("tag"), Some(&Value::String("main_toggle".into())));
+    assert_eq!(
+        result.get("tag"),
+        Some(&Value::String("main_toggle".into()))
+    );
     let rect = snapshot_rect_obj(&result);
     assert_eq!(rect.get("x"), Some(&Value::Number(100.into())));
     assert_eq!(rect.get("y"), Some(&Value::Number(50.into())));
@@ -2353,15 +2430,12 @@ fn build_scroll_producer(
     }
 }
 
-fn dispatch_scene_scroll(
-    producer: &mut dyn FnMut(u32, u32) -> Scene,
-    req: &str,
-) -> Response {
+fn dispatch_scene_scroll(producer: &mut dyn FnMut(u32, u32) -> Scene, req: &str) -> Response {
     let mut state = counted_scene(0);
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
-    let mut ctx = DispatchContext::new(&mut state, &previews, &revision)
-        .with_paint_producer(producer);
+    let mut ctx =
+        DispatchContext::new(&mut state, &previews, &revision).with_paint_producer(producer);
     parse_response(&dispatch(&mut ctx, req).unwrap())
 }
 
@@ -2499,7 +2573,10 @@ fn scene_scroll_at_and_path_together_is_invalid() {
     assert_eq!(err.code, -32602);
     let data = err.data.as_ref().and_then(Value::as_str).unwrap_or("");
     assert!(data.contains("mutually exclusive"), "data: {data:?}");
-    assert!(data.contains("path") && data.contains("at"), "data: {data:?}");
+    assert!(
+        data.contains("path") && data.contains("at"),
+        "data: {data:?}"
+    );
 }
 
 #[test]
@@ -2513,7 +2590,10 @@ fn scene_scroll_neither_path_nor_at_returns_invalid_params() {
     let err = resp.error.unwrap();
     assert_eq!(err.code, -32602);
     let data = err.data.as_ref().and_then(Value::as_str).unwrap_or("");
-    assert!(data.contains("requires") && data.contains("path"), "data: {data:?}");
+    assert!(
+        data.contains("requires") && data.contains("path"),
+        "data: {data:?}"
+    );
     assert!(data.contains("at"), "data: {data:?}");
 }
 
@@ -2541,8 +2621,8 @@ fn scene_click_path_inside_scroll_translates_to_absolute_coords() {
     // scroll-local rect; the click target must be the window-
     // absolute rect (`viewport.{x,y} + row.{x,y} - offset`) so
     // the InputRouter hit-test lands on the right cell.
-    use pinion_core::scene::{BoxNode, ContainerNode, Rect, ScrollNode};
     use pinion_core::Color;
+    use pinion_core::scene::{BoxNode, ContainerNode, Rect, ScrollNode};
     let mut state = counted_scene(0);
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
@@ -2551,13 +2631,11 @@ fn scene_click_path_inside_scroll_translates_to_absolute_coords() {
         // Row at content-local (0, 34, 220, 28) inside a Scroll
         // at viewport (70, 78, 220, 164) with offset_y = 0.
         let row = Scene::Box(
-            BoxNode::filled(Rect::new(0, 34, 220, 28), Color::default())
-                .with_tag("main_list#1"),
+            BoxNode::filled(Rect::new(0, 34, 220, 28), Color::default()).with_tag("main_list#1"),
         );
-        let content =
-            Scene::Container(ContainerNode::new(vec![row]).with_tag("rows"));
-        let scroll = ScrollNode::new(Rect::new(70, 78, 220, 164), content)
-            .with_tag("main_list_scroll");
+        let content = Scene::Container(ContainerNode::new(vec![row]).with_tag("rows"));
+        let scroll =
+            ScrollNode::new(Rect::new(70, 78, 220, 164), content).with_tag("main_list_scroll");
         Scene::Container(ContainerNode::new(vec![Scene::Scroll(scroll)]))
     };
     let mut ctx = DispatchContext::new(&mut state, &previews, &revision)
@@ -2580,19 +2658,17 @@ fn scene_click_path_inside_scroll_translates_to_absolute_coords() {
 fn scene_click_path_inside_scroll_with_offset_subtracts_offset() {
     // Same shape but the scroll has `offset_y = 30`, so the
     // visible row position shifts up by 30 pixels.
-    use pinion_core::scene::{BoxNode, ContainerNode, Rect, ScrollNode};
     use pinion_core::Color;
+    use pinion_core::scene::{BoxNode, ContainerNode, Rect, ScrollNode};
     let mut state = counted_scene(0);
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let mut inbox: Vec<DeferredInput> = Vec::new();
     let mut produce = |_w: u32, _h: u32| -> Scene {
         let row = Scene::Box(
-            BoxNode::filled(Rect::new(0, 100, 220, 28), Color::default())
-                .with_tag("main_list#3"),
+            BoxNode::filled(Rect::new(0, 100, 220, 28), Color::default()).with_tag("main_list#3"),
         );
-        let content =
-            Scene::Container(ContainerNode::new(vec![row]).with_tag("rows"));
+        let content = Scene::Container(ContainerNode::new(vec![row]).with_tag("rows"));
         let scroll = ScrollNode::new(Rect::new(70, 78, 220, 164), content)
             .with_tag("main_list_scroll")
             .with_offset(0, 30);
@@ -2622,8 +2698,8 @@ fn r55_g7_scene_click_path_overwide_row_clips_to_viewport() {
     // viewport. The new translate_and_clip step intersects the
     // row's window-abs rect with the viewport stack so the click
     // lands inside the visible 220-wide slice.
-    use pinion_core::scene::{BoxNode, ContainerNode, Rect, ScrollNode};
     use pinion_core::Color;
+    use pinion_core::scene::{BoxNode, ContainerNode, Rect, ScrollNode};
     let mut state = counted_scene(0);
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
@@ -2632,8 +2708,7 @@ fn r55_g7_scene_click_path_overwide_row_clips_to_viewport() {
         // Row is 800 wide (overflows viewport 220) at content-local
         // (0, 0, 800, 28) — viewport at (70, 78, 220, 164).
         let row = Scene::Box(
-            BoxNode::filled(Rect::new(0, 0, 800, 28), Color::default())
-                .with_tag("wide_row"),
+            BoxNode::filled(Rect::new(0, 0, 800, 28), Color::default()).with_tag("wide_row"),
         );
         let content = Scene::Container(ContainerNode::new(vec![row]));
         let scroll = ScrollNode::new(Rect::new(70, 78, 220, 164), content);
@@ -2642,8 +2717,7 @@ fn r55_g7_scene_click_path_overwide_row_clips_to_viewport() {
     let mut ctx = DispatchContext::new(&mut state, &previews, &revision)
         .with_paint_producer(&mut produce)
         .with_deferred_inputs(&mut inbox);
-    let req =
-        r#"{"jsonrpc":"2.0","method":"scene/click","params":{"path":"wide_row"},"id":810}"#;
+    let req = r#"{"jsonrpc":"2.0","method":"scene/click","params":{"path":"wide_row"},"id":810}"#;
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
     assert!(resp.error.is_none(), "{:?}", resp.error);
     let DeferredInput::Click { x, y } = inbox[0] else {
@@ -2661,8 +2735,8 @@ fn r55_g7_scene_click_path_partially_scrolled_off_row_clips_to_visible() {
     // R55.G.7 carry-of-R51.200 — row that bleeds past the
     // viewport's bottom edge (height extends beyond clip): the
     // returned rect now matches only the visible portion.
-    use pinion_core::scene::{BoxNode, ContainerNode, Rect, ScrollNode};
     use pinion_core::Color;
+    use pinion_core::scene::{BoxNode, ContainerNode, Rect, ScrollNode};
     let mut state = counted_scene(0);
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
@@ -2671,8 +2745,7 @@ fn r55_g7_scene_click_path_partially_scrolled_off_row_clips_to_visible() {
         // 100-tall row at content-local (0, 0, 220, 100), viewport
         // height = 50, offset = 0 → bottom half is clipped.
         let row = Scene::Box(
-            BoxNode::filled(Rect::new(0, 0, 220, 100), Color::default())
-                .with_tag("tall_row"),
+            BoxNode::filled(Rect::new(0, 0, 220, 100), Color::default()).with_tag("tall_row"),
         );
         let content = Scene::Container(ContainerNode::new(vec![row]));
         let scroll = ScrollNode::new(Rect::new(0, 0, 220, 50), content);
@@ -2681,8 +2754,7 @@ fn r55_g7_scene_click_path_partially_scrolled_off_row_clips_to_visible() {
     let mut ctx = DispatchContext::new(&mut state, &previews, &revision)
         .with_paint_producer(&mut produce)
         .with_deferred_inputs(&mut inbox);
-    let req =
-        r#"{"jsonrpc":"2.0","method":"scene/click","params":{"path":"tall_row"},"id":811}"#;
+    let req = r#"{"jsonrpc":"2.0","method":"scene/click","params":{"path":"tall_row"},"id":811}"#;
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
     assert!(resp.error.is_none(), "{:?}", resp.error);
     let DeferredInput::Click { x, y } = inbox[0] else {
@@ -2699,8 +2771,8 @@ fn r55_g7_scene_click_path_fully_scrolled_off_row_returns_not_found() {
     // R55.G.7 carry-of-R51.200 — row completely past the viewport
     // edge (scrolled off) no longer returns a degenerate (0,0)
     // saturation; the upstream handler surfaces "tag not found".
-    use pinion_core::scene::{BoxNode, ContainerNode, Rect, ScrollNode};
     use pinion_core::Color;
+    use pinion_core::scene::{BoxNode, ContainerNode, Rect, ScrollNode};
     let mut state = counted_scene(0);
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
@@ -2709,8 +2781,7 @@ fn r55_g7_scene_click_path_fully_scrolled_off_row_returns_not_found() {
         // Row at content-local (0, 500, 220, 28) — far below
         // viewport of (0, 0, 220, 100) with offset 0.
         let row = Scene::Box(
-            BoxNode::filled(Rect::new(0, 500, 220, 28), Color::default())
-                .with_tag("offscreen_row"),
+            BoxNode::filled(Rect::new(0, 500, 220, 28), Color::default()).with_tag("offscreen_row"),
         );
         let content = Scene::Container(ContainerNode::new(vec![row]));
         let scroll = ScrollNode::new(Rect::new(0, 0, 220, 100), content);
@@ -2725,7 +2796,10 @@ fn r55_g7_scene_click_path_fully_scrolled_off_row_returns_not_found() {
     // Pre-R55.G.7 this returned success with click coords saturated
     // to (110, 0) — a phantom click at the window top. Now the
     // handler explicitly fails: tag is not visible.
-    assert!(resp.error.is_some(), "expected error for fully-scrolled-off tag");
+    assert!(
+        resp.error.is_some(),
+        "expected error for fully-scrolled-off tag"
+    );
     assert_eq!(inbox.len(), 0, "no phantom click enqueued");
 }
 
@@ -2739,9 +2813,10 @@ fn scene_wheel_path_resolves_to_tag_rect_center() {
     let revision = SceneRevision::default();
     let mut inbox: Vec<DeferredInput> = Vec::new();
     let mut produce = |_w: u32, _h: u32| -> Scene {
-        let scroll = ScrollNode::new(Rect::new(70, 78, 220, 164), Scene::Container(
-            ContainerNode::new(vec![]),
-        ))
+        let scroll = ScrollNode::new(
+            Rect::new(70, 78, 220, 164),
+            Scene::Container(ContainerNode::new(vec![])),
+        )
         .with_tag("main_list_scroll");
         Scene::Container(ContainerNode::new(vec![Scene::Scroll(scroll)]))
     };
@@ -2768,9 +2843,10 @@ fn scene_key_path_resolves_to_tag_rect_center() {
     let revision = SceneRevision::default();
     let mut inbox: Vec<DeferredInput> = Vec::new();
     let mut produce = |_w: u32, _h: u32| -> Scene {
-        let scroll = ScrollNode::new(Rect::new(0, 0, 220, 164), Scene::Container(
-            ContainerNode::new(vec![]),
-        ))
+        let scroll = ScrollNode::new(
+            Rect::new(0, 0, 220, 164),
+            Scene::Container(ContainerNode::new(vec![])),
+        )
         .with_tag("main_list_scroll");
         Scene::Container(ContainerNode::new(vec![Scene::Scroll(scroll)]))
     };
@@ -2781,7 +2857,13 @@ fn scene_key_path_resolves_to_tag_rect_center() {
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
     assert!(resp.error.is_none(), "{:?}", resp.error);
     assert_eq!(inbox.len(), 1);
-    let DeferredInput::Key { x, y, ref key, state: _ } = inbox[0] else {
+    let DeferredInput::Key {
+        x,
+        y,
+        ref key,
+        state: _,
+    } = inbox[0]
+    else {
         panic!("expected Key variant");
     };
     assert_eq!(key, "PageDown");
@@ -2794,18 +2876,21 @@ fn scene_key_path_resolves_to_tag_rect_center() {
 
 #[test]
 fn scene_click_path_resolves_to_tag_rect_center() {
-    use pinion_core::scene::{BoxNode, ContainerNode};
     use pinion_core::Color;
+    use pinion_core::scene::{BoxNode, ContainerNode};
     let mut state = counted_scene(0);
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let mut inbox: Vec<DeferredInput> = Vec::new();
     // Paint scene contains a tagged Container at (100, 50, 64, 32).
     let mut produce = |_w: u32, _h: u32| -> Scene {
-        let inner = Scene::Box(BoxNode::filled(
-            pinion_core::scene::Rect::new(100, 50, 64, 32),
-            Color::default(),
-        ).with_tag("main_toggle"));
+        let inner = Scene::Box(
+            BoxNode::filled(
+                pinion_core::scene::Rect::new(100, 50, 64, 32),
+                Color::default(),
+            )
+            .with_tag("main_toggle"),
+        );
         let mut outer = ContainerNode::new(vec![inner]);
         outer.rect = pinion_core::scene::Rect::new(0, 0, 360, 220);
         Scene::Container(outer)
@@ -2833,10 +2918,9 @@ fn scene_click_path_without_paint_producer_is_unavailable() {
     let revision = SceneRevision::default();
     let mut inbox: Vec<DeferredInput> = Vec::new();
     // No paint producer registered.
-    let mut ctx = DispatchContext::new(&mut state, &previews, &revision)
-        .with_deferred_inputs(&mut inbox);
-    let req =
-        r#"{"jsonrpc":"2.0","method":"scene/click","params":{"path":"any_tag"},"id":601}"#;
+    let mut ctx =
+        DispatchContext::new(&mut state, &previews, &revision).with_deferred_inputs(&mut inbox);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/click","params":{"path":"any_tag"},"id":601}"#;
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
     let err = resp.error.unwrap();
     assert_eq!(err.code, -32602);
@@ -2875,9 +2959,7 @@ fn scene_click_at_and_path_together_is_invalid() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let mut inbox: Vec<DeferredInput> = Vec::new();
-    let mut produce = |_w: u32, _h: u32| -> Scene {
-        Scene::Container(ContainerNode::new(vec![]))
-    };
+    let mut produce = |_w: u32, _h: u32| -> Scene { Scene::Container(ContainerNode::new(vec![])) };
     let mut ctx = DispatchContext::new(&mut state, &previews, &revision)
         .with_paint_producer(&mut produce)
         .with_deferred_inputs(&mut inbox);
@@ -2895,8 +2977,8 @@ fn scene_click_neither_at_nor_path_is_invalid() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let mut inbox: Vec<DeferredInput> = Vec::new();
-    let mut ctx = DispatchContext::new(&mut state, &previews, &revision)
-        .with_deferred_inputs(&mut inbox);
+    let mut ctx =
+        DispatchContext::new(&mut state, &previews, &revision).with_deferred_inputs(&mut inbox);
     let req = r#"{"jsonrpc":"2.0","method":"scene/click","params":{},"id":604}"#;
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
     let err = resp.error.unwrap();
@@ -2916,7 +2998,8 @@ fn scene_dry_run_returns_hypothetical_snapshot_and_rolls_back() {
     assert_eq!(intro.get("count"), Some(&Value::Number(77.into())));
 
     // Follow-up query confirms the scene was rolled back.
-    let q_req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/count"},"id":17}"#;
+    let q_req =
+        r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/count"},"id":17}"#;
     let q_resp = parse_response(&dispatch_t(&mut scene, q_req).unwrap());
     assert_eq!(q_resp.result.unwrap(), Value::Number(3.into()));
 }
@@ -2924,7 +3007,8 @@ fn scene_dry_run_returns_hypothetical_snapshot_and_rolls_back() {
 #[test]
 fn scene_dry_run_missing_value_param_is_invalid() {
     let mut scene = counted_scene(0);
-    let req = r#"{"jsonrpc":"2.0","method":"scene/dry_run","params":{"path":"/external/count"},"id":18}"#;
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/dry_run","params":{"path":"/external/count"},"id":18}"#;
     let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
     let err = resp.error.unwrap();
     assert_eq!(err.code, -32602);
@@ -2945,7 +3029,8 @@ fn scene_simulate_two_steps_returns_compound_snapshot_and_rolls_back() {
     assert_eq!(intro.get("count"), Some(&Value::Number(999.into())));
 
     // Pre-call value (5) restored, not the intermediate (42).
-    let q_req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/count"},"id":161}"#;
+    let q_req =
+        r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/count"},"id":161}"#;
     let q_resp = parse_response(&dispatch_t(&mut scene, q_req).unwrap());
     assert_eq!(q_resp.result.unwrap(), Value::Number(5.into()));
 }
@@ -3026,7 +3111,8 @@ fn scene_query_on_button_external_returns_state_text() {
     let mut bx = ButtonExternal::new();
     bx.send(ButtonEvent::PointerEnter);
     let mut scene = Scene::External(ExternalNode::new(Box::new(bx)));
-    let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/state"},"id":42}"#;
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/state"},"id":42}"#;
     let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
     assert!(resp.error.is_none(), "unexpected error: {:?}", resp.error);
     let result = resp.result.expect("scene/query produced no result");
@@ -3044,7 +3130,8 @@ fn scene_query_on_button_external_returns_state_text() {
 fn scene_query_on_button_external_unknown_path_is_invalid() {
     use pinion_core::widgets::button::ButtonExternal;
     let mut scene = Scene::External(ExternalNode::new(Box::new(ButtonExternal::new())));
-    let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/nope"},"id":43}"#;
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/nope"},"id":43}"#;
     let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
     let err = resp.error.expect("unknown path should error");
     assert_eq!(err.code, -32602);
@@ -3124,8 +3211,7 @@ fn scene_intents_drains_counted_changed_after_rewind() {
     // wired through the dispatcher; the resulting intent surfaces
     // through `scene/intents` on the next call.
     let mut scene = counted_scene(0);
-    let rewind_req =
-        r#"{"jsonrpc":"2.0","method":"scene/rewind","params":{"path":"/external/count","value":11},"id":61}"#;
+    let rewind_req = r#"{"jsonrpc":"2.0","method":"scene/rewind","params":{"path":"/external/count","value":11},"id":61}"#;
     let _ = dispatch_t(&mut scene, rewind_req).unwrap();
 
     let req = r#"{"jsonrpc":"2.0","method":"scene/intents","id":62}"#;
@@ -3159,17 +3245,14 @@ fn scene_invoke_rejected_event_returns_invoke_rejected() {
     let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
     let err = resp.error.unwrap();
     assert_eq!(err.code, -32602);
-    assert_eq!(
-        err.data,
-        Some(Value::String("InvokeRejected".to_string()))
-    );
+    assert_eq!(err.data, Some(Value::String("InvokeRejected".to_string())));
 }
 
 // ---- §5.32 R39.1: scene/locate JSON-RPC wire ----
 
 fn box_scene(x: u32, y: u32, w: u32, h: u32) -> Scene {
-    use pinion_core::scene::{BoxNode, Rect};
     use pinion_core::Color;
+    use pinion_core::scene::{BoxNode, Rect};
     Scene::Box(BoxNode::filled(Rect::new(x, y, w, h), Color::default()))
 }
 
@@ -3182,12 +3265,18 @@ fn scene_locate_returns_path_bbox_ancestors() {
     let result = resp.result.expect("scene/locate produced no result");
     let obj = result.as_object().expect("result must be object");
     assert!(obj.contains_key("path"));
-    let bbox = obj.get("bbox").and_then(Value::as_object).expect("bbox object");
+    let bbox = obj
+        .get("bbox")
+        .and_then(Value::as_object)
+        .expect("bbox object");
     assert_eq!(bbox.get("x"), Some(&Value::Number(10.into())));
     assert_eq!(bbox.get("y"), Some(&Value::Number(20.into())));
     assert_eq!(bbox.get("w"), Some(&Value::Number(50.into())));
     assert_eq!(bbox.get("h"), Some(&Value::Number(30.into())));
-    let ancestors = obj.get("ancestors").and_then(Value::as_array).expect("ancestors array");
+    let ancestors = obj
+        .get("ancestors")
+        .and_then(Value::as_array)
+        .expect("ancestors array");
     assert!(ancestors.is_empty(), "root hit has no ancestors");
 }
 
@@ -3241,7 +3330,10 @@ fn scene_locate_region_disjoint_returns_empty_paths() {
     let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
     assert!(resp.error.is_none(), "disjoint never errors");
     let result = resp.result.expect("no result");
-    let paths = result.get("paths").and_then(Value::as_array).expect("paths");
+    let paths = result
+        .get("paths")
+        .and_then(Value::as_array)
+        .expect("paths");
     assert!(paths.is_empty());
 }
 
@@ -3259,7 +3351,8 @@ fn scene_locate_region_missing_w_is_invalid_params() {
 #[test]
 fn scene_bbox_returns_bbox_for_root_path() {
     let mut scene = box_scene(10, 20, 30, 40);
-    let req = r#"{"jsonrpc":"2.0","method":"scene/bbox","params":{"path":"/window[main]"},"id":107}"#;
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/bbox","params":{"path":"/window[main]"},"id":107}"#;
     let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
     assert!(resp.error.is_none());
     let bbox = resp.result.unwrap().get("bbox").cloned().unwrap();
@@ -3310,10 +3403,7 @@ impl crate::preview::Proposal for WireTestProposal {
     fn affected_paths(&self) -> Vec<String> {
         vec![self.target.clone()]
     }
-    fn apply(
-        &self,
-        _ctx: &mut crate::preview::ApplyContext<'_>,
-    ) -> Result<(), String> {
+    fn apply(&self, _ctx: &mut crate::preview::ApplyContext<'_>) -> Result<(), String> {
         // Used only by the wire-format tests for cancel /
         // list_previews; never reached because those flows do
         // not exercise apply_preview.
@@ -3336,7 +3426,9 @@ fn scene_cancel_preview_returns_cancelled_true_for_active_id() {
         r#"{{"jsonrpc":"2.0","method":"scene/cancel_preview","params":{{"preview_id":{}}},"id":201}}"#,
         id.get()
     );
-    let resp = parse_response(&dispatch_full(&mut scene, &previews, &SceneRevision::default(), &req).unwrap());
+    let resp = parse_response(
+        &dispatch_full(&mut scene, &previews, &SceneRevision::default(), &req).unwrap(),
+    );
     assert!(resp.error.is_none());
     let obj = resp.result.unwrap();
     assert_eq!(obj.get("cancelled"), Some(&Value::Bool(true)));
@@ -3348,7 +3440,9 @@ fn scene_cancel_preview_returns_cancelled_false_for_unknown_id() {
     let mut scene = counted_scene(0);
     let previews = PreviewLedger::default();
     let req = r#"{"jsonrpc":"2.0","method":"scene/cancel_preview","params":{"preview_id":9999},"id":202}"#;
-    let resp = parse_response(&dispatch_full(&mut scene, &previews, &SceneRevision::default(), req).unwrap());
+    let resp = parse_response(
+        &dispatch_full(&mut scene, &previews, &SceneRevision::default(), req).unwrap(),
+    );
     assert!(resp.error.is_none());
     let obj = resp.result.unwrap();
     assert_eq!(obj.get("cancelled"), Some(&Value::Bool(false)));
@@ -3365,10 +3459,20 @@ fn scene_cancel_preview_is_idempotent_over_dispatch() {
         r#"{{"jsonrpc":"2.0","method":"scene/cancel_preview","params":{{"preview_id":{}}},"id":203}}"#,
         id.get()
     );
-    let first = parse_response(&dispatch_full(&mut scene, &previews, &SceneRevision::default(), &req).unwrap());
-    assert_eq!(first.result.unwrap().get("cancelled"), Some(&Value::Bool(true)));
-    let second = parse_response(&dispatch_full(&mut scene, &previews, &SceneRevision::default(), &req).unwrap());
-    assert_eq!(second.result.unwrap().get("cancelled"), Some(&Value::Bool(false)));
+    let first = parse_response(
+        &dispatch_full(&mut scene, &previews, &SceneRevision::default(), &req).unwrap(),
+    );
+    assert_eq!(
+        first.result.unwrap().get("cancelled"),
+        Some(&Value::Bool(true))
+    );
+    let second = parse_response(
+        &dispatch_full(&mut scene, &previews, &SceneRevision::default(), &req).unwrap(),
+    );
+    assert_eq!(
+        second.result.unwrap().get("cancelled"),
+        Some(&Value::Bool(false))
+    );
 }
 
 #[test]
@@ -3376,7 +3480,9 @@ fn scene_cancel_preview_missing_id_is_invalid_params() {
     let mut scene = counted_scene(0);
     let previews = PreviewLedger::default();
     let req = r#"{"jsonrpc":"2.0","method":"scene/cancel_preview","params":{},"id":204}"#;
-    let resp = parse_response(&dispatch_full(&mut scene, &previews, &SceneRevision::default(), req).unwrap());
+    let resp = parse_response(
+        &dispatch_full(&mut scene, &previews, &SceneRevision::default(), req).unwrap(),
+    );
     assert_eq!(resp.error.unwrap().code, -32602);
 }
 
@@ -3384,8 +3490,11 @@ fn scene_cancel_preview_missing_id_is_invalid_params() {
 fn scene_cancel_preview_zero_id_is_invalid_params() {
     let mut scene = counted_scene(0);
     let previews = PreviewLedger::default();
-    let req = r#"{"jsonrpc":"2.0","method":"scene/cancel_preview","params":{"preview_id":0},"id":205}"#;
-    let resp = parse_response(&dispatch_full(&mut scene, &previews, &SceneRevision::default(), req).unwrap());
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/cancel_preview","params":{"preview_id":0},"id":205}"#;
+    let resp = parse_response(
+        &dispatch_full(&mut scene, &previews, &SceneRevision::default(), req).unwrap(),
+    );
     assert_eq!(resp.error.unwrap().code, -32602);
 }
 
@@ -3394,7 +3503,9 @@ fn scene_cancel_preview_string_id_is_invalid_params() {
     let mut scene = counted_scene(0);
     let previews = PreviewLedger::default();
     let req = r#"{"jsonrpc":"2.0","method":"scene/cancel_preview","params":{"preview_id":"abc"},"id":206}"#;
-    let resp = parse_response(&dispatch_full(&mut scene, &previews, &SceneRevision::default(), req).unwrap());
+    let resp = parse_response(
+        &dispatch_full(&mut scene, &previews, &SceneRevision::default(), req).unwrap(),
+    );
     assert_eq!(resp.error.unwrap().code, -32602);
 }
 
@@ -3405,14 +3516,11 @@ fn scene_list_previews_empty_ledger_returns_empty_array() {
     let mut scene = counted_scene(0);
     let previews = PreviewLedger::default();
     let req = r#"{"jsonrpc":"2.0","method":"scene/list_previews","id":301}"#;
-    let resp = parse_response(&dispatch_full(&mut scene, &previews, &SceneRevision::default(), req).unwrap());
+    let resp = parse_response(
+        &dispatch_full(&mut scene, &previews, &SceneRevision::default(), req).unwrap(),
+    );
     assert!(resp.error.is_none());
-    let arr = resp
-        .result
-        .unwrap()
-        .get("previews")
-        .cloned()
-        .unwrap();
+    let arr = resp.result.unwrap().get("previews").cloned().unwrap();
     assert_eq!(arr.as_array().unwrap().len(), 0);
 }
 
@@ -3424,7 +3532,9 @@ fn scene_list_previews_single_entry_surfaces_all_fields() {
         .propose(7, Box::new(WireTestProposal::new()), None, now_inst())
         .unwrap();
     let req = r#"{"jsonrpc":"2.0","method":"scene/list_previews","id":302}"#;
-    let resp = parse_response(&dispatch_full(&mut scene, &previews, &SceneRevision::default(), req).unwrap());
+    let resp = parse_response(
+        &dispatch_full(&mut scene, &previews, &SceneRevision::default(), req).unwrap(),
+    );
     let arr = resp.result.unwrap().get("previews").cloned().unwrap();
     let entries = arr.as_array().unwrap();
     assert_eq!(entries.len(), 1);
@@ -3441,7 +3551,11 @@ fn scene_list_previews_single_entry_surfaces_all_fields() {
     );
     // age/ttl present, non-negative, ttl roughly 60s (default TTL).
     assert!(obj.get("age_ms").and_then(Value::as_u64).is_some());
-    assert!(obj.get("ttl_remaining_ms").and_then(Value::as_u64).is_some());
+    assert!(
+        obj.get("ttl_remaining_ms")
+            .and_then(Value::as_u64)
+            .is_some()
+    );
 }
 
 #[test]
@@ -3458,7 +3572,9 @@ fn scene_list_previews_in_id_order() {
         .propose(0, Box::new(WireTestProposal::new()), None, now_inst())
         .unwrap();
     let req = r#"{"jsonrpc":"2.0","method":"scene/list_previews","id":303}"#;
-    let resp = parse_response(&dispatch_full(&mut scene, &previews, &SceneRevision::default(), req).unwrap());
+    let resp = parse_response(
+        &dispatch_full(&mut scene, &previews, &SceneRevision::default(), req).unwrap(),
+    );
     let arr = resp.result.unwrap().get("previews").cloned().unwrap();
     let entries = arr.as_array().unwrap();
     let ids: Vec<u64> = entries
@@ -3474,7 +3590,9 @@ fn scene_list_previews_omits_params_ok() {
     let previews = PreviewLedger::default();
     // Empty params object should be equivalent to omitted params.
     let req = r#"{"jsonrpc":"2.0","method":"scene/list_previews","params":{},"id":304}"#;
-    let resp = parse_response(&dispatch_full(&mut scene, &previews, &SceneRevision::default(), req).unwrap());
+    let resp = parse_response(
+        &dispatch_full(&mut scene, &previews, &SceneRevision::default(), req).unwrap(),
+    );
     assert!(resp.error.is_none());
 }
 
@@ -3509,7 +3627,8 @@ fn dispatch_does_not_bump_revision_on_read_only_methods() {
     let mut scene = counted_scene(42);
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
-    let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/count"},"id":403}"#;
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/count"},"id":403}"#;
     let _ = dispatch_full(&mut scene, &previews, &revision, req);
     assert_eq!(revision.current(), 0, "scene/query is read-only");
 }
@@ -3520,9 +3639,14 @@ fn dispatch_does_not_bump_revision_on_preview_lifecycle_methods() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     // cancel_preview touches the ledger but not the scene tree.
-    let req = r#"{"jsonrpc":"2.0","method":"scene/cancel_preview","params":{"preview_id":1},"id":404}"#;
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/cancel_preview","params":{"preview_id":1},"id":404}"#;
     let _ = dispatch_full(&mut scene, &previews, &revision, req);
-    assert_eq!(revision.current(), 0, "preview lifecycle does not bump scene revision");
+    assert_eq!(
+        revision.current(),
+        0,
+        "preview lifecycle does not bump scene revision"
+    );
     let req = r#"{"jsonrpc":"2.0","method":"scene/list_previews","id":405}"#;
     let _ = dispatch_full(&mut scene, &previews, &revision, req);
     assert_eq!(revision.current(), 0);
@@ -3661,13 +3785,21 @@ fn scene_apply_preview_writes_signal_end_to_end() {
     );
     let apply_resp =
         parse_response(&dispatch_full(&mut scene, &previews, &revision, &apply_req).unwrap());
-    assert!(apply_resp.error.is_none(), "unexpected error: {:?}", apply_resp.error);
+    assert!(
+        apply_resp.error.is_none(),
+        "unexpected error: {:?}",
+        apply_resp.error
+    );
     let obj = apply_resp.result.unwrap();
-    assert_eq!(obj.get("preview_id"), Some(&Value::Number(preview_id.into())));
+    assert_eq!(
+        obj.get("preview_id"),
+        Some(&Value::Number(preview_id.into()))
+    );
     assert_eq!(obj.get("new_revision"), Some(&Value::Number(1.into())));
 
     // 3) query confirms scene now reflects the apply.
-    let query_req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/count"},"id":603}"#;
+    let query_req =
+        r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/count"},"id":603}"#;
     let query_resp =
         parse_response(&dispatch_full(&mut scene, &previews, &revision, query_req).unwrap());
     assert_eq!(query_resp.result.unwrap(), Value::Number(77.into()));
@@ -3679,7 +3811,8 @@ fn scene_apply_preview_unknown_id_surfaces_typed_variant() {
     let mut scene = counted_scene(0);
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
-    let req = r#"{"jsonrpc":"2.0","method":"scene/apply_preview","params":{"preview_id":9999},"id":604}"#;
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/apply_preview","params":{"preview_id":9999},"id":604}"#;
     let resp = parse_response(&dispatch_full(&mut scene, &previews, &revision, req).unwrap());
     let err = resp.error.unwrap();
     let data = err.data.unwrap();
@@ -3801,14 +3934,13 @@ fn scene_apply_preview_outcome_contains_empty_intents_for_set_signal() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let propose_req = r#"{"jsonrpc":"2.0","method":"scene/propose_change","params":{"kind":"SetSignal","target_path":"/external/count","signal_path":"/external/count","value":1},"id":701}"#;
-    let preview_id = parse_response(
-        &dispatch_full(&mut scene, &previews, &revision, propose_req).unwrap(),
-    )
-    .result
-    .unwrap()
-    .get("preview_id")
-    .and_then(Value::as_u64)
-    .unwrap();
+    let preview_id =
+        parse_response(&dispatch_full(&mut scene, &previews, &revision, propose_req).unwrap())
+            .result
+            .unwrap()
+            .get("preview_id")
+            .and_then(Value::as_u64)
+            .unwrap();
     let apply_req = format!(
         r#"{{"jsonrpc":"2.0","method":"scene/apply_preview","params":{{"preview_id":{preview_id}}},"id":702}}"#
     );
@@ -3831,14 +3963,13 @@ fn scene_propose_dispatch_intent_then_apply_surfaces_intent_on_wire() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let propose_req = r#"{"jsonrpc":"2.0","method":"scene/propose_change","params":{"kind":"DispatchIntent","target_path":"/save_btn","intent":{"tag":"save_btn.click","payload":42}},"id":703}"#;
-    let preview_id = parse_response(
-        &dispatch_full(&mut scene, &previews, &revision, propose_req).unwrap(),
-    )
-    .result
-    .unwrap()
-    .get("preview_id")
-    .and_then(Value::as_u64)
-    .unwrap();
+    let preview_id =
+        parse_response(&dispatch_full(&mut scene, &previews, &revision, propose_req).unwrap())
+            .result
+            .unwrap()
+            .get("preview_id")
+            .and_then(Value::as_u64)
+            .unwrap();
     let apply_req = format!(
         r#"{{"jsonrpc":"2.0","method":"scene/apply_preview","params":{{"preview_id":{preview_id}}},"id":704}}"#
     );
@@ -3898,14 +4029,13 @@ fn scene_propose_set_style_then_apply_changes_box_fill_end_to_end() {
     let revision = SceneRevision::default();
     // Wire ARGB 0x00ff_00ff = magenta, fits in u32.
     let propose_req = r#"{"jsonrpc":"2.0","method":"scene/propose_change","params":{"kind":"SetStyle","target_path":"/btn","style":{"fill":16711935}},"id":710}"#;
-    let preview_id = parse_response(
-        &dispatch_full(&mut scene, &previews, &revision, propose_req).unwrap(),
-    )
-    .result
-    .unwrap()
-    .get("preview_id")
-    .and_then(Value::as_u64)
-    .unwrap();
+    let preview_id =
+        parse_response(&dispatch_full(&mut scene, &previews, &revision, propose_req).unwrap())
+            .result
+            .unwrap()
+            .get("preview_id")
+            .and_then(Value::as_u64)
+            .unwrap();
     let apply_req = format!(
         r#"{{"jsonrpc":"2.0","method":"scene/apply_preview","params":{{"preview_id":{preview_id}}},"id":711}}"#
     );
@@ -3934,14 +4064,13 @@ fn scene_propose_set_style_unknown_target_surfaces_apply_rejected() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let propose_req = r#"{"jsonrpc":"2.0","method":"scene/propose_change","params":{"kind":"SetStyle","target_path":"/ghost","style":{"fill":255}},"id":712}"#;
-    let preview_id = parse_response(
-        &dispatch_full(&mut scene, &previews, &revision, propose_req).unwrap(),
-    )
-    .result
-    .unwrap()
-    .get("preview_id")
-    .and_then(Value::as_u64)
-    .unwrap();
+    let preview_id =
+        parse_response(&dispatch_full(&mut scene, &previews, &revision, propose_req).unwrap())
+            .result
+            .unwrap()
+            .get("preview_id")
+            .and_then(Value::as_u64)
+            .unwrap();
     let apply_req = format!(
         r#"{{"jsonrpc":"2.0","method":"scene/apply_preview","params":{{"preview_id":{preview_id}}},"id":713}}"#
     );
@@ -3979,14 +4108,13 @@ fn scene_propose_set_style_with_border_round_trips() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let propose_req = r#"{"jsonrpc":"2.0","method":"scene/propose_change","params":{"kind":"SetStyle","target_path":"/btn","style":{"fill":0,"border_color":255,"border_width":3,"corner_radius":4}},"id":715}"#;
-    let preview_id = parse_response(
-        &dispatch_full(&mut scene, &previews, &revision, propose_req).unwrap(),
-    )
-    .result
-    .unwrap()
-    .get("preview_id")
-    .and_then(Value::as_u64)
-    .unwrap();
+    let preview_id =
+        parse_response(&dispatch_full(&mut scene, &previews, &revision, propose_req).unwrap())
+            .result
+            .unwrap()
+            .get("preview_id")
+            .and_then(Value::as_u64)
+            .unwrap();
     let apply_req = format!(
         r#"{{"jsonrpc":"2.0","method":"scene/apply_preview","params":{{"preview_id":{preview_id}}},"id":716}}"#
     );
@@ -4022,14 +4150,13 @@ fn scene_propose_replace_view_then_apply_swaps_box_end_to_end() {
     let revision = SceneRevision::default();
     // Replace /btn (untagged after swap) with a fresh tagged Box.
     let propose_req = r#"{"jsonrpc":"2.0","method":"scene/propose_change","params":{"kind":"ReplaceView","target_path":"/btn","replacement":{"kind":"Box","rect":{"x":0,"y":0,"w":20,"h":20},"style":{"fill":3735928559},"tag":"new_btn"}},"id":720}"#;
-    let preview_id = parse_response(
-        &dispatch_full(&mut scene, &previews, &revision, propose_req).unwrap(),
-    )
-    .result
-    .unwrap()
-    .get("preview_id")
-    .and_then(Value::as_u64)
-    .unwrap();
+    let preview_id =
+        parse_response(&dispatch_full(&mut scene, &previews, &revision, propose_req).unwrap())
+            .result
+            .unwrap()
+            .get("preview_id")
+            .and_then(Value::as_u64)
+            .unwrap();
     let apply_req = format!(
         r#"{{"jsonrpc":"2.0","method":"scene/apply_preview","params":{{"preview_id":{preview_id}}},"id":721}}"#
     );
@@ -4057,14 +4184,13 @@ fn scene_propose_replace_view_with_nested_container_round_trips() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let propose_req = r#"{"jsonrpc":"2.0","method":"scene/propose_change","params":{"kind":"ReplaceView","target_path":"/btn","replacement":{"kind":"Container","rect":{"x":0,"y":0,"w":50,"h":50},"style":{"fill":0},"tag":"panel","children":[{"kind":"Box","rect":{"x":5,"y":5,"w":10,"h":10},"style":{"fill":255},"tag":"inner"}]}},"id":722}"#;
-    let preview_id = parse_response(
-        &dispatch_full(&mut scene, &previews, &revision, propose_req).unwrap(),
-    )
-    .result
-    .unwrap()
-    .get("preview_id")
-    .and_then(Value::as_u64)
-    .unwrap();
+    let preview_id =
+        parse_response(&dispatch_full(&mut scene, &previews, &revision, propose_req).unwrap())
+            .result
+            .unwrap()
+            .get("preview_id")
+            .and_then(Value::as_u64)
+            .unwrap();
     let apply_req = format!(
         r#"{{"jsonrpc":"2.0","method":"scene/apply_preview","params":{{"preview_id":{preview_id}}},"id":723}}"#
     );
@@ -4105,14 +4231,13 @@ fn scene_propose_replace_view_with_text_round_trips() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let propose_req = r#"{"jsonrpc":"2.0","method":"scene/propose_change","params":{"kind":"ReplaceView","target_path":"/btn","replacement":{"kind":"Text","content":"Save","rect":{"x":0,"y":0,"w":40,"h":20},"style":{"font_size_px":18,"fg_color":255},"tag":"label"}},"id":740}"#;
-    let preview_id = parse_response(
-        &dispatch_full(&mut scene, &previews, &revision, propose_req).unwrap(),
-    )
-    .result
-    .unwrap()
-    .get("preview_id")
-    .and_then(Value::as_u64)
-    .unwrap();
+    let preview_id =
+        parse_response(&dispatch_full(&mut scene, &previews, &revision, propose_req).unwrap())
+            .result
+            .unwrap()
+            .get("preview_id")
+            .and_then(Value::as_u64)
+            .unwrap();
     let apply_req = format!(
         r#"{{"jsonrpc":"2.0","method":"scene/apply_preview","params":{{"preview_id":{preview_id}}},"id":741}}"#
     );
@@ -4134,14 +4259,13 @@ fn scene_propose_replace_view_with_path_round_trips() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let propose_req = r#"{"jsonrpc":"2.0","method":"scene/propose_change","params":{"kind":"ReplaceView","target_path":"/btn","replacement":{"kind":"Path","rect":{"x":0,"y":0,"w":32,"h":32},"style":{"fill":255},"commands":[{"op":"MoveTo","point":{"x":0,"y":0}},{"op":"LineTo","point":{"x":10,"y":10}},{"op":"Close"}],"tag":"logo"}},"id":742}"#;
-    let preview_id = parse_response(
-        &dispatch_full(&mut scene, &previews, &revision, propose_req).unwrap(),
-    )
-    .result
-    .unwrap()
-    .get("preview_id")
-    .and_then(Value::as_u64)
-    .unwrap();
+    let preview_id =
+        parse_response(&dispatch_full(&mut scene, &previews, &revision, propose_req).unwrap())
+            .result
+            .unwrap()
+            .get("preview_id")
+            .and_then(Value::as_u64)
+            .unwrap();
     let apply_req = format!(
         r#"{{"jsonrpc":"2.0","method":"scene/apply_preview","params":{{"preview_id":{preview_id}}},"id":743}}"#
     );
@@ -4162,14 +4286,13 @@ fn scene_propose_replace_view_with_image_round_trips() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let propose_req = r#"{"jsonrpc":"2.0","method":"scene/propose_change","params":{"kind":"ReplaceView","target_path":"/btn","replacement":{"kind":"Image","source":"file:///tmp/icon.png","rect":{"x":0,"y":0,"w":24,"h":24},"style":{"fit":"Contain"},"tag":"avatar"}},"id":744}"#;
-    let preview_id = parse_response(
-        &dispatch_full(&mut scene, &previews, &revision, propose_req).unwrap(),
-    )
-    .result
-    .unwrap()
-    .get("preview_id")
-    .and_then(Value::as_u64)
-    .unwrap();
+    let preview_id =
+        parse_response(&dispatch_full(&mut scene, &previews, &revision, propose_req).unwrap())
+            .result
+            .unwrap()
+            .get("preview_id")
+            .and_then(Value::as_u64)
+            .unwrap();
     let apply_req = format!(
         r#"{{"jsonrpc":"2.0","method":"scene/apply_preview","params":{{"preview_id":{preview_id}}},"id":745}}"#
     );
@@ -4229,14 +4352,13 @@ fn scene_propose_replace_view_unknown_target_surfaces_apply_rejected() {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let propose_req = r#"{"jsonrpc":"2.0","method":"scene/propose_change","params":{"kind":"ReplaceView","target_path":"/ghost","replacement":{"kind":"Box","rect":{"x":0,"y":0,"w":1,"h":1},"style":{"fill":0}}},"id":726}"#;
-    let preview_id = parse_response(
-        &dispatch_full(&mut scene, &previews, &revision, propose_req).unwrap(),
-    )
-    .result
-    .unwrap()
-    .get("preview_id")
-    .and_then(Value::as_u64)
-    .unwrap();
+    let preview_id =
+        parse_response(&dispatch_full(&mut scene, &previews, &revision, propose_req).unwrap())
+            .result
+            .unwrap()
+            .get("preview_id")
+            .and_then(Value::as_u64)
+            .unwrap();
     let apply_req = format!(
         r#"{{"jsonrpc":"2.0","method":"scene/apply_preview","params":{{"preview_id":{preview_id}}},"id":727}}"#
     );
@@ -4269,23 +4391,17 @@ fn bytes_as_json_array(bytes: &[u8]) -> String {
 }
 
 /// Dispatch helper with a font registry attached (R50.X.1 §5.37.2).
-fn dispatch_with_font(
-    scene: &mut Scene,
-    registry: &FontRegistry,
-    req: &str,
-) -> Option<String> {
+fn dispatch_with_font(scene: &mut Scene, registry: &FontRegistry, req: &str) -> Option<String> {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
-    let mut ctx = DispatchContext::new(scene, &previews, &revision)
-        .with_font_registry(registry);
+    let mut ctx = DispatchContext::new(scene, &previews, &revision).with_font_registry(registry);
     dispatch(&mut ctx, req)
 }
 
 #[test]
 fn font_parse_without_registry_returns_registry_unavailable() {
     let mut scene = counted_scene(0);
-    let req =
-        r#"{"jsonrpc":"2.0","method":"font/parse","params":{"bytes":[0]},"id":1}"#;
+    let req = r#"{"jsonrpc":"2.0","method":"font/parse","params":{"bytes":[0]},"id":1}"#;
     let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
     let err = resp.error.unwrap();
     assert_eq!(err.code, -32603);
@@ -4303,8 +4419,7 @@ fn font_parse_noto_sans_returns_font_id() {
         r#"{{"jsonrpc":"2.0","method":"font/parse","params":{{"bytes":{bytes}}},"id":1}}"#,
         bytes = bytes_as_json_array(NOTO_SANS_FONT),
     );
-    let resp =
-        parse_response(&dispatch_with_font(&mut scene, &registry, &body).unwrap());
+    let resp = parse_response(&dispatch_with_font(&mut scene, &registry, &body).unwrap());
     let font_id = resp
         .result
         .unwrap()
@@ -4320,8 +4435,7 @@ fn font_parse_rejects_non_byte_in_array() {
     let mut scene = counted_scene(0);
     let registry = FontRegistry::new();
     let req = r#"{"jsonrpc":"2.0","method":"font/parse","params":{"bytes":[0,1,256]},"id":1}"#;
-    let resp =
-        parse_response(&dispatch_with_font(&mut scene, &registry, req).unwrap());
+    let resp = parse_response(&dispatch_with_font(&mut scene, &registry, req).unwrap());
     let err = resp.error.unwrap();
     assert_eq!(err.code, -32602);
     assert!(
@@ -4338,16 +4452,11 @@ fn font_parse_rejects_non_byte_in_array() {
 fn font_parse_rejects_empty_bytes() {
     let mut scene = counted_scene(0);
     let registry = FontRegistry::new();
-    let req =
-        r#"{"jsonrpc":"2.0","method":"font/parse","params":{"bytes":[]},"id":1}"#;
-    let resp =
-        parse_response(&dispatch_with_font(&mut scene, &registry, req).unwrap());
+    let req = r#"{"jsonrpc":"2.0","method":"font/parse","params":{"bytes":[]},"id":1}"#;
+    let resp = parse_response(&dispatch_with_font(&mut scene, &registry, req).unwrap());
     let err = resp.error.unwrap();
     assert_eq!(err.code, -32602);
-    assert_eq!(
-        err.data.as_ref().and_then(|d| d.as_str()),
-        Some("Parse"),
-    );
+    assert_eq!(err.data.as_ref().and_then(|d| d.as_str()), Some("Parse"),);
 }
 
 #[test]
@@ -4358,9 +4467,7 @@ fn font_family_name_round_trip_noto_sans() {
         r#"{{"jsonrpc":"2.0","method":"font/parse","params":{{"bytes":{bytes}}},"id":1}}"#,
         bytes = bytes_as_json_array(NOTO_SANS_FONT),
     );
-    let parsed = parse_response(
-        &dispatch_with_font(&mut scene, &registry, &parse_body).unwrap(),
-    );
+    let parsed = parse_response(&dispatch_with_font(&mut scene, &registry, &parse_body).unwrap());
     let font_id = parsed
         .result
         .unwrap()
@@ -4370,9 +4477,7 @@ fn font_family_name_round_trip_noto_sans() {
     let family_body = format!(
         r#"{{"jsonrpc":"2.0","method":"font/family_name","params":{{"font_id":{font_id}}},"id":2}}"#,
     );
-    let resp = parse_response(
-        &dispatch_with_font(&mut scene, &registry, &family_body).unwrap(),
-    );
+    let resp = parse_response(&dispatch_with_font(&mut scene, &registry, &family_body).unwrap());
     let name = resp
         .result
         .unwrap()
@@ -4388,14 +4493,10 @@ fn font_family_name_rejects_zero_id() {
     let mut scene = counted_scene(0);
     let registry = FontRegistry::new();
     let req = r#"{"jsonrpc":"2.0","method":"font/family_name","params":{"font_id":0},"id":1}"#;
-    let resp =
-        parse_response(&dispatch_with_font(&mut scene, &registry, req).unwrap());
+    let resp = parse_response(&dispatch_with_font(&mut scene, &registry, req).unwrap());
     let err = resp.error.unwrap();
     assert_eq!(err.code, -32602);
-    assert_eq!(
-        err.data.as_ref().and_then(|d| d.as_str()),
-        Some("NotFound"),
-    );
+    assert_eq!(err.data.as_ref().and_then(|d| d.as_str()), Some("NotFound"),);
 }
 
 #[test]
@@ -4406,20 +4507,16 @@ fn font_glyph_id_for_letter_a_round_trip() {
         r#"{{"jsonrpc":"2.0","method":"font/parse","params":{{"bytes":{bytes}}},"id":1}}"#,
         bytes = bytes_as_json_array(NOTO_SANS_FONT),
     );
-    let font_id = parse_response(
-        &dispatch_with_font(&mut scene, &registry, &parse_body).unwrap(),
-    )
-    .result
-    .unwrap()
-    .get("font_id")
-    .and_then(Value::as_u64)
-    .unwrap();
+    let font_id = parse_response(&dispatch_with_font(&mut scene, &registry, &parse_body).unwrap())
+        .result
+        .unwrap()
+        .get("font_id")
+        .and_then(Value::as_u64)
+        .unwrap();
     let glyph_body = format!(
         r#"{{"jsonrpc":"2.0","method":"font/glyph_id_for","params":{{"font_id":{font_id},"codepoint":65}},"id":2}}"#,
     );
-    let resp = parse_response(
-        &dispatch_with_font(&mut scene, &registry, &glyph_body).unwrap(),
-    );
+    let resp = parse_response(&dispatch_with_font(&mut scene, &registry, &glyph_body).unwrap());
     let gid = resp
         .result
         .unwrap()
@@ -4434,8 +4531,7 @@ fn font_glyph_id_for_codepoint_out_of_u32_range() {
     let mut scene = counted_scene(0);
     let registry = FontRegistry::new();
     let req = r#"{"jsonrpc":"2.0","method":"font/glyph_id_for","params":{"font_id":1,"codepoint":4294967296},"id":1}"#;
-    let resp =
-        parse_response(&dispatch_with_font(&mut scene, &registry, req).unwrap());
+    let resp = parse_response(&dispatch_with_font(&mut scene, &registry, req).unwrap());
     let err = resp.error.unwrap();
     assert_eq!(err.code, -32602);
     assert!(
@@ -4450,10 +4546,7 @@ fn font_glyph_id_for_codepoint_out_of_u32_range() {
 
 // --- R50.X.2 §5.37.2 extended method E2E tests ---
 
-fn parse_noto_sans_via_dispatch(
-    scene: &mut Scene,
-    registry: &FontRegistry,
-) -> u64 {
+fn parse_noto_sans_via_dispatch(scene: &mut Scene, registry: &FontRegistry) -> u64 {
     let body = format!(
         r#"{{"jsonrpc":"2.0","method":"font/parse","params":{{"bytes":{bytes}}},"id":1}}"#,
         bytes = bytes_as_json_array(NOTO_SANS_FONT),
@@ -4474,9 +4567,7 @@ fn font_glyph_outline_notdef_is_simple_kind() {
     let body = format!(
         r#"{{"jsonrpc":"2.0","method":"font/glyph_outline","params":{{"font_id":{font_id},"glyph_id":0}},"id":2}}"#,
     );
-    let resp = parse_response(
-        &dispatch_with_font(&mut scene, &registry, &body).unwrap(),
-    );
+    let resp = parse_response(&dispatch_with_font(&mut scene, &registry, &body).unwrap());
     let result = resp.result.unwrap();
     assert_eq!(
         result.get("kind").and_then(Value::as_str),
@@ -4496,9 +4587,7 @@ fn font_glyph_outline_rejects_glyph_id_overflow() {
     let body = format!(
         r#"{{"jsonrpc":"2.0","method":"font/glyph_outline","params":{{"font_id":{font_id},"glyph_id":65536}},"id":3}}"#,
     );
-    let resp = parse_response(
-        &dispatch_with_font(&mut scene, &registry, &body).unwrap(),
-    );
+    let resp = parse_response(&dispatch_with_font(&mut scene, &registry, &body).unwrap());
     let err = resp.error.unwrap();
     assert_eq!(err.code, -32602);
     assert!(
@@ -4519,9 +4608,7 @@ fn font_glyph_outline_rejects_out_of_range_glyph_id() {
     let body = format!(
         r#"{{"jsonrpc":"2.0","method":"font/glyph_outline","params":{{"font_id":{font_id},"glyph_id":65535}},"id":4}}"#,
     );
-    let resp = parse_response(
-        &dispatch_with_font(&mut scene, &registry, &body).unwrap(),
-    );
+    let resp = parse_response(&dispatch_with_font(&mut scene, &registry, &body).unwrap());
     let err = resp.error.unwrap();
     assert_eq!(err.code, -32602);
     assert_eq!(
@@ -4538,9 +4625,7 @@ fn font_cmap_subtables_round_trip_noto_sans() {
     let body = format!(
         r#"{{"jsonrpc":"2.0","method":"font/cmap_subtables","params":{{"font_id":{font_id}}},"id":5}}"#,
     );
-    let resp = parse_response(
-        &dispatch_with_font(&mut scene, &registry, &body).unwrap(),
-    );
+    let resp = parse_response(&dispatch_with_font(&mut scene, &registry, &body).unwrap());
     let result = resp.result.unwrap();
     let subtables = result.get("subtables").and_then(Value::as_array).unwrap();
     assert!(!subtables.is_empty());
@@ -4561,9 +4646,7 @@ fn font_metrics_round_trip_noto_sans() {
     let body = format!(
         r#"{{"jsonrpc":"2.0","method":"font/metrics","params":{{"font_id":{font_id}}},"id":6}}"#,
     );
-    let resp = parse_response(
-        &dispatch_with_font(&mut scene, &registry, &body).unwrap(),
-    );
+    let resp = parse_response(&dispatch_with_font(&mut scene, &registry, &body).unwrap());
     let m = resp.result.unwrap();
     assert_eq!(m.get("units_per_em").and_then(Value::as_u64), Some(1000));
     assert_eq!(m.get("weight_class").and_then(Value::as_u64), Some(400));
@@ -4578,9 +4661,7 @@ fn font_subfamily_name_round_trip_regular() {
     let body = format!(
         r#"{{"jsonrpc":"2.0","method":"font/subfamily_name","params":{{"font_id":{font_id}}},"id":7}}"#,
     );
-    let resp = parse_response(
-        &dispatch_with_font(&mut scene, &registry, &body).unwrap(),
-    );
+    let resp = parse_response(&dispatch_with_font(&mut scene, &registry, &body).unwrap());
     assert_eq!(
         resp.result.unwrap().get("name").and_then(Value::as_str),
         Some("Regular"),
@@ -4595,9 +4676,7 @@ fn font_full_name_round_trip_contains_family() {
     let body = format!(
         r#"{{"jsonrpc":"2.0","method":"font/full_name","params":{{"font_id":{font_id}}},"id":8}}"#,
     );
-    let resp = parse_response(
-        &dispatch_with_font(&mut scene, &registry, &body).unwrap(),
-    );
+    let resp = parse_response(&dispatch_with_font(&mut scene, &registry, &body).unwrap());
     let name = resp
         .result
         .unwrap()
@@ -4616,9 +4695,7 @@ fn font_postscript_name_round_trip_starts_with_notosans() {
     let body = format!(
         r#"{{"jsonrpc":"2.0","method":"font/postscript_name","params":{{"font_id":{font_id}}},"id":9}}"#,
     );
-    let resp = parse_response(
-        &dispatch_with_font(&mut scene, &registry, &body).unwrap(),
-    );
+    let resp = parse_response(&dispatch_with_font(&mut scene, &registry, &body).unwrap());
     let name = resp
         .result
         .unwrap()
@@ -4664,9 +4741,7 @@ fn font_dispose_round_trip_removes_handle() {
     let body = format!(
         r#"{{"jsonrpc":"2.0","method":"font/dispose","params":{{"font_id":{font_id}}},"id":10}}"#,
     );
-    let resp = parse_response(
-        &dispatch_with_font(&mut scene, &registry, &body).unwrap(),
-    );
+    let resp = parse_response(&dispatch_with_font(&mut scene, &registry, &body).unwrap());
     assert_eq!(
         resp.result.unwrap().get("existed").and_then(Value::as_bool),
         Some(true),
@@ -4679,8 +4754,7 @@ fn font_dispose_unknown_handle_existed_false() {
     let mut scene = counted_scene(0);
     let registry = FontRegistry::new();
     let req = r#"{"jsonrpc":"2.0","method":"font/dispose","params":{"font_id":9999},"id":11}"#;
-    let resp =
-        parse_response(&dispatch_with_font(&mut scene, &registry, req).unwrap());
+    let resp = parse_response(&dispatch_with_font(&mut scene, &registry, req).unwrap());
     assert_eq!(
         resp.result.unwrap().get("existed").and_then(Value::as_bool),
         Some(false),
@@ -4694,8 +4768,7 @@ fn font_list_round_trip_returns_handles() {
     let a = parse_noto_sans_via_dispatch(&mut scene, &registry);
     let b = parse_noto_sans_via_dispatch(&mut scene, &registry);
     let req = r#"{"jsonrpc":"2.0","method":"font/list","id":12}"#;
-    let resp =
-        parse_response(&dispatch_with_font(&mut scene, &registry, req).unwrap());
+    let resp = parse_response(&dispatch_with_font(&mut scene, &registry, req).unwrap());
     let ids: Vec<u64> = resp
         .result
         .unwrap()
@@ -4715,7 +4788,10 @@ fn font_lifecycle_without_registry_returns_registry_unavailable() {
             "font/dispose",
             r#"{"jsonrpc":"2.0","method":"font/dispose","params":{"font_id":1},"id":13}"#,
         ),
-        ("font/list", r#"{"jsonrpc":"2.0","method":"font/list","id":14}"#),
+        (
+            "font/list",
+            r#"{"jsonrpc":"2.0","method":"font/list","id":14}"#,
+        ),
     ] {
         let mut scene = counted_scene(0);
         let resp = parse_response(&dispatch_t(&mut scene, body).unwrap());
@@ -4739,8 +4815,7 @@ fn text_normalize_body(text: &str, form: &str, id: u32) -> String {
     use std::fmt::Write as _;
     let mut escaped = String::with_capacity(text.chars().count() * 6);
     for c in text.chars() {
-        write!(escaped, "\\u{:04X}", c as u32)
-            .expect("String write infallible");
+        write!(escaped, "\\u{:04X}", c as u32).expect("String write infallible");
     }
     format!(
         r#"{{"jsonrpc":"2.0","method":"text/normalize","params":{{"text":"{escaped}","form":"{form}"}},"id":{id}}}"#
@@ -4833,11 +4908,12 @@ fn text_normalize_missing_form_param() {
     let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
     let err = resp.error.unwrap();
     assert_eq!(err.code, -32602);
-    assert!(err
-        .data
-        .as_ref()
-        .and_then(|d| d.as_str())
-        .is_some_and(|s| s.contains("form")));
+    assert!(
+        err.data
+            .as_ref()
+            .and_then(|d| d.as_str())
+            .is_some_and(|s| s.contains("form"))
+    );
 }
 
 #[test]
@@ -4847,11 +4923,12 @@ fn text_normalize_unknown_form_rejected() {
     let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
     let err = resp.error.unwrap();
     assert_eq!(err.code, -32602);
-    assert!(err
-        .data
-        .as_ref()
-        .and_then(|d| d.as_str())
-        .is_some_and(|s| s.contains("NFC/NFD/NFKC/NFKD")));
+    assert!(
+        err.data
+            .as_ref()
+            .and_then(|d| d.as_str())
+            .is_some_and(|s| s.contains("NFC/NFD/NFKC/NFKD"))
+    );
 }
 
 #[test]
@@ -4883,12 +4960,14 @@ fn text_normalize_ascii_passthrough() {
 fn scene_query_on_toggle_external_returns_initial_state_and_value() {
     use pinion_core::widgets::toggle::ToggleExternal;
     let mut scene = Scene::External(ExternalNode::new(Box::new(ToggleExternal::new())));
-    let req_state = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/state"},"id":1}"#;
+    let req_state =
+        r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/state"},"id":1}"#;
     let resp = parse_response(&dispatch_t(&mut scene, req_state).unwrap());
     let s = serde_json::to_string(&resp.result.unwrap()).unwrap();
     assert!(s.contains("Idle"), "got {s}");
 
-    let req_value = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/value"},"id":2}"#;
+    let req_value =
+        r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/value"},"id":2}"#;
     let resp = parse_response(&dispatch_t(&mut scene, req_value).unwrap());
     let v = serde_json::to_string(&resp.result.unwrap()).unwrap();
     assert!(v.contains("false"), "got {v}");
@@ -4902,7 +4981,8 @@ fn scene_rewind_on_toggle_external_sets_value_without_intent() {
     let resp = parse_response(&dispatch_t(&mut scene, rewind).unwrap());
     assert!(resp.error.is_none(), "rewind error: {:?}", resp.error);
 
-    let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/value"},"id":11}"#;
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/value"},"id":11}"#;
     let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
     let v = serde_json::to_string(&resp.result.unwrap()).unwrap();
     assert!(v.contains("true"), "got {v}");
@@ -4956,10 +5036,14 @@ fn scene_invoke_full_cycle_on_toggle_external_emits_toggle_intent() {
     assert_eq!(entry.get("payload"), Some(&Value::Bool(true)));
 
     // Final state observation through the same envelope.
-    let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/value"},"id":32}"#;
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/value"},"id":32}"#;
     let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
     let v = serde_json::to_string(&resp.result.unwrap()).unwrap();
-    assert!(v.contains("true"), "value after activate should be true: {v}");
+    assert!(
+        v.contains("true"),
+        "value after activate should be true: {v}"
+    );
 }
 
 // ---- R51.13 §5.38 — Checkbox widget e2e through JSON-RPC envelope ----
@@ -4975,12 +5059,14 @@ fn scene_invoke_full_cycle_on_toggle_external_emits_toggle_intent() {
 fn scene_query_on_checkbox_external_returns_initial_state_and_checked() {
     use pinion_core::widgets::checkbox::CheckboxExternal;
     let mut scene = Scene::External(ExternalNode::new(Box::new(CheckboxExternal::new())));
-    let req_state = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/state"},"id":1}"#;
+    let req_state =
+        r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/state"},"id":1}"#;
     let resp = parse_response(&dispatch_t(&mut scene, req_state).unwrap());
     let s = serde_json::to_string(&resp.result.unwrap()).unwrap();
     assert!(s.contains("Idle"), "got {s}");
 
-    let req_checked = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/checked"},"id":2}"#;
+    let req_checked =
+        r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/checked"},"id":2}"#;
     let resp = parse_response(&dispatch_t(&mut scene, req_checked).unwrap());
     let v = serde_json::to_string(&resp.result.unwrap()).unwrap();
     assert!(v.contains("false"), "got {v}");
@@ -4994,7 +5080,8 @@ fn scene_rewind_on_checkbox_external_sets_checked_without_intent() {
     let resp = parse_response(&dispatch_t(&mut scene, rewind).unwrap());
     assert!(resp.error.is_none(), "rewind error: {:?}", resp.error);
 
-    let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/checked"},"id":11}"#;
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/checked"},"id":11}"#;
     let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
     let v = serde_json::to_string(&resp.result.unwrap()).unwrap();
     assert!(v.contains("true"), "got {v}");
@@ -5038,10 +5125,14 @@ fn scene_invoke_full_cycle_on_checkbox_external_emits_checked_intent() {
     assert_eq!(entry.get("tag").and_then(Value::as_str), Some("checked"));
     assert_eq!(entry.get("payload"), Some(&Value::Bool(true)));
 
-    let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/checked"},"id":32}"#;
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/checked"},"id":32}"#;
     let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
     let v = serde_json::to_string(&resp.result.unwrap()).unwrap();
-    assert!(v.contains("true"), "checked after activate should be true: {v}");
+    assert!(
+        v.contains("true"),
+        "checked after activate should be true: {v}"
+    );
 }
 
 // ---- R51.13 §5.38 — Radio widget e2e through JSON-RPC envelope ----
@@ -5061,12 +5152,14 @@ fn scene_invoke_full_cycle_on_checkbox_external_emits_checked_intent() {
 fn scene_query_on_radio_external_returns_initial_state_and_selected() {
     use pinion_core::widgets::radio::RadioExternal;
     let mut scene = Scene::External(ExternalNode::new(Box::new(RadioExternal::new())));
-    let req_state = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/state"},"id":1}"#;
+    let req_state =
+        r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/state"},"id":1}"#;
     let resp = parse_response(&dispatch_t(&mut scene, req_state).unwrap());
     let s = serde_json::to_string(&resp.result.unwrap()).unwrap();
     assert!(s.contains("Idle"), "got {s}");
 
-    let req_selected = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/selected"},"id":2}"#;
+    let req_selected =
+        r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/selected"},"id":2}"#;
     let resp = parse_response(&dispatch_t(&mut scene, req_selected).unwrap());
     let v = serde_json::to_string(&resp.result.unwrap()).unwrap();
     assert!(v.contains("false"), "got {v}");
@@ -5121,7 +5214,11 @@ fn scene_invoke_full_cycle_on_radio_external_emits_selected_intent_once() {
     let resp = parse_response(&dispatch_t(&mut scene, drain).unwrap());
     let arr = resp.result.unwrap();
     let arr = arr.as_array().expect("intents result must be array");
-    assert_eq!(arr.len(), 1, "first activate fires exactly one selected intent");
+    assert_eq!(
+        arr.len(),
+        1,
+        "first activate fires exactly one selected intent"
+    );
     let entry = arr[0].as_object().unwrap();
     assert_eq!(entry.get("tag").and_then(Value::as_str), Some("selected"));
     assert_eq!(entry.get("payload"), Some(&Value::Null));
@@ -5162,12 +5259,14 @@ fn scene_invoke_full_cycle_on_radio_external_emits_selected_intent_once() {
 fn scene_query_on_slider_external_returns_initial_state_and_value() {
     use pinion_core::widgets::slider::SliderExternal;
     let mut scene = Scene::External(ExternalNode::new(Box::new(SliderExternal::new())));
-    let req_state = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/state"},"id":1}"#;
+    let req_state =
+        r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/state"},"id":1}"#;
     let resp = parse_response(&dispatch_t(&mut scene, req_state).unwrap());
     let s = serde_json::to_string(&resp.result.unwrap()).unwrap();
     assert!(s.contains("Idle"), "got {s}");
 
-    let req_value = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/value"},"id":2}"#;
+    let req_value =
+        r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/value"},"id":2}"#;
     let resp = parse_response(&dispatch_t(&mut scene, req_value).unwrap());
     let v = serde_json::to_string(&resp.result.unwrap()).unwrap();
     // f64 zero serializes as "0.0" through serde_json.
@@ -5182,7 +5281,8 @@ fn scene_rewind_on_slider_external_changes_value_and_fires_value_changing() {
     let resp = parse_response(&dispatch_t(&mut scene, rewind).unwrap());
     assert!(resp.error.is_none(), "rewind error: {:?}", resp.error);
 
-    let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/value"},"id":11}"#;
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/value"},"id":11}"#;
     let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
     let v = serde_json::to_string(&resp.result.unwrap()).unwrap();
     assert!(v.contains("0.5"), "got {v}");
@@ -5239,7 +5339,11 @@ fn scene_invoke_full_drag_cycle_on_slider_external_emits_value_committed() {
     // Drag-end commit.
     let req = r#"{"jsonrpc":"2.0","method":"scene/invoke","params":{"path":"/external/send","args":"PointerUp"},"id":32}"#;
     let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
-    assert!(resp.error.is_none(), "invoke PointerUp error: {:?}", resp.error);
+    assert!(
+        resp.error.is_none(),
+        "invoke PointerUp error: {:?}",
+        resp.error
+    );
 
     // Drain — two intents in order: value_changing then
     // value_committed. Both carry Float(0.75).
@@ -5281,10 +5385,10 @@ fn scene_invoke_full_drag_cycle_on_slider_external_emits_value_committed() {
 #[test]
 fn scene_query_on_radio_group_returns_count_and_initial_selected_index() {
     use pinion_core::widgets::radio_group::RadioGroupExternal;
-    let mut scene =
-        Scene::External(ExternalNode::new(Box::new(RadioGroupExternal::new(3))));
+    let mut scene = Scene::External(ExternalNode::new(Box::new(RadioGroupExternal::new(3))));
 
-    let req_count = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/count"},"id":1}"#;
+    let req_count =
+        r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/count"},"id":1}"#;
     let resp = parse_response(&dispatch_t(&mut scene, req_count).unwrap());
     let s = serde_json::to_string(&resp.result.unwrap()).unwrap();
     assert!(s.contains('3'), "got {s}");
@@ -5303,8 +5407,7 @@ fn scene_query_on_radio_group_returns_count_and_initial_selected_index() {
 #[test]
 fn scene_rewind_on_radio_group_sets_selected_index_without_intent() {
     use pinion_core::widgets::radio_group::RadioGroupExternal;
-    let mut scene =
-        Scene::External(ExternalNode::new(Box::new(RadioGroupExternal::new(4))));
+    let mut scene = Scene::External(ExternalNode::new(Box::new(RadioGroupExternal::new(4))));
 
     let rewind = r#"{"jsonrpc":"2.0","method":"scene/rewind","params":{"path":"/external/selected_index","value":2},"id":10}"#;
     let resp = parse_response(&dispatch_t(&mut scene, rewind).unwrap());
@@ -5325,8 +5428,7 @@ fn scene_rewind_on_radio_group_sets_selected_index_without_intent() {
 #[test]
 fn scene_invoke_on_radio_group_drives_indexed_radio() {
     use pinion_core::widgets::radio_group::RadioGroupExternal;
-    let mut scene =
-        Scene::External(ExternalNode::new(Box::new(RadioGroupExternal::new(3))));
+    let mut scene = Scene::External(ExternalNode::new(Box::new(RadioGroupExternal::new(3))));
 
     // PointerEnter on index 1 — moves that Radio to Hover, no
     // selection change yet (no activate). selected_index stays
@@ -5342,8 +5444,7 @@ fn scene_invoke_on_radio_group_drives_indexed_radio() {
 #[test]
 fn scene_invoke_full_cycle_on_radio_group_emits_selected_with_index() {
     use pinion_core::widgets::radio_group::RadioGroupExternal;
-    let mut scene =
-        Scene::External(ExternalNode::new(Box::new(RadioGroupExternal::new(3))));
+    let mut scene = Scene::External(ExternalNode::new(Box::new(RadioGroupExternal::new(3))));
 
     // Drive a full activate on index 2 over the wire.
     for ev in ["PointerEnter", "PointerDown", "PointerUp"] {
@@ -5372,7 +5473,10 @@ fn scene_invoke_full_cycle_on_radio_group_emits_selected_with_index() {
     let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/selected_index"},"id":32}"#;
     let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
     let v = serde_json::to_string(&resp.result.unwrap()).unwrap();
-    assert!(v.contains('2'), "selected_index after activate should be 2: {v}");
+    assert!(
+        v.contains('2'),
+        "selected_index after activate should be 2: {v}"
+    );
 }
 
 // ---- R51.100 §5.38 — ListBox e2e through JSON-RPC envelope ----
@@ -5401,10 +5505,10 @@ fn scene_invoke_full_cycle_on_radio_group_emits_selected_with_index() {
 #[test]
 fn r51_100_scene_query_on_listbox_single_returns_count_and_mode() {
     use pinion_core::widgets::listbox::ListBoxExternal;
-    let mut scene =
-        Scene::External(ExternalNode::new(Box::new(ListBoxExternal::new(3))));
+    let mut scene = Scene::External(ExternalNode::new(Box::new(ListBoxExternal::new(3))));
 
-    let req_count = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/count"},"id":1}"#;
+    let req_count =
+        r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/count"},"id":1}"#;
     let resp = parse_response(&dispatch_t(&mut scene, req_count).unwrap());
     let s = serde_json::to_string(&resp.result.unwrap()).unwrap();
     assert!(s.contains('3'), "count: got {s}");
@@ -5422,8 +5526,7 @@ fn r51_100_scene_query_on_listbox_single_returns_count_and_mode() {
 #[test]
 fn r51_100_scene_rewind_listbox_single_selected_index_no_intent() {
     use pinion_core::widgets::listbox::ListBoxExternal;
-    let mut scene =
-        Scene::External(ExternalNode::new(Box::new(ListBoxExternal::new(4))));
+    let mut scene = Scene::External(ExternalNode::new(Box::new(ListBoxExternal::new(4))));
 
     let rewind = r#"{"jsonrpc":"2.0","method":"scene/rewind","params":{"path":"/external/selected_index","value":2},"id":10}"#;
     let resp = parse_response(&dispatch_t(&mut scene, rewind).unwrap());
@@ -5444,8 +5547,7 @@ fn r51_100_scene_rewind_listbox_single_selected_index_no_intent() {
 #[test]
 fn r51_100_scene_invoke_listbox_full_activate_emits_selected() {
     use pinion_core::widgets::listbox::ListBoxExternal;
-    let mut scene =
-        Scene::External(ExternalNode::new(Box::new(ListBoxExternal::new(3))));
+    let mut scene = Scene::External(ExternalNode::new(Box::new(ListBoxExternal::new(3))));
 
     for ev in ["PointerEnter", "PointerDown", "PointerUp"] {
         let req = format!(
@@ -5472,8 +5574,7 @@ fn r51_100_scene_invoke_listbox_full_activate_emits_selected() {
 #[test]
 fn r51_100_scene_invoke_listbox_pointer_cancel_silent() {
     use pinion_core::widgets::listbox::ListBoxExternal;
-    let mut scene =
-        Scene::External(ExternalNode::new(Box::new(ListBoxExternal::new(3))));
+    let mut scene = Scene::External(ExternalNode::new(Box::new(ListBoxExternal::new(3))));
 
     // Pressed → cancel without commit. R51.93 PointerCancel must
     // not fire `"selected"` even through the composite wire.
@@ -5526,7 +5627,11 @@ fn r51_100_scene_rewind_listbox_multi_selected_dot_writes_per_row() {
             r#"{{"jsonrpc":"2.0","method":"scene/rewind","params":{{"path":"/external/selected.{i}","value":true}},"id":50}}"#
         );
         let resp = parse_response(&dispatch_t(&mut scene, &req).unwrap());
-        assert!(resp.error.is_none(), "rewind selected.{i}: {:?}", resp.error);
+        assert!(
+            resp.error.is_none(),
+            "rewind selected.{i}: {:?}",
+            resp.error
+        );
     }
 
     // Verify per-row selected reads true.
@@ -5555,8 +5660,7 @@ fn r51_100_scene_rewind_listbox_multi_selected_dot_writes_per_row() {
 #[test]
 fn r51_100_scene_rewind_listbox_single_selected_dot_rejected() {
     use pinion_core::widgets::listbox::ListBoxExternal;
-    let mut scene =
-        Scene::External(ExternalNode::new(Box::new(ListBoxExternal::new(3))));
+    let mut scene = Scene::External(ExternalNode::new(Box::new(ListBoxExternal::new(3))));
     // Single-mode rejects per-row intervene (the mutual-exclusion
     // invariant lives in `selected_index`, not `selected.<i>`).
     let req = r#"{"jsonrpc":"2.0","method":"scene/rewind","params":{"path":"/external/selected.1","value":true},"id":60}"#;
@@ -5592,10 +5696,7 @@ fn r51_100_scene_invoke_listbox_multi_full_cycle_emits_toggle_on_and_off() {
     let arr = resp.result.unwrap().as_array().unwrap().clone();
     assert_eq!(arr.len(), 2, "expected toggle-on + toggle-off intents");
     for entry in &arr {
-        assert_eq!(
-            entry.get("tag").and_then(Value::as_str),
-            Some("selected"),
-        );
+        assert_eq!(entry.get("tag").and_then(Value::as_str), Some("selected"),);
         assert_eq!(
             entry.get("payload").and_then(Value::as_i64),
             Some(2),
@@ -5617,8 +5718,7 @@ fn dispatch_with_focus(
 ) -> Option<String> {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
-    let mut ctx = DispatchContext::new(scene, &previews, &revision)
-        .with_focus_manager(focus);
+    let mut ctx = DispatchContext::new(scene, &previews, &revision).with_focus_manager(focus);
     dispatch(&mut ctx, req)
 }
 
@@ -5626,10 +5726,7 @@ fn dispatch_with_focus(
 fn focus_set_wire_round_trip() {
     let mut scene = counted_scene(0);
     let mut focus = pinion_runtime::FocusManager::new();
-    focus.update_focusable_tags(vec![
-        "main_btn".to_owned(),
-        "main_cb".to_owned(),
-    ]);
+    focus.update_focusable_tags(vec!["main_btn".to_owned(), "main_cb".to_owned()]);
     let req = r#"{"jsonrpc":"2.0","method":"focus/set","params":{"tag":"main_cb"},"id":40}"#;
     let resp = parse_response(&dispatch_with_focus(&mut scene, &mut focus, req).unwrap());
     let result = resp.result.expect("focus/set returned no result");
@@ -5669,10 +5766,7 @@ fn focus_set_unknown_tag_errors() {
 fn focus_get_returns_state_with_tab_order() {
     let mut scene = counted_scene(0);
     let mut focus = pinion_runtime::FocusManager::new();
-    focus.update_focusable_tags(vec![
-        "a".to_owned(),
-        "b".to_owned(),
-    ]);
+    focus.update_focusable_tags(vec!["a".to_owned(), "b".to_owned()]);
     let _ = focus.focus_set("b");
     let req = r#"{"jsonrpc":"2.0","method":"focus/get","id":43}"#;
     let resp = parse_response(&dispatch_with_focus(&mut scene, &mut focus, req).unwrap());
@@ -5737,15 +5831,10 @@ fn focus_set_already_focused_succeeds_idempotent() {
 // scope so all three sibling axes (theme / animation / widget)
 // can call them without per-file duplication.
 
-fn dispatch_with_runtime_owner(
-    scene: &mut Scene,
-    owner: &Owner,
-    req: &str,
-) -> Option<String> {
+fn dispatch_with_runtime_owner(scene: &mut Scene, owner: &Owner, req: &str) -> Option<String> {
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
-    let mut ctx = DispatchContext::new(scene, &previews, &revision)
-        .with_runtime_owner(owner);
+    let mut ctx = DispatchContext::new(scene, &previews, &revision).with_runtime_owner(owner);
     dispatch(&mut ctx, req)
 }
 
@@ -5756,8 +5845,7 @@ fn dispatch_with_runtime_owner_and_revision(
     req: &str,
 ) -> Option<String> {
     let previews = PreviewLedger::default();
-    let mut ctx = DispatchContext::new(scene, &previews, revision)
-        .with_runtime_owner(owner);
+    let mut ctx = DispatchContext::new(scene, &previews, revision).with_runtime_owner(owner);
     dispatch(&mut ctx, req)
 }
 
@@ -5792,8 +5880,7 @@ fn r708_box_style_to_json_emits_gradient() {
 
     // Radial gradient -> center + radius geometry.
     let radial = box_style_to_json(
-        &BoxStyle::filled(Color::TRANSPARENT)
-            .with_gradient(Gradient::radial((0.5, 0.5), 0.25)),
+        &BoxStyle::filled(Color::TRANSPARENT).with_gradient(Gradient::radial((0.5, 0.5), 0.25)),
     );
     assert_eq!(radial["gradient"]["geometry"]["kind"], "radial");
     assert_eq!(radial["gradient"]["geometry"]["center"]["v"], 0.5);
@@ -5825,9 +5912,15 @@ fn r979_scene_access_dumps_the_tree_with_focus_and_value_range() {
     let mut produce_access = || -> (Vec<AccessNode>, Option<AccessFocus>) {
         let save = AccessNode::new("save", AriaRole::Button)
             .with_name("Save")
-            .with_state(AccessState { focused: true, ..AccessState::default() });
-        let opacity = AccessNode::new("opacity", AriaRole::Slider)
-            .with_value(AccessValue::Float { value: 0.5, min: 0.0, max: 1.0 });
+            .with_state(AccessState {
+                focused: true,
+                ..AccessState::default()
+            });
+        let opacity = AccessNode::new("opacity", AriaRole::Slider).with_value(AccessValue::Float {
+            value: 0.5,
+            min: 0.0,
+            max: 1.0,
+        });
         (vec![save, opacity], Some(AccessFocus::atomic("save")))
     };
     let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
@@ -5860,7 +5953,10 @@ fn r979_scene_access_without_producer_errors() {
     let req = r#"{"jsonrpc":"2.0","method":"scene/access","id":1}"#;
     let resp = parse_response(&dispatch_t(&mut scene, req).expect("error frame"));
     let err = resp.error.expect("no producer -> error frame");
-    assert_eq!(err.data, Some(Value::String("AccessTreeUnavailable".into())));
+    assert_eq!(
+        err.data,
+        Some(Value::String("AccessTreeUnavailable".into()))
+    );
 }
 
 #[path = "dispatch_tests_theme.rs"]

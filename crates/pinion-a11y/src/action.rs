@@ -99,7 +99,7 @@ pub fn translate_action<S: BuildHasher>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tree::{tag_to_node_id, ROOT_NODE_ID};
+    use crate::tree::{ROOT_NODE_ID, tag_to_node_id};
 
     fn map_with(tag: &str) -> HashMap<NodeId, String> {
         let mut m = HashMap::new();
@@ -110,12 +110,18 @@ mod tests {
 
     #[test]
     fn click_lifts_to_click() {
-        assert_eq!(AccessAction::from_accesskit(Action::Click), AccessAction::Click);
+        assert_eq!(
+            AccessAction::from_accesskit(Action::Click),
+            AccessAction::Click
+        );
     }
 
     #[test]
     fn focus_lifts_to_focus() {
-        assert_eq!(AccessAction::from_accesskit(Action::Focus), AccessAction::Focus);
+        assert_eq!(
+            AccessAction::from_accesskit(Action::Focus),
+            AccessAction::Focus
+        );
     }
 
     #[test]
@@ -132,8 +138,14 @@ mod tests {
 
     #[test]
     fn unmapped_actions_become_other() {
-        assert_eq!(AccessAction::from_accesskit(Action::ScrollDown), AccessAction::Other);
-        assert_eq!(AccessAction::from_accesskit(Action::Expand), AccessAction::Other);
+        assert_eq!(
+            AccessAction::from_accesskit(Action::ScrollDown),
+            AccessAction::Other
+        );
+        assert_eq!(
+            AccessAction::from_accesskit(Action::Expand),
+            AccessAction::Other
+        );
     }
 
     #[test]

@@ -345,7 +345,10 @@ mod tests {
         assert_eq!(b.query("count"), Some(IntrospectValue::Int(150)));
         assert_eq!(b.query("max"), Some(IntrospectValue::Int(99)));
         assert_eq!(b.query("dot"), Some(IntrospectValue::Bool(false)));
-        assert_eq!(b.query("label"), Some(IntrospectValue::Text("99+".to_string())));
+        assert_eq!(
+            b.query("label"),
+            Some(IntrospectValue::Text("99+".to_string()))
+        );
         assert_eq!(b.query("visible"), Some(IntrospectValue::Bool(true)));
         assert_eq!(b.query("nope"), None);
     }
@@ -353,7 +356,8 @@ mod tests {
     #[test]
     fn intervene_count_clamps_negative_to_zero() {
         let mut b = BadgeExternal::with_count(5);
-        b.intervene("count", IntrospectValue::Int(-3)).expect("int accepted");
+        b.intervene("count", IntrospectValue::Int(-3))
+            .expect("int accepted");
         assert_eq!(b.count(), 0);
         assert!(!b.visible(), "count 0 hides a count badge");
     }
@@ -369,7 +373,8 @@ mod tests {
     #[test]
     fn intervene_dot_toggles() {
         let mut b = BadgeExternal::with_count(3);
-        b.intervene("dot", IntrospectValue::Bool(true)).expect("bool accepted");
+        b.intervene("dot", IntrospectValue::Bool(true))
+            .expect("bool accepted");
         assert!(b.dot());
         assert_eq!(b.query("label"), Some(IntrospectValue::Text(String::new())));
     }
@@ -377,8 +382,12 @@ mod tests {
     #[test]
     fn intervene_max_clamps_and_drives_overflow() {
         let mut b = BadgeExternal::with_count(50);
-        b.intervene("max", IntrospectValue::Int(9)).expect("int accepted");
-        assert_eq!(b.query("label"), Some(IntrospectValue::Text("9+".to_string())));
+        b.intervene("max", IntrospectValue::Int(9))
+            .expect("int accepted");
+        assert_eq!(
+            b.query("label"),
+            Some(IntrospectValue::Text("9+".to_string()))
+        );
     }
 
     #[test]

@@ -102,7 +102,11 @@ mod tests {
     #[test]
     fn at_inset_is_unchanged() {
         let r = Rect::new(10, 1, 40, 30);
-        assert_eq!(clamp_top_off_flood_row(r), r, "exactly at the inset is fine");
+        assert_eq!(
+            clamp_top_off_flood_row(r),
+            r,
+            "exactly at the inset is fine"
+        );
     }
 
     #[test]
@@ -115,13 +119,21 @@ mod tests {
     #[test]
     fn far_clamp_none_viewport_is_unchanged() {
         let r = Rect::new(10, 20, 999, 999);
-        assert_eq!(clamp_far_edges_into_viewport(r, None), r, "unknown extent: no clamp");
+        assert_eq!(
+            clamp_far_edges_into_viewport(r, None),
+            r,
+            "unknown extent: no clamp"
+        );
     }
 
     #[test]
     fn far_clamp_in_bounds_is_unchanged() {
         let r = Rect::new(10, 20, 40, 30); // far edges 50, 50 — well inside 200x100
-        assert_eq!(clamp_far_edges_into_viewport(r, Some((200, 100))), r, "no-op when inside");
+        assert_eq!(
+            clamp_far_edges_into_viewport(r, Some((200, 100))),
+            r,
+            "no-op when inside"
+        );
     }
 
     #[test]
@@ -140,6 +152,10 @@ mod tests {
         // zero span (the caller treats this as "off-screen, skip"). saturating_sub
         // floors at 0 rather than wrapping.
         let out = clamp_far_edges_into_viewport(Rect::new(250, 10, 40, 30), Some((200, 100)));
-        assert_eq!(out, Rect::new(250, 10, 0, 30), "right=min(290,200)=200 < x=250 -> width 0");
+        assert_eq!(
+            out,
+            Rect::new(250, 10, 0, 30),
+            "right=min(290,200)=200 < x=250 -> width 0"
+        );
     }
 }

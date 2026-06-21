@@ -79,7 +79,8 @@
 //! (decoupled — `Ctrl+Space` can leave it on a deselected row) is the
 //! `aria-activedescendant`.
 
-use pinion_a11y::{treegrid_nodes, AccessFocus, AccessNode, TreeGridSelection, WidgetA11y};
+use pinion_a11y::{AccessFocus, AccessNode, TreeGridSelection, WidgetA11y, treegrid_nodes};
+use pinion_core::composite_tag::{GridTag, split_send_payload};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, QueryOnlyIntrospect, QuerySource, RepaintOwner,
@@ -90,22 +91,21 @@ use pinion_core::intent_tag;
 use pinion_core::reactive::batch;
 use pinion_core::scene::ContainerNode;
 use pinion_core::style::{AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size};
-use pinion_core::theme::{use_theme, ColorRole};
-use pinion_core::composite_tag::{split_send_payload, GridTag};
+use pinion_core::theme::{ColorRole, use_theme};
+use pinion_core::undo::{UndoCommand, UndoStack, undo_redo_verb, use_undo_stack};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::scroll::use_scroll_state;
-use pinion_core::undo::{undo_redo_verb, use_undo_stack, UndoCommand, UndoStack};
 use pinion_core::widgets::tree_nav::{
-    find_node_mut, flat_visible, insert_subtree, remove_subtree, toggle_expanded,
-    tree_view_introspection_extra, MutableTreeNode, TreeNode, VisibleRow,
+    MutableTreeNode, TreeNode, VisibleRow, find_node_mut, flat_visible, insert_subtree,
+    remove_subtree, toggle_expanded, tree_view_introspection_extra,
 };
 use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::{Frame, Modifiers, Owner, Scene, SelectionChord, Signal, WidgetCore};
 use pinion_shell::typeahead::apply_windowed_tree_key;
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::table::GridScroll;
 use pinion_widget_paint::tree_view::{
-    view_virtual_treegrid, TreeGridData, TreeRowClickExternal, TreeViewStyle,
+    TreeGridData, TreeRowClickExternal, TreeViewStyle, view_virtual_treegrid,
 };
 use std::borrow::Cow;
 use std::collections::BTreeSet;
@@ -205,7 +205,12 @@ struct OutlinerNode {
 
 impl OutlinerNode {
     fn leaf(id: String, label: String) -> Self {
-        Self { id, label, expanded: false, children: Vec::new() }
+        Self {
+            id,
+            label,
+            expanded: false,
+            children: Vec::new(),
+        }
     }
 }
 
@@ -305,7 +310,9 @@ impl QuerySource for CellsIntrospect {
 
     fn introspect_query(&self, path: &str) -> Option<IntrospectValue> {
         if path == "col_count" {
-            return Some(IntrospectValue::Int(i64::try_from(DATA_HEADERS.len()).unwrap_or(i64::MAX)));
+            return Some(IntrospectValue::Int(
+                i64::try_from(DATA_HEADERS.len()).unwrap_or(i64::MAX),
+            ));
         }
         let rest = path.strip_prefix("cell_at.")?;
         // `cell_at.<pos>.<col>` — two indices. A malformed or out-of-range
@@ -335,7 +342,9 @@ impl QuerySource for CellsIntrospect {
 /// WHOLE tree — not just the visible rows — so a node stays selected while an
 /// ancestor is collapsed.
 fn contains_id(nodes: &[OutlinerNode], id: &str) -> bool {
-    nodes.iter().any(|n| n.id == id || contains_id(&n.children, id))
+    nodes
+        .iter()
+        .any(|n| n.id == id || contains_id(&n.children, id))
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -443,7 +452,8 @@ impl UndoCommand for TreeBatchDelete {
         let mut tree = self.nodes.get();
         // Re-insert ascending by (parent, index): each insert shifts the
         // following originals back into place (the standard multi-undelete).
-        let mut ordered: Vec<&(Option<String>, usize, OutlinerNode)> = self.removed.iter().collect();
+        let mut ordered: Vec<&(Option<String>, usize, OutlinerNode)> =
+            self.removed.iter().collect();
         ordered.sort_by(|a, b| (a.0.as_deref(), a.1).cmp(&(b.0.as_deref(), b.1)));
         for (parent, index, node) in ordered {
             insert_subtree(&mut tree, parent.as_deref(), *index, node.clone());
@@ -516,7 +526,8 @@ struct TreeState {
 }
 
 fn use_tree_state() -> Rc<TreeState> {
-    let owner = Owner::current().expect("use_tree_state must run inside a CoreShell view / reducer wrap");
+    let owner =
+        Owner::current().expect("use_tree_state must run inside a CoreShell view / reducer wrap");
     // R905 — pre-resolve the undo stack before the `state` cache factory: a
     // cache factory must not re-enter `Owner::cache` ([[owner-cache-no-nested-factory]]),
     // and `use_undo_stack` is itself a cache hook.
@@ -590,7 +601,9 @@ impl TreeState {
             return false;
         };
         let anchor = self.anchor.get();
-        let Some(anchor_pos) = anchor.as_deref().and_then(|a| rows.iter().position(|r| r.id == a))
+        let Some(anchor_pos) = anchor
+            .as_deref()
+            .and_then(|a| rows.iter().position(|r| r.id == a))
         else {
             return self.select_only(target);
         };
@@ -634,8 +647,11 @@ impl TreeState {
     /// range anchor resets, the cursor is left put. Returns whether it changed.
     fn set_selection(&self, ids: &BTreeSet<String>) -> bool {
         let nodes = self.nodes.get();
-        let next: BTreeSet<String> =
-            ids.iter().filter(|id| contains_id(&nodes, id)).cloned().collect();
+        let next: BTreeSet<String> = ids
+            .iter()
+            .filter(|id| contains_id(&nodes, id))
+            .cloned()
+            .collect();
         if self.selection.get() == next && self.anchor.get().is_none() {
             return false;
         }
@@ -659,13 +675,18 @@ impl TreeState {
         let selection = self.selection.get();
         let mut top = Vec::new();
         collect_top_level(&nodes, &selection, &mut top);
-        let removed: Vec<(Option<String>, usize, OutlinerNode)> =
-            top.iter().filter_map(|id| find_location(&nodes, None, id)).collect();
+        let removed: Vec<(Option<String>, usize, OutlinerNode)> = top
+            .iter()
+            .filter_map(|id| find_location(&nodes, None, id))
+            .collect();
         if removed.is_empty() {
             return 0;
         }
         let count = removed.len();
-        self.undo_stack.record(TreeBatchDelete { nodes: self.nodes.clone(), removed });
+        self.undo_stack.record(TreeBatchDelete {
+            nodes: self.nodes.clone(),
+            removed,
+        });
         self.clear();
         count
     }
@@ -694,7 +715,10 @@ impl TreeState {
             return 0;
         }
         let count = renames.len();
-        self.undo_stack.record(TreeBatchRename { nodes: self.nodes.clone(), renames });
+        self.undo_stack.record(TreeBatchRename {
+            nodes: self.nodes.clone(),
+            renames,
+        });
         count
     }
 
@@ -746,7 +770,12 @@ impl TreeSelectExternal {
     /// an AI consumer treats the slot as a list unconditionally.
     fn selection_value(&self) -> IntrospectValue {
         IntrospectValue::Json(serde_json::Value::Array(
-            self.state.selection.get().into_iter().map(serde_json::Value::String).collect(),
+            self.state
+                .selection
+                .get()
+                .into_iter()
+                .map(serde_json::Value::String)
+                .collect(),
         ))
     }
 
@@ -789,7 +818,11 @@ impl ExternalIntrospect for TreeSelectExternal {
         // R905 — `delete_selected` / `rename_selected` / `undo` / `redo` are the
         // batch-edit `invoke` ops (delete/rename return the count, undo/redo a
         // bool).
-        IntrospectSchema::new(&[("selection", "json"), ("count", "int"), ("anchor", "string")])
+        IntrospectSchema::new(&[
+            ("selection", "json"),
+            ("count", "int"),
+            ("anchor", "string"),
+        ])
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
@@ -798,9 +831,12 @@ impl ExternalIntrospect for TreeSelectExternal {
             "count" => Some(IntrospectValue::Int(
                 i64::try_from(self.state.selection.get().len()).unwrap_or(i64::MAX),
             )),
-            "anchor" => {
-                Some(self.state.anchor.get().map_or(IntrospectValue::Null, IntrospectValue::Text))
-            }
+            "anchor" => Some(
+                self.state
+                    .anchor
+                    .get()
+                    .map_or(IntrospectValue::Null, IntrospectValue::Text),
+            ),
             _ => None,
         }
     }
@@ -832,7 +868,11 @@ impl ExternalIntrospect for TreeSelectExternal {
         }
     }
 
-    fn invoke(&mut self, path: &str, args: IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+    fn invoke(
+        &mut self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
         // Each op drives the shared funnel and returns the resulting set (the
         // same funnel the keyboard + click drive — RPC parity, not a fork).
         match path {
@@ -917,7 +957,11 @@ fn apply_key_impl(key: &str, modifiers: Modifiers) -> bool {
     // already drive, so keyboard and `scene/invoke` are one funnel. Plain `z` /
     // `y` (no command modifier) fall through to type-ahead.
     if let Some(verb) = undo_redo_verb(key, modifiers) {
-        return if verb == "redo" { state.redo() } else { state.undo() };
+        return if verb == "redo" {
+            state.redo()
+        } else {
+            state.undo()
+        };
     }
     let cmd = modifiers.ctrl || modifiers.meta;
     match key {
@@ -996,7 +1040,10 @@ fn view(_state: (), _frame: &Frame) -> Scene {
 
     let grid = view_virtual_treegrid(
         TREE_TAG,
-        GridScroll { body: &scroll, horizontal: &h_scroll },
+        GridScroll {
+            body: &scroll,
+            horizontal: &h_scroll,
+        },
         &TreeGridData {
             rows: &rows,
             tree_header: TREE_HEADER,
@@ -1017,7 +1064,11 @@ fn view(_state: (), _frame: &Frame) -> Scene {
     let invisible_root = Scene::Container(
         ContainerNode::new(Vec::new())
             .with_tag(ROOT_TAG)
-            .with_layout(LayoutStyle::new().with_size(Size::px(0, 0)).with_focusable(true)),
+            .with_layout(
+                LayoutStyle::new()
+                    .with_size(Size::px(0, 0))
+                    .with_focusable(true),
+            ),
     );
 
     Scene::Container(
@@ -1060,7 +1111,10 @@ impl WidgetCore for TreeGridView {
             // R902.1 — opt in to modifier-aware clicks (the `click` intent then
             // carries the held modifiers; the keyboard's `SelectionChord` chords
             // get a pointer peer).
-            ExtraExternal::new(TREE_TAG, Box::new(TreeRowClickExternal::new().with_click_modifiers())),
+            ExtraExternal::new(
+                TREE_TAG,
+                Box::new(TreeRowClickExternal::new().with_click_modifiers()),
+            ),
             tree_view_introspection_extra(
                 TREE_STATE_TAG,
                 move || flat_visible(&struct_nodes.get()),
@@ -1075,7 +1129,10 @@ impl WidgetCore for TreeGridView {
             ),
             // R902 — the multi-select coordinator: query / intervene the
             // selection set + invoke the keyboard's funnel ops from RPC.
-            ExtraExternal::new(SELECT_TAG, Box::new(TreeSelectExternal { state: tree_state })),
+            ExtraExternal::new(
+                SELECT_TAG,
+                Box::new(TreeSelectExternal { state: tree_state }),
+            ),
         ]
     }
 
@@ -1132,7 +1189,12 @@ impl WidgetCore for TreeGridView {
     /// would steal keys from sibling panels in the eventual self-hosted editor
     /// ([[routing-and-focus-are-separate-axes]]); the RPC demo issues
     /// `focus/set` first like every other gated example.
-    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, modifiers: Modifiers) -> bool {
+    fn apply_key(
+        scene: &mut Scene,
+        focused: Option<&str>,
+        key: &str,
+        modifiers: Modifiers,
+    ) -> bool {
         let _ = scene;
         if focused != Some(ROOT_TAG) {
             return false;
@@ -1174,8 +1236,13 @@ impl WidgetA11y for TreeGridView {
         let selection = tree_state.selection.get();
         let scroll = use_scroll_state(SCROLL_KEY);
         let (_, measured_h) = scroll.measured_viewport();
-        let window =
-            compute_visible_range(scroll.offset_y(), measured_h, rows.len(), ROW_PITCH, OVERSCAN);
+        let window = compute_visible_range(
+            scroll.offset_y(),
+            measured_h,
+            rows.len(),
+            ROW_PITCH,
+            OVERSCAN,
+        );
         let slice: &[VisibleRow] = &rows[window.first..window.first + window.count];
         treegrid_nodes(
             ROOT_TAG,
@@ -1184,7 +1251,10 @@ impl WidgetA11y for TreeGridView {
             TREE_HEADER,
             &DATA_HEADERS,
             slice,
-            &TreeGridSelection { selected: &selection, cursor: cursor.as_deref() },
+            &TreeGridSelection {
+                selected: &selection,
+                cursor: cursor.as_deref(),
+            },
         )
     }
 
@@ -1199,7 +1269,10 @@ impl WidgetA11y for TreeGridView {
         if focused == Some(ROOT_TAG)
             && let Some(cursor) = use_tree_state().focused_id.get()
         {
-            return Some(AccessFocus::composite(ROOT_TAG, GridTag::metadata_row(TREE_TAG, &cursor)));
+            return Some(AccessFocus::composite(
+                ROOT_TAG,
+                GridTag::metadata_row(TREE_TAG, &cursor),
+            ));
         }
         focused.map(AccessFocus::atomic)
     }
@@ -1209,7 +1282,10 @@ impl WidgetView for TreeGridView {
     type Renderer = HelloTreeGridRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 }
 
@@ -1225,8 +1301,18 @@ mod tests {
     fn nav(key: &str) -> bool {
         apply_key_impl(key, Modifiers::empty())
     }
-    const SHIFT: Modifiers = Modifiers { shift: true, ctrl: false, alt: false, meta: false };
-    const CTRL: Modifiers = Modifiers { shift: false, ctrl: true, alt: false, meta: false };
+    const SHIFT: Modifiers = Modifiers {
+        shift: true,
+        ctrl: false,
+        alt: false,
+        meta: false,
+    };
+    const CTRL: Modifiers = Modifiers {
+        shift: false,
+        ctrl: true,
+        alt: false,
+        meta: false,
+    };
 
     /// The current selection as a sorted `Vec<String>` (a `BTreeSet` is already
     /// ordered) for terse assertions.
@@ -1240,16 +1326,30 @@ mod tests {
         // so the metadata pane genuinely scrolls horizontally past the freeze.
         // Sum the real per-column widths (a runtime fold, not a const).
         let total: u32 = TREE_COL_W + DATA_HEADERS.iter().map(|_| DATA_COL_W).sum::<u32>();
-        assert!(total > WIN_W, "tree + metadata ({total}) must exceed WIN_W ({WIN_W})");
+        assert!(
+            total > WIN_W,
+            "tree + metadata ({total}) must exceed WIN_W ({WIN_W})"
+        );
         // The frozen tree column leaves room for visible metadata beside it.
         let metadata_visible = WIN_W.saturating_sub(TREE_COL_W);
-        assert!(metadata_visible > 0, "frozen column leaves room for metadata");
+        assert!(
+            metadata_visible > 0,
+            "frozen column leaves room for metadata"
+        );
     }
 
     #[test]
     fn cell_data_distinguishes_folders_from_objects() {
-        assert_eq!(cell_data("f3", 0), "Folder", "a folder id (no '-') is a Folder");
-        assert_ne!(cell_data("f3-o1", 0), "Folder", "an object id is not a Folder");
+        assert_eq!(
+            cell_data("f3", 0),
+            "Folder",
+            "a folder id (no '-') is a Folder"
+        );
+        assert_ne!(
+            cell_data("f3-o1", 0),
+            "Folder",
+            "an object id is not a Folder"
+        );
         // Deterministic: same id → same metadata.
         assert_eq!(cell_data("f3-o1", 2), cell_data("f3-o1", 2));
     }
@@ -1261,7 +1361,11 @@ mod tests {
         let rows = flat_visible(&nodes);
         // FOLDERS folder rows + EXPANDED_AT_BOOT × OBJECTS_PER object rows.
         let expected = FOLDERS + EXPANDED_AT_BOOT * OBJECTS_PER;
-        assert_eq!(rows.len(), expected, "boot visible rows = folders + expanded children");
+        assert_eq!(
+            rows.len(),
+            expected,
+            "boot visible rows = folders + expanded children"
+        );
     }
 
     // ── R864 keyboard roving ─────────────────────────────────────────
@@ -1290,9 +1394,17 @@ mod tests {
             // f0 boots expanded → ArrowDown descends to its first child.
             assert_eq!(state.focused_id.get().as_deref(), Some("f0"));
             assert!(nav("ArrowDown"), "ArrowDown handled");
-            assert_eq!(state.focused_id.get().as_deref(), Some("f0-o0"), "Down -> first child");
+            assert_eq!(
+                state.focused_id.get().as_deref(),
+                Some("f0-o0"),
+                "Down -> first child"
+            );
             assert!(nav("ArrowUp"), "ArrowUp handled");
-            assert_eq!(state.focused_id.get().as_deref(), Some("f0"), "Up -> back to parent");
+            assert_eq!(
+                state.focused_id.get().as_deref(),
+                Some("f0"),
+                "Up -> back to parent"
+            );
             // A non-navigation, non-typeahead key is unhandled (falls through).
             assert!(!nav("F5"), "F5 is not a tree key");
         });
@@ -1311,7 +1423,11 @@ mod tests {
             assert_eq!(after, before + OBJECTS_PER, "ArrowRight expanded f10");
             // ArrowLeft on the expanded branch collapses it again.
             assert!(nav("ArrowLeft"), "ArrowLeft handled");
-            assert_eq!(flat_visible(&state.nodes.get()).len(), before, "ArrowLeft collapsed f10");
+            assert_eq!(
+                flat_visible(&state.nodes.get()).len(),
+                before,
+                "ArrowLeft collapsed f10"
+            );
         });
     }
 
@@ -1325,14 +1441,21 @@ mod tests {
             for _ in 0..40 {
                 nav("ArrowDown");
             }
-            assert!(scroll.offset_y() > 0, "navigating down scrolled the body window");
+            assert!(
+                scroll.offset_y() > 0,
+                "navigating down scrolled the body window"
+            );
             // The cursor row is inside the re-derived window (scroll-into-view).
             let state = use_tree_state();
             let cursor = state.focused_id.get().expect("cursor set");
             let rows = flat_visible(&state.nodes.get());
-            let idx = rows.iter().position(|r| r.id == cursor).expect("cursor row visible");
+            let idx = rows
+                .iter()
+                .position(|r| r.id == cursor)
+                .expect("cursor row visible");
             let (_, mh) = scroll.measured_viewport();
-            let window = compute_visible_range(scroll.offset_y(), mh, rows.len(), ROW_PITCH, OVERSCAN);
+            let window =
+                compute_visible_range(scroll.offset_y(), mh, rows.len(), ROW_PITCH, OVERSCAN);
             assert!(
                 idx >= window.first && idx < window.first + window.count,
                 "cursor row {idx} stays within the revealed window {window:?}",
@@ -1352,11 +1475,21 @@ mod tests {
                 "no focus -> key dropped",
             );
             assert!(
-                !TreeGridView::apply_key(&mut scene, Some("other"), "ArrowDown", Modifiers::default()),
+                !TreeGridView::apply_key(
+                    &mut scene,
+                    Some("other"),
+                    "ArrowDown",
+                    Modifiers::default()
+                ),
                 "focus elsewhere -> key dropped",
             );
             assert!(
-                TreeGridView::apply_key(&mut scene, Some(ROOT_TAG), "ArrowDown", Modifiers::default()),
+                TreeGridView::apply_key(
+                    &mut scene,
+                    Some(ROOT_TAG),
+                    "ArrowDown",
+                    Modifiers::default()
+                ),
                 "focus on the treegrid root -> key applies",
             );
         });
@@ -1373,26 +1506,43 @@ mod tests {
             use_scroll_state(SCROLL_KEY).set_measured_viewport(WIN_W, 8 * ROW_PITCH);
             TreeGridView::access_node(&(), None)
         });
-        assert_eq!(nodes[0].role, pinion_a11y::AriaRole::TreeGrid, "container is a treegrid");
-        let rows = nodes.iter().filter(|n| n.role == pinion_a11y::AriaRole::Row).count();
+        assert_eq!(
+            nodes[0].role,
+            pinion_a11y::AriaRole::TreeGrid,
+            "container is a treegrid"
+        );
+        let rows = nodes
+            .iter()
+            .filter(|n| n.role == pinion_a11y::AriaRole::Row)
+            .count();
         let visible = flat_visible(&initial_nodes()).len();
         assert!(visible > 30, "boot has many visible rows ({visible})");
         // header row + windowed data rows, far fewer than the full flattening.
-        assert!(rows < visible, "AT rows {rows} window the {visible} visible rows");
+        assert!(
+            rows < visible,
+            "AT rows {rows} window the {visible} visible rows"
+        );
         // The boot cursor (f0) is in the top window, so its row is present.
-        assert!(nodes.iter().any(|n| n.tag == "tgrid_drowf0"), "cursor row f0 windowed in");
+        assert!(
+            nodes.iter().any(|n| n.tag == "tgrid_drowf0"),
+            "cursor row f0 windowed in"
+        );
     }
 
     #[test]
     fn cell_at_reads_metadata_by_position_and_column() {
         // The off-window read: `cell_at.<pos>.<col>` resolves the visible row
         // at <pos> and reports its <col> metadata exactly as `cell_data` does.
-        let src = CellsIntrospect { rows: Box::new(|| flat_visible(&initial_nodes())) };
+        let src = CellsIntrospect {
+            rows: Box::new(|| flat_visible(&initial_nodes())),
+        };
         let rows = flat_visible(&initial_nodes());
         // col_count mirrors the metadata header count.
         assert_eq!(
             src.introspect_query("col_count"),
-            Some(IntrospectValue::Int(i64::try_from(DATA_HEADERS.len()).unwrap())),
+            Some(IntrospectValue::Int(
+                i64::try_from(DATA_HEADERS.len()).unwrap()
+            )),
         );
         // An in-range cell reports the same string the painted cell shows.
         let pos = 5.min(rows.len() - 1);
@@ -1402,9 +1552,21 @@ mod tests {
             Some(IntrospectValue::Text(expected)),
         );
         // Out-of-range column / position / malformed address -> Null.
-        assert_eq!(src.introspect_query("cell_at.0.99"), Some(IntrospectValue::Null), "col OOR");
-        assert_eq!(src.introspect_query("cell_at.99999.0"), Some(IntrospectValue::Null), "pos OOR");
-        assert_eq!(src.introspect_query("cell_at.0"), Some(IntrospectValue::Null), "no column");
+        assert_eq!(
+            src.introspect_query("cell_at.0.99"),
+            Some(IntrospectValue::Null),
+            "col OOR"
+        );
+        assert_eq!(
+            src.introspect_query("cell_at.99999.0"),
+            Some(IntrospectValue::Null),
+            "pos OOR"
+        );
+        assert_eq!(
+            src.introspect_query("cell_at.0"),
+            Some(IntrospectValue::Null),
+            "no column"
+        );
         assert_eq!(src.introspect_query("bogus"), None, "unknown path");
     }
 
@@ -1419,7 +1581,10 @@ mod tests {
             use_tree_state().focused_id.set(Some(String::from("f0-o3")));
             let target = TreeGridView::access_focus_target(&(), Some(ROOT_TAG))
                 .expect("focused outliner -> composite focus");
-            assert_eq!(target.focus_tag, ROOT_TAG, "focus lands on the treegrid root");
+            assert_eq!(
+                target.focus_tag, ROOT_TAG,
+                "focus lands on the treegrid root"
+            );
             assert_eq!(
                 target.active_descendant.as_deref(),
                 Some("tgrid_drowf0-o3"),
@@ -1463,7 +1628,11 @@ mod tests {
             // selection-follows-focus: the set is exactly the new cursor.
             assert_eq!(state.focused_id.get().as_deref(), Some("f0-o0"));
             assert_eq!(selection_of(&state), vec!["f0-o0"], "plain nav replaces");
-            assert_eq!(state.anchor.get().as_deref(), Some("f0-o0"), "plain nav re-seeds the anchor");
+            assert_eq!(
+                state.anchor.get().as_deref(),
+                Some("f0-o0"),
+                "plain nav re-seeds the anchor"
+            );
         });
     }
 
@@ -1475,12 +1644,24 @@ mod tests {
             // anchor boots at f0; f0 boots expanded → the next visible rows are
             // f0-o0, f0-o1, … Shift+Down extends the contiguous run.
             assert!(apply_key_impl("ArrowDown", SHIFT));
-            assert_eq!(selection_of(&state), vec!["f0", "f0-o0"], "shift extends from anchor f0");
-            assert_eq!(state.anchor.get().as_deref(), Some("f0"), "anchor stays put while extending");
+            assert_eq!(
+                selection_of(&state),
+                vec!["f0", "f0-o0"],
+                "shift extends from anchor f0"
+            );
+            assert_eq!(
+                state.anchor.get().as_deref(),
+                Some("f0"),
+                "anchor stays put while extending"
+            );
             // Extend further: the range grows, anchor unchanged, cursor at the end.
             assert!(apply_key_impl("ArrowDown", SHIFT));
             assert_eq!(selection_of(&state), vec!["f0", "f0-o0", "f0-o1"]);
-            assert_eq!(state.focused_id.get().as_deref(), Some("f0-o1"), "cursor rides the far end");
+            assert_eq!(
+                state.focused_id.get().as_deref(),
+                Some("f0-o1"),
+                "cursor rides the far end"
+            );
             assert_eq!(state.anchor.get().as_deref(), Some("f0"));
         });
     }
@@ -1493,7 +1674,11 @@ mod tests {
             // boot: cursor f0, selected {f0}. Ctrl+Space deselects it (cursor stays).
             assert!(apply_key_impl("Space", CTRL));
             assert!(selection_of(&state).is_empty(), "Ctrl+Space toggled f0 off");
-            assert_eq!(state.focused_id.get().as_deref(), Some("f0"), "cursor stays put");
+            assert_eq!(
+                state.focused_id.get().as_deref(),
+                Some("f0"),
+                "cursor stays put"
+            );
             // Ctrl+Space again re-selects it.
             assert!(apply_key_impl("Space", CTRL));
             assert_eq!(selection_of(&state), vec!["f0"]);
@@ -1508,7 +1693,11 @@ mod tests {
             let visible = flat_visible(&state.nodes.get()).len();
             assert!(visible > 30, "boot has many visible rows ({visible})");
             assert!(apply_key_impl("a", CTRL));
-            assert_eq!(state.selection.get().len(), visible, "Ctrl+A selects all visible rows");
+            assert_eq!(
+                state.selection.get().len(),
+                visible,
+                "Ctrl+A selects all visible rows"
+            );
         });
     }
 
@@ -1522,13 +1711,24 @@ mod tests {
             assert!(state.toggle("f0-o5"));
             assert!(state.selection.get().contains("f0-o5"));
             toggle_expanded(&state.nodes, "f0"); // collapse f0
-            let visible: BTreeSet<String> =
-                flat_visible(&state.nodes.get()).iter().map(|r| r.id.clone()).collect();
-            assert!(!visible.contains("f0-o5"), "the child is collapsed away (not visible)");
-            assert!(state.selection.get().contains("f0-o5"), "but it stays selected by stable id");
+            let visible: BTreeSet<String> = flat_visible(&state.nodes.get())
+                .iter()
+                .map(|r| r.id.clone())
+                .collect();
+            assert!(
+                !visible.contains("f0-o5"),
+                "the child is collapsed away (not visible)"
+            );
+            assert!(
+                state.selection.get().contains("f0-o5"),
+                "but it stays selected by stable id"
+            );
             // Re-expand: it is visible AND still selected.
             toggle_expanded(&state.nodes, "f0");
-            assert!(state.selection.get().contains("f0-o5"), "re-expanding restores the selected row");
+            assert!(
+                state.selection.get().contains("f0-o5"),
+                "re-expanding restores the selected row"
+            );
         });
     }
 
@@ -1540,7 +1740,11 @@ mod tests {
             assert!(state.clear());
             assert!(selection_of(&state).is_empty());
             assert!(state.anchor.get().is_none(), "clear drops the range anchor");
-            assert_eq!(state.focused_id.get().as_deref(), Some("f1"), "cursor ⊥ selection: cursor stays");
+            assert_eq!(
+                state.focused_id.get().as_deref(),
+                Some("f1"),
+                "cursor ⊥ selection: cursor stays"
+            );
             assert!(!state.clear(), "clearing an empty selection is a no-op");
         });
     }
@@ -1549,15 +1753,31 @@ mod tests {
     fn set_selection_and_select_only_reject_phantom_ids() {
         Owner::new().run(|| {
             let state = use_tree_state();
-            let ids: BTreeSet<String> =
-                ["f2", "f3", "ghost", "f99-o99"].iter().map(|s| (*s).to_owned()).collect();
+            let ids: BTreeSet<String> = ["f2", "f3", "ghost", "f99-o99"]
+                .iter()
+                .map(|s| (*s).to_owned())
+                .collect();
             assert!(state.set_selection(&ids));
-            assert_eq!(selection_of(&state), vec!["f2", "f3"], "phantom ids dropped, real ids kept");
-            assert!(state.anchor.get().is_none(), "admin restore resets the anchor");
+            assert_eq!(
+                selection_of(&state),
+                vec!["f2", "f3"],
+                "phantom ids dropped, real ids kept"
+            );
+            assert!(
+                state.anchor.get().is_none(),
+                "admin restore resets the anchor"
+            );
             // The interaction funnel guards too: a malformed id is a no-op.
-            assert!(!state.select_only("does-not-exist"), "unknown id is a no-op");
+            assert!(
+                !state.select_only("does-not-exist"),
+                "unknown id is a no-op"
+            );
             assert!(!state.toggle("does-not-exist"), "unknown id is a no-op");
-            assert_eq!(selection_of(&state), vec!["f2", "f3"], "selection unchanged by phantom ops");
+            assert_eq!(
+                selection_of(&state),
+                vec!["f2", "f3"],
+                "selection unchanged by phantom ops"
+            );
         });
     }
 
@@ -1579,10 +1799,20 @@ mod tests {
             // Plain click f7 (a collapsed folder): selects it (replace) AND
             // expands it (the R860 row-click affordance).
             let _ = TreeGridView::update((), &click_intent("f7", Modifiers::empty()));
-            assert_eq!(selection_of(&state), vec!["f7"], "plain click replaces the selection");
-            assert_eq!(state.focused_id.get().as_deref(), Some("f7"), "plain click moves the cursor");
+            assert_eq!(
+                selection_of(&state),
+                vec!["f7"],
+                "plain click replaces the selection"
+            );
+            assert_eq!(
+                state.focused_id.get().as_deref(),
+                Some("f7"),
+                "plain click moves the cursor"
+            );
             assert!(
-                flat_visible(&state.nodes.get()).iter().any(|r| r.id == "f7-o0"),
+                flat_visible(&state.nodes.get())
+                    .iter()
+                    .any(|r| r.id == "f7-o0"),
                 "plain click expanded the folder",
             );
         });
@@ -1597,8 +1827,16 @@ mod tests {
             // Plain click a LEAF (f0 boots expanded, f0-o2 is a leaf -> no expand):
             // replaces + anchors at f0-o2.
             let _ = TreeGridView::update((), &click_intent("f0-o2", Modifiers::empty()));
-            assert_eq!(selection_of(&state), vec!["f0-o2"], "plain click on a leaf replaces");
-            assert_eq!(state.anchor.get().as_deref(), Some("f0-o2"), "plain click seeds the anchor");
+            assert_eq!(
+                selection_of(&state),
+                vec!["f0-o2"],
+                "plain click on a leaf replaces"
+            );
+            assert_eq!(
+                state.anchor.get().as_deref(),
+                Some("f0-o2"),
+                "plain click seeds the anchor"
+            );
             // Shift-click extends the contiguous range from the anchor.
             let _ = TreeGridView::update((), &click_intent("f0-o5", SHIFT));
             assert_eq!(
@@ -1606,30 +1844,50 @@ mod tests {
                 vec!["f0-o2", "f0-o3", "f0-o4", "f0-o5"],
                 "Shift-click extends the range from the anchor over the visible run",
             );
-            assert_eq!(state.anchor.get().as_deref(), Some("f0-o2"), "Shift-click holds the anchor put");
+            assert_eq!(
+                state.anchor.get().as_deref(),
+                Some("f0-o2"),
+                "Shift-click holds the anchor put"
+            );
             // Ctrl-click toggles a non-adjacent row IN without clearing the range,
             // and does NOT expand it.
             let _ = TreeGridView::update((), &click_intent("f7", CTRL));
             assert!(state.selection.get().contains("f7"), "Ctrl-click adds f7");
-            assert!(state.selection.get().contains("f0-o3"), "Ctrl-click keeps the existing range");
             assert!(
-                flat_visible(&state.nodes.get()).iter().all(|r| r.id != "f7-o0"),
+                state.selection.get().contains("f0-o3"),
+                "Ctrl-click keeps the existing range"
+            );
+            assert!(
+                flat_visible(&state.nodes.get())
+                    .iter()
+                    .all(|r| r.id != "f7-o0"),
                 "Ctrl-click on a folder does NOT expand it (pure selection gesture)",
             );
             // Ctrl-click an existing member removes it.
             let _ = TreeGridView::update((), &click_intent("f0-o3", CTRL));
-            assert!(!state.selection.get().contains("f0-o3"), "Ctrl-click toggles a member off");
+            assert!(
+                !state.selection.get().contains("f0-o3"),
+                "Ctrl-click toggles a member off"
+            );
         });
     }
 
     #[test]
     fn select_external_query_intervene_invoke_round_trip() {
         Owner::new().run(|| {
-            let mut ext = TreeSelectExternal { state: use_tree_state() };
+            let mut ext = TreeSelectExternal {
+                state: use_tree_state(),
+            };
             // boot: {f0}. Read mirrors the state.
             assert_eq!(ext.query("count"), Some(IntrospectValue::Int(1)));
-            assert_eq!(ext.query("selection"), Some(IntrospectValue::Json(serde_json::json!(["f0"]))));
-            assert_eq!(ext.query("anchor"), Some(IntrospectValue::Text("f0".into())));
+            assert_eq!(
+                ext.query("selection"),
+                Some(IntrospectValue::Json(serde_json::json!(["f0"])))
+            );
+            assert_eq!(
+                ext.query("anchor"),
+                Some(IntrospectValue::Text("f0".into()))
+            );
             // invoke toggle adds a row and returns the resulting set.
             assert_eq!(
                 ext.invoke("toggle", IntrospectValue::Text("f5".into())),
@@ -1637,8 +1895,11 @@ mod tests {
             );
             // intervene (admin restore) replaces; the read mirrors the write,
             // and an unknown id is dropped on the write path.
-            ext.intervene("selection", IntrospectValue::Json(serde_json::json!(["f3", "ghost"])))
-                .expect("array replaces");
+            ext.intervene(
+                "selection",
+                IntrospectValue::Json(serde_json::json!(["f3", "ghost"])),
+            )
+            .expect("array replaces");
             assert_eq!(
                 ext.query("selection"),
                 Some(IntrospectValue::Json(serde_json::json!(["f3"]))),
@@ -1650,18 +1911,29 @@ mod tests {
                 ext.invoke("clear", IntrospectValue::Null),
                 Ok(IntrospectValue::Json(serde_json::json!([]))),
             );
-            assert_eq!(ext.intervene("count", IntrospectValue::Int(0)), Err(InterveneError::ReadOnly));
-            assert_eq!(ext.invoke("bogus", IntrospectValue::Null), Err(InvokeError::UnknownPath));
+            assert_eq!(
+                ext.intervene("count", IntrospectValue::Int(0)),
+                Err(InterveneError::ReadOnly)
+            );
+            assert_eq!(
+                ext.invoke("bogus", IntrospectValue::Null),
+                Err(InvokeError::UnknownPath)
+            );
         });
     }
 
     #[test]
     fn select_external_extend_to_ranges_over_visible_rows() {
         Owner::new().run(|| {
-            let mut ext = TreeSelectExternal { state: use_tree_state() };
+            let mut ext = TreeSelectExternal {
+                state: use_tree_state(),
+            };
             // Seed the anchor at f0, then extend over the visible run to f0-o2.
-            ext.invoke("select", IntrospectValue::Text("f0".into())).unwrap();
-            let set = ext.invoke("extend_to", IntrospectValue::Text("f0-o2".into())).unwrap();
+            ext.invoke("select", IntrospectValue::Text("f0".into()))
+                .unwrap();
+            let set = ext
+                .invoke("extend_to", IntrospectValue::Text("f0-o2".into()))
+                .unwrap();
             assert_eq!(
                 set,
                 IntrospectValue::Json(serde_json::json!(["f0", "f0-o0", "f0-o1", "f0-o2"])),
@@ -1687,12 +1959,21 @@ mod tests {
             // Both folders and their object children are gone.
             assert!(!contains_id(&state.nodes.get(), "f5"));
             assert!(!contains_id(&state.nodes.get(), "f6"));
-            assert!(!contains_id(&state.nodes.get(), "f5-o0"), "child subtree removed too");
-            assert!(selection_of(&state).is_empty(), "selection cleared after delete");
+            assert!(
+                !contains_id(&state.nodes.get(), "f5-o0"),
+                "child subtree removed too"
+            );
+            assert!(
+                selection_of(&state).is_empty(),
+                "selection cleared after delete"
+            );
             // One undo restores the whole batch.
             assert!(state.undo(), "undo steps");
             assert!(contains_id(&state.nodes.get(), "f5"), "f5 restored");
-            assert!(contains_id(&state.nodes.get(), "f6-o3"), "f6's children restored");
+            assert!(
+                contains_id(&state.nodes.get(), "f6-o3"),
+                "f6's children restored"
+            );
             assert!(state.redo(), "redo re-applies");
             assert!(!contains_id(&state.nodes.get(), "f5"), "redo deletes again");
         });
@@ -1712,7 +1993,10 @@ mod tests {
             assert!(!contains_id(&state.nodes.get(), "f0"));
             assert!(!contains_id(&state.nodes.get(), "f0-o0"));
             assert!(state.undo(), "undo restores");
-            assert!(contains_id(&state.nodes.get(), "f0-o0"), "descendant came back with ancestor");
+            assert!(
+                contains_id(&state.nodes.get(), "f0-o0"),
+                "descendant came back with ancestor"
+            );
         });
     }
 
@@ -1747,7 +2031,11 @@ mod tests {
         Owner::new().run(|| {
             let state = use_tree_state();
             state.clear();
-            assert_eq!(state.delete_selected(), 0, "nothing selected, nothing deleted");
+            assert_eq!(
+                state.delete_selected(),
+                0,
+                "nothing selected, nothing deleted"
+            );
             assert!(!state.undo(), "no undo step was recorded");
         });
     }
@@ -1770,13 +2058,27 @@ mod tests {
             let state = use_tree_state();
             state.set_selection(&BTreeSet::from([String::from("f7")]));
             // Delete (no command modifier) removes the selected subtree.
-            assert!(apply_key_impl("Delete", Modifiers::empty()), "Delete removes the selection");
-            assert!(!contains_id(&state.nodes.get(), "f7"), "f7 deleted via the keyboard");
+            assert!(
+                apply_key_impl("Delete", Modifiers::empty()),
+                "Delete removes the selection"
+            );
+            assert!(
+                !contains_id(&state.nodes.get(), "f7"),
+                "f7 deleted via the keyboard"
+            );
             // Ctrl+Z restores it (the same undo the RPC `undo` op drives).
             assert!(apply_key_impl("z", CTRL), "Ctrl+Z undoes");
-            assert!(contains_id(&state.nodes.get(), "f7"), "f7 restored via the keyboard");
+            assert!(
+                contains_id(&state.nodes.get(), "f7"),
+                "f7 restored via the keyboard"
+            );
             // Ctrl+Shift+Z redoes.
-            let shift_ctrl = Modifiers { shift: true, ctrl: true, alt: false, meta: false };
+            let shift_ctrl = Modifiers {
+                shift: true,
+                ctrl: true,
+                alt: false,
+                meta: false,
+            };
             assert!(apply_key_impl("z", shift_ctrl), "Ctrl+Shift+Z redoes");
             assert!(!contains_id(&state.nodes.get(), "f7"), "f7 re-deleted");
         });

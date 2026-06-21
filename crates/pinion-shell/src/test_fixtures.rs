@@ -31,7 +31,7 @@ use core::fmt;
 
 use pinion_core::test_fixtures::{ContextMenuFixture, EchoButtonFixture, ScrollbarMultiFixture};
 
-use crate::{vello_renderer_impl, WidgetView};
+use crate::{WidgetView, vello_renderer_impl};
 
 /// R51.175 §5.41 — minimal `VelloRenderer`-conforming renderer for
 /// fixture tests. Mirrors the pinion-forge codegen template: an
@@ -69,11 +69,7 @@ impl TestRenderer {
     /// The `Result` shape exists only to match the
     /// [`crate::VelloRenderer::new`] contract.
     #[allow(clippy::unused_async)]
-    pub async fn new<W>(
-        _target: W,
-        _width: u32,
-        _height: u32,
-    ) -> Result<Self, TestRendererError>
+    pub async fn new<W>(_target: W, _width: u32, _height: u32) -> Result<Self, TestRendererError>
     where
         W: Into<vello::wgpu::SurfaceTarget<'static>>,
     {
@@ -113,7 +109,10 @@ impl WidgetView for EchoButtonFixture {
     type Renderer = TestRenderer;
 
     fn initial_size_strategy() -> crate::SizeStrategy {
-        crate::SizeStrategy::Fixed { width: 8, height: 8 }
+        crate::SizeStrategy::Fixed {
+            width: 8,
+            height: 8,
+        }
     }
 }
 
@@ -125,7 +124,10 @@ impl WidgetView for ScrollbarMultiFixture {
     type Renderer = TestRenderer;
 
     fn initial_size_strategy() -> crate::SizeStrategy {
-        crate::SizeStrategy::Fixed { width: 8, height: 8 }
+        crate::SizeStrategy::Fixed {
+            width: 8,
+            height: 8,
+        }
     }
 }
 
@@ -138,6 +140,9 @@ impl WidgetView for ContextMenuFixture {
     type Renderer = TestRenderer;
 
     fn initial_size_strategy() -> crate::SizeStrategy {
-        crate::SizeStrategy::Fixed { width: 8, height: 8 }
+        crate::SizeStrategy::Fixed {
+            width: 8,
+            height: 8,
+        }
     }
 }

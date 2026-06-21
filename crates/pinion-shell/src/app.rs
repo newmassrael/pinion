@@ -35,7 +35,7 @@ use pinion_core::reactive::{Effect, Signal};
 use pinion_a11y::AccessTreeBuilder;
 use pinion_core::event::WheelDelta;
 use pinion_core::scene::BoxNode;
-use pinion_runtime::{image_cache, paint_adapter, CommandExecutor, HandlerRegistry, PointerId};
+use pinion_runtime::{CommandExecutor, HandlerRegistry, PointerId, image_cache, paint_adapter};
 use vello::Scene as VelloScene;
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalPosition, LogicalSize};
@@ -46,7 +46,10 @@ use winit::window::{Window, WindowId};
 
 use crate::executor::build_executor_and_sink;
 use crate::substrate::ShellCore;
-use crate::{AppEvent, RenderState, SizeStrategy, VelloContext, VelloRenderer, WidgetRenderer, WidgetView, WindowSpec};
+use crate::{
+    AppEvent, RenderState, SizeStrategy, VelloContext, VelloRenderer, WidgetRenderer, WidgetView,
+    WindowSpec,
+};
 
 /// R670.B §5.16 §5.41 — per-window state cluster.
 ///
@@ -298,7 +301,6 @@ pub struct AppShell<V: WidgetView> {
     last_known_specs: Rc<RefCell<Vec<WindowSpec>>>,
 }
 
-
 impl<V: WidgetView> AppShell<V> {
     /// R51.76 §5.40 — construct the shell with a freshly-built state
     /// scene and the initial cached state read through the §5.15
@@ -469,10 +471,8 @@ impl<V: WidgetView> AppShell<V> {
         // the substrate call keeps the closure's `&Arc<Window>`
         // borrow alive without re-borrowing `self.windows` from
         // inside the closure.
-        let primary_window_arc: Option<Arc<Window>> = self
-            .primary_slot()
-            .and_then(Self::slot_window)
-            .cloned();
+        let primary_window_arc: Option<Arc<Window>> =
+            self.primary_slot().and_then(Self::slot_window).cloned();
         let mut resize_req = |w: u32, h: u32| {
             // R47.7.4.2 — `scene/resize` reaches winit through this
             // closure: `request_inner_size` queues a size change that
@@ -490,7 +490,9 @@ impl<V: WidgetView> AppShell<V> {
         // `scene/snapshot from: paint`, so `scene/layout {viewport:
         // null}` answers with the named window's own geometry or the
         // honest `NoLastPaintLayout`.
-        let resp = self.core.dispatch_rpc_scoped(parsed_request, &mut resize_req);
+        let resp = self
+            .core
+            .dispatch_rpc_scoped(parsed_request, &mut resize_req);
         if let Some(resp) = resp {
             let mut out = std::io::stdout().lock();
             if writeln!(out, "{resp}").is_err() {
@@ -515,7 +517,9 @@ impl<V: WidgetView> AppShell<V> {
         size_w: u32,
         size_h: u32,
     ) {
-        let Some(slot) = self.windows.get_mut(&window_id) else { return };
+        let Some(slot) = self.windows.get_mut(&window_id) else {
+            return;
+        };
         if slot.accesskit.is_none() {
             return;
         }
@@ -528,7 +532,9 @@ impl<V: WidgetView> AppShell<V> {
         // Re-acquire the slot mutable borrow now that the substrate
         // borrows released (collect_access_emit_inputs +
         // plan_access_emit take `&mut self.core`).
-        let Some(slot) = self.windows.get_mut(&window_id) else { return };
+        let Some(slot) = self.windows.get_mut(&window_id) else {
+            return;
+        };
         if decision.should_emit
             && let Some(adapter) = slot.accesskit.as_mut()
         {
@@ -611,8 +617,12 @@ impl<V: WidgetView> AppShell<V> {
                 return;
             };
             let size = window.inner_size();
-            let Some(w) = core::num::NonZeroU32::new(size.width) else { return };
-            let Some(h) = core::num::NonZeroU32::new(size.height) else { return };
+            let Some(w) = core::num::NonZeroU32::new(size.width) else {
+                return;
+            };
+            let Some(h) = core::num::NonZeroU32::new(size.height) else {
+                return;
+            };
             (slot.spec_id.clone(), w, h)
         };
         // R51.80 §5.16 §5.36 — ShellCore owns the paint scene
@@ -650,93 +660,89 @@ impl<V: WidgetView> AppShell<V> {
         // (emit_accesskit_for_window, publish_ime_for_window) which
         // take `&mut self`.
         let size = {
-            let Some(slot) = self.windows.get_mut(&window_id) else { return };
+            let Some(slot) = self.windows.get_mut(&window_id) else {
+                return;
+            };
             let RenderState::Active { window, renderer } = &mut slot.render else {
                 return;
             };
             let size = window.inner_size();
-        // R668 §5.16 — `IntrinsicAfterFirstPaint` post-first-paint
-        // resize hook (per-window since R670.B). The first painted
-        // scene now carries layout-computed rects on every node, so
-        // walking the tree ([`Scene::intrinsic_content_size`]) gives
-        // us the tight (width, height) the content actually wants;
-        // clamp to `[min, max]` and forward to
-        // `Window::request_inner_size`. winit emits a
-        // `WindowEvent::Resized` on acceptance which re-enters the
-        // layout pass at the new viewport on the next paint. The
-        // hook drains itself — `Fixed`-strategy paints and every
-        // steady-state paint after the first land on the `None`
-        // branch and skip out.
-        if let Some((min, max)) = slot.pending_intrinsic_resize.take() {
-            let (content_w, content_h) = paint_scene.intrinsic_content_size();
-            let target_w = content_w.clamp(min.0, max.0);
-            let target_h = content_h.clamp(min.1, max.1);
-            if (target_w, target_h) != (w.get(), h.get()) {
-                let _ = window.request_inner_size(LogicalSize::new(
-                    f64::from(target_w),
-                    f64::from(target_h),
-                ));
-                // Force-request a redraw so the next event-loop pass
-                // re-enters `render` against the updated inner_size
-                // and paints the final layout immediately rather than
-                // idling on the now-undersized first-paint frame.
-                window.request_redraw();
+            // R668 §5.16 — `IntrinsicAfterFirstPaint` post-first-paint
+            // resize hook (per-window since R670.B). The first painted
+            // scene now carries layout-computed rects on every node, so
+            // walking the tree ([`Scene::intrinsic_content_size`]) gives
+            // us the tight (width, height) the content actually wants;
+            // clamp to `[min, max]` and forward to
+            // `Window::request_inner_size`. winit emits a
+            // `WindowEvent::Resized` on acceptance which re-enters the
+            // layout pass at the new viewport on the next paint. The
+            // hook drains itself — `Fixed`-strategy paints and every
+            // steady-state paint after the first land on the `None`
+            // branch and skip out.
+            if let Some((min, max)) = slot.pending_intrinsic_resize.take() {
+                let (content_w, content_h) = paint_scene.intrinsic_content_size();
+                let target_w = content_w.clamp(min.0, max.0);
+                let target_h = content_h.clamp(min.1, max.1);
+                if (target_w, target_h) != (w.get(), h.get()) {
+                    let _ = window.request_inner_size(LogicalSize::new(
+                        f64::from(target_w),
+                        f64::from(target_h),
+                    ));
+                    // Force-request a redraw so the next event-loop pass
+                    // re-enters `render` against the updated inner_size
+                    // and paints the final layout immediately rather than
+                    // idling on the now-undersized first-paint frame.
+                    window.request_redraw();
+                }
             }
-        }
-        slot.vello_scene.reset();
-        let base = paint_adapter::root_background(&paint_scene);
-        // R682 §5.16 atomic 1 — cached path. The per-window
-        // `FragmentCache` skips re-encoding cacheable Container
-        // subtrees whose `paint_hash` matches the previous frame
-        // (the §2 #4 immediate-mode coexistence enabler: a sibling
-        // `ImmediateModeNode` triggers `V::view` re-runs every paint,
-        // but retained widget subtrees with stable structure replay
-        // their encoded `vello::Scene` via `append` instead of fresh
-        // walk). `&|_b| None` is the canonical no-override fill hook
-        // every production shell call site passes — the cache's
-        // structurally-derived contract holds trivially.
-        // R705 §5.39 — the focus ring is no longer stroked here. It is
-        // injected upstream as a pointer-transparent overlay
-        // `Scene::Box` by `Substrate::apply_focus_ring` (the final step
-        // of every paint-scene producer), so `to_vello_cached` paints it
-        // via the generic box path and `scene/snapshot from: paint`
-        // observes it (§2 #1 + #7). The pre-R705 opaque
-        // `paint_adapter::paint_focus_ring` vello stroke is retired.
-        let encode_start = Instant::now();
-        paint_adapter::to_vello_cached(
-            &paint_scene,
-            &|_b: &BoxNode| None,
-            self.core.text_cache_mut(),
-            &mut slot.image_cache,
-            &mut slot.fragment_cache,
-            &mut slot.vello_scene,
-        );
-        encode_us = instant_delta_us(encode_start, Instant::now());
-        // R51.109.1 §5.41 — call through the backend-agnostic
-        // `WidgetRenderer` trait. `VelloContext::base_color` carries
-        // the window background sampled from
-        // `paint_adapter::root_background`; the renderer's macro impl
-        // forwards to the inherent `<R>::render(frame, base_color)`.
-        // `renderer.render` auto-derefs through `Box<R>` because the
-        // `WidgetRenderer` trait is in scope.
-        let render_start = Instant::now();
-        if let Err(e) = renderer.render(&slot.vello_scene, VelloContext { base_color: base }) {
-            eprintln!("shell: vello render: {e}");
-        }
-        render_us = instant_delta_us(render_start, Instant::now());
+            slot.vello_scene.reset();
+            let base = paint_adapter::root_background(&paint_scene);
+            // R682 §5.16 atomic 1 — cached path. The per-window
+            // `FragmentCache` skips re-encoding cacheable Container
+            // subtrees whose `paint_hash` matches the previous frame
+            // (the §2 #4 immediate-mode coexistence enabler: a sibling
+            // `ImmediateModeNode` triggers `V::view` re-runs every paint,
+            // but retained widget subtrees with stable structure replay
+            // their encoded `vello::Scene` via `append` instead of fresh
+            // walk). `&|_b| None` is the canonical no-override fill hook
+            // every production shell call site passes — the cache's
+            // structurally-derived contract holds trivially.
+            // R705 §5.39 — the focus ring is no longer stroked here. It is
+            // injected upstream as a pointer-transparent overlay
+            // `Scene::Box` by `Substrate::apply_focus_ring` (the final step
+            // of every paint-scene producer), so `to_vello_cached` paints it
+            // via the generic box path and `scene/snapshot from: paint`
+            // observes it (§2 #1 + #7). The pre-R705 opaque
+            // `paint_adapter::paint_focus_ring` vello stroke is retired.
+            let encode_start = Instant::now();
+            paint_adapter::to_vello_cached(
+                &paint_scene,
+                &|_b: &BoxNode| None,
+                self.core.text_cache_mut(),
+                &mut slot.image_cache,
+                &mut slot.fragment_cache,
+                &mut slot.vello_scene,
+            );
+            encode_us = instant_delta_us(encode_start, Instant::now());
+            // R51.109.1 §5.41 — call through the backend-agnostic
+            // `WidgetRenderer` trait. `VelloContext::base_color` carries
+            // the window background sampled from
+            // `paint_adapter::root_background`; the renderer's macro impl
+            // forwards to the inherent `<R>::render(frame, base_color)`.
+            // `renderer.render` auto-derefs through `Box<R>` because the
+            // `WidgetRenderer` trait is in scope.
+            let render_start = Instant::now();
+            if let Err(e) = renderer.render(&slot.vello_scene, VelloContext { base_color: base }) {
+                eprintln!("shell: vello render: {e}");
+            }
+            render_us = instant_delta_us(render_start, Instant::now());
             size
         };
         // The post-paint helpers (`emit_accesskit_for_window`,
         // `publish_ime_for_window`) each re-acquire their own slot
         // borrow internally and take `&mut self.core` — the scope
         // above released the long-held slot borrow so this is safe.
-        self.emit_accesskit_for_window(
-            window_id,
-            &spec_id,
-            &paint_scene,
-            size.width,
-            size.height,
-        );
+        self.emit_accesskit_for_window(window_id, &spec_id, &paint_scene, size.width, size.height);
         // R56.2.c §5.13 §5.38 — push IME candidate window position
         // to the platform IME (per-window since R670.B).
         self.publish_ime_for_window(window_id, &paint_scene);
@@ -751,10 +757,7 @@ impl<V: WidgetView> AppShell<V> {
         // the post-borrow `finalize_frame_for_window` call (clones
         // are `Cow`-cheap for `Borrowed`, `String::clone` for
         // `Owned`).
-        let spec_id_for_finalize = self
-            .windows
-            .get(&window_id)
-            .map(|s| s.spec_id.clone());
+        let spec_id_for_finalize = self.windows.get(&window_id).map(|s| s.spec_id.clone());
         // R682 §5.16 atomic 3 — capture the post-paint cache
         // snapshot before publishing. `to_vello_cached` brackets its
         // walk with begin_paint / end_paint internally, so the
@@ -835,20 +838,17 @@ impl<V: WidgetView> AppShell<V> {
     /// `last_ime_cursor_area` so an unchanged caret (most frames —
     /// caret moves only on key press or text mutation) skips the
     /// `winit` boundary call.
-    fn publish_ime_for_window(
-        &mut self,
-        window_id: WindowId,
-        paint_scene: &pinion_core::Scene,
-    ) {
+    fn publish_ime_for_window(&mut self, window_id: WindowId, paint_scene: &pinion_core::Scene) {
         let cached_state = *self.core.cached_state();
         let focused_owned = self.core.focus().focused().map(str::to_owned);
         let owner = self.core.root_owner().clone();
-        let ime_rect = owner.run(|| {
-            V::ime_caret_rect(&cached_state, paint_scene, focused_owned.as_deref())
-        });
+        let ime_rect =
+            owner.run(|| V::ime_caret_rect(&cached_state, paint_scene, focused_owned.as_deref()));
         let Some(rect) = ime_rect else { return };
         let rect_tuple = (rect.x, rect.y, rect.width, rect.height);
-        let Some(slot) = self.windows.get_mut(&window_id) else { return };
+        let Some(slot) = self.windows.get_mut(&window_id) else {
+            return;
+        };
         if slot.last_ime_cursor_area == Some(rect_tuple) {
             return;
         }
@@ -903,11 +903,7 @@ impl<V: WidgetView> AppShell<V> {
     /// without a winit `ActiveEventLoop`. R51.78 pushes the substrate
     /// logic into [`ShellCore`] and leaves only the winit↔substrate
     /// adapter shape here.
-    fn handle_key_press(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        logical_key: &Key,
-    ) {
+    fn handle_key_press(&mut self, event_loop: &ActiveEventLoop, logical_key: &Key) {
         match logical_key.as_ref() {
             // R693 §5.39 — while a modal focus trap is active, Escape
             // dismisses the modal, not the window: route it to the
@@ -939,7 +935,8 @@ impl<V: WidgetView> AppShell<V> {
                 // non-editor widget reports Tab unhandled, so traversal is
                 // byte-unchanged for them.
                 if !self.core.try_apply_key("Tab") {
-                    self.core.handle_focus_traverse(self.core.modifiers_shift_key());
+                    self.core
+                        .handle_focus_traverse(self.core.modifiers_shift_key());
                 }
             }
             Key::Character(c) => self.core.handle_character_key(c),
@@ -1006,19 +1003,24 @@ impl<V: WidgetView> AppShell<V> {
     fn handle_mouse_button(&mut self, spec_id: &str, button: MouseButton, state: ElementState) {
         match (button, state) {
             (MouseButton::Left, ElementState::Pressed) => {
-                self.core.mouse_pressed_for_window(spec_id, PointerId::MOUSE);
+                self.core
+                    .mouse_pressed_for_window(spec_id, PointerId::MOUSE);
             }
             (MouseButton::Left, ElementState::Released) => {
-                self.core.mouse_released_for_window(spec_id, PointerId::MOUSE);
+                self.core
+                    .mouse_released_for_window(spec_id, PointerId::MOUSE);
             }
             (MouseButton::Middle, ElementState::Pressed) => {
-                self.core.middle_pressed_for_window(spec_id, PointerId::MOUSE);
+                self.core
+                    .middle_pressed_for_window(spec_id, PointerId::MOUSE);
             }
             (MouseButton::Middle, ElementState::Released) => {
-                self.core.middle_released_for_window(spec_id, PointerId::MOUSE);
+                self.core
+                    .middle_released_for_window(spec_id, PointerId::MOUSE);
             }
             (MouseButton::Right, ElementState::Pressed) => {
-                self.core.secondary_click_for_window(spec_id, PointerId::MOUSE);
+                self.core
+                    .secondary_click_for_window(spec_id, PointerId::MOUSE);
             }
             _ => {}
         }
@@ -1443,9 +1445,7 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
             None => V::windows(),
         };
         if specs.is_empty() {
-            eprintln!(
-                "shell: V::windows() returned empty list; nothing to create",
-            );
+            eprintln!("shell: V::windows() returned empty list; nothing to create",);
             event_loop.exit();
             return;
         }
@@ -1461,10 +1461,7 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
             // HashMap `.get(K: Borrow<Q>)` resolves through Cow's
             // `Borrow<str>` impl, so the `.get(&*spec.id)` form
             // passes a plain `&str` and avoids cloning the Cow.
-            let cached_window_id = self
-                .spec_id_to_window_id
-                .get(&*spec.id)
-                .copied();
+            let cached_window_id = self.spec_id_to_window_id.get(&*spec.id).copied();
             // Skip specs that already have an Active slot. A spec is
             // either fully Active or fully Suspended (no mid-state).
             if let Some(window_id) = cached_window_id
@@ -1630,7 +1627,8 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
                 // modifier state, so cache the most-recent value
                 // out-of-band for Shift+Tab detection.
                 // R51.108 §5.41 — convert at the winit boundary.
-                self.core.set_modifiers(winit_modifiers_to_pinion(modifiers.state()));
+                self.core
+                    .set_modifiers(winit_modifiers_to_pinion(modifiers.state()));
             }
             WindowEvent::Focused(focused) => {
                 // R51.59 §5.39 — Window blur / refocus. ARIA Focus
@@ -1697,7 +1695,9 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
                 // holds the live GPU renderer the wgpu surface
                 // resize-event must reach.
                 if let Some(slot) = self.windows.get_mut(&window_id)
-                    && let RenderState::Active { renderer, window, .. } = &mut slot.render
+                    && let RenderState::Active {
+                        renderer, window, ..
+                    } = &mut slot.render
                 {
                     renderer.resize(size.width.max(1), size.height.max(1));
                     // R1023 §5.16 — pair the surface resize with an explicit
@@ -1827,10 +1827,7 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
             );
             let Some(budget) = budget else { continue };
             immediate_slot_ids.push(slot.spec_id.clone());
-            let deadline = match self
-                .core
-                .last_paint_instant_for_window(&slot.spec_id)
-            {
+            let deadline = match self.core.last_paint_instant_for_window(&slot.spec_id) {
                 Some(prev) => prev + budget,
                 // No prior paint — schedule ASAP (now + 0). winit
                 // clamps WaitUntil(past_or_present) to "wake
@@ -1880,7 +1877,6 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
         self.drain_redraw_to_winit();
     }
 }
-
 
 /// R907 §5.16 §5.7 — microseconds elapsed between two `Instant`s for
 /// the frame-timing profiler, saturating to `u64::MAX`.
@@ -2070,9 +2066,7 @@ fn winit_modifiers_to_pinion(
 /// the two), so this helper maps 1:1 onto `Light` / `Dark`. The
 /// `NoPreference` variant remains the fresh-thread default; the
 /// platform side never *clears* the signal back to it.
-fn winit_theme_to_pinion_scheme(
-    theme: winit::window::Theme,
-) -> pinion_core::SystemColorScheme {
+fn winit_theme_to_pinion_scheme(theme: winit::window::Theme) -> pinion_core::SystemColorScheme {
     match theme {
         winit::window::Theme::Light => pinion_core::SystemColorScheme::Light,
         winit::window::Theme::Dark => pinion_core::SystemColorScheme::Dark,
@@ -2219,7 +2213,10 @@ mod r56_2_a_winit_ime_mapping_tests {
             winit_ime_to_composition(&Ime::Preedit("ha".to_owned(), Some((2, 2))), false);
         assert_eq!(
             events,
-            vec![CompositionEvent::Start, CompositionEvent::Update("ha".to_owned())],
+            vec![
+                CompositionEvent::Start,
+                CompositionEvent::Update("ha".to_owned())
+            ],
         );
         assert!(next, "first non-empty preedit opens a composition session");
     }
@@ -2240,16 +2237,14 @@ mod r56_2_a_winit_ime_mapping_tests {
         // substrate stays composing via `Update("")` so the
         // immediately-following Commit lands at the caret with
         // `was_composing` still true.
-        let (events, next) =
-            winit_ime_to_composition(&Ime::Preedit(String::new(), None), true);
+        let (events, next) = winit_ime_to_composition(&Ime::Preedit(String::new(), None), true);
         assert_eq!(events, vec![CompositionEvent::Update(String::new())]);
         assert!(next, "empty preedit during session keeps was_composing");
     }
 
     #[test]
     fn r56_2_a_empty_preedit_while_idle_is_idempotent_no_op() {
-        let (events, next) =
-            winit_ime_to_composition(&Ime::Preedit(String::new(), None), false);
+        let (events, next) = winit_ime_to_composition(&Ime::Preedit(String::new(), None), false);
         assert!(events.is_empty());
         assert!(!next);
     }
@@ -2260,9 +2255,11 @@ mod r56_2_a_winit_ime_mapping_tests {
         // Preedit("", None) [synthetic clear, dispatched as
         // Update("")] → Commit("\u{D55C}") lands here with
         // was_composing=true.
-        let (events, next) =
-            winit_ime_to_composition(&Ime::Commit("\u{D55C}".to_owned()), true);
-        assert_eq!(events, vec![CompositionEvent::Commit("\u{D55C}".to_owned())]);
+        let (events, next) = winit_ime_to_composition(&Ime::Commit("\u{D55C}".to_owned()), true);
+        assert_eq!(
+            events,
+            vec![CompositionEvent::Commit("\u{D55C}".to_owned())]
+        );
         assert!(!next, "Commit closes the session");
     }
 
@@ -2273,8 +2270,7 @@ mod r56_2_a_winit_ime_mapping_tests {
         // through Focused → Editing and the `was_composing` gate
         // inside `apply_composition_commit` fires the
         // `text_committed` intent.
-        let (events, next) =
-            winit_ime_to_composition(&Ime::Commit("e\u{301}".to_owned()), false);
+        let (events, next) = winit_ime_to_composition(&Ime::Commit("e\u{301}".to_owned()), false);
         assert_eq!(
             events,
             vec![
@@ -2511,8 +2507,8 @@ pub fn run_with_handlers<V: WidgetView>(registry: HandlerRegistry) {
     // R51.159 §5.23 — assemble the CommandExecutor and inject it
     // before the event loop starts so the first dispatch tail can
     // already drain pending commands.
-    let (executor, sink) = build_executor_and_sink(event_loop.create_proxy())
-        .expect("tokio runtime build failed");
+    let (executor, sink) =
+        build_executor_and_sink(event_loop.create_proxy()).expect("tokio runtime build failed");
     let cmd_exec = Arc::new(CommandExecutor::new(registry, executor, sink));
 
     let mut app = AppShell::<V>::new(event_loop.create_proxy());
@@ -2697,14 +2693,10 @@ mod tests {
         // trips, the two backends disagree on direction and
         // `ScrollState::scroll_by` will move the offset opposite
         // ways per backend — §2 #6 GUI/TUI dual invariant break.
-        let from_winit_forward =
-            winit_wheel_to_pinion(MouseScrollDelta::LineDelta(0.0, 1.0));
+        let from_winit_forward = winit_wheel_to_pinion(MouseScrollDelta::LineDelta(0.0, 1.0));
         let from_tui_scroll_up = WheelDelta::Lines { dx: 0.0, dy: -1.0 };
         match (from_winit_forward, from_tui_scroll_up) {
-            (
-                WheelDelta::Lines { dy: w_dy, .. },
-                WheelDelta::Lines { dy: t_dy, .. },
-            ) => {
+            (WheelDelta::Lines { dy: w_dy, .. }, WheelDelta::Lines { dy: t_dy, .. }) => {
                 assert!(
                     w_dy.signum() == t_dy.signum(),
                     "winit forward must match TUI ScrollUp sign (both negative dy); \

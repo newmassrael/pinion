@@ -24,7 +24,11 @@ fn atlas_caches_repeated_glyph() {
     let dims = (atlas.width(), atlas.height(), atlas.len());
     let second = atlas.get_or_insert(&font, h, 48.0).expect("cache hit");
     assert_eq!(first, second, "repeat lookup returns the same entry");
-    assert_eq!((atlas.width(), atlas.height(), atlas.len()), dims, "no re-pack on a hit");
+    assert_eq!(
+        (atlas.width(), atlas.height(), atlas.len()),
+        dims,
+        "no re-pack on a hit"
+    );
     assert_eq!(atlas.len(), 1, "one distinct entry");
 }
 
@@ -37,8 +41,16 @@ fn atlas_subrect_is_byte_identical_to_standalone_raster() {
     let h = font.glyph_id_for(0x0048).expect("'H' mapped");
     let entry = atlas.get_or_insert(&font, h, 48.0).expect("rasterizes");
     let standalone = font.rasterize_glyph(h, 48.0).expect("rasterizes");
-    assert_eq!((entry.width, entry.height), (standalone.width, standalone.height), "same size");
-    assert_eq!((entry.left, entry.top), (standalone.left, standalone.top), "same pen offset");
+    assert_eq!(
+        (entry.width, entry.height),
+        (standalone.width, standalone.height),
+        "same size"
+    );
+    assert_eq!(
+        (entry.left, entry.top),
+        (standalone.left, standalone.top),
+        "same pen offset"
+    );
     let aw = atlas.width();
     for y in 0..entry.height {
         for x in 0..entry.width {
@@ -90,10 +102,17 @@ fn atlas_wraps_to_a_new_shelf() {
     let mut atlas = GlyphAtlas::new(h_w); // width == one 'H' → any 2nd glyph wraps
     let a = atlas.get_or_insert(&font, h, 48.0).expect("rasterizes");
     let b = atlas.get_or_insert(&font, n, 48.0).expect("rasterizes");
-    assert!(b.width > 0, "the wrapping glyph must have ink (else the wrap is vacuous)");
+    assert!(
+        b.width > 0,
+        "the wrapping glyph must have ink (else the wrap is vacuous)"
+    );
     assert_eq!(a.y, 0, "first glyph on shelf 0");
     assert_eq!(b.x, 0, "wrapped glyph starts a fresh shelf at x=0");
-    assert_eq!(b.y, a.height, "wrapped glyph sits exactly one shelf below: y={}", b.y);
+    assert_eq!(
+        b.y, a.height,
+        "wrapped glyph sits exactly one shelf below: y={}",
+        b.y
+    );
 }
 
 #[test]
@@ -109,13 +128,22 @@ fn atlas_grow_preserves_prior_subrect_and_packs_new_shelf() {
     let m = font.glyph_id_for(0x004D).expect("'M' mapped");
     let i_raw = font.rasterize_glyph(i, 48.0).expect("rasterizes");
     let m_raw = font.rasterize_glyph(m, 48.0).expect("rasterizes");
-    assert!(m_raw.width > i_raw.width, "'M' must be wider than 'i' to force a widen");
+    assert!(
+        m_raw.width > i_raw.width,
+        "'M' must be wider than 'i' to force a widen"
+    );
 
     let mut atlas = GlyphAtlas::new(i_raw.width); // exactly one 'i' wide
     let i_e = atlas.get_or_insert(&font, i, 48.0).expect("rasterizes");
     let m_e = atlas.get_or_insert(&font, m, 48.0).expect("rasterizes"); // wraps + widens
-    assert!(atlas.width() >= m_raw.width, "atlas widened to fit the wider glyph");
-    assert!(m_e.y >= i_e.height && m_e.y > 0, "wider glyph on a new shelf (g.y != 0)");
+    assert!(
+        atlas.width() >= m_raw.width,
+        "atlas widened to fit the wider glyph"
+    );
+    assert!(
+        m_e.y >= i_e.height && m_e.y > 0,
+        "wider glyph on a new shelf (g.y != 0)"
+    );
 
     let aw = atlas.width();
     // 'i' sub-rect survived the row-stride rewrite byte-for-byte.
@@ -146,8 +174,14 @@ fn atlas_caches_blank_glyph_as_zero_rect() {
     let font = load(NOTO);
     let mut atlas = GlyphAtlas::new(64);
     let space = font.glyph_id_for(0x0020).expect("Noto maps U+0020 space");
-    let entry = atlas.get_or_insert(&font, space, 32.0).expect("blank rasterizes");
+    let entry = atlas
+        .get_or_insert(&font, space, 32.0)
+        .expect("blank rasterizes");
     assert_eq!((entry.width, entry.height), (0, 0), "blank packs nothing");
     assert_eq!(atlas.len(), 1, "blank is still cached");
-    assert_eq!(atlas.get_or_insert(&font, space, 32.0).expect("cache hit"), entry, "stable");
+    assert_eq!(
+        atlas.get_or_insert(&font, space, 32.0).expect("cache hit"),
+        entry,
+        "stable"
+    );
 }

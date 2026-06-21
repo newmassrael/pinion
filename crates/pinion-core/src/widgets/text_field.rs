@@ -73,7 +73,7 @@
     clippy::style,
     clippy::complexity,
     clippy::pedantic,
-    clippy::all,
+    clippy::all
 )]
 mod sm {
     include!(concat!(env!("OUT_DIR"), "/text_field_sm.rs"));
@@ -85,22 +85,19 @@ pub use sm::{TextFieldEvent, TextFieldState};
 // R643 `WidgetStateName` SSOT primitive, replacing the hand-written
 // `text_field_state_name` fn (mirrors the R696.A Disclosure adoption).
 // The pinion-widget-paint read path uses `from_name_or_default` too.
-crate::widget_state_name!(TextFieldState, default = Idle, [
-    Idle, Focused, Editing, Disabled,
-]);
+crate::widget_state_name!(
+    TextFieldState,
+    default = Idle,
+    [Idle, Focused, Editing, Disabled,]
+);
 // R699 §5.16 — TextFieldEvent <-> SCXML-name mapping through the
 // `WidgetEventName` SSOT primitive, replacing `parse_text_field_event`.
 // The external set is focus/edit-lifecycle (not pointer); `TextfieldCommit`
 // (internal raise) + `Null` stay out of `from_name`.
-crate::widget_event_name!(TextFieldEvent,
+crate::widget_event_name!(
+    TextFieldEvent,
     external = [
-        Focus,
-        Blur,
-        BeginEdit,
-        CommitEdit,
-        CancelEdit,
-        Disable,
-        Enable,
+        Focus, Blur, BeginEdit, CommitEdit, CancelEdit, Disable, Enable,
     ],
     internal = [TextfieldCommit, Null],
 );
@@ -111,9 +108,8 @@ use std::rc::Rc;
 use crate::clipboard::{Clipboard, ClipboardSelection};
 use crate::composite_tag::split_send_payload;
 use crate::external::{
-    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner,
-    ThreadOwnership,
+    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
 use crate::input::is_activation_event;
 use crate::intent::Intent;
@@ -259,11 +255,7 @@ pub fn caret_rect(
 /// CJK ideographs (already-composed) insert correctly via the
 /// printable-char branch.
 #[must_use]
-pub fn apply_key(
-    state: &TextEditState,
-    key: &str,
-    modifiers: crate::input::Modifiers,
-) -> bool {
+pub fn apply_key(state: &TextEditState, key: &str, modifiers: crate::input::Modifiers) -> bool {
     match key {
         "Backspace" => {
             // R56.1.f.1 — `backspace` is already selection-aware:
@@ -359,10 +351,7 @@ pub fn apply_key(
             // emits `KeyCode::Char('a')` which the R51.111 bridge
             // maps to `"a"`). Both Ctrl (Linux/Win) and Meta (macOS)
             // count so the same binding fires on every desktop.
-            if modifiers.command_key()
-                && !modifiers.alt_key()
-                && other == "a"
-            {
+            if modifiers.command_key() && !modifiers.alt_key() && other == "a" {
                 let len = state.text().len();
                 state.set_selection(0, len);
                 return true;
@@ -384,10 +373,7 @@ pub fn apply_key(
             // `other == "z"` match had: the platform delivers uppercase `"Z"`
             // when Shift is held, so `Ctrl+Shift+Z` redo silently did nothing;
             // `undo_redo_verb` case-folds the key.
-            if modifiers.command_key()
-                && !modifiers.alt_key()
-                && state.undo_stack().is_some()
-            {
+            if modifiers.command_key() && !modifiers.alt_key() && state.undo_stack().is_some() {
                 if let Some(verb) = crate::undo::undo_redo_verb(other, modifiers) {
                     if verb == "redo" {
                         state.redo();
@@ -717,17 +703,10 @@ impl WidgetTransition for TextField {
         self.send(event);
     }
 
-    fn detect(
-        before: Self::Snapshot,
-        event: Self::Event,
-        after: Self::Snapshot,
-    ) -> Vec<Intent> {
-        let commit_via_event = matches!(
-            event,
-            TextFieldEvent::CommitEdit | TextFieldEvent::Blur,
-        );
-        let exited_editing = matches!(before, TextFieldState::Editing)
-            && !matches!(after, TextFieldState::Editing);
+    fn detect(before: Self::Snapshot, event: Self::Event, after: Self::Snapshot) -> Vec<Intent> {
+        let commit_via_event = matches!(event, TextFieldEvent::CommitEdit | TextFieldEvent::Blur,);
+        let exited_editing =
+            matches!(before, TextFieldState::Editing) && !matches!(after, TextFieldState::Editing);
         if commit_via_event && exited_editing {
             vec![Intent::new_static("text_committed", IntrospectValue::Null)]
         } else {
@@ -861,7 +840,10 @@ impl TextFieldExternal {
     /// [`TextField`] in [`TextFieldState::Idle`].
     #[must_use]
     pub fn new() -> Self {
-        Self { em: IntentEmitter::default(), emit_blur_intent: false }
+        Self {
+            em: IntentEmitter::default(),
+            emit_blur_intent: false,
+        }
     }
 
     /// R793 §5.38 §5.39 — opt into emitting a `"blur"` §5.20 intent on every
@@ -1050,11 +1032,7 @@ impl TextFieldExternal {
         // Sample the composition-active predicate before
         // `preedit_commit` clears the buffer — the post-clear read
         // would always return `false` and gate the intent off.
-        let was_composing = self
-            .em
-            .inner
-            .text_state()
-            .is_some_and(|s| s.is_composing());
+        let was_composing = self.em.inner.text_state().is_some_and(|s| s.is_composing());
         if let Some(state) = self.em.inner.text_state() {
             state.preedit_commit(committed);
         }
@@ -1190,11 +1168,7 @@ impl External for TextFieldExternal {
         // composition. Empty preedit (start without any update yet)
         // cancels instead of committing — matches the W3C
         // "no-data compositionend is a cancel" convention.
-        let pending_preedit = self
-            .em
-            .inner
-            .text_state()
-            .and_then(|s| s.preedit());
+        let pending_preedit = self.em.inner.text_state().and_then(|s| s.preedit());
         match pending_preedit {
             Some(text) if !text.is_empty() => {
                 self.apply_composition_commit(&text);
@@ -1211,7 +1185,8 @@ impl External for TextFieldExternal {
         // on focus loss (the reducer gates on its own edit-mode flag); a plain
         // field never opts in, so this is silent for every non-editor field.
         if self.emit_blur_intent {
-            self.em.push(Intent::new_static("blur", IntrospectValue::Null));
+            self.em
+                .push(Intent::new_static("blur", IntrospectValue::Null));
         }
     }
 }
@@ -1363,16 +1338,12 @@ impl ExternalIntrospect for TextFieldExternal {
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
         match path {
-            "state" => Some(IntrospectValue::Text(
-                self.state().as_name().to_string(),
-            )),
+            "state" => Some(IntrospectValue::Text(self.state().as_name().to_string())),
             // R56.1.b §5.38 — text + caret read through the attached
             // [`TextEditState`]. `None` when no handle is attached;
             // the AI client treats that as "widget not bound to
             // reactive state" and gates intervene/invoke accordingly.
-            "text" => self
-                .text_state()
-                .map(|s| IntrospectValue::Text(s.text())),
+            "text" => self.text_state().map(|s| IntrospectValue::Text(s.text())),
             "caret" => self.text_state().map(|s| {
                 // usize → i64 — caret is bounded by `text.len() <=
                 // isize::MAX` on every platform pinion targets, so
@@ -1508,11 +1479,7 @@ impl ExternalIntrospect for TextFieldExternal {
         }
     }
 
-    fn intervene(
-        &mut self,
-        path: &str,
-        value: IntrospectValue,
-    ) -> Result<(), InterveneError> {
+    fn intervene(&mut self, path: &str, value: IntrospectValue) -> Result<(), InterveneError> {
         match path {
             // §5.38 — `state` is SCXML-owned (driven via `send`).
             "state" => Err(InterveneError::ReadOnly),
@@ -1727,35 +1694,25 @@ impl ExternalIntrospect for TextFieldExternal {
             // post-dispatch SCXML state name (mirror of the
             // `send` invoke return shape).
             "composition" => match args {
-                IntrospectValue::Json(ref obj) => {
-                    match parse_composition_invoke_json(obj) {
-                        Some(CompositionAction::Start) => {
-                            self.apply_composition_start();
-                            Ok(IntrospectValue::Text(
-                                self.state().as_name().to_string(),
-                            ))
-                        }
-                        Some(CompositionAction::Update(data)) => {
-                            self.apply_composition_update(&data);
-                            Ok(IntrospectValue::Text(
-                                self.state().as_name().to_string(),
-                            ))
-                        }
-                        Some(CompositionAction::End(data)) => {
-                            self.apply_composition_commit(&data);
-                            Ok(IntrospectValue::Text(
-                                self.state().as_name().to_string(),
-                            ))
-                        }
-                        Some(CompositionAction::Cancel) => {
-                            self.apply_composition_cancel();
-                            Ok(IntrospectValue::Text(
-                                self.state().as_name().to_string(),
-                            ))
-                        }
-                        None => Err(InvokeError::TypeMismatch),
+                IntrospectValue::Json(ref obj) => match parse_composition_invoke_json(obj) {
+                    Some(CompositionAction::Start) => {
+                        self.apply_composition_start();
+                        Ok(IntrospectValue::Text(self.state().as_name().to_string()))
                     }
-                }
+                    Some(CompositionAction::Update(data)) => {
+                        self.apply_composition_update(&data);
+                        Ok(IntrospectValue::Text(self.state().as_name().to_string()))
+                    }
+                    Some(CompositionAction::End(data)) => {
+                        self.apply_composition_commit(&data);
+                        Ok(IntrospectValue::Text(self.state().as_name().to_string()))
+                    }
+                    Some(CompositionAction::Cancel) => {
+                        self.apply_composition_cancel();
+                        Ok(IntrospectValue::Text(self.state().as_name().to_string()))
+                    }
+                    None => Err(InvokeError::TypeMismatch),
+                },
                 _ => Err(InvokeError::TypeMismatch),
             },
             // R56.2.e §5.22 — middle-click / RPC PRIMARY paste.
@@ -1770,9 +1727,7 @@ impl ExternalIntrospect for TextFieldExternal {
             // invoke slot so the substrate has one source of truth
             // for the PRIMARY paste action.
             "paste-primary" => match args {
-                IntrospectValue::Null => {
-                    Ok(IntrospectValue::Bool(self.paste_from_primary()))
-                }
+                IntrospectValue::Null => Ok(IntrospectValue::Bool(self.paste_from_primary())),
                 _ => Err(InvokeError::TypeMismatch),
             },
             // R768 §5.36 §5.22 / R770.1 — apply one styled run over a byte
@@ -1850,24 +1805,24 @@ impl TextFieldExternal {
         match path {
             "apply-style" => match args {
                 IntrospectValue::Json(obj) => match parse_apply_style_json(obj) {
-                    Some((start, end, style)) => Ok(IntrospectValue::Bool(
-                        self.text_state().is_some_and(|s| {
+                    Some((start, end, style)) => {
+                        Ok(IntrospectValue::Bool(self.text_state().is_some_and(|s| {
                             s.apply_style_run(start, end, style);
                             true
-                        }),
-                    )),
+                        })))
+                    }
                     None => Err(InvokeError::TypeMismatch),
                 },
                 _ => Err(InvokeError::TypeMismatch),
             },
             "clear-style" => match args {
                 IntrospectValue::Json(obj) => match parse_clear_style_json(obj) {
-                    Some((start, end)) => Ok(IntrospectValue::Bool(
-                        self.text_state().is_some_and(|s| {
+                    Some((start, end)) => {
+                        Ok(IntrospectValue::Bool(self.text_state().is_some_and(|s| {
                             s.clear_style_runs(start, end);
                             true
-                        }),
-                    )),
+                        })))
+                    }
                     None => Err(InvokeError::TypeMismatch),
                 },
                 _ => Err(InvokeError::TypeMismatch),
@@ -1931,12 +1886,12 @@ impl TextFieldExternal {
                 _ => Err(InvokeError::TypeMismatch),
             },
             "clear-mark" => match args {
-                IntrospectValue::Null => Ok(IntrospectValue::Bool(self.text_state().is_some_and(
-                    |s| {
+                IntrospectValue::Null => {
+                    Ok(IntrospectValue::Bool(self.text_state().is_some_and(|s| {
                         s.set_pending_style(None);
                         true
-                    },
-                ))),
+                    })))
+                }
                 _ => Err(InvokeError::TypeMismatch),
             },
             _ => Err(InvokeError::UnknownPath),
@@ -1978,11 +1933,11 @@ impl TextFieldExternal {
             // Replace every match with the `Text` replacement as one undo step;
             // returns the count replaced.
             "replace-all" => match args {
-                IntrospectValue::Text(replacement) => Ok(IntrospectValue::Int(
-                    self.text_state().map_or(0, |s| {
+                IntrospectValue::Text(replacement) => {
+                    Ok(IntrospectValue::Int(self.text_state().map_or(0, |s| {
                         i64::try_from(s.replace_all(replacement)).unwrap_or(i64::MAX)
-                    }),
-                )),
+                    })))
+                }
                 _ => Err(InvokeError::TypeMismatch),
             },
             // Unreachable: the caller only routes the four paths above here.
@@ -2020,15 +1975,17 @@ impl TextFieldExternal {
             // `Null` arg (mirror of `paste-primary`); returns the collapsed
             // count after the bulk fold / unfold.
             "fold-all" | "unfold-all" => match args {
-                IntrospectValue::Null => Ok(IntrospectValue::Int(self.text_state().map_or(0, |s| {
-                    if path == "fold-all" {
-                        s.fold_all();
-                    } else {
-                        s.unfold_all();
-                    }
-                    i64::try_from(s.fold_regions().iter().filter(|r| r.collapsed).count())
-                        .unwrap_or(i64::MAX)
-                }))),
+                IntrospectValue::Null => {
+                    Ok(IntrospectValue::Int(self.text_state().map_or(0, |s| {
+                        if path == "fold-all" {
+                            s.fold_all();
+                        } else {
+                            s.unfold_all();
+                        }
+                        i64::try_from(s.fold_regions().iter().filter(|r| r.collapsed).count())
+                            .unwrap_or(i64::MAX)
+                    })))
+                }
                 _ => Err(InvokeError::TypeMismatch),
             },
             // Unreachable: the caller only routes the three paths above.
@@ -2052,13 +2009,15 @@ impl TextFieldExternal {
         args: &IntrospectValue,
     ) -> Result<IntrospectValue, InvokeError> {
         match args {
-            IntrospectValue::Null => Ok(IntrospectValue::Bool(self.text_state().is_some_and(|s| {
-                if path == "indent" {
-                    s.indent_selection(crate::widgets::text_edit::INDENT_UNIT)
-                } else {
-                    s.dedent_selection(crate::widgets::text_edit::INDENT_WIDTH)
-                }
-            }))),
+            IntrospectValue::Null => {
+                Ok(IntrospectValue::Bool(self.text_state().is_some_and(|s| {
+                    if path == "indent" {
+                        s.indent_selection(crate::widgets::text_edit::INDENT_UNIT)
+                    } else {
+                        s.dedent_selection(crate::widgets::text_edit::INDENT_WIDTH)
+                    }
+                })))
+            }
             _ => Err(InvokeError::TypeMismatch),
         }
     }
@@ -2074,9 +2033,11 @@ impl TextFieldExternal {
     /// `UnknownPath`.
     fn invoke_comment(&mut self, args: &IntrospectValue) -> Result<IntrospectValue, InvokeError> {
         match args {
-            IntrospectValue::Null => Ok(IntrospectValue::Bool(self.text_state().is_some_and(|s| {
-                s.line_comment().is_some_and(|m| s.toggle_line_comment(m))
-            }))),
+            IntrospectValue::Null => {
+                Ok(IntrospectValue::Bool(self.text_state().is_some_and(|s| {
+                    s.line_comment().is_some_and(|m| s.toggle_line_comment(m))
+                })))
+            }
             _ => Err(InvokeError::TypeMismatch),
         }
     }
@@ -2091,12 +2052,17 @@ impl TextFieldExternal {
     /// (the `usize::try_from` failure path, mirror of the `toggle-fold` guard); a
     /// bare `TextField` with no attached state returns `Int(0)` (nothing to
     /// navigate), distinguishing it from a real line-1 landing.
-    fn invoke_go_to_line(&mut self, args: &IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+    fn invoke_go_to_line(
+        &mut self,
+        args: &IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
         match args {
             IntrospectValue::Int(line) => {
                 let l = usize::try_from(*line).map_err(|_| InvokeError::Rejected)?;
                 let resolved = self.text_state().map_or(0, |s| s.go_to_line(l));
-                Ok(IntrospectValue::Int(i64::try_from(resolved).unwrap_or(i64::MAX)))
+                Ok(IntrospectValue::Int(
+                    i64::try_from(resolved).unwrap_or(i64::MAX),
+                ))
             }
             _ => Err(InvokeError::TypeMismatch),
         }
@@ -2186,16 +2152,18 @@ impl TextFieldExternal {
         args: &IntrospectValue,
     ) -> Result<IntrospectValue, InvokeError> {
         match args {
-            IntrospectValue::Null => Ok(IntrospectValue::Bool(self.text_state().is_some_and(|s| {
-                match path {
-                    "move-line-up" => s.move_lines(false),
-                    "move-line-down" => s.move_lines(true),
-                    "duplicate-line-up" => s.duplicate_lines(false),
-                    "duplicate-line-down" => s.duplicate_lines(true),
-                    // Unreachable: the caller routes only the four paths above.
-                    _ => false,
-                }
-            }))),
+            IntrospectValue::Null => {
+                Ok(IntrospectValue::Bool(self.text_state().is_some_and(|s| {
+                    match path {
+                        "move-line-up" => s.move_lines(false),
+                        "move-line-down" => s.move_lines(true),
+                        "duplicate-line-up" => s.duplicate_lines(false),
+                        "duplicate-line-down" => s.duplicate_lines(true),
+                        // Unreachable: the caller routes only the four paths above.
+                        _ => false,
+                    }
+                })))
+            }
             _ => Err(InvokeError::TypeMismatch),
         }
     }
@@ -2228,11 +2196,8 @@ impl TextFieldExternal {
         // when the visible mutation is a no-op (Ctrl+C with no
         // selection produces an empty copy — the key was *handled*,
         // matching the W3C `defaultPrevented` discipline).
-        if modifiers.command_key()
-            && !modifiers.alt_key()
-        {
-            if let (Some(state), Some(cb)) =
-                (self.em.inner.text_state(), self.em.inner.clipboard())
+        if modifiers.command_key() && !modifiers.alt_key() {
+            if let (Some(state), Some(cb)) = (self.em.inner.text_state(), self.em.inner.clipboard())
             {
                 match key_str {
                     "c" => {
@@ -2306,9 +2271,7 @@ impl TextFieldExternal {
     /// desktop "select text + middle-click in another app" UX path
     /// remains observable from out-of-process introspection).
     fn publish_primary_selection_if_any(&self) {
-        if let (Some(state), Some(cb)) =
-            (self.em.inner.text_state(), self.em.inner.clipboard())
-        {
+        if let (Some(state), Some(cb)) = (self.em.inner.text_state(), self.em.inner.clipboard()) {
             if let Some(text) = state.selection_text() {
                 // Empty-string selection_text is impossible (anchor ==
                 // focus collapses to `None`), but guard defensively
@@ -2335,8 +2298,7 @@ impl TextFieldExternal {
     /// Ctrl+V handler's recognised-keystroke discipline so the
     /// caret stays solid through the paste.
     pub fn paste_from_primary(&mut self) -> bool {
-        let (Some(state), Some(cb)) =
-            (self.em.inner.text_state(), self.em.inner.clipboard())
+        let (Some(state), Some(cb)) = (self.em.inner.text_state(), self.em.inner.clipboard())
         else {
             return false;
         };
@@ -2541,7 +2503,10 @@ pub fn json_to_text_style(obj: &serde_json::Map<String, serde_json::Value>) -> T
     if let Some(lh) = obj.get("line_height").and_then(json_to_line_height) {
         s.line_height = lh;
     }
-    if let Some(ls) = obj.get("letter_spacing").and_then(serde_json::Value::as_i64) {
+    if let Some(ls) = obj
+        .get("letter_spacing")
+        .and_then(serde_json::Value::as_i64)
+    {
         if let Ok(ls) = i32::try_from(ls) {
             s.letter_spacing = ls;
         }
@@ -2556,7 +2521,10 @@ pub fn json_to_text_style(obj: &serde_json::Map<String, serde_json::Value>) -> T
     }
     if let Some(d) = obj.get("decoration").and_then(serde_json::Value::as_object) {
         s.decoration = TextDecoration {
-            underline: d.get("underline").and_then(serde_json::Value::as_bool).unwrap_or(false),
+            underline: d
+                .get("underline")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
             strikethrough: d
                 .get("strikethrough")
                 .and_then(serde_json::Value::as_bool)
@@ -2581,7 +2549,12 @@ fn json_to_color(v: &serde_json::Value) -> Option<Color> {
             .and_then(serde_json::Value::as_u64)
             .and_then(|n| u8::try_from(n).ok())
     };
-    Some(Color::rgba(ch("r")?, ch("g")?, ch("b")?, ch("a").unwrap_or(0xff)))
+    Some(Color::rgba(
+        ch("r")?,
+        ch("g")?,
+        ch("b")?,
+        ch("a").unwrap_or(0xff),
+    ))
 }
 
 /// Decode `font_style_to_json`: `"Normal"` / `"Italic"` /
@@ -2630,9 +2603,7 @@ fn parse_clear_style_json(value: &serde_json::Value) -> Option<(usize, usize)> {
     parse_byte_range_json(value.as_object()?)
 }
 
-fn parse_key_invoke_json(
-    value: &serde_json::Value,
-) -> Option<(String, crate::input::Modifiers)> {
+fn parse_key_invoke_json(value: &serde_json::Value) -> Option<(String, crate::input::Modifiers)> {
     let obj = value.as_object()?;
     let key_str = obj.get("key")?.as_str()?.to_string();
     let modifier_bit = |name: &str| -> Option<bool> {
@@ -2706,12 +2677,10 @@ mod tests {
     //! four-state transition graph, commit/cancel detection, ARIA
     //! commit-on-blur path, introspect surface.
 
-    use super::{
-        TextField, TextFieldEvent, TextFieldExternal, TextFieldState,
-    };
+    use super::{TextField, TextFieldEvent, TextFieldExternal, TextFieldState};
     use crate::external::{
-        Backend, External, ExternalIntrospect, InterveneError, IntrospectValue,
-        InvokeError, RepaintOwner, ThreadOwnership,
+        Backend, External, ExternalIntrospect, InterveneError, IntrospectValue, InvokeError,
+        RepaintOwner, ThreadOwnership,
     };
     use crate::{WidgetEventName, WidgetStateName};
 
@@ -2999,10 +2968,7 @@ mod tests {
     fn external_intervene_state_read_only() {
         let mut tfx = TextFieldExternal::new();
         assert_eq!(
-            tfx.intervene(
-                "state",
-                IntrospectValue::Text("Focused".to_string()),
-            ),
+            tfx.intervene("state", IntrospectValue::Text("Focused".to_string()),),
             Err(InterveneError::ReadOnly),
         );
         assert_eq!(tfx.state(), TextFieldState::Idle);
@@ -3059,7 +3025,8 @@ mod tests {
         // `send` returns the post-transition state name as proof of
         // the dispatch round-trip through introspect.
         let mut tfx = TextFieldExternal::new();
-        tfx.invoke("send", IntrospectValue::Text("Focus".to_string())).unwrap();
+        tfx.invoke("send", IntrospectValue::Text("Focus".to_string()))
+            .unwrap();
         tfx.invoke("send", IntrospectValue::Text("BeginEdit".to_string()))
             .unwrap();
         let out = tfx
@@ -3174,10 +3141,7 @@ mod tests {
         // R699 §5.16 — internal raise + Null reject; `as_name` total.
         assert_eq!(TextFieldEvent::from_name("TextfieldCommit"), None);
         assert_eq!(TextFieldEvent::from_name("Null"), None);
-        assert_eq!(
-            TextFieldEvent::TextfieldCommit.as_name(),
-            "TextfieldCommit"
-        );
+        assert_eq!(TextFieldEvent::TextfieldCommit.as_name(), "TextfieldCommit");
     }
 }
 
@@ -3187,7 +3151,7 @@ mod r56_1_b_tests {
     //! [`TextField`] composition with [`TextEditState`] +
     //! introspect text/caret slots.
 
-    use super::{caret_rect, TextField, TextFieldEvent, TextFieldExternal};
+    use super::{TextField, TextFieldEvent, TextFieldExternal, caret_rect};
     use crate::external::{ExternalIntrospect, InterveneError, IntrospectValue};
     use crate::scene::Rect;
     use crate::widgets::text_edit::TextEditState;
@@ -3409,10 +3373,7 @@ mod r56_1_b_tests {
         let state = Rc::new(TextEditState::new());
         let mut tfx = TextFieldExternal::new().attach_state(state);
         assert_eq!(
-            tfx.intervene(
-                "state",
-                IntrospectValue::Text("Focused".to_string()),
-            ),
+            tfx.intervene("state", IntrospectValue::Text("Focused".to_string()),),
             Err(InterveneError::ReadOnly),
         );
     }
@@ -3425,7 +3386,7 @@ mod r56_1_d_tests {
     //! RPC path. Mirrors the R56.1.b test layout (closed-form helper
     //! battery + External RPC battery).
 
-    use super::{apply_key, TextField, TextFieldExternal};
+    use super::{TextField, TextFieldExternal, apply_key};
     use crate::external::{External, ExternalIntrospect, IntrospectValue, InvokeError};
     use crate::scene::StyleRun;
     use crate::style::{Color, FontStyle, FontWeight, TextStyle};
@@ -3440,7 +3401,11 @@ mod r56_1_d_tests {
     fn r56_1_d_backspace_deletes_char_left_of_caret() {
         let state = TextEditState::with_initial("abc".to_string());
         state.set_caret(3);
-        assert!(apply_key(&state, "Backspace", crate::input::Modifiers::empty()));
+        assert!(apply_key(
+            &state,
+            "Backspace",
+            crate::input::Modifiers::empty()
+        ));
         assert_eq!(state.text(), "ab");
         assert_eq!(state.caret(), 2);
     }
@@ -3451,7 +3416,11 @@ mod r56_1_d_tests {
         // (consumed) even when the visible mutation is a no-op.
         let state = TextEditState::with_initial("abc".to_string());
         state.set_caret(0);
-        assert!(apply_key(&state, "Backspace", crate::input::Modifiers::empty()));
+        assert!(apply_key(
+            &state,
+            "Backspace",
+            crate::input::Modifiers::empty()
+        ));
         assert_eq!(state.text(), "abc");
         assert_eq!(state.caret(), 0);
     }
@@ -3460,7 +3429,11 @@ mod r56_1_d_tests {
     fn r56_1_d_delete_removes_char_at_caret() {
         let state = TextEditState::with_initial("abc".to_string());
         state.set_caret(0);
-        assert!(apply_key(&state, "Delete", crate::input::Modifiers::empty()));
+        assert!(apply_key(
+            &state,
+            "Delete",
+            crate::input::Modifiers::empty()
+        ));
         assert_eq!(state.text(), "bc");
         assert_eq!(state.caret(), 0);
     }
@@ -3469,7 +3442,11 @@ mod r56_1_d_tests {
     fn r56_1_d_delete_at_end_no_ops_but_returns_handled() {
         let state = TextEditState::with_initial("abc".to_string());
         state.set_caret(3);
-        assert!(apply_key(&state, "Delete", crate::input::Modifiers::empty()));
+        assert!(apply_key(
+            &state,
+            "Delete",
+            crate::input::Modifiers::empty()
+        ));
         assert_eq!(state.text(), "abc");
     }
 
@@ -3477,7 +3454,11 @@ mod r56_1_d_tests {
     fn r56_1_d_arrow_left_moves_caret_back_one() {
         let state = TextEditState::with_initial("abc".to_string());
         state.set_caret(2);
-        assert!(apply_key(&state, "ArrowLeft", crate::input::Modifiers::empty()));
+        assert!(apply_key(
+            &state,
+            "ArrowLeft",
+            crate::input::Modifiers::empty()
+        ));
         assert_eq!(state.caret(), 1);
     }
 
@@ -3485,7 +3466,11 @@ mod r56_1_d_tests {
     fn r56_1_d_arrow_left_at_zero_no_ops_but_returns_handled() {
         let state = TextEditState::with_initial("abc".to_string());
         state.set_caret(0);
-        assert!(apply_key(&state, "ArrowLeft", crate::input::Modifiers::empty()));
+        assert!(apply_key(
+            &state,
+            "ArrowLeft",
+            crate::input::Modifiers::empty()
+        ));
         assert_eq!(state.caret(), 0);
     }
 
@@ -3493,7 +3478,11 @@ mod r56_1_d_tests {
     fn r56_1_d_arrow_right_moves_caret_forward_one() {
         let state = TextEditState::with_initial("abc".to_string());
         state.set_caret(1);
-        assert!(apply_key(&state, "ArrowRight", crate::input::Modifiers::empty()));
+        assert!(apply_key(
+            &state,
+            "ArrowRight",
+            crate::input::Modifiers::empty()
+        ));
         assert_eq!(state.caret(), 2);
     }
 
@@ -3501,7 +3490,11 @@ mod r56_1_d_tests {
     fn r56_1_d_arrow_right_at_end_no_ops_but_returns_handled() {
         let state = TextEditState::with_initial("abc".to_string());
         state.set_caret(3);
-        assert!(apply_key(&state, "ArrowRight", crate::input::Modifiers::empty()));
+        assert!(apply_key(
+            &state,
+            "ArrowRight",
+            crate::input::Modifiers::empty()
+        ));
         assert_eq!(state.caret(), 3);
     }
 
@@ -3551,12 +3544,20 @@ mod r56_1_d_tests {
 
     #[test]
     fn r939_apply_key_ctrl_slash_toggles_comment_when_opted_in() {
-        let ctrl = crate::input::Modifiers { shift: false, ctrl: true, alt: false, meta: false };
+        let ctrl = crate::input::Modifiers {
+            shift: false,
+            ctrl: true,
+            alt: false,
+            meta: false,
+        };
         let state = TextEditState::with_initial("ab".to_string());
         state.set_caret(0);
         // Not opted in → Ctrl+/ is unhandled (falls through to the application)
         // and never inserts a literal "/" under Ctrl.
-        assert!(!apply_key(&state, "/", ctrl), "no marker configured → falls through");
+        assert!(
+            !apply_key(&state, "/", ctrl),
+            "no marker configured → falls through"
+        );
         assert_eq!(state.text(), "ab");
         // Opt in → Ctrl+/ toggles the line comment, the keymap-SSOT twin of the
         // `toggle-comment` RPC verb.
@@ -3633,21 +3634,37 @@ mod r56_1_d_tests {
         // through to the focus manager Tab traversal.
         let state = TextEditState::with_initial("abc".to_string());
         let before = (state.text(), state.caret());
-        assert!(!apply_key(&state, "ArrowUp", crate::input::Modifiers::empty()));
+        assert!(!apply_key(
+            &state,
+            "ArrowUp",
+            crate::input::Modifiers::empty()
+        ));
         assert_eq!((state.text(), state.caret()), before);
     }
 
     #[test]
     fn r56_1_d_arrow_down_returns_false_pending_multiline() {
         let state = TextEditState::new();
-        assert!(!apply_key(&state, "ArrowDown", crate::input::Modifiers::empty()));
+        assert!(!apply_key(
+            &state,
+            "ArrowDown",
+            crate::input::Modifiers::empty()
+        ));
     }
 
     #[test]
     fn r56_1_d_page_up_down_return_false() {
         let state = TextEditState::new();
-        assert!(!apply_key(&state, "PageUp", crate::input::Modifiers::empty()));
-        assert!(!apply_key(&state, "PageDown", crate::input::Modifiers::empty()));
+        assert!(!apply_key(
+            &state,
+            "PageUp",
+            crate::input::Modifiers::empty()
+        ));
+        assert!(!apply_key(
+            &state,
+            "PageDown",
+            crate::input::Modifiers::empty()
+        ));
     }
 
     #[test]
@@ -3657,7 +3674,11 @@ mod r56_1_d_tests {
         // upstream anyway — it never reaches apply_key in
         // practice, but the rejection is defensive).
         let state = TextEditState::with_initial("abc".to_string());
-        assert!(!apply_key(&state, "Enter", crate::input::Modifiers::empty()));
+        assert!(!apply_key(
+            &state,
+            "Enter",
+            crate::input::Modifiers::empty()
+        ));
         assert_eq!(state.text(), "abc");
     }
 
@@ -3682,7 +3703,11 @@ mod r56_1_d_tests {
         // flows through the preedit-buffer substrate, not this hook.
         let state = TextEditState::new();
         assert!(!apply_key(&state, "ab", crate::input::Modifiers::empty()));
-        assert!(!apply_key(&state, "hello", crate::input::Modifiers::empty()));
+        assert!(!apply_key(
+            &state,
+            "hello",
+            crate::input::Modifiers::empty()
+        ));
         assert_eq!(state.text(), "");
     }
 
@@ -3694,7 +3719,11 @@ mod r56_1_d_tests {
         let state = TextEditState::new();
         assert!(!apply_key(&state, "\t", crate::input::Modifiers::empty()));
         assert!(!apply_key(&state, "\n", crate::input::Modifiers::empty()));
-        assert!(!apply_key(&state, "\u{0000}", crate::input::Modifiers::empty()));
+        assert!(!apply_key(
+            &state,
+            "\u{0000}",
+            crate::input::Modifiers::empty()
+        ));
         assert_eq!(state.text(), "");
     }
 
@@ -3793,13 +3822,25 @@ mod r56_1_d_tests {
         state.set_selection(0, 5);
         let mut tfx = TextFieldExternal::new().attach_state(Rc::clone(&state));
         // First toggle bolds -> Bool(true); the run's colour is untouched.
-        let r = tfx.invoke("toggle-format", IntrospectValue::Text("bold".to_owned())).unwrap();
+        let r = tfx
+            .invoke("toggle-format", IntrospectValue::Text("bold".to_owned()))
+            .unwrap();
         assert_eq!(r, IntrospectValue::Bool(true), "the new on-state is bold");
         let runs = state.style_runs();
-        assert_eq!(runs[0].style.font_weight, crate::style::FontWeight::BOLD, "bold via RPC");
-        assert_eq!(runs[0].style.fg_color, Color::rgb(0xD0, 0x28, 0x28), "RPC toggle keeps colour");
+        assert_eq!(
+            runs[0].style.font_weight,
+            crate::style::FontWeight::BOLD,
+            "bold via RPC"
+        );
+        assert_eq!(
+            runs[0].style.fg_color,
+            Color::rgb(0xD0, 0x28, 0x28),
+            "RPC toggle keeps colour"
+        );
         // A second toggle returns Bool(false) and un-bolds (round-trip).
-        let r2 = tfx.invoke("toggle-format", IntrospectValue::Text("bold".to_owned())).unwrap();
+        let r2 = tfx
+            .invoke("toggle-format", IntrospectValue::Text("bold".to_owned()))
+            .unwrap();
         assert_eq!(r2, IntrospectValue::Bool(false));
         assert_eq!(
             state.style_runs()[0].style.font_weight,
@@ -3808,7 +3849,8 @@ mod r56_1_d_tests {
         );
         // An unknown field token is rejected (not a silent no-op).
         assert!(
-            tfx.invoke("toggle-format", IntrospectValue::Text("rainbow".to_owned())).is_err(),
+            tfx.invoke("toggle-format", IntrospectValue::Text("rainbow".to_owned()))
+                .is_err(),
             "an unknown field token is a TypeMismatch",
         );
     }
@@ -3824,7 +3866,11 @@ mod r56_1_d_tests {
             })),
         )
         .unwrap();
-        assert_eq!(state.style_runs()[0].style.font_size_px, 24, "size override threads through");
+        assert_eq!(
+            state.style_runs()[0].style.font_size_px,
+            24,
+            "size override threads through"
+        );
     }
 
     #[test]
@@ -3843,9 +3889,16 @@ mod r56_1_d_tests {
             )
             .unwrap();
         assert_eq!(result, IntrospectValue::Bool(true));
-        let spans: Vec<(u32, u32)> =
-            state.style_runs().iter().map(|r| (r.start, r.end)).collect();
-        assert_eq!(spans, vec![(0, 3), (8, 11)], "clear splits the run without shifting");
+        let spans: Vec<(u32, u32)> = state
+            .style_runs()
+            .iter()
+            .map(|r| (r.start, r.end))
+            .collect();
+        assert_eq!(
+            spans,
+            vec![(0, 3), (8, 11)],
+            "clear splits the run without shifting"
+        );
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -3864,7 +3917,8 @@ mod r56_1_d_tests {
             .unwrap();
         assert_eq!(armed, IntrospectValue::Bool(true));
         // Typing through the same code path the shell drives picks up the mark.
-        tfx.invoke("key", IntrospectValue::Text("X".to_string())).unwrap();
+        tfx.invoke("key", IntrospectValue::Text("X".to_string()))
+            .unwrap();
         let runs = state.style_runs();
         assert_eq!(runs.len(), 1, "the armed mark styles the typed char");
         assert_eq!((runs[0].start, runs[0].end), (0, 1));
@@ -3888,7 +3942,10 @@ mod r56_1_d_tests {
             other => panic!("expected Json, got {other:?}"),
         }
         assert!(
-            matches!(tfx.query("pending_style").unwrap(), IntrospectValue::Json(_)),
+            matches!(
+                tfx.query("pending_style").unwrap(),
+                IntrospectValue::Json(_)
+            ),
             "pending_style reports the armed mark"
         );
     }
@@ -3909,7 +3966,10 @@ mod r56_1_d_tests {
             "inherited style is not an armed mark"
         );
         assert!(
-            matches!(tfx.query("style_at_caret").unwrap(), IntrospectValue::Json(_)),
+            matches!(
+                tfx.query("style_at_caret").unwrap(),
+                IntrospectValue::Json(_)
+            ),
             "style_at_caret still reflects the inherited run"
         );
     }
@@ -3921,7 +3981,10 @@ mod r56_1_d_tests {
         armed.font_size_px = 30;
         state.set_pending_style(Some(armed));
         let mut tfx = TextFieldExternal::new().attach_state(Rc::clone(&state));
-        assert!(matches!(tfx.query("pending_style").unwrap(), IntrospectValue::Json(_)));
+        assert!(matches!(
+            tfx.query("pending_style").unwrap(),
+            IntrospectValue::Json(_)
+        ));
         let r = tfx.invoke("clear-mark", IntrospectValue::Null).unwrap();
         assert_eq!(r, IntrospectValue::Bool(true));
         assert_eq!(
@@ -3965,7 +4028,11 @@ mod r56_1_d_tests {
                 })),
             )
             .unwrap();
-        assert_eq!(result, IntrospectValue::Bool(false), "unbound widget reports no-op");
+        assert_eq!(
+            result,
+            IntrospectValue::Bool(false),
+            "unbound widget reports no-op"
+        );
     }
 
     #[test]
@@ -4019,9 +4086,21 @@ mod r56_1_d_tests {
             .unwrap();
         assert_eq!(result, IntrospectValue::Bool(true));
         let runs = state.style_runs();
-        assert_eq!(runs[0].style.font_weight, FontWeight::BOLD, "weight set via full style");
-        assert_eq!(runs[0].style.font_style, FontStyle::Italic, "italic set via full style");
-        assert_eq!(runs[0].style.fg_color, Color::rgb(0xD0, 0x28, 0x28), "colour set via full style");
+        assert_eq!(
+            runs[0].style.font_weight,
+            FontWeight::BOLD,
+            "weight set via full style"
+        );
+        assert_eq!(
+            runs[0].style.font_style,
+            FontStyle::Italic,
+            "italic set via full style"
+        );
+        assert_eq!(
+            runs[0].style.fg_color,
+            Color::rgb(0xD0, 0x28, 0x28),
+            "colour set via full style"
+        );
     }
 
     #[test]
@@ -4070,7 +4149,10 @@ mod r56_1_d_tests {
         let tfx = TextFieldExternal::new();
         let schema = tfx.schema();
         assert!(
-            schema.fields.iter().any(|(name, ty)| *name == "key" && *ty == "string"),
+            schema
+                .fields
+                .iter()
+                .any(|(name, ty)| *name == "key" && *ty == "string"),
             "key slot must be in schema",
         );
     }
@@ -4096,10 +4178,19 @@ mod r56_1_d_tests {
         let mut tfx = TextFieldExternal::new().attach_state(state);
         // Drive every recognized edit-class key.
         for key in [
-            "a", "b", "c", "Space", "Backspace", "ArrowLeft", "ArrowRight",
-            "Home", "End", "Delete",
+            "a",
+            "b",
+            "c",
+            "Space",
+            "Backspace",
+            "ArrowLeft",
+            "ArrowRight",
+            "Home",
+            "End",
+            "Delete",
         ] {
-            tfx.invoke("key", IntrospectValue::Text(key.to_string())).unwrap();
+            tfx.invoke("key", IntrospectValue::Text(key.to_string()))
+                .unwrap();
         }
         // The statechart did not transition; no intent was raised
         // (text_committed only fires on Editing exit per the R56.1.a
@@ -4275,7 +4366,7 @@ mod r56_1_f_tests {
     //! extension + Ctrl+A select-all + selection-replace dispatch
     //! through the `TextField` keystroke surface.
 
-    use super::{apply_key, TextFieldExternal};
+    use super::{TextFieldExternal, apply_key};
     use crate::external::{ExternalIntrospect, IntrospectValue};
     use crate::input::Modifiers;
     use crate::widgets::text_edit::TextEditState;
@@ -4289,7 +4380,10 @@ mod r56_1_f_tests {
     fn r56_1_f_shift_arrow_left_extends_selection() {
         let state = TextEditState::with_initial("abcdef".to_string());
         state.set_caret(3);
-        let shift = Modifiers { shift: true, ..Modifiers::empty() };
+        let shift = Modifiers {
+            shift: true,
+            ..Modifiers::empty()
+        };
         assert!(apply_key(&state, "ArrowLeft", shift));
         assert_eq!(state.caret(), 2);
         assert_eq!(state.selection_anchor(), Some(3));
@@ -4300,7 +4394,10 @@ mod r56_1_f_tests {
     fn r56_1_f_shift_arrow_right_extends_selection() {
         let state = TextEditState::with_initial("abcdef".to_string());
         state.set_caret(2);
-        let shift = Modifiers { shift: true, ..Modifiers::empty() };
+        let shift = Modifiers {
+            shift: true,
+            ..Modifiers::empty()
+        };
         assert!(apply_key(&state, "ArrowRight", shift));
         assert_eq!(state.caret(), 3);
         assert_eq!(state.selection_anchor(), Some(2));
@@ -4310,7 +4407,10 @@ mod r56_1_f_tests {
     fn r56_1_f_shift_home_extends_selection_to_zero() {
         let state = TextEditState::with_initial("abcdef".to_string());
         state.set_caret(4);
-        let shift = Modifiers { shift: true, ..Modifiers::empty() };
+        let shift = Modifiers {
+            shift: true,
+            ..Modifiers::empty()
+        };
         assert!(apply_key(&state, "Home", shift));
         assert_eq!(state.caret(), 0);
         assert_eq!(state.selection_range(), Some((0, 4)));
@@ -4320,7 +4420,10 @@ mod r56_1_f_tests {
     fn r56_1_f_shift_end_extends_selection_to_text_len() {
         let state = TextEditState::with_initial("abcdef".to_string());
         state.set_caret(2);
-        let shift = Modifiers { shift: true, ..Modifiers::empty() };
+        let shift = Modifiers {
+            shift: true,
+            ..Modifiers::empty()
+        };
         assert!(apply_key(&state, "End", shift));
         assert_eq!(state.caret(), 6);
         assert_eq!(state.selection_range(), Some((2, 6)));
@@ -4355,7 +4458,10 @@ mod r56_1_f_tests {
     fn r56_1_f_ctrl_a_selects_entire_text() {
         let state = TextEditState::with_initial("abcdef".to_string());
         state.set_caret(2);
-        let ctrl = Modifiers { ctrl: true, ..Modifiers::empty() };
+        let ctrl = Modifiers {
+            ctrl: true,
+            ..Modifiers::empty()
+        };
         assert!(apply_key(&state, "a", ctrl));
         assert_eq!(state.selection_range(), Some((0, 6)));
         assert_eq!(state.caret(), 6);
@@ -4367,7 +4473,10 @@ mod r56_1_f_tests {
         // binding fires on both modifier bits so apps do not need
         // platform-specific keymaps.
         let state = TextEditState::with_initial("abcdef".to_string());
-        let meta = Modifiers { meta: true, ..Modifiers::empty() };
+        let meta = Modifiers {
+            meta: true,
+            ..Modifiers::empty()
+        };
         assert!(apply_key(&state, "a", meta));
         assert_eq!(state.selection_range(), Some((0, 6)));
     }
@@ -4392,7 +4501,11 @@ mod r56_1_f_tests {
         // typing safe.
         let state = TextEditState::with_initial("xy".to_string());
         state.set_caret(0);
-        let ctrl_alt = Modifiers { ctrl: true, alt: true, ..Modifiers::empty() };
+        let ctrl_alt = Modifiers {
+            ctrl: true,
+            alt: true,
+            ..Modifiers::empty()
+        };
         // The key still recognises (printable-char branch fires);
         // selection-all branch passes through because alt is set.
         let _ = apply_key(&state, "a", ctrl_alt);
@@ -4414,11 +4527,25 @@ mod r56_1_f_tests {
         assert!(state.undo(), "undo the insert");
         assert_eq!(state.text(), "", "undone");
         // Ctrl+Shift+Z arrives as uppercase "Z" — must still redo.
-        let ctrl_shift = Modifiers { ctrl: true, shift: true, ..Modifiers::empty() };
-        assert!(apply_key(&state, "Z", ctrl_shift), "Ctrl+Shift+Z is consumed");
-        assert_eq!(state.text(), "x", "Ctrl+Shift+Z redid the insert (uppercase Z case-folded)");
+        let ctrl_shift = Modifiers {
+            ctrl: true,
+            shift: true,
+            ..Modifiers::empty()
+        };
+        assert!(
+            apply_key(&state, "Z", ctrl_shift),
+            "Ctrl+Shift+Z is consumed"
+        );
+        assert_eq!(
+            state.text(),
+            "x",
+            "Ctrl+Shift+Z redid the insert (uppercase Z case-folded)"
+        );
         // Lower-case chords still work: Ctrl+Z undoes, Ctrl+Y redoes.
-        let ctrl = Modifiers { ctrl: true, ..Modifiers::empty() };
+        let ctrl = Modifiers {
+            ctrl: true,
+            ..Modifiers::empty()
+        };
         assert!(apply_key(&state, "z", ctrl), "Ctrl+Z consumed");
         assert_eq!(state.text(), "", "Ctrl+Z undid");
         assert!(apply_key(&state, "y", ctrl), "Ctrl+Y consumed");
@@ -4605,10 +4732,7 @@ mod r56_1_f_tests {
     fn r56_1_f_3_intervene_selection_text_args_rejects_with_type_mismatch() {
         let state = Rc::new(TextEditState::with_initial("abcdef".to_string()));
         let mut tfx = TextFieldExternal::new().attach_state(state);
-        let r = tfx.intervene(
-            "selection",
-            IntrospectValue::Text("1,4".to_string()),
-        );
+        let r = tfx.intervene("selection", IntrospectValue::Text("1,4".to_string()));
         assert_eq!(r, Err(InterveneError::TypeMismatch));
     }
 
@@ -4629,14 +4753,16 @@ mod r56_1_e_tests {
     //! keystroke dispatch through the `TextField` `invoke("key", ...)`
     //! channel.
 
-    use super::{TextFieldExternal};
+    use super::TextFieldExternal;
     use crate::clipboard::{Clipboard, InMemoryClipboard};
     use crate::external::{ExternalIntrospect, IntrospectValue, InvokeError};
     use crate::input::Modifiers;
     use crate::widgets::text_edit::TextEditState;
     use std::rc::Rc;
 
-    fn make_tfx_with_clipboard(text: &str) -> (TextFieldExternal, Rc<TextEditState>, Rc<dyn Clipboard>) {
+    fn make_tfx_with_clipboard(
+        text: &str,
+    ) -> (TextFieldExternal, Rc<TextEditState>, Rc<dyn Clipboard>) {
         let state = Rc::new(TextEditState::with_initial(text.to_string()));
         let cb: Rc<dyn Clipboard> = Rc::new(InMemoryClipboard::new());
         let tfx = TextFieldExternal::new()
@@ -4793,7 +4919,9 @@ mod r56_1_e_tests {
         // No modifier — plain printable insert path (R56.1.d) fires.
         let (mut tfx, state, cb) = make_tfx_with_clipboard("");
         for ch in ['c', 'x', 'v'] {
-            let r = tfx.invoke("key", IntrospectValue::Text(ch.to_string())).unwrap();
+            let r = tfx
+                .invoke("key", IntrospectValue::Text(ch.to_string()))
+                .unwrap();
             assert_eq!(r, IntrospectValue::Bool(true));
         }
         assert_eq!(state.text(), "cxv");
@@ -4812,9 +4940,13 @@ mod r56_1_e_tests {
         // typing safe (mirror of R56.1.f.2 select-all gate).
         let (mut tfx, state, cb) = make_tfx_with_clipboard("hello");
         state.set_selection(0, 5);
-        let mods_ctrl_alt = Modifiers { ctrl: true, alt: true, ..Modifiers::empty() };
+        let mods_ctrl_alt = Modifiers {
+            ctrl: true,
+            alt: true,
+            ..Modifiers::empty()
+        };
         let _ = mods_ctrl_alt; // documented gate; the modifier shape
-                                // routes through the Json arg path.
+        // routes through the Json arg path.
         let r = tfx
             .invoke(
                 "key",
@@ -4873,10 +5005,7 @@ mod r56_1_e_tests {
         assert_eq!(cb.paste_from(ClipboardSelection::Primary), None);
         let r = tfx.invoke("key", json_key("a", true)).unwrap();
         assert_eq!(r, IntrospectValue::Bool(true));
-        assert_eq!(
-            state.selection_text(),
-            Some("hello world".to_string()),
-        );
+        assert_eq!(state.selection_text(), Some("hello world".to_string()),);
         assert_eq!(
             cb.paste_from(ClipboardSelection::Primary),
             Some("hello world".to_string()),
@@ -5521,7 +5650,7 @@ mod r56_1_j_tests {
     //! `widgets/caret_blink.rs`; this module verifies only the
     //! wiring from the keystroke surface into that contract.
 
-    use super::{TextFieldExternal, TextFieldEvent};
+    use super::{TextFieldEvent, TextFieldExternal};
     use crate::animation::Tickable;
     use crate::external::{ExternalIntrospect, IntrospectValue};
     use crate::widgets::caret_blink::CaretBlink;
@@ -5559,7 +5688,10 @@ mod r56_1_j_tests {
             .invoke("key", IntrospectValue::Text("h".to_string()))
             .unwrap();
         assert_eq!(r, IntrospectValue::Bool(true), "printable key recognized");
-        assert!(blink.visible(), "recognized key snaps blink back to visible");
+        assert!(
+            blink.visible(),
+            "recognized key snaps blink back to visible"
+        );
     }
 
     #[test]
@@ -5572,7 +5704,10 @@ mod r56_1_j_tests {
             .invoke("key", IntrospectValue::Text("Backspace".to_string()))
             .unwrap();
         assert_eq!(r, IntrospectValue::Bool(true));
-        assert!(blink.visible(), "Backspace resets even when it's a caret-0 no-op");
+        assert!(
+            blink.visible(),
+            "Backspace resets even when it's a caret-0 no-op"
+        );
     }
 
     #[test]
@@ -6308,9 +6443,7 @@ mod r56_1_g_2_tests {
         .unwrap();
         tfx.invoke(
             "composition",
-            IntrospectValue::Json(
-                serde_json::json!({"action": "update", "data": "hi"}),
-            ),
+            IntrospectValue::Json(serde_json::json!({"action": "update", "data": "hi"})),
         )
         .unwrap();
         assert_eq!(state.preedit(), Some("hi".to_string()));
@@ -6324,9 +6457,7 @@ mod r56_1_g_2_tests {
         let result = tfx
             .invoke(
                 "composition",
-                IntrospectValue::Json(
-                    serde_json::json!({"action": "end", "data": "한"}),
-                ),
+                IntrospectValue::Json(serde_json::json!({"action": "end", "data": "한"})),
             )
             .unwrap();
         assert_eq!(result, IntrospectValue::Text("Focused".to_string()));
@@ -6344,9 +6475,7 @@ mod r56_1_g_2_tests {
         let result = tfx
             .invoke(
                 "composition",
-                IntrospectValue::Json(
-                    serde_json::json!({"action": "end", "data": ""}),
-                ),
+                IntrospectValue::Json(serde_json::json!({"action": "end", "data": ""})),
             )
             .unwrap();
         assert_eq!(result, IntrospectValue::Text("Focused".to_string()));
@@ -6412,10 +6541,7 @@ mod r56_1_g_2_tests {
         // wire shape stays strict.
         let (mut tfx, _state) = focused_external_with_state();
         let err = tfx
-            .invoke(
-                "composition",
-                IntrospectValue::Text("start".to_string()),
-            )
+            .invoke("composition", IntrospectValue::Text("start".to_string()))
             .unwrap_err();
         assert!(matches!(err, InvokeError::TypeMismatch));
     }
@@ -6643,12 +6769,14 @@ mod r903_find_replace_tests {
             Err(InvokeError::TypeMismatch),
         ));
         assert!(matches!(
-            tfx.intervene("find_case_sensitive", IntrospectValue::Text("yes".to_string())),
+            tfx.intervene(
+                "find_case_sensitive",
+                IntrospectValue::Text("yes".to_string())
+            ),
             Err(InterveneError::TypeMismatch),
         ));
     }
 }
-
 
 #[cfg(test)]
 mod r933_fold_tests {
@@ -6838,7 +6966,8 @@ mod r933_fold_tests {
         // A bare field (no state) is inert too.
         let mut bare = TextFieldExternal::new();
         assert_eq!(
-            bare.invoke("toggle-comment", IntrospectValue::Null).unwrap(),
+            bare.invoke("toggle-comment", IntrospectValue::Null)
+                .unwrap(),
             IntrospectValue::Bool(false),
         );
     }
@@ -6879,7 +7008,10 @@ mod r933_fold_tests {
     fn r941_invoke_go_to_line_rejects_negative_and_bad_type() {
         let (_state, mut tfx) = wired("a\nb");
         assert!(
-            matches!(tfx.invoke("go-to-line", IntrospectValue::Int(-1)), Err(InvokeError::Rejected)),
+            matches!(
+                tfx.invoke("go-to-line", IntrospectValue::Int(-1)),
+                Err(InvokeError::Rejected)
+            ),
             "a negative line cannot name a row (the toggle-fold guard mirror)",
         );
         assert!(matches!(
@@ -6911,7 +7043,10 @@ mod r933_fold_tests {
 
     // ─── R959 / R961 §5.36 §5.22 — gutter send-route (TextFieldSendKey) ──────
 
-    fn send_text(tfx: &mut TextFieldExternal, payload: &str) -> Result<IntrospectValue, InvokeError> {
+    fn send_text(
+        tfx: &mut TextFieldExternal,
+        payload: &str,
+    ) -> Result<IntrospectValue, InvokeError> {
         tfx.invoke("send", IntrospectValue::Text(payload.into()))
     }
 
@@ -6919,19 +7054,40 @@ mod r933_fold_tests {
     fn r961_send_key_encode_decode_roundtrip() {
         // The paint producer and the `send` decoder share one SSOT, so the
         // wire grammar cannot drift — across BOTH kinds.
-        assert_eq!(TextFieldSendKey::gutter_line_tag("main_textarea", 3), "main_textarea#gl3");
-        assert_eq!(TextFieldSendKey::fold_toggle_tag("code_editor", 2), "code_editor#fold2");
+        assert_eq!(
+            TextFieldSendKey::gutter_line_tag("main_textarea", 3),
+            "main_textarea#gl3"
+        );
+        assert_eq!(
+            TextFieldSendKey::fold_toggle_tag("code_editor", 2),
+            "code_editor#fold2"
+        );
         let (primary, sub) = crate::composite_tag::split_subindex("main_textarea#gl3");
         assert_eq!(primary, "main_textarea");
-        assert_eq!(TextFieldSendKey::parse(sub.unwrap()), Some(TextFieldSendKey::GutterLine { line: 3 }));
+        assert_eq!(
+            TextFieldSendKey::parse(sub.unwrap()),
+            Some(TextFieldSendKey::GutterLine { line: 3 })
+        );
         assert_eq!(
             TextFieldSendKey::parse("fold2"),
             Some(TextFieldSendKey::FoldToggle { line: 2 }),
         );
         // The `gl` / `fold` prefixes are disjoint and a non-key sub does not decode.
-        assert_eq!(TextFieldSendKey::parse("3"), None, "a bare numeric is not a key");
-        assert_eq!(TextFieldSendKey::parse("glx"), None, "a non-numeric gl tail is rejected");
-        assert_eq!(TextFieldSendKey::parse("foldx"), None, "a non-numeric fold tail is rejected");
+        assert_eq!(
+            TextFieldSendKey::parse("3"),
+            None,
+            "a bare numeric is not a key"
+        );
+        assert_eq!(
+            TextFieldSendKey::parse("glx"),
+            None,
+            "a non-numeric gl tail is rejected"
+        );
+        assert_eq!(
+            TextFieldSendKey::parse("foldx"),
+            None,
+            "a non-numeric fold tail is rejected"
+        );
     }
 
     #[test]
@@ -6941,8 +7097,16 @@ mod r933_fold_tests {
         // caret-drag arm (the press hook never sees it).
         let (state, mut tfx) = wired("zero\none\ntwo\nthree\nfour"); // starts [0,5,9,13,19]
         assert!(send_text(&mut tfx, "gl3:PointerUp").is_ok());
-        assert_eq!(state.caret(), 9, "click gutter 3 -> caret at line 3 (\"two\") start");
-        assert_eq!(state.selection_range(), None, "a plain gutter click collapses any selection");
+        assert_eq!(
+            state.caret(),
+            9,
+            "click gutter 3 -> caret at line 3 (\"two\") start"
+        );
+        assert_eq!(
+            state.selection_range(),
+            None,
+            "a plain gutter click collapses any selection"
+        );
     }
 
     #[test]
@@ -6969,7 +7133,10 @@ mod r933_fold_tests {
         let (state, mut tfx) = wired("zero\none\ntwo\nthree\nfour");
         state.set_caret(2);
         for edge in ["gl4:PointerDown", "gl4:PointerEnter", "gl4:PointerLeave"] {
-            assert!(send_text(&mut tfx, edge).is_ok(), "{edge} is a recognized send");
+            assert!(
+                send_text(&mut tfx, edge).is_ok(),
+                "{edge} is a recognized send"
+            );
             assert_eq!(state.caret(), 2, "{edge} does not move the caret");
         }
     }
@@ -6980,9 +7147,15 @@ mod r933_fold_tests {
         // existing SCXML-event send is unchanged, and a non-gutter composite
         // falls through to `from_name` (which rejects it).
         let (_state, mut tfx) = wired("a\nb");
-        assert!(send_text(&mut tfx, "Focus").is_ok(), "a bare SCXML event still dispatches");
         assert!(
-            matches!(send_text(&mut tfx, "foo:PointerUp"), Err(InvokeError::Rejected)),
+            send_text(&mut tfx, "Focus").is_ok(),
+            "a bare SCXML event still dispatches"
+        );
+        assert!(
+            matches!(
+                send_text(&mut tfx, "foo:PointerUp"),
+                Err(InvokeError::Rejected)
+            ),
             "a non-gutter composite is not a recognized send",
         );
     }
@@ -7001,9 +7174,17 @@ mod r933_fold_tests {
         // `toggle_fold` SSOT the keyboard `Enter` + `toggle-fold` RPC drive.
         let (_state, mut tfx) = wired("x {\n y\n}\n"); // a region opens on line 0
         assert!(send_text(&mut tfx, "fold0:PointerUp").is_ok());
-        assert_eq!(regions(&tfx)[0]["collapsed"], serde_json::json!(true), "click collapsed line 0");
+        assert_eq!(
+            regions(&tfx)[0]["collapsed"],
+            serde_json::json!(true),
+            "click collapsed line 0"
+        );
         assert!(send_text(&mut tfx, "fold0:PointerUp").is_ok());
-        assert_eq!(regions(&tfx)[0]["collapsed"], serde_json::json!(false), "click again expanded it");
+        assert_eq!(
+            regions(&tfx)[0]["collapsed"],
+            serde_json::json!(false),
+            "click again expanded it"
+        );
     }
 
     #[test]
@@ -7013,9 +7194,20 @@ mod r933_fold_tests {
         // sub on a non-opener line toggles nothing (toggle_fold returns false).
         let (_state, mut tfx) = wired("x {\n y\n}\n");
         assert!(send_text(&mut tfx, "fold0:PointerDown").is_ok());
-        assert_eq!(regions(&tfx)[0]["collapsed"], serde_json::json!(false), "PointerDown did not fold");
-        assert!(send_text(&mut tfx, "fold1:PointerUp").is_ok(), "no opener on line 1 -> recognized no-op");
-        assert_eq!(regions(&tfx)[0]["collapsed"], serde_json::json!(false), "line 1 has no region");
+        assert_eq!(
+            regions(&tfx)[0]["collapsed"],
+            serde_json::json!(false),
+            "PointerDown did not fold"
+        );
+        assert!(
+            send_text(&mut tfx, "fold1:PointerUp").is_ok(),
+            "no opener on line 1 -> recognized no-op"
+        );
+        assert_eq!(
+            regions(&tfx)[0]["collapsed"],
+            serde_json::json!(false),
+            "line 1 has no region"
+        );
     }
 
     // ─── R945 §5.22 — move-line / duplicate-line invoke verbs ───────────────
@@ -7034,7 +7226,11 @@ mod r933_fold_tests {
             tfx.invoke("move-line-up", IntrospectValue::Null).unwrap(),
             IntrospectValue::Bool(true),
         );
-        assert_eq!(state.text(), "a\nb\nc", "move up restores the original order");
+        assert_eq!(
+            state.text(),
+            "a\nb\nc",
+            "move up restores the original order"
+        );
     }
 
     #[test]
@@ -7054,7 +7250,8 @@ mod r933_fold_tests {
         let (state, mut tfx) = wired("a\nb");
         state.set_caret(0);
         assert_eq!(
-            tfx.invoke("duplicate-line-down", IntrospectValue::Null).unwrap(),
+            tfx.invoke("duplicate-line-down", IntrospectValue::Null)
+                .unwrap(),
             IntrospectValue::Bool(true),
         );
         assert_eq!(state.text(), "a\na\nb");
@@ -7062,7 +7259,8 @@ mod r933_fold_tests {
 
         let (state, mut tfx) = wired("a\nb");
         state.set_caret(0);
-        tfx.invoke("duplicate-line-up", IntrospectValue::Null).unwrap();
+        tfx.invoke("duplicate-line-up", IntrospectValue::Null)
+            .unwrap();
         assert_eq!(state.text(), "a\na\nb");
         assert_eq!(state.caret(), 0, "up keeps the caret on the upper instance");
     }
@@ -7070,7 +7268,12 @@ mod r933_fold_tests {
     #[test]
     fn r945_invoke_line_move_bare_inert_and_type_checked() {
         let mut bare = TextFieldExternal::new();
-        for verb in ["move-line-up", "move-line-down", "duplicate-line-up", "duplicate-line-down"] {
+        for verb in [
+            "move-line-up",
+            "move-line-down",
+            "duplicate-line-up",
+            "duplicate-line-down",
+        ] {
             assert_eq!(
                 bare.invoke(verb, IntrospectValue::Null).unwrap(),
                 IntrospectValue::Bool(false),
@@ -7078,9 +7281,12 @@ mod r933_fold_tests {
             );
         }
         let (_state, mut tfx) = wired("a\nb");
-        assert!(matches!(
-            tfx.invoke("move-line-down", IntrospectValue::Int(1)),
-            Err(InvokeError::TypeMismatch),
-        ), "a non-Null arg is a type mismatch");
+        assert!(
+            matches!(
+                tfx.invoke("move-line-down", IntrospectValue::Int(1)),
+                Err(InvokeError::TypeMismatch),
+            ),
+            "a non-Null arg is a type mismatch"
+        );
     }
 }

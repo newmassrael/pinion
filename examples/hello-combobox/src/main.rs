@@ -71,7 +71,7 @@
 //! coordinator + a `pinion_widget_paint::combobox` chrome helper.
 
 use pinion_a11y::{
-    listbox_option_nodes, AccessFocus, AccessNode, AccessState, AriaRole, ListOption, WidgetA11y,
+    AccessFocus, AccessNode, AccessState, AriaRole, ListOption, WidgetA11y, listbox_option_nodes,
 };
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::reactive::{Owner, Signal};
@@ -79,16 +79,16 @@ use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::button::{ButtonExternal, ButtonState};
 use pinion_core::widgets::listbox::ListBoxExternal;
 use pinion_core::widgets::listbox_item::ListboxItemState;
 use pinion_core::{Frame, Scene, WidgetCore, WidgetStateName};
-use pinion_shell::{vello_renderer_impl, WidgetView};
-use pinion_widget_paint::button::{read_button_focused, read_button_state};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::barrier::dismiss_barrier;
-use pinion_widget_paint::listbox::{view_option, OptionRow};
+use pinion_widget_paint::button::{read_button_focused, read_button_state};
+use pinion_widget_paint::listbox::{OptionRow, view_option};
 use pinion_widget_paint::popup::popup_surface;
 use std::rc::Rc;
 
@@ -235,9 +235,7 @@ fn trigger_scene(state: &ComboViewState, open: bool, theme: &Theme) -> Scene {
     } else {
         theme.resolve(ColorRole::Outline)
     };
-    let value_text = state
-        .selected
-        .map_or(PLACEHOLDER, |i| LABELS[i.min(N - 1)]);
+    let value_text = state.selected.map_or(PLACEHOLDER, |i| LABELS[i.min(N - 1)]);
     let value_color = if state.selected.is_some() {
         theme.resolve(ColorRole::OnSurface)
     } else {
@@ -266,7 +264,10 @@ fn trigger_scene(state: &ComboViewState, open: bool, theme: &Theme) -> Scene {
             .with_style(
                 BoxStyle::filled(bg)
                     .with_corner_radius(6)
-                    .with_border(Border::new(border_color, if state.trigger_focused { 2 } else { 1 })),
+                    .with_border(Border::new(
+                        border_color,
+                        if state.trigger_focused { 2 } else { 1 },
+                    )),
             )
             .with_layout(
                 LayoutStyle::new()
@@ -339,7 +340,9 @@ fn view(state: &ComboViewState, _frame: &Frame) -> Scene {
 
     if open {
         let active = active_option(state);
-        let options: Vec<Scene> = (0..N).map(|i| option_scene(i, state, active, &theme)).collect();
+        let options: Vec<Scene> = (0..N)
+            .map(|i| option_scene(i, state, active, &theme))
+            .collect();
         let panel = Scene::Container(
             ContainerNode::new(options)
                 .with_tag(PANEL_TAG)
@@ -477,7 +480,6 @@ impl WidgetCore for ComboView {
         None
     }
 
-
     /// WAI-ARIA §4.5 select-only combobox keyboard model. All keys route
     /// only while the trigger owns shell focus (single Tab stop):
     /// - **closed** — `ArrowDown` / `ArrowUp` / `Enter` / `Space` open
@@ -562,11 +564,10 @@ impl WidgetA11y for ComboView {
         let open = use_combo_open().get();
         let combo = AccessNode::new(TRIGGER_TAG, AriaRole::ComboBox)
             .with_name("T-shirt size")
-            .with_value(pinion_a11y::AccessValue::Text(
-                state
-                    .selected
-                    .map_or_else(|| PLACEHOLDER.to_string(), |i| LABELS[i.min(N - 1)].to_string()),
-            ))
+            .with_value(pinion_a11y::AccessValue::Text(state.selected.map_or_else(
+                || PLACEHOLDER.to_string(),
+                |i| LABELS[i.min(N - 1)].to_string(),
+            )))
             .with_expanded(open)
             .with_controls(OPTIONS_TAG)
             .with_state(AccessState {
@@ -594,7 +595,12 @@ impl WidgetA11y for ComboView {
                     focused: trigger_focused && i == active,
                 })
                 .collect();
-            nodes.extend(listbox_option_nodes(OPTIONS_TAG, "T-shirt size options", false, &options));
+            nodes.extend(listbox_option_nodes(
+                OPTIONS_TAG,
+                "T-shirt size options",
+                false,
+                &options,
+            ));
         }
         nodes
     }
@@ -646,10 +652,13 @@ mod tests {
     /// Build the multi-external state scene the way the shell does so
     /// `apply_key` has real trigger / listbox / barrier externals.
     fn boot_scene() -> Scene {
-        let mut children =
-            vec![Scene::External(ExternalNode::new(ComboView::create_external()).with_tag(TRIGGER_TAG))];
+        let mut children = vec![Scene::External(
+            ExternalNode::new(ComboView::create_external()).with_tag(TRIGGER_TAG),
+        )];
         for extra in ComboView::create_extra_externals() {
-            children.push(Scene::External(ExternalNode::new(extra.handle).with_tag(extra.tag)));
+            children.push(Scene::External(
+                ExternalNode::new(extra.handle).with_tag(extra.tag),
+            ));
         }
         Scene::Container(ContainerNode::new(children))
     }
@@ -679,7 +688,10 @@ mod tests {
         Owner::new().run(|| {
             open_combo();
             let _ = ComboView::update(idle(), &intent("combo_options.selected"));
-            assert!(!use_combo_open().get(), "committing an option closes the popup");
+            assert!(
+                !use_combo_open().get(),
+                "committing an option closes the popup"
+            );
         });
     }
 
@@ -697,7 +709,10 @@ mod tests {
                 pinion_core::Modifiers::empty(),
             );
             assert!(handled);
-            assert!(use_combo_open().get(), "ArrowDown opens the closed combobox");
+            assert!(
+                use_combo_open().get(),
+                "ArrowDown opens the closed combobox"
+            );
         });
     }
 
@@ -756,12 +771,27 @@ mod tests {
             let mut scene = boot_scene();
             let m = pinion_core::Modifiers::empty();
             // Fresh open: first ArrowDown lands on the active option (0).
-            assert!(ComboView::apply_key(&mut scene, Some(TRIGGER_TAG), "ArrowDown", m));
+            assert!(ComboView::apply_key(
+                &mut scene,
+                Some(TRIGGER_TAG),
+                "ArrowDown",
+                m
+            ));
             assert_eq!(read_combo_state(&scene).focused, Some(0));
             // Next ArrowDown steps to 1, then End jumps to the last.
-            assert!(ComboView::apply_key(&mut scene, Some(TRIGGER_TAG), "ArrowDown", m));
+            assert!(ComboView::apply_key(
+                &mut scene,
+                Some(TRIGGER_TAG),
+                "ArrowDown",
+                m
+            ));
             assert_eq!(read_combo_state(&scene).focused, Some(1));
-            assert!(ComboView::apply_key(&mut scene, Some(TRIGGER_TAG), "End", m));
+            assert!(ComboView::apply_key(
+                &mut scene,
+                Some(TRIGGER_TAG),
+                "End",
+                m
+            ));
             assert_eq!(read_combo_state(&scene).focused, Some(N - 1));
         });
     }
@@ -783,8 +813,16 @@ mod tests {
             assert_eq!(nodes.len(), 1);
             assert_eq!(nodes[0].role, AriaRole::ComboBox);
             assert_eq!(nodes[0].tag, TRIGGER_TAG);
-            assert_eq!(nodes[0].expanded, Some(false), "closed combobox carries aria-expanded=false");
-            assert_eq!(nodes[0].controls.as_deref(), Some(OPTIONS_TAG), "aria-controls → listbox");
+            assert_eq!(
+                nodes[0].expanded,
+                Some(false),
+                "closed combobox carries aria-expanded=false"
+            );
+            assert_eq!(
+                nodes[0].controls.as_deref(),
+                Some(OPTIONS_TAG),
+                "aria-controls → listbox"
+            );
         });
     }
 
@@ -802,7 +840,11 @@ mod tests {
             assert_eq!(nodes[1].children.len(), N);
             for (i, node) in nodes.iter().skip(2).enumerate() {
                 assert_eq!(node.role, AriaRole::ListBoxOption);
-                assert_eq!(node.selected, Some(i == 2), "only the committed option is selected");
+                assert_eq!(
+                    node.selected,
+                    Some(i == 2),
+                    "only the committed option is selected"
+                );
             }
         });
     }
@@ -841,7 +883,10 @@ mod tests {
         Owner::new().run(|| {
             close_combo();
             let scene = view(&idle(), &Frame::new());
-            assert!(!scene.contains_tag(BARRIER_TAG), "closed: no barrier painted");
+            assert!(
+                !scene.contains_tag(BARRIER_TAG),
+                "closed: no barrier painted"
+            );
             assert!(!scene.contains_tag(PANEL_TAG), "closed: no panel painted");
             assert!(scene.contains_tag(TRIGGER_TAG), "trigger always painted");
         });
@@ -852,10 +897,19 @@ mod tests {
         Owner::new().run(|| {
             open_combo();
             let scene = view(&idle(), &Frame::new());
-            assert!(scene.contains_tag(BARRIER_TAG), "open: transparent barrier painted");
-            assert!(scene.contains_tag(PANEL_TAG), "open: dropdown panel painted");
+            assert!(
+                scene.contains_tag(BARRIER_TAG),
+                "open: transparent barrier painted"
+            );
+            assert!(
+                scene.contains_tag(PANEL_TAG),
+                "open: dropdown panel painted"
+            );
             for i in 0..N {
-                assert!(scene.contains_tag(&format!("{OPTIONS_TAG}#{i}")), "option {i} painted");
+                assert!(
+                    scene.contains_tag(&format!("{OPTIONS_TAG}#{i}")),
+                    "option {i} painted"
+                );
             }
         });
     }

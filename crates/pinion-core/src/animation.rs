@@ -255,7 +255,11 @@ impl AnimRect {
     }
 }
 
-#[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
 fn saturate_u32(v: f32) -> u32 {
     if v.is_nan() || v <= 0.0 {
         0
@@ -556,8 +560,7 @@ impl<T: Animatable> SpringState<T> {
     /// predicate for [`Animation::is_at_rest`] / driver tick-skip.
     #[must_use]
     pub fn is_done(self, epsilon: f32) -> bool {
-        self.target.sub(self.current).approx_zero(epsilon)
-            && self.velocity.approx_zero(epsilon)
+        self.target.sub(self.current).approx_zero(epsilon) && self.velocity.approx_zero(epsilon)
     }
 }
 
@@ -1247,10 +1250,7 @@ mod tests {
         let neg = AnimRect::new(-5.0, -1.0, -100.0, -0.5);
         assert_eq!(neg.to_rect(), crate::scene::Rect::new(0, 0, 0, 0));
         let nan_x = AnimRect::new(f32::NAN, 5.0, 10.0, 20.0);
-        assert_eq!(
-            nan_x.to_rect(),
-            crate::scene::Rect::new(0, 5, 10, 20),
-        );
+        assert_eq!(nan_x.to_rect(), crate::scene::Rect::new(0, 5, 10, 20),);
     }
 
     #[test]
@@ -1393,7 +1393,7 @@ mod tests {
     // ──────────────────────────────────────────────────────────────────
 
     mod animation {
-        use super::super::{Animation, AnimVec2, SpringConfig};
+        use super::super::{AnimVec2, Animation, SpringConfig};
         use crate::reactive::{Effect, Owner};
         use std::cell::{Cell, RefCell};
         use std::rc::Rc;

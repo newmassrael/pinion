@@ -117,25 +117,49 @@ impl<'a> MenuItemView<'a> {
     /// A plain enabled command row.
     #[must_use]
     pub const fn command(label: &'a str) -> Self {
-        Self { label, checkmark: None, separator: false, enabled: true, submenu: false }
+        Self {
+            label,
+            checkmark: None,
+            separator: false,
+            enabled: true,
+            submenu: false,
+        }
     }
 
     /// A checkbox row with the given checked state.
     #[must_use]
     pub const fn checkbox(label: &'a str, checked: bool) -> Self {
-        Self { label, checkmark: Some(checked), separator: false, enabled: true, submenu: false }
+        Self {
+            label,
+            checkmark: Some(checked),
+            separator: false,
+            enabled: true,
+            submenu: false,
+        }
     }
 
     /// A non-interactive divider row.
     #[must_use]
     pub const fn separator() -> Self {
-        Self { label: "", checkmark: None, separator: true, enabled: false, submenu: false }
+        Self {
+            label: "",
+            checkmark: None,
+            separator: true,
+            enabled: false,
+            submenu: false,
+        }
     }
 
     /// R985 — a submenu parent row (carries a trailing chevron).
     #[must_use]
     pub const fn submenu(label: &'a str) -> Self {
-        Self { label, checkmark: None, separator: false, enabled: true, submenu: true }
+        Self {
+            label,
+            checkmark: None,
+            separator: false,
+            enabled: true,
+            submenu: true,
+        }
     }
 
     /// Builder: mark this row disabled (muted, no state-layer).
@@ -392,8 +416,20 @@ pub fn view_menu_dropdown(
     theme: &Theme,
     style: &MenuStyle,
 ) -> Scene {
-    let x = u32::try_from(menu_index).unwrap_or(u32::MAX).saturating_mul(style.title_slot_width);
-    build_popup(bar_tag, dropdown_tag, x, style.bar_height, &[], items, active, theme, style)
+    let x = u32::try_from(menu_index)
+        .unwrap_or(u32::MAX)
+        .saturating_mul(style.title_slot_width);
+    build_popup(
+        bar_tag,
+        dropdown_tag,
+        x,
+        style.bar_height,
+        &[],
+        items,
+        active,
+        theme,
+        style,
+    )
 }
 
 /// R985 — one open menu level within a cascade: its item rows + the active
@@ -430,14 +466,30 @@ pub fn view_menu_cascade(
     style: &MenuStyle,
 ) -> Vec<Scene> {
     let mut out: Vec<Scene> = Vec::with_capacity(levels.len().min(level_tags.len()));
-    let mut x = u32::try_from(menu_index).unwrap_or(u32::MAX).saturating_mul(style.title_slot_width);
+    let mut x = u32::try_from(menu_index)
+        .unwrap_or(u32::MAX)
+        .saturating_mul(style.title_slot_width);
     let mut y = style.bar_height;
     let mut prefix: Vec<usize> = Vec::new();
     for (depth, level) in levels.iter().enumerate() {
-        let Some(&tag) = level_tags.get(depth) else { break };
-        out.push(build_popup(bar_tag, tag, x, y, &prefix, level.items, level.active, theme, style));
+        let Some(&tag) = level_tags.get(depth) else {
+            break;
+        };
+        out.push(build_popup(
+            bar_tag,
+            tag,
+            x,
+            y,
+            &prefix,
+            level.items,
+            level.active,
+            theme,
+            style,
+        ));
         // The child popup (if any) cascades off this level's open row.
-        let Some(a) = level.active.filter(|_| depth + 1 < levels.len()) else { break };
+        let Some(a) = level.active.filter(|_| depth + 1 < levels.len()) else {
+            break;
+        };
         x = x.saturating_add(style.dropdown_width);
         let a_u32 = u32::try_from(a).unwrap_or(u32::MAX);
         y = y.saturating_add(style.dropdown_v_padding + a_u32.saturating_mul(style.item_height));
@@ -449,7 +501,10 @@ pub fn view_menu_cascade(
 /// R985 — shared elevated-popup composition for one menu level at an explicit
 /// window-space `(x, y)`, item rows tagged with the `rel_prefix` descent.
 /// The R691 menubar dropdown and each R985 nested popup are this same surface.
-#[expect(clippy::too_many_arguments, reason = "popup geometry + tags + theme are all distinct inputs")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "popup geometry + tags + theme are all distinct inputs"
+)]
 fn build_popup(
     bar_tag: &str,
     popup_tag: &'static str,
@@ -469,7 +524,15 @@ fn build_popup(
     for (i, item) in items.iter().enumerate() {
         let mut rel = rel_prefix.to_vec();
         rel.push(i);
-        rows.push(build_item(bar_tag, &rel, item, active == Some(i), reserve_gutter, theme, style));
+        rows.push(build_item(
+            bar_tag,
+            &rel,
+            item,
+            active == Some(i),
+            reserve_gutter,
+            theme,
+            style,
+        ));
     }
     let height = style.dropdown_height(u32::try_from(items.len()).unwrap_or(u32::MAX));
     Scene::Container(
@@ -488,7 +551,12 @@ fn build_popup(
                     .with_justify(JustifyContent::Start)
                     .with_absolute_position(x, y)
                     .with_size(Size::px(style.dropdown_width, height))
-                    .with_padding(Rect::new(0, style.dropdown_v_padding, 0, style.dropdown_v_padding)),
+                    .with_padding(Rect::new(
+                        0,
+                        style.dropdown_v_padding,
+                        0,
+                        style.dropdown_v_padding,
+                    )),
             ),
     )
 }
@@ -554,14 +622,25 @@ pub fn view_context_menu(
     // a declared-defer until a consumer needs it), so no gutter is reserved.
     for (i, label) in items.iter().enumerate() {
         let item = MenuItemView::command(label);
-        rows.push(build_item(tag, &[i], &item, active == Some(i), false, theme, style));
+        rows.push(build_item(
+            tag,
+            &[i],
+            &item,
+            active == Some(i),
+            false,
+            theme,
+            style,
+        ));
     }
     let width = style.dropdown_width;
     let height = style.dropdown_height(u32::try_from(items.len()).unwrap_or(u32::MAX));
     // Clamp so the panel's far edge never leaves the window (a right-click
     // near the right/bottom edge slides the popup back on-screen).
     let x = anchor_px(placement.anchor.0, placement.window.0.saturating_sub(width));
-    let y = anchor_px(placement.anchor.1, placement.window.1.saturating_sub(height));
+    let y = anchor_px(
+        placement.anchor.1,
+        placement.window.1.saturating_sub(height),
+    );
     Scene::Container(
         ContainerNode::new(rows)
             .with_tag(panel_tag)
@@ -582,7 +661,12 @@ pub fn view_context_menu(
                     // the tag-carrying panel so the scene-derived enumeration
                     // collects the open context-menu's tag as a Tab stop.
                     .with_focusable(style.focusable)
-                    .with_padding(Rect::new(0, style.dropdown_v_padding, 0, style.dropdown_v_padding)),
+                    .with_padding(Rect::new(
+                        0,
+                        style.dropdown_v_padding,
+                        0,
+                        style.dropdown_v_padding,
+                    )),
             ),
     )
 }
@@ -631,12 +715,18 @@ fn build_item(
     if reserve_gutter {
         // The check-gutter: the glyph for a checked checkbox, else an empty
         // fixed-width spacer so every label aligns past the gutter.
-        let glyph = if item.checkmark == Some(true) { CHECK_GLYPH } else { "" };
+        let glyph = if item.checkmark == Some(true) {
+            CHECK_GLYPH
+        } else {
+            ""
+        };
         children.push(Scene::Container(
             ContainerNode::new(vec![Scene::Text(TextNode::styled(
                 glyph,
                 Rect::default(),
-                TextStyle::new().with_size_px(style.item_font_px).with_fg(fg),
+                TextStyle::new()
+                    .with_size_px(style.item_font_px)
+                    .with_fg(fg),
             ))])
             .with_layout(
                 LayoutStyle::new()
@@ -650,7 +740,9 @@ fn build_item(
     children.push(Scene::Text(TextNode::styled(
         item.label,
         Rect::default(),
-        TextStyle::new().with_size_px(style.item_font_px).with_fg(fg),
+        TextStyle::new()
+            .with_size_px(style.item_font_px)
+            .with_fg(fg),
     )));
     if item.submenu {
         // R985 — a flex-grow spacer pushes the chevron to the trailing edge.
@@ -660,7 +752,9 @@ fn build_item(
         children.push(Scene::Text(TextNode::styled(
             SUBMENU_CHEVRON,
             Rect::default(),
-            TextStyle::new().with_size_px(style.item_font_px).with_fg(fg),
+            TextStyle::new()
+                .with_size_px(style.item_font_px)
+                .with_fg(fg),
         )));
     }
     Scene::Container(
@@ -721,7 +815,11 @@ mod tests {
         for index in [0_usize, 1, 7, 42] {
             let tag = composite_item_tag("ctx", index);
             let (_bar, sub) = tag.split_once('#').expect("composite tag carries a '#'");
-            assert_eq!(parse_item_sub_tag(sub), Some(index), "round-trips item {index}");
+            assert_eq!(
+                parse_item_sub_tag(sub),
+                Some(index),
+                "round-trips item {index}"
+            );
         }
         // Rejects a non-item sub-tag, a non-numeric index, and the empty string.
         assert_eq!(parse_item_sub_tag("barrier"), None, "non-item sub-tag");
@@ -946,11 +1044,20 @@ mod tests {
     fn r772_context_menu_tags_items_and_panel() {
         let s = MenuStyle::m3_default();
         let scene = view_context_menu(
-            "ctx", "ctx_panel", &ITEMS, None, placement((100.0, 80.0), (800, 600)), &theme(), &s,
+            "ctx",
+            "ctx_panel",
+            &ITEMS,
+            None,
+            placement((100.0, 80.0), (800, 600)),
+            &theme(),
+            &s,
         );
         let tags = collect_tags(&scene);
         assert!(tags.contains(&"ctx_panel".to_string()), "panel tag present");
-        assert!(tags.contains(&"ctx#i0".to_string()), "items route to the ctx scope");
+        assert!(
+            tags.contains(&"ctx#i0".to_string()),
+            "items route to the ctx scope"
+        );
         assert!(tags.contains(&"ctx#i2".to_string()));
         assert_eq!(all_text(&scene), vec!["New", "Open", "Save"]);
     }
@@ -959,7 +1066,13 @@ mod tests {
     fn r772_context_menu_anchors_at_cursor_in_bounds() {
         let s = MenuStyle::m3_default();
         let scene = view_context_menu(
-            "ctx", "ctx_panel", &ITEMS, None, placement((100.0, 80.0), (800, 600)), &theme(), &s,
+            "ctx",
+            "ctx_panel",
+            &ITEMS,
+            None,
+            placement((100.0, 80.0), (800, 600)),
+            &theme(),
+            &s,
         );
         let Scene::Container(c) = &scene else {
             panic!("expected panel Container");
@@ -974,7 +1087,13 @@ mod tests {
         let s = MenuStyle::m3_default();
         let win = (800, 600);
         let scene = view_context_menu(
-            "ctx", "ctx_panel", &ITEMS, None, placement((790.0, 595.0), win), &theme(), &s,
+            "ctx",
+            "ctx_panel",
+            &ITEMS,
+            None,
+            placement((790.0, 595.0), win),
+            &theme(),
+            &s,
         );
         let Scene::Container(c) = &scene else {
             panic!("expected panel Container");
@@ -993,7 +1112,13 @@ mod tests {
         let t = theme();
         let s = MenuStyle::m3_default();
         let scene = view_context_menu(
-            "ctx", "ctx_panel", &ITEMS, Some(2), placement((0.0, 0.0), (800, 600)), &t, &s,
+            "ctx",
+            "ctx_panel",
+            &ITEMS,
+            Some(2),
+            placement((0.0, 0.0), (800, 600)),
+            &t,
+            &s,
         );
         let expected = t
             .resolve(ColorRole::SurfaceContainerHigh)
@@ -1056,7 +1181,15 @@ mod tests {
             MenuItemView::checkbox("On", true),
             MenuItemView::checkbox("Off", false),
         ];
-        let scene = view_menu_dropdown("menu", "menu_dropdown", 0, &items, None, &theme(), &MenuStyle::m3_default());
+        let scene = view_menu_dropdown(
+            "menu",
+            "menu_dropdown",
+            0,
+            &items,
+            None,
+            &theme(),
+            &MenuStyle::m3_default(),
+        );
         let texts = all_text(&scene);
         assert_eq!(
             texts.iter().filter(|t| *t == CHECK_GLYPH).count(),
@@ -1074,7 +1207,15 @@ mod tests {
         let plain = view_menu_dropdown("menu", "menu_dropdown", 0, &cmds, None, &theme(), &style);
         assert_eq!(find_container(&plain, "menu#i0").unwrap().children.len(), 1);
         // With a checkbox present, every row (incl. commands) gets a gutter.
-        let mixed = view_menu_dropdown("menu", "menu_dropdown", 0, &rich_items(), None, &theme(), &style);
+        let mixed = view_menu_dropdown(
+            "menu",
+            "menu_dropdown",
+            0,
+            &rich_items(),
+            None,
+            &theme(),
+            &style,
+        );
         assert_eq!(
             find_container(&mixed, "menu#i0").unwrap().children.len(),
             2,
@@ -1085,23 +1226,53 @@ mod tests {
     #[test]
     fn r805_separator_paints_outline_rule() {
         let t = theme();
-        let scene = view_menu_dropdown("menu", "menu_dropdown", 0, &rich_items(), None, &t, &MenuStyle::m3_default());
+        let scene = view_menu_dropdown(
+            "menu",
+            "menu_dropdown",
+            0,
+            &rich_items(),
+            None,
+            &t,
+            &MenuStyle::m3_default(),
+        );
         let sep = find_container(&scene, "menu#i2").expect("separator row tagged like an item");
-        assert_eq!(sep.style.fill, Color::TRANSPARENT, "separator row is transparent");
+        assert_eq!(
+            sep.style.fill,
+            Color::TRANSPARENT,
+            "separator row is transparent"
+        );
         assert_eq!(sep.children.len(), 1, "separator holds a single rule child");
         let Scene::Container(rule) = &sep.children[0] else {
             panic!("separator child is the rule container");
         };
-        assert_eq!(rule.style.fill, t.resolve(ColorRole::Outline), "rule is the Outline divider");
+        assert_eq!(
+            rule.style.fill,
+            t.resolve(ColorRole::Outline),
+            "rule is the Outline divider"
+        );
     }
 
     #[test]
     fn r805_disabled_item_label_is_muted() {
         let t = theme();
-        let scene = view_menu_dropdown("menu", "menu_dropdown", 0, &rich_items(), None, &t, &MenuStyle::m3_default());
+        let scene = view_menu_dropdown(
+            "menu",
+            "menu_dropdown",
+            0,
+            &rich_items(),
+            None,
+            &t,
+            &MenuStyle::m3_default(),
+        );
         // Item 3 ("Redo") is disabled -> muted; item 0 ("Undo") enabled.
-        assert_eq!(label_fg(&scene, "menu#i3"), Some(t.resolve(ColorRole::OnSurfaceMuted)));
-        assert_eq!(label_fg(&scene, "menu#i0"), Some(t.resolve(ColorRole::OnSurface)));
+        assert_eq!(
+            label_fg(&scene, "menu#i3"),
+            Some(t.resolve(ColorRole::OnSurfaceMuted))
+        );
+        assert_eq!(
+            label_fg(&scene, "menu#i0"),
+            Some(t.resolve(ColorRole::OnSurface))
+        );
     }
 
     // ----- R985: cascading submenu paint -----
@@ -1112,7 +1283,15 @@ mod tests {
             MenuItemView::command("New"),
             MenuItemView::submenu("Open Recent"),
         ];
-        let scene = view_menu_dropdown("menu", "menu_dropdown", 0, &items, None, &theme(), &MenuStyle::m3_default());
+        let scene = view_menu_dropdown(
+            "menu",
+            "menu_dropdown",
+            0,
+            &items,
+            None,
+            &theme(),
+            &MenuStyle::m3_default(),
+        );
         let texts = all_text(&scene);
         assert!(texts.contains(&"Open Recent".to_string()));
         assert_eq!(
@@ -1128,7 +1307,10 @@ mod tests {
                 cmd_texts.push(tn.content.clone());
             }
         }
-        assert!(!cmd_texts.iter().any(|t| t == SUBMENU_CHEVRON), "command row has no chevron");
+        assert!(
+            !cmd_texts.iter().any(|t| t == SUBMENU_CHEVRON),
+            "command row has no chevron"
+        );
     }
 
     #[test]
@@ -1138,18 +1320,38 @@ mod tests {
             MenuItemView::command("New"),
             MenuItemView::submenu("Open Recent"),
         ];
-        let sub = [MenuItemView::command("a.txt"), MenuItemView::command("b.txt")];
-        let levels = [
-            MenuLevel { items: &top, active: Some(1) }, // submenu 1 open
-            MenuLevel { items: &sub, active: Some(0) },
+        let sub = [
+            MenuItemView::command("a.txt"),
+            MenuItemView::command("b.txt"),
         ];
-        let popups = view_menu_cascade("menu", &["menu_dropdown", "menu_sub0"], 0, &levels, &theme(), &s);
+        let levels = [
+            MenuLevel {
+                items: &top,
+                active: Some(1),
+            }, // submenu 1 open
+            MenuLevel {
+                items: &sub,
+                active: Some(0),
+            },
+        ];
+        let popups = view_menu_cascade(
+            "menu",
+            &["menu_dropdown", "menu_sub0"],
+            0,
+            &levels,
+            &theme(),
+            &s,
+        );
         assert_eq!(popups.len(), 2, "top dropdown + one nested popup");
         // Top dropdown anchored under its title.
-        let Scene::Container(top_c) = &popups[0] else { panic!("top container") };
+        let Scene::Container(top_c) = &popups[0] else {
+            panic!("top container")
+        };
         assert_eq!(top_c.layout.absolute_position, Some((0, s.bar_height)));
         // Nested popup opens to the right of the parent, aligned to row 1.
-        let Scene::Container(sub_c) = &popups[1] else { panic!("sub container") };
+        let Scene::Container(sub_c) = &popups[1] else {
+            panic!("sub container")
+        };
         let expect_x = s.dropdown_width;
         // Parent's open row is index 1 → y offset = v_padding + 1 * item_height.
         let expect_y = s.bar_height + s.dropdown_v_padding + s.item_height;
@@ -1159,17 +1361,42 @@ mod tests {
     #[test]
     fn r985_nested_item_tags_carry_descent_path() {
         let s = MenuStyle::m3_default();
-        let top = [MenuItemView::command("New"), MenuItemView::submenu("Open Recent")];
-        let sub = [MenuItemView::command("a.txt"), MenuItemView::command("b.txt")];
-        let levels = [
-            MenuLevel { items: &top, active: Some(1) },
-            MenuLevel { items: &sub, active: None },
+        let top = [
+            MenuItemView::command("New"),
+            MenuItemView::submenu("Open Recent"),
         ];
-        let popups = view_menu_cascade("menu", &["menu_dropdown", "menu_sub0"], 0, &levels, &theme(), &s);
+        let sub = [
+            MenuItemView::command("a.txt"),
+            MenuItemView::command("b.txt"),
+        ];
+        let levels = [
+            MenuLevel {
+                items: &top,
+                active: Some(1),
+            },
+            MenuLevel {
+                items: &sub,
+                active: None,
+            },
+        ];
+        let popups = view_menu_cascade(
+            "menu",
+            &["menu_dropdown", "menu_sub0"],
+            0,
+            &levels,
+            &theme(),
+            &s,
+        );
         let sub_scene = &popups[1];
         // Items of the nested popup carry the `1.<i>` descent in their tag.
-        assert!(find_container(sub_scene, "menu#i1.0").is_some(), "submenu item 0 tag");
-        assert!(find_container(sub_scene, "menu#i1.1").is_some(), "submenu item 1 tag");
+        assert!(
+            find_container(sub_scene, "menu#i1.0").is_some(),
+            "submenu item 0 tag"
+        );
+        assert!(
+            find_container(sub_scene, "menu#i1.1").is_some(),
+            "submenu item 1 tag"
+        );
     }
 
     #[test]
@@ -1177,8 +1404,18 @@ mod tests {
         let s = MenuStyle::m3_default();
         let top = [MenuItemView::command("New"), MenuItemView::submenu("More")];
         // Only the top level is open (no active child to cascade from).
-        let levels = [MenuLevel { items: &top, active: None }];
-        let popups = view_menu_cascade("menu", &["menu_dropdown", "menu_sub0"], 0, &levels, &theme(), &s);
+        let levels = [MenuLevel {
+            items: &top,
+            active: None,
+        }];
+        let popups = view_menu_cascade(
+            "menu",
+            &["menu_dropdown", "menu_sub0"],
+            0,
+            &levels,
+            &theme(),
+            &s,
+        );
         assert_eq!(popups.len(), 1, "no nested popup without an open child");
     }
 }

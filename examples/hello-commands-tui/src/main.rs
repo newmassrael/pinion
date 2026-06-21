@@ -135,13 +135,11 @@ impl WidgetCore for HelloCommandsTui {
             ButtonState::Pressed | ButtonState::Disabled => Color::rgb(0xe0, 0xe0, 0xe0),
             _ => Color::rgb(0x40, 0x40, 0x40),
         };
-        button.style =
-            BoxStyle::filled(bg_fill).with_border(Border::new(border_color, 1));
+        button.style = BoxStyle::filled(bg_fill).with_border(Border::new(border_color, 1));
         button.children.push(Scene::Text(label));
 
         let mut hint = TextNode::default();
-        "PINION_TUI_LOG=/tmp/cmd.log to see traces, Esc = quit"
-            .clone_into(&mut hint.content);
+        "PINION_TUI_LOG=/tmp/cmd.log to see traces, Esc = quit".clone_into(&mut hint.content);
         hint.rect = Rect::new(16, 96, 512, 16);
         hint.style = style::TextStyle::default();
 
@@ -173,7 +171,12 @@ impl WidgetCore for HelloCommandsTui {
         }
     }
 
-    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, _modifiers: pinion_core::Modifiers) -> bool {
+    fn apply_key(
+        scene: &mut Scene,
+        focused: Option<&str>,
+        key: &str,
+        _modifiers: pinion_core::Modifiers,
+    ) -> bool {
         pinion_core::widgets::aria::apply_aria_activate(scene, focused, key, Self::tag())
     }
 
@@ -212,8 +215,7 @@ impl WidgetA11y for HelloCommandsTui {
             ..AccessState::from_interaction(state, None)
         };
         vec![
-            AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::Button)
-                .with_state(access_state),
+            AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::Button).with_state(access_state),
         ]
     }
 }
@@ -247,9 +249,7 @@ fn build_handler_registry() -> HandlerRegistry {
 }
 
 fn main() {
-    if let Err(e) =
-        pinion_tui::run_with_handlers::<HelloCommandsTui>(build_handler_registry())
-    {
+    if let Err(e) = pinion_tui::run_with_handlers::<HelloCommandsTui>(build_handler_registry()) {
         eprintln!("hello-commands-tui: shell error: {e}");
         std::process::exit(1);
     }

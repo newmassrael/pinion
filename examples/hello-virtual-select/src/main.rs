@@ -36,22 +36,22 @@
 //! axis — this slice is pointer + RPC + AT selection (R730 keyboard-defer
 //! precedent).
 
-use pinion_a11y::{windowed_list_nodes_selected, AccessNode, WidgetA11y};
+use pinion_a11y::{AccessNode, WidgetA11y, windowed_list_nodes_selected};
 use pinion_core::external::External;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
 use pinion_core::widgets::virtual_list::compute_visible_range;
-use pinion_core::widgets::virtual_select::{read_selected, VirtualSelectExternal};
+use pinion_core::widgets::virtual_select::{VirtualSelectExternal, read_selected};
 use pinion_core::{Frame, Scene, WidgetCore};
-use pinion_widget_paint::scrollbar::{view_vertical_scrollbar, VerticalScrollbarStyle};
+use pinion_shell::{WidgetView, vello_renderer_impl};
+use pinion_widget_paint::scrollbar::{VerticalScrollbarStyle, view_vertical_scrollbar};
 use pinion_widget_paint::virtual_list::view_virtual_list;
-use pinion_shell::{vello_renderer_impl, WidgetView};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloVirtualSelectRenderer, HelloVirtualSelectRendererError);
@@ -91,7 +91,10 @@ const SCROLLBAR_TAG: &str = "vlist_scrollbar";
 fn build_row(index: usize, theme: &Theme, selected: Option<usize>) -> Scene {
     let is_selected = selected == Some(index);
     let (fill, fg) = if is_selected {
-        (theme.resolve(ColorRole::Accent), theme.resolve(ColorRole::OnAccent))
+        (
+            theme.resolve(ColorRole::Accent),
+            theme.resolve(ColorRole::OnAccent),
+        )
     } else {
         let stripe = if index % 2 == 0 {
             ColorRole::SurfaceContainerLow
@@ -123,7 +126,10 @@ fn build_row(index: usize, theme: &Theme, selected: Option<usize>) -> Scene {
 /// `scene/snapshot` readout.
 fn row_label(index: usize) -> String {
     const CATEGORIES: [&str; 5] = ["Alpha", "Bravo", "Charlie", "Delta", "Echo"];
-    format!("Item {index:05} \u{00B7} {}", CATEGORIES[index % CATEGORIES.len()])
+    format!(
+        "Item {index:05} \u{00B7} {}",
+        CATEGORIES[index % CATEGORIES.len()]
+    )
 }
 
 /// view-fn (§6.3): pure sync mapping `selected index -> Scene`. The dataset
@@ -187,7 +193,10 @@ impl WidgetCore for VirtualSelectView {
 
     /// Sibling `ScrollBarExternal` sharing the list's `Rc<ScrollState>`.
     fn create_extra_externals() -> Vec<ExtraExternal> {
-        vec![scrollbar_extra_external(use_scroll_state(SCROLL_KEY), SCROLLBAR_TAG)]
+        vec![scrollbar_extra_external(
+            use_scroll_state(SCROLL_KEY),
+            SCROLLBAR_TAG,
+        )]
     }
 
     fn tag() -> &'static str {
@@ -297,7 +306,11 @@ mod tests {
         // With row 2 selected, row 2 is Accent and a neighbor is not.
         let scene = run_view(Some(2));
         assert_eq!(row_fill(&scene, 2), Some(accent), "selected row is Accent");
-        assert_ne!(row_fill(&scene, 3), Some(accent), "unselected row is not Accent");
+        assert_ne!(
+            row_fill(&scene, 3),
+            Some(accent),
+            "unselected row is not Accent"
+        );
     }
 
     #[test]
@@ -306,7 +319,11 @@ mod tests {
         let accent = theme.resolve(ColorRole::Accent);
         let scene = run_view(None);
         for i in 0..6 {
-            assert_ne!(row_fill(&scene, i), Some(accent), "row {i} not Accent when unselected");
+            assert_ne!(
+                row_fill(&scene, i),
+                Some(accent),
+                "row {i} not Accent when unselected"
+            );
         }
     }
 
@@ -319,12 +336,19 @@ mod tests {
             .iter()
             .find(|n| n.position_in_set == Some(2))
             .expect("rendered listitem for index 1");
-        assert_eq!(item1.selected, Some(true), "selected row carries aria-selected=true");
+        assert_eq!(
+            item1.selected,
+            Some(true),
+            "selected row carries aria-selected=true"
+        );
         let item0 = nodes[1..]
             .iter()
             .find(|n| n.position_in_set == Some(1))
             .expect("rendered listitem for index 0");
-        assert_eq!(item0.selected, Some(false), "unselected row carries aria-selected=false");
+        assert_eq!(
+            item0.selected,
+            Some(false),
+            "unselected row carries aria-selected=false"
+        );
     }
-
 }

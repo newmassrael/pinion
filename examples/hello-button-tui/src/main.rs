@@ -147,7 +147,8 @@ impl WidgetCore for HelloButtonTui {
         // Disabled retain their discrete fills (no animation; the
         // shell's adaptive `poll_timeout` keeps the substrate idle
         // once the spring settles).
-        let hover_progress = use_hover_progress(matches!(state, ButtonState::Hover), HOVER_ANIM_KEY);
+        let hover_progress =
+            use_hover_progress(matches!(state, ButtonState::Hover), HOVER_ANIM_KEY);
         let bg_fill: Color = match state {
             ButtonState::Idle | ButtonState::Hover => {
                 BTN_FILL_IDLE.lerp(BTN_FILL_HOVER, hover_progress)
@@ -156,9 +157,7 @@ impl WidgetCore for HelloButtonTui {
             ButtonState::Disabled => Color::rgb(0xb0, 0x20, 0x20),
         };
         let border_color: Color = match state {
-            ButtonState::Pressed | ButtonState::Disabled => {
-                Color::rgb(0xe0, 0xe0, 0xe0)
-            }
+            ButtonState::Pressed | ButtonState::Disabled => Color::rgb(0xe0, 0xe0, 0xe0),
             _ => Color::rgb(0x40, 0x40, 0x40),
         };
 
@@ -228,7 +227,12 @@ impl WidgetCore for HelloButtonTui {
     /// SCXML event; `Button::detect` emits a `"click"` intent the
     /// shell logs to stderr. `Disabled` ignores activation per the
     /// ARIA spec (the SCXML transition is absent from that state).
-    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, _modifiers: pinion_core::Modifiers) -> bool {
+    fn apply_key(
+        scene: &mut Scene,
+        focused: Option<&str>,
+        key: &str,
+        _modifiers: pinion_core::Modifiers,
+    ) -> bool {
         pinion_core::widgets::aria::apply_aria_activate(scene, focused, key, Self::tag())
     }
 }
@@ -244,8 +248,7 @@ impl WidgetA11y for HelloButtonTui {
             ..AccessState::from_interaction(state, None)
         };
         vec![
-            AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::Button)
-                .with_state(access_state),
+            AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::Button).with_state(access_state),
         ]
     }
 }

@@ -57,8 +57,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use futures_executor::block_on;
     use pinion_core::external::IntrospectValue;
@@ -72,9 +72,8 @@ mod tests {
 
     #[test]
     fn closure_blanket_impl_returns_intent() {
-        let handler: Arc<dyn Handler> = Arc::new(|cmd: Command| -> HandlerFuture {
-            Box::pin(async move { echo_intent(cmd) })
-        });
+        let handler: Arc<dyn Handler> =
+            Arc::new(|cmd: Command| -> HandlerFuture { Box::pin(async move { echo_intent(cmd) }) });
         let cmd = Command::new_static("audio.play", IntrospectValue::Int(440), 1);
         let intent = block_on(handler.handle(cmd));
         assert_eq!(intent.tag_str(), "echo.audio.play");
@@ -83,9 +82,8 @@ mod tests {
 
     #[test]
     fn handler_is_object_safe() {
-        let handler: Box<dyn Handler> = Box::new(|cmd: Command| -> HandlerFuture {
-            Box::pin(async move { echo_intent(cmd) })
-        });
+        let handler: Box<dyn Handler> =
+            Box::new(|cmd: Command| -> HandlerFuture { Box::pin(async move { echo_intent(cmd) }) });
         let cmd = Command::new_static("clipboard.write", IntrospectValue::Text("x".into()), 4);
         let intent = block_on(handler.handle(cmd));
         assert_eq!(intent.tag_str(), "echo.clipboard.write");

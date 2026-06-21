@@ -34,27 +34,29 @@
 
 use std::rc::Rc;
 
-use pinion_a11y::{grouped_tree_access_nodes, AccessNode, AriaRole, GroupedTreeSpec, WidgetA11y};
+use pinion_a11y::{AccessNode, AriaRole, GroupedTreeSpec, WidgetA11y, grouped_tree_access_nodes};
 use pinion_core::external::External;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::group_order::{
-    use_group_order_with_source, GroupOrderExternal, GroupOrderState, GroupRow,
+    GroupOrderExternal, GroupOrderState, GroupRow, use_group_order_with_source,
 };
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
-use pinion_core::widgets::view_order::{sort_dir_str, use_view_order, ViewOrderState, ViewSortFilterExternal};
+use pinion_core::widgets::view_order::{
+    ViewOrderState, ViewSortFilterExternal, sort_dir_str, use_view_order,
+};
 use pinion_core::widgets::virtual_list::compute_visible_range;
-use pinion_core::widgets::virtual_select::{read_selected, VirtualSelectExternal};
+use pinion_core::widgets::virtual_select::{VirtualSelectExternal, read_selected};
 use pinion_core::{Frame, Scene, WidgetCore};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::group_header::group_header_row;
-use pinion_widget_paint::scrollbar::{view_vertical_scrollbar, VerticalScrollbarStyle};
+use pinion_widget_paint::scrollbar::{VerticalScrollbarStyle, view_vertical_scrollbar};
 use pinion_widget_paint::virtual_list::view_virtual_list;
-use pinion_shell::{vello_renderer_impl, WidgetView};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloGroupedSortRenderer, HelloGroupedSortRendererError);
@@ -120,7 +122,10 @@ fn use_groups() -> Rc<GroupOrderState> {
         GROUP_TAG,
         || {
             let groups = (0..N).map(row_group).collect::<Vec<usize>>();
-            let labels = GROUPS.iter().map(|&g| g.to_string()).collect::<Vec<String>>();
+            let labels = GROUPS
+                .iter()
+                .map(|&g| g.to_string())
+                .collect::<Vec<String>>();
             (groups, labels)
         },
         move || sort.order(),
@@ -137,16 +142,22 @@ fn control_bar(sort: Option<bool>, filter: Option<usize>, visible: usize, theme:
         Some(c) => CATS[c % CATS.len()],
         None => "All",
     };
-    let text = format!("Sort {arrow} name   \u{00B7}   Filter: {filter_label}   \u{00B7}   {visible} rows");
+    let text = format!(
+        "Sort {arrow} name   \u{00B7}   Filter: {filter_label}   \u{00B7}   {visible} rows"
+    );
     let label = Scene::Text(TextNode::styled(
         text,
         Rect::default(),
-        TextStyle::new().with_size_px(13).with_fg(theme.resolve(ColorRole::OnSurface)),
+        TextStyle::new()
+            .with_size_px(13)
+            .with_fg(theme.resolve(ColorRole::OnSurface)),
     ));
     Scene::Container(
         ContainerNode::new(vec![label])
             .with_tag(format!("{SORT_TAG}#{SORT_REGION}"))
-            .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHighest)))
+            .with_style(BoxStyle::filled(
+                theme.resolve(ColorRole::SurfaceContainerHighest),
+            ))
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Row)
@@ -177,9 +188,16 @@ fn build_header(group: usize, member_count: usize, collapsed: bool, theme: &Them
 fn build_data_row(source: usize, theme: &Theme, selected: Option<usize>) -> Scene {
     let is_selected = selected == Some(source);
     let (fill, fg) = if is_selected {
-        (theme.resolve(ColorRole::Accent), theme.resolve(ColorRole::OnAccent))
+        (
+            theme.resolve(ColorRole::Accent),
+            theme.resolve(ColorRole::OnAccent),
+        )
     } else {
-        let stripe = if source % 2 == 0 { ColorRole::SurfaceContainerLow } else { ColorRole::Surface };
+        let stripe = if source % 2 == 0 {
+            ColorRole::SurfaceContainerLow
+        } else {
+            ColorRole::Surface
+        };
         (theme.resolve(stripe), theme.resolve(ColorRole::OnSurface))
     };
     let text = format!("{}   [{}]", row_name(source), CATS[row_category(source)]);
@@ -226,17 +244,23 @@ fn view(selected: Option<usize>, _frame: &Frame) -> Scene {
         ROW_PITCH,
         OVERSCAN,
         |view_pos| match rows[view_pos] {
-            GroupRow::Header { group, member_count, collapsed } => {
-                build_header(group, member_count, collapsed, &theme)
-            }
+            GroupRow::Header {
+                group,
+                member_count,
+                collapsed,
+            } => build_header(group, member_count, collapsed, &theme),
             GroupRow::Data { source } => build_data_row(source, &theme, selected),
         },
     );
 
     let scrollbar_style = VerticalScrollbarStyle::material(VIEWPORT_H, SCROLLBAR_TAG);
     let scrollbar_interaction = use_scrollbar_interaction(SCROLLBAR_TAG);
-    let scrollbar_visual =
-        view_vertical_scrollbar(&scroll_state, &theme, &scrollbar_style, scrollbar_interaction.get());
+    let scrollbar_visual = view_vertical_scrollbar(
+        &scroll_state,
+        &theme,
+        &scrollbar_style,
+        scrollbar_interaction.get(),
+    );
 
     let list_row = Scene::Container(
         ContainerNode::new(vec![list, scrollbar_visual])
@@ -331,8 +355,13 @@ impl WidgetA11y for GroupedSortView {
         let sort = use_sort();
         let groups = use_groups();
         let rows = groups.rows();
-        let window =
-            compute_visible_range(scroll_state.offset_y(), VIEWPORT_H, rows.len(), ROW_PITCH, OVERSCAN);
+        let window = compute_visible_range(
+            scroll_state.offset_y(),
+            VIEWPORT_H,
+            rows.len(),
+            ROW_PITCH,
+            OVERSCAN,
+        );
 
         // The sort control is a standalone Button sibling of the grouped tree.
         let mut nodes = vec![
@@ -364,7 +393,10 @@ impl WidgetView for GroupedSortView {
     type Renderer = HelloGroupedSortRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 }
 
@@ -434,7 +466,11 @@ mod tests {
     #[test]
     fn boot_groups_source_order_with_six_groups() {
         let scene = render(None, None, None);
-        assert_eq!(first_header_group(&scene), Some(0), "group 0 (Mesh) leads source order");
+        assert_eq!(
+            first_header_group(&scene),
+            Some(0),
+            "group 0 (Mesh) leads source order"
+        );
         let sources = present_sources(&scene);
         assert!(sources.len() < 30, "virtualized window");
         assert_eq!(&sources[..3], &[0, 6, 12], "Mesh members in source order");
@@ -445,8 +481,16 @@ mod tests {
         // Descending by name = reverse source order. Source 9999 leads; its
         // group is 9999 % 6 == 3, so group 3 heads the flattening.
         let scene = render(None, Some(false), None);
-        assert_eq!(first_header_group(&scene), Some(3), "highest source's group leads descending");
-        assert_eq!(present_sources(&scene)[0], 9999, "9999 is the first descending member");
+        assert_eq!(
+            first_header_group(&scene),
+            Some(3),
+            "highest source's group leads descending"
+        );
+        assert_eq!(
+            present_sources(&scene)[0],
+            9999,
+            "9999 is the first descending member"
+        );
     }
 
     #[test]
@@ -456,7 +500,10 @@ mod tests {
         let scene = render(None, None, Some(0));
         let sources = present_sources(&scene);
         assert!(!sources.is_empty());
-        assert!(sources.iter().all(|&s| s % 5 == 0), "only category-0 rows: {sources:?}");
+        assert!(
+            sources.iter().all(|&s| s % 5 == 0),
+            "only category-0 rows: {sources:?}"
+        );
     }
 
     #[test]

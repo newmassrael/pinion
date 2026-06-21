@@ -199,10 +199,10 @@ use std::collections::HashSet;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{
+    Expr, ExprPath, Ident, ItemStruct, LitStr, Token, Type,
     parse::{Parse, ParseStream},
     punctuated::Punctuated,
     spanned::Spanned,
-    Expr, ExprPath, Ident, ItemStruct, LitStr, Token, Type,
 };
 
 /// R644 §5.16 — source form of the `tag = X` attribute.
@@ -220,10 +220,7 @@ enum TagSource {
 
 /// Entry point for [`crate::widget`]. Parses the attribute and the
 /// item, then assembles the three forwarding trait impls.
-pub(crate) fn expand(
-    attr: TokenStream2,
-    item: TokenStream2,
-) -> syn::Result<TokenStream2> {
+pub(crate) fn expand(attr: TokenStream2, item: TokenStream2) -> syn::Result<TokenStream2> {
     let args: WidgetArgs = syn::parse2(attr)?;
     let item: ItemStruct = syn::parse2(item)?;
     let view_ident = &item.ident;
@@ -266,7 +263,13 @@ pub(crate) fn expand(
     let a11y_impl = if flags.contains("a11y_manual") {
         TokenStream2::new()
     } else {
-        emit_a11y_impl(view_ident, &state, role.as_ref(), &state_flags, access_value.as_ref())
+        emit_a11y_impl(
+            view_ident,
+            &state,
+            role.as_ref(),
+            &state_flags,
+            access_value.as_ref(),
+        )
     };
     // R645 §5.16 — derive flags split. `state_name_derive` was the
     // R643 combined flag; R645 split it so tuple-state bindings
@@ -699,7 +702,10 @@ impl WidgetArgsBuilder {
             WidgetArg::Renderer(v) => assign(&mut self.renderer, v, "renderer", Spanned::span),
             WidgetArg::InitialSize(w, h) => {
                 if self.initial_size.is_some() {
-                    return Err(syn::Error::new(w.span(), "duplicate 'initial_size' attribute"));
+                    return Err(syn::Error::new(
+                        w.span(),
+                        "duplicate 'initial_size' attribute",
+                    ));
                 }
                 self.initial_size = Some((w, h));
                 Ok(())
@@ -756,7 +762,10 @@ impl WidgetArgsBuilder {
             ));
         }
         let missing = |field: &str| {
-            syn::Error::new(input_span, format!("missing required 'widget' attribute: {field}"))
+            syn::Error::new(
+                input_span,
+                format!("missing required 'widget' attribute: {field}"),
+            )
         };
         Ok(WidgetArgs {
             tag: self.tag.ok_or_else(|| missing("tag"))?,
@@ -789,7 +798,10 @@ where
     F: FnOnce(&T) -> proc_macro2::Span,
 {
     if slot.is_some() {
-        return Err(syn::Error::new(span_of(&value), format!("duplicate '{name}' attribute")));
+        return Err(syn::Error::new(
+            span_of(&value),
+            format!("duplicate '{name}' attribute"),
+        ));
     }
     *slot = Some(value);
     Ok(())
@@ -841,12 +853,12 @@ enum WidgetArg {
 const KNOWN_FLAGS: &[&str] = &[
     "apply_key",
     "keybinding",
-    "state_name_derive",  // R643 combined; kept as alias for R642 bindings
-    "read_state_derive",  // R645 split
-    "event_name_derive",  // R645 split
-    "fmt_state_log",      // R645 restore (2nd consumer: Slider)
-    "a11y_manual",        // R645: opt out of WidgetA11y emit (binding provides custom impl)
-    "update",             // R653: forward WidgetCore::update (R27 reducer side effects)
+    "state_name_derive",     // R643 combined; kept as alias for R642 bindings
+    "read_state_derive",     // R645 split
+    "event_name_derive",     // R645 split
+    "fmt_state_log",         // R645 restore (2nd consumer: Slider)
+    "a11y_manual",           // R645: opt out of WidgetA11y emit (binding provides custom impl)
+    "update",                // R653: forward WidgetCore::update (R27 reducer side effects)
     "initial_size_strategy", // R670: forward WidgetView::initial_size_strategy to inherent fn (IntrinsicAfterFirstPaint first consumer)
 ];
 
@@ -902,7 +914,10 @@ impl Parse for WidgetArg {
                     syn::parenthesized!(content in input);
                     let idx_lit: syn::LitInt = content.parse()?;
                     let idx: usize = idx_lit.base10_parse()?;
-                    Ok(Self::AccessValue(StateFlagSource::BoolField(idx), key.span()))
+                    Ok(Self::AccessValue(
+                        StateFlagSource::BoolField(idx),
+                        key.span(),
+                    ))
                 }
                 _ => Err(syn::Error::new(
                     key.span(),
@@ -960,27 +975,39 @@ fn parse_state_flags(input: ParseStream) -> syn::Result<StateFlagsConfig> {
             "hovered" => {
                 let variant = require_variant(&name, "hovered", source)?;
                 if cfg.hovered.is_some() {
-                    return Err(syn::Error::new(name.span(), "duplicate 'hovered' state_flag"));
+                    return Err(syn::Error::new(
+                        name.span(),
+                        "duplicate 'hovered' state_flag",
+                    ));
                 }
                 cfg.hovered = Some(variant);
             }
             "pressed" => {
                 let variant = require_variant(&name, "pressed", source)?;
                 if cfg.pressed.is_some() {
-                    return Err(syn::Error::new(name.span(), "duplicate 'pressed' state_flag"));
+                    return Err(syn::Error::new(
+                        name.span(),
+                        "duplicate 'pressed' state_flag",
+                    ));
                 }
                 cfg.pressed = Some(variant);
             }
             "disabled" => {
                 let variant = require_variant(&name, "disabled", source)?;
                 if cfg.disabled.is_some() {
-                    return Err(syn::Error::new(name.span(), "duplicate 'disabled' state_flag"));
+                    return Err(syn::Error::new(
+                        name.span(),
+                        "duplicate 'disabled' state_flag",
+                    ));
                 }
                 cfg.disabled = Some(variant);
             }
             "checked" => {
                 if cfg.checked.is_some() {
-                    return Err(syn::Error::new(name.span(), "duplicate 'checked' state_flag"));
+                    return Err(syn::Error::new(
+                        name.span(),
+                        "duplicate 'checked' state_flag",
+                    ));
                 }
                 cfg.checked = Some(source);
             }
@@ -989,7 +1016,10 @@ fn parse_state_flags(input: ParseStream) -> syn::Result<StateFlagsConfig> {
             // `bool_field(N)`); maps to `AccessNode::expanded`.
             "expanded" => {
                 if cfg.expanded.is_some() {
-                    return Err(syn::Error::new(name.span(), "duplicate 'expanded' state_flag"));
+                    return Err(syn::Error::new(
+                        name.span(),
+                        "duplicate 'expanded' state_flag",
+                    ));
                 }
                 cfg.expanded = Some(source);
             }

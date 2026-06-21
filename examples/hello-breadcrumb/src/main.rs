@@ -33,19 +33,19 @@
 //! tree (`navigation` > `link` with `aria-current`) all converge on the
 //! same `RadioGroupExternal` statechart.
 
+use pinion_a11y::{
+    AccessAction, AccessFocus, AccessNode, NavLink, WidgetA11y, navigation_link_nodes,
+};
 use pinion_core::external::External;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widgets::radio::{RadioEvent, RadioState};
 use pinion_core::widgets::radio_group::RadioGroupExternal;
 use pinion_core::{Frame, Scene, WidgetCore};
-use pinion_a11y::{
-    navigation_link_nodes, AccessAction, AccessFocus, AccessNode, NavLink, WidgetA11y,
-};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::radio_composite as rc;
 use pinion_widget_paint::state_layer::state_layer;
 
@@ -99,14 +99,12 @@ fn view(state: TrailState, _frame: &Frame) -> Scene {
     // PRIMARY_TAG on the trail row so `{path:"breadcrumb"}` AI routing +
     // `rect_for_tag` AT bounds attach to the Navigation landmark.
     let trail = Scene::Container(
-        ContainerNode::new(row)
-            .with_tag(PRIMARY_TAG)
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Row)
-                    .with_align_items(AlignItems::Center)
-                    .with_gap(CRUMB_GAP),
-            ),
+        ContainerNode::new(row).with_tag(PRIMARY_TAG).with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Row)
+                .with_align_items(AlignItems::Center)
+                .with_gap(CRUMB_GAP),
+        ),
     );
     Scene::Container(
         ContainerNode::new(vec![trail])
@@ -331,8 +329,15 @@ mod tests {
     #[test]
     fn current_crumb_carries_aria_current_page() {
         let nodes = BreadcrumbView::access_node(&selected_state(2), None);
-        assert_eq!(nodes[3].current, Some(AriaCurrent::Page), "crumb 2 is current");
-        assert!(nodes[1].current.is_none(), "non-current crumb has no aria-current");
+        assert_eq!(
+            nodes[3].current,
+            Some(AriaCurrent::Page),
+            "crumb 2 is current"
+        );
+        assert!(
+            nodes[1].current.is_none(),
+            "non-current crumb has no aria-current"
+        );
         assert!(nodes[2].current.is_none());
         assert!(nodes[4].current.is_none());
     }
@@ -358,11 +363,16 @@ mod tests {
     }
 
     fn current_index(scene: &Scene) -> Option<i64> {
-        let Scene::External(node) = scene else { return None };
-        node.handle.introspect()?.query("selected_index").and_then(|v| match v {
-            IntrospectValue::Int(i) => Some(i),
-            _ => None,
-        })
+        let Scene::External(node) = scene else {
+            return None;
+        };
+        node.handle
+            .introspect()?
+            .query("selected_index")
+            .and_then(|v| match v {
+                IntrospectValue::Int(i) => Some(i),
+                _ => None,
+            })
     }
 
     #[test]
@@ -382,23 +392,43 @@ mod tests {
     #[test]
     fn home_end_jump_to_edges() {
         let mut s = scene();
-        assert!(BreadcrumbView::apply_key(&mut s, Some(PRIMARY_TAG), "End", pinion_core::Modifiers::empty()));
+        assert!(BreadcrumbView::apply_key(
+            &mut s,
+            Some(PRIMARY_TAG),
+            "End",
+            pinion_core::Modifiers::empty()
+        ));
         assert_eq!(current_index(&s), Some(i64::try_from(N - 1).unwrap()));
-        assert!(BreadcrumbView::apply_key(&mut s, Some(PRIMARY_TAG), "Home", pinion_core::Modifiers::empty()));
+        assert!(BreadcrumbView::apply_key(
+            &mut s,
+            Some(PRIMARY_TAG),
+            "Home",
+            pinion_core::Modifiers::empty()
+        ));
         assert_eq!(current_index(&s), Some(0));
     }
 
     #[test]
     fn unfocused_swallows_arrow() {
         let mut s = scene();
-        assert!(!BreadcrumbView::apply_key(&mut s, None, "ArrowRight", pinion_core::Modifiers::empty()));
+        assert!(!BreadcrumbView::apply_key(
+            &mut s,
+            None,
+            "ArrowRight",
+            pinion_core::Modifiers::empty()
+        ));
         assert_eq!(current_index(&s), None);
     }
 
     #[test]
     fn at_click_navigates_to_crumb() {
         let mut s = scene();
-        assert!(BreadcrumbView::access_child_invoke(&mut s, PRIMARY_TAG, "1", AccessAction::Click));
+        assert!(BreadcrumbView::access_child_invoke(
+            &mut s,
+            PRIMARY_TAG,
+            "1",
+            AccessAction::Click
+        ));
         assert_eq!(current_index(&s), Some(1));
     }
 

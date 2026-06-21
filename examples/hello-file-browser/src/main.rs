@@ -36,19 +36,19 @@
 //! `aria-selected` on the picked file. Keyboard roving over the window is
 //! a later additive axis (R746/R786 pointer-then-keyboard precedent).
 
-use pinion_a11y::{windowed_list_nodes_selected, AccessNode, WidgetA11y};
+use pinion_a11y::{AccessNode, WidgetA11y, windowed_list_nodes_selected};
 use pinion_core::directory::{Directory, InMemoryDirectory};
 use pinion_core::external::{External, StubExternal};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{BoxStyle, FlexDirection, LayoutStyle, TextStyle};
-use pinion_core::theme::{use_theme, ColorRole};
+use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::widget_core::ExtraExternal;
-use pinion_core::widgets::file_browser::{use_directory_state, DirectoryExternal};
+use pinion_core::widgets::file_browser::{DirectoryExternal, use_directory_state};
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::{DirEntry, Frame, Scene, WidgetCore};
-use pinion_widget_paint::file_browser::{file_browser_pane, FileBrowserMetrics};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_shell::{WidgetView, vello_renderer_impl};
+use pinion_widget_paint::file_browser::{FileBrowserMetrics, file_browser_pane};
 use std::rc::Rc;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -90,7 +90,11 @@ fn seed_directory() -> Rc<dyn Directory> {
     );
     d.insert(
         "/proj/src",
-        vec![DirEntry::dir("ui"), DirEntry::file("main.rs"), DirEntry::file("lib.rs")],
+        vec![
+            DirEntry::dir("ui"),
+            DirEntry::file("main.rs"),
+            DirEntry::file("lib.rs"),
+        ],
     );
     d.insert(
         "/proj/src/ui",
@@ -120,7 +124,13 @@ fn view(_state: (), _frame: &Frame) -> Scene {
         &dir,
         &scroll,
         &theme,
-        FileBrowserMetrics { list_width: LIST_W, list_height: LIST_H, row_pitch: ROW_PITCH, overscan: OVERSCAN, focusable: false },
+        FileBrowserMetrics {
+            list_width: LIST_W,
+            list_height: LIST_H,
+            row_pitch: ROW_PITCH,
+            overscan: OVERSCAN,
+            focusable: false,
+        },
         None,
     );
 
@@ -130,7 +140,9 @@ fn view(_state: (), _frame: &Frame) -> Scene {
             None => "Selected: (none)".to_string(),
         },
         Rect::default(),
-        TextStyle::new().with_size_px(14).with_fg(theme.resolve(ColorRole::OnSurface)),
+        TextStyle::new()
+            .with_size_px(14)
+            .with_fg(theme.resolve(ColorRole::OnSurface)),
     ));
 
     Scene::Container(
@@ -167,7 +179,10 @@ impl WidgetCore for FileBrowserView {
     /// /fb_dir/external/...` drives the same model.
     fn create_extra_externals() -> Vec<ExtraExternal> {
         let dir = use_directory_state(DIR_TAG, seed_directory, || ROOT_DIR.to_string());
-        vec![ExtraExternal::new(DIR_TAG, Box::new(DirectoryExternal::new(dir)))]
+        vec![ExtraExternal::new(
+            DIR_TAG,
+            Box::new(DirectoryExternal::new(dir)),
+        )]
     }
 
     fn tag() -> &'static str {
@@ -217,7 +232,10 @@ impl WidgetView for FileBrowserView {
     type Renderer = HelloFileBrowserRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 }
 
@@ -229,17 +247,24 @@ fn main() {
 mod tests {
     use super::*;
     use pinion_a11y::AriaRole;
+    use pinion_core::Owner;
     use pinion_core::theme::Theme;
     use pinion_core::widgets::file_browser::DirectoryState;
-    use pinion_core::Owner;
 
     #[test]
     fn seed_tree_lists_proj_root() {
         let dir = seed_directory();
-        let names: Vec<String> =
-            dir.read_dir("/proj").expect("root lists").iter().map(|e| e.name.clone()).collect();
+        let names: Vec<String> = dir
+            .read_dir("/proj")
+            .expect("root lists")
+            .iter()
+            .map(|e| e.name.clone())
+            .collect();
         // Dirs first (assets, src), then files alpha (.gitignore, Cargo.toml, README.md).
-        assert_eq!(names, ["assets", "src", ".gitignore", "Cargo.toml", "README.md"]);
+        assert_eq!(
+            names,
+            ["assets", "src", ".gitignore", "Cargo.toml", "README.md"]
+        );
     }
 
     #[test]
@@ -276,9 +301,21 @@ mod tests {
             dir.select("Cargo.toml"); // row 3
             view((), &Frame::default())
         });
-        assert_eq!(row_fill(&scene, 3), Some(accent), "selected file row is Accent");
-        assert_ne!(row_fill(&scene, 0), Some(accent), "directory row is not Accent");
-        assert_ne!(row_fill(&scene, 4), Some(accent), "unselected file row is not Accent");
+        assert_eq!(
+            row_fill(&scene, 3),
+            Some(accent),
+            "selected file row is Accent"
+        );
+        assert_ne!(
+            row_fill(&scene, 0),
+            Some(accent),
+            "directory row is not Accent"
+        );
+        assert_ne!(
+            row_fill(&scene, 4),
+            Some(accent),
+            "unselected file row is not Accent"
+        );
     }
 
     #[test]
@@ -287,7 +324,11 @@ mod tests {
         // file row (zebra) render in distinct inks (the Phase-2 pixel witness's
         // structural twin).
         let scene = Owner::new().run(|| view((), &Frame::default()));
-        assert_ne!(row_fill(&scene, 0), row_fill(&scene, 2), "dir row != file row fill");
+        assert_ne!(
+            row_fill(&scene, 0),
+            row_fill(&scene, 2),
+            "dir row != file row fill"
+        );
     }
 
     #[test]
@@ -304,6 +345,10 @@ mod tests {
             .iter()
             .find(|n| n.position_in_set == Some(4))
             .expect("listitem for row 3");
-        assert_eq!(item.selected, Some(true), "picked file carries aria-selected");
+        assert_eq!(
+            item.selected,
+            Some(true),
+            "picked file carries aria-selected"
+        );
     }
 }

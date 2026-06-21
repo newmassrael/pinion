@@ -31,9 +31,7 @@
 //! `IntentEmitter::dispatch` pipeline is measured end-to-end, not
 //! just the raw `ListBox::send`.
 
-use criterion::{
-    black_box, criterion_group, criterion_main, BenchmarkId, Criterion,
-};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use pinion_core::external::External;
 use pinion_core::widgets::listbox::ListBoxExternal;
 use pinion_core::widgets::listbox_item::ListboxItemEvent;

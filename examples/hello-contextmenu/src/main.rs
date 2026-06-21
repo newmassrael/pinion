@@ -68,7 +68,7 @@
 //! invariant #7).
 
 use pinion_a11y::{
-    menu_item_nodes, AccessAction, AccessFocus, AccessNode, MenuItemCell, WidgetA11y,
+    AccessAction, AccessFocus, AccessNode, MenuItemCell, WidgetA11y, menu_item_nodes,
 };
 // R817 §5.40 — `AriaRole` is now only referenced by the test asserts (the
 // lifted `menu_item_nodes` builder owns role + state tagging in prod).
@@ -79,13 +79,13 @@ use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole};
-use pinion_core::widgets::context_menu::{read_open_state, ContextMenuExternal};
+use pinion_core::theme::{ColorRole, use_theme};
+use pinion_core::widgets::context_menu::{ContextMenuExternal, read_open_state};
 use pinion_core::{Frame, Scene, WidgetCore};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::barrier::dismiss_barrier;
 use pinion_widget_paint::menu::{
-    composite_item_tag, parse_item_sub_tag, view_context_menu, ContextMenuPlacement, MenuStyle,
+    ContextMenuPlacement, MenuStyle, composite_item_tag, parse_item_sub_tag, view_context_menu,
 };
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -307,8 +307,9 @@ impl WidgetA11y for ContextMenuView {
             return Vec::new();
         }
         let group_focused = focused == Some(<Self as WidgetCore>::tag());
-        let tags: Vec<String> =
-            (0..ITEMS.len()).map(|i| composite_item_tag(CTX_TAG, i)).collect();
+        let tags: Vec<String> = (0..ITEMS.len())
+            .map(|i| composite_item_tag(CTX_TAG, i))
+            .collect();
         let items: Vec<MenuItemCell<'_>> = (0..ITEMS.len())
             .map(|i| MenuItemCell {
                 tag: &tags[i],
@@ -361,10 +362,7 @@ impl WidgetA11y for ContextMenuView {
         match action {
             AccessAction::Click | AccessAction::Default => {
                 // PointerUp is the activation edge: command + close.
-                let _ = intro.invoke(
-                    "send",
-                    IntrospectValue::Text(format!("i{idx}:PointerUp")),
-                );
+                let _ = intro.invoke("send", IntrospectValue::Text(format!("i{idx}:PointerUp")));
                 true
             }
             AccessAction::Focus => {

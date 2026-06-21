@@ -39,23 +39,26 @@
 
 use std::rc::Rc;
 
+#[cfg(test)]
+use pinion_a11y::{AriaRole, WidgetA11y};
 use pinion_core::composite_tag::send_activation_index;
+use pinion_core::external::query_proxy_external_impl;
 use pinion_core::external::{
     ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
 };
-use pinion_core::external::query_proxy_external_impl;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, Color, FlexDirection, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::{ColorRole, Frame, Owner, Scene, Signal, use_theme};
-#[cfg(test)]
-use pinion_a11y::{AriaRole, WidgetA11y};
 use pinion_derive::widget;
 use pinion_shell::vello_renderer_impl;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
-vello_renderer_impl!(HelloCommandPaletteRenderer, HelloCommandPaletteRendererError);
+vello_renderer_impl!(
+    HelloCommandPaletteRenderer,
+    HelloCommandPaletteRendererError
+);
 
 const WIN_W: u32 = 440;
 const WIN_H: u32 = 420;
@@ -97,8 +100,11 @@ const COMMANDS: [&str; 10] = [
 /// An empty query matches everything with score `0`.
 #[must_use]
 fn fuzzy_score(query: &str, candidate: &str) -> Option<i32> {
-    let needle: Vec<char> =
-        query.chars().filter(|c| !c.is_whitespace()).map(|c| c.to_ascii_lowercase()).collect();
+    let needle: Vec<char> = query
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
     if needle.is_empty() {
         return Some(0);
     }
@@ -171,7 +177,11 @@ impl PaletteExternal {
         selected: Rc<Signal<usize>>,
         last_executed: Rc<Signal<Option<String>>>,
     ) -> Self {
-        Self { query, selected, last_executed }
+        Self {
+            query,
+            selected,
+            last_executed,
+        }
     }
 
     fn visible(&self) -> Vec<usize> {
@@ -182,7 +192,11 @@ impl PaletteExternal {
     /// change can shrink the list under a stale index).
     fn sel(&self) -> usize {
         let len = self.visible().len();
-        if len == 0 { 0 } else { self.selected.get().min(len - 1) }
+        if len == 0 {
+            0
+        } else {
+            self.selected.get().min(len - 1)
+        }
     }
 
     /// Set the query and reset the selection to the top result (the
@@ -260,7 +274,9 @@ impl ExternalIntrospect for PaletteExternal {
             }),
             _ => {
                 let i: usize = path.strip_prefix("result.")?.parse().ok()?;
-                visible.get(i).map(|&c| IntrospectValue::Text(COMMANDS[c].to_owned()))
+                visible
+                    .get(i)
+                    .map(|&c| IntrospectValue::Text(COMMANDS[c].to_owned()))
             }
         }
     }
@@ -290,7 +306,11 @@ impl ExternalIntrospect for PaletteExternal {
         }
     }
 
-    fn invoke(&mut self, path: &str, args: IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+    fn invoke(
+        &mut self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
         match path {
             "select" => match args {
                 IntrospectValue::Int(n) => {
@@ -369,7 +389,11 @@ fn view(selected: usize, _frame: &Frame) -> Scene {
 
     let query = use_query().get();
     let visible = visible_commands(&query);
-    let sel = if visible.is_empty() { 0 } else { selected.min(visible.len() - 1) };
+    let sel = if visible.is_empty() {
+        0
+    } else {
+        selected.min(visible.len() - 1)
+    };
 
     // Search box: a "> query" prompt in an input-styled container.
     let prompt = if query.is_empty() {
@@ -382,7 +406,9 @@ fn view(selected: usize, _frame: &Frame) -> Scene {
         ContainerNode::new(vec![Scene::Text(TextNode::styled(
             prompt,
             Rect::default(),
-            TextStyle::new().with_size_px(PROMPT_FONT_PX).with_fg(prompt_fg),
+            TextStyle::new()
+                .with_size_px(PROMPT_FONT_PX)
+                .with_fg(prompt_fg),
         ))])
         .with_tag("palette_search")
         .with_style(BoxStyle::filled(surface_alt).with_corner_radius(6))
@@ -437,7 +463,11 @@ fn view(selected: usize, _frame: &Frame) -> Scene {
 /// accent background.
 fn result_row(index: usize, name: &str, selected: bool, fg: Color, accent: Color) -> Scene {
     let fill = if selected { accent } else { Color::TRANSPARENT };
-    let text_fg = if selected { Color::rgb(0xff, 0xff, 0xff) } else { fg };
+    let text_fg = if selected {
+        Color::rgb(0xff, 0xff, 0xff)
+    } else {
+        fg
+    };
     Scene::Container(
         ContainerNode::new(vec![Scene::Text(TextNode::styled(
             name.to_owned(),
@@ -514,7 +544,10 @@ impl PaletteView {
         let Some(intro) = node.handle.introspect_mut() else {
             return false;
         };
-        let _ = intro.invoke("select", IntrospectValue::Int(i64::try_from(target).unwrap_or(0)));
+        let _ = intro.invoke(
+            "select",
+            IntrospectValue::Int(i64::try_from(target).unwrap_or(0)),
+        );
         true
     }
 }
@@ -534,7 +567,10 @@ mod tests {
 
     #[test]
     fn r912_empty_query_lists_all_commands_in_order() {
-        assert_eq!(visible_commands(""), (0..COMMANDS.len()).collect::<Vec<_>>());
+        assert_eq!(
+            visible_commands(""),
+            (0..COMMANDS.len()).collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -553,7 +589,10 @@ mod tests {
         // command where o/f are mid-word.
         let of = visible_commands("of");
         assert!(!of.is_empty());
-        assert_eq!(COMMANDS[of[0]], "Open Folder", "word-start match ranks first");
+        assert_eq!(
+            COMMANDS[of[0]], "Open Folder",
+            "word-start match ranks first"
+        );
     }
 
     #[test]
@@ -572,7 +611,8 @@ mod tests {
         e.invoke("select", IntrospectValue::Int(5)).unwrap();
         assert_eq!(e.sel(), 5);
         // A query that yields a single result clamps + resets selection.
-        e.intervene("query", IntrospectValue::Text("Reload Window".to_owned())).unwrap();
+        e.intervene("query", IntrospectValue::Text("Reload Window".to_owned()))
+            .unwrap();
         assert_eq!(e.query("result_count"), Some(IntrospectValue::Int(1)));
         assert_eq!(e.sel(), 0, "set_query resets selection to the top result");
     }
@@ -580,29 +620,45 @@ mod tests {
     #[test]
     fn r912_execute_records_the_selected_command() {
         let mut e = ext();
-        e.intervene("query", IntrospectValue::Text("save".to_owned())).unwrap();
-        assert_eq!(e.query("selected_command"), Some(IntrospectValue::Text("Save All".to_owned())));
+        e.intervene("query", IntrospectValue::Text("save".to_owned()))
+            .unwrap();
+        assert_eq!(
+            e.query("selected_command"),
+            Some(IntrospectValue::Text("Save All".to_owned()))
+        );
         let ran = e.invoke("execute", IntrospectValue::Null).unwrap();
         assert_eq!(ran, IntrospectValue::Text("Save All".to_owned()));
-        assert_eq!(e.query("last_executed"), Some(IntrospectValue::Text("Save All".to_owned())));
+        assert_eq!(
+            e.query("last_executed"),
+            Some(IntrospectValue::Text("Save All".to_owned()))
+        );
     }
 
     #[test]
     fn r912_click_send_selects_and_runs_on_activation() {
         let mut e = ext();
         // Hover/press do not run; the PointerUp activation edge does.
-        e.invoke("send", IntrospectValue::Text("2:PointerEnter".to_owned())).unwrap();
+        e.invoke("send", IntrospectValue::Text("2:PointerEnter".to_owned()))
+            .unwrap();
         assert_eq!(e.query("last_executed"), Some(IntrospectValue::Null));
-        e.invoke("send", IntrospectValue::Text("2:PointerUp".to_owned())).unwrap();
+        e.invoke("send", IntrospectValue::Text("2:PointerUp".to_owned()))
+            .unwrap();
         // Result 2 in the empty-query list is "Save All".
-        assert_eq!(e.query("last_executed"), Some(IntrospectValue::Text("Save All".to_owned())));
+        assert_eq!(
+            e.query("last_executed"),
+            Some(IntrospectValue::Text("Save All".to_owned()))
+        );
     }
 
     #[test]
     fn r912_select_out_of_range_rejected() {
         let mut e = ext();
-        e.intervene("query", IntrospectValue::Text("reload".to_owned())).unwrap();
-        assert!(e.invoke("select", IntrospectValue::Int(3)).is_err(), "only 1 result");
+        e.intervene("query", IntrospectValue::Text("reload".to_owned()))
+            .unwrap();
+        assert!(
+            e.invoke("select", IntrospectValue::Int(3)).is_err(),
+            "only 1 result"
+        );
     }
 
     fn has_text(scene: &Scene, needle: &str) -> bool {
@@ -621,7 +677,10 @@ mod tests {
             view(0, &Frame::new())
         });
         assert!(has_text(&scene, "Save All"), "filtered command shown");
-        assert!(!has_text(&scene, "Reload Window"), "non-matching command hidden");
+        assert!(
+            !has_text(&scene, "Reload Window"),
+            "non-matching command hidden"
+        );
     }
 
     #[test]

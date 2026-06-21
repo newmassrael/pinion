@@ -62,7 +62,10 @@ fn both_fixtures_have_common_required_tables() {
         let (_, records) = parse_sfnt(&bytes).expect("valid sfnt");
         let tags: std::collections::HashSet<[u8; 4]> = records.iter().map(|r| r.tag).collect();
         for tag in required {
-            assert!(tags.contains(*tag), "{path}: required table {tag:?} missing");
+            assert!(
+                tags.contains(*tag),
+                "{path}: required table {tag:?} missing"
+            );
         }
     }
 }
@@ -135,7 +138,10 @@ fn noto_sans_cmap_ascii_letters() {
     }
     // Unassigned codepoint (private use area) → None or .notdef.
     let gid = font.glyph_id_for(0x10_FFFE);
-    assert!(gid.is_none() || gid == Some(0), "unexpected mapping for U+10FFFE");
+    assert!(
+        gid.is_none() || gid == Some(0),
+        "unexpected mapping for U+10FFFE"
+    );
 }
 
 #[test]
@@ -198,10 +204,11 @@ fn noto_sans_cmap_format4_sweep() {
                 let _gid = f4.glyph_id(cp); // OOB panic 없음만 확인
             }
         }
-        assert!(total_segments > 1, "Noto Sans cmap format 4 has > 1 segments");
-        eprintln!(
-            "Noto Sans: {total_segments} segments ({indirect_segments} indirect)",
+        assert!(
+            total_segments > 1,
+            "Noto Sans cmap format 4 has > 1 segments"
         );
+        eprintln!("Noto Sans: {total_segments} segments ({indirect_segments} indirect)",);
     }
 }
 

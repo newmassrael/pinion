@@ -434,10 +434,17 @@ fn emit_struct_with_children(name: &str, children: &[PinionChild]) -> String {
 }
 
 fn needs_spawner(children: &[PinionChild]) -> bool {
-    children.iter().any(|c| matches!(c, PinionChild::Resource(_)))
+    children
+        .iter()
+        .any(|c| matches!(c, PinionChild::Resource(_)))
 }
 
-fn emit_signal_into(s: &SignalDecl, fields: &mut String, bindings: &mut String, inits: &mut String) {
+fn emit_signal_into(
+    s: &SignalDecl,
+    fields: &mut String,
+    bindings: &mut String,
+    inits: &mut String,
+) {
     let _ = writeln!(
         fields,
         "{INDENT}pub {field}: ::pinion_core::reactive::Signal<{ty}>,",
@@ -547,7 +554,10 @@ fn emit_resource_into(
 /// Single-name uses the trailing-comma form (`(x,)`) for grammatical
 /// uniformity with the multi-name case.
 fn capture_tuple(prior_names: &[String]) -> (String, String) {
-    debug_assert!(!prior_names.is_empty(), "capture_tuple called with no priors");
+    debug_assert!(
+        !prior_names.is_empty(),
+        "capture_tuple called with no priors"
+    );
     if prior_names.len() == 1 {
         let n = &prior_names[0];
         (format!("({n},)"), format!("({n}.clone(),)"))
@@ -555,9 +565,12 @@ fn capture_tuple(prior_names: &[String]) -> (String, String) {
         let lhs = format!("({})", prior_names.join(", "));
         let rhs = format!(
             "({})",
-            prior_names.iter().map(|n| format!("{n}.clone()")).collect::<Vec<_>>().join(", ")
+            prior_names
+                .iter()
+                .map(|n| format!("{n}.clone()"))
+                .collect::<Vec<_>>()
+                .join(", ")
         );
         (lhs, rhs)
     }
 }
-

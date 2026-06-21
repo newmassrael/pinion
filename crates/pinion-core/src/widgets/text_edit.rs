@@ -84,7 +84,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::BTreeSet;
 use std::rc::Rc;
 
-use crate::reactive::{batch, Owner, Signal};
+use crate::reactive::{Owner, Signal, batch};
 use crate::scene::StyleRun;
 use crate::style::TextStyle;
 use crate::undo::{UndoCommand, UndoStack};
@@ -126,12 +126,18 @@ impl FormatField {
     pub fn set(self, style: &mut TextStyle, on: bool) {
         match self {
             FormatField::Bold => {
-                style.font_weight =
-                    if on { crate::style::FontWeight::BOLD } else { crate::style::FontWeight::NORMAL };
+                style.font_weight = if on {
+                    crate::style::FontWeight::BOLD
+                } else {
+                    crate::style::FontWeight::NORMAL
+                };
             }
             FormatField::Italic => {
-                style.font_style =
-                    if on { crate::style::FontStyle::Italic } else { crate::style::FontStyle::Normal };
+                style.font_style = if on {
+                    crate::style::FontStyle::Italic
+                } else {
+                    crate::style::FontStyle::Normal
+                };
             }
             FormatField::Underline => style.decoration.underline = on,
             FormatField::Strikethrough => style.decoration.strikethrough = on,
@@ -551,7 +557,10 @@ impl UndoCommand for TextEditCommand {
 
     fn redo(&self) {
         let mut buf = self.text.get();
-        buf.replace_range(self.offset..self.offset + self.removed.len(), &self.inserted);
+        buf.replace_range(
+            self.offset..self.offset + self.removed.len(),
+            &self.inserted,
+        );
         let mut runs = self.runs.get();
         // The same maintenance the forward mutators apply: drop the deleted
         // span's coverage, then shift trailing runs right for the insert.
@@ -580,7 +589,10 @@ impl UndoCommand for TextEditCommand {
 
     fn undo(&self) {
         let mut buf = self.text.get();
-        buf.replace_range(self.offset..self.offset + self.inserted.len(), &self.removed);
+        buf.replace_range(
+            self.offset..self.offset + self.inserted.len(),
+            &self.removed,
+        );
         let mut runs = self.runs.get();
         // Reverse the forward clip+shift, restore the coverage the delete
         // destroyed, and re-fuse any survivor that was extended back over it.
@@ -836,8 +848,7 @@ fn text_diff(before: &str, after: &str) -> (usize, String, String) {
         p -= 1;
     }
     let mut s = common_suffix_len(bb, ab, (bb.len() - p).min(ab.len() - p));
-    while s > 0
-        && (!before.is_char_boundary(bb.len() - s) || !after.is_char_boundary(ab.len() - s))
+    while s > 0 && (!before.is_char_boundary(bb.len() - s) || !after.is_char_boundary(ab.len() - s))
     {
         s -= 1;
     }
@@ -1002,8 +1013,8 @@ fn is_word_boundary(haystack: &str, start: usize, end: usize) -> bool {
             .chars()
             .next_back()
             .is_some_and(is_word_char);
-    let after_ok = end == haystack.len()
-        || !haystack[end..].chars().next().is_some_and(is_word_char);
+    let after_ok =
+        end == haystack.len() || !haystack[end..].chars().next().is_some_and(is_word_char);
     before_ok && after_ok
 }
 
@@ -1624,11 +1635,12 @@ impl TextEditState {
         let snapped_focus = clamp_to_char_boundary(&text, focus.min(len));
         batch(|| {
             self.caret_pos.set(snapped_focus);
-            self.selection_anchor.set(if snapped_anchor == snapped_focus {
-                None
-            } else {
-                Some(snapped_anchor)
-            });
+            self.selection_anchor
+                .set(if snapped_anchor == snapped_focus {
+                    None
+                } else {
+                    Some(snapped_anchor)
+                });
         });
     }
 
@@ -2141,8 +2153,10 @@ impl TextEditState {
     /// gesture). Reanchors the caret out of any interior it hides.
     pub fn fold_all(&self) {
         let text = self.text.get();
-        let anchors: BTreeSet<usize> =
-            fold_regions_in(&text).into_iter().map(|r| r.open_byte).collect();
+        let anchors: BTreeSet<usize> = fold_regions_in(&text)
+            .into_iter()
+            .map(|r| r.open_byte)
+            .collect();
         self.folds.set(anchors);
         self.reanchor_caret_out_of_folds();
     }
@@ -2393,8 +2407,7 @@ impl TextEditState {
             stack.end_macro();
         }
         // Re-anchor across the removals (each a delete: `inserted_len == 0`).
-        let shift: Vec<(usize, usize, usize)> =
-            edits.iter().map(|&(ls, n)| (ls, n, 0)).collect();
+        let shift: Vec<(usize, usize, usize)> = edits.iter().map(|&(ls, n)| (ls, n, 0)).collect();
         let new_end = shift_pos_for_edits(end, &shift);
         if had_selection {
             self.set_selection(line_starts[0], new_end);
@@ -2465,8 +2478,8 @@ impl TextEditState {
                     // Strip the marker plus one following space if present (the
                     // inverse of the inserted `"{marker} "`).
                     let after = p + marker.len();
-                    let strip = marker.len()
-                        + usize::from(text.as_bytes().get(after) == Some(&b' '));
+                    let strip =
+                        marker.len() + usize::from(text.as_bytes().get(after) == Some(&b' '));
                     (p, strip, String::new())
                 } else {
                     (p, 0, added.clone())
@@ -2482,8 +2495,10 @@ impl TextEditState {
         if let Some(stack) = self.undo_stack() {
             stack.end_macro();
         }
-        let shift: Vec<(usize, usize, usize)> =
-            edits.iter().map(|(p, removed, ins)| (*p, *removed, ins.len())).collect();
+        let shift: Vec<(usize, usize, usize)> = edits
+            .iter()
+            .map(|(p, removed, ins)| (*p, *removed, ins.len()))
+            .collect();
         let new_end = shift_pos_for_edits(end, &shift);
         if had_selection {
             self.set_selection(line_starts[0], new_end);
@@ -2621,7 +2636,11 @@ impl TextEditState {
             (format!("\n{block}"), block_end + 1)
         };
         self.replace_range(block_end, block_end, &insert_text);
-        let new_caret = if down { copy_start + rel } else { block_start + rel };
+        let new_caret = if down {
+            copy_start + rel
+        } else {
+            block_start + rel
+        };
         self.set_caret(new_caret);
         true
     }
@@ -3127,11 +3146,8 @@ impl TextEditState {
         let anchor = self.selection_anchor.get().unwrap_or(caret);
         batch(|| {
             self.caret_pos.set(0);
-            self.selection_anchor.set(if anchor == 0 {
-                None
-            } else {
-                Some(anchor)
-            });
+            self.selection_anchor
+                .set(if anchor == 0 { None } else { Some(anchor) });
         });
     }
 
@@ -3144,11 +3160,8 @@ impl TextEditState {
         let anchor = self.selection_anchor.get().unwrap_or(caret);
         batch(|| {
             self.caret_pos.set(len);
-            self.selection_anchor.set(if anchor == len {
-                None
-            } else {
-                Some(anchor)
-            });
+            self.selection_anchor
+                .set(if anchor == len { None } else { Some(anchor) });
         });
     }
 
@@ -3686,10 +3699,10 @@ mod tests {
     //! hook integration.
 
     use super::{
-        clamp_to_char_boundary, dedent_remove_len, find_matches_in, fold_regions_in,
-        line_first_non_ws, line_of, line_starts, line_starts_in_range, matching_bracket_in,
-        next_char_boundary, prev_char_boundary, shift_pos_for_edits, style_runs_diff,
-        use_text_edit_state, FormatField, TextEditState, INDENT_UNIT, INDENT_WIDTH,
+        FormatField, INDENT_UNIT, INDENT_WIDTH, TextEditState, clamp_to_char_boundary,
+        dedent_remove_len, find_matches_in, fold_regions_in, line_first_non_ws, line_of,
+        line_starts, line_starts_in_range, matching_bracket_in, next_char_boundary,
+        prev_char_boundary, shift_pos_for_edits, style_runs_diff, use_text_edit_state,
     };
     use crate::reactive::{Effect, Owner};
     use crate::scene::StyleRun;
@@ -4748,7 +4761,7 @@ mod tests {
     #[test]
     fn r56_1_b_prev_next_char_boundary_walks_grapheme() {
         let s = "a한b"; // bytes: 'a'(1) + 한(3) + 'b'(1) = 5
-                            // boundaries: {0, 1, 4, 5}
+        // boundaries: {0, 1, 4, 5}
         assert_eq!(prev_char_boundary(s, 5), 4);
         assert_eq!(prev_char_boundary(s, 4), 1, "skip mid-codepoint");
         assert_eq!(prev_char_boundary(s, 1), 0);
@@ -4847,7 +4860,10 @@ mod tests {
         s.preedit_update("X");
         let (eff, vc, range) = s.splice_preedit(99);
         assert_eq!(eff, "abX");
-        assert_eq!(vc, 3, "splice clamps to text.len(), preedit_end = 2 + 1 = 3");
+        assert_eq!(
+            vc, 3,
+            "splice clamps to text.len(), preedit_end = 2 + 1 = 3"
+        );
         assert_eq!(range, Some((2, 3)));
     }
 
@@ -4861,7 +4877,11 @@ mod tests {
         s.set_style_runs(vec![run(6, 11)]); // "world"
         s.set_caret(0);
         s.insert("XX"); // 2 bytes at the buffer start
-        assert_eq!(run_spans(&s), vec![(8, 13)], "a run after the insert shifts right by len");
+        assert_eq!(
+            run_spans(&s),
+            vec![(8, 13)],
+            "a run after the insert shifts right by len"
+        );
     }
 
     #[test]
@@ -4870,7 +4890,11 @@ mod tests {
         s.set_style_runs(vec![run(0, 5)]);
         s.set_caret(2);
         s.insert("XX"); // inside the run
-        assert_eq!(run_spans(&s), vec![(0, 7)], "typing inside a styled span extends it");
+        assert_eq!(
+            run_spans(&s),
+            vec![(0, 7)],
+            "typing inside a styled span extends it"
+        );
     }
 
     #[test]
@@ -4879,7 +4903,11 @@ mod tests {
         s.set_style_runs(vec![run(0, 2)]);
         s.set_caret(2); // at the run end
         s.insert("X");
-        assert_eq!(run_spans(&s), vec![(0, 3)], "insert at a run's end extends it (inherit-left)");
+        assert_eq!(
+            run_spans(&s),
+            vec![(0, 3)],
+            "insert at a run's end extends it (inherit-left)"
+        );
     }
 
     #[test]
@@ -4902,7 +4930,11 @@ mod tests {
         s.set_caret(5);
         s.backspace(); // delete byte [4, 5)
         assert_eq!(s.text(), "hell");
-        assert_eq!(run_spans(&s), vec![(0, 4)], "deleting a byte inside a run shrinks its end");
+        assert_eq!(
+            run_spans(&s),
+            vec![(0, 4)],
+            "deleting a byte inside a run shrinks its end"
+        );
     }
 
     #[test]
@@ -4911,7 +4943,10 @@ mod tests {
         s.set_style_runs(vec![run(0, 2)]);
         s.set_selection(0, 2);
         s.delete_forward(); // drains the whole run's text
-        assert!(s.style_runs().is_empty(), "a run whose text is fully deleted is dropped");
+        assert!(
+            s.style_runs().is_empty(),
+            "a run whose text is fully deleted is dropped"
+        );
     }
 
     #[test]
@@ -4942,7 +4977,11 @@ mod tests {
         assert_eq!(s.text(), "hi WORLD! end");
         // run0 ("world") drained to empty -> dropped; "end" run shifts +1
         // (net delta +1 from the 5->6 replace) to [10, 13).
-        assert_eq!(run_spans(&s), vec![(10, 13)], "trailing run tracks the net length change");
+        assert_eq!(
+            run_spans(&s),
+            vec![(10, 13)],
+            "trailing run tracks the net length change"
+        );
     }
 
     #[test]
@@ -4950,7 +4989,10 @@ mod tests {
         let s = TextEditState::with_initial("hello".to_owned());
         s.set_style_runs(vec![run(0, 5)]);
         s.set_text("brand new".to_owned());
-        assert!(s.style_runs().is_empty(), "a wholesale set_text clears the now-invalid runs");
+        assert!(
+            s.style_runs().is_empty(),
+            "a wholesale set_text clears the now-invalid runs"
+        );
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -4962,7 +5004,11 @@ mod tests {
     /// tell two spans apart by style (the default-styled [`run`] helper
     /// cannot distinguish adjacent spans for the merge assertions).
     fn crun(s: u32, e: u32, rgb: (u8, u8, u8)) -> StyleRun {
-        StyleRun::new(s, e, TextStyle::new().with_fg(Color::rgb(rgb.0, rgb.1, rgb.2)))
+        StyleRun::new(
+            s,
+            e,
+            TextStyle::new().with_fg(Color::rgb(rgb.0, rgb.1, rgb.2)),
+        )
     }
 
     const RED: (u8, u8, u8) = (0xD0, 0x28, 0x28);
@@ -4971,8 +5017,16 @@ mod tests {
     #[test]
     fn r768_apply_over_unstyled_gap_adds_a_run() {
         let s = TextEditState::with_initial("hello world".to_owned());
-        s.apply_style_run(6, 11, TextStyle::new().with_fg(Color::rgb(RED.0, RED.1, RED.2)));
-        assert_eq!(run_spans(&s), vec![(6, 11)], "applying over plain text adds one run");
+        s.apply_style_run(
+            6,
+            11,
+            TextStyle::new().with_fg(Color::rgb(RED.0, RED.1, RED.2)),
+        );
+        assert_eq!(
+            run_spans(&s),
+            vec![(6, 11)],
+            "applying over plain text adds one run"
+        );
     }
 
     #[test]
@@ -4980,15 +5034,27 @@ mod tests {
         let s = TextEditState::with_initial("hello world".to_owned());
         s.set_style_runs(vec![crun(0, 11, RED)]);
         // Recolour the middle "lo wo" → red | blue | red.
-        s.apply_style_run(3, 8, TextStyle::new().with_fg(Color::rgb(BLUE.0, BLUE.1, BLUE.2)));
+        s.apply_style_run(
+            3,
+            8,
+            TextStyle::new().with_fg(Color::rgb(BLUE.0, BLUE.1, BLUE.2)),
+        );
         assert_eq!(
             run_spans(&s),
             vec![(0, 3), (3, 8), (8, 11)],
             "overlaying inside a run carves it into before | new | after",
         );
         let runs = s.style_runs();
-        assert_eq!(runs[1].style.fg_color, Color::rgb(BLUE.0, BLUE.1, BLUE.2), "middle is the new ink");
-        assert_eq!(runs[0].style.fg_color, Color::rgb(RED.0, RED.1, RED.2), "flanks keep the old ink");
+        assert_eq!(
+            runs[1].style.fg_color,
+            Color::rgb(BLUE.0, BLUE.1, BLUE.2),
+            "middle is the new ink"
+        );
+        assert_eq!(
+            runs[0].style.fg_color,
+            Color::rgb(RED.0, RED.1, RED.2),
+            "flanks keep the old ink"
+        );
     }
 
     #[test]
@@ -4997,16 +5063,32 @@ mod tests {
         s.set_style_runs(vec![crun(0, 5, RED)]);
         // Apply the identical red to the abutting "[5, 11)" — the seam
         // dissolves into one span (FormatRange minimisation).
-        s.apply_style_run(5, 11, TextStyle::new().with_fg(Color::rgb(RED.0, RED.1, RED.2)));
-        assert_eq!(run_spans(&s), vec![(0, 11)], "adjacent identical styles coalesce");
+        s.apply_style_run(
+            5,
+            11,
+            TextStyle::new().with_fg(Color::rgb(RED.0, RED.1, RED.2)),
+        );
+        assert_eq!(
+            run_spans(&s),
+            vec![(0, 11)],
+            "adjacent identical styles coalesce"
+        );
     }
 
     #[test]
     fn r768_apply_different_style_to_adjacent_keeps_two() {
         let s = TextEditState::with_initial("hello world".to_owned());
         s.set_style_runs(vec![crun(0, 5, RED)]);
-        s.apply_style_run(5, 11, TextStyle::new().with_fg(Color::rgb(BLUE.0, BLUE.1, BLUE.2)));
-        assert_eq!(run_spans(&s), vec![(0, 5), (5, 11)], "abutting distinct styles stay separate");
+        s.apply_style_run(
+            5,
+            11,
+            TextStyle::new().with_fg(Color::rgb(BLUE.0, BLUE.1, BLUE.2)),
+        );
+        assert_eq!(
+            run_spans(&s),
+            vec![(0, 5), (5, 11)],
+            "abutting distinct styles stay separate"
+        );
     }
 
     #[test]
@@ -5015,7 +5097,11 @@ mod tests {
         s.set_style_runs(vec![crun(0, 5, RED), crun(6, 11, BLUE)]);
         // A wide blue overlay swallows the red run and the gap; the
         // trailing tail of the old blue run survives, then merges.
-        s.apply_style_run(2, 9, TextStyle::new().with_fg(Color::rgb(BLUE.0, BLUE.1, BLUE.2)));
+        s.apply_style_run(
+            2,
+            9,
+            TextStyle::new().with_fg(Color::rgb(BLUE.0, BLUE.1, BLUE.2)),
+        );
         assert_eq!(
             run_spans(&s),
             vec![(0, 2), (2, 11)],
@@ -5033,7 +5119,11 @@ mod tests {
             vec![(0, 3), (8, 11)],
             "clearing a middle range splits the run and drops the covered styling (no offset shift)",
         );
-        assert_eq!(s.text(), "hello world", "clear-formatting never edits the text");
+        assert_eq!(
+            s.text(),
+            "hello world",
+            "clear-formatting never edits the text"
+        );
     }
 
     #[test]
@@ -5041,21 +5131,36 @@ mod tests {
         let s = TextEditState::with_initial("hello".to_owned());
         s.set_style_runs(vec![crun(0, 5, RED)]);
         s.clear_style_runs(0, 5);
-        assert!(s.style_runs().is_empty(), "clearing a run's full extent drops it");
+        assert!(
+            s.style_runs().is_empty(),
+            "clearing a run's full extent drops it"
+        );
     }
 
     #[test]
     fn r768_apply_empty_range_is_a_noop() {
         let s = TextEditState::with_initial("hello".to_owned());
         s.set_style_runs(vec![crun(0, 5, RED)]);
-        s.apply_style_run(3, 3, TextStyle::new().with_fg(Color::rgb(BLUE.0, BLUE.1, BLUE.2)));
-        assert_eq!(run_spans(&s), vec![(0, 5)], "a collapsed range leaves the runs untouched");
+        s.apply_style_run(
+            3,
+            3,
+            TextStyle::new().with_fg(Color::rgb(BLUE.0, BLUE.1, BLUE.2)),
+        );
+        assert_eq!(
+            run_spans(&s),
+            vec![(0, 5)],
+            "a collapsed range leaves the runs untouched"
+        );
     }
 
     #[test]
     fn r768_apply_clamps_out_of_range_bytes() {
         let s = TextEditState::with_initial("hello".to_owned());
-        s.apply_style_run(2, 999, TextStyle::new().with_fg(Color::rgb(RED.0, RED.1, RED.2)));
+        s.apply_style_run(
+            2,
+            999,
+            TextStyle::new().with_fg(Color::rgb(RED.0, RED.1, RED.2)),
+        );
         assert_eq!(run_spans(&s), vec![(2, 5)], "end clamps to text.len()");
     }
 
@@ -5079,8 +5184,16 @@ mod tests {
         });
         let runs = s.style_runs();
         assert_eq!(run_spans(&s), vec![(0, 5)], "the run span is preserved");
-        assert_eq!(runs[0].style.fg_color, Color::rgb(RED.0, RED.1, RED.2), "colour kept");
-        assert_eq!(runs[0].style.font_weight, crate::style::FontWeight::BOLD, "now bold");
+        assert_eq!(
+            runs[0].style.fg_color,
+            Color::rgb(RED.0, RED.1, RED.2),
+            "colour kept"
+        );
+        assert_eq!(
+            runs[0].style.font_weight,
+            crate::style::FontWeight::BOLD,
+            "now bold"
+        );
     }
 
     #[test]
@@ -5091,9 +5204,21 @@ mod tests {
             st.font_weight = crate::style::FontWeight::BOLD;
         });
         let runs = s.style_runs();
-        assert_eq!(run_spans(&s), vec![(6, 11)], "a run materialises over the bolded gap");
-        assert_eq!(runs[0].style.fg_color, Color::rgb(INK_BASE.0, INK_BASE.1, INK_BASE.2), "base ink");
-        assert_eq!(runs[0].style.font_weight, crate::style::FontWeight::BOLD, "base + bold");
+        assert_eq!(
+            run_spans(&s),
+            vec![(6, 11)],
+            "a run materialises over the bolded gap"
+        );
+        assert_eq!(
+            runs[0].style.fg_color,
+            Color::rgb(INK_BASE.0, INK_BASE.1, INK_BASE.2),
+            "base ink"
+        );
+        assert_eq!(
+            runs[0].style.font_weight,
+            crate::style::FontWeight::BOLD,
+            "base + bold"
+        );
     }
 
     #[test]
@@ -5104,13 +5229,37 @@ mod tests {
         s.merge_style_run(3, 8, &base_ink(INK_BASE), |st| {
             st.font_weight = crate::style::FontWeight::BOLD;
         });
-        assert_eq!(run_spans(&s), vec![(0, 3), (3, 5), (5, 8)], "split into normal | red-bold | base-bold");
+        assert_eq!(
+            run_spans(&s),
+            vec![(0, 3), (3, 5), (5, 8)],
+            "split into normal | red-bold | base-bold"
+        );
         let runs = s.style_runs();
-        assert_eq!(runs[0].style.font_weight, crate::style::FontWeight::NORMAL, "untouched flank stays normal");
-        assert_eq!(runs[1].style.fg_color, Color::rgb(RED.0, RED.1, RED.2), "covered slice keeps red");
-        assert_eq!(runs[1].style.font_weight, crate::style::FontWeight::BOLD, "covered slice is bold");
-        assert_eq!(runs[2].style.fg_color, Color::rgb(INK_BASE.0, INK_BASE.1, INK_BASE.2), "gap took base ink");
-        assert_eq!(runs[2].style.font_weight, crate::style::FontWeight::BOLD, "gap is bold");
+        assert_eq!(
+            runs[0].style.font_weight,
+            crate::style::FontWeight::NORMAL,
+            "untouched flank stays normal"
+        );
+        assert_eq!(
+            runs[1].style.fg_color,
+            Color::rgb(RED.0, RED.1, RED.2),
+            "covered slice keeps red"
+        );
+        assert_eq!(
+            runs[1].style.font_weight,
+            crate::style::FontWeight::BOLD,
+            "covered slice is bold"
+        );
+        assert_eq!(
+            runs[2].style.fg_color,
+            Color::rgb(INK_BASE.0, INK_BASE.1, INK_BASE.2),
+            "gap took base ink"
+        );
+        assert_eq!(
+            runs[2].style.font_weight,
+            crate::style::FontWeight::BOLD,
+            "gap is bold"
+        );
     }
 
     #[test]
@@ -5121,7 +5270,11 @@ mod tests {
         s.merge_style_run(0, 5, &base_ink(INK_BASE), |st| {
             st.font_weight = crate::style::FontWeight::BOLD;
         });
-        assert_eq!(run_spans(&s), vec![(0, 5)], "identical bolded pieces coalesce into one span");
+        assert_eq!(
+            run_spans(&s),
+            vec![(0, 5)],
+            "identical bolded pieces coalesce into one span"
+        );
     }
 
     #[test]
@@ -5135,7 +5288,11 @@ mod tests {
         s.merge_style_run(0, 5, &base_ink(INK_BASE), |st| {
             st.font_weight = crate::style::FontWeight::NORMAL;
         });
-        assert_eq!(s.style_runs(), original, "bold then un-bold returns the exact original runs");
+        assert_eq!(
+            s.style_runs(),
+            original,
+            "bold then un-bold returns the exact original runs"
+        );
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -5152,14 +5309,30 @@ mod tests {
         let now = s.toggle_format(FormatField::Bold, &base_ink(INK_BASE));
         assert!(now, "toggle reports the new on-state (bold)");
         let runs = s.style_runs();
-        assert_eq!(runs[0].style.font_weight, crate::style::FontWeight::BOLD, "now bold");
-        assert_eq!(runs[0].style.fg_color, Color::rgb(RED.0, RED.1, RED.2), "colour preserved (mergeCharFormat)");
+        assert_eq!(
+            runs[0].style.font_weight,
+            crate::style::FontWeight::BOLD,
+            "now bold"
+        );
+        assert_eq!(
+            runs[0].style.fg_color,
+            Color::rgb(RED.0, RED.1, RED.2),
+            "colour preserved (mergeCharFormat)"
+        );
         // Second toggle reads bold -> targets normal, round-tripping the colour.
         let now2 = s.toggle_format(FormatField::Bold, &base_ink(INK_BASE));
         assert!(!now2, "the second toggle reports off");
         let runs = s.style_runs();
-        assert_eq!(runs[0].style.font_weight, crate::style::FontWeight::NORMAL, "un-bolded");
-        assert_eq!(runs[0].style.fg_color, Color::rgb(RED.0, RED.1, RED.2), "colour still preserved");
+        assert_eq!(
+            runs[0].style.font_weight,
+            crate::style::FontWeight::NORMAL,
+            "un-bolded"
+        );
+        assert_eq!(
+            runs[0].style.fg_color,
+            Color::rgb(RED.0, RED.1, RED.2),
+            "colour still preserved"
+        );
     }
 
     #[test]
@@ -5172,9 +5345,20 @@ mod tests {
         assert!(s.toggle_format(FormatField::Underline, &base_ink(INK_BASE)));
         let st = s.style_runs()[0].style.clone();
         assert_eq!(st.font_weight, crate::style::FontWeight::BOLD, "bold set");
-        assert_eq!(st.font_style, crate::style::FontStyle::Italic, "italic set, weight untouched");
-        assert!(st.decoration.underline, "underline set, weight + style untouched");
-        assert_eq!(st.fg_color, Color::rgb(RED.0, RED.1, RED.2), "colour preserved through all three toggles");
+        assert_eq!(
+            st.font_style,
+            crate::style::FontStyle::Italic,
+            "italic set, weight untouched"
+        );
+        assert!(
+            st.decoration.underline,
+            "underline set, weight + style untouched"
+        );
+        assert_eq!(
+            st.fg_color,
+            Color::rgb(RED.0, RED.1, RED.2),
+            "colour preserved through all three toggles"
+        );
     }
 
     #[test]
@@ -5190,16 +5374,29 @@ mod tests {
             Some(crate::style::FontWeight::BOLD),
             "the next typed char would be bold",
         );
-        assert!(s.style_runs().is_empty(), "no run materialised at a collapsed caret");
+        assert!(
+            s.style_runs().is_empty(),
+            "no run materialised at a collapsed caret"
+        );
     }
 
     #[test]
     fn r967_format_field_from_wire_round_trips_and_rejects_unknown() {
         assert_eq!(FormatField::from_wire("bold"), Some(FormatField::Bold));
         assert_eq!(FormatField::from_wire("italic"), Some(FormatField::Italic));
-        assert_eq!(FormatField::from_wire("underline"), Some(FormatField::Underline));
-        assert_eq!(FormatField::from_wire("strikethrough"), Some(FormatField::Strikethrough));
-        assert_eq!(FormatField::from_wire("rainbow"), None, "unknown token rejected");
+        assert_eq!(
+            FormatField::from_wire("underline"),
+            Some(FormatField::Underline)
+        );
+        assert_eq!(
+            FormatField::from_wire("strikethrough"),
+            Some(FormatField::Strikethrough)
+        );
+        assert_eq!(
+            FormatField::from_wire("rainbow"),
+            None,
+            "unknown token rejected"
+        );
     }
 
     #[test]
@@ -5213,9 +5410,21 @@ mod tests {
             st.font_style = crate::style::FontStyle::Italic;
         });
         let runs = s.style_runs();
-        assert_eq!(runs[0].style.font_weight, crate::style::FontWeight::BOLD, "weight survives a later italic merge");
-        assert_eq!(runs[0].style.font_style, crate::style::FontStyle::Italic, "italic applied");
-        assert_eq!(runs[0].style.fg_color, Color::rgb(RED.0, RED.1, RED.2), "colour survives both merges");
+        assert_eq!(
+            runs[0].style.font_weight,
+            crate::style::FontWeight::BOLD,
+            "weight survives a later italic merge"
+        );
+        assert_eq!(
+            runs[0].style.font_style,
+            crate::style::FontStyle::Italic,
+            "italic applied"
+        );
+        assert_eq!(
+            runs[0].style.fg_color,
+            Color::rgb(RED.0, RED.1, RED.2),
+            "colour survives both merges"
+        );
     }
 
     #[test]
@@ -5228,7 +5437,10 @@ mod tests {
             "a covered byte reports its run style",
         );
         assert!(s.style_at(7).is_none(), "an unstyled byte reports None");
-        assert!(s.style_at(5).is_none(), "the exclusive end byte is outside the run");
+        assert!(
+            s.style_at(5).is_none(),
+            "the exclusive end byte is outside the run"
+        );
     }
 
     #[test]
@@ -5239,7 +5451,11 @@ mod tests {
         s.merge_style_run(3, 3, &base_ink(INK_BASE), |st| {
             st.font_weight = crate::style::FontWeight::BOLD;
         });
-        assert_eq!(s.style_runs(), before, "a collapsed range leaves the runs untouched");
+        assert_eq!(
+            s.style_runs(),
+            before,
+            "a collapsed range leaves the runs untouched"
+        );
     }
 
     #[test]
@@ -5256,8 +5472,15 @@ mod tests {
             seen.set(seen.get() + 1);
         });
         let before = runs_seen.get();
-        s.apply_style_run(0, 5, TextStyle::new().with_fg(Color::rgb(RED.0, RED.1, RED.2)));
-        assert!(runs_seen.get() > before, "a runs-only apply re-runs a style_runs subscriber");
+        s.apply_style_run(
+            0,
+            5,
+            TextStyle::new().with_fg(Color::rgb(RED.0, RED.1, RED.2)),
+        );
+        assert!(
+            runs_seen.get() > before,
+            "a runs-only apply re-runs a style_runs subscriber"
+        );
     }
 
     // R796 §5.52 — undo / redo with word-level coalescing.
@@ -5318,7 +5541,11 @@ mod tests {
             st.insert("x");
             assert_eq!(st.text(), "axb");
             assert!(st.undo());
-            assert_eq!(st.text(), "ab", "only the post-move insert undoes (caret move broke coalescing)");
+            assert_eq!(
+                st.text(),
+                "ab",
+                "only the post-move insert undoes (caret move broke coalescing)"
+            );
         });
     }
 
@@ -5330,7 +5557,11 @@ mod tests {
             st.backspace();
             assert_eq!(st.text(), "ab");
             assert!(st.undo());
-            assert_eq!(st.text(), "abc", "the delete is its own step (different group)");
+            assert_eq!(
+                st.text(),
+                "abc",
+                "the delete is its own step (different group)"
+            );
             assert!(st.undo());
             assert_eq!(st.text(), "", "the typing run is the prior step");
         });
@@ -5345,7 +5576,11 @@ mod tests {
             st.insert("X");
             assert_eq!(st.text(), "X");
             assert!(st.undo());
-            assert_eq!(st.text(), "abc", "type-to-replace undoes back to the selected text in one step");
+            assert_eq!(
+                st.text(),
+                "abc",
+                "type-to-replace undoes back to the selected text in one step"
+            );
         });
     }
 
@@ -5370,10 +5605,18 @@ mod tests {
             st.set_selection(2, 4);
             st.backspace(); // delete "cd" from inside the run
             assert_eq!(st.text(), "abef");
-            assert_eq!(st.style_runs(), vec![red(0, 4)], "the run clips to the shorter text");
+            assert_eq!(
+                st.style_runs(),
+                vec![red(0, 4)],
+                "the run clips to the shorter text"
+            );
             assert!(st.undo());
             assert_eq!(st.text(), "abcdef");
-            assert_eq!(st.style_runs(), vec![red(0, 6)], "undo restores the run span exactly");
+            assert_eq!(
+                st.style_runs(),
+                vec![red(0, 6)],
+                "undo restores the run span exactly"
+            );
         });
     }
 
@@ -5402,7 +5645,11 @@ mod tests {
             st.set_caret(0);
             st.insert("XY"); // shifts the run right by 2
             assert_eq!(st.text(), "XYabc");
-            assert_eq!(st.style_runs(), vec![red(2, 5)], "insert before the run shifts it");
+            assert_eq!(
+                st.style_runs(),
+                vec![red(2, 5)],
+                "insert before the run shifts it"
+            );
             assert!(st.undo());
             assert_eq!(st.text(), "abc");
             assert_eq!(st.style_runs(), vec![red(0, 3)], "undo shifts the run back");
@@ -5418,7 +5665,11 @@ mod tests {
             st.backspace();
             assert_eq!(st.text(), "wo");
             assert!(st.undo());
-            assert_eq!(st.text(), "word", "two backspaces undo as one coalesced step");
+            assert_eq!(
+                st.text(),
+                "word",
+                "two backspaces undo as one coalesced step"
+            );
             assert!(st.undo());
             assert_eq!(st.text(), "", "the typing run is the prior step");
         });
@@ -5439,18 +5690,34 @@ mod tests {
         let after = vec![crun(0, 2, RED), crun(2, 4, BLUE), crun(4, 6, RED)];
         let (prefix, removed, inserted) = style_runs_diff(&before, &after);
         assert_eq!(prefix, 1, "the leading equal run is outside the splice");
-        assert_eq!(removed, vec![crun(2, 4, RED)], "only the changed run is removed");
-        assert_eq!(inserted, vec![crun(2, 4, BLUE)], "only the changed run is inserted");
+        assert_eq!(
+            removed,
+            vec![crun(2, 4, RED)],
+            "only the changed run is removed"
+        );
+        assert_eq!(
+            inserted,
+            vec![crun(2, 4, BLUE)],
+            "only the changed run is inserted"
+        );
     }
 
     #[test]
     fn r928_apply_then_undo_reverts_formatting() {
         Owner::new().run(|| {
             let st = styled("hello", vec![]);
-            st.apply_style_run(0, 3, TextStyle::new().with_fg(Color::rgb(RED.0, RED.1, RED.2)));
+            st.apply_style_run(
+                0,
+                3,
+                TextStyle::new().with_fg(Color::rgb(RED.0, RED.1, RED.2)),
+            );
             assert_eq!(run_spans(&st), vec![(0, 3)], "the format applied");
             assert!(st.undo(), "Ctrl+Z reverses the format");
-            assert_eq!(run_spans(&st), Vec::<(u32, u32)>::new(), "formatting undone");
+            assert_eq!(
+                run_spans(&st),
+                Vec::<(u32, u32)>::new(),
+                "formatting undone"
+            );
             assert_eq!(st.text(), "hello", "the text was never touched");
             assert!(st.redo(), "redo re-applies the format");
             assert_eq!(run_spans(&st), vec![(0, 3)], "the run is back");
@@ -5462,9 +5729,17 @@ mod tests {
         Owner::new().run(|| {
             let st = styled("hello", vec![red(0, 5)]);
             st.clear_style_runs(0, 5);
-            assert_eq!(run_spans(&st), Vec::<(u32, u32)>::new(), "the run was cleared");
+            assert_eq!(
+                run_spans(&st),
+                Vec::<(u32, u32)>::new(),
+                "the run was cleared"
+            );
             assert!(st.undo());
-            assert_eq!(st.style_runs(), vec![red(0, 5)], "undo restores the cleared run exactly");
+            assert_eq!(
+                st.style_runs(),
+                vec![red(0, 5)],
+                "undo restores the cleared run exactly"
+            );
             assert!(st.redo());
             assert_eq!(run_spans(&st), Vec::<(u32, u32)>::new(), "redo re-clears");
         });
@@ -5475,12 +5750,22 @@ mod tests {
         Owner::new().run(|| {
             let st = styled("hello", vec![]);
             let base = TextStyle::new();
-            st.merge_style_run(0, 5, &base, |s| s.font_weight = crate::style::FontWeight::BOLD);
+            st.merge_style_run(0, 5, &base, |s| {
+                s.font_weight = crate::style::FontWeight::BOLD;
+            });
             let runs = st.style_runs();
             assert_eq!(runs.len(), 1, "the bold toggle laid one run");
-            assert_eq!(runs[0].style.font_weight, crate::style::FontWeight::BOLD, "selection is bold");
+            assert_eq!(
+                runs[0].style.font_weight,
+                crate::style::FontWeight::BOLD,
+                "selection is bold"
+            );
             assert!(st.undo(), "Ctrl+Z un-bolds");
-            assert_eq!(run_spans(&st), Vec::<(u32, u32)>::new(), "the bold run is gone");
+            assert_eq!(
+                run_spans(&st),
+                Vec::<(u32, u32)>::new(),
+                "the bold run is gone"
+            );
             assert!(st.redo());
             assert_eq!(
                 st.style_runs()[0].style.font_weight,
@@ -5499,10 +5784,18 @@ mod tests {
         Owner::new().run(|| {
             let st = undoable();
             st.insert("ab");
-            st.apply_style_run(0, 1, TextStyle::new().with_fg(Color::rgb(RED.0, RED.1, RED.2)));
+            st.apply_style_run(
+                0,
+                1,
+                TextStyle::new().with_fg(Color::rgb(RED.0, RED.1, RED.2)),
+            );
             assert_eq!(run_spans(&st), vec![(0, 1)], "the format is on");
             assert!(st.undo(), "first undo");
-            assert_eq!(run_spans(&st), Vec::<(u32, u32)>::new(), "the format alone reverted");
+            assert_eq!(
+                run_spans(&st),
+                Vec::<(u32, u32)>::new(),
+                "the format alone reverted"
+            );
             assert_eq!(st.text(), "ab", "the typing still stands — a separate step");
             assert!(st.undo(), "second undo");
             assert_eq!(st.text(), "", "now the typing reverts");
@@ -5513,13 +5806,29 @@ mod tests {
     fn r928_consecutive_formats_are_separate_steps() {
         Owner::new().run(|| {
             let st = styled("hello world", vec![]);
-            st.apply_style_run(0, 5, TextStyle::new().with_fg(Color::rgb(RED.0, RED.1, RED.2)));
-            st.apply_style_run(6, 11, TextStyle::new().with_fg(Color::rgb(BLUE.0, BLUE.1, BLUE.2)));
+            st.apply_style_run(
+                0,
+                5,
+                TextStyle::new().with_fg(Color::rgb(RED.0, RED.1, RED.2)),
+            );
+            st.apply_style_run(
+                6,
+                11,
+                TextStyle::new().with_fg(Color::rgb(BLUE.0, BLUE.1, BLUE.2)),
+            );
             assert_eq!(run_spans(&st), vec![(0, 5), (6, 11)], "two formats applied");
             assert!(st.undo());
-            assert_eq!(run_spans(&st), vec![(0, 5)], "one undo drops only the last format");
+            assert_eq!(
+                run_spans(&st),
+                vec![(0, 5)],
+                "one undo drops only the last format"
+            );
             assert!(st.undo());
-            assert_eq!(run_spans(&st), Vec::<(u32, u32)>::new(), "the first format is the prior step");
+            assert_eq!(
+                run_spans(&st),
+                Vec::<(u32, u32)>::new(),
+                "the first format is the prior step"
+            );
         });
     }
 
@@ -5530,9 +5839,17 @@ mod tests {
         Owner::new().run(|| {
             let st = undoable();
             st.insert("ab");
-            st.apply_style_run(2, 2, TextStyle::new().with_fg(Color::rgb(RED.0, RED.1, RED.2)));
+            st.apply_style_run(
+                2,
+                2,
+                TextStyle::new().with_fg(Color::rgb(RED.0, RED.1, RED.2)),
+            );
             assert!(st.undo(), "the only journalled step is the typing");
-            assert_eq!(st.text(), "", "the no-op format pushed nothing; one undo cleared the text");
+            assert_eq!(
+                st.text(),
+                "",
+                "the no-op format pushed nothing; one undo cleared the text"
+            );
         });
     }
 
@@ -5543,10 +5860,22 @@ mod tests {
         Owner::new().run(|| {
             let st = TextEditState::with_initial("hello".to_owned());
             assert!(st.undo_stack().is_none());
-            st.apply_style_run(0, 3, TextStyle::new().with_fg(Color::rgb(RED.0, RED.1, RED.2)));
-            assert_eq!(run_spans(&st), vec![(0, 3)], "the format applied with no stack");
+            st.apply_style_run(
+                0,
+                3,
+                TextStyle::new().with_fg(Color::rgb(RED.0, RED.1, RED.2)),
+            );
+            assert_eq!(
+                run_spans(&st),
+                vec![(0, 3)],
+                "the format applied with no stack"
+            );
             assert!(!st.undo(), "no stack -> undo is a no-op");
-            assert_eq!(run_spans(&st), vec![(0, 3)], "the format stands; nothing was journalled");
+            assert_eq!(
+                run_spans(&st),
+                vec![(0, 3)],
+                "the format stands; nothing was journalled"
+            );
         });
     }
 
@@ -5562,22 +5891,50 @@ mod tests {
             st.set_caret(0);
             // (1) text edit shifts the run right by the insert.
             st.insert("XY");
-            assert_eq!(st.style_runs(), vec![red(2, 7)], "the run shifted right by the insert");
+            assert_eq!(
+                st.style_runs(),
+                vec![red(2, 7)],
+                "the run shifted right by the insert"
+            );
             // (2) a format edit over the *shifted* text.
-            st.apply_style_run(0, 2, TextStyle::new().with_fg(Color::rgb(BLUE.0, BLUE.1, BLUE.2)));
-            assert_eq!(run_spans(&st), vec![(0, 2), (2, 7)], "blue prefix + shifted red");
+            st.apply_style_run(
+                0,
+                2,
+                TextStyle::new().with_fg(Color::rgb(BLUE.0, BLUE.1, BLUE.2)),
+            );
+            assert_eq!(
+                run_spans(&st),
+                vec![(0, 2), (2, 7)],
+                "blue prefix + shifted red"
+            );
             // (3) undo the format: blue gone, the shifted red intact, text untouched.
             assert!(st.undo());
-            assert_eq!(st.style_runs(), vec![red(2, 7)], "format undone against the shifted runs");
-            assert_eq!(st.text(), "XYhello world", "the text edit still stands (separate step)");
+            assert_eq!(
+                st.style_runs(),
+                vec![red(2, 7)],
+                "format undone against the shifted runs"
+            );
+            assert_eq!(
+                st.text(),
+                "XYhello world",
+                "the text edit still stands (separate step)"
+            );
             // (4) undo the text edit: text + runs back to the seed exactly.
             assert!(st.undo());
             assert_eq!(st.text(), "hello world");
-            assert_eq!(st.style_runs(), vec![red(0, 5)], "runs restored to the seed");
+            assert_eq!(
+                st.style_runs(),
+                vec![red(0, 5)],
+                "runs restored to the seed"
+            );
             // (5) redo both, in order.
             assert!(st.redo());
             assert!(st.redo());
-            assert_eq!(run_spans(&st), vec![(0, 2), (2, 7)], "both edits re-applied");
+            assert_eq!(
+                run_spans(&st),
+                vec![(0, 2), (2, 7)],
+                "both edits re-applied"
+            );
         });
     }
 
@@ -5624,7 +5981,10 @@ mod tests {
         // A multi-byte prefix shifts the byte offset; the match range must land
         // on the source's own byte boundaries.
         let s = "\u{00e9}cole cole"; // "école cole" — 'é' is 2 bytes
-        assert_eq!(find_matches_in(s, "cole", true, false), vec![(2, 6), (7, 11)]);
+        assert_eq!(
+            find_matches_in(s, "cole", true, false),
+            vec![(2, 6), (7, 11)]
+        );
     }
 
     // ── R926 §5.22 — matching-bracket derivation ─────────────────────
@@ -5725,7 +6085,11 @@ mod tests {
         let starts = line_starts(s);
         assert_eq!(starts, vec![0, 3, 6, 7]);
         assert_eq!(line_of(&starts, 0), 0);
-        assert_eq!(line_of(&starts, 2), 0, "the trailing '\\n' belongs to its line");
+        assert_eq!(
+            line_of(&starts, 2),
+            0,
+            "the trailing '\\n' belongs to its line"
+        );
         assert_eq!(line_of(&starts, 3), 1);
         assert_eq!(line_of(&starts, 6), 2, "an empty line still indexes");
         assert_eq!(line_of(&starts, 8), 3);
@@ -5751,8 +6115,16 @@ mod tests {
         let src = "a {\n  b {\n    c\n  }\n}\n";
         let regions = fold_regions_in(src);
         assert_eq!(regions.len(), 2, "outer and inner brace blocks");
-        assert_eq!((regions[0].start_line, regions[0].end_line), (0, 4), "outer first");
-        assert_eq!((regions[1].start_line, regions[1].end_line), (1, 3), "inner second");
+        assert_eq!(
+            (regions[0].start_line, regions[0].end_line),
+            (0, 4),
+            "outer first"
+        );
+        assert_eq!(
+            (regions[1].start_line, regions[1].end_line),
+            (1, 3),
+            "inner second"
+        );
     }
 
     #[test]
@@ -5820,9 +6192,15 @@ mod tests {
         Owner::new().run(|| {
             let st = TextEditState::with_initial("a {\n b {\n  c\n }\n}\n".to_string());
             st.fold_all();
-            assert!(st.fold_regions().iter().all(|r| r.collapsed), "all collapsed");
+            assert!(
+                st.fold_regions().iter().all(|r| r.collapsed),
+                "all collapsed"
+            );
             st.unfold_all();
-            assert!(st.fold_regions().iter().all(|r| !r.collapsed), "all expanded");
+            assert!(
+                st.fold_regions().iter().all(|r| !r.collapsed),
+                "all expanded"
+            );
             assert!(!st.is_line_hidden(2));
         });
     }
@@ -5836,7 +6214,10 @@ mod tests {
             // Clearing the buffer removes every brace, so the collapsed
             // anchor matches no derived region — pruned, not panicking.
             st.set_text(String::new());
-            assert!(st.fold_regions().is_empty(), "stale anchor yields no region");
+            assert!(
+                st.fold_regions().is_empty(),
+                "stale anchor yields no region"
+            );
             assert!(!st.is_line_hidden(0));
         });
     }
@@ -5852,7 +6233,10 @@ mod tests {
             // (mirror of its style-run clear), else identical-shape content
             // would silently re-collapse.
             st.set_text("a {\n b\n}\n".to_string());
-            assert!(!st.fold_regions()[0].collapsed, "set_text reset the fold set");
+            assert!(
+                !st.fold_regions()[0].collapsed,
+                "set_text reset the fold set"
+            );
             assert!(!st.is_line_hidden(1), "nothing hidden after the reset");
         });
     }
@@ -5867,7 +6251,10 @@ mod tests {
             st.set_caret(0);
             st.insert("pub ");
             // The anchor shifted with its '{'; the fold did NOT spring open.
-            assert!(st.fold_regions()[0].collapsed, "fold survives an edit before it");
+            assert!(
+                st.fold_regions()[0].collapsed,
+                "fold survives an edit before it"
+            );
             assert!(st.is_line_hidden(1), "interior still hidden");
         });
     }
@@ -5888,7 +6275,10 @@ mod tests {
             let regions = st.fold_regions();
             let b1 = regions.iter().find(|r| r.start_line == 0).unwrap();
             let b2 = regions.iter().find(|r| r.start_line == 3).unwrap();
-            assert!(!b1.collapsed, "block-1 must NOT collapse (no anchor collision)");
+            assert!(
+                !b1.collapsed,
+                "block-1 must NOT collapse (no anchor collision)"
+            );
             assert!(b2.collapsed, "block-2 stays collapsed, tracking its brace");
         });
     }
@@ -5903,7 +6293,10 @@ mod tests {
             // range → dropped; no foldable region remains.
             st.set_selection(2, 3);
             st.backspace();
-            assert!(st.fold_regions().is_empty(), "deleting the opener brace prunes the fold");
+            assert!(
+                st.fold_regions().is_empty(),
+                "deleting the opener brace prunes the fold"
+            );
             assert!(!st.is_line_hidden(1), "nothing hidden");
         });
     }
@@ -5921,7 +6314,10 @@ mod tests {
             st.insert("pub ");
             assert!(st.fold_regions()[0].collapsed, "fold tracks the insert");
             assert!(st.undo(), "undo the insert");
-            assert!(st.fold_regions()[0].collapsed, "fold still valid after undo");
+            assert!(
+                st.fold_regions()[0].collapsed,
+                "fold still valid after undo"
+            );
             assert!(st.is_line_hidden(1));
         });
     }
@@ -5950,20 +6346,31 @@ mod tests {
     fn r938_dedent_remove_len_and_pos_shift() {
         assert_eq!(dedent_remove_len("    x", 0, 4), 4, "four leading spaces");
         assert_eq!(dedent_remove_len("  x", 0, 4), 2, "fewer than width");
-        assert_eq!(dedent_remove_len("\tx", 0, 4), 1, "a leading tab is one level");
+        assert_eq!(
+            dedent_remove_len("\tx", 0, 4),
+            1,
+            "a leading tab is one level"
+        );
         assert_eq!(dedent_remove_len("x", 0, 4), 0, "no leading whitespace");
         // Re-anchor across removals (`inserted_len == 0`): after a run shifts
         // left; inside clamps to start.
         let edits = [(0_usize, 4_usize, 0_usize), (7, 2, 0)];
         assert_eq!(shift_pos_for_edits(11, &edits), 5, "after both removals");
-        assert_eq!(shift_pos_for_edits(2, &edits), 0, "inside the first run clamps");
+        assert_eq!(
+            shift_pos_for_edits(2, &edits),
+            0,
+            "inside the first run clamps"
+        );
         assert_eq!(shift_pos_for_edits(0, &edits), 0, "before everything");
     }
 
     #[test]
     fn r938_tab_indents_flag_defaults_off() {
         let st = TextEditState::new();
-        assert!(!st.tab_indents(), "off by default — single-line fields keep Tab=traverse");
+        assert!(
+            !st.tab_indents(),
+            "off by default — single-line fields keep Tab=traverse"
+        );
         st.set_tab_indents(true);
         assert!(st.tab_indents());
     }
@@ -6010,7 +6417,11 @@ mod tests {
             st.set_selection(0, 5);
             assert!(st.indent_selection(INDENT_UNIT));
             assert_eq!(st.text(), "    a\n    b\n    c");
-            assert_eq!(st.selection_range(), Some((0, 17)), "the block re-covers after indent");
+            assert_eq!(
+                st.selection_range(),
+                Some((0, 17)),
+                "the block re-covers after indent"
+            );
             assert_eq!(stack.len(), 1, "three line inserts fold into one undo step");
             assert!(st.undo(), "one undo reverses the whole block indent");
             assert_eq!(st.text(), "a\nb\nc");
@@ -6018,7 +6429,11 @@ mod tests {
             // child (bottom line) carries the pre-indent caret/anchor and
             // undoes last (MacroCommand reverses children), so the macro's undo
             // — not the post-macro set_selection — fixes the final state.
-            assert_eq!(st.selection_range(), Some((0, 5)), "undo restores the original selection");
+            assert_eq!(
+                st.selection_range(),
+                Some((0, 5)),
+                "undo restores the original selection"
+            );
             assert!(st.redo());
             assert_eq!(st.text(), "    a\n    b\n    c", "one redo re-applies it");
         });
@@ -6043,7 +6458,10 @@ mod tests {
             // And one undo restores both the text and the fold.
             assert!(st.undo());
             assert_eq!(st.text(), "fn a() {\n  x\n}\nz");
-            assert!(st.fold_regions()[0].collapsed, "fold still valid after undo");
+            assert!(
+                st.fold_regions()[0].collapsed,
+                "fold still valid after undo"
+            );
         });
     }
 
@@ -6126,17 +6544,29 @@ mod tests {
     #[test]
     fn r939_line_comment_flag_defaults_off() {
         let st = TextEditState::new();
-        assert_eq!(st.line_comment(), None, "off by default — Ctrl+/ falls through");
+        assert_eq!(
+            st.line_comment(),
+            None,
+            "off by default — Ctrl+/ falls through"
+        );
         st.set_line_comment("//");
         assert_eq!(st.line_comment(), Some("//"));
     }
 
     #[test]
     fn r939_line_first_non_ws_finds_column_or_none_for_blank() {
-        assert_eq!(line_first_non_ws("  ab", 0), Some(2), "skips leading spaces");
+        assert_eq!(
+            line_first_non_ws("  ab", 0),
+            Some(2),
+            "skips leading spaces"
+        );
         assert_eq!(line_first_non_ws("\t\tx", 0), Some(2), "skips leading tabs");
         assert_eq!(line_first_non_ws("ab", 0), Some(0), "no indent");
-        assert_eq!(line_first_non_ws("   \nx", 0), None, "whitespace-only line is blank");
+        assert_eq!(
+            line_first_non_ws("   \nx", 0),
+            None,
+            "whitespace-only line is blank"
+        );
         assert_eq!(line_first_non_ws("", 0), None, "EOF is blank");
         // Mid-buffer: the line starting at byte 3 ("  y").
         assert_eq!(line_first_non_ws("a\n  y", 2), Some(4));
@@ -6147,7 +6577,10 @@ mod tests {
         Owner::new().run(|| {
             let st = TextEditState::with_initial("a\nb".to_string());
             st.set_selection(0, 3);
-            assert!(!st.toggle_line_comment(""), "an empty marker changes nothing");
+            assert!(
+                !st.toggle_line_comment(""),
+                "an empty marker changes nothing"
+            );
             assert_eq!(st.text(), "a\nb");
         });
     }
@@ -6176,7 +6609,11 @@ mod tests {
             assert!(st.toggle_line_comment("//"));
             // The marker hugs the code, each line keeps its own indent.
             assert_eq!(st.text(), "  // ab\n    // cd");
-            assert_eq!(st.selection_range(), Some((0, st.text().len())), "block re-covers");
+            assert_eq!(
+                st.selection_range(),
+                Some((0, st.text().len())),
+                "block re-covers"
+            );
         });
     }
 
@@ -6208,7 +6645,11 @@ mod tests {
             let st = TextEditState::with_initial("a\r\n\r\nb".to_string());
             st.set_selection(0, st.text().len());
             assert!(st.toggle_line_comment("//"));
-            assert_eq!(st.text(), "// a\r\n\r\n// b", "the bare CRLF line takes no marker");
+            assert_eq!(
+                st.text(),
+                "// a\r\n\r\n// b",
+                "the bare CRLF line takes no marker"
+            );
         });
     }
 
@@ -6220,7 +6661,11 @@ mod tests {
             let st = TextEditState::with_initial("// a\nb".to_string());
             st.set_selection(0, st.text().len());
             assert!(st.toggle_line_comment("//"));
-            assert_eq!(st.text(), "// // a\n// b", "adds to every line when not all are commented");
+            assert_eq!(
+                st.text(),
+                "// // a\n// b",
+                "adds to every line when not all are commented"
+            );
         });
     }
 
@@ -6257,7 +6702,11 @@ mod tests {
             let st = TextEditState::with_initial("//  ab".to_string());
             st.set_caret(0);
             assert!(st.toggle_line_comment("//"));
-            assert_eq!(st.text(), " ab", "marker + one space removed, extra space kept");
+            assert_eq!(
+                st.text(),
+                " ab",
+                "marker + one space removed, extra space kept"
+            );
         });
     }
 
@@ -6305,11 +6754,17 @@ mod tests {
             st.set_selection(0, st.text().len());
             assert!(st.toggle_line_comment("//"));
             assert_eq!(st.text(), "// fn a() {\n  // x\n// }\n// z");
-            assert!(st.fold_regions()[0].collapsed, "fold survives the comment toggle");
+            assert!(
+                st.fold_regions()[0].collapsed,
+                "fold survives the comment toggle"
+            );
             assert!(st.is_line_hidden(1), "interior still hidden");
             assert!(st.undo());
             assert_eq!(st.text(), "fn a() {\n  x\n}\nz");
-            assert!(st.fold_regions()[0].collapsed, "fold still valid after undo");
+            assert!(
+                st.fold_regions()[0].collapsed,
+                "fold still valid after undo"
+            );
         });
     }
 
@@ -6327,9 +6782,21 @@ mod tests {
         // dedent / comment-remove have `inserted == 0`, so this clamps to the
         // run start there; comment-add has `removed == 0`, so no straddle.)
         let mixed = [(4_usize, 4_usize, 2_usize)];
-        assert_eq!(shift_pos_for_edits(5, &mixed), 5, "one byte into the run → into the replacement");
-        assert_eq!(shift_pos_for_edits(7, &mixed), 6, "deep in the run clamps to the replacement end");
-        assert_eq!(shift_pos_for_edits(10, &mixed), 8, "after the run shifts by net -2");
+        assert_eq!(
+            shift_pos_for_edits(5, &mixed),
+            5,
+            "one byte into the run → into the replacement"
+        );
+        assert_eq!(
+            shift_pos_for_edits(7, &mixed),
+            6,
+            "deep in the run clamps to the replacement end"
+        );
+        assert_eq!(
+            shift_pos_for_edits(10, &mixed),
+            8,
+            "after the run shifts by net -2"
+        );
     }
 
     #[test]
@@ -6387,7 +6854,11 @@ mod tests {
             // On a match now: replace it, advance to next.
             assert!(st.replace_current("X"), "second press replaces");
             assert_eq!(st.text(), "X bat hat");
-            assert_eq!(st.selection_range(), Some((3, 5)), "advanced to 'at' in bat");
+            assert_eq!(
+                st.selection_range(),
+                Some((3, 5)),
+                "advanced to 'at' in bat"
+            );
         });
     }
 
@@ -6466,7 +6937,12 @@ mod tests {
             // No highlighter → the manual (empty) runs.
             assert!(st.style_runs().is_empty(), "no highlighter → manual runs");
             st.attach_highlighter(std::rc::Rc::new(|t: &str| {
-                crate::syntax::highlight_code(t, &["let"], crate::syntax::SyntaxPalette::classic(), 16)
+                crate::syntax::highlight_code(
+                    t,
+                    &["let"],
+                    crate::syntax::SyntaxPalette::classic(),
+                    16,
+                )
             }));
             let runs = st.style_runs();
             assert_eq!(runs.len(), 1, "highlighter colours the 'let' keyword");
@@ -6479,13 +6955,25 @@ mod tests {
         Owner::new().run(|| {
             let st = TextEditState::with_initial(String::new());
             st.attach_highlighter(std::rc::Rc::new(|t: &str| {
-                crate::syntax::highlight_code(t, &["fn"], crate::syntax::SyntaxPalette::classic(), 16)
+                crate::syntax::highlight_code(
+                    t,
+                    &["fn"],
+                    crate::syntax::SyntaxPalette::classic(),
+                    16,
+                )
             }));
             assert!(st.style_runs().is_empty(), "empty buffer → no tokens");
             st.insert("fn");
-            assert_eq!(st.style_runs().len(), 1, "typing a keyword re-highlights it");
+            assert_eq!(
+                st.style_runs().len(),
+                1,
+                "typing a keyword re-highlights it"
+            );
             // The shadowed manual runs stay empty under a highlighter.
-            assert!(st.style_runs.get().is_empty(), "manual runs shadowed, not written");
+            assert!(
+                st.style_runs.get().is_empty(),
+                "manual runs shadowed, not written"
+            );
         });
     }
 
@@ -6500,7 +6988,11 @@ mod tests {
         st.set_text("a\nb\nc".to_string());
         assert_eq!(st.line_count(), 3);
         st.set_text("a\nb\n".to_string());
-        assert_eq!(st.line_count(), 3, "a trailing newline opens an empty last line");
+        assert_eq!(
+            st.line_count(),
+            3,
+            "a trailing newline opens an empty last line"
+        );
     }
 
     #[test]
@@ -6533,7 +7025,10 @@ mod tests {
         assert!(st.has_selection());
         assert_eq!(st.go_to_line(3), 3);
         assert_eq!(st.caret(), 5, "caret at line 3 start");
-        assert!(!st.has_selection(), "go_to_line collapses the selection (a caret move)");
+        assert!(
+            !st.has_selection(),
+            "go_to_line collapses the selection (a caret move)"
+        );
     }
 
     #[test]
@@ -6546,12 +7041,28 @@ mod tests {
         st.set_text("zero\none\ntwo\nthree".to_string()); // starts [0, 5, 9, 13]
         st.set_caret(2);
         assert_eq!(st.line_start_byte(1), 0, "line 1 starts at byte 0");
-        assert_eq!(st.line_start_byte(3), 9, "line 3 (\"two\") starts at byte 9");
-        assert_eq!(st.line_start_byte(4), 13, "line 4 (\"three\") starts at byte 13");
-        assert_eq!(st.caret(), 2, "line_start_byte is a pure read — the caret did not move");
+        assert_eq!(
+            st.line_start_byte(3),
+            9,
+            "line 3 (\"two\") starts at byte 9"
+        );
+        assert_eq!(
+            st.line_start_byte(4),
+            13,
+            "line 4 (\"three\") starts at byte 13"
+        );
+        assert_eq!(
+            st.caret(),
+            2,
+            "line_start_byte is a pure read — the caret did not move"
+        );
         // Clamps like go_to_line: 0 / past-end land on the first / last line.
         assert_eq!(st.line_start_byte(0), 0, "0 clamps to the first line");
-        assert_eq!(st.line_start_byte(99), 13, "past the end clamps to the last line");
+        assert_eq!(
+            st.line_start_byte(99),
+            13,
+            "past the end clamps to the last line"
+        );
     }
 
     // ─── R945 §5.22 — move-line / duplicate-line ────────────────────────────
@@ -6599,7 +7110,11 @@ mod tests {
             let st = TextEditState::with_initial("a\nb".to_string()); // "b" has no trailing \n
             st.set_caret(0); // caret on "a" (second-to-last)
             assert!(st.move_lines(true));
-            assert_eq!(st.text(), "b\na", "newline relocates; no trailing newline added");
+            assert_eq!(
+                st.text(),
+                "b\na",
+                "newline relocates; no trailing newline added"
+            );
             assert_eq!(st.caret(), 2, "caret rides the now-last line");
         });
     }
@@ -6612,7 +7127,11 @@ mod tests {
             let st = TextEditState::with_initial("a\nb".to_string());
             st.set_caret(2); // caret on the last line "b"
             assert!(st.move_lines(false));
-            assert_eq!(st.text(), "b\na", "the pair swap which line ends the buffer");
+            assert_eq!(
+                st.text(),
+                "b\na",
+                "the pair swap which line ends the buffer"
+            );
             assert_eq!(st.caret(), 0, "caret rides 'b' to the top");
         });
     }
@@ -6627,7 +7146,11 @@ mod tests {
             // The re-cover spans the whole moved block "a\nb\n" = [2, 6); the
             // trailing newline is included (the natural "these two lines" extent,
             // and `line_starts_in_range` trims it on a repeated move).
-            assert_eq!(st.selection_range(), Some((2, 6)), "the selection re-covers the moved block");
+            assert_eq!(
+                st.selection_range(),
+                Some((2, 6)),
+                "the selection re-covers the moved block"
+            );
         });
     }
 
@@ -6663,7 +7186,11 @@ mod tests {
             let st = TextEditState::with_initial("a\nb".to_string());
             st.set_caret(0);
             assert!(st.duplicate_lines(false));
-            assert_eq!(st.text(), "a\na\nb", "the buffer gains an identical adjacent copy");
+            assert_eq!(
+                st.text(),
+                "a\na\nb",
+                "the buffer gains an identical adjacent copy"
+            );
             assert_eq!(st.caret(), 0, "caret stays on the upper instance");
         });
     }
@@ -6674,7 +7201,11 @@ mod tests {
             let st = TextEditState::with_initial("a\nb".to_string()); // "b" has no trailing \n
             st.set_caret(2); // line "b"
             assert!(st.duplicate_lines(true));
-            assert_eq!(st.text(), "a\nb\nb", "a separator newline precedes the copy");
+            assert_eq!(
+                st.text(),
+                "a\nb\nb",
+                "a separator newline precedes the copy"
+            );
             assert_eq!(st.caret(), 4, "caret lands on the lower copy");
         });
     }
@@ -6715,7 +7246,11 @@ mod tests {
             let runs = st.style_runs();
             assert_eq!(runs.len(), 1, "the armed mark styles the typed char");
             assert_eq!((runs[0].start, runs[0].end), (0, 1));
-            assert_eq!(runs[0].style, bold_style(), "the run carries the armed style");
+            assert_eq!(
+                runs[0].style,
+                bold_style(),
+                "the run carries the armed style"
+            );
         });
     }
 
@@ -6728,7 +7263,11 @@ mod tests {
             st.insert("b");
             assert_eq!(st.text(), "ab");
             let runs = st.style_runs();
-            assert_eq!(runs.len(), 1, "consecutive marked keystrokes coalesce to one run");
+            assert_eq!(
+                runs.len(),
+                1,
+                "consecutive marked keystrokes coalesce to one run"
+            );
             assert_eq!((runs[0].start, runs[0].end), (0, 2));
         });
     }
@@ -6741,7 +7280,10 @@ mod tests {
             st.set_pending_style(Some(bold_style()));
             assert!(st.pending_style().is_some(), "armed at the collapsed caret");
             st.move_right();
-            assert!(st.pending_style().is_none(), "moving the caret drops the mark");
+            assert!(
+                st.pending_style().is_none(),
+                "moving the caret drops the mark"
+            );
             st.insert("Z"); // at caret 2 in "abc" -> "abZc"; left neighbour 'b' is unstyled
             assert!(
                 st.style_runs().is_empty(),
@@ -6781,9 +7323,17 @@ mod tests {
                 "caret after a bold char inherits bold"
             );
             st.set_caret(3); // after the unstyled 'c'
-            assert_eq!(st.style_at_caret(), None, "caret after unstyled inherits the base");
+            assert_eq!(
+                st.style_at_caret(),
+                None,
+                "caret after unstyled inherits the base"
+            );
             st.set_caret(0); // no char to the left
-            assert_eq!(st.style_at_caret(), None, "caret at the start is the field base");
+            assert_eq!(
+                st.style_at_caret(),
+                None,
+                "caret at the start is the field base"
+            );
         });
     }
 
@@ -6794,12 +7344,24 @@ mod tests {
             st.set_style_runs(vec![StyleRun::new(0, 2, bold_style())]);
             st.set_caret(2);
             assert_eq!(st.style_at_caret(), Some(bold_style()), "inheriting bold");
-            assert_eq!(st.pending_style(), None, "inherited is not the same as armed");
+            assert_eq!(
+                st.pending_style(),
+                None,
+                "inherited is not the same as armed"
+            );
             let mut big = TextStyle::new();
             big.font_size_px = 24;
             st.set_pending_style(Some(big.clone()));
-            assert_eq!(st.pending_style(), Some(big.clone()), "the armed mark is reported");
-            assert_eq!(st.style_at_caret(), Some(big), "the armed mark overrides inherited");
+            assert_eq!(
+                st.pending_style(),
+                Some(big.clone()),
+                "the armed mark is reported"
+            );
+            assert_eq!(
+                st.style_at_caret(),
+                Some(big),
+                "the armed mark overrides inherited"
+            );
         });
     }
 
@@ -6813,7 +7375,10 @@ mod tests {
             st.format_at_caret_or_selection(&base, |s| {
                 s.font_weight = crate::style::FontWeight::BOLD;
             });
-            assert!(st.pending_style().is_none(), "the selection path arms no mark");
+            assert!(
+                st.pending_style().is_none(),
+                "the selection path arms no mark"
+            );
             let runs = st.style_runs();
             assert_eq!(runs.len(), 1, "the selection got a bold run");
             assert_eq!((runs[0].start, runs[0].end), (0, 3));
@@ -6825,7 +7390,10 @@ mod tests {
             st2.format_at_caret_or_selection(&base, |s| {
                 s.font_weight = crate::style::FontWeight::BOLD;
             });
-            assert!(st2.style_runs().is_empty(), "the collapsed path touches no runs");
+            assert!(
+                st2.style_runs().is_empty(),
+                "the collapsed path touches no runs"
+            );
             assert_eq!(
                 st2.pending_style().map(|s| s.font_weight),
                 Some(crate::style::FontWeight::BOLD),
@@ -6858,7 +7426,11 @@ mod tests {
             assert!(st.redo());
             assert_eq!(st.text(), "ab");
             let runs = st.style_runs();
-            assert_eq!(runs.len(), 1, "redo restores the overlaid mark, not just the text");
+            assert_eq!(
+                runs.len(),
+                1,
+                "redo restores the overlaid mark, not just the text"
+            );
             assert_eq!((runs[0].start, runs[0].end), (0, 2));
             assert_eq!(runs[0].style, bold_style());
         });
@@ -6871,7 +7443,10 @@ mod tests {
             st.set_pending_style(Some(bold_style()));
             st.set_pending_style(None);
             st.insert("a");
-            assert!(st.style_runs().is_empty(), "a cleared mark -> unstyled insert");
+            assert!(
+                st.style_runs().is_empty(),
+                "a cleared mark -> unstyled insert"
+            );
         });
     }
 
@@ -6897,12 +7472,21 @@ mod tests {
             let st = TextEditState::with_initial("hello".to_string());
             st.set_selection(1, 3);
             st.set_pending_style(Some(bold_style())); // armed during selection -> inert
-            assert!(st.pending_style().is_none(), "inert while the selection is active");
+            assert!(
+                st.pending_style().is_none(),
+                "inert while the selection is active"
+            );
             st.clear_selection(); // collapse
-            assert!(st.pending_style().is_none(), "the mark does not resurrect on collapse");
+            assert!(
+                st.pending_style().is_none(),
+                "the mark does not resurrect on collapse"
+            );
             st.set_caret(0);
             st.insert("X");
-            assert!(st.style_runs().is_empty(), "the next typed char is unstyled");
+            assert!(
+                st.style_runs().is_empty(),
+                "the next typed char is unstyled"
+            );
         });
     }
 
@@ -6922,7 +7506,10 @@ mod tests {
             st.preedit_commit("c");
             assert!(st.style_runs().is_empty(), "the committed text is unstyled");
             st.insert("d");
-            assert!(st.style_runs().is_empty(), "the next direct keystroke is also unstyled");
+            assert!(
+                st.style_runs().is_empty(),
+                "the next direct keystroke is also unstyled"
+            );
         });
     }
 }

@@ -29,22 +29,25 @@
 //! `ArrowDown` / `ArrowLeft` decrement, `Home` / `End` jump to the
 //! extremes, `PageUp` / `PageDown` apply the large step.
 
+use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
 use pinion_core::external::External;
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widgets::slider::{SliderAxis, SliderEvent, SliderExternal, SliderState};
-use pinion_core::{scale_normalized_to_px, Color, Frame, Scene, WidgetCore, WidgetStateName};
-use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_core::{Color, Frame, Scene, WidgetCore, WidgetStateName, scale_normalized_to_px};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::slider::{read_slider_state, slider_apply_key};
 
 use pinion_widget_paint::state_layer::{DISABLED, HOVER, PRESSED};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
-vello_renderer_impl!(HelloSliderVerticalRenderer, HelloSliderVerticalRendererError);
+vello_renderer_impl!(
+    HelloSliderVerticalRenderer,
+    HelloSliderVerticalRendererError
+);
 
 const WIN_W: u32 = 220;
 const WIN_H: u32 = 360;
@@ -172,10 +175,7 @@ fn view(state: SliderState, value: f32, _frame: &Frame) -> Scene {
             .with_size_px(18)
             .with_fg(theme.resolve(ColorRole::OnSurface)),
     ));
-    let status_str = format!(
-        "{} | {value_clamped:.2}",
-        state.as_name(),
-    );
+    let status_str = format!("{} | {value_clamped:.2}", state.as_name(),);
     let status = Scene::Text(TextNode::styled(
         status_str,
         Rect::default(),
@@ -220,8 +220,7 @@ impl WidgetCore for SliderVerticalView {
         // R737 §5.38 — shared introspect reader (axis-agnostic; the
         // value is the same normalised f32 on either axis). Fallback
         // `(Idle, 0.0)` matches the horizontal mirror.
-        read_slider_state(scene, <Self as WidgetCore>::tag())
-            .unwrap_or((SliderState::Idle, 0.0))
+        read_slider_state(scene, <Self as WidgetCore>::tag()).unwrap_or((SliderState::Idle, 0.0))
     }
 
     fn view(state: (SliderState, f32), frame: &Frame) -> Scene {
@@ -255,7 +254,12 @@ impl WidgetCore for SliderVerticalView {
     /// branch on `aria-orientation` to decide the activation
     /// direction. Disabled state ignores keyboard input per the
     /// same ARIA contract.
-    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, _modifiers: pinion_core::Modifiers) -> bool {
+    fn apply_key(
+        scene: &mut Scene,
+        focused: Option<&str>,
+        key: &str,
+        _modifiers: pinion_core::Modifiers,
+    ) -> bool {
         // The focus-guard / disabled-check / read / intervene scaffold is
         // the lifted R739.1 `slider_apply_key` SSOT (shared with the
         // horizontal / discrete / labeled sliders). The key-map keeps
@@ -290,9 +294,15 @@ impl WidgetA11y for SliderVerticalView {
             focused: focused == Some(<Self as WidgetCore>::tag()),
             ..AccessState::from_interaction(interaction, None)
         };
-        vec![AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::Slider)
-            .with_value(AccessValue::Float { value, min: 0.0, max: 1.0 })
-            .with_state(access_state)]
+        vec![
+            AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::Slider)
+                .with_value(AccessValue::Float {
+                    value,
+                    min: 0.0,
+                    max: 1.0,
+                })
+                .with_state(access_state),
+        ]
     }
 }
 
@@ -300,7 +310,10 @@ impl WidgetView for SliderVerticalView {
     type Renderer = HelloSliderVerticalRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 }
 
@@ -339,28 +352,48 @@ mod tests {
     #[test]
     fn vertical_arrow_up_increments() {
         let mut scene = scene_at(0.5);
-        assert!(SliderVerticalView::apply_key(&mut scene, Some("main_slider"), "ArrowUp", pinion_core::Modifiers::empty()));
+        assert!(SliderVerticalView::apply_key(
+            &mut scene,
+            Some("main_slider"),
+            "ArrowUp",
+            pinion_core::Modifiers::empty()
+        ));
         assert!((current_value(&scene) - 0.55).abs() < 1e-5);
     }
 
     #[test]
     fn vertical_arrow_down_decrements() {
         let mut scene = scene_at(0.5);
-        assert!(SliderVerticalView::apply_key(&mut scene, Some("main_slider"), "ArrowDown", pinion_core::Modifiers::empty()));
+        assert!(SliderVerticalView::apply_key(
+            &mut scene,
+            Some("main_slider"),
+            "ArrowDown",
+            pinion_core::Modifiers::empty()
+        ));
         assert!((current_value(&scene) - 0.45).abs() < 1e-5);
     }
 
     #[test]
     fn vertical_home_jumps_to_minimum() {
         let mut scene = scene_at(0.7);
-        assert!(SliderVerticalView::apply_key(&mut scene, Some("main_slider"), "Home", pinion_core::Modifiers::empty()));
+        assert!(SliderVerticalView::apply_key(
+            &mut scene,
+            Some("main_slider"),
+            "Home",
+            pinion_core::Modifiers::empty()
+        ));
         assert!((current_value(&scene) - 0.0).abs() < 1e-5);
     }
 
     #[test]
     fn vertical_end_jumps_to_maximum() {
         let mut scene = scene_at(0.3);
-        assert!(SliderVerticalView::apply_key(&mut scene, Some("main_slider"), "End", pinion_core::Modifiers::empty()));
+        assert!(SliderVerticalView::apply_key(
+            &mut scene,
+            Some("main_slider"),
+            "End",
+            pinion_core::Modifiers::empty()
+        ));
         assert!((current_value(&scene) - 1.0).abs() < 1e-5);
     }
 
@@ -389,8 +422,9 @@ mod tests {
         assert!(!SliderVerticalView::apply_key(
             &mut scene,
             None,
-            "ArrowUp"
-        , pinion_core::Modifiers::empty()));
+            "ArrowUp",
+            pinion_core::Modifiers::empty()
+        ));
         assert!((current_value(&scene) - 0.5).abs() < 1e-5);
     }
 
@@ -400,8 +434,9 @@ mod tests {
         assert!(!SliderVerticalView::apply_key(
             &mut scene,
             Some("save_btn"),
-            "ArrowUp"
-        , pinion_core::Modifiers::empty()));
+            "ArrowUp",
+            pinion_core::Modifiers::empty()
+        ));
         assert!((current_value(&scene) - 0.5).abs() < 1e-5);
     }
 }
@@ -442,10 +477,7 @@ mod a11y_tests {
 
     #[test]
     fn vertical_focused_tag_sets_focused_flag() {
-        let nodes = SliderVerticalView::access_node(
-            &(SliderState::Idle, 0.5),
-            Some("main_slider"),
-        );
+        let nodes = SliderVerticalView::access_node(&(SliderState::Idle, 0.5), Some("main_slider"));
         assert!(nodes[0].state.focused);
     }
 

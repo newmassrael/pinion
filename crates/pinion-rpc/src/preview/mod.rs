@@ -35,15 +35,15 @@ mod list;
 mod proposal;
 mod propose;
 
-pub use apply::{apply_preview, ApplyOutcome};
+pub use apply::{ApplyOutcome, apply_preview};
 pub use blueprint::ViewBlueprint;
 pub use cancel::cancel_preview;
 pub use error::{ApplyError, ProposeError};
 pub use id::PreviewId;
 pub use kinds::TypedProposal;
 pub use ledger::{
-    Entry, PreviewLedger, PreviewView, SweepReport, DEFAULT_CAPACITY, DEFAULT_TTL, MAX_TTL,
+    DEFAULT_CAPACITY, DEFAULT_TTL, Entry, MAX_TTL, PreviewLedger, PreviewView, SweepReport,
 };
 pub use list::list_previews;
 pub use proposal::{ApplyContext, Proposal};
-pub use propose::{propose_change, ProposeOutcome};
+pub use propose::{ProposeOutcome, propose_change};

@@ -29,8 +29,8 @@
 use std::borrow::Cow;
 use std::rc::Rc;
 
-use crate::intent::Intent;
 use crate::Event;
+use crate::intent::Intent;
 
 /// Render backends an `External` may declare support for (§5.15 item 1).
 #[non_exhaustive]
@@ -264,7 +264,10 @@ pub(crate) fn at_index<T>(
     get: impl Fn(usize) -> Option<T>,
     project: impl Fn(T) -> IntrospectValue,
 ) -> IntrospectValue {
-    rest.parse::<usize>().ok().and_then(get).map_or(IntrospectValue::Null, project)
+    rest.parse::<usize>()
+        .ok()
+        .and_then(get)
+        .map_or(IntrospectValue::Null, project)
 }
 
 /// R742 §5.51 — typed drag-and-drop payload. Produced by a drag source
@@ -794,7 +797,10 @@ macro_rules! query_proxy_external_impl {
         impl $crate::external::External for $t {
             fn backends(&self) -> $crate::external::BackendSupport {
                 $crate::external::BackendSupport::new(
-                    &[$crate::external::Backend::Gui, $crate::external::Backend::Rpc],
+                    &[
+                        $crate::external::Backend::Gui,
+                        $crate::external::Backend::Rpc,
+                    ],
                     $crate::external::BackendFallback::Skip,
                 )
             }
@@ -883,7 +889,13 @@ impl<S: QuerySource + core::fmt::Debug + 'static> ExternalIntrospect for QueryOn
     /// `UnknownPath`. The schema is the single source of "which paths
     /// exist", so a slot can never drift between `query` and `intervene`.
     fn intervene(&mut self, path: &str, _value: IntrospectValue) -> Result<(), InterveneError> {
-        if self.source.introspect_schema().fields.iter().any(|(name, _)| *name == path) {
+        if self
+            .source
+            .introspect_schema()
+            .fields
+            .iter()
+            .any(|(name, _)| *name == path)
+        {
             Err(InterveneError::ReadOnly)
         } else {
             Err(InterveneError::UnknownPath)
@@ -1131,10 +1143,7 @@ mod tests {
     fn counted_opts_in_to_introspection() {
         let counted = CountedExternal::new(7);
         let introspect = counted.introspect().expect("opt-in declared");
-        assert_eq!(
-            introspect.query("count"),
-            Some(IntrospectValue::Int(7)),
-        );
+        assert_eq!(introspect.query("count"), Some(IntrospectValue::Int(7)),);
         assert!(introspect.query("missing").is_none());
     }
 
@@ -1186,7 +1195,9 @@ mod tests {
     #[test]
     fn counted_invoke_increment_returns_new_total() {
         let mut counted = CountedExternal::new(10);
-        let out = counted.invoke("increment", IntrospectValue::Int(5)).unwrap();
+        let out = counted
+            .invoke("increment", IntrospectValue::Int(5))
+            .unwrap();
         assert_eq!(out, IntrospectValue::Int(15));
         assert_eq!(counted.count, 15);
     }
@@ -1298,20 +1309,14 @@ mod tests {
             fn query(&self, _: &str) -> Option<IntrospectValue> {
                 None
             }
-            fn intervene(
-                &mut self,
-                _: &str,
-                _: IntrospectValue,
-            ) -> Result<(), InterveneError> {
+            fn intervene(&mut self, _: &str, _: IntrospectValue) -> Result<(), InterveneError> {
                 Err(InterveneError::UnknownPath)
             }
             // invoke uses default impl
         }
         let mut stub = StubExternal::new();
         let mut null = NullIntrospect;
-        let err = null
-            .invoke("anything", IntrospectValue::Null)
-            .unwrap_err();
+        let err = null.invoke("anything", IntrospectValue::Null).unwrap_err();
         assert_eq!(err, InvokeError::UnknownPath);
         // Silence the unused stub binding.
         let _ = &mut stub;
@@ -1360,10 +1365,7 @@ mod tests {
             None,
             "narrowing failure surfaces as None, not silent truncation",
         );
-        assert_eq!(
-            IntrospectValue::Int(i64::from(i32::MIN) - 1).as_i32(),
-            None,
-        );
+        assert_eq!(IntrospectValue::Int(i64::from(i32::MIN) - 1).as_i32(), None,);
     }
 
     #[test]

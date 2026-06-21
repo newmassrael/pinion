@@ -41,25 +41,28 @@
 //! `Home` / `End` jump to the first / last segment, and the
 //! single-key shortcuts `d` / `w` / `m` select Day / Week / Month.
 
+use pinion_a11y::{
+    AccessAction, AccessFocus, AccessNode, RadioCell, WidgetA11y, radiogroup_radio_nodes,
+};
 use pinion_core::external::External;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widgets::radio::{RadioEvent, RadioState};
 use pinion_core::widgets::radio_group::RadioGroupExternal;
 use pinion_core::{Color, Frame, Scene, WidgetCore};
-use pinion_a11y::{
-    radiogroup_radio_nodes, AccessAction, AccessFocus, AccessNode, RadioCell, WidgetA11y,
-};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::radio_composite as rc;
 
 use pinion_widget_paint::state_layer::{HOVER, PRESSED};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
-vello_renderer_impl!(HelloSegmentedButtonRenderer, HelloSegmentedButtonRendererError);
+vello_renderer_impl!(
+    HelloSegmentedButtonRenderer,
+    HelloSegmentedButtonRendererError
+);
 
 const WIN_W: u32 = 420;
 const WIN_H: u32 = 140;
@@ -153,13 +156,17 @@ fn segment(index: usize, state: RadioState, selected: bool, theme: &Theme) -> Sc
         children.push(Scene::Text(TextNode::styled(
             CHECK_GLYPH,
             Rect::default(),
-            TextStyle::new().with_size_px(CHECK_FONT_PX).with_fg(label_color),
+            TextStyle::new()
+                .with_size_px(CHECK_FONT_PX)
+                .with_fg(label_color),
         )));
     }
     children.push(Scene::Text(TextNode::styled(
         segment_label(index),
         Rect::default(),
-        TextStyle::new().with_size_px(LABEL_FONT_PX).with_fg(label_color),
+        TextStyle::new()
+            .with_size_px(LABEL_FONT_PX)
+            .with_fg(label_color),
     )));
     let seg_tag = format!("{PRIMARY_TAG}#{index}");
     Scene::Container(
@@ -292,7 +299,13 @@ impl WidgetCore for SegmentedView {
             .rows
             .iter()
             .enumerate()
-            .map(|(i, (s, sel))| format!("{i}={}{}", radio_state_short(*s), if *sel { "+" } else { "-" }))
+            .map(|(i, (s, sel))| {
+                format!(
+                    "{i}={}{}",
+                    radio_state_short(*s),
+                    if *sel { "+" } else { "-" }
+                )
+            })
             .collect::<Vec<_>>()
             .join(" ");
         match state.focused {
@@ -538,10 +551,13 @@ mod tests {
         let Scene::External(node) = scene else {
             return None;
         };
-        node.handle.introspect()?.query("selected_index").and_then(|v| match v {
-            IntrospectValue::Int(i) => Some(i),
-            _ => None,
-        })
+        node.handle
+            .introspect()?
+            .query("selected_index")
+            .and_then(|v| match v {
+                IntrospectValue::Int(i) => Some(i),
+                _ => None,
+            })
     }
 
     #[test]
@@ -586,7 +602,12 @@ mod tests {
     #[test]
     fn no_focus_swallows_arrow_silently() {
         let mut s = scene();
-        assert!(!SegmentedView::apply_key(&mut s, None, "ArrowRight", pinion_core::Modifiers::empty()));
+        assert!(!SegmentedView::apply_key(
+            &mut s,
+            None,
+            "ArrowRight",
+            pinion_core::Modifiers::empty()
+        ));
         assert_eq!(selected_index(&s), None);
     }
 
@@ -619,32 +640,62 @@ mod tests {
     #[test]
     fn home_and_end_jump_to_edges() {
         let mut s = scene();
-        assert!(SegmentedView::apply_key(&mut s, Some("view_mode"), "End", pinion_core::Modifiers::empty()));
+        assert!(SegmentedView::apply_key(
+            &mut s,
+            Some("view_mode"),
+            "End",
+            pinion_core::Modifiers::empty()
+        ));
         assert_eq!(selected_index(&s), Some(i64::try_from(N - 1).unwrap()));
-        assert!(SegmentedView::apply_key(&mut s, Some("view_mode"), "Home", pinion_core::Modifiers::empty()));
+        assert!(SegmentedView::apply_key(
+            &mut s,
+            Some("view_mode"),
+            "Home",
+            pinion_core::Modifiers::empty()
+        ));
         assert_eq!(selected_index(&s), Some(0));
     }
 
     #[test]
     fn access_child_invoke_click_selects_addressed_segment() {
         let mut s = scene();
-        assert!(SegmentedView::access_child_invoke(&mut s, PRIMARY_TAG, "1", AccessAction::Click));
+        assert!(SegmentedView::access_child_invoke(
+            &mut s,
+            PRIMARY_TAG,
+            "1",
+            AccessAction::Click
+        ));
         assert_eq!(selected_index(&s), Some(1));
     }
 
     #[test]
     fn access_child_invoke_subsequent_click_switches_selection() {
         let mut s = scene();
-        assert!(SegmentedView::access_child_invoke(&mut s, PRIMARY_TAG, "0", AccessAction::Click));
+        assert!(SegmentedView::access_child_invoke(
+            &mut s,
+            PRIMARY_TAG,
+            "0",
+            AccessAction::Click
+        ));
         assert_eq!(selected_index(&s), Some(0));
-        assert!(SegmentedView::access_child_invoke(&mut s, PRIMARY_TAG, "2", AccessAction::Click));
+        assert!(SegmentedView::access_child_invoke(
+            &mut s,
+            PRIMARY_TAG,
+            "2",
+            AccessAction::Click
+        ));
         assert_eq!(selected_index(&s), Some(2));
     }
 
     #[test]
     fn access_child_invoke_out_of_range_returns_false() {
         let mut s = scene();
-        assert!(!SegmentedView::access_child_invoke(&mut s, PRIMARY_TAG, "9", AccessAction::Click));
+        assert!(!SegmentedView::access_child_invoke(
+            &mut s,
+            PRIMARY_TAG,
+            "9",
+            AccessAction::Click
+        ));
         assert_eq!(selected_index(&s), None);
     }
 

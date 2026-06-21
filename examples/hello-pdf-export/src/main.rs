@@ -35,6 +35,8 @@
 //! ([[introspection-from-paint-not-screen]],
 //! [[ai-first-rpc-introspection-obligation]]).
 
+#[cfg(test)]
+use pinion_a11y::{AriaRole, WidgetA11y};
 use pinion_core::external::IntrospectValue;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -43,8 +45,6 @@ use pinion_core::style::{
 };
 use pinion_core::widgets::toggle::{ToggleEvent, ToggleExternal, ToggleState};
 use pinion_core::{ColorRole, Frame, Scene, WidgetCore, WidgetStateName, use_theme};
-#[cfg(test)]
-use pinion_a11y::{AriaRole, WidgetA11y};
 use pinion_derive::widget;
 use pinion_shell::vello_renderer_impl;
 
@@ -133,27 +133,33 @@ fn view(state: ToggleState, on: bool, _frame: &Frame) -> Scene {
 
     // Row of three primary-colour rounded swatches.
     let swatches = Scene::Container(
-        ContainerNode::new(SWATCH_COLORS.iter().map(|c| swatch(*c)).collect())
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Row)
-                    .with_justify(JustifyContent::Center)
-                    .with_align_items(AlignItems::Center)
-                    .with_gap(12),
-            ),
+        ContainerNode::new(SWATCH_COLORS.iter().map(|c| swatch(*c)).collect()).with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Row)
+                .with_justify(JustifyContent::Center)
+                .with_align_items(AlignItems::Center)
+                .with_gap(12),
+        ),
     );
 
     // Body text block.
     let body = Scene::Container(
-        ContainerNode::new(BODY_LINES.iter().map(|l| body_line(l, on_surface)).collect())
-            .with_layout(LayoutStyle::new().flex(FlexDirection::Column).with_gap(4)),
+        ContainerNode::new(
+            BODY_LINES
+                .iter()
+                .map(|l| body_line(l, on_surface))
+                .collect(),
+        )
+        .with_layout(LayoutStyle::new().flex(FlexDirection::Column).with_gap(4)),
     );
 
     // Bordered caption box (exercises the PDF stroke path).
     let caption = Scene::Text(TextNode::styled(
         "Figure 1 - colour key",
         Rect::default(),
-        TextStyle::new().with_size_px(CAPTION_FONT_PX).with_fg(outline),
+        TextStyle::new()
+            .with_size_px(CAPTION_FONT_PX)
+            .with_fg(outline),
     ));
     let bordered = Scene::Container(
         ContainerNode::new(vec![caption])
@@ -187,7 +193,9 @@ fn view(state: ToggleState, on: bool, _frame: &Frame) -> Scene {
     let repaint_label = Scene::Text(TextNode::styled(
         "Toggle watermark (repaint)",
         Rect::default(),
-        TextStyle::new().with_size_px(BODY_FONT_PX).with_fg(on_surface),
+        TextStyle::new()
+            .with_size_px(BODY_FONT_PX)
+            .with_fg(on_surface),
     ));
     let chip_base = theme.resolve(ColorRole::SurfaceContainerHighest);
     let repaint_fill: Color = match state {

@@ -379,8 +379,8 @@ pub fn split_subindex(tag: &str) -> (&str, Option<&str>) {
 #[cfg(test)]
 mod tests {
     use super::{
-        compose_send_payload, parse_send_payload, send_activation_index, send_activation_key,
-        split_send_payload, split_subindex, GridSendKey, GridTag,
+        GridSendKey, GridTag, compose_send_payload, parse_send_payload, send_activation_index,
+        send_activation_key, split_send_payload, split_subindex,
     };
     use crate::input::Modifiers;
 
@@ -413,7 +413,11 @@ mod tests {
             GridSendKey::Header { col: 1 },
             GridSendKey::Group { group: 3 },
         ] {
-            assert_eq!(GridSendKey::parse(&key.encode()), Some(key), "round-trip {key:?}");
+            assert_eq!(
+                GridSendKey::parse(&key.encode()),
+                Some(key),
+                "round-trip {key:?}"
+            );
         }
         assert_eq!(GridSendKey::Cell { row: 4, col: 2 }.encode(), "4_2");
         assert_eq!(GridSendKey::Header { col: 1 }.encode(), "h1");
@@ -422,7 +426,10 @@ mod tests {
 
     #[test]
     fn grid_send_key_row_view_and_rejects_non_grid() {
-        assert_eq!(GridSendKey::parse("5_2").and_then(GridSendKey::row), Some(5));
+        assert_eq!(
+            GridSendKey::parse("5_2").and_then(GridSendKey::row),
+            Some(5)
+        );
         // A header key has no row (SelectRows: ignored by a row coordinator).
         assert_eq!(GridSendKey::parse("h2").and_then(GridSendKey::row), None);
         // A group-header key has no row either (the group axis, R892).
@@ -487,12 +494,30 @@ mod tests {
         let parsed: Option<(u64, &str, Modifiers)> = parse_send_payload("3:PointerUp:sc");
         assert_eq!(
             parsed,
-            Some((3_u64, "PointerUp", Modifiers { shift: true, ctrl: true, alt: false, meta: false })),
+            Some((
+                3_u64,
+                "PointerUp",
+                Modifiers {
+                    shift: true,
+                    ctrl: true,
+                    alt: false,
+                    meta: false
+                }
+            )),
         );
         // The raw splitter agrees (the SSOT both paths decode through).
         assert_eq!(
             split_send_payload("4_2:PointerUp:s"),
-            Some(("4_2", "PointerUp", Modifiers { shift: true, ctrl: false, alt: false, meta: false })),
+            Some((
+                "4_2",
+                "PointerUp",
+                Modifiers {
+                    shift: true,
+                    ctrl: false,
+                    alt: false,
+                    meta: false
+                }
+            )),
         );
         // An unparseable modifier token rejects the whole payload.
         let bad: Option<(u64, &str, Modifiers)> = parse_send_payload("3:PointerUp:Move");
@@ -505,17 +530,38 @@ mod tests {
         // composed form decodes back to its inputs, and the bare
         // modifier-free form is the colon-free back-compat wire
         // (split answers None = bare event).
-        let ctrl = Modifiers { shift: false, ctrl: true, alt: false, meta: false };
-        assert_eq!(compose_send_payload(Some("4"), "PointerUp", ctrl), "4:PointerUp:c");
+        let ctrl = Modifiers {
+            shift: false,
+            ctrl: true,
+            alt: false,
+            meta: false,
+        };
+        assert_eq!(
+            compose_send_payload(Some("4"), "PointerUp", ctrl),
+            "4:PointerUp:c"
+        );
         assert_eq!(
             split_send_payload("4:PointerUp:c"),
             Some(("4", "PointerUp", ctrl)),
         );
-        assert_eq!(compose_send_payload(Some("4"), "PointerUp", NONE), "4:PointerUp");
-        assert_eq!(compose_send_payload(None, "PointerUp", ctrl), ":PointerUp:c");
-        assert_eq!(split_send_payload(":PointerUp:c"), Some(("", "PointerUp", ctrl)));
+        assert_eq!(
+            compose_send_payload(Some("4"), "PointerUp", NONE),
+            "4:PointerUp"
+        );
+        assert_eq!(
+            compose_send_payload(None, "PointerUp", ctrl),
+            ":PointerUp:c"
+        );
+        assert_eq!(
+            split_send_payload(":PointerUp:c"),
+            Some(("", "PointerUp", ctrl))
+        );
         assert_eq!(compose_send_payload(None, "PointerUp", NONE), "PointerUp");
-        assert_eq!(split_send_payload("PointerUp"), None, "bare = no-split contract");
+        assert_eq!(
+            split_send_payload("PointerUp"),
+            None,
+            "bare = no-split contract"
+        );
     }
 
     #[test]
@@ -526,7 +572,16 @@ mod tests {
         // no special-casing in the splitter.
         assert_eq!(
             split_send_payload(":PointerUp:c"),
-            Some(("", "PointerUp", Modifiers { shift: false, ctrl: true, alt: false, meta: false })),
+            Some((
+                "",
+                "PointerUp",
+                Modifiers {
+                    shift: false,
+                    ctrl: true,
+                    alt: false,
+                    meta: false
+                }
+            )),
         );
         // A modifier-free bare event stays the colon-free back-compat wire:
         // no `:` at all, so the splitter answers `None` (= bare event).
@@ -559,9 +614,20 @@ mod tests {
         // on the activation edge (a status-bar segment name, not an
         // index). Gate is shared with send_activation_index.
         assert_eq!(send_activation_key("mode:PointerUp"), Some("mode"));
-        assert_eq!(send_activation_key("encoding:KeyboardActivate"), Some("encoding"));
-        assert_eq!(send_activation_key("mode:PointerEnter"), None, "hover does not activate");
-        assert_eq!(send_activation_key("mode:PointerDown"), None, "press does not activate");
+        assert_eq!(
+            send_activation_key("encoding:KeyboardActivate"),
+            Some("encoding")
+        );
+        assert_eq!(
+            send_activation_key("mode:PointerEnter"),
+            None,
+            "hover does not activate"
+        );
+        assert_eq!(
+            send_activation_key("mode:PointerDown"),
+            None,
+            "press does not activate"
+        );
         // The index form is the parsed specialization of the key form.
         assert_eq!(send_activation_index("7:PointerUp"), Some(7));
         assert_eq!(send_activation_key("7:PointerUp"), Some("7"));

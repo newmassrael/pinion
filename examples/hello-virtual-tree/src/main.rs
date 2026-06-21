@@ -43,7 +43,7 @@
 //! the `clamp_nav` + `scroll_offset_to_reveal` SSOTs the family already
 //! owns; no new substrate.
 
-use pinion_a11y::{tree_row_tag, windowed_tree_access_nodes, AccessFocus, AccessNode, WidgetA11y};
+use pinion_a11y::{AccessFocus, AccessNode, WidgetA11y, tree_row_tag, windowed_tree_access_nodes};
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::intent::Intent;
 use pinion_core::intent_tag;
@@ -51,20 +51,20 @@ use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
 use pinion_core::widgets::tree_nav::{
-    flat_visible, toggle_expanded, tree_view_introspection_extra, TreeNode,
+    TreeNode, flat_visible, toggle_expanded, tree_view_introspection_extra,
 };
 use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::{Frame, Owner, Scene, Signal, WidgetCore};
 use pinion_shell::typeahead::apply_windowed_tree_key;
-use pinion_shell::{vello_renderer_impl, SizeStrategy, WidgetView};
-use pinion_widget_paint::scrollbar::{view_vertical_scrollbar, VerticalScrollbarStyle};
-use pinion_widget_paint::tree_view::{view_virtual_tree, TreeViewFocus, TreeViewStyle};
+use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
+use pinion_widget_paint::scrollbar::{VerticalScrollbarStyle, view_vertical_scrollbar};
+use pinion_widget_paint::tree_view::{TreeViewFocus, TreeViewStyle, view_virtual_tree};
 use std::rc::Rc;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -172,9 +172,7 @@ fn initial_nodes() -> Vec<TreeRow> {
     (0..SECTIONS)
         .map(|s| {
             let children = (0..CHILDREN_PER)
-                .map(|i| {
-                    TreeRow::leaf(format!("s{s}-i{i}"), format!("Item {s:03}-{i:04}"))
-                })
+                .map(|i| TreeRow::leaf(format!("s{s}-i{i}"), format!("Item {s:03}-{i:04}")))
                 .collect();
             TreeRow {
                 id: format!("s{s}"),
@@ -208,8 +206,8 @@ struct TreeState {
 }
 
 fn use_tree_state() -> Rc<TreeState> {
-    let owner = Owner::current()
-        .expect("use_tree_state must run inside a CoreShell view / reducer wrap");
+    let owner =
+        Owner::current().expect("use_tree_state must run inside a CoreShell view / reducer wrap");
     owner.cache("hello_virtual_tree::state", || TreeState {
         nodes: Signal::new(initial_nodes()),
         // Boot the keyboard cursor on the first row (the WAI-ARIA tree
@@ -280,8 +278,12 @@ fn view(_state: ButtonState, _frame: &Frame) -> Scene {
     let (_, measured_h) = scroll.measured_viewport();
     let scrollbar_style = VerticalScrollbarStyle::material(measured_h, SCROLLBAR_TAG);
     let scrollbar_interaction = use_scrollbar_interaction(SCROLLBAR_TAG);
-    let scrollbar_visual =
-        view_vertical_scrollbar(&scroll, &theme, &scrollbar_style, scrollbar_interaction.get());
+    let scrollbar_visual = view_vertical_scrollbar(
+        &scroll,
+        &theme,
+        &scrollbar_style,
+        scrollbar_interaction.get(),
+    );
 
     // Row band: the windowed tree beside the scrollbar peer, flex-grow so
     // it fills the window below the header. The measured-viewport
@@ -300,7 +302,11 @@ fn view(_state: ButtonState, _frame: &Frame) -> Scene {
     let invisible_root = Scene::Container(
         ContainerNode::new(Vec::new())
             .with_tag(ROOT_TAG)
-            .with_layout(LayoutStyle::new().with_size(Size::px(0, 0)).with_focusable(true)),
+            .with_layout(
+                LayoutStyle::new()
+                    .with_size(Size::px(0, 0))
+                    .with_focusable(true),
+            ),
     );
 
     Scene::Container(
@@ -448,8 +454,13 @@ impl WidgetA11y for VirtualTreeView {
         let rows = flat_visible(&nodes);
         let scroll = use_scroll_state(SCROLL_KEY);
         let (_, measured_h) = scroll.measured_viewport();
-        let window =
-            compute_visible_range(scroll.offset_y(), measured_h, rows.len(), ROW_PITCH, OVERSCAN);
+        let window = compute_visible_range(
+            scroll.offset_y(),
+            measured_h,
+            rows.len(),
+            ROW_PITCH,
+            OVERSCAN,
+        );
         windowed_tree_access_nodes(
             ROOT_TAG,
             TREE_TAG,
@@ -470,7 +481,10 @@ impl WidgetA11y for VirtualTreeView {
         if focused == Some(ROOT_TAG)
             && let Some(cursor) = use_tree_state().focused_id.get()
         {
-            return Some(AccessFocus::composite(ROOT_TAG, tree_row_tag(TREE_TAG, &cursor)));
+            return Some(AccessFocus::composite(
+                ROOT_TAG,
+                tree_row_tag(TREE_TAG, &cursor),
+            ));
         }
         focused.map(AccessFocus::atomic)
     }
@@ -494,9 +508,9 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_key_impl, flat_visible, initial_nodes, toggle_expanded, tree_row_tag, use_tree_state,
-        view, TreeRow, VirtualTreeView, CHILDREN_PER, CLICK_INTENT_TAG, EXPANDED_AT_BOOT, OVERSCAN,
-        ROOT_TAG, ROW_PITCH, SCROLL_KEY, SECTIONS, TOTAL_NODES, TREE_TAG,
+        CHILDREN_PER, CLICK_INTENT_TAG, EXPANDED_AT_BOOT, OVERSCAN, ROOT_TAG, ROW_PITCH,
+        SCROLL_KEY, SECTIONS, TOTAL_NODES, TREE_TAG, TreeRow, VirtualTreeView, apply_key_impl,
+        flat_visible, initial_nodes, toggle_expanded, tree_row_tag, use_tree_state, view,
     };
     use pinion_a11y::{AriaRole, WidgetA11y};
     use pinion_core::scene::ContainerNode;
@@ -504,7 +518,7 @@ mod tests {
     use pinion_core::widgets::scroll::use_scroll_state;
     use pinion_core::widgets::virtual_list::compute_visible_range;
     use pinion_core::{Frame, Modifiers, Owner, Scene, WidgetCore};
-    use pinion_widget_paint::tree_view::{TreeViewStyle, TREE_ROW_CLICK_EVENT};
+    use pinion_widget_paint::tree_view::{TREE_ROW_CLICK_EVENT, TreeViewStyle};
 
     fn count_nodes(nodes: &[TreeRow]) -> usize {
         nodes.iter().map(|n| 1 + count_nodes(&n.children)).sum()
@@ -537,7 +551,10 @@ mod tests {
     #[test]
     fn click_intent_tag_matches_substrate_event() {
         // Lockstep: the dotted reducer arm vs the substrate bare name.
-        assert_eq!(CLICK_INTENT_TAG, format!("{TREE_TAG}.{TREE_ROW_CLICK_EVENT}"));
+        assert_eq!(
+            CLICK_INTENT_TAG,
+            format!("{TREE_TAG}.{TREE_ROW_CLICK_EVENT}")
+        );
     }
 
     #[test]
@@ -561,7 +578,11 @@ mod tests {
             let state = use_tree_state();
             let before = flat_visible(&state.nodes.get()).len();
             toggle_expanded(&state.nodes, "s0-i0"); // a leaf
-            assert_eq!(flat_visible(&state.nodes.get()).len(), before, "leaf toggle no-op");
+            assert_eq!(
+                flat_visible(&state.nodes.get()).len(),
+                before,
+                "leaf toggle no-op"
+            );
         });
     }
 
@@ -572,9 +593,7 @@ mod tests {
             match scene {
                 Scene::Scroll(s) => walk(s.content.as_ref(), prefix),
                 Scene::Container(c) => {
-                    let here = usize::from(
-                        c.tag.as_deref().is_some_and(|t| t.starts_with(prefix)),
-                    );
+                    let here = usize::from(c.tag.as_deref().is_some_and(|t| t.starts_with(prefix)));
                     here + c.children.iter().map(|ch| walk(ch, prefix)).sum::<usize>()
                 }
                 _ => 0,
@@ -625,15 +644,25 @@ mod tests {
         for item in items {
             assert_eq!(item.role, AriaRole::TreeItem, "windowed rows are treeitems");
             assert!(item.level.is_some(), "each treeitem carries aria-level");
-            assert!(item.position_in_set.is_some(), "each treeitem carries aria-posinset");
-            assert!(item.size_of_set.is_some(), "each treeitem carries aria-setsize");
+            assert!(
+                item.position_in_set.is_some(),
+                "each treeitem carries aria-posinset"
+            );
+            assert!(
+                item.size_of_set.is_some(),
+                "each treeitem carries aria-setsize"
+            );
         }
         // The top section row (a branch) advertises its expanded state.
         let s0 = items
             .iter()
             .find(|n| n.tag.ends_with("#s0"))
             .expect("section 0 in the boot window");
-        assert_eq!(s0.expanded, Some(true), "s0 boots expanded (aria-expanded=true)");
+        assert_eq!(
+            s0.expanded,
+            Some(true),
+            "s0 boots expanded (aria-expanded=true)"
+        );
     }
 
     #[test]
@@ -658,12 +687,17 @@ mod tests {
             Some(tree_row_tag(TREE_TAG, "s0").as_str()),
             "active descendant = the cursor row",
         );
-        let cursor =
-            nodes.iter().find(|n| n.tag == tree_row_tag(TREE_TAG, "s0")).expect("cursor windowed");
+        let cursor = nodes
+            .iter()
+            .find(|n| n.tag == tree_row_tag(TREE_TAG, "s0"))
+            .expect("cursor windowed");
         assert!(cursor.state.focused, "cursor row carries with_focused");
         assert_eq!(cursor.selected, Some(true), "selection-follows-focus");
         assert!(
-            elsewhere.expect("atomic when not on the tree").active_descendant.is_none(),
+            elsewhere
+                .expect("atomic when not on the tree")
+                .active_descendant
+                .is_none(),
             "focus elsewhere -> atomic, no active descendant",
         );
     }
@@ -684,9 +718,17 @@ mod tests {
 
             // Boots with the cursor on s0; ArrowDown advances to its first
             // child and needs no scroll (still inside the top window).
-            assert_eq!(state.focused_id.get().as_deref(), Some("s0"), "boot cursor on s0");
+            assert_eq!(
+                state.focused_id.get().as_deref(),
+                Some("s0"),
+                "boot cursor on s0"
+            );
             assert!(apply_key_impl("ArrowDown"), "ArrowDown handled");
-            assert_eq!(state.focused_id.get().as_deref(), Some("s0-i0"), "ArrowDown -> first child");
+            assert_eq!(
+                state.focused_id.get().as_deref(),
+                Some("s0-i0"),
+                "ArrowDown -> first child"
+            );
             assert_eq!(scroll.offset_y(), 0, "near-top row needs no scroll");
 
             // Drive the cursor well past the bottom of the 10-row window.
@@ -698,9 +740,13 @@ mod tests {
             // The cursor row is inside the re-derived window (scroll-into-view).
             let cursor = state.focused_id.get().expect("cursor set");
             let rows = flat_visible(&state.nodes.get());
-            let idx = rows.iter().position(|r| r.id == cursor).expect("cursor row visible");
+            let idx = rows
+                .iter()
+                .position(|r| r.id == cursor)
+                .expect("cursor row visible");
             let (_, mh) = scroll.measured_viewport();
-            let window = compute_visible_range(scroll.offset_y(), mh, rows.len(), ROW_PITCH, OVERSCAN);
+            let window =
+                compute_visible_range(scroll.offset_y(), mh, rows.len(), ROW_PITCH, OVERSCAN);
             assert!(
                 idx >= window.first && idx < window.first + window.count,
                 "cursor row {idx} stays within the revealed window {window:?}"
@@ -725,11 +771,21 @@ mod tests {
                 "no focus -> key dropped"
             );
             assert!(
-                !VirtualTreeView::apply_key(&mut scene, Some("other"), "ArrowDown", Modifiers::default()),
+                !VirtualTreeView::apply_key(
+                    &mut scene,
+                    Some("other"),
+                    "ArrowDown",
+                    Modifiers::default()
+                ),
                 "focus elsewhere -> key dropped"
             );
             assert!(
-                VirtualTreeView::apply_key(&mut scene, Some(ROOT_TAG), "ArrowDown", Modifiers::default()),
+                VirtualTreeView::apply_key(
+                    &mut scene,
+                    Some(ROOT_TAG),
+                    "ArrowDown",
+                    Modifiers::default()
+                ),
                 "focus on the tree root -> key applies"
             );
         });
@@ -749,7 +805,11 @@ mod tests {
             assert_eq!(after, before + CHILDREN_PER, "ArrowRight expanded s50");
             // ArrowLeft on the expanded branch collapses it again.
             assert!(apply_key_impl("ArrowLeft"), "ArrowLeft handled");
-            assert_eq!(flat_visible(&state.nodes.get()).len(), before, "ArrowLeft collapsed s50");
+            assert_eq!(
+                flat_visible(&state.nodes.get()).len(),
+                before,
+                "ArrowLeft collapsed s50"
+            );
         });
     }
 }

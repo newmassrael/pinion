@@ -376,7 +376,10 @@ mod tests {
         // pinned this for the inline binding; the lift carries it
         // forward.
         let theme = light_theme();
-        assert_eq!(checkbox_accent_for(&theme, CheckboxState::Idle), theme.accent);
+        assert_eq!(
+            checkbox_accent_for(&theme, CheckboxState::Idle),
+            theme.accent
+        );
     }
 
     #[test]
@@ -384,7 +387,10 @@ mod tests {
         // Pre-lift parity for the outline ramp (mirror of the accent
         // test, anchored on the outline role).
         let theme = light_theme();
-        assert_eq!(checkbox_outline_for(&theme, CheckboxState::Idle), theme.outline);
+        assert_eq!(
+            checkbox_outline_for(&theme, CheckboxState::Idle),
+            theme.outline
+        );
     }
 
     #[test]

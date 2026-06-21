@@ -28,19 +28,19 @@
 //! [`rc::roving_key`] shell with a clamping key map).
 
 use pinion_a11y::{
-    navigation_link_nodes, AccessAction, AccessFocus, AccessNode, NavLink, WidgetA11y,
+    AccessAction, AccessFocus, AccessNode, NavLink, WidgetA11y, navigation_link_nodes,
 };
 use pinion_core::external::{External, ExternalIntrospect, IntrospectValue};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widgets::button::ButtonState;
 use pinion_core::widgets::pagination::PaginationExternal;
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::{Color, Frame, Scene, WidgetCore, WidgetStateName};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::radio_composite as rc;
 use pinion_widget_paint::state_layer::state_layer;
 
@@ -118,14 +118,12 @@ fn view(state: PageState, _frame: &Frame) -> Scene {
     // PRIMARY_TAG on the pager row so `{path:"pagination"}` AI routing +
     // `rect_for_tag` AT bounds attach to the Navigation landmark.
     let bar = Scene::Container(
-        ContainerNode::new(row)
-            .with_tag(PRIMARY_TAG)
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Row)
-                    .with_align_items(AlignItems::Center)
-                    .with_gap(GAP),
-            ),
+        ContainerNode::new(row).with_tag(PRIMARY_TAG).with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Row)
+                .with_align_items(AlignItems::Center)
+                .with_gap(GAP),
+        ),
     );
     Scene::Container(
         ContainerNode::new(vec![bar])
@@ -213,7 +211,10 @@ const PAGE_LABELS: [&str; N] = ["1", "2", "3", "4", "5"];
 
 /// Read a chevron's [`ButtonState`] from the coordinator's introspect slot
 /// (`prev.state` / `next.state`), defaulting to `Idle` if absent.
-fn read_button_state(intro: &dyn pinion_core::external::ExternalIntrospect, path: &str) -> ButtonState {
+fn read_button_state(
+    intro: &dyn pinion_core::external::ExternalIntrospect,
+    path: &str,
+) -> ButtonState {
     match intro.query(path) {
         Some(IntrospectValue::Text(name)) => ButtonState::from_name_or_default(&name),
         _ => ButtonState::Idle,
@@ -285,7 +286,10 @@ impl WidgetCore for PaginationView {
             .iter()
             .position(|(_, sel)| *sel)
             .map_or_else(|| "none".to_string(), |i| i.to_string());
-        format!("current={cur} prev={} next={}", state.can_prev, state.can_next)
+        format!(
+            "current={cur} prev={} next={}",
+            state.can_prev, state.can_next
+        )
     }
 }
 
@@ -364,8 +368,10 @@ impl WidgetA11y for PaginationView {
         match sub_tag {
             "prev" | "next" => {
                 if matches!(action, AccessAction::Click | AccessAction::Default) {
-                    let _ =
-                        intro.invoke("send", IntrospectValue::Text(format!("{sub_tag}:PointerUp")));
+                    let _ = intro.invoke(
+                        "send",
+                        IntrospectValue::Text(format!("{sub_tag}:PointerUp")),
+                    );
                     true
                 } else {
                     false
@@ -380,17 +386,17 @@ impl WidgetView for PaginationView {
     type Renderer = HelloPaginationRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 }
 
 /// Resolve a key to a target page index, **clamping** at the ends (no
 /// wrap — matching the prev / next buttons). `Home` / `End` jump to the
 /// first / last page.
-fn resolve_target_index(
-    intro: Option<&dyn ExternalIntrospect>,
-    key: &str,
-) -> Option<usize> {
+fn resolve_target_index(intro: Option<&dyn ExternalIntrospect>, key: &str) -> Option<usize> {
     let cur = intro.and_then(rc::selected_index).unwrap_or(0);
     match key {
         "Home" => Some(0),
@@ -421,12 +427,24 @@ mod tests {
     #[test]
     fn view_carries_primary_tag_every_page_and_both_arrows() {
         let scene = pinion_core::Owner::new().run(|| view(state_with(BOOT_CURRENT), &Frame::new()));
-        assert!(scene.contains_tag(PRIMARY_TAG), "pager row carries the landmark tag");
+        assert!(
+            scene.contains_tag(PRIMARY_TAG),
+            "pager row carries the landmark tag"
+        );
         for i in 0..N {
-            assert!(scene.contains_tag(&format!("{PRIMARY_TAG}#{i}")), "page {i} present");
+            assert!(
+                scene.contains_tag(&format!("{PRIMARY_TAG}#{i}")),
+                "page {i} present"
+            );
         }
-        assert!(scene.contains_tag(&format!("{PRIMARY_TAG}#prev")), "prev arrow present");
-        assert!(scene.contains_tag(&format!("{PRIMARY_TAG}#next")), "next arrow present");
+        assert!(
+            scene.contains_tag(&format!("{PRIMARY_TAG}#prev")),
+            "prev arrow present"
+        );
+        assert!(
+            scene.contains_tag(&format!("{PRIMARY_TAG}#next")),
+            "next arrow present"
+        );
     }
 
     /// Recursively find the container tagged `tag`.
@@ -462,7 +480,11 @@ mod tests {
         assert_eq!(nodes[1].name.as_deref(), Some("Previous page"));
         assert_eq!(nodes[1].role, AriaRole::Link);
         let page2 = &nodes[2 + 2]; // page index 2
-        assert_eq!(page2.current, Some(AriaCurrent::Page), "current page = aria-current");
+        assert_eq!(
+            page2.current,
+            Some(AriaCurrent::Page),
+            "current page = aria-current"
+        );
         assert_eq!(page2.name.as_deref(), Some("Page 3"));
         let last = nodes.last().unwrap();
         assert_eq!(last.name.as_deref(), Some("Next page"));
@@ -472,17 +494,27 @@ mod tests {
     fn prev_disabled_on_first_page_next_disabled_on_last() {
         let first = PaginationView::access_node(&state_with(0), None);
         assert!(first[1].state.disabled, "prev disabled on page 0");
-        assert!(!first.last().unwrap().state.disabled, "next enabled on page 0");
+        assert!(
+            !first.last().unwrap().state.disabled,
+            "next enabled on page 0"
+        );
         let last = PaginationView::access_node(&state_with(N - 1), None);
         assert!(!last[1].state.disabled, "prev enabled on last page");
-        assert!(last.last().unwrap().state.disabled, "next disabled on last page");
+        assert!(
+            last.last().unwrap().state.disabled,
+            "next disabled on last page"
+        );
     }
 
     #[test]
     fn keymap_clamps_without_wrapping() {
         // No live external here — resolve from the key alone (cur defaults
         // to 0 when intro is None), exercising the clamp arithmetic.
-        assert_eq!(resolve_target_index(None, "ArrowLeft"), Some(0), "clamp at first");
+        assert_eq!(
+            resolve_target_index(None, "ArrowLeft"),
+            Some(0),
+            "clamp at first"
+        );
         assert_eq!(resolve_target_index(None, "ArrowRight"), Some(1));
         assert_eq!(resolve_target_index(None, "Home"), Some(0));
         assert_eq!(resolve_target_index(None, "End"), Some(N - 1));

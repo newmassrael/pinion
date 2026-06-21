@@ -32,12 +32,12 @@
 use std::rc::Rc;
 
 use crate::external::{
-    query_proxy_external_impl, ExternalIntrospect, InterveneError, IntrospectSchema,
-    IntrospectValue, InvokeError,
+    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
+    query_proxy_external_impl,
 };
 use crate::reactive::{Owner, Signal};
 use crate::style::Color;
-use crate::widgets::grid_sort::{grid_filter_from_str, grid_filter_str, GridFilter};
+use crate::widgets::grid_sort::{GridFilter, grid_filter_from_str, grid_filter_str};
 
 /// R998 §5.40 — the background + foreground colour a matched [`RowStyleRule`]
 /// paints a row with. The wire form is `"<bg-hex>;<fg-hex>"` (each
@@ -67,7 +67,10 @@ impl RowTint {
     #[must_use]
     pub fn from_wire(s: &str) -> Option<Self> {
         let (bg, fg) = s.split_once(';')?;
-        Some(Self { bg: Color::from_hex(bg.trim())?, fg: Color::from_hex(fg.trim())? })
+        Some(Self {
+            bg: Color::from_hex(bg.trim())?,
+            fg: Color::from_hex(fg.trim())?,
+        })
     }
 }
 
@@ -97,7 +100,11 @@ impl RowStyleRule {
     /// Render as the wire form `"<filter>;<bg-hex>;<fg-hex>"`.
     #[must_use]
     pub fn to_wire(&self) -> String {
-        format!("{};{}", grid_filter_str(Some(&self.filter)), self.tint.to_wire())
+        format!(
+            "{};{}",
+            grid_filter_str(Some(&self.filter)),
+            self.tint.to_wire()
+        )
     }
 
     /// Parse `"<filter>;<bg-hex>;<fg-hex>"`; `None` when the filter does not
@@ -138,13 +145,19 @@ impl RowStyleState {
     /// An empty rule list (no coloring).
     #[must_use]
     pub fn new() -> Self {
-        Self { tag: None, rules: Signal::new(Vec::new()) }
+        Self {
+            tag: None,
+            rules: Signal::new(Vec::new()),
+        }
     }
 
     /// As [`new`](Self::new) but records the `use_row_style` cache key.
     #[must_use]
     pub fn with_tag(key: &'static str) -> Self {
-        Self { tag: Some(key), ..Self::new() }
+        Self {
+            tag: Some(key),
+            ..Self::new()
+        }
     }
 
     /// The `use_row_style` cache key, or `None` when constructed directly.
@@ -271,7 +284,11 @@ impl RowStyleExternal {
     /// Rule-management-only adapter (no per-row match introspection).
     #[must_use]
     pub fn new(state: Rc<RowStyleState>) -> Self {
-        Self { state, source: None, row_count: 0 }
+        Self {
+            state,
+            source: None,
+            row_count: 0,
+        }
     }
 
     /// Attach a dataset (`row_count` rows, `source(row)` → its cells) so the
@@ -307,7 +324,11 @@ impl RowStyleExternal {
         if rules.is_empty() {
             "none".to_string()
         } else {
-            rules.iter().map(RowStyleRule::to_wire).collect::<Vec<_>>().join("|")
+            rules
+                .iter()
+                .map(RowStyleRule::to_wire)
+                .collect::<Vec<_>>()
+                .join("|")
         }
     }
 
@@ -321,7 +342,8 @@ impl RowStyleExternal {
     fn match_index(&self, row: usize) -> Option<usize> {
         let source = self.source.as_ref()?;
         let cells = source(row);
-        self.state.match_index(|c| cells.get(c).map_or("", String::as_str))
+        self.state
+            .match_index(|c| cells.get(c).map_or("", String::as_str))
     }
 
     /// The number of rows matching any rule (0 without a source). Reads the
@@ -376,7 +398,9 @@ impl ExternalIntrospect for RowStyleExternal {
                 self.state
                     .rules()
                     .get(i)
-                    .map_or(IntrospectValue::Null, |r| IntrospectValue::Text(r.to_wire())),
+                    .map_or(IntrospectValue::Null, |r| {
+                        IntrospectValue::Text(r.to_wire())
+                    }),
             );
         }
         if let Some(rest) = path.strip_prefix("match.") {
@@ -394,13 +418,15 @@ impl ExternalIntrospect for RowStyleExternal {
         }
         match path {
             "rules" => Some(IntrospectValue::Text(self.rules_wire())),
-            "rule_count" => {
-                Some(IntrospectValue::Int(i64::try_from(self.state.rule_count()).unwrap_or(i64::MAX)))
-            }
-            "rows" => Some(IntrospectValue::Int(i64::try_from(self.row_count).unwrap_or(i64::MAX))),
-            "matched_rows" => {
-                Some(IntrospectValue::Int(i64::try_from(self.matched_rows()).unwrap_or(i64::MAX)))
-            }
+            "rule_count" => Some(IntrospectValue::Int(
+                i64::try_from(self.state.rule_count()).unwrap_or(i64::MAX),
+            )),
+            "rows" => Some(IntrospectValue::Int(
+                i64::try_from(self.row_count).unwrap_or(i64::MAX),
+            )),
+            "matched_rows" => Some(IntrospectValue::Int(
+                i64::try_from(self.matched_rows()).unwrap_or(i64::MAX),
+            )),
             _ => None,
         }
     }
@@ -427,14 +453,20 @@ impl ExternalIntrospect for RowStyleExternal {
         }
     }
 
-    fn invoke(&mut self, path: &str, args: IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+    fn invoke(
+        &mut self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
         match path {
             // AI-first: append a rule from its wire form, returning the new count.
             "add_rule" => match args {
                 IntrospectValue::Text(ref s) => {
                     let rule = RowStyleRule::from_wire(s).ok_or(InvokeError::TypeMismatch)?;
                     self.state.add_rule(rule);
-                    Ok(IntrospectValue::Int(i64::try_from(self.state.rule_count()).unwrap_or(i64::MAX)))
+                    Ok(IntrospectValue::Int(
+                        i64::try_from(self.state.rule_count()).unwrap_or(i64::MAX),
+                    ))
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
@@ -464,15 +496,17 @@ mod tests {
     // A 4-row × 2-column grid: col 0 a category, col 1 numeric.
     fn cells() -> Vec<Vec<String>> {
         vec![
-            vec!["A".to_string(), "30".to_string()], // 0
-            vec!["B".to_string(), "10".to_string()], // 1
-            vec!["A".to_string(), "5".to_string()],  // 2
+            vec!["A".to_string(), "30".to_string()],  // 0
+            vec!["B".to_string(), "10".to_string()],  // 1
+            vec!["A".to_string(), "5".to_string()],   // 2
             vec!["C".to_string(), "700".to_string()], // 3
         ]
     }
 
     fn cell_at(rows: &[Vec<String>], row: usize, col: usize) -> &str {
-        rows.get(row).and_then(|r| r.get(col)).map_or("", String::as_str)
+        rows.get(row)
+            .and_then(|r| r.get(col))
+            .map_or("", String::as_str)
     }
 
     #[test]
@@ -502,7 +536,11 @@ mod tests {
             RowStyleRule::from_wire(&wire),
         );
         // A bare filter that fails to parse → no rule.
-        assert_eq!(RowStyleRule::from_wire("garbage;#FF3030"), None, "needs filter;bg;fg");
+        assert_eq!(
+            RowStyleRule::from_wire("garbage;#FF3030"),
+            None,
+            "needs filter;bg;fg"
+        );
     }
 
     #[test]
@@ -534,7 +572,11 @@ mod tests {
             GridFilter::single(ColumnFacet::new(1, FilterOp::Ge, "20")),
             green_on_black(),
         ));
-        assert_eq!(st.resolve(|c| cell_at(&rows, 0, c)), Some(red_on_white()), "earlier rule wins");
+        assert_eq!(
+            st.resolve(|c| cell_at(&rows, 0, c)),
+            Some(red_on_white()),
+            "earlier rule wins"
+        );
         assert_eq!(st.match_index(|c| cell_at(&rows, 0, c)), Some(0));
     }
 
@@ -548,24 +590,42 @@ mod tests {
                 .with_source(rows.len(), move |row| rows[row].clone());
             // Boot: empty.
             assert_eq!(ext.query("rule_count"), Some(IntrospectValue::Int(0)));
-            assert_eq!(ext.query("rules"), Some(IntrospectValue::Text("none".into())));
+            assert_eq!(
+                ext.query("rules"),
+                Some(IntrospectValue::Text("none".into()))
+            );
             assert_eq!(ext.query("rows"), Some(IntrospectValue::Int(4)));
             // add_rule returns the new count.
             assert_eq!(
-                ext.invoke("add_rule", IntrospectValue::Text("0=A;#FF3030;#FFFFFF".into())),
+                ext.invoke(
+                    "add_rule",
+                    IntrospectValue::Text("0=A;#FF3030;#FFFFFF".into())
+                ),
                 Ok(IntrospectValue::Int(1)),
             );
             assert_eq!(
-                ext.invoke("add_rule", IntrospectValue::Text("1>=100;#30FF30;#000000".into())),
+                ext.invoke(
+                    "add_rule",
+                    IntrospectValue::Text("1>=100;#30FF30;#000000".into())
+                ),
                 Ok(IntrospectValue::Int(2)),
             );
-            assert_eq!(ext.query("rule.0"), Some(IntrospectValue::Text("0=A;#ff3030;#ffffff".into())));
+            assert_eq!(
+                ext.query("rule.0"),
+                Some(IntrospectValue::Text("0=A;#ff3030;#ffffff".into()))
+            );
             // match.<row>: row 0 (A,30) → rule 0; row 3 (C,700) → rule 1; row 1 → -1.
             assert_eq!(ext.query("match.0"), Some(IntrospectValue::Int(0)));
             assert_eq!(ext.query("match.3"), Some(IntrospectValue::Int(1)));
             assert_eq!(ext.query("match.1"), Some(IntrospectValue::Int(-1)));
-            assert_eq!(ext.query("tint.0"), Some(IntrospectValue::Text("#ff3030;#ffffff".into())));
-            assert_eq!(ext.query("tint.1"), Some(IntrospectValue::Text("none".into())));
+            assert_eq!(
+                ext.query("tint.0"),
+                Some(IntrospectValue::Text("#ff3030;#ffffff".into()))
+            );
+            assert_eq!(
+                ext.query("tint.1"),
+                Some(IntrospectValue::Text("none".into()))
+            );
             // matched_rows: rows 0,2 (A) + row 3 (700) = 3.
             assert_eq!(ext.query("matched_rows"), Some(IntrospectValue::Int(3)));
             // rules wire round-trips through intervene (to_hex emits lowercase).
@@ -576,13 +636,24 @@ mod tests {
             assert_eq!(wire, "0=A;#ff3030;#ffffff|1>=100;#30ff30;#000000");
             ext.intervene("rules", IntrospectValue::Null).unwrap();
             assert_eq!(ext.query("rule_count"), Some(IntrospectValue::Int(0)));
-            ext.intervene("rules", IntrospectValue::Text(wire.clone())).unwrap();
-            assert_eq!(ext.query("rule_count"), Some(IntrospectValue::Int(2)), "restore");
+            ext.intervene("rules", IntrospectValue::Text(wire.clone()))
+                .unwrap();
+            assert_eq!(
+                ext.query("rule_count"),
+                Some(IntrospectValue::Int(2)),
+                "restore"
+            );
             // clear via invoke.
-            assert_eq!(ext.invoke("clear", IntrospectValue::Null), Ok(IntrospectValue::Int(0)));
+            assert_eq!(
+                ext.invoke("clear", IntrospectValue::Null),
+                Ok(IntrospectValue::Int(0))
+            );
             assert_eq!(ext.query("rule_count"), Some(IntrospectValue::Int(0)));
             // read-only slots reject intervene.
-            assert_eq!(ext.intervene("rule_count", IntrospectValue::Int(1)), Err(InterveneError::ReadOnly));
+            assert_eq!(
+                ext.intervene("rule_count", IntrospectValue::Int(1)),
+                Err(InterveneError::ReadOnly)
+            );
         });
     }
 }

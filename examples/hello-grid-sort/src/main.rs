@@ -44,22 +44,24 @@
 //! so — exactly as the 1-D `hello-virtual-sort` does — the tree is built
 //! inline (R776's view-order-permutation carve-out).
 
-use pinion_a11y::{windowed_grid_nodes_sorted, AccessNode, WidgetA11y};
+use pinion_a11y::{AccessNode, WidgetA11y, windowed_grid_nodes_sorted};
 use pinion_core::external::External;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, LayoutStyle, Size, SizeValue, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
-use pinion_core::undo::{use_undo_stack, UndoStack, UndoStackExternal};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
+use pinion_core::undo::{UndoStack, UndoStackExternal, use_undo_stack};
 use pinion_core::widget_core::ExtraExternal;
-use pinion_core::widgets::grid_sort::{grid_sort_str, use_grid_sort, GridSortExternal, GridSortState};
+use pinion_core::widgets::grid_sort::{
+    GridSortExternal, GridSortState, grid_sort_str, use_grid_sort,
+};
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::virtual_list::compute_visible_range;
-use pinion_core::widgets::virtual_select::{read_selected, VirtualSelectExternal};
+use pinion_core::widgets::virtual_select::{VirtualSelectExternal, read_selected};
 use pinion_core::{Frame, Scene, WidgetCore};
-use pinion_shell::{vello_renderer_impl, WidgetView};
-use pinion_widget_paint::table::{view_virtual_table, GridScroll, TableStyle, VirtualTableData};
+use pinion_shell::{WidgetView, vello_renderer_impl};
+use pinion_widget_paint::table::{GridScroll, TableStyle, VirtualTableData, view_virtual_table};
 use std::rc::Rc;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -167,7 +169,9 @@ fn status_bar(theme: &Theme, sort: Option<(usize, bool)>, selected: Option<usize
     );
     Scene::Container(
         ContainerNode::new(vec![text])
-            .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh)))
+            .with_style(BoxStyle::filled(
+                theme.resolve(ColorRole::SurfaceContainerHigh),
+            ))
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Row)
@@ -196,7 +200,10 @@ fn view(selected: Option<usize>, _frame: &Frame) -> Scene {
 
     let grid = view_virtual_table(
         GRID_TAG,
-        GridScroll { body: &scroll, horizontal: &h_scroll },
+        GridScroll {
+            body: &scroll,
+            horizontal: &h_scroll,
+        },
         VirtualTableData {
             headers: &HEADERS,
             item_count: N,
@@ -249,7 +256,10 @@ impl WidgetCore for GridSortView {
                 SORT_TAG,
                 Box::new(GridSortExternal::new(use_grid_data()).with_undo(use_sort_undo())),
             ),
-            ExtraExternal::new(UNDO_STACK_TAG, Box::new(UndoStackExternal::new(use_sort_undo()))),
+            ExtraExternal::new(
+                UNDO_STACK_TAG,
+                Box::new(UndoStackExternal::new(use_sort_undo())),
+            ),
         ]
     }
 
@@ -298,7 +308,8 @@ impl WidgetA11y for GridSortView {
         let sort = grid_sort.sort();
         let order = grid_sort.order();
         let (_, measured_h) = scroll.measured_viewport();
-        let window = compute_visible_range(scroll.offset_y(), measured_h, order.len(), ROW_H, OVERSCAN);
+        let window =
+            compute_visible_range(scroll.offset_y(), measured_h, order.len(), ROW_H, OVERSCAN);
         windowed_grid_nodes_sorted(
             GRID_TAG,
             "Sortable data grid",
@@ -362,9 +373,15 @@ mod tests {
             // `"100" < "9"` lexically but `9 < 100` numerically).
             let mut lex: Vec<usize> = (0..N).collect();
             lex.sort_by(|&a, &b| {
-                score(a).to_string().cmp(&score(b).to_string()).then(a.cmp(&b))
+                score(a)
+                    .to_string()
+                    .cmp(&score(b).to_string())
+                    .then(a.cmp(&b))
             });
-            assert_ne!(*order, lex, "numeric order differs from the lexicographic order");
+            assert_ne!(
+                *order, lex,
+                "numeric order differs from the lexicographic order"
+            );
         });
     }
 
@@ -408,7 +425,11 @@ mod tests {
             let selected = order[0];
             let scene = view(Some(selected), &Frame::default());
             let fill = find_row_fill(&scene, &format!("{GRID_TAG}_row{selected}"));
-            assert_eq!(fill, Some(wash), "the selected SOURCE row carries the wash after re-sort");
+            assert_eq!(
+                fill,
+                Some(wash),
+                "the selected SOURCE row carries the wash after re-sort"
+            );
         });
     }
 
@@ -426,9 +447,19 @@ mod tests {
         });
         assert_eq!(nodes[0].role, AriaRole::Grid);
         // Active column header carries aria-sort=ascending; others none.
-        let ch1 = nodes.iter().find(|n| n.tag == format!("{GRID_TAG}_ch1")).unwrap();
-        assert_eq!(ch1.sort, Some(SortDirection::Ascending), "active column aria-sort");
-        let ch0 = nodes.iter().find(|n| n.tag == format!("{GRID_TAG}_ch0")).unwrap();
+        let ch1 = nodes
+            .iter()
+            .find(|n| n.tag == format!("{GRID_TAG}_ch1"))
+            .unwrap();
+        assert_eq!(
+            ch1.sort,
+            Some(SortDirection::Ascending),
+            "active column aria-sort"
+        );
+        let ch0 = nodes
+            .iter()
+            .find(|n| n.tag == format!("{GRID_TAG}_ch0"))
+            .unwrap();
         assert_eq!(ch0.sort, None, "inactive column has no aria-sort");
         // The top visual row's source carries aria-selected=true.
         let top_selected = nodes

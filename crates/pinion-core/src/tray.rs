@@ -111,13 +111,22 @@ impl TrayMenuItem {
     /// An enabled [`TrayMenuItem::Action`].
     #[must_use]
     pub fn action(id: impl Into<String>, label: impl Into<String>) -> Self {
-        Self::Action { id: id.into(), label: label.into(), enabled: true }
+        Self::Action {
+            id: id.into(),
+            label: label.into(),
+            enabled: true,
+        }
     }
 
     /// An enabled [`TrayMenuItem::Check`] with the given state.
     #[must_use]
     pub fn check(id: impl Into<String>, label: impl Into<String>, checked: bool) -> Self {
-        Self::Check { id: id.into(), label: label.into(), checked, enabled: true }
+        Self::Check {
+            id: id.into(),
+            label: label.into(),
+            checked,
+            enabled: true,
+        }
     }
 
     /// The activation id, if this item has one (an `Action` / `Check`).
@@ -304,7 +313,10 @@ impl InMemoryTrayBackend {
     /// `Unavailable`" path (a headless box with no `StatusNotifierWatcher`).
     #[must_use]
     pub fn unavailable() -> Self {
-        Self { available: false, ..Self::new() }
+        Self {
+            available: false,
+            ..Self::new()
+        }
     }
 
     /// The most recently published model, if any. Test / introspection read.
@@ -379,8 +391,16 @@ mod tests {
 
     #[test]
     fn status_tokens_round_trip() {
-        for s in [TrayStatus::Active, TrayStatus::Passive, TrayStatus::NeedsAttention] {
-            assert_eq!(TrayStatus::from_wire(s.as_str()), Some(s), "round-trip {s:?}");
+        for s in [
+            TrayStatus::Active,
+            TrayStatus::Passive,
+            TrayStatus::NeedsAttention,
+        ] {
+            assert_eq!(
+                TrayStatus::from_wire(s.as_str()),
+                Some(s),
+                "round-trip {s:?}"
+            );
         }
         assert_eq!(TrayStatus::from_wire("active"), None, "strict casing");
         assert_eq!(TrayStatus::default(), TrayStatus::Active);
@@ -393,7 +413,10 @@ mod tests {
         assert!(action.can_activate("show"));
         assert!(!action.can_activate("hide"), "wrong id");
         assert_eq!(TrayMenuItem::Separator.id(), None);
-        assert!(!TrayMenuItem::Separator.can_activate("show"), "a separator never activates");
+        assert!(
+            !TrayMenuItem::Separator.can_activate("show"),
+            "a separator never activates"
+        );
         // A disabled action cannot be activated.
         let disabled = TrayMenuItem::Action {
             id: "ship".to_owned(),
@@ -401,7 +424,10 @@ mod tests {
             enabled: false,
         };
         assert_eq!(disabled.id(), Some("ship"), "id is still addressable");
-        assert!(!disabled.can_activate("ship"), "but a disabled item rejects activation");
+        assert!(
+            !disabled.can_activate("ship"),
+            "but a disabled item rejects activation"
+        );
     }
 
     #[test]
@@ -423,12 +449,19 @@ mod tests {
         let model = sample_model();
         b.publish(&model).expect("publish on an available host");
         assert_eq!(b.publish_count(), 1);
-        assert_eq!(b.published().as_ref(), Some(&model), "the published model is recorded");
+        assert_eq!(
+            b.published().as_ref(),
+            Some(&model),
+            "the published model is recorded"
+        );
         // Re-publishing an updated model overwrites + counts.
         let updated = model.clone().with_status(TrayStatus::NeedsAttention);
         b.publish(&updated).expect("re-publish");
         assert_eq!(b.publish_count(), 2);
-        assert_eq!(b.published().map(|m| m.status), Some(TrayStatus::NeedsAttention));
+        assert_eq!(
+            b.published().map(|m| m.status),
+            Some(TrayStatus::NeedsAttention)
+        );
     }
 
     #[test]
@@ -447,8 +480,14 @@ mod tests {
         b.push_event(TrayEvent::Activated);
         b.push_event(TrayEvent::MenuItem("show".to_owned()));
         let drained = b.poll_events();
-        assert_eq!(drained, vec![TrayEvent::Activated, TrayEvent::MenuItem("show".to_owned())]);
-        assert!(b.poll_events().is_empty(), "a second poll drains nothing (events consumed once)");
+        assert_eq!(
+            drained,
+            vec![TrayEvent::Activated, TrayEvent::MenuItem("show".to_owned())]
+        );
+        assert!(
+            b.poll_events().is_empty(),
+            "a second poll drains nothing (events consumed once)"
+        );
     }
 
     #[test]

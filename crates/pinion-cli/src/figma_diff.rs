@@ -142,21 +142,13 @@ pub struct DiffMetrics {
 pub fn run(args: &FigmaDiffArgs) -> Result<(), Box<dyn std::error::Error>> {
     let img_a = decode_rgba8(&args.image_a)?;
     let img_b = decode_rgba8(&args.image_b)?;
-    eprintln!(
-        "image-a: {} x {} RGBA",
-        img_a.width(),
-        img_a.height()
-    );
+    eprintln!("image-a: {} x {} RGBA", img_a.width(), img_a.height());
     let img_a_dims = (img_a.width(), img_a.height());
     let img_b_dims_orig = (img_b.width(), img_b.height());
 
     let (img_a, img_b) = match (args.resize, img_a_dims == img_b_dims_orig) {
         (_, true) => {
-            eprintln!(
-                "image-b: {} x {} RGBA",
-                img_b.width(),
-                img_b.height(),
-            );
+            eprintln!("image-b: {} x {} RGBA", img_b.width(), img_b.height(),);
             (img_a, img_b)
         }
         (None, false) => {
@@ -172,12 +164,8 @@ pub fn run(args: &FigmaDiffArgs) -> Result<(), Box<dyn std::error::Error>> {
                 "image-b: {} x {} RGBA (resized to {} x {} via Lanczos3)",
                 img_b_dims_orig.0, img_b_dims_orig.1, img_a_dims.0, img_a_dims.1,
             );
-            let resized = image::imageops::resize(
-                &img_b,
-                img_a_dims.0,
-                img_a_dims.1,
-                FilterType::Lanczos3,
-            );
+            let resized =
+                image::imageops::resize(&img_b, img_a_dims.0, img_a_dims.1, FilterType::Lanczos3);
             (img_a, resized)
         }
         (Some(ResizeMode::AtoB), false) => {
@@ -222,9 +210,8 @@ pub fn run(args: &FigmaDiffArgs) -> Result<(), Box<dyn std::error::Error>> {
 /// Greyscale / palette / RGB-only PNGs are widened to RGBA8 so the
 /// downstream diff math stays single-pathed.
 fn decode_rgba8(path: &PathBuf) -> Result<RgbaImage, Box<dyn std::error::Error>> {
-    let reader = ImageReader::open(path).map_err(|err| {
-        format!("open {path}: {err}", path = path.display())
-    })?;
+    let reader = ImageReader::open(path)
+        .map_err(|err| format!("open {path}: {err}", path = path.display()))?;
     let decoded = reader
         .with_guessed_format()
         .map_err(|err| format!("guess format of {}: {err}", path.display()))?
@@ -335,9 +322,8 @@ fn u64_to_f64(v: u64) -> f64 {
 /// produced the input pinion PNG) and the CLI (which produces the
 /// diff PNG consumed downstream by humans / AI agents).
 fn encode_rgb_png(img: &RgbImage, path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    let file = std::fs::File::create(path).map_err(|err| {
-        format!("create {path}: {err}", path = path.display())
-    })?;
+    let file = std::fs::File::create(path)
+        .map_err(|err| format!("create {path}: {err}", path = path.display()))?;
     let writer = std::io::BufWriter::new(file);
     let mut encoder = png::Encoder::new(writer, img.width(), img.height());
     encoder.set_color(png::ColorType::Rgb);

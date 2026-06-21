@@ -51,14 +51,16 @@
 //!   keyboard-defer precedent).
 //! - **Multi-select / drag-drop / inline rename**. Not in R671 scope.
 
-use crate::glyph::{DISCLOSURE_COLLAPSED as GLYPH_COLLAPSED, DISCLOSURE_EXPANDED as GLYPH_EXPANDED};
+use crate::glyph::{
+    DISCLOSURE_COLLAPSED as GLYPH_COLLAPSED, DISCLOSURE_EXPANDED as GLYPH_EXPANDED,
+};
+use pinion_core::composite_tag::GridTag;
 use pinion_core::composite_tag::{compose_send_payload, parse_send_payload};
-use pinion_core::input::Modifiers;
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
-use pinion_core::composite_tag::GridTag;
+use pinion_core::input::Modifiers;
 use pinion_core::input::PointerWireEvent;
 use pinion_core::intent::Intent;
 use pinion_core::scene::{ContainerNode, Rect, TextNode, TextRole};
@@ -67,12 +69,12 @@ use pinion_core::style::{
 };
 use pinion_core::theme::{ColorRole, Theme};
 use pinion_core::widgets::scroll::ScrollState;
-use pinion_core::widgets::tree_nav::{flat_visible, VisibleRow};
+use pinion_core::widgets::tree_nav::{VisibleRow, flat_visible};
 use pinion_core::widgets::virtual_list::{compute_visible_range, content_height};
 use pinion_core::{Color, Scene};
 use std::rc::Rc;
 
-use crate::table::{frozen_split_panes, GridScroll, SplitPane};
+use crate::table::{GridScroll, SplitPane, frozen_split_panes};
 use crate::virtual_list::{assemble_windowed_flex, uniform_slots};
 
 /// R671 §5.16 §5.50 — Material 3 `TreeView` row dimensions. Mirrors
@@ -421,7 +423,13 @@ pub fn view_virtual_tree(
 ) -> Scene {
     let row_pitch = style.row_height;
     let (measured_w, measured_h) = scroll.measured_viewport();
-    let window = compute_visible_range(scroll.offset_y(), measured_h, rows.len(), row_pitch, overscan);
+    let window = compute_visible_range(
+        scroll.offset_y(),
+        measured_h,
+        rows.len(),
+        row_pitch,
+        overscan,
+    );
     let total_h = content_height(rows.len(), row_pitch);
     let slots = uniform_slots(&window, measured_w, row_pitch, |index| {
         let row = &rows[index];
@@ -455,9 +463,8 @@ fn tree_cell_content(row: &VisibleRow, theme: &Theme, style: &TreeViewStyle) -> 
         // indent_step; height = row_height. The container carries no
         // tag (presentational) so the AT layer doesn't expose it.
         row_children.push(Scene::Container(
-            ContainerNode::new(Vec::new()).with_layout(
-                LayoutStyle::new().with_size(Size::px(indent_px, style.row_height)),
-            ),
+            ContainerNode::new(Vec::new())
+                .with_layout(LayoutStyle::new().with_size(Size::px(indent_px, style.row_height))),
         ));
     }
     // R673 §5.50 — wrap the expand glyph in a fixed-width container
@@ -529,12 +536,7 @@ fn build_row(
                     // highlight + indent spacer rely on it). `Size::height_px`
                     // is the width-Auto / height-pinned SSOT (R684).
                     .with_size(Size::height_px(style.row_height))
-                    .with_padding(Rect::new(
-                        style.row_padding,
-                        0,
-                        style.row_padding,
-                        0,
-                    )),
+                    .with_padding(Rect::new(style.row_padding, 0, style.row_padding, 0)),
             )
             .with_style(BoxStyle::filled(row_bg)),
     )
@@ -604,8 +606,12 @@ pub fn row_focus_bg(theme: &Theme, is_focused: bool) -> Color {
 /// An ordinary row stays transparent.
 fn treegrid_row_bg(theme: &Theme, is_selected: bool, is_cursor: bool) -> Color {
     match (is_selected, is_cursor) {
-        (true, true) => theme.resolve(ColorRole::Surface).lerp(theme.resolve(ColorRole::Accent), 0.28),
-        (true, false) => theme.resolve(ColorRole::Surface).lerp(theme.resolve(ColorRole::Accent), 0.16),
+        (true, true) => theme
+            .resolve(ColorRole::Surface)
+            .lerp(theme.resolve(ColorRole::Accent), 0.28),
+        (true, false) => theme
+            .resolve(ColorRole::Surface)
+            .lerp(theme.resolve(ColorRole::Accent), 0.16),
         (false, true) => theme.resolve(ColorRole::SurfaceContainerHighest),
         (false, false) => Color::TRANSPARENT,
     }
@@ -650,7 +656,13 @@ fn treegrid_name_cell(
 /// `treegrid` resolves a per-cell `gridcell` bounds rect; the tag is in the
 /// `'_'` presentational family (no `'#'`), so a click on it stays a no-op,
 /// exactly as the untagged cell was.
-fn treegrid_text_cell(cell_tag: String, text: &str, width: u32, theme: &Theme, style: &TreeViewStyle) -> Scene {
+fn treegrid_text_cell(
+    cell_tag: String,
+    text: &str,
+    width: u32,
+    theme: &Theme,
+    style: &TreeViewStyle,
+) -> Scene {
     let label = Scene::Text(TextNode::styled(
         text.to_string(),
         Rect::default(),
@@ -675,7 +687,13 @@ fn treegrid_data_row(
     let cells: Vec<Scene> = (0..data.data_headers.len())
         .map(|col| {
             let cell_tag = GridTag::metadata_cell(tag, &row.id, col);
-            treegrid_text_cell(cell_tag, &cell_data(&row.id, col), data.data_col_width, theme, style)
+            treegrid_text_cell(
+                cell_tag,
+                &cell_data(&row.id, col),
+                data.data_col_width,
+                theme,
+                style,
+            )
         })
         .collect();
     Scene::Container(
@@ -695,7 +713,13 @@ fn treegrid_data_row(
 /// `cell_tag` (`GridTag::col_header` for a metadata column, `tree_col_header`
 /// for the name column) so the a11y `treegrid` resolves a per-column
 /// `columnheader` bounds rect.
-fn treegrid_header_cell(cell_tag: String, label: &str, width: u32, theme: &Theme, style: &TreeViewStyle) -> Scene {
+fn treegrid_header_cell(
+    cell_tag: String,
+    label: &str,
+    width: u32,
+    theme: &Theme,
+    style: &TreeViewStyle,
+) -> Scene {
     let text = Scene::Text(TextNode::styled(
         label.to_string(),
         Rect::default(),
@@ -719,13 +743,21 @@ fn treegrid_data_header(
         .iter()
         .enumerate()
         .map(|(col, label)| {
-            treegrid_header_cell(GridTag::col_header(tag, col), label, col_width, theme, style)
+            treegrid_header_cell(
+                GridTag::col_header(tag, col),
+                label,
+                col_width,
+                theme,
+                style,
+            )
         })
         .collect();
     Scene::Container(
         ContainerNode::new(cells)
             .with_tag(GridTag::header_row(tag))
-            .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh)))
+            .with_style(BoxStyle::filled(
+                theme.resolve(ColorRole::SurfaceContainerHigh),
+            ))
             .with_layout(LayoutStyle::new().flex(FlexDirection::Row)),
     )
 }
@@ -778,8 +810,13 @@ pub fn view_virtual_treegrid(
     let rows = data.rows;
     let view_len = rows.len();
     let (_, measured_h) = scroll.body.measured_viewport();
-    let window =
-        compute_visible_range(scroll.body.offset_y(), measured_h, view_len, row_pitch, data.overscan);
+    let window = compute_visible_range(
+        scroll.body.offset_y(),
+        measured_h,
+        view_len,
+        row_pitch,
+        data.overscan,
+    );
     let total_h = content_height(view_len, row_pitch);
 
     let frozen_w = data.tree_col_width;
@@ -789,15 +826,21 @@ pub fn view_virtual_treegrid(
     // Frozen pane: the tree name column, one cell per visible row.
     let frozen_slots = uniform_slots(&window, frozen_w, row_pitch, |index| {
         let row = &rows[index];
-        let row_bg =
-            treegrid_row_bg(theme, is_selected(row.id.as_str()), data.cursor == Some(row.id.as_str()));
+        let row_bg = treegrid_row_bg(
+            theme,
+            is_selected(row.id.as_str()),
+            data.cursor == Some(row.id.as_str()),
+        );
         treegrid_name_cell(tag, row, frozen_w, row_bg, theme, style)
     });
     // Scrolling pane: the metadata columns, one strip per visible row.
     let scroll_slots = uniform_slots(&window, scroll_w, row_pitch, |index| {
         let row = &rows[index];
-        let row_bg =
-            treegrid_row_bg(theme, is_selected(row.id.as_str()), data.cursor == Some(row.id.as_str()));
+        let row_bg = treegrid_row_bg(
+            theme,
+            is_selected(row.id.as_str()),
+            data.cursor == Some(row.id.as_str()),
+        );
         treegrid_data_row(tag, row, data, row_bg, theme, style, &cell_data)
     });
 
@@ -811,16 +854,27 @@ pub fn view_virtual_treegrid(
             style,
         )])
         .with_tag(GridTag::frozen_header_row(tag))
-            .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh)))
-            .with_layout(LayoutStyle::new().flex(FlexDirection::Row)),
+        .with_style(BoxStyle::filled(
+            theme.resolve(ColorRole::SurfaceContainerHigh),
+        ))
+        .with_layout(LayoutStyle::new().flex(FlexDirection::Row)),
     );
-    let scroll_header = treegrid_data_header(tag, data.data_headers, data.data_col_width, theme, style);
+    let scroll_header =
+        treegrid_data_header(tag, data.data_headers, data.data_col_width, theme, style);
 
     frozen_split_panes(
         scroll,
         total_h,
-        SplitPane { header: frozen_header, width: frozen_w, slots: frozen_slots },
-        SplitPane { header: scroll_header, width: scroll_w, slots: scroll_slots },
+        SplitPane {
+            header: frozen_header,
+            width: frozen_w,
+            slots: frozen_slots,
+        },
+        SplitPane {
+            header: scroll_header,
+            width: scroll_w,
+            slots: scroll_slots,
+        },
     )
 }
 
@@ -1022,11 +1076,16 @@ impl TreeRowClickExternal {
     /// otherwise it is the bare `Text(id)` every pre-R902.1 consumer expects.
     fn emit_click(&mut self, id: String, modifiers: Modifiers) {
         let payload = if self.emit_modifiers {
-            IntrospectValue::Text(compose_send_payload(Some(&id), TREE_ROW_CLICK_EVENT, modifiers))
+            IntrospectValue::Text(compose_send_payload(
+                Some(&id),
+                TREE_ROW_CLICK_EVENT,
+                modifiers,
+            ))
         } else {
             IntrospectValue::Text(id)
         };
-        self.pending.push(Intent::new_static(TREE_ROW_CLICK_EVENT, payload));
+        self.pending
+            .push(Intent::new_static(TREE_ROW_CLICK_EVENT, payload));
     }
 
     /// R678 §5.20 — enqueue the `hover` intent on the §5.20 channel
@@ -1034,7 +1093,8 @@ impl TreeRowClickExternal {
     /// Leave). `drain_intents` ships the payload across the boundary
     /// on the next substrate drain pass.
     fn emit_hover(&mut self, payload: IntrospectValue) {
-        self.pending.push(Intent::new_static(TREE_ROW_HOVER_EVENT, payload));
+        self.pending
+            .push(Intent::new_static(TREE_ROW_HOVER_EVENT, payload));
     }
 }
 
@@ -1098,11 +1158,7 @@ impl ExternalIntrospect for TreeRowClickExternal {
         }
     }
 
-    fn intervene(
-        &mut self,
-        path: &str,
-        _value: IntrospectValue,
-    ) -> Result<(), InterveneError> {
+    fn intervene(&mut self, path: &str, _value: IntrospectValue) -> Result<(), InterveneError> {
         match path {
             "pressed_id" | "hovered_id" => Err(InterveneError::ReadOnly),
             _ => Err(InterveneError::UnknownPath),
@@ -1132,10 +1188,7 @@ impl ExternalIntrospect for TreeRowClickExternal {
                             Ok(IntrospectValue::Bool(true))
                         }
                         Some(PointerWireEvent::Up) => {
-                            let armed = self
-                                .pressed_id
-                                .as_ref()
-                                .is_some_and(|p| p == &id);
+                            let armed = self.pressed_id.as_ref().is_some_and(|p| p == &id);
                             self.pressed_id = None;
                             if armed {
                                 self.emit_click(id, modifiers);
@@ -1173,11 +1226,7 @@ impl ExternalIntrospect for TreeRowClickExternal {
                             // preserved): drop the pressed slot if
                             // the leave/cancel id matches the press,
                             // silently aborting the in-flight click.
-                            if self
-                                .pressed_id
-                                .as_ref()
-                                .is_some_and(|p| p == &id)
-                            {
+                            if self.pressed_id.as_ref().is_some_and(|p| p == &id) {
                                 self.pressed_id = None;
                             }
                             // Pre-R678 contract: leave/cancel returns
@@ -1340,12 +1389,7 @@ mod tests {
     #[test]
     fn r671_tree_view_single_leaf_produces_one_row() {
         let items = vec![TreeItem::leaf("root", "Hello")];
-        let scene = view_tree(
-            "tree",
-            &items,
-            &light_theme(),
-            &TreeViewStyle::m3_default(),
-        );
+        let scene = view_tree("tree", &items, &light_theme(), &TreeViewStyle::m3_default());
         assert_eq!(count_row_children(&scene), 1);
         let tags = collect_tags(&scene);
         // Root + one row. Indent spacer is absent at depth 0 (no
@@ -1361,14 +1405,12 @@ mod tests {
             "root",
             "Root",
             true,
-            vec![TreeItem::leaf("a", "Child A"), TreeItem::leaf("b", "Child B")],
+            vec![
+                TreeItem::leaf("a", "Child A"),
+                TreeItem::leaf("b", "Child B"),
+            ],
         )];
-        let scene = view_tree(
-            "tree",
-            &items,
-            &light_theme(),
-            &TreeViewStyle::m3_default(),
-        );
+        let scene = view_tree("tree", &items, &light_theme(), &TreeViewStyle::m3_default());
         assert_eq!(count_row_children(&scene), 3);
     }
 
@@ -1380,14 +1422,12 @@ mod tests {
             "root",
             "Root",
             false,
-            vec![TreeItem::leaf("a", "Child A"), TreeItem::leaf("b", "Child B")],
+            vec![
+                TreeItem::leaf("a", "Child A"),
+                TreeItem::leaf("b", "Child B"),
+            ],
         )];
-        let scene = view_tree(
-            "tree",
-            &items,
-            &light_theme(),
-            &TreeViewStyle::m3_default(),
-        );
+        let scene = view_tree("tree", &items, &light_theme(), &TreeViewStyle::m3_default());
         assert_eq!(count_row_children(&scene), 1);
         let tags = collect_tags(&scene);
         assert_eq!(tags, vec!["tree".to_string(), "tree#root".to_string()]);
@@ -1401,12 +1441,7 @@ mod tests {
             true,
             vec![TreeItem::leaf("a", "A")],
         )];
-        let scene = view_tree(
-            "tree",
-            &items,
-            &light_theme(),
-            &TreeViewStyle::m3_default(),
-        );
+        let scene = view_tree("tree", &items, &light_theme(), &TreeViewStyle::m3_default());
         if let Scene::Container(c) = &scene {
             let row = &c.children[0];
             assert_eq!(find_glyph_in_row(row).as_deref(), Some(GLYPH_EXPANDED));
@@ -1423,12 +1458,7 @@ mod tests {
             false,
             vec![TreeItem::leaf("a", "A")],
         )];
-        let scene = view_tree(
-            "tree",
-            &items,
-            &light_theme(),
-            &TreeViewStyle::m3_default(),
-        );
+        let scene = view_tree("tree", &items, &light_theme(), &TreeViewStyle::m3_default());
         if let Scene::Container(c) = &scene {
             let row = &c.children[0];
             assert_eq!(find_glyph_in_row(row).as_deref(), Some(GLYPH_COLLAPSED));
@@ -1443,12 +1473,7 @@ mod tests {
         // NO-BREAK SPACE so the column width still lines up with
         // branch rows.
         let items = vec![TreeItem::leaf("leaf", "Leaf")];
-        let scene = view_tree(
-            "tree",
-            &items,
-            &light_theme(),
-            &TreeViewStyle::m3_default(),
-        );
+        let scene = view_tree("tree", &items, &light_theme(), &TreeViewStyle::m3_default());
         if let Scene::Container(c) = &scene {
             let row = &c.children[0];
             assert_eq!(find_glyph_in_row(row).as_deref(), Some(GLYPH_LEAF));
@@ -1474,12 +1499,7 @@ mod tests {
                 vec![TreeItem::leaf("grand", "Grand")],
             )],
         )];
-        let scene = view_tree(
-            "tree",
-            &items,
-            &light_theme(),
-            &TreeViewStyle::m3_default(),
-        );
+        let scene = view_tree("tree", &items, &light_theme(), &TreeViewStyle::m3_default());
         if let Scene::Container(c) = &scene {
             assert_eq!(c.children.len(), 3);
             // Indent column count per row:
@@ -1499,18 +1519,10 @@ mod tests {
     #[test]
     fn r671_tree_view_label_is_visible_text() {
         let items = vec![TreeItem::leaf("only", "Hello, world")];
-        let scene = view_tree(
-            "tree",
-            &items,
-            &light_theme(),
-            &TreeViewStyle::m3_default(),
-        );
+        let scene = view_tree("tree", &items, &light_theme(), &TreeViewStyle::m3_default());
         if let Scene::Container(c) = &scene {
             let row = &c.children[0];
-            assert_eq!(
-                find_label_in_row(row).as_deref(),
-                Some("Hello, world")
-            );
+            assert_eq!(find_label_in_row(row).as_deref(), Some("Hello, world"));
         } else {
             panic!("expected Container root");
         }
@@ -1527,12 +1539,7 @@ mod tests {
             ),
             TreeItem::leaf("b", "B"),
         ];
-        let scene = view_tree(
-            "tree",
-            &items,
-            &light_theme(),
-            &TreeViewStyle::m3_default(),
-        );
+        let scene = view_tree("tree", &items, &light_theme(), &TreeViewStyle::m3_default());
         let tags = collect_tags(&scene);
         assert_eq!(
             tags,
@@ -1589,7 +1596,7 @@ mod r675_tree_row_click_external_tests {
     //! module — same behaviours, now pinned at the substrate layer
     //! where every future tree consumer inherits coverage.
 
-    use super::{TreeRowClickExternal, TREE_ROW_CLICK_EVENT};
+    use super::{TREE_ROW_CLICK_EVENT, TreeRowClickExternal};
     use pinion_core::external::{
         External, ExternalIntrospect, InterveneError, IntrospectValue, InvokeError,
     };
@@ -1648,7 +1655,11 @@ mod r675_tree_row_click_external_tests {
             "PointerUp must release the pressed slot",
         );
         let harvested = drain(&mut handler);
-        assert_eq!(harvested.len(), 1, "matched Down→Up emits exactly one intent");
+        assert_eq!(
+            harvested.len(),
+            1,
+            "matched Down→Up emits exactly one intent"
+        );
         assert_eq!(harvested[0].tag_str(), TREE_ROW_CLICK_EVENT);
         assert_eq!(
             harvested[0].payload,
@@ -1690,10 +1701,7 @@ mod r675_tree_row_click_external_tests {
         send(&mut handler, "src:PointerDown");
         let out = send(&mut handler, "src:PointerCancel");
         assert_eq!(out, IntrospectValue::Bool(false));
-        assert_eq!(
-            handler.query("pressed_id").unwrap(),
-            IntrospectValue::Null,
-        );
+        assert_eq!(handler.query("pressed_id").unwrap(), IntrospectValue::Null,);
         assert!(drain(&mut handler).is_empty());
     }
 
@@ -1703,10 +1711,7 @@ mod r675_tree_row_click_external_tests {
         send(&mut handler, "src:PointerDown");
         let out = send(&mut handler, "src:PointerLeave");
         assert_eq!(out, IntrospectValue::Bool(false));
-        assert_eq!(
-            handler.query("pressed_id").unwrap(),
-            IntrospectValue::Null,
-        );
+        assert_eq!(handler.query("pressed_id").unwrap(), IntrospectValue::Null,);
         assert!(drain(&mut handler).is_empty());
     }
 
@@ -1744,8 +1749,7 @@ mod r675_tree_row_click_external_tests {
     #[test]
     fn r675_malformed_payload_missing_separator_rejected() {
         let mut handler = TreeRowClickExternal::new();
-        let result =
-            handler.invoke("send", IntrospectValue::Text("PointerDown".to_string()));
+        let result = handler.invoke("send", IntrospectValue::Text("PointerDown".to_string()));
         assert_eq!(result, Err(InvokeError::Rejected));
     }
 
@@ -1794,8 +1798,7 @@ mod r675_tree_row_click_external_tests {
     #[test]
     fn r675_intervene_pressed_id_is_read_only() {
         let mut handler = TreeRowClickExternal::new();
-        let result = handler
-            .intervene("pressed_id", IntrospectValue::Text("forged".to_string()));
+        let result = handler.intervene("pressed_id", IntrospectValue::Text("forged".to_string()));
         assert_eq!(result, Err(InterveneError::ReadOnly));
     }
 
@@ -1827,7 +1830,7 @@ mod r678_tree_row_hover_external_tests {
     //! hover-highlight overlay in `examples/hello-multi-window` is
     //! the first consumer.
 
-    use super::{TreeRowClickExternal, TREE_ROW_CLICK_EVENT, TREE_ROW_HOVER_EVENT};
+    use super::{TREE_ROW_CLICK_EVENT, TREE_ROW_HOVER_EVENT, TreeRowClickExternal};
     use pinion_core::external::{
         External, ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue,
         InvokeError,
@@ -1947,10 +1950,7 @@ mod r678_tree_row_hover_external_tests {
         let mut handler = TreeRowClickExternal::new();
         let out = send(&mut handler, "src:PointerLeave");
         assert_eq!(out, IntrospectValue::Bool(false));
-        assert_eq!(
-            handler.query("hovered_id").unwrap(),
-            IntrospectValue::Null,
-        );
+        assert_eq!(handler.query("hovered_id").unwrap(), IntrospectValue::Null,);
         assert!(drain(&mut handler).is_empty());
     }
 
@@ -1987,7 +1987,10 @@ mod r678_tree_row_hover_external_tests {
         assert_eq!(intents[0].tag_str(), TREE_ROW_HOVER_EVENT);
         assert_eq!(intents[0].payload, IntrospectValue::Null);
         assert_eq!(intents[1].tag_str(), TREE_ROW_HOVER_EVENT);
-        assert_eq!(intents[1].payload, IntrospectValue::Text("docs".to_string()));
+        assert_eq!(
+            intents[1].payload,
+            IntrospectValue::Text("docs".to_string())
+        );
         assert_eq!(
             handler.query("hovered_id").unwrap(),
             IntrospectValue::Text("docs".to_string()),
@@ -2011,7 +2014,10 @@ mod r678_tree_row_hover_external_tests {
         );
         let intents = drain(&mut handler);
         assert_eq!(intents.len(), 1);
-        assert_eq!(intents[0].payload, IntrospectValue::Text("docs".to_string()));
+        assert_eq!(
+            intents[0].payload,
+            IntrospectValue::Text("docs".to_string())
+        );
     }
 
     #[test]
@@ -2069,7 +2075,11 @@ mod r678_tree_row_hover_external_tests {
         assert_eq!(handler.query("pressed_id").unwrap(), IntrospectValue::Null);
         assert_eq!(handler.query("hovered_id").unwrap(), IntrospectValue::Null);
         let intents = drain(&mut handler);
-        assert_eq!(intents.len(), 1, "only the hover axis emits on combined leave");
+        assert_eq!(
+            intents.len(),
+            1,
+            "only the hover axis emits on combined leave"
+        );
         assert_eq!(intents[0].tag_str(), TREE_ROW_HOVER_EVENT);
         assert_eq!(intents[0].payload, IntrospectValue::Null);
     }
@@ -2100,10 +2110,7 @@ mod r678_tree_row_hover_external_tests {
             .invoke("hover", IntrospectValue::Null)
             .expect("`hover` Null must clear the slot");
         assert_eq!(out, IntrospectValue::Bool(true));
-        assert_eq!(
-            handler.query("hovered_id").unwrap(),
-            IntrospectValue::Null,
-        );
+        assert_eq!(handler.query("hovered_id").unwrap(), IntrospectValue::Null,);
         let intents = drain(&mut handler);
         assert_eq!(intents.len(), 1);
         assert_eq!(intents[0].payload, IntrospectValue::Null);
@@ -2129,8 +2136,7 @@ mod r678_tree_row_hover_external_tests {
     #[test]
     fn r678_intervene_hovered_id_is_read_only() {
         let mut handler = TreeRowClickExternal::new();
-        let result = handler
-            .intervene("hovered_id", IntrospectValue::Text("forged".to_string()));
+        let result = handler.intervene("hovered_id", IntrospectValue::Text("forged".to_string()));
         assert_eq!(result, Err(InterveneError::ReadOnly));
     }
 
@@ -2144,8 +2150,14 @@ mod r678_tree_row_hover_external_tests {
         assert!(names.contains(&"send"));
         assert!(names.contains(&"click"));
         // Hover axis (R678 additions).
-        assert!(names.contains(&"hovered_id"), "schema must expose hovered_id slot");
-        assert!(names.contains(&"hover"), "schema must expose hover invoke channel");
+        assert!(
+            names.contains(&"hovered_id"),
+            "schema must expose hovered_id slot"
+        );
+        assert!(
+            names.contains(&"hover"),
+            "schema must expose hover invoke channel"
+        );
     }
 
     #[test]
@@ -2166,12 +2178,12 @@ mod r819_virtual_tree_tests {
     //! [`build_row`] SSOT [`view_tree_focused`] also renders (a windowed
     //! row is byte-identical to the same row in the non-virtual path).
     use super::{
-        view_virtual_tree, Color, ColorRole, Scene, Theme, TreeItem, TreeViewFocus, TreeViewStyle,
+        Color, ColorRole, Scene, Theme, TreeItem, TreeViewFocus, TreeViewStyle, view_virtual_tree,
     };
+    use pinion_core::Owner;
     use pinion_core::style::SizeValue;
     use pinion_core::widgets::scroll::ScrollState;
     use pinion_core::widgets::tree_nav::flat_visible;
-    use pinion_core::Owner;
     use std::rc::Rc;
 
     const PITCH: u32 = 48;
@@ -2200,7 +2212,10 @@ mod r819_virtual_tree_tests {
         let pitch = i32::try_from(PITCH).expect("pitch fits i32");
         state.set_max(0, i32::try_from(rows.len()).expect("len fits i32") * pitch);
         state.set_measured_viewport(280, viewport_rows * PITCH);
-        state.scroll_to(0, i32::try_from(offset_rows).expect("offset fits i32") * pitch);
+        state.scroll_to(
+            0,
+            i32::try_from(offset_rows).expect("offset fits i32") * pitch,
+        );
         let focus = TreeViewFocus {
             focused_id: focused,
         };
@@ -2349,11 +2364,14 @@ mod r860_treegrid_tests {
     //! tree (frozen name column) with metadata columns over the R859
     //! frozen-split substrate: the tree column is pinned (follower V-body)
     //! while the metadata columns scroll, in vertical lockstep.
-    use super::{view_virtual_treegrid, Color, ColorRole, GridScroll, Scene, Theme, TreeGridData, TreeItem, TreeViewStyle};
+    use super::{
+        Color, ColorRole, GridScroll, Scene, Theme, TreeGridData, TreeItem, TreeViewStyle,
+        view_virtual_treegrid,
+    };
+    use pinion_core::Owner;
     use pinion_core::scene::ScrollAxis;
     use pinion_core::widgets::scroll::ScrollState;
-    use pinion_core::widgets::tree_nav::{flat_visible, VisibleRow};
-    use pinion_core::Owner;
+    use pinion_core::widgets::tree_nav::{VisibleRow, flat_visible};
     use std::rc::Rc;
 
     const TAG: &str = "tg";
@@ -2385,7 +2403,10 @@ mod r860_treegrid_tests {
         Owner::new().run(|| {
             view_virtual_treegrid(
                 TAG,
-                GridScroll { body: &body, horizontal: &h },
+                GridScroll {
+                    body: &body,
+                    horizontal: &h,
+                },
                 &TreeGridData {
                     rows,
                     tree_header: "Name",
@@ -2446,11 +2467,23 @@ mod r860_treegrid_tests {
     #[test]
     fn renders_frozen_tree_and_scrolling_metadata() {
         let scene = run(&flat_visible(&outliner(true)), &[], None);
-        assert!(has_tag(&scene, "tg_fhrow"), "frozen tree header band present");
-        assert!(has_tag(&scene, "tg_hrow"), "scrolling metadata header band present");
+        assert!(
+            has_tag(&scene, "tg_fhrow"),
+            "frozen tree header band present"
+        );
+        assert!(
+            has_tag(&scene, "tg_hrow"),
+            "scrolling metadata header band present"
+        );
         for id in ["grp", "a", "b", "c"] {
-            assert!(has_tag(&scene, &format!("tg#{id}")), "tree name cell tg#{id}");
-            assert!(has_tag(&scene, &format!("tg_drow{id}")), "metadata strip tg_drow{id}");
+            assert!(
+                has_tag(&scene, &format!("tg#{id}")),
+                "tree name cell tg#{id}"
+            );
+            assert!(
+                has_tag(&scene, &format!("tg_drow{id}")),
+                "metadata strip tg_drow{id}"
+            );
         }
     }
 
@@ -2473,7 +2506,10 @@ mod r860_treegrid_tests {
         assert_eq!(expanded.len(), 4, "grp expanded -> grp+a+b+c");
         assert_eq!(collapsed.len(), 2, "grp collapsed -> grp+c only");
         let scene = run(&collapsed, &[], None);
-        assert!(has_tag(&scene, "tg#grp"), "group row rendered when collapsed");
+        assert!(
+            has_tag(&scene, "tg#grp"),
+            "group row rendered when collapsed"
+        );
         assert!(!has_tag(&scene, "tg#a"), "collapsed child a not rendered");
         assert!(!has_tag(&scene, "tg#b"), "collapsed child b not rendered");
         assert!(has_tag(&scene, "tg#c"), "sibling leaf c still rendered");
@@ -2485,25 +2521,61 @@ mod r860_treegrid_tests {
         // (`c`, unselected — the post-`Ctrl+Space` state). Each visual state
         // has its own fill, on BOTH the frozen name cell and the metadata strip.
         let theme = Theme::light();
-        let sel_bg = theme.resolve(ColorRole::Surface).lerp(theme.resolve(ColorRole::Accent), 0.16);
-        let cursor_sel_bg = theme.resolve(ColorRole::Surface).lerp(theme.resolve(ColorRole::Accent), 0.28);
+        let sel_bg = theme
+            .resolve(ColorRole::Surface)
+            .lerp(theme.resolve(ColorRole::Accent), 0.16);
+        let cursor_sel_bg = theme
+            .resolve(ColorRole::Surface)
+            .lerp(theme.resolve(ColorRole::Accent), 0.28);
         let cursor_only_bg = theme.resolve(ColorRole::SurfaceContainerHighest);
         // `a`,`b` selected; `b` is the cursor; `c` is unselected non-cursor.
         let scene = run(&flat_visible(&outliner(true)), &["a", "b"], Some("b"));
         // A plain selected row (a): the 0.16 accent wash, both panes.
-        assert_eq!(fill_of(&scene, "tg#a"), Some(sel_bg), "selected name cell washed");
-        assert_eq!(fill_of(&scene, "tg_drowa"), Some(sel_bg), "selected metadata strip washed");
+        assert_eq!(
+            fill_of(&scene, "tg#a"),
+            Some(sel_bg),
+            "selected name cell washed"
+        );
+        assert_eq!(
+            fill_of(&scene, "tg_drowa"),
+            Some(sel_bg),
+            "selected metadata strip washed"
+        );
         // The selected cursor row (b): the deeper 0.28 wash, both panes.
-        assert_eq!(fill_of(&scene, "tg#b"), Some(cursor_sel_bg), "selected cursor name cell deeper");
-        assert_eq!(fill_of(&scene, "tg_drowb"), Some(cursor_sel_bg), "selected cursor metadata deeper");
+        assert_eq!(
+            fill_of(&scene, "tg#b"),
+            Some(cursor_sel_bg),
+            "selected cursor name cell deeper"
+        );
+        assert_eq!(
+            fill_of(&scene, "tg_drowb"),
+            Some(cursor_sel_bg),
+            "selected cursor metadata deeper"
+        );
         // An unselected, non-cursor row (c): transparent.
-        assert_ne!(fill_of(&scene, "tg#c"), Some(sel_bg), "unselected row not washed");
-        assert_ne!(fill_of(&scene, "tg#c"), Some(cursor_only_bg), "unselected non-cursor row not focus-tinted");
+        assert_ne!(
+            fill_of(&scene, "tg#c"),
+            Some(sel_bg),
+            "unselected row not washed"
+        );
+        assert_ne!(
+            fill_of(&scene, "tg#c"),
+            Some(cursor_only_bg),
+            "unselected non-cursor row not focus-tinted"
+        );
 
         // The cursor on an UNSELECTED row (the Ctrl+Space-deselected state):
         // the focus tint, distinct from the selection wash.
         let scene2 = run(&flat_visible(&outliner(true)), &["a"], Some("c"));
-        assert_eq!(fill_of(&scene2, "tg#c"), Some(cursor_only_bg), "cursor-only row shows the focus tint");
-        assert_eq!(fill_of(&scene2, "tg#a"), Some(sel_bg), "the still-selected row keeps the wash");
+        assert_eq!(
+            fill_of(&scene2, "tg#c"),
+            Some(cursor_only_bg),
+            "cursor-only row shows the focus tint"
+        );
+        assert_eq!(
+            fill_of(&scene2, "tg#a"),
+            Some(sel_bg),
+            "the still-selected row keeps the wash"
+        );
     }
 }

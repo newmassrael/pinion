@@ -81,7 +81,7 @@ pub mod widget;
 #[cfg(any(test, feature = "test-fixtures"))]
 pub mod test_fixtures;
 
-pub use executor::{build_executor_and_sink, MpscIntentSink, TokioExecutor};
+pub use executor::{MpscIntentSink, TokioExecutor, build_executor_and_sink};
 pub use input::{cell_to_pixel, key_str_from_event, modifiers_from_crossterm};
 pub use shell::{run, run_with_handlers};
 pub use substrate::ShellCoreTui;
@@ -168,10 +168,18 @@ impl<B: Backend> WidgetRenderer for TuiRenderer<B> {
             let target = target_frame.buffer_mut();
             // Hoist origins into locals so the mutable-borrow index
             // expression below does not also read through `target`.
-            let (tx, ty, tw, th) =
-                (target.area.x, target.area.y, target.area.width, target.area.height);
-            let (fx, fy, fw, fh) =
-                (frame.area.x, frame.area.y, frame.area.width, frame.area.height);
+            let (tx, ty, tw, th) = (
+                target.area.x,
+                target.area.y,
+                target.area.width,
+                target.area.height,
+            );
+            let (fx, fy, fw, fh) = (
+                frame.area.x,
+                frame.area.y,
+                frame.area.width,
+                frame.area.height,
+            );
             let max_x = fw.min(tw);
             let max_y = fh.min(th);
             for y in 0..max_y {
@@ -203,7 +211,8 @@ mod tests {
         // R51.109.2 — anchors the `TuiRenderer<TestBackend>` shape so
         // future paint mapping work (R51.110) can build on a known
         // headless construction surface.
-        let _renderer = TuiRenderer::new(TestBackend::new(40, 10)).expect("TestBackend never errors");
+        let _renderer =
+            TuiRenderer::new(TestBackend::new(40, 10)).expect("TestBackend never errors");
     }
 
     #[test]

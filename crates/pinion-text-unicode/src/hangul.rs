@@ -43,9 +43,7 @@ pub(crate) fn is_hangul_syllable(c: u32) -> bool {
 ///
 /// Returns `None` for any other input pair.
 pub(crate) fn compose_hangul(a: u32, b: u32) -> Option<u32> {
-    if (L_BASE..L_BASE + L_COUNT).contains(&a)
-        && (V_BASE..V_BASE + V_COUNT).contains(&b)
-    {
+    if (L_BASE..L_BASE + L_COUNT).contains(&a) && (V_BASE..V_BASE + V_COUNT).contains(&b) {
         let l_index = a - L_BASE;
         let v_index = b - V_BASE;
         return Some(S_BASE + (l_index * N_COUNT + v_index * T_COUNT));
@@ -83,8 +81,8 @@ pub(crate) fn decompose_hangul_syllable(c: u32, out: &mut Vec<u32>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        compose_hangul, decompose_hangul_syllable, is_hangul_syllable,
-        L_BASE, S_BASE, S_COUNT, T_BASE, V_BASE,
+        L_BASE, S_BASE, S_COUNT, T_BASE, V_BASE, compose_hangul, decompose_hangul_syllable,
+        is_hangul_syllable,
     };
 
     #[test]

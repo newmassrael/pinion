@@ -294,13 +294,17 @@ mod tests {
     }
 
     fn ring_child(scene: &Scene) -> &BoxNode {
-        let Scene::Container(c) = scene else { panic!("expected Container") };
+        let Scene::Container(c) = scene else {
+            panic!("expected Container")
+        };
         let ring = c
             .children
             .iter()
             .find(|ch| ch.tag() == Some(FOCUS_RING_TAG))
             .expect("ring child present");
-        let Scene::Box(b) = ring else { panic!("ring is a Box") };
+        let Scene::Box(b) = ring else {
+            panic!("ring is a Box")
+        };
         b
     }
 
@@ -342,11 +346,23 @@ mod tests {
         let scene = container(vec![tagged_box(0, 0, 96, 40, 0, "menu#t0")]);
         let out = inject_focus_ring(scene, Some("menu#t0"), FocusRingStyle::default(), None);
         let ring = ring_child(&out);
-        assert_eq!(ring.rect, Rect::new(0, 1, 98, 41), "concentric, top inset off y=0");
+        assert_eq!(
+            ring.rect,
+            Rect::new(0, 1, 98, 41),
+            "concentric, top inset off y=0"
+        );
         // The far edges keep the full outward offset (concentric); only the
         // near gap is clipped (left by the framebuffer, top by the inset).
-        assert_eq!(ring.rect.x + ring.rect.w, 98, "right edge = widget right (96) + 2");
-        assert_eq!(ring.rect.y + ring.rect.h, 42, "bottom edge = widget bottom (40) + 2");
+        assert_eq!(
+            ring.rect.x + ring.rect.w,
+            98,
+            "right edge = widget right (96) + 2"
+        );
+        assert_eq!(
+            ring.rect.y + ring.rect.h,
+            42,
+            "bottom edge = widget bottom (40) + 2"
+        );
         assert!(
             ring.rect.y >= crate::edge::TOP_EDGE_INSET,
             "top stroke kept off the y=0 flood row",
@@ -378,7 +394,11 @@ mod tests {
         let ring = ring_child(&out);
         // y: max(1, 1-2)=1. h: (1+30+2)-1 = 32.
         assert_eq!(ring.rect, Rect::new(48, 1, 44, 32));
-        assert_eq!(ring.rect.y + ring.rect.h, 33, "bottom = widget bottom (31) + 2");
+        assert_eq!(
+            ring.rect.y + ring.rect.h,
+            33,
+            "bottom = widget bottom (31) + 2"
+        );
     }
 
     #[test]
@@ -391,13 +411,26 @@ mod tests {
         // vanish. The far clamp pulls them back to the framebuffer extent so
         // all four strokes land on-screen.
         let scene = container(vec![tagged_box(0, 0, 200, 100, 0, "pane")]);
-        let out = inject_focus_ring(scene, Some("pane"), FocusRingStyle::default(), Some((200, 100)));
+        let out = inject_focus_ring(
+            scene,
+            Some("pane"),
+            FocusRingStyle::default(),
+            Some((200, 100)),
+        );
         let ring = ring_child(&out);
         // x:0 (left flush), y:1 (top flush, off the flood row),
         // right: min(202, 200)=200, bottom: min(102, 100)=100.
         assert_eq!(ring.rect, Rect::new(0, 1, 200, 99));
-        assert_eq!(ring.rect.x + ring.rect.w, 200, "right stroke inside the framebuffer");
-        assert_eq!(ring.rect.y + ring.rect.h, 100, "bottom stroke inside the framebuffer");
+        assert_eq!(
+            ring.rect.x + ring.rect.w,
+            200,
+            "right stroke inside the framebuffer"
+        );
+        assert_eq!(
+            ring.rect.y + ring.rect.h,
+            100,
+            "bottom stroke inside the framebuffer"
+        );
         assert!(ring.rect.x + ring.rect.w <= 200 && ring.rect.y + ring.rect.h <= 100);
     }
 
@@ -409,13 +442,26 @@ mod tests {
         // per-axis, not a whole-rect shift (mirror of the near-edge
         // `ring_clips_only_the_overflowing_axis`).
         let scene = container(vec![tagged_box(50, 80, 40, 20, 0, "btn")]);
-        let out = inject_focus_ring(scene, Some("btn"), FocusRingStyle::default(), Some((200, 100)));
+        let out = inject_focus_ring(
+            scene,
+            Some("btn"),
+            FocusRingStyle::default(),
+            Some((200, 100)),
+        );
         let ring = ring_child(&out);
         // x:48, right: min(50+40+2, 200)=92 (full symmetric outset, w=44).
         // y:78, bottom: min(80+20+2, 100)=100 (clamped, h=22).
         assert_eq!(ring.rect, Rect::new(48, 78, 44, 22));
-        assert_eq!(ring.rect.x + ring.rect.w, 92, "right stays concentric (widget right 90 + 2)");
-        assert_eq!(ring.rect.y + ring.rect.h, 100, "bottom clamps to the framebuffer");
+        assert_eq!(
+            ring.rect.x + ring.rect.w,
+            92,
+            "right stays concentric (widget right 90 + 2)"
+        );
+        assert_eq!(
+            ring.rect.y + ring.rect.h,
+            100,
+            "bottom clamps to the framebuffer"
+        );
     }
 
     #[test]
@@ -426,7 +472,11 @@ mod tests {
         let scene = container(vec![tagged_box(100, 50, 40, 30, 0, "btn")]);
         let out = inject_focus_ring(scene, Some("btn"), FocusRingStyle::default(), None);
         let ring = ring_child(&out);
-        assert_eq!(ring.rect, Rect::new(98, 48, 44, 34), "no far clamp when viewport unknown");
+        assert_eq!(
+            ring.rect,
+            Rect::new(98, 48, 44, 34),
+            "no far clamp when viewport unknown"
+        );
     }
 
     #[test]
@@ -438,8 +488,15 @@ mod tests {
         // the `rect_for_tag_absolute -> None` scrolled-out skip. The pre-R1022
         // always-positive span could never reach this.
         let scene = container(vec![tagged_box(250, 10, 40, 30, 0, "btn")]);
-        let out = inject_focus_ring(scene, Some("btn"), FocusRingStyle::default(), Some((200, 100)));
-        let Scene::Container(c) = &out else { panic!("expected Container") };
+        let out = inject_focus_ring(
+            scene,
+            Some("btn"),
+            FocusRingStyle::default(),
+            Some((200, 100)),
+        );
+        let Scene::Container(c) = &out else {
+            panic!("expected Container")
+        };
         assert!(
             c.children.iter().all(|ch| ch.tag() != Some(FOCUS_RING_TAG)),
             "no ring for a widget past the far edge (degenerate span skipped)",
@@ -511,8 +568,14 @@ mod tests {
         let scene = container(vec![tagged_box(0, 0, 40, 40, 0, "btn")]);
         let once = inject_focus_ring(scene, Some("btn"), FocusRingStyle::default(), None);
         let twice = inject_focus_ring(once, Some("btn"), FocusRingStyle::default(), None);
-        let Scene::Container(c) = &twice else { panic!() };
-        let rings = c.children.iter().filter(|ch| ch.tag() == Some(FOCUS_RING_TAG)).count();
+        let Scene::Container(c) = &twice else {
+            panic!()
+        };
+        let rings = c
+            .children
+            .iter()
+            .filter(|ch| ch.tag() == Some(FOCUS_RING_TAG))
+            .count();
         assert_eq!(rings, 1, "exactly one ring after double injection");
     }
 
@@ -529,8 +592,9 @@ mod tests {
         // (0, 60) therefore paints at window-absolute (10, 60 + (100-50)).
         let row = tagged_box(0, 60, 100, 30, 0, "row#3");
         let content = container(vec![row]);
-        let scroll = Scene::Scroll(ScrollNode::new(Rect::new(10, 100, 200, 200), content)
-            .with_offset(0, 50));
+        let scroll = Scene::Scroll(
+            ScrollNode::new(Rect::new(10, 100, 200, 200), content).with_offset(0, 50),
+        );
         let scene = container(vec![scroll]);
         let out = inject_focus_ring(scene, Some("row#3"), FocusRingStyle::default(), None);
         let ring = ring_child(&out);
@@ -548,7 +612,9 @@ mod tests {
         // needs a Container to live in alongside the original content.
         let scene = tagged_box(0, 0, 40, 40, 0, "btn");
         let out = inject_focus_ring(scene, Some("btn"), FocusRingStyle::default(), None);
-        let Scene::Container(c) = &out else { panic!("lone root wrapped into Container") };
+        let Scene::Container(c) = &out else {
+            panic!("lone root wrapped into Container")
+        };
         assert_eq!(c.children.len(), 2, "original + ring");
     }
 }

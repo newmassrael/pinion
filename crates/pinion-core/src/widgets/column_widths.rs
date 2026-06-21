@@ -29,11 +29,11 @@
 use std::borrow::Cow;
 use std::rc::Rc;
 
+use crate::composite_tag::split_send_payload;
 use crate::external::{
     Backend, BackendFallback, BackendSupport, CaptureNormalize, External, ExternalIntrospect,
     InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
-use crate::composite_tag::split_send_payload;
 use crate::input::{DragCalibration, PointerWireEvent};
 use crate::reactive::{Owner, Signal};
 use crate::widget_core::ExtraExternal;
@@ -82,7 +82,11 @@ impl ColumnWidths {
     #[must_use]
     pub fn new(widths: Vec<u32>) -> Self {
         let widths = clamp_widths(widths, DEFAULT_MIN_COL_WIDTH);
-        Self { tag: None, widths: Signal::new(widths), min_width: DEFAULT_MIN_COL_WIDTH }
+        Self {
+            tag: None,
+            widths: Signal::new(widths),
+            min_width: DEFAULT_MIN_COL_WIDTH,
+        }
     }
 
     /// As [`new`](Self::new) but records the [`use_column_widths`] cache key,
@@ -90,7 +94,10 @@ impl ColumnWidths {
     /// [`ScrollState::with_tag`](crate::widgets::scroll::ScrollState::with_tag).
     #[must_use]
     pub fn with_tag(key: &'static str, widths: Vec<u32>) -> Self {
-        Self { tag: Some(key), ..Self::new(widths) }
+        Self {
+            tag: Some(key),
+            ..Self::new(widths)
+        }
     }
 
     /// Override the minimum-width clamp (builder form), **re-clamping** any
@@ -101,7 +108,8 @@ impl ColumnWidths {
         self.min_width = min_width;
         // `set_with` reads the current vector by reference (no subscription)
         // and equality-skips, so a no-op floor change does not churn.
-        self.widths.set_with(|w| w.iter().map(|&x| x.max(min_width)).collect());
+        self.widths
+            .set_with(|w| w.iter().map(|&x| x.max(min_width)).collect());
         self
     }
 
@@ -127,7 +135,11 @@ impl ColumnWidths {
     /// when out of range. Subscribes when read inside a view-fn.
     #[must_use]
     pub fn width(&self, col: usize) -> u32 {
-        self.widths.get().get(col).copied().unwrap_or(self.min_width)
+        self.widths
+            .get()
+            .get(col)
+            .copied()
+            .unwrap_or(self.min_width)
     }
 
     /// A snapshot of every column width (cheap `Vec` clone). Subscribes when
@@ -192,10 +204,7 @@ impl ColumnWidths {
 /// Panics if no current [`Owner`] is set (call from within a `view` / a
 /// `create_extra_externals` hook — both run inside a `root_owner.run`).
 #[must_use]
-pub fn use_column_widths(
-    key: &'static str,
-    widths: impl FnOnce() -> Vec<u32>,
-) -> Rc<ColumnWidths> {
+pub fn use_column_widths(key: &'static str, widths: impl FnOnce() -> Vec<u32>) -> Rc<ColumnWidths> {
     Owner::current()
         .expect("use_column_widths requires an active Owner scope")
         .cache(key, || ColumnWidths::with_tag(key, widths()))
@@ -205,7 +214,11 @@ pub fn use_column_widths(
 /// (`"130,90,200"`) the `widths` introspect slot reports and accepts.
 #[must_use]
 pub fn widths_str(widths: &[u32]) -> String {
-    widths.iter().map(u32::to_string).collect::<Vec<_>>().join(",")
+    widths
+        .iter()
+        .map(u32::to_string)
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 /// Parse the comma-separated wire string (`"130,90,200"`) back into widths.
@@ -322,7 +335,11 @@ impl ExternalIntrospect for ColumnWidthExternal {
         }
     }
 
-    fn invoke(&mut self, path: &str, args: IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+    fn invoke(
+        &mut self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
         match path {
             // AI-first column resize: a `"<col>=<width>"` payload sets that
             // column's width (clamped up to `min_width`) and returns the
@@ -331,7 +348,9 @@ impl ExternalIntrospect for ColumnWidthExternal {
             "set_col_width" => match args {
                 IntrospectValue::Text(ref s) => {
                     let (col, width) = parse_col_width(s).ok_or(InvokeError::TypeMismatch)?;
-                    Ok(IntrospectValue::Int(i64::from(self.state.set_width(col, width))))
+                    Ok(IntrospectValue::Int(i64::from(
+                        self.state.set_width(col, width),
+                    )))
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
@@ -502,8 +521,9 @@ impl External for ColumnResizeExternal {
     ///
     /// `y_rel` is ignored (column width is the horizontal axis only).
     fn pointer_move(&mut self, x_rel: f32, _y_rel: f32) {
-        if let Some((width_at_press, delta)) =
-            self.resize.drive(f64::from(x_rel), || Some(self.state.width(self.col)))
+        if let Some((width_at_press, delta)) = self
+            .resize
+            .drive(f64::from(x_rel), || Some(self.state.width(self.col)))
         {
             let (viewport_w, _) = self.h_scroll.measured_viewport();
             let next = f64::from(width_at_press) + delta * f64::from(viewport_w);
@@ -531,7 +551,9 @@ impl ExternalIntrospect for ColumnResizeExternal {
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
         match path {
-            "col" => Some(IntrospectValue::Int(i64::try_from(self.col).unwrap_or(i64::MAX))),
+            "col" => Some(IntrospectValue::Int(
+                i64::try_from(self.col).unwrap_or(i64::MAX),
+            )),
             "dragging" => Some(IntrospectValue::Bool(self.is_dragging())),
             _ => None,
         }
@@ -555,7 +577,11 @@ impl ExternalIntrospect for ColumnResizeExternal {
     /// The handle clears its calibration so the next press recalibrates.
     /// `PointerDown` / `PointerEnter` / `PointerLeave` arrive too but need no
     /// reaction (calibration happens in the first `pointer_move`).
-    fn invoke(&mut self, path: &str, args: IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+    fn invoke(
+        &mut self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
         if path != "send" {
             return Err(InvokeError::UnknownPath);
         }
@@ -644,11 +670,19 @@ mod tests {
     #[test]
     fn set_width_clamps_to_min_and_returns_applied() {
         let w = widths();
-        assert_eq!(w.set_width(1, 250), 250, "in-range set returns the applied width");
+        assert_eq!(
+            w.set_width(1, 250),
+            250,
+            "in-range set returns the applied width"
+        );
         assert_eq!(w.width(1), 250);
         assert_eq!(w.total(), 130 + 250 + 200);
         // Below the floor clamps up.
-        assert_eq!(w.set_width(0, 5), DEFAULT_MIN_COL_WIDTH, "sub-min clamps to the floor");
+        assert_eq!(
+            w.set_width(0, 5),
+            DEFAULT_MIN_COL_WIDTH,
+            "sub-min clamps to the floor"
+        );
         assert_eq!(w.width(0), DEFAULT_MIN_COL_WIDTH);
         // Out-of-range column is a no-op, returns 0.
         assert_eq!(w.set_width(9, 100), 0, "out-of-range set is a no-op");
@@ -666,9 +700,17 @@ mod tests {
         // R785.1 — the "width >= min_width" invariant holds at construction,
         // not just after a mutation: a sub-floor initial width clamps up.
         let w = ColumnWidths::new(vec![10, 200, 5]);
-        assert_eq!(w.width(0), DEFAULT_MIN_COL_WIDTH, "sub-min initial width clamped");
+        assert_eq!(
+            w.width(0),
+            DEFAULT_MIN_COL_WIDTH,
+            "sub-min initial width clamped"
+        );
         assert_eq!(w.width(1), 200, "above-min initial width untouched");
-        assert_eq!(w.width(2), DEFAULT_MIN_COL_WIDTH, "sub-min initial width clamped");
+        assert_eq!(
+            w.width(2),
+            DEFAULT_MIN_COL_WIDTH,
+            "sub-min initial width clamped"
+        );
     }
 
     #[test]
@@ -676,8 +718,16 @@ mod tests {
         // R785.1 — raising the floor re-clamps already-stored widths, so the
         // invariant holds after the floor moves (not only on the next write).
         let w = ColumnWidths::new(vec![60, 200]).with_min_width(100);
-        assert_eq!(w.width(0), 100, "stored width below the new floor re-clamped");
-        assert_eq!(w.width(1), 200, "stored width above the new floor untouched");
+        assert_eq!(
+            w.width(0),
+            100,
+            "stored width below the new floor re-clamped"
+        );
+        assert_eq!(
+            w.width(1),
+            200,
+            "stored width above the new floor untouched"
+        );
     }
 
     #[test]
@@ -699,18 +749,25 @@ mod tests {
     fn external_invoke_set_col_width_returns_clamped() {
         let state = Rc::new(widths());
         let mut ext = ColumnWidthExternal::new(Rc::clone(&state));
-        let out = ext.invoke("set_col_width", IntrospectValue::Text("1=300".into())).unwrap();
+        let out = ext
+            .invoke("set_col_width", IntrospectValue::Text("1=300".into()))
+            .unwrap();
         assert_eq!(out, IntrospectValue::Int(300));
         assert_eq!(state.width(1), 300);
         // Sub-min clamps and the return reports the clamped value.
-        let out = ext.invoke("set_col_width", IntrospectValue::Text("1=5".into())).unwrap();
+        let out = ext
+            .invoke("set_col_width", IntrospectValue::Text("1=5".into()))
+            .unwrap();
         assert_eq!(out, IntrospectValue::Int(i64::from(DEFAULT_MIN_COL_WIDTH)));
     }
 
     #[test]
     fn external_query_exposes_widths_total_cols() {
         let ext = ColumnWidthExternal::new(Rc::new(widths()));
-        assert_eq!(ext.query("widths"), Some(IntrospectValue::Text("130,90,200".into())));
+        assert_eq!(
+            ext.query("widths"),
+            Some(IntrospectValue::Text("130,90,200".into()))
+        );
         assert_eq!(ext.query("total"), Some(IntrospectValue::Int(420)));
         assert_eq!(ext.query("cols"), Some(IntrospectValue::Int(3)));
         assert_eq!(ext.query("width.2"), Some(IntrospectValue::Int(200)));
@@ -722,10 +779,14 @@ mod tests {
     fn external_intervene_widths_restores_whole_vector() {
         let state = Rc::new(widths());
         let mut ext = ColumnWidthExternal::new(Rc::clone(&state));
-        ext.intervene("widths", IntrospectValue::Text("60,60,60,60".into())).unwrap();
+        ext.intervene("widths", IntrospectValue::Text("60,60,60,60".into()))
+            .unwrap();
         assert_eq!(state.col_count(), 4, "restore replaces the whole vector");
         assert_eq!(state.total(), 240);
-        assert_eq!(ext.intervene("total", IntrospectValue::Int(9)), Err(InterveneError::ReadOnly));
+        assert_eq!(
+            ext.intervene("total", IntrospectValue::Int(9)),
+            Err(InterveneError::ReadOnly)
+        );
     }
 
     // ---- R786 live-drag column resize ----
@@ -766,13 +827,25 @@ mod tests {
         // The delta is always measured from the PRESS fraction (fixed basis),
         // so an intermediate move re-derives from 90, never compounding.
         ext.pointer_move(0.6, 0.0); // +0.1*500 = +50
-        assert_eq!(state.width(1), 140, "delta re-derived from the press anchor");
+        assert_eq!(
+            state.width(1),
+            140,
+            "delta re-derived from the press anchor"
+        );
         // Drag far left, past the floor: clamps to min_width.
         ext.pointer_move(0.0, 0.0); // -0.5*500 = -250 -> 90-250 < 0 -> floored
-        assert_eq!(state.width(1), DEFAULT_MIN_COL_WIDTH, "sub-min clamps to the floor");
+        assert_eq!(
+            state.width(1),
+            DEFAULT_MIN_COL_WIDTH,
+            "sub-min clamps to the floor"
+        );
         // Returning right un-clamps cleanly (anchored on the press width, 90).
         ext.pointer_move(0.7, 0.0);
-        assert_eq!(state.width(1), 190, "un-clamps from the press anchor, not the floor");
+        assert_eq!(
+            state.width(1),
+            190,
+            "un-clamps from the press anchor, not the floor"
+        );
     }
 
     #[test]
@@ -795,14 +868,19 @@ mod tests {
         assert!(ext.is_dragging());
         // The strip is a composite "<tag>_ch0#resize" target, so the wire
         // payload carries the "resize" sub-index segment.
-        ext.invoke("send", IntrospectValue::Text("resize:PointerUp".into())).unwrap();
+        ext.invoke("send", IntrospectValue::Text("resize:PointerUp".into()))
+            .unwrap();
         assert!(!ext.is_dragging(), "PointerUp tears down the drag");
         assert_eq!(ext.query("dragging"), Some(IntrospectValue::Bool(false)));
         // A fresh press recalibrates from the new width.
         let _ = state.set_width(0, 160);
         ext.pointer_move(0.5, 0.0);
         ext.pointer_move(0.54, 0.0); // +0.04*500 = +20 -> 180
-        assert_eq!(state.width(0), 180, "recalibrated against the post-drag width");
+        assert_eq!(
+            state.width(0),
+            180,
+            "recalibrated against the post-drag width"
+        );
     }
 
     #[test]
@@ -822,17 +900,25 @@ mod tests {
         ext.pointer_move(0.5, 0.0);
         assert!(ext.is_dragging());
         // Well-formed three-segment wire (held modifiers) decodes.
-        ext.invoke("send", IntrospectValue::Text("resize:PointerUp:c".into())).unwrap();
-        assert!(!ext.is_dragging(), "the R781 modifier segment decodes through the SSOT");
+        ext.invoke("send", IntrospectValue::Text("resize:PointerUp:c".into()))
+            .unwrap();
+        assert!(
+            !ext.is_dragging(),
+            "the R781 modifier segment decodes through the SSOT"
+        );
         // Malformed modifier token → reject-loudly, no teardown.
         ext.pointer_move(0.5, 0.0);
         assert!(ext.is_dragging());
         let err = ext.invoke("send", IntrospectValue::Text("resize:PointerUp:zz".into()));
-        assert!(err.is_err(), "a malformed modifier token rejects the whole wire");
+        assert!(
+            err.is_err(),
+            "a malformed modifier token rejects the whole wire"
+        );
         assert!(ext.is_dragging(), "a rejected wire must not half-apply");
         // Bare (non-composite) event name still decodes via the
         // documented `None` fallback.
-        ext.invoke("send", IntrospectValue::Text("PointerCancel".into())).unwrap();
+        ext.invoke("send", IntrospectValue::Text("PointerCancel".into()))
+            .unwrap();
         assert!(!ext.is_dragging());
     }
 
@@ -842,11 +928,17 @@ mod tests {
         let mut ext = resize_ext(&state, 0);
         ext.pointer_move(0.5, 0.0);
         // Enter / Down do not tear down the in-flight calibration.
-        ext.invoke("send", IntrospectValue::Text("resize:PointerEnter".into())).unwrap();
-        ext.invoke("send", IntrospectValue::Text("resize:PointerDown".into())).unwrap();
-        assert!(ext.is_dragging(), "non-teardown events leave the drag armed");
+        ext.invoke("send", IntrospectValue::Text("resize:PointerEnter".into()))
+            .unwrap();
+        ext.invoke("send", IntrospectValue::Text("resize:PointerDown".into()))
+            .unwrap();
+        assert!(
+            ext.is_dragging(),
+            "non-teardown events leave the drag armed"
+        );
         // PointerCancel does tear down (OS-cancelled capture).
-        ext.invoke("send", IntrospectValue::Text("resize:PointerCancel".into())).unwrap();
+        ext.invoke("send", IntrospectValue::Text("resize:PointerCancel".into()))
+            .unwrap();
         assert!(!ext.is_dragging());
     }
 
@@ -870,7 +962,10 @@ mod tests {
         assert_eq!(ext.query("col"), Some(IntrospectValue::Int(2)));
         assert_eq!(ext.query("dragging"), Some(IntrospectValue::Bool(false)));
         assert_eq!(ext.query("nope"), None);
-        assert_eq!(ext.intervene("col", IntrospectValue::Int(0)), Err(InterveneError::ReadOnly));
+        assert_eq!(
+            ext.intervene("col", IntrospectValue::Int(0)),
+            Err(InterveneError::ReadOnly)
+        );
         assert_eq!(
             ext.intervene("dragging", IntrospectValue::Bool(true)),
             Err(InterveneError::ReadOnly)

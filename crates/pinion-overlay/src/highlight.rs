@@ -29,9 +29,9 @@
 //! This keeps z-order trivial — highlights are drawn last (topmost)
 //! by §5.2 painting order.
 
+use pinion_core::Scene;
 use pinion_core::scene::{BoxNode, ContainerNode, Rect};
 use pinion_core::style::{Border, BoxStyle, Color};
-use pinion_core::Scene;
 
 /// Tag prefix that identifies overlay-managed boxes. Every highlight
 /// node carries `ai-overlay/<target-suffix>` as its [§5.20] tag so
@@ -141,7 +141,9 @@ pub fn clear_highlights(scene: Scene) -> Scene {
 }
 
 fn is_highlight_child(child: &Scene) -> bool {
-    child.tag().is_some_and(|t| t.starts_with(HIGHLIGHT_TAG_PREFIX))
+    child
+        .tag()
+        .is_some_and(|t| t.starts_with(HIGHLIGHT_TAG_PREFIX))
 }
 
 fn build_highlight_box(bbox: Rect, tag: &str, style: HighlightStyle) -> BoxNode {
@@ -194,8 +196,8 @@ pub use pinion_core::scene::HitPath as HighlightHitPath;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pinion_core::scene::{BoxNode, ContainerNode, Rect};
     use pinion_core::Color;
+    use pinion_core::scene::{BoxNode, ContainerNode, Rect};
 
     fn box_at(x: u32, y: u32, w: u32, h: u32) -> Scene {
         Scene::Box(BoxNode::filled(Rect::new(x, y, w, h), Color::default()))
@@ -213,7 +215,10 @@ mod tests {
 
     fn count_overlay_children(scene: &Scene) -> usize {
         let Scene::Container(c) = scene else { return 0 };
-        c.children.iter().filter(|ch| is_highlight_child(ch)).count()
+        c.children
+            .iter()
+            .filter(|ch| is_highlight_child(ch))
+            .count()
     }
 
     #[test]
@@ -233,9 +238,13 @@ mod tests {
         let scene = container_with(vec![tagged_box_at(10, 10, 50, 50, "save_btn")]);
         let out = inject_highlight(scene, "save_btn", HighlightStyle::default());
         // Original child + highlight
-        let Scene::Container(c) = &out else { panic!("Container") };
+        let Scene::Container(c) = &out else {
+            panic!("Container")
+        };
         assert_eq!(c.children.len(), 2);
-        let Scene::Box(highlight) = &c.children[1] else { panic!("Box") };
+        let Scene::Box(highlight) = &c.children[1] else {
+            panic!("Box")
+        };
         assert_eq!(
             highlight.tag.as_deref(),
             Some("ai-overlay/save_btn"),
@@ -255,10 +264,22 @@ mod tests {
         // cleared by routing both overlays through one helper.
         let scene = container_with(vec![tagged_box_at(96, 0, 96, 40, "title")]);
         let out = inject_highlight(scene, "title", HighlightStyle::default());
-        let Scene::Container(c) = &out else { panic!("Container") };
-        let Scene::Box(highlight) = &c.children[1] else { panic!("Box") };
-        assert_eq!(highlight.rect, Rect::new(96, 1, 96, 39), "top off flood row");
-        assert_eq!(highlight.rect.y + highlight.rect.h, 40, "bottom edge preserved");
+        let Scene::Container(c) = &out else {
+            panic!("Container")
+        };
+        let Scene::Box(highlight) = &c.children[1] else {
+            panic!("Box")
+        };
+        assert_eq!(
+            highlight.rect,
+            Rect::new(96, 1, 96, 39),
+            "top off flood row"
+        );
+        assert_eq!(
+            highlight.rect.y + highlight.rect.h,
+            40,
+            "bottom edge preserved"
+        );
     }
 
     #[test]
@@ -266,7 +287,9 @@ mod tests {
         let scene = container_with(vec![box_at(0, 0, 10, 10)]);
         let out = inject_highlight(scene, "ghost", HighlightStyle::default());
         // No new child; not wrapped further.
-        let Scene::Container(c) = &out else { panic!("Container") };
+        let Scene::Container(c) = &out else {
+            panic!("Container")
+        };
         assert_eq!(c.children.len(), 1);
         assert_eq!(count_overlay_children(&out), 0);
     }
@@ -278,7 +301,9 @@ mod tests {
         let twice = inject_highlight(once, "btn", HighlightStyle::default());
         // Still exactly one overlay child despite double injection.
         assert_eq!(count_overlay_children(&twice), 1);
-        let Scene::Container(c) = &twice else { panic!("Container") };
+        let Scene::Container(c) = &twice else {
+            panic!("Container")
+        };
         assert_eq!(c.children.len(), 2, "1 original + 1 highlight");
     }
 
@@ -301,7 +326,9 @@ mod tests {
         let cleared = clear_highlights(with_overlay);
         assert_eq!(count_overlay_children(&cleared), 0);
         // Original child preserved
-        let Scene::Container(c) = &cleared else { panic!("Container") };
+        let Scene::Container(c) = &cleared else {
+            panic!("Container")
+        };
         assert_eq!(c.children.len(), 1);
         assert_eq!(c.children[0].tag(), Some("btn"));
     }
@@ -311,7 +338,9 @@ mod tests {
         let scene = container_with(vec![box_at(0, 0, 10, 10)]);
         let cleared = clear_highlights(scene);
         let cleared2 = clear_highlights(cleared);
-        let Scene::Container(c) = &cleared2 else { panic!("Container") };
+        let Scene::Container(c) = &cleared2 else {
+            panic!("Container")
+        };
         assert_eq!(c.children.len(), 1);
     }
 
@@ -335,8 +364,12 @@ mod tests {
         };
         let scene = container_with(vec![box_at(0, 0, 10, 10)]);
         let out = inject_highlight(scene, "0", style);
-        let Scene::Container(c) = &out else { panic!("Container") };
-        let Scene::Box(highlight) = &c.children[1] else { panic!("Box") };
+        let Scene::Container(c) = &out else {
+            panic!("Container")
+        };
+        let Scene::Box(highlight) = &c.children[1] else {
+            panic!("Box")
+        };
         let b = highlight.style.border.expect("border emitted");
         assert_eq!(b.color, Color::from_argb(0x0000_ff00));
         assert_eq!(b.width, 5);
@@ -348,8 +381,12 @@ mod tests {
         // only the border draws.
         let scene = container_with(vec![box_at(0, 0, 10, 10)]);
         let out = inject_highlight(scene, "0", HighlightStyle::default());
-        let Scene::Container(c) = &out else { panic!("Container") };
-        let Scene::Box(highlight) = &c.children[1] else { panic!("Box") };
+        let Scene::Container(c) = &out else {
+            panic!("Container")
+        };
+        let Scene::Box(highlight) = &c.children[1] else {
+            panic!("Box")
+        };
         assert_eq!(highlight.style.fill, Color::TRANSPARENT);
     }
 }

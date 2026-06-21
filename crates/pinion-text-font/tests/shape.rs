@@ -36,10 +36,22 @@ fn shape_run_accumulates_advances() {
     assert_eq!(run.glyphs.len(), 2, "two codepoints → two glyphs");
     assert_eq!(run.glyphs[0].glyph_id, a);
     assert_eq!(run.glyphs[1].glyph_id, v);
-    assert!((run.glyphs[0].x - 0.0).abs() < 1e-3, "first glyph at the pen origin");
-    assert!((run.glyphs[1].x - adv_a).abs() < 1e-3, "second glyph at glyph 0's advance");
-    assert!((run.advance - (adv_a + adv_v)).abs() < 1e-3, "run advance = sum of advances");
-    assert!(adv_a > 0.0, "advances are positive (non-degenerate fixture)");
+    assert!(
+        (run.glyphs[0].x - 0.0).abs() < 1e-3,
+        "first glyph at the pen origin"
+    );
+    assert!(
+        (run.glyphs[1].x - adv_a).abs() < 1e-3,
+        "second glyph at glyph 0's advance"
+    );
+    assert!(
+        (run.advance - (adv_a + adv_v)).abs() < 1e-3,
+        "run advance = sum of advances"
+    );
+    assert!(
+        adv_a > 0.0,
+        "advances are positive (non-degenerate fixture)"
+    );
 }
 
 #[test]
@@ -49,7 +61,11 @@ fn shape_run_records_utf8_byte_clusters() {
     let font = load(NOTO);
     let run = font.shape_run("A한B", 32.0);
     let clusters: Vec<usize> = run.glyphs.iter().map(|g| g.cluster).collect();
-    assert_eq!(clusters, vec![0, 1, 4], "byte offsets: A@0, 한@1 (3 bytes), B@4");
+    assert_eq!(
+        clusters,
+        vec![0, 1, 4],
+        "byte offsets: A@0, 한@1 (3 bytes), B@4"
+    );
 }
 
 #[test]
@@ -58,7 +74,10 @@ fn shape_run_unmapped_codepoint_is_notdef() {
     let font = load(NOTO);
     let run = font.shape_run("\u{10FFFF}", 32.0);
     assert_eq!(run.glyphs.len(), 1);
-    assert_eq!(run.glyphs[0].glyph_id, 0, "unmapped codepoint resolves to .notdef");
+    assert_eq!(
+        run.glyphs[0].glyph_id, 0,
+        "unmapped codepoint resolves to .notdef"
+    );
 }
 
 #[test]
@@ -80,7 +99,12 @@ fn render_run_positions_two_latin_glyphs_side_by_side() {
     let one = font.render_run("H", px).expect("renders");
     let two = font.render_run("HH", px).expect("renders");
     assert!(one.ink_sum() > 0, "single 'H' inks");
-    assert!(two.width > one.width, "two glyphs wider than one: {} vs {}", two.width, one.width);
+    assert!(
+        two.width > one.width,
+        "two glyphs wider than one: {} vs {}",
+        two.width,
+        one.width
+    );
     assert!(
         two.ink_sum() > one.ink_sum() * 3 / 2,
         "two glyphs ≈ 2x ink, got {} vs {}",
@@ -95,13 +119,18 @@ fn render_run_positions_two_latin_glyphs_side_by_side() {
     let advance_px = font.shape_run("HH", px).glyphs[1].x;
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let expected_w = advance_px.round() as usize + one.width;
-    assert_eq!(two.width, expected_w, "second 'H' placed at exactly the advance");
+    assert_eq!(
+        two.width, expected_w,
+        "second 'H' placed at exactly the advance"
+    );
     let third = two.width / 3;
-    let ink_in = |xs: std::ops::Range<usize>| {
-        (0..two.height).any(|y| xs.clone().any(|x| two.at(x, y) > 0))
-    };
+    let ink_in =
+        |xs: std::ops::Range<usize>| (0..two.height).any(|y| xs.clone().any(|x| two.at(x, y) > 0));
     assert!(ink_in(0..third), "ink in the left third (first glyph)");
-    assert!(ink_in(two.width - third..two.width), "ink in the right third (second glyph)");
+    assert!(
+        ink_in(two.width - third..two.width),
+        "ink in the right third (second glyph)"
+    );
 }
 
 #[test]
@@ -116,12 +145,14 @@ fn render_run_aligns_mixed_height_glyphs_on_one_baseline() {
     let px = 48.0;
     let hx = font.render_run("Hx", px).expect("renders");
     let third = hx.width / 3;
-    let top_row = |xs: std::ops::Range<usize>| {
-        (0..hx.height).find(|&y| xs.clone().any(|x| hx.at(x, y) > 0))
-    };
+    let top_row =
+        |xs: std::ops::Range<usize>| (0..hx.height).find(|&y| xs.clone().any(|x| hx.at(x, y) > 0));
     let h_top = top_row(0..third).expect("'H' inks in the left third");
     let x_top = top_row(hx.width - third..hx.width).expect("'x' inks in the right third");
-    assert!(h_top < x_top, "cap 'H' rises above x-height 'x' on the baseline: H@{h_top} x@{x_top}");
+    assert!(
+        h_top < x_top,
+        "cap 'H' rises above x-height 'x' on the baseline: H@{h_top} x@{x_top}"
+    );
 }
 
 #[test]
@@ -133,9 +164,20 @@ fn render_run_single_glyph_is_byte_identical_to_raster() {
     let h = font.glyph_id_for(0x0048).expect("'H' mapped");
     let direct = font.rasterize_glyph(h, 48.0).expect("rasterizes");
     let rendered = font.render_run("H", 48.0).expect("renders");
-    assert_eq!((rendered.width, rendered.height), (direct.width, direct.height), "same size");
-    assert_eq!((rendered.left, rendered.top), (direct.left, direct.top), "same pen offset");
-    assert_eq!(rendered.alpha, direct.alpha, "render_run('H') is byte-identical to the raster");
+    assert_eq!(
+        (rendered.width, rendered.height),
+        (direct.width, direct.height),
+        "same size"
+    );
+    assert_eq!(
+        (rendered.left, rendered.top),
+        (direct.left, direct.top),
+        "same pen offset"
+    );
+    assert_eq!(
+        rendered.alpha, direct.alpha,
+        "render_run('H') is byte-identical to the raster"
+    );
 }
 
 #[test]
@@ -143,9 +185,18 @@ fn render_run_blank_run_is_empty() {
     // A space is an empty outline: it advances the pen but inks nothing, so a
     // run of only spaces (and the empty string) composites to an empty bitmap.
     let font = load(NOTO);
-    assert!(font.render_run("", 32.0).expect("renders").is_empty(), "empty string");
-    assert!(font.glyph_id_for(0x0020).is_some(), "Noto maps U+0020 space");
-    assert!(font.render_run("   ", 32.0).expect("renders").is_empty(), "all spaces ink nothing");
+    assert!(
+        font.render_run("", 32.0).expect("renders").is_empty(),
+        "empty string"
+    );
+    assert!(
+        font.glyph_id_for(0x0020).is_some(),
+        "Noto maps U+0020 space"
+    );
+    assert!(
+        font.render_run("   ", 32.0).expect("renders").is_empty(),
+        "all spaces ink nothing"
+    );
 }
 
 #[test]
@@ -153,7 +204,10 @@ fn render_run_space_widens_the_run() {
     // "H H" must be wider than "HH": the interior space advances the pen, opening
     // a gap between the two inked glyphs even though it leaves no ink itself.
     let font = load(NOTO);
-    assert!(font.glyph_id_for(0x0020).is_some(), "Noto maps U+0020 space");
+    assert!(
+        font.glyph_id_for(0x0020).is_some(),
+        "Noto maps U+0020 space"
+    );
     let px = 48.0;
     let tight = font.render_run("HH", px).expect("renders");
     let spaced = font.render_run("H H", px).expect("renders");
@@ -182,7 +236,12 @@ fn render_run_wide_cjk_places_two_syllables() {
 
     let one = font.render_run("가", px).expect("renders");
     let two = font.render_run("가가", px).expect("renders");
-    assert!(two.width > one.width, "two 가 wider than one: {} vs {}", two.width, one.width);
+    assert!(
+        two.width > one.width,
+        "two 가 wider than one: {} vs {}",
+        two.width,
+        one.width
+    );
     assert!(
         two.ink_sum() > one.ink_sum() * 3 / 2,
         "two 가 ≈ 2x ink, got {} vs {}",

@@ -73,7 +73,7 @@
 //! consumers per [[abstraction-needs-second-consumer]]. Click-to-toggle
 //! is already wired (R674 [`TreeRowClickExternal`]).
 
-use pinion_a11y::{tree_access_nodes, tree_row_tag, AccessFocus, AccessNode, WidgetA11y};
+use pinion_a11y::{AccessFocus, AccessNode, WidgetA11y, tree_access_nodes, tree_row_tag};
 use pinion_core::external::IntrospectValue;
 use pinion_core::intent::Intent;
 use pinion_core::intent_tag;
@@ -81,17 +81,17 @@ use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole};
+use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
 use pinion_core::widgets::tree_nav::{
-    apply_tree_key, flat_visible, toggle_expanded, tree_view_introspection_extra, TreeNode,
+    TreeNode, apply_tree_key, flat_visible, toggle_expanded, tree_view_introspection_extra,
 };
 use pinion_core::{Frame, Owner, Scene, Signal, WidgetCore};
 use pinion_shell::typeahead::tree_typeahead_jump;
-use pinion_shell::{vello_renderer_impl, SizeStrategy, WidgetView};
+use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
 use pinion_widget_paint::tree_view::{
-    view_tree_focused, TreeItem, TreeRowClickExternal, TreeViewFocus, TreeViewStyle,
+    TreeItem, TreeRowClickExternal, TreeViewFocus, TreeViewStyle, view_tree_focused,
 };
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -437,9 +437,7 @@ impl WidgetCore for TreeViewBinding {
             && let Some(intro) = node.handle.introspect()
             && let Some(IntrospectValue::Text(name)) = intro.query("state")
         {
-            return <Self::State as pinion_core::WidgetStateName>::from_name_or_default(
-                &name,
-            );
+            return <Self::State as pinion_core::WidgetStateName>::from_name_or_default(&name);
         }
         ButtonState::Idle
     }
@@ -482,10 +480,7 @@ impl WidgetCore for TreeViewBinding {
     /// [`FILE_TREE_CLICK_INTENT_TAG`] per
     /// [[intent-tag-dotted-wire-form]] — bare-event-name matching is
     /// always silent.
-    fn update(
-        _state: Self::State,
-        intent: &Intent,
-    ) -> Vec<pinion_core::command::Command> {
+    fn update(_state: Self::State, intent: &Intent) -> Vec<pinion_core::command::Command> {
         if intent.tag_str() == FILE_TREE_CLICK_INTENT_TAG
             && let IntrospectValue::Text(id) = &intent.payload
         {
@@ -518,7 +513,14 @@ impl WidgetA11y for TreeViewBinding {
         let tree_state = use_tree_state();
         let nodes = tree_state.nodes.get();
         let cursor = tree_state.focused_id.get();
-        tree_access_nodes(ROOT_BTN_TAG, TREE_TAG, None, &flat_visible(&nodes), None, cursor.as_deref())
+        tree_access_nodes(
+            ROOT_BTN_TAG,
+            TREE_TAG,
+            None,
+            &flat_visible(&nodes),
+            None,
+            cursor.as_deref(),
+        )
     }
 
     /// R868 — composite focus: a navigation tree (no selection) still owns a
@@ -531,7 +533,10 @@ impl WidgetA11y for TreeViewBinding {
         if focused == Some(ROOT_BTN_TAG)
             && let Some(cursor) = use_tree_state().focused_id.get()
         {
-            return Some(AccessFocus::composite(ROOT_BTN_TAG, tree_row_tag(TREE_TAG, &cursor)));
+            return Some(AccessFocus::composite(
+                ROOT_BTN_TAG,
+                tree_row_tag(TREE_TAG, &cursor),
+            ));
         }
         focused.map(AccessFocus::atomic)
     }
@@ -591,7 +596,7 @@ mod r812_tree_access_node_lockstep {
     //! `pinion_a11y::tree_view`'s own tests when it was lifted at R812.
 
     use super::{FileNode, ROOT_BTN_TAG, TREE_TAG};
-    use pinion_a11y::{tree_access_nodes, AriaRole};
+    use pinion_a11y::{AriaRole, tree_access_nodes};
     use pinion_core::widgets::tree_nav::flat_visible;
     use pinion_widget_paint::tree_view::composite_row_tag;
 
@@ -619,7 +624,10 @@ mod r812_tree_access_node_lockstep {
         // container's row prefix (TREE_TAG) — the builder takes both.
         let rows = flat_visible(&sample_tree());
         let out = tree_access_nodes(ROOT_BTN_TAG, TREE_TAG, None, &rows, None, None);
-        assert_eq!(out[0].tag, ROOT_BTN_TAG, "Tree root node = the focusable External");
+        assert_eq!(
+            out[0].tag, ROOT_BTN_TAG,
+            "Tree root node = the focusable External"
+        );
         assert_eq!(out[0].role, AriaRole::Tree);
         // Every row tag matches the paint substrate's composite form, so
         // the AT NodeId and the hit-test target hash through one key.
@@ -635,8 +643,8 @@ mod r868_active_descendant {
     //! R868 §5.40 — the navigation tree's keyboard cursor lowers to
     //! `aria-activedescendant` (composite focus + the cursor row's
     //! `with_focused`) while carrying no `aria-selected` (no selection model).
-    use super::{TreeViewBinding, ROOT_BTN_TAG, TREE_TAG};
-    use pinion_a11y::{tree_row_tag, WidgetA11y};
+    use super::{ROOT_BTN_TAG, TREE_TAG, TreeViewBinding};
+    use pinion_a11y::{WidgetA11y, tree_row_tag};
     use pinion_core::reactive::Owner;
     use pinion_core::widgets::button::ButtonState;
 
@@ -644,8 +652,9 @@ mod r868_active_descendant {
     fn cursor_is_active_descendant_without_selection() {
         Owner::new().run(|| {
             // Boot cursor is "src".
-            let focus = TreeViewBinding::access_focus_target(&ButtonState::Idle, Some(ROOT_BTN_TAG))
-                .expect("tree focused -> composite focus target");
+            let focus =
+                TreeViewBinding::access_focus_target(&ButtonState::Idle, Some(ROOT_BTN_TAG))
+                    .expect("tree focused -> composite focus target");
             assert_eq!(focus.focus_tag, ROOT_BTN_TAG);
             assert_eq!(
                 focus.active_descendant.as_deref(),
@@ -653,10 +662,15 @@ mod r868_active_descendant {
                 "active descendant = the cursor row",
             );
             let nodes = TreeViewBinding::access_node(&ButtonState::Idle, None);
-            let cursor =
-                nodes.iter().find(|n| n.tag == tree_row_tag(TREE_TAG, "src")).expect("cursor row");
+            let cursor = nodes
+                .iter()
+                .find(|n| n.tag == tree_row_tag(TREE_TAG, "src"))
+                .expect("cursor row");
             assert!(cursor.state.focused, "cursor row carries with_focused");
-            assert_eq!(cursor.selected, None, "navigation tree: cursor not aria-selected");
+            assert_eq!(
+                cursor.selected, None,
+                "navigation tree: cursor not aria-selected"
+            );
             // Focus elsewhere -> atomic, no active descendant.
             let other = TreeViewBinding::access_focus_target(&ButtonState::Idle, Some("elsewhere"));
             assert!(other.expect("atomic").active_descendant.is_none());

@@ -257,7 +257,9 @@ mod tests {
         // synchronous reflow-Effect re-run resolve Owner::current() and observe
         // the new pane size.
         let owner = Owner::new();
-        let sig = owner.pane_viewport_registry().signal_for(Cow::Borrowed("pane.a"));
+        let sig = owner
+            .pane_viewport_registry()
+            .signal_for(Cow::Borrowed("pane.a"));
         let seen = Rc::new(RefCell::new(Vec::new()));
         let seen_c = Rc::clone(&seen);
         let _eff = owner.run(|| {
@@ -304,7 +306,9 @@ mod tests {
         // -> Owner::current().expect() panics. This is why
         // CoreShell::publish_pane_viewports wraps the set in root_owner.run.
         let owner = Owner::new();
-        let sig = owner.pane_viewport_registry().signal_for(Cow::Borrowed("pane.a"));
+        let sig = owner
+            .pane_viewport_registry()
+            .signal_for(Cow::Borrowed("pane.a"));
         let _eff = owner.run(|| {
             Effect::new(&Owner::current().expect("inside run"), || {
                 let _ = use_pane_viewport_size("pane.a");
@@ -318,7 +322,9 @@ mod tests {
         // Equality-skip: a same-size republish does not re-fire the reflow Effect
         // — the mechanism that floors a steady-state pane at zero extra re-passes.
         let owner = Owner::new();
-        let sig = owner.pane_viewport_registry().signal_for(Cow::Borrowed("pane.a"));
+        let sig = owner
+            .pane_viewport_registry()
+            .signal_for(Cow::Borrowed("pane.a"));
         let count = Rc::new(std::cell::Cell::new(0_u32));
         let count_c = Rc::clone(&count);
         let _eff = owner.run(|| {

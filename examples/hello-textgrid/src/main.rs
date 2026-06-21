@@ -105,12 +105,12 @@ use pinion_a11y::{AccessNode, WidgetA11y};
 use pinion_core::external::{External, StubExternal};
 use pinion_core::scene::{ContainerNode, TextGridNode};
 use pinion_core::style::{BoxStyle, Color, LayoutStyle, Size};
-use pinion_core::theme::{use_theme, ColorRole};
+use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::{
     CellAttrs, CellMetric, CursorShape, Frame, GridBuffer, GridCursor, Scene, ScreenKind, TermCell,
     TermColor, WidgetCore,
 };
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloTextGridRenderer, HelloTextGridRendererError);
@@ -187,9 +187,21 @@ fn content_buffer() -> GridBuffer {
         .with_row(
             2,
             [
-                TermCell::new("R", TermColor::Rgb(Color::rgb(0xff, 0x00, 0x00)), TermColor::Default),
-                TermCell::new("G", TermColor::Rgb(Color::rgb(0x00, 0xff, 0x00)), TermColor::Default),
-                TermCell::new("B", TermColor::Rgb(Color::rgb(0x00, 0x00, 0xff)), TermColor::Default),
+                TermCell::new(
+                    "R",
+                    TermColor::Rgb(Color::rgb(0xff, 0x00, 0x00)),
+                    TermColor::Default,
+                ),
+                TermCell::new(
+                    "G",
+                    TermColor::Rgb(Color::rgb(0x00, 0xff, 0x00)),
+                    TermColor::Default,
+                ),
+                TermCell::new(
+                    "B",
+                    TermColor::Rgb(Color::rgb(0x00, 0x00, 0xff)),
+                    TermColor::Default,
+                ),
             ],
         )
         // Row 3 — mixed indexed: white-on-blue ANSI, a colour-cube red
@@ -223,14 +235,22 @@ fn attrs_buffer() -> GridBuffer {
         .with_row(
             0,
             [
-                TermCell::new("B", TermColor::Default, TermColor::Default).with_attrs(e().with_bold(true)),
-                TermCell::new("D", TermColor::Default, TermColor::Default).with_attrs(e().with_dim(true)),
-                TermCell::new("I", TermColor::Default, TermColor::Default).with_attrs(e().with_italic(true)),
-                TermCell::new("U", TermColor::Default, TermColor::Default).with_attrs(e().with_underline(true)),
-                TermCell::new("K", TermColor::Default, TermColor::Default).with_attrs(e().with_blink(true)),
-                TermCell::new("R", TermColor::Default, TermColor::Default).with_attrs(e().with_reverse(true)),
-                TermCell::new("H", TermColor::Default, TermColor::Default).with_attrs(e().with_hidden(true)),
-                TermCell::new("S", TermColor::Default, TermColor::Default).with_attrs(e().with_strikethrough(true)),
+                TermCell::new("B", TermColor::Default, TermColor::Default)
+                    .with_attrs(e().with_bold(true)),
+                TermCell::new("D", TermColor::Default, TermColor::Default)
+                    .with_attrs(e().with_dim(true)),
+                TermCell::new("I", TermColor::Default, TermColor::Default)
+                    .with_attrs(e().with_italic(true)),
+                TermCell::new("U", TermColor::Default, TermColor::Default)
+                    .with_attrs(e().with_underline(true)),
+                TermCell::new("K", TermColor::Default, TermColor::Default)
+                    .with_attrs(e().with_blink(true)),
+                TermCell::new("R", TermColor::Default, TermColor::Default)
+                    .with_attrs(e().with_reverse(true)),
+                TermCell::new("H", TermColor::Default, TermColor::Default)
+                    .with_attrs(e().with_hidden(true)),
+                TermCell::new("S", TermColor::Default, TermColor::Default)
+                    .with_attrs(e().with_strikethrough(true)),
             ],
         )
         // Row 1 — combinations + reverse with stored colours (not swapped).
@@ -504,8 +524,20 @@ fn view(_state: (), _frame: &Frame) -> Scene {
 
     Scene::Container(
         ContainerNode::new(vec![
-            grid(DEFAULT_TAG, CellMetric::DEFAULT, DEFAULT_POS, DEFAULT_SIZE, None),
-            grid(MEASURED_TAG, measured, MEASURED_POS, MEASURED_SIZE, measured_font),
+            grid(
+                DEFAULT_TAG,
+                CellMetric::DEFAULT,
+                DEFAULT_POS,
+                DEFAULT_SIZE,
+                None,
+            ),
+            grid(
+                MEASURED_TAG,
+                measured,
+                MEASURED_POS,
+                MEASURED_SIZE,
+                measured_font,
+            ),
             content,
             attrs,
             cursor,
@@ -582,8 +614,8 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pinion_core::scene::Rect;
     use pinion_core::CellWidth;
+    use pinion_core::scene::Rect;
 
     /// The derived dims are a pure function of `rect` + metric — the
     /// R969 layout-derived SSOT. The running shell fills `rect` via the
@@ -601,7 +633,12 @@ mod tests {
     fn measured_grid_derives_40x20_from_its_rect() {
         let metric = CellMetric::new(MEASURED_CELL.0, MEASURED_CELL.1).expect("non-zero");
         let mut g = TextGridNode::new(metric);
-        g.rect = Rect::new(MEASURED_POS.0, MEASURED_POS.1, MEASURED_SIZE.0, MEASURED_SIZE.1);
+        g.rect = Rect::new(
+            MEASURED_POS.0,
+            MEASURED_POS.1,
+            MEASURED_SIZE.0,
+            MEASURED_SIZE.1,
+        );
         assert_eq!(g.cols(), 40); // 360 / 9
         assert_eq!(g.rows(), 20); // 360 / 18
     }
@@ -658,7 +695,11 @@ mod tests {
     #[test]
     fn measured_grid_falls_back_without_provider() {
         let scene = pinion_core::Owner::new().run(|| view((), &Frame::new()));
-        assert_eq!(measured_grid_font_size(&scene), None, "fallback is the fit path");
+        assert_eq!(
+            measured_grid_font_size(&scene),
+            None,
+            "fallback is the fit path"
+        );
     }
 
     #[test]

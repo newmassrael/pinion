@@ -27,16 +27,16 @@
 //! exactly as winit does — §2 invariant #2 holds (RPC headless ==
 //! human cursor for the activation path).
 
+#[cfg(test)]
+use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
 use pinion_core::external::IntrospectValue;
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widgets::radio::{RadioEvent, RadioExternal, RadioState};
 use pinion_core::{Color, Frame, Scene, WidgetCore, WidgetStateName};
-#[cfg(test)]
-use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
 use pinion_derive::widget;
 use pinion_shell::vello_renderer_impl;
 use pinion_widget_paint::state_layer::state_layer;
@@ -191,8 +191,7 @@ impl RadioView {
                 } else {
                     RadioState::Idle
                 };
-                let selected =
-                    matches!(intro.query("selected"), Some(IntrospectValue::Bool(true)));
+                let selected = matches!(intro.query("selected"), Some(IntrospectValue::Bool(true)));
                 return (state, selected);
             }
         }
@@ -245,7 +244,10 @@ impl RadioView {
             return false;
         };
         intro
-            .invoke("send", IntrospectValue::Text("KeyboardActivate".to_string()))
+            .invoke(
+                "send",
+                IntrospectValue::Text("KeyboardActivate".to_string()),
+            )
             .is_ok()
     }
 

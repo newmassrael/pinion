@@ -111,10 +111,10 @@ use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
-use crate::intent::Intent;
 use crate::input::PointerWireEvent;
-use crate::widgets::wire::resolve_index;
+use crate::intent::Intent;
 use crate::widgets::IntentEmitter;
+use crate::widgets::wire::resolve_index;
 
 /// R692 §5.38 — the two control classes a [`Toolbar`] groups. A
 /// `Command` is a one-shot button; a `Toggle` carries a persistent
@@ -518,7 +518,9 @@ impl ExternalIntrospect for ToolbarExternal {
                 _ => Err(InterveneError::TypeMismatch),
             },
             _ => {
-                let suffix = path.strip_prefix("pressed.").ok_or(InterveneError::UnknownPath)?;
+                let suffix = path
+                    .strip_prefix("pressed.")
+                    .ok_or(InterveneError::UnknownPath)?;
                 let i: usize = suffix.parse().map_err(|_| InterveneError::UnknownPath)?;
                 // Programmatic pressed set (RPC restore / form default) —
                 // no `"toggle"` intent fires. Only toggle controls carry
@@ -537,7 +539,11 @@ impl ExternalIntrospect for ToolbarExternal {
         }
     }
 
-    fn invoke(&mut self, path: &str, args: IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+    fn invoke(
+        &mut self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
         match path {
             // Mouse: "<i>:<Event>". Returns the roving cursor.
             "send" => match args {
@@ -712,7 +718,8 @@ mod tests {
     #[test]
     fn external_intervene_pressed_toggle_only() {
         let mut e = ext();
-        e.intervene("pressed.1", IntrospectValue::Bool(true)).unwrap();
+        e.intervene("pressed.1", IntrospectValue::Bool(true))
+            .unwrap();
         assert_eq!(e.is_pressed(1), Some(true));
         assert!(!e.is_dirty(), "programmatic pressed fires no toggle intent");
         // A command control has no pressed slot.
@@ -952,7 +959,11 @@ mod tests {
         assert_eq!(read_roving_focus(&e), (0, false));
         e.em.inner.set_focus(2);
         e.on_focus_change(true);
-        assert_eq!(read_roving_focus(&e), (2, true), "decodes the moved cursor + group focus");
+        assert_eq!(
+            read_roving_focus(&e),
+            (2, true),
+            "decodes the moved cursor + group focus"
+        );
         e.on_focus_change(false);
         assert_eq!(read_roving_focus(&e), (2, false));
     }

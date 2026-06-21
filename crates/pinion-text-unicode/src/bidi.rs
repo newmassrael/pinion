@@ -227,10 +227,7 @@ pub fn mirroring_glyph(cp: char) -> Option<char> {
     let pairs = tables::BIDI_MIRRORING_PAIRS;
     let idx = pairs.binary_search_by_key(&key, |&(k, _)| k).ok()?;
     let (_, mirrored) = pairs[idx];
-    Some(
-        char::from_u32(mirrored)
-            .expect("BidiMirroring.txt entries are valid scalar values"),
-    )
+    Some(char::from_u32(mirrored).expect("BidiMirroring.txt entries are valid scalar values"))
 }
 
 /// UAX #9 BD16 lookup — given a codepoint, return its matching
@@ -258,8 +255,8 @@ pub fn paired_bracket(cp: char) -> Option<(char, BracketType)> {
     let pairs = tables::BIDI_BRACKET_PAIRS;
     let idx = pairs.binary_search_by_key(&key, |&(k, _, _)| k).ok()?;
     let (_, matching, kind) = pairs[idx];
-    let matching_char = char::from_u32(matching)
-        .expect("BidiBrackets.txt entries are valid scalar values");
+    let matching_char =
+        char::from_u32(matching).expect("BidiBrackets.txt entries are valid scalar values");
     let bt = match kind {
         0 => BracketType::Open,
         1 => BracketType::Close,
@@ -644,7 +641,10 @@ fn pop_embedding(stack: &mut DirectionalStatusStack) -> (u8, BidiClass) {
 /// non-formatting character.
 fn apply_x6(stack: &DirectionalStatusStack, cls: BidiClass) -> (u8, BidiClass) {
     let top = stack.top();
-    (top.embedding_level, apply_override(top.directional_override, cls))
+    (
+        top.embedding_level,
+        apply_override(top.directional_override, cls),
+    )
 }
 
 /// Override projection: if the current stack entry has an LTR or RTL
@@ -862,19 +862,17 @@ fn build_isolating_run_sequences(
         // member is LRI/RLI/FSI in `classes`. Symmetrically for an
         // unmatched PDI at the start.
         let last_run_idx = *run_indices.last().unwrap_or(&ri);
-        let last_member =
-            *runs[last_run_idx].members.last().unwrap_or(&usize::MAX);
-        let ends_with_unmatched_initiator =
-            next_in_seq[last_run_idx].is_none()
-                && last_member < classes.len()
-                && matches!(
-                    classes[last_member],
-                    BidiClass::LRI | BidiClass::RLI | BidiClass::FSI,
-                );
+        let last_member = *runs[last_run_idx].members.last().unwrap_or(&usize::MAX);
+        let ends_with_unmatched_initiator = next_in_seq[last_run_idx].is_none()
+            && last_member < classes.len()
+            && matches!(
+                classes[last_member],
+                BidiClass::LRI | BidiClass::RLI | BidiClass::FSI,
+            );
         let first_run_idx = ri;
         let first_member = runs[first_run_idx].members[0];
-        let starts_with_unmatched_pdi = !has_prev[first_run_idx]
-            && classes[first_member] == BidiClass::PDI;
+        let starts_with_unmatched_pdi =
+            !has_prev[first_run_idx] && classes[first_member] == BidiClass::PDI;
         sequences.push(IsolatingRunSequence {
             level: runs[ri].level,
             run_indices,
@@ -899,7 +897,10 @@ fn compute_sos_eos(
     paragraph_level: u8,
 ) -> (BidiClass, BidiClass) {
     let first_run = &runs[seq.run_indices[0]];
-    let last_run = &runs[*seq.run_indices.last().expect("sequence has at least one run")];
+    let last_run = &runs[*seq
+        .run_indices
+        .last()
+        .expect("sequence has at least one run")];
     let first_pos = first_run.members[0];
     let last_pos = *last_run
         .members
@@ -1016,9 +1017,7 @@ fn apply_w4(view: &mut [BidiClass]) {
         let prev = view[i - 1];
         let next = view[i + 1];
         match view[i] {
-            BidiClass::ES | BidiClass::CS
-                if prev == BidiClass::EN && next == BidiClass::EN =>
-            {
+            BidiClass::ES | BidiClass::CS if prev == BidiClass::EN && next == BidiClass::EN => {
                 view[i] = BidiClass::EN;
             }
             BidiClass::CS if prev == BidiClass::AN && next == BidiClass::AN => {
@@ -1200,9 +1199,7 @@ fn find_bracket_pairs(
             }
             BracketType::Close => {
                 let ch_canon = canonical_bracket_form(ch);
-                if let Some(found) =
-                    stack.iter().rposition(|&(_, m)| m == ch_canon)
-                {
+                if let Some(found) = stack.iter().rposition(|&(_, m)| m == ch_canon) {
                     let (open_pos, _) = stack[found];
                     stack.truncate(found);
                     pairs.push((open_pos, i));
@@ -1418,10 +1415,8 @@ pub fn resolve_neutral_types(
 
     for seq in &sequences {
         let positions = collect_sequence_positions(seq, &runs);
-        let (sos, eos) =
-            compute_sos_eos(seq, &runs, &levels, &classes, paragraph_level);
-        let mut view: Vec<BidiClass> =
-            positions.iter().map(|&i| classes[i]).collect();
+        let (sos, eos) = compute_sos_eos(seq, &runs, &levels, &classes, paragraph_level);
+        let mut view: Vec<BidiClass> = positions.iter().map(|&i| classes[i]).collect();
 
         let embed_dir = if seq.level % 2 == 0 {
             BidiClass::L
@@ -1524,11 +1519,7 @@ pub fn resolve_implicit_levels(neutral: ExplicitLevels) -> ExplicitLevels {
 const fn is_l1_pre_reset(cls: BidiClass) -> bool {
     matches!(
         cls,
-        BidiClass::WS
-            | BidiClass::LRI
-            | BidiClass::RLI
-            | BidiClass::FSI
-            | BidiClass::PDI
+        BidiClass::WS | BidiClass::LRI | BidiClass::RLI | BidiClass::FSI | BidiClass::PDI
     )
 }
 
@@ -1546,8 +1537,7 @@ pub fn apply_l1_line_break(
         mut levels,
         classes,
     } = implicit;
-    let original: Vec<BidiClass> =
-        paragraph.chars().map(bidi_class).collect();
+    let original: Vec<BidiClass> = paragraph.chars().map(bidi_class).collect();
     let n = original.len();
     if n == 0 {
         return ExplicitLevels { levels, classes };
@@ -1636,8 +1626,7 @@ pub fn reorder_visual(levels: &[u8]) -> Vec<usize> {
     }
     let max_level = *levels.iter().max().expect("non-empty levels");
     // Lowest odd level present in the text — the loop floor per L2.
-    let Some(min_odd) = levels.iter().copied().filter(|&l| l % 2 == 1).min()
-    else {
+    let Some(min_odd) = levels.iter().copied().filter(|&l| l % 2 == 1).min() else {
         return indices;
     };
 
@@ -1679,10 +1668,7 @@ pub fn reorder_visual(levels: &[u8]) -> Vec<usize> {
 /// the caller). NSM runs not followed by a base (i.e. the very end
 /// of the visual sequence) are left as-is — they have no associated
 /// base to reorder against.
-fn apply_l3_combining_marks(
-    visual_indices: &mut [usize],
-    original_classes: &[BidiClass],
-) {
+fn apply_l3_combining_marks(visual_indices: &mut [usize], original_classes: &[BidiClass]) {
     let n = visual_indices.len();
     if n < 2 {
         return;
@@ -1749,8 +1735,7 @@ pub fn bidi_reorder(paragraph: &str) -> Vec<usize> {
     // dragged `min_odd` from 3 down to 1 and triggered a spurious
     // whole-line reversal.
     let mut visible_levels: Vec<u8> = Vec::with_capacity(post_l1.levels.len());
-    let mut visible_to_original: Vec<usize> =
-        Vec::with_capacity(post_l1.levels.len());
+    let mut visible_to_original: Vec<usize> = Vec::with_capacity(post_l1.levels.len());
     for (i, &cls) in post_l1.classes.iter().enumerate() {
         if cls != BidiClass::BN {
             visible_levels.push(post_l1.levels[i]);
@@ -1763,8 +1748,7 @@ pub fn bidi_reorder(paragraph: &str) -> Vec<usize> {
         .map(|k| visible_to_original[k])
         .collect();
 
-    let original_classes: Vec<BidiClass> =
-        paragraph.chars().map(bidi_class).collect();
+    let original_classes: Vec<BidiClass> = paragraph.chars().map(bidi_class).collect();
     apply_l3_combining_marks(&mut indices, &original_classes);
     indices
 }
@@ -1833,9 +1817,7 @@ pub fn mirror_paired_brackets(text: &str) -> std::borrow::Cow<'_, str> {
         }
         let levels = resolved_levels_for_paragraph(paragraph);
         for (i, ch) in paragraph.chars().enumerate() {
-            if levels.levels[i] % 2 == 1
-                && levels.classes[i] != BidiClass::BN
-            {
+            if levels.levels[i] % 2 == 1 && levels.classes[i] != BidiClass::BN {
                 if let Some(mirror) = mirroring_glyph(ch) {
                     out.push(mirror);
                     continue;
@@ -2064,9 +2046,7 @@ mod tests {
         // P1 composes with P2/P3: each split paragraph resolves
         // independently. Demonstrates the canonical pipeline.
         let text = "Hello\nאבג\n123";
-        let levels: Vec<u8> = iter_paragraphs(text)
-            .map(paragraph_level)
-            .collect();
+        let levels: Vec<u8> = iter_paragraphs(text).map(paragraph_level).collect();
         // LTR / RTL / LTR (no strong → default 0).
         assert_eq!(levels, vec![0, 1, 0]);
     }
@@ -2167,7 +2147,10 @@ mod tests {
         let text = format!("{rlo}abc{pdf}");
         let out = resolve_explicit_levels(&text, 0);
         // 'a','b','c' are L originally; override to R.
-        assert_eq!(out.classes[1..=3], [BidiClass::R, BidiClass::R, BidiClass::R]);
+        assert_eq!(
+            out.classes[1..=3],
+            [BidiClass::R, BidiClass::R, BidiClass::R]
+        );
         assert_eq!(out.levels[1..=3], [1, 1, 1]);
     }
 
@@ -2179,7 +2162,10 @@ mod tests {
         let pdf = '\u{202C}';
         let text = format!("{lro}אבג{pdf}");
         let out = resolve_explicit_levels(&text, 0);
-        assert_eq!(out.classes[1..=3], [BidiClass::L, BidiClass::L, BidiClass::L]);
+        assert_eq!(
+            out.classes[1..=3],
+            [BidiClass::L, BidiClass::L, BidiClass::L]
+        );
         assert_eq!(out.levels[1..=3], [2, 2, 2]);
     }
 
@@ -2588,7 +2574,10 @@ mod tests {
         // override the EN to L afterward — keeps the W4 effect
         // observable).
         let out = resolve_pipeline("1+2", 1);
-        assert_eq!(out.classes, vec![BidiClass::EN, BidiClass::EN, BidiClass::EN]);
+        assert_eq!(
+            out.classes,
+            vec![BidiClass::EN, BidiClass::EN, BidiClass::EN]
+        );
     }
 
     #[test]
@@ -2609,7 +2598,10 @@ mod tests {
         // RTL paragraph keeps the AN→AN visible (W7 doesn't touch AN).
         let text = "\u{0660},\u{0661}";
         let out = resolve_pipeline(text, 1);
-        assert_eq!(out.classes, vec![BidiClass::AN, BidiClass::AN, BidiClass::AN]);
+        assert_eq!(
+            out.classes,
+            vec![BidiClass::AN, BidiClass::AN, BidiClass::AN]
+        );
     }
 
     #[test]
@@ -2618,7 +2610,10 @@ mod tests {
         // neighbor types). W6 reclassifies it to ON.
         let text = "5,\u{0660}";
         let out = resolve_pipeline(text, 1);
-        assert_eq!(out.classes, vec![BidiClass::EN, BidiClass::ON, BidiClass::AN]);
+        assert_eq!(
+            out.classes,
+            vec![BidiClass::EN, BidiClass::ON, BidiClass::AN]
+        );
     }
 
     // ---- W5 ----
@@ -2849,8 +2844,7 @@ mod tests {
         for ch in ['(', '[', '{', '\u{0F3A}', '\u{27E6}', '\u{2983}'] {
             let (matching, kind) = paired_bracket(ch).expect("paired bracket");
             assert_eq!(kind, BracketType::Open);
-            let (back, back_kind) =
-                paired_bracket(matching).expect("inverse paired bracket");
+            let (back, back_kind) = paired_bracket(matching).expect("inverse paired bracket");
             assert_eq!(back, ch);
             assert_eq!(back_kind, BracketType::Close);
         }
@@ -2884,10 +2878,7 @@ mod tests {
         // "(a)" in LTR paragraph. Embedding = L, inner 'a' is L (matches
         // embed) → brackets become L.
         let out = resolve_full("(a)", 0);
-        assert_eq!(
-            out.classes,
-            vec![BidiClass::L, BidiClass::L, BidiClass::L],
-        );
+        assert_eq!(out.classes, vec![BidiClass::L, BidiClass::L, BidiClass::L],);
     }
 
     #[test]
@@ -3360,8 +3351,10 @@ mod tests {
         // visual.
         let nsm_visual_pos = result.iter().position(|&i| chars[i] == '\u{0301}').unwrap();
         let bet_visual_pos = result.iter().position(|&i| chars[i] == 'ב').unwrap();
-        assert!(nsm_visual_pos > bet_visual_pos,
-            "NSM should follow its base 'ב' in visual order; got NSM at {nsm_visual_pos}, ב at {bet_visual_pos}. Visual: {visual:?}");
+        assert!(
+            nsm_visual_pos > bet_visual_pos,
+            "NSM should follow its base 'ב' in visual order; got NSM at {nsm_visual_pos}, ב at {bet_visual_pos}. Visual: {visual:?}"
+        );
     }
 
     #[test]
@@ -3441,8 +3434,7 @@ mod tests {
         // Two paragraphs: first LTR with brackets (no mirror), second
         // RTL with brackets (mirror). Helper must split via
         // iter_paragraphs and resolve each independently.
-        let input =
-            "abc (x)\n\u{05D0}(\u{05D1})\u{05D2}";
+        let input = "abc (x)\n\u{05D0}(\u{05D1})\u{05D2}";
         let mirrored = mirror_paired_brackets(input);
         let chars: Vec<char> = mirrored.chars().collect();
         // First paragraph: brackets preserved.
@@ -3458,8 +3450,7 @@ mod tests {
     // ---- R51.24.1 §5.37.4 — `BidiCharacterTest.txt` conformance harness ----
 
     use crate::test_fixture::{
-        load_bidi_character_test, BidiCharacterCase,
-        BidiParagraphDirectionInput,
+        BidiCharacterCase, BidiParagraphDirectionInput, load_bidi_character_test,
     };
 
     /// Run one `BidiCharacterTest.txt` row through the pinion BIDI
@@ -3477,9 +3468,7 @@ mod tests {
     /// Returns `Err(diagnostic)` on the first mismatch so the caller
     /// can pinpoint a single failing UCD coordinate; the diagnostic
     /// quotes the source `line_number` for direct lookup.
-    fn run_bidi_character_case(
-        case: &BidiCharacterCase,
-    ) -> Result<(), String> {
+    fn run_bidi_character_case(case: &BidiCharacterCase) -> Result<(), String> {
         let paragraph: String = case.codepoints.iter().collect();
 
         let p_level = match case.paragraph_direction_input {
@@ -3554,10 +3543,8 @@ mod tests {
         // original indices. The UCD reference indices in Field 4 are
         // computed the same way ("characters with a resolved level of
         // 'x' are skipped").
-        let mut visible_levels: Vec<u8> =
-            Vec::with_capacity(post_l1.levels.len());
-        let mut visible_to_original: Vec<usize> =
-            Vec::with_capacity(post_l1.levels.len());
+        let mut visible_levels: Vec<u8> = Vec::with_capacity(post_l1.levels.len());
+        let mut visible_to_original: Vec<usize> = Vec::with_capacity(post_l1.levels.len());
         for (i, &cls) in post_l1.classes.iter().enumerate() {
             if cls != BidiClass::BN {
                 visible_levels.push(post_l1.levels[i]);
@@ -3598,15 +3585,14 @@ mod tests {
             cases.len(),
         );
         for case in cases.iter().take(100) {
-            run_bidi_character_case(case).unwrap_or_else(|err| {
-                panic!("BidiCharacterTest smoke failure: {err}")
-            });
+            run_bidi_character_case(case)
+                .unwrap_or_else(|err| panic!("BidiCharacterTest smoke failure: {err}"));
         }
     }
 
     // ---- R51.26 §5.37.4 — `BidiTest.txt` class-sequence conformance ----
 
-    use crate::test_fixture::{load_bidi_test, BidiTestCase};
+    use crate::test_fixture::{BidiTestCase, load_bidi_test};
 
     /// Map each `Bidi_Class` to a representative codepoint whose
     /// `bidi_class()` returns that class. Used to synthesize an input
@@ -3743,10 +3729,8 @@ mod tests {
             }
         }
 
-        let mut visible_levels: Vec<u8> =
-            Vec::with_capacity(post_l1.levels.len());
-        let mut visible_to_original: Vec<usize> =
-            Vec::with_capacity(post_l1.levels.len());
+        let mut visible_levels: Vec<u8> = Vec::with_capacity(post_l1.levels.len());
+        let mut visible_to_original: Vec<usize> = Vec::with_capacity(post_l1.levels.len());
         for (i, &cls) in post_l1.classes.iter().enumerate() {
             if cls != BidiClass::BN {
                 visible_levels.push(post_l1.levels[i]);
@@ -3795,9 +3779,7 @@ mod tests {
             cases.len(),
         );
         for case in cases.iter().take(100) {
-            run_bidi_test_case(case).unwrap_or_else(|err| {
-                panic!("BidiTest smoke failure: {err}")
-            });
+            run_bidi_test_case(case).unwrap_or_else(|err| panic!("BidiTest smoke failure: {err}"));
         }
     }
 

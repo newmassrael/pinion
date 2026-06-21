@@ -30,11 +30,11 @@ pub mod core_shell;
 pub mod focus;
 pub mod frame_pacing;
 pub mod frame_timing;
+#[cfg(feature = "vello")]
+pub mod image_cache;
 pub mod input;
 pub mod intent_queue;
 pub mod layout;
-#[cfg(feature = "vello")]
-pub mod image_cache;
 #[cfg(feature = "vello")]
 pub mod paint_adapter;
 pub mod paint_cache_stats;
@@ -44,12 +44,12 @@ pub use command::{
     BlockOnExecutor, BoxFuture, CommandExecutor, CommandTaskHandle, Executor, Handler,
     HandlerFuture, HandlerRegistry, IntentSink, VecSink,
 };
-pub use core_shell::{CoreShell, DispatchTail, StateChange, DEFAULT_WINDOW};
+pub use core_shell::{CoreShell, DEFAULT_WINDOW, DispatchTail, StateChange};
 pub use focus::FocusManager;
-pub use frame_pacing::{clamp_frame_dt, substep, FixedTimestep, PacingState, MAX_FRAME_DT_SECS};
-pub use frame_timing::{FrameTiming, FrameTimingStats, FrameTimingsSnapshot, FRAME_TIMING_WINDOW};
-pub use input::{rect_for_tag, InputRouter, PanRelease, Modifiers, PointerId, Touch, TouchPhase};
-pub use intent_queue::{walk_scene_and_drain, walk_scene_and_drain_immediate, IntentQueue};
+pub use frame_pacing::{FixedTimestep, MAX_FRAME_DT_SECS, PacingState, clamp_frame_dt, substep};
+pub use frame_timing::{FRAME_TIMING_WINDOW, FrameTiming, FrameTimingStats, FrameTimingsSnapshot};
+pub use input::{InputRouter, Modifiers, PanRelease, PointerId, Touch, TouchPhase, rect_for_tag};
+pub use intent_queue::{IntentQueue, walk_scene_and_drain, walk_scene_and_drain_immediate};
 pub use layout::{compute_layout, compute_layout_with_scroll_dirty};
 pub use paint_cache_stats::FragmentCacheStats;
 pub use window::WindowRouter;

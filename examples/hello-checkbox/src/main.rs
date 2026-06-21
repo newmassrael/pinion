@@ -16,18 +16,18 @@
 //! the shell threads through the shared `LayoutCache` — no
 //! special-case bitmap or SVG path, just Unicode + parley.
 
-use pinion_core::external::IntrospectValue;
-use pinion_core::style::{AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle};
-use pinion_core::theme::{use_theme, ColorRole};
-#[cfg(test)]
-use pinion_core::theme::Theme;
-use pinion_core::widgets::checkbox::{CheckboxEvent, CheckboxExternal, CheckboxState};
-use pinion_core::{Frame, Scene, WidgetCore, WidgetStateName};
 #[cfg(test)]
 use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
+use pinion_core::external::IntrospectValue;
+use pinion_core::style::{AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle};
+#[cfg(test)]
+use pinion_core::theme::Theme;
+use pinion_core::theme::{ColorRole, use_theme};
+use pinion_core::widgets::checkbox::{CheckboxEvent, CheckboxExternal, CheckboxState};
+use pinion_core::{Frame, Scene, WidgetCore, WidgetStateName};
 use pinion_derive::widget;
 use pinion_shell::vello_renderer_impl;
-use pinion_widget_paint::checkbox::{view_checkbox, CheckboxStyle};
+use pinion_widget_paint::checkbox::{CheckboxStyle, view_checkbox};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloCheckboxRenderer, HelloCheckboxRendererError);
@@ -160,7 +160,10 @@ impl CheckboxView {
             return false;
         };
         intro
-            .invoke("send", IntrospectValue::Text("KeyboardActivate".to_string()))
+            .invoke(
+                "send",
+                IntrospectValue::Text("KeyboardActivate".to_string()),
+            )
             .is_ok()
     }
 
@@ -216,10 +219,7 @@ mod a11y_tests {
 
     #[test]
     fn focused_tag_sets_focused_flag() {
-        let nodes = CheckboxView::access_node(
-            &(CheckboxState::Idle, false),
-            Some("main_checkbox"),
-        );
+        let nodes = CheckboxView::access_node(&(CheckboxState::Idle, false), Some("main_checkbox"));
         assert!(nodes[0].state.focused);
     }
 
@@ -267,10 +267,7 @@ mod a11y_tests {
         // re-exercises the same contract against the lifted symbol.
         let light = Theme::light();
         assert_eq!(
-            pinion_widget_paint::checkbox::checkbox_accent_for(
-                &light,
-                CheckboxState::Idle,
-            ),
+            pinion_widget_paint::checkbox::checkbox_accent_for(&light, CheckboxState::Idle,),
             light.accent,
         );
     }
@@ -279,10 +276,7 @@ mod a11y_tests {
     fn r57_x_checkbox_unchecked_outline_uses_outline_role() {
         let light = Theme::light();
         assert_eq!(
-            pinion_widget_paint::checkbox::checkbox_outline_for(
-                &light,
-                CheckboxState::Idle,
-            ),
+            pinion_widget_paint::checkbox::checkbox_outline_for(&light, CheckboxState::Idle,),
             light.outline,
         );
     }
@@ -297,10 +291,7 @@ mod a11y_tests {
             .resolve(ColorRole::Accent)
             .lerp(theme.resolve(ColorRole::OnSurface), 0.08);
         assert_eq!(
-            pinion_widget_paint::checkbox::checkbox_accent_for(
-                &theme,
-                CheckboxState::Hover,
-            ),
+            pinion_widget_paint::checkbox::checkbox_accent_for(&theme, CheckboxState::Hover,),
             expected,
         );
     }

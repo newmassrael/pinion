@@ -48,7 +48,5 @@ pub mod focus_ring;
 pub mod highlight;
 
 pub use event::OverlayEvent;
-pub use focus_ring::{inject_focus_ring, FocusRingStyle, FOCUS_RING_TAG};
-pub use highlight::{
-    clear_highlights, inject_highlight, HighlightStyle, HIGHLIGHT_TAG_PREFIX,
-};
+pub use focus_ring::{FOCUS_RING_TAG, FocusRingStyle, inject_focus_ring};
+pub use highlight::{HIGHLIGHT_TAG_PREFIX, HighlightStyle, clear_highlights, inject_highlight};

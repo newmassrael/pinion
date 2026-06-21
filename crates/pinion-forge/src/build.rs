@@ -62,10 +62,7 @@ impl From<Vec<PinionForgeDiagnostic>> for CompileError {
 /// # Errors
 /// Returns [`CompileError::Diagnostics`] on any DSL-level failure
 /// (parse, validate). Never returns I/O errors — pure in-memory.
-pub fn compile_str(
-    xml: &str,
-    source_label: impl Into<PathBuf>,
-) -> Result<String, CompileError> {
+pub fn compile_str(xml: &str, source_label: impl Into<PathBuf>) -> Result<String, CompileError> {
     let doc = parse_pinion(xml, source_label)?;
     Ok(emit_rust(&doc))
 }
@@ -127,4 +124,3 @@ fn derived_stem(input: &Path) -> PathBuf {
     );
     PathBuf::from(format!("{stem}.rs"))
 }
-

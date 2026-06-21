@@ -92,11 +92,8 @@ mod tests {
 
     #[test]
     fn propose_change_surfaces_capacity_full() {
-        let ledger = PreviewLedger::with_config(
-            1,
-            Duration::from_secs(60),
-            Duration::from_secs(600),
-        );
+        let ledger =
+            PreviewLedger::with_config(1, Duration::from_secs(60), Duration::from_secs(600));
         let revision = SceneRevision::default();
         propose_change(&ledger, &revision, signal_proposal(), None).unwrap();
         let err = propose_change(&ledger, &revision, signal_proposal(), None).unwrap_err();

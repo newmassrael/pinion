@@ -79,7 +79,10 @@ impl DragLatch {
     /// Open the latch at the press origin (logical px).
     #[must_use]
     pub const fn new(origin: (f64, f64)) -> Self {
-        Self { origin, live: false }
+        Self {
+            origin,
+            live: false,
+        }
     }
 
     /// Advance with the current cursor (logical px, same space as the
@@ -665,7 +668,9 @@ impl<T: Copy> DragCalibration<T> {
     /// An idle calibration — no drag in flight.
     #[must_use]
     pub fn new() -> Self {
-        Self { anchor: Cell::new(None) }
+        Self {
+            anchor: Cell::new(None),
+        }
     }
 
     /// Drive one captured `pointer_move` at cursor fraction `x_rel`.
@@ -774,12 +779,7 @@ impl<T: Copy> core::fmt::Debug for DragCalibration<T> {
 /// chain rather than silently swallowing the key). The binding keeps its
 /// own `focused == Some(<my tag>)` roving-tabindex guard before calling.
 #[must_use]
-pub fn forward_key_to_field(
-    scene: &mut Scene,
-    tag: &str,
-    key: &str,
-    modifiers: Modifiers,
-) -> bool {
+pub fn forward_key_to_field(scene: &mut Scene, tag: &str, key: &str, modifiers: Modifiers) -> bool {
     let Some(node) = scene.find_external_with_tag_mut(tag) else {
         return false;
     };
@@ -872,8 +872,8 @@ mod tests {
     //! plain-keystroke branches.
 
     use super::{
-        is_activation_event, DragLatch, HeldKeys, Modifiers, PointerWireEvent,
-        KEYBOARD_ACTIVATE_EVENT,
+        DragLatch, HeldKeys, KEYBOARD_ACTIVATE_EVENT, Modifiers, PointerWireEvent,
+        is_activation_event,
     };
 
     #[test]
@@ -925,27 +925,56 @@ mod tests {
         // stays a click; once past, the gesture is a drag for its lifetime
         // — even back at the origin (the Qt startDragDistance latch).
         let mut latch = DragLatch::new((10.0, 10.0));
-        assert!(!latch.advance((12.0, 10.0)), "2px wobble: inside the dead zone");
-        assert!(!latch.advance((10.0, 14.0)), "exactly 4px: not yet a drag (strict)");
+        assert!(
+            !latch.advance((12.0, 10.0)),
+            "2px wobble: inside the dead zone"
+        );
+        assert!(
+            !latch.advance((10.0, 14.0)),
+            "exactly 4px: not yet a drag (strict)"
+        );
         assert!(!latch.live());
         assert!(latch.advance((15.0, 10.0)), "5px: past the threshold");
-        assert!(latch.advance((10.0, 10.0)), "returning to the origin stays a drag");
+        assert!(
+            latch.advance((10.0, 10.0)),
+            "returning to the origin stays a drag"
+        );
         assert!(latch.live());
     }
 
     #[test]
     fn r880_1_selection_chord_and_command_key_decode() {
         use super::SelectionChord;
-        let m = |shift, ctrl, meta| Modifiers { shift, ctrl, alt: false, meta };
-        assert_eq!(SelectionChord::from_modifiers(m(false, false, false)), SelectionChord::Replace);
-        assert_eq!(SelectionChord::from_modifiers(m(false, true, false)), SelectionChord::Toggle);
-        assert_eq!(SelectionChord::from_modifiers(m(true, false, false)), SelectionChord::Extend);
+        let m = |shift, ctrl, meta| Modifiers {
+            shift,
+            ctrl,
+            alt: false,
+            meta,
+        };
+        assert_eq!(
+            SelectionChord::from_modifiers(m(false, false, false)),
+            SelectionChord::Replace
+        );
+        assert_eq!(
+            SelectionChord::from_modifiers(m(false, true, false)),
+            SelectionChord::Toggle
+        );
+        assert_eq!(
+            SelectionChord::from_modifiers(m(true, false, false)),
+            SelectionChord::Extend
+        );
         // The command chord wins over Shift — ONE precedence for every
         // selection consumer (list, grid, node canvas, marquee).
-        assert_eq!(SelectionChord::from_modifiers(m(true, true, false)), SelectionChord::Toggle);
+        assert_eq!(
+            SelectionChord::from_modifiers(m(true, true, false)),
+            SelectionChord::Toggle
+        );
         // Cmd (meta) is a command chord too — the macOS convention the
         // command_key predicate encodes (R879.1-ratified ctrl-or-meta).
-        assert_eq!(SelectionChord::from_modifiers(m(false, false, true)), SelectionChord::Toggle);
+        assert_eq!(
+            SelectionChord::from_modifiers(m(false, false, true)),
+            SelectionChord::Toggle
+        );
         assert!(m(false, false, true).command_key());
         assert!(m(false, true, false).command_key());
         assert!(!m(true, false, false).command_key());
@@ -954,15 +983,37 @@ mod tests {
     #[test]
     fn r902_1_multiselect_key_op_classifies_the_non_nav_chords() {
         use super::MultiSelectKeyOp;
-        let cmd = Modifiers { shift: false, ctrl: true, alt: false, meta: false };
-        let meta = Modifiers { shift: false, ctrl: false, alt: false, meta: true };
+        let cmd = Modifiers {
+            shift: false,
+            ctrl: true,
+            alt: false,
+            meta: false,
+        };
+        let meta = Modifiers {
+            shift: false,
+            ctrl: false,
+            alt: false,
+            meta: true,
+        };
         let none = Modifiers::empty();
         // Ctrl/Cmd+A -> select-all; case-insensitive on the character key.
-        assert_eq!(MultiSelectKeyOp::classify("a", cmd), Some(MultiSelectKeyOp::SelectAll));
-        assert_eq!(MultiSelectKeyOp::classify("A", meta), Some(MultiSelectKeyOp::SelectAll));
+        assert_eq!(
+            MultiSelectKeyOp::classify("a", cmd),
+            Some(MultiSelectKeyOp::SelectAll)
+        );
+        assert_eq!(
+            MultiSelectKeyOp::classify("A", meta),
+            Some(MultiSelectKeyOp::SelectAll)
+        );
         // Ctrl/Cmd+Space (both wire spellings) -> toggle the cursor.
-        assert_eq!(MultiSelectKeyOp::classify(" ", cmd), Some(MultiSelectKeyOp::ToggleCursor));
-        assert_eq!(MultiSelectKeyOp::classify("Space", cmd), Some(MultiSelectKeyOp::ToggleCursor));
+        assert_eq!(
+            MultiSelectKeyOp::classify(" ", cmd),
+            Some(MultiSelectKeyOp::ToggleCursor)
+        );
+        assert_eq!(
+            MultiSelectKeyOp::classify("Space", cmd),
+            Some(MultiSelectKeyOp::ToggleCursor)
+        );
         // Without the command modifier, these are NOT set-ops (plain 'a' =
         // type-ahead, plain Space = expand-toggle) — the caller navigates.
         assert_eq!(MultiSelectKeyOp::classify("a", none), None);
@@ -978,8 +1029,17 @@ mod tests {
         // events that count as "activate", and nothing else.
         assert!(is_activation_event(PointerWireEvent::Up.as_wire_name()));
         assert!(is_activation_event(KEYBOARD_ACTIVATE_EVENT));
-        for name in ["PointerDown", "PointerEnter", "PointerLeave", "PointerCancel", ""] {
-            assert!(!is_activation_event(name), "{name} is not an activation edge");
+        for name in [
+            "PointerDown",
+            "PointerEnter",
+            "PointerLeave",
+            "PointerCancel",
+            "",
+        ] {
+            assert!(
+                !is_activation_event(name),
+                "{name} is not an activation edge"
+            );
         }
     }
 
@@ -1016,10 +1076,30 @@ mod tests {
     #[test]
     fn r56_1_f_0_any_bit_breaks_is_empty() {
         for m in [
-            Modifiers { shift: true, ctrl: false, alt: false, meta: false },
-            Modifiers { shift: false, ctrl: true, alt: false, meta: false },
-            Modifiers { shift: false, ctrl: false, alt: true, meta: false },
-            Modifiers { shift: false, ctrl: false, alt: false, meta: true },
+            Modifiers {
+                shift: true,
+                ctrl: false,
+                alt: false,
+                meta: false,
+            },
+            Modifiers {
+                shift: false,
+                ctrl: true,
+                alt: false,
+                meta: false,
+            },
+            Modifiers {
+                shift: false,
+                ctrl: false,
+                alt: true,
+                meta: false,
+            },
+            Modifiers {
+                shift: false,
+                ctrl: false,
+                alt: false,
+                meta: true,
+            },
         ] {
             assert!(!m.is_empty(), "any single bit must break is_empty");
         }
@@ -1037,20 +1117,39 @@ mod tests {
                 meta: bits & 8 != 0,
             };
             let token = m.as_wire_token();
-            assert_eq!(Modifiers::from_wire_token(&token), Some(m), "round-trip {m:?}");
+            assert_eq!(
+                Modifiers::from_wire_token(&token),
+                Some(m),
+                "round-trip {m:?}"
+            );
         }
         // Canonical order + empty-state contract.
         assert_eq!(Modifiers::empty().as_wire_token(), "");
         assert_eq!(
-            Modifiers { shift: true, ctrl: true, alt: false, meta: false }.as_wire_token(),
+            Modifiers {
+                shift: true,
+                ctrl: true,
+                alt: false,
+                meta: false
+            }
+            .as_wire_token(),
             "sc",
         );
         // Decode is order-tolerant; a non-scam letter rejects the whole token.
         assert_eq!(
             Modifiers::from_wire_token("cs"),
-            Some(Modifiers { shift: true, ctrl: true, alt: false, meta: false }),
+            Some(Modifiers {
+                shift: true,
+                ctrl: true,
+                alt: false,
+                meta: false
+            }),
         );
-        assert_eq!(Modifiers::from_wire_token("sx"), None, "unknown letter rejects");
+        assert_eq!(
+            Modifiers::from_wire_token("sx"),
+            None,
+            "unknown letter rejects"
+        );
         assert_eq!(Modifiers::from_wire_token(""), Some(Modifiers::empty()));
     }
 
@@ -1209,7 +1308,7 @@ mod edit_field_keymap_tests {
 
     use std::cell::Cell;
 
-    use super::{edit_field_keymap, Modifiers};
+    use super::{Modifiers, edit_field_keymap};
     use crate::cell_value::CellKind;
     use crate::scene::{ContainerNode, Scene};
 
@@ -1276,7 +1375,10 @@ mod edit_field_keymap_tests {
                 .with_tag("tf"),
             );
             let touched = Cell::new(false);
-            let chord = Modifiers { ctrl: true, ..Modifiers::empty() };
+            let chord = Modifiers {
+                ctrl: true,
+                ..Modifiers::empty()
+            };
             let handled = edit_field_keymap(
                 &mut scene,
                 "tf",
@@ -1286,9 +1388,16 @@ mod edit_field_keymap_tests {
                 || touched.set(true),
                 || touched.set(true),
             );
-            assert!(handled, "Ctrl+A reaches the field's select-all arm in an int editor");
+            assert!(
+                handled,
+                "Ctrl+A reaches the field's select-all arm in an int editor"
+            );
             assert!(!touched.get(), "a chord is never commit/cancel");
-            assert_eq!(editor.selection_range(), Some((0, 2)), "and it actually selected all");
+            assert_eq!(
+                editor.selection_range(),
+                Some((0, 2)),
+                "and it actually selected all"
+            );
             // The bare letter still dies at the int gate.
             let bare = edit_field_keymap(
                 &mut scene,
@@ -1336,7 +1445,10 @@ mod edit_field_keymap_tests {
             || {},
             || {},
         );
-        assert!(!handled, "non-whitelist named keys defer to the fallback chain");
+        assert!(
+            !handled,
+            "non-whitelist named keys defer to the fallback chain"
+        );
     }
 
     #[test]
@@ -1345,7 +1457,14 @@ mod edit_field_keymap_tests {
         // no External under the tag the forward reports `false` (the
         // shell fallback), never a panic.
         let mut scene = empty_scene();
-        for key in ["ArrowLeft", "ArrowRight", "Home", "End", "Backspace", "Delete"] {
+        for key in [
+            "ArrowLeft",
+            "ArrowRight",
+            "Home",
+            "End",
+            "Backspace",
+            "Delete",
+        ] {
             let handled = edit_field_keymap(
                 &mut scene,
                 "tf",
@@ -1355,7 +1474,10 @@ mod edit_field_keymap_tests {
                 || {},
                 || {},
             );
-            assert!(!handled, "{key} forwards; a missing field reports unhandled");
+            assert!(
+                !handled,
+                "{key} forwards; a missing field reports unhandled"
+            );
         }
     }
 }
@@ -1384,7 +1506,10 @@ mod drag_calibration_tests {
         /// so compare it against an epsilon rather than for bit-equality.
         fn assert_drag(got: Option<(f64, f64)>, base: f64, delta: f64) {
             let (p, d) = got.expect("a later move yields travel");
-            assert!((p - base).abs() < f64::EPSILON, "payload {p} != base {base}");
+            assert!(
+                (p - base).abs() < f64::EPSILON,
+                "payload {p} != base {base}"
+            );
             assert!((d - delta).abs() < 1e-9, "delta {d} != expected {delta}");
         }
         let cal = DragCalibration::<f64>::new();
@@ -1392,7 +1517,11 @@ mod drag_calibration_tests {
         assert_drag(cal.drive(0.7, || unreachable!("seed runs once")), 10.0, 0.2);
         // Delta is always measured from the PRESS, not the previous move — so a
         // clamp that floored an intermediate value un-clamps cleanly on return.
-        assert_drag(cal.drive(0.4, || unreachable!("seed runs once")), 10.0, -0.1);
+        assert_drag(
+            cal.drive(0.4, || unreachable!("seed runs once")),
+            10.0,
+            -0.1,
+        );
         assert_drag(cal.drive(0.5, || unreachable!("seed runs once")), 10.0, 0.0);
     }
 
@@ -1413,7 +1542,10 @@ mod drag_calibration_tests {
     #[test]
     fn end_reports_whether_a_drag_ran() {
         let cal = DragCalibration::<u32>::new();
-        assert!(!cal.end(), "a press that never moved is a click, not a drag");
+        assert!(
+            !cal.end(),
+            "a press that never moved is a click, not a drag"
+        );
 
         cal.drive(0.5, || Some(7));
         assert!(cal.end(), "a calibrated drag is reported on teardown");
@@ -1431,19 +1563,34 @@ mod drag_calibration_tests {
         assert!(!cal.traveled_beyond(100.0, 4.0), "idle: no travel");
 
         cal.drive(0.5, || Some(0)); // calibrate at the press (the R51.35 forward)
-        assert!(!cal.traveled_beyond(100.0, 4.0), "the calibration frame is a click so far");
+        assert!(
+            !cal.traveled_beyond(100.0, 4.0),
+            "the calibration frame is a click so far"
+        );
 
         cal.drive(0.52, || unreachable!("seeded")); // 0.02 * 100 = 2px < 4px
-        assert!(!cal.traveled_beyond(100.0, 4.0), "a 2px stray is still within the click dead zone");
+        assert!(
+            !cal.traveled_beyond(100.0, 4.0),
+            "a 2px stray is still within the click dead zone"
+        );
 
         cal.drive(0.56, || unreachable!("seeded")); // 0.06 * 100 = 6px >= 4px
-        assert!(cal.traveled_beyond(100.0, 4.0), "a 6px stray crossed into a drag");
+        assert!(
+            cal.traveled_beyond(100.0, 4.0),
+            "a 6px stray crossed into a drag"
+        );
 
         // The max is sticky: returning toward the press stays a drag.
         cal.drive(0.5, || unreachable!("seeded"));
-        assert!(cal.traveled_beyond(100.0, 4.0), "max travel is sticky — still a drag");
+        assert!(
+            cal.traveled_beyond(100.0, 4.0),
+            "max travel is sticky — still a drag"
+        );
 
         cal.end();
-        assert!(!cal.traveled_beyond(100.0, 4.0), "teardown resets the discriminator");
+        assert!(
+            !cal.traveled_beyond(100.0, 4.0),
+            "teardown resets the discriminator"
+        );
     }
 }

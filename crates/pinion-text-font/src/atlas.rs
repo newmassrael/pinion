@@ -74,7 +74,10 @@ impl GlyphAtlas {
     /// packed glyph grows it.
     #[must_use]
     pub fn new(width: usize) -> Self {
-        Self { width, ..Self::default() }
+        Self {
+            width,
+            ..Self::default()
+        }
     }
 
     /// The atlas bitmap width (px).
@@ -130,7 +133,14 @@ impl GlyphAtlas {
         let entry = if cov.is_empty() {
             // Blank glyph (space): cached so it is not re-rasterized, but nothing
             // is packed — width/height 0. left/top carried for completeness.
-            AtlasGlyph { x: 0, y: 0, width: 0, height: 0, left: cov.left, top: cov.top }
+            AtlasGlyph {
+                x: 0,
+                y: 0,
+                width: 0,
+                height: 0,
+                left: cov.left,
+                top: cov.top,
+            }
         } else {
             let (x, y) = self.pack(cov.width, cov.height);
             for row in 0..cov.height {
@@ -138,7 +148,14 @@ impl GlyphAtlas {
                 let src = row * cov.width;
                 self.alpha[dst..dst + cov.width].copy_from_slice(&cov.alpha[src..src + cov.width]);
             }
-            AtlasGlyph { x, y, width: cov.width, height: cov.height, left: cov.left, top: cov.top }
+            AtlasGlyph {
+                x,
+                y,
+                width: cov.width,
+                height: cov.height,
+                left: cov.left,
+                top: cov.top,
+            }
         };
         self.entries.insert(key, entry);
         Ok(entry)

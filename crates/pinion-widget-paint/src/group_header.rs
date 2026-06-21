@@ -29,7 +29,9 @@
 //! `U+25BC` expanded), so a grouped header reads with the same affordance as a
 //! [`crate::disclosure`] section and a `tree_view` branch.
 
-use crate::glyph::{DISCLOSURE_COLLAPSED as GLYPH_COLLAPSED, DISCLOSURE_EXPANDED as GLYPH_EXPANDED};
+use crate::glyph::{
+    DISCLOSURE_COLLAPSED as GLYPH_COLLAPSED, DISCLOSURE_EXPANDED as GLYPH_EXPANDED,
+};
 use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
 use pinion_core::style::{AlignItems, BoxStyle, FlexDirection, LayoutStyle, Size, TextStyle};
 use pinion_core::theme::{ColorRole, Theme};
@@ -61,7 +63,11 @@ pub fn group_header_row(
     width: u32,
     height: u32,
 ) -> Scene {
-    let chevron = if collapsed { GLYPH_COLLAPSED } else { GLYPH_EXPANDED };
+    let chevron = if collapsed {
+        GLYPH_COLLAPSED
+    } else {
+        GLYPH_EXPANDED
+    };
     let text = if detail.is_empty() {
         format!("{chevron}  {label}")
     } else {
@@ -70,12 +76,16 @@ pub fn group_header_row(
     let label_node = Scene::Text(TextNode::styled(
         text,
         Rect::default(),
-        TextStyle::new().with_size_px(HEADER_FONT_PX).with_fg(theme.resolve(ColorRole::OnSurface)),
+        TextStyle::new()
+            .with_size_px(HEADER_FONT_PX)
+            .with_fg(theme.resolve(ColorRole::OnSurface)),
     ));
     Scene::Container(
         ContainerNode::new(vec![label_node])
             .with_tag(tag)
-            .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh)))
+            .with_style(BoxStyle::filled(
+                theme.resolve(ColorRole::SurfaceContainerHigh),
+            ))
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Row)
@@ -94,8 +104,12 @@ mod tests {
 
     /// Pull the header label text out of the built row (the single Text child).
     fn header_text(scene: &Scene) -> &str {
-        let Scene::Container(root) = scene else { panic!("group header is a Container") };
-        let Scene::Text(t) = &root.children[0] else { panic!("header has a Text child") };
+        let Scene::Container(root) = scene else {
+            panic!("group header is a Container")
+        };
+        let Scene::Text(t) = &root.children[0] else {
+            panic!("header has a Text child")
+        };
         &t.content
     }
 

@@ -34,50 +34,49 @@ use pinion_core::{Owner, Scene, SceneRevision};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::animation_state::{animation_state, AnimationStateError, AnimationStateOutcome};
-use crate::cache_stats::{cache_stats, CacheStatsError, CacheStatsOutcome};
-use crate::caret_state::{caret_state, CaretStateOutcome};
-use crate::frame_timings::{frame_timings, FrameTimingsError, FrameTimingsOutcome};
-use crate::commands::{list_pending_commands, CommandsError};
-use crate::dry_run::{dry_run, DryRunError};
-use crate::export_pdf::{export_pdf, ExportPdfError, ExportPdfParams};
-use crate::simulate::{simulate, simulate_with_owner, SimulateError, SimulateStep};
+use crate::animation_state::{AnimationStateError, AnimationStateOutcome, animation_state};
+use crate::cache_stats::{CacheStatsError, CacheStatsOutcome, cache_stats};
+use crate::caret_state::{CaretStateOutcome, caret_state};
+use crate::commands::{CommandsError, list_pending_commands};
+use crate::dry_run::{DryRunError, dry_run};
+use crate::export_pdf::{ExportPdfError, ExportPdfParams, export_pdf};
 use crate::font::{self, FontError, FontRegistry};
-use crate::intents::{drain_intents, IntentsError};
-use crate::intervene::{intervene, InterveneError};
-use crate::invoke::{invoke, InvokeError};
-use crate::layout_query::{layout_query, LayoutQueryError, LayoutQueryParams};
+use crate::frame_timings::{FrameTimingsError, FrameTimingsOutcome, frame_timings};
+use crate::intents::{IntentsError, drain_intents};
+use crate::intervene::{InterveneError, intervene};
+use crate::invoke::{InvokeError, invoke};
+use crate::layout_query::{LayoutQueryError, LayoutQueryParams, layout_query};
 use crate::locate::{
-    bbox, locate, locate_region, BboxError, LocateError, LocateOutcome, LocateRegionOutcome,
+    BboxError, LocateError, LocateOutcome, LocateRegionOutcome, bbox, locate, locate_region,
 };
-use crate::resize::{resize, ResizeError, ResizeParams};
 use crate::preview::{
-    apply_preview, cancel_preview, list_previews, propose_change, ApplyError, ApplyOutcome,
-    PreviewId, PreviewLedger, PreviewView, ProposeError, ProposeOutcome, TypedProposal,
-    ViewBlueprint,
+    ApplyError, ApplyOutcome, PreviewId, PreviewLedger, PreviewView, ProposeError, ProposeOutcome,
+    TypedProposal, ViewBlueprint, apply_preview, cancel_preview, list_previews, propose_change,
 };
-use crate::query::{query, QueryError};
-use crate::rewind::{rewind, RewindError};
-use crate::screenshot::{screenshot, Screenshot, ScreenshotError};
+use crate::query::{QueryError, query};
+use crate::resize::{ResizeError, ResizeParams, resize};
+use crate::rewind::{RewindError, rewind};
+use crate::screenshot::{Screenshot, ScreenshotError, screenshot};
 use crate::scroll_state::{
-    scroll_state, set_scroll_offset, ScrollStateOutcome, SetScrollOffsetParams,
+    ScrollStateOutcome, SetScrollOffsetParams, scroll_state, set_scroll_offset,
 };
-use crate::substrate_introspect::{introspect_error_to_data, SubstrateIntrospectError};
+use crate::simulate::{SimulateError, SimulateStep, simulate, simulate_with_owner};
 use crate::snapshot::{
-    snapshot, GridCursorSnapshot, GridRowSnapshot, GridStyleRun, SnapshotError, SnapshotNode,
-    TermColorSnapshot, TextGridSnapshot,
+    GridCursorSnapshot, GridRowSnapshot, GridStyleRun, SnapshotError, SnapshotNode,
+    TermColorSnapshot, TextGridSnapshot, snapshot,
 };
-use crate::text::{text_normalize, NormalizeForm, NormalizeOutcome};
+use crate::substrate_introspect::{SubstrateIntrospectError, introspect_error_to_data};
+use crate::text::{NormalizeForm, NormalizeOutcome, text_normalize};
 use crate::text_state::{
-    set_caret, set_selection, set_text, text_state, SetCaretParams, SetSelectionParams,
-    SetTextParams, TextStateOutcome,
+    SetCaretParams, SetSelectionParams, SetTextParams, TextStateOutcome, set_caret, set_selection,
+    set_text, text_state,
 };
 use crate::theme::{
-    parse_palette_value, set_theme_mode, set_theme_palettes, theme_tokens, PaletteParseError,
-    SetThemeModeError, SetThemeModeOutcome, SetThemeModeParams, SetThemePalettesError,
-    SetThemePalettesOutcome, SetThemePalettesParams, ThemeTokensError, ThemeTokensOutcome,
+    PaletteParseError, SetThemeModeError, SetThemeModeOutcome, SetThemeModeParams,
+    SetThemePalettesError, SetThemePalettesOutcome, SetThemePalettesParams, ThemeTokensError,
+    ThemeTokensOutcome, parse_palette_value, set_theme_mode, set_theme_palettes, theme_tokens,
 };
-use crate::wait_for::{wait_for, WaitForError, WaitOutcome};
+use crate::wait_for::{WaitForError, WaitOutcome, wait_for};
 
 /// JSON-RPC 2.0 request envelope.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -152,7 +151,7 @@ pub struct Response {
     #[serde(
         default,
         deserialize_with = "deserialize_nullable_present",
-        skip_serializing_if = "Option::is_none",
+        skip_serializing_if = "Option::is_none"
     )]
     pub result: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -164,9 +163,7 @@ pub struct Response {
 /// `Some(Value::Null)` rather than `None`. Paired with
 /// `#[serde(default)]` on the field — when the field is absent the
 /// deserializer never runs and serde supplies `None` via the default.
-fn deserialize_nullable_present<'de, D>(
-    deserializer: D,
-) -> Result<Option<Value>, D::Error>
+fn deserialize_nullable_present<'de, D>(deserializer: D) -> Result<Option<Value>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -279,7 +276,8 @@ pub struct DispatchContext<'a> {
     /// with an `AccessTreeUnavailable` error; other methods ignore the
     /// field. Mirrors [`Self::paint_producer`]: the embedder threads a
     /// fresh closure before each dispatch.
-    pub access_producer: Option<&'a mut (dyn FnMut() -> (Vec<AccessNode>, Option<AccessFocus>) + 'a)>,
+    pub access_producer:
+        Option<&'a mut (dyn FnMut() -> (Vec<AccessNode>, Option<AccessFocus>) + 'a)>,
     /// R47.7.4 §5.12 — application-supplied resize request hook.
     /// Invoked by `scene/resize` with the requested logical
     /// `(width, height)`. The application typically calls
@@ -962,10 +960,7 @@ impl<'a> DispatchContext<'a> {
     /// `winit::window::Window::request_inner_size` so winit emits a
     /// `Resized` event on the next loop iteration.
     #[must_use]
-    pub fn with_resize_request(
-        mut self,
-        request: &'a mut (dyn FnMut(u32, u32) + 'a),
-    ) -> Self {
+    pub fn with_resize_request(mut self, request: &'a mut (dyn FnMut(u32, u32) + 'a)) -> Self {
         self.resize_request = Some(request);
         self
     }
@@ -1001,10 +996,7 @@ impl<'a> DispatchContext<'a> {
     /// methods error with `focus manager unavailable` when this is
     /// not registered.
     #[must_use]
-    pub fn with_focus_manager(
-        mut self,
-        focus: &'a mut pinion_runtime::FocusManager,
-    ) -> Self {
+    pub fn with_focus_manager(mut self, focus: &'a mut pinion_runtime::FocusManager) -> Self {
         self.focus_manager = Some(focus);
         self
     }
@@ -1031,10 +1023,7 @@ impl<'a> DispatchContext<'a> {
     /// with [`Self::with_runtime_owner`] for full pending +
     /// in-flight symmetry.
     #[must_use]
-    pub fn with_commands_executor(
-        mut self,
-        executor: &'a pinion_runtime::CommandExecutor,
-    ) -> Self {
+    pub fn with_commands_executor(mut self, executor: &'a pinion_runtime::CommandExecutor) -> Self {
         self.commands_executor = Some(executor);
         self
     }
@@ -1078,10 +1067,7 @@ impl<'a> DispatchContext<'a> {
     /// it. `None` (the default) causes `scene/cache_stats` to surface
     /// `CacheStatsUnavailable`.
     #[must_use]
-    pub fn with_fragment_cache_stats(
-        mut self,
-        stats: pinion_runtime::FragmentCacheStats,
-    ) -> Self {
+    pub fn with_fragment_cache_stats(mut self, stats: pinion_runtime::FragmentCacheStats) -> Self {
         self.fragment_cache_stats = Some(stats);
         self
     }
@@ -1093,10 +1079,7 @@ impl<'a> DispatchContext<'a> {
     /// it. `None` (the default) causes `scene/frame_timings` to
     /// surface `FrameTimingsUnavailable`.
     #[must_use]
-    pub fn with_frame_timings(
-        mut self,
-        snapshot: pinion_runtime::FrameTimingsSnapshot,
-    ) -> Self {
+    pub fn with_frame_timings(mut self, snapshot: pinion_runtime::FrameTimingsSnapshot) -> Self {
         self.frame_timings = Some(snapshot);
         self
     }
@@ -1526,12 +1509,7 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
             )]
             let producer = paint_producer.as_mut().map(|p| &mut **p);
             (
-                handle_scene_snapshot(
-                    scene,
-                    producer,
-                    last_paint_scene,
-                    request.params.as_ref(),
-                ),
+                handle_scene_snapshot(scene, producer, last_paint_scene, request.params.as_ref()),
                 HandlerKind::Read,
             )
         }
@@ -1592,22 +1570,13 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
             handle_scene_cache_stats(fragment_cache_stats),
             HandlerKind::Read,
         ),
-        "scene/frame_timings" => (
-            handle_scene_frame_timings(frame_timings),
-            HandlerKind::Read,
-        ),
+        "scene/frame_timings" => (handle_scene_frame_timings(frame_timings), HandlerKind::Read),
         "scene/export_pdf" => (
             handle_scene_export_pdf(last_paint_scene, request.params.as_ref()),
             HandlerKind::Read,
         ),
-        "scene/pacing_state" => (
-            handle_scene_pacing_state(pacing_state),
-            HandlerKind::Read,
-        ),
-        "scene/input_state" => (
-            handle_scene_input_state(input_state),
-            HandlerKind::Read,
-        ),
+        "scene/pacing_state" => (handle_scene_pacing_state(pacing_state), HandlerKind::Read),
+        "scene/input_state" => (handle_scene_input_state(input_state), HandlerKind::Read),
         "scene/animate_settle" => (
             handle_scene_animate_settle(runtime_owner),
             HandlerKind::Mutate,
@@ -1729,10 +1698,7 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
             handle_scene_cancel_preview(previews, request.params.as_ref()),
             HandlerKind::Read,
         ),
-        "scene/list_previews" => (
-            handle_scene_list_previews(previews),
-            HandlerKind::Read,
-        ),
+        "scene/list_previews" => (handle_scene_list_previews(previews), HandlerKind::Read),
         "scene/propose_change" => (
             handle_scene_propose_change(previews, revision, request.params.as_ref()),
             HandlerKind::Read,
@@ -1791,10 +1757,7 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
             HandlerKind::Read,
         ),
         "focus/set" => (
-            crate::focus::handle_focus_set(
-                focus_manager.as_deref_mut(),
-                request.params.as_ref(),
-            ),
+            crate::focus::handle_focus_set(focus_manager.as_deref_mut(), request.params.as_ref()),
             // Focus state tracked independently of SceneRevision.
             HandlerKind::Read,
         ),
@@ -1811,8 +1774,7 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
             HandlerKind::Read,
         ),
         _ => (
-            Err(RpcError::new(-32601, "Method not found")
-                .with_data_string(request.method.clone())),
+            Err(RpcError::new(-32601, "Method not found").with_data_string(request.method.clone())),
             HandlerKind::Read,
         ),
     };
@@ -1896,7 +1858,9 @@ fn handle_scene_query(
 ) -> Result<Value, RpcError> {
     let params = require_params(params)?;
     let Some(path) = params.get("path").and_then(Value::as_str) else {
-        return Err(RpcError::invalid_params("params.path missing or not a string"));
+        return Err(RpcError::invalid_params(
+            "params.path missing or not a string",
+        ));
     };
 
     match query(scene, path) {
@@ -1975,9 +1939,9 @@ where
     let button = match params.get("button") {
         None => ClickButton::default(),
         Some(v) => {
-            let name = v.as_str().ok_or_else(|| {
-                RpcError::invalid_params(CLICK_BUTTON_VOCAB_ERR)
-            })?;
+            let name = v
+                .as_str()
+                .ok_or_else(|| RpcError::invalid_params(CLICK_BUTTON_VOCAB_ERR))?;
             // R888.1 — detect the wrong-method button STRUCTURALLY
             // through DragButton's own decoder (not a re-hardcoded
             // token), so the redirect tracks that vocabulary; the
@@ -1991,9 +1955,8 @@ where
                     DragButton::Middle.as_wire_name(),
                 )));
             }
-            ClickButton::from_wire_name(name).ok_or_else(|| {
-                RpcError::invalid_params(CLICK_BUTTON_VOCAB_ERR)
-            })?
+            ClickButton::from_wire_name(name)
+                .ok_or_else(|| RpcError::invalid_params(CLICK_BUTTON_VOCAB_ERR))?
         }
     };
     let (x, y) = resolve_at_or_path(params, paint_producer, last_paint_scene)?;
@@ -2039,9 +2002,7 @@ where
 /// hover arc (§2 invariant #2); returns `null` on success, after which
 /// the AI client reads the resulting (un-hovered) state via
 /// `scene/query` / `scene/snapshot`.
-fn handle_scene_pointer_leave(
-    inbox: Option<&mut Vec<DeferredInput>>,
-) -> Result<Value, RpcError> {
+fn handle_scene_pointer_leave(inbox: Option<&mut Vec<DeferredInput>>) -> Result<Value, RpcError> {
     let Some(inbox) = inbox else {
         return Err(RpcError::invalid_params("InputInjectionUnavailable"));
     };
@@ -2079,7 +2040,9 @@ fn handle_scene_file_event(
         FileEventKind::Hover | FileEventKind::Drop => {
             let params = require_params(params)?;
             let Some(path) = params.get("path").and_then(Value::as_str) else {
-                return Err(RpcError::invalid_params("params.path missing or not a string"));
+                return Err(RpcError::invalid_params(
+                    "params.path missing or not a string",
+                ));
             };
             let path = path.to_string();
             match kind {
@@ -2112,7 +2075,9 @@ fn handle_scene_tick(
         .and_then(Value::as_f64)
         .ok_or_else(|| RpcError::invalid_params("params.dt missing or not a number"))?;
     if !dt.is_finite() || dt < 0.0 {
-        return Err(RpcError::invalid_params("params.dt must be finite and >= 0"));
+        return Err(RpcError::invalid_params(
+            "params.dt must be finite and >= 0",
+        ));
     }
     #[allow(clippy::cast_possible_truncation)]
     inbox.push(DeferredInput::Tick { dt: dt as f32 });
@@ -2259,7 +2224,9 @@ fn handle_scene_modifiers(
         match params.and_then(|p| p.get(name)) {
             None | Some(Value::Null) => Ok(false),
             Some(Value::Bool(b)) => Ok(*b),
-            Some(_) => Err(RpcError::invalid_params("params.<modifier> must be a boolean")),
+            Some(_) => Err(RpcError::invalid_params(
+                "params.<modifier> must be a boolean",
+            )),
         }
     };
     let shift = read_bit("shift")?;
@@ -2355,21 +2322,14 @@ where
         reason = "manual reborrow for the 2nd resolve (same rationale as the 1st)"
     )]
     let producer_for_to = paint_producer.as_mut().map(|p| &mut **p);
-    let to = resolve_drag_endpoint(
-        params,
-        "to",
-        "to_path",
-        producer_for_to,
-        last_paint_scene,
-    )?;
+    let to = resolve_drag_endpoint(params, "to", "to_path", producer_for_to, last_paint_scene)?;
     let steps = match params.get("steps") {
         Some(v) => v
             .as_u64()
             .ok_or_else(|| RpcError::invalid_params("params.steps must be a non-negative integer"))
             .and_then(|n| {
-                u32::try_from(n).map_err(|_| {
-                    RpcError::invalid_params("params.steps does not fit in u32")
-                })
+                u32::try_from(n)
+                    .map_err(|_| RpcError::invalid_params("params.steps does not fit in u32"))
             })?,
         None => 8,
     };
@@ -2680,12 +2640,10 @@ fn parse_at_coords_u32(at_value: &Value) -> Result<(u32, u32), RpcError> {
         .get("y")
         .and_then(Value::as_i64)
         .ok_or_else(|| RpcError::invalid_params("params.at.y missing or not an integer"))?;
-    let coord_x = u32::try_from(raw_x).map_err(|_| {
-        RpcError::invalid_params(format!("params.at.x out of u32 range: {raw_x}"))
-    })?;
-    let coord_y = u32::try_from(raw_y).map_err(|_| {
-        RpcError::invalid_params(format!("params.at.y out of u32 range: {raw_y}"))
-    })?;
+    let coord_x = u32::try_from(raw_x)
+        .map_err(|_| RpcError::invalid_params(format!("params.at.x out of u32 range: {raw_x}")))?;
+    let coord_y = u32::try_from(raw_y)
+        .map_err(|_| RpcError::invalid_params(format!("params.at.y out of u32 range: {raw_y}")))?;
     Ok((coord_x, coord_y))
 }
 
@@ -2746,13 +2704,17 @@ fn find_scroll_state_by_tag(
 fn handle_scene_rewind(scene: &mut Scene, params: Option<&Value>) -> Result<Value, RpcError> {
     let params = require_params(params)?;
     let Some(path) = params.get("path").and_then(Value::as_str) else {
-        return Err(RpcError::invalid_params("params.path missing or not a string"));
+        return Err(RpcError::invalid_params(
+            "params.path missing or not a string",
+        ));
     };
     let Some(value_json) = params.get("value") else {
         return Err(RpcError::invalid_params("params.value missing"));
     };
     let Some(value) = json_to_introspect_value(value_json) else {
-        return Err(RpcError::invalid_params("params.value unsupported (v0: null/bool/number/string only)"));
+        return Err(RpcError::invalid_params(
+            "params.value unsupported (v0: null/bool/number/string only)",
+        ));
     };
 
     match rewind(scene, path, value) {
@@ -2814,7 +2776,9 @@ where
 {
     let params = require_params(params)?;
     let Some(path) = params.get("path").and_then(Value::as_str) else {
-        return Err(RpcError::invalid_params("params.path missing or not a string"));
+        return Err(RpcError::invalid_params(
+            "params.path missing or not a string",
+        ));
     };
     let from = params
         .get("from")
@@ -2998,29 +2962,28 @@ where
 }
 
 fn parse_wheel_delta(obj: &serde_json::Map<String, Value>) -> Result<WheelDelta, RpcError> {
-    let extract = |key: &str| -> Result<Option<(f32, f32)>, RpcError> {
-        let Some(inner) = obj.get(key).and_then(Value::as_object) else {
-            return Ok(None);
+    let extract =
+        |key: &str| -> Result<Option<(f32, f32)>, RpcError> {
+            let Some(inner) = obj.get(key).and_then(Value::as_object) else {
+                return Ok(None);
+            };
+            let dx = inner.get("dx").and_then(Value::as_f64).ok_or_else(|| {
+                RpcError::invalid_params(format!("params.delta.{key}.dx missing"))
+            })?;
+            let dy = inner.get("dy").and_then(Value::as_f64).ok_or_else(|| {
+                RpcError::invalid_params(format!("params.delta.{key}.dy missing"))
+            })?;
+            // JSON Number is f64 wire-side; WheelDelta stores f32. The
+            // downcast is the wire-format boundary — application-level
+            // wheel deltas never exceed f32 precision in practice
+            // (winit / web / iOS all originate the value as f32).
+            #[allow(
+                clippy::cast_possible_truncation,
+                reason = "JSON f64 → WheelDelta f32 wire boundary; loss is intentional"
+            )]
+            let pair = (dx as f32, dy as f32);
+            Ok(Some(pair))
         };
-        let dx = inner
-            .get("dx")
-            .and_then(Value::as_f64)
-            .ok_or_else(|| RpcError::invalid_params(format!("params.delta.{key}.dx missing")))?;
-        let dy = inner
-            .get("dy")
-            .and_then(Value::as_f64)
-            .ok_or_else(|| RpcError::invalid_params(format!("params.delta.{key}.dy missing")))?;
-        // JSON Number is f64 wire-side; WheelDelta stores f32. The
-        // downcast is the wire-format boundary — application-level
-        // wheel deltas never exceed f32 precision in practice
-        // (winit / web / iOS all originate the value as f32).
-        #[allow(
-            clippy::cast_possible_truncation,
-            reason = "JSON f64 → WheelDelta f32 wire boundary; loss is intentional"
-        )]
-        let pair = (dx as f32, dy as f32);
-        Ok(Some(pair))
-    };
     match (extract("lines")?, extract("pixels")?) {
         (Some(_), Some(_)) => Err(RpcError::invalid_params(
             "params.delta carries both \"lines\" and \"pixels\"; pick one",
@@ -3106,11 +3069,7 @@ fn snapshot_node_to_json(node: SnapshotNode) -> Value {
         SnapshotNode::Path(snap) => {
             obj.insert("rect".to_string(), snapshot_rect_to_json(snap.rect));
             obj.insert("tag".to_string(), snapshot_tag_to_json(snap.tag.as_deref()));
-            let cmds: Vec<Value> = snap
-                .commands
-                .iter()
-                .map(path_command_to_json)
-                .collect();
+            let cmds: Vec<Value> = snap.commands.iter().map(path_command_to_json).collect();
             obj.insert("commands".to_string(), Value::Array(cmds));
             obj.insert("style".to_string(), path_style_to_json(&snap.style));
         }
@@ -3200,8 +3159,14 @@ fn text_grid_snapshot_fields(obj: &mut serde_json::Map<String, Value>, snap: &Te
     // sent), distinct from the layout-derived winsize `(cols, rows)` it is
     // told to size to; an AI compares the two to detect a resize-lag
     // divergence directly. `0×0` for a geometry-only grid.
-    obj.insert("buffer_cols".to_string(), Value::Number(snap.buffer_cols.into()));
-    obj.insert("buffer_rows".to_string(), Value::Number(snap.buffer_rows.into()));
+    obj.insert(
+        "buffer_cols".to_string(),
+        Value::Number(snap.buffer_cols.into()),
+    );
+    obj.insert(
+        "buffer_rows".to_string(),
+        Value::Number(snap.buffer_rows.into()),
+    );
     // R973 §5.41 — the cell-content projection: one entry per row, each
     // with the row text and its palette-resolved style runs.
     obj.insert(
@@ -3236,7 +3201,10 @@ fn grid_row_to_json(row: &GridRowSnapshot) -> Value {
         "runs".to_string(),
         Value::Array(row.runs.iter().map(grid_style_run_to_json).collect()),
     );
-    obj.insert("generation".to_string(), Value::Number(row.generation.into()));
+    obj.insert(
+        "generation".to_string(),
+        Value::Number(row.generation.into()),
+    );
     Value::Object(obj)
 }
 
@@ -3268,7 +3236,10 @@ fn cell_attrs_to_json(attrs: pinion_core::CellAttrs) -> Value {
     obj.insert("blink".to_string(), Value::Bool(attrs.blink));
     obj.insert("reverse".to_string(), Value::Bool(attrs.reverse));
     obj.insert("hidden".to_string(), Value::Bool(attrs.hidden));
-    obj.insert("strikethrough".to_string(), Value::Bool(attrs.strikethrough));
+    obj.insert(
+        "strikethrough".to_string(),
+        Value::Bool(attrs.strikethrough),
+    );
     Value::Object(obj)
 }
 
@@ -3304,13 +3275,11 @@ fn path_command_to_json(cmd: &pinion_core::scene::PathCommand) -> Value {
         let mut obj = serde_json::Map::new();
         obj.insert(
             "x".to_string(),
-            serde_json::Number::from_f64(f64::from(p.x))
-                .map_or(Value::Null, Value::Number),
+            serde_json::Number::from_f64(f64::from(p.x)).map_or(Value::Null, Value::Number),
         );
         obj.insert(
             "y".to_string(),
-            serde_json::Number::from_f64(f64::from(p.y))
-                .map_or(Value::Null, Value::Number),
+            serde_json::Number::from_f64(f64::from(p.y)).map_or(Value::Null, Value::Number),
         );
         Value::Object(obj)
     };
@@ -3570,7 +3539,10 @@ fn path_style_to_json(style: &pinion_core::style::PathStyle) -> Value {
     // R722 §5.50 — gradient fill (reuses the BoxStyle gradient wire).
     obj.insert(
         "gradient".to_string(),
-        style.gradient.as_ref().map_or(Value::Null, gradient_to_json),
+        style
+            .gradient
+            .as_ref()
+            .map_or(Value::Null, gradient_to_json),
     );
     Value::Object(obj)
 }
@@ -3705,25 +3677,39 @@ fn text_style_to_json(style: &pinion_core::style::TextStyle) -> Value {
         "font_weight".to_string(),
         Value::Number(style.font_weight.0.into()),
     );
-    obj.insert("font_style".to_string(), font_style_to_json(style.font_style));
-    obj.insert("line_height".to_string(), line_height_to_json(style.line_height));
+    obj.insert(
+        "font_style".to_string(),
+        font_style_to_json(style.font_style),
+    );
+    obj.insert(
+        "line_height".to_string(),
+        line_height_to_json(style.line_height),
+    );
     obj.insert(
         "letter_spacing".to_string(),
         Value::Number(style.letter_spacing.into()),
     );
-    obj.insert("text_align".to_string(), text_align_to_json(style.text_align));
+    obj.insert(
+        "text_align".to_string(),
+        text_align_to_json(style.text_align),
+    );
     obj.insert(
         "decoration".to_string(),
         text_decoration_to_json(style.decoration),
     );
-    obj.insert("overflow".to_string(), text_overflow_to_json(style.overflow));
+    obj.insert(
+        "overflow".to_string(),
+        text_overflow_to_json(style.overflow),
+    );
     Value::Object(obj)
 }
 
 fn handle_scene_dry_run(scene: &mut Scene, params: Option<&Value>) -> Result<Value, RpcError> {
     let params = require_params(params)?;
     let Some(path) = params.get("path").and_then(Value::as_str) else {
-        return Err(RpcError::invalid_params("params.path missing or not a string"));
+        return Err(RpcError::invalid_params(
+            "params.path missing or not a string",
+        ));
     };
     let Some(value_json) = params.get("value") else {
         return Err(RpcError::invalid_params("params.value missing"));
@@ -3774,7 +3760,9 @@ fn handle_scene_simulate(
 ) -> Result<Value, RpcError> {
     let params = require_params(params)?;
     let Some(steps_json) = params.get("steps").and_then(Value::as_array) else {
-        return Err(RpcError::invalid_params("params.steps missing or not an array"));
+        return Err(RpcError::invalid_params(
+            "params.steps missing or not an array",
+        ));
     };
     if steps_json.is_empty() {
         return Err(RpcError::invalid_params(
@@ -3803,7 +3791,10 @@ fn handle_scene_simulate(
                 "params.steps[{i}].value unsupported (v0: null/bool/number/string only)",
             )));
         };
-        steps.push(SimulateStep { path: path.to_string(), value });
+        steps.push(SimulateStep {
+            path: path.to_string(),
+            value,
+        });
     }
 
     let outcome = match runtime_owner {
@@ -3834,7 +3825,9 @@ fn simulate_error_to_rpc(err: &SimulateError) -> RpcError {
 fn handle_scene_wait_for(scene: &Scene, params: Option<&Value>) -> Result<Value, RpcError> {
     let params = require_params(params)?;
     let Some(path) = params.get("path").and_then(Value::as_str) else {
-        return Err(RpcError::invalid_params("params.path missing or not a string"));
+        return Err(RpcError::invalid_params(
+            "params.path missing or not a string",
+        ));
     };
     let Some(target_json) = params.get("target") else {
         return Err(RpcError::invalid_params("params.target missing"));
@@ -3845,7 +3838,9 @@ fn handle_scene_wait_for(scene: &Scene, params: Option<&Value>) -> Result<Value,
         ));
     };
     let Some(max_attempts) = params.get("max_attempts").and_then(Value::as_u64) else {
-        return Err(RpcError::invalid_params("params.max_attempts missing or not u64"));
+        return Err(RpcError::invalid_params(
+            "params.max_attempts missing or not u64",
+        ));
     };
     let max_attempts = u32::try_from(max_attempts)
         .map_err(|_| RpcError::invalid_params("params.max_attempts exceeds u32 range"))?;
@@ -3859,7 +3854,10 @@ fn handle_scene_wait_for(scene: &Scene, params: Option<&Value>) -> Result<Value,
 fn wait_outcome_to_json(outcome: &WaitOutcome) -> Value {
     let mut obj = serde_json::Map::new();
     obj.insert("matched".to_string(), Value::Bool(outcome.matched));
-    obj.insert("attempts".to_string(), Value::Number(outcome.attempts.into()));
+    obj.insert(
+        "attempts".to_string(),
+        Value::Number(outcome.attempts.into()),
+    );
     obj.insert(
         "final_value".to_string(),
         introspect_value_to_json(outcome.final_value.clone()),
@@ -3879,7 +3877,9 @@ fn wait_for_error_to_rpc(err: WaitForError) -> RpcError {
 fn handle_scene_screenshot(scene: &Scene, params: Option<&Value>) -> Result<Value, RpcError> {
     let params = require_params(params)?;
     let Some(path) = params.get("path").and_then(Value::as_str) else {
-        return Err(RpcError::invalid_params("params.path missing or not a string"));
+        return Err(RpcError::invalid_params(
+            "params.path missing or not a string",
+        ));
     };
 
     match screenshot(scene, path) {
@@ -3915,7 +3915,9 @@ fn screenshot_error_to_rpc(err: ScreenshotError) -> RpcError {
 fn handle_scene_invoke(scene: &mut Scene, params: Option<&Value>) -> Result<Value, RpcError> {
     let params = require_params(params)?;
     let Some(path) = params.get("path").and_then(Value::as_str) else {
-        return Err(RpcError::invalid_params("params.path missing or not a string"));
+        return Err(RpcError::invalid_params(
+            "params.path missing or not a string",
+        ));
     };
     let Some(args_json) = params.get("args") else {
         return Err(RpcError::invalid_params("params.args missing"));
@@ -3943,7 +3945,10 @@ fn handle_scene_intents(scene: &mut Scene) -> Result<Value, RpcError> {
 
 fn intent_to_json(intent: &Intent) -> Value {
     let mut obj = serde_json::Map::new();
-    obj.insert("tag".to_string(), Value::String(intent.tag_str().to_string()));
+    obj.insert(
+        "tag".to_string(),
+        Value::String(intent.tag_str().to_string()),
+    );
     obj.insert(
         "payload".to_string(),
         introspect_value_to_json(intent.payload.clone()),
@@ -4220,8 +4225,9 @@ fn handle_scene_animation_state(
     let epsilon = params
         .and_then(|p| p.get("epsilon"))
         .map(|v| {
-            v.as_f64()
-                .ok_or_else(|| RpcError::invalid_params("params.epsilon must be a number when present"))
+            v.as_f64().ok_or_else(|| {
+                RpcError::invalid_params("params.epsilon must be a number when present")
+            })
         })
         .transpose()?
         .map(|v| {
@@ -4233,7 +4239,9 @@ fn handle_scene_animation_state(
                 reason = "spring solver evaluates in f32; out-of-range / NaN \
                           is rejected by animation_state() as InvalidEpsilon"
             )]
-            { v as f32 }
+            {
+                v as f32
+            }
         });
     match animation_state(runtime_owner, epsilon) {
         Ok(outcome) => animation_state_outcome_to_json(outcome),
@@ -4256,10 +4264,8 @@ fn animation_state_error_to_rpc(err: &AnimationStateError) -> RpcError {
                 .with_data_string("RuntimeOwnerUnavailable")
         }
         AnimationStateError::InvalidEpsilon { value } => {
-            RpcError::invalid_params(format!(
-                "params.epsilon {value} must be finite and >= 0",
-            ))
-            .with_data_string("InvalidEpsilon")
+            RpcError::invalid_params(format!("params.epsilon {value} must be finite and >= 0",))
+                .with_data_string("InvalidEpsilon")
         }
     }
 }
@@ -4346,7 +4352,9 @@ fn handle_scene_export_pdf(
     };
     match export_pdf(last_paint_scene, &typed) {
         Ok(outcome) => serde_json::to_value(outcome).map_err(|e| {
-            RpcError::internal_error(format!("scene/export_pdf: failed to serialize outcome: {e}"))
+            RpcError::internal_error(format!(
+                "scene/export_pdf: failed to serialize outcome: {e}"
+            ))
         }),
         Err(err) => Err(export_pdf_error_to_rpc(&err)),
     }
@@ -4594,9 +4602,8 @@ fn read_optional_tag(params: Option<&Value>) -> Result<Option<&str>, RpcError> {
     params
         .and_then(|p| p.get("tag"))
         .map(|v| {
-            v.as_str().ok_or_else(|| {
-                RpcError::invalid_params("params.tag must be a string when present")
-            })
+            v.as_str()
+                .ok_or_else(|| RpcError::invalid_params("params.tag must be a string when present"))
         })
         .transpose()
 }
@@ -4668,13 +4675,10 @@ fn read_required_str<'a>(
     field: &str,
     data_tag: &'static str,
 ) -> Result<&'a str, RpcError> {
-    params
-        .get(field)
-        .and_then(Value::as_str)
-        .ok_or_else(|| {
-            RpcError::invalid_params(format!("params.{field} missing or not a string"))
-                .with_data_string(data_tag)
-        })
+    params.get(field).and_then(Value::as_str).ok_or_else(|| {
+        RpcError::invalid_params(format!("params.{field} missing or not a string"))
+            .with_data_string(data_tag)
+    })
 }
 
 /// Parse `params.<field>` as an `i32`. Rejects floats with a
@@ -4688,10 +4692,8 @@ fn read_i32_field(params: &Value, field: &str) -> Result<i32, RpcError> {
     })?;
     if let Some(int_v) = value.as_i64() {
         return i32::try_from(int_v).map_err(|_| {
-            RpcError::invalid_params(format!(
-                "params.{field} {int_v} out of i32 range",
-            ))
-            .with_data_string("InvalidAxisValue")
+            RpcError::invalid_params(format!("params.{field} {int_v} out of i32 range",))
+                .with_data_string("InvalidAxisValue")
         });
     }
     Err(
@@ -4774,11 +4776,7 @@ fn handle_scene_set_selection(
     let tag = read_required_tag(params_value)?;
     let anchor = read_usize_field(params_value, "anchor")?;
     let focus = read_usize_field(params_value, "focus")?;
-    let typed_params = SetSelectionParams {
-        tag,
-        anchor,
-        focus,
-    };
+    let typed_params = SetSelectionParams { tag, anchor, focus };
     match set_selection(runtime_owner, &typed_params) {
         Ok(outcome) => text_state_outcome_to_json(&outcome),
         Err(err) => Err(introspect_error_to_rpc(&err)),
@@ -4822,17 +4820,13 @@ fn read_usize_field(params: &Value, field: &str) -> Result<usize, RpcError> {
     })?;
     if let Some(int_v) = value.as_u64() {
         return usize::try_from(int_v).map_err(|_| {
-            RpcError::invalid_params(format!(
-                "params.{field} {int_v} out of usize range",
-            ))
-            .with_data_string("InvalidByteOffset")
+            RpcError::invalid_params(format!("params.{field} {int_v} out of usize range",))
+                .with_data_string("InvalidByteOffset")
         });
     }
     Err(
-        RpcError::invalid_params(format!(
-            "params.{field} must be a non-negative integer",
-        ))
-        .with_data_string("InvalidByteOffset"),
+        RpcError::invalid_params(format!("params.{field} must be a non-negative integer",))
+            .with_data_string("InvalidByteOffset"),
     )
 }
 
@@ -4900,13 +4894,19 @@ fn introspect_error_to_rpc(err: &SubstrateIntrospectError) -> RpcError {
 fn handle_scene_locate(scene: &Scene, params: Option<&Value>) -> Result<Value, RpcError> {
     let params = require_params(params)?;
     let Some(x) = params.get("x").and_then(Value::as_u64) else {
-        return Err(RpcError::invalid_params("params.x missing or not a non-negative integer"));
+        return Err(RpcError::invalid_params(
+            "params.x missing or not a non-negative integer",
+        ));
     };
     let Some(y) = params.get("y").and_then(Value::as_u64) else {
-        return Err(RpcError::invalid_params("params.y missing or not a non-negative integer"));
+        return Err(RpcError::invalid_params(
+            "params.y missing or not a non-negative integer",
+        ));
     };
-    let x32 = u32::try_from(x).map_err(|_| RpcError::invalid_params("params.x exceeds u32 range"))?;
-    let y32 = u32::try_from(y).map_err(|_| RpcError::invalid_params("params.y exceeds u32 range"))?;
+    let x32 =
+        u32::try_from(x).map_err(|_| RpcError::invalid_params("params.x exceeds u32 range"))?;
+    let y32 =
+        u32::try_from(y).map_err(|_| RpcError::invalid_params("params.y exceeds u32 range"))?;
 
     match locate(scene, x32, y32) {
         Ok(outcome) => Ok(locate_outcome_to_json(&outcome)),
@@ -4920,7 +4920,13 @@ fn locate_outcome_to_json(out: &LocateOutcome) -> Value {
     map.insert("bbox".into(), bbox_to_json(&out.bbox));
     map.insert(
         "ancestors".into(),
-        Value::Array(out.ancestor_paths.iter().cloned().map(Value::String).collect()),
+        Value::Array(
+            out.ancestor_paths
+                .iter()
+                .cloned()
+                .map(Value::String)
+                .collect(),
+        ),
     );
     Value::Object(map)
 }
@@ -4937,11 +4943,11 @@ fn bbox_to_json(r: &pinion_core::scene::Rect) -> Value {
 fn handle_scene_locate_region(scene: &Scene, params: Option<&Value>) -> Result<Value, RpcError> {
     let params = require_params(params)?;
     let read_u32 = |k: &str| -> Result<u32, RpcError> {
-        let raw = params
-            .get(k)
-            .and_then(Value::as_u64)
-            .ok_or_else(|| RpcError::invalid_params(format!("params.{k} missing or not a non-negative integer")))?;
-        u32::try_from(raw).map_err(|_| RpcError::invalid_params(format!("params.{k} exceeds u32 range")))
+        let raw = params.get(k).and_then(Value::as_u64).ok_or_else(|| {
+            RpcError::invalid_params(format!("params.{k} missing or not a non-negative integer"))
+        })?;
+        u32::try_from(raw)
+            .map_err(|_| RpcError::invalid_params(format!("params.{k} exceeds u32 range")))
     };
     let x = read_u32("x")?;
     let y = read_u32("y")?;
@@ -4958,7 +4964,10 @@ fn locate_region_outcome_to_json(out: &LocateRegionOutcome) -> Value {
         "paths".into(),
         Value::Array(out.paths.iter().cloned().map(Value::String).collect()),
     );
-    map.insert("common_ancestor".into(), Value::String(out.common_ancestor.clone()));
+    map.insert(
+        "common_ancestor".into(),
+        Value::String(out.common_ancestor.clone()),
+    );
     Value::Object(map)
 }
 
@@ -4972,7 +4981,9 @@ fn locate_error_to_rpc(err: LocateError) -> RpcError {
 fn handle_scene_bbox(scene: &Scene, params: Option<&Value>) -> Result<Value, RpcError> {
     let params = require_params(params)?;
     let Some(path) = params.get("path").and_then(Value::as_str) else {
-        return Err(RpcError::invalid_params("params.path missing or not a string"));
+        return Err(RpcError::invalid_params(
+            "params.path missing or not a string",
+        ));
     };
     match bbox(scene, path) {
         Ok(r) => {
@@ -5068,7 +5079,9 @@ fn handle_scene_cancel_preview(
         ));
     };
     let Some(id) = PreviewId::try_new(raw_id) else {
-        return Err(RpcError::invalid_params("params.preview_id must be non-zero"));
+        return Err(RpcError::invalid_params(
+            "params.preview_id must be non-zero",
+        ));
     };
     let cancelled = cancel_preview(previews, id);
     let mut map = serde_json::Map::new();
@@ -5143,7 +5156,9 @@ fn parse_typed_proposal(params: &Value) -> Result<TypedProposal, RpcError> {
             };
             let payload_value = intent_obj.get("payload").cloned().unwrap_or(Value::Null);
             let payload = json_to_introspect_value(&payload_value).ok_or_else(|| {
-                RpcError::invalid_params("params.intent.payload not a representable IntrospectValue shape")
+                RpcError::invalid_params(
+                    "params.intent.payload not a representable IntrospectValue shape",
+                )
             })?;
             Ok(TypedProposal::DispatchIntent {
                 target_path: target_path.to_owned(),
@@ -5186,7 +5201,6 @@ fn parse_typed_proposal(params: &Value) -> Result<TypedProposal, RpcError> {
     }
 }
 
-
 /// Wire→[`ViewBlueprint`] coercion for `ReplaceView` payloads
 /// (R40.11 / R43). Recursive: `Container.children` invokes the same
 /// parser per child. `kind` discriminates between blueprint variants;
@@ -5208,15 +5222,17 @@ fn parse_view_blueprint(v: &Value) -> Result<ViewBlueprint, RpcError> {
     let tag = parse_optional_tag(v.get("tag"))?;
     match kind {
         "Box" => {
-            let style = parse_box_style(
-                v.get("style").ok_or_else(|| RpcError::invalid_params("params.replacement.style missing"))?,
-            )?;
+            let style =
+                parse_box_style(v.get("style").ok_or_else(|| {
+                    RpcError::invalid_params("params.replacement.style missing")
+                })?)?;
             Ok(ViewBlueprint::Box { rect, style, tag })
         }
         "Container" => {
-            let style = parse_box_style(
-                v.get("style").ok_or_else(|| RpcError::invalid_params("params.replacement.style missing"))?,
-            )?;
+            let style =
+                parse_box_style(v.get("style").ok_or_else(|| {
+                    RpcError::invalid_params("params.replacement.style missing")
+                })?)?;
             let children_value = v.get("children").unwrap_or(&Value::Null);
             let children = match children_value {
                 Value::Null => Vec::new(),
@@ -5307,13 +5323,15 @@ fn parse_text_style(v: Option<&Value>) -> Result<pinion_core::style::TextStyle, 
     };
     let mut style = pinion_core::style::TextStyle::new();
     if let Some(font_size) = obj.get("font_size_px").and_then(Value::as_u64) {
-        let n = u32::try_from(font_size)
-            .map_err(|_| RpcError::invalid_params("params.replacement.style.font_size_px exceeds u32 range"))?;
+        let n = u32::try_from(font_size).map_err(|_| {
+            RpcError::invalid_params("params.replacement.style.font_size_px exceeds u32 range")
+        })?;
         style.font_size_px = n;
     }
     if let Some(fg) = obj.get("fg_color").and_then(Value::as_u64) {
-        let n = u32::try_from(fg)
-            .map_err(|_| RpcError::invalid_params("params.replacement.style.fg_color exceeds u32 range"))?;
+        let n = u32::try_from(fg).map_err(|_| {
+            RpcError::invalid_params("params.replacement.style.fg_color exceeds u32 range")
+        })?;
         style.fg_color = Color::from_argb(n);
     }
     if let Some(family) = obj.get("font_family").and_then(Value::as_str) {
@@ -5332,8 +5350,9 @@ fn parse_path_style(v: Option<&Value>) -> Result<pinion_core::style::PathStyle, 
     };
     let mut style = pinion_core::style::PathStyle::default();
     if let Some(fill) = obj.get("fill").and_then(Value::as_u64) {
-        let n = u32::try_from(fill)
-            .map_err(|_| RpcError::invalid_params("params.replacement.style.fill exceeds u32 range"))?;
+        let n = u32::try_from(fill).map_err(|_| {
+            RpcError::invalid_params("params.replacement.style.fill exceeds u32 range")
+        })?;
         style.fill = Some(Color::from_argb(n));
     }
     if let Some(stroke_obj) = obj.get("stroke") {
@@ -5349,10 +5368,12 @@ fn parse_path_style(v: Option<&Value>) -> Result<pinion_core::style::PathStyle, 
             .ok_or_else(|| {
                 RpcError::invalid_params("params.replacement.style.stroke.width missing or not u64")
             })?;
-        let c = u32::try_from(stroke_color)
-            .map_err(|_| RpcError::invalid_params("params.replacement.style.stroke.color exceeds u32 range"))?;
-        let w = u32::try_from(stroke_width)
-            .map_err(|_| RpcError::invalid_params("params.replacement.style.stroke.width exceeds u32 range"))?;
+        let c = u32::try_from(stroke_color).map_err(|_| {
+            RpcError::invalid_params("params.replacement.style.stroke.color exceeds u32 range")
+        })?;
+        let w = u32::try_from(stroke_width).map_err(|_| {
+            RpcError::invalid_params("params.replacement.style.stroke.width exceeds u32 range")
+        })?;
         style.stroke = Some(pinion_core::style::Stroke::new(Color::from_argb(c), w));
     }
     Ok(style)
@@ -5379,8 +5400,9 @@ fn parse_image_style(v: Option<&Value>) -> Result<pinion_core::style::ImageStyle
         };
     }
     if let Some(tint) = obj.get("tint").and_then(Value::as_u64) {
-        let n = u32::try_from(tint)
-            .map_err(|_| RpcError::invalid_params("params.replacement.style.tint exceeds u32 range"))?;
+        let n = u32::try_from(tint).map_err(|_| {
+            RpcError::invalid_params("params.replacement.style.tint exceeds u32 range")
+        })?;
         style.tint = Some(Color::from_argb(n));
     }
     Ok(style)
@@ -5388,7 +5410,9 @@ fn parse_image_style(v: Option<&Value>) -> Result<pinion_core::style::ImageStyle
 
 /// Wire→`Vec<PathCommand>` coercion. Each command is an object
 /// `{op: "MoveTo"|"LineTo"|"CurveTo"|"Close", ...args}`.
-fn parse_path_commands(v: Option<&Value>) -> Result<Vec<pinion_core::scene::PathCommand>, RpcError> {
+fn parse_path_commands(
+    v: Option<&Value>,
+) -> Result<Vec<pinion_core::scene::PathCommand>, RpcError> {
     let Some(arr_val) = v else {
         return Ok(Vec::new());
     };
@@ -5492,8 +5516,9 @@ fn parse_box_style(style: &Value) -> Result<BoxStyle, RpcError> {
         .map_err(|_| RpcError::invalid_params("params.style.fill exceeds u32 range"))?;
     let mut out = BoxStyle::filled(Color::from_argb(fill_argb));
     if let Some(corner) = style.get("corner_radius").and_then(Value::as_u64) {
-        let radius = u32::try_from(corner)
-            .map_err(|_| RpcError::invalid_params("params.style.corner_radius exceeds u32 range"))?;
+        let radius = u32::try_from(corner).map_err(|_| {
+            RpcError::invalid_params("params.style.corner_radius exceeds u32 range")
+        })?;
         out = out.with_corner_radius(radius);
     }
     // Border requires both color + width; either alone is incoherent
@@ -5502,10 +5527,12 @@ fn parse_box_style(style: &Value) -> Result<BoxStyle, RpcError> {
     let border_width = style.get("border_width").and_then(Value::as_u64);
     match (border_color, border_width) {
         (Some(c), Some(w)) => {
-            let c = u32::try_from(c)
-                .map_err(|_| RpcError::invalid_params("params.style.border_color exceeds u32 range"))?;
-            let w = u32::try_from(w)
-                .map_err(|_| RpcError::invalid_params("params.style.border_width exceeds u32 range"))?;
+            let c = u32::try_from(c).map_err(|_| {
+                RpcError::invalid_params("params.style.border_color exceeds u32 range")
+            })?;
+            let w = u32::try_from(w).map_err(|_| {
+                RpcError::invalid_params("params.style.border_width exceeds u32 range")
+            })?;
             out = out.with_border(Border::new(Color::from_argb(c), w));
         }
         (None, None) => {}
@@ -5544,7 +5571,9 @@ fn handle_scene_apply_preview(
         ));
     };
     let Some(id) = PreviewId::try_new(raw_id) else {
-        return Err(RpcError::invalid_params("params.preview_id must be non-zero"));
+        return Err(RpcError::invalid_params(
+            "params.preview_id must be non-zero",
+        ));
     };
     match apply_preview(scene, revision, previews, id) {
         Ok(outcome) => Ok(apply_outcome_to_json(&outcome)),
@@ -5667,13 +5696,12 @@ fn invoke_error_to_rpc(err: &InvokeError) -> RpcError {
 /// [`handle_scene_invoke`] (the read+execute peer); the trait-level
 /// distinction is `intervene = set state slot` vs
 /// `invoke = call action`.
-fn handle_scene_intervene(
-    scene: &mut Scene,
-    params: Option<&Value>,
-) -> Result<Value, RpcError> {
+fn handle_scene_intervene(scene: &mut Scene, params: Option<&Value>) -> Result<Value, RpcError> {
     let params = require_params(params)?;
     let Some(path) = params.get("path").and_then(Value::as_str) else {
-        return Err(RpcError::invalid_params("params.path missing or not a string"));
+        return Err(RpcError::invalid_params(
+            "params.path missing or not a string",
+        ));
     };
     let Some(value_json) = params.get("value") else {
         return Err(RpcError::invalid_params("params.value missing"));
@@ -5711,7 +5739,9 @@ fn handle_font_parse(
     let registry = registry.ok_or_else(font_registry_unavailable)?;
     let params = require_params(params)?;
     let Some(bytes_arr) = params.get("bytes").and_then(Value::as_array) else {
-        return Err(RpcError::invalid_params("params.bytes missing or not an array"));
+        return Err(RpcError::invalid_params(
+            "params.bytes missing or not an array",
+        ));
     };
     let mut bytes: Vec<u8> = Vec::with_capacity(bytes_arr.len());
     for (i, v) in bytes_arr.iter().enumerate() {
@@ -5728,10 +5758,7 @@ fn handle_font_parse(
     match font::parse(registry, bytes) {
         Ok(outcome) => {
             let mut map = serde_json::Map::new();
-            map.insert(
-                "font_id".to_string(),
-                Value::Number(outcome.font_id.into()),
-            );
+            map.insert("font_id".to_string(), Value::Number(outcome.font_id.into()));
             Ok(Value::Object(map))
         }
         Err(err) => Err(font_error_to_rpc(&err)),
@@ -5795,8 +5822,7 @@ fn font_id_from_params(params: Option<&Value>) -> Result<u32, RpcError> {
             "params.font_id missing or not an unsigned integer",
         ));
     };
-    u32::try_from(font_id)
-        .map_err(|_| RpcError::invalid_params("params.font_id out of u32 range"))
+    u32::try_from(font_id).map_err(|_| RpcError::invalid_params("params.font_id out of u32 range"))
 }
 
 fn font_registry_unavailable() -> RpcError {
@@ -5806,16 +5832,10 @@ fn font_registry_unavailable() -> RpcError {
 fn font_error_to_rpc(err: &FontError) -> RpcError {
     let (code, message, variant): (i32, &str, &str) = match err {
         FontError::NotFound { .. } => (-32602, "Invalid params", "NotFound"),
-        FontError::GlyphIdOutOfRange { .. } => {
-            (-32602, "Invalid params", "GlyphIdOutOfRange")
-        }
+        FontError::GlyphIdOutOfRange { .. } => (-32602, "Invalid params", "GlyphIdOutOfRange"),
         FontError::Parse(_) => (-32602, "Invalid params", "Parse"),
-        FontError::RegistryExhausted => {
-            (-32603, "Internal error", "RegistryExhausted")
-        }
-        FontError::RegistryPoisoned => {
-            (-32603, "Internal error", "RegistryPoisoned")
-        }
+        FontError::RegistryExhausted => (-32603, "Internal error", "RegistryExhausted"),
+        FontError::RegistryPoisoned => (-32603, "Internal error", "RegistryPoisoned"),
     };
     RpcError::new(code, message).with_data_string(variant)
 }
@@ -5992,8 +6012,9 @@ pub(crate) fn introspect_value_to_json(value: IntrospectValue) -> Value {
     match value {
         IntrospectValue::Bool(b) => Value::Bool(b),
         IntrospectValue::Int(n) => Value::Number(n.into()),
-        IntrospectValue::Float(f) => serde_json::Number::from_f64(f)
-            .map_or(Value::Null, Value::Number),
+        IntrospectValue::Float(f) => {
+            serde_json::Number::from_f64(f).map_or(Value::Null, Value::Number)
+        }
         IntrospectValue::Text(s) => Value::String(s),
         IntrospectValue::Json(v) => v,
         // `IntrospectValue::Null` collapses into the non_exhaustive
@@ -6003,7 +6024,12 @@ pub(crate) fn introspect_value_to_json(value: IntrospectValue) -> Value {
     }
 }
 
-fn error_response(id: Option<RequestId>, code: i32, message: &str, data: Option<Value>) -> Response {
+fn error_response(
+    id: Option<RequestId>,
+    code: i32,
+    message: &str,
+    data: Option<Value>,
+) -> Response {
     let mut err = RpcError::new(code, message);
     if let Some(d) = data {
         err = err.with_data(d);
@@ -6024,7 +6050,6 @@ fn serialize(resp: &Response) -> String {
         )
     })
 }
-
 
 // R626 §5.7 — the #[cfg(test)] tests module body lives in
 // dispatch_tests.rs (5,643 lines of wire-integration tests for ~50

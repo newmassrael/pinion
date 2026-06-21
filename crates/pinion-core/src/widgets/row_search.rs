@@ -58,12 +58,12 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::external::{
-    query_proxy_external_impl, ExternalIntrospect, InterveneError, IntrospectSchema,
-    IntrospectValue, InvokeError,
+    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
+    query_proxy_external_impl,
 };
 use crate::reactive::{Owner, Signal};
-use crate::widgets::grid_sort::{grid_filter_from_str, grid_filter_str, GridFilter};
-use crate::widgets::order_memo::{source_at_value, OrderMemo};
+use crate::widgets::grid_sort::{GridFilter, grid_filter_from_str, grid_filter_str};
+use crate::widgets::order_memo::{OrderMemo, source_at_value};
 use crate::widgets::scroll::ScrollState;
 
 /// R1004 §5.27 §5.40 — the matching **source row indices** for a `query` over
@@ -138,7 +138,10 @@ impl RowSearchState {
     /// symmetry with [`ScrollState::with_tag`](crate::widgets::scroll::ScrollState::with_tag).
     #[must_use]
     pub fn with_tag(key: &'static str, col_count: usize, cells: Vec<Vec<String>>) -> Self {
-        Self { tag: Some(key), ..Self::new(col_count, cells) }
+        Self {
+            tag: Some(key),
+            ..Self::new(col_count, cells)
+        }
     }
 
     /// The [`use_row_search`] cache key, or `None` when constructed directly.
@@ -162,7 +165,10 @@ impl RowSearchState {
     /// The cell text at `(row, col)`, or `""` out of range.
     #[must_use]
     pub fn cell(&self, row: usize, col: usize) -> &str {
-        self.cells.get(row).and_then(|r| r.get(col)).map_or("", String::as_str)
+        self.cells
+            .get(row)
+            .and_then(|r| r.get(col))
+            .map_or("", String::as_str)
     }
 
     /// Active search query, or `None`. Subscribes when read inside a view-fn.
@@ -325,7 +331,10 @@ impl RowSearchExternal {
     /// [`with_reveal`](Self::with_reveal).
     #[must_use]
     pub fn new(state: Rc<RowSearchState>) -> Self {
-        Self { state, reveal: None }
+        Self {
+            state,
+            reveal: None,
+        }
     }
 
     /// Attach the body [`ScrollState`] (and its uniform `row_pitch`) so every
@@ -417,7 +426,9 @@ impl ExternalIntrospect for RowSearchExternal {
             return Some(source_at_value(rest, |i| self.state.match_at(i)));
         }
         match path {
-            "query" => Some(IntrospectValue::Text(grid_filter_str(self.state.query().as_ref()))),
+            "query" => Some(IntrospectValue::Text(grid_filter_str(
+                self.state.query().as_ref(),
+            ))),
             "match_count" => Some(self.match_count_value()),
             "current" => Some(
                 self.state
@@ -452,7 +463,11 @@ impl ExternalIntrospect for RowSearchExternal {
         }
     }
 
-    fn invoke(&mut self, path: &str, args: IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+    fn invoke(
+        &mut self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
         match path {
             // AI-first search: set the query, land on the first match, scroll it
             // into view; returns the resulting match_count in one round-trip.
@@ -536,7 +551,11 @@ mod tests {
     fn search_matches_none_is_empty_some_keeps_predicate() {
         let c = cells();
         let cell = |r: usize, col: usize| c[r][col].as_str();
-        assert_eq!(search_matches(12, None, cell), Vec::<usize>::new(), "no query → no matches");
+        assert_eq!(
+            search_matches(12, None, cell),
+            Vec::<usize>::new(),
+            "no query → no matches"
+        );
         let q = GridFilter::eq(2, "Done");
         assert_eq!(search_matches(12, Some(&q), cell), DONE_ROWS.to_vec());
     }
@@ -547,7 +566,11 @@ mod tests {
         assert_eq!(s.count(), 12);
         assert_eq!(s.col_count(), 3);
         assert_eq!(s.query(), None);
-        assert_eq!(s.match_count(), 0, "no query → no matches (unlike a filter's match-all)");
+        assert_eq!(
+            s.match_count(),
+            0,
+            "no query → no matches (unlike a filter's match-all)"
+        );
         assert_eq!(s.current_index(), None);
         assert_eq!(s.current_row(), None);
     }
@@ -557,7 +580,11 @@ mod tests {
         let s = state();
         assert_eq!(s.set_query(Some(GridFilter::eq(2, "Done"))), 4);
         assert_eq!(s.match_count(), 4);
-        assert_eq!(s.current_index(), Some(0), "cursor lands on the first match");
+        assert_eq!(
+            s.current_index(),
+            Some(0),
+            "cursor lands on the first match"
+        );
         assert_eq!(s.current_row(), Some(2), "first Done row is source 2");
         // A query that matches nothing yields no cursor.
         assert_eq!(s.set_query(Some(GridFilter::eq(2, "Nope"))), 0);
@@ -570,7 +597,10 @@ mod tests {
         let s = state();
         s.set_query(Some(GridFilter::eq(2, "Done")));
         let first = s.matches();
-        assert!(Rc::ptr_eq(&first, &s.matches()), "match list memoized across reads");
+        assert!(
+            Rc::ptr_eq(&first, &s.matches()),
+            "match list memoized across reads"
+        );
         s.set_query(Some(GridFilter::eq(2, "Active")));
         assert!(!Rc::ptr_eq(&first, &s.matches()), "a new query recomputes");
     }
@@ -603,7 +633,11 @@ mod tests {
         assert_eq!(s.jump_to(2), Some(8), "match position 2 is source 8");
         assert_eq!(s.current_index(), Some(2));
         assert_eq!(s.jump_to(99), None, "out-of-range jump is a no-op");
-        assert_eq!(s.current_index(), Some(2), "cursor unchanged after a bad jump");
+        assert_eq!(
+            s.current_index(),
+            Some(2),
+            "cursor unchanged after a bad jump"
+        );
     }
 
     #[test]
@@ -623,8 +657,12 @@ mod tests {
     #[test]
     fn query_surfaces_match_set_and_cursor() {
         let mut e = ext();
-        e.invoke("set_query", IntrospectValue::Text("2=Done".into())).unwrap();
-        assert_eq!(e.query("query"), Some(IntrospectValue::Text("2=Done".into())));
+        e.invoke("set_query", IntrospectValue::Text("2=Done".into()))
+            .unwrap();
+        assert_eq!(
+            e.query("query"),
+            Some(IntrospectValue::Text("2=Done".into()))
+        );
         assert_eq!(e.query("match_count"), Some(IntrospectValue::Int(4)));
         assert_eq!(e.query("current"), Some(IntrospectValue::Int(0)));
         assert_eq!(e.query("current_row"), Some(IntrospectValue::Int(2)));
@@ -647,9 +685,18 @@ mod tests {
             Ok(IntrospectValue::Int(4)),
             "set_query returns match_count",
         );
-        assert_eq!(e.invoke("next", IntrospectValue::Null), Ok(IntrospectValue::Int(5)));
-        assert_eq!(e.invoke("prev", IntrospectValue::Null), Ok(IntrospectValue::Int(2)));
-        assert_eq!(e.invoke("jump", IntrospectValue::Int(3)), Ok(IntrospectValue::Int(11)));
+        assert_eq!(
+            e.invoke("next", IntrospectValue::Null),
+            Ok(IntrospectValue::Int(5))
+        );
+        assert_eq!(
+            e.invoke("prev", IntrospectValue::Null),
+            Ok(IntrospectValue::Int(2))
+        );
+        assert_eq!(
+            e.invoke("jump", IntrospectValue::Int(3)),
+            Ok(IntrospectValue::Int(11))
+        );
         assert_eq!(
             e.invoke("clear", IntrospectValue::Null),
             Ok(IntrospectValue::Int(0)),
@@ -657,16 +704,21 @@ mod tests {
         );
         assert_eq!(e.query("query"), Some(IntrospectValue::Text("none".into())));
         assert_eq!(e.query("current"), Some(IntrospectValue::Null));
-        assert_eq!(e.invoke("bogus", IntrospectValue::Null), Err(InvokeError::UnknownPath));
+        assert_eq!(
+            e.invoke("bogus", IntrospectValue::Null),
+            Err(InvokeError::UnknownPath)
+        );
     }
 
     #[test]
     fn intervene_sets_query_and_guards_readonly() {
         let mut e = ext();
-        e.intervene("query", IntrospectValue::Text("2=Active".into())).expect("query set");
+        e.intervene("query", IntrospectValue::Text("2=Active".into()))
+            .expect("query set");
         assert_eq!(e.state().query(), Some(GridFilter::eq(2, "Active")));
         // "none" clears.
-        e.intervene("query", IntrospectValue::Text("none".into())).expect("query clear");
+        e.intervene("query", IntrospectValue::Text("none".into()))
+            .expect("query clear");
         assert_eq!(e.state().query(), None);
         assert_eq!(
             e.intervene("match_count", IntrospectValue::Int(1)),
@@ -686,8 +738,13 @@ mod tests {
     fn phantom_column_query_is_dropped_on_parse() {
         let mut e = ext();
         // Column 9 does not exist in a 3-wide grid → clamped away → no search.
-        e.invoke("set_query", IntrospectValue::Text("9=Done".into())).unwrap();
-        assert_eq!(e.state().query(), None, "phantom-column query collapses to no search");
+        e.invoke("set_query", IntrospectValue::Text("9=Done".into()))
+            .unwrap();
+        assert_eq!(
+            e.state().query(),
+            None,
+            "phantom-column query collapses to no search"
+        );
         assert_eq!(e.query("match_count"), Some(IntrospectValue::Int(0)));
     }
 
@@ -702,7 +759,8 @@ mod tests {
         let mut e = RowSearchExternal::new(Rc::clone(&s)).with_reveal(Rc::clone(&scroll), 32);
 
         // Search for Active rows (1, 4, 7, 10); cursor lands on row 1 (near top).
-        e.invoke("set_query", IntrospectValue::Text("2=Active".into())).unwrap();
+        e.invoke("set_query", IntrospectValue::Text("2=Active".into()))
+            .unwrap();
         // Jump to the last match (source row 10) — deep enough to require a scroll.
         e.invoke("jump", IntrospectValue::Int(3)).unwrap();
         assert_eq!(s.current_row(), Some(10));
@@ -712,6 +770,10 @@ mod tests {
         // row's top to the viewport (offset = 1 * pitch = 32).
         e.invoke("jump", IntrospectValue::Int(0)).unwrap();
         assert!(scroll.offset_y() < deep, "jumping back scrolls up");
-        assert_eq!(scroll.offset_y(), 32, "first match (source row 1) aligns to its row top");
+        assert_eq!(
+            scroll.offset_y(),
+            32,
+            "first match (source row 1) aligns to its row top"
+        );
     }
 }

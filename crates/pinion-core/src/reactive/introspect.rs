@@ -205,10 +205,19 @@ where
 
 impl<T> External for SignalExternal<T>
 where
-    T: Clone + PartialEq + Serialize + DeserializeOwned + IntoIntrospectValue + std::fmt::Debug + 'static,
+    T: Clone
+        + PartialEq
+        + Serialize
+        + DeserializeOwned
+        + IntoIntrospectValue
+        + std::fmt::Debug
+        + 'static,
 {
     fn backends(&self) -> BackendSupport {
-        BackendSupport::new(&[Backend::Gui, Backend::Tui, Backend::Rpc], BackendFallback::Skip)
+        BackendSupport::new(
+            &[Backend::Gui, Backend::Tui, Backend::Rpc],
+            BackendFallback::Skip,
+        )
     }
 
     fn repaint_ownership(&self) -> RepaintOwner {
@@ -234,7 +243,13 @@ where
 
 impl<T> ExternalIntrospect for SignalExternal<T>
 where
-    T: Clone + PartialEq + Serialize + DeserializeOwned + IntoIntrospectValue + std::fmt::Debug + 'static,
+    T: Clone
+        + PartialEq
+        + Serialize
+        + DeserializeOwned
+        + IntoIntrospectValue
+        + std::fmt::Debug
+        + 'static,
 {
     fn schema(&self) -> IntrospectSchema {
         IntrospectSchema::new(schema_fields::<T>())
@@ -276,8 +291,8 @@ fn schema_fields<T: IntoIntrospectValue>() -> &'static [(&'static str, &'static 
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::owner::Owner;
+    use super::*;
 
     #[test]
     fn query_reads_i32_signal_as_int() {
@@ -299,7 +314,10 @@ mod tests {
     fn query_reads_string_signal_as_text() {
         let s = Signal::new(String::from("hello"));
         let ext = SignalExternal::new(s);
-        assert_eq!(ext.query("value"), Some(IntrospectValue::Text(String::from("hello"))));
+        assert_eq!(
+            ext.query("value"),
+            Some(IntrospectValue::Text(String::from("hello")))
+        );
     }
 
     #[test]

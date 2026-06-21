@@ -189,11 +189,7 @@ impl Palette {
     /// step 0, then `55 + step*40` (→ `95, 135, 175, 215, 255`). This is
     /// the standard xterm colour-cube channel formula.
     const fn cube_channel(step: u8) -> u8 {
-        if step == 0 {
-            0
-        } else {
-            55 + step * 40
-        }
+        if step == 0 { 0 } else { 55 + step * 40 }
     }
 
     /// Resolve a stored [`TermColor`] to the concrete [`Color`] a painter
@@ -771,8 +767,14 @@ mod tests {
     #[test]
     fn palette_resolves_default_per_target() {
         let p = Palette::xterm_default();
-        assert_eq!(p.resolve(TermColor::Default, ColorTarget::Foreground), p.default_fg());
-        assert_eq!(p.resolve(TermColor::Default, ColorTarget::Background), p.default_bg());
+        assert_eq!(
+            p.resolve(TermColor::Default, ColorTarget::Foreground),
+            p.default_fg()
+        );
+        assert_eq!(
+            p.resolve(TermColor::Default, ColorTarget::Background),
+            p.default_bg()
+        );
         // The xterm convention: light grey on black.
         assert_eq!(p.default_fg(), Color::rgb(0xe5, 0xe5, 0xe5));
         assert_eq!(p.default_bg(), Color::rgb(0x00, 0x00, 0x00));
@@ -890,7 +892,11 @@ mod tests {
     #[test]
     fn grid_cell_carries_attrs_and_blank_is_empty() {
         assert!(TermCell::blank().attrs.is_empty());
-        assert!(TermCell::new("x", TermColor::Default, TermColor::Default).attrs.is_empty());
+        assert!(
+            TermCell::new("x", TermColor::Default, TermColor::Default)
+                .attrs
+                .is_empty()
+        );
         let styled = TermCell::new("x", TermColor::Default, TermColor::Default)
             .with_attrs(CellAttrs::empty().with_italic(true).with_underline(true));
         assert!(styled.attrs.italic && styled.attrs.underline);
@@ -996,7 +1002,9 @@ mod tests {
         assert_eq!(b.cell(0, 0).unwrap().width, CellWidth::Wide);
         assert_eq!(b.cell(1, 0).unwrap().width, CellWidth::Trailer);
         assert_eq!(b.cell(2, 0).unwrap().width, CellWidth::Narrow);
-        let row: String = (0..3).map(|c| b.cell(c, 0).unwrap().cluster.clone()).collect();
+        let row: String = (0..3)
+            .map(|c| b.cell(c, 0).unwrap().cluster.clone())
+            .collect();
         assert_eq!(row, format!("{WIDE_CLUSTER}x")); // two glyphs, three columns
     }
 

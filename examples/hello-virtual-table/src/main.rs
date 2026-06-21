@@ -35,16 +35,16 @@
 //! horizontal scroll), no sort / selection / scrollbar peer — those are
 //! follow-ups, mirroring the R744 → R746 list arc.
 
-use pinion_a11y::{windowed_grid_nodes, AccessNode, WidgetA11y};
+use pinion_a11y::{AccessNode, WidgetA11y, windowed_grid_nodes};
 use pinion_core::external::{External, StubExternal};
 use pinion_core::scene::ContainerNode;
 use pinion_core::style::{BoxStyle, FlexDirection, LayoutStyle};
-use pinion_core::theme::{use_theme, ColorRole};
+use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::{Frame, Scene, WidgetCore};
-use pinion_widget_paint::table::{view_virtual_table, GridScroll, TableStyle, VirtualTableData};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_shell::{WidgetView, vello_renderer_impl};
+use pinion_widget_paint::table::{GridScroll, TableStyle, VirtualTableData, view_virtual_table};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloVirtualTableRenderer, HelloVirtualTableRendererError);
@@ -115,7 +115,10 @@ fn view(_state: (), _frame: &Frame) -> Scene {
 
     let grid = view_virtual_table(
         TABLE_TAG,
-        GridScroll { body: &scroll, horizontal: &h_scroll },
+        GridScroll {
+            body: &scroll,
+            horizontal: &h_scroll,
+        },
         VirtualTableData {
             headers: &HEADERS,
             item_count: N,
@@ -259,9 +262,8 @@ mod tests {
     fn rendered_rows_track_measured_viewport_and_window_dataset() {
         let short = run_access(360);
         let tall = run_access(720);
-        let count_rows = |nodes: &[AccessNode]| {
-            nodes.iter().filter(|n| n.role == AriaRole::Row).count()
-        };
+        let count_rows =
+            |nodes: &[AccessNode]| nodes.iter().filter(|n| n.role == AriaRole::Row).count();
         // Header row + data rows; subtract the 1 header row for the body.
         let short_body = count_rows(&short) - 1;
         let tall_body = count_rows(&tall) - 1;
@@ -286,6 +288,10 @@ mod tests {
             .iter()
             .find(|n| n.role == AriaRole::Row && n.tag != format!("{TABLE_TAG}_hrow"));
         let first = first_body.expect("at least one body row");
-        assert_eq!(first.position_in_set, Some(1), "top window starts at posinset 1");
+        assert_eq!(
+            first.position_in_set,
+            Some(1),
+            "top window starts at posinset 1"
+        );
     }
 }

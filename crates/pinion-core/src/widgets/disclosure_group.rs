@@ -54,9 +54,8 @@
 //! reachable via `set_selected`).
 
 use crate::external::{
-    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner,
-    ThreadOwnership,
+    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
 use crate::intent::Intent;
 use crate::widgets::disclosure::{Disclosure, DisclosureEvent, DisclosureState};
@@ -202,11 +201,7 @@ impl WidgetTransition for DisclosureGroup {
         self.send(idx, ev);
     }
 
-    fn detect(
-        before: Self::Snapshot,
-        _event: Self::Event,
-        after: Self::Snapshot,
-    ) -> Vec<Intent> {
+    fn detect(before: Self::Snapshot, _event: Self::Event, after: Self::Snapshot) -> Vec<Intent> {
         if before == after {
             return Vec::new();
         }
@@ -233,7 +228,9 @@ impl DisclosureGroupExternal {
     /// Construct with `count` sections, all collapsed.
     #[must_use]
     pub fn new(count: usize) -> Self {
-        Self { em: IntentEmitter::new(DisclosureGroup::new(count)) }
+        Self {
+            em: IntentEmitter::new(DisclosureGroup::new(count)),
+        }
     }
 
     /// Drive `event` to the section at `index`. Queues an `"expanded"`
@@ -339,13 +336,10 @@ impl ExternalIntrospect for DisclosureGroupExternal {
     fn query(&self, path: &str) -> Option<IntrospectValue> {
         match path {
             "count" => Some(IntrospectValue::Int(
-                i64::try_from(self.count())
-                    .expect("DisclosureGroup count must fit in i64"),
+                i64::try_from(self.count()).expect("DisclosureGroup count must fit in i64"),
             )),
             "expanded_index" => Some(match self.expanded_index() {
-                Some(idx) => IntrospectValue::Int(
-                    i64::try_from(idx).expect("index fits in i64"),
-                ),
+                Some(idx) => IntrospectValue::Int(i64::try_from(idx).expect("index fits in i64")),
                 None => IntrospectValue::Null,
             }),
             _ => {
@@ -358,9 +352,7 @@ impl ExternalIntrospect for DisclosureGroupExternal {
                     if idx >= self.count() {
                         return None;
                     }
-                    return Some(IntrospectValue::Text(
-                        self.state(idx).as_name().to_string(),
-                    ));
+                    return Some(IntrospectValue::Text(self.state(idx).as_name().to_string()));
                 }
                 if let Some(idx_str) = path.strip_prefix("expanded.") {
                     let idx: usize = idx_str.parse().ok()?;
@@ -374,11 +366,7 @@ impl ExternalIntrospect for DisclosureGroupExternal {
         }
     }
 
-    fn intervene(
-        &mut self,
-        path: &str,
-        value: IntrospectValue,
-    ) -> Result<(), InterveneError> {
+    fn intervene(&mut self, path: &str, value: IntrospectValue) -> Result<(), InterveneError> {
         match path {
             "count" => Err(InterveneError::ReadOnly),
             "expanded_index" => match value {
@@ -411,18 +399,16 @@ impl ExternalIntrospect for DisclosureGroupExternal {
                 IntrospectValue::Text(ref s) => {
                     // R781 — modifiers ignored (no modifier-aware activation).
                     let (idx, event_name, _): (usize, &str, _) =
-                        crate::composite_tag::parse_send_payload(s)
-                            .ok_or(InvokeError::Rejected)?;
+                        crate::composite_tag::parse_send_payload(s).ok_or(InvokeError::Rejected)?;
                     if idx >= self.count() {
                         return Err(InvokeError::Rejected);
                     }
-                    let ev = DisclosureEvent::from_name(event_name)
-                        .ok_or(InvokeError::Rejected)?;
+                    let ev = DisclosureEvent::from_name(event_name).ok_or(InvokeError::Rejected)?;
                     self.send(idx, ev);
                     Ok(match self.expanded_index() {
-                        Some(i) => IntrospectValue::Int(
-                            i64::try_from(i).expect("index fits in i64"),
-                        ),
+                        Some(i) => {
+                            IntrospectValue::Int(i64::try_from(i).expect("index fits in i64"))
+                        }
                         None => IntrospectValue::Null,
                     })
                 }
@@ -535,8 +521,10 @@ mod tests {
         click_ext(&mut ext, 1);
         let mut harvested = Vec::new();
         ext.drain_intents(&mut |i| harvested.push(i));
-        let expanded: Vec<_> =
-            harvested.iter().filter(|i| i.tag_str() == "expanded").collect();
+        let expanded: Vec<_> = harvested
+            .iter()
+            .filter(|i| i.tag_str() == "expanded")
+            .collect();
         assert_eq!(expanded.len(), 1, "first open emits one expanded intent");
         assert_eq!(expanded[0].payload, IntrospectValue::Int(1));
 
@@ -544,8 +532,10 @@ mod tests {
         click_ext(&mut ext, 0);
         let mut harvested = Vec::new();
         ext.drain_intents(&mut |i| harvested.push(i));
-        let expanded: Vec<_> =
-            harvested.iter().filter(|i| i.tag_str() == "expanded").collect();
+        let expanded: Vec<_> = harvested
+            .iter()
+            .filter(|i| i.tag_str() == "expanded")
+            .collect();
         assert_eq!(expanded.len(), 1, "switch emits one expanded intent");
         assert_eq!(expanded[0].payload, IntrospectValue::Int(0));
 
@@ -554,8 +544,10 @@ mod tests {
         click_ext(&mut ext, 0);
         let mut harvested = Vec::new();
         ext.drain_intents(&mut |i| harvested.push(i));
-        let expanded: Vec<_> =
-            harvested.iter().filter(|i| i.tag_str() == "expanded").collect();
+        let expanded: Vec<_> = harvested
+            .iter()
+            .filter(|i| i.tag_str() == "expanded")
+            .collect();
         assert_eq!(expanded.len(), 1, "close emits one expanded intent");
         assert_eq!(expanded[0].payload, IntrospectValue::Null);
     }
@@ -566,20 +558,14 @@ mod tests {
     fn query_count_expanded_index_and_per_section() {
         let mut ext = DisclosureGroupExternal::new(2);
         assert_eq!(ext.query("count"), Some(IntrospectValue::Int(2)));
-        assert_eq!(
-            ext.query("expanded_index"),
-            Some(IntrospectValue::Null)
-        );
+        assert_eq!(ext.query("expanded_index"), Some(IntrospectValue::Null));
         assert_eq!(
             ext.query("state.0"),
             Some(IntrospectValue::Text("Idle".to_string()))
         );
         assert_eq!(ext.query("expanded.1"), Some(IntrospectValue::Bool(false)));
         click_ext(&mut ext, 1);
-        assert_eq!(
-            ext.query("expanded_index"),
-            Some(IntrospectValue::Int(1))
-        );
+        assert_eq!(ext.query("expanded_index"), Some(IntrospectValue::Int(1)));
         assert_eq!(ext.query("expanded.1"), Some(IntrospectValue::Bool(true)));
         // Out-of-range per-section query -> None.
         assert_eq!(ext.query("expanded.9"), None);
@@ -590,11 +576,17 @@ mod tests {
     #[test]
     fn intervene_expanded_index_int_null_and_out_of_range() {
         let mut ext = DisclosureGroupExternal::new(3);
-        assert!(ext.intervene("expanded_index", IntrospectValue::Int(2)).is_ok());
+        assert!(
+            ext.intervene("expanded_index", IntrospectValue::Int(2))
+                .is_ok()
+        );
         assert_eq!(ext.expanded_index(), Some(2));
         assert!(ext.is_expanded(2) && !ext.is_expanded(0));
         // Null clears.
-        assert!(ext.intervene("expanded_index", IntrospectValue::Null).is_ok());
+        assert!(
+            ext.intervene("expanded_index", IntrospectValue::Null)
+                .is_ok()
+        );
         assert_eq!(ext.expanded_index(), None);
         // Out-of-range + negative -> OutOfRange.
         assert!(matches!(
@@ -629,12 +621,14 @@ mod tests {
         let mut ext = DisclosureGroupExternal::new(2);
         // "<idx>:<EventName>" cycle opens section 0; returns the new
         // expanded index.
-        assert!(ext
-            .invoke("send", IntrospectValue::Text("0:PointerEnter".into()))
-            .is_ok());
-        assert!(ext
-            .invoke("send", IntrospectValue::Text("0:PointerDown".into()))
-            .is_ok());
+        assert!(
+            ext.invoke("send", IntrospectValue::Text("0:PointerEnter".into()))
+                .is_ok()
+        );
+        assert!(
+            ext.invoke("send", IntrospectValue::Text("0:PointerDown".into()))
+                .is_ok()
+        );
         assert_eq!(
             ext.invoke("send", IntrospectValue::Text("0:PointerUp".into())),
             Ok(IntrospectValue::Int(0))
@@ -675,11 +669,13 @@ mod tests {
     fn invoke_send_enforces_single_open() {
         let mut ext = DisclosureGroupExternal::new(3);
         for ev in ["0:PointerEnter", "0:PointerDown", "0:PointerUp"] {
-            ext.invoke("send", IntrospectValue::Text(ev.into())).unwrap();
+            ext.invoke("send", IntrospectValue::Text(ev.into()))
+                .unwrap();
         }
         assert_eq!(ext.expanded_index(), Some(0));
         for ev in ["2:PointerEnter", "2:PointerDown", "2:PointerUp"] {
-            ext.invoke("send", IntrospectValue::Text(ev.into())).unwrap();
+            ext.invoke("send", IntrospectValue::Text(ev.into()))
+                .unwrap();
         }
         assert_eq!(ext.expanded_index(), Some(2));
         assert!(!ext.is_expanded(0), "single-open enforced through RPC send");
@@ -690,9 +686,13 @@ mod tests {
         let ext = DisclosureGroupExternal::new(1);
         let schema = ext.schema();
         let names: Vec<&str> = schema.fields.iter().map(|(n, _)| *n).collect();
-        for expected in
-            ["count", "expanded_index", "state.<index>", "expanded.<index>", "send"]
-        {
+        for expected in [
+            "count",
+            "expanded_index",
+            "state.<index>",
+            "expanded.<index>",
+            "send",
+        ] {
             assert!(names.contains(&expected), "schema missing {expected}");
         }
     }

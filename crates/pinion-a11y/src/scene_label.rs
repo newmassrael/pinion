@@ -158,7 +158,7 @@ fn walk_for_text(container: &pinion_core::scene::ContainerNode) -> Option<String
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AriaRole};
+    use crate::AriaRole;
     use pinion_core::scene::{ContainerNode, Rect, TextNode};
 
     fn button_scene_with_text(tag: &'static str, label: &'static str) -> Scene {
@@ -198,9 +198,7 @@ mod tests {
     #[test]
     fn existing_name_is_preserved() {
         let scene = button_scene_with_text("main_btn", "Click me!");
-        let mut nodes = vec![
-            AccessNode::new("main_btn", AriaRole::Button).with_name("Explicit")
-        ];
+        let mut nodes = vec![AccessNode::new("main_btn", AriaRole::Button).with_name("Explicit")];
         let filled = enrich_names_from_scene(&mut nodes, &scene);
         assert_eq!(filled, 0);
         assert_eq!(nodes[0].name.as_deref(), Some("Explicit"));
@@ -283,10 +281,7 @@ mod tests {
                     TextNode::new("\u{2713}".to_string(), Rect::default())
                         .with_role(TextRole::Presentational),
                 ),
-                Scene::Text(TextNode::new(
-                    "Subscribe".to_string(),
-                    Rect::default(),
-                )),
+                Scene::Text(TextNode::new("Subscribe".to_string(), Rect::default())),
             ])
             .with_tag("checkbox"),
         );

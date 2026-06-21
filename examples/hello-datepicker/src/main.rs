@@ -62,23 +62,17 @@
 //! for explicit month navigation. The coordinator already supports the
 //! roll, so the axis is purely a binding-side keyboard extension.
 
-use pinion_a11y::{
-    AccessAction, AccessFocus, AccessNode, AccessState, AriaRole, WidgetA11y,
-};
+use pinion_a11y::{AccessAction, AccessFocus, AccessNode, AccessState, AriaRole, WidgetA11y};
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::scene::ContainerNode;
-use pinion_core::style::{
-    AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle,
-};
-use pinion_core::theme::{use_theme, ColorRole};
-use pinion_core::widgets::datepicker::{
-    days_in_month, CivilDate, DatePickerExternal,
-};
+use pinion_core::style::{AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle};
+use pinion_core::theme::{ColorRole, use_theme};
+use pinion_core::widgets::datepicker::{CivilDate, DatePickerExternal, days_in_month};
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::{Frame, Scene, WidgetCore, WidgetStateName};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::datepicker::{
-    view_datepicker, DatePickerStyle, DisplayedMonth, MONTH_NAMES, WEEKDAY_NAMES,
+    DatePickerStyle, DisplayedMonth, MONTH_NAMES, WEEKDAY_NAMES, view_datepicker,
 };
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -229,7 +223,10 @@ fn view(state: &PickerState, _frame: &Frame) -> Scene {
     // ring against the shell's stroke.
     let picker = view_datepicker(
         PRIMARY_TAG,
-        DisplayedMonth { year: state.year, month: state.month },
+        DisplayedMonth {
+            year: state.year,
+            month: state.month,
+        },
         state.selected,
         state.day_state_slice(),
         &theme,
@@ -333,7 +330,6 @@ impl WidgetCore for DatePickerView {
         "pinion hello-datepicker (R704 §5.38 inline month calendar)"
     }
 
-
     /// WAI-ARIA APG date-grid keyboard model. Routing depends on which Tab
     /// stop owns shell focus:
     /// - `PRIMARY_TAG` (the grid): arrows / Home / End move the roving
@@ -357,7 +353,11 @@ impl WidgetCore for DatePickerView {
             if !matches!(key, "Enter" | "Space") {
                 return false;
             }
-            let wire = if focused == Some(PREV_TAG) { "PrevMonth" } else { "NextMonth" };
+            let wire = if focused == Some(PREV_TAG) {
+                "PrevMonth"
+            } else {
+                "NextMonth"
+            };
             let Scene::External(node) = scene else {
                 return false;
             };
@@ -408,7 +408,11 @@ impl WidgetCore for DatePickerView {
                 true
             }
             "PageUp" | "PageDown" => {
-                let wire = if key == "PageUp" { "PrevMonth" } else { "NextMonth" };
+                let wire = if key == "PageUp" {
+                    "PrevMonth"
+                } else {
+                    "NextMonth"
+                };
                 intro
                     .invoke("send", IntrospectValue::Text(wire.to_string()))
                     .is_ok()
@@ -435,9 +439,10 @@ impl WidgetCore for DatePickerView {
     }
 
     fn fmt_state_log(state: &PickerState) -> String {
-        let sel = state
-            .selected
-            .map_or_else(|| "none".to_string(), |d| format!("{:04}-{:02}-{:02}", d.year, d.month, d.day));
+        let sel = state.selected.map_or_else(
+            || "none".to_string(),
+            |d| format!("{:04}-{:02}-{:02}", d.year, d.month, d.day),
+        );
         format!("{:04}-{:02} sel={sel}", state.year, state.month)
     }
 }
@@ -463,8 +468,7 @@ impl WidgetA11y for DatePickerView {
         let grid_focused = focused == Some(PRIMARY_TAG);
         let active_day = active_day(state);
 
-        let mut nodes: Vec<AccessNode> =
-            Vec::with_capacity(usize::from(days) + 10);
+        let mut nodes: Vec<AccessNode> = Vec::with_capacity(usize::from(days) + 10);
 
         // Grid root + weekday column headers as children.
         let mut grid = AccessNode::new(PRIMARY_TAG, AriaRole::Grid)
@@ -562,15 +566,17 @@ impl WidgetA11y for DatePickerView {
         if matches!(sub_tag, "prev" | "next") {
             return match action {
                 AccessAction::Click | AccessAction::Default => {
-                    let wire = if sub_tag == "prev" { "PrevMonth" } else { "NextMonth" };
+                    let wire = if sub_tag == "prev" {
+                        "PrevMonth"
+                    } else {
+                        "NextMonth"
+                    };
                     intro
                         .invoke("send", IntrospectValue::Text(wire.to_string()))
                         .is_ok()
                 }
                 AccessAction::Focus => true,
-                AccessAction::Increment | AccessAction::Decrement | AccessAction::Other => {
-                    false
-                }
+                AccessAction::Increment | AccessAction::Decrement | AccessAction::Other => false,
             };
         }
         let Ok(day) = sub_tag.parse::<u8>() else {
@@ -601,7 +607,10 @@ impl WidgetView for DatePickerView {
     type Renderer = HelloDatePickerRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 }
 
@@ -618,9 +627,7 @@ mod tests {
     /// `apply_key` / `access_child_invoke` walk the live shell's exact
     /// topology (one composite `Scene::External` at `PRIMARY_TAG`).
     fn scene_fixture() -> Scene {
-        Scene::External(
-            ExternalNode::new(DatePickerView::create_external()).with_tag(PRIMARY_TAG),
-        )
+        Scene::External(ExternalNode::new(DatePickerView::create_external()).with_tag(PRIMARY_TAG))
     }
 
     fn displayed_month(scene: &Scene) -> (i32, u8) {
@@ -664,7 +671,10 @@ mod tests {
         let state = PickerState::idle(INITIAL_YEAR, INITIAL_MONTH);
         let scene = pinion_core::Owner::new().run(|| view(&state, &Frame::new()));
         for day in 1..=31u8 {
-            assert!(scene.contains_tag(&format!("datepicker#{day}")), "day {day} present");
+            assert!(
+                scene.contains_tag(&format!("datepicker#{day}")),
+                "day {day} present"
+            );
         }
     }
 
@@ -859,11 +869,21 @@ mod tests {
     #[test]
     fn selected_day_cell_carries_aria_selected() {
         let mut state = PickerState::idle(INITIAL_YEAR, INITIAL_MONTH);
-        state.selected = Some(CivilDate { year: 2026, month: 5, day: 15 });
+        state.selected = Some(CivilDate {
+            year: 2026,
+            month: 5,
+            day: 15,
+        });
         let nodes = DatePickerView::access_node(&state, None);
-        let cell = nodes.iter().find(|n| n.tag == "datepicker#15").expect("day 15");
+        let cell = nodes
+            .iter()
+            .find(|n| n.tag == "datepicker#15")
+            .expect("day 15");
         assert_eq!(cell.selected, Some(true));
-        let other = nodes.iter().find(|n| n.tag == "datepicker#14").expect("day 14");
+        let other = nodes
+            .iter()
+            .find(|n| n.tag == "datepicker#14")
+            .expect("day 14");
         assert_eq!(other.selected, Some(false));
     }
 
@@ -883,9 +903,15 @@ mod tests {
         let mut state = PickerState::idle(INITIAL_YEAR, INITIAL_MONTH);
         state.focused_day = Some(12);
         let nodes = DatePickerView::access_node(&state, Some(PRIMARY_TAG));
-        let cell = nodes.iter().find(|n| n.tag == "datepicker#12").expect("day 12");
+        let cell = nodes
+            .iter()
+            .find(|n| n.tag == "datepicker#12")
+            .expect("day 12");
         assert!(cell.state.focused, "active descendant cell is focused");
-        let other = nodes.iter().find(|n| n.tag == "datepicker#11").expect("day 11");
+        let other = nodes
+            .iter()
+            .find(|n| n.tag == "datepicker#11")
+            .expect("day 11");
         assert!(!other.state.focused);
     }
 
@@ -910,7 +936,11 @@ mod tests {
     #[test]
     fn access_focus_target_falls_back_to_selected_then_day_one() {
         let mut state = PickerState::idle(INITIAL_YEAR, INITIAL_MONTH);
-        state.selected = Some(CivilDate { year: 2026, month: 5, day: 9 });
+        state.selected = Some(CivilDate {
+            year: 2026,
+            month: 5,
+            day: 9,
+        });
         let target = DatePickerView::access_focus_target(&state, Some(PRIMARY_TAG))
             .expect("grid focused returns Some");
         assert_eq!(target.active_descendant.as_deref(), Some("datepicker#9"));
@@ -974,7 +1004,14 @@ mod tests {
         let state = DatePickerView::read_state(&scene);
         assert_eq!(state.year, 2026);
         assert_eq!(state.month, 5);
-        assert_eq!(state.selected, Some(CivilDate { year: 2026, month: 5, day: 31 }));
+        assert_eq!(
+            state.selected,
+            Some(CivilDate {
+                year: 2026,
+                month: 5,
+                day: 31
+            })
+        );
         // The activate edge syncs the active descendant to the chosen day.
         assert_eq!(state.focused_day, Some(31));
     }

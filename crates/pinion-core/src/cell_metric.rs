@@ -129,7 +129,10 @@ impl CellMetric {
     /// can never round differently).
     #[must_use]
     pub fn px_to_cell(self, x_px: u32, y_px: u32) -> (u16, u16) {
-        (Self::whole_cells(x_px, self.cell_w), Self::whole_cells(y_px, self.cell_h))
+        (
+            Self::whole_cells(x_px, self.cell_w),
+            Self::whole_cells(y_px, self.cell_h),
+        )
     }
 
     /// Whole cell columns spanning `width_px` logical pixels — the
@@ -245,10 +248,22 @@ mod tests {
     fn px_to_cell_floors_pixel_into_its_cell() {
         let m = CellMetric::DEFAULT; // 8x16
         assert_eq!(m.px_to_cell(0, 0), (0, 0));
-        assert_eq!(m.px_to_cell(7, 15), (0, 0), "any pixel inside cell (0,0) maps to it");
-        assert_eq!(m.px_to_cell(8, 16), (1, 1), "the first pixel of the next cell");
+        assert_eq!(
+            m.px_to_cell(7, 15),
+            (0, 0),
+            "any pixel inside cell (0,0) maps to it"
+        );
+        assert_eq!(
+            m.px_to_cell(8, 16),
+            (1, 1),
+            "the first pixel of the next cell"
+        );
         assert_eq!(m.px_to_cell(24, 32), (3, 2)); // inverse of cell_to_px(3, 2) = (24, 32)
-        assert_eq!(m.px_to_cell(31, 47), (3, 2), "trailing pixels still inside cell (3,2)");
+        assert_eq!(
+            m.px_to_cell(31, 47),
+            (3, 2),
+            "trailing pixels still inside cell (3,2)"
+        );
     }
 
     #[test]
@@ -260,9 +275,17 @@ mod tests {
                 let (x, y) = m.cell_to_px(col, row);
                 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                 let (x0, y0) = (x as u32, y as u32);
-                assert_eq!(m.px_to_cell(x0, y0), (col, row), "top-left of cell ({col},{row})");
+                assert_eq!(
+                    m.px_to_cell(x0, y0),
+                    (col, row),
+                    "top-left of cell ({col},{row})"
+                );
                 // The last pixel still inside the cell (origin + size - 1).
-                assert_eq!(m.px_to_cell(x0 + 9, y0 + 19), (col, row), "interior of ({col},{row})");
+                assert_eq!(
+                    m.px_to_cell(x0 + 9, y0 + 19),
+                    (col, row),
+                    "interior of ({col},{row})"
+                );
             }
         }
     }
@@ -281,6 +304,9 @@ mod tests {
         let (cols, rows) = (m.cols_for(640), m.rows_for(384)); // 80, 24
         let (c, r) = m.px_to_cell(640, 384); // exactly one cell past each edge
         assert_eq!((c, r), (80, 24));
-        assert!(c >= cols && r >= rows, "off-grid pixel exceeds the cell counts");
+        assert!(
+            c >= cols && r >= rows,
+            "off-grid pixel exceeds the cell counts"
+        );
     }
 }

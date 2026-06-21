@@ -54,21 +54,23 @@
 //! `AriaRole::ListItem` with `aria-posinset` + `aria-selected = (index ==
 //! selected)`. The list container is the focusable tab stop.
 
-use pinion_a11y::{windowed_list_nodes_selected, AccessNode, WidgetA11y};
+use pinion_a11y::{AccessNode, WidgetA11y, windowed_list_nodes_selected};
 use pinion_core::external::External;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, LayoutStyle, Size, SizeValue, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
 use pinion_core::widgets::virtual_list::compute_visible_range;
-use pinion_core::widgets::virtual_select::{nav_select_key, read_selected, RowMetrics, VirtualSelectExternal};
+use pinion_core::widgets::virtual_select::{
+    RowMetrics, VirtualSelectExternal, nav_select_key, read_selected,
+};
 use pinion_core::{Frame, Scene, WidgetCore};
-use pinion_shell::{vello_renderer_impl, WidgetView};
-use pinion_widget_paint::scrollbar::{view_vertical_scrollbar, VerticalScrollbarStyle};
+use pinion_shell::{WidgetView, vello_renderer_impl};
+use pinion_widget_paint::scrollbar::{VerticalScrollbarStyle, view_vertical_scrollbar};
 use pinion_widget_paint::virtual_list::view_flex_virtual_list;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -110,7 +112,10 @@ const STATUS_TAG: &str = "vlist_status";
 fn build_row(index: usize, theme: &Theme, width: u32, selected: Option<usize>) -> Scene {
     let is_selected = selected == Some(index);
     let (fill, fg) = if is_selected {
-        (theme.resolve(ColorRole::Accent), theme.resolve(ColorRole::OnAccent))
+        (
+            theme.resolve(ColorRole::Accent),
+            theme.resolve(ColorRole::OnAccent),
+        )
     } else {
         let stripe = if index % 2 == 0 {
             ColorRole::SurfaceContainerLow
@@ -142,7 +147,10 @@ fn build_row(index: usize, theme: &Theme, width: u32, selected: Option<usize>) -
 /// `scene/snapshot` readout.
 fn row_label(index: usize) -> String {
     const CATEGORIES: [&str; 5] = ["Alpha", "Bravo", "Charlie", "Delta", "Echo"];
-    format!("Item {index:05} \u{00B7} {}", CATEGORIES[index % CATEGORIES.len()])
+    format!(
+        "Item {index:05} \u{00B7} {}",
+        CATEGORIES[index % CATEGORIES.len()]
+    )
 }
 
 /// Header-bar status line: the current selection + the measured viewport
@@ -168,7 +176,9 @@ fn header(
     );
     Scene::Container(
         ContainerNode::new(vec![text])
-            .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh)))
+            .with_style(BoxStyle::filled(
+                theme.resolve(ColorRole::SurfaceContainerHigh),
+            ))
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Row)
@@ -242,7 +252,10 @@ impl WidgetCore for VirtualNavView {
 
     /// Sibling `ScrollBarExternal` sharing the list's `Rc<ScrollState>`.
     fn create_extra_externals() -> Vec<ExtraExternal> {
-        vec![scrollbar_extra_external(use_scroll_state(SCROLL_KEY), SCROLLBAR_TAG)]
+        vec![scrollbar_extra_external(
+            use_scroll_state(SCROLL_KEY),
+            SCROLLBAR_TAG,
+        )]
     }
 
     fn tag() -> &'static str {
@@ -289,7 +302,10 @@ impl WidgetCore for VirtualNavView {
             focused,
             key,
             modifiers,
-            RowMetrics { item_count: N, row_pitch: ROW_PITCH },
+            RowMetrics {
+                item_count: N,
+                row_pitch: ROW_PITCH,
+            },
         )
     }
 
@@ -346,9 +362,9 @@ fn main() {
 mod tests {
     use super::*;
     use pinion_a11y::AriaRole;
+    use pinion_core::Owner;
     use pinion_core::widgets::scroll::ScrollState;
     use pinion_core::widgets::virtual_list::scroll_offset_to_reveal;
-    use pinion_core::Owner;
     use std::rc::Rc;
 
     // The keyboard navigation policy + controller (`clamp_nav` /
@@ -360,7 +376,10 @@ mod tests {
         let owner = Owner::new();
         owner.run(|| {
             let scroll = use_scroll_state(SCROLL_KEY);
-            scroll.set_max(0, i32::try_from(N).unwrap() * i32::try_from(ROW_PITCH).unwrap());
+            scroll.set_max(
+                0,
+                i32::try_from(N).unwrap() * i32::try_from(ROW_PITCH).unwrap(),
+            );
             scroll.set_measured_viewport(360, measured_h);
             scroll.scroll_to(0, offset_y);
             view(selected, &Frame::default())
@@ -407,7 +426,11 @@ mod tests {
             .iter()
             .find(|n| n.position_in_set == Some(2))
             .expect("rendered listitem for index 1");
-        assert_eq!(item1.selected, Some(true), "selected row carries aria-selected=true");
+        assert_eq!(
+            item1.selected,
+            Some(true),
+            "selected row carries aria-selected=true"
+        );
     }
 
     #[test]
@@ -433,7 +456,10 @@ mod tests {
         // moves the scroll offset deep, so the windowed range now includes
         // 9 999 — a row that did not exist at offset 0.
         let s = Rc::new(ScrollState::new());
-        s.set_max(0, i32::try_from(N).unwrap() * i32::try_from(ROW_PITCH).unwrap());
+        s.set_max(
+            0,
+            i32::try_from(N).unwrap() * i32::try_from(ROW_PITCH).unwrap(),
+        );
         let measured_h = 384;
         let reveal = scroll_offset_to_reveal(N - 1, 0, measured_h, ROW_PITCH);
         s.scroll_to(0, reveal);

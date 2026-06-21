@@ -64,14 +64,11 @@
 //!   **slot-assignment** setter (no intent, no focused-sync).
 
 use crate::external::{
-    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner,
-    ThreadOwnership,
+    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
 use crate::intent::Intent;
-use crate::widgets::listbox_item::{
-    ListBoxItem, ListboxItemEvent, ListboxItemState,
-};
+use crate::widgets::listbox_item::{ListBoxItem, ListboxItemEvent, ListboxItemState};
 use crate::widgets::selection;
 use crate::widgets::{IntentEmitter, WidgetTransition};
 use crate::{WidgetEventName, WidgetStateName};
@@ -201,11 +198,7 @@ impl ListBox {
             // value needs forcing back to `false` on a re-activation
             // (selection::toggle_off_if_reselected). Focus follows any
             // activation regardless of the resulting bit.
-            selection::toggle_off_if_reselected(
-                &mut self.items[index],
-                was_selected,
-                activation,
-            );
+            selection::toggle_off_if_reselected(&mut self.items[index], was_selected, activation);
             if activation {
                 self.focused = Some(index);
             }
@@ -435,11 +428,7 @@ impl WidgetTransition for ListBox {
         self.send(idx, ev);
     }
 
-    fn detect(
-        before: Self::Snapshot,
-        _event: Self::Event,
-        after: Self::Snapshot,
-    ) -> Vec<Intent> {
+    fn detect(before: Self::Snapshot, _event: Self::Event, after: Self::Snapshot) -> Vec<Intent> {
         // R735.1 §5.38 — the multi-capable bitmap diff (single emits row
         // gains only; multi emits every flip) is the shared selection
         // substrate.
@@ -460,7 +449,9 @@ impl ListBoxExternal {
     /// unselected.
     #[must_use]
     pub fn new(count: usize) -> Self {
-        Self { em: IntentEmitter::new(ListBox::new(count)) }
+        Self {
+            em: IntentEmitter::new(ListBox::new(count)),
+        }
     }
 
     /// R51.98 §5.38 — construct a multi-select adapter with `count`
@@ -468,7 +459,9 @@ impl ListBoxExternal {
     /// model: activating one row toggles only that row's value.
     #[must_use]
     pub fn with_multiselect(count: usize) -> Self {
-        Self { em: IntentEmitter::new(ListBox::with_multiselect(count)) }
+        Self {
+            em: IntentEmitter::new(ListBox::with_multiselect(count)),
+        }
     }
 
     /// R51.98 §5.38 — `true` if this adapter was constructed via
@@ -634,8 +627,7 @@ impl ExternalIntrospect for ListBoxExternal {
     fn query(&self, path: &str) -> Option<IntrospectValue> {
         match path {
             "count" => Some(IntrospectValue::Int(
-                i64::try_from(self.count())
-                    .expect("ListBox count must fit in i64"),
+                i64::try_from(self.count()).expect("ListBox count must fit in i64"),
             )),
             // R51.98 §5.38 — mode metadata exposed to AI clients so a
             // mode-agnostic introspector can pick the right path
@@ -650,17 +642,15 @@ impl ExternalIntrospect for ListBoxExternal {
                     Some(IntrospectValue::Null)
                 } else {
                     Some(match self.selected_index() {
-                        Some(idx) => IntrospectValue::Int(
-                            i64::try_from(idx).expect("index fits in i64"),
-                        ),
+                        Some(idx) => {
+                            IntrospectValue::Int(i64::try_from(idx).expect("index fits in i64"))
+                        }
                         None => IntrospectValue::Null,
                     })
                 }
             }
             "focused_index" => Some(match self.focused_index() {
-                Some(idx) => IntrospectValue::Int(
-                    i64::try_from(idx).expect("index fits in i64"),
-                ),
+                Some(idx) => IntrospectValue::Int(i64::try_from(idx).expect("index fits in i64")),
                 None => IntrospectValue::Null,
             }),
             _ => {
@@ -669,9 +659,7 @@ impl ExternalIntrospect for ListBoxExternal {
                     if idx >= self.count() {
                         return None;
                     }
-                    return Some(IntrospectValue::Text(
-                        self.state(idx).as_name().to_string(),
-                    ));
+                    return Some(IntrospectValue::Text(self.state(idx).as_name().to_string()));
                 }
                 if let Some(idx_str) = path.strip_prefix("selected.") {
                     let idx: usize = idx_str.parse().ok()?;
@@ -685,11 +673,7 @@ impl ExternalIntrospect for ListBoxExternal {
         }
     }
 
-    fn intervene(
-        &mut self,
-        path: &str,
-        value: IntrospectValue,
-    ) -> Result<(), InterveneError> {
+    fn intervene(&mut self, path: &str, value: IntrospectValue) -> Result<(), InterveneError> {
         match path {
             "count" | "multiselect" => Err(InterveneError::ReadOnly),
             "selected_index" => {
@@ -732,19 +716,15 @@ impl ExternalIntrospect for ListBoxExternal {
                     return Err(InterveneError::ReadOnly);
                 }
                 let idx_str = other.strip_prefix("selected.").unwrap_or("");
-                let idx: usize =
-                    idx_str.parse().map_err(|_| InterveneError::UnknownPath)?;
+                let idx: usize = idx_str.parse().map_err(|_| InterveneError::UnknownPath)?;
                 if idx >= self.count() {
                     return Err(InterveneError::OutOfRange);
                 }
                 match value {
                     IntrospectValue::Bool(b) => {
                         let current: Vec<usize> = self.selected_indices();
-                        let mut next: Vec<usize> = current
-                            .iter()
-                            .copied()
-                            .filter(|&j| j != idx)
-                            .collect();
+                        let mut next: Vec<usize> =
+                            current.iter().copied().filter(|&j| j != idx).collect();
                         if b {
                             next.push(idx);
                             next.sort_unstable();
@@ -776,13 +756,12 @@ impl ExternalIntrospect for ListBoxExternal {
                 IntrospectValue::Text(ref s) => {
                     // R781 — modifiers ignored (no modifier-aware activation).
                     let (idx, event_name, _): (usize, &str, _) =
-                        crate::composite_tag::parse_send_payload(s)
-                            .ok_or(InvokeError::Rejected)?;
+                        crate::composite_tag::parse_send_payload(s).ok_or(InvokeError::Rejected)?;
                     if idx >= self.count() {
                         return Err(InvokeError::Rejected);
                     }
-                    let ev = ListboxItemEvent::from_name(event_name)
-                        .ok_or(InvokeError::Rejected)?;
+                    let ev =
+                        ListboxItemEvent::from_name(event_name).ok_or(InvokeError::Rejected)?;
                     self.send(idx, ev);
                     // R51.98 §5.38 — return path is mode-aware:
                     // single returns the (possibly new) `selected_index`
@@ -794,9 +773,9 @@ impl ExternalIntrospect for ListBoxExternal {
                         IntrospectValue::Null
                     } else {
                         match self.selected_index() {
-                            Some(i) => IntrospectValue::Int(
-                                i64::try_from(i).expect("index fits in i64"),
-                            ),
+                            Some(i) => {
+                                IntrospectValue::Int(i64::try_from(i).expect("index fits in i64"))
+                            }
                             None => IntrospectValue::Null,
                         }
                     })
@@ -968,14 +947,8 @@ mod tests {
     fn external_query_count_and_indices() {
         let mut lx = ListBoxExternal::new(3);
         assert_eq!(lx.query("count"), Some(IntrospectValue::Int(3)));
-        assert_eq!(
-            lx.query("selected_index"),
-            Some(IntrospectValue::Null)
-        );
-        assert_eq!(
-            lx.query("focused_index"),
-            Some(IntrospectValue::Null)
-        );
+        assert_eq!(lx.query("selected_index"), Some(IntrospectValue::Null));
+        assert_eq!(lx.query("focused_index"), Some(IntrospectValue::Null));
         // Activate index 1.
         for ev in [
             ListboxItemEvent::PointerEnter,
@@ -984,14 +957,8 @@ mod tests {
         ] {
             lx.send(1, ev);
         }
-        assert_eq!(
-            lx.query("selected_index"),
-            Some(IntrospectValue::Int(1))
-        );
-        assert_eq!(
-            lx.query("focused_index"),
-            Some(IntrospectValue::Int(1))
-        );
+        assert_eq!(lx.query("selected_index"), Some(IntrospectValue::Int(1)));
+        assert_eq!(lx.query("focused_index"), Some(IntrospectValue::Int(1)));
     }
 
     #[test]
@@ -1002,10 +969,7 @@ mod tests {
             lx.query("state.0"),
             Some(IntrospectValue::Text("Hover".to_string()))
         );
-        assert_eq!(
-            lx.query("selected.0"),
-            Some(IntrospectValue::Bool(false))
-        );
+        assert_eq!(lx.query("selected.0"), Some(IntrospectValue::Bool(false)));
         assert_eq!(
             lx.query("state.5"),
             None,
@@ -1026,8 +990,10 @@ mod tests {
     #[test]
     fn external_intervene_selected_index_null_clears() {
         let mut lx = ListBoxExternal::new(3);
-        lx.intervene("selected_index", IntrospectValue::Int(1)).unwrap();
-        lx.intervene("selected_index", IntrospectValue::Null).unwrap();
+        lx.intervene("selected_index", IntrospectValue::Int(1))
+            .unwrap();
+        lx.intervene("selected_index", IntrospectValue::Null)
+            .unwrap();
         assert_eq!(lx.selected_index(), None);
     }
 
@@ -1102,18 +1068,14 @@ mod tests {
     #[test]
     fn external_invoke_send_out_of_range_rejected() {
         let mut lx = ListBoxExternal::new(2);
-        let r = lx.invoke(
-            "send",
-            IntrospectValue::Text("5:PointerEnter".to_string()),
-        );
+        let r = lx.invoke("send", IntrospectValue::Text("5:PointerEnter".to_string()));
         assert!(matches!(r, Err(InvokeError::Rejected)));
     }
 
     #[test]
     fn external_invoke_send_malformed_wire_rejected() {
         let mut lx = ListBoxExternal::new(2);
-        let r =
-            lx.invoke("send", IntrospectValue::Text("no_colon".to_string()));
+        let r = lx.invoke("send", IntrospectValue::Text("no_colon".to_string()));
         assert!(matches!(r, Err(InvokeError::Rejected)));
     }
 
@@ -1174,7 +1136,10 @@ mod tests {
         l.send(0, ListboxItemEvent::KeyboardActivate);
         assert!(l.is_selected(0));
         l.send(0, ListboxItemEvent::KeyboardActivate);
-        assert!(!l.is_selected(0), "Space/Enter on selected multi-row deselects");
+        assert!(
+            !l.is_selected(0),
+            "Space/Enter on selected multi-row deselects"
+        );
     }
 
     #[test]
@@ -1322,10 +1287,7 @@ mod tests {
             lx.send(1, ev);
         }
         // Second activation on same row: emits toggle-off.
-        for ev in [
-            ListboxItemEvent::PointerDown,
-            ListboxItemEvent::PointerUp,
-        ] {
+        for ev in [ListboxItemEvent::PointerDown, ListboxItemEvent::PointerUp] {
             lx.send(1, ev);
         }
         let mut harvested = Vec::new();
@@ -1366,15 +1328,9 @@ mod tests {
         }
         // selected_index returns Null in multi-mode even when items
         // are selected — there is no single "the" selected index.
-        assert_eq!(
-            lx.query("selected_index"),
-            Some(IntrospectValue::Null)
-        );
+        assert_eq!(lx.query("selected_index"), Some(IntrospectValue::Null));
         // Per-row selection is still queryable.
-        assert_eq!(
-            lx.query("selected.1"),
-            Some(IntrospectValue::Bool(true))
-        );
+        assert_eq!(lx.query("selected.1"), Some(IntrospectValue::Bool(true)));
     }
 
     #[test]
@@ -1398,14 +1354,17 @@ mod tests {
     #[test]
     fn r51_98_external_intervene_selected_dot_writes_in_multi() {
         let mut lx = ListBoxExternal::with_multiselect(4);
-        lx.intervene("selected.1", IntrospectValue::Bool(true)).unwrap();
-        lx.intervene("selected.3", IntrospectValue::Bool(true)).unwrap();
+        lx.intervene("selected.1", IntrospectValue::Bool(true))
+            .unwrap();
+        lx.intervene("selected.3", IntrospectValue::Bool(true))
+            .unwrap();
         assert_eq!(lx.selected_indices(), vec![1, 3]);
         // Slot-assignment: no `"selected"` intent (mirrors
         // set_selected/set_selected_indices admin semantics).
         assert!(!lx.is_dirty());
         // Clear one.
-        lx.intervene("selected.1", IntrospectValue::Bool(false)).unwrap();
+        lx.intervene("selected.1", IntrospectValue::Bool(false))
+            .unwrap();
         assert_eq!(lx.selected_indices(), vec![3]);
     }
 

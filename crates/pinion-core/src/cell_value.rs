@@ -37,7 +37,10 @@ pub enum CellValue {
     /// [`CellKind`], so the editor is a popup listbox (not text or toggle)
     /// and the `intervene` write addresses an option by index
     /// ([`CellValue::with_intervene`]).
-    Choice { selected: usize, options: Vec<String> },
+    Choice {
+        selected: usize,
+        options: Vec<String>,
+    },
     /// An sRGB colour (the property-grid colour cell, R869). Edited by a
     /// popup — a preset swatch palette plus a hex field for an arbitrary
     /// value — not inline text or a toggle. The `intervene` write takes a
@@ -269,13 +272,18 @@ impl CellValue {
                 if idx >= options.len() {
                     return Err(InterveneError::OutOfRange);
                 }
-                Ok(CellValue::Choice { selected: idx, options: options.clone() })
+                Ok(CellValue::Choice {
+                    selected: idx,
+                    options: options.clone(),
+                })
             }
             CellValue::Color(_) => {
                 let IntrospectValue::Text(hex) = value else {
                     return Err(InterveneError::TypeMismatch);
                 };
-                Color::from_hex(&hex).map(CellValue::Color).ok_or(InterveneError::OutOfRange)
+                Color::from_hex(&hex)
+                    .map(CellValue::Color)
+                    .ok_or(InterveneError::OutOfRange)
             }
             _ => self.kind().coerce(value),
         }
@@ -423,7 +431,10 @@ mod tests {
         assert_eq!(CellKind::Int.parse("x"), None);
         assert_eq!(CellKind::Float.parse("-3.5"), Some(CellValue::Float(-3.5)));
         assert_eq!(CellKind::Float.parse("."), None);
-        assert_eq!(CellKind::Text.parse("  hi "), Some(CellValue::Text("hi".to_owned())));
+        assert_eq!(
+            CellKind::Text.parse("  hi "),
+            Some(CellValue::Text("hi".to_owned()))
+        );
         assert_eq!(CellKind::Bool.parse("true"), None, "bool never text-parsed");
     }
 
@@ -443,23 +454,41 @@ mod tests {
     fn accepts_keystroke_gates_by_kind() {
         assert!(CellKind::Int.accepts_keystroke("3"));
         assert!(CellKind::Int.accepts_keystroke("-"));
-        assert!(!CellKind::Int.accepts_keystroke("."), "int rejects the decimal point");
+        assert!(
+            !CellKind::Int.accepts_keystroke("."),
+            "int rejects the decimal point"
+        );
         assert!(!CellKind::Int.accepts_keystroke("a"));
         assert!(CellKind::Float.accepts_keystroke("."));
         assert!(CellKind::Text.accepts_keystroke("a"));
-        assert!(!CellKind::Text.accepts_keystroke("ab"), "multi-char is not a keystroke");
-        assert!(!CellKind::Bool.accepts_keystroke("1"), "bool accepts no keystroke");
-        assert!(!CellKind::Int.accepts_keystroke("Enter"), "named key rejected");
+        assert!(
+            !CellKind::Text.accepts_keystroke("ab"),
+            "multi-char is not a keystroke"
+        );
+        assert!(
+            !CellKind::Bool.accepts_keystroke("1"),
+            "bool accepts no keystroke"
+        );
+        assert!(
+            !CellKind::Int.accepts_keystroke("Enter"),
+            "named key rejected"
+        );
     }
 
     #[test]
     fn coerce_is_strict_per_kind() {
-        assert_eq!(CellKind::Int.coerce(IntrospectValue::Int(5)), Ok(CellValue::Int(5)));
+        assert_eq!(
+            CellKind::Int.coerce(IntrospectValue::Int(5)),
+            Ok(CellValue::Int(5))
+        );
         assert_eq!(
             CellKind::Int.coerce(IntrospectValue::Text("no".to_owned())),
             Err(InterveneError::TypeMismatch),
         );
-        assert_eq!(CellKind::Bool.coerce(IntrospectValue::Bool(true)), Ok(CellValue::Bool(true)));
+        assert_eq!(
+            CellKind::Bool.coerce(IntrospectValue::Bool(true)),
+            Ok(CellValue::Bool(true))
+        );
         assert_eq!(
             CellKind::Float.coerce(IntrospectValue::Int(3)),
             Err(InterveneError::TypeMismatch),
@@ -469,9 +498,15 @@ mod tests {
 
     #[test]
     fn to_introspect_maps_each_variant() {
-        assert_eq!(CellValue::Bool(true).to_introspect(), IntrospectValue::Bool(true));
+        assert_eq!(
+            CellValue::Bool(true).to_introspect(),
+            IntrospectValue::Bool(true)
+        );
         assert_eq!(CellValue::Int(9).to_introspect(), IntrospectValue::Int(9));
-        assert_eq!(CellValue::Float(1.5).to_introspect(), IntrospectValue::Float(1.5));
+        assert_eq!(
+            CellValue::Float(1.5).to_introspect(),
+            IntrospectValue::Float(1.5)
+        );
         assert_eq!(
             CellValue::Text("x".to_owned()).to_introspect(),
             IntrospectValue::Text("x".to_owned()),
@@ -481,16 +516,29 @@ mod tests {
     /// A two-option `Choice` fixture — `Normal` / `Additive`, currently
     /// `Additive`.
     fn choice_fixture() -> CellValue {
-        CellValue::Choice { selected: 1, options: vec!["Normal".to_owned(), "Additive".to_owned()] }
+        CellValue::Choice {
+            selected: 1,
+            options: vec!["Normal".to_owned(), "Additive".to_owned()],
+        }
     }
 
     #[test]
     fn choice_kind_name_and_text_gates() {
         assert_eq!(choice_fixture().kind(), CellKind::Choice);
         assert_eq!(CellKind::Choice.name(), "choice");
-        assert!(!CellKind::Choice.is_text_editable(), "choice is popup-edited, not text");
-        assert!(!CellKind::Choice.accepts_keystroke("a"), "choice takes no keystroke");
-        assert_eq!(CellKind::Choice.parse("Normal"), None, "choice is never text-parsed");
+        assert!(
+            !CellKind::Choice.is_text_editable(),
+            "choice is popup-edited, not text"
+        );
+        assert!(
+            !CellKind::Choice.accepts_keystroke("a"),
+            "choice takes no keystroke"
+        );
+        assert_eq!(
+            CellKind::Choice.parse("Normal"),
+            None,
+            "choice is never text-parsed"
+        );
     }
 
     #[test]
@@ -498,7 +546,10 @@ mod tests {
         assert_eq!(choice_fixture().display(), "Additive");
         assert_eq!(choice_fixture().edit_text(), "Additive");
         // A stale index degrades to the empty label, never panics.
-        let stale = CellValue::Choice { selected: 9, options: vec!["X".to_owned()] };
+        let stale = CellValue::Choice {
+            selected: 9,
+            options: vec!["X".to_owned()],
+        };
         assert_eq!(stale.display(), "");
     }
 
@@ -526,8 +577,14 @@ mod tests {
             }),
         );
         // Out of range and negative both reject without mutating.
-        assert_eq!(v.with_intervene(IntrospectValue::Int(3)), Err(InterveneError::OutOfRange));
-        assert_eq!(v.with_intervene(IntrospectValue::Int(-1)), Err(InterveneError::OutOfRange));
+        assert_eq!(
+            v.with_intervene(IntrospectValue::Int(3)),
+            Err(InterveneError::OutOfRange)
+        );
+        assert_eq!(
+            v.with_intervene(IntrospectValue::Int(-1)),
+            Err(InterveneError::OutOfRange)
+        );
         // Wrong payload variant is a type mismatch (choice sets by index).
         assert_eq!(
             v.with_intervene(IntrospectValue::Text("B".to_owned())),
@@ -538,7 +595,10 @@ mod tests {
     #[test]
     fn with_intervene_delegates_to_coerce_for_scalars() {
         // The scalar path is byte-identical to kind().coerce.
-        assert_eq!(CellValue::Int(0).with_intervene(IntrospectValue::Int(5)), Ok(CellValue::Int(5)));
+        assert_eq!(
+            CellValue::Int(0).with_intervene(IntrospectValue::Int(5)),
+            Ok(CellValue::Int(5))
+        );
         assert_eq!(
             CellValue::Text(String::new()).with_intervene(IntrospectValue::Bool(true)),
             Err(InterveneError::TypeMismatch),
@@ -560,11 +620,23 @@ mod tests {
         let v = CellValue::Color(Color::rgb(255, 128, 0));
         assert_eq!(v.kind(), CellKind::Color);
         assert_eq!(CellKind::Color.name(), "color");
-        assert!(!CellKind::Color.is_text_editable(), "colour is popup-edited, not inline text");
+        assert!(
+            !CellKind::Color.is_text_editable(),
+            "colour is popup-edited, not inline text"
+        );
         // The popup hex field accepts hex digits + the leading '#', nothing else.
-        assert!(CellKind::Color.accepts_keystroke("a"), "hex field accepts hex digits");
-        assert!(CellKind::Color.accepts_keystroke("#"), "and the leading hash");
-        assert!(!CellKind::Color.accepts_keystroke("g"), "but not a non-hex letter");
+        assert!(
+            CellKind::Color.accepts_keystroke("a"),
+            "hex field accepts hex digits"
+        );
+        assert!(
+            CellKind::Color.accepts_keystroke("#"),
+            "and the leading hash"
+        );
+        assert!(
+            !CellKind::Color.accepts_keystroke("g"),
+            "but not a non-hex letter"
+        );
     }
 
     #[test]
@@ -573,7 +645,10 @@ mod tests {
         assert_eq!(v.display(), "#ff8000");
         assert_eq!(v.edit_text(), "#ff8000");
         // A non-opaque colour keeps its alpha byte.
-        assert_eq!(CellValue::Color(Color::rgba(255, 0, 0, 128)).display(), "#ff000080");
+        assert_eq!(
+            CellValue::Color(Color::rgba(255, 0, 0, 128)).display(),
+            "#ff000080"
+        );
     }
 
     #[test]
@@ -583,7 +658,11 @@ mod tests {
             CellKind::Color.parse(" #00ff00 "),
             Some(CellValue::Color(Color::rgb(0, 255, 0))),
         );
-        assert_eq!(CellKind::Color.parse("not-a-colour"), None, "malformed hex rejected");
+        assert_eq!(
+            CellKind::Color.parse("not-a-colour"),
+            None,
+            "malformed hex rejected"
+        );
     }
 
     #[test]
@@ -611,7 +690,10 @@ mod tests {
             v.with_intervene(IntrospectValue::Text("xyz".to_owned())),
             Err(InterveneError::OutOfRange),
         );
-        assert_eq!(v.with_intervene(IntrospectValue::Int(5)), Err(InterveneError::TypeMismatch));
+        assert_eq!(
+            v.with_intervene(IntrospectValue::Int(5)),
+            Err(InterveneError::TypeMismatch)
+        );
     }
 
     #[test]
@@ -647,8 +729,14 @@ mod tests {
         // but `value_eq` (built on `sort_cmp`'s `total_cmp`) reports equal — so a
         // no-op guard / modified check never spuriously fires on a `NaN` default.
         let nan = CellValue::Float(f64::NAN);
-        assert!(nan != nan.clone(), "derived PartialEq: NaN != NaN (the trap)");
-        assert!(nan.value_eq(&nan.clone()), "value_eq: NaN equals NaN (NaN-safe)");
+        assert!(
+            nan != nan.clone(),
+            "derived PartialEq: NaN != NaN (the trap)"
+        );
+        assert!(
+            nan.value_eq(&nan.clone()),
+            "value_eq: NaN equals NaN (NaN-safe)"
+        );
         // Ordinary equality / inequality still hold for every kind.
         assert!(CellValue::Int(7).value_eq(&CellValue::Int(7)));
         assert!(!CellValue::Int(7).value_eq(&CellValue::Int(8)));
@@ -663,22 +751,40 @@ mod tests {
         // vocab), NOT the "On"/"Off" display label.
         assert!(CellValue::Bool(true).matches_filter("true"));
         assert!(CellValue::Bool(false).matches_filter("false"));
-        assert!(!CellValue::Bool(true).matches_filter("On"), "not the display label");
+        assert!(
+            !CellValue::Bool(true).matches_filter("On"),
+            "not the display label"
+        );
         assert!(!CellValue::Bool(true).matches_filter("false"));
         // Int compares the parsed number: whitespace + leading zeros fold.
         assert!(CellValue::Int(24).matches_filter("24"));
-        assert!(CellValue::Int(24).matches_filter(" 024 "), "parsed, not literal text");
+        assert!(
+            CellValue::Int(24).matches_filter(" 024 "),
+            "parsed, not literal text"
+        );
         assert!(!CellValue::Int(24).matches_filter("25"));
-        assert!(!CellValue::Int(24).matches_filter("abc"), "unparseable matches nothing");
+        assert!(
+            !CellValue::Int(24).matches_filter("abc"),
+            "unparseable matches nothing"
+        );
         // Float compares totally; trailing-zero forms fold.
         assert!(CellValue::Float(2.5).matches_filter("2.50"));
         assert!(!CellValue::Float(2.5).matches_filter("2.6"));
         // Text matches exactly (the cross-grid GridFilter contract).
         assert!(CellValue::Text("mesh".into()).matches_filter("mesh"));
-        assert!(!CellValue::Text("mesh".into()).matches_filter("Mesh"), "exact, case-sensitive");
-        assert!(!CellValue::Text("mesh".into()).matches_filter("me"), "not a substring match");
+        assert!(
+            !CellValue::Text("mesh".into()).matches_filter("Mesh"),
+            "exact, case-sensitive"
+        );
+        assert!(
+            !CellValue::Text("mesh".into()).matches_filter("me"),
+            "not a substring match"
+        );
         // Choice matches the selected label; Color matches a parsed hex.
-        let choice = CellValue::Choice { selected: 1, options: vec!["a".into(), "b".into()] };
+        let choice = CellValue::Choice {
+            selected: 1,
+            options: vec!["a".into(), "b".into()],
+        };
         assert!(choice.matches_filter("b"));
         assert!(!choice.matches_filter("a"));
         let color = CellValue::Color(Color::rgb(255, 128, 0));

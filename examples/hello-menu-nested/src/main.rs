@@ -27,22 +27,22 @@
 //! tree (§2 invariants #2 / #7).
 
 use pinion_a11y::{
-    menu_item_nodes, AccessAction, AccessFocus, AccessNode, AccessState, AriaRole, MenuItemCell,
-    SubmenuCell, WidgetA11y,
+    AccessAction, AccessFocus, AccessNode, AccessState, AriaRole, MenuItemCell, SubmenuCell,
+    WidgetA11y, menu_item_nodes,
 };
 use pinion_core::external::{External, ExternalIntrospect, IntrospectValue};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole};
-use pinion_core::widgets::menu::{parse_path, path_text, MenuBarExternal, MenuItem};
+use pinion_core::theme::{ColorRole, use_theme};
+use pinion_core::widgets::menu::{MenuBarExternal, MenuItem, parse_path, path_text};
 use pinion_core::{Frame, Scene, WidgetCore};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::barrier::dismiss_barrier;
 use pinion_widget_paint::menu::{
-    composite_item_path_tag, composite_title_tag, view_menu_bar, view_menu_cascade, MenuItemView,
-    MenuLevel, MenuStyle,
+    MenuItemView, MenuLevel, MenuStyle, composite_item_path_tag, composite_title_tag,
+    view_menu_bar, view_menu_cascade,
 };
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -101,7 +101,9 @@ impl Item {
             Item::Command(_) => MenuItem::command(),
             Item::Checkbox(_, checked) => MenuItem::checkbox(checked),
             Item::Separator => MenuItem::separator(),
-            Item::Submenu(_, kids) => MenuItem::submenu(kids.iter().map(|it| it.to_model()).collect()),
+            Item::Submenu(_, kids) => {
+                MenuItem::submenu(kids.iter().map(|it| it.to_model()).collect())
+            }
         }
     }
 
@@ -215,7 +217,11 @@ fn open_levels(state: &MenuState) -> Vec<(&'static [Item], Option<usize>)> {
     let path = state.open_path();
     let mut items: &'static [Item] = MENUS[m];
     for d in 0..=path.len() {
-        let active = if d < path.len() { Some(path[d]) } else { state.active };
+        let active = if d < path.len() {
+            Some(path[d])
+        } else {
+            state.active
+        };
         levels.push((items, active));
         if d < path.len() {
             match items.get(path[d]) {
@@ -251,12 +257,16 @@ fn view(state: MenuState, _frame: &Frame) -> Scene {
     let body = Scene::Text(TextNode::styled(
         "File > Open Recent > Older nests two levels; View > Appearance one.",
         Rect::default(),
-        TextStyle::new().with_size_px(BODY_FONT_PX).with_fg(on_surface),
+        TextStyle::new()
+            .with_size_px(BODY_FONT_PX)
+            .with_fg(on_surface),
     ));
     let footer = Scene::Text(TextNode::styled(
         "\u{2192} open submenu   \u{2190}/Esc close one level   Enter activate",
         Rect::default(),
-        TextStyle::new().with_size_px(FOOTER_FONT_PX).with_fg(on_surface_muted),
+        TextStyle::new()
+            .with_size_px(FOOTER_FONT_PX)
+            .with_fg(on_surface_muted),
     ));
     let content = Scene::Container(
         ContainerNode::new(vec![body, footer]).with_layout(
@@ -294,9 +304,19 @@ fn view(state: MenuState, _frame: &Frame) -> Scene {
         let levels: Vec<MenuLevel> = level_views
             .iter()
             .zip(levels_model.iter())
-            .map(|(views, (_, active))| MenuLevel { items: views.as_slice(), active: *active })
+            .map(|(views, (_, active))| MenuLevel {
+                items: views.as_slice(),
+                active: *active,
+            })
             .collect();
-        children.extend(view_menu_cascade(BAR_TAG, &LEVEL_TAGS, m, &levels, &theme, &style));
+        children.extend(view_menu_cascade(
+            BAR_TAG,
+            &LEVEL_TAGS,
+            m,
+            &levels,
+            &theme,
+            &style,
+        ));
     }
 
     Scene::Container(
@@ -318,8 +338,10 @@ impl WidgetCore for MenuView {
     type Event = ();
 
     fn create_external() -> Box<dyn External> {
-        let menus: Vec<Vec<MenuItem>> =
-            MENUS.iter().map(|items| items.iter().map(|it| it.to_model()).collect()).collect();
+        let menus: Vec<Vec<MenuItem>> = MENUS
+            .iter()
+            .map(|items| items.iter().map(|it| it.to_model()).collect())
+            .collect();
         Box::new(MenuBarExternal::with_items(menus))
     }
 
@@ -392,8 +414,14 @@ impl WidgetCore for MenuView {
     }
 
     fn fmt_state_log(state: &MenuState) -> String {
-        let open = state.open.map_or_else(|| "-".to_string(), |m| m.to_string());
-        format!("open={open} path=[{}] active={:?}", path_text(state.open_path()), state.active)
+        let open = state
+            .open
+            .map_or_else(|| "-".to_string(), |m| m.to_string());
+        format!(
+            "open={open} path=[{}] active={:?}",
+            path_text(state.open_path()),
+            state.active
+        )
     }
 }
 
@@ -420,7 +448,10 @@ impl WidgetA11y for MenuView {
         for m in 0..n {
             let title_focused = group_focused && state.open.is_none() && state.bar_focus == m;
             let mut title = AccessNode::new(composite_title_tag(BAR_TAG, m), AriaRole::MenuItem)
-                .with_state(AccessState { focused: title_focused, ..AccessState::default() })
+                .with_state(AccessState {
+                    focused: title_focused,
+                    ..AccessState::default()
+                })
                 .with_position_in_set(u32::try_from(m + 1).unwrap_or(u32::MAX))
                 .with_size_of_set(title_setsize);
             if state.open == Some(m) {
@@ -446,7 +477,9 @@ impl WidgetA11y for MenuView {
             };
             // Separators are presentational — dropped before the slice so
             // posinset / setsize count real items only (per R805).
-            let real: Vec<usize> = (0..items.len()).filter(|&i| !items[i].is_separator()).collect();
+            let real: Vec<usize> = (0..items.len())
+                .filter(|&i| !items[i].is_separator())
+                .collect();
             let tags: Vec<String> = real.iter().map(|&i| item_tag(path, d, i)).collect();
             let child_tags: Vec<&'static str> = real
                 .iter()
@@ -501,7 +534,10 @@ impl WidgetA11y for MenuView {
             },
             None => composite_title_tag(BAR_TAG, state.bar_focus),
         };
-        Some(AccessFocus::composite(<Self as WidgetCore>::tag(), descendant))
+        Some(AccessFocus::composite(
+            <Self as WidgetCore>::tag(),
+            descendant,
+        ))
     }
 
     fn access_child_invoke(
@@ -555,7 +591,10 @@ impl WidgetView for MenuView {
     type Renderer = HelloMenuNestedRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 }
 
@@ -587,7 +626,11 @@ mod tests {
     use super::*;
 
     fn open_state(m: usize, path: &[usize], active: Option<usize>) -> MenuState {
-        let mut s = MenuState { open: Some(m), active, ..MenuState::default() };
+        let mut s = MenuState {
+            open: Some(m),
+            active,
+            ..MenuState::default()
+        };
         for (k, &idx) in path.iter().enumerate() {
             s.open_path[k] = idx;
         }
@@ -613,17 +656,34 @@ mod tests {
         let s = open_state(0, &[], Some(1));
         let nodes = MenuView::access_node(&s, Some(BAR_TAG));
         // The Open Recent parent (top item 1) advertises its popup.
-        let parent = nodes.iter().find(|n| n.tag == "menu#i1").expect("submenu parent node");
+        let parent = nodes
+            .iter()
+            .find(|n| n.tag == "menu#i1")
+            .expect("submenu parent node");
         assert_eq!(parent.has_popup, Some(pinion_a11y::HasPopup::Menu));
-        assert_eq!(parent.expanded, Some(false), "collapsed while open_path is empty");
+        assert_eq!(
+            parent.expanded,
+            Some(false),
+            "collapsed while open_path is empty"
+        );
     }
 
     #[test]
     fn access_node_open_submenu_owns_child() {
         let s = open_state(0, &[1], Some(0));
         let nodes = MenuView::access_node(&s, Some(BAR_TAG));
-        let parent = nodes.iter().find(|n| n.tag == "menu#i1").expect("submenu parent node");
-        assert_eq!(parent.expanded, Some(true), "expanded while its submenu is open");
-        assert!(parent.children.contains(&"menu_sub1".to_string()), "owns the nested menu node");
+        let parent = nodes
+            .iter()
+            .find(|n| n.tag == "menu#i1")
+            .expect("submenu parent node");
+        assert_eq!(
+            parent.expanded,
+            Some(true),
+            "expanded while its submenu is open"
+        );
+        assert!(
+            parent.children.contains(&"menu_sub1".to_string()),
+            "owns the nested menu node"
+        );
     }
 }

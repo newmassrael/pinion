@@ -23,7 +23,11 @@ pub struct Location {
 
 impl Location {
     pub fn new(file: impl Into<PathBuf>) -> Self {
-        Self { file: file.into(), line: None, column: None }
+        Self {
+            file: file.into(),
+            line: None,
+            column: None,
+        }
     }
 
     #[must_use]
@@ -72,12 +76,19 @@ pub enum PinionForgeDiagnostic {
     /// `<pinion>` root is missing the required `xmlns` attribute (the
     /// pinion DSL namespace claim — see [`PINION_DSL_NS`]).
     #[error("<pinion> in {} missing required xmlns attribute (expected {expected})", location.file.display())]
-    MissingXmlns { expected: &'static str, location: Location },
+    MissingXmlns {
+        expected: &'static str,
+        location: Location,
+    },
 
     /// `<pinion xmlns=...>` declared a namespace other than the canonical
     /// pinion DSL namespace.
     #[error("<pinion xmlns=\"{found}\"> in {}: expected {expected}", location.file.display())]
-    WrongXmlns { found: String, expected: &'static str, location: Location },
+    WrongXmlns {
+        found: String,
+        expected: &'static str,
+        location: Location,
+    },
 
     /// `<pinion>` root is missing the required `kind` attribute.
     #[error("<pinion> in {} missing required kind attribute", location.file.display())]
@@ -109,14 +120,23 @@ pub enum PinionForgeDiagnostic {
     /// [`Self::MissingName`]) because authoring guidance is different
     /// there.
     #[error("<{tag}> in {} missing required {attribute} attribute", location.file.display())]
-    MissingAttribute { tag: String, attribute: String, location: Location },
+    MissingAttribute {
+        tag: String,
+        attribute: String,
+        location: Location,
+    },
 
     /// Generic invalid-identifier diagnostic for child-element attribute
     /// values that must be valid Rust identifiers (`<signal name=...>`,
     /// `<computed name=...>`, etc.). [`Self::InvalidName`] handles the
     /// root-element `<pinion name=...>` case.
     #[error("<{tag} {attribute}=\"{found}\"> in {}: must be a valid Rust identifier", location.file.display())]
-    InvalidIdent { tag: String, attribute: String, found: String, location: Location },
+    InvalidIdent {
+        tag: String,
+        attribute: String,
+        found: String,
+        location: Location,
+    },
 
     /// Required body content (text/CDATA) is missing or whitespace-only.
     /// Used by elements that mandate an inline expression — e.g.

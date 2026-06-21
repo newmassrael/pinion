@@ -7,8 +7,8 @@
 
 use crate::error::ParseError;
 use crate::raster::{Coverage, RasterError, rasterize_glyph_outline};
-use crate::shape::ShapedRun;
 use crate::sfnt::{OffsetTable, TableRecord, find_table, parse_sfnt};
+use crate::shape::ShapedRun;
 use crate::tables::cmap::Cmap;
 use crate::tables::glyf::{Glyf, Glyph};
 use crate::tables::head::Head;
@@ -182,11 +182,7 @@ impl Font {
     ///   component placement (a later sub-round).
     /// * [`RasterError::SizeExceeded`] — `px_per_em` would produce a bitmap
     ///   larger than the per-axis limit (pathological size).
-    pub fn rasterize_glyph(
-        &self,
-        glyph_id: u16,
-        px_per_em: f32,
-    ) -> Result<Coverage, RasterError> {
+    pub fn rasterize_glyph(&self, glyph_id: u16, px_per_em: f32) -> Result<Coverage, RasterError> {
         let Some(glyph) = self.glyf.glyph(glyph_id) else {
             return Err(RasterError::GlyphNotFound(glyph_id));
         };

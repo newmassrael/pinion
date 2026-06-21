@@ -59,17 +59,17 @@ use std::f32::consts::TAU;
 use std::rc::Rc;
 use std::time::Duration;
 
+#[cfg(test)]
+use pinion_a11y::{AriaRole, WidgetA11y};
 use pinion_core::scene::{
     ContainerNode, ImmediateMode, ImmediateModeNode, ImmediatePainter, Rect, TextNode,
 };
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole};
+use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
 use pinion_core::{Color, Frame, Owner, Scene, WidgetCore};
-#[cfg(test)]
-use pinion_a11y::{AriaRole, WidgetA11y};
 use pinion_derive::widget;
 use pinion_shell::vello_renderer_impl;
 
@@ -216,8 +216,8 @@ impl ImmediateMode for RotatingTriangleDriver {
 /// slot on every view-fn call so the per-frame tick advances the
 /// same state instance across the binding lifetime.
 fn use_canvas_driver() -> Rc<RefCell<RotatingTriangleDriver>> {
-    let owner = Owner::current()
-        .expect("use_canvas_driver must run inside Owner::run wrap (view fn)");
+    let owner =
+        Owner::current().expect("use_canvas_driver must run inside Owner::run wrap (view fn)");
     owner.cache(CANVAS_DRIVER_CACHE_KEY, || {
         RefCell::new(RotatingTriangleDriver::default())
     })
@@ -273,17 +273,14 @@ fn view(state: ButtonState, _frame: &Frame) -> Scene {
         ImmediateModeNode::new(handle, Rect::default())
             .with_tag(CANVAS_NODE_TAG)
             .with_layout(
-                LayoutStyle::new()
-                    .with_size(Size::px(CANVAS_VIEWPORT_W, CANVAS_VIEWPORT_H)),
+                LayoutStyle::new().with_size(Size::px(CANVAS_VIEWPORT_W, CANVAS_VIEWPORT_H)),
             ),
     );
 
     // Dismiss Button — `ButtonState` mapped to M3 surface tier +
     // state-layer overlay (same convention hello-button uses).
     let btn_fill: Color = match state {
-        ButtonState::Idle | ButtonState::Hover => {
-            theme.resolve(ColorRole::SurfaceContainerHighest)
-        }
+        ButtonState::Idle | ButtonState::Hover => theme.resolve(ColorRole::SurfaceContainerHighest),
         ButtonState::Pressed => theme
             .resolve(ColorRole::SurfaceContainerHighest)
             .lerp(on_surface, 0.12),
@@ -450,10 +447,8 @@ mod r681_immediate_mode_canvas_tests {
         let owner = Owner::new();
         let scene_a = owner.run(|| view(ButtonState::Idle, &Frame::new()));
         let scene_b = owner.run(|| view(ButtonState::Idle, &Frame::new()));
-        let handle_a = first_immediate_handle(&scene_a)
-            .expect("scene_a has ImmediateModeNode");
-        let handle_b = first_immediate_handle(&scene_b)
-            .expect("scene_b has ImmediateModeNode");
+        let handle_a = first_immediate_handle(&scene_a).expect("scene_a has ImmediateModeNode");
+        let handle_b = first_immediate_handle(&scene_b).expect("scene_b has ImmediateModeNode");
         assert!(
             Rc::ptr_eq(&handle_a, &handle_b),
             "Owner::cache must return the same driver Rc across view-fn re-runs",
@@ -490,8 +485,8 @@ mod r681_immediate_mode_canvas_tests {
         let mut scene = owner.run(|| view(ButtonState::Idle, &Frame::new()));
         let mut text_cache = pinion_text::LayoutCache::new();
         pinion_runtime::compute_layout(&mut scene, &mut text_cache, WIN_W, WIN_H);
-        let node = walk_first_immediate_node(&scene)
-            .expect("painted scene contains ImmediateModeNode");
+        let node =
+            walk_first_immediate_node(&scene).expect("painted scene contains ImmediateModeNode");
         // Taffy clamps the canvas size against the column-flex
         // parent's content area (window minus padding minus the
         // header / hint / button row heights + gap rhythm). The
@@ -519,18 +514,14 @@ mod r681_immediate_mode_canvas_tests {
         );
     }
 
-    fn first_immediate_handle(
-        scene: &PinionScene,
-    ) -> Option<Rc<RefCell<dyn ImmediateMode>>> {
+    fn first_immediate_handle(scene: &PinionScene) -> Option<Rc<RefCell<dyn ImmediateMode>>> {
         walk_first_immediate_node(scene).map(|n| n.handle.clone())
     }
 
     fn walk_first_immediate_node(scene: &PinionScene) -> Option<&ImmediateModeNode> {
         match scene {
             PinionScene::ImmediateModeNode(n) => Some(n),
-            PinionScene::Container(c) => {
-                c.children.iter().find_map(walk_first_immediate_node)
-            }
+            PinionScene::Container(c) => c.children.iter().find_map(walk_first_immediate_node),
             PinionScene::Scroll(s) => walk_first_immediate_node(&s.content),
             _ => None,
         }

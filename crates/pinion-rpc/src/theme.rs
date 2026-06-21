@@ -91,7 +91,7 @@
 use pinion_core::reactive::Owner;
 use pinion_core::style::Color;
 use pinion_core::theme::{
-    system_color_scheme, ColorRole, SystemColorScheme, Theme, ThemeMode, ThemeProvider,
+    ColorRole, SystemColorScheme, Theme, ThemeMode, ThemeProvider, system_color_scheme,
 };
 use serde::Serialize;
 
@@ -588,10 +588,7 @@ pub enum PaletteParseError {
     /// the setter requires a complete palette (every role bound) so
     /// the round-trip with [`scene/theme_tokens`](crate::theme::theme_tokens)
     /// stays total.
-    MissingRoles {
-        which: String,
-        missing: Vec<String>,
-    },
+    MissingRoles { which: String, missing: Vec<String> },
 }
 
 /// Parse a JSON array of `{"role": "<name>", "color": "<hex>"}`
@@ -645,13 +642,12 @@ pub fn parse_palette_value(
                 which: which.to_string(),
                 index,
             })?;
-        let role = ColorRole::from_name(role_name).ok_or_else(|| {
-            PaletteParseError::UnknownRole {
+        let role =
+            ColorRole::from_name(role_name).ok_or_else(|| PaletteParseError::UnknownRole {
                 which: which.to_string(),
                 index,
                 role: role_name.to_string(),
-            }
-        })?;
+            })?;
         if bound_by_role.contains_key(&role) {
             return Err(PaletteParseError::DuplicateRole {
                 which: which.to_string(),
@@ -698,9 +694,8 @@ pub fn parse_palette_value(
 /// caller bypassed the `MissingRoles` precondition. Cannot happen
 /// through the public [`parse_palette_value`] surface.
 fn theme_from_role_map(map: &std::collections::HashMap<ColorRole, Color>) -> Theme {
-    let lookup = |role: ColorRole| -> Color {
-        *map.get(&role).expect("role bound by parse_palette_value")
-    };
+    let lookup =
+        |role: ColorRole| -> Color { *map.get(&role).expect("role bound by parse_palette_value") };
     Theme {
         surface: lookup(ColorRole::Surface),
         on_surface: lookup(ColorRole::OnSurface),
@@ -737,7 +732,7 @@ fn parse_color_hex(input: &str) -> Option<Color> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pinion_core::theme::{set_system_color_scheme, Theme, ThemeMode};
+    use pinion_core::theme::{Theme, ThemeMode, set_system_color_scheme};
 
     // R622 §5.7 — 1-line typed wrapper specializing
     // crate::test_fixtures::bind_state to ThemeProvider (with the
@@ -769,7 +764,6 @@ mod tests {
             set_system_color_scheme(self.original);
         }
     }
-
 
     // ─────────────────────────────────────────────────────────────────
     // Failure modes
@@ -1049,8 +1043,7 @@ mod tests {
         let owner = Owner::new();
         let provider = bind_provider(&owner, "app");
         provider.set_mode(ThemeMode::Light);
-        let outcome =
-            set_theme_mode(Some(&owner), &params_with_mode(ThemeMode::System)).unwrap();
+        let outcome = set_theme_mode(Some(&owner), &params_with_mode(ThemeMode::System)).unwrap();
         assert_eq!(outcome.mode, "system");
         assert_eq!(outcome.active, "dark");
     }
@@ -1063,8 +1056,7 @@ mod tests {
         let owner = Owner::new();
         let provider = bind_provider(&owner, "app");
         provider.set_mode(ThemeMode::Dark);
-        let outcome =
-            set_theme_mode(Some(&owner), &params_with_mode(ThemeMode::Dark)).unwrap();
+        let outcome = set_theme_mode(Some(&owner), &params_with_mode(ThemeMode::Dark)).unwrap();
         assert_eq!(outcome.mode, "dark");
         assert_eq!(provider.mode(), ThemeMode::Dark);
     }
@@ -1425,8 +1417,14 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(provider.light_palette().surface, Color::rgb(0xab, 0xcd, 0xef));
-        assert_eq!(provider.dark_palette().surface, Color::rgb(0x12, 0x34, 0x56));
+        assert_eq!(
+            provider.light_palette().surface,
+            Color::rgb(0xab, 0xcd, 0xef)
+        );
+        assert_eq!(
+            provider.dark_palette().surface,
+            Color::rgb(0x12, 0x34, 0x56)
+        );
     }
 
     #[test]

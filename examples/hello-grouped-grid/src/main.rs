@@ -38,28 +38,28 @@
 use std::rc::Rc;
 
 use pinion_a11y::{
-    grouped_focus_target, grouped_grid_access_nodes, AccessFocus, AccessNode, GridColumn,
-    GroupedGridSelection, GroupedGridSpec, WidgetA11y,
+    AccessFocus, AccessNode, GridColumn, GroupedGridSelection, GroupedGridSpec, WidgetA11y,
+    grouped_focus_target, grouped_grid_access_nodes,
 };
 use pinion_core::external::External;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::group_order::{
-    group_nav_key, read_cursor, use_group_order, GroupOrderExternal, GroupOrderState, GroupRow,
+    GroupOrderExternal, GroupOrderState, GroupRow, group_nav_key, read_cursor, use_group_order,
 };
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
 use pinion_core::widgets::virtual_list::compute_visible_range;
-use pinion_core::widgets::virtual_select::{read_selected, VirtualSelectExternal};
+use pinion_core::widgets::virtual_select::{VirtualSelectExternal, read_selected};
 use pinion_core::{Frame, Scene, WidgetCore};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::group_header::group_header_row;
-use pinion_widget_paint::scrollbar::{view_vertical_scrollbar, VerticalScrollbarStyle};
+use pinion_widget_paint::scrollbar::{VerticalScrollbarStyle, view_vertical_scrollbar};
 use pinion_widget_paint::virtual_list::view_virtual_list;
-use pinion_shell::{vello_renderer_impl, WidgetView};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloGroupedGridRenderer, HelloGroupedGridRendererError);
@@ -130,7 +130,10 @@ struct GridState {
 fn use_grid_groups() -> Rc<GroupOrderState> {
     use_group_order(GROUP_TAG, || {
         let groups = (0..N).map(row_group).collect::<Vec<usize>>();
-        let labels = GROUPS.iter().map(|&g| g.to_string()).collect::<Vec<String>>();
+        let labels = GROUPS
+            .iter()
+            .map(|&g| g.to_string())
+            .collect::<Vec<String>>();
         (groups, labels)
     })
 }
@@ -143,7 +146,9 @@ fn column_header_row(theme: &Theme) -> Scene {
         let label = Scene::Text(TextNode::styled(
             name.to_string(),
             Rect::default(),
-            TextStyle::new().with_size_px(13).with_fg(theme.resolve(ColorRole::OnSurface)),
+            TextStyle::new()
+                .with_size_px(13)
+                .with_fg(theme.resolve(ColorRole::OnSurface)),
         ));
         cells.push(Scene::Container(
             ContainerNode::new(vec![label])
@@ -160,7 +165,9 @@ fn column_header_row(theme: &Theme) -> Scene {
     Scene::Container(
         ContainerNode::new(cells)
             .with_tag(HEAD_ROW_TAG)
-            .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHighest)))
+            .with_style(BoxStyle::filled(
+                theme.resolve(ColorRole::SurfaceContainerHighest),
+            ))
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Row)
@@ -190,9 +197,16 @@ fn build_header(group: usize, member_count: usize, collapsed: bool, theme: &Them
 fn build_data_row(source: usize, theme: &Theme, selected: Option<usize>) -> Scene {
     let is_selected = selected == Some(source);
     let (fill, fg) = if is_selected {
-        (theme.resolve(ColorRole::Accent), theme.resolve(ColorRole::OnAccent))
+        (
+            theme.resolve(ColorRole::Accent),
+            theme.resolve(ColorRole::OnAccent),
+        )
     } else {
-        let stripe = if source % 2 == 0 { ColorRole::SurfaceContainerLow } else { ColorRole::Surface };
+        let stripe = if source % 2 == 0 {
+            ColorRole::SurfaceContainerLow
+        } else {
+            ColorRole::Surface
+        };
         (theme.resolve(stripe), theme.resolve(ColorRole::OnSurface))
     };
     let mut cells: Vec<Scene> = Vec::with_capacity(COLS.len());
@@ -245,17 +259,23 @@ fn view(selected: Option<usize>, _frame: &Frame) -> Scene {
         ROW_PITCH,
         OVERSCAN,
         |view_pos| match rows[view_pos] {
-            GroupRow::Header { group, member_count, collapsed } => {
-                build_header(group, member_count, collapsed, &theme)
-            }
+            GroupRow::Header {
+                group,
+                member_count,
+                collapsed,
+            } => build_header(group, member_count, collapsed, &theme),
             GroupRow::Data { source } => build_data_row(source, &theme, selected),
         },
     );
 
     let scrollbar_style = VerticalScrollbarStyle::material(VIEWPORT_H, SCROLLBAR_TAG);
     let scrollbar_interaction = use_scrollbar_interaction(SCROLLBAR_TAG);
-    let scrollbar_visual =
-        view_vertical_scrollbar(&scroll_state, &theme, &scrollbar_style, scrollbar_interaction.get());
+    let scrollbar_visual = view_vertical_scrollbar(
+        &scroll_state,
+        &theme,
+        &scrollbar_style,
+        scrollbar_interaction.get(),
+    );
 
     let list_row = Scene::Container(
         ContainerNode::new(vec![list, scrollbar_visual])
@@ -265,7 +285,11 @@ fn view(selected: Option<usize>, _frame: &Frame) -> Scene {
     let grid_root = Scene::Container(
         ContainerNode::new(vec![header, list_row])
             .with_tag(GRID_TAG)
-            .with_layout(LayoutStyle::new().flex(FlexDirection::Column).with_focusable(true)),
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Column)
+                    .with_focusable(true),
+            ),
     );
 
     Scene::Container(
@@ -292,7 +316,10 @@ impl WidgetCore for GroupedGridView {
 
     fn create_extra_externals() -> Vec<ExtraExternal> {
         vec![
-            ExtraExternal::new(GROUP_TAG, Box::new(GroupOrderExternal::new(use_grid_groups()))),
+            ExtraExternal::new(
+                GROUP_TAG,
+                Box::new(GroupOrderExternal::new(use_grid_groups())),
+            ),
             scrollbar_extra_external(use_scroll_state(SCROLL_KEY), SCROLLBAR_TAG),
         ]
     }
@@ -354,8 +381,12 @@ impl WidgetCore for GroupedGridView {
     fn fmt_state_log(state: &GridState) -> String {
         format!(
             "selected={} cursor={}",
-            state.selected.map_or_else(|| "none".to_string(), |i| format!("source {i}")),
-            state.cursor.map_or_else(|| "none".to_string(), |c| c.to_string()),
+            state
+                .selected
+                .map_or_else(|| "none".to_string(), |i| format!("source {i}")),
+            state
+                .cursor
+                .map_or_else(|| "none".to_string(), |c| c.to_string()),
         )
     }
 }
@@ -375,8 +406,13 @@ impl WidgetA11y for GroupedGridView {
         let scroll_state = use_scroll_state(SCROLL_KEY);
         let groups = use_grid_groups();
         let rows = groups.rows();
-        let window =
-            compute_visible_range(scroll_state.offset_y(), VIEWPORT_H, rows.len(), ROW_PITCH, OVERSCAN);
+        let window = compute_visible_range(
+            scroll_state.offset_y(),
+            VIEWPORT_H,
+            rows.len(),
+            ROW_PITCH,
+            OVERSCAN,
+        );
         // Static (non-sortable) columns: tag + label, no aria-sort.
         let columns: Vec<GridColumn> = COLS
             .iter()
@@ -416,7 +452,13 @@ impl WidgetA11y for GroupedGridView {
     /// [`grouped_focus_target`] SSOT (shared with `hello-grouped-list`) so the
     /// ring policy is one source of truth across both grouped presentations.
     fn access_focus_target(state: &GridState, focused: Option<&str>) -> Option<AccessFocus> {
-        grouped_focus_target(&use_grid_groups(), GRID_TAG, GROUP_TAG, state.cursor, focused)
+        grouped_focus_target(
+            &use_grid_groups(),
+            GRID_TAG,
+            GROUP_TAG,
+            state.cursor,
+            focused,
+        )
     }
 }
 
@@ -424,7 +466,10 @@ impl WidgetView for GroupedGridView {
     type Renderer = HelloGroupedGridRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed {
+            width: WIN_W,
+            height: WIN_H,
+        }
     }
 }
 
@@ -468,7 +513,10 @@ mod tests {
     fn data_sources(scene: &Scene) -> Vec<usize> {
         present_tags(scene)
             .iter()
-            .filter_map(|t| t.strip_prefix(&format!("{GRID_TAG}#")).and_then(|r| r.parse::<usize>().ok()))
+            .filter_map(|t| {
+                t.strip_prefix(&format!("{GRID_TAG}#"))
+                    .and_then(|r| r.parse::<usize>().ok())
+            })
             .collect()
     }
 
@@ -478,9 +526,15 @@ mod tests {
         let tags = present_tags(&scene);
         // The three column headers and the group-0 header are present.
         for c in 0..COLS.len() {
-            assert!(tags.contains(&format!("{GRID_TAG}_col{c}")), "column header {c} present");
+            assert!(
+                tags.contains(&format!("{GRID_TAG}_col{c}")),
+                "column header {c} present"
+            );
         }
-        assert!(tags.contains(&format!("{GROUP_TAG}#0")), "Mesh group header present");
+        assert!(
+            tags.contains(&format!("{GROUP_TAG}#0")),
+            "Mesh group header present"
+        );
         // First data rows are Mesh members 0, 6, 12, each with three cells.
         let mut sources = data_sources(&scene);
         sources.sort_unstable();
@@ -493,37 +547,72 @@ mod tests {
     #[test]
     fn collapsing_a_group_hides_its_cell_rows() {
         let expanded = render(None, |_| {});
-        assert!(data_sources(&expanded).contains(&0), "source 0 visible when expanded");
+        assert!(
+            data_sources(&expanded).contains(&0),
+            "source 0 visible when expanded"
+        );
         let collapsed = render(None, |g| g.set_collapsed(0, true));
-        assert!(!data_sources(&collapsed).contains(&0), "collapsed Mesh hides its cell rows");
+        assert!(
+            !data_sources(&collapsed).contains(&0),
+            "collapsed Mesh hides its cell rows"
+        );
         // The header itself stays.
-        assert!(present_tags(&collapsed).contains(&format!("{GROUP_TAG}#0")), "header stays on collapse");
+        assert!(
+            present_tags(&collapsed).contains(&format!("{GROUP_TAG}#0")),
+            "header stays on collapse"
+        );
     }
 
     #[test]
     fn a11y_treegrid_has_columnheaders_expandable_group_rows_and_gridcells() {
         // Cursor on visual pos 1 (the first data row, source 0).
         let nodes = Owner::new().run(|| {
-            GroupedGridView::access_node(&GridState { selected: Some(0), cursor: Some(1) }, None)
+            GroupedGridView::access_node(
+                &GridState {
+                    selected: Some(0),
+                    cursor: Some(1),
+                },
+                None,
+            )
         });
         // R874 — treegrid root (hierarchical + columns), not a flat grid.
         assert_eq!(nodes[0].role, AriaRole::TreeGrid);
         // Three column headers.
-        let col_headers = nodes.iter().filter(|n| n.role == AriaRole::ColumnHeader).count();
+        let col_headers = nodes
+            .iter()
+            .filter(|n| n.role == AriaRole::ColumnHeader)
+            .count();
         assert_eq!(col_headers, COLS.len(), "one columnheader per column");
         // Group-0 header is an expandable level-1 Row.
-        let gh = nodes.iter().find(|n| n.tag == format!("{GROUP_TAG}#0")).expect("group header node");
+        let gh = nodes
+            .iter()
+            .find(|n| n.tag == format!("{GROUP_TAG}#0"))
+            .expect("group header node");
         assert_eq!(gh.role, AriaRole::Row);
         assert_eq!(gh.level, Some(1), "group header is aria-level 1");
-        assert_eq!(gh.expanded, Some(true), "expanded group header carries aria-expanded");
+        assert_eq!(
+            gh.expanded,
+            Some(true),
+            "expanded group header carries aria-expanded"
+        );
         // The selected data row is a level-2 Row with aria-selected and three
         // gridcells, and it is the cursor row (active descendant) → focused.
-        let dr = nodes.iter().find(|n| n.tag == format!("{GRID_TAG}#0")).expect("data row node");
+        let dr = nodes
+            .iter()
+            .find(|n| n.tag == format!("{GRID_TAG}#0"))
+            .expect("data row node");
         assert_eq!(dr.role, AriaRole::Row);
         assert_eq!(dr.level, Some(2), "data row is aria-level 2");
-        assert_eq!(dr.selected, Some(true), "selected row carries aria-selected");
+        assert_eq!(
+            dr.selected,
+            Some(true),
+            "selected row carries aria-selected"
+        );
         assert!(dr.state.focused, "the cursor row is the active descendant");
-        let cells = nodes.iter().filter(|n| n.role == AriaRole::GridCell).count();
+        let cells = nodes
+            .iter()
+            .filter(|n| n.role == AriaRole::GridCell)
+            .count();
         assert!(cells >= COLS.len(), "data rows expose gridcells");
     }
 
@@ -533,18 +622,30 @@ mod tests {
             let _ = use_grid_groups(); // build the shared holder (all groups expanded)
             // Cursor on visual pos 0 = the group-0 header.
             let af = GroupedGridView::access_focus_target(
-                &GridState { selected: None, cursor: Some(0) },
+                &GridState {
+                    selected: None,
+                    cursor: Some(0),
+                },
                 Some(GRID_TAG),
             )
             .expect("grid focused returns Some");
-            assert_eq!(af.active_descendant.as_deref(), Some(&*format!("{GROUP_TAG}#0")));
+            assert_eq!(
+                af.active_descendant.as_deref(),
+                Some(&*format!("{GROUP_TAG}#0"))
+            );
             // Cursor on visual pos 1 = the first Mesh data row (source 0).
             let af1 = GroupedGridView::access_focus_target(
-                &GridState { selected: None, cursor: Some(1) },
+                &GridState {
+                    selected: None,
+                    cursor: Some(1),
+                },
                 Some(GRID_TAG),
             )
             .expect("grid focused returns Some");
-            assert_eq!(af1.active_descendant.as_deref(), Some(&*format!("{GRID_TAG}#0")));
+            assert_eq!(
+                af1.active_descendant.as_deref(),
+                Some(&*format!("{GRID_TAG}#0"))
+            );
             // No cursor → ring the container (no active descendant).
             let af_none =
                 GroupedGridView::access_focus_target(&GridState::default(), Some(GRID_TAG))

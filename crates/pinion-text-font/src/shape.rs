@@ -88,11 +88,18 @@ pub fn shape_run(font: &Font, text: &str, px_per_em: f32) -> ShapedRun {
     let mut pen = 0.0_f32;
     for (cluster, ch) in text.char_indices() {
         let glyph_id = font.glyph_id_for(ch as u32).unwrap_or(0);
-        glyphs.push(PositionedGlyph { glyph_id, x: pen, cluster });
+        glyphs.push(PositionedGlyph {
+            glyph_id,
+            x: pen,
+            cluster,
+        });
         let advance_units = font.glyph_advance_width(glyph_id).unwrap_or(0);
         pen += f32::from(advance_units) * scale;
     }
-    ShapedRun { glyphs, advance: pen }
+    ShapedRun {
+        glyphs,
+        advance: pen,
+    }
 }
 
 /// Shape `text` and composite every glyph's AA coverage into one bitmap, each at
@@ -171,7 +178,13 @@ pub fn render_run(font: &Font, text: &str, px_per_em: f32) -> Result<Coverage, R
             }
         }
     }
-    Ok(Coverage { width, height, left: min_x, top: min_y, alpha })
+    Ok(Coverage {
+        width,
+        height,
+        left: min_x,
+        top: min_y,
+        alpha,
+    })
 }
 
 /// Same-color alpha-over of two `0..=255` coverage values: `out = d + s − d·s`,
@@ -208,7 +221,10 @@ mod tests {
             for s in 0u16..=255 {
                 #[allow(clippy::cast_possible_truncation)]
                 let o = over(d as u8, s as u8);
-                assert!(u16::from(o) >= d && u16::from(o) >= s, "over >= each operand");
+                assert!(
+                    u16::from(o) >= d && u16::from(o) >= s,
+                    "over >= each operand"
+                );
                 assert!(u16::from(o) <= d + s, "over <= d + s (no overshoot)");
                 assert!(o >= prev, "over(d, ·) non-decreasing in s: {o} < {prev}");
                 prev = o;

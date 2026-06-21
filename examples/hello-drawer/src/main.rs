@@ -68,23 +68,22 @@
 
 use pinion_a11y::{AccessNode, AriaRole, WidgetA11y};
 use pinion_core::external::External;
-use pinion_core::reactive::{batch, Owner, Signal};
+use pinion_core::reactive::{Owner, Signal, batch};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole};
+use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::aria::apply_aria_activate;
 use pinion_core::widgets::button::{ButtonExternal, ButtonState};
-use pinion_core::widgets::modal::{modal_introspection_extra, use_modal, ModalState};
+use pinion_core::widgets::modal::{ModalState, modal_introspection_extra, use_modal};
 use pinion_core::{Frame, Scene, WidgetCore};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::button::{
-    button_a11y_state, read_button_focused, read_button_state,
-    ButtonColors, ButtonStyle,
+    ButtonColors, ButtonStyle, button_a11y_state, read_button_focused, read_button_state,
 };
-use pinion_widget_paint::drawer::{view_drawer, DrawerStyle};
+use pinion_widget_paint::drawer::{DrawerStyle, view_drawer};
 use std::rc::Rc;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -327,7 +326,10 @@ impl WidgetCore for DrawerView {
     /// externals. The scrim is registered as a real `External` so a
     /// backdrop click light-dismisses (the R693 carry this round clears).
     fn create_extra_externals() -> Vec<ExtraExternal> {
-        let mut extras = vec![ExtraExternal::new(SCRIM_TAG, Box::new(ButtonExternal::new()))];
+        let mut extras = vec![ExtraExternal::new(
+            SCRIM_TAG,
+            Box::new(ButtonExternal::new()),
+        )];
         for tag in NAV_TAGS {
             extras.push(ExtraExternal::new(tag, Box::new(ButtonExternal::new())));
         }
@@ -369,7 +371,6 @@ impl WidgetCore for DrawerView {
     fn keybinding(_key: &str) -> Option<()> {
         None
     }
-
 
     /// R702 §5.39 — Escape dismisses the open drawer (the shell routes
     /// Escape here only while the trap is active). Enter / Space on a
@@ -441,8 +442,9 @@ impl WidgetA11y for DrawerView {
     fn access_node(state: &DrawerViewState, focused: Option<&str>) -> Vec<AccessNode> {
         let open = modal().is_open();
         if !open {
-            return vec![AccessNode::new(TRIGGER_TAG, AriaRole::Button)
-                .with_state(button_a11y_state(state.trigger, focused == Some(TRIGGER_TAG)))];
+            return vec![AccessNode::new(TRIGGER_TAG, AriaRole::Button).with_state(
+                button_a11y_state(state.trigger, focused == Some(TRIGGER_TAG)),
+            )];
         }
         let mut dialog = AccessNode::new(PANEL_TAG, AriaRole::Dialog).with_modal();
         for tag in NAV_TAGS {
@@ -503,8 +505,9 @@ mod tests {
     /// to dispatch against.
     fn boot_scene() -> Scene {
         use pinion_core::scene::ExternalNode;
-        let mut children =
-            vec![Scene::External(ExternalNode::new(DrawerView::create_external()).with_tag(TRIGGER_TAG))];
+        let mut children = vec![Scene::External(
+            ExternalNode::new(DrawerView::create_external()).with_tag(TRIGGER_TAG),
+        )];
         for extra in DrawerView::create_extra_externals() {
             children.push(Scene::External(
                 ExternalNode::new(extra.handle).with_tag(extra.tag),
@@ -540,7 +543,11 @@ mod tests {
             use_drawer_active().set(2);
             let _ = DrawerView::update(idle(), &intent("drawer_scrim.click"));
             assert!(!modal().is_open(), "scrim tap closes the drawer");
-            assert_eq!(use_drawer_active().get(), 2, "scrim tap does not change active");
+            assert_eq!(
+                use_drawer_active().get(),
+                2,
+                "scrim tap does not change active"
+            );
             assert_eq!(
                 pinion_core::modal_scope_request::drain(),
                 Some(pinion_core::modal_scope_request::ModalRequest::Close)
@@ -632,11 +639,17 @@ mod tests {
             assert_eq!(nodes[0].role, AriaRole::Dialog);
             assert!(nodes[0].modal, "drawer root carries aria-modal");
             assert_eq!(nodes[0].children, NAV_TAGS.to_vec());
-            assert!(nodes[1].state.focused, "auto-focused first item marked focused");
+            assert!(
+                nodes[1].state.focused,
+                "auto-focused first item marked focused"
+            );
             let set_size = u32::try_from(NAV_N).expect("fits");
             for (i, node) in nodes.iter().skip(1).enumerate() {
                 assert_eq!(node.role, AriaRole::Button);
-                assert_eq!(node.position_in_set, Some(u32::try_from(i + 1).expect("fits")));
+                assert_eq!(
+                    node.position_in_set,
+                    Some(u32::try_from(i + 1).expect("fits"))
+                );
                 assert_eq!(node.size_of_set, Some(set_size));
             }
         });

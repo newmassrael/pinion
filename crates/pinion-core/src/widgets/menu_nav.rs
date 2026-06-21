@@ -108,7 +108,11 @@ mod tests {
 
     #[test]
     fn nav_move_from_none_lands_on_edge() {
-        assert_eq!(nav_move(None, 4, true), Some(0), "Down from nothing -> first");
+        assert_eq!(
+            nav_move(None, 4, true),
+            Some(0),
+            "Down from nothing -> first"
+        );
         assert_eq!(nav_move(None, 4, false), Some(3), "Up from nothing -> last");
     }
 

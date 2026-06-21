@@ -231,9 +231,9 @@ impl core::fmt::Debug for ProxyRepaintSink {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core::sync::atomic::{AtomicBool, Ordering};
-    use core::pin::Pin;
     use core::future::Future;
+    use core::pin::Pin;
+    use core::sync::atomic::{AtomicBool, Ordering};
 
     type LocalBoxFuture = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
 

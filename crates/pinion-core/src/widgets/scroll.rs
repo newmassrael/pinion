@@ -261,8 +261,7 @@ impl ScrollState {
                 self.offset_y.set(my);
             }
         });
-        self.max_x.revision() != revisions_before.0
-            || self.max_y.revision() != revisions_before.1
+        self.max_x.revision() != revisions_before.0 || self.max_y.revision() != revisions_before.1
     }
 
     /// (R774 §5.27) Current `(measured_w, measured_h)` — the

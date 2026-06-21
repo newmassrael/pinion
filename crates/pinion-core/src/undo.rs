@@ -60,8 +60,8 @@ use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
@@ -634,7 +634,9 @@ impl UndoStackExternal {
 
     /// A label `Option` as `Text` / `Null`.
     fn label_value(label: Option<Cow<'static, str>>) -> IntrospectValue {
-        label.map_or(IntrospectValue::Null, |l| IntrospectValue::Text(l.into_owned()))
+        label.map_or(IntrospectValue::Null, |l| {
+            IntrospectValue::Text(l.into_owned())
+        })
     }
 }
 
@@ -712,7 +714,11 @@ impl ExternalIntrospect for UndoStackExternal {
         }
     }
 
-    fn invoke(&mut self, path: &str, _args: IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+    fn invoke(
+        &mut self,
+        path: &str,
+        _args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
         match path {
             // AI-first undo/redo — return whether a step actually happened.
             "undo" => Ok(IntrospectValue::Bool(self.stack.undo())),
@@ -822,7 +828,11 @@ mod tests {
             assert_eq!(stack.index(), 0, "no step lands until end_macro");
             stack.end_macro();
             assert_eq!(stack.len(), 1, "three edits folded into one step");
-            assert_eq!(stack.labels(), vec!["batch +3"], "macro label, not children");
+            assert_eq!(
+                stack.labels(),
+                vec!["batch +3"],
+                "macro label, not children"
+            );
             // One Ctrl+Z reverses the whole run.
             assert!(stack.undo());
             assert_eq!(counter.get(), 0, "single undo reverses all three");
@@ -855,7 +865,11 @@ mod tests {
             let (_counter, stack) = fixture();
             stack.begin_macro("nothing");
             stack.end_macro();
-            assert_eq!(stack.len(), 0, "an empty macro leaves the timeline untouched");
+            assert_eq!(
+                stack.len(),
+                0,
+                "an empty macro leaves the timeline untouched"
+            );
             assert!(!stack.can_undo());
         });
     }
@@ -967,18 +981,33 @@ mod tests {
             assert_eq!(ext.query("redo_label"), Some(IntrospectValue::Null));
 
             // invoke undo → value reverts, cursor steps back.
-            assert_eq!(ext.invoke("undo", IntrospectValue::Null), Ok(IntrospectValue::Bool(true)));
+            assert_eq!(
+                ext.invoke("undo", IntrospectValue::Null),
+                Ok(IntrospectValue::Bool(true))
+            );
             assert_eq!(counter.get(), 0);
             assert_eq!(ext.query("index"), Some(IntrospectValue::Int(0)));
             // invoke redo → value re-applies.
-            assert_eq!(ext.invoke("redo", IntrospectValue::Null), Ok(IntrospectValue::Bool(true)));
+            assert_eq!(
+                ext.invoke("redo", IntrospectValue::Null),
+                Ok(IntrospectValue::Bool(true))
+            );
             assert_eq!(counter.get(), 7);
             // clear empties the history.
-            assert_eq!(ext.invoke("clear", IntrospectValue::Null), Ok(IntrospectValue::Int(0)));
+            assert_eq!(
+                ext.invoke("clear", IntrospectValue::Null),
+                Ok(IntrospectValue::Int(0))
+            );
             assert_eq!(ext.query("count"), Some(IntrospectValue::Int(0)));
 
-            assert_eq!(ext.intervene("index", IntrospectValue::Int(3)), Err(InterveneError::ReadOnly));
-            assert_eq!(ext.invoke("frobnicate", IntrospectValue::Null), Err(InvokeError::UnknownPath));
+            assert_eq!(
+                ext.intervene("index", IntrospectValue::Int(3)),
+                Err(InterveneError::ReadOnly)
+            );
+            assert_eq!(
+                ext.invoke("frobnicate", IntrospectValue::Null),
+                Err(InvokeError::UnknownPath)
+            );
         });
     }
 
@@ -1038,10 +1067,18 @@ mod tests {
         Owner::new().run(|| {
             let redos = Rc::new(Cell::new(0u32));
             let stack = UndoStack::new();
-            stack.record(CountCmd { redos: redos.clone() });
+            stack.record(CountCmd {
+                redos: redos.clone(),
+            });
             assert_eq!(redos.get(), 1, "record applies the edit (one redo)");
-            stack.push_applied(CountCmd { redos: redos.clone() });
-            assert_eq!(redos.get(), 1, "push_applied does NOT re-run redo (caller already applied)");
+            stack.push_applied(CountCmd {
+                redos: redos.clone(),
+            });
+            assert_eq!(
+                redos.get(),
+                1,
+                "push_applied does NOT re-run redo (caller already applied)"
+            );
             assert_eq!(stack.len(), 2, "both are recorded");
         });
     }
@@ -1052,10 +1089,24 @@ mod tests {
             let cell = Rc::new(Cell::new(0i64));
             let stack = UndoStack::new();
             cell.set(1);
-            stack.push_applied(AddCmd { cell: cell.clone(), before: 0, after: 1, coalescable: true });
+            stack.push_applied(AddCmd {
+                cell: cell.clone(),
+                before: 0,
+                after: 1,
+                coalescable: true,
+            });
             cell.set(2);
-            stack.push_applied(AddCmd { cell: cell.clone(), before: 1, after: 2, coalescable: true });
-            assert_eq!(stack.len(), 1, "contiguous coalescable edits fold into one step");
+            stack.push_applied(AddCmd {
+                cell: cell.clone(),
+                before: 1,
+                after: 2,
+                coalescable: true,
+            });
+            assert_eq!(
+                stack.len(),
+                1,
+                "contiguous coalescable edits fold into one step"
+            );
             assert_eq!(cell.get(), 2);
             assert!(stack.undo());
             assert_eq!(cell.get(), 0, "one undo reverses the whole coalesced run");
@@ -1071,9 +1122,19 @@ mod tests {
             let stack = UndoStack::new();
             // A non-coalescable command never absorbs its successor.
             cell.set(1);
-            stack.push_applied(AddCmd { cell: cell.clone(), before: 0, after: 1, coalescable: false });
+            stack.push_applied(AddCmd {
+                cell: cell.clone(),
+                before: 0,
+                after: 1,
+                coalescable: false,
+            });
             cell.set(2);
-            stack.push_applied(AddCmd { cell: cell.clone(), before: 1, after: 2, coalescable: true });
+            stack.push_applied(AddCmd {
+                cell: cell.clone(),
+                before: 1,
+                after: 2,
+                coalescable: true,
+            });
             assert_eq!(stack.len(), 2, "a non-coalescable top stays its own step");
         });
     }
@@ -1084,28 +1145,73 @@ mod tests {
             let cell = Rc::new(Cell::new(0i64));
             let stack = UndoStack::new();
             cell.set(1);
-            stack.push_applied(AddCmd { cell: cell.clone(), before: 0, after: 1, coalescable: true });
+            stack.push_applied(AddCmd {
+                cell: cell.clone(),
+                before: 0,
+                after: 1,
+                coalescable: true,
+            });
             assert!(stack.undo(), "undo back to 0");
             // Typing after an undo starts a fresh step — the truncated suffix
             // means the surviving stack must not absorb this contiguous edit.
             cell.set(1);
-            stack.push_applied(AddCmd { cell: cell.clone(), before: 0, after: 1, coalescable: true });
-            assert_eq!(stack.len(), 1, "the prior command was truncated, not merged into");
+            stack.push_applied(AddCmd {
+                cell: cell.clone(),
+                before: 0,
+                after: 1,
+                coalescable: true,
+            });
+            assert_eq!(
+                stack.len(),
+                1,
+                "the prior command was truncated, not merged into"
+            );
             assert!(!stack.can_redo(), "no dangling redo branch");
         });
     }
 
     #[test]
     fn undo_redo_verb_maps_the_canonical_editor_chords() {
-        let ctrl = Modifiers { shift: false, ctrl: true, alt: false, meta: false };
-        let ctrl_shift = Modifiers { shift: true, ctrl: true, alt: false, meta: false };
-        let cmd = Modifiers { shift: false, ctrl: false, alt: false, meta: true };
+        let ctrl = Modifiers {
+            shift: false,
+            ctrl: true,
+            alt: false,
+            meta: false,
+        };
+        let ctrl_shift = Modifiers {
+            shift: true,
+            ctrl: true,
+            alt: false,
+            meta: false,
+        };
+        let cmd = Modifiers {
+            shift: false,
+            ctrl: false,
+            alt: false,
+            meta: true,
+        };
         assert_eq!(undo_redo_verb("z", ctrl), Some("undo"));
         assert_eq!(undo_redo_verb("Z", ctrl), Some("undo"), "case-insensitive");
-        assert_eq!(undo_redo_verb("z", ctrl_shift), Some("redo"), "Ctrl+Shift+Z redoes");
+        assert_eq!(
+            undo_redo_verb("z", ctrl_shift),
+            Some("redo"),
+            "Ctrl+Shift+Z redoes"
+        );
         assert_eq!(undo_redo_verb("y", ctrl), Some("redo"), "Ctrl+Y redoes");
-        assert_eq!(undo_redo_verb("z", cmd), Some("undo"), "Cmd (meta) is command_key too");
-        assert_eq!(undo_redo_verb("z", Modifiers::empty()), None, "a bare z is not undo");
-        assert_eq!(undo_redo_verb("a", ctrl), None, "Ctrl+A is not an undo chord");
+        assert_eq!(
+            undo_redo_verb("z", cmd),
+            Some("undo"),
+            "Cmd (meta) is command_key too"
+        );
+        assert_eq!(
+            undo_redo_verb("z", Modifiers::empty()),
+            None,
+            "a bare z is not undo"
+        );
+        assert_eq!(
+            undo_redo_verb("a", ctrl),
+            None,
+            "Ctrl+A is not an undo chord"
+        );
     }
 }

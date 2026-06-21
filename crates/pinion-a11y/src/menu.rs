@@ -121,7 +121,9 @@ pub fn menu_item_nodes(
         // (when open) references the nested menu it owns as a child so the AT
         // tree links parent menuitem -> submenu.
         if let Some(sub) = item.popup {
-            node = node.with_has_popup(HasPopup::Menu).with_expanded(sub.expanded);
+            node = node
+                .with_has_popup(HasPopup::Menu)
+                .with_expanded(sub.expanded);
             if let Some(child) = sub.owns {
                 node = node.with_child(child);
             }
@@ -137,9 +139,30 @@ mod tests {
 
     fn items() -> [MenuItemCell<'static>; 3] {
         [
-            MenuItemCell { tag: "m#0", label: Some("New"), checked: None, disabled: false, focused: true, ..MenuItemCell::default() },
-            MenuItemCell { tag: "m#1", label: None, checked: Some(true), disabled: false, focused: false, ..MenuItemCell::default() },
-            MenuItemCell { tag: "m#2", label: Some("Print"), checked: None, disabled: true, focused: false, ..MenuItemCell::default() },
+            MenuItemCell {
+                tag: "m#0",
+                label: Some("New"),
+                checked: None,
+                disabled: false,
+                focused: true,
+                ..MenuItemCell::default()
+            },
+            MenuItemCell {
+                tag: "m#1",
+                label: None,
+                checked: Some(true),
+                disabled: false,
+                focused: false,
+                ..MenuItemCell::default()
+            },
+            MenuItemCell {
+                tag: "m#2",
+                label: Some("Print"),
+                checked: None,
+                disabled: true,
+                focused: false,
+                ..MenuItemCell::default()
+            },
         ]
     }
 
@@ -154,27 +177,49 @@ mod tests {
         assert_eq!(nodes.len(), it.len() + 1, "one menu + N items");
         assert_eq!(nodes[0].role, AriaRole::Menu);
         assert_eq!(nodes[0].name.as_deref(), Some("File"));
-        assert_eq!(nodes[0].children.len(), it.len(), "menu references every item");
+        assert_eq!(
+            nodes[0].children.len(),
+            it.len(),
+            "menu references every item"
+        );
     }
 
     #[test]
     fn checked_some_is_menuitemcheckbox_none_is_menuitem() {
         let nodes = menu_item_nodes("menu", "File", &items());
-        assert_eq!(by_tag(&nodes, "m#0").role, AriaRole::MenuItem, "checked None → menuitem");
+        assert_eq!(
+            by_tag(&nodes, "m#0").role,
+            AriaRole::MenuItem,
+            "checked None → menuitem"
+        );
         assert_eq!(
             by_tag(&nodes, "m#1").role,
             AriaRole::MenuItemCheckbox,
             "checked Some → menuitemcheckbox",
         );
-        assert_eq!(by_tag(&nodes, "m#1").state.checked, Some(true), "aria-checked lowered");
-        assert_eq!(by_tag(&nodes, "m#0").state.checked, None, "plain item omits aria-checked");
+        assert_eq!(
+            by_tag(&nodes, "m#1").state.checked,
+            Some(true),
+            "aria-checked lowered"
+        );
+        assert_eq!(
+            by_tag(&nodes, "m#0").state.checked,
+            None,
+            "plain item omits aria-checked"
+        );
     }
 
     #[test]
     fn disabled_and_focused_state_lower() {
         let nodes = menu_item_nodes("menu", "File", &items());
-        assert!(by_tag(&nodes, "m#0").state.focused, "the active item is focused");
-        assert!(by_tag(&nodes, "m#2").state.disabled, "the disabled command lowers aria-disabled");
+        assert!(
+            by_tag(&nodes, "m#0").state.focused,
+            "the active item is focused"
+        );
+        assert!(
+            by_tag(&nodes, "m#2").state.disabled,
+            "the disabled command lowers aria-disabled"
+        );
         assert!(!by_tag(&nodes, "m#0").state.disabled);
     }
 
@@ -191,8 +236,16 @@ mod tests {
     #[test]
     fn explicit_label_set_and_none_left_for_enrichment() {
         let nodes = menu_item_nodes("menu", "File", &items());
-        assert_eq!(by_tag(&nodes, "m#0").name.as_deref(), Some("New"), "explicit label applied");
-        assert_eq!(by_tag(&nodes, "m#1").name, None, "label None left to scene enrichment");
+        assert_eq!(
+            by_tag(&nodes, "m#0").name.as_deref(),
+            Some("New"),
+            "explicit label applied"
+        );
+        assert_eq!(
+            by_tag(&nodes, "m#1").name,
+            None,
+            "label None left to scene enrichment"
+        );
     }
 
     #[test]
@@ -210,15 +263,33 @@ mod tests {
         let cells = [MenuItemCell {
             tag: "m#1",
             label: Some("Open Recent"),
-            popup: Some(SubmenuCell { expanded: false, owns: None }),
+            popup: Some(SubmenuCell {
+                expanded: false,
+                owns: None,
+            }),
             ..MenuItemCell::default()
         }];
         let nodes = menu_item_nodes("menu", "File", &cells);
         let parent = by_tag(&nodes, "m#1");
-        assert_eq!(parent.role, AriaRole::MenuItem, "a submenu parent is a plain menuitem");
-        assert_eq!(parent.has_popup, Some(HasPopup::Menu), "aria-haspopup=menu lowered");
-        assert_eq!(parent.expanded, Some(false), "aria-expanded=false while collapsed");
-        assert!(parent.children.is_empty(), "no owned submenu node while collapsed");
+        assert_eq!(
+            parent.role,
+            AriaRole::MenuItem,
+            "a submenu parent is a plain menuitem"
+        );
+        assert_eq!(
+            parent.has_popup,
+            Some(HasPopup::Menu),
+            "aria-haspopup=menu lowered"
+        );
+        assert_eq!(
+            parent.expanded,
+            Some(false),
+            "aria-expanded=false while collapsed"
+        );
+        assert!(
+            parent.children.is_empty(),
+            "no owned submenu node while collapsed"
+        );
     }
 
     #[test]
@@ -226,13 +297,20 @@ mod tests {
         let cells = [MenuItemCell {
             tag: "m#1",
             label: Some("Open Recent"),
-            popup: Some(SubmenuCell { expanded: true, owns: Some("submenu") }),
+            popup: Some(SubmenuCell {
+                expanded: true,
+                owns: Some("submenu"),
+            }),
             ..MenuItemCell::default()
         }];
         let nodes = menu_item_nodes("menu", "File", &cells);
         let parent = by_tag(&nodes, "m#1");
         assert_eq!(parent.expanded, Some(true), "aria-expanded=true while open");
-        assert_eq!(parent.children, vec!["submenu".to_string()], "owns the nested menu node");
+        assert_eq!(
+            parent.children,
+            vec!["submenu".to_string()],
+            "owns the nested menu node"
+        );
     }
 
     #[test]

@@ -98,10 +98,7 @@ pub trait WidgetA11y: WidgetCore {
     /// Default wraps `focused` as [`AccessFocus::atomic`]. Returning
     /// `None` leaves AccessKit's focus on the synthetic window root.
     #[must_use]
-    fn access_focus_target(
-        _state: &Self::State,
-        focused: Option<&str>,
-    ) -> Option<AccessFocus> {
+    fn access_focus_target(_state: &Self::State, focused: Option<&str>) -> Option<AccessFocus> {
         focused.map(AccessFocus::atomic)
     }
 

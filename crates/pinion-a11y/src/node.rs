@@ -640,11 +640,25 @@ mod tests {
     #[test]
     fn attach_child_button_links_and_emits_under_a_present_host() {
         let mut nodes = vec![AccessNode::new("cell", AriaRole::GridCell)];
-        attach_child_button(&mut nodes, "cell", "cell#reset".to_owned(), "Reset".to_owned());
+        attach_child_button(
+            &mut nodes,
+            "cell",
+            "cell#reset".to_owned(),
+            "Reset".to_owned(),
+        );
         // The host now references the button, and the button node exists.
-        let host = nodes.iter().find(|n| n.tag == "cell").expect("host present");
-        assert!(host.children.contains(&"cell#reset".to_owned()), "host links the button");
-        let btn = nodes.iter().find(|n| n.tag == "cell#reset").expect("button emitted");
+        let host = nodes
+            .iter()
+            .find(|n| n.tag == "cell")
+            .expect("host present");
+        assert!(
+            host.children.contains(&"cell#reset".to_owned()),
+            "host links the button"
+        );
+        let btn = nodes
+            .iter()
+            .find(|n| n.tag == "cell#reset")
+            .expect("button emitted");
         assert_eq!(btn.role, AriaRole::Button);
         assert_eq!(btn.name.as_deref(), Some("Reset"));
     }
@@ -654,8 +668,17 @@ mod tests {
         // R984.1 — orphan-free by construction: an affordance whose host is not
         // in the tree (windowed out) must leave NO dangling button node behind.
         let mut nodes = vec![AccessNode::new("other", AriaRole::GridCell)];
-        attach_child_button(&mut nodes, "absent", "absent#reset".to_owned(), "Reset".to_owned());
-        assert_eq!(nodes.len(), 1, "no button node is pushed when the host is absent");
+        attach_child_button(
+            &mut nodes,
+            "absent",
+            "absent#reset".to_owned(),
+            "Reset".to_owned(),
+        );
+        assert_eq!(
+            nodes.len(),
+            1,
+            "no button node is pushed when the host is absent"
+        );
         assert!(
             !nodes.iter().any(|n| n.tag == "absent#reset"),
             "the orphan button must not exist",
@@ -688,16 +711,17 @@ mod tests {
 
     #[test]
     fn with_value_bool() {
-        let n = AccessNode::new("cb", AriaRole::CheckBox)
-            .with_value(AccessValue::Bool(true));
+        let n = AccessNode::new("cb", AriaRole::CheckBox).with_value(AccessValue::Bool(true));
         assert_eq!(n.value, Some(AccessValue::Bool(true)));
     }
 
     #[test]
     fn with_value_float() {
-        let n = AccessNode::new("sl", AriaRole::Slider).with_value(
-            AccessValue::Float { value: 0.5, min: 0.0, max: 1.0 },
-        );
+        let n = AccessNode::new("sl", AriaRole::Slider).with_value(AccessValue::Float {
+            value: 0.5,
+            min: 0.0,
+            max: 1.0,
+        });
         assert!(matches!(
             n.value,
             Some(AccessValue::Float { value, min, max })
@@ -712,12 +736,22 @@ mod tests {
         // R739 §5.40 — value_text is a separate additive axis: a plain
         // numeric slider omits it (None), and the labeled variant carries
         // the named-stop string alongside the numeric Float.
-        let plain = AccessNode::new("sl", AriaRole::Slider)
-            .with_value(AccessValue::Float { value: 0.5, min: 0.0, max: 1.0 });
-        assert!(plain.value_text.is_none(), "numeric slider omits aria-valuetext");
+        let plain = AccessNode::new("sl", AriaRole::Slider).with_value(AccessValue::Float {
+            value: 0.5,
+            min: 0.0,
+            max: 1.0,
+        });
+        assert!(
+            plain.value_text.is_none(),
+            "numeric slider omits aria-valuetext"
+        );
 
         let labeled = AccessNode::new("sl", AriaRole::Slider)
-            .with_value(AccessValue::Float { value: 0.5, min: 0.0, max: 1.0 })
+            .with_value(AccessValue::Float {
+                value: 0.5,
+                min: 0.0,
+                max: 1.0,
+            })
             .with_value_text("Medium");
         assert_eq!(labeled.value_text.as_deref(), Some("Medium"));
         // Coexists with the numeric value — the two are complementary.
@@ -743,7 +777,10 @@ mod tests {
         let d = AccessState::from_interaction(RadioState::Disabled, None);
         assert!(d.disabled && !d.hovered && !d.pressed && d.checked.is_none());
         // Struct-update syntax overrides focus without disturbing posture.
-        let f = AccessState { focused: true, ..AccessState::from_interaction(RadioState::Pressed, None) };
+        let f = AccessState {
+            focused: true,
+            ..AccessState::from_interaction(RadioState::Pressed, None)
+        };
         assert!(f.focused && f.pressed && !f.hovered && !f.disabled);
     }
 
@@ -762,8 +799,7 @@ mod tests {
 
     #[test]
     fn with_bounds_sets_rect() {
-        let n = AccessNode::new("btn", AriaRole::Button)
-            .with_bounds(Rect::new(10, 20, 100, 30));
+        let n = AccessNode::new("btn", AriaRole::Button).with_bounds(Rect::new(10, 20, 100, 30));
         assert_eq!(n.bounds, Some(Rect::new(10, 20, 100, 30)));
     }
 
@@ -780,8 +816,7 @@ mod tests {
         // A frozen-grid Row lists the frozen-pane strip; the substrate later
         // unions its rect into the resolved bounds. Multiple fragments append
         // in call order.
-        let n = AccessNode::new("vtbl_row3", AriaRole::Row)
-            .with_bounds_union_tag("vtbl_frow3");
+        let n = AccessNode::new("vtbl_row3", AriaRole::Row).with_bounds_union_tag("vtbl_frow3");
         assert_eq!(n.bounds_union_tags, vec!["vtbl_frow3"]);
         let multi = AccessNode::new("tg_drowf1", AriaRole::Row)
             .with_bounds_union_tag("tg#f1")
@@ -886,15 +921,13 @@ mod tests {
 
     #[test]
     fn r674_with_position_in_set_sets_aria_posinset() {
-        let n = AccessNode::new("row", AriaRole::TreeItem)
-            .with_position_in_set(2);
+        let n = AccessNode::new("row", AriaRole::TreeItem).with_position_in_set(2);
         assert_eq!(n.position_in_set, Some(2));
     }
 
     #[test]
     fn r674_with_size_of_set_sets_aria_setsize() {
-        let n = AccessNode::new("row", AriaRole::TreeItem)
-            .with_size_of_set(5);
+        let n = AccessNode::new("row", AriaRole::TreeItem).with_size_of_set(5);
         assert_eq!(n.size_of_set, Some(5));
     }
 

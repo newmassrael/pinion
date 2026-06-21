@@ -32,11 +32,11 @@
 //! [`crate::dispatch`]; this module exposes the typed dispatcher
 //! only.
 
-use pinion_core::external::{IntrospectValue, InvokeError as TraitInvokeError};
 use pinion_core::Scene;
+use pinion_core::external::{IntrospectValue, InvokeError as TraitInvokeError};
 
 use crate::path::PathError;
-use crate::resolve::{resolve_external_introspect_mut, ResolveExternalError};
+use crate::resolve::{ResolveExternalError, resolve_external_introspect_mut};
 
 /// Reasons the typed [`invoke`] dispatcher can fail.
 #[non_exhaustive]
@@ -119,9 +119,9 @@ pub fn invoke(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_core::Color;
     use pinion_core::external::{CountedExternal, StubExternal};
     use pinion_core::scene::{BoxNode, ExternalNode, Rect};
-    use pinion_core::Color;
 
     fn counted_scene(n: i64) -> Scene {
         Scene::External(ExternalNode::new(Box::new(CountedExternal::new(n))))
@@ -130,12 +130,7 @@ mod tests {
     #[test]
     fn counted_increment_returns_new_total() {
         let mut scene = counted_scene(5);
-        let result = invoke(
-            &mut scene,
-            "/external/increment",
-            IntrospectValue::Int(3),
-        )
-        .unwrap();
+        let result = invoke(&mut scene, "/external/increment", IntrospectValue::Int(3)).unwrap();
         assert_eq!(result, IntrospectValue::Int(8));
     }
 
@@ -154,48 +149,28 @@ mod tests {
     #[test]
     fn stub_at_root_reports_introspection_opted_out() {
         let mut scene = Scene::External(ExternalNode::new(Box::new(StubExternal::new())));
-        let err = invoke(
-            &mut scene,
-            "/external/anything",
-            IntrospectValue::Null,
-        )
-        .unwrap_err();
+        let err = invoke(&mut scene, "/external/anything", IntrospectValue::Null).unwrap_err();
         assert_eq!(err, InvokeError::IntrospectionOptedOut);
     }
 
     #[test]
     fn box_at_root_reports_no_external() {
         let mut scene = Scene::Box(BoxNode::filled(Rect::default(), Color::default()));
-        let err = invoke(
-            &mut scene,
-            "/external/x",
-            IntrospectValue::Null,
-        )
-        .unwrap_err();
+        let err = invoke(&mut scene, "/external/x", IntrospectValue::Null).unwrap_err();
         assert_eq!(err, InvokeError::NoExternalAtPath);
     }
 
     #[test]
     fn unsupported_scene_path_rejected() {
         let mut scene = counted_scene(0);
-        let err = invoke(
-            &mut scene,
-            "/some/other/shape",
-            IntrospectValue::Int(0),
-        )
-        .unwrap_err();
+        let err = invoke(&mut scene, "/some/other/shape", IntrospectValue::Int(0)).unwrap_err();
         assert_eq!(err, InvokeError::UnsupportedPath);
     }
 
     #[test]
     fn unknown_action_path_propagates() {
         let mut scene = counted_scene(0);
-        let err = invoke(
-            &mut scene,
-            "/external/ghost",
-            IntrospectValue::Null,
-        )
-        .unwrap_err();
+        let err = invoke(&mut scene, "/external/ghost", IntrospectValue::Null).unwrap_err();
         assert_eq!(err, InvokeError::UnknownInvokePath);
     }
 
@@ -227,9 +202,8 @@ mod tests {
 
     fn container_with_nested_counted(tag: &'static str, count: i64) -> Scene {
         use pinion_core::scene::{ContainerNode, Rect};
-        let ext = Scene::External(
-            ExternalNode::new(Box::new(CountedExternal::new(count))).with_tag(tag),
-        );
+        let ext =
+            Scene::External(ExternalNode::new(Box::new(CountedExternal::new(count))).with_tag(tag));
         let mut c = ContainerNode::new(vec![ext]);
         c.rect = Rect::new(0, 0, 100, 100);
         Scene::Container(c)
@@ -272,9 +246,7 @@ mod tests {
         // R55.D.5 multi-External shape: the extra sibling carries a
         // composite tag (`todo_toggle#1` convention). v1 path syntax
         // addresses it directly without disturbing the primary.
-        let mut scene = container_with_two_counted_siblings(
-            "todo_list", 100, "todo_toggle#1", 0,
-        );
+        let mut scene = container_with_two_counted_siblings("todo_list", 100, "todo_toggle#1", 0);
         let result = invoke(
             &mut scene,
             "/todo_toggle#1/external/increment",
@@ -283,20 +255,14 @@ mod tests {
         .unwrap();
         assert_eq!(result, IntrospectValue::Int(3));
         // Primary untouched — v0 fallback still resolves to it.
-        let primary_via_v0 = invoke(
-            &mut scene,
-            "/external/increment",
-            IntrospectValue::Int(0),
-        )
-        .unwrap();
+        let primary_via_v0 =
+            invoke(&mut scene, "/external/increment", IntrospectValue::Int(0)).unwrap();
         assert_eq!(primary_via_v0, IntrospectValue::Int(100));
     }
 
     #[test]
     fn r666_invoke_extra_external_with_window_prefix() {
-        let mut scene = container_with_two_counted_siblings(
-            "primary", 0, "todo_delete#7", 0,
-        );
+        let mut scene = container_with_two_counted_siblings("primary", 0, "todo_delete#7", 0);
         let result = invoke(
             &mut scene,
             "/window[main]/todo_delete#7/external/increment",
@@ -321,9 +287,7 @@ mod tests {
     #[test]
     fn r666_invoke_non_external_target_is_no_external() {
         use pinion_core::scene::{BoxNode as BNode, ContainerNode, Rect};
-        let child = Scene::Box(
-            BNode::filled(Rect::default(), Color::default()).with_tag("info"),
-        );
+        let child = Scene::Box(BNode::filled(Rect::default(), Color::default()).with_tag("info"));
         let mut c = ContainerNode::new(vec![child]);
         c.rect = Rect::new(0, 0, 100, 100);
         let mut scene = Scene::Container(c);

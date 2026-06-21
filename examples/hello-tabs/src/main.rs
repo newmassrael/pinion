@@ -52,9 +52,7 @@
 //!
 //! [`RadioGroup`]: pinion_core::widgets::radio_group::RadioGroup
 
-use pinion_a11y::{
-    tablist_tab_nodes, AccessAction, AccessFocus, AccessNode, TabCell, WidgetA11y,
-};
+use pinion_a11y::{AccessAction, AccessFocus, AccessNode, TabCell, WidgetA11y, tablist_tab_nodes};
 // R815 §5.40 — `AriaRole` is now only referenced by the test asserts (the
 // lifted `tablist_tab_nodes` builder owns the role + state tagging in prod).
 #[cfg(test)]
@@ -64,11 +62,11 @@ use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole};
+use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::widgets::radio_group::RadioGroupExternal;
 use pinion_core::{Frame, Scene, WidgetCore};
-use pinion_shell::{vello_renderer_impl, WidgetView};
-use pinion_widget_paint::tabs::{composite_tab_tag, view_tabs, TabsStyle};
+use pinion_shell::{WidgetView, vello_renderer_impl};
+use pinion_widget_paint::tabs::{TabsStyle, composite_tab_tag, view_tabs};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloTabsRenderer, HelloTabsRendererError);
@@ -392,10 +390,7 @@ impl WidgetView for TabsView {
 /// Arrow Right/Left step by one with wrap-around (the WAI-ARIA tabs
 /// cyclic convention). Returns `None` for unrecognised keys so the
 /// shell's swallow path matches the unrecognised-keybinding contract.
-fn resolve_target_index(
-    intro: Option<&dyn ExternalIntrospect>,
-    key: &str,
-) -> Option<usize> {
+fn resolve_target_index(intro: Option<&dyn ExternalIntrospect>, key: &str) -> Option<usize> {
     match key {
         "Home" => Some(0),
         "End" => Some(N - 1),
@@ -409,12 +404,13 @@ fn resolve_target_index(
 /// (ArrowRight) or `-1` (ArrowLeft); wraps at the ends. With no tab
 /// selected, ArrowRight lands on `0` and ArrowLeft on `N - 1`.
 fn arrow_step(intro: Option<&dyn ExternalIntrospect>, direction: i32) -> usize {
-    let current: Option<usize> = intro
-        .and_then(|i| i.query("selected_index"))
-        .and_then(|v| match v {
-            IntrospectValue::Int(i) => usize::try_from(i).ok(),
-            _ => None,
-        });
+    let current: Option<usize> =
+        intro
+            .and_then(|i| i.query("selected_index"))
+            .and_then(|v| match v {
+                IntrospectValue::Int(i) => usize::try_from(i).ok(),
+                _ => None,
+            });
     match (current, direction) {
         (Some(c), 1) => (c + 1) % N,
         (Some(c), -1) => (c + N - 1) % N,
@@ -482,7 +478,10 @@ mod a11y_tests {
     fn r690_tabs_carry_posinset_and_setsize() {
         let nodes = TabsView::access_node(&selected_state(0), None);
         for i in 0..N {
-            assert_eq!(nodes[i + 1].position_in_set, Some(u32::try_from(i + 1).unwrap()));
+            assert_eq!(
+                nodes[i + 1].position_in_set,
+                Some(u32::try_from(i + 1).unwrap())
+            );
             assert_eq!(nodes[i + 1].size_of_set, Some(u32::try_from(N).unwrap()));
         }
     }

@@ -107,7 +107,10 @@ pub fn apply_aria_activate(
         return false;
     };
     intro
-        .invoke("send", IntrospectValue::Text("KeyboardActivate".to_string()))
+        .invoke(
+            "send",
+            IntrospectValue::Text("KeyboardActivate".to_string()),
+        )
         .is_ok()
 }
 
@@ -118,9 +121,7 @@ mod tests {
     use crate::widgets::button::ButtonExternal;
 
     fn make_scene(tag: &'static str) -> Scene {
-        Scene::External(
-            ExternalNode::new(Box::new(ButtonExternal::new())).with_tag(tag),
-        )
+        Scene::External(ExternalNode::new(Box::new(ButtonExternal::new())).with_tag(tag))
     }
 
     #[test]
@@ -198,7 +199,17 @@ mod tests {
         // Enter on the focused cancel button fires only the cancel
         // child; the chained-or call shape a binding uses resolves to
         // the matching tag.
-        assert!(!apply_aria_activate(&mut scene, Some("dialog_cancel"), "Enter", "dialog_ok"));
-        assert!(apply_aria_activate(&mut scene, Some("dialog_cancel"), "Enter", "dialog_cancel"));
+        assert!(!apply_aria_activate(
+            &mut scene,
+            Some("dialog_cancel"),
+            "Enter",
+            "dialog_ok"
+        ));
+        assert!(apply_aria_activate(
+            &mut scene,
+            Some("dialog_cancel"),
+            "Enter",
+            "dialog_cancel"
+        ));
     }
 }

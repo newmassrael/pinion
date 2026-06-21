@@ -41,18 +41,20 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
 
-use pinion_core::external::{ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue};
+#[cfg(test)]
+use pinion_a11y::{AriaRole, WidgetA11y};
+use pinion_core::external::{
+    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue,
+};
 use pinion_core::scene::{
     ContainerNode, ImmediateMode, ImmediateModeNode, ImmediatePainter, Rect, TextNode,
 };
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole};
+use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
 use pinion_core::{Color, Frame, Intent, Owner, Scene, Signal, WidgetCore};
-#[cfg(test)]
-use pinion_a11y::{AriaRole, WidgetA11y};
 use pinion_derive::widget;
 use pinion_shell::vello_renderer_impl;
 
@@ -64,7 +66,10 @@ include!(concat!(env!("OUT_DIR"), "/app.rs"));
 
 // R51.30 bridge from the inherent renderer methods to the
 // `pinion_shell::VelloRenderer` trait.
-vello_renderer_impl!(HelloImmediateIntentRenderer, HelloImmediateIntentRendererError);
+vello_renderer_impl!(
+    HelloImmediateIntentRenderer,
+    HelloImmediateIntentRendererError
+);
 
 /// (R827 §2 #4) Window size — header + immediate-mode track + bounce
 /// readout + dismiss trigger.
@@ -310,14 +315,12 @@ impl ExternalIntrospect for BouncingBallDriver {
             // first click, so the parametric paths are still schema-
             // declared but resolve to "no value yet").
             "clicked" => Some(IntrospectValue::Bool(self.last_click.is_some())),
-            "last_click_x" => Some(
-                self.last_click
-                    .map_or(IntrospectValue::Null, |(x, _)| IntrospectValue::Float(f64::from(x))),
-            ),
-            "last_click_y" => Some(
-                self.last_click
-                    .map_or(IntrospectValue::Null, |(_, y)| IntrospectValue::Float(f64::from(y))),
-            ),
+            "last_click_x" => Some(self.last_click.map_or(IntrospectValue::Null, |(x, _)| {
+                IntrospectValue::Float(f64::from(x))
+            })),
+            "last_click_y" => Some(self.last_click.map_or(IntrospectValue::Null, |(_, y)| {
+                IntrospectValue::Float(f64::from(y))
+            })),
             _ => None,
         }
     }
@@ -332,7 +335,8 @@ impl ExternalIntrospect for BouncingBallDriver {
 /// view-fn call so the per-frame tick advances the same state instance
 /// across the binding lifetime.
 fn use_ball_driver() -> Rc<RefCell<BouncingBallDriver>> {
-    let owner = Owner::current().expect("use_ball_driver must run inside Owner::run wrap (view fn)");
+    let owner =
+        Owner::current().expect("use_ball_driver must run inside Owner::run wrap (view fn)");
     owner.cache(BALL_DRIVER_CACHE_KEY, || {
         RefCell::new(BouncingBallDriver::default())
     })
@@ -345,8 +349,8 @@ fn use_ball_driver() -> Rc<RefCell<BouncingBallDriver>> {
 /// `root_owner` scope so they resolve the same Signal — the immediate ->
 /// retained bridge's shared retained state.
 fn use_bounce_count() -> Rc<Signal<u32>> {
-    let owner =
-        Owner::current().expect("use_bounce_count must run inside Owner::run wrap (view / reducer)");
+    let owner = Owner::current()
+        .expect("use_bounce_count must run inside Owner::run wrap (view / reducer)");
     owner.cache(BOUNCE_COUNT_CACHE_KEY, || Signal::new(0_u32))
 }
 
@@ -402,7 +406,9 @@ fn view(state: ButtonState, _frame: &Frame) -> Scene {
     let canvas = Scene::ImmediateModeNode(
         ImmediateModeNode::new(handle, Rect::default())
             .with_tag(BALL_NODE_TAG)
-            .with_layout(LayoutStyle::new().with_size(Size::px(CANVAS_VIEWPORT_W, CANVAS_VIEWPORT_H))),
+            .with_layout(
+                LayoutStyle::new().with_size(Size::px(CANVAS_VIEWPORT_W, CANVAS_VIEWPORT_H)),
+            ),
     );
 
     let readout = Scene::Text(
@@ -621,7 +627,10 @@ mod r827_immediate_intent_tests {
         driver.drain_intents(&mut |i| drained2.push(i));
         assert_eq!(drained2.len(), 1, "one reflection -> one bounce");
         assert_eq!(drained2[0].tag_str(), BOUNCE_EVENT);
-        assert!(driver.vel < 0.0, "velocity reversed after right-wall bounce");
+        assert!(
+            driver.vel < 0.0,
+            "velocity reversed after right-wall bounce"
+        );
         assert!(
             (0.0..=1.0).contains(&driver.pos),
             "pos stays inside the track after reflection; got {}",
@@ -662,8 +671,14 @@ mod r827_immediate_intent_tests {
             Some(IntrospectValue::Int(i64::from(driver.bounces))),
         );
         // pos / velocity surface as floats; unknown paths are None.
-        assert!(matches!(intro.query("pos"), Some(IntrospectValue::Float(_))));
-        assert!(matches!(intro.query("velocity"), Some(IntrospectValue::Float(_))));
+        assert!(matches!(
+            intro.query("pos"),
+            Some(IntrospectValue::Float(_))
+        ));
+        assert!(matches!(
+            intro.query("velocity"),
+            Some(IntrospectValue::Float(_))
+        ));
         assert_eq!(intro.query("ghost"), None);
         // Schema declares the simulation fields plus the R830 forwarded-
         // input fields.
@@ -683,7 +698,9 @@ mod r827_immediate_intent_tests {
     #[test]
     fn r828_driver_introspect_intervene_is_read_only() {
         let mut driver = BouncingBallDriver::default();
-        let intro = driver.introspect_mut().expect("driver opts into introspection");
+        let intro = driver
+            .introspect_mut()
+            .expect("driver opts into introspection");
         assert!(matches!(
             intro.intervene("pos", IntrospectValue::Float(0.5)),
             Err(InterveneError::ReadOnly),
@@ -697,9 +714,15 @@ mod r827_immediate_intent_tests {
         assert!(driver.last_click.is_none(), "no click before first press");
         driver.on_pointer_down(12.5, 7.0);
         // A click reverses travel: vel == -v0 (so vel + v0 == 0).
-        assert!((driver.vel + v0).abs() < 1e-6, "click must reverse velocity");
+        assert!(
+            (driver.vel + v0).abs() < 1e-6,
+            "click must reverse velocity"
+        );
         let (lx, ly) = driver.last_click.expect("click recorded");
-        assert!((lx - 12.5).abs() < 1e-6 && (ly - 7.0).abs() < 1e-6, "viewport-local coords stored");
+        assert!(
+            (lx - 12.5).abs() < 1e-6 && (ly - 7.0).abs() < 1e-6,
+            "viewport-local coords stored"
+        );
     }
 
     #[test]
@@ -729,8 +752,14 @@ mod r827_immediate_intent_tests {
         driver.on_pointer_down(40.0, 18.0);
         let intro = driver.introspect().expect("opt-in");
         assert_eq!(intro.query("clicked"), Some(IntrospectValue::Bool(true)));
-        assert_eq!(intro.query("last_click_x"), Some(IntrospectValue::Float(40.0)));
-        assert_eq!(intro.query("last_click_y"), Some(IntrospectValue::Float(18.0)));
+        assert_eq!(
+            intro.query("last_click_x"),
+            Some(IntrospectValue::Float(40.0))
+        );
+        assert_eq!(
+            intro.query("last_click_y"),
+            Some(IntrospectValue::Float(18.0))
+        );
     }
 
     #[test]

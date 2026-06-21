@@ -46,6 +46,8 @@
 //!   structural query cannot replace ([[introspection-from-paint-not-screen]],
 //!   R706/R707.3/R708/R709 precedent).
 
+#[cfg(test)]
+use pinion_a11y::{AriaRole, WidgetA11y};
 use pinion_core::external::IntrospectValue;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -53,8 +55,6 @@ use pinion_core::style::{
 };
 use pinion_core::widgets::toggle::{ToggleEvent, ToggleExternal, ToggleState};
 use pinion_core::{ColorRole, Frame, Scene, WidgetCore, WidgetStateName, use_theme};
-#[cfg(test)]
-use pinion_a11y::{AriaRole, WidgetA11y};
 use pinion_derive::widget;
 use pinion_shell::vello_renderer_impl;
 // R711 §5.50 — the lifted shared elevation ramp (this binding is one of
@@ -212,15 +212,17 @@ fn view(state: ToggleState, on: bool, _frame: &Frame) -> Scene {
     ));
 
     Scene::Container(
-        ContainerNode::new(vec![title, card_low, card_mid, card_high, raise_card, status])
-            .with_style(BoxStyle::filled(surface))
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Column)
-                    .with_justify(JustifyContent::Center)
-                    .with_align_items(AlignItems::Center)
-                    .with_gap(COLUMN_GAP),
-            ),
+        ContainerNode::new(vec![
+            title, card_low, card_mid, card_high, raise_card, status,
+        ])
+        .with_style(BoxStyle::filled(surface))
+        .with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Column)
+                .with_justify(JustifyContent::Center)
+                .with_align_items(AlignItems::Center)
+                .with_gap(COLUMN_GAP),
+        ),
     )
 }
 

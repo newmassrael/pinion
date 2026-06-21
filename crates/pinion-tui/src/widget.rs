@@ -17,8 +17,8 @@
 //! consumers actually use; the other 12 binding methods live upstream
 //! exactly once.
 
-use pinion_core::renderer::WidgetRenderer;
 use pinion_core::Frame;
+use pinion_core::renderer::WidgetRenderer;
 use ratatui::buffer::Buffer;
 
 use crate::TuiContext;
@@ -81,9 +81,9 @@ pub fn render_one_frame<V: WidgetViewTui>(state: V::State, cols: u16, rows: u16)
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_core::WidgetCore;
     use pinion_core::external::External;
     use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
-    use pinion_core::WidgetCore;
 
     /// A minimal `WidgetViewTui` impl for testing the helper +
     /// trait shape end-to-end without a real SCXML widget.

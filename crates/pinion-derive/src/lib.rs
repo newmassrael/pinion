@@ -55,7 +55,7 @@ mod widget;
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
-use syn::{spanned::Spanned, Data, DeriveInput, Fields, Lit, Meta, Variant};
+use syn::{Data, DeriveInput, Fields, Lit, Meta, Variant, spanned::Spanned};
 
 /// Derive [`IntentTag`](pinion_core::intent::IntentTag) on an enum.
 ///
@@ -243,11 +243,7 @@ struct VariantParts {
     schema_entry: TokenStream2,
 }
 
-fn variant_match_arms(
-    variant_ident: &syn::Ident,
-    tag: &str,
-    kind: PayloadKind,
-) -> VariantParts {
+fn variant_match_arms(variant_ident: &syn::Ident, tag: &str, kind: PayloadKind) -> VariantParts {
     match kind {
         PayloadKind::Void => VariantParts {
             const_tag_arm: quote! { Self::#variant_ident => #tag, },
@@ -303,10 +299,7 @@ fn extract_tag_attr(variant: &Variant) -> syn::Result<String> {
             continue;
         }
         let Meta::List(meta_list) = &attr.meta else {
-            return Err(syn::Error::new(
-                attr.span(),
-                "expected #[tag(\"name\")]",
-            ));
+            return Err(syn::Error::new(attr.span(), "expected #[tag(\"name\")]"));
         };
         let parsed: Lit = syn::parse2(meta_list.tokens.clone())?;
         let Lit::Str(text) = parsed else {
@@ -350,10 +343,7 @@ fn classify_variant_payload(variant: &Variant) -> syn::Result<PayloadKind> {
                     "v0 IntentTag derive supports unit or single-field tuple variants only",
                 ));
             }
-            let field = unnamed
-                .unnamed
-                .first()
-                .expect("len checked above");
+            let field = unnamed.unnamed.first().expect("len checked above");
             payload_kind_from_type(&field.ty).ok_or_else(|| {
                 syn::Error::new(
                     field.ty.span(),

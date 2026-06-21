@@ -55,7 +55,7 @@ use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
 use pinion_core::style::{Border, BoxStyle};
 use pinion_core::widgets::text_edit::use_text_edit_state;
 use pinion_core::widgets::text_field::{TextFieldEvent, TextFieldExternal, TextFieldState};
-use pinion_core::{style, Color, Frame, WidgetCore, WidgetStateName};
+use pinion_core::{Color, Frame, WidgetCore, WidgetStateName, style};
 use pinion_tui::ratatui::backend::CrosstermBackend;
 use pinion_tui::{TuiRenderer, WidgetViewTui};
 
@@ -298,9 +298,7 @@ impl WidgetCore for HelloTextFieldTui {
         // convention the Vello sibling uses).
         let field_fill: Color = match interaction {
             TextFieldState::Idle => Color::rgb(0x20, 0x28, 0x30),
-            TextFieldState::Focused | TextFieldState::Editing => {
-                Color::rgb(0x14, 0x1c, 0x28)
-            }
+            TextFieldState::Focused | TextFieldState::Editing => Color::rgb(0x14, 0x1c, 0x28),
             TextFieldState::Disabled => Color::rgb(0x4a, 0x42, 0x38),
         };
         let border_color: Color = match interaction {
@@ -336,12 +334,8 @@ impl WidgetCore for HelloTextFieldTui {
         // maps to a single-row box with `+`/`-`/`|` ASCII border per
         // its conventions.
         let mut field_container = ContainerNode::default();
-        field_container.rect = Rect::new(
-            FIELD_LEFT_PX,
-            FIELD_TOP_PX,
-            FIELD_WIDTH_PX,
-            FIELD_HEIGHT_PX,
-        );
+        field_container.rect =
+            Rect::new(FIELD_LEFT_PX, FIELD_TOP_PX, FIELD_WIDTH_PX, FIELD_HEIGHT_PX);
         field_container.tag = Some(Cow::Borrowed(TF_TAG));
         field_container.style =
             BoxStyle::filled(field_fill).with_border(Border::new(border_color, 1));
@@ -422,10 +416,7 @@ impl WidgetCore for HelloTextFieldTui {
         if !matches!(interaction, TextFieldState::Disabled) {
             let mut cursor_node = TextNode::default();
             CURSOR_GLYPH.clone_into(&mut cursor_node.content);
-            let cursor_col = cell_column_for_byte_offset(
-                &effective_text,
-                visual_caret_byte,
-            );
+            let cursor_col = cell_column_for_byte_offset(&effective_text, visual_caret_byte);
             let cursor_left_px = FIELD_LEFT_PX
                 .saturating_add(TEXT_INNER_PAD_PX)
                 .saturating_add(cursor_col.saturating_mul(CELL_PX_X));
@@ -438,7 +429,12 @@ impl WidgetCore for HelloTextFieldTui {
         // Vello sibling's "TextField" header.
         let mut title = TextNode::default();
         "TextField (TUI)".clone_into(&mut title.content);
-        title.rect = Rect::new(FIELD_LEFT_PX, TITLE_TOP_PX, TEXT_BLOCK_WIDTH_PX, TEXT_ROW_HEIGHT_PX);
+        title.rect = Rect::new(
+            FIELD_LEFT_PX,
+            TITLE_TOP_PX,
+            TEXT_BLOCK_WIDTH_PX,
+            TEXT_ROW_HEIGHT_PX,
+        );
         title.style = style::TextStyle::default();
 
         // Status line — text-only mirror so the AI side can verify
@@ -465,15 +461,24 @@ impl WidgetCore for HelloTextFieldTui {
             text,
         );
         status_str.clone_into(&mut status.content);
-        status.rect = Rect::new(FIELD_LEFT_PX, STATUS_TOP_PX, TEXT_BLOCK_WIDTH_PX, TEXT_ROW_HEIGHT_PX);
+        status.rect = Rect::new(
+            FIELD_LEFT_PX,
+            STATUS_TOP_PX,
+            TEXT_BLOCK_WIDTH_PX,
+            TEXT_ROW_HEIGHT_PX,
+        );
         status.style = style::TextStyle::default();
 
         // Hint line — keyboard cheatsheet, single line so the
         // paint walker's row floor does not split it.
         let mut hint = TextNode::default();
-        "Type/Backspace/Arrow/Home/End/Delete, d/e disable, Esc quit"
-            .clone_into(&mut hint.content);
-        hint.rect = Rect::new(FIELD_LEFT_PX, HINT_TOP_PX, TEXT_BLOCK_WIDTH_PX, TEXT_ROW_HEIGHT_PX);
+        "Type/Backspace/Arrow/Home/End/Delete, d/e disable, Esc quit".clone_into(&mut hint.content);
+        hint.rect = Rect::new(
+            FIELD_LEFT_PX,
+            HINT_TOP_PX,
+            TEXT_BLOCK_WIDTH_PX,
+            TEXT_ROW_HEIGHT_PX,
+        );
         hint.style = style::TextStyle::default();
 
         let mut root = ContainerNode::default();
@@ -512,7 +517,12 @@ impl WidgetCore for HelloTextFieldTui {
     /// (the TUI shell passes `Some(V::tag())` unconditionally, so
     /// the gate is currently a no-op but stays in place for the
     /// future TUI [`FocusManager`] axis).
-    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, modifiers: pinion_core::Modifiers) -> bool {
+    fn apply_key(
+        scene: &mut Scene,
+        focused: Option<&str>,
+        key: &str,
+        modifiers: pinion_core::Modifiers,
+    ) -> bool {
         if focused != Some(TF_TAG) {
             return false;
         }
@@ -524,11 +534,7 @@ impl WidgetCore for HelloTextFieldTui {
     }
 
     fn fmt_state_log(state: &Self::State) -> String {
-        format!(
-            "{} / caret={}",
-            state.0.as_name(),
-            state.1,
-        )
+        format!("{} / caret={}", state.0.as_name(), state.1,)
     }
 }
 
@@ -575,7 +581,7 @@ mod tests {
     //! the view fn's paint into a ratatui [`Buffer`] without a real
     //! terminal, then asserts on per-cell glyphs.
 
-    use super::{HelloTextFieldTui, CURSOR_GLYPH, TF_TAG};
+    use super::{CURSOR_GLYPH, HelloTextFieldTui, TF_TAG};
     use pinion_a11y::{AccessValue, AriaRole, WidgetA11y};
     use pinion_core::reactive::Owner;
     use pinion_core::widgets::text_edit::use_text_edit_state;
@@ -613,8 +619,7 @@ mod tests {
     #[test]
     fn r56_1_b_1_tui_access_node_role_is_text_input() {
         with_owner(|| {
-            let nodes =
-                HelloTextFieldTui::access_node(&(TextFieldState::Idle, 0), None);
+            let nodes = HelloTextFieldTui::access_node(&(TextFieldState::Idle, 0), None);
             assert_eq!(nodes.len(), 1);
             assert_eq!(nodes[0].role, AriaRole::TextInput);
             assert_eq!(nodes[0].tag, TF_TAG);
@@ -626,10 +631,7 @@ mod tests {
         with_owner(|| {
             let state = use_text_edit_state(TF_TAG);
             state.set_text("TUI typed".to_owned());
-            let nodes = HelloTextFieldTui::access_node(
-                &(TextFieldState::Focused, 0),
-                None,
-            );
+            let nodes = HelloTextFieldTui::access_node(&(TextFieldState::Focused, 0), None);
             assert_eq!(
                 nodes[0].value,
                 Some(AccessValue::Text("TUI typed".to_owned())),
@@ -640,10 +642,7 @@ mod tests {
     #[test]
     fn r56_1_b_1_tui_access_node_disabled_flag_set_when_disabled() {
         with_owner(|| {
-            let nodes = HelloTextFieldTui::access_node(
-                &(TextFieldState::Disabled, 0),
-                None,
-            );
+            let nodes = HelloTextFieldTui::access_node(&(TextFieldState::Disabled, 0), None);
             assert!(nodes[0].state.disabled);
         });
     }
@@ -668,10 +667,7 @@ mod tests {
     fn r56_1_b_1_tui_view_carries_field_tag() {
         with_owner(|| {
             use pinion_core::Frame;
-            let scene = HelloTextFieldTui::view(
-                (TextFieldState::Focused, 0),
-                &Frame::default(),
-            );
+            let scene = HelloTextFieldTui::view((TextFieldState::Focused, 0), &Frame::default());
             assert!(scene.contains_tag(TF_TAG));
         });
     }

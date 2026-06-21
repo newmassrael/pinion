@@ -290,9 +290,7 @@ impl WindowFramePolicy {
     pub fn frame_budget(self) -> Option<core::time::Duration> {
         match self {
             Self::Idle | Self::Polled { fps: 0 } => None,
-            Self::Polled { fps } => {
-                Some(core::time::Duration::from_secs_f64(1.0 / f64::from(fps)))
-            }
+            Self::Polled { fps } => Some(core::time::Duration::from_secs_f64(1.0 / f64::from(fps))),
         }
     }
 
@@ -354,9 +352,9 @@ pub fn frame_budget_for_window(
 #[cfg(test)]
 mod tests {
     use super::{
-        clamp_frame_dt, default_window_frame_policy, frame_budget_for_window, substep,
-        FixedTimestep, WindowFramePolicy, DEFAULT_IMMEDIATE_MODE_FPS,
-        FIXED_TIMESTEP_SUBSTEP_SECS, MAX_FRAME_DT_SECS,
+        DEFAULT_IMMEDIATE_MODE_FPS, FIXED_TIMESTEP_SUBSTEP_SECS, FixedTimestep, MAX_FRAME_DT_SECS,
+        WindowFramePolicy, clamp_frame_dt, default_window_frame_policy, frame_budget_for_window,
+        substep,
     };
     use core::time::Duration;
 
@@ -406,7 +404,10 @@ mod tests {
         // delta. The clamp normalizes it to `0.0` rather than passing
         // a negative `dt` into the integrator.
         assert_eq!(clamp_frame_dt(-0.1).to_bits(), 0.0_f32.to_bits());
-        assert_eq!(clamp_frame_dt(f32::NEG_INFINITY).to_bits(), 0.0_f32.to_bits());
+        assert_eq!(
+            clamp_frame_dt(f32::NEG_INFINITY).to_bits(),
+            0.0_f32.to_bits()
+        );
     }
 
     #[test]
@@ -535,7 +536,11 @@ mod tests {
         // the input exactly (last step partial), leaving no remainder.
         let mut seen: Vec<f32> = Vec::new();
         substep(2.5 * FIXED_TIMESTEP_SUBSTEP_SECS, |s| seen.push(s));
-        assert_eq!(seen.len(), 3, "2.5 fixed steps → 3 sub-steps (2 full + partial)");
+        assert_eq!(
+            seen.len(),
+            3,
+            "2.5 fixed steps → 3 sub-steps (2 full + partial)"
+        );
         let total: f32 = seen.iter().sum();
         assert!(
             (total - 2.5 * FIXED_TIMESTEP_SUBSTEP_SECS).abs() < 1e-7,
@@ -565,7 +570,9 @@ mod tests {
         assert_eq!(n, 2, "2.5 fixed steps → 2 whole steps, remainder carried");
         assert_eq!(steps.len(), 2);
         assert!(
-            steps.iter().all(|s| (s - FIXED_TIMESTEP_SUBSTEP_SECS).abs() < 1e-9),
+            steps
+                .iter()
+                .all(|s| (s - FIXED_TIMESTEP_SUBSTEP_SECS).abs() < 1e-9),
             "every step is EXACTLY one fixed timestep, never partial",
         );
         assert!(
@@ -641,9 +648,16 @@ mod tests {
         // from a known boundary.
         let mut ts = FixedTimestep::default();
         ts.advance(0.7 * FIXED_TIMESTEP_SUBSTEP_SECS, |_| {});
-        assert!(ts.remainder() > 0.0, "a sub-fixed advance leaves a remainder");
+        assert!(
+            ts.remainder() > 0.0,
+            "a sub-fixed advance leaves a remainder"
+        );
         ts.reset();
-        assert_eq!(ts.remainder().to_bits(), 0.0_f32.to_bits(), "reset clears it");
+        assert_eq!(
+            ts.remainder().to_bits(),
+            0.0_f32.to_bits(),
+            "reset clears it"
+        );
         // After reset, an exact-multiple advance fires exactly that many
         // steps with no off-by-one from a stale phase.
         let mut fired = 0;

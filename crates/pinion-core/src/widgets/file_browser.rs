@@ -37,7 +37,7 @@ use crate::external::{
     Backend, BackendFallback, BackendSupport, DragPayload, DropPoint, External, ExternalIntrospect,
     InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
-use crate::input::{is_activation_event, PointerWireEvent};
+use crate::input::{PointerWireEvent, is_activation_event};
 use crate::reactive::{Owner, Signal};
 use crate::widgets::scroll::ScrollState;
 
@@ -192,7 +192,9 @@ impl DirectoryState {
     pub fn selected_index(&self) -> Option<usize> {
         let selected = self.selected()?;
         let cwd = self.cwd();
-        self.entries().iter().position(|e| join_path(&cwd, &e.name) == selected)
+        self.entries()
+            .iter()
+            .position(|e| join_path(&cwd, &e.name) == selected)
     }
 
     /// R791.1 — the **leaf name** of the current selection (`"/proj/a.txt"`
@@ -204,7 +206,8 @@ impl DirectoryState {
     /// basename. Subscribes (reads `selected`).
     #[must_use]
     pub fn selected_name(&self) -> Option<String> {
-        self.selected().map(|p| p.rsplit('/').next().unwrap_or(&p).to_owned())
+        self.selected()
+            .map(|p| p.rsplit('/').next().unwrap_or(&p).to_owned())
     }
 
     /// R792 §5.15 §5.40 — the **effective keyboard cursor**: the visual row
@@ -239,9 +242,12 @@ impl DirectoryState {
                   (the navigate / select fire-and-forget mutator precedent)"
     )]
     pub fn move_cursor(&self, key: &str, page: usize) -> bool {
-        let Some(target) =
-            crate::widgets::virtual_select::clamp_nav(self.cursor(), key, self.entries.get().len(), page)
-        else {
+        let Some(target) = crate::widgets::virtual_select::clamp_nav(
+            self.cursor(),
+            key,
+            self.entries.get().len(),
+            page,
+        ) else {
             return false;
         };
         self.cursor.set(Some(target));
@@ -356,7 +362,11 @@ impl DirectoryState {
                   precedent)"
     )]
     pub fn navigate(&self, name: &str) -> String {
-        let is_child_dir = self.entries.get().iter().any(|e| e.is_dir && e.name == name);
+        let is_child_dir = self
+            .entries
+            .get()
+            .iter()
+            .any(|e| e.is_dir && e.name == name);
         if is_child_dir {
             self.enter_directory(join_path(&self.cwd.get(), name));
         }
@@ -523,7 +533,8 @@ impl DirectoryState {
     /// on no real row starts no drag). Not an interaction — pure pointer
     /// bookkeeping, the reorder-model `pressed` precedent.
     pub fn press(&self, index: usize) {
-        self.pressed.set((index < self.entries.get().len()).then_some(index));
+        self.pressed
+            .set((index < self.entries.get().len()).then_some(index));
     }
 
     /// R794 §5.51 — arm a [`DragPayload`] from the [`pressed`](Self::pressed)
@@ -538,7 +549,10 @@ impl DirectoryState {
     pub fn begin_file_drag(&self) -> Option<DragPayload> {
         let idx = self.pressed.get()?;
         let name = self.entries.get().get(idx)?.name.clone();
-        Some(DragPayload { kind: Cow::Borrowed(FILE_DRAG_KIND), value: IntrospectValue::Text(name) })
+        Some(DragPayload {
+            kind: Cow::Borrowed(FILE_DRAG_KIND),
+            value: IntrospectValue::Text(name),
+        })
     }
 
     /// R794 — the live [`FileDropTarget`] under the cursor during a drag, or
@@ -600,7 +614,11 @@ impl DirectoryState {
         if self.pressed.get() == Some(idx) {
             return None;
         }
-        self.entries.get().get(idx).filter(|e| e.is_dir).map(|_| FileDropTarget::Row(idx))
+        self.entries
+            .get()
+            .get(idx)
+            .filter(|e| e.is_dir)
+            .map(|_| FileDropTarget::Row(idx))
     }
 
     /// Apply the move the released drag resolves: the [`pressed`](Self::pressed)
@@ -792,7 +810,13 @@ fn dir_nav_key_inner(
 fn entries_wire(entries: &[DirEntry]) -> String {
     entries
         .iter()
-        .map(|e| if e.is_dir { format!("{}/", e.name) } else { e.name.clone() })
+        .map(|e| {
+            if e.is_dir {
+                format!("{}/", e.name)
+            } else {
+                e.name.clone()
+            }
+        })
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -909,11 +933,19 @@ impl ExternalIntrospect for DirectoryExternal {
         // Indexed entry fields: `name.<i>` / `is_dir.<i>`.
         if let Some(rest) = path.strip_prefix("name.") {
             let i: usize = rest.parse().ok()?;
-            return self.state.entries().get(i).map(|e| IntrospectValue::Text(e.name.clone()));
+            return self
+                .state
+                .entries()
+                .get(i)
+                .map(|e| IntrospectValue::Text(e.name.clone()));
         }
         if let Some(rest) = path.strip_prefix("is_dir.") {
             let i: usize = rest.parse().ok()?;
-            return self.state.entries().get(i).map(|e| IntrospectValue::Bool(e.is_dir));
+            return self
+                .state
+                .entries()
+                .get(i)
+                .map(|e| IntrospectValue::Bool(e.is_dir));
         }
         match path {
             "cwd" => Some(IntrospectValue::Text(self.state.cwd())),
@@ -974,7 +1006,11 @@ impl ExternalIntrospect for DirectoryExternal {
         }
     }
 
-    fn invoke(&mut self, path: &str, args: IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+    fn invoke(
+        &mut self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
         match path {
             // R787 — pointer / keyboard activation of a painted row, the
             // composite-tag convention the InputRouter routes here: a row
@@ -1060,8 +1096,18 @@ mod tests {
 
     fn sample() -> Rc<dyn Directory> {
         let d = InMemoryDirectory::new();
-        d.insert("/proj", vec![DirEntry::dir("src"), DirEntry::file("Cargo.toml"), DirEntry::file("README.md")]);
-        d.insert("/proj/src", vec![DirEntry::file("main.rs"), DirEntry::file("lib.rs")]);
+        d.insert(
+            "/proj",
+            vec![
+                DirEntry::dir("src"),
+                DirEntry::file("Cargo.toml"),
+                DirEntry::file("README.md"),
+            ],
+        );
+        d.insert(
+            "/proj/src",
+            vec![DirEntry::file("main.rs"), DirEntry::file("lib.rs")],
+        );
         Rc::new(d)
     }
 
@@ -1093,7 +1139,11 @@ mod tests {
         let s = state();
         assert_eq!(s.navigate("src"), "/proj/src", "navigate into a child dir");
         let names: Vec<String> = s.entries().iter().map(|e| e.name.clone()).collect();
-        assert_eq!(names, ["lib.rs", "main.rs"], "listing refreshed to child dir");
+        assert_eq!(
+            names,
+            ["lib.rs", "main.rs"],
+            "listing refreshed to child dir"
+        );
         assert_eq!(s.up(), "/proj", "up returns to the parent");
         assert_eq!(s.entries().len(), 3, "parent listing restored");
     }
@@ -1101,8 +1151,16 @@ mod tests {
     #[test]
     fn r787_navigate_to_file_is_noop() {
         let s = state();
-        assert_eq!(s.navigate("README.md"), "/proj", "navigate to a file is a no-op");
-        assert_eq!(s.navigate("nope"), "/proj", "navigate to a missing entry is a no-op");
+        assert_eq!(
+            s.navigate("README.md"),
+            "/proj",
+            "navigate to a file is a no-op"
+        );
+        assert_eq!(
+            s.navigate("nope"),
+            "/proj",
+            "navigate to a missing entry is a no-op"
+        );
     }
 
     #[test]
@@ -1129,14 +1187,20 @@ mod tests {
     fn r787_external_query_surface() {
         let st = Rc::new(state());
         let ext = DirectoryExternal::new(Rc::clone(&st));
-        assert_eq!(ext.query("cwd"), Some(IntrospectValue::Text("/proj".into())));
+        assert_eq!(
+            ext.query("cwd"),
+            Some(IntrospectValue::Text("/proj".into()))
+        );
         assert_eq!(ext.query("count"), Some(IntrospectValue::Int(3)));
         assert_eq!(
             ext.query("entries"),
             Some(IntrospectValue::Text("src/\nCargo.toml\nREADME.md".into())),
             "dirs suffixed '/' in the wire listing",
         );
-        assert_eq!(ext.query("name.0"), Some(IntrospectValue::Text("src".into())));
+        assert_eq!(
+            ext.query("name.0"),
+            Some(IntrospectValue::Text("src".into()))
+        );
         assert_eq!(ext.query("is_dir.0"), Some(IntrospectValue::Bool(true)));
         assert_eq!(ext.query("is_dir.1"), Some(IntrospectValue::Bool(false)));
         assert_eq!(ext.query("selected"), Some(IntrospectValue::Null));
@@ -1148,18 +1212,24 @@ mod tests {
         let st = Rc::new(state());
         let mut ext = DirectoryExternal::new(Rc::clone(&st));
         assert_eq!(
-            ext.invoke("navigate", IntrospectValue::Text("src".into())).unwrap(),
+            ext.invoke("navigate", IntrospectValue::Text("src".into()))
+                .unwrap(),
             IntrospectValue::Text("/proj/src".into()),
         );
         assert_eq!(st.cwd(), "/proj/src");
         assert_eq!(
-            ext.invoke("select", IntrospectValue::Text("main.rs".into())).unwrap(),
+            ext.invoke("select", IntrospectValue::Text("main.rs".into()))
+                .unwrap(),
             IntrospectValue::Text("/proj/src/main.rs".into()),
         );
-        assert_eq!(ext.invoke("up", IntrospectValue::Null).unwrap(), IntrospectValue::Text("/proj".into()));
+        assert_eq!(
+            ext.invoke("up", IntrospectValue::Null).unwrap(),
+            IntrospectValue::Text("/proj".into())
+        );
         assert_eq!(st.selected(), None, "up cleared the selection");
         assert_eq!(
-            ext.invoke("open", IntrospectValue::Text("/proj/src".into())).unwrap(),
+            ext.invoke("open", IntrospectValue::Text("/proj/src".into()))
+                .unwrap(),
             IntrospectValue::Text("/proj/src".into()),
         );
         assert_eq!(
@@ -1185,17 +1255,21 @@ mod tests {
         let st = Rc::new(state());
         let mut ext = DirectoryExternal::new(Rc::clone(&st));
         // Row 0 (src) PointerUp → navigate.
-        ext.invoke("send", IntrospectValue::Text("0:PointerUp".into())).unwrap();
+        ext.invoke("send", IntrospectValue::Text("0:PointerUp".into()))
+            .unwrap();
         assert_eq!(st.cwd(), "/proj/src");
         // "up" affordance → parent.
-        ext.invoke("send", IntrospectValue::Text("up:PointerUp".into())).unwrap();
+        ext.invoke("send", IntrospectValue::Text("up:PointerUp".into()))
+            .unwrap();
         assert_eq!(st.cwd(), "/proj");
         // Row 2 (README.md) PointerUp → select.
-        ext.invoke("send", IntrospectValue::Text("2:PointerUp".into())).unwrap();
+        ext.invoke("send", IntrospectValue::Text("2:PointerUp".into()))
+            .unwrap();
         assert_eq!(st.selected(), Some("/proj/README.md".to_string()));
         // Non-activation edge (hover) is inert.
         let before = st.cwd();
-        ext.invoke("send", IntrospectValue::Text("0:PointerEnter".into())).unwrap();
+        ext.invoke("send", IntrospectValue::Text("0:PointerEnter".into()))
+            .unwrap();
         assert_eq!(st.cwd(), before, "hover does not navigate");
     }
 
@@ -1206,7 +1280,8 @@ mod tests {
         // name and the activation test silently failed.
         let st = Rc::new(state());
         let mut ext = DirectoryExternal::new(Rc::clone(&st));
-        ext.invoke("send", IntrospectValue::Text("0:PointerUp:c".into())).unwrap();
+        ext.invoke("send", IntrospectValue::Text("0:PointerUp:c".into()))
+            .unwrap();
         assert_eq!(st.cwd(), "/proj/src", "Ctrl+click still navigates");
     }
 
@@ -1225,26 +1300,47 @@ mod tests {
         let s = state(); // /proj: [src(dir), Cargo.toml, README.md]
         assert_eq!(s.selected_name(), None, "no selection = None");
         s.select("README.md");
-        assert_eq!(s.selected_name(), Some("README.md".to_string()), "leaf of /proj/README.md");
+        assert_eq!(
+            s.selected_name(),
+            Some("README.md".to_string()),
+            "leaf of /proj/README.md"
+        );
         s.navigate("src");
         s.select("main.rs");
-        assert_eq!(s.selected_name(), Some("main.rs".to_string()), "leaf in a nested cwd");
+        assert_eq!(
+            s.selected_name(),
+            Some("main.rs".to_string()),
+            "leaf in a nested cwd"
+        );
     }
 
     #[test]
     fn r789_state_create_dir_file_and_delete_selected() {
         let s = state(); // /proj: [src(dir), Cargo.toml, README.md]
         assert!(s.create_dir("assets"), "new dir created in cwd");
-        assert!(s.entries().iter().any(|e| e.name == "assets" && e.is_dir), "assets listed");
+        assert!(
+            s.entries().iter().any(|e| e.name == "assets" && e.is_dir),
+            "assets listed"
+        );
         assert!(s.create_file("notes.txt"), "new file created in cwd");
-        assert!(s.entries().iter().any(|e| e.name == "notes.txt" && !e.is_dir));
+        assert!(
+            s.entries()
+                .iter()
+                .any(|e| e.name == "notes.txt" && !e.is_dir)
+        );
         assert!(!s.create_dir("src"), "duplicate name rejected");
         // delete_selected removes the picked entry + clears the selection.
         s.select("Cargo.toml");
         assert!(s.delete_selected(), "selected entry removed");
         assert_eq!(s.selected(), None, "selection cleared after delete");
-        assert!(!s.entries().iter().any(|e| e.name == "Cargo.toml"), "Cargo.toml gone");
-        assert!(!s.delete_selected(), "delete with no selection is a false no-op");
+        assert!(
+            !s.entries().iter().any(|e| e.name == "Cargo.toml"),
+            "Cargo.toml gone"
+        );
+        assert!(
+            !s.delete_selected(),
+            "delete with no selection is a false no-op"
+        );
     }
 
     #[test]
@@ -1252,22 +1348,29 @@ mod tests {
         let st = Rc::new(state());
         let mut ext = DirectoryExternal::new(Rc::clone(&st));
         assert_eq!(
-            ext.invoke("mkdir", IntrospectValue::Text("assets".into())).unwrap(),
+            ext.invoke("mkdir", IntrospectValue::Text("assets".into()))
+                .unwrap(),
             IntrospectValue::Bool(true),
         );
         assert_eq!(st.count(), 4, "mkdir grew the listing");
         assert_eq!(
-            ext.invoke("touch", IntrospectValue::Text("LICENSE".into())).unwrap(),
+            ext.invoke("touch", IntrospectValue::Text("LICENSE".into()))
+                .unwrap(),
             IntrospectValue::Bool(true),
         );
         // delete operates on the selection.
-        ext.invoke("select", IntrospectValue::Text("README.md".into())).unwrap();
-        assert_eq!(ext.invoke("delete", IntrospectValue::Null).unwrap(), IntrospectValue::Bool(true));
+        ext.invoke("select", IntrospectValue::Text("README.md".into()))
+            .unwrap();
+        assert_eq!(
+            ext.invoke("delete", IntrospectValue::Null).unwrap(),
+            IntrospectValue::Bool(true)
+        );
         assert_eq!(st.selected(), None, "delete cleared the selection");
         assert!(!st.entries().iter().any(|e| e.name == "README.md"));
         // duplicate mkdir reports false (not an error).
         assert_eq!(
-            ext.invoke("mkdir", IntrospectValue::Text("src".into())).unwrap(),
+            ext.invoke("mkdir", IntrospectValue::Text("src".into()))
+                .unwrap(),
             IntrospectValue::Bool(false),
         );
     }
@@ -1276,37 +1379,68 @@ mod tests {
     fn r791_state_rename_selected_follows_selection() {
         let s = state(); // /proj: [src(dir), Cargo.toml, README.md]
         // No selection → no-op.
-        assert!(!s.rename_selected("x"), "rename with no selection is a false no-op");
+        assert!(
+            !s.rename_selected("x"),
+            "rename with no selection is a false no-op"
+        );
         s.select("README.md");
         assert!(s.rename_selected("NOTES.md"), "selected file renamed");
-        assert!(s.entries().iter().any(|e| e.name == "NOTES.md"), "new name listed");
-        assert!(!s.entries().iter().any(|e| e.name == "README.md"), "old name gone");
-        assert_eq!(s.selected(), Some("/proj/NOTES.md".to_string()), "selection follows the rename");
+        assert!(
+            s.entries().iter().any(|e| e.name == "NOTES.md"),
+            "new name listed"
+        );
+        assert!(
+            !s.entries().iter().any(|e| e.name == "README.md"),
+            "old name gone"
+        );
+        assert_eq!(
+            s.selected(),
+            Some("/proj/NOTES.md".to_string()),
+            "selection follows the rename"
+        );
         // Blank name + taken name are rejected (selection unchanged).
         assert!(!s.rename_selected("   "), "blank name rejected");
         assert!(!s.rename_selected("Cargo.toml"), "taken name rejected");
-        assert_eq!(s.selected(), Some("/proj/NOTES.md".to_string()), "rejected rename left selection");
+        assert_eq!(
+            s.selected(),
+            Some("/proj/NOTES.md".to_string()),
+            "rejected rename left selection"
+        );
     }
 
     #[test]
     fn r791_external_rename_invoke() {
         let st = Rc::new(state());
         let mut ext = DirectoryExternal::new(Rc::clone(&st));
-        ext.invoke("select", IntrospectValue::Text("Cargo.toml".into())).unwrap();
+        ext.invoke("select", IntrospectValue::Text("Cargo.toml".into()))
+            .unwrap();
         assert_eq!(
-            ext.invoke("rename", IntrospectValue::Text("Cargo.lock".into())).unwrap(),
+            ext.invoke("rename", IntrospectValue::Text("Cargo.lock".into()))
+                .unwrap(),
             IntrospectValue::Bool(true),
         );
-        assert!(st.entries().iter().any(|e| e.name == "Cargo.lock"), "renamed via invoke");
-        assert_eq!(st.selected(), Some("/proj/Cargo.lock".to_string()), "selection followed");
-        // rename with no selection cleared → false; a non-string arg errors.
-        ext.invoke("open", IntrospectValue::Text("/proj".into())).unwrap(); // clears selection
+        assert!(
+            st.entries().iter().any(|e| e.name == "Cargo.lock"),
+            "renamed via invoke"
+        );
         assert_eq!(
-            ext.invoke("rename", IntrospectValue::Text("x".into())).unwrap(),
+            st.selected(),
+            Some("/proj/Cargo.lock".to_string()),
+            "selection followed"
+        );
+        // rename with no selection cleared → false; a non-string arg errors.
+        ext.invoke("open", IntrospectValue::Text("/proj".into()))
+            .unwrap(); // clears selection
+        assert_eq!(
+            ext.invoke("rename", IntrospectValue::Text("x".into()))
+                .unwrap(),
             IntrospectValue::Bool(false),
             "rename with no selection reports false",
         );
-        assert_eq!(ext.invoke("rename", IntrospectValue::Null), Err(InvokeError::TypeMismatch));
+        assert_eq!(
+            ext.invoke("rename", IntrospectValue::Null),
+            Err(InvokeError::TypeMismatch)
+        );
     }
 
     // ── R792 keyboard cursor ────────────────────────────────────────
@@ -1315,7 +1449,11 @@ mod tests {
     fn r792_cursor_defaults_to_first_row_and_empty_is_none() {
         let s = state(); // /proj: [src, Cargo.toml, README.md]
         // Unmoved → the effective cursor is the first row.
-        assert_eq!(s.cursor(), Some(0), "unmoved cursor defaults to the first row");
+        assert_eq!(
+            s.cursor(),
+            Some(0),
+            "unmoved cursor defaults to the first row"
+        );
         // An empty listing has no cursor.
         let d = InMemoryDirectory::new();
         d.insert("/empty", vec![]);
@@ -1331,13 +1469,24 @@ mod tests {
         assert!(s.move_cursor("ArrowDown", 5));
         assert_eq!(s.cursor(), Some(2));
         assert!(s.move_cursor("ArrowDown", 5));
-        assert_eq!(s.cursor(), Some(2), "ArrowDown at the last row clamps (no wrap)");
+        assert_eq!(
+            s.cursor(),
+            Some(2),
+            "ArrowDown at the last row clamps (no wrap)"
+        );
         assert!(s.move_cursor("Home", 5));
         assert_eq!(s.cursor(), Some(0), "Home jumps to the first row");
         assert!(s.move_cursor("End", 5));
         assert_eq!(s.cursor(), Some(2), "End jumps to the last row");
-        assert!(!s.move_cursor("Tab", 5), "an unhandled key is a false no-op");
-        assert_eq!(s.cursor(), Some(2), "an unhandled key leaves the cursor put");
+        assert!(
+            !s.move_cursor("Tab", 5),
+            "an unhandled key is a false no-op"
+        );
+        assert_eq!(
+            s.cursor(),
+            Some(2),
+            "an unhandled key leaves the cursor put"
+        );
     }
 
     #[test]
@@ -1346,7 +1495,11 @@ mod tests {
         s.move_cursor("End", 5);
         assert_eq!(s.cursor(), Some(2), "cursor moved to the last row");
         s.navigate("src"); // /proj/src: [lib.rs, main.rs]
-        assert_eq!(s.cursor(), Some(0), "navigation resets the cursor to the new dir's first row");
+        assert_eq!(
+            s.cursor(),
+            Some(0),
+            "navigation resets the cursor to the new dir's first row"
+        );
         s.move_cursor("ArrowDown", 5);
         assert_eq!(s.cursor(), Some(1));
         s.up();
@@ -1363,7 +1516,11 @@ mod tests {
         // Cursor on row 2 (README.md) → Enter selects.
         s.move_cursor("End", 5);
         s.activate_cursor();
-        assert_eq!(s.selected(), Some("/proj/README.md".to_string()), "activate on a file selects it");
+        assert_eq!(
+            s.selected(),
+            Some("/proj/README.md".to_string()),
+            "activate on a file selects it"
+        );
     }
 
     #[test]
@@ -1374,7 +1531,11 @@ mod tests {
         s.set_cursor(Some(99));
         assert_eq!(s.cursor(), Some(2), "out-of-range clamps to the last row");
         s.set_cursor(None);
-        assert_eq!(s.cursor(), Some(0), "None resets to the effective first row");
+        assert_eq!(
+            s.cursor(),
+            Some(0),
+            "None resets to the effective first row"
+        );
     }
 
     #[test]
@@ -1384,14 +1545,25 @@ mod tests {
         let scroll = ScrollState::new();
         scroll.set_measured_viewport(300, 160);
         // Unfocused → ignored.
-        assert!(!dir_nav_key(&s, &scroll, Some("other"), "fb", "ArrowDown", 34));
+        assert!(!dir_nav_key(
+            &s,
+            &scroll,
+            Some("other"),
+            "fb",
+            "ArrowDown",
+            34
+        ));
         assert_eq!(s.cursor(), Some(0), "unfocused key did not move the cursor");
         // Focused → ArrowDown advances.
         assert!(dir_nav_key(&s, &scroll, Some("fb"), "fb", "ArrowDown", 34));
         assert_eq!(s.cursor(), Some(1));
         // Enter activates the cursor row (row 1 = Cargo.toml → select).
         assert!(dir_nav_key(&s, &scroll, Some("fb"), "fb", "Enter", 34));
-        assert_eq!(s.selected(), Some("/proj/Cargo.toml".to_string()), "Enter picked the cursor file");
+        assert_eq!(
+            s.selected(),
+            Some("/proj/Cargo.toml".to_string()),
+            "Enter picked the cursor file"
+        );
         // A non-nav key is a false no-op.
         assert!(!dir_nav_key(&s, &scroll, Some("fb"), "fb", "Tab", 34));
     }
@@ -1401,7 +1573,9 @@ mod tests {
         use crate::widgets::scroll::ScrollState;
         // A listing taller than the viewport so End scrolls.
         let d = InMemoryDirectory::new();
-        let files: Vec<DirEntry> = (0..40).map(|i| DirEntry::file(format!("f{i}.txt"))).collect();
+        let files: Vec<DirEntry> = (0..40)
+            .map(|i| DirEntry::file(format!("f{i}.txt")))
+            .collect();
         d.insert("/big", files);
         let s = DirectoryState::new(Rc::new(d), "/big");
         let scroll = ScrollState::new();
@@ -1409,7 +1583,11 @@ mod tests {
         scroll.set_measured_viewport(300, 160);
         assert!(dir_nav_key(&s, &scroll, Some("fb"), "fb", "End", 34));
         assert_eq!(s.cursor(), Some(39), "End moves to the last row");
-        assert!(scroll.offset_y() > 0, "the deep cursor scrolled into view, offset {}", scroll.offset_y());
+        assert!(
+            scroll.offset_y() > 0,
+            "the deep cursor scrolled into view, offset {}",
+            scroll.offset_y()
+        );
         assert!(dir_nav_key(&s, &scroll, Some("fb"), "fb", "Home", 34));
         assert_eq!(s.cursor(), Some(0));
         assert_eq!(scroll.offset_y(), 0, "Home scrolled back to the top");
@@ -1424,20 +1602,39 @@ mod tests {
         // ArrowDown lands on Cargo.toml (a file) → it becomes selected.
         assert!(s.move_cursor_selecting("ArrowDown", 5), "ArrowDown handled");
         assert_eq!(s.cursor(), Some(1));
-        assert_eq!(s.selected(), Some("/proj/Cargo.toml".to_string()), "file row selection follows focus");
+        assert_eq!(
+            s.selected(),
+            Some("/proj/Cargo.toml".to_string()),
+            "file row selection follows focus"
+        );
         // ArrowDown to README.md (a file) → selection follows.
         assert!(s.move_cursor_selecting("ArrowDown", 5));
-        assert_eq!(s.selected(), Some("/proj/README.md".to_string()), "selection tracks the focused file");
+        assert_eq!(
+            s.selected(),
+            Some("/proj/README.md".to_string()),
+            "selection tracks the focused file"
+        );
         // Home lands on src (a directory) → selection clears (dirs are not picks).
         assert!(s.move_cursor_selecting("Home", 5));
         assert_eq!(s.cursor(), Some(0));
-        assert_eq!(s.selected(), None, "a directory row under the cursor clears the selection");
+        assert_eq!(
+            s.selected(),
+            None,
+            "a directory row under the cursor clears the selection"
+        );
         // Plain move_cursor (the Files model) leaves the selection orthogonal.
         s.move_cursor_selecting("End", 5); // select README.md again
         assert_eq!(s.selected(), Some("/proj/README.md".to_string()));
-        assert!(s.move_cursor("Home", 5), "plain move_cursor moves the cursor");
+        assert!(
+            s.move_cursor("Home", 5),
+            "plain move_cursor moves the cursor"
+        );
         assert_eq!(s.cursor(), Some(0), "cursor moved to the dir row");
-        assert_eq!(s.selected(), Some("/proj/README.md".to_string()), "plain move_cursor does not touch selection");
+        assert_eq!(
+            s.selected(),
+            Some("/proj/README.md".to_string()),
+            "plain move_cursor does not touch selection"
+        );
     }
 
     #[test]
@@ -1447,14 +1644,43 @@ mod tests {
         let scroll = ScrollState::new();
         scroll.set_measured_viewport(300, 160);
         // Unfocused → ignored, selection untouched.
-        assert!(!dir_nav_key_selecting(&s, &scroll, Some("other"), "fb", "ArrowDown", 34));
+        assert!(!dir_nav_key_selecting(
+            &s,
+            &scroll,
+            Some("other"),
+            "fb",
+            "ArrowDown",
+            34
+        ));
         assert_eq!(s.selected(), None, "unfocused key selects nothing");
         // Focused ArrowDown → row 1 (Cargo.toml) selected (the OK gate would enable).
-        assert!(dir_nav_key_selecting(&s, &scroll, Some("fb"), "fb", "ArrowDown", 34));
-        assert_eq!(s.selected(), Some("/proj/Cargo.toml".to_string()), "selection follows the focused file");
+        assert!(dir_nav_key_selecting(
+            &s,
+            &scroll,
+            Some("fb"),
+            "fb",
+            "ArrowDown",
+            34
+        ));
+        assert_eq!(
+            s.selected(),
+            Some("/proj/Cargo.toml".to_string()),
+            "selection follows the focused file"
+        );
         // Home → row 0 (src, a dir) → selection clears (the OK gate would disable).
-        assert!(dir_nav_key_selecting(&s, &scroll, Some("fb"), "fb", "Home", 34));
-        assert_eq!(s.selected(), None, "focusing a directory row clears the picker selection");
+        assert!(dir_nav_key_selecting(
+            &s,
+            &scroll,
+            Some("fb"),
+            "fb",
+            "Home",
+            34
+        ));
+        assert_eq!(
+            s.selected(),
+            None,
+            "focusing a directory row clears the picker selection"
+        );
     }
 
     #[test]
@@ -1464,7 +1690,11 @@ mod tests {
         // Effective cursor defaults to the first row.
         assert_eq!(ext.query("cursor"), Some(IntrospectValue::Int(0)));
         st.move_cursor("End", 5);
-        assert_eq!(ext.query("cursor"), Some(IntrospectValue::Int(2)), "query tracks the moved cursor");
+        assert_eq!(
+            ext.query("cursor"),
+            Some(IntrospectValue::Int(2)),
+            "query tracks the moved cursor"
+        );
         // Admin set via intervene.
         ext.intervene("cursor", IntrospectValue::Int(1)).unwrap();
         assert_eq!(st.cursor(), Some(1));
@@ -1480,16 +1710,27 @@ mod tests {
     fn r787_external_intervene_cwd_is_admin_navigation() {
         let st = Rc::new(state());
         let mut ext = DirectoryExternal::new(Rc::clone(&st));
-        ext.intervene("cwd", IntrospectValue::Text("/proj/src".into())).unwrap();
+        ext.intervene("cwd", IntrospectValue::Text("/proj/src".into()))
+            .unwrap();
         assert_eq!(st.cwd(), "/proj/src", "intervene cwd jumps absolutely");
-        assert_eq!(ext.intervene("count", IntrospectValue::Int(0)), Err(InterveneError::ReadOnly));
-        assert_eq!(ext.intervene("nope", IntrospectValue::Null), Err(InterveneError::UnknownPath));
+        assert_eq!(
+            ext.intervene("count", IntrospectValue::Int(0)),
+            Err(InterveneError::ReadOnly)
+        );
+        assert_eq!(
+            ext.intervene("nope", IntrospectValue::Null),
+            Err(InterveneError::UnknownPath)
+        );
     }
 
     // ── R794 drag-to-move ───────────────────────────────────────────
 
     fn drop_at(tag: &str) -> DropPoint {
-        DropPoint { tag: tag.to_string(), x_rel: 0.5, y_rel: 0.5 }
+        DropPoint {
+            tag: tag.to_string(),
+            x_rel: 0.5,
+            y_rel: 0.5,
+        }
     }
 
     #[test]
@@ -1499,8 +1740,15 @@ mod tests {
         s.press(2); // README.md
         assert_eq!(s.pressed(), Some(2));
         let payload = s.begin_file_drag().expect("an armed row drags");
-        assert_eq!(payload.kind, FILE_DRAG_KIND, "payload carries the file-row kind");
-        assert_eq!(payload.value, IntrospectValue::Text("README.md".into()), "and the leaf name");
+        assert_eq!(
+            payload.kind, FILE_DRAG_KIND,
+            "payload carries the file-row kind"
+        );
+        assert_eq!(
+            payload.value,
+            IntrospectValue::Text("README.md".into()),
+            "and the leaf name"
+        );
         // An out-of-range press clears the arm (a press on no real row).
         s.press(99);
         assert_eq!(s.pressed(), None, "out-of-range press disarms");
@@ -1513,7 +1761,11 @@ mod tests {
         s.press(2); // dragging README.md
         // A directory row is a move-into target.
         s.drag_over(Some(&drop_at("fb#0")));
-        assert_eq!(s.drop_target(), Some(FileDropTarget::Row(0)), "folder row = drop into it");
+        assert_eq!(
+            s.drop_target(),
+            Some(FileDropTarget::Row(0)),
+            "folder row = drop into it"
+        );
         // A file row is not a move-into target.
         s.drag_over(Some(&drop_at("fb#1")));
         assert_eq!(s.drop_target(), None, "a file has no inside");
@@ -1523,7 +1775,11 @@ mod tests {
         assert_eq!(s.drop_target(), None, "dropping onto yourself is no target");
         // The `../` breadcrumb resolves to Up.
         s.drag_over(Some(&drop_at("fb#up")));
-        assert_eq!(s.drop_target(), Some(FileDropTarget::Up), "breadcrumb = move up");
+        assert_eq!(
+            s.drop_target(),
+            Some(FileDropTarget::Up),
+            "breadcrumb = move up"
+        );
         // The background (no tag) clears the target.
         s.drag_over(None);
         assert_eq!(s.drop_target(), None, "over no region = no target");
@@ -1536,13 +1792,19 @@ mod tests {
         s.press(2); // drag README.md
         s.drag_over(Some(&drop_at("fb#0"))); // over src/
         assert!(s.drag_drop(Some(&drop_at("fb#0"))), "the move took effect");
-        assert!(!s.entries().iter().any(|e| e.name == "README.md"), "file left the cwd");
+        assert!(
+            !s.entries().iter().any(|e| e.name == "README.md"),
+            "file left the cwd"
+        );
         assert_eq!(s.selected(), None, "the moved selection cleared");
         assert_eq!(s.pressed(), None, "drag arm cleared on drop");
         assert_eq!(s.drop_target(), None, "drop highlight cleared on drop");
         // It landed inside src/.
         s.navigate("src");
-        assert!(s.entries().iter().any(|e| e.name == "README.md"), "file is now inside src/");
+        assert!(
+            s.entries().iter().any(|e| e.name == "README.md"),
+            "file is now inside src/"
+        );
     }
 
     #[test]
@@ -1550,10 +1812,19 @@ mod tests {
         let s = state();
         s.navigate("src"); // /proj/src: [lib.rs@0, main.rs@1]
         s.press(0); // drag lib.rs
-        assert!(s.drag_drop(Some(&drop_at("fb#up"))), "drop on `../` moves to the parent");
-        assert!(!s.entries().iter().any(|e| e.name == "lib.rs"), "lib.rs left /proj/src");
+        assert!(
+            s.drag_drop(Some(&drop_at("fb#up"))),
+            "drop on `../` moves to the parent"
+        );
+        assert!(
+            !s.entries().iter().any(|e| e.name == "lib.rs"),
+            "lib.rs left /proj/src"
+        );
         s.up();
-        assert!(s.entries().iter().any(|e| e.name == "lib.rs"), "lib.rs landed in /proj");
+        assert!(
+            s.entries().iter().any(|e| e.name == "lib.rs"),
+            "lib.rs landed in /proj"
+        );
     }
 
     #[test]
@@ -1561,11 +1832,20 @@ mod tests {
         let s = state();
         s.press(2); // README.md
         // Drop onto a file row (Cargo.toml@1) → no valid target.
-        assert!(!s.drag_drop(Some(&drop_at("fb#1"))), "dropping onto a file is inert");
-        assert!(s.entries().iter().any(|e| e.name == "README.md"), "nothing moved");
+        assert!(
+            !s.drag_drop(Some(&drop_at("fb#1"))),
+            "dropping onto a file is inert"
+        );
+        assert!(
+            s.entries().iter().any(|e| e.name == "README.md"),
+            "nothing moved"
+        );
         // Drop onto the source row itself → inert.
         s.press(2);
-        assert!(!s.drag_drop(Some(&drop_at("fb#2"))), "dropping onto yourself is inert");
+        assert!(
+            !s.drag_drop(Some(&drop_at("fb#2"))),
+            "dropping onto yourself is inert"
+        );
         // Drop with no armed source → inert.
         assert!(!s.drag_drop(Some(&drop_at("fb#0"))));
     }
@@ -1578,12 +1858,24 @@ mod tests {
         d.insert("/p/dest", vec![]);
         let s = DirectoryState::new(Rc::new(d), "/p"); // [dest@0, from@1]
         s.press(1); // drag the `from` directory
-        assert!(s.drag_drop(Some(&drop_at("fb#0"))), "folder moved into dest/");
-        assert!(!s.entries().iter().any(|e| e.name == "from"), "from/ left /p");
+        assert!(
+            s.drag_drop(Some(&drop_at("fb#0"))),
+            "folder moved into dest/"
+        );
+        assert!(
+            !s.entries().iter().any(|e| e.name == "from"),
+            "from/ left /p"
+        );
         s.navigate("dest");
-        assert!(s.entries().iter().any(|e| e.name == "from"), "from/ now under dest/");
+        assert!(
+            s.entries().iter().any(|e| e.name == "from"),
+            "from/ now under dest/"
+        );
         s.navigate("from");
-        assert!(s.entries().iter().any(|e| e.name == "a.rs"), "the subtree came along");
+        assert!(
+            s.entries().iter().any(|e| e.name == "a.rs"),
+            "the subtree came along"
+        );
     }
 
     #[test]
@@ -1594,13 +1886,25 @@ mod tests {
         d.insert("/a/dir1/sub", vec![]);
         let s = DirectoryState::new(Rc::new(d), "/a");
         // Into the current directory (already there) → rejected.
-        assert!(!s.move_into("dir1", "/a"), "moving into the current dir is a no-op");
+        assert!(
+            !s.move_into("dir1", "/a"),
+            "moving into the current dir is a no-op"
+        );
         // Into itself → rejected.
-        assert!(!s.move_into("dir1", "/a/dir1"), "moving a dir into itself is refused");
+        assert!(
+            !s.move_into("dir1", "/a/dir1"),
+            "moving a dir into itself is refused"
+        );
         // Into its own descendant → rejected (would corrupt the subtree re-key).
-        assert!(!s.move_into("dir1", "/a/dir1/sub"), "moving a dir into its subtree is refused");
+        assert!(
+            !s.move_into("dir1", "/a/dir1/sub"),
+            "moving a dir into its subtree is refused"
+        );
         // The listing is untouched by every rejected move.
-        assert!(s.entries().iter().any(|e| e.name == "dir1"), "dir1 still in /a");
+        assert!(
+            s.entries().iter().any(|e| e.name == "dir1"),
+            "dir1 still in /a"
+        );
     }
 
     #[test]
@@ -1610,9 +1914,16 @@ mod tests {
         assert_eq!(ext.query("dragging"), Some(IntrospectValue::Bool(false)));
         assert_eq!(ext.query("drop_target"), Some(IntrospectValue::Null));
         // A row PointerDown arms the drag (the router's begin_drag source).
-        ext.invoke("send", IntrospectValue::Text("2:PointerDown".into())).unwrap();
-        assert_eq!(ext.query("dragging"), Some(IntrospectValue::Bool(true)), "armed after PointerDown");
-        let payload = ext.begin_drag().expect("begin_drag arms from the pressed row");
+        ext.invoke("send", IntrospectValue::Text("2:PointerDown".into()))
+            .unwrap();
+        assert_eq!(
+            ext.query("dragging"),
+            Some(IntrospectValue::Bool(true)),
+            "armed after PointerDown"
+        );
+        let payload = ext
+            .begin_drag()
+            .expect("begin_drag arms from the pressed row");
         // drag_to over a folder row surfaces the introspectable target.
         ext.drag_to(&payload, Some(drop_at("fb#0")));
         assert_eq!(
@@ -1622,11 +1933,25 @@ mod tests {
         );
         // release commits the move and clears the transient state.
         ext.drag_release(&payload, Some(drop_at("fb#0")));
-        assert!(!st.entries().iter().any(|e| e.name == "README.md"), "README.md moved out of /proj");
-        assert_eq!(ext.query("dragging"), Some(IntrospectValue::Bool(false)), "disarmed after drop");
-        assert_eq!(ext.query("drop_target"), Some(IntrospectValue::Null), "highlight cleared after drop");
+        assert!(
+            !st.entries().iter().any(|e| e.name == "README.md"),
+            "README.md moved out of /proj"
+        );
+        assert_eq!(
+            ext.query("dragging"),
+            Some(IntrospectValue::Bool(false)),
+            "disarmed after drop"
+        );
+        assert_eq!(
+            ext.query("drop_target"),
+            Some(IntrospectValue::Null),
+            "highlight cleared after drop"
+        );
         // The drag introspection slots are read-only.
-        assert_eq!(ext.intervene("dragging", IntrospectValue::Bool(true)), Err(InterveneError::ReadOnly));
+        assert_eq!(
+            ext.intervene("dragging", IntrospectValue::Bool(true)),
+            Err(InterveneError::ReadOnly)
+        );
         assert_eq!(
             ext.intervene("drop_target", IntrospectValue::Text("up".into())),
             Err(InterveneError::ReadOnly),
@@ -1638,9 +1963,14 @@ mod tests {
         let st = Rc::new(state());
         st.navigate("src");
         let mut ext = DirectoryExternal::new(Rc::clone(&st));
-        ext.invoke("send", IntrospectValue::Text("0:PointerDown".into())).unwrap();
+        ext.invoke("send", IntrospectValue::Text("0:PointerDown".into()))
+            .unwrap();
         let payload = ext.begin_drag().expect("armed");
         ext.drag_to(&payload, Some(drop_at("fb#up")));
-        assert_eq!(ext.query("drop_target"), Some(IntrospectValue::Text("up".into())), "Up reports as text");
+        assert_eq!(
+            ext.query("drop_target"),
+            Some(IntrospectValue::Text("up".into())),
+            "Up reports as text"
+        );
     }
 }

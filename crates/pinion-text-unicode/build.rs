@@ -43,8 +43,8 @@ struct UnicodeDataTables {
     reason = "nfc_qc / nfd_qc_no / nfkc_qc / nfkd_qc_no mirror the UCD property names by design"
 )]
 fn main() {
-    let manifest_dir = env::var("CARGO_MANIFEST_DIR")
-        .expect("CARGO_MANIFEST_DIR must be set by cargo");
+    let manifest_dir =
+        env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set by cargo");
     let ucd_dir = Path::new(&manifest_dir).join("ucd");
 
     println!("cargo:rerun-if-changed=build.rs");
@@ -55,17 +55,12 @@ fn main() {
     println!("cargo:rerun-if-changed=ucd/BidiMirroring.txt");
     println!("cargo:rerun-if-changed=ucd/LineBreak.txt");
 
-    let unicode_data =
-        fs::read_to_string(ucd_dir.join("UnicodeData.txt"))
-            .expect("ucd/UnicodeData.txt must be vendored");
-    let derived = fs::read_to_string(
-        ucd_dir.join("DerivedNormalizationProps.txt"),
-    )
-    .expect("ucd/DerivedNormalizationProps.txt must be vendored");
-    let derived_bidi = fs::read_to_string(
-        ucd_dir.join("DerivedBidiClass.txt"),
-    )
-    .expect("ucd/DerivedBidiClass.txt must be vendored");
+    let unicode_data = fs::read_to_string(ucd_dir.join("UnicodeData.txt"))
+        .expect("ucd/UnicodeData.txt must be vendored");
+    let derived = fs::read_to_string(ucd_dir.join("DerivedNormalizationProps.txt"))
+        .expect("ucd/DerivedNormalizationProps.txt must be vendored");
+    let derived_bidi = fs::read_to_string(ucd_dir.join("DerivedBidiClass.txt"))
+        .expect("ucd/DerivedBidiClass.txt must be vendored");
     let bidi_brackets = fs::read_to_string(ucd_dir.join("BidiBrackets.txt"))
         .expect("ucd/BidiBrackets.txt must be vendored");
     let bidi_mirroring = fs::read_to_string(ucd_dir.join("BidiMirroring.txt"))
@@ -230,8 +225,8 @@ fn parse_bidi_mirroring(text: &str) -> Vec<(u32, u32)> {
         if parts.len() < 2 {
             continue;
         }
-        let cp = u32::from_str_radix(parts[0].trim(), 16)
-            .expect("invalid Bidi_Mirroring codepoint");
+        let cp =
+            u32::from_str_radix(parts[0].trim(), 16).expect("invalid Bidi_Mirroring codepoint");
         let mirrored = u32::from_str_radix(parts[1].trim(), 16)
             .expect("invalid Bidi_Mirroring target codepoint");
         out.push((cp, mirrored));
@@ -263,8 +258,8 @@ fn parse_bidi_brackets(text: &str) -> Vec<(u32, u32, u8)> {
         }
         let cp = u32::from_str_radix(parts[0].trim(), 16)
             .expect("invalid Bidi_Paired_Bracket codepoint");
-        let matching = u32::from_str_radix(parts[1].trim(), 16)
-            .expect("invalid matching bracket codepoint");
+        let matching =
+            u32::from_str_radix(parts[1].trim(), 16).expect("invalid matching bracket codepoint");
         let kind = match parts[2].trim() {
             "o" => BPT_OPEN,
             "c" => BPT_CLOSE,
@@ -372,10 +367,8 @@ fn parse_quick_check(text: &str, prop_name: &str) -> Vec<(u32, u8)> {
         };
         let range = parts[0].trim();
         if let Some(dot) = range.find("..") {
-            let start =
-                u32::from_str_radix(&range[..dot], 16).expect("range start");
-            let end =
-                u32::from_str_radix(&range[dot + 2..], 16).expect("range end");
+            let start = u32::from_str_radix(&range[..dot], 16).expect("range start");
+            let end = u32::from_str_radix(&range[dot + 2..], 16).expect("range end");
             for cp in start..=end {
                 out.push((cp, qc));
             }
@@ -413,9 +406,8 @@ fn parse_unicode_data(text: &str) -> UnicodeDataTables {
         if fields.len() < 6 {
             continue;
         }
-        let cp = u32::from_str_radix(fields[0], 16).unwrap_or_else(|_| {
-            panic!("invalid hex codepoint: {}", fields[0])
-        });
+        let cp = u32::from_str_radix(fields[0], 16)
+            .unwrap_or_else(|_| panic!("invalid hex codepoint: {}", fields[0]));
         let ccc_value: u8 = fields[3]
             .parse()
             .unwrap_or_else(|_| panic!("invalid CCC: {}", fields[3]));
@@ -430,9 +422,8 @@ fn parse_unicode_data(text: &str) -> UnicodeDataTables {
         let decomp: Vec<u32> = hex_seq
             .split_whitespace()
             .map(|h| {
-                u32::from_str_radix(h, 16).unwrap_or_else(|_| {
-                    panic!("invalid decomp codepoint: {h}")
-                })
+                u32::from_str_radix(h, 16)
+                    .unwrap_or_else(|_| panic!("invalid decomp codepoint: {h}"))
             })
             .collect();
         if is_canonical {
@@ -488,18 +479,13 @@ fn parse_full_composition_exclusion(text: &str) -> Vec<u32> {
         }
         let range = parts[0].trim();
         if let Some(dot) = range.find("..") {
-            let start = u32::from_str_radix(&range[..dot], 16)
-                .expect("invalid range start");
-            let end = u32::from_str_radix(&range[dot + 2..], 16)
-                .expect("invalid range end");
+            let start = u32::from_str_radix(&range[..dot], 16).expect("invalid range start");
+            let end = u32::from_str_radix(&range[dot + 2..], 16).expect("invalid range end");
             for cp in start..=end {
                 out.push(cp);
             }
         } else {
-            out.push(
-                u32::from_str_radix(range, 16)
-                    .expect("invalid single codepoint"),
-            );
+            out.push(u32::from_str_radix(range, 16).expect("invalid single codepoint"));
         }
     }
     out.sort_unstable();
@@ -549,9 +535,7 @@ fn emit_tables(
     s.push_str("// Auto-generated by build.rs from UCD 16.0.0.\n");
     s.push_str("// DO NOT EDIT — regenerated on every build.\n\n");
 
-    s.push_str(
-        "/// UCD version pin (UAX #44 — Hyrum's Law deterministic).\n",
-    );
+    s.push_str("/// UCD version pin (UAX #44 — Hyrum's Law deterministic).\n");
     s.push_str("pub static UCD_VERSION: &str = \"16.0.0\";\n\n");
 
     emit_fast_path_anchors(
@@ -663,7 +647,7 @@ fn emit_fast_path_anchors(
     let compatibility_first = parsed.compatibility_decomposition[0].0;
     let ccc_first = parsed.canonical_combining_class[0].0;
     let exclusion_first = exclusions[0];
-    let primary_first_a = primary_composites[0].0 .0;
+    let primary_first_a = primary_composites[0].0.0;
     let primary_last_a = primary_composites
         .iter()
         .map(|((a, _), _)| *a)
@@ -767,12 +751,7 @@ fn emit_fast_path_anchors(
 /// Stage 2) plus a slice into the flat `_DATA` store. Mirrors the
 /// `emit_u8_bmp_trie_table` pattern from R50.2.10/R50.2.11 but
 /// adapts the value encoding to handle variable-length entries.
-fn emit_decomp_table(
-    s: &mut String,
-    name: &str,
-    doc: &str,
-    table: &[(u32, Vec<u32>)],
-) {
+fn emit_decomp_table(s: &mut String, name: &str, doc: &str, table: &[(u32, Vec<u32>)]) {
     let entry_count = table.len();
     let (bmp_index, bmp_data, decomp_data) = build_decomp_bmp_trie(table);
     let supplementary: Vec<(u32, &[u32])> = table
@@ -806,8 +785,7 @@ fn emit_decomp_table(
          `{name}_BMP_INDEX`; value `0` = no decomposition.",
     )
     .expect("String write infallible");
-    writeln!(s, "pub(crate) static {name}_BMP_DATA: &[u32] = &[")
-        .expect("String write infallible");
+    writeln!(s, "pub(crate) static {name}_BMP_DATA: &[u32] = &[").expect("String write infallible");
     emit_packed_u32_hex_row(s, &bmp_data);
     s.push_str("];\n\n");
 
@@ -819,8 +797,7 @@ fn emit_decomp_table(
          one-step decomposition sequence.",
     )
     .expect("String write infallible");
-    writeln!(s, "pub(crate) static {name}_DATA: &[u32] = &[")
-        .expect("String write infallible");
+    writeln!(s, "pub(crate) static {name}_DATA: &[u32] = &[").expect("String write infallible");
     emit_packed_u32_hex_row(s, &decomp_data);
     s.push_str("];\n\n");
 
@@ -876,9 +853,7 @@ fn emit_decomp_table(
 /// when their entry sets happen to coincide. Inputs with codepoint
 /// `>= 0x10000` are filtered out \u{2014} supplementary entries land in a
 /// separate sorted array via [`emit_decomp_table`].
-fn build_decomp_bmp_trie(
-    entries: &[(u32, Vec<u32>)],
-) -> (Vec<u16>, Vec<u32>, Vec<u32>) {
+fn build_decomp_bmp_trie(entries: &[(u32, Vec<u32>)]) -> (Vec<u16>, Vec<u32>, Vec<u32>) {
     const BLOCK_SIZE: usize = 256;
     const NUM_BLOCKS: usize = 0x10000 / BLOCK_SIZE; // 256
 
@@ -891,12 +866,12 @@ fn build_decomp_bmp_trie(
         }
         let offset = decomp_data.len();
         let length = decomp.len();
-        let length_u32: u32 = length.try_into().expect(
-            "decomp length must fit in u32 (UCD entries are far smaller)",
-        );
-        let offset_u32: u32 = offset.try_into().expect(
-            "decomp_data offset must fit in u32 (UCD totals under 256 KiB)",
-        );
+        let length_u32: u32 = length
+            .try_into()
+            .expect("decomp length must fit in u32 (UCD entries are far smaller)");
+        let offset_u32: u32 = offset
+            .try_into()
+            .expect("decomp_data offset must fit in u32 (UCD totals under 256 KiB)");
         assert!(
             length_u32 > 0 && length_u32 < 256,
             "decomp length {length_u32} out of [1, 255] for U+{cp:04X}",
@@ -943,12 +918,7 @@ fn emit_ccc_table(s: &mut String, ccc: &[(u32, u8)]) {
 /// Stage 2 packed `u8` blocks) plus a sorted supplementary fallback
 /// for codepoints at or above `U+10000`. Shared by CCC (R50.2.10)
 /// and the four Quick-check tables (R50.2.11).
-fn emit_u8_bmp_trie_table(
-    s: &mut String,
-    name: &str,
-    purpose: &str,
-    entries: &[(u32, u8)],
-) {
+fn emit_u8_bmp_trie_table(s: &mut String, name: &str, purpose: &str, entries: &[(u32, u8)]) {
     let (bmp_index, bmp_data) = build_u8_bmp_trie(entries);
     let supplementary: Vec<(u32, u8)> = entries
         .iter()
@@ -972,13 +942,9 @@ fn emit_u8_bmp_trie_table(
     emit_packed_row(s, &bmp_index);
     s.push_str("];\n\n");
 
-    writeln!(
-        s,
-        "/// Packed value blocks indexed by `{name}_BMP_INDEX`.",
-    )
-    .expect("String write infallible");
-    writeln!(s, "pub(crate) static {name}_BMP_DATA: &[u8] = &[")
+    writeln!(s, "/// Packed value blocks indexed by `{name}_BMP_INDEX`.",)
         .expect("String write infallible");
+    writeln!(s, "pub(crate) static {name}_BMP_DATA: &[u8] = &[").expect("String write infallible");
     emit_packed_row(s, &bmp_data);
     s.push_str("];\n\n");
 
@@ -995,8 +961,7 @@ fn emit_u8_bmp_trie_table(
     )
     .expect("String write infallible");
     for (cp, value) in &supplementary {
-        writeln!(s, "    (0x{cp:04X}, {value}),")
-            .expect("String write infallible");
+        writeln!(s, "    (0x{cp:04X}, {value}),").expect("String write infallible");
     }
     s.push_str("];\n\n");
 }
@@ -1108,10 +1073,7 @@ fn emit_exclusion_table(s: &mut String, exclusions: &[u32]) {
 /// the R50.2.13 decomp trie. Replaces the R50.2.2
 /// `&[((u32, u32), u32)]` shape that paid log\u{2082}(1100)
 /// iterations on every compose probe.
-fn emit_primary_composites_table(
-    s: &mut String,
-    primary_composites: &[((u32, u32), u32)],
-) {
+fn emit_primary_composites_table(s: &mut String, primary_composites: &[((u32, u32), u32)]) {
     let (bmp_index, bmp_data, bc_data, supplementary) =
         build_primary_composites_trie(primary_composites);
 
@@ -1146,8 +1108,11 @@ fn emit_primary_composites_table(
          `PRIMARY_COMPOSITES_BMP_INDEX`; value `0` = no `a` group.",
     )
     .expect("String write infallible");
-    writeln!(s, "pub(crate) static PRIMARY_COMPOSITES_BMP_DATA: &[u32] = &[")
-        .expect("String write infallible");
+    writeln!(
+        s,
+        "pub(crate) static PRIMARY_COMPOSITES_BMP_DATA: &[u32] = &["
+    )
+    .expect("String write infallible");
     emit_packed_u32_hex_row(s, &bmp_data);
     s.push_str("];\n\n");
 
@@ -1165,8 +1130,7 @@ fn emit_primary_composites_table(
     )
     .expect("String write infallible");
     for (b, c) in &bc_data {
-        writeln!(s, "    (0x{b:04X}, 0x{c:04X}),")
-            .expect("String write infallible");
+        writeln!(s, "    (0x{b:04X}, 0x{c:04X}),").expect("String write infallible");
     }
     s.push_str("];\n\n");
 
@@ -1190,8 +1154,7 @@ fn emit_primary_composites_table(
             if i > 0 {
                 s.push_str(", ");
             }
-            write!(s, "(0x{b:04X}, 0x{c:04X})")
-                .expect("String write infallible");
+            write!(s, "(0x{b:04X}, 0x{c:04X})").expect("String write infallible");
         }
         s.push_str("]),\n");
     }
@@ -1219,10 +1182,10 @@ fn emit_primary_composites_table(
 /// `clippy::type_complexity` and a named alias documents intent
 /// better than a four-element tuple at a single call site.
 type PrimaryCompositesTrieParts = (
-    Vec<u16>,                     // stage1
-    Vec<u32>,                     // stage2 (packed `(length, offset)`)
-    Vec<(u32, u32)>,              // bc_data (flat per-`a` sub-tables)
-    Vec<(u32, Vec<(u32, u32)>)>,  // supplementary sparse fallback
+    Vec<u16>,                    // stage1
+    Vec<u32>,                    // stage2 (packed `(length, offset)`)
+    Vec<(u32, u32)>,             // bc_data (flat per-`a` sub-tables)
+    Vec<(u32, Vec<(u32, u32)>)>, // supplementary sparse fallback
 );
 
 /// R50.2.14 \u{2014} build the two-level BMP trie for the primary-
@@ -1236,9 +1199,7 @@ type PrimaryCompositesTrieParts = (
 /// sparse `(a, sub-table)` list for supplementary-plane `a`
 /// codepoints (Musical Symbols, etc. — a handful in UCD 16.0.0,
 /// each sub-table also sorted by `b`).
-fn build_primary_composites_trie(
-    entries: &[((u32, u32), u32)],
-) -> PrimaryCompositesTrieParts {
+fn build_primary_composites_trie(entries: &[((u32, u32), u32)]) -> PrimaryCompositesTrieParts {
     use std::collections::BTreeMap;
     const BLOCK_SIZE: usize = 256;
     const NUM_BLOCKS: usize = 0x10000 / BLOCK_SIZE; // 256
@@ -1262,12 +1223,12 @@ fn build_primary_composites_trie(
         }
         let offset = bc_data.len();
         let length = sub.len();
-        let length_u32: u32 = length.try_into().expect(
-            "per-`a` sub-table length must fit in u32 (UCD totals tiny)",
-        );
-        let offset_u32: u32 = offset.try_into().expect(
-            "BC_DATA offset must fit in u32 (UCD totals under 64 KiB)",
-        );
+        let length_u32: u32 = length
+            .try_into()
+            .expect("per-`a` sub-table length must fit in u32 (UCD totals tiny)");
+        let offset_u32: u32 = offset
+            .try_into()
+            .expect("BC_DATA offset must fit in u32 (UCD totals under 64 KiB)");
         assert!(
             length_u32 > 0 && length_u32 < 256,
             "per-`a` sub-table length {length_u32} out of [1, 255] for U+{a:04X}"
@@ -1291,9 +1252,8 @@ fn build_primary_composites_trie(
         if *blk == null_block {
             stage1[i] = 0;
         } else {
-            let idx = u16::try_from(stage2.len() / BLOCK_SIZE).expect(
-                "primary-composite BMP trie block index must fit in u16",
-            );
+            let idx = u16::try_from(stage2.len() / BLOCK_SIZE)
+                .expect("primary-composite BMP trie block index must fit in u16");
             stage2.extend_from_slice(blk);
             stage1[i] = idx;
         }
@@ -1302,12 +1262,7 @@ fn build_primary_composites_trie(
     (stage1, stage2, bc_data, supplementary)
 }
 
-fn emit_qc_ynm_table(
-    s: &mut String,
-    name: &str,
-    doc: &str,
-    table: &[(u32, u8)],
-) {
+fn emit_qc_ynm_table(s: &mut String, name: &str, doc: &str, table: &[(u32, u8)]) {
     emit_u8_bmp_trie_table(s, name, doc, table);
 }
 
@@ -1315,8 +1270,7 @@ fn emit_qc_ynm_table(
 /// `(u32, u8)` shape used by [`emit_u8_bmp_trie_table`], with value
 /// `1` standing in for "member" (the lookup just tests non-zero).
 fn emit_qc_no_table(s: &mut String, name: &str, doc: &str, table: &[u32]) {
-    let promoted: Vec<(u32, u8)> =
-        table.iter().copied().map(|cp| (cp, 1)).collect();
+    let promoted: Vec<(u32, u8)> = table.iter().copied().map(|cp| (cp, 1)).collect();
     emit_u8_bmp_trie_table(s, name, doc, &promoted);
 }
 
