@@ -293,6 +293,82 @@ impl HeadlessScreenshot {
             )
             .map_err(|e| HeadlessScreenshotError::VelloRender(format!("{e}")))?;
 
+        self.read_texture(&texture, width, height)
+    }
+
+    /// R1036 PR-17 — render `scenes` SEQUENTIALLY into ONE reused target
+    /// texture (the live [`vello::util::RenderSurface::target_view`] reuse
+    /// model — a single intermediate texture every frame draws into), reading
+    /// back the RGBA8 raster after each. Returns one buffer per scene.
+    ///
+    /// This is the headless analog of N consecutive surface frames, and the
+    /// decisive test of whether the GPU raster ACCUMULATES across frames that
+    /// share a target: a coverage-only `render_to_texture` would leave frame
+    /// N-1's pixels wherever frame N draws nothing, which is exactly the PR-17
+    /// splitter-reflow "old rows not erased" residue. With `base_color` clearing
+    /// the whole target each call, frame N must equal a from-scratch render of
+    /// scene N — independent of what scene N-1 drew.
+    ///
+    /// # Errors
+    ///
+    /// See [`HeadlessScreenshotError`]; `ZeroDimension` for a zero axis.
+    pub fn render_sequence(
+        &mut self,
+        scenes: &[&VelloScene],
+        width: u32,
+        height: u32,
+        base_color: PenikoColor,
+    ) -> Result<Vec<Vec<u8>>, HeadlessScreenshotError> {
+        if width == 0 || height == 0 {
+            return Err(HeadlessScreenshotError::ZeroDimension);
+        }
+        let texture = self.device.create_texture(&TextureDescriptor {
+            label: Some("pinion-shell::HeadlessScreenshot reused target"),
+            size: Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format: TextureFormat::Rgba8Unorm,
+            usage: TextureUsages::STORAGE_BINDING | TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&TextureViewDescriptor::default());
+        let mut frames = Vec::with_capacity(scenes.len());
+        for scene in scenes {
+            self.renderer
+                .render_to_texture(
+                    &self.device,
+                    &self.queue,
+                    scene,
+                    &view,
+                    &RenderParams {
+                        base_color,
+                        width,
+                        height,
+                        antialiasing_method: AaConfig::Area,
+                    },
+                )
+                .map_err(|e| HeadlessScreenshotError::VelloRender(format!("{e}")))?;
+            frames.push(self.read_texture(&texture, width, height)?);
+        }
+        Ok(frames)
+    }
+
+    /// Copy `texture` (an `Rgba8Unorm`, `COPY_SRC` target of `width x height`)
+    /// back into a contiguous `width * height * 4` premultiplied-RGBA8 buffer
+    /// (row-major, top-left origin), stripping the wgpu `bytes_per_row`
+    /// alignment padding. Shared by [`Self::render_to_rgba8`] and
+    /// [`Self::render_sequence`].
+    fn read_texture(
+        &self,
+        texture: &wgpu::Texture,
+        width: u32,
+        height: u32,
+    ) -> Result<Vec<u8>, HeadlessScreenshotError> {
         let unpadded_bytes_per_row = width * 4;
         let padded_bytes_per_row = unpadded_bytes_per_row.div_ceil(ROW_ALIGN) * ROW_ALIGN;
         let staging_size = u64::from(padded_bytes_per_row) * u64::from(height);
@@ -310,7 +386,7 @@ impl HeadlessScreenshot {
             });
         encoder.copy_texture_to_buffer(
             TexelCopyTextureInfo {
-                texture: &texture,
+                texture,
                 mip_level: 0,
                 origin: Origin3d::ZERO,
                 aspect: TextureAspect::All,
