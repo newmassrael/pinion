@@ -4315,7 +4315,7 @@
       "intent": "§5.37.5 script analysis sub-layer placeholder — UCD Script property 기반 segmentation. shape engine input (run splitting). ratify 는 multi-session carry, BIDI 이후 자연 순서"
     },
     "5.37.6": {
-      "title": "Shape — text-run positioning (cmap+hmtx baseline, integer-snap); GSUB/GPOS = R50.6.x",
+      "title": "Shape — text-run positioning (cmap+hmtx + GPOS kern pair-positioning, integer-snap); GSUB/mark = R50.6.x",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5.37",
       "decision_status": "active",
@@ -4331,13 +4331,15 @@
         "Unicode &str — char_indices codepoint 순회 (grapheme cluster = R50.6.x)",
         "§5.37.1 cmap (glyph_id_for); unmapped codepoint → 0 .notdef (OpenType 규약)",
         "§5.37.1 hmtx advance_width + §5.37.1 head units_per_em → scale = px/upem",
+        "§5.37.6 GPOS kern (PairPos Type 2) → 인접 glyph-pair x-advance 조정 (design units)",
         "§5.37.8 Font::rasterize_glyph — per-glyph AA coverage (composite 포함)",
         "target px_per_em — positioning + raster 공통 scale"
       ],
       "outputs_bullets": [
         "PositionedGlyph { glyph_id, x: f32 baseline-rel pen px, cluster: byte offset }",
         "ShapedRun { glyphs: Vec<PositionedGlyph>, advance: f32 total pen px }",
-        "Font::shape_run(text, px) -> ShapedRun — exact f32 positions",
+        "Font::shape_run(text, px) -> ShapedRun — exact f32 positions (GPOS kern 반영)",
+        "Font::kern_x_advance(left, right) -> i16 — GPOS pair kern, design units (0=무)",
         "Font::render_run(text, px) -> Result<Coverage, RasterError> — integer-snap 합성",
         "empty str → empty Coverage; space(empty glyph) → advance 만, ink 0"
       ],
@@ -4350,7 +4352,11 @@
         "production paint 는 여전히 §5.36 swash — render_run 은 test forcing-consumer, paint-wiring = atlas 후",
         "render_run 합성 = same-color alpha-over(a+b−ab) + integer pen snap; 겹침 AA fringe 비-double-darken",
         "combined bitmap 크기 미상한 — 호출자가 viewport clip 책임 (per-glyph 는 MAX_DIM guard)",
-        "R1018: render_run 은 글리프를 §5.37.9 GlyphAtlas 경유로 rasterize-once(run 내 dedup); 출력 픽셀 불변"
+        "R1018: render_run 은 글리프를 §5.37.9 GlyphAtlas 경유로 rasterize-once(run 내 dedup); 출력 픽셀 불변",
+        "R50.6.1: GPOS kern (PairPos Type 2 fmt 1/2 + Extension Type 9) applied in shape_run pen",
+        "R50.6.1 still defers: GSUB, GPOS mark/cursive/contextual, lookupFlag filtering, script-seg",
+        "kern lookups unioned across scripts (script-seg deferred); coverage-gated, cross-script no-op",
+        "R50.6.1 supersedes the R50.6 'GPOS kerning=R50.6.x' / 'advance-only' caveats: pair-kern now applied"
       ],
       "alternatives_rejected": [
         {
@@ -4408,6 +4414,31 @@
           "file": "crates/pinion-text-font/src/font.rs",
           "symbol": "Font::shape_run",
           "kind": "references"
+        },
+        {
+          "file": "crates/pinion-text-font/src/tables/gpos/mod.rs",
+          "symbol": "Gpos::kern_x_advance",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-text-font/src/tables/gpos/pairpos.rs",
+          "symbol": "PairPos",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-text-font/src/tables/gpos/coverage.rs",
+          "symbol": "Coverage",
+          "kind": "references"
+        },
+        {
+          "file": "crates/pinion-text-font/src/tables/gpos/classdef.rs",
+          "symbol": "ClassDef",
+          "kind": "references"
+        },
+        {
+          "file": "crates/pinion-text-font/src/font.rs",
+          "symbol": "Font::kern_x_advance",
+          "kind": "implements"
         }
       ]
     },
@@ -11919,6 +11950,46 @@
       "publishable_carry_forward_bullets": [
         "Deferred: LB30b [ExtPict&Cn] x EM + SA->CM (gc Mn/Mc) — need Extended_Pictographic / gc Mn/Mc substrates",
         "EAW is (start,end) membership; the (start,end,idx) Rule-of-Three idx-helper lift across bidi/lb/eaw still pends"
+      ]
+    },
+    "R1034": {
+      "decision_summary": "§5.37.6 GPOS pair kerning: parse the GPOS kern feature (PairPos Lookup Type 2) and fold first-glyph X-advance into shape_run.",
+      "changes_bullets": [
+        "Add tables/gpos: Gpos nav (Script→Feature→Lookup) + PairPos fmt 1/2 + Coverage/ClassDef tables",
+        "Resolve kern feature via scripts' default LangSys; unwrap Extension Type 9; coverage-gated lookups",
+        "shape_run applies Font::kern_x_advance between adjacent glyphs; Font gains optional gpos field"
+      ],
+      "verification_bullets": [
+        "pinion-text-font 212 tests incl. 24 new GPOS (coverage/classdef/pairpos/nav + NotoSans kern oracle)",
+        "Workspace 1440 tests 0 fail; clippy --workspace --all-targets vello clean; rustfmt clean",
+        "cargo doc: new files 0 warnings (cmap best_subtable / hhea int16[4] pre-existing carry)"
+      ],
+      "impact_refs": [
+        "5.37.6"
+      ],
+      "carry_forward_bullets": [
+        "Deferred R50.6.x: GSUB, GPOS single/cursive/mark/contextual, lookupFlag glyph filtering",
+        "Coverage/ClassDef under gpos/ until GSUB (2nd consumer) triggers lift to shared layout/",
+        "Production paint still §5.36 swash; kern is a test forcing-consumer until paint-wiring"
+      ],
+      "publishable_decision_summary": "§5.37.6 GPOS pair kerning: parse the GPOS kern feature (PairPos Lookup Type 2) and fold first-glyph X-advance into shape_run.",
+      "publishable_changes_bullets": [
+        "Add tables/gpos: Gpos nav (Script→Feature→Lookup) + PairPos fmt 1/2 + Coverage/ClassDef tables",
+        "Resolve kern feature via scripts' default LangSys; unwrap Extension Type 9; coverage-gated lookups",
+        "shape_run applies Font::kern_x_advance between adjacent glyphs; Font gains optional gpos field"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-text-font 212 tests incl. 24 new GPOS (coverage/classdef/pairpos/nav + NotoSans kern oracle)",
+        "Workspace 1440 tests 0 fail; clippy --workspace --all-targets vello clean; rustfmt clean",
+        "cargo doc: new files 0 warnings (cmap best_subtable / hhea int16[4] pre-existing carry)"
+      ],
+      "publishable_impact_refs": [
+        "5.37.6"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Deferred R50.6.x: GSUB, GPOS single/cursive/mark/contextual, lookupFlag glyph filtering",
+        "Coverage/ClassDef under gpos/ until GSUB (2nd consumer) triggers lift to shared layout/",
+        "Production paint still §5.36 swash; kern is a test forcing-consumer until paint-wiring"
       ]
     },
     "R232": {
