@@ -55,6 +55,95 @@ fn shape_run_accumulates_advances() {
 }
 
 #[test]
+fn shape_run_applies_gpos_pair_kerning() {
+    // The forcing consumer for §5.37.6 GPOS pair kerning: NotoSans ships a real
+    // GPOS `kern` feature; shape_run must reach it (Script→Feature→Lookup→
+    // PairPos) and fold the adjustment into the pen.
+    let font = load(NOTO);
+    assert!(font.gpos.is_some(), "NotoSans ships a GPOS table");
+    assert!(
+        font.gpos.as_ref().unwrap().has_kerning(),
+        "NotoSans GPOS exposes a kern feature reachable from the default script"
+    );
+
+    let px = 64.0_f32;
+    let s = scale(&font, px);
+
+    // Classic Latin kern pairs. Probe until one is actually kerned so the
+    // assertion is non-vacuous — a parser that found no kerning would leave
+    // every probe at 0 and fail the `expect` below.
+    let candidates = [
+        "AV", "VA", "AW", "WA", "AT", "TA", "AY", "YA", "AC", "PA", "Ta", "Te", "To", "Tr", "Tu",
+        "Tw", "Ty", "Wa", "We", "Wo", "Ya", "Yo", "Ve", "Vo", "F.", "P.", "L'", "r.", "7.", "f.",
+    ];
+    let kerned = candidates.iter().find_map(|pair| {
+        let mut it = pair.chars();
+        let (a, b) = (it.next().unwrap(), it.next().unwrap());
+        let ga = font.glyph_id_for(a as u32)?;
+        let gb = font.glyph_id_for(b as u32)?;
+        let k = font.kern_x_advance(ga, gb);
+        (k != 0).then_some((*pair, ga, gb, k))
+    });
+    let (pair, ga, gb, kern) =
+        kerned.expect("NotoSans kerns at least one classic Latin pair via GPOS");
+
+    // Exact positioning oracle — mirror shape_run's accumulation term-by-term so
+    // the f32 result is bit-identical (no tolerance fudge): glyph 1 sits at glyph
+    // 0's hmtx advance PLUS the kern, and the run advance then adds glyph 1's.
+    let adv_a = font.glyph_advance_width(ga).unwrap();
+    let adv_b = font.glyph_advance_width(gb).unwrap();
+    let expected_second_x = f32::from(adv_a) * s + f32::from(kern) * s;
+    let expected_advance = expected_second_x + f32::from(adv_b) * s;
+
+    let run = font.shape_run(pair, px);
+    assert_eq!(run.glyphs.len(), 2, "{pair} → two glyphs");
+    // Exact f32 equality via bit patterns: the oracle mirrors shape_run's
+    // accumulation term-by-term, so the results are bit-identical — no proxy
+    // tolerance that could mask a partial-kern bug.
+    assert_eq!(
+        run.glyphs[0].x.to_bits(),
+        0.0f32.to_bits(),
+        "first glyph at the origin"
+    );
+    assert_eq!(
+        run.glyphs[1].x.to_bits(),
+        expected_second_x.to_bits(),
+        "{pair}: glyph 1 at adv(0) + kern ({kern} units)"
+    );
+    assert_eq!(
+        run.advance.to_bits(),
+        expected_advance.to_bits(),
+        "{pair}: run advance folds kern"
+    );
+
+    // The kern must actually displace glyph 1 from its bare-advance position,
+    // proving GPOS changed the layout rather than being a no-op.
+    let bare_second_x = f32::from(adv_a) * s;
+    assert_ne!(
+        run.glyphs[1].x.to_bits(),
+        bare_second_x.to_bits(),
+        "{pair}: kern ({kern} units) moves glyph 1 off the bare hmtx advance"
+    );
+}
+
+#[test]
+fn shape_run_single_glyph_has_no_kern() {
+    // Kerning is a pair property: a lone glyph's advance is the bare hmtx value,
+    // never adjusted by GPOS (there is no preceding glyph to kern against).
+    let font = load(NOTO);
+    let px = 64.0_f32;
+    let s = scale(&font, px);
+    let a = font.glyph_id_for(0x0041).expect("'A' mapped");
+    let run = font.shape_run("A", px);
+    assert_eq!(run.glyphs.len(), 1);
+    assert_eq!(
+        run.advance.to_bits(),
+        (f32::from(font.glyph_advance_width(a).unwrap()) * s).to_bits(),
+        "single glyph advance is the unmodified hmtx value"
+    );
+}
+
+#[test]
 fn shape_run_records_utf8_byte_clusters() {
     // "A한B": clusters are byte offsets, so the 3-byte 한 pushes 'B' to byte 4.
     // Proves the shaper iterates by codepoint and tracks source byte offsets.

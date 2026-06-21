@@ -11,6 +11,7 @@ use crate::sfnt::{OffsetTable, TableRecord, find_table, parse_sfnt};
 use crate::shape::ShapedRun;
 use crate::tables::cmap::Cmap;
 use crate::tables::glyf::{Glyf, Glyph};
+use crate::tables::gpos::Gpos;
 use crate::tables::head::Head;
 use crate::tables::hhea::Hhea;
 use crate::tables::hmtx::Hmtx;
@@ -39,6 +40,8 @@ pub struct Font {
     pub loca: Loca,
     pub glyf: Glyf,
     pub name: Name,
+    /// GPOS positioning table — `None` when the font has no GPOS (§5.37.6).
+    pub gpos: Option<Gpos>,
 }
 
 impl Font {
@@ -72,6 +75,12 @@ impl Font {
         )?;
         let glyf = Glyf::parse(find_table(&bytes, &records, *b"glyf")?, &loca)?;
         let name = Name::parse(find_table(&bytes, &records, *b"name")?)?;
+        // GPOS is optional — absent tables yield `None`, a malformed present one
+        // propagates its parse error.
+        let gpos = match find_table(&bytes, &records, *b"GPOS") {
+            Ok(table) => Some(Gpos::parse(table)?),
+            Err(_) => None,
+        };
 
         Ok(Self {
             bytes,
@@ -87,6 +96,7 @@ impl Font {
             loca,
             glyf,
             name,
+            gpos,
         })
     }
 
@@ -195,9 +205,20 @@ impl Font {
         )
     }
 
-    /// Shape `text` into a positioned glyph run at `px_per_em` (§5.37.6
-    /// baseline: cmap codepoint → glyph + hmtx advance, no GSUB/GPOS). See
-    /// [`crate::shape::shape_run`] for the scope and determinism contract.
+    /// First-glyph X-advance kern adjustment in design units for the ordered
+    /// glyph pair `(left, right)`, via the GPOS `kern` feature (§5.37.6).
+    /// Returns 0 when the font has no GPOS table or no covering kern lookup.
+    #[must_use]
+    pub fn kern_x_advance(&self, left: u16, right: u16) -> i16 {
+        self.gpos
+            .as_ref()
+            .map_or(0, |g| g.kern_x_advance(left, right))
+    }
+
+    /// Shape `text` into a positioned glyph run at `px_per_em` (§5.37.6: cmap
+    /// codepoint → glyph + hmtx advance, refined by GPOS `kern` pair
+    /// positioning). See [`crate::shape::shape_run`] for the scope and
+    /// determinism contract.
     #[must_use]
     pub fn shape_run(&self, text: &str, px_per_em: f32) -> ShapedRun {
         crate::shape::shape_run(self, text, px_per_em)

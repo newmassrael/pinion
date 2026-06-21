@@ -5,23 +5,25 @@
 //! coverage bitmap. This is the first time the self-hosted text engine renders a
 //! whole *string* to pixels (the rasterizer renders one glyph by id).
 //!
-//! # Scope — baseline (R50.6)
+//! # Scope — baseline + GPOS pair-kerning (R50.6, R50.6.1)
 //!
 //! Codepoint → glyph via the cmap ([`Font::glyph_id_for`]), advance width via
 //! hmtx ([`Font::glyph_advance_width`]), and a left-to-right pen that accumulates
-//! advances. This is the degenerate, 1:1, advance-only case of OpenType shaping —
-//! the foundation that GSUB substitution (ligatures, contextual forms) and GPOS
-//! positioning (kerning, mark attachment, cursive) refine in a later sub-round
-//! (R50.6.x), mirroring the simple → composite raster split (R50.8 → R50.8.x).
+//! advances. R50.6.1 adds the most universal positioning refinement on top of
+//! this baseline: GPOS `kern`-feature **pair kerning** ([`Font::kern_x_advance`],
+//! [`crate::tables::gpos`]) adjusts the advance between adjacent glyphs. This
+//! mirrors the simple → composite raster split (R50.8 → R50.8.x) — the
+//! foundation, then incremental refinement.
 //!
 //! Deliberately NOT yet handled (each is honest deferral, not a silent gap):
-//! GSUB/GPOS execution, script segmentation (§5.37.5), BIDI reorder (§5.37.4
-//! lives in a separate crate, not yet wired in here — a single visual run is
-//! assumed), grapheme
-//! clustering / combining marks (iteration is per codepoint), and line breaking
-//! (§5.37.7 — a single line is assumed). Production paint is still §5.36 swash;
-//! [`render_run`] is a test forcing-consumer until the GPU atlas + paint wiring
-//! land.
+//! GSUB substitution (ligatures, contextual forms); GPOS single / cursive / mark
+//! / contextual positioning (only Lookup Type 2 pair kerning is applied);
+//! `lookupFlag` glyph filtering (kern is applied to every adjacent pair); script
+//! segmentation (§5.37.5); BIDI reorder (§5.37.4 lives in a separate crate, not
+//! yet wired in here — a single visual run is assumed); grapheme clustering /
+//! combining marks (iteration is per codepoint); and line breaking (§5.37.7 — a
+//! single line is assumed). Production paint is still §5.36 swash; [`render_run`]
+//! is a test forcing-consumer until the GPU atlas + paint wiring land.
 //!
 //! # Determinism
 //!
@@ -67,9 +69,10 @@ pub struct ShapedRun {
     pub advance: f32,
 }
 
-/// Shape `text` into a positioned glyph run at `px_per_em` (§5.37.6 baseline:
-/// cmap codepoint → glyph, hmtx advance, left-to-right pen; no GSUB/GPOS, no
-/// BIDI reorder, no grapheme clustering — see the module scope).
+/// Shape `text` into a positioned glyph run at `px_per_em` (§5.37.6: cmap
+/// codepoint → glyph, hmtx advance refined by GPOS `kern` pair positioning,
+/// left-to-right pen; no GSUB, no BIDI reorder, no grapheme clustering — see the
+/// module scope).
 ///
 /// An unmapped codepoint resolves to glyph 0 (`.notdef`) per the OpenType
 /// convention. A degenerate font (`units_per_em == 0`) or a non-finite / `<= 0`
@@ -86,8 +89,16 @@ pub fn shape_run(font: &Font, text: &str, px_per_em: f32) -> ShapedRun {
 
     let mut glyphs = Vec::new();
     let mut pen = 0.0_f32;
+    let mut prev_glyph: Option<u16> = None;
     for (cluster, ch) in text.char_indices() {
         let glyph_id = font.glyph_id_for(ch as u32).unwrap_or(0);
+        // GPOS `kern` adjusts the advance between the previous glyph and this
+        // one (design units, same scale as hmtx advance). 0 when no covering
+        // kern lookup, so an un-kerned font keeps the exact cmap+hmtx baseline.
+        if let Some(prev) = prev_glyph {
+            let kern_units = font.kern_x_advance(prev, glyph_id);
+            pen += f32::from(kern_units) * scale;
+        }
         glyphs.push(PositionedGlyph {
             glyph_id,
             x: pen,
@@ -95,6 +106,7 @@ pub fn shape_run(font: &Font, text: &str, px_per_em: f32) -> ShapedRun {
         });
         let advance_units = font.glyph_advance_width(glyph_id).unwrap_or(0);
         pen += f32::from(advance_units) * scale;
+        prev_glyph = Some(glyph_id);
     }
     ShapedRun {
         glyphs,

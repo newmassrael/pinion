@@ -38,5 +38,6 @@ pub use tables::glyf::{
     Component, ComponentArgs, ComponentTransform, CompositeGlyph, Glyf, Glyph, GlyphHeader,
     GlyphPoint, SimpleGlyph,
 };
+pub use tables::gpos::Gpos;
 pub use tables::loca::{Loca, LocaFormat};
 pub use tables::name::{LangTagRecord, Name, NameId, NameRecord};
