@@ -42,7 +42,13 @@ jobs:
       - name: Rust toolchain (rust-toolchain.toml)
         run: |
           rustup show
-          rustup component add clippy
+          rustup component add clippy rustfmt
+      - name: rustfmt (cargo fmt --all --check)
+        # R1026.1 §6.3 — the durable, un-bypassable formatting gate. Runs
+        # before the build deps + clippy so a format drift fails fast and
+        # cheap (rustfmt needs only the source, no compilation). Mirrors the
+        # local .githooks/pre-commit + pre-push `cargo fmt --all --check`.
+        run: cargo fmt --all --check
       - name: System build deps (fontconfig for parley/fontique)
         run: |
           sudo apt-get update

@@ -7602,7 +7602,8 @@
         "Frame ZST guarantee: size_of::<Frame>() == 0 in v1.0; LLVM elides &Frame from ABI; runtime zero-cost",
         "Frame must be read-only and side-effect-free to preserve §2 dry_run purity invariant",
         "R1026: rustfmt adopted (was clippy-only); rustfmt.toml max_width=100, reformat 472 files",
-        "R1026: fmt --check in pre-commit + pre-push; max_width=100 min-churn; .git-blame-ignore-revs added"
+        "R1026: fmt --check in pre-commit + pre-push; max_width=100 min-churn; .git-blame-ignore-revs added",
+        "R1026.1: cargo fmt --check also in CI (.github/workflows/ci.yml lint-and-test) - un-bypassable gate"
       ],
       "alternatives_rejected": [
         {
@@ -11317,6 +11318,42 @@
         "the 5 too_many_lines #[allow]s are formatting-induced (functions only 1-16 lines over the 100 ceiling they were kept just under); helper extraction deferred to the owner if the ceiling is to stay strict",
         "local clones must run `git config blame.ignoreRevsFile .git-blame-ignore-revs` once to honour the reformat skip (GitHub/GitLab auto-honour the file)",
         "R1024 + R1024.1 + R1025 + R1025.1 + R1026 (reformat) + R1026 (hooks) committed locally, push consent pending"
+      ]
+    },
+    "R1026.1": {
+      "decision_summary": "R1026.1 §6.3 make fmt enforcement durable: add cargo fmt --all --check to CI (the un-bypassable gate; local hooks need core.hooksPath and are --no-verify-bypassable)",
+      "changes_bullets": [
+        ".github/workflows/ci.yml lint-and-test job: add rustfmt to the toolchain components + a 'cargo fmt --all --check' step placed before the build deps + clippy (fail-fast, no compilation needed)",
+        "this is the DURABLE enforcement layer: the local .githooks fmt gate (R1026) requires a per-clone `git config core.hooksPath .githooks` and can be skipped with --no-verify; CI cannot be bypassed and applies to every push / PR / contributor"
+      ],
+      "verification_bullets": [
+        "ci.yml parses as valid YAML; the fmt step is ordered before the clippy step in lint-and-test; cargo fmt --all --check = 0 diffs on the current tree",
+        "rustfmt is in rust-toolchain.toml components and now also explicitly added in CI (rustup component add clippy rustfmt)",
+        "mnemosyne validate-workspace T1=0"
+      ],
+      "impact_refs": [
+        "6.3"
+      ],
+      "carry_forward_bullets": [
+        "fmt is now enforced at 3 layers: rustfmt.toml (config) + local pre-commit/pre-push hooks (R1026, bypassable) + CI (R1026.1, un-bypassable)",
+        "R1024..R1026.1 (7 commits) committed locally, push consent pending — CI fmt gate takes effect once pushed"
+      ],
+      "publishable_decision_summary": "R1026.1 §6.3 make fmt enforcement durable: add cargo fmt --all --check to CI (the un-bypassable gate; local hooks need core.hooksPath and are --no-verify-bypassable)",
+      "publishable_changes_bullets": [
+        ".github/workflows/ci.yml lint-and-test job: add rustfmt to the toolchain components + a 'cargo fmt --all --check' step placed before the build deps + clippy (fail-fast, no compilation needed)",
+        "this is the DURABLE enforcement layer: the local .githooks fmt gate (R1026) requires a per-clone `git config core.hooksPath .githooks` and can be skipped with --no-verify; CI cannot be bypassed and applies to every push / PR / contributor"
+      ],
+      "publishable_verification_bullets": [
+        "ci.yml parses as valid YAML; the fmt step is ordered before the clippy step in lint-and-test; cargo fmt --all --check = 0 diffs on the current tree",
+        "rustfmt is in rust-toolchain.toml components and now also explicitly added in CI (rustup component add clippy rustfmt)",
+        "mnemosyne validate-workspace T1=0"
+      ],
+      "publishable_impact_refs": [
+        "6.3"
+      ],
+      "publishable_carry_forward_bullets": [
+        "fmt is now enforced at 3 layers: rustfmt.toml (config) + local pre-commit/pre-push hooks (R1026, bypassable) + CI (R1026.1, un-bypassable)",
+        "R1024..R1026.1 (7 commits) committed locally, push consent pending — CI fmt gate takes effect once pushed"
       ]
     },
     "R232": {
