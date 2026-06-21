@@ -674,7 +674,10 @@
         "R51.48 Phase 2 scope: thin RHI 3D pass 는 Vello UI path 와 additive 공존, drop = Phase 4+ 평가",
         "R51.48 Phase 2 surface: pinion-forge renderer kind=rhi + naga shader emit + bgfx/makepad pattern",
         "R51.48 Phase 2 demo target: 단일 3D primitive (triangle/cube) + AI-introspect scene = first dogfood",
-        "R51.48 Phase 4+ B 평가 gate: 언리얼-class engine pass, AAA RDG/bindless 운용 검증 후 ratify"
+        "R51.48 Phase 4+ B 평가 gate: 언리얼-class engine pass, AAA RDG/bindless 운용 검증 후 ratify",
+        "R1027: shell layout in logical px; physical only at GPU surface, vello Affine::scale, pointer, a11y",
+        "R1027: scale!=1 scaled vello append to scratch; scale==1 direct byte-identical (cache IDENTITY kept)",
+        "R1027: introspection/RPC scene stays logical = DPI-independent (scene-as-data); headless = scale 1"
       ],
       "alternatives_rejected": [
         {
@@ -3233,7 +3236,8 @@
         "R51.50 정식 용법: composite hit-target convention 만 '#' 사용 (paint 'tag#idx' + state primary)",
         "R1025: ShellCore exposes hover_target + captured_target READ accessors (sprag PR-14)",
         "R1025: read-only CoreShell/InputRouter passthrough; pointer sibling of focus()/redraw read",
-        "R1025: CoreShell gains captured_target passthrough; grounds splitter/pan/drag tests in data"
+        "R1025: CoreShell gains captured_target passthrough; grounds splitter/pan/drag tests in data",
+        "R1027: CursorMoved/Touch/PixelDelta physical /scale_factor -> logical before router (HiDPI hit)"
       ],
       "alternatives_rejected": [
         {
@@ -5584,7 +5588,8 @@
         "R51.98 — AccessNode.selected (aria-selected) + multiselectable (aria-multiselectable) wire-up",
         "R51.98 — hello-listbox ListBoxOption aria-checked→aria-selected 정정 (axis 분리, WAI-ARIA APG)",
         "R51.101 — dispatch.rs invalid_params(&str) wrapper 제거 (R51.89.1 carry; 129 caller 직접 호출)",
-        "R51.121.1 — WidgetA11y supertrait (pinion-a11y) 로 a11y 3 method 이동, audit citation 정정"
+        "R51.121.1 — WidgetA11y supertrait (pinion-a11y) 로 a11y 3 method 이동, audit citation 정정",
+        "R1027: a11y bounds stay logical; root node Affine::scale(scale) -> physical px (build_with_scale)"
       ],
       "alternatives_rejected": [
         {
@@ -11354,6 +11359,54 @@
       "publishable_carry_forward_bullets": [
         "fmt is now enforced at 3 layers: rustfmt.toml (config) + local pre-commit/pre-push hooks (R1026, bypassable) + CI (R1026.1, un-bypassable)",
         "R1024..R1026.1 (7 commits) committed locally, push consent pending — CI fmt gate takes effect once pushed"
+      ]
+    },
+    "R1027": {
+      "decision_summary": "R1027 §5.16 §5.35 §5.40 HiDPI scale_factor (sprag PR-15): pinion-shell scale-aware via the logical-coordinate-world strategy — scene/layout/introspection/AccessKit all logical, physical only at GPU surface + vello Affine::scale raster + pointer/wheel physical->logical + AccessKit root transform; non-HiDPI byte-identical (4px splitter handle + half-font fix at the shell coordinate boundary)",
+      "changes_bullets": [
+        "pinion-shell: WindowSlot.scale_factor (seed Window::scale_factor, refresh on ScaleFactorChanged) + scaled_scene scratch; helpers logical_layout_size / winit_pointer_to_logical / scale_is_non_identity (delegate to winit to_logical)",
+        "render_window lays out at inner_size/scale (logical); scale!=1 appends vello_scene into scaled_scene under Affine::scale, else renders direct (FragmentCache IDENTITY intact); intrinsic-resize now logical-consistent",
+        "CursorMoved/Touch/MouseWheel-PixelDelta physical->logical (LineDelta unitless, unscaled); pinion-a11y AccessTreeBuilder::build_with_scale sets root-node Affine::scale(scale), bounds stay logical"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 = 0 failed; cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0; cargo fmt --all --check = 0",
+        "headless units: logical_layout_size/pointer/wheel-PixelDelta-scale/scale-gate (1.5x rounding, 1.0 identity) + a11y build_with_scale root-transform (scale 2 set / scale 1 None == build())",
+        "real-GPU witness r1027_scaled_append_doubles_ink_extent_on_hidpi (--ignored, lavapipe PASS): 4-logical-px band = 4 device-px scale 1, 8 device-px scale 2 via Affine::scale append",
+        "splitter@2x router composition (pointer_state_readback): manual /scale + real hit-test lands on 4-logical handle vs raw-physical mis-hit; arm-calls-helper link is code-inspection (render_window needs live event loop)"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.35",
+        "5.40",
+        "5.45"
+      ],
+      "carry_forward_bullets": [
+        "render_window + window_event arms not headlessly driveable (live event loop) — seams covered by helper units + GPU append witness + router composition (honest winit-boundary convention)",
+        "scale_is_non_identity epsilon predicate duplicated app.rs + a11y tree.rs (cross-crate, 2 sites); lift to pinion-core only on a 3rd DPI-gate consumer (abstraction-needs-second-consumer)",
+        "Mac/Win per-monitor-DPI native surfaces out of scope (need those OS runners; phase-B-excludes-mac-win); live 2x manual verify (no WINIT_X11_SCALE_FACTOR workaround) pending user"
+      ],
+      "publishable_decision_summary": "R1027 §5.16 §5.35 §5.40 HiDPI scale_factor (sprag PR-15): pinion-shell scale-aware via the logical-coordinate-world strategy — scene/layout/introspection/AccessKit all logical, physical only at GPU surface + vello Affine::scale raster + pointer/wheel physical->logical + AccessKit root transform; non-HiDPI byte-identical (4px splitter handle + half-font fix at the shell coordinate boundary)",
+      "publishable_changes_bullets": [
+        "pinion-shell: WindowSlot.scale_factor (seed Window::scale_factor, refresh on ScaleFactorChanged) + scaled_scene scratch; helpers logical_layout_size / winit_pointer_to_logical / scale_is_non_identity (delegate to winit to_logical)",
+        "render_window lays out at inner_size/scale (logical); scale!=1 appends vello_scene into scaled_scene under Affine::scale, else renders direct (FragmentCache IDENTITY intact); intrinsic-resize now logical-consistent",
+        "CursorMoved/Touch/MouseWheel-PixelDelta physical->logical (LineDelta unitless, unscaled); pinion-a11y AccessTreeBuilder::build_with_scale sets root-node Affine::scale(scale), bounds stay logical"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 = 0 failed; cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0; cargo fmt --all --check = 0",
+        "headless units: logical_layout_size/pointer/wheel-PixelDelta-scale/scale-gate (1.5x rounding, 1.0 identity) + a11y build_with_scale root-transform (scale 2 set / scale 1 None == build())",
+        "real-GPU witness r1027_scaled_append_doubles_ink_extent_on_hidpi (--ignored, lavapipe PASS): 4-logical-px band = 4 device-px scale 1, 8 device-px scale 2 via Affine::scale append",
+        "splitter@2x router composition (pointer_state_readback): manual /scale + real hit-test lands on 4-logical handle vs raw-physical mis-hit; arm-calls-helper link is code-inspection (render_window needs live event loop)"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.35",
+        "5.40",
+        "5.45"
+      ],
+      "publishable_carry_forward_bullets": [
+        "render_window + window_event arms not headlessly driveable (live event loop) — seams covered by helper units + GPU append witness + router composition (honest winit-boundary convention)",
+        "scale_is_non_identity epsilon predicate duplicated app.rs + a11y tree.rs (cross-crate, 2 sites); lift to pinion-core only on a 3rd DPI-gate consumer (abstraction-needs-second-consumer)",
+        "Mac/Win per-monitor-DPI native surfaces out of scope (need those OS runners; phase-B-excludes-mac-win); live 2x manual verify (no WINIT_X11_SCALE_FACTOR workaround) pending user"
       ]
     },
     "R232": {
