@@ -11059,6 +11059,36 @@
         "R1023 is impl-complete + compile/clippy green but PUSH PENDING explicit user consent."
       ]
     },
+    "R1023.1": {
+      "decision_summary": "R1023.1 §5.16: redraw-idiom documentation clearance — documented the two redraw-request idioms at drain_redraw_to_winit (the coalescing chokepoint): ledger route (request_redraw / request_redraw_for_window for triggers that cannot name their window — state/RPC/animation/external) vs direct poke (winit-event arms holding the Arc<Window> — Resized, request_inner_size). winit coalesces both to one paint per frame; the direct form skips a ledger round-trip when the window is in hand. Converts the entrenched two-idiom split from tribal knowledge to documented design.",
+      "changes_bullets": [
+        "app.rs drain_redraw_to_winit doc: added the two redraw-request idioms and when each applies — ledger route (ShellCore::request_redraw / request_redraw_for_window, for triggers that cannot name their window up front: state mutations, RPC dispatch, animation ticks, external repaints; the coalescing SSOT) vs direct poke (winit-event arms already holding the Arc<Window>: the WindowEvent::Resized arm and the request_inner_size sites call window.request_redraw() directly). winit coalesces repeated request_redraw before the next RedrawRequested, so both idioms converge to one paint per frame; the direct form just skips a ledger round-trip when the window is in hand."
+      ],
+      "verification_bullets": [
+        "Doc-only change. cargo check --workspace clean; clippy --workspace --all-targets --features pinion-runtime/vello = 0; cargo test --workspace = 7268 ok 0 fail (no test delta)."
+      ],
+      "impact_refs": [
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "Addresses the architect-LOW / root-cause session-review finding (two redraw idioms with no documented rule). R1023's direct poke matches the request_inner_size precedent; the selection rule is now documented at the drain chokepoint rather than tribal knowledge.",
+        "All six session commits (R1021/R1022/R1023 + R1021.1/R1022.1/R1023.1) are green + review-cleared; PUSH PENDING explicit user consent."
+      ],
+      "publishable_decision_summary": "R1023.1 §5.16: redraw-idiom documentation clearance — documented the two redraw-request idioms at drain_redraw_to_winit (the coalescing chokepoint): ledger route (request_redraw / request_redraw_for_window for triggers that cannot name their window — state/RPC/animation/external) vs direct poke (winit-event arms holding the Arc<Window> — Resized, request_inner_size). winit coalesces both to one paint per frame; the direct form skips a ledger round-trip when the window is in hand. Converts the entrenched two-idiom split from tribal knowledge to documented design.",
+      "publishable_changes_bullets": [
+        "app.rs drain_redraw_to_winit doc: added the two redraw-request idioms and when each applies — ledger route (ShellCore::request_redraw / request_redraw_for_window, for triggers that cannot name their window up front: state mutations, RPC dispatch, animation ticks, external repaints; the coalescing SSOT) vs direct poke (winit-event arms already holding the Arc<Window>: the WindowEvent::Resized arm and the request_inner_size sites call window.request_redraw() directly). winit coalesces repeated request_redraw before the next RedrawRequested, so both idioms converge to one paint per frame; the direct form just skips a ledger round-trip when the window is in hand."
+      ],
+      "publishable_verification_bullets": [
+        "Doc-only change. cargo check --workspace clean; clippy --workspace --all-targets --features pinion-runtime/vello = 0; cargo test --workspace = 7268 ok 0 fail (no test delta)."
+      ],
+      "publishable_impact_refs": [
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Addresses the architect-LOW / root-cause session-review finding (two redraw idioms with no documented rule). R1023's direct poke matches the request_inner_size precedent; the selection rule is now documented at the drain chokepoint rather than tribal knowledge.",
+        "All six session commits (R1021/R1022/R1023 + R1021.1/R1022.1/R1023.1) are green + review-cleared; PUSH PENDING explicit user consent."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

@@ -366,6 +366,20 @@ impl<V: WidgetView> AppShell<V> {
     /// `ApplicationHandler` arm so all redraw requests collapse into a
     /// single `Window::request_redraw` per window per
     /// event-loop iteration.
+    ///
+    /// R1023.1 §5.16 — the two redraw-request idioms, and when each applies:
+    /// - **Ledger route** (this drain): triggers that cannot name their window
+    ///   up front — state mutations, RPC dispatch, animation ticks, external
+    ///   repaints — set [`ShellCore::request_redraw`] /
+    ///   [`ShellCore::request_redraw_for_window`] and rely on this chokepoint to
+    ///   coalesce + forward. This is the default and the coalescing SSOT.
+    /// - **Direct poke**: winit-event arms that already hold the `Arc<Window>`
+    ///   and need to repaint exactly that surface — the `WindowEvent::Resized`
+    ///   arm (R1023) and the `request_inner_size` sites — call
+    ///   `window.request_redraw()` directly. winit itself coalesces repeated
+    ///   `request_redraw` before the next `RedrawRequested`, so the direct poke
+    ///   and the ledger converge to one paint per frame; the direct form just
+    ///   skips a ledger round-trip when the window is already in hand.
     fn drain_redraw_to_winit(&mut self) {
         // R680 atomic 2 §5.16 §5.41 — two-tier redraw drain:
         // - Binding-wide [`ShellCore::redraw_requested`] flag fans
