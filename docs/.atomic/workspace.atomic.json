@@ -3230,7 +3230,10 @@
         "R51.41 sub-index: paint 'tag#idx' → InputRouter '#' split + invoke('send','idx:Event')",
         "R51.50 paint tag literal 의 '#' 사용 = application 측 금지 — InputRouter R51.42 split 와 충돌",
         "R51.50 위반 시 행동: 첫 '#' 이전 primary 추출 → 의도치 않은 state lookup, 묵시적 dispatch drop",
-        "R51.50 정식 용법: composite hit-target convention 만 '#' 사용 (paint 'tag#idx' + state primary)"
+        "R51.50 정식 용법: composite hit-target convention 만 '#' 사용 (paint 'tag#idx' + state primary)",
+        "R1025: ShellCore exposes hover_target + captured_target READ accessors (sprag PR-14)",
+        "R1025: read-only CoreShell/InputRouter passthrough; pointer sibling of focus()/redraw read",
+        "R1025: CoreShell gains captured_target passthrough; grounds splitter/pan/drag tests in data"
       ],
       "alternatives_rejected": [
         {
@@ -11184,6 +11187,52 @@
         "touch-Started (handle_touch_for_window) shares click_to_focus_for_window so the fix covers it; a dedicated touch redraw test omitted as near-redundant (shared body), noted by both reviewers",
         "pinion-shell carries ~25 pre-existing dangling intra-doc links (PreviewLedger / LayoutCache / DispatchContext / RepaintSink / WidgetView::* / ...) - not caught by the clippy commit gate, a separate docs-only round",
         "R1024 + R1024.1 committed locally, push consent pending"
+      ]
+    },
+    "R1025": {
+      "decision_summary": "R1025 §5.35 ShellCore exposes pointer hover/capture READ accessors (sprag PR-14), the pointer-axis sibling of focus()/redraw_requested(), to ground pointer-driven interaction tests in data not pixels",
+      "changes_bullets": [
+        "ShellCore (substrate.rs): +hover_target / hover_target_for_window / captured_target / captured_target_for_window read accessors, passthrough to CoreShell, mirroring the focus() exposure precedent",
+        "CoreShell (core_shell.rs): +captured_target / captured_target_for_window (InputRouter::captured_target passthrough); hover_target already had both single + per-window forms, capture closed the asymmetry",
+        "read-only, no behaviour or performance change; the WRITE side (cursor_moved/mouse_pressed/mouse_released) already existed, only the READ side was missing",
+        "new tests/pointer_state_readback.rs forcing consumer: a wants_pointer_capture widget driven over the real cursor_moved/mouse_pressed/mouse_released path"
+      ],
+      "verification_bullets": [
+        "tests/pointer_state_readback.rs 3 ok: hover tracks cursor on/off; capture empty-while-hovering, holds press..release, clears on release; press-off-target captures nothing (the hover-miss vs capture-miss diagnostic)",
+        "each single-window read cross-checked against its DEFAULT_WINDOW per-window form",
+        "cargo test --workspace -j2 = 7277 ok 0 failed",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) = 0",
+        "cargo doc: 0 new dangling intra-doc links (all new accessor [..] links resolve); mnemosyne validate-workspace T1=0"
+      ],
+      "impact_refs": [
+        "5.35"
+      ],
+      "carry_forward_bullets": [
+        "unblocks the sprag splitter-drag grounded test: stage hover (4px handle hit) -> capture -> pointer_move to localize where the divider drag stalls",
+        "single-window forms are thin DEFAULT_WINDOW wrappers symmetric with the existing single-window cursor_moved/mouse_pressed drivers; no new state",
+        "R1024 + R1024.1 + R1025 committed locally, push consent pending"
+      ],
+      "publishable_decision_summary": "R1025 §5.35 ShellCore exposes pointer hover/capture READ accessors (sprag PR-14), the pointer-axis sibling of focus()/redraw_requested(), to ground pointer-driven interaction tests in data not pixels",
+      "publishable_changes_bullets": [
+        "ShellCore (substrate.rs): +hover_target / hover_target_for_window / captured_target / captured_target_for_window read accessors, passthrough to CoreShell, mirroring the focus() exposure precedent",
+        "CoreShell (core_shell.rs): +captured_target / captured_target_for_window (InputRouter::captured_target passthrough); hover_target already had both single + per-window forms, capture closed the asymmetry",
+        "read-only, no behaviour or performance change; the WRITE side (cursor_moved/mouse_pressed/mouse_released) already existed, only the READ side was missing",
+        "new tests/pointer_state_readback.rs forcing consumer: a wants_pointer_capture widget driven over the real cursor_moved/mouse_pressed/mouse_released path"
+      ],
+      "publishable_verification_bullets": [
+        "tests/pointer_state_readback.rs 3 ok: hover tracks cursor on/off; capture empty-while-hovering, holds press..release, clears on release; press-off-target captures nothing (the hover-miss vs capture-miss diagnostic)",
+        "each single-window read cross-checked against its DEFAULT_WINDOW per-window form",
+        "cargo test --workspace -j2 = 7277 ok 0 failed",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) = 0",
+        "cargo doc: 0 new dangling intra-doc links (all new accessor [..] links resolve); mnemosyne validate-workspace T1=0"
+      ],
+      "publishable_impact_refs": [
+        "5.35"
+      ],
+      "publishable_carry_forward_bullets": [
+        "unblocks the sprag splitter-drag grounded test: stage hover (4px handle hit) -> capture -> pointer_move to localize where the divider drag stalls",
+        "single-window forms are thin DEFAULT_WINDOW wrappers symmetric with the existing single-window cursor_moved/mouse_pressed drivers; no new state",
+        "R1024 + R1024.1 + R1025 committed locally, push consent pending"
       ]
     },
     "R232": {

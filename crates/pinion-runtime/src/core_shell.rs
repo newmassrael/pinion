@@ -1511,6 +1511,34 @@ impl<V: WidgetCore> CoreShell<V> {
         self.routers.get(window_id).and_then(|r| r.hover_target(pid))
     }
 
+    /// R1025 §5.35 — single-window read of the pointer-capture lock
+    /// (the [`DEFAULT_WINDOW`] router). Multi-window callers use
+    /// [`Self::captured_target_for_window`]. Capture sibling of
+    /// [`Self::hover_target`].
+    #[must_use]
+    pub fn captured_target(&self, pid: PointerId) -> Option<&str> {
+        self.captured_target_for_window(DEFAULT_WINDOW, pid)
+    }
+
+    /// R1025 §5.35 — per-window read of the [`InputRouter::captured_target`]
+    /// pointer-capture lock: the tag of the widget that grabbed `pid` on
+    /// `pointer_down` (a `wants_pointer_capture` External — splitter,
+    /// slider, pan canvas) until its release. Returns `None` when the
+    /// window has no router yet or no widget holds `pid`. The read sibling
+    /// of [`Self::hover_target_for_window`]; lets a binding ground a
+    /// drag-gesture test on the capture state without exposing the
+    /// router's mutable interior.
+    #[must_use]
+    pub fn captured_target_for_window(
+        &self,
+        window_id: &str,
+        pid: PointerId,
+    ) -> Option<&str> {
+        self.routers
+            .get(window_id)
+            .and_then(|r| r.captured_target(pid))
+    }
+
     /// R762 §5.36 §5.38 — last cursor position for `pid` on the
     /// addressed window's [`InputRouter`]. The press path reads this to
     /// hit-test a click into a text-field caret offset (`cursor_moved`

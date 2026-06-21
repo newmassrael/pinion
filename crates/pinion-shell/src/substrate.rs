@@ -565,6 +565,51 @@ impl<V: WidgetView> ShellCore<V> {
     pub fn focus(&self) -> &FocusManager {
         &self.focus
     }
+
+    /// R1025 §5.35 — read the pointer's hover target on the addressed
+    /// window (passthrough to [`pinion_runtime::CoreShell::hover_target_for_window`]).
+    ///
+    /// A read-only diagnostic accessor, the pointer-axis sibling of
+    /// [`Self::focus`] and [`Self::redraw_requested_for_window`]: after a
+    /// binding drives `cursor_moved`, it can assert what the cursor
+    /// resolved to (the deepest tagged paint node) — grounding
+    /// pointer-driven interaction tests in data, not pixels (§7 / the
+    /// AI-first introspection posture). `None` = the window has no router
+    /// yet, or the cursor is over no tagged node.
+    #[must_use]
+    pub fn hover_target_for_window(&self, window_id: &str, pid: PointerId) -> Option<&str> {
+        self.core.hover_target_for_window(window_id, pid)
+    }
+
+    /// R1025 §5.35 — single-window [`Self::hover_target_for_window`]
+    /// (the [`pinion_runtime::DEFAULT_WINDOW`] router), symmetric with the
+    /// single-window [`Self::cursor_moved`] / [`Self::mouse_pressed`] drivers.
+    #[must_use]
+    pub fn hover_target(&self, pid: PointerId) -> Option<&str> {
+        self.core.hover_target(pid)
+    }
+
+    /// R1025 §5.35 — read the pointer-capture lock on the addressed window
+    /// (passthrough to [`pinion_runtime::CoreShell::captured_target_for_window`]).
+    ///
+    /// Returns the tag of the widget that captured `pid` between its press
+    /// and release — a `wants_pointer_capture` External (splitter, slider,
+    /// pan canvas). The read sibling of [`Self::hover_target_for_window`];
+    /// lets a drag test assert that a press actually engaged capture (vs a
+    /// missed hit-target or an un-capturing widget) without pixels. `None`
+    /// = no widget holds `pid` on that window.
+    #[must_use]
+    pub fn captured_target_for_window(&self, window_id: &str, pid: PointerId) -> Option<&str> {
+        self.core.captured_target_for_window(window_id, pid)
+    }
+
+    /// R1025 §5.35 — single-window [`Self::captured_target_for_window`]
+    /// (the [`pinion_runtime::DEFAULT_WINDOW`] router), symmetric with the
+    /// single-window [`Self::mouse_pressed`] / [`Self::mouse_released`] drivers.
+    #[must_use]
+    pub fn captured_target(&self, pid: PointerId) -> Option<&str> {
+        self.core.captured_target(pid)
+    }
 }
 
 /// `ShellCore::new()` is the canonical constructor; the
