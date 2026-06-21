@@ -11755,6 +11755,44 @@
         "demo-sweep clusters tag_not_focusable + text-band + r674 all locally green; full sweep confirms on push."
       ]
     },
+    "R1032": {
+      "decision_summary": "Round 1032 — §5.45 scrollbar 페인트 래퍼 트랙-px / 콘텐츠-viewport 단위 분리(with_viewport_extent); sprag PR-16 R16.2 인도, R16.1 드래그-권위 API 불요 판정",
+      "changes_bullets": [
+        "VerticalScrollbarStyle.viewport_extent: Option<u32> + with_viewport_extent + content_viewport()",
+        "view_vertical_scrollbar: 트랙=viewport_h(px), thumb 비율=content_viewport() — 단위 상쇄로 px트랙+행 정확",
+        "기본 viewport_extent=None→viewport_h 위임: 기존 px 소비자 바이트-동일 (additive #[non_exhaustive])"
+      ],
+      "verification_bullets": [
+        "pinion-widget-paint scrollbar 18 test green (R1032 신규 2: extent override + 행 thumb 192/96 핀)",
+        "clippy --all-targets --features pinion-runtime/vello 0 / rustfmt clean / cargo check --workspace 0"
+      ],
+      "impact_refs": [
+        "5.45"
+      ],
+      "carry_forward_bullets": [
+        "R1032 작업트리 구현·검증 완료, 커밋/푸시 미실시 (사용자 commit 미선택)",
+        "sprag 터미널 세로 스크롤바 배선=sprag-native (행 ScrollState + with_viewport_extent + follow/inversion)",
+        "R16.1 드래그-권위 attach API 불요 (ScrollState 단위중립); 2nd 소비자 전 보류"
+      ],
+      "publishable_decision_summary": "Round 1032 — §5.45 scrollbar 페인트 래퍼 트랙-px / 콘텐츠-viewport 단위 분리(with_viewport_extent); sprag PR-16 R16.2 인도, R16.1 드래그-권위 API 불요 판정",
+      "publishable_changes_bullets": [
+        "VerticalScrollbarStyle.viewport_extent: Option<u32> + with_viewport_extent + content_viewport()",
+        "view_vertical_scrollbar: 트랙=viewport_h(px), thumb 비율=content_viewport() — 단위 상쇄로 px트랙+행 정확",
+        "기본 viewport_extent=None→viewport_h 위임: 기존 px 소비자 바이트-동일 (additive #[non_exhaustive])"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-widget-paint scrollbar 18 test green (R1032 신규 2: extent override + 행 thumb 192/96 핀)",
+        "clippy --all-targets --features pinion-runtime/vello 0 / rustfmt clean / cargo check --workspace 0"
+      ],
+      "publishable_impact_refs": [
+        "5.45"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R1032 작업트리 구현·검증 완료, 커밋/푸시 미실시 (사용자 commit 미선택)",
+        "sprag 터미널 세로 스크롤바 배선=sprag-native (행 ScrollState + with_viewport_extent + follow/inversion)",
+        "R16.1 드래그-권위 attach API 불요 (ScrollState 단위중립); 2nd 소비자 전 보류"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

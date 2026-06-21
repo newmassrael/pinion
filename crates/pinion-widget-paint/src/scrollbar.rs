@@ -88,11 +88,36 @@ use pinion_core::widgets::scrollbar::{ScrollBarOrientation, ScrollBarState, scro
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy)]
 pub struct VerticalScrollbarStyle {
-    /// Vertical viewport extent of the paired
-    /// [`ScrollNode`](pinion_core::scene::ScrollNode) — feeds the
-    /// track height + the thumb-extent ratio derivation in
-    /// [`scrollbar_thumb_rect`].
+    /// Track **pixel** height — the cross-axis-perpendicular extent
+    /// the track [`Scene::Container`] is laid out at. For the common
+    /// pixel-unit consumer this is also the viewport content-extent
+    /// (the two coincide when the [`ScrollState`] offset / max are in
+    /// pixels), so [`Self::viewport_extent`] defaults to this value.
+    ///
+    /// (R1032 §5.45) A **row-unit** consumer — a text grid / terminal
+    /// whose [`ScrollState`] counts scrollback *rows*, not pixels —
+    /// keeps this as the track's real pixel height (e.g. `480`) and
+    /// declares the visible *row* count separately through
+    /// [`Self::with_viewport_extent`] (e.g. `24`). The track still
+    /// renders at the right pixel size while the thumb ratio is
+    /// derived from the row counts. See [`Self::content_viewport`].
     pub viewport_h: u32,
+    /// (R1032 §5.45) Viewport content-extent in the **same unit as the
+    /// paired [`ScrollState`]'s `offset_y` / `max_y`** — the value fed
+    /// to [`scrollbar_thumb_rect`] as `viewport_extent`. `None` means
+    /// "same as [`Self::viewport_h`]", the pixel-unit case where the
+    /// track pixel height and the content viewport coincide.
+    ///
+    /// Set this (via [`Self::with_viewport_extent`]) only when the
+    /// [`ScrollState`] is driven in a non-pixel unit — e.g. a terminal
+    /// whose `offset_y` is a scrollback *row* index. Then `viewport_h`
+    /// stays the track's pixel height and this carries the visible row
+    /// count; the thumb extent / position resolve to the correct
+    /// pixels because [`scrollbar_thumb_rect`] only ever consumes
+    /// `viewport_extent` / `content_extent` / `offset` as *ratios*
+    /// (`track_px · viewport/content`, `travel_px · offset/scroll_max`),
+    /// so the content unit cancels.
+    pub viewport_extent: Option<u32>,
     /// Track width along the cross axis. Material / web canonical
     /// is 8 px for desktop-class UIs; touch interfaces may bump to
     /// 12+ via a future axis.
@@ -125,9 +150,36 @@ impl VerticalScrollbarStyle {
     pub const fn material(viewport_h: u32, tag: &'static str) -> Self {
         Self {
             viewport_h,
+            viewport_extent: None,
             gutter_w: 8,
             min_thumb: 24,
             tag,
+        }
+    }
+
+    /// (R1032 §5.45) Declare a viewport content-extent distinct from
+    /// the track pixel height [`Self::viewport_h`]. Use this when the
+    /// paired [`ScrollState`] is driven in a non-pixel unit — e.g. a
+    /// terminal whose `offset_y` / `max_y` are scrollback *row*
+    /// indices: pass the track's real pixel height to
+    /// [`Self::material`] and the visible **row** count here. `None`
+    /// (the default) keeps the pixel-unit behaviour where the track
+    /// height doubles as the content viewport.
+    #[must_use]
+    pub const fn with_viewport_extent(mut self, viewport_extent: u32) -> Self {
+        self.viewport_extent = Some(viewport_extent);
+        self
+    }
+
+    /// (R1032 §5.45) Effective viewport content-extent fed to
+    /// [`scrollbar_thumb_rect`]: the [`Self::viewport_extent`] override
+    /// when set, else [`Self::viewport_h`] (the pixel-unit case where
+    /// the track height and the content viewport are the same number).
+    #[must_use]
+    pub const fn content_viewport(&self) -> u32 {
+        match self.viewport_extent {
+            Some(extent) => extent,
+            None => self.viewport_h,
         }
     }
 
@@ -209,6 +261,20 @@ fn thumb_fill_for_state(theme: &Theme, interaction: ScrollBarState) -> pinion_co
 /// signal — auto-subscription on the read side repaints the next
 /// frame.
 ///
+/// ## Unit: pixel vs row content
+///
+/// (R1032 §5.45) By default the track pixel height
+/// ([`VerticalScrollbarStyle::viewport_h`]) doubles as the viewport
+/// content-extent — correct when the [`ScrollState`] offset / max are
+/// in pixels. A **row-unit** consumer (terminal / text grid whose
+/// `offset_y` is a scrollback row index) declares the visible row
+/// count via [`VerticalScrollbarStyle::with_viewport_extent`] while
+/// keeping `viewport_h` as the real track pixel height; the thumb
+/// extent / position still resolve to the correct pixels because
+/// [`scrollbar_thumb_rect`] consumes the content scalars only as
+/// ratios. The drag wire below is unaffected — `pointer_move` writes
+/// `ScrollState::scroll_to` in whatever unit the state already holds.
+///
 /// ## Drag-able wire
 ///
 /// The visible peer is **paint-only**. To make the thumb drag-able
@@ -247,20 +313,28 @@ pub fn view_vertical_scrollbar(
 ) -> Scene {
     let (_, offset_y) = scroll_state.offset();
     let (_, max_y) = scroll_state.max();
+    // (R1032 §5.45) Track is laid out at its real pixel height; the
+    // thumb ratio is derived from the content-unit viewport extent,
+    // which equals the pixel height for pixel-unit consumers and the
+    // visible *row* count for a row-unit consumer (terminal / text
+    // grid). [`scrollbar_thumb_rect`] consumes `viewport_extent` /
+    // `content_extent` / `offset` only as ratios, so the content unit
+    // cancels against the pixel `track_rect` height.
     let track_rect = Rect::new(0, 0, style.gutter_w, style.viewport_h);
+    let viewport_extent = style.content_viewport();
     // [`ScrollState::max`] returns `content_extent − viewport_extent`,
-    // so `content_extent = viewport_extent + max`. First-frame
-    // `max_y == 0` → thumb fills the track ("nothing to scroll");
-    // R55.G.24 [[signal-batch-atomic-multi-axis-update]] writes the
-    // real max on the next paint, the view fn re-runs, the thumb
-    // snaps to size.
+    // so `content_extent = viewport_extent + max` (in the ScrollState's
+    // own unit). First-frame `max_y == 0` → thumb fills the track
+    // ("nothing to scroll"); R55.G.24
+    // [[signal-batch-atomic-multi-axis-update]] writes the real max on
+    // the next paint, the view fn re-runs, the thumb snaps to size.
     let max_y_nonneg = u32::try_from(max_y.max(0)).unwrap_or(0);
-    let content_extent = style.viewport_h.saturating_add(max_y_nonneg);
+    let content_extent = viewport_extent.saturating_add(max_y_nonneg);
     let scroll_offset = u32::try_from(offset_y.max(0)).unwrap_or(0);
     let geom = scrollbar_thumb_rect(
         ScrollBarOrientation::Vertical,
         track_rect,
-        style.viewport_h,
+        viewport_extent,
         content_extent,
         scroll_offset,
         style.min_thumb,
@@ -512,6 +586,79 @@ mod tests {
                 &style,
                 ScrollBarState::Idle,
             );
+        });
+    }
+
+    // R1032 §5.45 — track pixel height vs content viewport extent split.
+    // A row-unit consumer (terminal / text grid whose ScrollState counts
+    // scrollback rows) keeps `viewport_h` as the real track pixel height
+    // and declares the visible ROW count through `with_viewport_extent`.
+    // The thumb ratio then resolves to the correct pixels off the row
+    // content scalars, decoupled from the px track height.
+
+    #[test]
+    fn r1032_viewport_extent_defaults_to_track_height_else_override() {
+        // material() alone: content viewport == track pixel height — the
+        // pixel-unit case the pre-R1032 consumers rely on (unchanged).
+        let px = VerticalScrollbarStyle::material(480, TEST_TAG);
+        assert_eq!(px.viewport_extent, None);
+        assert_eq!(px.content_viewport(), 480);
+        // Row-unit override: track stays 480 px, content viewport = 24 rows.
+        let rows = VerticalScrollbarStyle::material(480, TEST_TAG).with_viewport_extent(24);
+        assert_eq!(rows.viewport_extent, Some(24));
+        assert_eq!(
+            rows.viewport_h, 480,
+            "track pixel height untouched by the content-extent override",
+        );
+        assert_eq!(rows.content_viewport(), 24);
+    }
+
+    #[test]
+    fn r1032_row_unit_thumb_sized_by_row_content_not_track_pixels() {
+        run(|| {
+            // Terminal-style row-unit ScrollState: offset_y / max_y count
+            // scrollback ROWS while the track renders at 480 px. visible =
+            // 24 rows, total = 120 rows → max_y = 96 rows, offset = 48 rows.
+            let scroll = use_scroll_state("r1032_row_unit");
+            scroll.set_max(0, 96); // rows
+            scroll.scroll_to(0, 48); // rows
+            let style = VerticalScrollbarStyle::material(480, TEST_TAG).with_viewport_extent(24);
+            let scene =
+                view_vertical_scrollbar(&scroll, &Theme::light(), &style, ScrollBarState::Idle);
+
+            let Scene::Container(track) = scene else {
+                panic!("track Container");
+            };
+            // Track laid out at its real pixel height, NOT the 24-row count.
+            assert_eq!(
+                track.layout.size,
+                Size::px(8, 480),
+                "track keeps pixel height"
+            );
+
+            let Scene::Container(thumb) = &track.children[0] else {
+                panic!("thumb Container");
+            };
+            let (_, thumb_top) = thumb
+                .layout
+                .absolute_position
+                .expect("thumb absolute_position set");
+            // Closed-form with ROW ratios over a 480 px track:
+            // content = 24 + 96 = 120; thumb_extent = 480 * 24/120 = 96 px;
+            // scroll_max = 96; travel = 480 - 96 = 384; pos = 384 * 48/96 = 192.
+            assert_eq!(
+                thumb_top, 192,
+                "thumb positioned by row ratio over the pixel track"
+            );
+            assert_eq!(
+                thumb.layout.size.height,
+                Size::px(8, 96).height,
+                "thumb extent derived from the row content ratio",
+            );
+            // Contrast guard: had the helper kept treating viewport_h = 480
+            // as the row viewport, content would be 480 + 96 = 576 → thumb
+            // extent 400 px, position 40 px. Pinning 192 / 96 proves the
+            // content-extent path consumes the row scalars, not the px height.
         });
     }
 
