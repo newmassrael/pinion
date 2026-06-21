@@ -11755,6 +11755,38 @@
         "demo-sweep clusters tag_not_focusable + text-band + r674 all locally green; full sweep confirms on push."
       ]
     },
+    "R1031.1": {
+      "decision_summary": "R1031.1 §5.39 complete the tag_not_focusable demo-sweep cluster: two immediate-mode example buttons (canvas_btn in hello-immediate-mode-canvas, dismiss_btn in hello-immediate-intent) are hand-composed Containers that never opted into LayoutStyle::focusable, so R1030's widget-style default flip did not reach them (the R1030 example opt-in sweep missed the immediate-mode bindings). Add .with_focusable(true) to each — the same hand-composed opt-in as rating / tree invisible-root. Verified r681/r827 PASS locally. This leaves r705_focus_ring_placement as the single remaining demo-sweep failure, which is CI-only (not reproducible locally even under forced DejaVu + lavapipe): nav_rail became focusable (R1030), and at the 720x480 default snapshot viewport the full-height rail's focus ring hits the framebuffer far edge where build_focus_ring_box (R1022) clamps it, but the demo's assert_focus_ring_concentric inflate_sat mirror only clamps the near edge — a demo-side mirror gap, tracked for a follow-up.",
+      "changes_bullets": [
+        "hello-immediate-mode-canvas + hello-immediate-intent: .with_focusable(true) on hand-composed button"
+      ],
+      "verification_bullets": [
+        "r681 + r827 PASS locally (was tag_not_focusable canvas_btn/dismiss_btn); clippy + fmt clean"
+      ],
+      "impact_refs": [
+        "5.39"
+      ],
+      "carry_forward_bullets": [
+        "r705 is the SINGLE remaining demo-sweep failure: CI-only, not reproducible locally even under DejaVu+lavapipe.",
+        "r705 hypothesis: assert_focus_ring_concentric inflate_sat (rpc_verify) lacks the R1022 far-edge framebuffer clamp.",
+        "unpushed: R1031.1; push greens r681/r827 and isolates r705 for a CI-loop fix."
+      ],
+      "publishable_decision_summary": "R1031.1 §5.39 complete the tag_not_focusable demo-sweep cluster: two immediate-mode example buttons (canvas_btn in hello-immediate-mode-canvas, dismiss_btn in hello-immediate-intent) are hand-composed Containers that never opted into LayoutStyle::focusable, so R1030's widget-style default flip did not reach them (the R1030 example opt-in sweep missed the immediate-mode bindings). Add .with_focusable(true) to each — the same hand-composed opt-in as rating / tree invisible-root. Verified r681/r827 PASS locally. This leaves r705_focus_ring_placement as the single remaining demo-sweep failure, which is CI-only (not reproducible locally even under forced DejaVu + lavapipe): nav_rail became focusable (R1030), and at the 720x480 default snapshot viewport the full-height rail's focus ring hits the framebuffer far edge where build_focus_ring_box (R1022) clamps it, but the demo's assert_focus_ring_concentric inflate_sat mirror only clamps the near edge — a demo-side mirror gap, tracked for a follow-up.",
+      "publishable_changes_bullets": [
+        "hello-immediate-mode-canvas + hello-immediate-intent: .with_focusable(true) on hand-composed button"
+      ],
+      "publishable_verification_bullets": [
+        "r681 + r827 PASS locally (was tag_not_focusable canvas_btn/dismiss_btn); clippy + fmt clean"
+      ],
+      "publishable_impact_refs": [
+        "5.39"
+      ],
+      "publishable_carry_forward_bullets": [
+        "r705 is the SINGLE remaining demo-sweep failure: CI-only, not reproducible locally even under DejaVu+lavapipe.",
+        "r705 hypothesis: assert_focus_ring_concentric inflate_sat (rpc_verify) lacks the R1022 far-edge framebuffer clamp.",
+        "unpushed: R1031.1; push greens r681/r827 and isolates r705 for a CI-loop fix."
+      ]
+    },
     "R1032": {
       "decision_summary": "Round 1032 — §5.45 scrollbar 페인트 래퍼 트랙-px / 콘텐츠-viewport 단위 분리(with_viewport_extent); sprag PR-16 R16.2 인도, R16.1 드래그-권위 API 불요 판정",
       "changes_bullets": [

@@ -460,6 +460,9 @@ fn view(state: ButtonState, _frame: &Frame) -> Scene {
                     .flex(FlexDirection::Row)
                     .with_justify(JustifyContent::Center)
                     .with_align_items(AlignItems::Center)
+                    // (R1031.1 §5.39) hand-composed button (immediate-mode view)
+                    // is a Tab stop — the composing view owns the focus opt-in.
+                    .with_focusable(true)
                     .with_size(Size::px(BTN_W, BTN_H)),
             ),
     );
