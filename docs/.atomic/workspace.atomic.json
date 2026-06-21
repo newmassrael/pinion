@@ -4412,11 +4412,11 @@
       ]
     },
     "5.37.7": {
-      "title": "Line-break property substrate (UAX #14 Line_Break) — R50.7 sub-scope",
+      "title": "Line breaking (UAX #14): Line_Break substrate + LB1-LB31 break algorithm (LineBreakTest-conformant)",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5.37",
       "decision_status": "active",
-      "intent": "§5.37 line-break layer: LineBreak enum (48 UAX #14 Line_Break values) + codepoint-to-class lookup over a UCD 16.0 range table; the substrate every LB rule reads (break algorithm = R50.7.x).",
+      "intent": "Decide where a run may wrap: the Line_Break property lookup plus the LB1-LB31 pair-rule break algorithm, validated against the full UCD 16.0 LineBreakTest.txt.",
       "rationale_bullets": [
         "§5.37 의 'run 이 어디서 wrap 가능한가' 결정층 — shaping(§5.37.6) 위, paint 아래",
         "BidiClass table(§5.37.4)이 UAX #9 rule 에 선행하듯 LB class lookup 이 LB1-LB31 에 선행",
@@ -4432,9 +4432,13 @@
       ],
       "outputs_bullets": [
         "LineBreak enum — 48 Line_Break values, #[repr(u8)] AI=0..ZWJ=47, from_index/ucd_name",
-        "line_break_class(char) -> LineBreak — RANGES binary-search, 미등재 codepoint = XX default",
+        "line_break_class(char) -> LineBreak — RANGES binary-search, unlisted codepoint = XX default",
         "LINE_BREAK_CLASS_RANGES — codegen'd sorted (start,end,class_idx), linebreak_tables.rs",
-        "lib.rs re-export LineBreak / line_break_class — downstream LB 알고리즘 + 외부 consumer"
+        "line_break_opportunities(&str) -> Vec<BreakOpportunity> — LB1-LB31 break byte offsets",
+        "BreakOpportunity { offset, mandatory } — break point; mandatory = LB3/LB4/LB5 hard break",
+        "is_east_asian_wide + EAST_ASIAN_WIDE_RANGES — $EastAsian F/W/H for LB19a/LB21a/LB30",
+        "INITIAL_PUNCTUATION / FINAL_PUNCTUATION — Pi/Pf gc subsets, QU sub-class (LB15a/b/LB19)",
+        "lib.rs re-export LineBreak / line_break_class / line_break_opportunities / BreakOpportunity"
       ],
       "caveats_bullets": [
         "Carry placeholder — ratify TBD, §5.37.4 BIDI / §5.37.6 shape 이후 자연 순서",
@@ -4445,7 +4449,13 @@
         "SG(surrogate) = Rust char 도달불가, property set 완전성 위해서만 존재",
         "range-lookup = 2nd (start,end,idx) site(bidi_class peer); 3rd property 가 helper lift 트리거",
         "production paint 여전히 §5.36 swash; line-break 는 test forcing-consumer 로만 검증",
-        "R1019: 위 'ratify TBD/Carry placeholder' = R51.1 기록, supersede — R50.7 property substrate landed"
+        "R1019: 위 'ratify TBD/Carry placeholder' = R51.1 기록, supersede — R50.7 property substrate landed",
+        "R1033: LB1-LB31 break algorithm landed (line_break_opportunities); R50.7.x deferral superseded.",
+        "Conformance: full LineBreakTest.txt (UCD 16.0) passes bar LB30b ExtPict&Cn x EM ([30.22], 1 line).",
+        "EAW substrate: East_Asian_Width F/W/H (EastAsianWidth.txt) = $EastAsian for LB19a/LB21a/LB30.",
+        "Pi/Pf gc subsets (UnicodeData.txt) sub-classify QU for LB15a/LB15b/LB19.",
+        "LB9/LB10 = cluster-unit fold; SA->CM (gc Mn/Mc) deferred (suite has no SA combining mark).",
+        "EAW = (start,end) membership not (start,end,idx); the idx-helper Rule-of-Three lift still pends."
       ],
       "alternatives_rejected": [
         {
@@ -4490,6 +4500,41 @@
           "file": "crates/pinion-text-unicode/build.rs",
           "symbol": "emit_line_break_tables",
           "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-text-unicode/src/linebreak.rs",
+          "symbol": "line_break_opportunities",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-text-unicode/src/linebreak.rs",
+          "symbol": "break_actions",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-text-unicode/src/linebreak.rs",
+          "symbol": "BreakOpportunity",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-text-unicode/src/linebreak.rs",
+          "symbol": "is_east_asian_wide",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-text-unicode/build.rs",
+          "symbol": "parse_east_asian_wide",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-text-unicode/build.rs",
+          "symbol": "parse_general_category",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-text-unicode/src/test_fixture.rs",
+          "symbol": "load_line_break_test",
+          "kind": "references"
         }
       ]
     },
@@ -11823,6 +11868,42 @@
         "R1032 작업트리 구현·검증 완료, 커밋/푸시 미실시 (사용자 commit 미선택)",
         "sprag 터미널 세로 스크롤바 배선=sprag-native (행 ScrollState + with_viewport_extent + follow/inversion)",
         "R16.1 드래그-권위 attach API 불요 (ScrollState 단위중립); 2nd 소비자 전 보류"
+      ]
+    },
+    "R1033": {
+      "decision_summary": "§5.37.7 line breaking: land the UAX #14 LB1-LB31 break algorithm, LineBreakTest-conformant.",
+      "changes_bullets": [
+        "linebreak.rs: line_break_opportunities + break_actions — LB1-LB31 over a cluster-unit fold (LB9/LB10)",
+        "Add EAW substrate (EastAsianWidth.txt F/W/H) + Pi/Pf gc subsets (UnicodeData.txt) for LB15a/b/19a/21a/30",
+        "Vendor LineBreakTest.txt (UCD 16.0.0); test_fixture::load_line_break_test conformance harness"
+      ],
+      "verification_bullets": [
+        "248 pinion-text-unicode tests pass incl. full LineBreakTest.txt (16700 rows), bar 1 deferred LB30b [30.22] line",
+        "clippy --workspace --all-targets --features vello clean; rustfmt clean; new code cargo doc clean"
+      ],
+      "impact_refs": [
+        "5.37.7"
+      ],
+      "carry_forward_bullets": [
+        "Deferred: LB30b [ExtPict&Cn] x EM + SA->CM (gc Mn/Mc) — need Extended_Pictographic / gc Mn/Mc substrates",
+        "EAW is (start,end) membership; the (start,end,idx) Rule-of-Three idx-helper lift across bidi/lb/eaw still pends"
+      ],
+      "publishable_decision_summary": "§5.37.7 line breaking: land the UAX #14 LB1-LB31 break algorithm, LineBreakTest-conformant.",
+      "publishable_changes_bullets": [
+        "linebreak.rs: line_break_opportunities + break_actions — LB1-LB31 over a cluster-unit fold (LB9/LB10)",
+        "Add EAW substrate (EastAsianWidth.txt F/W/H) + Pi/Pf gc subsets (UnicodeData.txt) for LB15a/b/19a/21a/30",
+        "Vendor LineBreakTest.txt (UCD 16.0.0); test_fixture::load_line_break_test conformance harness"
+      ],
+      "publishable_verification_bullets": [
+        "248 pinion-text-unicode tests pass incl. full LineBreakTest.txt (16700 rows), bar 1 deferred LB30b [30.22] line",
+        "clippy --workspace --all-targets --features vello clean; rustfmt clean; new code cargo doc clean"
+      ],
+      "publishable_impact_refs": [
+        "5.37.7"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Deferred: LB30b [ExtPict&Cn] x EM + SA->CM (gc Mn/Mc) — need Extended_Pictographic / gc Mn/Mc substrates",
+        "EAW is (start,end) membership; the (start,end,idx) Rule-of-Three idx-helper lift across bidi/lb/eaw still pends"
       ]
     },
     "R232": {
