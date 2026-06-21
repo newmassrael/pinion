@@ -12074,6 +12074,88 @@
         "Paint-wiring needs script-seg (§5.37.5) + bidi reorder wiring (§5.37.4) to be non-regressing"
       ]
     },
+    "R1036": {
+      "decision_summary": "§5.16 §2#7 scene/render_fidelity RPC: a dedicated uncontaminated presented-frame record (written only on the winit paint path, never an RPC recompute) plus an RPC method that diffs the displayed frame against a fresh state recompute and reports a diverged verdict, making the PR-17 residue AI-diagnosable in data (§2#7) instead of by pixel-counting.",
+      "changes_bullets": [
+        "pinion-runtime: RenderFidelity (paint_seq/present_ok/viewport/per-grid hash) + grid_fidelity walk",
+        "record_presented_frame written ONLY on the winit paint path, never an RPC recompute",
+        "pinion-rpc scene/render_fidelity: displayed record vs fresh state recompute + diverged verdict"
+      ],
+      "verification_bullets": [
+        "render_fidelity_seam 4 tests: stale 3-row frame vs settled 1-row state -> diverged in data",
+        "Diagnosis: residue = missed-repaint/present-staleness, not paint content (from:paint contaminated)",
+        "Re-verified R1037: render_fidelity_seam 4 tests pass"
+      ],
+      "impact_refs": [
+        "5.16",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "RECONSTRUCTED R1037 from git cf7dfb40 + PR-17 memory (prior session committed w/o Mnemosyne entry)",
+        "Live verify pending (displayed.used_rows < framebuffer prompts); forcing consumer = off-limits sprag",
+        "from:paint snapshot contaminated by R684 finalize recompute; render_fidelity is uncontaminated path"
+      ],
+      "publishable_decision_summary": "§5.16 §2#7 scene/render_fidelity RPC: a dedicated uncontaminated presented-frame record (written only on the winit paint path, never an RPC recompute) plus an RPC method that diffs the displayed frame against a fresh state recompute and reports a diverged verdict, making the PR-17 residue AI-diagnosable in data (§2#7) instead of by pixel-counting.",
+      "publishable_changes_bullets": [
+        "pinion-runtime: RenderFidelity (paint_seq/present_ok/viewport/per-grid hash) + grid_fidelity walk",
+        "record_presented_frame written ONLY on the winit paint path, never an RPC recompute",
+        "pinion-rpc scene/render_fidelity: displayed record vs fresh state recompute + diverged verdict"
+      ],
+      "publishable_verification_bullets": [
+        "render_fidelity_seam 4 tests: stale 3-row frame vs settled 1-row state -> diverged in data",
+        "Diagnosis: residue = missed-repaint/present-staleness, not paint content (from:paint contaminated)",
+        "Re-verified R1037: render_fidelity_seam 4 tests pass"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "RECONSTRUCTED R1037 from git cf7dfb40 + PR-17 memory (prior session committed w/o Mnemosyne entry)",
+        "Live verify pending (displayed.used_rows < framebuffer prompts); forcing consumer = off-limits sprag",
+        "from:paint snapshot contaminated by R684 finalize recompute; render_fidelity is uncontaminated path"
+      ]
+    },
+    "R1036.1": {
+      "decision_summary": "Headless GPU proof that pinion's raster does not accumulate: render N scenes into one reused target texture (the live RenderSurface::target_view reuse); a 5-row then 1-row TextGrid leaves rows 1-4 dark in frame 1 (no residue). Refutes the PR-17 doc's two suspects by code audit; passes on hardware and lavapipe. Did NOT ship a speculative reset/clear (would duplicate existing code = false fix).",
+      "changes_bullets": [
+        "HeadlessScreenshot::render_sequence: N scenes into one reused target (mirrors live target_view reuse)",
+        "render_target_reuse_gpu: TextGrid 5-red-rows then 1-red-row -> rows 1-4 dark = no accumulation",
+        "Factor read_texture shared by render_to_rgba8 + render_sequence"
+      ],
+      "verification_bullets": [
+        "Passes on hardware AND lavapipe; encode->render->reused-target->blit->present all non-accumulating",
+        "Code audit refutes both PR-17 suspects (vello reset + base_color clear + full blit every frame)",
+        "Re-verified R1037 on lavapipe: render_target_reuse_gpu 1 test passes (--ignored)"
+      ],
+      "impact_refs": [
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "RECONSTRUCTED R1037 from git 532711a0 + PR-17 memory (prior session committed w/o Mnemosyne entry)",
+        "Remaining residue candidates: swapchain/X-compositor present commit OR producer scrollback re-emission",
+        "r806_* lavapipe AA quirk (top-tile-flood/focus-ring) pre-existing, not from read_texture refactor"
+      ],
+      "publishable_decision_summary": "Headless GPU proof that pinion's raster does not accumulate: render N scenes into one reused target texture (the live RenderSurface::target_view reuse); a 5-row then 1-row TextGrid leaves rows 1-4 dark in frame 1 (no residue). Refutes the PR-17 doc's two suspects by code audit; passes on hardware and lavapipe. Did NOT ship a speculative reset/clear (would duplicate existing code = false fix).",
+      "publishable_changes_bullets": [
+        "HeadlessScreenshot::render_sequence: N scenes into one reused target (mirrors live target_view reuse)",
+        "render_target_reuse_gpu: TextGrid 5-red-rows then 1-red-row -> rows 1-4 dark = no accumulation",
+        "Factor read_texture shared by render_to_rgba8 + render_sequence"
+      ],
+      "publishable_verification_bullets": [
+        "Passes on hardware AND lavapipe; encode->render->reused-target->blit->present all non-accumulating",
+        "Code audit refutes both PR-17 suspects (vello reset + base_color clear + full blit every frame)",
+        "Re-verified R1037 on lavapipe: render_target_reuse_gpu 1 test passes (--ignored)"
+      ],
+      "publishable_impact_refs": [
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "RECONSTRUCTED R1037 from git 532711a0 + PR-17 memory (prior session committed w/o Mnemosyne entry)",
+        "Remaining residue candidates: swapchain/X-compositor present commit OR producer scrollback re-emission",
+        "r806_* lavapipe AA quirk (top-tile-flood/focus-ring) pre-existing, not from read_texture refactor"
+      ]
+    },
     "R1037": {
       "decision_summary": "§5.37.5 UAX #24 Script property + script-run segmentation: script(char) over a code-generated Script enum/range table plus simplified run itemisation; Rule-of-Three lift of the (start,end,idx) range search shared by bidi_class/line_break_class/script.",
       "changes_bullets": [
