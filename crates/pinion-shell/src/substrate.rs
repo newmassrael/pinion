@@ -3044,11 +3044,14 @@ impl<V: WidgetView> ShellCore<V> {
         // focus ring is paint-time-injected (`apply_focus_ring`) and a
         // `FocusManager` mutation dirties no reactive owner, so without this the
         // ring lags to the next unrelated repaint (sprag PR-13). The wake is
-        // binding-wide (`request_redraw`), not per-window: focus is binding-wide
-        // state, so a cross-window steal must repaint BOTH the window losing the
-        // ring and the one gaining it. A click that moves no focus (re-click the
-        // focused widget, a tagged non-focusable decoration, an empty-background
-        // click while already cleared) requests nothing.
+        // binding-wide (`request_redraw`), not per-window: the focused tag is
+        // binding-wide state and `apply_focus_ring` reads the single
+        // `FocusManager` in EVERY window's producer, so a shared-state tag
+        // rendered in more than one window must repaint all of them on a focus
+        // change (R1024.1: not a cross-window "steal" — R1020 enumerates focus
+        // from the primary paint only). A click that moves no focus (re-click
+        // the focused widget, a tagged non-focusable decoration, an empty-
+        // background click while already cleared) requests nothing.
         if focus_changed {
             self.revision.bump();
             self.request_redraw();

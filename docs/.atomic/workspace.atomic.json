@@ -5268,7 +5268,9 @@
         "R1024: change gate = focus_set/focus_clear return; no-op click requests nothing (no spurious frame)",
         "R1024: binding-wide request_redraw not per-window - cross-window focus steal repaints loser+gainer",
         "R1024: one click_to_focus_for_window fix covers both mouse_pressed and touch-Started press callers",
-        "R1024: TUI has no click-to-focus path so no §2 #6 gap (drain bumps revision, differential redraw)"
+        "R1024: TUI has no click-to-focus path so no §2 #6 gap (drain bumps revision, differential redraw)",
+        "R1024.1: binding-wide redraw precis - apply_focus_ring reads one FocusManager per window producer",
+        "R1024.1: shared-state tag in >1 window repaints all; not a cross-window steal (R1020 primary enum)"
       ],
       "alternatives_rejected": [
         {
@@ -11140,6 +11142,48 @@
         "TUI has no click-to-focus path; its drain_focus_request bumps revision only (ratatui differential redraw), so no §2 #6 parity fix needed",
         "cross-window focus steal stays bounded by R1020's primary-window-only focus enumeration; a true multi-window focus model is a separate later round",
         "PR-13's suggested request_redraw_for_window(window_id) was corrected to binding-wide request_redraw (the true isomorphism with drain_focus_request and the multi-window-correct wake)"
+      ]
+    },
+    "R1024.1": {
+      "decision_summary": "R1024.1 §5.39 clearance (2 adversarial reviewers): correct the binding-wide-redraw rationale wording and pin the non-focusable-decoration no-redraw arm with a test",
+      "changes_bullets": [
+        "substrate.rs comment + §5.39 caveat: replaced the imprecise 'cross-window steal' rationale with the precise one - R1020 enumerates focus from the primary paint only (focus_set rejects non-enumerated tags), so focus cannot move to a secondary window's widget; the real reason binding-wide is correct is that apply_focus_ring reads the single FocusManager in every window's producer, so a shared-state tag rendered in >1 window must repaint all",
+        "tests/click_focus_redraw.rs: added clicking_a_nonfocusable_decoration_requests_no_redraw (a tagged non-focusable DECO cell; the click resolves to a hover target resolve_focusable rejects -> None, focus stays, no redraw) - directly exercises the None => false arm the fix added",
+        "no code-behavior change: binding-wide request_redraw retained (the choice was correct; only the stated rationale was imprecise)"
+      ],
+      "verification_bullets": [
+        "2 independent read-only adversarial reviewers (system-architect SSOT + quality-engineer code/test) returned push-ready; both verified the change-boundary congruence via an exhaustive 5-arm table and the red->green witness with load-bearing no-redraw controls",
+        "cargo test --workspace -j2 = 7274 ok 0 failed (click_focus_redraw 6 ok incl the new decoration arm)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) = 0",
+        "mnemosyne validate-workspace T1=0"
+      ],
+      "impact_refs": [
+        "5.39"
+      ],
+      "carry_forward_bullets": [
+        "touch-Started (handle_touch_for_window) shares click_to_focus_for_window so the fix covers it; a dedicated touch redraw test omitted as near-redundant (shared body), noted by both reviewers",
+        "pinion-shell carries ~25 pre-existing dangling intra-doc links (PreviewLedger / LayoutCache / DispatchContext / RepaintSink / WidgetView::* / ...) - not caught by the clippy commit gate, a separate docs-only round",
+        "R1024 + R1024.1 committed locally, push consent pending"
+      ],
+      "publishable_decision_summary": "R1024.1 §5.39 clearance (2 adversarial reviewers): correct the binding-wide-redraw rationale wording and pin the non-focusable-decoration no-redraw arm with a test",
+      "publishable_changes_bullets": [
+        "substrate.rs comment + §5.39 caveat: replaced the imprecise 'cross-window steal' rationale with the precise one - R1020 enumerates focus from the primary paint only (focus_set rejects non-enumerated tags), so focus cannot move to a secondary window's widget; the real reason binding-wide is correct is that apply_focus_ring reads the single FocusManager in every window's producer, so a shared-state tag rendered in >1 window must repaint all",
+        "tests/click_focus_redraw.rs: added clicking_a_nonfocusable_decoration_requests_no_redraw (a tagged non-focusable DECO cell; the click resolves to a hover target resolve_focusable rejects -> None, focus stays, no redraw) - directly exercises the None => false arm the fix added",
+        "no code-behavior change: binding-wide request_redraw retained (the choice was correct; only the stated rationale was imprecise)"
+      ],
+      "publishable_verification_bullets": [
+        "2 independent read-only adversarial reviewers (system-architect SSOT + quality-engineer code/test) returned push-ready; both verified the change-boundary congruence via an exhaustive 5-arm table and the red->green witness with load-bearing no-redraw controls",
+        "cargo test --workspace -j2 = 7274 ok 0 failed (click_focus_redraw 6 ok incl the new decoration arm)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) = 0",
+        "mnemosyne validate-workspace T1=0"
+      ],
+      "publishable_impact_refs": [
+        "5.39"
+      ],
+      "publishable_carry_forward_bullets": [
+        "touch-Started (handle_touch_for_window) shares click_to_focus_for_window so the fix covers it; a dedicated touch redraw test omitted as near-redundant (shared body), noted by both reviewers",
+        "pinion-shell carries ~25 pre-existing dangling intra-doc links (PreviewLedger / LayoutCache / DispatchContext / RepaintSink / WidgetView::* / ...) - not caught by the clippy commit gate, a separate docs-only round",
+        "R1024 + R1024.1 committed locally, push consent pending"
       ]
     },
     "R232": {

@@ -41,6 +41,10 @@ use std::sync::Mutex;
 
 const PANE0: &str = "pane#0";
 const PANE1: &str = "pane#1";
+/// A tagged but NON-focusable node (no `.with_focusable`) — the W3C
+/// decoration: clicking it leaves focus unchanged, so it must request no
+/// redraw. Exercises the `resolve_focusable -> None` arm of the fix.
+const DECO: &str = "decoration";
 
 const W: u32 = 640;
 const H: u32 = 384;
@@ -84,23 +88,24 @@ impl WidgetCore for ClickFocusView {
 
     fn read_state(_scene: &Scene) {}
 
-    // Two focus stops side by side at fixed 100x100 rects (flex row, no grow),
-    // so a cursor coordinate hits a known pane deterministically. The root is
-    // intentionally UNtagged: a click past the panes resolves to no target,
-    // exercising the `focus_clear` arm (a tagged-but-non-focusable root would
-    // instead leave focus unchanged — the W3C decoration convention).
+    // Two focus stops then a non-focusable decoration, side by side at fixed
+    // 100x100 rects (flex row, no grow), so a cursor coordinate hits a known
+    // node deterministically: pane#0 x[0,100), pane#1 x[100,200), decoration
+    // x[200,300). The root is intentionally UNtagged: a click past all three
+    // (x>=300) resolves to no target, exercising the `focus_clear` arm (a
+    // tagged-but-non-focusable root would instead leave focus unchanged).
     fn view(_state: (), _frame: &Frame) -> Scene {
-        let pane = |tag: &'static str| {
+        let cell = |tag: &'static str, focusable: bool| {
             Scene::Container(
                 ContainerNode::new(Vec::new()).with_tag(tag).with_layout(
                     LayoutStyle::new()
-                        .with_focusable(true)
+                        .with_focusable(focusable)
                         .with_size(Size::px(100, 100)),
                 ),
             )
         };
         Scene::Container(
-            ContainerNode::new(vec![pane(PANE0), pane(PANE1)])
+            ContainerNode::new(vec![cell(PANE0, true), cell(PANE1, true), cell(DECO, false)])
                 .with_layout(LayoutStyle::new().flex(FlexDirection::Row)),
         )
     }
@@ -210,6 +215,28 @@ fn background_click_clearing_focus_requests_a_redraw() {
     assert!(
         redraw,
         "a background click that clears focus must request a redraw (R13.2)",
+    );
+}
+
+#[test]
+fn clicking_a_nonfocusable_decoration_requests_no_redraw() {
+    let _g = TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut core = booted();
+    click_at(&mut core, 50.0, 50.0);
+    assert_eq!(core.focus().focused(), Some(PANE0));
+
+    // Control: a click on a tagged-but-non-focusable node resolves to a hover
+    // target that `resolve_focusable` rejects (`None`), so focus is unchanged
+    // and no redraw is requested. Directly exercises the `None => false` arm.
+    let redraw = click_at(&mut core, 250.0, 50.0);
+    assert_eq!(
+        core.focus().focused(),
+        Some(PANE0),
+        "a decoration click leaves focus on pane#0 (W3C: only focusable nodes focus)",
+    );
+    assert!(
+        !redraw,
+        "a click on a non-focusable decoration moves no focus, so requests no redraw",
     );
 }
 
