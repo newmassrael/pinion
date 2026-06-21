@@ -12,6 +12,7 @@ use crate::shape::ShapedRun;
 use crate::tables::cmap::Cmap;
 use crate::tables::glyf::{Glyf, Glyph};
 use crate::tables::gpos::Gpos;
+use crate::tables::gsub::Gsub;
 use crate::tables::head::Head;
 use crate::tables::hhea::Hhea;
 use crate::tables::hmtx::Hmtx;
@@ -42,6 +43,8 @@ pub struct Font {
     pub name: Name,
     /// GPOS positioning table — `None` when the font has no GPOS (§5.37.6).
     pub gpos: Option<Gpos>,
+    /// GSUB substitution table — `None` when the font has no GSUB (§5.37.6).
+    pub gsub: Option<Gsub>,
 }
 
 impl Font {
@@ -81,6 +84,10 @@ impl Font {
             Ok(table) => Some(Gpos::parse(table)?),
             Err(_) => None,
         };
+        let gsub = match find_table(&bytes, &records, *b"GSUB") {
+            Ok(table) => Some(Gsub::parse(table)?),
+            Err(_) => None,
+        };
 
         Ok(Self {
             bytes,
@@ -97,6 +104,7 @@ impl Font {
             glyf,
             name,
             gpos,
+            gsub,
         })
     }
 
@@ -203,6 +211,19 @@ impl Font {
             self.units_per_em(),
             px_per_em,
         )
+    }
+
+    /// Apply GSUB `liga` ligature substitution to a glyph-id sequence (§5.37.6).
+    /// Returns one `(glyph, origin)` per output glyph, where `origin` is the
+    /// index in `glyphs` of the first component that produced it (so a caller
+    /// maps the possibly-fewer outputs back to source clusters). A font with no
+    /// GSUB / no `liga` feature returns the input glyphs 1:1 (`origin = index`).
+    #[must_use]
+    pub fn substitute_ligatures(&self, glyphs: &[u16]) -> Vec<(u16, usize)> {
+        match &self.gsub {
+            Some(g) => g.substitute(glyphs),
+            None => glyphs.iter().enumerate().map(|(i, &g)| (g, i)).collect(),
+        }
     }
 
     /// First-glyph X-advance kern adjustment in design units for the ordered

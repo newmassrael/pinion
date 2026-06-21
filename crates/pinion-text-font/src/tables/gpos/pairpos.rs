@@ -14,11 +14,10 @@
 //! Offsets inside a `PairPos` subtable are relative to the subtable start, so the
 //! parser is handed the whole GPOS table plus the subtable's absolute offset.
 
-use super::classdef::ClassDef;
-use super::coverage::Coverage;
-use super::{GPOS_TAG, slice_at};
+use super::GPOS_TAG;
 use crate::error::{FieldValue, ParseError};
 use crate::reader::Reader;
+use crate::tables::layout::{ClassDef, Coverage, slice_at};
 
 /// `ValueRecord` field-presence bits (Microsoft OpenType "`ValueRecord`").
 const X_PLACEMENT: u16 = 0x0001;
@@ -67,7 +66,7 @@ impl PairPos {
     /// * [`ParseError::InvalidTableField`] — unknown posFormat or a malformed
     ///   Coverage / `ClassDef`.
     pub fn parse(table: &[u8], subtable_off: usize) -> Result<Self, ParseError> {
-        let local = slice_at(table, subtable_off)?;
+        let local = slice_at(table, subtable_off, GPOS_TAG)?;
         let mut r = Reader::new(local, GPOS_TAG);
         let pos_format = r.read_u16()?;
         match pos_format {
@@ -93,11 +92,11 @@ impl PairPos {
             pair_set_offsets.push(usize::from(r.read_u16()?));
         }
 
-        let coverage = Coverage::parse(slice_at(local, coverage_off)?)?;
+        let coverage = Coverage::parse(slice_at(local, coverage_off, GPOS_TAG)?, GPOS_TAG)?;
 
         let mut pair_sets = Vec::with_capacity(pair_set_offsets.len());
         for off in pair_set_offsets {
-            let mut pr = Reader::new(slice_at(local, off)?, GPOS_TAG);
+            let mut pr = Reader::new(slice_at(local, off, GPOS_TAG)?, GPOS_TAG);
             let pair_value_count = pr.read_u16()?;
             // No `with_capacity(pair_value_count)` blow-up risk: count is u16.
             let mut entries = Vec::with_capacity(usize::from(pair_value_count));
@@ -129,9 +128,9 @@ impl PairPos {
         let class1_count = r.read_u16()?;
         let class2_count = r.read_u16()?;
 
-        let coverage = Coverage::parse(slice_at(local, coverage_off)?)?;
-        let class_def1 = ClassDef::parse(slice_at(local, class_def1_off)?)?;
-        let class_def2 = ClassDef::parse(slice_at(local, class_def2_off)?)?;
+        let coverage = Coverage::parse(slice_at(local, coverage_off, GPOS_TAG)?, GPOS_TAG)?;
+        let class_def1 = ClassDef::parse(slice_at(local, class_def1_off, GPOS_TAG)?, GPOS_TAG)?;
+        let class_def2 = ClassDef::parse(slice_at(local, class_def2_off, GPOS_TAG)?, GPOS_TAG)?;
 
         // The class1×class2 matrix follows the header inline. Read with `r`
         // (already positioned past class2Count). Build with plain `push` — NOT

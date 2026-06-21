@@ -1,24 +1,25 @@
-//! R50.6 §5.37.6 — baseline text-run shaping (cmap + hmtx positioning).
+//! R50.6 §5.37.6 — text-run shaping (cmap + GSUB ligatures + GPOS kerning).
 //!
 //! The layer above the glyph rasterizer (§5.37.8): turns a Unicode `&str` into a
 //! sequence of positioned glyphs, then composites them into one anti-aliased
 //! coverage bitmap. This is the first time the self-hosted text engine renders a
 //! whole *string* to pixels (the rasterizer renders one glyph by id).
 //!
-//! # Scope — baseline + GPOS pair-kerning (R50.6, R50.6.1)
+//! # Scope — cmap + GSUB ligatures + GPOS kerning (R50.6, R50.6.1, R50.7)
 //!
-//! Codepoint → glyph via the cmap ([`Font::glyph_id_for`]), advance width via
-//! hmtx ([`Font::glyph_advance_width`]), and a left-to-right pen that accumulates
-//! advances. R50.6.1 adds the most universal positioning refinement on top of
-//! this baseline: GPOS `kern`-feature **pair kerning** ([`Font::kern_x_advance`],
-//! [`crate::tables::gpos`]) adjusts the advance between adjacent glyphs. This
-//! mirrors the simple → composite raster split (R50.8 → R50.8.x) — the
-//! foundation, then incremental refinement.
+//! Three-stage shaping: (1) cmap codepoint → glyph ([`Font::glyph_id_for`]);
+//! (2) GSUB `liga` **ligature substitution** ([`Font::substitute_ligatures`],
+//! [`crate::tables::gsub`]) collapses component sequences (f + i → ﬁ); (3) GPOS
+//! `kern` **pair kerning** ([`Font::kern_x_advance`], [`crate::tables::gpos`])
+//! refines the advance between adjacent glyphs, with an hmtx-advance pen. GSUB
+//! before GPOS, per the OpenType pipeline. This mirrors the simple → composite
+//! raster split (R50.8 → R50.8.x) — a foundation refined incrementally.
 //!
 //! Deliberately NOT yet handled (each is honest deferral, not a silent gap):
-//! GSUB substitution (ligatures, contextual forms); GPOS single / cursive / mark
+//! GSUB single / multiple / alternate / contextual / reverse-chaining (only
+//! Lookup Type 4 ligature substitution is applied); GPOS single / cursive / mark
 //! / contextual positioning (only Lookup Type 2 pair kerning is applied);
-//! `lookupFlag` glyph filtering (kern is applied to every adjacent pair); script
+//! `lookupFlag` glyph filtering (kern/liga apply to every adjacent run); script
 //! segmentation (§5.37.5); BIDI reorder (§5.37.4 lives in a separate crate, not
 //! yet wired in here — a single visual run is assumed); grapheme clustering /
 //! combining marks (iteration is per codepoint); and line breaking (§5.37.7 — a
@@ -70,14 +71,15 @@ pub struct ShapedRun {
 }
 
 /// Shape `text` into a positioned glyph run at `px_per_em` (§5.37.6: cmap
-/// codepoint → glyph, hmtx advance refined by GPOS `kern` pair positioning,
-/// left-to-right pen; no GSUB, no BIDI reorder, no grapheme clustering — see the
-/// module scope).
+/// codepoint → glyph, GSUB `liga` ligature substitution, then a left-to-right
+/// hmtx-advance pen refined by GPOS `kern` pair positioning; no BIDI reorder,
+/// no grapheme clustering — see the module scope).
 ///
 /// An unmapped codepoint resolves to glyph 0 (`.notdef`) per the OpenType
-/// convention. A degenerate font (`units_per_em == 0`) or a non-finite / `<= 0`
-/// `px_per_em` produces glyphs at the origin with zero advance (nothing to
-/// position against), never a panic or `NaN` pen.
+/// convention. A ligature carries its first component's `cluster` (so the run's
+/// glyphs may be fewer than the input codepoints). A degenerate font
+/// (`units_per_em == 0`) or a non-finite / `<= 0` `px_per_em` produces glyphs at
+/// the origin with zero advance, never a panic or `NaN` pen.
 #[must_use]
 pub fn shape_run(font: &Font, text: &str, px_per_em: f32) -> ShapedRun {
     let upem = font.units_per_em();
@@ -87,14 +89,28 @@ pub fn shape_run(font: &Font, text: &str, px_per_em: f32) -> ShapedRun {
         px_per_em / f32::from(upem)
     };
 
-    let mut glyphs = Vec::new();
+    // Stage 1 — cmap: each source codepoint → glyph id, tracking its byte
+    // cluster. An unmapped codepoint resolves to glyph 0 (.notdef).
+    let mut raw_glyphs: Vec<u16> = Vec::new();
+    let mut raw_clusters: Vec<usize> = Vec::new();
+    for (cluster, ch) in text.char_indices() {
+        raw_glyphs.push(font.glyph_id_for(ch as u32).unwrap_or(0));
+        raw_clusters.push(cluster);
+    }
+
+    // Stage 2 — GSUB substitution: collapse `liga` ligature sequences. Each
+    // output is (glyph, origin) where origin indexes into `raw_glyphs`/clusters
+    // (the ligature carries its first component's cluster). Identity for a font
+    // with no GSUB / no `liga` feature, so the cmap+hmtx baseline is preserved.
+    let substituted = font.substitute_ligatures(&raw_glyphs);
+
+    // Stage 3 — GPOS positioning: accumulate the pen left to right, folding the
+    // `kern` adjustment between adjacent glyphs (design units, same scale as the
+    // hmtx advance). 0 kern keeps the exact cmap+hmtx baseline.
+    let mut glyphs = Vec::with_capacity(substituted.len());
     let mut pen = 0.0_f32;
     let mut prev_glyph: Option<u16> = None;
-    for (cluster, ch) in text.char_indices() {
-        let glyph_id = font.glyph_id_for(ch as u32).unwrap_or(0);
-        // GPOS `kern` adjusts the advance between the previous glyph and this
-        // one (design units, same scale as hmtx advance). 0 when no covering
-        // kern lookup, so an un-kerned font keeps the exact cmap+hmtx baseline.
+    for (glyph_id, origin) in substituted {
         if let Some(prev) = prev_glyph {
             let kern_units = font.kern_x_advance(prev, glyph_id);
             pen += f32::from(kern_units) * scale;
@@ -102,7 +118,7 @@ pub fn shape_run(font: &Font, text: &str, px_per_em: f32) -> ShapedRun {
         glyphs.push(PositionedGlyph {
             glyph_id,
             x: pen,
-            cluster,
+            cluster: raw_clusters[origin],
         });
         let advance_units = font.glyph_advance_width(glyph_id).unwrap_or(0);
         pen += f32::from(advance_units) * scale;

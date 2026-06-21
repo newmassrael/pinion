@@ -1,4 +1,4 @@
-//! R50.6.1 §5.37.6 — OpenType Layout `Coverage` table.
+//! R50.7 §5.37.6 — OpenType Layout `Coverage` table.
 //!
 //! Microsoft OpenType 1.9.x spec, "Coverage Table" (Common Table Formats).
 //! Maps a glyph id to a *coverage index* (its 0-based position among the
@@ -7,12 +7,12 @@
 //! Format 1 = an explicit sorted glyph list; Format 2 = sorted, non-overlapping
 //! glyph ranges each carrying the coverage index of its first glyph.
 //!
-//! This is an OpenType-Layout *common* table (GSUB shares it too). It lives
-//! under `gpos/` while GPOS is its only consumer; a GSUB second consumer
-//! (R50.6.x) is the trigger to lift it to a shared `layout/` module
-//! (abstraction follows the second consumer, not speculation).
+//! Shared OpenType-Layout common table: GPOS (`PairPos`) and GSUB
+//! (`LigatureSubst`) both consume it. Lifted here from `tables/gpos/` at R50.7
+//! when GSUB became the second consumer (abstraction follows the second
+//! consumer). `parse` takes the owning table's `tag` so a malformed-coverage
+//! error names GPOS vs GSUB.
 
-use super::GPOS_TAG;
 use crate::error::{FieldValue, ParseError};
 use crate::reader::Reader;
 
@@ -36,14 +36,15 @@ pub struct CoverageRange {
 
 impl Coverage {
     /// Parse a Coverage table from its own first byte (`bytes[0]` = coverageFormat).
+    /// `tag` is the owning table's sfnt tag, used only for error reporting.
     ///
     /// # Errors
     ///
     /// * [`ParseError::TableTooShort`] — header / records run past the slice.
     /// * [`ParseError::InvalidTableField`] — unknown format, glyph list not
     ///   strictly ascending, or a range with `start > end`.
-    pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
-        let mut r = Reader::new(bytes, GPOS_TAG);
+    pub fn parse(bytes: &[u8], tag: [u8; 4]) -> Result<Self, ParseError> {
+        let mut r = Reader::new(bytes, tag);
         let format = r.read_u16()?;
         match format {
             1 => {
@@ -58,7 +59,7 @@ impl Coverage {
                 for w in glyphs.windows(2) {
                     if w[0] >= w[1] {
                         return Err(ParseError::InvalidTableField {
-                            tag: GPOS_TAG,
+                            tag,
                             field: "coverage1/glyphArray-not-ascending",
                             value: FieldValue::from_u16(w[0]),
                         });
@@ -75,7 +76,7 @@ impl Coverage {
                     let start_coverage_index = r.read_u16()?;
                     if start_glyph_id > end_glyph_id {
                         return Err(ParseError::InvalidTableField {
-                            tag: GPOS_TAG,
+                            tag,
                             field: "coverage2/start>end",
                             value: FieldValue::Unsigned(
                                 (u64::from(start_glyph_id) << 16) | u64::from(end_glyph_id),
@@ -91,7 +92,7 @@ impl Coverage {
                 Ok(Self::Format2 { ranges })
             }
             other => Err(ParseError::InvalidTableField {
-                tag: GPOS_TAG,
+                tag,
                 field: "coverage/format",
                 value: FieldValue::from_u16(other),
             }),
@@ -111,8 +112,8 @@ impl Coverage {
                     .and_then(|i| u16::try_from(i).ok())
             }
             Self::Format2 { ranges } => {
-                // Ranges are non-overlapping; a linear scan suffices (kern
-                // coverage range counts are small). `start_coverage_index` is
+                // Ranges are non-overlapping; a linear scan suffices (covered
+                // range counts are small). `start_coverage_index` is
                 // authoritative — it need not equal the cumulative offset. A
                 // malformed `start_coverage_index` near u16::MAX would overflow
                 // the add; `checked_add` returns None (treat as not covered) so a
@@ -134,6 +135,8 @@ impl Coverage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const TAG: [u8; 4] = *b"GSUB";
 
     fn fmt1(glyphs: &[u16]) -> Vec<u8> {
         let mut b = Vec::new();
@@ -159,7 +162,7 @@ mod tests {
 
     #[test]
     fn format1_index_is_array_position() {
-        let cov = Coverage::parse(&fmt1(&[3, 7, 42, 100])).unwrap();
+        let cov = Coverage::parse(&fmt1(&[3, 7, 42, 100]), TAG).unwrap();
         assert_eq!(cov.index(3), Some(0));
         assert_eq!(cov.index(7), Some(1));
         assert_eq!(cov.index(42), Some(2));
@@ -172,7 +175,7 @@ mod tests {
     #[test]
     fn format2_index_walks_range() {
         // Two ranges; second's startCoverageIndex continues past the first.
-        let cov = Coverage::parse(&fmt2(&[(10, 12, 0), (20, 21, 3)])).unwrap();
+        let cov = Coverage::parse(&fmt2(&[(10, 12, 0), (20, 21, 3)]), TAG).unwrap();
         assert_eq!(cov.index(10), Some(0));
         assert_eq!(cov.index(11), Some(1));
         assert_eq!(cov.index(12), Some(2));
@@ -187,7 +190,7 @@ mod tests {
         // A malformed range whose start_coverage_index is near u16::MAX must not
         // panic (debug overflow-check) nor wrap to a bogus index — treat the
         // overflowing glyph as not covered.
-        let cov = Coverage::parse(&fmt2(&[(0, 0xFFFF, 0xFFFF)])).unwrap();
+        let cov = Coverage::parse(&fmt2(&[(0, 0xFFFF, 0xFFFF)]), TAG).unwrap();
         assert_eq!(
             cov.index(0),
             Some(0xFFFF),
@@ -205,13 +208,13 @@ mod tests {
     fn format2_honors_explicit_start_coverage_index() {
         // A non-zero startCoverageIndex on the first range must be honored
         // (not recomputed from cumulative position).
-        let cov = Coverage::parse(&fmt2(&[(5, 5, 9)])).unwrap();
+        let cov = Coverage::parse(&fmt2(&[(5, 5, 9)]), TAG).unwrap();
         assert_eq!(cov.index(5), Some(9));
     }
 
     #[test]
     fn reject_format1_not_ascending() {
-        let err = Coverage::parse(&fmt1(&[5, 5])).unwrap_err();
+        let err = Coverage::parse(&fmt1(&[5, 5]), TAG).unwrap_err();
         assert!(matches!(
             err,
             ParseError::InvalidTableField {
@@ -223,7 +226,7 @@ mod tests {
 
     #[test]
     fn reject_format2_start_gt_end() {
-        let err = Coverage::parse(&fmt2(&[(20, 10, 0)])).unwrap_err();
+        let err = Coverage::parse(&fmt2(&[(20, 10, 0)]), TAG).unwrap_err();
         assert!(matches!(
             err,
             ParseError::InvalidTableField {
@@ -235,7 +238,7 @@ mod tests {
 
     #[test]
     fn reject_unknown_format() {
-        let err = Coverage::parse(&3u16.to_be_bytes()).unwrap_err();
+        let err = Coverage::parse(&3u16.to_be_bytes(), TAG).unwrap_err();
         assert!(matches!(
             err,
             ParseError::InvalidTableField {
@@ -252,7 +255,7 @@ mod tests {
         b.extend_from_slice(&4u16.to_be_bytes());
         b.extend_from_slice(&3u16.to_be_bytes());
         assert!(matches!(
-            Coverage::parse(&b),
+            Coverage::parse(&b, TAG),
             Err(ParseError::TableTooShort { .. })
         ));
     }

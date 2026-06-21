@@ -1,4 +1,4 @@
-//! R50.6.1 §5.37.6 — OpenType Layout `ClassDef` table.
+//! R50.7 §5.37.6 — OpenType Layout `ClassDef` table.
 //!
 //! Microsoft OpenType 1.9.x spec, "Class Definition Table" (Common Table
 //! Formats). Maps a glyph id to a *class value*; any glyph not listed is
@@ -8,11 +8,10 @@
 //! Format 1 = a contiguous run of glyph ids starting at `startGlyphID`, each
 //! with an explicit class; Format 2 = sorted `(start, end, class)` ranges.
 //!
-//! OpenType-Layout common table (GSUB shares it). Lives under `gpos/` until a
-//! second consumer (GSUB, R50.6.x) triggers a lift to a shared `layout/`
-//! module — same discipline as [`super::coverage`].
+//! Shared OpenType-Layout common table (GSUB chaining-context shares it too),
+//! lifted here from `tables/gpos/` at R50.7 alongside [`super::coverage`].
+//! `parse` takes the owning table's `tag` for error reporting.
 
-use super::GPOS_TAG;
 use crate::error::{FieldValue, ParseError};
 use crate::reader::Reader;
 
@@ -38,14 +37,15 @@ pub struct ClassRange {
 
 impl ClassDef {
     /// Parse a `ClassDef` table from its own first byte (`bytes[0]` = classFormat).
+    /// `tag` is the owning table's sfnt tag, used only for error reporting.
     ///
     /// # Errors
     ///
     /// * [`ParseError::TableTooShort`] — header / records run past the slice.
     /// * [`ParseError::InvalidTableField`] — unknown format or a range with
     ///   `start > end`.
-    pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
-        let mut r = Reader::new(bytes, GPOS_TAG);
+    pub fn parse(bytes: &[u8], tag: [u8; 4]) -> Result<Self, ParseError> {
+        let mut r = Reader::new(bytes, tag);
         let format = r.read_u16()?;
         match format {
             1 => {
@@ -69,7 +69,7 @@ impl ClassDef {
                     let class = r.read_u16()?;
                     if start_glyph_id > end_glyph_id {
                         return Err(ParseError::InvalidTableField {
-                            tag: GPOS_TAG,
+                            tag,
                             field: "classdef2/start>end",
                             value: FieldValue::Unsigned(
                                 (u64::from(start_glyph_id) << 16) | u64::from(end_glyph_id),
@@ -85,7 +85,7 @@ impl ClassDef {
                 Ok(Self::Format2 { ranges })
             }
             other => Err(ParseError::InvalidTableField {
-                tag: GPOS_TAG,
+                tag,
                 field: "classdef/format",
                 value: FieldValue::from_u16(other),
             }),
@@ -118,6 +118,8 @@ impl ClassDef {
 mod tests {
     use super::*;
 
+    const TAG: [u8; 4] = *b"GPOS";
+
     fn fmt1(start: u16, classes: &[u16]) -> Vec<u8> {
         let mut b = 1u16.to_be_bytes().to_vec();
         b.extend_from_slice(&start.to_be_bytes());
@@ -141,7 +143,7 @@ mod tests {
 
     #[test]
     fn format1_contiguous_run_else_default() {
-        let cd = ClassDef::parse(&fmt1(50, &[1, 2, 0, 3])).unwrap();
+        let cd = ClassDef::parse(&fmt1(50, &[1, 2, 0, 3]), TAG).unwrap();
         assert_eq!(cd.class_of(49), 0, "below run = default class 0");
         assert_eq!(cd.class_of(50), 1);
         assert_eq!(cd.class_of(51), 2);
@@ -153,7 +155,7 @@ mod tests {
     #[test]
     fn format1_below_start_does_not_wrap() {
         // glyph < start_glyph_id must not underflow into a bogus index.
-        let cd = ClassDef::parse(&fmt1(10, &[7])).unwrap();
+        let cd = ClassDef::parse(&fmt1(10, &[7]), TAG).unwrap();
         assert_eq!(cd.class_of(0), 0);
         assert_eq!(cd.class_of(9), 0);
         assert_eq!(cd.class_of(10), 7);
@@ -161,7 +163,7 @@ mod tests {
 
     #[test]
     fn format2_ranges_else_default() {
-        let cd = ClassDef::parse(&fmt2(&[(10, 12, 4), (20, 20, 9)])).unwrap();
+        let cd = ClassDef::parse(&fmt2(&[(10, 12, 4), (20, 20, 9)]), TAG).unwrap();
         assert_eq!(cd.class_of(9), 0);
         assert_eq!(cd.class_of(10), 4);
         assert_eq!(cd.class_of(12), 4);
@@ -172,7 +174,7 @@ mod tests {
 
     #[test]
     fn reject_format2_start_gt_end() {
-        let err = ClassDef::parse(&fmt2(&[(30, 10, 1)])).unwrap_err();
+        let err = ClassDef::parse(&fmt2(&[(30, 10, 1)]), TAG).unwrap_err();
         assert!(matches!(
             err,
             ParseError::InvalidTableField {
@@ -184,7 +186,7 @@ mod tests {
 
     #[test]
     fn reject_unknown_format() {
-        let err = ClassDef::parse(&9u16.to_be_bytes()).unwrap_err();
+        let err = ClassDef::parse(&9u16.to_be_bytes(), TAG).unwrap_err();
         assert!(matches!(
             err,
             ParseError::InvalidTableField {

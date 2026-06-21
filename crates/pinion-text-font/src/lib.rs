@@ -39,5 +39,6 @@ pub use tables::glyf::{
     GlyphPoint, SimpleGlyph,
 };
 pub use tables::gpos::Gpos;
+pub use tables::gsub::Gsub;
 pub use tables::loca::{Loca, LocaFormat};
 pub use tables::name::{LangTagRecord, Name, NameId, NameRecord};

@@ -127,6 +127,76 @@ fn shape_run_applies_gpos_pair_kerning() {
 }
 
 #[test]
+fn shape_run_applies_gsub_ligature() {
+    // The forcing consumer for §5.37.6 GSUB ligature substitution: NotoSans
+    // ships a real `liga` feature; substitute_ligatures must reach it (Script→
+    // Feature→Lookup→LigatureSubst) and collapse a component sequence, and
+    // shape_run must surface the collapse (fewer glyphs, correct cluster).
+    let font = load(NOTO);
+    assert!(font.gsub.is_some(), "NotoSans ships a GSUB table");
+    assert!(
+        font.gsub.as_ref().unwrap().has_ligatures(),
+        "NotoSans GSUB exposes a liga feature reachable from the default script"
+    );
+
+    // Probe classic Latin ligature clusters; find one NotoSans actually ligates
+    // (output glyph count < input) so the assertion is non-vacuous.
+    let candidates = ["ffi", "ffl", "fi", "fl", "ff"];
+    let ligated = candidates.iter().find_map(|word| {
+        let glyphs: Vec<u16> = word
+            .chars()
+            .map(|c| font.glyph_id_for(c as u32).expect("Latin glyph mapped"))
+            .collect();
+        let out = font.substitute_ligatures(&glyphs);
+        (out.len() < glyphs.len()).then_some((*word, glyphs.len(), out))
+    });
+    let (word, n_in, out) =
+        ligated.expect("NotoSans ligates at least one classic Latin cluster via GSUB");
+    assert!(
+        out.len() < n_in,
+        "{word}: {n_in} glyphs collapsed to {}",
+        out.len()
+    );
+
+    // shape_run surfaces the collapse: fewer positioned glyphs than codepoints,
+    // the ligature glyph first, carrying its first component's byte cluster (0).
+    let run = font.shape_run(word, 64.0);
+    assert_eq!(
+        run.glyphs.len(),
+        out.len(),
+        "{word}: shaped glyph count == substituted count"
+    );
+    assert!(
+        run.glyphs.len() < word.chars().count(),
+        "{word}: shaped fewer glyphs ({}) than chars ({})",
+        run.glyphs.len(),
+        word.chars().count()
+    );
+    assert_eq!(
+        run.glyphs[0].glyph_id, out[0].0,
+        "first glyph is the ligature"
+    );
+    assert_eq!(
+        run.glyphs[0].cluster, 0,
+        "ligature cluster = first component"
+    );
+
+    // Cluster mapping for a non-leading ligature: prepend ASCII 'a' (1 byte,
+    // does not ligature with 'f') — the ligature now starts at byte 1.
+    let prefixed = format!("a{word}");
+    let run2 = font.shape_run(&prefixed, 64.0);
+    assert_eq!(run2.glyphs[0].cluster, 0, "'a' at byte 0");
+    assert_eq!(
+        run2.glyphs[1].cluster, 1,
+        "ligature carries its first component's cluster (byte 1)"
+    );
+    assert_eq!(
+        run2.glyphs[1].glyph_id, out[0].0,
+        "same ligature glyph after 'a'"
+    );
+}
+
+#[test]
 fn shape_run_single_glyph_has_no_kern() {
     // Kerning is a pair property: a lone glyph's advance is the bare hmtx value,
     // never adjusted by GPOS (there is no preceding glyph to kern against).
