@@ -54,6 +54,33 @@ pub(crate) fn clamp_top_off_flood_row(rect: Rect) -> Rect {
     Rect::new(rect.x, y, rect.w, bottom.saturating_sub(y))
 }
 
+/// R1022 §5.39 — clamp `rect`'s **far** (right/bottom) edges into the framebuffer
+/// extent, preserving the near origin (the width/height shrink by the clamp).
+/// The far-edge sibling of [`clamp_top_off_flood_row`]: an overlay box whose far
+/// edge lands past the framebuffer rasterises that stroke off-screen, so a widget
+/// flush against the window's bottom/right edge loses ring/highlight strokes. The
+/// default `Inside` border alignment draws the stroke within the box rect, so a
+/// far edge clamped to the framebuffer extent lands the stroke fully visible.
+///
+/// `viewport` is the layout viewport `(width, height)` the shell fed
+/// `compute_layout` (R1006 canon — the value `use_viewport_size` reports). `None`
+/// = extent unknown (headless / pure-geometry callers): no clamp, so the box is
+/// never shrunk against a size that was never measured. A non-flush box
+/// (`far <= viewport`) is unaffected — the `min` is a no-op.
+pub(crate) fn clamp_far_edges_into_viewport(rect: Rect, viewport: Option<(u32, u32)>) -> Rect {
+    let Some((vw, vh)) = viewport else {
+        return rect;
+    };
+    let right = rect.x.saturating_add(rect.w).min(vw);
+    let bottom = rect.y.saturating_add(rect.h).min(vh);
+    Rect::new(
+        rect.x,
+        rect.y,
+        right.saturating_sub(rect.x),
+        bottom.saturating_sub(rect.y),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -83,5 +110,36 @@ mod tests {
         let once = clamp_top_off_flood_row(Rect::new(0, 0, 98, 42));
         let twice = clamp_top_off_flood_row(once);
         assert_eq!(once, twice, "clamping a clamped rect is a no-op");
+    }
+
+    #[test]
+    fn far_clamp_none_viewport_is_unchanged() {
+        let r = Rect::new(10, 20, 999, 999);
+        assert_eq!(clamp_far_edges_into_viewport(r, None), r, "unknown extent: no clamp");
+    }
+
+    #[test]
+    fn far_clamp_in_bounds_is_unchanged() {
+        let r = Rect::new(10, 20, 40, 30); // far edges 50, 50 — well inside 200x100
+        assert_eq!(clamp_far_edges_into_viewport(r, Some((200, 100))), r, "no-op when inside");
+    }
+
+    #[test]
+    fn far_clamp_shrinks_overflowing_far_edges_per_axis() {
+        // Box overflowing both far edges of a 200x100 viewport: right 0+202>200,
+        // bottom 1+102>100. The near origin is preserved; the spans shrink.
+        let out = clamp_far_edges_into_viewport(Rect::new(0, 1, 202, 102), Some((200, 100)));
+        assert_eq!(out, Rect::new(0, 1, 200, 99));
+        assert_eq!(out.x + out.w, 200, "right clamped to the viewport");
+        assert_eq!(out.y + out.h, 100, "bottom clamped to the viewport");
+    }
+
+    #[test]
+    fn far_clamp_collapses_to_zero_when_origin_past_far_edge() {
+        // A box whose near origin is already beyond the far edge collapses to a
+        // zero span (the caller treats this as "off-screen, skip"). saturating_sub
+        // floors at 0 rather than wrapping.
+        let out = clamp_far_edges_into_viewport(Rect::new(250, 10, 40, 30), Some((200, 100)));
+        assert_eq!(out, Rect::new(250, 10, 0, 30), "right=min(290,200)=200 < x=250 -> width 0");
     }
 }

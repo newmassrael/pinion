@@ -618,14 +618,15 @@ fn resolve_focus_ring_tag<V: WidgetView>(
 fn inject_styled_focus_ring<V: WidgetView>(
     scene: Scene,
     ring_tag: Option<&str>,
-    fb_w: u32,
-    fb_h: u32,
+    viewport: Option<(u32, u32)>,
 ) -> Scene {
     match ring_tag {
         Some(tag) => match V::focus_ring_style(tag) {
-            // R1022 §5.39 — thread the framebuffer (layout viewport) extent so
-            // the ring's far edges clamp on-screen for a window-flush widget.
-            Some(style) => pinion_overlay::inject_focus_ring(scene, Some(tag), style, fb_w, fb_h),
+            // R1022 §5.39 — thread the layout viewport extent so the ring's far
+            // edges clamp on-screen for a window-flush widget. The shell always
+            // knows the size, so it is `Some`; `None` is the overlay crate's
+            // headless / pure-geometry path.
+            Some(style) => pinion_overlay::inject_focus_ring(scene, Some(tag), style, viewport),
             None => scene,
         },
         None => scene,
@@ -2709,9 +2710,9 @@ impl<V: WidgetView> ShellCore<V> {
             resolve_focus_ring_tag::<V>(self.core.cached_state(), focused, self.core.root_owner());
         // R1010 §5.39 §5.40 — the binding owns the ring style for the rung tag
         // (None suppresses it; the default draws the framework ring).
-        // R1022 §5.39 — `(w, h)` = the framebuffer the scene was laid out to, so
-        // the ring's far edges clamp on-screen for a window-flush widget.
-        inject_styled_focus_ring::<V>(scene, Some(&ring_tag), w, h)
+        // R1022 §5.39 — `(w, h)` = the layout viewport the scene was laid out to,
+        // so the ring's far edges clamp on-screen for a window-flush widget.
+        inject_styled_focus_ring::<V>(scene, Some(&ring_tag), Some((w, h)))
     }
 
     /// R670.B §5.16 — per-window paint scene producer. Same pipeline
@@ -3306,9 +3307,9 @@ impl<V: WidgetView> ShellCore<V> {
                 // matches what the AI client addressed.
                 // R1010 §5.39 §5.40 — same binding-controlled ring as the winit
                 // paint path (None = no ring), through the shared SSOT.
-                // R1022 §5.39 — same framebuffer `(w, h)` the produce closure laid
-                // out to, so the introspected ring rect matches the winit path.
-                inject_styled_focus_ring::<V>(paint, ring_tag_for_paint.as_deref(), w, h)
+                // R1022 §5.39 — same layout viewport `(w, h)` the produce closure
+                // laid out to, so the introspected ring rect matches the winit path.
+                inject_styled_focus_ring::<V>(paint, ring_tag_for_paint.as_deref(), Some((w, h)))
             };
             // R979 §5.40 §2 #7 — `scene/access` producer (the `build_access_tree`
             // SSOT the live AccessKit emit also runs; entry-focus `focus_before`).

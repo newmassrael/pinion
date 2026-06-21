@@ -113,8 +113,9 @@ impl Default for FocusRingStyle {
 /// The ring box is the focused node's post-layout rect inflated by
 /// `style.offset` on every side (clamped at all four framebuffer edges
 /// — top/left near via R806, bottom/right far via R1022 using the
-/// `fb_w`/`fb_h` framebuffer extent — so a flush widget keeps all four
-/// ring strokes on-screen, see [`build_focus_ring_box`]), with a border of `style.stroke` /
+/// `viewport` extent — so a flush widget keeps all four ring strokes
+/// on-screen; a widget fully off the far edge yields no ring, see
+/// [`build_focus_ring_box`]), with a border of `style.stroke` /
 /// `style.stroke_width`, a transparent fill, and a corner radius that
 /// tracks the focused node's own rounding (`node_radius + offset` when
 /// the node is rounded, `0` otherwise) so the ring stays concentric.
@@ -160,8 +161,7 @@ pub fn inject_focus_ring(
     scene: Scene,
     focused_tag: Option<&str>,
     style: FocusRingStyle,
-    fb_w: u32,
-    fb_h: u32,
+    viewport: Option<(u32, u32)>,
 ) -> Scene {
     let Some(tag) = focused_tag else {
         return scene;
@@ -172,11 +172,14 @@ pub fn inject_focus_ring(
         return scene;
     };
     let corner_radius = corner_radius_for_tag(&scene, tag);
-    // `(fb_w, fb_h)` = the framebuffer / layout viewport extent the shell fed
-    // `compute_layout`; the ring's far (bottom/right) edges clamp into it so a
-    // widget flush against the window's bottom/right edge keeps all four ring
-    // strokes on-screen (R1022 far-edge sibling of the R806 near-edge clamp).
-    let ring = build_focus_ring_box(rect, corner_radius, style, fb_w, fb_h);
+    // `viewport` = the layout viewport `(w, h)` the shell fed `compute_layout`
+    // (R1006 canon; `None` = unknown/headless): the ring's far (bottom/right)
+    // edges clamp into it so a widget flush against the window's bottom/right
+    // edge keeps all four ring strokes on-screen (R1022 far-edge sibling of the
+    // R806 near-edge clamp). A widget fully off the far edge yields no ring.
+    let Some(ring) = build_focus_ring_box(rect, corner_radius, style, viewport) else {
+        return scene;
+    };
     let mut wrapped = wrap_into_container(scene);
     strip_tag(&mut wrapped, FOCUS_RING_TAG);
     push_top_level(&mut wrapped, Scene::Box(ring));
@@ -213,50 +216,46 @@ fn build_focus_ring_box(
     target: Rect,
     target_radius: u32,
     style: FocusRingStyle,
-    fb_w: u32,
-    fb_h: u32,
-) -> BoxNode {
+    viewport: Option<(u32, u32)>,
+) -> Option<BoxNode> {
     let off = style.offset;
     // Concentric outset, boundary-clipped on all four edges (R806 near +
-    // R1022 far §5.39). `Rect` origins are unsigned, so a widget flush against
-    // the top/left framebuffer edge (`x` or `y` < `off`) cannot carry the
-    // negative origin a full outward offset needs. We clamp the origin and
-    // shrink the span by the *same* clamped amount, so the far (bottom/right)
-    // edge still lands at `target + off` — the ring stays concentric with the
-    // widget and the framebuffer edge clips the lost near gap.
+    // R1022 far §5.39), with the framebuffer-edge clamps owned by [`crate::edge`].
+    //
+    // Near (top/left): `Rect` origins are unsigned, so a widget flush against the
+    // top/left edge (`x` or `y` < `off`) cannot carry the negative origin a full
+    // outward offset needs. We clamp the origin here and shrink the span by the
+    // *same* amount so the far edge still lands at `target + off` — the ring stays
+    // concentric and the framebuffer edge clips the lost near gap.
     let x = target.x.saturating_sub(off);
     let y = target.y.saturating_sub(off);
-    // Ideal far edges = widget far edge + the full outward offset. The span
-    // back from the clamped near origin keeps the ring concentric.
     let ideal_right = target.x.saturating_add(target.w).saturating_add(off);
     let ideal_bottom = target.y.saturating_add(target.h).saturating_add(off);
-    // R1022 §5.39 — far-edge sibling of the R806 near-edge clamp. A widget
-    // flush against the bottom/right framebuffer edge pushes its ideal far edge
-    // past the framebuffer, so that stroke rasterises off-screen (the sprag
-    // full-bleed pane: a pane flush at the window bottom showed only 3 of its 4
-    // ring edges). Unlike the near edge — which has outward room and keeps the
-    // far edge concentric — a far-flush edge has none, so the ring INSETS to
-    // land on-screen (the same shape as the top flood-row inset, not a mirror
-    // of the near `saturating_sub`). The default `Inside` border alignment
-    // draws the whole stroke within the box rect, so a far edge clamped to the
-    // framebuffer extent lands the stroke fully visible. A non-flush widget
-    // (`ideal_far <= framebuffer`) is unaffected — `min` is a no-op. A `0`
-    // framebuffer extent (unknown / headless) disables the far clamp so the
-    // ring is never collapsed to zero.
-    let right = if fb_w == 0 { ideal_right } else { ideal_right.min(fb_w) };
-    let bottom = if fb_h == 0 { ideal_bottom } else { ideal_bottom.min(fb_h) };
-    // R807 §5.16 — funnel the final rect through the shared overlay SSOT that
-    // keeps the top stroke off the vello `y = 0` flood row (see
-    // [`crate::edge`]); shared with the §5.33 highlight box so the workaround
-    // lives in exactly one place. The bottom/right edges were clamped above and
-    // do not flood, so only the top is nudged (a top-flush ring loses 1px of
-    // its top gap).
-    let ring_rect = crate::edge::clamp_top_off_flood_row(Rect::new(
+    let ideal_rect = Rect::new(
         x,
         y,
-        right.saturating_sub(x),
-        bottom.saturating_sub(y),
-    ));
+        ideal_right.saturating_sub(x),
+        ideal_bottom.saturating_sub(y),
+    );
+    // Far (bottom/right): unlike the near edge — which has outward room and keeps
+    // the far edge concentric — a widget flush against the bottom/right edge has
+    // no outward room, so the ring INSETS to land on-screen (the same shape as the
+    // top flood-row inset, not a mirror of the near `saturating_sub`). The default
+    // `Inside` border alignment draws the whole stroke within the rect, so a far
+    // edge clamped to the viewport lands the stroke fully visible. `None` viewport
+    // (headless / pure geometry) leaves the ring un-clamped. Then the top stroke
+    // is nudged off the vello `y = 0` flood row (R807). Both clamps live in
+    // [`crate::edge`] — the single home for overlay framebuffer-edge handling.
+    let far_clamped = crate::edge::clamp_far_edges_into_viewport(ideal_rect, viewport);
+    let ring_rect = crate::edge::clamp_top_off_flood_row(far_clamped);
+    // R1022 §5.39 — a focused widget laid out (nearly) fully past the far edge, or
+    // a sub-`off` viewport, clamps to a zero-span rect. Skip rather than push a
+    // degenerate box: an off-screen widget has no visible ring, matching the
+    // `rect_for_tag_absolute -> None` skip for a scrolled-out widget. This is the
+    // case the pre-R1022 always-positive span could never reach.
+    if ring_rect.w == 0 || ring_rect.h == 0 {
+        return None;
+    }
     // Keep the ring concentric with a rounded widget: grow the radius
     // by the same offset the rect grew. A sharp widget (radius 0) keeps
     // a sharp ring.
@@ -273,7 +272,7 @@ fn build_focus_ring_box(
     node.tag = Some(FOCUS_RING_TAG.into());
     // §5.39 — decorative overlay: invisible to hit-testing.
     node.layout = node.layout.with_pointer_transparent(true);
-    node
+    Some(node)
 }
 
 #[cfg(test)]
@@ -308,7 +307,7 @@ mod tests {
     #[test]
     fn none_focus_is_unchanged_no_op() {
         let scene = container(vec![tagged_box(0, 0, 40, 40, 0, "btn")]);
-        let out = inject_focus_ring(scene, None, FocusRingStyle::default(), 1000, 1000);
+        let out = inject_focus_ring(scene, None, FocusRingStyle::default(), None);
         let Scene::Container(c) = &out else { panic!() };
         assert_eq!(c.children.len(), 1, "no ring when nothing focused");
     }
@@ -316,7 +315,7 @@ mod tests {
     #[test]
     fn unknown_tag_is_unchanged_no_op() {
         let scene = container(vec![tagged_box(0, 0, 40, 40, 0, "btn")]);
-        let out = inject_focus_ring(scene, Some("ghost"), FocusRingStyle::default(), 1000, 1000);
+        let out = inject_focus_ring(scene, Some("ghost"), FocusRingStyle::default(), None);
         let Scene::Container(c) = &out else { panic!() };
         assert_eq!(c.children.len(), 1, "no ring when focused tag absent");
     }
@@ -324,7 +323,7 @@ mod tests {
     #[test]
     fn ring_inflated_by_offset_around_target() {
         let scene = container(vec![tagged_box(100, 50, 40, 30, 0, "btn")]);
-        let out = inject_focus_ring(scene, Some("btn"), FocusRingStyle::default(), 1000, 1000);
+        let out = inject_focus_ring(scene, Some("btn"), FocusRingStyle::default(), None);
         let ring = ring_child(&out);
         // default offset = 2 → rect grows by 2 on each side.
         assert_eq!(ring.rect, Rect::new(98, 48, 44, 34));
@@ -341,7 +340,7 @@ mod tests {
         // i.e. the ring is (0, 1, 98, 41), NOT the pre-R806 naive
         // (0, 0, 100, 44) whose bottom/right was pushed a doubled gap out.
         let scene = container(vec![tagged_box(0, 0, 96, 40, 0, "menu#t0")]);
-        let out = inject_focus_ring(scene, Some("menu#t0"), FocusRingStyle::default(), 1000, 1000);
+        let out = inject_focus_ring(scene, Some("menu#t0"), FocusRingStyle::default(), None);
         let ring = ring_child(&out);
         assert_eq!(ring.rect, Rect::new(0, 1, 98, 41), "concentric, top inset off y=0");
         // The far edges keep the full outward offset (concentric); only the
@@ -361,7 +360,7 @@ mod tests {
         // the x-axis keeps its symmetric outset. Proves the clamp is
         // per-axis, not a whole-rect shift.
         let scene = container(vec![tagged_box(200, 0, 40, 30, 0, "btn")]);
-        let out = inject_focus_ring(scene, Some("btn"), FocusRingStyle::default(), 1000, 1000);
+        let out = inject_focus_ring(scene, Some("btn"), FocusRingStyle::default(), None);
         let ring = ring_child(&out);
         // x: 200-2=198, w: (200+40+2)-198 = 44 (full symmetric outset).
         // y: floored to 1 (off the flood row), h: (0+30+2)-1 = 31.
@@ -375,7 +374,7 @@ mod tests {
         // the top stroke clears the flood row and the height shrinks to suit.
         // Bottom edge stays concentric.
         let scene = container(vec![tagged_box(50, 1, 40, 30, 0, "btn")]);
-        let out = inject_focus_ring(scene, Some("btn"), FocusRingStyle::default(), 1000, 1000);
+        let out = inject_focus_ring(scene, Some("btn"), FocusRingStyle::default(), None);
         let ring = ring_child(&out);
         // y: max(1, 1-2)=1. h: (1+30+2)-1 = 32.
         assert_eq!(ring.rect, Rect::new(48, 1, 44, 32));
@@ -392,7 +391,7 @@ mod tests {
         // vanish. The far clamp pulls them back to the framebuffer extent so
         // all four strokes land on-screen.
         let scene = container(vec![tagged_box(0, 0, 200, 100, 0, "pane")]);
-        let out = inject_focus_ring(scene, Some("pane"), FocusRingStyle::default(), 200, 100);
+        let out = inject_focus_ring(scene, Some("pane"), FocusRingStyle::default(), Some((200, 100)));
         let ring = ring_child(&out);
         // x:0 (left flush), y:1 (top flush, off the flood row),
         // right: min(202, 200)=200, bottom: min(102, 100)=100.
@@ -410,7 +409,7 @@ mod tests {
         // per-axis, not a whole-rect shift (mirror of the near-edge
         // `ring_clips_only_the_overflowing_axis`).
         let scene = container(vec![tagged_box(50, 80, 40, 20, 0, "btn")]);
-        let out = inject_focus_ring(scene, Some("btn"), FocusRingStyle::default(), 200, 100);
+        let out = inject_focus_ring(scene, Some("btn"), FocusRingStyle::default(), Some((200, 100)));
         let ring = ring_child(&out);
         // x:48, right: min(50+40+2, 200)=92 (full symmetric outset, w=44).
         // y:78, bottom: min(80+20+2, 100)=100 (clamped, h=22).
@@ -420,14 +419,47 @@ mod tests {
     }
 
     #[test]
-    fn ring_far_clamp_disabled_for_zero_framebuffer() {
-        // A `0` framebuffer extent (unknown / headless) disables the far clamp
-        // so the ring is never collapsed to zero — it keeps the concentric
-        // outset exactly as the pre-R1022 behaviour.
+    fn ring_far_clamp_disabled_when_viewport_unknown() {
+        // `None` viewport (unknown / headless / pure-geometry callers) disables
+        // the far clamp — the ring keeps the concentric outset exactly as the
+        // pre-R1022 behaviour, never collapsed against an unmeasured extent.
         let scene = container(vec![tagged_box(100, 50, 40, 30, 0, "btn")]);
-        let out = inject_focus_ring(scene, Some("btn"), FocusRingStyle::default(), 0, 0);
+        let out = inject_focus_ring(scene, Some("btn"), FocusRingStyle::default(), None);
         let ring = ring_child(&out);
-        assert_eq!(ring.rect, Rect::new(98, 48, 44, 34), "no far clamp when framebuffer unknown");
+        assert_eq!(ring.rect, Rect::new(98, 48, 44, 34), "no far clamp when viewport unknown");
+    }
+
+    #[test]
+    fn ring_skipped_when_widget_is_past_the_far_edge() {
+        // R1022.1 — a focused widget laid out (nearly) fully beyond the far edge
+        // (e.g. a top-level child wider than the window). The far clamp would
+        // collapse the ring to a zero span; rather than push a degenerate box,
+        // the ring is skipped — an off-screen widget has no visible ring, matching
+        // the `rect_for_tag_absolute -> None` scrolled-out skip. The pre-R1022
+        // always-positive span could never reach this.
+        let scene = container(vec![tagged_box(250, 10, 40, 30, 0, "btn")]);
+        let out = inject_focus_ring(scene, Some("btn"), FocusRingStyle::default(), Some((200, 100)));
+        let Scene::Container(c) = &out else { panic!("expected Container") };
+        assert!(
+            c.children.iter().all(|ch| ch.tag() != Some(FOCUS_RING_TAG)),
+            "no ring for a widget past the far edge (degenerate span skipped)",
+        );
+    }
+
+    #[test]
+    fn ring_far_clamp_at_zero_offset() {
+        // `offset = 0`: the ring traces the widget rect exactly. A full-bleed
+        // widget at zero offset still clamps far edges into the viewport and
+        // still insets the top off the flood row — all four strokes on-screen.
+        let style = FocusRingStyle::new().with_offset(0);
+        let scene = container(vec![tagged_box(0, 0, 200, 100, 0, "pane")]);
+        let out = inject_focus_ring(scene, Some("pane"), style, Some((200, 100)));
+        let ring = ring_child(&out);
+        // ideal = widget exactly (0,0,200,100); far clamp is a no-op (already at
+        // the viewport); top flood-row inset -> (0,1,200,99).
+        assert_eq!(ring.rect, Rect::new(0, 1, 200, 99));
+        assert_eq!(ring.rect.x + ring.rect.w, 200, "right on-screen");
+        assert_eq!(ring.rect.y + ring.rect.h, 100, "bottom on-screen");
     }
 
     #[test]
@@ -436,7 +468,7 @@ mod tests {
         // geometry). The ring must be rounded too — radius 20 + 2px
         // offset = 22 — not a sharp square.
         let scene = container(vec![tagged_box(0, 0, 40, 40, 20, "day#15")]);
-        let out = inject_focus_ring(scene, Some("day#15"), FocusRingStyle::default(), 1000, 1000);
+        let out = inject_focus_ring(scene, Some("day#15"), FocusRingStyle::default(), None);
         let ring = ring_child(&out);
         assert_eq!(ring.style.corner_radius, 22, "concentric rounded ring");
     }
@@ -444,7 +476,7 @@ mod tests {
     #[test]
     fn ring_stays_sharp_for_sharp_target() {
         let scene = container(vec![tagged_box(0, 0, 40, 40, 0, "btn")]);
-        let out = inject_focus_ring(scene, Some("btn"), FocusRingStyle::default(), 1000, 1000);
+        let out = inject_focus_ring(scene, Some("btn"), FocusRingStyle::default(), None);
         let ring = ring_child(&out);
         assert_eq!(ring.style.corner_radius, 0, "sharp widget keeps sharp ring");
     }
@@ -452,7 +484,7 @@ mod tests {
     #[test]
     fn ring_is_pointer_transparent_and_transparent_fill() {
         let scene = container(vec![tagged_box(0, 0, 40, 40, 0, "btn")]);
-        let out = inject_focus_ring(scene, Some("btn"), FocusRingStyle::default(), 1000, 1000);
+        let out = inject_focus_ring(scene, Some("btn"), FocusRingStyle::default(), None);
         let ring = ring_child(&out);
         assert!(
             ring.layout.pointer_transparent,
@@ -467,7 +499,7 @@ mod tests {
             .with_stroke(Color::rgb(255, 0, 0))
             .with_stroke_width(3);
         let scene = container(vec![tagged_box(0, 0, 40, 40, 0, "btn")]);
-        let out = inject_focus_ring(scene, Some("btn"), style, 1000, 1000);
+        let out = inject_focus_ring(scene, Some("btn"), style, None);
         let ring = ring_child(&out);
         let b = ring.style.border.expect("border emitted");
         assert_eq!(b.color, Color::rgb(255, 0, 0));
@@ -477,8 +509,8 @@ mod tests {
     #[test]
     fn reinjection_replaces_not_duplicates() {
         let scene = container(vec![tagged_box(0, 0, 40, 40, 0, "btn")]);
-        let once = inject_focus_ring(scene, Some("btn"), FocusRingStyle::default(), 1000, 1000);
-        let twice = inject_focus_ring(once, Some("btn"), FocusRingStyle::default(), 1000, 1000);
+        let once = inject_focus_ring(scene, Some("btn"), FocusRingStyle::default(), None);
+        let twice = inject_focus_ring(once, Some("btn"), FocusRingStyle::default(), None);
         let Scene::Container(c) = &twice else { panic!() };
         let rings = c.children.iter().filter(|ch| ch.tag() == Some(FOCUS_RING_TAG)).count();
         assert_eq!(rings, 1, "exactly one ring after double injection");
@@ -500,7 +532,7 @@ mod tests {
         let scroll = Scene::Scroll(ScrollNode::new(Rect::new(10, 100, 200, 200), content)
             .with_offset(0, 50));
         let scene = container(vec![scroll]);
-        let out = inject_focus_ring(scene, Some("row#3"), FocusRingStyle::default(), 1000, 1000);
+        let out = inject_focus_ring(scene, Some("row#3"), FocusRingStyle::default(), None);
         let ring = ring_child(&out);
         // window-abs row = (0+10, 60+(100-50)) = (10, 110); ring = +/-2.
         assert_eq!(
@@ -515,7 +547,7 @@ mod tests {
         // Single-widget paint root (bare Box, no Container). The ring
         // needs a Container to live in alongside the original content.
         let scene = tagged_box(0, 0, 40, 40, 0, "btn");
-        let out = inject_focus_ring(scene, Some("btn"), FocusRingStyle::default(), 1000, 1000);
+        let out = inject_focus_ring(scene, Some("btn"), FocusRingStyle::default(), None);
         let Scene::Container(c) = &out else { panic!("lone root wrapped into Container") };
         assert_eq!(c.children.len(), 2, "original + ring");
     }

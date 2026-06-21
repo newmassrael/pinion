@@ -10939,6 +10939,50 @@
         "R1022 is impl-complete + green but PUSH PENDING explicit user consent."
       ]
     },
+    "R1022.1": {
+      "decision_summary": "R1022.1 §5.39 §5.16: focus-ring review clearance — lifted the far-edge clamp into pinion-overlay edge.rs (clamp_far_edges_into_viewport, sibling of clamp_top_off_flood_row) so all overlay framebuffer-edge handling lives in the one SSOT module; replaced the fb==0 sentinel with viewport: Option<(u32,u32)> (kills the magic-zero overload, the two-bare-u32 arg-swap hazard, and an introspection-parity hole); build_focus_ring_box returns Option and skips a degenerate zero-span ring (a widget fully past the far edge yields no ring — the corner the pre-R1022 always-positive span could not reach); renamed framebuffer vocab to the R1006 viewport canon.",
+      "changes_bullets": [
+        "pinion-overlay edge.rs: new clamp_far_edges_into_viewport(rect, Option<(u32,u32)>) — far (right/bottom) clamp preserving the near origin; None = unknown extent (no clamp). The far-edge sibling of clamp_top_off_flood_row; both overlay framebuffer-edge clamps now live in edge.rs (the module's declared SSOT, fixing the R1022 inline fragmentation). +4 edge tests.",
+        "focus_ring.rs build_focus_ring_box: framebuffer param -> viewport: Option<(u32,u32)>, composes edge::clamp_far_edges_into_viewport then clamp_top_off_flood_row; returns Option<BoxNode> and yields None on a zero-span rect; inject_focus_ring skips the ring on None. Removes the fb==0 in-band sentinel (which overloaded zero + left an introspection-parity hole where a 0 snapshot viewport produced an unclamped ring) and the two-bare-u32 arg-swap hazard.",
+        "Zero-span skip fixes the reviewer-found regression corner: a widget fully past the far edge would clamp to width/height 0 (an invisible ring = the very symptom R1022 fixed); it now yields no ring, matching the scrolled-out rect_for_tag_absolute None-skip. The pre-R1022 always-positive span could not reach this.",
+        "Threaded Option<(u32,u32)> through inject_styled_focus_ring + apply_focus_ring (shell passes Some((w,h))) + the RPC produce path + 2 headless_screenshot sites (Some((W,H))). 14 unit-test sites pass None (do not exercise the clamp), clearer than the prior 1000x1000 literals. Renamed the \"framebuffer\" vocab to the R1006 \"viewport\" canon.",
+        "Tests: renamed zero-fb -> ring_far_clamp_disabled_when_viewport_unknown (None); added ring_skipped_when_widget_is_past_the_far_edge + ring_far_clamp_at_zero_offset."
+      ],
+      "verification_bullets": [
+        "pinion-overlay: 40 unit tests ok (4 new edge + ring_skipped/zero-offset focus_ring + the R806 near-edge guards byte-identical under None).",
+        "GPU screenshot ring tests r806_focus_ring_top_edge + r706_cached_render pass --ignored on the real vello rasterizer (None/Some give identical in-bounds results; ring rects unchanged).",
+        "cargo check --workspace clean; clippy --workspace --all-targets --features pinion-runtime/vello = 0; cargo test --workspace = 7268 ok 0 fail (R1022 was 7261, +7)."
+      ],
+      "impact_refs": [
+        "5.39",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "Addresses the 3-reviewer adversarial session review: zero-span regression corner (correctness), edge.rs SSOT home + Option-over-sentinel (architecture/smell), viewport vocab canon (R1006).",
+        "R1022.1 green but PUSH PENDING explicit user consent (bundled with R1021/R1022/R1023 + R1021.1/R1023.1)."
+      ],
+      "publishable_decision_summary": "R1022.1 §5.39 §5.16: focus-ring review clearance — lifted the far-edge clamp into pinion-overlay edge.rs (clamp_far_edges_into_viewport, sibling of clamp_top_off_flood_row) so all overlay framebuffer-edge handling lives in the one SSOT module; replaced the fb==0 sentinel with viewport: Option<(u32,u32)> (kills the magic-zero overload, the two-bare-u32 arg-swap hazard, and an introspection-parity hole); build_focus_ring_box returns Option and skips a degenerate zero-span ring (a widget fully past the far edge yields no ring — the corner the pre-R1022 always-positive span could not reach); renamed framebuffer vocab to the R1006 viewport canon.",
+      "publishable_changes_bullets": [
+        "pinion-overlay edge.rs: new clamp_far_edges_into_viewport(rect, Option<(u32,u32)>) — far (right/bottom) clamp preserving the near origin; None = unknown extent (no clamp). The far-edge sibling of clamp_top_off_flood_row; both overlay framebuffer-edge clamps now live in edge.rs (the module's declared SSOT, fixing the R1022 inline fragmentation). +4 edge tests.",
+        "focus_ring.rs build_focus_ring_box: framebuffer param -> viewport: Option<(u32,u32)>, composes edge::clamp_far_edges_into_viewport then clamp_top_off_flood_row; returns Option<BoxNode> and yields None on a zero-span rect; inject_focus_ring skips the ring on None. Removes the fb==0 in-band sentinel (which overloaded zero + left an introspection-parity hole where a 0 snapshot viewport produced an unclamped ring) and the two-bare-u32 arg-swap hazard.",
+        "Zero-span skip fixes the reviewer-found regression corner: a widget fully past the far edge would clamp to width/height 0 (an invisible ring = the very symptom R1022 fixed); it now yields no ring, matching the scrolled-out rect_for_tag_absolute None-skip. The pre-R1022 always-positive span could not reach this.",
+        "Threaded Option<(u32,u32)> through inject_styled_focus_ring + apply_focus_ring (shell passes Some((w,h))) + the RPC produce path + 2 headless_screenshot sites (Some((W,H))). 14 unit-test sites pass None (do not exercise the clamp), clearer than the prior 1000x1000 literals. Renamed the \"framebuffer\" vocab to the R1006 \"viewport\" canon.",
+        "Tests: renamed zero-fb -> ring_far_clamp_disabled_when_viewport_unknown (None); added ring_skipped_when_widget_is_past_the_far_edge + ring_far_clamp_at_zero_offset."
+      ],
+      "publishable_verification_bullets": [
+        "pinion-overlay: 40 unit tests ok (4 new edge + ring_skipped/zero-offset focus_ring + the R806 near-edge guards byte-identical under None).",
+        "GPU screenshot ring tests r806_focus_ring_top_edge + r706_cached_render pass --ignored on the real vello rasterizer (None/Some give identical in-bounds results; ring rects unchanged).",
+        "cargo check --workspace clean; clippy --workspace --all-targets --features pinion-runtime/vello = 0; cargo test --workspace = 7268 ok 0 fail (R1022 was 7261, +7)."
+      ],
+      "publishable_impact_refs": [
+        "5.39",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Addresses the 3-reviewer adversarial session review: zero-span regression corner (correctness), edge.rs SSOT home + Option-over-sentinel (architecture/smell), viewport vocab canon (R1006).",
+        "R1022.1 green but PUSH PENDING explicit user consent (bundled with R1021/R1022/R1023 + R1021.1/R1023.1)."
+      ]
+    },
     "R1023": {
       "decision_summary": "R1023 §5.16: winit Resized requests a redraw — the WindowEvent::Resized arm now calls window.request_redraw() right after renderer.resize(), so a live drag-resize repaints the reconfigured swapchain each size step instead of presenting a stale backbuffer until an unrelated redraw arrives (the full-bleed ghosting sprag-gui observed). Mirrors the existing request_inner_size + request_redraw pairing; per-window (R670.B). Forcing consumer: sprag-gui live drag-resize. Paint-layer fix: compile/clippy-verified + precedent-mirrored; live visual confirmation is a manual real-window check.",
       "changes_bullets": [
