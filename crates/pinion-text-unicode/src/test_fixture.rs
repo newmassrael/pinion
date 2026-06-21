@@ -8,6 +8,9 @@
 //! * `load_bidi_test` — `BidiTest.txt` (UAX #9, class-sequence form
 //!   with paragraph-direction bitsets; consumed by the BIDI
 //!   class-sequence conformance harness in `bidi.rs`).
+//! * `load_line_break_test` — `LineBreakTest.txt` (UAX #14, `÷`/`×`
+//!   marked sample strings; consumed by the line-break conformance
+//!   harness in `linebreak.rs`).
 
 #[derive(Debug)]
 pub(crate) struct NormalizationCase {
@@ -318,4 +321,81 @@ fn parse_bidi_class_token(token: &str, line_no: usize) -> crate::bidi::BidiClass
         "PDI" => BidiClass::PDI,
         other => panic!("BidiTest.txt:{line_no}: unknown Bidi_Class token {other:?}"),
     }
+}
+
+// ---- UAX #14 `LineBreakTest.txt` (R50.7.x) ----
+
+/// One row of `LineBreakTest.txt`. The `÷` / `×` markers between (and
+/// around) the codepoints are decoded into `breaks`, a boolean per
+/// boundary: `breaks[0]` is the start-of-text marker (always `×`),
+/// `breaks[codepoints.len()]` the end-of-text marker (always `÷`), and
+/// `breaks[k]` for `0 < k < len` the boundary between `codepoints[k-1]`
+/// and `codepoints[k]`. `true` = `÷` (break), `false` = `×` (no break).
+#[derive(Debug)]
+pub(crate) struct LineBreakCase {
+    /// 1-based line number in the vendored UCD file (for diagnostics).
+    pub(crate) line_number: usize,
+    /// The sample string as a `Vec<char>`.
+    pub(crate) codepoints: Vec<char>,
+    /// Break decision at each of the `codepoints.len() + 1` boundaries.
+    pub(crate) breaks: Vec<bool>,
+    /// Trailing `#` annotation (carries the `[rule]` ids), kept so a
+    /// conformance harness can scope a documented deferral by rule.
+    pub(crate) comment: String,
+}
+
+/// Load every test row from the vendored UCD `LineBreakTest.txt`.
+pub(crate) fn load_line_break_test() -> Vec<LineBreakCase> {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/ucd/LineBreakTest.txt");
+    let text = std::fs::read_to_string(path).expect("LineBreakTest.txt must be vendored");
+    parse_line_break_test(&text)
+}
+
+fn parse_line_break_test(text: &str) -> Vec<LineBreakCase> {
+    const BREAK: char = '\u{00F7}'; // ÷
+    const NOBREAK: char = '\u{00D7}'; // ×
+    let mut cases = Vec::new();
+    for (idx, raw) in text.lines().enumerate() {
+        let line_number = idx + 1;
+        if raw.starts_with('#') || raw.trim().is_empty() {
+            continue;
+        }
+        let (data, comment) = match raw.find('#') {
+            Some(pos) => (&raw[..pos], raw[pos + 1..].trim().to_owned()),
+            None => (raw, String::new()),
+        };
+        let mut codepoints = Vec::new();
+        let mut breaks = Vec::new();
+        let mut expect_marker = true;
+        for tok in data.split_whitespace() {
+            if expect_marker {
+                match tok.chars().next() {
+                    Some(BREAK) => breaks.push(true),
+                    Some(NOBREAK) => breaks.push(false),
+                    _ => {
+                        panic!("LineBreakTest.txt:{line_number}: expected ÷/× marker, got {tok:?}")
+                    }
+                }
+                expect_marker = false;
+            } else {
+                let cp = u32::from_str_radix(tok, 16)
+                    .unwrap_or_else(|_| panic!("LineBreakTest.txt:{line_number}: hex {tok:?}"));
+                codepoints
+                    .push(char::from_u32(cp).expect("LineBreakTest.txt: valid Unicode scalar"));
+                expect_marker = true;
+            }
+        }
+        assert_eq!(
+            breaks.len(),
+            codepoints.len() + 1,
+            "LineBreakTest.txt:{line_number}: marker/codepoint interleave broke: {raw:?}"
+        );
+        cases.push(LineBreakCase {
+            line_number,
+            codepoints,
+            breaks,
+            comment,
+        });
+    }
+    cases
 }

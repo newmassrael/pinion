@@ -1,22 +1,37 @@
-//! R50.7 §5.37.7 — line-break property substrate (UAX #14).
+//! R50.7 §5.37.7 — line breaking (UAX #14).
 //!
-//! This first slice lands the `LineBreak` enum (UAX #14 Table 1, 48
-//! `Line_Break` property values) and the codepoint → class lookup via
-//! a build.rs codegen'd range table (`LINE_BREAK_CLASS_RANGES`, parsed
-//! from UCD 16.0 `LineBreak.txt`). The pair-table break algorithm
-//! (rules `LB1`–`LB31`, validated against `LineBreakTest.txt`) is the
-//! follow-up slice (R50.7.x) — this layer is the substrate every rule
-//! reads, exactly as the `BidiClass` table (§5.37.4) precedes the
-//! UAX #9 resolution rules.
+//! Two layers, landed in order (the `BidiClass` table → UAX #9 rules
+//! precedent of §5.37.4):
+//!
+//! 1. **Property substrate** (R50.7): the `LineBreak` enum (UAX #14
+//!    Table 1, 48 `Line_Break` values) and the codepoint → class lookup
+//!    [`line_break_class`] over a build.rs codegen'd range table parsed
+//!    from UCD 16.0 `LineBreak.txt`. Every LB rule is phrased in terms
+//!    of the `Line_Break` class of adjacent characters, so the class
+//!    lookup is the irreducible foundation.
+//!
+//! 2. **Break algorithm** (R50.7.x): [`line_break_opportunities`]
+//!    applies the resolution + pair rules `LB1`–`LB31` to a string and
+//!    returns the byte offsets at which a line may (or must) break. It
+//!    is validated against the full vendored `LineBreakTest.txt`
+//!    (UCD 16.0.0) conformance suite.
 //!
 //! Why a property substrate first: line breaking is the layer above
-//! shaping (§5.37.6) that decides *where* a run may wrap. Every LB
-//! rule is phrased in terms of the `Line_Break` class of adjacent
-//! characters, so the class lookup is the irreducible foundation; it
-//! is meaningless to encode `LB2`…`LB31` before the classes they pair
-//! on exist. Landing it standalone keeps each round a complete,
-//! UCD-conformant artifact (the table is validated against the
-//! published property assignments) rather than a half-built algorithm.
+//! shaping (§5.37.6) that decides *where* a run may wrap; it is
+//! meaningless to encode `LB2`…`LB31` before the classes they pair on
+//! exist. Landing each standalone keeps every round a complete,
+//! UCD-conformant artifact rather than a half-built algorithm.
+//!
+//! Deferred (honest gaps, not silent): the East Asian Width carve-outs
+//! of `LB19a`/`LB30` (this engine has no `East_Asian_Width` substrate
+//! yet — `$EastAsian` is treated as empty, which is exact for the
+//! all-non-East-Asian conformance suite and over-applies the QU /
+//! parenthesis non-break rules to real East Asian text); the `LB30b`
+//! `[\p{Extended_Pictographic}&\p{Cn}] × EM` clause (needs the
+//! `Extended_Pictographic` property); and the `LB1` `SA → CM`
+//! resolution for `Mn`/`Mc` South-East Asian marks (resolved to `AL`;
+//! the suite exercises no `SA` combining mark). Each follows the
+//! `East_Asian_Width` / `Script` substrate (§5.37.5).
 //!
 //! External dependencies: zero. `std` only — mirrors the §5.37.3 NFC
 //! engine and §5.37.4 BIDI policy.
@@ -261,6 +276,514 @@ mod tables {
     pub use LINE_BREAK_CLASS_RANGES as RANGES;
 }
 
+/// `true` if `c` has `General_Category=Initial_Punctuation` (Pi) — the
+/// UAX #14 `[\p{Pi}&QU]` opening-quotation sub-class (`LB15a`, `LB19`).
+fn is_initial_punctuation(c: char) -> bool {
+    tables::INITIAL_PUNCTUATION
+        .binary_search(&(c as u32))
+        .is_ok()
+}
+
+/// `true` if `c` has `General_Category=Final_Punctuation` (Pf) — the
+/// UAX #14 `[\p{Pf}&QU]` closing-quotation sub-class (`LB15b`, `LB19`).
+fn is_final_punctuation(c: char) -> bool {
+    tables::FINAL_PUNCTUATION.binary_search(&(c as u32)).is_ok()
+}
+
+/// `true` if `c` is an East Asian character per the UAX #14 `$EastAsian`
+/// macro — `East_Asian_Width` `F`, `W`, or `H` — tested by the `LB19a`,
+/// `LB21a` and `LB30` carve-outs. A codepoint outside every range
+/// defaults to `N` (not East Asian) per `EastAsianWidth.txt`'s single
+/// `@missing: 0000..10FFFF; N`; the block-level `W` default for some
+/// unassigned CJK ranges is not applied (no such codepoint reaches the
+/// rules in practice, and the conformance suite samples are assigned).
+fn is_east_asian_wide(c: char) -> bool {
+    let cp = c as u32;
+    tables::EAST_ASIAN_WIDE_RANGES
+        .binary_search_by(|&(start, end)| {
+            if cp < start {
+                std::cmp::Ordering::Greater
+            } else if cp > end {
+                std::cmp::Ordering::Less
+            } else {
+                std::cmp::Ordering::Equal
+            }
+        })
+        .is_ok()
+}
+
+/// A position in a string at which UAX #14 permits — or requires — a line
+/// break.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BreakOpportunity {
+    /// Byte offset of the break in the source string: where the next line
+    /// begins. `text[..offset]` ends a line and `text[offset..]` starts
+    /// the next. Never `0` (`LB2`); the final opportunity is always
+    /// `text.len()` (`LB3`).
+    pub offset: usize,
+    /// `true` for a mandatory break — the `LB4`/`LB5` hard breaks and the
+    /// end-of-text break (`LB3`); `false` for an optional opportunity.
+    pub mandatory: bool,
+}
+
+/// The break action UAX #14 assigns to the boundary after a character.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Action {
+    /// `×` — no break permitted here.
+    Prohibited,
+    /// `÷` — an optional break opportunity.
+    Allowed,
+    /// `!` — a mandatory (forced) break.
+    Mandatory,
+}
+
+/// Stage in a `NU (SY | IS)* (CL | CP)?` numeric run, tracked for `LB25`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NumState {
+    /// Not in a numeric run.
+    None,
+    /// Inside `NU (SY | IS)*`.
+    InNumber,
+    /// `NU (SY | IS)*` followed by one closing `CL`/`CP`.
+    Closed,
+}
+
+/// `LB1` — resolve the tailorable classes to concrete ones using the
+/// default (non-tailored) assignment. `AI`/`SG`/`XX`/`SA` → `AL`,
+/// `CJ` → `NS`. `CB` is left for `LB20`. `SA` marks of
+/// `General_Category` `Mn`/`Mc` should resolve to `CM`, but this engine
+/// has no `Mn`/`Mc` substrate yet (see module docs); the conformance
+/// suite exercises no such mark.
+fn resolve_lb1(raw: LineBreak) -> LineBreak {
+    use LineBreak as L;
+    match raw {
+        L::AI | L::SG | L::XX | L::SA => L::AL,
+        L::CJ => L::NS,
+        other => other,
+    }
+}
+
+/// `LB25` numeric-run transition on consuming a character of class `c`.
+fn next_num_state(state: NumState, c: LineBreak) -> NumState {
+    use LineBreak as L;
+    match (state, c) {
+        (_, L::NU) | (NumState::InNumber, L::SY | L::IS) => NumState::InNumber,
+        (NumState::InNumber, L::CL | L::CP) => NumState::Closed,
+        _ => NumState::None,
+    }
+}
+
+/// Compute the UAX #14 line-break opportunities of `text`.
+///
+/// Returns, in source order, every byte offset at which a line may or
+/// must break: the optional opportunities together with the mandatory
+/// hard breaks (`LB4`/`LB5`) and the end-of-text break (`LB3`). The
+/// start of text is never a break (`LB2`); empty input yields none.
+///
+/// The full resolution + pair rules `LB1`–`LB31` are applied. See the
+/// module documentation for the deliberately deferred East Asian Width
+/// and emoji carve-outs.
+#[must_use]
+pub fn line_break_opportunities(text: &str) -> Vec<BreakOpportunity> {
+    let chars: Vec<char> = text.chars().collect();
+    let actions = break_actions(&chars);
+    let mut out = Vec::new();
+    let mut offset = 0usize;
+    for (i, &c) in chars.iter().enumerate() {
+        offset += c.len_utf8();
+        match actions[i] {
+            Action::Prohibited => {}
+            Action::Allowed => out.push(BreakOpportunity {
+                offset,
+                mandatory: false,
+            }),
+            Action::Mandatory => out.push(BreakOpportunity {
+                offset,
+                mandatory: true,
+            }),
+        }
+    }
+    out
+}
+
+/// One UAX #14 unit: a base character together with the combining marks
+/// `LB9` folds into it. The pair rules `LB2`–`LB31` run over units, so
+/// `LB9`/`LB10` need no per-rule special-casing — a break inside a
+/// cluster is simply not a unit boundary.
+struct Unit {
+    /// Resolved (`LB1`) line-break class of the base, used by the rules.
+    cls: LineBreak,
+    /// The base character (for `is_*_punctuation`, `is_east_asian_wide`,
+    /// and the literal U+25CC / U+2010 checks in `LB28a` / `LB20a`).
+    base_char: char,
+    /// Raw class of the *last* char in the cluster — `LB8a` (`× after
+    /// ZWJ`) fires when a cluster ends in a `ZWJ`.
+    last_raw: LineBreak,
+    /// Index of the last char of the cluster (where the post-unit break
+    /// action is recorded).
+    last: usize,
+}
+
+/// Per-character break action: `actions[i]` is the action at the boundary
+/// *after* `chars[i]` (between `chars[i]` and `chars[i+1]`). The last
+/// entry is the end-of-text break (`LB3`, always [`Action::Mandatory`]).
+///
+/// A direct, in-order transcription of UAX #14 `LB1`–`LB31`: the first
+/// matching rule decides each boundary. `LB1` resolution and `LB9`/`LB10`
+/// combining-mark folding run as a pre-pass that collapses the string
+/// into [`Unit`]s; the remaining rules are evaluated unit-to-unit against
+/// the resolved class, the class of the last non-`SP` unit (the
+/// `… SP* ×` rules), the consecutive regional-indicator count (`LB30a`)
+/// and the numeric-run state (`LB25`).
+#[allow(
+    clippy::too_many_lines,
+    clippy::many_single_char_names,
+    reason = "Flat 1:1 transcription of UAX #14 LB1-LB31; splitting the \
+              rule chain would obscure its correspondence to the spec. \
+              `l`/`r` are the left/right break class, `u` the unit index, \
+              `n`/`m` the char/unit counts — conventional for the scan."
+)]
+fn break_actions(chars: &[char]) -> Vec<Action> {
+    use LineBreak as L;
+    let n = chars.len();
+    if n == 0 {
+        return Vec::new();
+    }
+
+    // LB1 resolution + LB9/LB10 folding: collapse the string into units,
+    // each a base char plus any trailing CM/ZWJ. A CM/ZWJ extends the
+    // current unit unless that unit's class is BK/CR/LF/NL/SP/ZW; with no
+    // such base it stands alone as AL (LB10).
+    let mut units: Vec<Unit> = Vec::new();
+    for (i, &ch) in chars.iter().enumerate() {
+        let raw = line_break_class(ch);
+        if matches!(raw, L::CM | L::ZWJ) {
+            if let Some(u) = units.last_mut() {
+                if !matches!(u.cls, L::BK | L::CR | L::LF | L::NL | L::SP | L::ZW) {
+                    u.last_raw = raw;
+                    u.last = i;
+                    continue;
+                }
+            }
+            units.push(Unit {
+                cls: L::AL,
+                base_char: ch,
+                last_raw: raw,
+                last: i,
+            });
+        } else {
+            units.push(Unit {
+                cls: resolve_lb1(raw),
+                base_char: ch,
+                last_raw: raw,
+                last: i,
+            });
+        }
+    }
+
+    let m = units.len();
+    let ea = |k: usize| is_east_asian_wide(units[k].base_char);
+    let is_ak_group =
+        |k: usize| matches!(units[k].cls, L::AK | L::AS) || units[k].base_char == '\u{25CC}';
+    let is_ak_or_dotted = |k: usize| units[k].cls == L::AK || units[k].base_char == '\u{25CC}';
+
+    let mut unit_action = vec![Action::Prohibited; m];
+    let mut last_nonsp: Option<L> = None;
+    let mut last_nonsp_idx = 0usize;
+    let mut ri_run = 0usize;
+    let mut num_state = NumState::None;
+
+    for u in 0..m {
+        let l = units[u].cls;
+        // Advance running state to include unit u.
+        if l != L::SP {
+            last_nonsp = Some(l);
+            last_nonsp_idx = u;
+        }
+        if l == L::RI {
+            ri_run += 1;
+        } else {
+            ri_run = 0;
+        }
+        num_state = next_num_state(num_state, l);
+
+        if u == m - 1 {
+            unit_action[u] = Action::Mandatory; // LB3
+            break;
+        }
+
+        let r = units[u + 1].cls;
+        unit_action[u] = 'decide: {
+            // LB4 / LB5 — mandatory breaks.
+            if l == L::BK {
+                break 'decide Action::Mandatory;
+            }
+            if l == L::CR && r == L::LF {
+                break 'decide Action::Prohibited;
+            }
+            if matches!(l, L::CR | L::LF | L::NL) {
+                break 'decide Action::Mandatory;
+            }
+            // LB6 — × before a hard break.
+            if matches!(r, L::BK | L::CR | L::LF | L::NL) {
+                break 'decide Action::Prohibited;
+            }
+            // LB7 — × before SP / ZW.
+            if matches!(r, L::SP | L::ZW) {
+                break 'decide Action::Prohibited;
+            }
+            // LB8 — ZW SP* ÷.
+            if last_nonsp == Some(L::ZW) {
+                break 'decide Action::Allowed;
+            }
+            // LB8a — × after ZWJ (a cluster may end in one).
+            if units[u].last_raw == L::ZWJ {
+                break 'decide Action::Prohibited;
+            }
+            // LB11 — × around WJ.
+            if l == L::WJ || r == L::WJ {
+                break 'decide Action::Prohibited;
+            }
+            // LB12 — GL ×.
+            if l == L::GL {
+                break 'decide Action::Prohibited;
+            }
+            // LB12a — [^SP BA HY] × GL.
+            if !matches!(l, L::SP | L::BA | L::HY) && r == L::GL {
+                break 'decide Action::Prohibited;
+            }
+            // LB13 — × CL / CP / EX / SY.
+            if matches!(r, L::CL | L::CP | L::EX | L::SY) {
+                break 'decide Action::Prohibited;
+            }
+            // LB14 — OP SP* ×.
+            if last_nonsp == Some(L::OP) {
+                break 'decide Action::Prohibited;
+            }
+            // LB15a — (sot|BK|CR|LF|NL|OP|QU|GL|SP|ZW) [Pi&QU] SP* ×.
+            if last_nonsp == Some(L::QU) {
+                let j = last_nonsp_idx;
+                if is_initial_punctuation(units[j].base_char)
+                    && (j == 0
+                        || matches!(
+                            units[j - 1].cls,
+                            L::BK | L::CR | L::LF | L::NL | L::OP | L::QU | L::GL | L::SP | L::ZW
+                        ))
+                {
+                    break 'decide Action::Prohibited;
+                }
+            }
+            // LB15b — × [Pf&QU] (SP|GL|WJ|CL|QU|CP|EX|IS|SY|BK|CR|LF|NL|ZW|eot).
+            if r == L::QU && is_final_punctuation(units[u + 1].base_char) {
+                let follower_ok = u + 2 >= m
+                    || matches!(
+                        units[u + 2].cls,
+                        L::SP
+                            | L::GL
+                            | L::WJ
+                            | L::CL
+                            | L::QU
+                            | L::CP
+                            | L::EX
+                            | L::IS
+                            | L::SY
+                            | L::BK
+                            | L::CR
+                            | L::LF
+                            | L::NL
+                            | L::ZW
+                    );
+                if follower_ok {
+                    break 'decide Action::Prohibited;
+                }
+            }
+            // LB15c — SP ÷ IS NU.
+            if l == L::SP && r == L::IS && u + 2 < m && units[u + 2].cls == L::NU {
+                break 'decide Action::Allowed;
+            }
+            // LB15d — × IS.
+            if r == L::IS {
+                break 'decide Action::Prohibited;
+            }
+            // LB16 — (CL|CP) SP* × NS.
+            if matches!(last_nonsp, Some(L::CL | L::CP)) && r == L::NS {
+                break 'decide Action::Prohibited;
+            }
+            // LB17 — B2 SP* × B2.
+            if last_nonsp == Some(L::B2) && r == L::B2 {
+                break 'decide Action::Prohibited;
+            }
+            // LB18 — SP ÷.
+            if l == L::SP {
+                break 'decide Action::Allowed;
+            }
+            // LB19 — × [QU-Pi] ; [QU-Pf] ×.
+            if r == L::QU && !is_initial_punctuation(units[u + 1].base_char) {
+                break 'decide Action::Prohibited;
+            }
+            if l == L::QU && !is_final_punctuation(units[u].base_char) {
+                break 'decide Action::Prohibited;
+            }
+            // LB19a — do not break either side of a QU unless surrounded
+            // by East Asian characters.
+            if r == L::QU && (!ea(u) || u + 2 >= m || !ea(u + 2)) {
+                break 'decide Action::Prohibited;
+            }
+            if l == L::QU && (!ea(u + 1) || u == 0 || !ea(u - 1)) {
+                break 'decide Action::Prohibited;
+            }
+            // LB20 — ÷ around CB.
+            if l == L::CB || r == L::CB {
+                break 'decide Action::Allowed;
+            }
+            // LB20a — (sot|BK|CR|LF|NL|SP|ZW|CB|GL) (HY | U+2010) × AL.
+            if (l == L::HY || units[u].base_char == '\u{2010}')
+                && r == L::AL
+                && (u == 0
+                    || matches!(
+                        units[u - 1].cls,
+                        L::BK | L::CR | L::LF | L::NL | L::SP | L::ZW | L::CB | L::GL
+                    ))
+            {
+                break 'decide Action::Prohibited;
+            }
+            // LB21 — × BA / HY / NS ; BB ×.
+            if matches!(r, L::BA | L::HY | L::NS) {
+                break 'decide Action::Prohibited;
+            }
+            if l == L::BB {
+                break 'decide Action::Prohibited;
+            }
+            // LB21a — HL (HY | [BA - EastAsian]) × [^HL].
+            if u > 0
+                && units[u - 1].cls == L::HL
+                && (l == L::HY || (l == L::BA && !ea(u)))
+                && r != L::HL
+            {
+                break 'decide Action::Prohibited;
+            }
+            // LB21b — SY × HL.
+            if l == L::SY && r == L::HL {
+                break 'decide Action::Prohibited;
+            }
+            // LB22 — × IN.
+            if r == L::IN {
+                break 'decide Action::Prohibited;
+            }
+            // LB23 — (AL|HL) × NU ; NU × (AL|HL).
+            if matches!(l, L::AL | L::HL) && r == L::NU {
+                break 'decide Action::Prohibited;
+            }
+            if l == L::NU && matches!(r, L::AL | L::HL) {
+                break 'decide Action::Prohibited;
+            }
+            // LB23a — PR × (ID|EB|EM) ; (ID|EB|EM) × PO.
+            if l == L::PR && matches!(r, L::ID | L::EB | L::EM) {
+                break 'decide Action::Prohibited;
+            }
+            if matches!(l, L::ID | L::EB | L::EM) && r == L::PO {
+                break 'decide Action::Prohibited;
+            }
+            // LB24 — (PR|PO) × (AL|HL) ; (AL|HL) × (PR|PO).
+            if matches!(l, L::PR | L::PO) && matches!(r, L::AL | L::HL) {
+                break 'decide Action::Prohibited;
+            }
+            if matches!(l, L::AL | L::HL) && matches!(r, L::PR | L::PO) {
+                break 'decide Action::Prohibited;
+            }
+            // LB25 — numbers.
+            if matches!(num_state, NumState::InNumber | NumState::Closed)
+                && matches!(r, L::PO | L::PR)
+            {
+                break 'decide Action::Prohibited;
+            }
+            if num_state == NumState::InNumber && r == L::NU {
+                break 'decide Action::Prohibited;
+            }
+            if matches!(l, L::PO | L::PR) && r == L::NU {
+                break 'decide Action::Prohibited;
+            }
+            if matches!(l, L::PO | L::PR) && r == L::OP {
+                let glued = (u + 2 < m && units[u + 2].cls == L::NU)
+                    || (u + 3 < m && units[u + 2].cls == L::IS && units[u + 3].cls == L::NU);
+                if glued {
+                    break 'decide Action::Prohibited;
+                }
+            }
+            if matches!(l, L::HY | L::IS) && r == L::NU {
+                break 'decide Action::Prohibited;
+            }
+            // LB26 — Korean syllable blocks.
+            if l == L::JL && matches!(r, L::JL | L::JV | L::H2 | L::H3) {
+                break 'decide Action::Prohibited;
+            }
+            if matches!(l, L::JV | L::H2) && matches!(r, L::JV | L::JT) {
+                break 'decide Action::Prohibited;
+            }
+            if matches!(l, L::JT | L::H3) && r == L::JT {
+                break 'decide Action::Prohibited;
+            }
+            // LB27 — Korean syllable block treated as ID for affixes.
+            if matches!(l, L::JL | L::JV | L::JT | L::H2 | L::H3) && r == L::PO {
+                break 'decide Action::Prohibited;
+            }
+            if l == L::PR && matches!(r, L::JL | L::JV | L::JT | L::H2 | L::H3) {
+                break 'decide Action::Prohibited;
+            }
+            // LB28 — (AL|HL) × (AL|HL).
+            if matches!(l, L::AL | L::HL) && matches!(r, L::AL | L::HL) {
+                break 'decide Action::Prohibited;
+            }
+            // LB28a — Brahmic orthographic syllables (◌ = U+25CC).
+            if l == L::AP && is_ak_group(u + 1) {
+                break 'decide Action::Prohibited;
+            }
+            if is_ak_group(u) && matches!(r, L::VF | L::VI) {
+                break 'decide Action::Prohibited;
+            }
+            if u > 0 && is_ak_group(u - 1) && l == L::VI && is_ak_or_dotted(u + 1) {
+                break 'decide Action::Prohibited;
+            }
+            if is_ak_group(u) && is_ak_group(u + 1) && u + 2 < m && units[u + 2].cls == L::VF {
+                break 'decide Action::Prohibited;
+            }
+            // LB29 — IS × (AL|HL).
+            if l == L::IS && matches!(r, L::AL | L::HL) {
+                break 'decide Action::Prohibited;
+            }
+            // LB30 — (AL|HL|NU) × [OP-EastAsian] ; [CP-EastAsian] × (AL|HL|NU).
+            if matches!(l, L::AL | L::HL | L::NU) && r == L::OP && !ea(u + 1) {
+                break 'decide Action::Prohibited;
+            }
+            if l == L::CP && !ea(u) && matches!(r, L::AL | L::HL | L::NU) {
+                break 'decide Action::Prohibited;
+            }
+            // LB30a — RI RI ÷ RI (break only between regional-indicator pairs).
+            if l == L::RI && r == L::RI {
+                break 'decide if ri_run % 2 == 0 {
+                    Action::Allowed
+                } else {
+                    Action::Prohibited
+                };
+            }
+            // LB30b — EB × EM (the [Extended_Pictographic & Cn] × EM clause is deferred).
+            if l == L::EB && r == L::EM {
+                break 'decide Action::Prohibited;
+            }
+            // LB31 — break everywhere else.
+            Action::Allowed
+        };
+    }
+
+    // Map unit boundaries back to char positions; boundaries inside a
+    // cluster are never a unit's `last`, so they keep the LB9 default `×`.
+    let mut actions = vec![Action::Prohibited; n];
+    for (u, unit) in units.iter().enumerate() {
+        actions[unit.last] = unit_action[u];
+    }
+    actions
+}
+
 /// Look up the UAX #14 `Line_Break` class for `cp`. Binary-searches the
 /// codegen'd `(start, end, class_idx)` range table.
 ///
@@ -476,5 +999,112 @@ mod tests {
             }
             prev_end = Some(end);
         }
+    }
+
+    // ---- LB1-LB31 break algorithm ----
+
+    use super::{BreakOpportunity, line_break_opportunities};
+
+    /// Resolve the break opportunities of `text` into one `÷`/`×` marker
+    /// per boundary (`out[0]` = sot, `out[n]` = eot), mirroring the
+    /// `LineBreakTest.txt` row form so a test can assert against it.
+    fn boundary_breaks(text: &str) -> Vec<bool> {
+        let n = text.chars().count();
+        let mut offsets = Vec::with_capacity(n + 1);
+        let mut off = 0usize;
+        offsets.push(0usize);
+        for c in text.chars() {
+            off += c.len_utf8();
+            offsets.push(off);
+        }
+        let mut breaks = vec![false; n + 1];
+        for BreakOpportunity { offset, .. } in line_break_opportunities(text) {
+            let b = offsets
+                .binary_search(&offset)
+                .expect("opportunity at a char boundary");
+            breaks[b] = true;
+        }
+        breaks
+    }
+
+    #[test]
+    fn empty_and_single_char_degenerate_cases() {
+        assert!(
+            line_break_opportunities("").is_empty(),
+            "LB: empty text → no breaks"
+        );
+        // LB3 — a single character always has the trailing eot break.
+        let opps = line_break_opportunities("a");
+        assert_eq!(opps.len(), 1);
+        assert_eq!(
+            opps[0],
+            BreakOpportunity {
+                offset: 1,
+                mandatory: true
+            }
+        );
+    }
+
+    #[test]
+    fn spaces_words_and_mandatory_breaks() {
+        // LB28 keeps a word whole; LB7/LB18 break after the space; LB3 eot.
+        assert_eq!(
+            boundary_breaks("ab cd"),
+            [false, false, false, true, false, true]
+        );
+        // LB5 — LF is a mandatory hard break (offset after it), eot too.
+        let opps = line_break_opportunities("a\nb");
+        assert_eq!(
+            opps[0],
+            BreakOpportunity {
+                offset: 2,
+                mandatory: true
+            }
+        );
+        // LB5 — CR×LF stays glued, the break falls after the pair.
+        let crlf = line_break_opportunities("a\r\nb");
+        assert!(crlf.iter().any(|o| o.offset == 3 && o.mandatory));
+        assert!(!crlf.iter().any(|o| o.offset == 2), "no break inside CR LF");
+    }
+
+    /// Exhaustive UAX #14 conformance: every row of the vendored
+    /// `LineBreakTest.txt` (UCD 16.0.0) must match
+    /// [`line_break_opportunities`], save the single documented `LB30b`
+    /// `[Extended_Pictographic & Cn] × EM` deferral (rule `[30.22]`,
+    /// which needs the `Extended_Pictographic` property this engine does
+    /// not yet vendor — see module docs).
+    #[test]
+    fn uax14_linebreaktest_conformance() {
+        let cases = crate::test_fixture::load_line_break_test();
+        assert!(
+            cases.len() > 9000,
+            "LineBreakTest.txt under-loaded: {} rows",
+            cases.len()
+        );
+        let mut deferred = Vec::new();
+        let mut unexpected = Vec::new();
+        for case in &cases {
+            let text: String = case.codepoints.iter().collect();
+            if boundary_breaks(&text) == case.breaks {
+                continue;
+            }
+            if case.comment.contains("[30.22]") {
+                deferred.push(case.line_number);
+            } else {
+                unexpected.push((case.line_number, case.comment.clone()));
+            }
+        }
+        assert!(
+            unexpected.is_empty(),
+            "{} unexpected LineBreakTest.txt mismatches (first few): {:?}",
+            unexpected.len(),
+            &unexpected[..unexpected.len().min(8)]
+        );
+        assert_eq!(
+            deferred.len(),
+            1,
+            "exactly one [30.22] Extended_Pictographic&Cn line is deferred; \
+             got lines {deferred:?}"
+        );
     }
 }

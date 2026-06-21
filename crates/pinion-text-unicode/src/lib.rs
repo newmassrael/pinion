@@ -191,7 +191,7 @@ pub mod bidi;
 pub use bidi::{BidiClass, bidi_class};
 
 pub mod linebreak;
-pub use linebreak::{LineBreak, line_break_class};
+pub use linebreak::{BreakOpportunity, LineBreak, line_break_class, line_break_opportunities};
 
 #[cfg(test)]
 mod test_fixture;
