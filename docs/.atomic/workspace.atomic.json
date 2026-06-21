@@ -4315,7 +4315,7 @@
       "intent": "§5.37.5 script analysis sub-layer placeholder — UCD Script property 기반 segmentation. shape engine input (run splitting). ratify 는 multi-session carry, BIDI 이후 자연 순서"
     },
     "5.37.6": {
-      "title": "Shape — text-run positioning (cmap+hmtx + GPOS kern pair-positioning, integer-snap); GSUB/mark = R50.6.x",
+      "title": "Shape — cmap/hmtx + GSUB liga substitution + GPOS kern positioning (integer-snap); mark/contextual = R50.7.x",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5.37",
       "decision_status": "active",
@@ -4330,6 +4330,7 @@
       "inputs_bullets": [
         "Unicode &str — char_indices codepoint 순회 (grapheme cluster = R50.6.x)",
         "§5.37.1 cmap (glyph_id_for); unmapped codepoint → 0 .notdef (OpenType 규약)",
+        "§5.37.6 GSUB liga (LigatureSubst Type 4) → glyph 시퀀스 → 합자 glyph 치환",
         "§5.37.1 hmtx advance_width + §5.37.1 head units_per_em → scale = px/upem",
         "§5.37.6 GPOS kern (PairPos Type 2) → 인접 glyph-pair x-advance 조정 (design units)",
         "§5.37.8 Font::rasterize_glyph — per-glyph AA coverage (composite 포함)",
@@ -4338,7 +4339,8 @@
       "outputs_bullets": [
         "PositionedGlyph { glyph_id, x: f32 baseline-rel pen px, cluster: byte offset }",
         "ShapedRun { glyphs: Vec<PositionedGlyph>, advance: f32 total pen px }",
-        "Font::shape_run(text, px) -> ShapedRun — exact f32 positions (GPOS kern 반영)",
+        "Font::shape_run(text, px) -> ShapedRun — cmap→GSUB liga→GPOS kern 3-stage",
+        "Font::substitute_ligatures(glyphs) -> Vec<(glyph, origin)> — origin=첫 component",
         "Font::kern_x_advance(left, right) -> i16 — GPOS pair kern, design units (0=무)",
         "Font::render_run(text, px) -> Result<Coverage, RasterError> — integer-snap 합성",
         "empty str → empty Coverage; space(empty glyph) → advance 만, ink 0"
@@ -4356,7 +4358,10 @@
         "R50.6.1: GPOS kern (PairPos Type 2 fmt 1/2 + Extension Type 9) applied in shape_run pen",
         "R50.6.1 still defers: GSUB, GPOS mark/cursive/contextual, lookupFlag filtering, script-seg",
         "kern lookups unioned across scripts (script-seg deferred); coverage-gated, cross-script no-op",
-        "R50.6.1 supersedes the R50.6 'GPOS kerning=R50.6.x' / 'advance-only' caveats: pair-kern now applied"
+        "R50.6.1 supersedes the R50.6 'GPOS kerning=R50.6.x' / 'advance-only' caveats: pair-kern now applied",
+        "R50.7: GSUB liga 합자 치환(LigatureSubst Type 4 + Extension Type 7) shape_run 적용 (cmap→GSUB→GPOS)",
+        "R50.7: Coverage/ClassDef + Script-Feature-Lookup nav → tables/layout/ (GPOS+GSUB 공유, 2nd consumer)",
+        "R50.7 defers: GSUB single/multiple/alternate/contextual/reverse-chain + lookupFlag filtering"
       ],
       "alternatives_rejected": [
         {
@@ -4426,18 +4431,38 @@
           "kind": "implements"
         },
         {
-          "file": "crates/pinion-text-font/src/tables/gpos/coverage.rs",
+          "file": "crates/pinion-text-font/src/font.rs",
+          "symbol": "Font::kern_x_advance",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-text-font/src/tables/layout/coverage.rs",
           "symbol": "Coverage",
           "kind": "references"
         },
         {
-          "file": "crates/pinion-text-font/src/tables/gpos/classdef.rs",
+          "file": "crates/pinion-text-font/src/tables/layout/classdef.rs",
           "symbol": "ClassDef",
           "kind": "references"
         },
         {
+          "file": "crates/pinion-text-font/src/tables/layout/mod.rs",
+          "symbol": "feature_lookup_indices",
+          "kind": "references"
+        },
+        {
+          "file": "crates/pinion-text-font/src/tables/gsub/mod.rs",
+          "symbol": "Gsub::substitute",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-text-font/src/tables/gsub/ligature.rs",
+          "symbol": "LigatureSubst",
+          "kind": "implements"
+        },
+        {
           "file": "crates/pinion-text-font/src/font.rs",
-          "symbol": "Font::kern_x_advance",
+          "symbol": "Font::substitute_ligatures",
           "kind": "implements"
         }
       ]
@@ -11990,6 +12015,46 @@
         "Deferred R50.6.x: GSUB, GPOS single/cursive/mark/contextual, lookupFlag glyph filtering",
         "Coverage/ClassDef under gpos/ until GSUB (2nd consumer) triggers lift to shared layout/",
         "Production paint still §5.36 swash; kern is a test forcing-consumer until paint-wiring"
+      ]
+    },
+    "R1035": {
+      "decision_summary": "§5.37.6 GSUB ligature substitution: parse the GSUB liga feature (LigatureSubst Type 4) and collapse component sequences in shape_run; lift shared OpenType Layout machinery to tables/layout.",
+      "changes_bullets": [
+        "Add tables/gsub: Gsub nav + LigatureSubst (Type 4) + Extension (Type 7) via liga feature",
+        "Lift Coverage/ClassDef + Script-Feature-Lookup nav to tables/layout (GPOS+GSUB shared, 2nd consumer)",
+        "shape_run = cmap->GSUB liga->GPOS kern; Font gains gsub + substitute_ligatures (cluster-mapped)"
+      ],
+      "verification_bullets": [
+        "pinion-text-font 223 tests 0 fail (10 new GSUB: ligature/nav/chain + NotoSans liga forcing-consumer)",
+        "Workspace 191 suites 0 fail; clippy --workspace --all-targets vello + rustfmt clean; cargo doc clean",
+        "validate T1=0; GPOS green through the lift; bindings repointed gpos/->layout/ for moved tables"
+      ],
+      "impact_refs": [
+        "5.37.6"
+      ],
+      "carry_forward_bullets": [
+        "Deferred R50.7.x: GSUB single/multiple/alternate/contextual/reverse-chain; lookupFlag filtering",
+        "Production paint still §5.36 swash; GSUB+GPOS test forcing-consumers until paint-wiring",
+        "Paint-wiring needs script-seg (§5.37.5) + bidi reorder wiring (§5.37.4) to be non-regressing"
+      ],
+      "publishable_decision_summary": "§5.37.6 GSUB ligature substitution: parse the GSUB liga feature (LigatureSubst Type 4) and collapse component sequences in shape_run; lift shared OpenType Layout machinery to tables/layout.",
+      "publishable_changes_bullets": [
+        "Add tables/gsub: Gsub nav + LigatureSubst (Type 4) + Extension (Type 7) via liga feature",
+        "Lift Coverage/ClassDef + Script-Feature-Lookup nav to tables/layout (GPOS+GSUB shared, 2nd consumer)",
+        "shape_run = cmap->GSUB liga->GPOS kern; Font gains gsub + substitute_ligatures (cluster-mapped)"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-text-font 223 tests 0 fail (10 new GSUB: ligature/nav/chain + NotoSans liga forcing-consumer)",
+        "Workspace 191 suites 0 fail; clippy --workspace --all-targets vello + rustfmt clean; cargo doc clean",
+        "validate T1=0; GPOS green through the lift; bindings repointed gpos/->layout/ for moved tables"
+      ],
+      "publishable_impact_refs": [
+        "5.37.6"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Deferred R50.7.x: GSUB single/multiple/alternate/contextual/reverse-chain; lookupFlag filtering",
+        "Production paint still §5.36 swash; GSUB+GPOS test forcing-consumers until paint-wiring",
+        "Paint-wiring needs script-seg (§5.37.5) + bidi reorder wiring (§5.37.4) to be non-regressing"
       ]
     },
     "R232": {
