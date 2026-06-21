@@ -11539,6 +11539,48 @@
         "empty-grid was the only actionable adversarial finding; coord-frame now pinned via offset test."
       ]
     },
+    "R1029": {
+      "decision_summary": "R1029 §6.3 §5.16 CI gpu-tests job: run the #[ignore]d headless GPU pixel guards (pinion-shell HeadlessScreenshot — R99x grid/glyph + R1028 gutter/geometry-only) in CI under software Vulkan (lavapipe via mesa-vulkan-drivers; NO Xvfb — HeadlessScreenshot is display-less: Instance display:None, request_adapter compatible_surface:None), closing the standing gap that these guards ran only on a manual local --ignored pass (the R1028.1 adversarial-review HIGH finding). Dedicated job (needs lint-and-test), scoped cargo test -p pinion-shell --lib -- --ignored --skip r806. Forcing lavapipe locally surfaced 2 failures: the R806 flood canaries assert an upstream vello y=0 top-tile flood STILL reproduces (flood>4), but that flood is adapter-dependent (reproduces on the Intel iGPU, NOT lavapipe), so they are hardware-adapter-only and excluded via --skip r806 (the positive r807 flood-safe guard still runs). This contradicts the r806_1 test's own 'in vello not the adapter' attribution — the flood IS adapter-specific (recorded as a follow-up).",
+      "changes_bullets": [
+        "new gpu-tests job: lavapipe (mesa-vulkan-drivers) + fonts-dejavu-core, no Xvfb (display-less)",
+        "runs cargo test -p pinion-shell --lib -- --ignored --skip r806 (14 GPU pixel guards) on push/PR",
+        "excludes R806 flood canaries: adapter-dependent (Intel floods, lavapipe does not) = hardware-only"
+      ],
+      "verification_bullets": [
+        "forced lavapipe locally (VK_ICD_FILENAMES=lvp): 14 pass / 0 fail; full --ignored = 2 r806 fail",
+        "ci.yml YAML parses; 3 jobs (lint-and-test, demo-sweep, gpu-tests); gpu-tests needs lint-and-test",
+        "HeadlessScreenshot display:None + compatible_surface:None = no X; demo-sweep lavapipe precedent"
+      ],
+      "impact_refs": [
+        "6.3",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "R1029 committed locally; PUSH PENDING explicit user consent.",
+        "FINDING: r806_1 \"flood in vello not adapter\" contradicted by lavapipe; revisit R806 attribution.",
+        "real-CI green confirmed when the workflow runs (push triggers gpu-tests); locally lavapipe-verified."
+      ],
+      "publishable_decision_summary": "R1029 §6.3 §5.16 CI gpu-tests job: run the #[ignore]d headless GPU pixel guards (pinion-shell HeadlessScreenshot — R99x grid/glyph + R1028 gutter/geometry-only) in CI under software Vulkan (lavapipe via mesa-vulkan-drivers; NO Xvfb — HeadlessScreenshot is display-less: Instance display:None, request_adapter compatible_surface:None), closing the standing gap that these guards ran only on a manual local --ignored pass (the R1028.1 adversarial-review HIGH finding). Dedicated job (needs lint-and-test), scoped cargo test -p pinion-shell --lib -- --ignored --skip r806. Forcing lavapipe locally surfaced 2 failures: the R806 flood canaries assert an upstream vello y=0 top-tile flood STILL reproduces (flood>4), but that flood is adapter-dependent (reproduces on the Intel iGPU, NOT lavapipe), so they are hardware-adapter-only and excluded via --skip r806 (the positive r807 flood-safe guard still runs). This contradicts the r806_1 test's own 'in vello not the adapter' attribution — the flood IS adapter-specific (recorded as a follow-up).",
+      "publishable_changes_bullets": [
+        "new gpu-tests job: lavapipe (mesa-vulkan-drivers) + fonts-dejavu-core, no Xvfb (display-less)",
+        "runs cargo test -p pinion-shell --lib -- --ignored --skip r806 (14 GPU pixel guards) on push/PR",
+        "excludes R806 flood canaries: adapter-dependent (Intel floods, lavapipe does not) = hardware-only"
+      ],
+      "publishable_verification_bullets": [
+        "forced lavapipe locally (VK_ICD_FILENAMES=lvp): 14 pass / 0 fail; full --ignored = 2 r806 fail",
+        "ci.yml YAML parses; 3 jobs (lint-and-test, demo-sweep, gpu-tests); gpu-tests needs lint-and-test",
+        "HeadlessScreenshot display:None + compatible_surface:None = no X; demo-sweep lavapipe precedent"
+      ],
+      "publishable_impact_refs": [
+        "6.3",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R1029 committed locally; PUSH PENDING explicit user consent.",
+        "FINDING: r806_1 \"flood in vello not adapter\" contradicted by lavapipe; revisit R806 attribution.",
+        "real-CI green confirmed when the workflow runs (push triggers gpu-tests); locally lavapipe-verified."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
