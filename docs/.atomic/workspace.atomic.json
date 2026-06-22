@@ -12951,6 +12951,50 @@
         "PR-18/19/20 all delivered; PR-18.1 closes the multi-pane wheel hit-test gap that single-pane never exposed"
       ]
     },
+    "R1049": {
+      "decision_summary": "§5.16 codegen renderer surface-invalidation recovery (sprag PR-21). The vello_renderer_impl! template (pinion-forge codegen) recovered from a non-presentable swapchain status by log+skip only, never reconfiguring — so an invalidated X11 surface stayed broken every frame, AND a stale-but-Success texture's create_view raised a wgpu validation error that wgpu's default uncaptured-error handler turned into a hard process panic (live-repro 2x during scrollbar drag/wheel repaints; boot/idle fine, frequent present/acquire exposes the latent gap). Two fixes: (1) the Outdated/Lost/Validation render arms now call context.configure_surface(&surface) [vello 0.9's surface.configure(device,&config)] before returning the labelled Surface error, so the next frame acquires a fresh swapchain (Timeout/Occluded are NOT surface losses -> still skip without reconfigure, matching wgpu's own variant guidance); (2) new() installs device.on_uncaptured_error(Arc::new(|e| eprintln!)) so a transient validation error is logged not panicked. GPU-window-only; the headless/RPC north-star path never compiles this renderer. Verified against vello 0.9 + wgpu 29 registry source; generated renderer compiles via forge-counter; 1-lens GPU-correctness review SHIP.",
+      "changes_bullets": [
+        "pinion-forge codegen.rs VELLO_TEMPLATE render(): Outdated/Lost/Validation arms now call self.context.configure_surface(&self.surface) [vello 0.9 = surface.configure(device,&config)] before returning the labelled Surface error -> next frame acquires a fresh swapchain; Timeout/Occluded unchanged (not surface losses, skip without reconfigure, matching wgpu's own variant guidance); recovery-vs-skip rationale documented inline",
+        "pinion-forge codegen.rs new(): device.on_uncaptured_error(::std::sync::Arc::new(|error| eprintln!)) installed at device creation (wgpu 29: handler is Arc<dyn Fn(Error)+Send+Sync+'static>, not Box) so a transient validation error is logged, not turned into a hard process panic by wgpu's default handler",
+        "forge lib.rs test emits_renderer_vello_recovers_invalidated_surface: 3x configure_surface in the recoverable arms + on_uncaptured_error install + labelled Surface errors retained"
+      ],
+      "verification_bullets": [
+        "generated renderer compiles: forge-counter build.rs regenerates+include!s the template; cargo check -p forge-counter green against vello 0.9/wgpu 29 (Arc + configure_surface confirmed in registry source)",
+        "cargo fmt --check + clippy --workspace --all-targets --features pinion-runtime/vello clean",
+        "cargo test --workspace: 194/194 result lines ok, 0 failed (incl 8 forge renderer-emit tests + the new recovery test)",
+        "1-lens GPU-correctness+root-cause review SHIP (no HIGH/MED): configure_surface = canonical wgpu acquire-failure recovery (matches wgpu surface_texture.rs variant docs), borrow sound (Outdated/Lost/Validation are unit variants -> no live SurfaceTexture at configure -> no configure-panic hazard), on_uncaptured_error Arc/closure/install-site correct, root cause traced to wgpu_core default_error_handler panic and closed end-to-end, raw-string/namespace-safe include! intact, test would fail under old template",
+        "commit 07260f8e; COMMITTED-NOT-PUSHED"
+      ],
+      "impact_refs": [
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "on_uncaptured_error handler silently absorbs ALL uncaptured errors (Validation/OutOfMemory/Internal) for the device -> real GPU/shader/OOM bugs now degrade to stderr rather than crash (intended per PR-21; review LOW). If a future round needs fail-fast on persistent errors, scope the handler to surface-validation only or count+escalate",
+        "Lost recovery is partial: a truly device-lost surface wants Instance::create_surface + device recreation; reconfigure-only handles the common surface-only-lost case (frame skipped + handler catches residual panic) (review LOW)",
+        "sprag-side: no action (renderer is codegen, sprag has no surface code); re-run with RUST_BACKTRACE=1 if the crash recurs to confirm the reconfigure path recovers (PR-21 report follow-up)"
+      ],
+      "publishable_decision_summary": "§5.16 codegen renderer surface-invalidation recovery (sprag PR-21). The vello_renderer_impl! template (pinion-forge codegen) recovered from a non-presentable swapchain status by log+skip only, never reconfiguring — so an invalidated X11 surface stayed broken every frame, AND a stale-but-Success texture's create_view raised a wgpu validation error that wgpu's default uncaptured-error handler turned into a hard process panic (live-repro 2x during scrollbar drag/wheel repaints; boot/idle fine, frequent present/acquire exposes the latent gap). Two fixes: (1) the Outdated/Lost/Validation render arms now call context.configure_surface(&surface) [vello 0.9's surface.configure(device,&config)] before returning the labelled Surface error, so the next frame acquires a fresh swapchain (Timeout/Occluded are NOT surface losses -> still skip without reconfigure, matching wgpu's own variant guidance); (2) new() installs device.on_uncaptured_error(Arc::new(|e| eprintln!)) so a transient validation error is logged not panicked. GPU-window-only; the headless/RPC north-star path never compiles this renderer. Verified against vello 0.9 + wgpu 29 registry source; generated renderer compiles via forge-counter; 1-lens GPU-correctness review SHIP.",
+      "publishable_changes_bullets": [
+        "pinion-forge codegen.rs VELLO_TEMPLATE render(): Outdated/Lost/Validation arms now call self.context.configure_surface(&self.surface) [vello 0.9 = surface.configure(device,&config)] before returning the labelled Surface error -> next frame acquires a fresh swapchain; Timeout/Occluded unchanged (not surface losses, skip without reconfigure, matching wgpu's own variant guidance); recovery-vs-skip rationale documented inline",
+        "pinion-forge codegen.rs new(): device.on_uncaptured_error(::std::sync::Arc::new(|error| eprintln!)) installed at device creation (wgpu 29: handler is Arc<dyn Fn(Error)+Send+Sync+'static>, not Box) so a transient validation error is logged, not turned into a hard process panic by wgpu's default handler",
+        "forge lib.rs test emits_renderer_vello_recovers_invalidated_surface: 3x configure_surface in the recoverable arms + on_uncaptured_error install + labelled Surface errors retained"
+      ],
+      "publishable_verification_bullets": [
+        "generated renderer compiles: forge-counter build.rs regenerates+include!s the template; cargo check -p forge-counter green against vello 0.9/wgpu 29 (Arc + configure_surface confirmed in registry source)",
+        "cargo fmt --check + clippy --workspace --all-targets --features pinion-runtime/vello clean",
+        "cargo test --workspace: 194/194 result lines ok, 0 failed (incl 8 forge renderer-emit tests + the new recovery test)",
+        "1-lens GPU-correctness+root-cause review SHIP (no HIGH/MED): configure_surface = canonical wgpu acquire-failure recovery (matches wgpu surface_texture.rs variant docs), borrow sound (Outdated/Lost/Validation are unit variants -> no live SurfaceTexture at configure -> no configure-panic hazard), on_uncaptured_error Arc/closure/install-site correct, root cause traced to wgpu_core default_error_handler panic and closed end-to-end, raw-string/namespace-safe include! intact, test would fail under old template",
+        "commit 07260f8e; COMMITTED-NOT-PUSHED"
+      ],
+      "publishable_impact_refs": [
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "on_uncaptured_error handler silently absorbs ALL uncaptured errors (Validation/OutOfMemory/Internal) for the device -> real GPU/shader/OOM bugs now degrade to stderr rather than crash (intended per PR-21; review LOW). If a future round needs fail-fast on persistent errors, scope the handler to surface-validation only or count+escalate",
+        "Lost recovery is partial: a truly device-lost surface wants Instance::create_surface + device recreation; reconfigure-only handles the common surface-only-lost case (frame skipped + handler catches residual panic) (review LOW)",
+        "sprag-side: no action (renderer is codegen, sprag has no surface code); re-run with RUST_BACKTRACE=1 if the crash recurs to confirm the reconfigure path recovers (PR-21 report follow-up)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
