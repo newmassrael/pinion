@@ -4489,23 +4489,23 @@
           "kind": "implements"
         },
         {
-          "file": "crates/pinion-text-font/src/layout.rs",
+          "file": "crates/pinion-text-font/src/paragraph.rs",
+          "symbol": "shape_runs_visual",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-text-font/src/line_layout.rs",
           "symbol": "layout_paragraph",
           "kind": "implements"
         },
         {
-          "file": "crates/pinion-text-font/src/layout.rs",
+          "file": "crates/pinion-text-font/src/line_layout.rs",
           "symbol": "ShapedLines",
           "kind": "implements"
         },
         {
-          "file": "crates/pinion-text-font/src/layout.rs",
+          "file": "crates/pinion-text-font/src/line_layout.rs",
           "symbol": "ShapedLine",
-          "kind": "implements"
-        },
-        {
-          "file": "crates/pinion-text-font/src/paragraph.rs",
-          "symbol": "shape_runs_visual",
           "kind": "implements"
         }
       ]
@@ -12465,6 +12465,52 @@
         "Per-line L1 trailing-WS reset (UAX #9 L1 item 4) not yet applied (paragraph-as-one-line L1)",
         "Line range includes its trailing break codepoint; shaped not trimmed (from wrap_paragraph)",
         "Single BIDI paragraph only; caller splits Bidi_Class=B (\\n, U+2029) via iter_paragraphs",
+        "layout_paragraph is a test forcing-consumer; production paint still §5.36 swash",
+        "cmap best_subtable + hhea int16[4] pre-existing cargo-doc dangling links (docs-round carry)"
+      ]
+    },
+    "R1042.1": {
+      "decision_summary": "R1042 adversarial-review clearance: rename module layout->line_layout (MED: disambiguate from tables::layout OpenType term-of-art), NaN guard on line_height (LOW: malformed-metric path), wrapped-RTL glyph-x geometry test (LOW: layout-level x pin). Two read-only reviewers found 0 HIGH / 0 MED-correctness; the clip+per-line-reorder equivalence and behavior-preserving extraction were substantiated by 150k+231k fuzz cases and mutation testing.",
+      "changes_bullets": [
+        "Rename src/layout.rs -> src/line_layout.rs (disambiguate from tables::layout OpenType)",
+        "NaN guard: non-finite line_height collapses vertical layout to zero (malformed font + huge px)",
+        "Add wrapped_rtl_line_pins_glyph_x_geometry test (layout-level glyph-x pin, not just order)",
+        "Repoint §5.37.6 bindings layout.rs -> line_layout.rs (no binding_unbacked)"
+      ],
+      "verification_bullets": [
+        "2 read-only adversarial reviewers (quality-engineer + system-architect): 0 HIGH, 0 MED-correctness",
+        "clip+reorder == codepoint L2 proven via 150k+231k fuzz; mutation confirms negative-control bites",
+        "workspace test 0 fail (7387 passed); clippy --workspace vello + rustfmt clean; my files doc 0 new",
+        "validate T1=0; bindings repointed to line_layout.rs"
+      ],
+      "impact_refs": [
+        "5.37.6"
+      ],
+      "carry_forward_bullets": [
+        "Per-line L1 trailing-WS reset deferred (affects only invisible trailing-WS positions, verified)",
+        "Trailing break codepoint shaped not trimmed; single BIDI paragraph only (caller splits Bidi B)",
+        "layout_paragraph is a test forcing-consumer; production paint still §5.36 swash",
+        "cmap best_subtable + hhea int16[4] pre-existing cargo-doc dangling links (docs-round carry)"
+      ],
+      "publishable_decision_summary": "R1042 adversarial-review clearance: rename module layout->line_layout (MED: disambiguate from tables::layout OpenType term-of-art), NaN guard on line_height (LOW: malformed-metric path), wrapped-RTL glyph-x geometry test (LOW: layout-level x pin). Two read-only reviewers found 0 HIGH / 0 MED-correctness; the clip+per-line-reorder equivalence and behavior-preserving extraction were substantiated by 150k+231k fuzz cases and mutation testing.",
+      "publishable_changes_bullets": [
+        "Rename src/layout.rs -> src/line_layout.rs (disambiguate from tables::layout OpenType)",
+        "NaN guard: non-finite line_height collapses vertical layout to zero (malformed font + huge px)",
+        "Add wrapped_rtl_line_pins_glyph_x_geometry test (layout-level glyph-x pin, not just order)",
+        "Repoint §5.37.6 bindings layout.rs -> line_layout.rs (no binding_unbacked)"
+      ],
+      "publishable_verification_bullets": [
+        "2 read-only adversarial reviewers (quality-engineer + system-architect): 0 HIGH, 0 MED-correctness",
+        "clip+reorder == codepoint L2 proven via 150k+231k fuzz; mutation confirms negative-control bites",
+        "workspace test 0 fail (7387 passed); clippy --workspace vello + rustfmt clean; my files doc 0 new",
+        "validate T1=0; bindings repointed to line_layout.rs"
+      ],
+      "publishable_impact_refs": [
+        "5.37.6"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Per-line L1 trailing-WS reset deferred (affects only invisible trailing-WS positions, verified)",
+        "Trailing break codepoint shaped not trimmed; single BIDI paragraph only (caller splits Bidi B)",
         "layout_paragraph is a test forcing-consumer; production paint still §5.36 swash",
         "cmap best_subtable + hhea int16[4] pre-existing cargo-doc dangling links (docs-round carry)"
       ]

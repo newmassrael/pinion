@@ -67,7 +67,7 @@ pub fn shape_paragraph(font: &Font, paragraph: &str, px_per_em: f32) -> ShapedPa
 /// each run, drop pure-control runs, order the survivors by UAX #9 L2, then shape
 /// and place each (reversing glyphs within right-to-left runs). The core shared
 /// by [`shape_paragraph`] (the whole paragraph as one line) and
-/// [`crate::layout::layout_paragraph`] (each wrapped line, given the paragraph's
+/// [`crate::line_layout::layout_paragraph`] (each wrapped line, given the paragraph's
 /// runs clipped to that line). `runs` must reference byte ranges within
 /// `paragraph`; the returned glyph `x` is relative to this line's origin and
 /// `cluster` is the paragraph byte offset of the source codepoint.

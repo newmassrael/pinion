@@ -22,7 +22,7 @@
 pub mod atlas;
 mod error;
 mod font;
-pub mod layout;
+pub mod line_layout;
 pub mod paragraph;
 pub mod raster;
 mod reader;
@@ -34,7 +34,7 @@ pub mod wrap;
 pub use atlas::{AtlasGlyph, GlyphAtlas};
 pub use error::{FieldValue, ParseError};
 pub use font::Font;
-pub use layout::{ShapedLine, ShapedLines, layout_paragraph};
+pub use line_layout::{ShapedLine, ShapedLines, layout_paragraph};
 pub use paragraph::{ShapedParagraph, shape_paragraph};
 pub use raster::{Coverage, RasterError};
 pub use sfnt::{Flavor as SfntFlavor, OffsetTable, TableRecord, find_table, parse_sfnt};

@@ -100,7 +100,18 @@ pub fn layout_paragraph(
     let ascent = f32::from(font.ascender()) * scale;
     let descent = f32::from(font.descender()) * scale; // <= 0
     let line_gap = f32::from(font.line_gap()) * scale;
-    let line_height = ascent - descent + line_gap;
+    // `line_height` adds a subtraction `shape_run`'s pure `+=` never performs, so a
+    // malformed font (metrics > upem) under an extreme finite `px_per_em` can scale
+    // to opposite-sign infinities and make this NaN. Collapse any non-finite result
+    // to a zero (degenerate) vertical layout rather than poison every baseline.
+    let (ascent, line_height) = {
+        let lh = ascent - descent + line_gap;
+        if lh.is_finite() {
+            (ascent, lh)
+        } else {
+            (0.0, 0.0)
+        }
+    };
 
     let mut lines: Vec<ShapedLine> = Vec::with_capacity(line_ranges.len());
     let mut width = 0.0_f32;
@@ -149,6 +160,7 @@ fn clip_runs(runs: &[ItemRun], start: usize, end: usize) -> Vec<ItemRun> {
 mod tests {
     use super::{ShapedLines, layout_paragraph};
     use crate::Font;
+    use crate::shape::shape_run;
     use crate::shape_paragraph;
     use pinion_text_unicode::{is_removed_by_x9, reorder_visual, resolved_levels};
 
@@ -292,6 +304,39 @@ mod tests {
             vec![9, 7, 5],
             "Hebrew line mirrors within itself"
         );
+    }
+
+    #[test]
+    fn wrapped_rtl_line_pins_glyph_x_geometry() {
+        // Stronger than order: pin the wrapped RTL line's glyph x. The first
+        // visual glyph sits at the line origin (x ~= 0) and each glyph's x equals
+        // the shape_run-derived mirror (run_advance - next_logical_pen_x), so a
+        // regression in the per-line x-mirror math is caught at the layout level,
+        // not only through the shared-core paragraph test.
+        let f = font();
+        let laid = layout_paragraph(&f, "ab\u{2028}\u{05D0}\u{05D1}\u{05D2}", PX, f32::MAX);
+        let line = &laid.lines[1]; // pure Hebrew RTL line, bytes 5 / 7 / 9
+        assert!(
+            line.glyphs[0].x.abs() < 1e-4,
+            "first visual glyph at line origin"
+        );
+        let logical = shape_run(&f, "\u{05D0}\u{05D1}\u{05D2}", PX);
+        let n = logical.glyphs.len();
+        for g in &line.glyphs {
+            let li = (g.cluster - 5) / 2; // paragraph byte -> Hebrew codepoint index
+            let next_x = if li + 1 < n {
+                logical.glyphs[li + 1].x
+            } else {
+                logical.advance
+            };
+            let expected = logical.advance - next_x;
+            assert!(
+                (g.x - expected).abs() < 1e-4,
+                "cluster {} x {} != mirror {expected}",
+                g.cluster,
+                g.x
+            );
+        }
     }
 
     #[test]
