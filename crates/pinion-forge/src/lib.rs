@@ -1185,6 +1185,41 @@ mod tests {
         assert!(rust.contains("antialiasing_method: ::vello::AaConfig::Area"));
     }
 
+    #[test]
+    fn emits_renderer_vello_recovers_invalidated_surface() {
+        // R1049 §5.16 (PR-21) — a non-presentable surface status
+        // (outdated / lost / validation) must RECONFIGURE the swapchain,
+        // not merely skip the frame: a surface stays broken until
+        // reconfigured, and a stale-but-"Success" texture then panics the
+        // process at `create_view`. The device also installs an
+        // uncaptured-error handler so a transient validation error is
+        // absorbed rather than hard-panicking via wgpu's default.
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="Scene" backend="vello"/>"#;
+        let rust = compile_str(xml, "scene.pinion.xml").expect("compile");
+        // Exactly the three recoverable statuses reconfigure (Timeout /
+        // Occluded are not surface losses → they skip without reconfigure).
+        assert_eq!(
+            rust.matches("self.context.configure_surface(&self.surface);")
+                .count(),
+            3,
+            "outdated / lost / validation each reconfigure the surface",
+        );
+        // ...and still surface a labelled error so the shell logs + skips
+        // THIS frame (recovery lands on the next acquisition).
+        for reason in ["outdated", "lost", "validation"] {
+            assert!(
+                rust.contains(&format!("Surface(\"{reason}\")")),
+                "recoverable status {reason} still returns its labelled Surface error",
+            );
+        }
+        // Uncaptured-error handler installed at device creation (wgpu 29
+        // takes an Arc).
+        assert!(
+            rust.contains("on_uncaptured_error(::std::sync::Arc::new("),
+            "device installs an uncaptured-error handler to absorb transient validation errors",
+        );
+    }
+
     // ---- R46.2.1 §5.16: aa manifest attribute (Vello AA mode) ----
 
     #[test]

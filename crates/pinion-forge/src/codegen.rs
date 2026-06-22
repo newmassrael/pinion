@@ -246,6 +246,21 @@ impl __NAME__ {
             .create_surface(target, width, height, ::vello::wgpu::PresentMode::AutoVsync)
             .await?;
         let device_handle = &context.devices[surface.dev_id];
+        // R1049 §5.16 — absorb transient wgpu uncaptured errors (e.g. a
+        // `create_view` on a momentarily-invalid swapchain texture right
+        // after a surface invalidation) instead of letting wgpu's default
+        // uncaptured-error handler hard-panic the process. `render`
+        // reconfigures the surface on a non-presentable acquisition status,
+        // so a logged transient error self-recovers on the next frame.
+        // Installed once at device creation (wgpu 29: the handler is an
+        // `Arc<dyn Fn(wgpu::Error) + Send + Sync>`).
+        device_handle
+            .device
+            .on_uncaptured_error(::std::sync::Arc::new(|error| {
+                ::std::eprintln!(
+                    "pinion renderer: wgpu uncaptured error absorbed (not panicking): {error}"
+                );
+            }));
         let renderer = ::vello::Renderer::new(
             &device_handle.device,
             ::vello::RendererOptions {
@@ -288,6 +303,19 @@ impl __NAME__ {
         // wgpu 29: `get_current_texture` returns a status enum instead
         // of `Result<_, SurfaceError>`. Present on Success/Suboptimal;
         // map the non-presentable states to a labelled surface error.
+        //
+        // R1049 §5.16 — recover the swapchain, don't just skip. A surface
+        // that comes back Outdated / Lost / Validation stays broken until
+        // it is reconfigured: every later frame re-fails the same way and,
+        // worse, a stale-but-"Success" texture makes `create_view` raise a
+        // wgpu validation error that the default handler turns into a hard
+        // process panic. `configure_surface` (the Vello-blessed
+        // `surface.configure(device, &config)`) re-establishes the
+        // swapchain to the current config so the NEXT frame acquires a
+        // fresh texture; this frame is still skipped (returns the labelled
+        // `Surface` error the shell logs). Timeout (transient, retry) and
+        // Occluded (window hidden) are not surface invalidations — a
+        // reconfigure neither helps nor is needed, so they only skip.
         let surface_texture = match self.surface.surface.get_current_texture() {
             ::vello::wgpu::CurrentSurfaceTexture::Success(t)
             | ::vello::wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
@@ -298,12 +326,15 @@ impl __NAME__ {
                 return ::std::result::Result::Err(__ERR_NAME__::Surface("occluded"));
             }
             ::vello::wgpu::CurrentSurfaceTexture::Outdated => {
+                self.context.configure_surface(&self.surface);
                 return ::std::result::Result::Err(__ERR_NAME__::Surface("outdated"));
             }
             ::vello::wgpu::CurrentSurfaceTexture::Lost => {
+                self.context.configure_surface(&self.surface);
                 return ::std::result::Result::Err(__ERR_NAME__::Surface("lost"));
             }
             ::vello::wgpu::CurrentSurfaceTexture::Validation => {
+                self.context.configure_surface(&self.surface);
                 return ::std::result::Result::Err(__ERR_NAME__::Surface("validation"));
             }
         };
