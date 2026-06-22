@@ -13180,6 +13180,46 @@
         "placement-loop seam fully retired (render_glyphs is the one render core); no further render-builder duplication remains"
       ]
     },
+    "R1053": {
+      "decision_summary": "R1053 §5.4 PR-22 — SCE deps moved from vendor/sce path to one root git+rev workspace dep (submodule SHA 3078f8bf) so a downstream consumer (sprag) can rev-pin pinion; a git source_id dedupes by (url,rev) where a path one cannot survive pinion being git-pinned. One SCE instance preserved.",
+      "changes_bullets": [
+        "root workspace.dependencies: sce-rust-runtime+sce-build = git+rev 3078f8bf (was vendor/sce path)",
+        "pinion-core (2 deps)+pinion-forge (1) now {workspace=true}; default-features=false on runtime decl",
+        "dual-pin discipline at workspace SCE block: Cargo rev MUST == vendor/sce submodule SHA"
+      ],
+      "verification_bullets": [
+        "cargo tree -i: rust-runtime<-core, build<-forge = ONE instance each (dedup confirmed)",
+        "core+forge build 21s; clippy --workspace --all-targets vello exit 0 (1m00s); validate T1=0",
+        "C++ submods (quickjs/spdlog/httplib/pugixml) git-fetched but NOT compiled; only libxml/bindgen"
+      ],
+      "impact_refs": [
+        "5.4"
+      ],
+      "carry_forward_bullets": [
+        "if a consumer rev-pins pinion, dogfood loop needs push+rev-bump per change (trade-off accepted)",
+        "vendor/sce submodule now Rust-vestigial; C++ side/canon sync still track it; retire policy deferred",
+        "SCE bump = move submodule + this Cargo rev together in one commit or built-vs-vendored SCE drifts"
+      ],
+      "publishable_decision_summary": "R1053 §5.4 PR-22 — SCE deps moved from vendor/sce path to one root git+rev workspace dep (submodule SHA 3078f8bf) so a downstream consumer (sprag) can rev-pin pinion; a git source_id dedupes by (url,rev) where a path one cannot survive pinion being git-pinned. One SCE instance preserved.",
+      "publishable_changes_bullets": [
+        "root workspace.dependencies: sce-rust-runtime+sce-build = git+rev 3078f8bf (was vendor/sce path)",
+        "pinion-core (2 deps)+pinion-forge (1) now {workspace=true}; default-features=false on runtime decl",
+        "dual-pin discipline at workspace SCE block: Cargo rev MUST == vendor/sce submodule SHA"
+      ],
+      "publishable_verification_bullets": [
+        "cargo tree -i: rust-runtime<-core, build<-forge = ONE instance each (dedup confirmed)",
+        "core+forge build 21s; clippy --workspace --all-targets vello exit 0 (1m00s); validate T1=0",
+        "C++ submods (quickjs/spdlog/httplib/pugixml) git-fetched but NOT compiled; only libxml/bindgen"
+      ],
+      "publishable_impact_refs": [
+        "5.4"
+      ],
+      "publishable_carry_forward_bullets": [
+        "if a consumer rev-pins pinion, dogfood loop needs push+rev-bump per change (trade-off accepted)",
+        "vendor/sce submodule now Rust-vestigial; C++ side/canon sync still track it; retire policy deferred",
+        "SCE bump = move submodule + this Cargo rev together in one commit or built-vs-vendored SCE drifts"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
