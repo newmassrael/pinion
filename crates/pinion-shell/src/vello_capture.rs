@@ -297,3 +297,34 @@ pub fn capture_surface_rgba8(
         rgba8,
     })
 }
+
+/// R1061 §5.12 — encode a premultiplied-RGBA8 buffer (`width * height * 4`
+/// bytes, row-major, top-left) as an 8-bit RGBA PNG to `writer`.
+///
+/// The single source of truth for RGBA8 → PNG, shared by the headless
+/// screenshot path ([`crate::headless_screenshot::HeadlessScreenshot`])
+/// and the live-capture `scene/screenshot {out_path}` wire (which writes
+/// the captured frame to a file instead of returning a multi-MB
+/// `pixels_rgba8` JSON array). The shape is RGBA 8-bit, no palette / no
+/// 16-bit / no interlace — the simplest lossless round-trip every decoder
+/// opens.
+///
+/// # Errors
+///
+/// Returns the `png` header / image-data write error rendered as a
+/// string (the substrate surface stays free of a `png` re-export).
+pub(crate) fn encode_rgba8_png<W: std::io::Write>(
+    width: u32,
+    height: u32,
+    rgba8: &[u8],
+    writer: W,
+) -> Result<(), String> {
+    let mut encoder = png::Encoder::new(writer, width, height);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut png_writer = encoder.write_header().map_err(|e| format!("{e}"))?;
+    png_writer
+        .write_image_data(rgba8)
+        .map_err(|e| format!("{e}"))?;
+    Ok(())
+}

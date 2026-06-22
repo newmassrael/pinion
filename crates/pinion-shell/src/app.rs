@@ -541,7 +541,15 @@ impl<V: WidgetView> AppShell<V> {
         // before `parsed_request` moves into the dispatch.
         let screenshot = if parsed_request.method == "scene/screenshot" {
             let scope = parsed_request.window_scope().ok().flatten();
-            self.capture_window_screenshot(scope)
+            // R1061 §5.12 — optional `{out_path: "….png"}` switches the
+            // wire to file output (small response) vs the inline
+            // `pixels_rgba8` array (default).
+            let out_path = parsed_request
+                .params
+                .as_ref()
+                .and_then(|p| p.get("out_path"))
+                .and_then(serde_json::Value::as_str);
+            self.capture_window_screenshot(scope, out_path)
         } else {
             None
         };
@@ -573,6 +581,7 @@ impl<V: WidgetView> AppShell<V> {
     fn capture_window_screenshot(
         &mut self,
         window_scope: Option<&str>,
+        out_path: Option<&str>,
     ) -> Option<pinion_rpc::Screenshot> {
         let window_id = match window_scope {
             Some(spec_id) => self.spec_id_to_window_id.get(spec_id).copied(),
@@ -581,6 +590,22 @@ impl<V: WidgetView> AppShell<V> {
         self.windows.get_mut(&window_id)?.pending_capture = true;
         self.render_window(window_id);
         let frame = self.windows.get_mut(&window_id)?.last_capture.take()?;
+        // R1061 §5.12 — `{out_path}` mode: write the captured frame to the
+        // file as PNG (the RGBA8 -> PNG SSOT shared with the headless
+        // path) and return just the path, so the wire stays small for
+        // large windows. A create / encode failure fails the capture
+        // (`None` -> `RenderBackendUnavailable`) rather than returning a
+        // wrong frame.
+        if let Some(path) = out_path {
+            let file = std::fs::File::create(path).ok()?;
+            crate::vello_capture::encode_rgba8_png(frame.width, frame.height, &frame.rgba8, file)
+                .ok()?;
+            return Some(pinion_rpc::Screenshot::new_file(
+                frame.width,
+                frame.height,
+                path.to_owned(),
+            ));
+        }
         Some(pinion_rpc::Screenshot::new(
             frame.width,
             frame.height,

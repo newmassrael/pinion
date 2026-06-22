@@ -3971,14 +3971,21 @@ fn screenshot_to_json(shot: &Screenshot) -> Value {
     let mut obj = serde_json::Map::new();
     obj.insert("width".to_string(), Value::Number(shot.width.into()));
     obj.insert("height".to_string(), Value::Number(shot.height.into()));
-    // v0 wire shape carries raw bytes as a JSON array of u8. Future
-    // slices may switch to base64 (single string) to halve frame size.
-    let pixels = shot
-        .pixels_rgba8
-        .iter()
-        .map(|b| Value::Number((*b).into()))
-        .collect();
-    obj.insert("pixels_rgba8".to_string(), Value::Array(pixels));
+    if let Some(path) = &shot.out_path {
+        // R1061 §5.12 — file-output mode: the embedder already wrote the
+        // captured frame to `out_path` as PNG, so the wire returns the
+        // path instead of a multi-MB `pixels_rgba8` array.
+        obj.insert("out_path".to_string(), Value::String(path.clone()));
+    } else {
+        // Inline mode: raw bytes as a JSON array of u8. A future slice may
+        // switch to base64 (single string) to halve frame size.
+        let pixels = shot
+            .pixels_rgba8
+            .iter()
+            .map(|b| Value::Number((*b).into()))
+            .collect();
+        obj.insert("pixels_rgba8".to_string(), Value::Array(pixels));
+    }
     Value::Object(obj)
 }
 

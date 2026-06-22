@@ -408,16 +408,10 @@ impl HeadlessScreenshot {
         writer: W,
     ) -> Result<(), HeadlessScreenshotError> {
         let pixels = self.render_to_rgba8(vello_scene, width, height, base_color)?;
-        let mut encoder = png::Encoder::new(writer, width, height);
-        encoder.set_color(png::ColorType::Rgba);
-        encoder.set_depth(png::BitDepth::Eight);
-        let mut png_writer = encoder
-            .write_header()
-            .map_err(|e| HeadlessScreenshotError::PngEncode(format!("{e}")))?;
-        png_writer
-            .write_image_data(&pixels)
-            .map_err(|e| HeadlessScreenshotError::PngEncode(format!("{e}")))?;
-        Ok(())
+        // R1061 §5.12 — delegate to the RGBA8 → PNG encode SSOT that the
+        // live-capture `scene/screenshot {out_path}` wire also uses.
+        crate::vello_capture::encode_rgba8_png(width, height, &pixels, writer)
+            .map_err(HeadlessScreenshotError::PngEncode)
     }
 }
 

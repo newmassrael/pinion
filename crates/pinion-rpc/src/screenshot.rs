@@ -25,11 +25,17 @@ pub struct Screenshot {
     pub width: u32,
     pub height: u32,
     /// Pre-multiplied RGBA8 byte buffer, `width * height * 4` bytes.
+    /// Empty in the [`Self::out_path`] file-output mode.
     pub pixels_rgba8: Vec<u8>,
+    /// R1061 §5.12 — when the request carried `{out_path: "….png"}` the
+    /// embedder wrote the captured frame to that file as PNG and
+    /// `pixels_rgba8` is empty; the wire returns the path instead of a
+    /// multi-MB pixel array. `None` = inline `pixels_rgba8` mode.
+    pub out_path: Option<String>,
 }
 
 impl Screenshot {
-    /// R1060 §5.12 — construct a captured-frame payload. The struct is
+    /// R1060 §5.12 — inline-pixel captured-frame payload. The struct is
     /// `#[non_exhaustive]`, so out-of-crate producers (the pinion-shell
     /// `AppShell` live-surface capture) build it through this
     /// constructor rather than a struct literal.
@@ -39,6 +45,20 @@ impl Screenshot {
             width,
             height,
             pixels_rgba8,
+            out_path: None,
+        }
+    }
+
+    /// R1061 §5.12 — file-output payload: the captured frame was already
+    /// written to `out_path` as PNG by the embedder, so `pixels_rgba8` is
+    /// empty and the wire stays small regardless of window size.
+    #[must_use]
+    pub fn new_file(width: u32, height: u32, out_path: String) -> Self {
+        Self {
+            width,
+            height,
+            pixels_rgba8: Vec::new(),
+            out_path: Some(out_path),
         }
     }
 }

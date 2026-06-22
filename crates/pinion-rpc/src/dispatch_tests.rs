@@ -3130,6 +3130,31 @@ fn r1060_scene_screenshot_returns_embedder_captured_pixels() {
     assert_eq!(got, pixels, "wire pixels round-trip the captured frame");
 }
 
+#[test]
+fn r1061_scene_screenshot_out_path_mode_returns_path_not_pixels() {
+    // R1061 §5.12 — `{out_path}` mode: the embedder wrote the PNG to the
+    // file, so the wire returns `out_path` (small) and OMITS the multi-MB
+    // `pixels_rgba8` array. The handler just serializes the embedder's
+    // file-mode `Screenshot`; app.rs picks the mode + does the PNG write.
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision).with_screenshot(
+        crate::screenshot::Screenshot::new_file(640, 480, "/tmp/pinion-shot.png".to_owned()),
+    );
+    let req = r#"{"jsonrpc":"2.0","method":"scene/screenshot","params":{"path":"","out_path":"/tmp/pinion-shot.png"},"id":24}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(resp.error.is_none(), "file-mode capture must not error");
+    let result = resp.result.expect("result present");
+    assert_eq!(result["width"].as_u64(), Some(640));
+    assert_eq!(result["height"].as_u64(), Some(480));
+    assert_eq!(result["out_path"].as_str(), Some("/tmp/pinion-shot.png"));
+    assert!(
+        result.get("pixels_rgba8").is_none(),
+        "out_path mode omits the inline pixel array"
+    );
+}
+
 /// `ButtonExternal` end-to-end: a real R12 widget reaches the
 /// JSON-RPC envelope. Validates §5.15 item 8 dispatch chain
 /// (`dispatch` → `scene/query` → `External::introspect` →
