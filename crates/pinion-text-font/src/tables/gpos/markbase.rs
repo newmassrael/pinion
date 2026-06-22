@@ -316,4 +316,51 @@ mod tests {
             })
         ));
     }
+
+    #[test]
+    fn multi_class_uses_the_marks_class_anchor() {
+        // markClassCount = 2, the mark in class 1: mark_offset must read the
+        // base's CLASS-1 anchor. A bug indexing class 0 would give (100, 550)
+        // instead of (200, 750) — the only mutation the single-class tests miss.
+        let mark_cov = coverage1(30);
+        let base_cov = coverage1(10);
+
+        // markArray: count(2) + record(class 2 + anchorOff 2) = 6, anchor at +6.
+        let mut mark_array = 1u16.to_be_bytes().to_vec(); // markCount
+        mark_array.extend_from_slice(&1u16.to_be_bytes()); // markClass = 1
+        mark_array.extend_from_slice(&6u16.to_be_bytes()); // markAnchorOffset
+        mark_array.extend_from_slice(&anchor_bytes(1, 100, 50));
+
+        // baseArray: count(2) + record(2 class offsets) = 6; anchors at +6, +12.
+        let mut base_array = 1u16.to_be_bytes().to_vec(); // baseCount
+        base_array.extend_from_slice(&6u16.to_be_bytes()); // class-0 anchorOffset
+        base_array.extend_from_slice(&12u16.to_be_bytes()); // class-1 anchorOffset
+        base_array.extend_from_slice(&anchor_bytes(1, 200, 600)); // class 0
+        base_array.extend_from_slice(&anchor_bytes(1, 300, 800)); // class 1
+
+        let header_len = 12;
+        let mark_cov_off = header_len;
+        let base_cov_off = mark_cov_off + mark_cov.len();
+        let mark_array_off = base_cov_off + base_cov.len();
+        let base_array_off = mark_array_off + mark_array.len();
+
+        let mut sub = 1u16.to_be_bytes().to_vec(); // posFormat
+        sub.extend_from_slice(&u16::try_from(mark_cov_off).unwrap().to_be_bytes());
+        sub.extend_from_slice(&u16::try_from(base_cov_off).unwrap().to_be_bytes());
+        sub.extend_from_slice(&2u16.to_be_bytes()); // markClassCount = 2
+        sub.extend_from_slice(&u16::try_from(mark_array_off).unwrap().to_be_bytes());
+        sub.extend_from_slice(&u16::try_from(base_array_off).unwrap().to_be_bytes());
+        sub.extend_from_slice(&mark_cov);
+        sub.extend_from_slice(&base_cov);
+        sub.extend_from_slice(&mark_array);
+        sub.extend_from_slice(&base_array);
+
+        let mb = MarkBasePos::parse(&sub, 0).unwrap();
+        // class-1 base anchor (300,800) - mark anchor (100,50) = (200, 750).
+        assert_eq!(
+            mb.mark_offset(10, 30),
+            Some((200, 750)),
+            "mark_offset reads the mark's own class anchor, not class 0"
+        );
+    }
 }

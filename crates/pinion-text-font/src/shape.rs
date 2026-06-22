@@ -57,7 +57,7 @@ const ATLAS_WIDTH: usize = 256;
 /// source codepoint (into the run `&str` from [`shape_run`], into the whole
 /// paragraph from `shape_paragraph` — where it descends across a right-to-left
 /// run), so a caller can map a glyph back to its text (hit-testing / selection).
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PositionedGlyph {
     /// Resolved glyph id (`.notdef` = 0 for an unmapped codepoint).
     pub glyph_id: u16,

@@ -9,10 +9,12 @@
 //! second consumer, not speculation).
 //!
 //! The lookup *type*-specific subtable parsing stays in each table's module
-//! (GPOS `PairPos`, GSUB `LigatureSubst`); this module stops at the generic
-//! "give me a feature's lookups, and each lookup's (type, flag, subtable
-//! offsets)" boundary. Every function takes the owning table's sfnt `tag` so
-//! diagnostics name GPOS vs GSUB.
+//! (GPOS `PairPos` / `MarkBasePos`, GSUB `LigatureSubst`); this module stops at
+//! the generic "give me a feature's lookups, each lookup's (type, flag, subtable
+//! offsets), and the subtables of a given type" boundary — the last via
+//! [`collect_subtables_of_type`], which takes the caller's per-type parser as a
+//! closure. Every function takes the owning table's sfnt `tag` so diagnostics
+//! name GPOS vs GSUB.
 //!
 //! Script segmentation (§5.37.5) is deferred, so [`feature_lookup_indices`]
 //! gathers the target feature from **every** script's default `LangSys`; callers
@@ -149,6 +151,38 @@ pub fn resolve_extension(
             available: table.len(),
         })?;
     Ok((extension_lookup_type, real_off))
+}
+
+/// Collect every subtable of `want_type` within one Lookup table, resolving any
+/// extension subtable (GPOS Lookup Type 9 / GSUB Type 7, passed as
+/// `extension_type`) to its real type first. This is the GSUB+GPOS-shared
+/// lookup-subtable walk — read the lookup, then for each subtable offset unwrap
+/// an extension and hand the type-matching offsets to `parse`. The per-type
+/// subtable parser lives in the caller's module ([`crate::tables::gpos`]
+/// `PairPos` / `MarkBasePos`, [`crate::tables::gsub`] `LigatureSubst`); this is
+/// only the resolve-and-filter loop those three shared verbatim (lifted at the
+/// third copy).
+pub fn collect_subtables_of_type<T>(
+    table: &[u8],
+    lookup_off: usize,
+    tag: [u8; 4],
+    extension_type: u16,
+    want_type: u16,
+    parse: impl Fn(&[u8], usize) -> Result<T, ParseError>,
+) -> Result<Vec<T>, ParseError> {
+    let (lookup_type, _lookup_flag, subtable_offsets) = read_lookup(table, lookup_off, tag)?;
+    let mut subs = Vec::new();
+    for soff in subtable_offsets {
+        let (real_type, real_abs) = if lookup_type == extension_type {
+            resolve_extension(table, soff, tag)?
+        } else {
+            (lookup_type, soff)
+        };
+        if real_type == want_type {
+            subs.push(parse(table, real_abs)?);
+        }
+    }
+    Ok(subs)
 }
 
 /// `FeatureList` → `(featureTag, absolute feature-table offset)` per record.

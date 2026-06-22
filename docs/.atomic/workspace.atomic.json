@@ -4333,7 +4333,7 @@
       ]
     },
     "5.37.6": {
-      "title": "Shape — cmap/hmtx + GSUB liga substitution + GPOS kern positioning (integer-snap); mark/contextual = R50.7.x",
+      "title": "Shape — cmap/hmtx + GSUB liga + GPOS kern + mark-to-base positioning (integer-snap); cursive/contextual = R50.6.x",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5.37",
       "decision_status": "active",
@@ -4387,7 +4387,8 @@
         "R1042 (R50.12) layout_paragraph: multi-line shaped layout = wrap + per-line L2 reorder + baseline",
         "R50.6.2 GPOS mark-to-base (MarkBasePos Type 4, mark feature): mark anchored over preceding base",
         "R1043 PositionedGlyph gains y (baseline-rel, down); mark lifts off baseline, render_run honors y",
-        "R1043 defers: RTL mark x (advance-mirror), mark-to-lig/mark (Type 5/6), lookupFlag mark-skip"
+        "R1043 defers: RTL mark x (advance-mirror), mark-to-lig/mark (Type 5/6), lookupFlag mark-skip",
+        "R1043 supersedes the 'GPOS mark = R50.6.x/R50.7.x' caveats: mark-to-base (Type 4) now applied"
       ],
       "alternatives_rejected": [
         {
@@ -12578,6 +12579,52 @@
         "mark-to-ligature (Type 5) + mark-to-mark stacking (Type 6) + lookupFlag mark-skip deferred",
         "parse_lookup_pairpos/markbase + parse_kern/mark_lookups = 2 mechanical copies; lift at 3rd GPOS type",
         "font fallback + styled runs = cross-cutting paint-wiring blockers (bigger future round; R1043 audit)",
+        "cmap best_subtable + hhea int16[4] pre-existing cargo-doc dangling links (docs-round carry)"
+      ]
+    },
+    "R1043.1": {
+      "decision_summary": "R1043 adversarial-review clearance: lift collect_subtables_of_type into tables/layout (the extension-resolve+type-filter loop was a 3rd identical copy across GSUB liga + GPOS pairpos + markbase, so the mechanical-wiring lift threshold was met now, not at a later GPOS type); correct stale docs (Gpos struct/parse said kern-only, Font::shape_run omitted mark, §5.37.6 title declared mark deferred) + supersede caveat; drop the unused PositionedGlyph Default derive; add a multi-class markbase test. Two read-only reviewers found 0 HIGH; the implementation, tests, and quantitative claims were sound — the findings were doc-consistency and the missed 3rd-copy lift.",
+      "changes_bullets": [
+        "Lift layout::collect_subtables_of_type (3rd copy: GSUB liga + GPOS pairpos + markbase share it)",
+        "Fix stale docs: Gpos struct/parse (mark lookups), Font::shape_run, §5.37.6 title + supersede caveat",
+        "Drop unused Default derive on PositionedGlyph (YAGNI)",
+        "Add markbase multi-class unit test (mark class 1 reads base class-1 anchor, not class 0)"
+      ],
+      "verification_bullets": [
+        "2 read-only adversarial reviewers (quality-engineer + system-architect): 0 HIGH",
+        "lift behavior-preserving: GSUB liga + GPOS kern + mark integration tests green",
+        "workspace test 0 fail (7396 passed); clippy --workspace vello + rustfmt clean; my files doc 0 new",
+        "validate T1=0; §5.37.6 title corrected (mark no longer deferred) + supersede caveat"
+      ],
+      "impact_refs": [
+        "5.37.6"
+      ],
+      "carry_forward_bullets": [
+        "RTL mark x deferred (advance-mirror); mark-to-lig/mark-to-mark (Type 5/6); lookupFlag mark-skip",
+        "non-zero mark advance over-advances pen (real combining marks ~0; documented); R50.6.x",
+        "font fallback + styled runs = cross-cutting paint-wiring blockers (bigger future round)",
+        "cmap best_subtable + hhea int16[4] pre-existing cargo-doc dangling links (docs-round carry)"
+      ],
+      "publishable_decision_summary": "R1043 adversarial-review clearance: lift collect_subtables_of_type into tables/layout (the extension-resolve+type-filter loop was a 3rd identical copy across GSUB liga + GPOS pairpos + markbase, so the mechanical-wiring lift threshold was met now, not at a later GPOS type); correct stale docs (Gpos struct/parse said kern-only, Font::shape_run omitted mark, §5.37.6 title declared mark deferred) + supersede caveat; drop the unused PositionedGlyph Default derive; add a multi-class markbase test. Two read-only reviewers found 0 HIGH; the implementation, tests, and quantitative claims were sound — the findings were doc-consistency and the missed 3rd-copy lift.",
+      "publishable_changes_bullets": [
+        "Lift layout::collect_subtables_of_type (3rd copy: GSUB liga + GPOS pairpos + markbase share it)",
+        "Fix stale docs: Gpos struct/parse (mark lookups), Font::shape_run, §5.37.6 title + supersede caveat",
+        "Drop unused Default derive on PositionedGlyph (YAGNI)",
+        "Add markbase multi-class unit test (mark class 1 reads base class-1 anchor, not class 0)"
+      ],
+      "publishable_verification_bullets": [
+        "2 read-only adversarial reviewers (quality-engineer + system-architect): 0 HIGH",
+        "lift behavior-preserving: GSUB liga + GPOS kern + mark integration tests green",
+        "workspace test 0 fail (7396 passed); clippy --workspace vello + rustfmt clean; my files doc 0 new",
+        "validate T1=0; §5.37.6 title corrected (mark no longer deferred) + supersede caveat"
+      ],
+      "publishable_impact_refs": [
+        "5.37.6"
+      ],
+      "publishable_carry_forward_bullets": [
+        "RTL mark x deferred (advance-mirror); mark-to-lig/mark-to-mark (Type 5/6); lookupFlag mark-skip",
+        "non-zero mark advance over-advances pen (real combining marks ~0; documented); R50.6.x",
+        "font fallback + styled runs = cross-cutting paint-wiring blockers (bigger future round)",
         "cmap best_subtable + hhea int16[4] pre-existing cargo-doc dangling links (docs-round carry)"
       ]
     },

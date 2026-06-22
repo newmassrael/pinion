@@ -145,20 +145,15 @@ fn parse_liga_lookups(
         let Some(&lookup_off) = lookup_offsets.get(usize::from(idx)) else {
             continue;
         };
-        let (lookup_type, _flag, subtable_offsets) =
-            layout::read_lookup(table, lookup_off, GSUB_TAG)?;
-        let mut subs = Vec::new();
-        for soff in subtable_offsets {
-            let (real_type, real_abs) = if lookup_type == EXTENSION_LOOKUP_TYPE {
-                layout::resolve_extension(table, soff, GSUB_TAG)?
-            } else {
-                (lookup_type, soff)
-            };
-            if real_type == LIGATURE_LOOKUP_TYPE {
-                subs.push(LigatureSubst::parse(table, real_abs)?);
-            }
-            // Other substitution lookup types within liga are deferred.
-        }
+        // Other substitution lookup types within liga are skipped.
+        let subs = layout::collect_subtables_of_type(
+            table,
+            lookup_off,
+            GSUB_TAG,
+            EXTENSION_LOOKUP_TYPE,
+            LIGATURE_LOOKUP_TYPE,
+            LigatureSubst::parse,
+        )?;
         if !subs.is_empty() {
             out.push(LigaLookup { subtables: subs });
         }

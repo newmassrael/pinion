@@ -246,9 +246,9 @@ impl Font {
     }
 
     /// Shape `text` into a positioned glyph run at `px_per_em` (§5.37.6: cmap
-    /// codepoint → glyph + hmtx advance, refined by GPOS `kern` pair
-    /// positioning). See [`crate::shape::shape_run`] for the scope and
-    /// determinism contract.
+    /// codepoint → glyph + hmtx advance, refined by GPOS `kern` pair positioning
+    /// and `mark` mark-to-base attachment). See [`crate::shape::shape_run`] for
+    /// the scope and determinism contract.
     #[must_use]
     pub fn shape_run(&self, text: &str, px_per_em: f32) -> ShapedRun {
         crate::shape::shape_run(self, text, px_per_em)

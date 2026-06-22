@@ -38,9 +38,10 @@ const EXTENSION_LOOKUP_TYPE: u16 = 9;
 const PAIR_POS_LOOKUP_TYPE: u16 = 2;
 const MARK_BASE_POS_LOOKUP_TYPE: u16 = 4;
 
-/// Parsed GPOS kerning view — the ordered `kern`-feature lookups, each holding
-/// its `PairPos` subtables. Lookups apply cumulatively; within a lookup the first
-/// subtable that covers the first glyph wins (OpenType lookup semantics).
+/// Parsed GPOS positioning view — the ordered `kern`-feature `PairPos` lookups
+/// and `mark`-feature `MarkBasePos` lookups. Lookups apply cumulatively; within a
+/// lookup the first subtable that covers the relevant glyph wins (OpenType lookup
+/// semantics).
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Gpos {
     kern_lookups: Vec<KernLookup>,
@@ -58,14 +59,15 @@ struct MarkLookup {
 }
 
 impl Gpos {
-    /// Parse the GPOS table, retaining only the `kern`-feature `PairPos` lookups.
+    /// Parse the GPOS table, retaining the `kern`-feature `PairPos` lookups and
+    /// the `mark`-feature `MarkBasePos` lookups.
     ///
     /// # Errors
     ///
     /// * [`ParseError::UnsupportedTableVersion`] — majorVersion != 1.
     /// * [`ParseError::TableTooShort`] — header / offset / record past the table.
     /// * [`ParseError::InvalidTableField`] — malformed Coverage / `ClassDef` /
-    ///   `PairPos` / extension subtable.
+    ///   `PairPos` / `MarkBasePos` / anchor / extension subtable.
     pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
         let mut r = Reader::new(bytes, GPOS_TAG);
         let major = r.read_u16()?;
@@ -167,31 +169,20 @@ fn parse_kern_lookups(
         let Some(&lookup_off) = lookup_offsets.get(usize::from(idx)) else {
             continue;
         };
-        let subtables = parse_lookup_pairpos(table, lookup_off)?;
+        // Other positioning lookup types within a kern feature are skipped.
+        let subtables = layout::collect_subtables_of_type(
+            table,
+            lookup_off,
+            GPOS_TAG,
+            EXTENSION_LOOKUP_TYPE,
+            PAIR_POS_LOOKUP_TYPE,
+            PairPos::parse,
+        )?;
         if !subtables.is_empty() {
             out.push(KernLookup { subtables });
         }
     }
     Ok(out)
-}
-
-/// Parse one Lookup table's `PairPos` (type 2, or extension→2) subtables.
-fn parse_lookup_pairpos(table: &[u8], lookup_off: usize) -> Result<Vec<PairPos>, ParseError> {
-    let (lookup_type, _lookup_flag, subtable_offsets) =
-        layout::read_lookup(table, lookup_off, GPOS_TAG)?;
-    let mut subs = Vec::new();
-    for soff in subtable_offsets {
-        let (real_type, real_abs) = if lookup_type == EXTENSION_LOOKUP_TYPE {
-            layout::resolve_extension(table, soff, GPOS_TAG)?
-        } else {
-            (lookup_type, soff)
-        };
-        if real_type == PAIR_POS_LOOKUP_TYPE {
-            subs.push(PairPos::parse(table, real_abs)?);
-        }
-        // Other positioning lookup types within a kern feature are deferred.
-    }
-    Ok(subs)
 }
 
 /// Parse the `MarkBasePos` subtables of the given `mark`-feature `LookupList`
@@ -212,31 +203,20 @@ fn parse_mark_lookups(
         let Some(&lookup_off) = lookup_offsets.get(usize::from(idx)) else {
             continue;
         };
-        let subtables = parse_lookup_markbase(table, lookup_off)?;
+        // Mark-to-ligature (5) / mark-to-mark (6) under the mark feature are skipped.
+        let subtables = layout::collect_subtables_of_type(
+            table,
+            lookup_off,
+            GPOS_TAG,
+            EXTENSION_LOOKUP_TYPE,
+            MARK_BASE_POS_LOOKUP_TYPE,
+            MarkBasePos::parse,
+        )?;
         if !subtables.is_empty() {
             out.push(MarkLookup { subtables });
         }
     }
     Ok(out)
-}
-
-/// Parse one Lookup table's `MarkBasePos` (type 4, or extension→4) subtables.
-fn parse_lookup_markbase(table: &[u8], lookup_off: usize) -> Result<Vec<MarkBasePos>, ParseError> {
-    let (lookup_type, _lookup_flag, subtable_offsets) =
-        layout::read_lookup(table, lookup_off, GPOS_TAG)?;
-    let mut subs = Vec::new();
-    for soff in subtable_offsets {
-        let (real_type, real_abs) = if lookup_type == EXTENSION_LOOKUP_TYPE {
-            layout::resolve_extension(table, soff, GPOS_TAG)?
-        } else {
-            (lookup_type, soff)
-        };
-        if real_type == MARK_BASE_POS_LOOKUP_TYPE {
-            subs.push(MarkBasePos::parse(table, real_abs)?);
-        }
-        // Mark-to-ligature (5) / mark-to-mark (6) under the mark feature are deferred.
-    }
-    Ok(subs)
 }
 
 #[cfg(test)]
