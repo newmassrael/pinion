@@ -33,7 +33,7 @@
 //! test forcing-consumer until the paint path wires the self-hosted layout.
 
 use crate::Font;
-use crate::paragraph::shape_runs_visual;
+use crate::paragraph::{shape_runs_visual, single_font_runs};
 use crate::shape::PositionedGlyph;
 use crate::wrap::{LineRange, wrap_paragraph};
 use pinion_text_unicode::{ItemRun, itemize};
@@ -118,7 +118,10 @@ pub fn layout_paragraph(
     let mut height = 0.0_f32; // running top offset, also the final block height
     for range in &line_ranges {
         let clipped = clip_runs(&para_runs, range.start, range.end);
-        let shaped = shape_runs_visual(font, paragraph, px_per_em, &clipped);
+        // Single-font multi-line: every clipped run shapes in `font` (index 0).
+        // Combining fallback with wrapping is a later layer (see module scope).
+        let placed = single_font_runs(&clipped);
+        let shaped = shape_runs_visual(&[font], paragraph, px_per_em, &placed);
         width = width.max(shaped.advance);
         lines.push(ShapedLine {
             glyphs: shaped.glyphs,

@@ -37,7 +37,7 @@ pub use error::{FieldValue, ParseError};
 pub use fallback::{FallbackRun, FontRun, FontRunRange, font_runs, shape_with_fallback};
 pub use font::Font;
 pub use line_layout::{ShapedLine, ShapedLines, layout_paragraph};
-pub use paragraph::{ShapedParagraph, shape_paragraph};
+pub use paragraph::{ShapedParagraph, shape_paragraph, shape_paragraph_with_fallback};
 pub use raster::{Coverage, RasterError};
 pub use sfnt::{Flavor as SfntFlavor, OffsetTable, TableRecord, find_table, parse_sfnt};
 pub use shape::{PositionedGlyph, ShapedRun};

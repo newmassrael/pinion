@@ -70,6 +70,12 @@ pub struct PositionedGlyph {
     pub y: f32,
     /// Byte offset of the source codepoint within the shaped `&str`.
     pub cluster: usize,
+    /// Index of the font (in the shaping font stack) that shaped this glyph and
+    /// in whose `glyph_id` space it is valid. Always 0 for single-font shaping
+    /// ([`shape_run`] / [`crate::shape_paragraph`]); the resolved stack index for
+    /// multi-font fallback ([`crate::fallback::shape_with_fallback`] /
+    /// [`crate::shape_paragraph_with_fallback`]).
+    pub font_index: usize,
 }
 
 /// A shaped text run: the positioned glyphs plus the total pen advance.
@@ -133,6 +139,7 @@ pub fn shape_run(font: &Font, text: &str, px_per_em: f32) -> ShapedRun {
             x: pen,
             y: 0.0,
             cluster: raw_clusters[origin],
+            font_index: 0,
         });
         let advance_units = font.glyph_advance_width(glyph_id).unwrap_or(0);
         pen += f32::from(advance_units) * scale;

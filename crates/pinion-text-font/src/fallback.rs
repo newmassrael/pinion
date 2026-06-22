@@ -15,14 +15,19 @@
 //! shared baseline. So `shape_run` stays single-font and fallback *composes* it
 //! — the same layering as BIDI/script itemisation feeding the shaper.
 //!
+//! [`font_runs`] is the font-itemisation primitive, consumed by two shapers:
+//! `shape_with_fallback` here (the single-direction, no-BIDI entry point) and
+//! the BIDI-aware paragraph shaper [`crate::shape_paragraph_with_fallback`]
+//! (R50.14), which splits each itemised (level, script) run by font coverage so
+//! BIDI/script and font fallback combine in one pipeline.
+//!
 //! Scope (honest deferrals, not silent gaps): resolution is per *codepoint*, not
 //! per grapheme cluster — a base and its combining mark could in principle land
 //! in different fonts (rare; cluster-grouped fallback is a later refinement).
-//! BIDI/script itemisation (§5.37.4, §5.37.5) is orthogonal and not combined here
-//! (a single direction is assumed, like [`shape_run`]); the unified
-//! itemise→font-split→shape pipeline is a follow-up. Production paint is still
-//! §5.36 swash, so this is a test forcing-consumer until the paint path wires
-//! the self-hosted engine.
+//! `shape_with_fallback` assumes a single direction (like [`shape_run`]); the
+//! BIDI-aware combination is [`crate::shape_paragraph_with_fallback`]. Production
+//! paint is still §5.36 swash, so this is a test forcing-consumer until the paint
+//! path wires the self-hosted engine.
 
 use crate::Font;
 use crate::shape::{PositionedGlyph, shape_run};
@@ -127,6 +132,7 @@ pub fn shape_with_fallback(fonts: &[&Font], text: &str, px_per_em: f32) -> Fallb
                 x: pen + g.x,
                 y: g.y,
                 cluster: r.start + g.cluster,
+                font_index: r.font_index,
             })
             .collect();
         runs.push(FontRun {
