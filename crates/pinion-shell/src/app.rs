@@ -1374,18 +1374,20 @@ impl<V: WidgetView> AppShell<V> {
             if hidden_window_requested() {
                 attrs = attrs.with_visible(false);
             }
-            // R668 §5.16 — anchor the user-driven OS-resize floor at
-            // `min` so dragging the resize chrome smaller than the
-            // intrinsic floor stops at `min`. winit clamps the floor
-            // to the OS-imposed minimum (~100×30 desktop) anyway.
-            let min_floor = match strategy {
-                SizeStrategy::Fixed { width, height } => (width, height),
-                SizeStrategy::IntrinsicAfterFirstPaint { min, .. } => min,
-            };
-            attrs = attrs.with_min_inner_size(LogicalSize::new(
-                f64::from(min_floor.0),
-                f64::from(min_floor.1),
-            ));
+            // R668 §5.16 / R1059 — anchor the user-driven OS-resize
+            // floor via the single-source-of-truth policy on
+            // `SizeStrategy`. `Fixed`/`IntrinsicAfterFirstPaint` pin
+            // the floor at their open size / `min`; `OpenResizable`
+            // forwards its independent `min`, and `None` skips
+            // `with_min_inner_size` entirely so the window stays at the
+            // OS-native minimum (~100×30 desktop) — the freely
+            // shrinkable case.
+            if let Some(min_floor) = strategy.min_inner_floor() {
+                attrs = attrs.with_min_inner_size(LogicalSize::new(
+                    f64::from(min_floor.0),
+                    f64::from(min_floor.1),
+                ));
+            }
             match event_loop.create_window(attrs) {
                 Ok(w) => Arc::new(w),
                 Err(e) => {
@@ -1408,7 +1410,10 @@ impl<V: WidgetView> AppShell<V> {
         // pass's `ShellCore::remove_window`.
         self.core.register_window(spec.id.as_ref());
         let pending_intrinsic_resize = match strategy {
-            SizeStrategy::Fixed { .. } => None,
+            // R1059 — `OpenResizable` opens at `size` with no
+            // post-first-paint resize, exactly like `Fixed`; only
+            // `IntrinsicAfterFirstPaint` queues the measure-and-resize.
+            SizeStrategy::Fixed { .. } | SizeStrategy::OpenResizable { .. } => None,
             SizeStrategy::IntrinsicAfterFirstPaint { min, max } => Some((min, max)),
         };
         // R56.2.a §5.13 §5.38 — opt into the winit IME bridge per
@@ -2755,6 +2760,13 @@ fn try_headless_screenshot<V: WidgetView>() -> bool {
         crate::SizeStrategy::Fixed { width, height } => {
             let scene = core.compute_paint_scene(width, height);
             (width, height, scene)
+        }
+        // R1059 — `OpenResizable` paints once at its open `size`, the
+        // same single-pass path as `Fixed`; the OS-resize floor
+        // (`min`) is a live-winit concern with no headless effect.
+        crate::SizeStrategy::OpenResizable { size, .. } => {
+            let scene = core.compute_paint_scene(size.0, size.1);
+            (size.0, size.1, scene)
         }
         crate::SizeStrategy::IntrinsicAfterFirstPaint { min, max } => {
             let measure = core.compute_paint_scene(max.0.max(1), max.1.max(1));

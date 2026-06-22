@@ -330,10 +330,23 @@ macro_rules! vello_renderer_impl {
 /// applications that need responsive shrink-wrap-on-state-change
 /// drive that via their view fn + an explicit `scene/resize` RPC, not
 /// this strategy.
+///
+/// R1059 §5.16 — `OpenResizable` decouples the *open size* from the
+/// *OS-resize floor*: the window is created at `size` exactly (like
+/// `Fixed`, no post-paint walk) but the user may drag it **below**
+/// `size` down to `min` — or down to the OS-native minimum when `min`
+/// is `None`. This is the "open at a sensible default, then freely
+/// shrink" policy a plain resizable window wants (`Fixed` instead
+/// pins the floor *at* the open size, which suits fixed-size dialogs).
+/// Both `Fixed` and `IntrinsicAfterFirstPaint` keep their pre-R1059
+/// behaviour bit-identical; the floor each one passes to winit is the
+/// single source of truth at [`SizeStrategy::min_inner_floor`].
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SizeStrategy {
     /// Open the window at exactly `(width, height)` logical pixels.
+    /// The OS-resize floor is pinned at the open size, so the user can
+    /// enlarge but not shrink below it (fixed-size dialog semantics).
     Fixed { width: u32, height: u32 },
     /// Open at `min`, then request the tight content bbox clamped to
     /// `[min, max]` after the first paint cycle.
@@ -345,17 +358,51 @@ pub enum SizeStrategy {
         /// the OS still cap at the monitor work area.
         max: (u32, u32),
     },
+    /// R1059 §5.16 — open at `size` exactly (no post-paint resize),
+    /// but let the user drag the window smaller than `size`. `min` is
+    /// the OS-resize floor; `None` leaves the window at the OS-native
+    /// minimum (the freely-shrinkable case). Unlike `Fixed`, the floor
+    /// is independent of the open size.
+    OpenResizable {
+        /// Logical-pixel size the window is created at.
+        size: (u32, u32),
+        /// OS-resize floor. `None` = OS-native minimum (no explicit
+        /// `set_min_inner_size`); `Some((w, h))` clamps the lower
+        /// bound at `(w, h)`, which may be smaller than `size`.
+        min: Option<(u32, u32)>,
+    },
 }
 
 impl SizeStrategy {
     /// The logical-pixel size the window is created at. `Fixed`
     /// returns its declared pair; `IntrinsicAfterFirstPaint` returns
-    /// `min` (the first-paint pass widens up to `max`).
+    /// `min` (the first-paint pass widens up to `max`);
+    /// `OpenResizable` returns `size`.
     #[must_use]
     pub const fn initial_logical_size(self) -> (u32, u32) {
         match self {
             Self::Fixed { width, height } => (width, height),
             Self::IntrinsicAfterFirstPaint { min, .. } => min,
+            Self::OpenResizable { size, .. } => size,
+        }
+    }
+
+    /// R1059 §5.16 — the OS-resize floor the shell passes to
+    /// [`winit::window::WindowAttributes::with_min_inner_size`], or
+    /// `None` to leave the window at the OS-native minimum (no
+    /// explicit floor, so the user can shrink it freely).
+    ///
+    /// This is the single source of truth for the window-creation
+    /// floor policy, consumed by both the live winit path and the
+    /// headless path in `app.rs`. `Fixed` and `IntrinsicAfterFirstPaint`
+    /// pin the floor at their open size / `min` (pre-R1059 behaviour
+    /// unchanged); `OpenResizable` forwards its independent `min`.
+    #[must_use]
+    pub const fn min_inner_floor(self) -> Option<(u32, u32)> {
+        match self {
+            Self::Fixed { width, height } => Some((width, height)),
+            Self::IntrinsicAfterFirstPaint { min, .. } => Some(min),
+            Self::OpenResizable { min, .. } => min,
         }
     }
 }
@@ -901,6 +948,64 @@ mod tests {
             max: (1280, 800),
         };
         assert_eq!(s.initial_logical_size(), (320, 240));
+    }
+
+    // R1059 §5.16 — `min_inner_floor` is the single source of truth
+    // for the window-creation floor `app.rs` passes to winit's
+    // `with_min_inner_size`. `Fixed` and `IntrinsicAfterFirstPaint`
+    // must report the SAME floor they did pre-R1059 (open size / `min`)
+    // so the live + headless paths stay byte-unchanged for every
+    // existing binding; `OpenResizable` decouples it.
+
+    #[test]
+    fn r1059_fixed_floor_pins_at_open_size_unchanged() {
+        // Regression guard: `Fixed` still floors at its open size, so
+        // the window can grow but not shrink below it (dialog
+        // semantics). Mirrors the pre-R1059 inline `min_floor` match.
+        let s = SizeStrategy::Fixed {
+            width: 800,
+            height: 600,
+        };
+        assert_eq!(s.min_inner_floor(), Some((800, 600)));
+    }
+
+    #[test]
+    fn r1059_intrinsic_floor_pins_at_min_unchanged() {
+        // Regression guard: `IntrinsicAfterFirstPaint` still floors at
+        // `min` (never at `max`), unchanged from pre-R1059.
+        let s = SizeStrategy::IntrinsicAfterFirstPaint {
+            min: (320, 240),
+            max: (1280, 800),
+        };
+        assert_eq!(s.min_inner_floor(), Some((320, 240)));
+    }
+
+    #[test]
+    fn r1059_open_resizable_opens_at_size_floors_independently() {
+        // Acceptance: opens at `size` but the floor is the independent
+        // `min` — here a value *smaller* than the open size, so the
+        // user can drag the window below where it opened.
+        let s = SizeStrategy::OpenResizable {
+            size: (1000, 700),
+            min: Some((200, 100)),
+        };
+        assert_eq!(s.initial_logical_size(), (1000, 700));
+        assert_eq!(s.min_inner_floor(), Some((200, 100)));
+    }
+
+    #[test]
+    fn r1059_open_resizable_none_floor_is_freely_shrinkable() {
+        // Acceptance for the sprag undock / plain-resizable-window
+        // case: `min: None` reports no explicit floor, so `app.rs`
+        // skips `with_min_inner_size` and winit leaves the window at
+        // the OS-native minimum — it can shrink below its open `size`
+        // with nothing but the OS floor blocking it.
+        let s = SizeStrategy::OpenResizable {
+            size: (1000, 700),
+            min: None,
+        };
+        assert_eq!(s.initial_logical_size(), (1000, 700));
+        assert_eq!(s.min_inner_floor(), None);
     }
 
     // R670 §5.16 §5.41 — [`WindowSpec`] + [`WidgetView::windows`]
