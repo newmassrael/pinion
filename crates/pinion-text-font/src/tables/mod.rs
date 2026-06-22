@@ -2,10 +2,11 @@
 //!
 //! Microsoft OpenType 1.9.x spec compliant. 각 table 은 fixed-length
 //! 또는 number-of-records 가 다른 table 에서 유도되는 variable-length.
-//! `gpos`/`gsub` 는 optional layout table — 폰트에 없으면 해당 `Font` 필드 =
-//! `None`. `layout` 은 GPOS+GSUB 공유 common-table machinery (R50.7 lift).
+//! `gpos`/`gsub`/`gdef` 는 optional layout table — 폰트에 없으면 해당 `Font` 필드 =
+//! `None`. `layout` 은 GPOS+GSUB+GDEF 공유 common-table machinery (R50.7 lift).
 
 pub mod cmap;
+pub mod gdef;
 pub mod glyf;
 pub mod gpos;
 pub mod gsub;

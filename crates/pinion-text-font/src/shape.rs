@@ -25,8 +25,9 @@
 //! Lookup Type 4 ligature substitution is applied); GPOS single / cursive /
 //! mark-to-ligature / contextual positioning (only Lookup Types 2 pair kerning,
 //! 4 mark-to-base, and 6 mark-to-mark are applied); `lookupFlag` glyph filtering
-//! and GDEF mark classes (kern/liga apply to every adjacent run; a mark attaches
-//! to its immediately preceding base, a stacking mark to the preceding mark);
+//! and the rest of GDEF (marks are recognised from the GDEF `GlyphClassDef`, but
+//! kern/liga still apply to every adjacent run; a mark attaches to its immediately
+//! preceding base, a stacking mark to the preceding mark);
 //! script segmentation (§5.37.5); BIDI reorder (§5.37.4 lives
 //! in a separate crate — [`crate::paragraph`] wires it in, `shape_run` itself
 //! assumes a single direction); grapheme clustering (iteration is per
@@ -165,9 +166,13 @@ pub fn shape_run(font: &Font, text: &str, px_per_em: f32) -> ShapedRun {
     //   preceding base (`last_base`).
     //
     // `prev_mark` is the most recently positioned mark (a stacking reference for the
-    // next); a base resets it (a new cluster). GDEF mark filtering is not applied,
-    // so a mark is recognised by being attached here, not by a GlyphClass — a
-    // limitation shared with the rest of this slice (R50.6.x).
+    // next); a base resets it (a new cluster). Marks are recognised from GDEF
+    // ([`Font::is_mark`], §5.37.6): a glyph the font declares a combining mark is
+    // never taken as a base even when it declared no anchor here, so a following
+    // mark still attaches to the real base instead of to a stray accent. A font
+    // without GDEF falls back to attach-based recognition (a glyph that attaches is
+    // the mark, anything else a base) — the pre-GDEF behaviour. `lookupFlag`
+    // mark-attachment-class filtering remains R50.6.x.
     let mut last_base: Option<usize> = None;
     let mut prev_mark: Option<usize> = None;
     for i in 0..glyphs.len() {
@@ -194,6 +199,11 @@ pub fn shape_run(font: &Font, text: &str, px_per_em: f32) -> ShapedRun {
             glyphs[i].x = base_x + f32::from(dx) * scale;
             glyphs[i].y = -f32::from(dy) * scale;
             prev_mark = Some(i); // an attached mark is a stacking reference
+        } else if font.is_mark(mark) {
+            // A GDEF mark that declared no anchor here is still a mark, not a base:
+            // keep `last_base` (a following mark attaches to the real base) and let
+            // this mark be a stacking reference for any `mkmk` that follows.
+            prev_mark = Some(i);
         } else {
             last_base = Some(i);
             prev_mark = None; // a base starts a fresh mark cluster

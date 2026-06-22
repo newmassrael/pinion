@@ -45,6 +45,7 @@ pub use paragraph::{
 pub use raster::{Coverage, RasterError};
 pub use sfnt::{Flavor as SfntFlavor, OffsetTable, TableRecord, find_table, parse_sfnt};
 pub use shape::{PositionedGlyph, ShapedRun};
+pub use tables::gdef::{Gdef, GlyphClass};
 pub use tables::glyf::{
     Component, ComponentArgs, ComponentTransform, CompositeGlyph, Glyf, Glyph, GlyphHeader,
     GlyphPoint, SimpleGlyph,

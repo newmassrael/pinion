@@ -603,3 +603,113 @@ fn shape_run_applies_gpos_mark_to_mark() {
         "mark1 is lifted off the baseline (mark-to-base ran first)"
     );
 }
+
+#[test]
+fn gdef_classifies_letters_and_marks() {
+    // NotoSans ships a GDEF GlyphClassDef: letters are Base glyphs, combining marks
+    // are Mark glyphs. This is what lets the shaper recognise a mark structurally
+    // (rather than only by whether a GPOS lookup happened to attach it).
+    use pinion_text_font::GlyphClass;
+    let font = load(NOTO);
+    assert!(
+        font.has_glyph_classes(),
+        "NotoSans ships a GDEF GlyphClassDef"
+    );
+
+    for ch in ['a', 'A', 'o', 'M'] {
+        let g = font.glyph_id_for(ch as u32).expect("Latin letter mapped");
+        assert_eq!(font.glyph_class(g), GlyphClass::Base, "{ch:?} is a base");
+        assert!(!font.is_mark(g), "{ch:?} is not a mark");
+    }
+    // Several standard combining marks must all classify as Mark.
+    let mut seen_mark = 0;
+    for m in ['\u{0301}', '\u{0302}', '\u{0308}', '\u{0323}'] {
+        if let Some(g) = font.glyph_id_for(m as u32) {
+            assert_eq!(
+                font.glyph_class(g),
+                GlyphClass::Mark,
+                "U+{:04X} is a combining mark",
+                m as u32
+            );
+            assert!(font.is_mark(g));
+            seen_mark += 1;
+        }
+    }
+    assert!(seen_mark >= 2, "NotoSans maps common combining marks");
+}
+
+/// Find a `(non_attaching_mark, attaching_mark, dx, dy)` for base `'a'`: a GDEF
+/// mark that declares NO mark-to-base anchor on `'a'`, plus another mark that DOES
+/// (with offset `(dx, dy)`) and does not `mkmk`-stack on the first — so the second
+/// must reach the base past the first. The scenario GDEF mark-recognition fixes.
+fn cross_mark_case(font: &Font) -> Option<(char, char, i16, i16)> {
+    let bg = font.glyph_id_for('a' as u32)?;
+    let mut non_attaching: Option<(char, u16)> = None;
+    let mut attaching: Option<(char, u16, i16, i16)> = None;
+    // Scan the Combining Diacritical Marks block (U+0300..=U+036F): NotoSans anchors
+    // the common above/below accents to 'a' but not the rarer marks, so both an
+    // attaching and a non-attaching GDEF mark exist in here.
+    for cp in 0x0300u32..=0x036F {
+        let (Some(m), Some(mg)) = (char::from_u32(cp), font.glyph_id_for(cp)) else {
+            continue;
+        };
+        if !font.is_mark(mg) {
+            continue; // must be a GDEF mark for the recognition to bite
+        }
+        match font.mark_offset(bg, mg) {
+            Some((dx, dy)) if dy != 0 && attaching.is_none() => attaching = Some((m, mg, dx, dy)),
+            None if non_attaching.is_none() => non_attaching = Some((m, mg)),
+            _ => {}
+        }
+        if non_attaching.is_some() && attaching.is_some() {
+            break;
+        }
+    }
+    let (non_char, non_glyph) = non_attaching?;
+    let (attach_char, attach_glyph, dx, dy) = attaching?;
+    // The attaching mark must NOT mkmk-stack on the non-attaching one, so in the
+    // shaper it falls through to mark-to-base on the real base (clean oracle).
+    if font.mark_mark_offset(non_glyph, attach_glyph).is_some() {
+        return None;
+    }
+    Some((non_char, attach_char, dx, dy))
+}
+
+#[test]
+fn shape_run_recognises_marks_from_gdef() {
+    // GDEF mark-recognition (R50.6.4): in "a + non_attaching_mark + attaching_mark",
+    // the middle mark declares no anchor on 'a'. WITHOUT GDEF it would be mistaken
+    // for a base and capture the third glyph; WITH GDEF it stays a mark, so the
+    // third mark still attaches to the real base 'a'. Observable only because the
+    // shaper now reads the GlyphClassDef.
+    let font = load(NOTO);
+    let px = 64.0_f32;
+    let s = scale(&font, px);
+    let Some((nonattach, attach, dx, dy)) = cross_mark_case(&font) else {
+        panic!("NotoSans should expose a non-attaching GDEF mark alongside an attaching one");
+    };
+
+    let run = font.shape_run(&format!("a{nonattach}{attach}"), px);
+    assert_eq!(run.glyphs.len(), 3, "base + two marks => three glyphs");
+
+    // The third glyph (attaching mark) is placed against the BASE 'a' (glyph 0 at
+    // the origin), not the intervening non-attaching mark — exact f32 bit-oracle.
+    let expected_x = run.glyphs[0].x + f32::from(dx) * s;
+    let expected_y = -f32::from(dy) * s;
+    assert_eq!(
+        run.glyphs[2].x.to_bits(),
+        expected_x.to_bits(),
+        "a{nonattach}{attach}: mark attaches to base.x + anchor dx ({dx} units), not the stray mark"
+    );
+    assert_eq!(
+        run.glyphs[2].y.to_bits(),
+        expected_y.to_bits(),
+        "a{nonattach}{attach}: mark y = -anchor dy ({dy} units)"
+    );
+    // Non-vacuous: it genuinely left the baseline (attachment ran).
+    assert_ne!(
+        run.glyphs[2].y.to_bits(),
+        0.0f32.to_bits(),
+        "the attaching mark is lifted off the baseline"
+    );
+}

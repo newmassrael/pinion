@@ -10,6 +10,7 @@ use crate::raster::{Coverage, RasterError, rasterize_glyph_outline};
 use crate::sfnt::{OffsetTable, TableRecord, find_table, parse_sfnt};
 use crate::shape::ShapedRun;
 use crate::tables::cmap::Cmap;
+use crate::tables::gdef::{Gdef, GlyphClass};
 use crate::tables::glyf::{Glyf, Glyph};
 use crate::tables::gpos::Gpos;
 use crate::tables::gsub::Gsub;
@@ -45,6 +46,8 @@ pub struct Font {
     pub gpos: Option<Gpos>,
     /// GSUB substitution table — `None` when the font has no GSUB (§5.37.6).
     pub gsub: Option<Gsub>,
+    /// GDEF definition table (glyph classes) — `None` when absent (§5.37.6).
+    pub gdef: Option<Gdef>,
 }
 
 impl Font {
@@ -78,16 +81,11 @@ impl Font {
         )?;
         let glyf = Glyf::parse(find_table(&bytes, &records, *b"glyf")?, &loca)?;
         let name = Name::parse(find_table(&bytes, &records, *b"name")?)?;
-        // GPOS is optional — absent tables yield `None`, a malformed present one
-        // propagates its parse error.
-        let gpos = match find_table(&bytes, &records, *b"GPOS") {
-            Ok(table) => Some(Gpos::parse(table)?),
-            Err(_) => None,
-        };
-        let gsub = match find_table(&bytes, &records, *b"GSUB") {
-            Ok(table) => Some(Gsub::parse(table)?),
-            Err(_) => None,
-        };
+        // GPOS / GSUB / GDEF are optional — absent tables yield `None`, a malformed
+        // present one propagates its parse error (`optional_table`).
+        let gpos = optional_table(&bytes, &records, *b"GPOS", Gpos::parse)?;
+        let gsub = optional_table(&bytes, &records, *b"GSUB", Gsub::parse)?;
+        let gdef = optional_table(&bytes, &records, *b"GDEF", Gdef::parse)?;
 
         Ok(Self {
             bytes,
@@ -105,6 +103,7 @@ impl Font {
             name,
             gpos,
             gsub,
+            gdef,
         })
     }
 
@@ -256,6 +255,29 @@ impl Font {
             .and_then(|g| g.mark_mark_offset(prev_mark, mark))
     }
 
+    /// `glyph`'s GDEF `GlyphClassDef` category (§5.37.6), or
+    /// [`GlyphClass::Unclassified`] when the font has no GDEF / no class table.
+    #[must_use]
+    pub fn glyph_class(&self, glyph: u16) -> GlyphClass {
+        self.gdef
+            .as_ref()
+            .map_or(GlyphClass::Unclassified, |g| g.glyph_class(glyph))
+    }
+
+    /// Whether `glyph` is a GDEF combining mark (class 3). `false` when the font
+    /// has no GDEF — callers fall back to attach-based mark recognition.
+    #[must_use]
+    pub fn is_mark(&self, glyph: u16) -> bool {
+        self.gdef.as_ref().is_some_and(|g| g.is_mark(glyph))
+    }
+
+    /// Whether the font carries GDEF glyph classes (so [`Self::is_mark`] is
+    /// authoritative rather than always `false`).
+    #[must_use]
+    pub fn has_glyph_classes(&self) -> bool {
+        self.gdef.as_ref().is_some_and(Gdef::has_glyph_classes)
+    }
+
     /// Shape `text` into a positioned glyph run at `px_per_em` (§5.37.6: cmap
     /// codepoint → glyph + hmtx advance, refined by GPOS `kern` pair positioning
     /// and `mark` mark-to-base attachment). See [`crate::shape::shape_run`] for
@@ -300,5 +322,20 @@ impl Font {
     #[must_use]
     pub fn postscript_name(&self) -> Option<String> {
         self.name.find_string(NameId::PostScriptName)
+    }
+}
+
+/// Parse an optional sfnt table: `Ok(None)` when the tag is absent, the parsed
+/// value when present, and a propagated [`ParseError`] when a present table is
+/// malformed. The single bridge for the optional GPOS / GSUB / GDEF tables.
+fn optional_table<T>(
+    bytes: &[u8],
+    records: &[TableRecord],
+    tag: [u8; 4],
+    parse: impl FnOnce(&[u8]) -> Result<T, ParseError>,
+) -> Result<Option<T>, ParseError> {
+    match find_table(bytes, records, tag) {
+        Ok(table) => Ok(Some(parse(table)?)),
+        Err(_) => Ok(None),
     }
 }
