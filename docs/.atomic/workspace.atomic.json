@@ -4437,7 +4437,8 @@
         "R1043 PositionedGlyph gains y (baseline-rel, down); mark lifts off baseline, render_run honors y",
         "R1043 defers: RTL mark x (advance-mirror), mark-to-lig/mark (Type 5/6), lookupFlag mark-skip",
         "R1043 supersedes the 'GPOS mark = R50.6.x/R50.7.x' caveats: mark-to-base (Type 4) now applied",
-        "R50.14(R1050): PositionedGlyph + font_index:usize (which stack font shaped glyph; single-font=0)"
+        "R50.14(R1050): PositionedGlyph + font_index:usize (which stack font shaped glyph; single-font=0)",
+        "R50.14.1(R1051): render_paragraph = first pixel consumer of multi-font ShapedParagraph"
       ],
       "alternatives_rejected": [
         {
@@ -4857,7 +4858,9 @@
         "eviction 없음 — cache 무한 성장(단일 run / 유한 UI glyph set 엔 무방, R50.9.x)",
         "size key = px.to_bits() 정확 bit-identity — float noise 다른 size 는 미병합",
         "atlas grow(ensure_width row-rewrite / ensure_height append)는 logical (x,y) 보존 → 기존 entry sub-rect 유효",
-        "production paint 는 여전히 §5.36 swash — render_run(첫 consumer) + test 로만 검증, paint-wiring=후속"
+        "production paint 는 여전히 §5.36 swash — render_run(첫 consumer) + test 로만 검증, paint-wiring=후속",
+        "R50.14.1(R1051): render_paragraph=2nd atlas consumer (per-font Vec<GlyphAtlas> for multi-font)",
+        "R50.14.1: composite() core (bbox+alpha-over) shared by render_run + render_paragraph (2 consumers)"
       ],
       "alternatives_rejected": [
         {
@@ -4905,6 +4908,16 @@
         {
           "file": "crates/pinion-text-font/tests/atlas.rs",
           "kind": "references"
+        },
+        {
+          "file": "crates/pinion-text-font/src/paragraph.rs",
+          "symbol": "render_paragraph",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-text-font/src/shape.rs",
+          "symbol": "composite",
+          "kind": "implements"
         }
       ]
     },
@@ -13053,6 +13066,56 @@
         "dual output reps (FallbackRun run-structured vs flat per-glyph font_index) to reconcile at paint; flat form survives BIDI reorder",
         "SA review: bias next 1-2 rounds toward a minimal paint-wiring spike to de-risk accumulated output-representation bets (GPU=VELLO env)",
         "RTL multi-glyph run in a non-primary font not directly tested (no RTL-script fixture font); single-glyph mirror+font_index path covered"
+      ]
+    },
+    "R1051": {
+      "decision_summary": "R1051 §5.37.9/§5.37.6 render_paragraph: first pixel consumer of the multi-font/BIDI ShapedParagraph output; composite() core shared with render_run — a CPU paint-spike de-risking the flat font_index representation against a real rasterizer",
+      "changes_bullets": [
+        "paragraph.rs: render_paragraph(fonts,&ShapedParagraph,px)->Result<Coverage,RasterError> = one GlyphAtlas per stack font, each glyph rasterized via fonts[font_index] into atlases[font_index], composited into one mask; first pixel consumer of shape_paragraph_with_fallback output",
+        "shape.rs: composite(atlases,&[PlacedGlyph])->Coverage extracted from render_run (bbox union + same-color alpha-over over()); render_run refactored to call it with one atlas (byte-identical); PlacedGlyph named struct replaces the positional placed-tuple = shared placed-glyph vocabulary",
+        "lib.rs exports render_paragraph; ATLAS_WIDTH/composite/PlacedGlyph lifted to pub(crate); render_run module doc de-staled (atlas already landed)"
+      ],
+      "verification_bullets": [
+        "pinion-text-font 271 pass 0 fail (lib 229, +5 render_paragraph tests: single-font==render_run incl combining-mark pen_y, 가-via-Nanum forcing == nanum.render_run, bidi+multifont composite, empty)",
+        "render_run 15 shape tests byte-identical after the composite extraction + PlacedGlyph refactor; workspace cargo test 7427 pass 0 fail; clippy --workspace --all-targets --features pinion-runtime/vello 0; rustfmt clean; cargo doc 0 new (cmap/hhea pre-existing, outside touched files)",
+        "adversarial 2-reviewer (quality-engineer composite-equivalence/multi-atlas/bounds/test-tamper + system-architect SSOT/layering/de-risk-value, read-only parallel): 0 HIGH; MED (named PlacedGlyph struct, honest test assertion, mark/bidi render coverage, N-atlas GPU doc, doc de-stale) cleared inline R1051.1",
+        "validate-workspace T1=0; production paint still §5.36 swash so render_paragraph is a test forcing-consumer"
+      ],
+      "impact_refs": [
+        "5.37.9",
+        "5.37.6"
+      ],
+      "carry_forward_bullets": [
+        "multi-line render: ShapedLines (line_layout) has no render path; render_paragraph is single-line ShapedParagraph — next layer",
+        "GPU upload deferred: multi-font = N per-font atlases; a GPU path must bind a texture array or merge into one atlas",
+        "styled-run shaping (per-span font/weight/color) now sits on a validated renderer — natural next round",
+        "shared-atlas glyph-id collision path not feasibly testable with Noto+Nanum (distinct gids); per-font Vec<GlyphAtlas> structurally precludes it",
+        "FallbackRun (run-structured) confirmed zero pixel consumers; flat per-glyph font_index validated; do NOT retire FallbackRun until a GPU batcher confirms it does not want pre-grouped runs",
+        "placement-building loop (shape.rs vs paragraph.rs) is a deferred 2nd seam — extract a shared builder when a 3rd (paint-wiring) renderer needs it"
+      ],
+      "publishable_decision_summary": "R1051 §5.37.9/§5.37.6 render_paragraph: first pixel consumer of the multi-font/BIDI ShapedParagraph output; composite() core shared with render_run — a CPU paint-spike de-risking the flat font_index representation against a real rasterizer",
+      "publishable_changes_bullets": [
+        "paragraph.rs: render_paragraph(fonts,&ShapedParagraph,px)->Result<Coverage,RasterError> = one GlyphAtlas per stack font, each glyph rasterized via fonts[font_index] into atlases[font_index], composited into one mask; first pixel consumer of shape_paragraph_with_fallback output",
+        "shape.rs: composite(atlases,&[PlacedGlyph])->Coverage extracted from render_run (bbox union + same-color alpha-over over()); render_run refactored to call it with one atlas (byte-identical); PlacedGlyph named struct replaces the positional placed-tuple = shared placed-glyph vocabulary",
+        "lib.rs exports render_paragraph; ATLAS_WIDTH/composite/PlacedGlyph lifted to pub(crate); render_run module doc de-staled (atlas already landed)"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-text-font 271 pass 0 fail (lib 229, +5 render_paragraph tests: single-font==render_run incl combining-mark pen_y, 가-via-Nanum forcing == nanum.render_run, bidi+multifont composite, empty)",
+        "render_run 15 shape tests byte-identical after the composite extraction + PlacedGlyph refactor; workspace cargo test 7427 pass 0 fail; clippy --workspace --all-targets --features pinion-runtime/vello 0; rustfmt clean; cargo doc 0 new (cmap/hhea pre-existing, outside touched files)",
+        "adversarial 2-reviewer (quality-engineer composite-equivalence/multi-atlas/bounds/test-tamper + system-architect SSOT/layering/de-risk-value, read-only parallel): 0 HIGH; MED (named PlacedGlyph struct, honest test assertion, mark/bidi render coverage, N-atlas GPU doc, doc de-stale) cleared inline R1051.1",
+        "validate-workspace T1=0; production paint still §5.36 swash so render_paragraph is a test forcing-consumer"
+      ],
+      "publishable_impact_refs": [
+        "5.37.9",
+        "5.37.6"
+      ],
+      "publishable_carry_forward_bullets": [
+        "multi-line render: ShapedLines (line_layout) has no render path; render_paragraph is single-line ShapedParagraph — next layer",
+        "GPU upload deferred: multi-font = N per-font atlases; a GPU path must bind a texture array or merge into one atlas",
+        "styled-run shaping (per-span font/weight/color) now sits on a validated renderer — natural next round",
+        "shared-atlas glyph-id collision path not feasibly testable with Noto+Nanum (distinct gids); per-font Vec<GlyphAtlas> structurally precludes it",
+        "FallbackRun (run-structured) confirmed zero pixel consumers; flat per-glyph font_index validated; do NOT retire FallbackRun until a GPU batcher confirms it does not want pre-grouped runs",
+        "placement-building loop (shape.rs vs paragraph.rs) is a deferred 2nd seam — extract a shared builder when a 3rd (paint-wiring) renderer needs it"
       ]
     },
     "R232": {
