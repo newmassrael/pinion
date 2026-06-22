@@ -178,6 +178,20 @@ struct WindowSlot<R: VelloRenderer> {
     /// unchanged). Per-window for the same reason `vello_scene` is (no
     /// cross-window buffer race on `reset`).
     scaled_scene: VelloScene,
+    /// R1060 §5.16 §5.12 — one-shot live-surface capture request. Set by
+    /// [`AppShell::capture_window_screenshot`] just before it drives a
+    /// [`AppShell::render_window`] pass; `render_window` reads + clears it
+    /// and, when set, submits the frame through
+    /// [`VelloRenderer::capture_rgba8`] (which reads back the presented
+    /// swapchain texture) instead of the normal `render` present. `false`
+    /// on every event-loop-driven paint, so the 60-144fps hot path is
+    /// byte-unchanged.
+    pending_capture: bool,
+    /// R1060 §5.16 §5.12 — the most recent capture result, written by
+    /// `render_window` when `pending_capture` was set and drained by
+    /// `capture_window_screenshot` immediately after. `None` between
+    /// captures.
+    last_capture: Option<crate::vello_capture::CapturedFrame>,
 }
 
 impl<R: VelloRenderer> WindowSlot<R> {
@@ -206,6 +220,8 @@ impl<R: VelloRenderer> WindowSlot<R> {
             image_cache: image_cache::ImageCache::new(),
             scale_factor,
             scaled_scene: VelloScene::new(),
+            pending_capture: false,
+            last_capture: None,
         }
     }
 }
@@ -515,9 +531,23 @@ impl<V: WidgetView> AppShell<V> {
         // `scene/snapshot from: paint`, so `scene/layout {viewport:
         // null}` answers with the named window's own geometry or the
         // honest `NoLastPaintLayout`.
+        // R1060 §5.12 §5.16 — a `scene/screenshot` request reads the
+        // live presented surface, which only AppShell (not ShellCore)
+        // can reach. Capture it here, before the `&mut self.core`
+        // dispatch borrow, when the method matches; every other method
+        // skips the GPU readback (the render_fidelity snapshot pattern,
+        // lazily gated by method so non-screenshot dispatches pay
+        // nothing). `scope` borrows `parsed_request`, so the capture runs
+        // before `parsed_request` moves into the dispatch.
+        let screenshot = if parsed_request.method == "scene/screenshot" {
+            let scope = parsed_request.window_scope().ok().flatten();
+            self.capture_window_screenshot(scope)
+        } else {
+            None
+        };
         let resp = self
             .core
-            .dispatch_rpc_scoped(parsed_request, &mut resize_req);
+            .dispatch_rpc_scoped(parsed_request, &mut resize_req, screenshot);
         if let Some(resp) = resp {
             let mut out = std::io::stdout().lock();
             if writeln!(out, "{resp}").is_err() {
@@ -525,6 +555,37 @@ impl<V: WidgetView> AppShell<V> {
                 // skip; do not abort the GUI loop on a broken pipe.
             }
         }
+    }
+
+    /// R1060 §5.12 §5.16 — capture the addressed window's live presented
+    /// surface for a `scene/screenshot` RPC. Resolves the request's
+    /// `{window: "<id>"}` scope (absent → the primary window) to a slot,
+    /// flags it for capture, drives ONE [`Self::render_window`] pass (which
+    /// then submits through [`VelloRenderer::capture_rgba8`], reading back
+    /// the swapchain texture instead of presenting blind), then drains +
+    /// converts the frame to the wire [`pinion_rpc::Screenshot`].
+    ///
+    /// Returns `None` when the window is unknown or the GPU capture
+    /// failed; the dispatcher then surfaces `unknown_window` (its own
+    /// gate) or `RenderBackendUnavailable` (the screenshot handler's
+    /// absent-snapshot path). This is the ONE site that can read live
+    /// pixels — the dispatch runs in `ShellCore`, which holds no renderer.
+    fn capture_window_screenshot(
+        &mut self,
+        window_scope: Option<&str>,
+    ) -> Option<pinion_rpc::Screenshot> {
+        let window_id = match window_scope {
+            Some(spec_id) => self.spec_id_to_window_id.get(spec_id).copied(),
+            None => self.primary_window_id,
+        }?;
+        self.windows.get_mut(&window_id)?.pending_capture = true;
+        self.render_window(window_id);
+        let frame = self.windows.get_mut(&window_id)?.last_capture.take()?;
+        Some(pinion_rpc::Screenshot::new(
+            frame.width,
+            frame.height,
+            frame.rgba8,
+        ))
     }
 
     /// R670.B §5.16 — per-window AccessKit emit helper. Extracted
@@ -797,13 +858,19 @@ impl<V: WidgetView> AppShell<V> {
             } else {
                 &slot.vello_scene
             };
-            present_ok = match renderer.render(render_target, VelloContext { base_color: base }) {
-                Ok(()) => true,
-                Err(e) => {
-                    eprintln!("shell: vello render: {e}");
-                    false
-                }
-            };
+            // R1060 §5.16 §5.12 — submit the frame: the normal present,
+            // or — when an RPC `scene/screenshot` flagged this slot via
+            // `capture_window_screenshot` — `capture_rgba8` reading back
+            // the presented swapchain. The flag is false on every
+            // event-loop-driven paint, so the hot path is byte-identical.
+            let wants_capture = slot.pending_capture;
+            slot.pending_capture = false;
+            let captured;
+            (present_ok, captured) =
+                submit_frame(&mut **renderer, render_target, base, wants_capture);
+            if let Some(frame) = captured {
+                slot.last_capture = Some(frame);
+            }
             render_us = instant_delta_us(render_start, Instant::now());
         };
         // R1036 PR-17 §2 #7 — record the uncontaminated fidelity fingerprint of
@@ -2125,6 +2192,43 @@ fn spawn_stdin_rpc_reader(proxy: EventLoopProxy<AppEvent>) {
 /// `f64::EPSILON` margin excludes only a literal `1.0`.
 fn scale_is_non_identity(scale: f64) -> bool {
     (scale - 1.0).abs() > f64::EPSILON
+}
+
+/// R1060 §5.16 §5.12 — submit one encoded frame to a window's renderer.
+///
+/// Normally this is the `render` present; when `capture` is set (an RPC
+/// `scene/screenshot` flagged the slot via
+/// [`AppShell::capture_window_screenshot`]) it is `capture_rgba8`, which
+/// renders AND reads back the presented swapchain texture. Returns the
+/// present outcome (fed to the per-window render-fidelity record) plus
+/// the captured frame when one was requested. Extracted from
+/// [`AppShell::render_window`] so that paint method stays under the
+/// workspace `clippy::too_many_lines` ceiling; the normal (`capture ==
+/// false`) path is byte-identical to the pre-R1060 inline present.
+fn submit_frame<R: VelloRenderer>(
+    renderer: &mut R,
+    target: &VelloScene,
+    base: vello::peniko::Color,
+    capture: bool,
+) -> (bool, Option<crate::vello_capture::CapturedFrame>) {
+    if capture {
+        match renderer.capture_rgba8(target, base) {
+            Ok(frame) => (true, Some(frame)),
+            Err(e) => {
+                eprintln!("shell: vello capture: {e}");
+                (false, None)
+            }
+        }
+    } else {
+        let ok = match renderer.render(target, VelloContext { base_color: base }) {
+            Ok(()) => true,
+            Err(e) => {
+                eprintln!("shell: vello render: {e}");
+                false
+            }
+        };
+        (ok, None)
+    }
 }
 
 /// R1027 §5.16 — convert a winit **physical** `inner_size` to the

@@ -57,7 +57,7 @@ use crate::query::{QueryError, query};
 use crate::render_fidelity::{RenderFidelityError, render_fidelity};
 use crate::resize::{ResizeError, ResizeParams, resize};
 use crate::rewind::{RewindError, rewind};
-use crate::screenshot::{Screenshot, ScreenshotError, screenshot};
+use crate::screenshot::{Screenshot, ScreenshotError};
 use crate::scroll_state::{
     ScrollStateOutcome, SetScrollOffsetParams, scroll_state, set_scroll_offset,
 };
@@ -419,6 +419,17 @@ pub struct DispatchContext<'a> {
     /// cannot give. `None` → `RenderFidelityUnavailable` (window has not painted
     /// yet, or headless embedder opt-out).
     pub render_fidelity: Option<pinion_runtime::RenderFidelity>,
+
+    /// R1060 §5.12 §5.16 — pre-captured live-surface screenshot, resolved
+    /// by the embedder before dispatch ONLY when the method is
+    /// `scene/screenshot` (the [`Self::render_fidelity`] snapshot pattern,
+    /// gated to avoid a GPU readback on every dispatch). The `AppShell`
+    /// windowed entry renders the addressed window through
+    /// `VelloRenderer::capture_rgba8` (which reads back the presented
+    /// swapchain texture) and hands the pixels here. `None` →
+    /// `RenderBackendUnavailable` (headless / single-window entry with no
+    /// live surface, or a non-screenshot method).
+    pub screenshot: Option<Screenshot>,
 
     /// R885 §5.49 — out-of-band input state snapshot, resolved by the
     /// embedder before dispatch (the [`Self::fragment_cache_stats`]
@@ -931,6 +942,7 @@ impl<'a> DispatchContext<'a> {
             fragment_cache_stats: None,
             frame_timings: None,
             render_fidelity: None,
+            screenshot: None,
             input_state: None,
             pacing_state: None,
             unknown_window: None,
@@ -1106,6 +1118,17 @@ impl<'a> DispatchContext<'a> {
     #[must_use]
     pub fn with_render_fidelity(mut self, record: pinion_runtime::RenderFidelity) -> Self {
         self.render_fidelity = Some(record);
+        self
+    }
+
+    /// R1060 §5.12 §5.16 — builder: attach the live-surface screenshot the
+    /// embedder pre-captured for a `scene/screenshot` dispatch. The
+    /// handler returns these pixels; `None` (the default) keeps the
+    /// `RenderBackendUnavailable` stub for headless / non-screenshot
+    /// paths.
+    #[must_use]
+    pub fn with_screenshot(mut self, shot: Screenshot) -> Self {
+        self.screenshot = Some(shot);
         self
     }
 
@@ -1298,6 +1321,10 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
     // the dispatch lifetime (owned, non-`Copy` — carries a `Vec` of per-grid
     // fingerprints). `scene/render_fidelity` is the only consumer.
     let render_fidelity = ctx.render_fidelity.take();
+    // R1060 §5.12 §5.16 — pre-captured live-surface screenshot; taken out
+    // for the dispatch lifetime (owned, non-`Copy` — carries the RGBA8
+    // `Vec`). `scene/screenshot` is the only consumer.
+    let screenshot = ctx.screenshot.take();
     // R885 §5.49 — embedder-resolved input-state snapshot; taken out
     // for the dispatch lifetime (the slot is per-dispatch like the
     // inbox), `scene/input_state` is the only consumer.
@@ -1563,7 +1590,7 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
             HandlerKind::Read,
         ),
         "scene/screenshot" => (
-            handle_scene_screenshot(scene, request.params.as_ref()),
+            handle_scene_screenshot(screenshot, request.params.as_ref()),
             HandlerKind::Read,
         ),
         "scene/invoke" => (
@@ -3910,17 +3937,33 @@ fn wait_for_error_to_rpc(err: WaitForError) -> RpcError {
     RpcError::invalid_params(variant)
 }
 
-fn handle_scene_screenshot(scene: &Scene, params: Option<&Value>) -> Result<Value, RpcError> {
+fn handle_scene_screenshot(
+    screenshot: Option<Screenshot>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError> {
     let params = require_params(params)?;
     let Some(path) = params.get("path").and_then(Value::as_str) else {
         return Err(RpcError::invalid_params(
             "params.path missing or not a string",
         ));
     };
-
-    match screenshot(scene, path) {
-        Ok(shot) => Ok(screenshot_to_json(&shot)),
-        Err(err) => Err(screenshot_error_to_rpc(err)),
+    // Validate the path shape (optional `/window[id]/` prefix + an
+    // EMPTY scene-path tail), the same contract the v0 stub enforced —
+    // the window scope itself was already consumed by the AppShell entry
+    // to pick which surface to capture.
+    let resolved = crate::path::resolve(path).map_err(|e| screenshot_error_to_rpc(e.into()))?;
+    if !resolved.scene_path.is_empty() {
+        return Err(screenshot_error_to_rpc(ScreenshotError::UnsupportedPath));
+    }
+    // R1060 §5.12 §5.16 — return the embedder's pre-captured live-surface
+    // pixels. Absent (headless / single-window entry with no live
+    // surface, or a capture failure) → the typed `RenderBackendUnavailable`
+    // the v0 stub always returned.
+    match screenshot {
+        Some(shot) => Ok(screenshot_to_json(&shot)),
+        None => Err(screenshot_error_to_rpc(
+            ScreenshotError::RenderBackendUnavailable,
+        )),
     }
 }
 

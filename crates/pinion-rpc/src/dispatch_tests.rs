@@ -3099,6 +3099,37 @@ fn scene_screenshot_missing_path_is_invalid() {
     assert_eq!(err.code, -32602);
 }
 
+#[test]
+fn r1060_scene_screenshot_returns_embedder_captured_pixels() {
+    // R1060 §5.12 §5.16 — when the AppShell windowed entry pre-captured
+    // the live presented surface (via `VelloRenderer::capture_rgba8`),
+    // the handler returns those exact pixels instead of the v0
+    // `RenderBackendUnavailable` stub. A 2x1 RGBA frame stands in for the
+    // real swapchain readback (no GPU in this unit test — the live
+    // readback itself is realgpu-verified, like the demo sweep). The
+    // absent-snapshot path stays `RenderBackendUnavailable`, pinned by
+    // `scene_screenshot_returns_render_backend_unavailable_tag` above.
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let pixels = vec![10, 20, 30, 255, 40, 50, 60, 255];
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+        .with_screenshot(crate::screenshot::Screenshot::new(2, 1, pixels.clone()));
+    let req = r#"{"jsonrpc":"2.0","method":"scene/screenshot","params":{"path":""},"id":23}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(resp.error.is_none(), "a captured frame must not error");
+    let result = resp.result.expect("result present");
+    assert_eq!(result["width"].as_u64(), Some(2));
+    assert_eq!(result["height"].as_u64(), Some(1));
+    let got: Vec<u8> = result["pixels_rgba8"]
+        .as_array()
+        .expect("pixels_rgba8 is an array")
+        .iter()
+        .map(|v| u8::try_from(v.as_u64().unwrap()).unwrap())
+        .collect();
+    assert_eq!(got, pixels, "wire pixels round-trip the captured frame");
+}
+
 /// `ButtonExternal` end-to-end: a real R12 widget reaches the
 /// JSON-RPC envelope. Validates §5.15 item 8 dispatch chain
 /// (`dispatch` → `scene/query` → `External::introspect` →

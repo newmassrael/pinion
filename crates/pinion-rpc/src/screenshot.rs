@@ -28,6 +28,21 @@ pub struct Screenshot {
     pub pixels_rgba8: Vec<u8>,
 }
 
+impl Screenshot {
+    /// R1060 §5.12 — construct a captured-frame payload. The struct is
+    /// `#[non_exhaustive]`, so out-of-crate producers (the pinion-shell
+    /// `AppShell` live-surface capture) build it through this
+    /// constructor rather than a struct literal.
+    #[must_use]
+    pub fn new(width: u32, height: u32, pixels_rgba8: Vec<u8>) -> Self {
+        Self {
+            width,
+            height,
+            pixels_rgba8,
+        }
+    }
+}
+
 /// Reasons [`screenshot`] can fail.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

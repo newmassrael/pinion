@@ -3230,6 +3230,7 @@ impl<V: WidgetView> ShellCore<V> {
         &mut self,
         request: Request,
         resize_request: &mut dyn FnMut(u32, u32),
+        screenshot: Option<pinion_rpc::Screenshot>,
     ) -> Option<String> {
         let scope: String = request
             .window_scope()
@@ -3237,7 +3238,7 @@ impl<V: WidgetView> ShellCore<V> {
             .flatten()
             .unwrap_or(pinion_runtime::DEFAULT_WINDOW)
             .to_owned();
-        self.dispatch_rpc_inner(request, Some(&scope), resize_request)
+        self.dispatch_rpc_inner(request, Some(&scope), resize_request, screenshot)
     }
 
     /// R670.B §5.7 — single-window dispatch entry. Accepts the raw
@@ -3266,7 +3267,11 @@ impl<V: WidgetView> ShellCore<V> {
             Err(err_resp) => return Some(err_resp),
         };
         let scope: Option<String> = parsed.window_scope().ok().flatten().map(str::to_owned);
-        self.dispatch_rpc_inner(parsed, scope.as_deref(), resize_request)
+        // R1060 §5.12 — the single-window / headless entry has no live
+        // surface to read back, so `scene/screenshot` gets no captured
+        // frame here and falls through to `RenderBackendUnavailable`
+        // (the AppShell windowed path supplies the real capture).
+        self.dispatch_rpc_inner(parsed, scope.as_deref(), resize_request, None)
     }
 
     // R1026 — rustfmt's reflow pushed this 4 lines over the workspace
@@ -3278,6 +3283,7 @@ impl<V: WidgetView> ShellCore<V> {
         request: Request,
         window_id: Option<&str>,
         resize_request: &mut dyn FnMut(u32, u32),
+        screenshot: Option<pinion_rpc::Screenshot>,
     ) -> Option<String> {
         // R51.73 §5.40 — sample focus before dispatch so we can
         // detect `focus/set` (or any other focus-mutating method)
@@ -3485,6 +3491,14 @@ impl<V: WidgetView> ShellCore<V> {
             }
             if let Some(pacing) = window_reads.pacing_state {
                 ctx = ctx.with_pacing_state(pacing);
+            }
+            // R1060 §5.12 §5.16 — the AppShell windowed entry pre-captured
+            // the addressed window's live presented surface (only when the
+            // method is `scene/screenshot`); hand it to the dispatcher so
+            // `handle_scene_screenshot` returns real pixels instead of the
+            // `RenderBackendUnavailable` stub.
+            if let Some(shot) = screenshot {
+                ctx = ctx.with_screenshot(shot);
             }
             // R889 §5.49 — thread the unknown-window verdict so the
             // dispatcher rejects the whole request (`-32602
