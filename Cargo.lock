@@ -4633,6 +4633,7 @@ dependencies = [
  "pinion-asset",
  "pinion-core",
  "pinion-text",
+ "pinion-text-font",
  "taffy",
  "vello",
 ]
@@ -4650,6 +4651,7 @@ dependencies = [
  "pinion-runtime",
  "pinion-shell",
  "pinion-text",
+ "pinion-text-font",
  "pinion-widget-paint",
  "png 0.17.16",
  "pollster",

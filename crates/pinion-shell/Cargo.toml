@@ -110,6 +110,11 @@ pinion-shell = { path = ".", features = ["test-fixtures"] }
 # offset against the production grid nesting. No dependency cycle:
 # pinion-widget-paint depends only on core/text/a11y, all below shell.
 pinion-widget-paint = { path = "../pinion-widget-paint", version = "0.0.1" }
+# R1063 §5.37 → production-paint seam — the realgpu forcing consumer shapes +
+# rasterises a string through the self-hosted text engine to a `Coverage`, then
+# blits it via `pinion_runtime::paint_adapter::draw_coverage` and reads back the
+# pixels. Dev-only: production paint is still the §5.36 parley/swash bridge.
+pinion-text-font = { path = "../pinion-text-font", version = "0.0.1" }
 
 [lints]
 workspace = true

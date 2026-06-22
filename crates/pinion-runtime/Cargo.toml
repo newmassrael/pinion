@@ -13,7 +13,13 @@ description = "Render loop and SCE hierarchical state machinery"
 # behind a feature so non-GUI consumers (headless / TUI / future
 # pinion-render-* alternatives) don't pull wgpu transitively.
 default = []
-vello = ["dep:vello"]
+# `vello` also pulls the §5.37 self-hosted text engine (`pinion-text-font`):
+# R1063 wires its `Coverage` AA-mask output into the Vello image path
+# (`paint_adapter::coverage_to_image_data` / `draw_coverage`) — the first
+# structural §5.37 → production-paint seam. Gated here because the conversion
+# returns a `peniko::ImageData` (vello type) and lives in the vello-only
+# paint_adapter module; non-GUI consumers never pull it.
+vello = ["dep:vello", "dep:pinion-text-font"]
 
 [dependencies]
 pinion-core = { path = "../pinion-core", version = "0.0.1" }
@@ -47,6 +53,11 @@ vello = { workspace = true, optional = true }
 # pinion-asset; this crate only converts a `DecodedImage`'s Arc-shared
 # RGBA8 buffer into a `peniko::ImageData` at paint time.
 pinion-asset = { path = "../pinion-asset", version = "0.0.1" }
+# R1063 §5.37 → production-paint seam — the self-hosted text engine's
+# `Coverage` AA mask is the input to `paint_adapter::coverage_to_image_data`.
+# Optional + tied to the `vello` feature (the conversion targets a vello type),
+# so non-GUI / TUI / headless-non-GPU consumers never pull it.
+pinion-text-font = { path = "../pinion-text-font", version = "0.0.1", optional = true }
 
 [dev-dependencies]
 # R51.127 §5.41 — pull `pinion_core::test_fixtures::ButtonFixture` into

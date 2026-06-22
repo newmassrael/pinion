@@ -37,6 +37,7 @@
 //! transitively.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use crate::image_cache::ImageCache;
 use crate::paint_cache_stats::FragmentCacheStats;
@@ -62,9 +63,14 @@ use vello::kurbo::{
     RoundedRect as KurboRoundedRect, Stroke,
 };
 use vello::peniko::{
-    Brush as PenikoBrush, Color as PenikoColor, Extend as PenikoExtend, Fill,
-    Gradient as PenikoGradient, ImageBrush,
+    Blob, Brush as PenikoBrush, Color as PenikoColor, Extend as PenikoExtend, Fill,
+    Gradient as PenikoGradient, ImageAlphaType, ImageBrush, ImageData, ImageFormat,
 };
+// R1063 §5.37 → production-paint seam — the self-hosted text engine's CPU AA
+// coverage mask. `pinion-text-font` is gated to the `vello` feature (see the
+// crate Cargo.toml), so this import is reachable only inside the vello-only
+// paint_adapter module.
+use pinion_text_font::Coverage;
 
 /// Build a Vello scene from a pinion [`Scene`] tree. `fill_hook` is
 /// consulted for each [`BoxNode`] visited; a `Some(color)` return
@@ -886,6 +892,97 @@ pub fn root_background(scene: &Scene) -> PenikoColor {
 #[must_use]
 pub fn to_peniko(c: Color) -> PenikoColor {
     PenikoColor::from_rgba8(c.r, c.g, c.b, c.a)
+}
+
+// ---------------------------------------------------------------------------
+// R1063 §5.37 → §5.16 — self-hosted text engine → production-paint seam.
+//
+// The §5.37 self-hosted engine (`pinion-text-font`) shapes + rasterises text
+// to a single CPU [`Coverage`] AA mask (`render_paragraph` / `render_lines`),
+// with zero external deps. It had no production pixel consumer — every layer
+// was a test forcing-consumer. This is the first wire reaching real pixels:
+// the coverage mask is uploaded as a `peniko::ImageData` and blitted through
+// Vello's existing image-texture path ([`vello::Scene::draw_image`], the same
+// pipeline `Scene::Image` already uses), rather than hand-rolling a wgpu
+// glyph-atlas upload. The §5.37 roadmap names exactly this — "the one CPU
+// coverage mask is what a GPU text path uploads".
+//
+// This round delivers the *seam* + forcing consumers; rewiring the production
+// `Scene::Text` arm off the §5.36 parley/swash bridge (caret / metrics /
+// selection / fallback parity) is a deliberately separate, later step — a
+// wholesale swap risks regressing Phase-B text editing.
+// ---------------------------------------------------------------------------
+
+/// R1063 §5.37 → §5.16 — convert a self-hosted [`Coverage`] AA mask into a
+/// `peniko::ImageData` ready for [`vello::Scene::draw_image`].
+///
+/// The mask supplies per-pixel **alpha**; `color` supplies the constant RGB
+/// (and its own alpha modulates the mask, so a translucent brush dims the
+/// whole run). Pixels are straight (un-premultiplied) RGBA8 with
+/// [`ImageAlphaType::Alpha`], matching the §5.16 [`ImageCache`] image path so
+/// Vello composites the run with `src-over` antialiasing exactly like a raster
+/// image leaf.
+///
+/// Returns `None` for an empty mask (a space / control glyph — nothing to
+/// paint), or when the mask's dimensions do not fit a `u32` (defensive; the
+/// rasterizer caps each axis well under that).
+#[must_use]
+pub fn coverage_to_image_data(coverage: &Coverage, color: Color) -> Option<ImageData> {
+    if coverage.is_empty() {
+        return None;
+    }
+    let (Ok(width), Ok(height)) = (
+        u32::try_from(coverage.width),
+        u32::try_from(coverage.height),
+    ) else {
+        return None;
+    };
+    let mut rgba = Vec::with_capacity(coverage.alpha.len() * 4);
+    for &mask in &coverage.alpha {
+        // Modulate the mask coverage by the brush colour's own alpha. The
+        // product is bounded by 255 (255*255/255), so the cast never truncates.
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "u16 product / 255 is in 0..=255, fits u8 exactly"
+        )]
+        let out_a = (u16::from(mask) * u16::from(color.a) / 255) as u8;
+        rgba.extend_from_slice(&[color.r, color.g, color.b, out_a]);
+    }
+    let pixels: Arc<dyn AsRef<[u8]> + Send + Sync> = Arc::new(rgba);
+    Some(ImageData {
+        data: Blob::new(pixels),
+        format: ImageFormat::Rgba8,
+        alpha_type: ImageAlphaType::Alpha,
+        width,
+        height,
+    })
+}
+
+/// R1063 §5.37 → §5.16 — blit a self-hosted [`Coverage`] mask into the Vello
+/// scene at baseline pen `(pen_x, pen_y)` (device px, y-down) in `color`,
+/// under `transform`.
+///
+/// The mask's `left` / `top` offset positions the bitmap relative to the pen
+/// (per [`Coverage`]: the top-left pixel lands at `(pen_x + left,
+/// pen_y + top)`). The image is drawn 1:1 (no scaling — it is already
+/// rasterised at the target px/em). A no-op for an empty mask.
+pub fn draw_coverage(
+    out: &mut VelloScene,
+    coverage: &Coverage,
+    color: Color,
+    pen_x: f64,
+    pen_y: f64,
+    transform: Affine,
+) {
+    let Some(image) = coverage_to_image_data(coverage, color) else {
+        return;
+    };
+    let place = transform
+        * Affine::translate((
+            pen_x + f64::from(coverage.left),
+            pen_y + f64::from(coverage.top),
+        ));
+    out.draw_image(&ImageBrush::new(image), place);
 }
 
 /// R991.1 §5.16 — emit one parley [`GlyphRun`](pinion_text::parley::GlyphRun)'s
@@ -1910,6 +2007,91 @@ mod tests {
         let from_argb = Color::from_argb(0x00ff_3366);
         let peniko = to_peniko(from_argb);
         assert_eq!(peniko, PenikoColor::from_rgba8(0xff, 0x33, 0x66, 0x00));
+    }
+
+    // R1063 §5.37 → §5.16 — Coverage AA mask → peniko::ImageData seam.
+
+    #[test]
+    fn coverage_to_image_data_empty_is_none() {
+        // A space / control glyph rasterises to an empty mask; the seam emits
+        // no image (the draw_coverage no-op contract).
+        assert!(coverage_to_image_data(&Coverage::empty(), Color::rgb(0, 0, 0)).is_none());
+    }
+
+    #[test]
+    fn coverage_to_image_data_maps_alpha_per_pixel_and_constant_color() {
+        // 2×1 mask: a fully-transparent pixel then a fully-inked one. The
+        // result is straight-alpha RGBA8 carrying the brush RGB at every pixel
+        // and the mask value as alpha — what Vello's image path src-overs.
+        let cov = Coverage {
+            width: 2,
+            height: 1,
+            left: 0,
+            top: 0,
+            alpha: vec![0, 255],
+        };
+        let img = coverage_to_image_data(&cov, Color::rgb(10, 20, 30)).expect("non-empty");
+        assert_eq!((img.width, img.height), (2, 1));
+        assert_eq!(img.format, ImageFormat::Rgba8);
+        assert_eq!(img.alpha_type, ImageAlphaType::Alpha);
+        assert_eq!(img.data.data(), &[10, 20, 30, 0, 10, 20, 30, 255]);
+    }
+
+    #[test]
+    fn coverage_to_image_data_modulates_mask_by_brush_alpha() {
+        // A translucent brush dims the whole run: out_a = mask * color.a / 255.
+        // Full coverage (255) under a half-alpha brush (128) -> 128.
+        let cov = Coverage {
+            width: 1,
+            height: 1,
+            left: 0,
+            top: 0,
+            alpha: vec![255],
+        };
+        let img = coverage_to_image_data(&cov, Color::rgba(0, 0, 0, 128)).expect("non-empty");
+        assert_eq!(img.data.data(), &[0, 0, 0, 128]);
+    }
+
+    #[test]
+    fn draw_coverage_empty_mask_emits_nothing() {
+        // The no-op contract holds at the draw site: an empty mask must not
+        // panic and must leave the scene untouched (encoded op count unchanged).
+        let mut scene = VelloScene::new();
+        draw_coverage(
+            &mut scene,
+            &Coverage::empty(),
+            Color::rgb(0, 0, 0),
+            4.0,
+            8.0,
+            Affine::IDENTITY,
+        );
+        // A fresh scene that received only a no-op draw encodes no draw tags.
+        assert_eq!(scene.encoding().n_paths, 0);
+    }
+
+    #[test]
+    fn draw_coverage_nonempty_mask_emits_one_fill() {
+        // A non-empty mask blits through Vello's image path (draw_image ->
+        // fill), so exactly one path is encoded. Proves the seam wires to the
+        // scene without needing a GPU (the end-to-end pixel check is the
+        // realgpu forcing consumer in pinion-shell).
+        let cov = Coverage {
+            width: 3,
+            height: 2,
+            left: -1,
+            top: -5,
+            alpha: vec![255; 6],
+        };
+        let mut scene = VelloScene::new();
+        draw_coverage(
+            &mut scene,
+            &cov,
+            Color::rgb(255, 0, 0),
+            10.0,
+            20.0,
+            Affine::IDENTITY,
+        );
+        assert_eq!(scene.encoding().n_paths, 1);
     }
 
     #[test]
