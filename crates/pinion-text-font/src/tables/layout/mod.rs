@@ -185,6 +185,54 @@ pub fn collect_subtables_of_type<T>(
     Ok(subs)
 }
 
+/// One feature's parsed Lookup: the `want_type` subtables it contributed (after
+/// extension unwrap + type filter). The shared wrapper for every GPOS/GSUB
+/// per-feature lookup list — `T` is the subtable type (`PairPos`,
+/// `MarkAnchorPos`, `SingleSubst`, `LigatureSubst`).
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct Lookup<T> {
+    /// The lookup's type-matching subtables, in `LookupList` order.
+    pub subtables: Vec<T>,
+}
+
+/// Collect the `want_type` subtables of each lookup a feature references, one
+/// [`Lookup`] per non-empty lookup. The GPOS+GSUB-shared **outer** per-feature
+/// loop (the counterpart to [`collect_subtables_of_type`]'s per-lookup walk):
+/// every `kern` / `mark` / `mkmk` / `ccmp` / `liga` collection is one call.
+/// A lookup index past the `LookupList` is skipped (best-effort), and a lookup
+/// that contributes no `want_type` subtable is dropped. A zero `lookup_list_off`
+/// or empty `indices` yields no lookups.
+///
+/// # Errors
+///
+/// Propagates a [`ParseError`] from [`lookup_list_offsets`] or any subtable parse.
+pub fn collect_feature_lookups<T>(
+    table: &[u8],
+    lookup_list_off: usize,
+    indices: &[u16],
+    tag: [u8; 4],
+    extension_type: u16,
+    want_type: u16,
+    parse: impl Fn(&[u8], usize) -> Result<T, ParseError> + Copy,
+) -> Result<Vec<Lookup<T>>, ParseError> {
+    if lookup_list_off == 0 || indices.is_empty() {
+        return Ok(Vec::new());
+    }
+    let lookup_offsets = lookup_list_offsets(table, lookup_list_off, tag)?;
+    let mut out = Vec::new();
+    for &idx in indices {
+        let Some(&lookup_off) = lookup_offsets.get(usize::from(idx)) else {
+            continue;
+        };
+        let subtables =
+            collect_subtables_of_type(table, lookup_off, tag, extension_type, want_type, parse)?;
+        if !subtables.is_empty() {
+            out.push(Lookup { subtables });
+        }
+    }
+    Ok(out)
+}
+
 /// `FeatureList` → `(featureTag, absolute feature-table offset)` per record.
 fn parse_feature_records(
     table: &[u8],

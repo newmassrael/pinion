@@ -39,18 +39,8 @@ const LIGATURE_LOOKUP_TYPE: u16 = 4;
 /// output of one is the input of the next); `ccmp` runs before `liga`.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Gsub {
-    ccmp_lookups: Vec<CcmpLookup>,
-    liga_lookups: Vec<LigaLookup>,
-}
-
-#[derive(Debug, PartialEq, Eq, Clone)]
-struct CcmpLookup {
-    subtables: Vec<SingleSubst>,
-}
-
-#[derive(Debug, PartialEq, Eq, Clone)]
-struct LigaLookup {
-    subtables: Vec<LigatureSubst>,
+    ccmp_lookups: Vec<layout::Lookup<SingleSubst>>,
+    liga_lookups: Vec<layout::Lookup<LigatureSubst>>,
 }
 
 impl Gsub {
@@ -85,7 +75,15 @@ impl Gsub {
             CCMP_FEATURE,
             GSUB_TAG,
         )?;
-        let ccmp_lookups = parse_ccmp_lookups(bytes, lookup_list_off, &ccmp_indices)?;
+        let ccmp_lookups = layout::collect_feature_lookups(
+            bytes,
+            lookup_list_off,
+            &ccmp_indices,
+            GSUB_TAG,
+            EXTENSION_LOOKUP_TYPE,
+            SINGLE_LOOKUP_TYPE,
+            SingleSubst::parse,
+        )?;
         let liga_indices = layout::feature_lookup_indices(
             bytes,
             script_list_off,
@@ -93,7 +91,15 @@ impl Gsub {
             LIGA_FEATURE,
             GSUB_TAG,
         )?;
-        let liga_lookups = parse_liga_lookups(bytes, lookup_list_off, &liga_indices)?;
+        let liga_lookups = layout::collect_feature_lookups(
+            bytes,
+            lookup_list_off,
+            &liga_indices,
+            GSUB_TAG,
+            EXTENSION_LOOKUP_TYPE,
+            LIGATURE_LOOKUP_TYPE,
+            LigatureSubst::parse,
+        )?;
         Ok(Self {
             ccmp_lookups,
             liga_lookups,
@@ -175,72 +181,6 @@ fn apply_liga_lookup(
             i += 1;
         }
     }
-}
-
-/// Parse the `SingleSubst` subtables of the given `ccmp`-feature `LookupList`
-/// indices. A lookup index past the `LookupList` is skipped; non-single lookup
-/// types within `ccmp` (e.g. multiple substitution type 2, used for
-/// decomposition) are skipped (deferred, R50.7.x).
-fn parse_ccmp_lookups(
-    table: &[u8],
-    lookup_list_off: usize,
-    ccmp_indices: &[u16],
-) -> Result<Vec<CcmpLookup>, ParseError> {
-    if lookup_list_off == 0 || ccmp_indices.is_empty() {
-        return Ok(Vec::new());
-    }
-    let lookup_offsets = layout::lookup_list_offsets(table, lookup_list_off, GSUB_TAG)?;
-    let mut out = Vec::new();
-    for &idx in ccmp_indices {
-        let Some(&lookup_off) = lookup_offsets.get(usize::from(idx)) else {
-            continue;
-        };
-        let subs = layout::collect_subtables_of_type(
-            table,
-            lookup_off,
-            GSUB_TAG,
-            EXTENSION_LOOKUP_TYPE,
-            SINGLE_LOOKUP_TYPE,
-            SingleSubst::parse,
-        )?;
-        if !subs.is_empty() {
-            out.push(CcmpLookup { subtables: subs });
-        }
-    }
-    Ok(out)
-}
-
-/// Parse the `LigatureSubst` subtables of the given `LookupList` indices. A
-/// lookup index past the `LookupList` is skipped (best-effort). Non-ligature
-/// lookup types within the `liga` feature are skipped (deferred).
-fn parse_liga_lookups(
-    table: &[u8],
-    lookup_list_off: usize,
-    liga_indices: &[u16],
-) -> Result<Vec<LigaLookup>, ParseError> {
-    if lookup_list_off == 0 || liga_indices.is_empty() {
-        return Ok(Vec::new());
-    }
-    let lookup_offsets = layout::lookup_list_offsets(table, lookup_list_off, GSUB_TAG)?;
-    let mut out = Vec::new();
-    for &idx in liga_indices {
-        let Some(&lookup_off) = lookup_offsets.get(usize::from(idx)) else {
-            continue;
-        };
-        // Other substitution lookup types within liga are skipped.
-        let subs = layout::collect_subtables_of_type(
-            table,
-            lookup_off,
-            GSUB_TAG,
-            EXTENSION_LOOKUP_TYPE,
-            LIGATURE_LOOKUP_TYPE,
-            LigatureSubst::parse,
-        )?;
-        if !subs.is_empty() {
-            out.push(LigaLookup { subtables: subs });
-        }
-    }
-    Ok(out)
 }
 
 #[cfg(test)]

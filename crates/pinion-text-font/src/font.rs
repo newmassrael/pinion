@@ -337,6 +337,10 @@ fn optional_table<T>(
 ) -> Result<Option<T>, ParseError> {
     match find_table(bytes, records, tag) {
         Ok(table) => Ok(Some(parse(table)?)),
-        Err(_) => Ok(None),
+        // Only an absent table is `None`; any other parse error propagates so a
+        // malformed-but-present table is never silently dropped. Matching the
+        // variant (rather than `Err(_)`) makes that contract compiler-enforced.
+        Err(ParseError::TableNotFound { .. }) => Ok(None),
+        Err(e) => Err(e),
     }
 }

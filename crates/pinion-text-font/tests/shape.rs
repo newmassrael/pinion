@@ -129,7 +129,7 @@ fn shape_run_applies_gpos_pair_kerning() {
 #[test]
 fn shape_run_applies_gsub_ligature() {
     // The forcing consumer for §5.37.6 GSUB ligature substitution: NotoSans
-    // ships a real `liga` feature; substitute_ligatures must reach it (Script→
+    // ships a real `liga` feature; substitute_glyphs must reach it (Script→
     // Feature→Lookup→LigatureSubst) and collapse a component sequence, and
     // shape_run must surface the collapse (fewer glyphs, correct cluster).
     let font = load(NOTO);
@@ -712,4 +712,30 @@ fn shape_run_recognises_marks_from_gdef() {
         0.0f32.to_bits(),
         "the attaching mark is lifted off the baseline"
     );
+}
+
+#[test]
+fn gdef_absent_font_reports_no_marks() {
+    // NanumGothic ships GPOS/GSUB but NO GDEF table. This pins the precondition of
+    // the shaper's GDEF fallback (shape.rs Stage 4): with no GlyphClassDef,
+    // `has_glyph_classes()` is false and `is_mark()` is false for every glyph, so
+    // mark recognition collapses to the pre-GDEF attach-based path. A regression
+    // that defaulted `is_mark` to true (or read a phantom GDEF) would fail here.
+    let nanum = load(NANUM);
+    assert!(nanum.gdef.is_none(), "NanumGothic has no GDEF table");
+    assert!(
+        !nanum.has_glyph_classes(),
+        "no GlyphClassDef => no glyph classes"
+    );
+    // Sample real glyphs (a Latin letter + a Hangul syllable) — both must report
+    // not-a-mark when GDEF is absent.
+    for cp in ['A', '\u{AC00}'] {
+        if let Some(g) = nanum.glyph_id_for(cp as u32) {
+            assert!(
+                !nanum.is_mark(g),
+                "U+{:04X}: no GDEF => is_mark is false",
+                cp as u32
+            );
+        }
+    }
 }

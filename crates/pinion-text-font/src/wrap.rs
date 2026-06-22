@@ -69,8 +69,13 @@ pub fn wrap_paragraph(
 /// shapes it, not as the primary's `.notdef`), so the break points feed a
 /// fallback-aware line layout ([`crate::line_layout::layout_paragraph_with_fallback`]).
 /// A one-element stack reproduces [`wrap_paragraph`] exactly (one font run per
-/// segment). An empty stack measures every segment as zero width, so the whole
-/// paragraph fits one line.
+/// segment). An empty stack yields no lines (nothing can be laid out), matching
+/// [`crate::line_layout::layout_paragraph_with_fallback`]. Kerning is dropped at
+/// every break opportunity AND at every intra-segment font-run boundary (each
+/// font run is shaped independently by [`shape_with_fallback`]), so the
+/// fallback path's width under-estimate is slightly larger than the single-font
+/// [`wrap_paragraph`]'s; both are sub-pixel for typical fonts and exact at the
+/// chosen break.
 #[must_use]
 pub fn wrap_paragraph_with_fallback(
     fonts: &[&Font],
@@ -79,7 +84,7 @@ pub fn wrap_paragraph_with_fallback(
     max_width: f32,
 ) -> Vec<LineRange> {
     let breaks = line_break_opportunities(paragraph);
-    if breaks.is_empty() {
+    if fonts.is_empty() || breaks.is_empty() {
         return Vec::new();
     }
     let adv_to = cumulative_advances(paragraph, &breaks, |seg| {

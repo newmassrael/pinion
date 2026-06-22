@@ -50,21 +50,11 @@ const MARK_MARK_POS_LOOKUP_TYPE: u16 = 6;
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Gpos {
     /// `kern`-feature pair-positioning lookups.
-    kern: Vec<KernLookup>,
+    kern: Vec<layout::Lookup<PairPos>>,
     /// `mark`-feature mark-to-base lookups.
-    mark: Vec<MarkLookup>,
+    mark: Vec<layout::Lookup<MarkAnchorPos>>,
     /// `mkmk`-feature mark-to-mark lookups.
-    mkmk: Vec<MarkLookup>,
-}
-
-#[derive(Debug, PartialEq, Eq, Clone)]
-struct KernLookup {
-    subtables: Vec<PairPos>,
-}
-
-#[derive(Debug, PartialEq, Eq, Clone)]
-struct MarkLookup {
-    subtables: Vec<MarkAnchorPos>,
+    mkmk: Vec<layout::Lookup<MarkAnchorPos>>,
 }
 
 impl Gpos {
@@ -102,7 +92,15 @@ impl Gpos {
             KERN_FEATURE,
             GPOS_TAG,
         )?;
-        let kern = parse_kern_lookups(bytes, lookup_list_off, &kern_indices)?;
+        let kern = layout::collect_feature_lookups(
+            bytes,
+            lookup_list_off,
+            &kern_indices,
+            GPOS_TAG,
+            EXTENSION_LOOKUP_TYPE,
+            PAIR_POS_LOOKUP_TYPE,
+            PairPos::parse,
+        )?;
         let mark_indices = layout::feature_lookup_indices(
             bytes,
             script_list_off,
@@ -110,11 +108,16 @@ impl Gpos {
             MARK_FEATURE,
             GPOS_TAG,
         )?;
-        let mark = parse_mark_attach_lookups(
+        // mark (Type 4) and mkmk (Type 6) share one MarkAnchorPos parser, differing
+        // only by feature tag + lookup type.
+        let mark = layout::collect_feature_lookups(
             bytes,
             lookup_list_off,
             &mark_indices,
+            GPOS_TAG,
+            EXTENSION_LOOKUP_TYPE,
             MARK_BASE_POS_LOOKUP_TYPE,
+            MarkAnchorPos::parse,
         )?;
         let mkmk_indices = layout::feature_lookup_indices(
             bytes,
@@ -123,11 +126,14 @@ impl Gpos {
             MKMK_FEATURE,
             GPOS_TAG,
         )?;
-        let mkmk = parse_mark_attach_lookups(
+        let mkmk = layout::collect_feature_lookups(
             bytes,
             lookup_list_off,
             &mkmk_indices,
+            GPOS_TAG,
+            EXTENSION_LOOKUP_TYPE,
             MARK_MARK_POS_LOOKUP_TYPE,
+            MarkAnchorPos::parse,
         )?;
         Ok(Self { kern, mark, mkmk })
     }
@@ -190,7 +196,11 @@ impl Gpos {
 /// resolution for both mark-to-base ([`Gpos::mark_offset`]) and mark-to-mark
 /// ([`Gpos::mark_mark_offset`]): try each lookup's subtables in order and return
 /// the first that attaches `mark` to `attach`.
-fn first_attach_offset(lookups: &[MarkLookup], attach: u16, mark: u16) -> Option<(i16, i16)> {
+fn first_attach_offset(
+    lookups: &[layout::Lookup<MarkAnchorPos>],
+    attach: u16,
+    mark: u16,
+) -> Option<(i16, i16)> {
     for lookup in lookups {
         for st in &lookup.subtables {
             if let Some(off) = st.offset(attach, mark) {
@@ -199,75 +209,6 @@ fn first_attach_offset(lookups: &[MarkLookup], attach: u16, mark: u16) -> Option
         }
     }
     None
-}
-
-/// Parse the `PairPos` subtables of the given `LookupList` indices. A lookup
-/// index past the `LookupList` is skipped (best-effort). Non-PairPos lookup
-/// types within the kern feature are skipped (deferred).
-fn parse_kern_lookups(
-    table: &[u8],
-    lookup_list_off: usize,
-    kern_indices: &[u16],
-) -> Result<Vec<KernLookup>, ParseError> {
-    if lookup_list_off == 0 || kern_indices.is_empty() {
-        return Ok(Vec::new());
-    }
-    let lookup_offsets = layout::lookup_list_offsets(table, lookup_list_off, GPOS_TAG)?;
-    let mut out = Vec::new();
-    for &idx in kern_indices {
-        let Some(&lookup_off) = lookup_offsets.get(usize::from(idx)) else {
-            continue;
-        };
-        // Other positioning lookup types within a kern feature are skipped.
-        let subtables = layout::collect_subtables_of_type(
-            table,
-            lookup_off,
-            GPOS_TAG,
-            EXTENSION_LOOKUP_TYPE,
-            PAIR_POS_LOOKUP_TYPE,
-            PairPos::parse,
-        )?;
-        if !subtables.is_empty() {
-            out.push(KernLookup { subtables });
-        }
-    }
-    Ok(out)
-}
-
-/// Parse the mark-attachment subtables of the given feature's `LookupList`
-/// indices, keeping only lookups of `lookup_type` — Type 4 (`MarkBasePos`, the
-/// `mark` feature) or Type 6 (`MarkMarkPos`, the `mkmk` feature); both parse with
-/// [`MarkAnchorPos`]. A lookup index past the `LookupList` is skipped; other
-/// positioning lookup types under the feature (e.g. mark-to-ligature type 5) are
-/// deferred (R50.6.x). The single SSOT for both mark passes.
-fn parse_mark_attach_lookups(
-    table: &[u8],
-    lookup_list_off: usize,
-    indices: &[u16],
-    lookup_type: u16,
-) -> Result<Vec<MarkLookup>, ParseError> {
-    if lookup_list_off == 0 || indices.is_empty() {
-        return Ok(Vec::new());
-    }
-    let lookup_offsets = layout::lookup_list_offsets(table, lookup_list_off, GPOS_TAG)?;
-    let mut out = Vec::new();
-    for &idx in indices {
-        let Some(&lookup_off) = lookup_offsets.get(usize::from(idx)) else {
-            continue;
-        };
-        let subtables = layout::collect_subtables_of_type(
-            table,
-            lookup_off,
-            GPOS_TAG,
-            EXTENSION_LOOKUP_TYPE,
-            lookup_type,
-            MarkAnchorPos::parse,
-        )?;
-        if !subtables.is_empty() {
-            out.push(MarkLookup { subtables });
-        }
-    }
-    Ok(out)
 }
 
 #[cfg(test)]
