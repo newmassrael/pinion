@@ -46,7 +46,7 @@
 //! | Element | `ColorRole`                  | Why                              |
 //! |---------|------------------------------|----------------------------------|
 //! | Track   | `SurfaceContainerHighest`    | M3 "inactive container" tier     |
-//! | Thumb   | `Outline`                    | M3 hairline / divider weight     |
+//! | Thumb   | `Outline` (default)          | M3 hairline / divider weight; idle base overridable via [`VerticalScrollbarStyle::with_thumb_role`] (R1046) for an always-visible bar |
 //!
 //! Mirrors the role mapping `hello-listbox` already landed at Round
 //! 577 ([[m3-surface-tier-expansion]]) — the helper inherits the
@@ -138,6 +138,23 @@ pub struct VerticalScrollbarStyle {
     /// Must match the tag the application registers the external
     /// under, or the drag wire stays inert (paint-only mode).
     pub tag: &'static str,
+    /// (R1046 §5.45) Idle thumb **base** [`ColorRole`], default
+    /// [`ColorRole::Outline`] (the M3 hairline weight). The hover /
+    /// dragging states still lerp *from* this base toward
+    /// [`ColorRole::OnSurface`], and Disabled fades toward
+    /// [`ColorRole::SurfaceContainerHighest`] — see
+    /// [`thumb_fill_for_state`].
+    ///
+    /// Override (via [`Self::with_thumb_role`]) when the default
+    /// `Outline` does not carry enough contrast against the
+    /// `SurfaceContainerHighest` track for an *always-visible* bar — on
+    /// the light palette `Outline` sits very close to the track tint, so
+    /// a gnome-terminal-style permanent scrollbar reads its idle thumb
+    /// as invisible. A row-unit terminal consumer passes
+    /// [`ColorRole::OnSurfaceMuted`] here to match the keyboard / drag
+    /// writers' contrast (light track `rgb(230,224,233)` vs muted thumb
+    /// `rgb(96,96,96)`).
+    pub thumb_role: ColorRole,
 }
 
 impl VerticalScrollbarStyle {
@@ -154,6 +171,7 @@ impl VerticalScrollbarStyle {
             gutter_w: 8,
             min_thumb: 24,
             tag,
+            thumb_role: ColorRole::Outline,
         }
     }
 
@@ -200,6 +218,22 @@ impl VerticalScrollbarStyle {
         self.min_thumb = min_thumb;
         self
     }
+
+    /// (R1046 §5.45) Override the idle thumb base [`ColorRole`]
+    /// (default [`ColorRole::Outline`]). The hover / dragging
+    /// state-layer overlays still lerp from this base toward
+    /// [`ColorRole::OnSurface`], so a single role swap shifts the whole
+    /// always-visible / hover ramp without touching the M3 composition.
+    ///
+    /// Use [`ColorRole::OnSurfaceMuted`] for a gnome-terminal-style
+    /// permanent bar whose idle thumb must stay legible against the
+    /// `SurfaceContainerHighest` track on the light palette (where
+    /// `Outline` is too low-contrast — the PR-19 motivating case).
+    #[must_use]
+    pub const fn with_thumb_role(mut self, thumb_role: ColorRole) -> Self {
+        self.thumb_role = thumb_role;
+        self
+    }
 }
 
 /// (R660 §5.45) Resolve the Material 3 thumb fill for the given
@@ -208,16 +242,26 @@ impl VerticalScrollbarStyle {
 /// renders perceptually-correct mid-tones across both light and
 /// dark palettes.
 ///
+/// `base` is the idle role — [`ColorRole::Outline`] by default, or the
+/// caller's [`VerticalScrollbarStyle::thumb_role`] override (R1046). The
+/// hover / dragging overlays lerp *from* `base`, so swapping the base
+/// shifts the whole always-visible ramp without disturbing the M3
+/// composition.
+///
 /// | State    | Composition                                  | Why                              |
 /// |----------|----------------------------------------------|----------------------------------|
-/// | Idle     | `Outline`                                    | M3 hairline / divider weight     |
-/// | Hover    | `Outline` lerp(`OnSurface`, 0.08)            | M3 hover state-layer opacity     |
-/// | Dragging | `Outline` lerp(`OnSurface`, 0.16)            | M3 dragged state-layer opacity   |
-/// | Disabled | `Outline` lerp(`SurfaceContainerHighest`, 0.62) | M3 disabled = 38% visible (1 − 0.62 fade toward track) |
+/// | Idle     | `base`                                       | M3 hairline / divider weight     |
+/// | Hover    | `base` lerp(`OnSurface`, 0.08)               | M3 hover state-layer opacity     |
+/// | Dragging | `base` lerp(`OnSurface`, 0.16)               | M3 dragged state-layer opacity   |
+/// | Disabled | `base` lerp(`SurfaceContainerHighest`, 0.62) | M3 disabled = 38% visible (1 − 0.62 fade toward track) |
 ///
 /// [`Color::lerp`]: pinion_core::style::Color::lerp
-fn thumb_fill_for_state(theme: &Theme, interaction: ScrollBarState) -> pinion_core::style::Color {
-    let base = theme.resolve(ColorRole::Outline);
+fn thumb_fill_for_state(
+    theme: &Theme,
+    interaction: ScrollBarState,
+    base_role: ColorRole,
+) -> pinion_core::style::Color {
+    let base = theme.resolve(base_role);
     match interaction {
         ScrollBarState::Idle => base,
         // Hover is the shared M3 8% token; Dragging (0.16) is the
@@ -351,7 +395,8 @@ pub fn view_vertical_scrollbar(
     let thumb = Scene::Container(
         ContainerNode::new(vec![])
             .with_style(
-                BoxStyle::filled(thumb_fill_for_state(theme, interaction)).with_corner_radius(2),
+                BoxStyle::filled(thumb_fill_for_state(theme, interaction, style.thumb_role))
+                    .with_corner_radius(2),
             )
             .with_layout(
                 LayoutStyle::new()
@@ -672,7 +717,7 @@ mod tests {
     #[test]
     fn r660_idle_thumb_fill_is_outline() {
         for theme in [Theme::light(), Theme::dark()] {
-            let fill = thumb_fill_for_state(&theme, ScrollBarState::Idle);
+            let fill = thumb_fill_for_state(&theme, ScrollBarState::Idle, ColorRole::Outline);
             assert_eq!(
                 fill,
                 theme.resolve(ColorRole::Outline),
@@ -684,8 +729,8 @@ mod tests {
     #[test]
     fn r660_hover_thumb_lifts_toward_on_surface() {
         for theme in [Theme::light(), Theme::dark()] {
-            let idle = thumb_fill_for_state(&theme, ScrollBarState::Idle);
-            let hover = thumb_fill_for_state(&theme, ScrollBarState::Hover);
+            let idle = thumb_fill_for_state(&theme, ScrollBarState::Idle, ColorRole::Outline);
+            let hover = thumb_fill_for_state(&theme, ScrollBarState::Hover, ColorRole::Outline);
             assert_ne!(hover, idle, "Hover tint must differ from Idle");
             // The hover overlay is lerped *toward* OnSurface at 0.08
             // alpha — verify the result is strictly between Idle and
@@ -701,8 +746,9 @@ mod tests {
     #[test]
     fn r660_dragging_thumb_lifts_more_than_hover() {
         for theme in [Theme::light(), Theme::dark()] {
-            let hover = thumb_fill_for_state(&theme, ScrollBarState::Hover);
-            let dragging = thumb_fill_for_state(&theme, ScrollBarState::Dragging);
+            let hover = thumb_fill_for_state(&theme, ScrollBarState::Hover, ColorRole::Outline);
+            let dragging =
+                thumb_fill_for_state(&theme, ScrollBarState::Dragging, ColorRole::Outline);
             assert_ne!(
                 dragging, hover,
                 "Dragging tint must be visually distinct from Hover \
@@ -718,8 +764,9 @@ mod tests {
         // = 38% visible (1 − 0.62 fade). Verify the result differs
         // from Idle AND moves toward the track.
         for theme in [Theme::light(), Theme::dark()] {
-            let idle = thumb_fill_for_state(&theme, ScrollBarState::Idle);
-            let disabled = thumb_fill_for_state(&theme, ScrollBarState::Disabled);
+            let idle = thumb_fill_for_state(&theme, ScrollBarState::Idle, ColorRole::Outline);
+            let disabled =
+                thumb_fill_for_state(&theme, ScrollBarState::Disabled, ColorRole::Outline);
             assert_ne!(disabled, idle, "Disabled tint must differ from Idle");
         }
     }
@@ -747,10 +794,124 @@ mod tests {
                 };
                 assert_eq!(
                     thumb.style.fill,
-                    thumb_fill_for_state(&Theme::light(), state),
+                    thumb_fill_for_state(&Theme::light(), state, ColorRole::Outline),
                     "thumb.style.fill matches helper for state={state:?}",
                 );
             }
+        });
+    }
+
+    // R1046 §5.45 — VerticalScrollbarStyle::with_thumb_role: idle thumb
+    // base-role override (default Outline). The always-visible row-unit
+    // terminal consumer (PR-19) overrides to OnSurfaceMuted so the idle
+    // thumb stays legible against the SurfaceContainerHighest track on
+    // the light palette, where Outline is too low-contrast.
+
+    #[test]
+    fn r1046_material_default_thumb_role_is_outline() {
+        let style = VerticalScrollbarStyle::material(480, TEST_TAG);
+        assert_eq!(
+            style.thumb_role,
+            ColorRole::Outline,
+            "default base role is the M3 Outline hairline (R660 carry)",
+        );
+        assert_eq!(
+            style.with_thumb_role(ColorRole::OnSurfaceMuted).thumb_role,
+            ColorRole::OnSurfaceMuted,
+            "with_thumb_role swaps the base role",
+        );
+    }
+
+    #[test]
+    fn r1046_idle_fill_follows_the_override_base() {
+        for theme in [Theme::light(), Theme::dark()] {
+            let idle =
+                thumb_fill_for_state(&theme, ScrollBarState::Idle, ColorRole::OnSurfaceMuted);
+            assert_eq!(
+                idle,
+                theme.resolve(ColorRole::OnSurfaceMuted),
+                "idle thumb paints the override base verbatim",
+            );
+            assert_ne!(
+                idle,
+                thumb_fill_for_state(&theme, ScrollBarState::Idle, ColorRole::Outline),
+                "the override base differs from the default Outline idle",
+            );
+        }
+    }
+
+    #[test]
+    fn r1046_override_base_still_lerps_for_hover_and_drag() {
+        // The hover / dragging overlays must ride the *override* base,
+        // not the default Outline — one role swap shifts the whole ramp.
+        for theme in [Theme::light(), Theme::dark()] {
+            let muted_idle =
+                thumb_fill_for_state(&theme, ScrollBarState::Idle, ColorRole::OnSurfaceMuted);
+            let muted_hover =
+                thumb_fill_for_state(&theme, ScrollBarState::Hover, ColorRole::OnSurfaceMuted);
+            let muted_drag =
+                thumb_fill_for_state(&theme, ScrollBarState::Dragging, ColorRole::OnSurfaceMuted);
+            assert_ne!(muted_hover, muted_idle, "hover lifts off the override base");
+            assert_ne!(muted_drag, muted_hover, "drag lifts further than hover");
+            assert_ne!(
+                muted_hover,
+                thumb_fill_for_state(&theme, ScrollBarState::Hover, ColorRole::Outline),
+                "hover composition rides the override base, not Outline",
+            );
+        }
+    }
+
+    #[test]
+    fn r1046_override_idle_out_contrasts_outline_on_light() {
+        // The PR-19 visibility guarantee: on the light palette the
+        // OnSurfaceMuted idle thumb stands clear of the
+        // SurfaceContainerHighest track, where the default Outline thumb
+        // nearly vanishes. Pin per-channel L1 distance to the track:
+        // muted >> outline.
+        let theme = Theme::light();
+        let track = theme.resolve(ColorRole::SurfaceContainerHighest);
+        let outline_idle = thumb_fill_for_state(&theme, ScrollBarState::Idle, ColorRole::Outline);
+        let muted_idle =
+            thumb_fill_for_state(&theme, ScrollBarState::Idle, ColorRole::OnSurfaceMuted);
+        let dist = |a: pinion_core::style::Color, b: pinion_core::style::Color| {
+            u32::from(a.r).abs_diff(u32::from(b.r))
+                + u32::from(a.g).abs_diff(u32::from(b.g))
+                + u32::from(a.b).abs_diff(u32::from(b.b))
+        };
+        let muted_dist = dist(muted_idle, track);
+        let outline_dist = dist(outline_idle, track);
+        assert!(
+            muted_dist > outline_dist,
+            "OnSurfaceMuted idle thumb must out-contrast the Outline default \
+             against the track (muted={muted_dist} vs outline={outline_dist})",
+        );
+    }
+
+    #[test]
+    fn r1046_view_threads_thumb_role_into_idle_fill() {
+        // End-to-end: with_thumb_role on the style reaches the painted
+        // thumb fill through view_vertical_scrollbar.
+        run(|| {
+            let scroll_state = use_scroll_state("r1046_scrollbar_thumb_role_view");
+            let style = VerticalScrollbarStyle::material(TEST_VIEWPORT_H, TEST_TAG)
+                .with_thumb_role(ColorRole::OnSurfaceMuted);
+            let scene = view_vertical_scrollbar(
+                &scroll_state,
+                &Theme::light(),
+                &style,
+                ScrollBarState::Idle,
+            );
+            let Scene::Container(track) = &scene else {
+                panic!("track");
+            };
+            let Scene::Container(thumb) = &track.children[0] else {
+                panic!("thumb");
+            };
+            assert_eq!(
+                thumb.style.fill,
+                Theme::light().resolve(ColorRole::OnSurfaceMuted),
+                "view fn threads style.thumb_role into the idle thumb fill",
+            );
         });
     }
 
