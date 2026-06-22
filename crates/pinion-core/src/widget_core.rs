@@ -568,6 +568,60 @@ pub trait WidgetCore: 'static {
         false
     }
 
+    /// R1047 §5.23 §5.22 §6.3 — per-paint binding **reconcile** pass. The
+    /// shell runs this once at the top of every *real* paint cycle,
+    /// BEFORE the pure view fn, inside the binding's root
+    /// [`Owner`](crate::reactive::Owner) scope (so `use_*` reactive hooks
+    /// resolve to the same instances the view fn shares — the same wrap
+    /// [`Self::apply_key`] uses). The default is a no-op; almost every
+    /// binding needs no override.
+    ///
+    /// This is the sanctioned non-view-fn place for a binding to write
+    /// its own reactive view-state. It exists because the view fn is
+    /// **pure** (§6.3 R51.27: same `(state, frame)` ⇒ same `Scene`, the
+    /// `dry_run` guarantee), so a `Signal` write inside `V::view` — e.g.
+    /// [`ScrollState::set_max`](crate::widgets::scroll::ScrollState::set_max)
+    /// / [`scroll_to`](crate::widgets::scroll::ScrollState::scroll_to) to
+    /// grow a scroll bound and tail-follow — is a purity violation.
+    /// Moving that write here keeps `V::view` a pure read of
+    /// already-reconciled state.
+    ///
+    /// The motivating gap: a binding whose scroll authority is an
+    /// **offset-projection** rather than a [`Scene::Scroll`](crate::scene::Scene::Scroll)
+    /// pixel clip — a terminal grid ([`Scene::TextGrid`](crate::scene::Scene::TextGrid))
+    /// that re-projects scrollback by `offset_lines` — has no clip node
+    /// for the post-layout reducer
+    /// (`update_scroll_state_bounds`) to measure, AND its content extent
+    /// (`scrollback_len`) lives in an **off-thread producer** (a PTY
+    /// thread) that only calls `request_repaint` with no reactive
+    /// `Signal` for an [`Effect`](crate::reactive::Effect) to subscribe.
+    /// So neither the declarative layout reducer (no clip node, extent
+    /// not layout-derived) nor an Effect (no dep) can reconcile the
+    /// bound — this is a substrate-integration gap, not a missed
+    /// refactor. The binding reconciles here instead: read the current
+    /// producer extent + [`at_bottom`](crate::widgets::virtual_list::at_bottom)
+    /// tail-follow predicate, then
+    /// [`follow_tail`](crate::widgets::virtual_list::follow_tail) its own
+    /// [`ScrollState`](crate::widgets::scroll::ScrollState).
+    ///
+    /// Runs **pre-view** (the post-layout sibling is the R774 scroll-dirty
+    /// re-pass + the R1012 pane-viewport publish): the producer-derived
+    /// extent needs no measured viewport, so reconciling before the view
+    /// fn lets the view project against the reconciled state in one pass —
+    /// no re-run. A consumer that genuinely needs a *layout-measured*
+    /// viewport for its reconcile uses the post-layout
+    /// [`use_pane_viewport_size`](crate::reactive::use_pane_viewport_size)
+    /// Effect (R1012) instead.
+    ///
+    /// Runs **only on the real paint path**, never the side-effect-free
+    /// introspection / `dry_run` paint mirror — so a `scene/snapshot` or a
+    /// dry-run never mutates state (§6.3 / §2 #3 preserved), exactly like
+    /// the R1006 pre-view `set_viewport_size` publish it sits beside.
+    /// Writes should be loop-safe (`set_max` / `scroll_to`
+    /// equality-skip), so a steady producer reconciles to a no-op and
+    /// does not schedule a paint.
+    fn reconcile_frame() {}
+
     // (R1020 §5.39) `focusable_tags()` was REMOVED. Keyboard focus
     // enumeration is no longer a hand-maintained binding-side list; it is
     // DERIVED from the paint scene by

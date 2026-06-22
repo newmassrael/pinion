@@ -2462,6 +2462,18 @@ impl<V: WidgetView> ShellCore<V> {
         // paint mirror (`_pure_internal`) deliberately omits this publish.
         if window_key == pinion_runtime::DEFAULT_WINDOW {
             self.core.set_viewport_size(w, h);
+            // R1047 §5.23 §6.3 — pre-view binding reconcile pass. Runs
+            // AFTER the `set_viewport_size` publish (so any winsize reflow
+            // Effect already updated the producer) and BEFORE the view fn,
+            // inside `root_owner`, so a binding can grow + tail-follow a
+            // `ScrollState` whose content extent lives in an off-thread
+            // producer (a PTY's scrollback) without writing a Signal from
+            // the pure view fn. Gated to the primary like
+            // `set_viewport_size` (binding-wide reactive state reconciled
+            // once per paint; R1006 per-window carry inherited). The
+            // side-effect-free paint mirror (`_pure_internal`) omits it, so
+            // an introspection / dry_run paint never reconciles.
+            self.core.reconcile_frame();
         }
         let frame = Frame::with_dt(dt);
         let cached_state = *self.core.cached_state();

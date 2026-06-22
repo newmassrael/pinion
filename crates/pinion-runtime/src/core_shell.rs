@@ -1293,6 +1293,25 @@ impl<V: WidgetCore> CoreShell<V> {
             .run(|| self.viewport_signal.set((width, height)));
     }
 
+    /// R1047 §5.23 §5.22 §6.3 — run the binding's per-paint
+    /// [`WidgetCore::reconcile_frame`] reducer inside the root
+    /// [`Owner`](pinion_core::reactive::Owner) scope, so a binding can
+    /// write its own reactive view-state (e.g. grow + tail-follow a
+    /// [`ScrollState`](pinion_core::widgets::scroll::ScrollState) whose
+    /// content extent lives in an off-thread producer) off the pure view
+    /// fn. Mirrors [`Self::set_viewport_size`]'s `root_owner.run` wrap:
+    /// the reconcile body resolves
+    /// [`Owner::current`](pinion_core::reactive::Owner::current) and the
+    /// `use_*` hooks it shares with the view fn.
+    ///
+    /// The shell calls this on the **real** paint path only (immediately
+    /// after the pre-view `set_viewport_size` publish, before `V::view`),
+    /// never the side-effect-free introspection / `dry_run` mirror — so a
+    /// snapshot paint stays observationally pure (§6.3 / §2 #3).
+    pub fn reconcile_frame(&self) {
+        self.root_owner.run(|| V::reconcile_frame());
+    }
+
     /// R1012 §5.23 §5.22 — publish each registered pane's measured pixel rect
     /// into its per-pane viewport
     /// [`Signal`], so a per-pane reflow Effect reading
@@ -3669,6 +3688,92 @@ mod tests {
             );
         });
         assert_eq!(state.offset(), (0, 0), "neither stage ran");
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R1047 §5.23 §5.22 §6.3 — WidgetCore::reconcile_frame: the per-paint
+    // pre-view binding reducer. CoreShell::reconcile_frame runs it inside
+    // the root Owner scope so a binding can write its own reactive
+    // view-state (grow + tail-follow a ScrollState whose content extent
+    // lives in an off-thread producer) off the pure view fn.
+    // ─────────────────────────────────────────────────────────────────
+
+    thread_local! {
+        /// Owner id observed from inside the fixture's reconcile_frame.
+        static RECONCILE_FRAME_OWNER: std::cell::Cell<Option<u64>> =
+            const { std::cell::Cell::new(None) };
+        /// reconcile_frame invocation count.
+        static RECONCILE_FRAME_CALLS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    }
+
+    struct ReconcileFrameFixture;
+
+    impl WidgetCore for ReconcileFrameFixture {
+        type State = ButtonState;
+        type Event = ButtonEvent;
+
+        fn create_external() -> Box<dyn pinion_core::external::External> {
+            Box::new(pinion_core::widgets::button::ButtonExternal::new())
+        }
+
+        fn tag() -> &'static str {
+            "reconcile_frame_fixture"
+        }
+
+        fn read_state(_scene: &Scene) -> Self::State {
+            ButtonState::Idle
+        }
+
+        fn view(_state: Self::State, _frame: &Frame) -> Scene {
+            Scene::Container(
+                pinion_core::scene::ContainerNode::new(vec![]).with_tag("reconcile_frame_fixture"),
+            )
+        }
+
+        fn event_name(_event: Self::Event) -> &'static str {
+            "__internal__"
+        }
+
+        fn title() -> &'static str {
+            "ReconcileFrame"
+        }
+
+        fn reconcile_frame() {
+            RECONCILE_FRAME_CALLS.with(|c| c.set(c.get() + 1));
+            RECONCILE_FRAME_OWNER.with(|c| c.set(pinion_core::Owner::current().map(|o| o.id())));
+        }
+    }
+
+    #[test]
+    fn r1047_reconcile_frame_runs_once_inside_root_owner_scope() {
+        RECONCILE_FRAME_CALLS.with(|c| c.set(0));
+        RECONCILE_FRAME_OWNER.with(|c| c.set(None));
+
+        let core: CoreShell<ReconcileFrameFixture> = CoreShell::new();
+        let root_id = core.root_owner().id();
+        core.reconcile_frame();
+
+        assert_eq!(
+            RECONCILE_FRAME_CALLS.with(std::cell::Cell::get),
+            1,
+            "reconcile_frame is invoked exactly once per call",
+        );
+        assert_eq!(
+            RECONCILE_FRAME_OWNER.with(std::cell::Cell::get),
+            Some(root_id),
+            "reconcile_frame runs inside the binding root Owner scope \
+             so use_* hooks resolve to the view fn's instances",
+        );
+    }
+
+    #[test]
+    fn r1047_default_reconcile_frame_is_a_noop() {
+        // The default trait impl does nothing — the overwhelming majority
+        // of bindings (every Scene::Scroll consumer) need no override and
+        // the call is a cheap no-op.
+        let core: CoreShell<TestButton> = CoreShell::new();
+        core.reconcile_frame(); // must not panic; nothing observable changes
+        assert_eq!(*core.cached_state(), ButtonState::Idle);
     }
 
     #[test]
