@@ -13272,6 +13272,52 @@
         "RTL x fallback x wrap not exercised by a dedicated test (each leg proven separately: RTL wrap/L2 in layout_paragraph, RTL fallback in shape_paragraph_with_fallback); honest LOW"
       ]
     },
+    "R1055": {
+      "decision_summary": "R1055 §5.37.6 R50.6.3 GPOS Lookup Type 6 mark-to-mark (mkmk): stacking diacritics pile on the preceding mark. MarkBasePos -> shared MarkAnchorPos (byte-identical Type 4/6 subtable, 2nd-consumer lift); mkmk feature navigation + Gpos::mark_mark_offset + a prev_mark shaper pass; first_attach_offset/parse_mark_attach_lookups/build_gpos_lookup lifted as 2nd-consumer SSOTs",
+      "changes_bullets": [
+        "tables/gpos/markanchor.rs (was markbase.rs): MarkBasePos -> shared MarkAnchorPos — the byte-identical format-1 mark-attachment subtable now serves both Type 4 (mark->base) and Type 6 (mark->mark); offset(attach,mark) generic; neutral markanchorpos/ field labels",
+        "tables/gpos/mod.rs: navigate the mkmk feature -> collect Type 6 MarkMarkPos lookups; Gpos::mark_mark_offset(prev_mark,mark) + has_mark_marks(); parse_mark_attach_lookups lifted generic over lookup type (mark Type 4 + mkmk Type 6 = 2 consumers); first_attach_offset shared by mark_offset + mark_mark_offset",
+        "shape.rs Stage 4: one left-to-right walk folds mark-to-base + mark-to-mark — a mark stacks on the preceding mark (prev_mark) via mkmk (overrides mark-to-base; a base resets the cluster); backward-compatible for non-mkmk fonts; font.rs exposes Font::mark_mark_offset",
+        "gpos/tests.rs: build_gpos_lookup lifted (table-assembly SSOT) + mark_mark_subtable builder; Gpos fields kern_lookups/mark_lookups/mkmk_lookups -> kern/mark/mkmk (struct_field_names lint fires at 3 fields)"
+      ],
+      "verification_bullets": [
+        "pinion-text-font 240 lib pass +2 (gpos: resolves_mkmk_through_full_navigation [Script->mkmk->Type6->MarkMarkPos, attachAnchor-markAnchor delta] + mark_and_mkmk_are_distinct_channels [same byte layout under a mark=Type4 feature feeds mark-to-base only, not mkmk])",
+        "shape integration 16 pass +1 (shape_run_applies_gpos_mark_to_mark on real NotoSans: discovered base+mark1+mark2, mark2 positioned against mark1's RESOLVED pos via exact f32 bit-oracle, non-vacuous mark1-off-baseline guard)",
+        "markanchor.rs parse tests (renamed from markbase, unchanged) still green: anchor formats 1/2/3, multi-class, reject posFormat/anchorFormat",
+        "cargo test --workspace -j2: 7440 pass 0 fail (= 7432 baseline + R1054 5 + R1055 3; corrects R1054's filtered-pipeline undercount of 1339 — that run's qualitative 0-fail/no-regression held); clippy --workspace --all-targets vello 0 warn (struct_field_names + doc_markdown + similar_names fixed); rustfmt clean",
+        "GDEF not parsed: a mark is recognised by being attached (mark-to-base) not a GlyphClass; backward-compatible for non-mkmk fonts (mark_mark_offset returns None -> existing mark-to-base path unchanged)"
+      ],
+      "impact_refs": [
+        "5.37.6"
+      ],
+      "carry_forward_bullets": [
+        "GDEF GlyphClassDef + lookupFlag mark filtering still deferred (R50.6.x): mark recognition is attach-based, so a mkmk-only mark2 not in the mark-to-base coverage is treated as a base (honest limitation shared with the rest of the slice)",
+        "mark-to-ligature (Lookup Type 5) still deferred; cursive (Type 3) / single (Type 1) / contextual positioning still open",
+        "shaper stacks on the immediately-preceding mark only (single prev_mark chain); attaching to an arbitrary earlier mark in the cluster (GDEF-driven) not modelled"
+      ],
+      "publishable_decision_summary": "R1055 §5.37.6 R50.6.3 GPOS Lookup Type 6 mark-to-mark (mkmk): stacking diacritics pile on the preceding mark. MarkBasePos -> shared MarkAnchorPos (byte-identical Type 4/6 subtable, 2nd-consumer lift); mkmk feature navigation + Gpos::mark_mark_offset + a prev_mark shaper pass; first_attach_offset/parse_mark_attach_lookups/build_gpos_lookup lifted as 2nd-consumer SSOTs",
+      "publishable_changes_bullets": [
+        "tables/gpos/markanchor.rs (was markbase.rs): MarkBasePos -> shared MarkAnchorPos — the byte-identical format-1 mark-attachment subtable now serves both Type 4 (mark->base) and Type 6 (mark->mark); offset(attach,mark) generic; neutral markanchorpos/ field labels",
+        "tables/gpos/mod.rs: navigate the mkmk feature -> collect Type 6 MarkMarkPos lookups; Gpos::mark_mark_offset(prev_mark,mark) + has_mark_marks(); parse_mark_attach_lookups lifted generic over lookup type (mark Type 4 + mkmk Type 6 = 2 consumers); first_attach_offset shared by mark_offset + mark_mark_offset",
+        "shape.rs Stage 4: one left-to-right walk folds mark-to-base + mark-to-mark — a mark stacks on the preceding mark (prev_mark) via mkmk (overrides mark-to-base; a base resets the cluster); backward-compatible for non-mkmk fonts; font.rs exposes Font::mark_mark_offset",
+        "gpos/tests.rs: build_gpos_lookup lifted (table-assembly SSOT) + mark_mark_subtable builder; Gpos fields kern_lookups/mark_lookups/mkmk_lookups -> kern/mark/mkmk (struct_field_names lint fires at 3 fields)"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-text-font 240 lib pass +2 (gpos: resolves_mkmk_through_full_navigation [Script->mkmk->Type6->MarkMarkPos, attachAnchor-markAnchor delta] + mark_and_mkmk_are_distinct_channels [same byte layout under a mark=Type4 feature feeds mark-to-base only, not mkmk])",
+        "shape integration 16 pass +1 (shape_run_applies_gpos_mark_to_mark on real NotoSans: discovered base+mark1+mark2, mark2 positioned against mark1's RESOLVED pos via exact f32 bit-oracle, non-vacuous mark1-off-baseline guard)",
+        "markanchor.rs parse tests (renamed from markbase, unchanged) still green: anchor formats 1/2/3, multi-class, reject posFormat/anchorFormat",
+        "cargo test --workspace -j2: 7440 pass 0 fail (= 7432 baseline + R1054 5 + R1055 3; corrects R1054's filtered-pipeline undercount of 1339 — that run's qualitative 0-fail/no-regression held); clippy --workspace --all-targets vello 0 warn (struct_field_names + doc_markdown + similar_names fixed); rustfmt clean",
+        "GDEF not parsed: a mark is recognised by being attached (mark-to-base) not a GlyphClass; backward-compatible for non-mkmk fonts (mark_mark_offset returns None -> existing mark-to-base path unchanged)"
+      ],
+      "publishable_impact_refs": [
+        "5.37.6"
+      ],
+      "publishable_carry_forward_bullets": [
+        "GDEF GlyphClassDef + lookupFlag mark filtering still deferred (R50.6.x): mark recognition is attach-based, so a mkmk-only mark2 not in the mark-to-base coverage is treated as a base (honest limitation shared with the rest of the slice)",
+        "mark-to-ligature (Lookup Type 5) still deferred; cursive (Type 3) / single (Type 1) / contextual positioning still open",
+        "shaper stacks on the immediately-preceding mark only (single prev_mark chain); attaching to an arbitrary earlier mark in the cluster (GDEF-driven) not modelled"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
