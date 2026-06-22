@@ -4384,7 +4384,10 @@
         "R1040 shape_paragraph filters X9-removed controls (run-granularity BN filter); R1039 X9 gap cleared",
         "R1041 wrap_paragraph (R50.11) supersedes 'single-line run 전제': greedy width line-breaking now exists",
         "R1042 layout: paragraph-context BIDI sliced per line; defers per-line L1 trail-WS + break-char trim",
-        "R1042 (R50.12) layout_paragraph: multi-line shaped layout = wrap + per-line L2 reorder + baseline"
+        "R1042 (R50.12) layout_paragraph: multi-line shaped layout = wrap + per-line L2 reorder + baseline",
+        "R50.6.2 GPOS mark-to-base (MarkBasePos Type 4, mark feature): mark anchored over preceding base",
+        "R1043 PositionedGlyph gains y (baseline-rel, down); mark lifts off baseline, render_run honors y",
+        "R1043 defers: RTL mark x (advance-mirror), mark-to-lig/mark (Type 5/6), lookupFlag mark-skip"
       ],
       "alternatives_rejected": [
         {
@@ -4506,6 +4509,21 @@
         {
           "file": "crates/pinion-text-font/src/line_layout.rs",
           "symbol": "ShapedLine",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-text-font/src/tables/gpos/markbase.rs",
+          "symbol": "MarkBasePos",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-text-font/src/tables/gpos/mod.rs",
+          "symbol": "Gpos::mark_offset",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-text-font/src/font.rs",
+          "symbol": "Font::mark_offset",
           "kind": "implements"
         }
       ]
@@ -12512,6 +12530,54 @@
         "Per-line L1 trailing-WS reset deferred (affects only invisible trailing-WS positions, verified)",
         "Trailing break codepoint shaped not trimmed; single BIDI paragraph only (caller splits Bidi B)",
         "layout_paragraph is a test forcing-consumer; production paint still §5.36 swash",
+        "cmap best_subtable + hhea int16[4] pre-existing cargo-doc dangling links (docs-round carry)"
+      ]
+    },
+    "R1043": {
+      "decision_summary": "§5.37.6 R50.6.2 GPOS mark-to-base positioning: shape_run gains a 4th stage attaching each combining mark to its preceding base at the GPOS mark-feature MarkBasePos (Type 4) anchor, lifting it off the baseline. PositionedGlyph gains y (baseline-relative, positive down); render_run composites at the mark's (x,y). Anchor formats 1/2/3 use the (x,y) design coordinates (device/contour refinements ignored). NotoSans (18 MarkToBase lookups) is the forcing consumer; the natural GPOS continuation after R1034 pair kerning, reusing the R1034/R1035 Coverage/nav infra.",
+      "changes_bullets": [
+        "New tables/gpos/markbase.rs: MarkBasePos (Type 4) Anchor/MarkArray/BaseArray + mark_offset",
+        "Gpos parses the `mark` feature; Gpos::mark_offset + Font::mark_offset delegation",
+        "shape_run stage 4: attach mark to last base (x=base.x+dx*s, y=-dy*s, font-up to screen-down)",
+        "PositionedGlyph gains y (baseline-rel, +down); render_run + shape_paragraph thread it through"
+      ],
+      "verification_bullets": [
+        "markbase 6 unit tests (built-byte anchor-delta oracle, fmt2/3, missing-anchor, bad formats)",
+        "NotoSans forcing consumer: shape_run mark exact x/y oracle + render_run inks above base",
+        "workspace test 0 fail (7395 passed); clippy --workspace vello + rustfmt clean; my files doc 0 new",
+        "validate T1=0; entries 1053->1054; §5.37.6 mark-to-base caveats + 3 bindings"
+      ],
+      "impact_refs": [
+        "5.37.6"
+      ],
+      "carry_forward_bullets": [
+        "RTL mark x: paragraph advance-mirror does not re-attach anchor-overridden marks (R50.6.x)",
+        "mark-to-ligature (Type 5) + mark-to-mark stacking (Type 6) + lookupFlag mark-skip deferred",
+        "parse_lookup_pairpos/markbase + parse_kern/mark_lookups = 2 mechanical copies; lift at 3rd GPOS type",
+        "font fallback + styled runs = cross-cutting paint-wiring blockers (bigger future round; R1043 audit)",
+        "cmap best_subtable + hhea int16[4] pre-existing cargo-doc dangling links (docs-round carry)"
+      ],
+      "publishable_decision_summary": "§5.37.6 R50.6.2 GPOS mark-to-base positioning: shape_run gains a 4th stage attaching each combining mark to its preceding base at the GPOS mark-feature MarkBasePos (Type 4) anchor, lifting it off the baseline. PositionedGlyph gains y (baseline-relative, positive down); render_run composites at the mark's (x,y). Anchor formats 1/2/3 use the (x,y) design coordinates (device/contour refinements ignored). NotoSans (18 MarkToBase lookups) is the forcing consumer; the natural GPOS continuation after R1034 pair kerning, reusing the R1034/R1035 Coverage/nav infra.",
+      "publishable_changes_bullets": [
+        "New tables/gpos/markbase.rs: MarkBasePos (Type 4) Anchor/MarkArray/BaseArray + mark_offset",
+        "Gpos parses the `mark` feature; Gpos::mark_offset + Font::mark_offset delegation",
+        "shape_run stage 4: attach mark to last base (x=base.x+dx*s, y=-dy*s, font-up to screen-down)",
+        "PositionedGlyph gains y (baseline-rel, +down); render_run + shape_paragraph thread it through"
+      ],
+      "publishable_verification_bullets": [
+        "markbase 6 unit tests (built-byte anchor-delta oracle, fmt2/3, missing-anchor, bad formats)",
+        "NotoSans forcing consumer: shape_run mark exact x/y oracle + render_run inks above base",
+        "workspace test 0 fail (7395 passed); clippy --workspace vello + rustfmt clean; my files doc 0 new",
+        "validate T1=0; entries 1053->1054; §5.37.6 mark-to-base caveats + 3 bindings"
+      ],
+      "publishable_impact_refs": [
+        "5.37.6"
+      ],
+      "publishable_carry_forward_bullets": [
+        "RTL mark x: paragraph advance-mirror does not re-attach anchor-overridden marks (R50.6.x)",
+        "mark-to-ligature (Type 5) + mark-to-mark stacking (Type 6) + lookupFlag mark-skip deferred",
+        "parse_lookup_pairpos/markbase + parse_kern/mark_lookups = 2 mechanical copies; lift at 3rd GPOS type",
+        "font fallback + styled runs = cross-cutting paint-wiring blockers (bigger future round; R1043 audit)",
         "cmap best_subtable + hhea int16[4] pre-existing cargo-doc dangling links (docs-round carry)"
       ]
     },

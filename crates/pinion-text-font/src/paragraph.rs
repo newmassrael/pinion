@@ -107,6 +107,10 @@ pub(crate) fn shape_runs_visual(
             // the last logical glyph), so in the reversed box its visual origin
             // is `pen + (run_advance - next_x)`. Kerning is already folded into
             // the logical pen by `shape_run` and is preserved through the mirror.
+            // A GPOS-attached mark's x is anchor-overridden (not advance-
+            // monotonic), so this advance-based mirror does not re-attach marks
+            // within a right-to-left run — RTL mark positioning is R50.6.x; the
+            // y offset is direction-independent and carries through unchanged.
             for i in (0..n).rev() {
                 let g = shaped.glyphs[i];
                 let next_x = if i + 1 < n {
@@ -117,6 +121,7 @@ pub(crate) fn shape_runs_visual(
                 glyphs.push(PositionedGlyph {
                     glyph_id: g.glyph_id,
                     x: pen + (shaped.advance - next_x),
+                    y: g.y,
                     cluster: active.origin_byte(g.cluster),
                 });
             }
@@ -125,6 +130,7 @@ pub(crate) fn shape_runs_visual(
                 glyphs.push(PositionedGlyph {
                     glyph_id: g.glyph_id,
                     x: pen + g.x,
+                    y: g.y,
                     cluster: active.origin_byte(g.cluster),
                 });
             }

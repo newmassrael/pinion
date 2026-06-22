@@ -408,3 +408,107 @@ fn render_run_wide_cjk_places_two_syllables() {
         one.ink_sum(),
     );
 }
+
+/// Find a `(base, mark)` pair `NotoSans` attaches via a GPOS mark-to-base
+/// lookup with a non-zero vertical lift (`dy != 0`) — the R50.6.2 forcing case.
+/// Returns `(base, mark, base_gid, mark_gid, dx, dy)` (anchor delta, design
+/// units, y up).
+fn positioned_mark(font: &Font) -> Option<(char, char, u16, u16, i16, i16)> {
+    let bases = ['a', 'e', 'o', 'n', 'c', 'u', 'i', 'A', 'E', 'O'];
+    let marks = [
+        '\u{0301}', '\u{0300}', '\u{0302}', '\u{0303}', '\u{0308}', '\u{030C}', '\u{0306}',
+        '\u{0327}',
+    ];
+    bases.iter().find_map(|&b| {
+        let bg = font.glyph_id_for(b as u32)?;
+        marks.iter().find_map(|&m| {
+            let mg = font.glyph_id_for(m as u32)?;
+            let (dx, dy) = font.mark_offset(bg, mg)?;
+            (dy != 0).then_some((b, m, bg, mg, dx, dy))
+        })
+    })
+}
+
+#[test]
+fn shape_run_applies_gpos_mark_to_base() {
+    // Forcing consumer for §5.37.6 GPOS mark-to-base (R50.6.2): NotoSans ships
+    // real `mark`-feature MarkBasePos lookups; shape_run must reach them
+    // (Script→Feature→Lookup→MarkBasePos) and attach a combining mark to its
+    // base at the anchor, lifting it off the baseline.
+    let font = load(NOTO);
+    assert!(font.gpos.is_some(), "NotoSans ships a GPOS table");
+    assert!(
+        font.gpos.as_ref().unwrap().has_marks(),
+        "NotoSans GPOS exposes a mark feature reachable from the default script"
+    );
+
+    let px = 64.0_f32;
+    let s = scale(&font, px);
+    let (base, mark, bg, mg, dx, dy) =
+        positioned_mark(&font).expect("NotoSans attaches a combining mark to a Latin base");
+
+    let run = font.shape_run(&format!("{base}{mark}"), px);
+    assert_eq!(
+        run.glyphs.len(),
+        2,
+        "base + mark => two glyphs (no ccmp/liga)"
+    );
+    assert_eq!(run.glyphs[0].glyph_id, bg, "glyph 0 is the base");
+    assert_eq!(run.glyphs[1].glyph_id, mg, "glyph 1 is the mark");
+
+    // Base on the baseline at the origin; mark anchor-placed relative to it.
+    // Exact f32 oracle mirrors shape_run's `base.x + dx*scale` / `-dy*scale`.
+    assert_eq!(run.glyphs[0].x.to_bits(), 0.0f32.to_bits(), "base origin x");
+    assert_eq!(
+        run.glyphs[0].y.to_bits(),
+        0.0f32.to_bits(),
+        "base on baseline"
+    );
+    let expected_x = 0.0f32 + f32::from(dx) * s;
+    let expected_y = -f32::from(dy) * s;
+    assert_eq!(
+        run.glyphs[1].x.to_bits(),
+        expected_x.to_bits(),
+        "{base}{mark}: mark x = base.x + anchor dx ({dx} units)"
+    );
+    assert_eq!(
+        run.glyphs[1].y.to_bits(),
+        expected_y.to_bits(),
+        "{base}{mark}: mark y = -anchor dy ({dy} units)"
+    );
+
+    // Non-vacuous: the mark genuinely left the baseline — bare shaping never
+    // sets a non-zero y, so this only passes when mark positioning ran.
+    assert_ne!(
+        run.glyphs[1].y.to_bits(),
+        0.0f32.to_bits(),
+        "mark is lifted off the baseline"
+    );
+}
+
+#[test]
+fn render_run_mark_inks_above_the_base() {
+    // The composited coverage of base+mark reaches above the bare base: the
+    // mark's ink sits over the baseline, so the union top is higher (smaller).
+    let font = load(NOTO);
+    let px = 64.0_f32;
+    let (base, mark, ..) =
+        positioned_mark(&font).expect("NotoSans attaches a combining mark to a Latin base");
+
+    let plain = font
+        .render_run(&base.to_string(), px)
+        .expect("base renders");
+    let accented = font
+        .render_run(&format!("{base}{mark}"), px)
+        .expect("base+mark renders");
+    assert!(
+        accented.top < plain.top,
+        "{base}{mark}: accented top {} must rise above bare base top {}",
+        accented.top,
+        plain.top
+    );
+    assert!(
+        accented.ink_sum() > plain.ink_sum(),
+        "accented text inks more than the bare base"
+    );
+}

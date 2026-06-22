@@ -5,26 +5,31 @@
 //! coverage bitmap. This is the first time the self-hosted text engine renders a
 //! whole *string* to pixels (the rasterizer renders one glyph by id).
 //!
-//! # Scope — cmap + GSUB ligatures + GPOS kerning (R50.6, R50.6.1, R50.7)
+//! # Scope — cmap + GSUB ligatures + GPOS kern & mark-to-base (R50.6 / .1 / .2, R50.7)
 //!
-//! Three-stage shaping: (1) cmap codepoint → glyph ([`Font::glyph_id_for`]);
+//! Four-stage shaping: (1) cmap codepoint → glyph ([`Font::glyph_id_for`]);
 //! (2) GSUB `liga` **ligature substitution** ([`Font::substitute_ligatures`],
 //! [`crate::tables::gsub`]) collapses component sequences (f + i → ﬁ); (3) GPOS
 //! `kern` **pair kerning** ([`Font::kern_x_advance`], [`crate::tables::gpos`])
-//! refines the advance between adjacent glyphs, with an hmtx-advance pen. GSUB
-//! before GPOS, per the OpenType pipeline. This mirrors the simple → composite
-//! raster split (R50.8 → R50.8.x) — a foundation refined incrementally.
+//! refines the advance between adjacent glyphs, with an hmtx-advance pen;
+//! (4) GPOS `mark` **mark-to-base attachment** ([`Font::mark_offset`]) places a
+//! combining mark at its anchor over the preceding base, lifting it off the
+//! baseline (the source of a glyph's non-zero `y`). GSUB before GPOS, per the
+//! OpenType pipeline. This mirrors the simple → composite raster split
+//! (R50.8 → R50.8.x) — a foundation refined incrementally.
 //!
 //! Deliberately NOT yet handled (each is honest deferral, not a silent gap):
 //! GSUB single / multiple / alternate / contextual / reverse-chaining (only
-//! Lookup Type 4 ligature substitution is applied); GPOS single / cursive / mark
-//! / contextual positioning (only Lookup Type 2 pair kerning is applied);
-//! `lookupFlag` glyph filtering (kern/liga apply to every adjacent run); script
-//! segmentation (§5.37.5); BIDI reorder (§5.37.4 lives in a separate crate, not
-//! yet wired in here — a single visual run is assumed); grapheme clustering /
-//! combining marks (iteration is per codepoint); and line breaking (§5.37.7 — a
-//! single line is assumed). Production paint is still §5.36 swash; [`render_run`]
-//! is a test forcing-consumer until the GPU atlas + paint wiring land.
+//! Lookup Type 4 ligature substitution is applied); GPOS single / cursive /
+//! mark-to-ligature / mark-to-mark / contextual positioning (only Lookup Types 2
+//! pair kerning and 4 mark-to-base are applied); `lookupFlag` glyph filtering
+//! (kern/liga apply to every adjacent run; a mark attaches to its immediately
+//! preceding base); script segmentation (§5.37.5); BIDI reorder (§5.37.4 lives
+//! in a separate crate — [`crate::paragraph`] wires it in, `shape_run` itself
+//! assumes a single direction); grapheme clustering (iteration is per
+//! codepoint); and line breaking (§5.37.7 — a single line is assumed).
+//! Production paint is still §5.36 swash; [`render_run`] is a test
+//! forcing-consumer until the GPU atlas + paint wiring land.
 //!
 //! # Determinism
 //!
@@ -52,12 +57,17 @@ const ATLAS_WIDTH: usize = 256;
 /// source codepoint (into the run `&str` from [`shape_run`], into the whole
 /// paragraph from `shape_paragraph` — where it descends across a right-to-left
 /// run), so a caller can map a glyph back to its text (hit-testing / selection).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct PositionedGlyph {
     /// Resolved glyph id (`.notdef` = 0 for an unmapped codepoint).
     pub glyph_id: u16,
     /// Pen-origin x (device px, baseline-relative, pre-snap).
     pub x: f32,
+    /// Pen-origin y (device px, baseline-relative, **positive downward**; 0 on
+    /// the baseline). Non-zero only for a GPOS-attached combining mark
+    /// (§5.37.6 mark-to-base) — base glyphs and unmarked text stay on the
+    /// baseline.
+    pub y: f32,
     /// Byte offset of the source codepoint within the shaped `&str`.
     pub cluster: usize,
 }
@@ -121,12 +131,37 @@ pub fn shape_run(font: &Font, text: &str, px_per_em: f32) -> ShapedRun {
         glyphs.push(PositionedGlyph {
             glyph_id,
             x: pen,
+            y: 0.0,
             cluster: raw_clusters[origin],
         });
         let advance_units = font.glyph_advance_width(glyph_id).unwrap_or(0);
         pen += f32::from(advance_units) * scale;
         prev_glyph = Some(glyph_id);
     }
+
+    // Stage 4 — GPOS mark-to-base attachment: place each combining mark at its
+    // anchor relative to the preceding base glyph, overriding the mark's
+    // running-pen x and lifting it off the baseline (y). Font design units are
+    // y-up while the pen is y-down, so the vertical anchor delta is negated.
+    // Combining marks carry ~0 hmtx advance, so the pen accumulated above stays
+    // correct for following glyphs. A positioned mark is not itself a base for
+    // later marks — mark-to-mark stacking (Lookup Type 6) is R50.6.x.
+    let mut last_base: Option<usize> = None;
+    for i in 0..glyphs.len() {
+        let mark = glyphs[i].glyph_id;
+        let attached = last_base.and_then(|bi| {
+            let (base_glyph, base_x) = (glyphs[bi].glyph_id, glyphs[bi].x);
+            font.mark_offset(base_glyph, mark)
+                .map(|(dx, dy)| (base_x, dx, dy))
+        });
+        if let Some((base_x, dx, dy)) = attached {
+            glyphs[i].x = base_x + f32::from(dx) * scale;
+            glyphs[i].y = -f32::from(dy) * scale;
+        } else {
+            last_base = Some(i);
+        }
+    }
+
     ShapedRun {
         glyphs,
         advance: pen,
@@ -155,37 +190,38 @@ pub fn render_run(font: &Font, text: &str, px_per_em: f32) -> Result<Coverage, R
     // is a cache hit), remembering its integer-snapped pen x. Blank glyphs (space)
     // advance the pen but pack nothing (width 0).
     let mut atlas = GlyphAtlas::new(ATLAS_WIDTH);
-    let mut placed: Vec<(i32, AtlasGlyph)> = Vec::new();
+    let mut placed: Vec<(i32, i32, AtlasGlyph)> = Vec::new();
     for glyph in &run.glyphs {
         let entry = atlas.get_or_insert(font, glyph.glyph_id, px_per_em)?;
         if entry.width == 0 {
             continue;
         }
         #[allow(clippy::cast_possible_truncation)]
-        // pen x is a finite advance accumulation; round() snaps onto the raster
-        // grid for deterministic placement.
-        let pen_x = glyph.x.round() as i32;
-        placed.push((pen_x, entry));
+        // pen x/y are finite accumulations; round() snaps onto the raster grid
+        // for deterministic placement. pen_y is non-zero only for an attached
+        // mark (baseline-relative, positive downward).
+        let (pen_x, pen_y) = (glyph.x.round() as i32, glyph.y.round() as i32);
+        placed.push((pen_x, pen_y, entry));
     }
     if placed.is_empty() {
         return Ok(Coverage::empty());
     }
 
     // Union bounding box in combined-bitmap space. A glyph's pixels occupy
-    // columns [pen_x + left, pen_x + left + width) and rows [top, top + height)
-    // — baseline = row 0, `top` negative above it. All glyphs share the
-    // baseline, so their `top` values are directly comparable.
+    // columns [pen_x + left, ...) and rows [pen_y + top, pen_y + top + height)
+    // — baseline = row 0, `top` negative above it, `pen_y` the mark's vertical
+    // attachment offset (0 for baseline glyphs).
     #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
     // each glyph width/height <= MAX_DIM (4096), exact in i32.
     let (min_x, min_y, max_x, max_y) = placed.iter().fold(
         (i32::MAX, i32::MAX, i32::MIN, i32::MIN),
-        |(min_x, min_y, max_x, max_y), (pen_x, g)| {
-            let gx = pen_x + g.left;
+        |(min_x, min_y, max_x, max_y), (pen_x, pen_y, g)| {
+            let (gx, gy) = (pen_x + g.left, pen_y + g.top);
             (
                 min_x.min(gx),
-                min_y.min(g.top),
+                min_y.min(gy),
                 max_x.max(gx + g.width as i32),
-                max_y.max(g.top + g.height as i32),
+                max_y.max(gy + g.height as i32),
             )
         },
     );
@@ -194,9 +230,13 @@ pub fn render_run(font: &Font, text: &str, px_per_em: f32) -> Result<Coverage, R
     let (width, height) = ((max_x - min_x) as usize, (max_y - min_y) as usize);
     let mut alpha = vec![0u8; width * height];
     let (atlas_w, atlas_alpha) = (atlas.width(), atlas.alpha());
-    for (pen_x, g) in &placed {
-        #[allow(clippy::cast_sign_loss)] // pen_x + left >= min_x, top >= min_y by the fold above.
-        let (off_x, off_y) = ((pen_x + g.left - min_x) as usize, (g.top - min_y) as usize);
+    for (pen_x, pen_y, g) in &placed {
+        #[allow(clippy::cast_sign_loss)]
+        // pen_x+left >= min_x, pen_y+top >= min_y by the fold above.
+        let (off_x, off_y) = (
+            (pen_x + g.left - min_x) as usize,
+            (pen_y + g.top - min_y) as usize,
+        );
         for gy in 0..g.height {
             let dst_row = (off_y + gy) * width + off_x;
             let src_row = (g.y + gy) * atlas_w + g.x;

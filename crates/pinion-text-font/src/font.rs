@@ -236,6 +236,15 @@ impl Font {
             .map_or(0, |g| g.kern_x_advance(left, right))
     }
 
+    /// Design-unit translation `(dx, dy)` (y up) placing combining `mark`'s
+    /// anchor onto `base`'s anchor, via the GPOS `mark` feature mark-to-base
+    /// lookups (§5.37.6). `None` when the font has no GPOS table or no
+    /// mark-to-base lookup attaches this mark to this base.
+    #[must_use]
+    pub fn mark_offset(&self, base: u16, mark: u16) -> Option<(i16, i16)> {
+        self.gpos.as_ref().and_then(|g| g.mark_offset(base, mark))
+    }
+
     /// Shape `text` into a positioned glyph run at `px_per_em` (§5.37.6: cmap
     /// codepoint → glyph + hmtx advance, refined by GPOS `kern` pair
     /// positioning). See [`crate::shape::shape_run`] for the scope and
