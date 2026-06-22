@@ -13458,6 +13458,50 @@
         "carry-forward unchanged: GSUB Type 2 multiple (NotoSans ccmp's actual decomposition) / GPOS Type 5 mark-to-ligature / lookupFlag filtering / per-line vmetrics=fonts[0] / wrap cross-font-run kerning / GPU N-atlas bind / styled-run per-span color RGBA"
       ]
     },
+    "R1059": {
+      "decision_summary": "R1059 §5.16 SizeStrategy::OpenResizable -- decouple window open-size from the OS-resize floor (PR-23 consumer-forced seam from sprag R55 undock). New #[non_exhaustive] additive variant {size, min:Option}: opens at size with no post-paint resize; floor=min, or None=OS-native-minimum so the window can shrink below its open size. Fixed/IntrinsicAfterFirstPaint byte-unchanged via the lifted min_inner_floor() SSOT both the live + headless app.rs paths consume.",
+      "changes_bullets": [
+        "lib.rs: SizeStrategy gains OpenResizable { size:(u32,u32), min:Option<(u32,u32)> } -- additive variant on the #[non_exhaustive] enum, so every existing Fixed/IntrinsicAfterFirstPaint construction + the #[pinion::widget(initial_size)] derive emit stays source-unchanged (seed (b) over seed (a)'s field-add which would break all Fixed literals)",
+        "lib.rs: lift min_inner_floor(self)->Option<(u32,u32)> as the single source of truth for the winit set_min_inner_size floor; Fixed=Some(open), IntrinsicAfterFirstPaint=Some(min), OpenResizable=min (None = no explicit floor); initial_logical_size gains OpenResizable=>size arm",
+        "app.rs live window-create: inline min_floor match replaced by strategy.min_inner_floor(); None skips with_min_inner_size so winit leaves the window at the OS-native minimum -- the freely-shrinkable case (drag below open size no longer blocked)",
+        "app.rs: pending_intrinsic_resize folds OpenResizable into the Fixed no-post-paint-resize arm; headless screenshot path paints OpenResizable once at its open size like Fixed (floor is a live-winit-only concern, no headless effect)"
+      ],
+      "verification_bullets": [
+        "4 new headless unit tests (pinion-shell lib.rs): Fixed floors at open size + IntrinsicAfterFirstPaint floors at min (pre-R1059 regression guards) / OpenResizable opens at size with an independent SMALLER floor / OpenResizable{min:None} reports no floor = the freely-shrinkable acceptance criterion",
+        "the live winit drag-floor itself is not headless-observable, but the floor POLICY (the only thing PR-23 changes) is fully covered via the lifted min_inner_floor() SSOT both the live window-create and the headless screenshot path consume",
+        "cargo test --workspace -j2: 7457 pass 0 fail (= 7453 R1058 baseline + 4 R1059 tests; real cargo exit captured, not pipe-masked); pinion-shell --lib 67 pass; clippy --workspace --all-targets --features pinion-runtime/vello 0 warn; rustfmt clean; validate T1 orphan=0",
+        "Fixed/IntrinsicAfterFirstPaint byte-unchanged: min_inner_floor() returns the exact value the deleted inline app.rs min_floor match produced (pinned by the two regression tests)"
+      ],
+      "impact_refs": [
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "PR-23 consumer (sprag R55, sprag-native session -- pinion cannot edit sprag): swap undock WindowSpec + main initial_size_strategy from Fixed to OpenResizable{min:None} to unblock free shrink below open size",
+        "ratified design pick: variant OpenResizable + min:Option(None=OS-native floor); the rejected forks were seed (a) Fixed{min} field-add (source-breaking) and a required-min OpenAt (less expressive for the OS-minimum case)",
+        "no pinion demo exercises OpenResizable end-to-end yet (the drag-floor is live-winit-only, not headless-observable); a Phase-B resizable-window demo could pin it visually if a future round wants the live evidence"
+      ],
+      "publishable_decision_summary": "R1059 §5.16 SizeStrategy::OpenResizable -- decouple window open-size from the OS-resize floor (PR-23 consumer-forced seam from sprag R55 undock). New #[non_exhaustive] additive variant {size, min:Option}: opens at size with no post-paint resize; floor=min, or None=OS-native-minimum so the window can shrink below its open size. Fixed/IntrinsicAfterFirstPaint byte-unchanged via the lifted min_inner_floor() SSOT both the live + headless app.rs paths consume.",
+      "publishable_changes_bullets": [
+        "lib.rs: SizeStrategy gains OpenResizable { size:(u32,u32), min:Option<(u32,u32)> } -- additive variant on the #[non_exhaustive] enum, so every existing Fixed/IntrinsicAfterFirstPaint construction + the #[pinion::widget(initial_size)] derive emit stays source-unchanged (seed (b) over seed (a)'s field-add which would break all Fixed literals)",
+        "lib.rs: lift min_inner_floor(self)->Option<(u32,u32)> as the single source of truth for the winit set_min_inner_size floor; Fixed=Some(open), IntrinsicAfterFirstPaint=Some(min), OpenResizable=min (None = no explicit floor); initial_logical_size gains OpenResizable=>size arm",
+        "app.rs live window-create: inline min_floor match replaced by strategy.min_inner_floor(); None skips with_min_inner_size so winit leaves the window at the OS-native minimum -- the freely-shrinkable case (drag below open size no longer blocked)",
+        "app.rs: pending_intrinsic_resize folds OpenResizable into the Fixed no-post-paint-resize arm; headless screenshot path paints OpenResizable once at its open size like Fixed (floor is a live-winit-only concern, no headless effect)"
+      ],
+      "publishable_verification_bullets": [
+        "4 new headless unit tests (pinion-shell lib.rs): Fixed floors at open size + IntrinsicAfterFirstPaint floors at min (pre-R1059 regression guards) / OpenResizable opens at size with an independent SMALLER floor / OpenResizable{min:None} reports no floor = the freely-shrinkable acceptance criterion",
+        "the live winit drag-floor itself is not headless-observable, but the floor POLICY (the only thing PR-23 changes) is fully covered via the lifted min_inner_floor() SSOT both the live window-create and the headless screenshot path consume",
+        "cargo test --workspace -j2: 7457 pass 0 fail (= 7453 R1058 baseline + 4 R1059 tests; real cargo exit captured, not pipe-masked); pinion-shell --lib 67 pass; clippy --workspace --all-targets --features pinion-runtime/vello 0 warn; rustfmt clean; validate T1 orphan=0",
+        "Fixed/IntrinsicAfterFirstPaint byte-unchanged: min_inner_floor() returns the exact value the deleted inline app.rs min_floor match produced (pinned by the two regression tests)"
+      ],
+      "publishable_impact_refs": [
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "PR-23 consumer (sprag R55, sprag-native session -- pinion cannot edit sprag): swap undock WindowSpec + main initial_size_strategy from Fixed to OpenResizable{min:None} to unblock free shrink below open size",
+        "ratified design pick: variant OpenResizable + min:Option(None=OS-native floor); the rejected forks were seed (a) Fixed{min} field-add (source-breaking) and a required-min OpenAt (less expressive for the OS-minimum case)",
+        "no pinion demo exercises OpenResizable end-to-end yet (the drag-floor is live-winit-only, not headless-observable); a Phase-B resizable-window demo could pin it visually if a future round wants the live evidence"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
