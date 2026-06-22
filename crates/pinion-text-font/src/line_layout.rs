@@ -4,7 +4,10 @@
 //! it joins the two halves built up to here — the UAX #14 greedy line breaker
 //! ([`crate::wrap_paragraph`], §5.37.7) and the UAX #9 paragraph shaper
 //! ([`crate::shape_paragraph`], §5.37.6) — into a wrapped, shaped block of
-//! lines, each carrying its glyphs and a baseline.
+//! lines, each carrying its glyphs and a baseline. [`layout_paragraph_with_fallback`]
+//! is the multi-font analogue: it wraps and shapes across a font stack with
+//! per-codepoint fallback (§5.37.10), so a mixed-script paragraph breaks at its
+//! true advances and each glyph carries its fallback font's stack index.
 //!
 //! BIDI levels are **paragraph-context**, resolved once for the whole paragraph
 //! ([`pinion_text_unicode::itemize()`]); a line is then a *slice* of that
@@ -33,10 +36,10 @@
 //! test forcing-consumer until the paint path wires the self-hosted layout.
 
 use crate::Font;
-use crate::paragraph::{shape_runs_visual, single_font_runs};
+use crate::paragraph::{PlacementRun, font_split_runs, shape_runs_visual, single_font_runs};
 use crate::raster::{Coverage, RasterError};
 use crate::shape::{GlyphDraw, PositionedGlyph, render_glyphs};
-use crate::wrap::{LineRange, wrap_paragraph};
+use crate::wrap::{LineRange, wrap_paragraph, wrap_paragraph_with_fallback};
 use pinion_text_unicode::{ItemRun, itemize};
 
 /// One laid-out, shaped line of a paragraph.
@@ -85,13 +88,78 @@ pub fn layout_paragraph(
     if line_ranges.is_empty() {
         return ShapedLines::default();
     }
-
     // Resolve BIDI + script once for the whole paragraph; lines are slices of
     // this single resolution (paragraph-context levels), never re-resolved.
     let para_runs = itemize(paragraph);
+    // Single-font multi-line: every clipped run shapes in `font` (index 0).
+    assemble_lines(
+        &[font],
+        paragraph,
+        px_per_em,
+        &line_ranges,
+        &para_runs,
+        single_font_runs,
+    )
+}
 
-    // Vertical metrics from hhea, guarded like `shape_run` (a degenerate
-    // units-per-em or a non-finite / non-positive size collapses to zero).
+/// Wrap `paragraph` to `max_width` and shape each line across the `fonts` stack
+/// with per-codepoint fallback (§5.37.6 + §5.37.7 + §5.37.10) — the multi-font
+/// analogue of [`layout_paragraph`], joining the fallback shaper
+/// ([`crate::shape_paragraph_with_fallback`]) with the line breaker. Wrapping
+/// measures advances across the stack ([`wrap_paragraph_with_fallback`]) so a
+/// mixed-script paragraph breaks at its true widths, and each wrapped line's
+/// clipped runs are font-split ([`font_split_runs`]) before shaping, so every
+/// glyph carries the stack index of the font that shaped it (a renderer
+/// rasterizes it with `fonts[g.font_index]`; [`render_lines`] does exactly that).
+/// Vertical metrics come from the primary font (`fonts[0]`); a one-element stack
+/// reproduces [`layout_paragraph`] exactly. Expects a single BIDI paragraph; an
+/// empty string or empty stack yields no lines.
+#[must_use]
+pub fn layout_paragraph_with_fallback(
+    fonts: &[&Font],
+    paragraph: &str,
+    px_per_em: f32,
+    max_width: f32,
+) -> ShapedLines {
+    if fonts.is_empty() {
+        return ShapedLines::default();
+    }
+    let line_ranges = wrap_paragraph_with_fallback(fonts, paragraph, px_per_em, max_width);
+    if line_ranges.is_empty() {
+        return ShapedLines::default();
+    }
+    let para_runs = itemize(paragraph);
+    assemble_lines(
+        fonts,
+        paragraph,
+        px_per_em,
+        &line_ranges,
+        &para_runs,
+        |clipped| font_split_runs(fonts, paragraph, clipped),
+    )
+}
+
+/// Shape and stack the wrapped `line_ranges` into a [`ShapedLines`] block — the
+/// core shared by [`layout_paragraph`] (single-font feeder) and
+/// [`layout_paragraph_with_fallback`] (font-split feeder). Only the per-line
+/// run-builder differs, so the vertical-metric computation and per-line stacking
+/// live here once. `para_runs` are the paragraph's itemised runs (resolved once,
+/// never per line); `build_runs` maps each line's clipped runs onto placement
+/// runs over `fonts`. Vertical metrics come from `fonts[0]` (the caller
+/// guarantees a non-empty stack and non-empty `line_ranges`).
+fn assemble_lines(
+    fonts: &[&Font],
+    paragraph: &str,
+    px_per_em: f32,
+    line_ranges: &[LineRange],
+    para_runs: &[ItemRun],
+    build_runs: impl Fn(&[ItemRun]) -> Vec<PlacementRun>,
+) -> ShapedLines {
+    // Vertical metrics from the primary font's hhea, guarded like `shape_run` (a
+    // degenerate units-per-em or a non-finite / non-positive size collapses to
+    // zero). Mixing per-line metrics across fallback fonts is a deeper typographic
+    // concern (line box = max run ascent); the primary font sets the line box.
+    let font = fonts[0];
     let upem = font.units_per_em();
     let scale = if upem == 0 || !px_per_em.is_finite() || px_per_em <= 0.0 {
         0.0
@@ -117,12 +185,10 @@ pub fn layout_paragraph(
     let mut lines: Vec<ShapedLine> = Vec::with_capacity(line_ranges.len());
     let mut width = 0.0_f32;
     let mut height = 0.0_f32; // running top offset, also the final block height
-    for range in &line_ranges {
-        let clipped = clip_runs(&para_runs, range.start, range.end);
-        // Single-font multi-line: every clipped run shapes in `font` (index 0).
-        // Combining fallback with wrapping is a later layer (see module scope).
-        let placed = single_font_runs(&clipped);
-        let shaped = shape_runs_visual(&[font], paragraph, px_per_em, &placed);
+    for range in line_ranges {
+        let clipped = clip_runs(para_runs, range.start, range.end);
+        let placed = build_runs(&clipped);
+        let shaped = shape_runs_visual(fonts, paragraph, px_per_em, &placed);
         width = width.max(shaped.advance);
         lines.push(ShapedLine {
             glyphs: shaped.glyphs,
@@ -147,10 +213,10 @@ pub fn layout_paragraph(
 /// block-top-relative baseline) and composited through one glyph atlas per stack
 /// font. `fonts` must be the stack the lines were shaped with: single-font
 /// [`layout_paragraph`] tags every glyph `font_index` 0, so a one-font stack
-/// suffices, but a multi-font stack is honoured for forward compatibility (when
-/// wrapping combines with fallback). Returns [`Coverage::empty`] for no lines or an
-/// empty stack. Production paint is still §5.36 swash, so this is a test
-/// forcing-consumer.
+/// suffices, while [`layout_paragraph_with_fallback`] tags each glyph with its
+/// fallback font's stack index — this rasterizes each from that font. Returns
+/// [`Coverage::empty`] for no lines or an empty stack. Production paint is still
+/// §5.36 swash, so this is a test forcing-consumer.
 ///
 /// # Errors
 ///
@@ -198,17 +264,26 @@ fn clip_runs(runs: &[ItemRun], start: usize, end: usize) -> Vec<ItemRun> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ShapedLines, layout_paragraph, render_lines};
+    use super::{ShapedLines, layout_paragraph, layout_paragraph_with_fallback, render_lines};
+    use crate::fallback::shape_with_fallback;
     use crate::raster::Coverage;
     use crate::shape::shape_run;
-    use crate::{Font, render_paragraph, shape_paragraph};
+    use crate::{Font, render_paragraph, shape_paragraph, shape_paragraph_with_fallback};
     use pinion_text_unicode::{is_removed_by_x9, reorder_visual, resolved_levels};
 
     const NOTO: &str = "tests/fonts/NotoSans-Regular.ttf";
+    const NANUM: &str = "tests/fonts/NanumGothic-Regular.ttf";
+    /// Hangul GA / NA / DA (U+AC00 U+B098 U+B2E4) — uncovered by `NotoSans`,
+    /// covered by `NanumGothic`; written escaped to keep the source ASCII-only.
+    const HANGUL: &str = "\u{AC00}\u{B098}\u{B2E4}";
     const PX: f32 = 32.0;
 
     fn font() -> Font {
-        let bytes = std::fs::read(NOTO).expect("read font fixture");
+        load(NOTO)
+    }
+
+    fn load(path: &str) -> Font {
+        let bytes = std::fs::read(path).expect("read font fixture");
         Font::from_bytes(bytes).expect("valid Font")
     }
 
@@ -516,6 +591,108 @@ mod tests {
         assert!(
             step.abs_diff(expected) <= 2,
             "second line starts ~line_height ({expected}) below the first; got {step}"
+        );
+    }
+
+    // ---- layout_paragraph_with_fallback (R1054 multi-font multi-line) ----
+
+    #[test]
+    fn fallback_single_font_stack_equals_layout_paragraph() {
+        // A one-element stack reproduces the single-font layout exactly (every glyph
+        // font_index 0, same wrap, same baselines): layout_paragraph is the 1-stack
+        // special case of layout_paragraph_with_fallback.
+        let f = font();
+        let narrow = shape_paragraph(&f, "alpha beta ", PX).advance;
+        let cases: [(&str, f32); 2] = [
+            ("the quick brown fox", f32::MAX),
+            ("alpha beta gamma delta epsilon", narrow),
+        ];
+        for (text, max) in cases {
+            assert_eq!(
+                layout_paragraph_with_fallback(&[&f], text, PX, max),
+                layout_paragraph(&f, text, PX, max),
+                "1-font stack == single-font layout for {text:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn wrapped_mixed_script_tags_fonts_per_codepoint() {
+        // A paragraph alternating Latin and Hangul, wrapped to several lines: every
+        // glyph must carry the stack index of the font covering its codepoint —
+        // Latin -> Noto (0), Hangul -> Nanum (1) — across the wrap, and the lines
+        // must still tile [0, len) covering each codepoint once. Proves wrapping and
+        // fallback compose, not just one in isolation.
+        let noto = font();
+        let nanum = load(NANUM);
+        let stack = [&noto, &nanum];
+        let text = format!("abc {HANGUL} xyz {HANGUL} def");
+        let max = shape_with_fallback(&stack, &format!("abc {HANGUL} "), PX).advance;
+        let laid = layout_paragraph_with_fallback(&stack, &text, PX, max);
+        assert!(laid.lines.len() >= 2, "mixed paragraph must wrap");
+
+        for line in &laid.lines {
+            for g in &line.glyphs {
+                let ch = text[g.cluster..]
+                    .chars()
+                    .next()
+                    .expect("cluster lands on a char start");
+                let want = usize::from(!ch.is_ascii());
+                assert_eq!(
+                    g.font_index, want,
+                    "cluster {} ({ch:?}) font_index",
+                    g.cluster,
+                );
+            }
+        }
+
+        // Lines tile and cover every codepoint exactly once.
+        assert_eq!(laid.lines[0].range.start, 0);
+        assert_eq!(laid.lines.last().unwrap().range.end, text.len());
+        for pair in laid.lines.windows(2) {
+            assert_eq!(pair[0].range.end, pair[1].range.start, "contiguous");
+        }
+        let mut seen: Vec<usize> = laid
+            .lines
+            .iter()
+            .flat_map(|l| l.glyphs.iter().map(|g| g.cluster))
+            .collect();
+        seen.sort_unstable();
+        let want: Vec<usize> = text.char_indices().map(|(b, _)| b).collect();
+        assert_eq!(seen, want, "every codepoint shaped exactly once");
+    }
+
+    #[test]
+    fn render_lines_multi_font_ink_matches_render_paragraph() {
+        // One unwrapped mixed-script line: layout_paragraph_with_fallback +
+        // render_lines must produce the SAME ink as shape_paragraph_with_fallback +
+        // render_paragraph (both feed the shared render_glyphs core), shifted down by
+        // the baseline. render_paragraph's multi-font rasterization is separately
+        // proven (R1050/R1051), so this transitively pins render_lines feeding the
+        // fallback stack — the Hangul rasterizes from Nanum, the Latin from Noto.
+        let noto = font();
+        let nanum = load(NANUM);
+        let stack = [&noto, &nanum];
+        let text = format!("ab {HANGUL} cd");
+        let laid = layout_paragraph_with_fallback(&stack, &text, PX, f32::MAX);
+        assert_eq!(laid.lines.len(), 1, "unbounded width => one line");
+        let block = render_lines(&stack, &laid, PX).unwrap();
+        let para = render_paragraph(
+            &stack,
+            &shape_paragraph_with_fallback(&stack, &text, PX),
+            PX,
+        )
+        .unwrap();
+        assert!(!block.alpha.is_empty(), "mixed line has ink");
+        assert_eq!(block.alpha, para.alpha, "identical multi-font ink");
+        assert_eq!((block.width, block.height), (para.width, para.height));
+        assert_eq!(block.left, para.left);
+        #[allow(clippy::cast_possible_truncation)]
+        let baseline = laid.lines[0].baseline.round() as i32;
+        assert_eq!(
+            block.top,
+            para.top + baseline,
+            "shifted down by the baseline"
         );
     }
 }

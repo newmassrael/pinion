@@ -6,6 +6,12 @@
 //! paragraph into logical lines so each line is as full as possible without
 //! exceeding the width — the classic greedy (first-fit) line breaker.
 //!
+//! Two entry points share one greedy core ([`greedy_break`]), differing only in
+//! how each segment's advance is measured: [`wrap_paragraph`] measures in a
+//! single font, [`wrap_paragraph_with_fallback`] measures across a font stack
+//! with per-codepoint fallback (§5.37.10) so a mixed-script paragraph wraps at
+//! its true advances rather than the primary font's `.notdef` widths.
+//!
 //! Lines are byte ranges in **logical** order. Visual reordering and per-line
 //! shaping are a later step ([`crate::shape_paragraph`] applied per line, with
 //! paragraph-context BIDI levels); the line *width* used here is the sum of
@@ -19,8 +25,9 @@
 //! forcing-consumer until the paint path wires the self-hosted layout.
 
 use crate::Font;
+use crate::fallback::shape_with_fallback;
 use crate::shape::shape_run;
-use pinion_text_unicode::line_break_opportunities;
+use pinion_text_unicode::{BreakOpportunity, line_break_opportunities};
 
 /// One laid-out line: a byte range `start..end` (`end` exclusive) into the
 /// source paragraph, in logical order.
@@ -48,22 +55,72 @@ pub fn wrap_paragraph(
     if breaks.is_empty() {
         return Vec::new();
     }
+    let adv_to = cumulative_advances(paragraph, &breaks, |seg| {
+        shape_run(font, seg, px_per_em).advance
+    });
+    greedy_break(&breaks, &adv_to, max_width)
+}
 
-    // Cumulative advance to each break offset. Each inter-break segment is shaped
-    // once, so this is O(n) shaping; `adv_to[i]` is the advance of
-    // `paragraph[0..breaks[i].offset]`. Kerning is dropped at every interior
-    // opportunity within a line (each segment is shaped independently), so the
-    // summed width is a slight under-estimate vs a single-run shape; for typical
-    // fonts this is sub-pixel, and at the chosen break point it is exact.
+/// Greedily break `paragraph` into lines no wider than `max_width`, measuring
+/// each segment across the `fonts` stack with per-codepoint fallback
+/// ([`shape_with_fallback`], §5.37.10) — the multi-font analogue of
+/// [`wrap_paragraph`]. A mixed-script paragraph wraps at its *true* advances
+/// (a codepoint the primary font lacks is measured in the font that actually
+/// shapes it, not as the primary's `.notdef`), so the break points feed a
+/// fallback-aware line layout ([`crate::line_layout::layout_paragraph_with_fallback`]).
+/// A one-element stack reproduces [`wrap_paragraph`] exactly (one font run per
+/// segment). An empty stack measures every segment as zero width, so the whole
+/// paragraph fits one line.
+#[must_use]
+pub fn wrap_paragraph_with_fallback(
+    fonts: &[&Font],
+    paragraph: &str,
+    px_per_em: f32,
+    max_width: f32,
+) -> Vec<LineRange> {
+    let breaks = line_break_opportunities(paragraph);
+    if breaks.is_empty() {
+        return Vec::new();
+    }
+    let adv_to = cumulative_advances(paragraph, &breaks, |seg| {
+        shape_with_fallback(fonts, seg, px_per_em).advance
+    });
+    greedy_break(&breaks, &adv_to, max_width)
+}
+
+/// Cumulative advance to each break offset, segment by segment. `adv_to[i]` is
+/// the summed advance of `paragraph[0..breaks[i].offset]`, each inter-break
+/// segment measured once by `measure` (O(n) shaping). Kerning is dropped at
+/// every interior opportunity within a line (each segment is measured
+/// independently), so the summed width is a slight under-estimate vs a
+/// single-run shape; for typical fonts this is sub-pixel, and at the chosen
+/// break point it is exact. The `measure` closure abstracts the font model —
+/// a single font ([`wrap_paragraph`]) or a fallback stack
+/// ([`wrap_paragraph_with_fallback`]).
+fn cumulative_advances(
+    paragraph: &str,
+    breaks: &[BreakOpportunity],
+    measure: impl Fn(&str) -> f32,
+) -> Vec<f32> {
     let mut adv_to: Vec<f32> = Vec::with_capacity(breaks.len());
     let mut seg_start = 0usize;
     let mut cumulative = 0.0_f32;
-    for bp in &breaks {
-        cumulative += shape_run(font, &paragraph[seg_start..bp.offset], px_per_em).advance;
+    for bp in breaks {
+        cumulative += measure(&paragraph[seg_start..bp.offset]);
         adv_to.push(cumulative);
         seg_start = bp.offset;
     }
+    adv_to
+}
 
+/// The greedy (first-fit) line breaker, shared by [`wrap_paragraph`] and
+/// [`wrap_paragraph_with_fallback`]: only the per-segment advance differs between
+/// them, so the break decision — width check, mandatory-break handling, overflow
+/// fallback — lives here as the single SSOT. `adv_to[i]` is the cumulative
+/// advance at `breaks[i]`; a line's width is `adv_to[i] - base`. The width check
+/// precedes the mandatory-ness check so an optional break that fits is taken
+/// before a following mandatory break whose segment would overflow.
+fn greedy_break(breaks: &[BreakOpportunity], adv_to: &[f32], max_width: f32) -> Vec<LineRange> {
     let mut lines: Vec<LineRange> = Vec::new();
     let mut line_start = 0usize;
     let mut base = 0.0_f32; // cumulative advance at the current line's start
@@ -112,15 +169,21 @@ pub fn wrap_paragraph(
 
 #[cfg(test)]
 mod tests {
-    use super::{LineRange, wrap_paragraph};
+    use super::{LineRange, wrap_paragraph, wrap_paragraph_with_fallback};
     use crate::Font;
+    use crate::fallback::shape_with_fallback;
     use crate::shape::shape_run;
 
     const NOTO: &str = "tests/fonts/NotoSans-Regular.ttf";
+    const NANUM: &str = "tests/fonts/NanumGothic-Regular.ttf";
     const PX: f32 = 32.0;
 
     fn font() -> Font {
-        let bytes = std::fs::read(NOTO).expect("read font fixture");
+        load(NOTO)
+    }
+
+    fn load(path: &str) -> Font {
+        let bytes = std::fs::read(path).expect("read font fixture");
         Font::from_bytes(bytes).expect("valid Font")
     }
 
@@ -290,5 +353,79 @@ mod tests {
                 "line {line:?} width {w} > {max} yet has {interior} interior break(s)"
             );
         }
+    }
+
+    // ---- wrap_paragraph_with_fallback (R1054 multi-font wrapping) ----
+
+    #[test]
+    fn fallback_single_font_stack_equals_wrap_paragraph() {
+        // A one-element stack measures each segment in that one font (one font run
+        // per segment), so the fallback wrap must reproduce the single-font wrap
+        // byte-for-byte — the special case that keeps the two paths consistent.
+        let f = font();
+        let cases: [(&str, f32); 3] = [
+            ("the quick brown fox", f32::MAX),
+            ("alpha beta gamma delta", width(&f, "alpha beta ")),
+            ("a\n\nb\u{2028}c", f32::MAX),
+        ];
+        for (text, max) in cases {
+            assert_eq!(
+                wrap_paragraph_with_fallback(&[&f], text, PX, max),
+                wrap_paragraph(&f, text, PX, max),
+                "1-font stack == single-font wrap for {text:?}",
+            );
+        }
+    }
+
+    /// Hangul GA / NA / DA (U+AC00 U+B098 U+B2E4) — uncovered by `NotoSans`,
+    /// covered by `NanumGothic`; written escaped to keep the source ASCII-only.
+    const HANGUL: &str = "\u{AC00}\u{B098}\u{B2E4}";
+
+    #[test]
+    fn fallback_wrap_measures_hangul_in_the_cjk_font() {
+        // The Hangul word is uncovered by Noto (it would measure as Noto's .notdef
+        // box) but real in Nanum. Wrapping must measure it in the font that
+        // actually shapes it, so the break responds to the *true* Hangul advance,
+        // not the primary font's placeholder width.
+        let noto = font();
+        let nanum = load(NANUM);
+        let stack = [&noto, &nanum];
+        let prefix_text = format!("aa {HANGUL} "); // "aa <GA NA DA> " = 13 bytes
+        let text = format!("aa {HANGUL} bb");
+
+        // Guard the premise: the Hangul genuinely measures differently in the two
+        // models (also fails loudly if Noto ever starts covering Hangul).
+        let in_nanum = shape_with_fallback(&stack, HANGUL, PX).advance;
+        let in_noto = shape_run(&noto, HANGUL, PX).advance;
+        assert!(
+            (in_nanum - in_noto).abs() > 1.0,
+            "Hangul advance must differ: Nanum {in_nanum} vs Noto .notdef {in_noto}",
+        );
+
+        // At a budget tuned to the TRUE width of "aa <Hangul> ", the Hangul word
+        // fits line 0 and only the trailing "bb" wraps.
+        let prefix = shape_with_fallback(&stack, &prefix_text, PX).advance;
+        let fits = wrap_paragraph_with_fallback(&stack, &text, PX, prefix + 1.0);
+        assert_tiles(&fits, text.len());
+        assert_eq!(
+            fits[0],
+            LineRange {
+                start: 0,
+                end: prefix_text.len(),
+            },
+            "true budget holds the whole Hangul word on line 0",
+        );
+        assert_eq!(fits.len(), 2, "trailing 'bb' wraps to a second line");
+
+        // Just over "aa " only: the Hangul word no longer fits its true advance and
+        // wraps off line 0 — the break tracks the real measurement, not a constant.
+        let tight = shape_with_fallback(&stack, "aa ", PX).advance + 1.0;
+        let wrapped = wrap_paragraph_with_fallback(&stack, &text, PX, tight);
+        assert_tiles(&wrapped, text.len());
+        assert_eq!(
+            wrapped[0],
+            LineRange { start: 0, end: 3 },
+            "under the Hangul's true width, only 'aa ' fits line 0",
+        );
     }
 }

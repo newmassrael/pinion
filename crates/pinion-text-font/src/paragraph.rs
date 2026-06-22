@@ -36,8 +36,9 @@
 //! Scope (honest deferrals, not silent gaps): a single paragraph (the caller
 //! splits on hard breaks via [`pinion_text_unicode::bidi::iter_paragraphs`]);
 //! L3 combining-mark reordering and per-script shaper selection are deferred.
-//! Multi-line wrapping ([`crate::line_layout::layout_paragraph`]) is still
-//! single-font; combining fallback with line wrapping is a later layer.
+//! Multi-line wrapping combined with fallback is
+//! [`crate::line_layout::layout_paragraph_with_fallback`], which reuses this
+//! module's [`font_split_runs`] per wrapped line.
 //! A removed control is not treated as a shaping-cluster boundary, so two
 //! visible codepoints separated only by one may shape together (rare; an
 //! interior control within a single level+script run). This includes the
@@ -100,6 +101,36 @@ pub(crate) fn single_font_runs(runs: &[ItemRun]) -> Vec<PlacementRun> {
         .collect()
 }
 
+/// Split each itemised (level, script) run into maximal same-font sub-runs over
+/// the `fonts` stack ([`font_runs`]) — the multi-font analogue of
+/// [`single_font_runs`] and the SSOT bridge shared by
+/// [`shape_paragraph_with_fallback`] (the whole paragraph's runs) and
+/// [`crate::line_layout::layout_paragraph_with_fallback`] (each wrapped line's
+/// clipped runs). A font split never changes a run's level (so the level array
+/// still drives the UAX #9 reorder), and the per-item loop rebases `font_runs`'
+/// item-relative offsets onto the paragraph while keeping each item's script in
+/// scope — the shape a future script-aware fallback (cmap coverage is
+/// script-blind today) would grow into. `runs` must reference byte ranges within
+/// `paragraph`.
+pub(crate) fn font_split_runs(
+    fonts: &[&Font],
+    paragraph: &str,
+    runs: &[ItemRun],
+) -> Vec<PlacementRun> {
+    let mut out: Vec<PlacementRun> = Vec::new();
+    for item in runs {
+        for fr in font_runs(fonts, &paragraph[item.start..item.end]) {
+            out.push(PlacementRun {
+                level: item.level,
+                font_index: fr.font_index,
+                start: item.start + fr.start,
+                end: item.start + fr.end,
+            });
+        }
+    }
+    out
+}
+
 /// Shape `paragraph` at `px_per_em` into visually-ordered positioned glyphs
 /// (§5.37.6: itemise → shape per run → place runs in UAX #9 L2 visual order,
 /// reversing glyphs within right-to-left runs). Single font — for a font stack
@@ -134,22 +165,7 @@ pub fn shape_paragraph_with_fallback(
     if fonts.is_empty() {
         return ShapedParagraph::default();
     }
-    let mut runs: Vec<PlacementRun> = Vec::new();
-    for item in itemize(paragraph) {
-        // Split per item run (not the whole paragraph): `font_runs` byte offsets
-        // are relative to the run slice and are rebased onto the paragraph, and
-        // the split inherits the item's BIDI level. Keeping the per-item loop also
-        // keeps each item's script in scope — the shape a future script-aware
-        // fallback (cmap coverage is script-blind today) would grow into.
-        for fr in font_runs(fonts, &paragraph[item.start..item.end]) {
-            runs.push(PlacementRun {
-                level: item.level,
-                font_index: fr.font_index,
-                start: item.start + fr.start,
-                end: item.start + fr.end,
-            });
-        }
-    }
+    let runs = font_split_runs(fonts, paragraph, &itemize(paragraph));
     shape_runs_visual(fonts, paragraph, px_per_em, &runs)
 }
 
