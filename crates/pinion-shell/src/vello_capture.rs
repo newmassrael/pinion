@@ -19,15 +19,24 @@
 //! The texture → RGBA8 copy (staging buffer + 256-byte row-alignment
 //! strip + BGRA↔RGBA swizzle) is byte-for-byte the same operation in
 //! both, so it lives here once as [`texture_to_rgba8`] — the single
-//! source of truth both call. The capture additionally re-runs the
-//! Vello present cycle against the live surface; that mirrors the
-//! pinion-forge template `render()` present pattern by necessity (the
-//! swapchain texture is only readable in the window between blit and
-//! present, which `render()` does not expose) — kept minimal and
-//! cross-referenced rather than lifted, because lifting it would mean
-//! routing the 144fps `render()` hot path through this module, which is
-//! not justified by a read-only capability (carry-forward: co-lift the
-//! present cycle the next time `render()` is touched).
+//! source of truth both call.
+//!
+//! The capture additionally re-runs the Vello present cycle
+//! (`render_to_texture` → `get_current_texture` + R1049 recovery → blit,
+//! with a `copy_texture_to_buffer` spliced in before `present`). That
+//! parallels the pinion-forge template `render()` present pattern, and
+//! the ~40 parallel lines (most acutely the surface-recovery match) are
+//! a duplication this module DOES NOT lift — not by choice but by
+//! constraint: the two live on opposite sides of the codegen boundary.
+//! `pinion-forge` emits a vello/wgpu-only Rust string `include!`-ed into
+//! ~130 example binaries that must NOT depend on `pinion-shell` (e.g.
+//! `ai-introspect-demo` uses the emitted renderer with no shell dep), so
+//! the template `render()` cannot call into this module, and there is no
+//! shared-symbol lift point across that boundary (a vello-only leaf crate
+//! both call would force the dep onto every example's Cargo.toml). The
+//! standing obligation is therefore mirror-not-lift: any present-pattern
+//! change (e.g. a future R1049-class surface-recovery fix) MUST land in
+//! BOTH `codegen.rs::render` and `capture_surface_rgba8` or they drift.
 
 use vello::peniko::Color as PenikoColor;
 use vello::util::RenderContext;
@@ -179,7 +188,12 @@ pub(crate) fn texture_to_rgba8(
 
 /// Premultiplied-RGBA8 capture of a live window surface: the exact
 /// pixels the window presented, plus the dimensions the wire needs.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// `Debug`-only: production moves the frame end-to-end (`last_capture`
+/// `take()` → wire conversion), never clones or compares the multi-MB
+/// buffer, so the speculative value-type derives are intentionally
+/// omitted (R1062).
+#[derive(Debug)]
 pub struct CapturedFrame {
     pub width: u32,
     pub height: u32,

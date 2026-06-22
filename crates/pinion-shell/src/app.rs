@@ -178,14 +178,16 @@ struct WindowSlot<R: VelloRenderer> {
     /// unchanged). Per-window for the same reason `vello_scene` is (no
     /// cross-window buffer race on `reset`).
     scaled_scene: VelloScene,
-    /// R1060 §5.16 §5.12 — one-shot live-surface capture request. Set by
-    /// [`AppShell::capture_window_screenshot`] just before it drives a
-    /// [`AppShell::render_window`] pass; `render_window` reads + clears it
+    /// R1060 §5.16 §5.12 — one-shot live-surface capture request, whose
+    /// set+clear lifecycle [`AppShell::capture_window_screenshot`] OWNS
+    /// (R1062): it sets the flag, drives one [`AppShell::render_window`]
+    /// pass, then clears it unconditionally. `render_window` only READS it
     /// and, when set, submits the frame through
     /// [`VelloRenderer::capture_rgba8`] (which reads back the presented
-    /// swapchain texture) instead of the normal `render` present. `false`
-    /// on every event-loop-driven paint, so the 60-144fps hot path is
-    /// byte-unchanged.
+    /// swapchain texture) instead of the normal `render` present. The
+    /// unconditional caller-side clear means an early-return `render_window`
+    /// path cannot leave it stale, so it is `false` on every
+    /// event-loop-driven paint and the 60-144fps hot path is byte-unchanged.
     pending_capture: bool,
     /// R1060 §5.16 §5.12 — the most recent capture result, written by
     /// `render_window` when `pending_capture` was set and drained by
@@ -589,13 +591,26 @@ impl<V: WidgetView> AppShell<V> {
         }?;
         self.windows.get_mut(&window_id)?.pending_capture = true;
         self.render_window(window_id);
-        let frame = self.windows.get_mut(&window_id)?.last_capture.take()?;
+        // R1062 §5.12 — clear the one-shot flag UNCONDITIONALLY: if
+        // `render_window` early-returned (minimized / 0-size or suspended
+        // window) it never consumed the flag, and a stale `true` would
+        // make the NEXT event-loop paint capture by surprise — a
+        // multi-MB readback + a blocking `device.poll` on the 60-144fps
+        // hot path, plus an orphaned frame. The capture still fails
+        // honestly via the `last_capture.take()?` below.
+        let slot = self.windows.get_mut(&window_id)?;
+        slot.pending_capture = false;
+        let frame = slot.last_capture.take()?;
         // R1061 §5.12 — `{out_path}` mode: write the captured frame to the
         // file as PNG (the RGBA8 -> PNG SSOT shared with the headless
         // path) and return just the path, so the wire stays small for
         // large windows. A create / encode failure fails the capture
         // (`None` -> `RenderBackendUnavailable`) rather than returning a
-        // wrong frame.
+        // wrong frame. This filesystem write is the ONE side-effect on
+        // the otherwise-Read `scene/screenshot` method — scene + OCC
+        // state are untouched, so the `HandlerKind::Read` classification
+        // holds; the write is the client's explicitly-requested output
+        // (same trust model as the `PINION_SCREENSHOT` env path).
         if let Some(path) = out_path {
             let file = std::fs::File::create(path).ok()?;
             crate::vello_capture::encode_rgba8_png(frame.width, frame.height, &frame.rgba8, file)
@@ -888,8 +903,11 @@ impl<V: WidgetView> AppShell<V> {
             // `capture_window_screenshot` — `capture_rgba8` reading back
             // the presented swapchain. The flag is false on every
             // event-loop-driven paint, so the hot path is byte-identical.
+            // R1062 — read-only here: `capture_window_screenshot` OWNS the
+            // flag's set+clear lifecycle (it clears unconditionally after
+            // this call, so an early-return path above cannot leave it
+            // stale and make a later event-loop paint capture by surprise).
             let wants_capture = slot.pending_capture;
-            slot.pending_capture = false;
             let captured;
             (present_ok, captured) =
                 submit_frame(&mut **renderer, render_target, base, wants_capture);

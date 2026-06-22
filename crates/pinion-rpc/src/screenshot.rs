@@ -1,19 +1,16 @@
-//! `scene/screenshot` RPC method dispatch (§5.12 method 7 of 7, R16 slice 16).
+//! `scene/screenshot` RPC method types (§5.12 method 7 of 7).
 //!
-//! v0 is a **typed placeholder**: every call surfaces
-//! [`ScreenshotError::RenderBackendUnavailable`] because pixel
-//! rendering is gated on §5.16 (`pinion-render-rhi` thin RHI +
-//! `pinion-render-shader` naga emit), which has not yet shipped.
-//!
-//! The reason this slice exists at all is *interface completeness* —
-//! §5.12 ratifies 7 typed methods and AI clients are best served by a
-//! uniform error path for "this is the method shape, the backend is
-//! not yet wired" versus "this method does not exist". The
-//! [`Screenshot`] payload struct (`width`/`height`/`pixels_rgba8`)
-//! freezes the response shape so the future renderer drop-in lands
-//! without disturbing the wire schema.
-
-use pinion_core::Scene;
+//! Carries the [`Screenshot`] response payload + [`ScreenshotError`]
+//! taxonomy + the [`validate_screenshot_path`] path-shape SSOT. The
+//! actual pixels are supplied by the embedder: the pinion-shell
+//! `AppShell` renders the addressed window through
+//! `VelloRenderer::capture_rgba8` (reading back the presented swapchain
+//! texture, R1060 §5.16) and hands a [`Screenshot`] into the
+//! `DispatchContext`; `handle_scene_screenshot` returns it (inline
+//! `pixels_rgba8`, or `out_path` PNG file mode, R1061). When no embedder
+//! supplied a frame (the headless / single-window dispatch entry, which
+//! holds no live surface), the handler returns
+//! [`ScreenshotError::RenderBackendUnavailable`].
 
 use crate::path::{self, PathError};
 
@@ -63,7 +60,7 @@ impl Screenshot {
     }
 }
 
-/// Reasons [`screenshot`] can fail.
+/// Reasons a `scene/screenshot` dispatch can fail.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScreenshotError {
@@ -71,9 +68,9 @@ pub enum ScreenshotError {
     Path(PathError),
     /// Scene path carries an unsupported tail.
     UnsupportedPath,
-    /// §5.16 RHI / wgpu fallback backend is not wired yet. v0 returns
-    /// this for every well-formed request; a later slice replaces it
-    /// with actual pixel output.
+    /// No embedder-supplied frame for this dispatch — the headless /
+    /// single-window entry holds no live surface to read back, so the
+    /// well-formed request cannot be answered with pixels.
     RenderBackendUnavailable,
 }
 
@@ -83,62 +80,55 @@ impl From<PathError> for ScreenshotError {
     }
 }
 
-/// Render a pixel screenshot of `scene`. v0 always errors with
-/// [`ScreenshotError::RenderBackendUnavailable`] after validating the
-/// path shape.
+/// R1062 §5.12 — validate the `scene/screenshot` `path` param shape: an
+/// optional `/window[id]/` prefix (consumed upstream by the `AppShell`
+/// entry to pick which surface to capture) followed by an EMPTY
+/// scene-path tail. The single source of truth for the path-shape
+/// contract, called by `handle_scene_screenshot` (which then returns the
+/// embedder's pre-captured pixels or `RenderBackendUnavailable`).
 ///
 /// # Errors
 ///
-/// See [`ScreenshotError`] for the failure modes. v0 surfaces
-/// [`ScreenshotError::RenderBackendUnavailable`] for every well-formed
-/// request.
-pub fn screenshot(scene: &Scene, raw_path: &str) -> Result<Screenshot, ScreenshotError> {
+/// [`ScreenshotError::Path`] for a malformed `/window[...]` prefix;
+/// [`ScreenshotError::UnsupportedPath`] when a non-empty scene-path tail
+/// is present (a screenshot addresses a whole window, not a sub-node).
+pub(crate) fn validate_screenshot_path(raw_path: &str) -> Result<(), ScreenshotError> {
     let resolved = path::resolve(raw_path)?;
     let _ = resolved.window;
-
-    if !resolved.scene_path.is_empty() {
-        return Err(ScreenshotError::UnsupportedPath);
+    if resolved.scene_path.is_empty() {
+        Ok(())
+    } else {
+        Err(ScreenshotError::UnsupportedPath)
     }
-
-    let _ = scene;
-    Err(ScreenshotError::RenderBackendUnavailable)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pinion_core::external::CountedExternal;
-    use pinion_core::scene::ExternalNode;
 
-    fn counted_scene(n: i64) -> Scene {
-        Scene::External(ExternalNode::new(Box::new(CountedExternal::new(n))))
+    #[test]
+    fn empty_path_is_valid() {
+        assert_eq!(validate_screenshot_path(""), Ok(()));
     }
 
     #[test]
-    fn well_formed_request_returns_render_backend_unavailable() {
-        let scene = counted_scene(0);
-        let err = screenshot(&scene, "").unwrap_err();
-        assert_eq!(err, ScreenshotError::RenderBackendUnavailable);
+    fn window_prefix_with_empty_tail_is_valid() {
+        assert_eq!(validate_screenshot_path("/window[main]"), Ok(()));
     }
 
     #[test]
-    fn window_prefix_short_circuits_then_render_backend_unavailable() {
-        let scene = counted_scene(0);
-        let err = screenshot(&scene, "/window[main]").unwrap_err();
-        assert_eq!(err, ScreenshotError::RenderBackendUnavailable);
-    }
-
-    #[test]
-    fn scene_path_tail_rejected_before_backend_check() {
-        let scene = counted_scene(0);
-        let err = screenshot(&scene, "/external/count").unwrap_err();
-        assert_eq!(err, ScreenshotError::UnsupportedPath);
+    fn scene_path_tail_is_unsupported() {
+        assert_eq!(
+            validate_screenshot_path("/external/count"),
+            Err(ScreenshotError::UnsupportedPath)
+        );
     }
 
     #[test]
     fn malformed_window_prefix_surfaces_as_path_error() {
-        let scene = counted_scene(0);
-        let err = screenshot(&scene, "/window[main").unwrap_err();
-        assert_eq!(err, ScreenshotError::Path(PathError::MalformedPrefix));
+        assert_eq!(
+            validate_screenshot_path("/window[main"),
+            Err(ScreenshotError::Path(PathError::MalformedPrefix))
+        );
     }
 }

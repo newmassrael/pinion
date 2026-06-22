@@ -3947,14 +3947,11 @@ fn handle_scene_screenshot(
             "params.path missing or not a string",
         ));
     };
-    // Validate the path shape (optional `/window[id]/` prefix + an
-    // EMPTY scene-path tail), the same contract the v0 stub enforced —
-    // the window scope itself was already consumed by the AppShell entry
-    // to pick which surface to capture.
-    let resolved = crate::path::resolve(path).map_err(|e| screenshot_error_to_rpc(e.into()))?;
-    if !resolved.scene_path.is_empty() {
-        return Err(screenshot_error_to_rpc(ScreenshotError::UnsupportedPath));
-    }
+    // R1062 §5.12 — validate the path shape via the SSOT (optional
+    // `/window[id]/` prefix + an EMPTY scene-path tail); the window scope
+    // itself was already consumed by the AppShell entry to pick which
+    // surface to capture.
+    crate::screenshot::validate_screenshot_path(path).map_err(screenshot_error_to_rpc)?;
     // R1060 §5.12 §5.16 — return the embedder's pre-captured live-surface
     // pixels. Absent (headless / single-window entry with no live
     // surface, or a capture failure) → the typed `RenderBackendUnavailable`

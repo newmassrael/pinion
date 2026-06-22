@@ -103,7 +103,7 @@ pub use resolve::{
     resolve_external_introspect_mut, resolve_external_path,
 };
 pub use rewind::{RewindError, rewind};
-pub use screenshot::{Screenshot, ScreenshotError, screenshot};
+pub use screenshot::{Screenshot, ScreenshotError};
 pub use scroll_state::{
     ScrollAxisPair, ScrollEdges, ScrollStateError, ScrollStateOutcome, scroll_state,
 };
