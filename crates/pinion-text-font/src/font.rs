@@ -212,13 +212,14 @@ impl Font {
         )
     }
 
-    /// Apply GSUB `liga` ligature substitution to a glyph-id sequence (§5.37.6).
-    /// Returns one `(glyph, origin)` per output glyph, where `origin` is the
-    /// index in `glyphs` of the first component that produced it (so a caller
-    /// maps the possibly-fewer outputs back to source clusters). A font with no
-    /// GSUB / no `liga` feature returns the input glyphs 1:1 (`origin = index`).
+    /// Apply GSUB substitution to a glyph-id sequence (§5.37.6): `ccmp` single
+    /// substitution then `liga` ligatures. Returns one `(glyph, origin)` per
+    /// output glyph, where `origin` is the index in `glyphs` of the first
+    /// component that produced it (so a caller maps the possibly-fewer outputs
+    /// back to source clusters). A font with no GSUB / neither feature returns the
+    /// input glyphs 1:1 (`origin = index`).
     #[must_use]
-    pub fn substitute_ligatures(&self, glyphs: &[u16]) -> Vec<(u16, usize)> {
+    pub fn substitute_glyphs(&self, glyphs: &[u16]) -> Vec<(u16, usize)> {
         match &self.gsub {
             Some(g) => g.substitute(glyphs),
             None => glyphs.iter().enumerate().map(|(i, &g)| (g, i)).collect(),

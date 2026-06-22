@@ -41,9 +41,10 @@ fn extension_wrap(body: &[u8]) -> Vec<u8> {
     b
 }
 
-/// Build a complete GSUB table: one script (DFLT) → one feature
-/// (`feature_tag`) → one Lookup → one `LigatureSubst` (ffi).
-fn build_gsub(feature_tag: [u8; 4], use_extension: bool) -> Vec<u8> {
+/// Build a complete GSUB table: one script (DFLT) → one feature (`feature_tag`)
+/// → one Lookup of `lookup_type` wrapping `subtable`. The shared table-assembly
+/// SSOT for the `LigatureSubst` ([`build_gsub`]) and `SingleSubst` cases.
+fn build_gsub_lookup(feature_tag: [u8; 4], lookup_type: u16, subtable: &[u8]) -> Vec<u8> {
     // ── ScriptList (20 bytes): DFLT → default LangSys → feature index 0 ──
     let mut script_list = Vec::new();
     script_list.extend_from_slice(&1u16.to_be_bytes()); // scriptCount
@@ -67,19 +68,13 @@ fn build_gsub(feature_tag: [u8; 4], use_extension: bool) -> Vec<u8> {
     feature_list.extend_from_slice(&0u16.to_be_bytes()); // lookupListIndices[0] = 0
     assert_eq!(feature_list.len(), 14);
 
-    // ── LookupList: one Lookup → LigatureSubst (optionally extension-wrapped) ──
-    let subst = ligature_subst();
-    let (lookup_type, subtable) = if use_extension {
-        (7u16, extension_wrap(&subst))
-    } else {
-        (4u16, subst)
-    };
+    // ── LookupList: one Lookup of `lookup_type` → `subtable` ──
     let mut lookup = Vec::new();
     lookup.extend_from_slice(&lookup_type.to_be_bytes()); // lookupType
     lookup.extend_from_slice(&0u16.to_be_bytes()); // lookupFlag
     lookup.extend_from_slice(&1u16.to_be_bytes()); // subTableCount
     lookup.extend_from_slice(&8u16.to_be_bytes()); // subtableOffset[0] (after 8-byte header)
-    lookup.extend_from_slice(&subtable);
+    lookup.extend_from_slice(subtable);
 
     let mut lookup_list = Vec::new();
     lookup_list.extend_from_slice(&1u16.to_be_bytes()); // lookupCount
@@ -102,6 +97,29 @@ fn build_gsub(feature_tag: [u8; 4], use_extension: bool) -> Vec<u8> {
     table.extend_from_slice(&feature_list);
     table.extend_from_slice(&lookup_list);
     table
+}
+
+/// A complete GSUB table with `feature_tag` → one `LigatureSubst` (ffi),
+/// optionally Extension(Type 7)-wrapped.
+fn build_gsub(feature_tag: [u8; 4], use_extension: bool) -> Vec<u8> {
+    let subst = ligature_subst();
+    if use_extension {
+        build_gsub_lookup(feature_tag, 7, &extension_wrap(&subst))
+    } else {
+        build_gsub_lookup(feature_tag, 4, &subst)
+    }
+}
+
+/// A `SingleSubst` format 1: covers `glyph`, maps it to `glyph + delta`. 12 bytes
+/// (substFormat + coverageOffset + deltaGlyphID + a 6-byte single-glyph Coverage).
+fn single_subst_format1(glyph: u16, delta: i16) -> Vec<u8> {
+    let mut b = 1u16.to_be_bytes().to_vec(); // substFormat
+    b.extend_from_slice(&6u16.to_be_bytes()); // coverageOffset (after 6-byte header)
+    b.extend_from_slice(&delta.to_be_bytes()); // deltaGlyphID
+    b.extend_from_slice(&1u16.to_be_bytes()); // coverageFormat 1
+    b.extend_from_slice(&1u16.to_be_bytes()); // glyphCount
+    b.extend_from_slice(&glyph.to_be_bytes());
+    b
 }
 
 #[test]
@@ -272,4 +290,49 @@ fn sequential_lookups_chain_and_preserve_origin() {
     assert_eq!(gsub.substitute(&[5, 10, 10, 11]), vec![(5, 0), (700, 1)]);
     // Partial chain: only lookup 0 fires when lookup 1 can't complete (no 'i').
     assert_eq!(gsub.substitute(&[10, 10]), vec![(600, 0)]);
+}
+
+#[test]
+fn resolves_ccmp_single_substitution() {
+    // ccmp feature → Lookup Type 1 SingleSubst: glyph 10 maps to 10 + delta 5 = 15.
+    // Proves the Script→Feature(ccmp)→Lookup(1)→SingleSubst chain and that
+    // substitute() applies it one-to-one (origins preserved).
+    let gsub = Gsub::parse(&build_gsub_lookup(
+        *b"ccmp",
+        1,
+        &single_subst_format1(10, 5),
+    ))
+    .unwrap();
+    assert!(gsub.has_ccmp(), "ccmp reachable from the default script");
+    assert!(!gsub.has_ligatures(), "no liga lookups");
+    assert_eq!(
+        gsub.substitute(&[10, 20]),
+        vec![(15, 0), (20, 1)],
+        "10 composed to 15 in place, 20 untouched, origins unchanged"
+    );
+}
+
+#[test]
+fn ccmp_gate_rejects_wrong_feature_and_type() {
+    // The SAME SingleSubst under the `liga` feature is picked up by neither channel:
+    // ccmp is absent, and the liga collector keeps only Type 4 (skips Type 1).
+    let gsub = Gsub::parse(&build_gsub_lookup(
+        *b"liga",
+        1,
+        &single_subst_format1(10, 5),
+    ))
+    .unwrap();
+    assert!(
+        !gsub.has_ccmp(),
+        "single sub under liga is not the ccmp channel"
+    );
+    assert!(
+        !gsub.has_ligatures(),
+        "liga collects Type 4 only, skips Type 1"
+    );
+    assert_eq!(
+        gsub.substitute(&[10]),
+        vec![(10, 0)],
+        "no substitution applied"
+    );
 }

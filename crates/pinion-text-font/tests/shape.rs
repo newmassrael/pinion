@@ -147,7 +147,7 @@ fn shape_run_applies_gsub_ligature() {
             .chars()
             .map(|c| font.glyph_id_for(c as u32).expect("Latin glyph mapped"))
             .collect();
-        let out = font.substitute_ligatures(&glyphs);
+        let out = font.substitute_glyphs(&glyphs);
         (out.len() < glyphs.len()).then_some((*word, glyphs.len(), out))
     });
     let (word, n_in, out) =

@@ -8,8 +8,8 @@
 //! # Scope — cmap + GSUB ligatures + GPOS kern & mark-to-base (R50.6 / .1 / .2, R50.7)
 //!
 //! Four-stage shaping: (1) cmap codepoint → glyph ([`Font::glyph_id_for`]);
-//! (2) GSUB `liga` **ligature substitution** ([`Font::substitute_ligatures`],
-//! [`crate::tables::gsub`]) collapses component sequences (f + i → ﬁ); (3) GPOS
+//! (2) GSUB **substitution** ([`Font::substitute_glyphs`], [`crate::tables::gsub`]):
+//! `ccmp` single substitution then `liga` ligature collapse (f + i → ﬁ); (3) GPOS
 //! `kern` **pair kerning** ([`Font::kern_x_advance`], [`crate::tables::gpos`])
 //! refines the advance between adjacent glyphs, with an hmtx-advance pen;
 //! (4) GPOS `mark` **mark-to-base attachment** ([`Font::mark_offset`]) places a
@@ -21,8 +21,8 @@
 //! refined incrementally.
 //!
 //! Deliberately NOT yet handled (each is honest deferral, not a silent gap):
-//! GSUB single / multiple / alternate / contextual / reverse-chaining (only
-//! Lookup Type 4 ligature substitution is applied); GPOS single / cursive /
+//! GSUB multiple / alternate / contextual / reverse-chaining (only Lookup Types 1
+//! single substitution and 4 ligature substitution are applied); GPOS single / cursive /
 //! mark-to-ligature / contextual positioning (only Lookup Types 2 pair kerning,
 //! 4 mark-to-base, and 6 mark-to-mark are applied); `lookupFlag` glyph filtering
 //! and the rest of GDEF (marks are recognised from the GDEF `GlyphClassDef`, but
@@ -122,11 +122,12 @@ pub fn shape_run(font: &Font, text: &str, px_per_em: f32) -> ShapedRun {
         raw_clusters.push(cluster);
     }
 
-    // Stage 2 — GSUB substitution: collapse `liga` ligature sequences. Each
-    // output is (glyph, origin) where origin indexes into `raw_glyphs`/clusters
-    // (the ligature carries its first component's cluster). Identity for a font
-    // with no GSUB / no `liga` feature, so the cmap+hmtx baseline is preserved.
-    let substituted = font.substitute_ligatures(&raw_glyphs);
+    // Stage 2 — GSUB substitution: `ccmp` single substitution then `liga`
+    // ligature collapse. Each output is (glyph, origin) where origin indexes into
+    // `raw_glyphs`/clusters (a ligature carries its first component's cluster).
+    // Identity for a font with no GSUB / neither feature, so the cmap+hmtx
+    // baseline is preserved.
+    let substituted = font.substitute_glyphs(&raw_glyphs);
 
     // Stage 3 — GPOS positioning: accumulate the pen left to right, folding the
     // `kern` adjustment between adjacent glyphs (design units, same scale as the
