@@ -12813,6 +12813,50 @@
         "nit: apply_secondary_click cursor is (f32,f32) vs apply_wheel (f64,f64) lossless — possible future harmonization; stage-0 does not gate on last_paint_scene like the router (harmless, binding declines)"
       ]
     },
+    "R1046": {
+      "decision_summary": "§5.45 scrollbar idle-thumb base-role override (sprag PR-19, consumer-forced ENHANCEMENT, not a blocker): VerticalScrollbarStyle gains thumb_role: ColorRole (default Outline) + with_thumb_role(ColorRole) builder; thumb_fill_for_state takes the base role so idle paints it and hover/drag still lerp FROM it toward OnSurface (Disabled fades toward SurfaceContainerHighest). view_vertical_scrollbar hardcoded idle=Outline, which on the LIGHT palette sits too close to the SurfaceContainerHighest track (Outline #c0c0c0 L1=111 to track) so an always-visible bar's idle thumb reads invisible; OnSurfaceMuted #606060 (L1=399, 3.6x) restores the gnome-terminal permanent-bar contrast. Additive, #[non_exhaustive] preserved (material() is the only constructor; ~25 consumers unaffected). Kept the consumer's exact with_thumb_role name over the reviewer's thumb_base_role nit — the docs disambiguate the idle-base semantics and it is renameable later if a full per-state role set lands. sprag view_pane_scrollbar (sanctioned R1032 row-unit geometry consumer) now collapses its last divergence surface (thumb_fill) into the substrate.",
+      "changes_bullets": [
+        "pinion-widget-paint scrollbar.rs: VerticalScrollbarStyle.thumb_role: ColorRole (default Outline in material()) + with_thumb_role(ColorRole) const builder — additive, #[non_exhaustive] preserved (material() is the only constructor; ~25 consumers unaffected)",
+        "thumb_fill_for_state(theme, interaction, base_role): idle = resolve(base_role), hover/drag lerp FROM base toward OnSurface, disabled fades toward SurfaceContainerHighest; view_vertical_scrollbar passes style.thumb_role; all internal test call sites pass ColorRole::Outline (default-preserving)",
+        "module-doc + thumb_fill_for_state role tables updated (Outline -> base/default); kept the consumer's exact with_thumb_role name (reviewer thumb_base_role nit = renameable judgment call, docs disambiguate the idle-base semantics)"
+      ],
+      "verification_bullets": [
+        "cargo fmt --check + clippy --workspace --all-targets --features pinion-runtime/vello clean (all ~25 scrollbar consumers compiled — non-breaking confirmed)",
+        "cargo test --workspace: 193/193 result lines ok, 0 failed",
+        "5 new r1046 tests: default-is-Outline+builder-swap / idle-follows-override / hover-drag-ride-new-base(non-vacuous vs Outline) / end-to-end-through-view-fn / contrast-beats-Outline-on-light",
+        "contrast test independently verified non-knife-edge: light track SurfaceContainerHighest #e6e0e9, muted #606060 L1=399 vs outline #c0c0c0 L1=111 (3.6x margin)",
+        "1-lens adversarial review SHIP-WITH-NITS (no HIGH/MED); commit c434b393; COMMITTED-NOT-PUSHED"
+      ],
+      "impact_refs": [
+        "5.45"
+      ],
+      "carry_forward_bullets": [
+        "sprag-native session: collapse view_pane_scrollbar (+thumb_fill, GUTTER_W/MIN_THUMB_PX/THUMB_RADIUS consts) to material(track_h, scrollbar_tag(i)).with_viewport_extent(rows).with_thumb_role(OnSurfaceMuted); keep wrap_pane_with_bar; pinion seam delivered, never edited from a pinion session",
+        "if a full per-state thumb role set (idle/hover/dragging) lands as a 2nd consumer need, reconcile naming: thumb_role(idle-base) vs future thumb_hover_role/thumb_dragging_role — consider thumb_idle_role then (reviewer R1046 LOW nit)",
+        "PR-19 was an enhancement (NOT a blocker): sprag self-paint was sanctioned R1032 row-unit geometry consumption; this just collapses the last divergence surface (thumb_fill) into the substrate"
+      ],
+      "publishable_decision_summary": "§5.45 scrollbar idle-thumb base-role override (sprag PR-19, consumer-forced ENHANCEMENT, not a blocker): VerticalScrollbarStyle gains thumb_role: ColorRole (default Outline) + with_thumb_role(ColorRole) builder; thumb_fill_for_state takes the base role so idle paints it and hover/drag still lerp FROM it toward OnSurface (Disabled fades toward SurfaceContainerHighest). view_vertical_scrollbar hardcoded idle=Outline, which on the LIGHT palette sits too close to the SurfaceContainerHighest track (Outline #c0c0c0 L1=111 to track) so an always-visible bar's idle thumb reads invisible; OnSurfaceMuted #606060 (L1=399, 3.6x) restores the gnome-terminal permanent-bar contrast. Additive, #[non_exhaustive] preserved (material() is the only constructor; ~25 consumers unaffected). Kept the consumer's exact with_thumb_role name over the reviewer's thumb_base_role nit — the docs disambiguate the idle-base semantics and it is renameable later if a full per-state role set lands. sprag view_pane_scrollbar (sanctioned R1032 row-unit geometry consumer) now collapses its last divergence surface (thumb_fill) into the substrate.",
+      "publishable_changes_bullets": [
+        "pinion-widget-paint scrollbar.rs: VerticalScrollbarStyle.thumb_role: ColorRole (default Outline in material()) + with_thumb_role(ColorRole) const builder — additive, #[non_exhaustive] preserved (material() is the only constructor; ~25 consumers unaffected)",
+        "thumb_fill_for_state(theme, interaction, base_role): idle = resolve(base_role), hover/drag lerp FROM base toward OnSurface, disabled fades toward SurfaceContainerHighest; view_vertical_scrollbar passes style.thumb_role; all internal test call sites pass ColorRole::Outline (default-preserving)",
+        "module-doc + thumb_fill_for_state role tables updated (Outline -> base/default); kept the consumer's exact with_thumb_role name (reviewer thumb_base_role nit = renameable judgment call, docs disambiguate the idle-base semantics)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo fmt --check + clippy --workspace --all-targets --features pinion-runtime/vello clean (all ~25 scrollbar consumers compiled — non-breaking confirmed)",
+        "cargo test --workspace: 193/193 result lines ok, 0 failed",
+        "5 new r1046 tests: default-is-Outline+builder-swap / idle-follows-override / hover-drag-ride-new-base(non-vacuous vs Outline) / end-to-end-through-view-fn / contrast-beats-Outline-on-light",
+        "contrast test independently verified non-knife-edge: light track SurfaceContainerHighest #e6e0e9, muted #606060 L1=399 vs outline #c0c0c0 L1=111 (3.6x margin)",
+        "1-lens adversarial review SHIP-WITH-NITS (no HIGH/MED); commit c434b393; COMMITTED-NOT-PUSHED"
+      ],
+      "publishable_impact_refs": [
+        "5.45"
+      ],
+      "publishable_carry_forward_bullets": [
+        "sprag-native session: collapse view_pane_scrollbar (+thumb_fill, GUTTER_W/MIN_THUMB_PX/THUMB_RADIUS consts) to material(track_h, scrollbar_tag(i)).with_viewport_extent(rows).with_thumb_role(OnSurfaceMuted); keep wrap_pane_with_bar; pinion seam delivered, never edited from a pinion session",
+        "if a full per-state thumb role set (idle/hover/dragging) lands as a 2nd consumer need, reconcile naming: thumb_role(idle-base) vs future thumb_hover_role/thumb_dragging_role — consider thumb_idle_role then (reviewer R1046 LOW nit)",
+        "PR-19 was an enhancement (NOT a blocker): sprag self-paint was sanctioned R1032 row-unit geometry consumption; this just collapses the last divergence surface (thumb_fill) into the substrate"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
