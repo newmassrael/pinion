@@ -13410,6 +13410,54 @@
         "STRATEGIC: 4 text-engine rounds (R1054-R1057); the engine is broad (cmap/GSUB single+liga/GPOS kern+mark+mkmk/GDEF/BIDI/fallback/wrap/raster) but STILL a CPU spike unwired to production paint (swash). Highest-leverage next = production-paint wiring OR a higher-value-order Phase B axis (DCC/Model-View), not more OpenType lookup-type completionism"
       ]
     },
+    "R1058": {
+      "decision_summary": "R1058 audit-clearance (3 adversarial reviewers over R1054-R1057): SSOT lift collect_feature_lookups<T> (4-site parse_*_lookups dup + 4 identical wrapper structs -> 1 generic in layout, finding A) + optional_table absent-vs-malformed explicit match (finding B) + empty-stack/doc/GDEF-less-test NITs. No new feature; behavior-preserving",
+      "changes_bullets": [
+        "layout/mod.rs: lift Lookup<T> + collect_feature_lookups<T>(...) -> Vec<Lookup<T>> (the shared OUTER per-feature lookup-collection loop, counterpart to the already-shared inner collect_subtables_of_type). Replaces 4 hand-copied parse_*_lookups (kern/mark-attach in gpos, ccmp/liga in gsub) + 4 identical {subtables: Vec<T>} wrappers (KernLookup/MarkLookup/CcmpLookup/LigaLookup) -- audit finding A, the confirmed SSOT violation",
+        "gpos/mod.rs + gsub/mod.rs: kern/mark/mkmk/ccmp/liga now Vec<layout::Lookup<T>>; first_attach_offset takes &[Lookup<MarkAnchorPos>]; behavior identical (all GPOS/GSUB/single/gdef tests green after the lift = byte-equivalent)",
+        "font.rs: optional_table Err(_)=>None -> Err(TableNotFound{..})=>Ok(None), Err(e)=>Err(e) -- a malformed-but-present GPOS/GSUB/GDEF table now propagates instead of being silently dropped; absent-vs-malformed contract compiler-enforced (finding B)",
+        "NITs: wrap_paragraph_with_fallback empty-stack guard (no lines, matching layout) + intra-segment font-boundary kern-loss doc; tests/shape.rs stale substitute_ligatures comment fixed + gdef_absent_font_reports_no_marks (NanumGothic has no GDEF -> has_glyph_classes/is_mark false = GDEF-fallback precondition pinned)"
+      ],
+      "verification_bullets": [
+        "audit method: 3 adversarial read-only reviewers over R1054-R1057 (text-layout / OpenType tables / shaper Stage 4). Verdicts: R1054, shaper Stage 4, MarkAnchorPos/SingleSubst/GDEF all independently judged textbook-canonical; 2 SHOULD-FIX (A SSOT 4-site dup, B optional_table silent-swallow) + NITs surfaced -- all cleared this round",
+        "behavior-preserving lift: pinion-text-font 250 lib pass (unchanged by the refactor), GPOS 19 / GSUB 16 / single 5 / gdef 3 all green = collect_feature_lookups byte-equivalent to the 4 deleted parse_*_lookups; shape integration 18->19 (+gdef_absent_font_reports_no_marks)",
+        "cargo test --workspace -j2: 7453 pass 0 fail (= 7452 R1057 baseline + 1 GDEF-less test); clippy --workspace --all-targets vello 0 warn; rustfmt clean; validate T1=0 (entries 1070->1071)",
+        "net: layout -4 functions -4 structs +1 generic fn +1 generic struct; the SSOT debt the codebase had already lifted once at the inner loop (collect_subtables_of_type 'lifted at the third copy') is now closed at the 4th copy of the sibling OUTER loop"
+      ],
+      "impact_refs": [
+        "5.37.6",
+        "5.37.7"
+      ],
+      "carry_forward_bullets": [
+        "audit NIT-D deferred (a watch, not a fix): the shaper Stage 4 loop is at the density threshold -- the NEXT concern (mark-to-ligature / lookupFlag filtering) should split the per-glyph body into a helper, not fold a 4th branch",
+        "GDEF-less fallback is precondition-pinned only (Nanum has no combining marks to attach end-to-end); the equivalence is bit-identical-by-construction (is_mark=false collapses Stage 4 to the pre-GDEF two-way branch)",
+        "NEXT DIRECTION = A (user-chosen): wire the §5.37 self-hosted engine into production paint (replace swash, §5.36) -- the big multi-round GPU-touching effort that makes the 40+ rounds of engine work actually used + AI-introspectable",
+        "carry-forward unchanged: GSUB Type 2 multiple (NotoSans ccmp's actual decomposition) / GPOS Type 5 mark-to-ligature / lookupFlag filtering / per-line vmetrics=fonts[0] / wrap cross-font-run kerning / GPU N-atlas bind / styled-run per-span color RGBA"
+      ],
+      "publishable_decision_summary": "R1058 audit-clearance (3 adversarial reviewers over R1054-R1057): SSOT lift collect_feature_lookups<T> (4-site parse_*_lookups dup + 4 identical wrapper structs -> 1 generic in layout, finding A) + optional_table absent-vs-malformed explicit match (finding B) + empty-stack/doc/GDEF-less-test NITs. No new feature; behavior-preserving",
+      "publishable_changes_bullets": [
+        "layout/mod.rs: lift Lookup<T> + collect_feature_lookups<T>(...) -> Vec<Lookup<T>> (the shared OUTER per-feature lookup-collection loop, counterpart to the already-shared inner collect_subtables_of_type). Replaces 4 hand-copied parse_*_lookups (kern/mark-attach in gpos, ccmp/liga in gsub) + 4 identical {subtables: Vec<T>} wrappers (KernLookup/MarkLookup/CcmpLookup/LigaLookup) -- audit finding A, the confirmed SSOT violation",
+        "gpos/mod.rs + gsub/mod.rs: kern/mark/mkmk/ccmp/liga now Vec<layout::Lookup<T>>; first_attach_offset takes &[Lookup<MarkAnchorPos>]; behavior identical (all GPOS/GSUB/single/gdef tests green after the lift = byte-equivalent)",
+        "font.rs: optional_table Err(_)=>None -> Err(TableNotFound{..})=>Ok(None), Err(e)=>Err(e) -- a malformed-but-present GPOS/GSUB/GDEF table now propagates instead of being silently dropped; absent-vs-malformed contract compiler-enforced (finding B)",
+        "NITs: wrap_paragraph_with_fallback empty-stack guard (no lines, matching layout) + intra-segment font-boundary kern-loss doc; tests/shape.rs stale substitute_ligatures comment fixed + gdef_absent_font_reports_no_marks (NanumGothic has no GDEF -> has_glyph_classes/is_mark false = GDEF-fallback precondition pinned)"
+      ],
+      "publishable_verification_bullets": [
+        "audit method: 3 adversarial read-only reviewers over R1054-R1057 (text-layout / OpenType tables / shaper Stage 4). Verdicts: R1054, shaper Stage 4, MarkAnchorPos/SingleSubst/GDEF all independently judged textbook-canonical; 2 SHOULD-FIX (A SSOT 4-site dup, B optional_table silent-swallow) + NITs surfaced -- all cleared this round",
+        "behavior-preserving lift: pinion-text-font 250 lib pass (unchanged by the refactor), GPOS 19 / GSUB 16 / single 5 / gdef 3 all green = collect_feature_lookups byte-equivalent to the 4 deleted parse_*_lookups; shape integration 18->19 (+gdef_absent_font_reports_no_marks)",
+        "cargo test --workspace -j2: 7453 pass 0 fail (= 7452 R1057 baseline + 1 GDEF-less test); clippy --workspace --all-targets vello 0 warn; rustfmt clean; validate T1=0 (entries 1070->1071)",
+        "net: layout -4 functions -4 structs +1 generic fn +1 generic struct; the SSOT debt the codebase had already lifted once at the inner loop (collect_subtables_of_type 'lifted at the third copy') is now closed at the 4th copy of the sibling OUTER loop"
+      ],
+      "publishable_impact_refs": [
+        "5.37.6",
+        "5.37.7"
+      ],
+      "publishable_carry_forward_bullets": [
+        "audit NIT-D deferred (a watch, not a fix): the shaper Stage 4 loop is at the density threshold -- the NEXT concern (mark-to-ligature / lookupFlag filtering) should split the per-glyph body into a helper, not fold a 4th branch",
+        "GDEF-less fallback is precondition-pinned only (Nanum has no combining marks to attach end-to-end); the equivalence is bit-identical-by-construction (is_mark=false collapses Stage 4 to the pre-GDEF two-way branch)",
+        "NEXT DIRECTION = A (user-chosen): wire the §5.37 self-hosted engine into production paint (replace swash, §5.36) -- the big multi-round GPU-touching effort that makes the 40+ rounds of engine work actually used + AI-introspectable",
+        "carry-forward unchanged: GSUB Type 2 multiple (NotoSans ccmp's actual decomposition) / GPOS Type 5 mark-to-ligature / lookupFlag filtering / per-line vmetrics=fonts[0] / wrap cross-font-run kerning / GPU N-atlas bind / styled-run per-span color RGBA"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
