@@ -13364,6 +13364,52 @@
         "(R1054 carry still open) per-line vmetrics=fonts[0]; wrap cross-font-run kerning drop; GPU N-atlas bind; styled-run per-span color needs RGBA; production paint still swash (engine is a test-only spike)"
       ]
     },
+    "R1057": {
+      "decision_summary": "R1057 §5.37.6 R50.7.2 GSUB Lookup Type 1 single substitution + ccmp feature: the foundational 1:1 glyph rewrite (delta + list formats), applied before liga in the GSUB pipeline. Font::substitute_ligatures renamed substitute_glyphs (now ccmp+liga); build_gsub_lookup lifted (2nd consumer)",
+      "changes_bullets": [
+        "tables/gsub/single.rs (new): SingleSubst enum (format 1 Delta{coverage,delta} via wrapping_add_signed / format 2 List{coverage,substitutes}); parse + substitute(glyph)->Option<u16>; reuses layout::Coverage",
+        "gsub/mod.rs: navigate the ccmp feature -> Type 1 SingleSubst lookups; substitute() applies ccmp (1:1, in place) BEFORE liga (OpenType default feature order, so a composed glyph can feed a ligature); has_ccmp(); parse_ccmp_lookups parallel to parse_liga_lookups (distinct subtable type, per GPOS kern/mark precedent)",
+        "font.rs: Font::substitute_ligatures renamed substitute_glyphs (now applies ccmp + liga, not just ligatures); shape.rs Stage 2 + module doc + tests/shape.rs call site updated",
+        "gsub/tests.rs: build_gsub_lookup lifted (table-assembly SSOT shared by the LigatureSubst + SingleSubst cases, mirrors build_gpos_lookup)"
+      ],
+      "verification_bullets": [
+        "pinion-text-font 250 lib pass +7 (single.rs: format-1 delta + negative 2^16-wrap + format-2 list + uncovered-glyph + reject-format; gsub: resolves_ccmp_single_substitution [Script->ccmp->Type1->SingleSubst, 10+delta=15 in place] + ccmp_gate_rejects_wrong_feature_and_type [same layout under liga feeds neither channel])",
+        "no regression: shape integration 18 pass (ccmp-before-liga did not break NotoSans liga/kern/mark shaping); NotoSans's own ccmp uses Type-2 (decomposition, deferred) not Type-1, so the Type-1 path is synthetic-verified deterministically (no fragile real-font conditional) -- consistent with the CPU-spike campaign",
+        "cargo test --workspace -j2: 7452 pass 0 fail (= 7445 R1056 baseline + R1057 7); clippy --workspace --all-targets vello 0 warn; rustfmt clean; validate T1=0 (entries 1069->1070)",
+        "production paint still §5.36 swash -- the self-hosted engine is a test-only spike"
+      ],
+      "impact_refs": [
+        "5.37.6"
+      ],
+      "carry_forward_bullets": [
+        "GSUB Type 2 multiple substitution (decomposition — what NotoSans's own ccmp actually uses) deferred; alternate (Type 3) / contextual (Type 5/6) / reverse-chaining still open",
+        "ccmp-before-liga ordering is code-evident + spec-mandated but not pinned by a dedicated 2-feature synthetic test (single-feature ccmp + the existing chained-liga test cover the machinery)",
+        "lookupFlag glyph filtering still deferred; GPOS Type 5 mark-to-ligature; (R1054/R1056 carry still open) per-line vmetrics=fonts[0] / wrap cross-font-run kerning drop / GPU N-atlas bind / styled-run per-span color RGBA",
+        "STRATEGIC: 4 text-engine rounds (R1054-R1057); the engine is broad (cmap/GSUB single+liga/GPOS kern+mark+mkmk/GDEF/BIDI/fallback/wrap/raster) but STILL a CPU spike unwired to production paint (swash). Highest-leverage next = production-paint wiring OR a higher-value-order Phase B axis (DCC/Model-View), not more OpenType lookup-type completionism"
+      ],
+      "publishable_decision_summary": "R1057 §5.37.6 R50.7.2 GSUB Lookup Type 1 single substitution + ccmp feature: the foundational 1:1 glyph rewrite (delta + list formats), applied before liga in the GSUB pipeline. Font::substitute_ligatures renamed substitute_glyphs (now ccmp+liga); build_gsub_lookup lifted (2nd consumer)",
+      "publishable_changes_bullets": [
+        "tables/gsub/single.rs (new): SingleSubst enum (format 1 Delta{coverage,delta} via wrapping_add_signed / format 2 List{coverage,substitutes}); parse + substitute(glyph)->Option<u16>; reuses layout::Coverage",
+        "gsub/mod.rs: navigate the ccmp feature -> Type 1 SingleSubst lookups; substitute() applies ccmp (1:1, in place) BEFORE liga (OpenType default feature order, so a composed glyph can feed a ligature); has_ccmp(); parse_ccmp_lookups parallel to parse_liga_lookups (distinct subtable type, per GPOS kern/mark precedent)",
+        "font.rs: Font::substitute_ligatures renamed substitute_glyphs (now applies ccmp + liga, not just ligatures); shape.rs Stage 2 + module doc + tests/shape.rs call site updated",
+        "gsub/tests.rs: build_gsub_lookup lifted (table-assembly SSOT shared by the LigatureSubst + SingleSubst cases, mirrors build_gpos_lookup)"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-text-font 250 lib pass +7 (single.rs: format-1 delta + negative 2^16-wrap + format-2 list + uncovered-glyph + reject-format; gsub: resolves_ccmp_single_substitution [Script->ccmp->Type1->SingleSubst, 10+delta=15 in place] + ccmp_gate_rejects_wrong_feature_and_type [same layout under liga feeds neither channel])",
+        "no regression: shape integration 18 pass (ccmp-before-liga did not break NotoSans liga/kern/mark shaping); NotoSans's own ccmp uses Type-2 (decomposition, deferred) not Type-1, so the Type-1 path is synthetic-verified deterministically (no fragile real-font conditional) -- consistent with the CPU-spike campaign",
+        "cargo test --workspace -j2: 7452 pass 0 fail (= 7445 R1056 baseline + R1057 7); clippy --workspace --all-targets vello 0 warn; rustfmt clean; validate T1=0 (entries 1069->1070)",
+        "production paint still §5.36 swash -- the self-hosted engine is a test-only spike"
+      ],
+      "publishable_impact_refs": [
+        "5.37.6"
+      ],
+      "publishable_carry_forward_bullets": [
+        "GSUB Type 2 multiple substitution (decomposition — what NotoSans's own ccmp actually uses) deferred; alternate (Type 3) / contextual (Type 5/6) / reverse-chaining still open",
+        "ccmp-before-liga ordering is code-evident + spec-mandated but not pinned by a dedicated 2-feature synthetic test (single-feature ccmp + the existing chained-liga test cover the machinery)",
+        "lookupFlag glyph filtering still deferred; GPOS Type 5 mark-to-ligature; (R1054/R1056 carry still open) per-line vmetrics=fonts[0] / wrap cross-font-run kerning drop / GPU N-atlas bind / styled-run per-span color RGBA",
+        "STRATEGIC: 4 text-engine rounds (R1054-R1057); the engine is broad (cmap/GSUB single+liga/GPOS kern+mark+mkmk/GDEF/BIDI/fallback/wrap/raster) but STILL a CPU spike unwired to production paint (swash). Highest-leverage next = production-paint wiring OR a higher-value-order Phase B axis (DCC/Model-View), not more OpenType lookup-type completionism"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
