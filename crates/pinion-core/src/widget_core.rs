@@ -514,12 +514,27 @@ pub trait WidgetCore: 'static {
     /// is a **position-bearing** hook like [`Self::apply_secondary_click`]:
     /// a wheel scrolls whatever sits *under the pointer*, independent of
     /// keyboard focus (the W3C / desktop convention), so `cursor` — not a
-    /// focused tag — is the discriminator. `cursor` is the pointer's
-    /// last window-local logical-pixel position (the same basis the
-    /// router hit-tests and the `External` offer normalises against); a
-    /// wheel with no stored cursor for the pointer never reaches this
-    /// hook (the shell short-circuits, matching the router's own
-    /// no-cursor no-op).
+    /// focused tag — is the discriminator, resolved against `paint`.
+    /// `cursor` is the pointer's last window-local logical-pixel position.
+    ///
+    /// `paint` (R1048) is the **laid-out paint scene** of the addressed
+    /// window — the [`InputRouter`](crate::input)'s `last_paint_scene`, the
+    /// post-layout tree with resolved rects that the router *itself*
+    /// hit-tests against. It is deliberately NOT the un-laid-out
+    /// state / model scene (the compose-root of input `External`s, tagged
+    /// by `External` tag and never laid out), on which
+    /// [`rect_for_tag_absolute`](crate::Scene::rect_for_tag_absolute)
+    /// resolves a paint-side pane tag to `None` — the pane tags are
+    /// paint-tree constructs absent from the model scene, and even a node
+    /// that *is* present there carries only its default zero rect. A
+    /// multi-pane binding maps
+    /// `cursor` to the pane it owns by hit-testing the pane's rect:
+    /// `paint.rect_for_tag_absolute(pane_tag)` resolves the pane's
+    /// window-absolute rect, which the binding tests `cursor` against —
+    /// the same laid-out basis the router's `External` offer normalises
+    /// against. A wheel with no stored cursor, or before the first paint
+    /// (no `paint` scene yet), never reaches this hook (the shell
+    /// short-circuits, matching the router's own no-op).
     ///
     /// This exists because a binding whose scroll authority is a
     /// **row-granular view-state it owns** — a virtualized terminal /
@@ -531,10 +546,13 @@ pub trait WidgetCore: 'static {
     /// layering violation), and stage 2 requires a `Scene::Scroll`
     /// pixel-clip node the row-reprojected grid deliberately has none of
     /// (a row offset is not a pixel offset). The binding overrides this
-    /// hook instead: it hit-tests `cursor` to the pane it owns and
-    /// advances that pane's own [`ScrollState`](crate::widgets::scroll::ScrollState)
-    /// (or equivalent reactive authority) at row granularity, keeping the
-    /// keyboard / drag / wheel writers on one SSOT.
+    /// hook instead: it hit-tests `cursor` against its pane rects in
+    /// `paint` and advances that pane's own
+    /// [`ScrollState`](crate::widgets::scroll::ScrollState) (or equivalent
+    /// reactive authority) at row granularity, keeping the keyboard /
+    /// drag / wheel writers on one SSOT. The wheel action mutates that
+    /// reactive authority (a `use_*` hook), not `paint` — hence `paint` is
+    /// shared read-only, not `&mut`.
     ///
     /// `delta` is the typed [`WheelDelta`](crate::event::WheelDelta)
     /// verbatim ([`Pixels`](crate::event::WheelDelta::Pixels) for
@@ -560,7 +578,7 @@ pub trait WidgetCore: 'static {
     /// or a hover-`External` need no override and keep the router path.
     #[must_use]
     fn apply_wheel(
-        _scene: &mut Scene,
+        _paint: &Scene,
         _cursor: (f64, f64),
         _delta: crate::event::WheelDelta,
         _modifiers: crate::input::Modifiers,

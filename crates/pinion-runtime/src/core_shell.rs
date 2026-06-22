@@ -2340,16 +2340,22 @@ impl<V: WidgetCore> CoreShell<V> {
         // ONCE rather than duplicated across all three producers — Vello
         // `ShellCore::wheel_for_window`, TUI `ShellCoreTui::wheel`, and the
         // RPC `scene/wheel` deferred replay all funnel through this method.
-        if let Some(cursor) = self
-            .routers
-            .get(window_id)
-            .and_then(|r| r.cursor_position(pid))
-        {
-            let owner = self.root_owner.clone();
-            let scene = &mut self.scene;
-            if owner.run(|| V::apply_wheel(scene, cursor, delta, modifiers)) {
-                return (self.tail(), true);
-            }
+        // R1048 §5.49 — hand the binding the addressed window's LAID-OUT
+        // paint scene (the router's `last_paint_scene`), NOT the un-laid-out
+        // state/model scene: a multi-pane binding hit-tests `cursor` to its
+        // pane via `paint.rect_for_tag_absolute(tag)`, which resolves rects
+        // only on the post-layout tree the router itself hit-tests. Both the
+        // cursor and the paint scene come off the same router borrow; gating
+        // on the paint scene also matches the router's own
+        // "no paint scene yet → no-op" first-paint guard.
+        let owner = self.root_owner.clone();
+        let handled = self.routers.get(window_id).and_then(|router| {
+            let cursor = router.cursor_position(pid)?;
+            let paint = router.last_paint_scene()?;
+            Some(owner.run(|| V::apply_wheel(paint, cursor, delta, modifiers)))
+        });
+        if handled == Some(true) {
+            return (self.tail(), true);
         }
         let Self { scene, routers, .. } = self;
         let router = routers.entry(window_id.to_owned()).or_default();
@@ -3564,7 +3570,7 @@ mod tests {
         }
 
         fn apply_wheel(
-            _scene: &mut Scene,
+            _paint: &Scene,
             cursor: (f64, f64),
             delta: WheelDelta,
             _modifiers: pinion_core::Modifiers,
@@ -3688,6 +3694,143 @@ mod tests {
             );
         });
         assert_eq!(state.offset(), (0, 0), "neither stage ran");
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R1048 §5.49 — apply_wheel receives the LAID-OUT paint scene (the
+    // router's last_paint_scene), not the un-laid-out model scene, so a
+    // multi-pane binding can hit-test cursor->pane via
+    // rect_for_tag_absolute. Pins the PR-18.1 fix: with the old model
+    // scene every tag resolved None and the hit was impossible.
+    // ─────────────────────────────────────────────────────────────────
+
+    thread_local! {
+        /// Which pane the fixture's apply_wheel resolved the cursor into.
+        static WHEEL_HIT_PANE: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+    }
+
+    struct MultiPaneWheelFixture;
+
+    impl WidgetCore for MultiPaneWheelFixture {
+        type State = ButtonState;
+        type Event = ButtonEvent;
+
+        fn create_external() -> Box<dyn pinion_core::external::External> {
+            Box::new(pinion_core::widgets::button::ButtonExternal::new())
+        }
+
+        fn tag() -> &'static str {
+            "multi_pane_wheel"
+        }
+
+        fn read_state(_scene: &Scene) -> Self::State {
+            ButtonState::Idle
+        }
+
+        fn view(_state: Self::State, _frame: &Frame) -> Scene {
+            Scene::Container(
+                pinion_core::scene::ContainerNode::new(vec![]).with_tag("multi_pane_wheel"),
+            )
+        }
+
+        fn event_name(_event: Self::Event) -> &'static str {
+            "__internal__"
+        }
+
+        fn title() -> &'static str {
+            "MultiPaneWheel"
+        }
+
+        fn apply_wheel(
+            paint: &Scene,
+            cursor: (f64, f64),
+            _delta: WheelDelta,
+            _modifiers: pinion_core::Modifiers,
+        ) -> bool {
+            let (cx, cy) = cursor;
+            // The PR-18.1 contract: `paint` is the laid-out scene, so
+            // rect_for_tag_absolute resolves each pane's window rect.
+            let in_pane = |tag: &str| {
+                paint.rect_for_tag_absolute(tag).is_some_and(|r| {
+                    cx >= f64::from(r.x)
+                        && cx < f64::from(r.x) + f64::from(r.w)
+                        && cy >= f64::from(r.y)
+                        && cy < f64::from(r.y) + f64::from(r.h)
+                })
+            };
+            let pane = if in_pane("pane.0") {
+                Some(0)
+            } else if in_pane("pane.1") {
+                Some(1)
+            } else {
+                None
+            };
+            WHEEL_HIT_PANE.with(|c| c.set(pane));
+            pane.is_some()
+        }
+    }
+
+    /// A laid-out paint scene: two pane Containers at their window-absolute
+    /// rects (left half `pane.0`, right half `pane.1`). `update_paint_scene`
+    /// stores this as the router's `last_paint_scene`, the scene
+    /// `apply_wheel` now receives.
+    fn two_pane_paint_scene() -> Scene {
+        use pinion_core::scene::{ContainerNode, Rect};
+        let mut pane0 = ContainerNode::new(vec![]).with_tag("pane.0");
+        pane0.rect = Rect::new(0, 0, 100, 200);
+        let mut pane1 = ContainerNode::new(vec![]).with_tag("pane.1");
+        pane1.rect = Rect::new(100, 0, 100, 200);
+        let mut root = ContainerNode::new(vec![Scene::Container(pane0), Scene::Container(pane1)])
+            .with_tag("panes");
+        root.rect = Rect::new(0, 0, 200, 200);
+        Scene::Container(root)
+    }
+
+    #[test]
+    fn r1048_apply_wheel_hit_tests_against_laid_out_paint_scene() {
+        let mut core: CoreShell<MultiPaneWheelFixture> = CoreShell::new();
+        core.update_paint_scene(two_pane_paint_scene());
+
+        // Cursor over the LEFT pane → apply_wheel resolves pane.0's rect
+        // (impossible with the old model scene, where the tag resolved None).
+        WHEEL_HIT_PANE.with(|c| c.set(None));
+        let _ = core.cursor_moved(PointerId::MOUSE, 50.0, 50.0);
+        let (_t, dispatched) =
+            core.wheel(PointerId::MOUSE, WheelDelta::Pixels { dx: 0.0, dy: 10.0 });
+        assert!(dispatched, "the binding consumed the wheel over pane.0");
+        assert_eq!(
+            WHEEL_HIT_PANE.with(std::cell::Cell::get),
+            Some(0),
+            "cursor (50,50) hit-tests to pane.0 against the laid-out paint scene",
+        );
+
+        // Cursor over the RIGHT pane → pane.1.
+        WHEEL_HIT_PANE.with(|c| c.set(None));
+        let _ = core.cursor_moved(PointerId::MOUSE, 150.0, 50.0);
+        let (_t, dispatched) =
+            core.wheel(PointerId::MOUSE, WheelDelta::Pixels { dx: 0.0, dy: 10.0 });
+        assert!(dispatched, "the binding consumed the wheel over pane.1");
+        assert_eq!(
+            WHEEL_HIT_PANE.with(std::cell::Cell::get),
+            Some(1),
+            "cursor (150,50) hit-tests to pane.1",
+        );
+
+        // Cursor outside both panes → the binding declines (no pane hit),
+        // and the wheel falls through to the router (no Scroll node → no-op).
+        WHEEL_HIT_PANE.with(|c| c.set(None));
+        let _ = core.cursor_moved(PointerId::MOUSE, 350.0, 350.0);
+        let (_t, dispatched) =
+            core.wheel(PointerId::MOUSE, WheelDelta::Pixels { dx: 0.0, dy: 10.0 });
+        assert!(
+            !dispatched,
+            "cursor outside both panes → binding declines, router no-ops"
+        );
+        assert_eq!(
+            WHEEL_HIT_PANE.with(std::cell::Cell::get),
+            None,
+            "no pane resolved the cursor"
+        );
     }
 
     // ─────────────────────────────────────────────────────────────────
