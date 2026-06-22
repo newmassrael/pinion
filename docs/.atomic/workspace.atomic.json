@@ -13551,6 +13551,44 @@
         "capture is on VelloRenderer only (GPU trait, not the TUI-shared WidgetRenderer); a future thin-RHI renderer kind (Phase 2+) gets its own capture or a shared GPU-capture trait lifted at the 2nd GPU consumer"
       ]
     },
+    "R1061": {
+      "decision_summary": "R1061 §5.12 scene/screenshot {out_path} PNG file-output wire -- {out_path:'.png'} makes the embedder write the captured frame to that file as PNG and return just {width,height,out_path} (tiny) instead of the multi-MB pixels_rgba8 JSON array. The RGBA8->PNG encode is lifted to one SSOT (encode_rgba8_png) shared by the headless render_to_png + the live-capture out_path path -- the PNG-encode counterpart to R1060's texture_to_rgba8 readback SSOT. Realgpu-verified: 320x200 -> 5637-byte valid PNG + a small response.",
+      "changes_bullets": [
+        "vello_capture.rs: lift encode_rgba8_png (RGBA8 -> 8-bit RGBA PNG) as the SSOT; headless_screenshot::render_to_png now delegates -- the PNG-encode counterpart to the R1060 texture_to_rgba8 readback SSOT, the 2nd consumer being the live-capture out_path path",
+        "pinion-rpc Screenshot: add out_path: Option<String> + Screenshot::new_file; screenshot_to_json returns {width,height,out_path} (omitting pixels_rgba8) in file mode, the inline u8 pixel array otherwise. Screenshot stays #[non_exhaustive]",
+        "app.rs: dispatch_rpc reads the optional {out_path} param; capture_window_screenshot writes the captured frame to that file via the encode SSOT + returns the file-mode Screenshot. A create/encode failure fails the capture (-> RenderBackendUnavailable) rather than returning a wrong frame"
+      ],
+      "verification_bullets": [
+        "realgpu end-to-end: PINION_HIDDEN_WINDOW hello-button + scene/screenshot {out_path} -> response {width:320,height:200,out_path} (NO pixel array) + a valid 320x200 8-bit RGBA PNG, 5637 bytes on disk (vs ~1.5MB inline pixels_rgba8 JSON for the same frame)",
+        "automated: r1061_scene_screenshot_out_path_mode_returns_path_not_pixels (file-mode wire returns out_path + omits pixels_rgba8); the R1060 inline-mode + absent-snapshot tests are unchanged (4 screenshot dispatch tests green)",
+        "cargo test --workspace -j2: 7459 pass 0 fail (= 7458 R1060 baseline + 1 r1061 test); clippy --workspace --all-targets vello 0 warn; rustfmt clean; validate T1 orphan=0"
+      ],
+      "impact_refs": [
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "base64 inline mode (single string) still open if a consumer needs sub-MB frames WITHOUT a file write (out_path needs same-machine file access to the server's filesystem)",
+        "sprag R55 (sprag-native session): drive scene/screenshot {out_path} on the undock window for the white-vs-content diagnosis -- small response + a PNG to eyeball/diff"
+      ],
+      "publishable_decision_summary": "R1061 §5.12 scene/screenshot {out_path} PNG file-output wire -- {out_path:'.png'} makes the embedder write the captured frame to that file as PNG and return just {width,height,out_path} (tiny) instead of the multi-MB pixels_rgba8 JSON array. The RGBA8->PNG encode is lifted to one SSOT (encode_rgba8_png) shared by the headless render_to_png + the live-capture out_path path -- the PNG-encode counterpart to R1060's texture_to_rgba8 readback SSOT. Realgpu-verified: 320x200 -> 5637-byte valid PNG + a small response.",
+      "publishable_changes_bullets": [
+        "vello_capture.rs: lift encode_rgba8_png (RGBA8 -> 8-bit RGBA PNG) as the SSOT; headless_screenshot::render_to_png now delegates -- the PNG-encode counterpart to the R1060 texture_to_rgba8 readback SSOT, the 2nd consumer being the live-capture out_path path",
+        "pinion-rpc Screenshot: add out_path: Option<String> + Screenshot::new_file; screenshot_to_json returns {width,height,out_path} (omitting pixels_rgba8) in file mode, the inline u8 pixel array otherwise. Screenshot stays #[non_exhaustive]",
+        "app.rs: dispatch_rpc reads the optional {out_path} param; capture_window_screenshot writes the captured frame to that file via the encode SSOT + returns the file-mode Screenshot. A create/encode failure fails the capture (-> RenderBackendUnavailable) rather than returning a wrong frame"
+      ],
+      "publishable_verification_bullets": [
+        "realgpu end-to-end: PINION_HIDDEN_WINDOW hello-button + scene/screenshot {out_path} -> response {width:320,height:200,out_path} (NO pixel array) + a valid 320x200 8-bit RGBA PNG, 5637 bytes on disk (vs ~1.5MB inline pixels_rgba8 JSON for the same frame)",
+        "automated: r1061_scene_screenshot_out_path_mode_returns_path_not_pixels (file-mode wire returns out_path + omits pixels_rgba8); the R1060 inline-mode + absent-snapshot tests are unchanged (4 screenshot dispatch tests green)",
+        "cargo test --workspace -j2: 7459 pass 0 fail (= 7458 R1060 baseline + 1 r1061 test); clippy --workspace --all-targets vello 0 warn; rustfmt clean; validate T1 orphan=0"
+      ],
+      "publishable_impact_refs": [
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "base64 inline mode (single string) still open if a consumer needs sub-MB frames WITHOUT a file write (out_path needs same-machine file access to the server's filesystem)",
+        "sprag R55 (sprag-native session): drive scene/screenshot {out_path} on the undock window for the white-vs-content diagnosis -- small response + a PNG to eyeball/diff"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
