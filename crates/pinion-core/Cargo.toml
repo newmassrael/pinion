@@ -20,7 +20,10 @@ default = []
 test-fixtures = []
 
 [dependencies]
-sce-rust-runtime = { path = "../../vendor/sce/sce-rust-runtime", default-features = false }
+# R1053 §5.4 PR-22 — git+rev via workspace dep (was a `vendor/sce` path dep).
+# `default-features = false` lives on the workspace declaration: a member-side
+# override is silently ignored by Cargo when `workspace = true`.
+sce-rust-runtime = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 # R934 §5.22 — `ResourceCache::with_capacity` backs an LRU-bounded async
@@ -29,7 +32,8 @@ serde_json = { workspace = true }
 lru = { workspace = true }
 
 [build-dependencies]
-sce-build = { path = "../../vendor/sce/sce-build" }
+# R1053 §5.4 PR-22 — git+rev via workspace dep (was a `vendor/sce` path dep).
+sce-build = { workspace = true }
 
 [dev-dependencies]
 # R51.105 §5.38 — criterion micro-bench measuring ListBox dispatch

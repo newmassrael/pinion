@@ -11,13 +11,13 @@ description = "pinion DSL (.pinion.xml) parser + Rust codegen per §5.22 (R38)"
 workspace = true
 
 [dependencies]
-# Path dep on vendored SCE per R37.8 RFC 001 closed policy. Submodule SHA
-# in .gitmodules is the single source of truth for the pinned SCE revision;
-# Cargo path resolution inherits the pin. sce-build is consumed for its
-# v1 NDJSON diagnostic format as a reference pattern (per R38 §5.22
-# "SCE v1 pattern reference only"); pinion-forge owns its own diagnostic
-# namespace and does not extend SCE's closed `DiagnosticCode` enum.
-sce-build = { path = "../../vendor/sce/sce-build" }
+# R1053 §5.4 PR-22 — git+rev via the workspace dep (was a `vendor/sce` path dep
+# per R37.8 RFC 001). The pin + dual-pin discipline (Cargo rev == submodule SHA)
+# is documented once at the root `[workspace.dependencies]` SCE block. sce-build
+# is consumed for its v1 NDJSON diagnostic format as a reference pattern (per
+# R38 §5.22 "SCE v1 pattern reference only"); pinion-forge owns its own
+# diagnostic namespace and does not extend SCE's closed `DiagnosticCode` enum.
+sce-build = { workspace = true }
 
 # Event-driven XML parser. Chosen over roxmltree (used by sce-build) because
 # pinion-forge handles a closed schema (one root, fixed child set) where the
