@@ -12857,6 +12857,56 @@
         "PR-19 was an enhancement (NOT a blocker): sprag self-paint was sanctioned R1032 row-unit geometry consumption; this just collapses the last divergence surface (thumb_fill) into the substrate"
       ]
     },
+    "R1047": {
+      "decision_summary": "§5.23 §5.22 §6.3 WidgetCore::reconcile_frame — per-paint pre-view binding reducer hook (sprag PR-20, consumer-forced; offset-projection scroll-bound reconcile). A binding whose scroll authority is an offset-projection (a Scene::TextGrid re-projecting scrollback by offset_lines, NOT a Scene::Scroll pixel clip) whose content extent (scrollback_len) lives in an off-thread producer with no reactive Signal: the post-layout update_scroll_state_bounds reducer cannot reach it (no clip node, extent not layout-derived) and no Effect can subscribe (no dep). reconcile_frame() is the sanctioned non-view-fn place to grow + tail-follow its ScrollState, so V::view stays a pure read (the §6.3 dry_run guarantee). Run pre-view (after set_viewport_size, before V::view, under root_owner) — no re-pass since a producer-derived extent needs no measured viewport. Chose B (binding hook) over A (extend the declarative reducer): only the binding knows the producer extent + the tail-follow timing; A would force off-thread producer counts into the scene. Coherent sibling of R1045 apply_wheel. EXCLUDED from the side-effect-free pure mirror (compute_paint_scene_pure_internal) — a scene/snapshot or dry_run never reconciles (§6.3 / §2 #3 by construction).",
+      "changes_bullets": [
+        "pinion-core widget_core.rs: WidgetCore::reconcile_frame() default no-op trait method — the per-paint pre-view binding reducer",
+        "pinion-runtime core_shell.rs: CoreShell::reconcile_frame(&self) runs V::reconcile_frame() under root_owner.run (mirrors set_viewport_size's wrap)",
+        "pinion-shell substrate.rs: compute_paint_scene_internal calls self.core.reconcile_frame() AFTER set_viewport_size, BEFORE V::view, gated DEFAULT_WINDOW; the side-effect-free mirror (compute_paint_scene_pure_internal) omits it",
+        "design: chose B (binding hook) over A (extend update_scroll_state_bounds) — the terminal extent (scrollback_len) is producer-derived (off-thread, no Signal), so only the binding knows it + the tail-follow timing; A would force off-thread producer counts into the scene. Pre-view (no re-pass) since a producer extent needs no measured viewport. Coherent sibling of R1045 apply_wheel"
+      ],
+      "verification_bullets": [
+        "cargo fmt --check + clippy --workspace --all-targets --features pinion-runtime/vello clean",
+        "cargo test --workspace: 194/194 result lines ok, 0 failed",
+        "2 core_shell unit tests (runs-once-under-root-owner / default-no-op) + 2 pinion-shell e2e (reconcile_frame_seam.rs): real paint reconciles the producer-derived bound (0->5->12), pure mirror leaves it frozen AND never calls the hook (§6.3 by construction), steady producer idempotent (loop-safe)",
+        "2-lens adversarial review: correctness SHIP-WITH-NITS / arch SHIP-WITH-NITS, no HIGH/MED-correctness; both traced EVERY pure paint entry point (RPC produce closure / dry_run / R684 finalize) reconcile-free; B-over-A confirmed principled (producer-derived vs layout-derived extent separation); pre-view ordering verified (set_viewport_size Signal::set is synchronous)",
+        "commit 14a13cd5; COMMITTED-NOT-PUSHED"
+      ],
+      "impact_refs": [
+        "5.23",
+        "5.22",
+        "6.3"
+      ],
+      "carry_forward_bullets": [
+        "sprag-native session: move reconcile_scroll(follow_tail) out of build_pane_scene (view-fn) into V::reconcile_frame -> build_pane_scene purified to a pure read of the already-reconciled ScrollState; pinion seam delivered, never edited from a pinion session",
+        "TUI reconcile_frame deferred-pending-consumer: pinion-tui compute_paint_scene calls neither set_viewport_size nor reconcile_frame; wiring now = feature without consumer (sprag is GUI). Future consumer-forced round (review MED, GUI-only v1 correct per needed-feature-test-as-forcing-consumer)",
+        "RPC-only headless never reconciles (no winit paint loop -> compute_paint_scene_internal never runs): inherited set_viewport_size/R1006 limitation, not new (review LOW)"
+      ],
+      "publishable_decision_summary": "§5.23 §5.22 §6.3 WidgetCore::reconcile_frame — per-paint pre-view binding reducer hook (sprag PR-20, consumer-forced; offset-projection scroll-bound reconcile). A binding whose scroll authority is an offset-projection (a Scene::TextGrid re-projecting scrollback by offset_lines, NOT a Scene::Scroll pixel clip) whose content extent (scrollback_len) lives in an off-thread producer with no reactive Signal: the post-layout update_scroll_state_bounds reducer cannot reach it (no clip node, extent not layout-derived) and no Effect can subscribe (no dep). reconcile_frame() is the sanctioned non-view-fn place to grow + tail-follow its ScrollState, so V::view stays a pure read (the §6.3 dry_run guarantee). Run pre-view (after set_viewport_size, before V::view, under root_owner) — no re-pass since a producer-derived extent needs no measured viewport. Chose B (binding hook) over A (extend the declarative reducer): only the binding knows the producer extent + the tail-follow timing; A would force off-thread producer counts into the scene. Coherent sibling of R1045 apply_wheel. EXCLUDED from the side-effect-free pure mirror (compute_paint_scene_pure_internal) — a scene/snapshot or dry_run never reconciles (§6.3 / §2 #3 by construction).",
+      "publishable_changes_bullets": [
+        "pinion-core widget_core.rs: WidgetCore::reconcile_frame() default no-op trait method — the per-paint pre-view binding reducer",
+        "pinion-runtime core_shell.rs: CoreShell::reconcile_frame(&self) runs V::reconcile_frame() under root_owner.run (mirrors set_viewport_size's wrap)",
+        "pinion-shell substrate.rs: compute_paint_scene_internal calls self.core.reconcile_frame() AFTER set_viewport_size, BEFORE V::view, gated DEFAULT_WINDOW; the side-effect-free mirror (compute_paint_scene_pure_internal) omits it",
+        "design: chose B (binding hook) over A (extend update_scroll_state_bounds) — the terminal extent (scrollback_len) is producer-derived (off-thread, no Signal), so only the binding knows it + the tail-follow timing; A would force off-thread producer counts into the scene. Pre-view (no re-pass) since a producer extent needs no measured viewport. Coherent sibling of R1045 apply_wheel"
+      ],
+      "publishable_verification_bullets": [
+        "cargo fmt --check + clippy --workspace --all-targets --features pinion-runtime/vello clean",
+        "cargo test --workspace: 194/194 result lines ok, 0 failed",
+        "2 core_shell unit tests (runs-once-under-root-owner / default-no-op) + 2 pinion-shell e2e (reconcile_frame_seam.rs): real paint reconciles the producer-derived bound (0->5->12), pure mirror leaves it frozen AND never calls the hook (§6.3 by construction), steady producer idempotent (loop-safe)",
+        "2-lens adversarial review: correctness SHIP-WITH-NITS / arch SHIP-WITH-NITS, no HIGH/MED-correctness; both traced EVERY pure paint entry point (RPC produce closure / dry_run / R684 finalize) reconcile-free; B-over-A confirmed principled (producer-derived vs layout-derived extent separation); pre-view ordering verified (set_viewport_size Signal::set is synchronous)",
+        "commit 14a13cd5; COMMITTED-NOT-PUSHED"
+      ],
+      "publishable_impact_refs": [
+        "5.23",
+        "5.22",
+        "6.3"
+      ],
+      "publishable_carry_forward_bullets": [
+        "sprag-native session: move reconcile_scroll(follow_tail) out of build_pane_scene (view-fn) into V::reconcile_frame -> build_pane_scene purified to a pure read of the already-reconciled ScrollState; pinion seam delivered, never edited from a pinion session",
+        "TUI reconcile_frame deferred-pending-consumer: pinion-tui compute_paint_scene calls neither set_viewport_size nor reconcile_frame; wiring now = feature without consumer (sprag is GUI). Future consumer-forced round (review MED, GUI-only v1 correct per needed-feature-test-as-forcing-consumer)",
+        "RPC-only headless never reconciles (no winit paint loop -> compute_paint_scene_internal never runs): inherited set_viewport_size/R1006 limitation, not new (review LOW)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
