@@ -13318,6 +13318,52 @@
         "shaper stacks on the immediately-preceding mark only (single prev_mark chain); attaching to an arbitrary earlier mark in the cluster (GDEF-driven) not modelled"
       ]
     },
+    "R1056": {
+      "decision_summary": "R1056 §5.37.6 R50.6.4 GDEF GlyphClassDef + GDEF-aware shaper mark recognition: a mark the font declares (class 3) is never mistaken for a base even when it declares no anchor, so a following mark still reaches the real base. Clears R1055's GDEF carry. layout::ClassDef reused; optional_table lifted (GPOS/GSUB/GDEF 3rd consumer)",
+      "changes_bullets": [
+        "tables/gdef.rs (new): Gdef::parse reads the GDEF header -> GlyphClassDef as a reused layout::ClassDef (no hand-roll); GlyphClass enum (Base/Ligature/Mark/Component/Unclassified); glyph_class / is_mark / has_glyph_classes",
+        "font.rs: gdef: Option<Gdef> parsed from the GDEF table; Font::glyph_class / is_mark / has_glyph_classes; optional_table<T> lifted as the GPOS/GSUB/GDEF optional-table bridge (find_table Ok=>parse / Err=>None, 3rd consumer = self-grep lift)",
+        "shape.rs Stage 4: mark recognition now reads GDEF — a GDEF mark that declares no anchor stays a mark (keeps last_base, becomes a mkmk stacking ref) instead of being taken as a base; GDEF-less fonts keep the attach-based heuristic; clears R1055 'GDEF not parsed' carry",
+        "lib.rs exports Gdef + GlyphClass; tables/mod.rs declares pub mod gdef"
+      ],
+      "verification_bullets": [
+        "pinion-text-font 243 lib pass +3 (gdef: classifies_each_glyph_class [synthetic Format-2 ClassDef -> Base/Ligature/Mark, unlisted=Unclassified] + absent_glyph_class_def_is_unclassified [offset 0] + reject_major_version)",
+        "shape integration 18 pass +2 (real NotoSans: gdef_classifies_letters_and_marks [letters=Base, U+0301/0302/0308/0323=Mark, deterministic] + shape_run_recognises_marks_from_gdef [a + non-attaching GDEF mark + attaching mark: attaching mark reaches base 'a' across the stray mark via exact f32 bit-oracle; fails in pre-GDEF code where the stray mark becomes a base])",
+        "no regression: mark-to-base + mark-to-mark shape tests still green (NotoSans attaching marks ARE GDEF class 3, behaviour unchanged); GDEF-less fonts: is_mark=false -> Stage 4 falls back to pre-GDEF attach path (backward-compatible)",
+        "cargo test --workspace -j2: 7445 pass 0 fail (= 7440 R1055 baseline + R1056 5); clippy --workspace --all-targets vello 0 warn; rustfmt clean; validate T1=0 (entries 1068->1069)"
+      ],
+      "impact_refs": [
+        "5.37.6"
+      ],
+      "carry_forward_bullets": [
+        "GDEF AttachList / LigCaretList / MarkAttachClassDef + v1.2 mark-glyph-sets + lookupFlag mark-attachment-class filtering still deferred (R50.6.x); only GlyphClassDef parsed",
+        "kern/liga still apply to every adjacent run (no lookupFlag IgnoreMarks yet); a stacking mark on a non-attaching (unpositioned) mark uses that mark's pen position (edge of an edge)",
+        "mark-to-ligature (GPOS Type 5) still deferred; cursive (Type 3) / single (Type 1) / contextual positioning open",
+        "(R1054 carry still open) per-line vmetrics=fonts[0]; wrap cross-font-run kerning drop; GPU N-atlas bind; styled-run per-span color needs RGBA; production paint still swash (engine is a test-only spike)"
+      ],
+      "publishable_decision_summary": "R1056 §5.37.6 R50.6.4 GDEF GlyphClassDef + GDEF-aware shaper mark recognition: a mark the font declares (class 3) is never mistaken for a base even when it declares no anchor, so a following mark still reaches the real base. Clears R1055's GDEF carry. layout::ClassDef reused; optional_table lifted (GPOS/GSUB/GDEF 3rd consumer)",
+      "publishable_changes_bullets": [
+        "tables/gdef.rs (new): Gdef::parse reads the GDEF header -> GlyphClassDef as a reused layout::ClassDef (no hand-roll); GlyphClass enum (Base/Ligature/Mark/Component/Unclassified); glyph_class / is_mark / has_glyph_classes",
+        "font.rs: gdef: Option<Gdef> parsed from the GDEF table; Font::glyph_class / is_mark / has_glyph_classes; optional_table<T> lifted as the GPOS/GSUB/GDEF optional-table bridge (find_table Ok=>parse / Err=>None, 3rd consumer = self-grep lift)",
+        "shape.rs Stage 4: mark recognition now reads GDEF — a GDEF mark that declares no anchor stays a mark (keeps last_base, becomes a mkmk stacking ref) instead of being taken as a base; GDEF-less fonts keep the attach-based heuristic; clears R1055 'GDEF not parsed' carry",
+        "lib.rs exports Gdef + GlyphClass; tables/mod.rs declares pub mod gdef"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-text-font 243 lib pass +3 (gdef: classifies_each_glyph_class [synthetic Format-2 ClassDef -> Base/Ligature/Mark, unlisted=Unclassified] + absent_glyph_class_def_is_unclassified [offset 0] + reject_major_version)",
+        "shape integration 18 pass +2 (real NotoSans: gdef_classifies_letters_and_marks [letters=Base, U+0301/0302/0308/0323=Mark, deterministic] + shape_run_recognises_marks_from_gdef [a + non-attaching GDEF mark + attaching mark: attaching mark reaches base 'a' across the stray mark via exact f32 bit-oracle; fails in pre-GDEF code where the stray mark becomes a base])",
+        "no regression: mark-to-base + mark-to-mark shape tests still green (NotoSans attaching marks ARE GDEF class 3, behaviour unchanged); GDEF-less fonts: is_mark=false -> Stage 4 falls back to pre-GDEF attach path (backward-compatible)",
+        "cargo test --workspace -j2: 7445 pass 0 fail (= 7440 R1055 baseline + R1056 5); clippy --workspace --all-targets vello 0 warn; rustfmt clean; validate T1=0 (entries 1068->1069)"
+      ],
+      "publishable_impact_refs": [
+        "5.37.6"
+      ],
+      "publishable_carry_forward_bullets": [
+        "GDEF AttachList / LigCaretList / MarkAttachClassDef + v1.2 mark-glyph-sets + lookupFlag mark-attachment-class filtering still deferred (R50.6.x); only GlyphClassDef parsed",
+        "kern/liga still apply to every adjacent run (no lookupFlag IgnoreMarks yet); a stacking mark on a non-attaching (unpositioned) mark uses that mark's pen position (edge of an edge)",
+        "mark-to-ligature (GPOS Type 5) still deferred; cursive (Type 3) / single (Type 1) / contextual positioning open",
+        "(R1054 carry still open) per-line vmetrics=fonts[0]; wrap cross-font-run kerning drop; GPU N-atlas bind; styled-run per-span color needs RGBA; production paint still swash (engine is a test-only spike)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
