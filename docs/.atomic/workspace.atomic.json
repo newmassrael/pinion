@@ -4380,7 +4380,8 @@
         "R50.7: GSUB liga 합자 치환(LigatureSubst Type 4 + Extension Type 7) shape_run 적용 (cmap→GSUB→GPOS)",
         "R50.7: Coverage/ClassDef + Script-Feature-Lookup nav → tables/layout/ (GPOS+GSUB 공유, 2nd consumer)",
         "R50.7 defers: GSUB single/multiple/alternate/contextual/reverse-chain + lookupFlag filtering",
-        "R1039 (R50.10) shape_paragraph supersedes 'single visual run': itemize + L2 reorder now applied"
+        "R1039 (R50.10) shape_paragraph supersedes 'single visual run': itemize + L2 reorder now applied",
+        "R1040 shape_paragraph filters X9-removed controls (run-granularity BN filter); R1039 X9 gap cleared"
       ],
       "alternatives_rejected": [
         {
@@ -12296,6 +12297,54 @@
         "shape_paragraph is a test forcing-consumer; production paint still §5.36 swash until paint-wiring",
         "L3 combining-mark reorder + multi-paragraph + per-script shaper selection deferred",
         "cargo-doc cmap best_subtable + hhea int16[4] pre-existing carry (unrelated)"
+      ]
+    },
+    "R1040": {
+      "decision_summary": "§5.37.6/§5.37.4 X9 control filtering: shape_paragraph now strips UAX #9 X9-removed directional controls (RLE/LRE/RLO/LRO/PDF/BN) per run and drops pure-control runs before the L2 reorder, clearing the R1039 deferral. New pinion-text-unicode pub fn is_removed_by_x9, equivalent to bidi_reorder's per-codepoint BN filter at run granularity.",
+      "changes_bullets": [
+        "pinion-text-unicode: new pub is_removed_by_x9(char) (RLE/LRE/RLO/LRO/PDF/BN); re-exported",
+        "shape_paragraph strips X9-removed controls per run (ActiveRun: filtered text + cluster map)",
+        "Pure-control runs dropped before reorder_visual so placeholder levels cannot skew L2",
+        "Clears the R1039 X9 honest-deferral; modern isolates (LRI/PDI) already handled"
+      ],
+      "verification_bullets": [
+        "is_removed_by_x9 == bidi_reorder post-pipeline BN filter (X-stage folds explicit codes to BN)",
+        "pinion-text-font 10 paragraph tests incl. visible_order_matches_bidi_reorder_oracle (equivalence)",
+        "workspace test 0 fail; bidi full sweeps 2 pass; clippy --workspace vello + rustfmt clean",
+        "validate T1=0; entries 1049->1050; §5.37.6 caveat: X9 filtered (R1039 gap cleared)"
+      ],
+      "impact_refs": [
+        "5.37.6",
+        "5.37.4"
+      ],
+      "carry_forward_bullets": [
+        "ZWNJ/ZWJ (BN) are stripped -> join shaping semantics not yet honoured (BIDI-removed != shaping-removed)",
+        "L3 combining-mark reorder + multi-paragraph + per-script shaper selection still deferred",
+        "shape_paragraph is a test forcing-consumer; production paint still §5.36 swash until paint-wiring",
+        "cargo-doc bidi.rs compute_sos_eos/bd16 + cmap best_subtable + hhea int16[4] pre-existing (unrelated)"
+      ],
+      "publishable_decision_summary": "§5.37.6/§5.37.4 X9 control filtering: shape_paragraph now strips UAX #9 X9-removed directional controls (RLE/LRE/RLO/LRO/PDF/BN) per run and drops pure-control runs before the L2 reorder, clearing the R1039 deferral. New pinion-text-unicode pub fn is_removed_by_x9, equivalent to bidi_reorder's per-codepoint BN filter at run granularity.",
+      "publishable_changes_bullets": [
+        "pinion-text-unicode: new pub is_removed_by_x9(char) (RLE/LRE/RLO/LRO/PDF/BN); re-exported",
+        "shape_paragraph strips X9-removed controls per run (ActiveRun: filtered text + cluster map)",
+        "Pure-control runs dropped before reorder_visual so placeholder levels cannot skew L2",
+        "Clears the R1039 X9 honest-deferral; modern isolates (LRI/PDI) already handled"
+      ],
+      "publishable_verification_bullets": [
+        "is_removed_by_x9 == bidi_reorder post-pipeline BN filter (X-stage folds explicit codes to BN)",
+        "pinion-text-font 10 paragraph tests incl. visible_order_matches_bidi_reorder_oracle (equivalence)",
+        "workspace test 0 fail; bidi full sweeps 2 pass; clippy --workspace vello + rustfmt clean",
+        "validate T1=0; entries 1049->1050; §5.37.6 caveat: X9 filtered (R1039 gap cleared)"
+      ],
+      "publishable_impact_refs": [
+        "5.37.6",
+        "5.37.4"
+      ],
+      "publishable_carry_forward_bullets": [
+        "ZWNJ/ZWJ (BN) are stripped -> join shaping semantics not yet honoured (BIDI-removed != shaping-removed)",
+        "L3 combining-mark reorder + multi-paragraph + per-script shaper selection still deferred",
+        "shape_paragraph is a test forcing-consumer; production paint still §5.36 swash until paint-wiring",
+        "cargo-doc bidi.rs compute_sos_eos/bd16 + cmap best_subtable + hhea int16[4] pre-existing (unrelated)"
       ]
     },
     "R232": {

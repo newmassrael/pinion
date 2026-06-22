@@ -163,6 +163,27 @@ pub fn bidi_class(cp: char) -> BidiClass {
         .map_or(BidiClass::L, BidiClass::from_index)
 }
 
+/// `true` if `cp` is removed by UAX #9 rule X9 — an explicit embedding /
+/// override formatting code (RLE / LRE / RLO / LRO / PDF) or a Boundary
+/// Neutral (BN). X9 reports all six as [`BidiClass::BN`] (the pipeline
+/// folds the explicit codes to BN), so testing the original class here is
+/// equivalent to the post-pipeline BN filter [`bidi_reorder`] applies.
+/// These carry no visual glyph; a shaper must drop them from its runs
+/// before the L2 reorder. The isolate controls (LRI / RLI / FSI / PDI)
+/// are **not** removed by X9.
+#[must_use]
+pub fn is_removed_by_x9(cp: char) -> bool {
+    matches!(
+        bidi_class(cp),
+        BidiClass::RLE
+            | BidiClass::LRE
+            | BidiClass::RLO
+            | BidiClass::LRO
+            | BidiClass::PDF
+            | BidiClass::BN
+    )
+}
+
 // ======================================================================
 // R51.20 §5.37.4 — BD16 paired bracket substrate (UCD `BidiBrackets.txt`)
 // ======================================================================
@@ -1852,6 +1873,32 @@ mod tests {
         assert_eq!(bidi_class('A'), BidiClass::L);
         assert_eq!(bidi_class('z'), BidiClass::L);
         assert_eq!(bidi_class('한'), BidiClass::L); // Hangul syllable
+    }
+
+    #[test]
+    fn x9_removed_set_is_explicit_codes_and_bn_not_isolates() {
+        // The six X9-removed classes (reported as BN post-pipeline).
+        for c in [
+            '\u{202A}', // LRE
+            '\u{202B}', // RLE
+            '\u{202D}', // LRO
+            '\u{202E}', // RLO
+            '\u{202C}', // PDF
+            '\u{200C}', // BN — ZWNJ (a real format control)
+            '\u{200D}', // BN — ZWJ
+            '\u{00AD}', // BN — SOFT HYPHEN
+            '\u{0000}', // BN — control
+        ] {
+            assert!(is_removed_by_x9(c), "{c:?} should be X9-removed");
+        }
+        // Isolates are NOT removed by X9.
+        for c in ['\u{2066}', '\u{2067}', '\u{2068}', '\u{2069}'] {
+            assert!(!is_removed_by_x9(c), "isolate {c:?} is not X9-removed");
+        }
+        // Ordinary visible content is not removed.
+        for c in ['a', '0', '\u{05D0}', '\u{4E00}', ' '] {
+            assert!(!is_removed_by_x9(c), "{c:?} is not X9-removed");
+        }
     }
 
     #[test]

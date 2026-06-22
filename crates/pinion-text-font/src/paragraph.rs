@@ -18,22 +18,28 @@
 //! run is then reversed for display — the OpenType / UAX #9 order, matching
 //! `HarfBuzz`.
 //!
+//! UAX #9 rule X9 controls (the explicit embedding / override codes
+//! RLE/LRE/RLO/LRO/PDF and Boundary Neutrals) are filtered out before shaping
+//! and the L2 reorder ([`pinion_text_unicode::is_removed_by_x9`]): they carry no
+//! glyph and a run made up entirely of them is dropped from the reorder so its
+//! placeholder level cannot skew it — the run-granularity form of
+//! `bidi_reorder`'s per-codepoint BN filter (its R51.24.1 fix).
+//!
 //! Scope (honest deferrals, not silent gaps): a single paragraph (the caller
 //! splits on hard breaks via [`pinion_text_unicode::bidi::iter_paragraphs`]);
 //! L3 combining-mark reordering and per-script shaper selection are deferred.
-//! **Explicit directional-format controls (the X9-removed RLE/LRE/RLO/LRO/PDF
-//! and BN codes) are not yet filtered before the L2 run reorder**, so a
-//! paragraph containing them may reorder incorrectly and emits a glyph for the
-//! control itself — `bidi_reorder` filters these per-codepoint (its R51.24.1
-//! fix), but doing so at run granularity here needs per-codepoint BN awareness
-//! and is a follow-up. The modern isolate controls (LRI/RLI/FSI/PDI) are *not*
-//! X9-removed and reorder correctly today. Production paint is still §5.36
-//! swash, so [`shape_paragraph`] is a test forcing-consumer until the paint
-//! path wires the self-hosted shaper.
+//! A removed control is not treated as a shaping-cluster boundary, so two
+//! visible codepoints separated only by one may shape together (rare; an
+//! interior control within a single level+script run). This includes the
+//! ZWNJ (U+200C) / ZWJ (U+200D) join controls — both Boundary Neutral — so
+//! their join/no-join shaping semantics are not yet honoured: the BIDI-removed
+//! set is broader than the shaping-removed set, to be split when the shaper
+//! reaches the paint path. Production paint is still §5.36 swash, so
+//! [`shape_paragraph`] is a test forcing-consumer until then.
 
 use crate::Font;
 use crate::shape::{PositionedGlyph, shape_run};
-use pinion_text_unicode::{itemize, reorder_visual};
+use pinion_text_unicode::{ItemRun, is_removed_by_x9, itemize, reorder_visual};
 
 /// A shaped paragraph: glyphs in visual (left-to-right) order with absolute
 /// pen-origin positions, plus the total advance.
@@ -54,23 +60,29 @@ pub struct ShapedParagraph {
 /// empty string yields no glyphs and zero advance.
 #[must_use]
 pub fn shape_paragraph(font: &Font, paragraph: &str, px_per_em: f32) -> ShapedParagraph {
-    let runs = itemize(paragraph);
-    if runs.is_empty() {
+    // Strip X9-removed controls from each run's text, keeping only runs with
+    // visible content. A pure-control run is dropped entirely so its placeholder
+    // level never reaches the L2 reorder (the run-granularity BN filter).
+    let active: Vec<ActiveRun> = itemize(paragraph)
+        .into_iter()
+        .filter_map(|run| ActiveRun::build(paragraph, run))
+        .collect();
+    if active.is_empty() {
         return ShapedParagraph::default();
     }
 
     // UAX #9 L2 at run granularity: each run is single-level, so reordering the
     // per-run level array yields the left-to-right display order of runs.
-    let run_levels: Vec<u8> = runs.iter().map(|r| r.level).collect();
-    let visual_order = reorder_visual(&run_levels);
+    let levels: Vec<u8> = active.iter().map(|a| a.run.level).collect();
+    let visual_order = reorder_visual(&levels);
 
     let mut glyphs: Vec<PositionedGlyph> = Vec::new();
     let mut pen = 0.0_f32;
-    for &ri in &visual_order {
-        let run = runs[ri];
-        let shaped = shape_run(font, &paragraph[run.start..run.end], px_per_em);
+    for &ai in &visual_order {
+        let active = &active[ai];
+        let shaped = shape_run(font, &active.text, px_per_em);
         let n = shaped.glyphs.len();
-        if run.is_rtl() {
+        if active.run.is_rtl() {
             // Mirror within the run for display: the logically-last glyph is
             // leftmost. A glyph spans `[g.x, next_x)` in the logical box
             // (`next_x` = the next glyph's pen origin, or the run advance for
@@ -87,7 +99,7 @@ pub fn shape_paragraph(font: &Font, paragraph: &str, px_per_em: f32) -> ShapedPa
                 glyphs.push(PositionedGlyph {
                     glyph_id: g.glyph_id,
                     x: pen + (shaped.advance - next_x),
-                    cluster: run.start + g.cluster,
+                    cluster: active.origin_byte(g.cluster),
                 });
             }
         } else {
@@ -95,7 +107,7 @@ pub fn shape_paragraph(font: &Font, paragraph: &str, px_per_em: f32) -> ShapedPa
                 glyphs.push(PositionedGlyph {
                     glyph_id: g.glyph_id,
                     x: pen + g.x,
-                    cluster: run.start + g.cluster,
+                    cluster: active.origin_byte(g.cluster),
                 });
             }
         }
@@ -105,6 +117,52 @@ pub fn shape_paragraph(font: &Font, paragraph: &str, px_per_em: f32) -> ShapedPa
     ShapedParagraph {
         glyphs,
         advance: pen,
+    }
+}
+
+/// An itemised run with its X9-filtered shapeable text and the map back to
+/// paragraph byte offsets. Built only for runs that retain visible content.
+struct ActiveRun {
+    run: ItemRun,
+    /// The run's text with X9-removed controls stripped.
+    text: String,
+    /// `(byte offset in `text`, byte offset in the paragraph)` for each kept
+    /// codepoint, ascending by the first — `shape_run` clusters are codepoint
+    /// (or ligature-component) starts, so they hit an entry exactly.
+    clusters: Vec<(usize, usize)>,
+}
+
+impl ActiveRun {
+    /// Build the filtered run, or `None` if every codepoint was X9-removed.
+    fn build(paragraph: &str, run: ItemRun) -> Option<Self> {
+        let mut text = String::new();
+        let mut clusters = Vec::new();
+        for (rel, ch) in paragraph[run.start..run.end].char_indices() {
+            if is_removed_by_x9(ch) {
+                continue;
+            }
+            clusters.push((text.len(), run.start + rel));
+            text.push(ch);
+        }
+        if text.is_empty() {
+            None
+        } else {
+            Some(Self {
+                run,
+                text,
+                clusters,
+            })
+        }
+    }
+
+    /// Map a `shape_run` cluster (byte offset into [`Self::text`]) back to the
+    /// paragraph byte offset of its source codepoint.
+    fn origin_byte(&self, cluster: usize) -> usize {
+        let idx = self
+            .clusters
+            .binary_search_by_key(&cluster, |&(text_byte, _)| text_byte)
+            .expect("cluster lands on a kept codepoint start");
+        self.clusters[idx].1
     }
 }
 
@@ -204,19 +262,83 @@ mod tests {
     }
 
     #[test]
-    fn explicit_directional_controls_do_not_panic_known_limitation() {
-        // X9-removed explicit embedding controls (RLE/LRE/RLO/LRO/PDF) are NOT
-        // yet filtered before the L2 run reorder (see the module deferral), so
-        // this pins only the guarantee we make today: no panic, coverage stays
-        // well-formed (x non-decreasing, clusters in range). When BN filtering
-        // lands this test gains exact reorder assertions.
+    fn explicit_directional_controls_are_filtered() {
+        // a LRE b PDF c — the X9-removed controls (U+202A/U+202C) must produce
+        // NO glyph and must not disturb order: exactly the three visible Latin
+        // letters at their paragraph byte offsets (a@0, b@4, c@8).
         let f = font(NOTO);
-        let text = "a\u{202A}b\u{202C}c"; // a LRE b PDF c
+        let text = "a\u{202A}b\u{202C}c";
         let para = shape_paragraph(&f, text, 32.0);
-        assert!(!para.glyphs.is_empty());
+        let clusters: Vec<usize> = para.glyphs.iter().map(|g| g.cluster).collect();
+        assert_eq!(
+            clusters,
+            vec![0, 4, 8],
+            "controls stripped, visible order kept"
+        );
         assert_x_ascending(&para);
-        for g in &para.glyphs {
-            assert!(g.cluster < text.len(), "cluster {} out of range", g.cluster);
+        // Equivalent to shaping the controls-removed text directly.
+        let plain = shape_paragraph(&f, "abc", 32.0);
+        assert_eq!(para.glyphs.len(), plain.glyphs.len());
+        assert!((para.advance - plain.advance).abs() < 1e-4);
+    }
+
+    #[test]
+    fn pure_control_run_yields_no_glyphs() {
+        // A paragraph of only X9-removed controls has no visible content.
+        let f = font(NOTO);
+        let para = shape_paragraph(&f, "\u{202A}\u{202C}", 32.0);
+        assert!(para.glyphs.is_empty());
+        assert!(para.advance.abs() < 1e-4);
+    }
+
+    #[test]
+    fn interior_controls_are_stripped_within_mixed_runs() {
+        // a RLE alef bet PDF c: RLE (level 0) joins the leading Latin run and
+        // PDF (level 1) joins the Hebrew run, so both are *interior* controls
+        // stripped per-codepoint (no pure-control run here). 4 visible glyphs:
+        // a (LTR) | bet, alef (RTL mirrored, clusters descend) | c (LTR).
+        let f = font(NOTO);
+        let text = "a\u{202B}\u{05D0}\u{05D1}\u{202C}c";
+        // bytes: a@0, RLE@1..4, alef@4..6, bet@6..8, PDF@8..11, c@11
+        let para = shape_paragraph(&f, text, 32.0);
+        let clusters: Vec<usize> = para.glyphs.iter().map(|g| g.cluster).collect();
+        assert_eq!(
+            clusters,
+            vec![0, 6, 4, 11],
+            "interior controls stripped, Hebrew mirrored"
+        );
+        assert_x_ascending(&para);
+    }
+
+    #[test]
+    fn visible_order_matches_bidi_reorder_oracle() {
+        // The equivalence guarantee: shape_paragraph's run-granularity X9 filter
+        // + L2 reorder must match the conformance-tested per-codepoint
+        // `bidi_reorder` restricted to visible codepoints. This is the negative
+        // control for the reorder — any skew (e.g. failing to drop a
+        // pure-control run) would diverge from the oracle. Latin + Hebrew, no
+        // ligature/combining triggers, so each visible codepoint is one glyph.
+        use pinion_text_unicode::bidi::bidi_reorder;
+        use pinion_text_unicode::is_removed_by_x9;
+        let f = font(NOTO);
+        for text in [
+            "a\u{202B}\u{05D0}b\u{202C}c",        // RLE Hebrew embedding, mixed
+            "\u{05D0}\u{202A}ab\u{202C}\u{05D1}", // Hebrew, LRE Latin, Hebrew
+            "ab\u{05D0}\u{05D1}cd",               // no controls, plain mixed
+        ] {
+            let para = shape_paragraph(&f, text, 32.0);
+            let byte_of: Vec<usize> = text.char_indices().map(|(b, _)| b).collect();
+            let chars: Vec<char> = text.chars().collect();
+            let oracle: Vec<usize> = bidi_reorder(text)
+                .into_iter()
+                .filter(|&ci| !is_removed_by_x9(chars[ci]))
+                .map(|ci| byte_of[ci])
+                .collect();
+            let got: Vec<usize> = para.glyphs.iter().map(|g| g.cluster).collect();
+            assert_eq!(
+                got, oracle,
+                "visible order must match bidi_reorder for {text:?}"
+            );
         }
     }
 
