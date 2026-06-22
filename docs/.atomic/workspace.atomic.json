@@ -677,7 +677,10 @@
         "R51.48 Phase 4+ B 평가 gate: 언리얼-class engine pass, AAA RDG/bindless 운용 검증 후 ratify",
         "R1027: shell layout in logical px; physical only at GPU surface, vello Affine::scale, pointer, a11y",
         "R1027: scale!=1 scaled vello append to scratch; scale==1 direct byte-identical (cache IDENTITY kept)",
-        "R1027: introspection/RPC scene stays logical = DPI-independent (scene-as-data); headless = scale 1"
+        "R1027: introspection/RPC scene stays logical = DPI-independent (scene-as-data); headless = scale 1",
+        "R1060: scene/screenshot pixel readback ships on the Vello backend, not pinion-render-rhi.",
+        "R1060: capture_rgba8 reads the presented swapchain (COPY_SRC); supersedes R11 blocked-on-rhi caveat.",
+        "R1060: readback SSOT-shared with headless; realgpu-verified (windowed lavapipe OOMs the buffer)."
       ],
       "alternatives_rejected": [
         {
@@ -13500,6 +13503,52 @@
         "PR-23 consumer (sprag R55, sprag-native session -- pinion cannot edit sprag): swap undock WindowSpec + main initial_size_strategy from Fixed to OpenResizable{min:None} to unblock free shrink below open size",
         "ratified design pick: variant OpenResizable + min:Option(None=OS-native floor); the rejected forks were seed (a) Fixed{min} field-add (source-breaking) and a required-min OpenAt (less expressive for the OS-minimum case)",
         "no pinion demo exercises OpenResizable end-to-end yet (the drag-floor is live-winit-only, not headless-observable); a Phase-B resizable-window demo could pin it visually if a future round wants the live evidence"
+      ]
+    },
+    "R1060": {
+      "decision_summary": "R1060 §5.12 §5.16 working scene/screenshot (PR-24) -- true live-surface pixel readback: VelloRenderer::capture_rgba8 renders + reads back the PRESENTED swapchain texture (COPY_SRC), so AI introspects present-stage fidelity (the white/stale-surface class scene data + render_fidelity cannot see -- render_fidelity.rs's header names the screenshot RPC as its complement). Capture bridged in the shell-coupled vello_renderer_impl! macro + a texture->RGBA8 readback SSOT shared with headless; forge template stays pinion-shell-free (ai-introspect-demo proof). Snapshot pattern pre-captures in AppShell (the only renderer-holding site) + threads pixels into DispatchContext. Realgpu-verified end-to-end (320x200, 210 colors); §5.16 caveat supersedes R11 blocked-on-pinion-render-rhi.",
+      "changes_bullets": [
+        "vello_capture.rs (new): readback SSOT texture_to_rgba8 (256-row-align strip + BGRA->RGBA swizzle by format) + capture_surface_rgba8 (render->blit->copy the PRESENTED swapchain texture->present->readback = true present-stage fidelity, NOT offscreen re-raster). headless_screenshot::read_texture now delegates (byte-equivalent; PR-17 lavapipe test guards it)",
+        "VelloRenderer::capture_rgba8 trait method; vello_renderer_impl! macro does FIELD-ACCESS capture into the SSOT so the forge template stays pinion-shell-free (ai-introspect-demo consumes the emitted renderer WITHOUT pinion-shell -- coupling it breaks that build); template only gains capability-guarded COPY_SRC on the surface config. GPU-less stubs (TestRenderer/SmokeRenderer) hand-impl the trait pair",
+        "app.rs: render_window's submit_frame branch captures via capture_rgba8 when a slot is flagged (hot path byte-unchanged when not); capture_window_screenshot resolves the window scope, drives one render_window capture pass, drains the frame; dispatch_rpc pre-captures BEFORE the &mut self.core dispatch borrow (render_fidelity snapshot pattern, method-gated so non-screenshot dispatches pay nothing) and threads the Screenshot in",
+        "pinion-rpc: DispatchContext.screenshot slot + with_screenshot; handle_scene_screenshot returns the embedder snapshot or the unchanged RenderBackendUnavailable (headless/single-window contract preserved); Screenshot::new constructor (the payload is non_exhaustive). §5.16 caveats record screenshot UNBLOCKED via the Vello backend (R41 path C), superseding the R11 blocked-on-pinion-render-rhi caveat"
+      ],
+      "verification_bullets": [
+        "live capture realgpu-verified END-TO-END: PINION_HIDDEN_WINDOW hello-button + a scene/screenshot RPC over stdin -> 320x200, pixels=w*h*4=256000, 210 distinct colors (white bg + M3-tinted button + dark text) = real PRESENTED-surface content, not a zeroed/uniform buffer (the blank-vs-content distinction PR-24 exists for). Byte-stable before + after the submit_frame extraction",
+        "automated: r1060_scene_screenshot_returns_embedder_captured_pixels (handler round-trips the snapshot's pixels) + the absent-snapshot path stays RenderBackendUnavailable; readback byte-equivalence lavapipe-guarded by render_target_reuse_gpu (PR-17, passes under lavapipe with the SSOT lift)",
+        "windowed lavapipe OOMs the Xvfb buffer (tools/README) so the LIVE capture is realgpu-verified like the demo sweep, NOT a CI unit test; the handler/wire + the texture->RGBA8 readback SSOT ARE unit/lavapipe-tested",
+        "cargo test --workspace -j2: 7458 pass 0 fail (= 7457 atomic-1 baseline + 1 r1060 handler test; real cargo exit captured); clippy --workspace --all-targets vello 0 warn; rustfmt clean; validate T1 orphan=0"
+      ],
+      "impact_refs": [
+        "5.7"
+      ],
+      "carry_forward_bullets": [
+        "sprag R55 (consumer, sprag-native session -- pinion cannot edit sprag): drive scene/screenshot on the undock window to confirm white-vs-content with DATA (the original forcing case that drove PR-24)",
+        "wire: pixels_rgba8 is a u8 JSON array (large for big windows); add {out_path:\".png\"} PNG output (reuse HeadlessScreenshot::render_to_png) + base64 when a real consumer needs sub-MB frames -- deferred, pixels_rgba8 meets the criterion",
+        "present-cycle parallel between capture_surface_rgba8 and the forge template render() is documented, NOT lifted (don't route the 144fps hot path through a read-only capture); co-lift at the next render() touch",
+        "capture is on VelloRenderer only (GPU trait, not the TUI-shared WidgetRenderer); a future thin-RHI renderer kind (Phase 2+) gets its own capture or a shared GPU-capture trait lifted at the 2nd GPU consumer"
+      ],
+      "publishable_decision_summary": "R1060 §5.12 §5.16 working scene/screenshot (PR-24) -- true live-surface pixel readback: VelloRenderer::capture_rgba8 renders + reads back the PRESENTED swapchain texture (COPY_SRC), so AI introspects present-stage fidelity (the white/stale-surface class scene data + render_fidelity cannot see -- render_fidelity.rs's header names the screenshot RPC as its complement). Capture bridged in the shell-coupled vello_renderer_impl! macro + a texture->RGBA8 readback SSOT shared with headless; forge template stays pinion-shell-free (ai-introspect-demo proof). Snapshot pattern pre-captures in AppShell (the only renderer-holding site) + threads pixels into DispatchContext. Realgpu-verified end-to-end (320x200, 210 colors); §5.16 caveat supersedes R11 blocked-on-pinion-render-rhi.",
+      "publishable_changes_bullets": [
+        "vello_capture.rs (new): readback SSOT texture_to_rgba8 (256-row-align strip + BGRA->RGBA swizzle by format) + capture_surface_rgba8 (render->blit->copy the PRESENTED swapchain texture->present->readback = true present-stage fidelity, NOT offscreen re-raster). headless_screenshot::read_texture now delegates (byte-equivalent; PR-17 lavapipe test guards it)",
+        "VelloRenderer::capture_rgba8 trait method; vello_renderer_impl! macro does FIELD-ACCESS capture into the SSOT so the forge template stays pinion-shell-free (ai-introspect-demo consumes the emitted renderer WITHOUT pinion-shell -- coupling it breaks that build); template only gains capability-guarded COPY_SRC on the surface config. GPU-less stubs (TestRenderer/SmokeRenderer) hand-impl the trait pair",
+        "app.rs: render_window's submit_frame branch captures via capture_rgba8 when a slot is flagged (hot path byte-unchanged when not); capture_window_screenshot resolves the window scope, drives one render_window capture pass, drains the frame; dispatch_rpc pre-captures BEFORE the &mut self.core dispatch borrow (render_fidelity snapshot pattern, method-gated so non-screenshot dispatches pay nothing) and threads the Screenshot in",
+        "pinion-rpc: DispatchContext.screenshot slot + with_screenshot; handle_scene_screenshot returns the embedder snapshot or the unchanged RenderBackendUnavailable (headless/single-window contract preserved); Screenshot::new constructor (the payload is non_exhaustive). §5.16 caveats record screenshot UNBLOCKED via the Vello backend (R41 path C), superseding the R11 blocked-on-pinion-render-rhi caveat"
+      ],
+      "publishable_verification_bullets": [
+        "live capture realgpu-verified END-TO-END: PINION_HIDDEN_WINDOW hello-button + a scene/screenshot RPC over stdin -> 320x200, pixels=w*h*4=256000, 210 distinct colors (white bg + M3-tinted button + dark text) = real PRESENTED-surface content, not a zeroed/uniform buffer (the blank-vs-content distinction PR-24 exists for). Byte-stable before + after the submit_frame extraction",
+        "automated: r1060_scene_screenshot_returns_embedder_captured_pixels (handler round-trips the snapshot's pixels) + the absent-snapshot path stays RenderBackendUnavailable; readback byte-equivalence lavapipe-guarded by render_target_reuse_gpu (PR-17, passes under lavapipe with the SSOT lift)",
+        "windowed lavapipe OOMs the Xvfb buffer (tools/README) so the LIVE capture is realgpu-verified like the demo sweep, NOT a CI unit test; the handler/wire + the texture->RGBA8 readback SSOT ARE unit/lavapipe-tested",
+        "cargo test --workspace -j2: 7458 pass 0 fail (= 7457 atomic-1 baseline + 1 r1060 handler test; real cargo exit captured); clippy --workspace --all-targets vello 0 warn; rustfmt clean; validate T1 orphan=0"
+      ],
+      "publishable_impact_refs": [
+        "5.7"
+      ],
+      "publishable_carry_forward_bullets": [
+        "sprag R55 (consumer, sprag-native session -- pinion cannot edit sprag): drive scene/screenshot on the undock window to confirm white-vs-content with DATA (the original forcing case that drove PR-24)",
+        "wire: pixels_rgba8 is a u8 JSON array (large for big windows); add {out_path:\".png\"} PNG output (reuse HeadlessScreenshot::render_to_png) + base64 when a real consumer needs sub-MB frames -- deferred, pixels_rgba8 meets the criterion",
+        "present-cycle parallel between capture_surface_rgba8 and the forge template render() is documented, NOT lifted (don't route the 144fps hot path through a read-only capture); co-lift at the next render() touch",
+        "capture is on VelloRenderer only (GPU trait, not the TUI-shared WidgetRenderer); a future thin-RHI renderer kind (Phase 2+) gets its own capture or a shared GPU-capture trait lifted at the 2nd GPU consumer"
       ]
     },
     "R232": {
