@@ -245,6 +245,17 @@ impl Font {
         self.gpos.as_ref().and_then(|g| g.mark_offset(base, mark))
     }
 
+    /// Design-unit translation `(dx, dy)` (y up) placing combining `mark`'s
+    /// anchor onto the preceding `prev_mark`'s anchor, via the GPOS `mkmk`
+    /// feature mark-to-mark lookups (§5.37.6) — stacking diacritics. `None` when
+    /// the font has no GPOS table or no mark-to-mark lookup stacks this pair.
+    #[must_use]
+    pub fn mark_mark_offset(&self, prev_mark: u16, mark: u16) -> Option<(i16, i16)> {
+        self.gpos
+            .as_ref()
+            .and_then(|g| g.mark_mark_offset(prev_mark, mark))
+    }
+
     /// Shape `text` into a positioned glyph run at `px_per_em` (§5.37.6: cmap
     /// codepoint → glyph + hmtx advance, refined by GPOS `kern` pair positioning
     /// and `mark` mark-to-base attachment). See [`crate::shape::shape_run`] for

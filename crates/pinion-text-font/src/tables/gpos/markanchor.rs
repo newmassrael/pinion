@@ -1,17 +1,24 @@
-//! R50.6.2 §5.37.6 — GPOS `MarkBasePos` subtable (Lookup Type 4, format 1).
+//! R50.6.2 / R50.6.3 §5.37.6 — GPOS mark-attachment subtable (format 1), the
+//! shared body of Lookup Type 4 (`MarkBasePos`) and Lookup Type 6
+//! (`MarkMarkPos`).
 //!
-//! Microsoft OpenType 1.9.x spec, "Mark-to-Base Attachment Positioning
-//! Subtable". This is how a combining mark (an accent / diacritic) is placed
-//! against the base glyph it attaches to: each mark carries an *anchor* point
-//! and each base carries one anchor per *mark class*; the shaper translates the
-//! mark so its anchor coincides with the base's anchor for the mark's class.
+//! Microsoft OpenType 1.9.x spec, "Mark-to-Base" and "Mark-to-Mark Attachment
+//! Positioning Subtable". A combining mark (an accent / diacritic) is placed
+//! against a preceding glyph it attaches to: each mark carries an *anchor* point
+//! and each attachment glyph carries one anchor per *mark class*; the shaper
+//! translates the mark so its anchor coincides with the attachment anchor for
+//! the mark's class. The two lookup types share this exact subtable layout — two
+//! coverages, a `markClassCount`, a `MarkArray`, and an array of per-class
+//! anchors — differing only in **what** the mark attaches to: Type 4 attaches a
+//! mark to a *base* (`mark` feature), Type 6 attaches a mark to another *mark*
+//! (`mkmk` feature). So one [`MarkAnchorPos`] parses both; the base-vs-mark
+//! distinction lives in [`super::Gpos`] (which feature / lookup type) and the
+//! shaper (which preceding glyph is the reference).
 //!
-//! Reached through the `mark` feature (the GPOS analogue of `kern` for
-//! positioning). Mark-to-ligature (Lookup Type 5) and mark-to-mark stacking
-//! (Lookup Type 6), plus `lookupFlag` mark filtering, are R50.6.x — this slice
-//! covers the universal base+single-mark case. Anchor formats 2 (contour point)
-//! and 3 (device tables) are accepted but their hinting refinements are ignored;
-//! only the `(x, y)` design-unit coordinates are used.
+//! Mark-to-ligature (Lookup Type 5) and `lookupFlag` mark filtering are R50.6.x.
+//! Anchor formats 2 (contour point) and 3 (device tables) are accepted but their
+//! hinting refinements are ignored; only the `(x, y)` design-unit coordinates
+//! are used.
 //!
 //! Offsets inside the subtable are relative to the subtable start, so the parser
 //! is handed the whole GPOS table plus the subtable's absolute offset.
@@ -35,20 +42,23 @@ struct MarkRecord {
     anchor: Anchor,
 }
 
-/// A parsed `MarkBasePos` subtable (format 1).
+/// A parsed mark-attachment subtable (format 1) — the shared body of
+/// `MarkBasePos` (Type 4) and `MarkMarkPos` (Type 6). `attach` is the glyph the
+/// mark attaches to: a *base* for Type 4, the preceding *mark* for Type 6.
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub struct MarkBasePos {
+pub struct MarkAnchorPos {
     mark_coverage: Coverage,
-    base_coverage: Coverage,
+    attach_coverage: Coverage,
     /// `marks[markCoverageIndex]` = that mark's class + anchor.
     marks: Vec<MarkRecord>,
-    /// `base_anchors[baseCoverageIndex][markClass]` = the base's anchor for that
-    /// mark class, or `None` when the base declares no anchor for it.
-    base_anchors: Vec<Vec<Option<Anchor>>>,
+    /// `attach_anchors[attachCoverageIndex][markClass]` = the attachment glyph's
+    /// anchor for that mark class, or `None` when it declares no anchor for it.
+    attach_anchors: Vec<Vec<Option<Anchor>>>,
 }
 
-impl MarkBasePos {
-    /// Parse a `MarkBasePos` subtable. `table` = full GPOS table bytes;
+impl MarkAnchorPos {
+    /// Parse a mark-attachment subtable (Type 4 `MarkBasePos` or Type 6
+    /// `MarkMarkPos` — identical layout). `table` = full GPOS table bytes;
     /// `subtable_off` = the subtable's offset from the GPOS table start.
     ///
     /// # Errors
@@ -63,52 +73,54 @@ impl MarkBasePos {
         if pos_format != 1 {
             return Err(ParseError::InvalidTableField {
                 tag: GPOS_TAG,
-                field: "markbasepos/posFormat",
+                field: "markanchorpos/posFormat",
                 value: FieldValue::from_u16(pos_format),
             });
         }
         let mark_coverage_off = usize::from(r.read_u16()?);
-        let base_coverage_off = usize::from(r.read_u16()?);
+        let attach_coverage_off = usize::from(r.read_u16()?);
         let mark_class_count = r.read_u16()?;
         let mark_array_off = usize::from(r.read_u16()?);
-        let base_array_off = usize::from(r.read_u16()?);
+        let attach_array_off = usize::from(r.read_u16()?);
 
         let mark_coverage =
             Coverage::parse(slice_at(local, mark_coverage_off, GPOS_TAG)?, GPOS_TAG)?;
-        let base_coverage =
-            Coverage::parse(slice_at(local, base_coverage_off, GPOS_TAG)?, GPOS_TAG)?;
+        let attach_coverage =
+            Coverage::parse(slice_at(local, attach_coverage_off, GPOS_TAG)?, GPOS_TAG)?;
         let marks = parse_mark_array(local, mark_array_off)?;
-        let base_anchors = parse_base_array(local, base_array_off, mark_class_count)?;
+        let attach_anchors = parse_attach_array(local, attach_array_off, mark_class_count)?;
         Ok(Self {
             mark_coverage,
-            base_coverage,
+            attach_coverage,
             marks,
-            base_anchors,
+            attach_anchors,
         })
     }
 
     /// The design-unit translation `(dx, dy)` that places `mark`'s anchor onto
-    /// `base`'s anchor for `mark`'s class — i.e. `baseAnchor - markAnchor`, y up.
+    /// `attach`'s anchor for `mark`'s class — i.e. `attachAnchor - markAnchor`,
+    /// y up. `attach` is the base (Type 4) or the preceding mark (Type 6).
     ///
-    /// `None` when `mark` is not in the mark Coverage, `base` is not in the base
-    /// Coverage, or the base declares no anchor for the mark's class (so the
-    /// caller should try the next subtable / leave the mark on the pen).
+    /// `None` when `mark` is not in the mark Coverage, `attach` is not in the
+    /// attachment Coverage, or the attachment glyph declares no anchor for the
+    /// mark's class (so the caller should try the next subtable / leave the mark
+    /// on the pen).
     #[must_use]
-    pub fn mark_offset(&self, base: u16, mark: u16) -> Option<(i16, i16)> {
+    pub fn offset(&self, attach: u16, mark: u16) -> Option<(i16, i16)> {
         let mi = usize::from(self.mark_coverage.index(mark)?);
         let m = self.marks.get(mi)?;
-        let bi = usize::from(self.base_coverage.index(base)?);
-        let base_anchor = self
-            .base_anchors
-            .get(bi)?
+        let ai = usize::from(self.attach_coverage.index(attach)?);
+        let attach_anchor = self
+            .attach_anchors
+            .get(ai)?
             .get(usize::from(m.class))?
             .as_ref()?;
         // saturating: a malformed font could give anchors whose difference
         // overflows i16; saturate rather than debug-panic (the value is scaled
         // to f32 by the caller regardless).
         Some((
-            base_anchor.x.saturating_sub(m.anchor.x),
-            base_anchor.y.saturating_sub(m.anchor.y),
+            attach_anchor.x.saturating_sub(m.anchor.x),
+            attach_anchor.y.saturating_sub(m.anchor.y),
         ))
     }
 }
@@ -129,18 +141,19 @@ fn parse_mark_array(table: &[u8], off: usize) -> Result<Vec<MarkRecord>, ParseEr
     Ok(marks)
 }
 
-/// Parse a `BaseArray`: `baseCount` × (`markClassCount` baseAnchorOffsets). An
-/// offset of 0 means the base declares no anchor for that mark class.
-fn parse_base_array(
+/// Parse a `BaseArray` (Type 4) / `Mark2Array` (Type 6) — identical layout:
+/// `count` × (`markClassCount` anchorOffsets). An offset of 0 means the
+/// attachment glyph declares no anchor for that mark class.
+fn parse_attach_array(
     table: &[u8],
     off: usize,
     mark_class_count: u16,
 ) -> Result<Vec<Vec<Option<Anchor>>>, ParseError> {
     let local = slice_at(table, off, GPOS_TAG)?;
     let mut r = Reader::new(local, GPOS_TAG);
-    let base_count = r.read_u16()?;
-    let mut rows = Vec::with_capacity(usize::from(base_count));
-    for _ in 0..base_count {
+    let attach_count = r.read_u16()?;
+    let mut rows = Vec::with_capacity(usize::from(attach_count));
+    for _ in 0..attach_count {
         // Plain push (not `with_capacity(mark_class_count)`): the Reader's
         // bounds check fails fast if a font claims more offsets than it stores.
         let mut row = Vec::new();
@@ -167,7 +180,7 @@ fn parse_anchor(table: &[u8], off: usize) -> Result<Anchor, ParseError> {
     if !(1..=3).contains(&format) {
         return Err(ParseError::InvalidTableField {
             tag: GPOS_TAG,
-            field: "markbasepos/anchorFormat",
+            field: "markanchorpos/anchorFormat",
             value: FieldValue::from_u16(format),
         });
     }
@@ -247,14 +260,14 @@ mod tests {
     fn mark_to_base_anchor_delta() {
         // base anchor (250,700), mark anchor (100,0) => delta (150,700).
         let sub = build_markbase(Some((250, 700)), 1);
-        let mb = MarkBasePos::parse(&sub, 0).unwrap();
+        let mb = MarkAnchorPos::parse(&sub, 0).unwrap();
         assert_eq!(
-            mb.mark_offset(10, 30),
+            mb.offset(10, 30),
             Some((150, 700)),
             "baseAnchor - markAnchor"
         );
-        assert_eq!(mb.mark_offset(99, 30), None, "base not covered");
-        assert_eq!(mb.mark_offset(10, 99), None, "mark not covered");
+        assert_eq!(mb.offset(99, 30), None, "base not covered");
+        assert_eq!(mb.offset(10, 99), None, "mark not covered");
     }
 
     #[test]
@@ -262,24 +275,24 @@ mod tests {
         let sub = build_markbase(Some((250, 700)), 1);
         let mut table = vec![0u8; 8];
         table.extend_from_slice(&sub);
-        let mb = MarkBasePos::parse(&table, 8).unwrap();
-        assert_eq!(mb.mark_offset(10, 30), Some((150, 700)));
+        let mb = MarkAnchorPos::parse(&table, 8).unwrap();
+        assert_eq!(mb.offset(10, 30), Some((150, 700)));
     }
 
     #[test]
     fn anchor_format3_ignores_device_tables() {
         // Format 3 adds (ignored) device offsets; the (x,y) delta is unchanged.
         let sub = build_markbase(Some((250, 700)), 3);
-        let mb = MarkBasePos::parse(&sub, 0).unwrap();
-        assert_eq!(mb.mark_offset(10, 30), Some((150, 700)));
+        let mb = MarkAnchorPos::parse(&sub, 0).unwrap();
+        assert_eq!(mb.offset(10, 30), Some((150, 700)));
     }
 
     #[test]
     fn missing_base_anchor_is_none() {
         // baseAnchorOffset 0 => the base declares no anchor for this mark class.
         let sub = build_markbase(None, 1);
-        let mb = MarkBasePos::parse(&sub, 0).unwrap();
-        assert_eq!(mb.mark_offset(10, 30), None, "no base anchor for the class");
+        let mb = MarkAnchorPos::parse(&sub, 0).unwrap();
+        assert_eq!(mb.offset(10, 30), None, "no base anchor for the class");
     }
 
     #[test]
@@ -287,9 +300,9 @@ mod tests {
         let mut sub = build_markbase(Some((250, 700)), 1);
         sub[0..2].copy_from_slice(&7u16.to_be_bytes());
         assert!(matches!(
-            MarkBasePos::parse(&sub, 0),
+            MarkAnchorPos::parse(&sub, 0),
             Err(ParseError::InvalidTableField {
-                field: "markbasepos/posFormat",
+                field: "markanchorpos/posFormat",
                 ..
             })
         ));
@@ -309,9 +322,9 @@ mod tests {
         let fmt_pos = mark_array_off + 6;
         sub[fmt_pos..fmt_pos + 2].copy_from_slice(&9u16.to_be_bytes());
         assert!(matches!(
-            MarkBasePos::parse(&sub, 0),
+            MarkAnchorPos::parse(&sub, 0),
             Err(ParseError::InvalidTableField {
-                field: "markbasepos/anchorFormat",
+                field: "markanchorpos/anchorFormat",
                 ..
             })
         ));
@@ -319,7 +332,7 @@ mod tests {
 
     #[test]
     fn multi_class_uses_the_marks_class_anchor() {
-        // markClassCount = 2, the mark in class 1: mark_offset must read the
+        // markClassCount = 2, the mark in class 1: offset must read the
         // base's CLASS-1 anchor. A bug indexing class 0 would give (100, 550)
         // instead of (200, 750) — the only mutation the single-class tests miss.
         let mark_cov = coverage1(30);
@@ -355,12 +368,12 @@ mod tests {
         sub.extend_from_slice(&mark_array);
         sub.extend_from_slice(&base_array);
 
-        let mb = MarkBasePos::parse(&sub, 0).unwrap();
+        let mb = MarkAnchorPos::parse(&sub, 0).unwrap();
         // class-1 base anchor (300,800) - mark anchor (100,50) = (200, 750).
         assert_eq!(
-            mb.mark_offset(10, 30),
+            mb.offset(10, 30),
             Some((200, 750)),
-            "mark_offset reads the mark's own class anchor, not class 0"
+            "offset reads the mark's own class anchor, not class 0"
         );
     }
 }

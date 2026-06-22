@@ -512,3 +512,94 @@ fn render_run_mark_inks_above_the_base() {
         "accented text inks more than the bare base"
     );
 }
+
+/// Find a `(base, mark1, mark2)` triple where `NotoSans` attaches `mark1` to the
+/// base (mark-to-base) AND stacks `mark2` on `mark1` (mark-to-mark / `mkmk`),
+/// returning the chars and the `mkmk` `(dx, dy)` of `mark2` on `mark1`. Searches
+/// Latin bases × common combining marks (e.g. Vietnamese â + ́: circumflex on the
+/// base, acute stacked on the circumflex). Discovery, not a hardcoded glyph pair,
+/// so a fixture change can only skip — never silently mis-assert.
+fn stacked_mark(font: &Font) -> Option<(char, char, char, i16, i16)> {
+    let bases = ['a', 'e', 'o', 'u', 'i', 'A', 'E', 'O'];
+    let marks = [
+        '\u{0302}', '\u{0301}', '\u{0300}', '\u{0303}', '\u{0308}', '\u{0327}', '\u{0306}',
+        '\u{030C}', '\u{0309}', '\u{0323}',
+    ];
+    for &b in &bases {
+        let Some(bg) = font.glyph_id_for(b as u32) else {
+            continue;
+        };
+        for &m1 in &marks {
+            let Some(m1g) = font.glyph_id_for(m1 as u32) else {
+                continue;
+            };
+            // mark1 must attach to the base, so the shaper makes it the stacking
+            // reference (prev_mark) for the following mark.
+            if font.mark_offset(bg, m1g).is_none() {
+                continue;
+            }
+            for &m2 in &marks {
+                let Some(m2g) = font.glyph_id_for(m2 as u32) else {
+                    continue;
+                };
+                if let Some((dx, dy)) = font.mark_mark_offset(m1g, m2g) {
+                    return Some((b, m1, m2, dx, dy));
+                }
+            }
+        }
+    }
+    None
+}
+
+#[test]
+fn shape_run_applies_gpos_mark_to_mark() {
+    // Forcing consumer for §5.37.6 GPOS mark-to-mark (R50.6.3): NotoSans ships real
+    // `mkmk` lookups; shape_run must reach them (Script→Feature→Lookup→MarkMarkPos)
+    // and stack a second combining mark on the FIRST mark — not on the base — so
+    // diacritics pile up correctly.
+    let font = load(NOTO);
+    assert!(
+        font.gpos
+            .as_ref()
+            .is_some_and(pinion_text_font::Gpos::has_mark_marks),
+        "NotoSans exposes a mkmk feature reachable from the default script"
+    );
+
+    let px = 64.0_f32;
+    let s = scale(&font, px);
+    let (base, m1, m2, dx, dy) =
+        stacked_mark(&font).expect("NotoSans stacks one combining mark on another via mkmk");
+
+    let run = font.shape_run(&format!("{base}{m1}{m2}"), px);
+    assert_eq!(
+        run.glyphs.len(),
+        3,
+        "base + two marks => three glyphs (no ccmp/liga collapse)"
+    );
+
+    // The stacking mark (glyph 2) is placed against glyph 1's RESOLVED position,
+    // not the baseline or the base: exact f32 oracle mirrors shape_run's
+    // `prev_mark.x + dx*scale` / `prev_mark.y - dy*scale`.
+    let (ref_x, ref_y) = (run.glyphs[1].x, run.glyphs[1].y);
+    let expected_x = ref_x + f32::from(dx) * s;
+    let expected_y = ref_y - f32::from(dy) * s;
+    assert_eq!(
+        run.glyphs[2].x.to_bits(),
+        expected_x.to_bits(),
+        "{base}{m1}{m2}: mark2 x = mark1.x + mkmk dx ({dx} units)"
+    );
+    assert_eq!(
+        run.glyphs[2].y.to_bits(),
+        expected_y.to_bits(),
+        "{base}{m1}{m2}: mark2 y = mark1.y - mkmk dy ({dy} units)"
+    );
+
+    // Non-vacuous: mark1 itself left the baseline (mark-to-base ran), so mark2's
+    // y is referenced off a non-zero anchor — this only holds when the mkmk pass
+    // used mark1 (not the base) as the reference.
+    assert_ne!(
+        run.glyphs[1].y.to_bits(),
+        0.0f32.to_bits(),
+        "mark1 is lifted off the baseline (mark-to-base ran first)"
+    );
+}

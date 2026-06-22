@@ -41,9 +41,10 @@ fn extension_wrap(body: &[u8]) -> Vec<u8> {
     b
 }
 
-/// Build a complete GPOS table with one script (DFLT) → one feature
-/// (`feature_tag`) → one Lookup → one `PairPos` `(10,20) → -50`.
-fn build_gpos(feature_tag: [u8; 4], use_extension: bool) -> Vec<u8> {
+/// Build a complete GPOS table: one script (DFLT) → one feature (`feature_tag`)
+/// → one Lookup of `lookup_type` wrapping `subtable`. The shared table-assembly
+/// SSOT for the `PairPos` ([`build_gpos`]) and mark ([`mark_mark_subtable`]) cases.
+fn build_gpos_lookup(feature_tag: [u8; 4], lookup_type: u16, subtable: &[u8]) -> Vec<u8> {
     // ── ScriptList (20 bytes): DFLT → default LangSys → feature index 0 ──
     let mut script_list = Vec::new();
     script_list.extend_from_slice(&1u16.to_be_bytes()); // scriptCount
@@ -70,19 +71,13 @@ fn build_gpos(feature_tag: [u8; 4], use_extension: bool) -> Vec<u8> {
     feature_list.extend_from_slice(&0u16.to_be_bytes()); // lookupListIndices[0] = 0
     assert_eq!(feature_list.len(), 14);
 
-    // ── LookupList: one Lookup → PairPos (optionally extension-wrapped) ──
-    let pairpos = pairpos_format1(10, 20, -50);
-    let (lookup_type, subtable) = if use_extension {
-        (9u16, extension_wrap(&pairpos))
-    } else {
-        (2u16, pairpos)
-    };
+    // ── LookupList: one Lookup of `lookup_type` → `subtable` ──
     let mut lookup = Vec::new();
     lookup.extend_from_slice(&lookup_type.to_be_bytes()); // lookupType
     lookup.extend_from_slice(&0u16.to_be_bytes()); // lookupFlag
     lookup.extend_from_slice(&1u16.to_be_bytes()); // subTableCount
     lookup.extend_from_slice(&8u16.to_be_bytes()); // subtableOffset[0] (after 8-byte header)
-    lookup.extend_from_slice(&subtable);
+    lookup.extend_from_slice(subtable);
 
     let mut lookup_list = Vec::new();
     lookup_list.extend_from_slice(&1u16.to_be_bytes()); // lookupCount
@@ -105,6 +100,76 @@ fn build_gpos(feature_tag: [u8; 4], use_extension: bool) -> Vec<u8> {
     table.extend_from_slice(&feature_list);
     table.extend_from_slice(&lookup_list);
     table
+}
+
+/// A complete GPOS table with `feature_tag` → one `PairPos` `(10,20) → -50`,
+/// optionally Extension(Type 9)-wrapped.
+fn build_gpos(feature_tag: [u8; 4], use_extension: bool) -> Vec<u8> {
+    let pairpos = pairpos_format1(10, 20, -50);
+    if use_extension {
+        build_gpos_lookup(feature_tag, 9, &extension_wrap(&pairpos))
+    } else {
+        build_gpos_lookup(feature_tag, 2, &pairpos)
+    }
+}
+
+/// A format-1 anchor table (`format, x, y`), 6 bytes.
+fn anchor1(x: i16, y: i16) -> Vec<u8> {
+    let mut b = 1u16.to_be_bytes().to_vec();
+    b.extend_from_slice(&x.to_be_bytes());
+    b.extend_from_slice(&y.to_be_bytes());
+    b
+}
+
+/// A format-1 single-glyph Coverage, 6 bytes.
+fn coverage1(glyph: u16) -> Vec<u8> {
+    let mut b = 1u16.to_be_bytes().to_vec(); // coverageFormat
+    b.extend_from_slice(&1u16.to_be_bytes()); // glyphCount
+    b.extend_from_slice(&glyph.to_be_bytes());
+    b
+}
+
+/// A `MarkMarkPos`/`MarkBasePos` format-1 subtable (one mark + one attachment
+/// glyph, one mark class): `mark` carries anchor `mark_anchor`, the attachment
+/// glyph `attach` carries `attach_anchor` for class 0. The byte layout serves
+/// both Type 4 and Type 6 (the parser is shared) — the test picks the lookup type.
+fn mark_mark_subtable(
+    mark: u16,
+    attach: u16,
+    mark_anchor: (i16, i16),
+    attach_anchor: (i16, i16),
+) -> Vec<u8> {
+    let mark_cov = coverage1(mark);
+    let attach_cov = coverage1(attach);
+
+    // markArray: markCount(2) + record(class 2 + anchorOff 2) = 6, anchor at +6.
+    let mut mark_array = 1u16.to_be_bytes().to_vec(); // markCount
+    mark_array.extend_from_slice(&0u16.to_be_bytes()); // markClass = 0
+    mark_array.extend_from_slice(&6u16.to_be_bytes()); // markAnchorOffset
+    mark_array.extend_from_slice(&anchor1(mark_anchor.0, mark_anchor.1));
+
+    // attachArray (Mark2Array/BaseArray): count(2) + record(1 offset = 2) = 4, anchor at +4.
+    let mut attach_array = 1u16.to_be_bytes().to_vec(); // count
+    attach_array.extend_from_slice(&4u16.to_be_bytes()); // class-0 anchorOffset
+    attach_array.extend_from_slice(&anchor1(attach_anchor.0, attach_anchor.1));
+
+    let header_len = 12;
+    let mark_cov_off = header_len;
+    let attach_cov_off = mark_cov_off + mark_cov.len();
+    let mark_array_off = attach_cov_off + attach_cov.len();
+    let attach_array_off = mark_array_off + mark_array.len();
+
+    let mut sub = 1u16.to_be_bytes().to_vec(); // posFormat
+    sub.extend_from_slice(&u16::try_from(mark_cov_off).unwrap().to_be_bytes());
+    sub.extend_from_slice(&u16::try_from(attach_cov_off).unwrap().to_be_bytes());
+    sub.extend_from_slice(&1u16.to_be_bytes()); // markClassCount
+    sub.extend_from_slice(&u16::try_from(mark_array_off).unwrap().to_be_bytes());
+    sub.extend_from_slice(&u16::try_from(attach_array_off).unwrap().to_be_bytes());
+    sub.extend_from_slice(&mark_cov);
+    sub.extend_from_slice(&attach_cov);
+    sub.extend_from_slice(&mark_array);
+    sub.extend_from_slice(&attach_array);
+    sub
 }
 
 #[test]
@@ -159,4 +224,47 @@ fn empty_offsets_yield_no_kerning() {
     let gpos = Gpos::parse(&table).unwrap();
     assert!(!gpos.has_kerning());
     assert_eq!(gpos.kern_x_advance(10, 20), 0);
+}
+
+#[test]
+fn resolves_mkmk_through_full_navigation() {
+    // mkmk feature → Lookup Type 6 MarkMarkPos: the combining mark glyph 31 stacks
+    // on the preceding mark glyph 30. attachAnchor (200,900) - markAnchor (50,100)
+    // = delta (150, 800). Proves Script→Feature(mkmk)→Lookup(6)→subtable navigation.
+    let sub = mark_mark_subtable(31, 30, (50, 100), (200, 900));
+    let gpos = Gpos::parse(&build_gpos_lookup(*b"mkmk", 6, &sub)).unwrap();
+    assert!(
+        gpos.has_mark_marks(),
+        "mkmk reachable from the default script"
+    );
+    assert!(!gpos.has_marks(), "mkmk is not the mark (Type 4) channel");
+    assert_eq!(
+        gpos.mark_mark_offset(30, 31),
+        Some((150, 800)),
+        "attachAnchor - markAnchor",
+    );
+    assert_eq!(gpos.mark_mark_offset(30, 99), None, "mark not covered");
+    assert_eq!(
+        gpos.mark_mark_offset(99, 31),
+        None,
+        "preceding mark not covered"
+    );
+    assert_eq!(gpos.mark_offset(30, 31), None, "no mark-to-base lookup");
+}
+
+#[test]
+fn mark_and_mkmk_are_distinct_channels() {
+    // The SAME subtable layout under a `mark` (Type 4) feature must populate
+    // mark-to-base, not mark-to-mark — the two features are separate channels and
+    // must not bleed into each other.
+    let sub = mark_mark_subtable(31, 30, (50, 100), (200, 900));
+    let gpos = Gpos::parse(&build_gpos_lookup(*b"mark", 4, &sub)).unwrap();
+    assert!(gpos.has_marks(), "mark feature populates mark-to-base");
+    assert!(!gpos.has_mark_marks(), "mark feature does not feed mkmk");
+    assert_eq!(
+        gpos.mark_offset(30, 31),
+        Some((150, 800)),
+        "mark-to-base offset"
+    );
+    assert_eq!(gpos.mark_mark_offset(30, 31), None, "no mkmk lookups");
 }

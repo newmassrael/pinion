@@ -13,18 +13,21 @@
 //! `kern` **pair kerning** ([`Font::kern_x_advance`], [`crate::tables::gpos`])
 //! refines the advance between adjacent glyphs, with an hmtx-advance pen;
 //! (4) GPOS `mark` **mark-to-base attachment** ([`Font::mark_offset`]) places a
-//! combining mark at its anchor over the preceding base, lifting it off the
-//! baseline (the source of a glyph's non-zero `y`). GSUB before GPOS, per the
-//! OpenType pipeline. This mirrors the simple → composite raster split
-//! (R50.8 → R50.8.x) — a foundation refined incrementally.
+//! combining mark at its anchor over the preceding base, and `mkmk`
+//! **mark-to-mark stacking** ([`Font::mark_mark_offset`]) piles a further mark
+//! over the preceding mark, lifting each off the baseline (the source of a
+//! glyph's non-zero `y`). GSUB before GPOS, per the OpenType pipeline. This
+//! mirrors the simple → composite raster split (R50.8 → R50.8.x) — a foundation
+//! refined incrementally.
 //!
 //! Deliberately NOT yet handled (each is honest deferral, not a silent gap):
 //! GSUB single / multiple / alternate / contextual / reverse-chaining (only
 //! Lookup Type 4 ligature substitution is applied); GPOS single / cursive /
-//! mark-to-ligature / mark-to-mark / contextual positioning (only Lookup Types 2
-//! pair kerning and 4 mark-to-base are applied); `lookupFlag` glyph filtering
-//! (kern/liga apply to every adjacent run; a mark attaches to its immediately
-//! preceding base); script segmentation (§5.37.5); BIDI reorder (§5.37.4 lives
+//! mark-to-ligature / contextual positioning (only Lookup Types 2 pair kerning,
+//! 4 mark-to-base, and 6 mark-to-mark are applied); `lookupFlag` glyph filtering
+//! and GDEF mark classes (kern/liga apply to every adjacent run; a mark attaches
+//! to its immediately preceding base, a stacking mark to the preceding mark);
+//! script segmentation (§5.37.5); BIDI reorder (§5.37.4 lives
 //! in a separate crate — [`crate::paragraph`] wires it in, `shape_run` itself
 //! assumes a single direction); grapheme clustering (iteration is per
 //! codepoint); and line breaking (§5.37.7 — a single line is assumed).
@@ -147,16 +150,41 @@ pub fn shape_run(font: &Font, text: &str, px_per_em: f32) -> ShapedRun {
         prev_glyph = Some(glyph_id);
     }
 
-    // Stage 4 — GPOS mark-to-base attachment: place each combining mark at its
-    // anchor relative to the preceding base glyph, overriding the mark's
-    // running-pen x and lifting it off the baseline (y). Font design units are
-    // y-up while the pen is y-down, so the vertical anchor delta is negated.
-    // Combining marks carry ~0 hmtx advance, so the pen accumulated above stays
-    // correct for following glyphs. A positioned mark is not itself a base for
-    // later marks — mark-to-mark stacking (Lookup Type 6) is R50.6.x.
+    // Stage 4 — GPOS mark attachment: place each combining mark at its anchor
+    // relative to a preceding glyph, overriding the mark's running-pen x and
+    // lifting it off the baseline (y). Font design units are y-up while the pen is
+    // y-down, so the vertical anchor delta is negated. Combining marks carry ~0
+    // hmtx advance, so the pen accumulated above stays correct for following
+    // glyphs. Two passes are folded into one left-to-right walk:
+    //
+    // * mark-to-mark (`mkmk`, Lookup Type 6) takes precedence: a mark that stacks
+    //   on the *preceding mark* (`prev_mark`) is placed against that mark's already
+    //   resolved position, so stacking diacritics pile up correctly. This overrides
+    //   mark-to-base for a mark covered by both (mkmk runs after mark in OpenType).
+    // * mark-to-base (`mark`, Lookup Type 4): otherwise a mark attaches to the
+    //   preceding base (`last_base`).
+    //
+    // `prev_mark` is the most recently positioned mark (a stacking reference for the
+    // next); a base resets it (a new cluster). GDEF mark filtering is not applied,
+    // so a mark is recognised by being attached here, not by a GlyphClass — a
+    // limitation shared with the rest of this slice (R50.6.x).
     let mut last_base: Option<usize> = None;
+    let mut prev_mark: Option<usize> = None;
     for i in 0..glyphs.len() {
         let mark = glyphs[i].glyph_id;
+        // mark-to-mark first (override): stack on the preceding mark if `mkmk` covers it.
+        let stacked = prev_mark.and_then(|pm| {
+            let (pm_x, pm_y) = (glyphs[pm].x, glyphs[pm].y);
+            font.mark_mark_offset(glyphs[pm].glyph_id, mark)
+                .map(|(dx, dy)| (pm_x, pm_y, dx, dy))
+        });
+        if let Some((pm_x, pm_y, dx, dy)) = stacked {
+            glyphs[i].x = pm_x + f32::from(dx) * scale;
+            glyphs[i].y = pm_y - f32::from(dy) * scale;
+            prev_mark = Some(i); // this mark becomes the reference for the next
+            continue;
+        }
+        // mark-to-base: attach to the preceding base.
         let attached = last_base.and_then(|bi| {
             let (base_glyph, base_x) = (glyphs[bi].glyph_id, glyphs[bi].x);
             font.mark_offset(base_glyph, mark)
@@ -165,8 +193,10 @@ pub fn shape_run(font: &Font, text: &str, px_per_em: f32) -> ShapedRun {
         if let Some((base_x, dx, dy)) = attached {
             glyphs[i].x = base_x + f32::from(dx) * scale;
             glyphs[i].y = -f32::from(dy) * scale;
+            prev_mark = Some(i); // an attached mark is a stacking reference
         } else {
             last_base = Some(i);
+            prev_mark = None; // a base starts a fresh mark cluster
         }
     }
 
