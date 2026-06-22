@@ -48,8 +48,10 @@
 //! [`shape_paragraph`] is a test forcing-consumer until then.
 
 use crate::Font;
+use crate::atlas::GlyphAtlas;
 use crate::fallback::font_runs;
-use crate::shape::{PositionedGlyph, shape_run};
+use crate::raster::{Coverage, RasterError};
+use crate::shape::{ATLAS_WIDTH, PlacedGlyph, PositionedGlyph, composite, shape_run};
 use pinion_text_unicode::{ItemRun, is_removed_by_x9, itemize, reorder_visual};
 
 /// A shaped paragraph: glyphs in visual (left-to-right) order with absolute
@@ -150,6 +152,63 @@ pub fn shape_paragraph_with_fallback(
         }
     }
     shape_runs_visual(fonts, paragraph, px_per_em, &runs)
+}
+
+/// Rasterize a shaped paragraph into one anti-aliased coverage bitmap, each glyph
+/// drawn from its own font — the first time the multi-font / BIDI paragraph output
+/// ([`shape_paragraph`] / [`shape_paragraph_with_fallback`]) becomes pixels.
+///
+/// `fonts` must be the stack the paragraph was shaped with: each glyph is
+/// rasterized by `fonts[glyph.font_index]` through that font's own [`GlyphAtlas`]
+/// (one atlas per stack font, so the same glyph id in two fonts never collides),
+/// then all glyphs are composited by same-color alpha-over into one mask at their
+/// integer-snapped pen positions. The single-font [`shape_paragraph`] output
+/// renders the same way (every glyph `font_index` 0). Returns [`Coverage::empty`]
+/// for an empty paragraph or an empty stack. A glyph whose `font_index` is outside
+/// `fonts` is skipped (defensive — the contract is the matching stack).
+///
+/// The one CPU coverage mask is what a GPU text path uploads; note the multi-font
+/// case fills *N* per-font atlases (one per stack font), so a GPU path must still
+/// decide how to bind them (a texture array, or a merge into one atlas) — that is
+/// deferred. Production paint is still §5.36 swash, so this is a test
+/// forcing-consumer.
+///
+/// # Errors
+///
+/// Propagates a [`RasterError`] from any glyph's rasterization (a pathological
+/// `px_per_em` past the size cap, or a not-yet-supported composite glyph).
+pub fn render_paragraph(
+    fonts: &[&Font],
+    shaped: &ShapedParagraph,
+    px_per_em: f32,
+) -> Result<Coverage, RasterError> {
+    if fonts.is_empty() {
+        return Ok(Coverage::empty());
+    }
+    let mut atlases: Vec<GlyphAtlas> = (0..fonts.len())
+        .map(|_| GlyphAtlas::new(ATLAS_WIDTH))
+        .collect();
+    let mut placed: Vec<PlacedGlyph> = Vec::new();
+    for g in &shaped.glyphs {
+        let fi = g.font_index;
+        if fi >= fonts.len() {
+            continue; // font_index past the stack (caller misuse) — drop, don't panic.
+        }
+        let entry = atlases[fi].get_or_insert(fonts[fi], g.glyph_id, px_per_em)?;
+        if entry.width == 0 {
+            continue; // blank glyph (space): advances the pen, packs nothing.
+        }
+        #[allow(clippy::cast_possible_truncation)]
+        // pen x/y are finite accumulations; round() snaps onto the raster grid.
+        let (pen_x, pen_y) = (g.x.round() as i32, g.y.round() as i32);
+        placed.push(PlacedGlyph {
+            pen_x,
+            pen_y,
+            atlas: fi,
+            glyph: entry,
+        });
+    }
+    Ok(composite(&atlases, &placed))
 }
 
 /// Shape an already-itemised run list into one visually-ordered line: X9-filter
@@ -297,8 +356,11 @@ impl ActiveRun {
 
 #[cfg(test)]
 mod tests {
-    use super::{ShapedParagraph, shape_paragraph, shape_paragraph_with_fallback};
+    use super::{
+        ShapedParagraph, render_paragraph, shape_paragraph, shape_paragraph_with_fallback,
+    };
     use crate::Font;
+    use crate::raster::Coverage;
     use crate::shape::shape_run;
 
     const NOTO: &str = "tests/fonts/NotoSans-Regular.ttf";
@@ -714,5 +776,115 @@ mod tests {
         for pair in para.glyphs.windows(2) {
             assert!(pair[1].x >= pair[0].x, "visual order: non-decreasing x");
         }
+    }
+
+    // ---- render_paragraph (R1051 multi-font paragraph rasterization) ----
+
+    #[test]
+    fn render_paragraph_empty_yields_empty_coverage() {
+        let noto = font(NOTO);
+        let empty = shape_paragraph(&noto, "", 32.0);
+        assert_eq!(
+            render_paragraph(&[&noto], &empty, 32.0).unwrap(),
+            Coverage::empty(),
+            "empty paragraph => empty coverage"
+        );
+        // Empty stack also yields empty (defensive).
+        let shaped = shape_paragraph(&noto, "A", 32.0);
+        assert_eq!(
+            render_paragraph(&[], &shaped, 32.0).unwrap(),
+            Coverage::empty(),
+            "empty stack => empty coverage"
+        );
+    }
+
+    #[test]
+    fn render_paragraph_single_font_matches_render_run() {
+        // For single-run text shape_paragraph == shape_run, so rendering the
+        // paragraph over a one-font stack must be byte-identical to render_run — the
+        // generalization adds the font dimension without disturbing the raster. The
+        // combining-mark string also drives the non-zero pen_y (mark-to-base)
+        // composite path through render_paragraph.
+        let noto = font(NOTO);
+        for text in ["office", "e\u{0301}"] {
+            let para = shape_paragraph(&noto, text, 32.0);
+            let from_para = render_paragraph(&[&noto], &para, 32.0).unwrap();
+            let from_run = noto.render_run(text, 32.0).unwrap();
+            assert_eq!(
+                from_para, from_run,
+                "render_paragraph(&[font]) == render_run: {text:?}"
+            );
+            assert!(
+                from_para.width > 0 && from_para.height > 0,
+                "non-empty ink: {text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn render_paragraph_draws_each_glyph_from_its_own_font() {
+        // The forcing payoff: 가 (only in Nanum) must be rasterized via Nanum, not
+        // the primary Noto. shape_paragraph_with_fallback tags it font 1, and
+        // render_paragraph must produce Nanum's 가 — byte-identical to rendering 가
+        // directly in Nanum. That equality IS the discriminator: had render_paragraph
+        // ignored font_index and used Noto (fonts[0]), it would feed Nanum's glyph id
+        // into Noto's outline table and yield different (or empty) ink.
+        let noto = font(NOTO);
+        let nanum = font(NANUM);
+        assert!(
+            !matches!(noto.glyph_id_for(0xAC00), Some(g) if g != 0),
+            "Noto must NOT cover 가"
+        );
+        let shaped = shape_paragraph_with_fallback(&[&noto, &nanum], "\u{AC00}", 32.0);
+        assert_eq!(shaped.glyphs.len(), 1);
+        assert_eq!(
+            shaped.glyphs[0].font_index, 1,
+            "가 resolved to Nanum (font 1)"
+        );
+
+        let rendered = render_paragraph(&[&noto, &nanum], &shaped, 32.0).unwrap();
+        let nanum_ga = nanum.render_run("\u{AC00}", 32.0).unwrap();
+        assert!(
+            !rendered.alpha.is_empty(),
+            "Nanum 가 has real ink (non-vacuous)"
+        );
+        assert_eq!(
+            rendered, nanum_ga,
+            "rasterized via Nanum, its resolved font"
+        );
+    }
+
+    #[test]
+    fn render_paragraph_composites_mixed_font_string() {
+        // "A가B" over [Noto, Nanum]: three glyphs from two fonts composite into one
+        // mask spanning all three (wider than a single Noto glyph) — the multi-atlas
+        // path produces a coherent non-empty bitmap.
+        let noto = font(NOTO);
+        let nanum = font(NANUM);
+        let shaped = shape_paragraph_with_fallback(&[&noto, &nanum], "A\u{AC00}B", 32.0);
+        let cov = render_paragraph(&[&noto, &nanum], &shaped, 32.0).unwrap();
+        assert!(cov.width > 0 && cov.height > 0, "non-empty composite");
+        let a_only = noto.render_run("A", 32.0).unwrap();
+        assert!(cov.width > a_only.width, "spans more than a single glyph");
+    }
+
+    #[test]
+    fn render_paragraph_composites_bidi_mixed_font() {
+        // Integration of R1050 (BIDI reorder + fallback) and R1051 (render): a
+        // BIDI-reordered, multi-font paragraph rasterizes without panic into a
+        // non-empty mask. "A" (Latin) + Hebrew (RTL, reordered) + 가 (Nanum) —
+        // render_paragraph places each glyph at its already-absolute visual x, so
+        // the reorder is transparent to it while 가 still comes from Nanum.
+        let noto = font(NOTO);
+        let nanum = font(NANUM);
+        let shaped =
+            shape_paragraph_with_fallback(&[&noto, &nanum], "A\u{05D0}\u{05D1}\u{AC00}", 32.0);
+        let cov = render_paragraph(&[&noto, &nanum], &shaped, 32.0).unwrap();
+        assert!(
+            cov.width > 0 && cov.height > 0,
+            "non-empty bidi+fallback composite"
+        );
+        let a_only = noto.render_run("A", 32.0).unwrap();
+        assert!(cov.width > a_only.width, "spans more than a single glyph");
     }
 }

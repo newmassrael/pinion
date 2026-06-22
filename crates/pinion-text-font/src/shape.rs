@@ -29,7 +29,8 @@
 //! assumes a single direction); grapheme clustering (iteration is per
 //! codepoint); and line breaking (§5.37.7 — a single line is assumed).
 //! Production paint is still §5.36 swash; [`render_run`] is a test
-//! forcing-consumer until the GPU atlas + paint wiring land.
+//! forcing-consumer until paint wiring lands (the §5.37.9 glyph atlas it composes
+//! through already has).
 //!
 //! # Determinism
 //!
@@ -45,7 +46,7 @@ use crate::raster::{Coverage, RasterError};
 /// Shelf-wrap width of the per-run glyph atlas. Output is independent of it (the
 /// composite is sized from each glyph's pen offset, not the atlas layout); it
 /// only bounds how wide a packing row grows before wrapping.
-const ATLAS_WIDTH: usize = 256;
+pub(crate) const ATLAS_WIDTH: usize = 256;
 
 /// One glyph in a shaped run, placed on the horizontal baseline.
 ///
@@ -197,7 +198,7 @@ pub fn render_run(font: &Font, text: &str, px_per_em: f32) -> Result<Coverage, R
     // is a cache hit), remembering its integer-snapped pen x. Blank glyphs (space)
     // advance the pen but pack nothing (width 0).
     let mut atlas = GlyphAtlas::new(ATLAS_WIDTH);
-    let mut placed: Vec<(i32, i32, AtlasGlyph)> = Vec::new();
+    let mut placed: Vec<PlacedGlyph> = Vec::new();
     for glyph in &run.glyphs {
         let entry = atlas.get_or_insert(font, glyph.glyph_id, px_per_em)?;
         if entry.width == 0 {
@@ -208,10 +209,48 @@ pub fn render_run(font: &Font, text: &str, px_per_em: f32) -> Result<Coverage, R
         // for deterministic placement. pen_y is non-zero only for an attached
         // mark (baseline-relative, positive downward).
         let (pen_x, pen_y) = (glyph.x.round() as i32, glyph.y.round() as i32);
-        placed.push((pen_x, pen_y, entry));
+        placed.push(PlacedGlyph {
+            pen_x,
+            pen_y,
+            atlas: 0,
+            glyph: entry,
+        });
     }
+    Ok(composite(std::slice::from_ref(&atlas), &placed))
+}
+
+/// A glyph ready for compositing: its integer-snapped pen origin, the atlas that
+/// holds its pixels, and its packed sub-rect. The shared input vocabulary of
+/// [`composite`], built by [`render_run`] (one atlas, index 0) and
+/// [`crate::paragraph::render_paragraph`] (one atlas per stack font, index = the
+/// glyph's `font_index`). Both renderers build this list with near-identical
+/// loops — a deferred second seam to extract when a third (paint-wiring) renderer
+/// needs it.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PlacedGlyph {
+    /// Pen-origin x in the combined bitmap (device px, integer-snapped).
+    pub pen_x: i32,
+    /// Pen-origin y (device px; baseline = 0, negative above, positive downward
+    /// for a combining mark).
+    pub pen_y: i32,
+    /// Index into the `atlases` slice of the atlas holding this glyph's pixels.
+    pub atlas: usize,
+    /// The glyph's packed sub-rect and pen offset in `atlases[atlas]`.
+    pub glyph: AtlasGlyph,
+}
+
+/// Composite placed glyphs into one AA coverage bitmap by same-color alpha-over.
+///
+/// Each [`PlacedGlyph`] carries its integer-snapped pen origin (device px,
+/// baseline = row 0), the index of the [`GlyphAtlas`] in `atlases` that
+/// rasterized it (always 0 for single-font [`render_run`]; the glyph's font-stack
+/// index for multi-font [`crate::paragraph::render_paragraph`]), and its packed
+/// sub-rect. Returns [`Coverage::empty`] when nothing is placed (an empty or
+/// all-blank run). Shared by both renderers so the bounding-box union and the
+/// alpha-over are one SSOT.
+pub(crate) fn composite(atlases: &[GlyphAtlas], placed: &[PlacedGlyph]) -> Coverage {
     if placed.is_empty() {
-        return Ok(Coverage::empty());
+        return Coverage::empty();
     }
 
     // Union bounding box in combined-bitmap space. A glyph's pixels occupy
@@ -222,8 +261,9 @@ pub fn render_run(font: &Font, text: &str, px_per_em: f32) -> Result<Coverage, R
     // each glyph width/height <= MAX_DIM (4096), exact in i32.
     let (min_x, min_y, max_x, max_y) = placed.iter().fold(
         (i32::MAX, i32::MAX, i32::MIN, i32::MIN),
-        |(min_x, min_y, max_x, max_y), (pen_x, pen_y, g)| {
-            let (gx, gy) = (pen_x + g.left, pen_y + g.top);
+        |(min_x, min_y, max_x, max_y), p| {
+            let g = &p.glyph;
+            let (gx, gy) = (p.pen_x + g.left, p.pen_y + g.top);
             (
                 min_x.min(gx),
                 min_y.min(gy),
@@ -236,13 +276,17 @@ pub fn render_run(font: &Font, text: &str, px_per_em: f32) -> Result<Coverage, R
     #[allow(clippy::cast_sign_loss)] // max_* > min_* (each placed glyph adds positive extent).
     let (width, height) = ((max_x - min_x) as usize, (max_y - min_y) as usize);
     let mut alpha = vec![0u8; width * height];
-    let (atlas_w, atlas_alpha) = (atlas.width(), atlas.alpha());
-    for (pen_x, pen_y, g) in &placed {
+    for p in placed {
+        // Read pixels from the atlas that rasterized this glyph (per-font for
+        // multi-font runs; the single atlas for `render_run`).
+        let atlas = &atlases[p.atlas];
+        let (atlas_w, atlas_alpha) = (atlas.width(), atlas.alpha());
+        let g = &p.glyph;
         #[allow(clippy::cast_sign_loss)]
         // pen_x+left >= min_x, pen_y+top >= min_y by the fold above.
         let (off_x, off_y) = (
-            (pen_x + g.left - min_x) as usize,
-            (pen_y + g.top - min_y) as usize,
+            (p.pen_x + g.left - min_x) as usize,
+            (p.pen_y + g.top - min_y) as usize,
         );
         for gy in 0..g.height {
             let dst_row = (off_y + gy) * width + off_x;
@@ -256,13 +300,13 @@ pub fn render_run(font: &Font, text: &str, px_per_em: f32) -> Result<Coverage, R
             }
         }
     }
-    Ok(Coverage {
+    Coverage {
         width,
         height,
         left: min_x,
         top: min_y,
         alpha,
-    })
+    }
 }
 
 /// Same-color alpha-over of two `0..=255` coverage values: `out = d + s − d·s`,
