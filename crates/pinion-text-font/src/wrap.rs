@@ -24,7 +24,7 @@ use pinion_text_unicode::line_break_opportunities;
 
 /// One laid-out line: a byte range `start..end` (`end` exclusive) into the
 /// source paragraph, in logical order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct LineRange {
     /// Byte offset of the line's first codepoint.
     pub start: usize,

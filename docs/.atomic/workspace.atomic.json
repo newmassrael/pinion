@@ -4382,7 +4382,9 @@
         "R50.7 defers: GSUB single/multiple/alternate/contextual/reverse-chain + lookupFlag filtering",
         "R1039 (R50.10) shape_paragraph supersedes 'single visual run': itemize + L2 reorder now applied",
         "R1040 shape_paragraph filters X9-removed controls (run-granularity BN filter); R1039 X9 gap cleared",
-        "R1041 wrap_paragraph (R50.11) supersedes 'single-line run 전제': greedy width line-breaking now exists"
+        "R1041 wrap_paragraph (R50.11) supersedes 'single-line run 전제': greedy width line-breaking now exists",
+        "R1042 layout: paragraph-context BIDI sliced per line; defers per-line L1 trail-WS + break-char trim",
+        "R1042 (R50.12) layout_paragraph: multi-line shaped layout = wrap + per-line L2 reorder + baseline"
       ],
       "alternatives_rejected": [
         {
@@ -4484,6 +4486,26 @@
         {
           "file": "crates/pinion-text-font/src/font.rs",
           "symbol": "Font::substitute_ligatures",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-text-font/src/layout.rs",
+          "symbol": "layout_paragraph",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-text-font/src/layout.rs",
+          "symbol": "ShapedLines",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-text-font/src/layout.rs",
+          "symbol": "ShapedLine",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-text-font/src/paragraph.rs",
+          "symbol": "shape_runs_visual",
           "kind": "implements"
         }
       ]
@@ -12395,6 +12417,56 @@
         "Trailing-whitespace hang (UAX#14 width refinement) + Knuth-Plass optimal breaking deferred",
         "Cross-opportunity kerning dropped in measure (sub-pixel under-estimate; exact at chosen break)",
         "wrap_paragraph is a test forcing-consumer; production paint still §5.36 swash until paint-wiring"
+      ]
+    },
+    "R1042": {
+      "decision_summary": "§5.37.6 R50.12 multi-line shaped paragraph layout: layout_paragraph wraps a paragraph (wrap_paragraph) and shapes each line, resolving BIDI once at paragraph context (itemize) then clipping the paragraph runs to each line for per-line UAX #9 L2 reorder + shaping. Baselines from hhea ascender/descender/line_gap. Last pure-CPU layer before paint wiring; shape_runs_visual extracted as the shared core of shape_paragraph + layout_paragraph.",
+      "changes_bullets": [
+        "New pinion-text-font/src/layout.rs: layout_paragraph -> ShapedLines{lines,width,height}",
+        "Per-line: clip paragraph-context itemize() runs to each LineRange, then L2 reorder + shape",
+        "Extract shape_runs_visual as shared core of shape_paragraph + layout_paragraph (2 consumers)",
+        "hhea ascender/descender/line_gap -> per-line baseline; LineRange gains Default"
+      ],
+      "verification_bullets": [
+        "pinion-text-font 7 layout tests: single-line==shape_paragraph, tiling, baselines, RTL mirror",
+        "per-line reorder oracle vs paragraph-context levels + negative control (per-line re-resolve)",
+        "workspace test 0 fail (7386 passed); clippy --workspace vello + rustfmt clean",
+        "my files cargo doc 0 new; validate T1=0; entries 1051->1052; §5.37.6 multi-line caveat superseded"
+      ],
+      "impact_refs": [
+        "5.37.6",
+        "5.37.7"
+      ],
+      "carry_forward_bullets": [
+        "Per-line L1 trailing-WS reset (UAX #9 L1 item 4) not yet applied (paragraph-as-one-line L1)",
+        "Line range includes its trailing break codepoint; shaped not trimmed (from wrap_paragraph)",
+        "Single BIDI paragraph only; caller splits Bidi_Class=B (\\n, U+2029) via iter_paragraphs",
+        "layout_paragraph is a test forcing-consumer; production paint still §5.36 swash",
+        "cmap best_subtable + hhea int16[4] pre-existing cargo-doc dangling links (docs-round carry)"
+      ],
+      "publishable_decision_summary": "§5.37.6 R50.12 multi-line shaped paragraph layout: layout_paragraph wraps a paragraph (wrap_paragraph) and shapes each line, resolving BIDI once at paragraph context (itemize) then clipping the paragraph runs to each line for per-line UAX #9 L2 reorder + shaping. Baselines from hhea ascender/descender/line_gap. Last pure-CPU layer before paint wiring; shape_runs_visual extracted as the shared core of shape_paragraph + layout_paragraph.",
+      "publishable_changes_bullets": [
+        "New pinion-text-font/src/layout.rs: layout_paragraph -> ShapedLines{lines,width,height}",
+        "Per-line: clip paragraph-context itemize() runs to each LineRange, then L2 reorder + shape",
+        "Extract shape_runs_visual as shared core of shape_paragraph + layout_paragraph (2 consumers)",
+        "hhea ascender/descender/line_gap -> per-line baseline; LineRange gains Default"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-text-font 7 layout tests: single-line==shape_paragraph, tiling, baselines, RTL mirror",
+        "per-line reorder oracle vs paragraph-context levels + negative control (per-line re-resolve)",
+        "workspace test 0 fail (7386 passed); clippy --workspace vello + rustfmt clean",
+        "my files cargo doc 0 new; validate T1=0; entries 1051->1052; §5.37.6 multi-line caveat superseded"
+      ],
+      "publishable_impact_refs": [
+        "5.37.6",
+        "5.37.7"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Per-line L1 trailing-WS reset (UAX #9 L1 item 4) not yet applied (paragraph-as-one-line L1)",
+        "Line range includes its trailing break codepoint; shaped not trimmed (from wrap_paragraph)",
+        "Single BIDI paragraph only; caller splits Bidi_Class=B (\\n, U+2029) via iter_paragraphs",
+        "layout_paragraph is a test forcing-consumer; production paint still §5.36 swash",
+        "cmap best_subtable + hhea int16[4] pre-existing cargo-doc dangling links (docs-round carry)"
       ]
     },
     "R232": {

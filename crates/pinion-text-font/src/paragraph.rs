@@ -60,11 +60,29 @@ pub struct ShapedParagraph {
 /// empty string yields no glyphs and zero advance.
 #[must_use]
 pub fn shape_paragraph(font: &Font, paragraph: &str, px_per_em: f32) -> ShapedParagraph {
+    shape_runs_visual(font, paragraph, px_per_em, &itemize(paragraph))
+}
+
+/// Shape an already-itemised run list into one visually-ordered line: X9-filter
+/// each run, drop pure-control runs, order the survivors by UAX #9 L2, then shape
+/// and place each (reversing glyphs within right-to-left runs). The core shared
+/// by [`shape_paragraph`] (the whole paragraph as one line) and
+/// [`crate::layout::layout_paragraph`] (each wrapped line, given the paragraph's
+/// runs clipped to that line). `runs` must reference byte ranges within
+/// `paragraph`; the returned glyph `x` is relative to this line's origin and
+/// `cluster` is the paragraph byte offset of the source codepoint.
+pub(crate) fn shape_runs_visual(
+    font: &Font,
+    paragraph: &str,
+    px_per_em: f32,
+    runs: &[ItemRun],
+) -> ShapedParagraph {
     // Strip X9-removed controls from each run's text, keeping only runs with
     // visible content. A pure-control run is dropped entirely so its placeholder
     // level never reaches the L2 reorder (the run-granularity BN filter).
-    let active: Vec<ActiveRun> = itemize(paragraph)
-        .into_iter()
+    let active: Vec<ActiveRun> = runs
+        .iter()
+        .copied()
         .filter_map(|run| ActiveRun::build(paragraph, run))
         .collect();
     if active.is_empty() {
