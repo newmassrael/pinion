@@ -3687,6 +3687,47 @@
         }
       ]
     },
+    "5.37.10": {
+      "title": "Font fallback — multi-font shaping over an in-memory font stack (R50.13 sub-scope)",
+      "parent_doc": "docs/GENERATED.md",
+      "parent_section": "5.37",
+      "decision_status": "active",
+      "intent": "Resolve each codepoint to the first font in an ordered stack with a real glyph, itemise into same-font runs, and shape each run in its own font.",
+      "inputs_bullets": [
+        "font stack: primary + ordered fallback fonts (&[&Font])",
+        "Unicode &str to shape",
+        "per-font cmap coverage (Font::glyph_id_for, non-.notdef)",
+        "target px_per_em (each font scales by its own units_per_em)"
+      ],
+      "outputs_bullets": [
+        "font_runs(fonts,text) -> Vec<FontRunRange{font_index,start,end}> (font itemisation)",
+        "shape_with_fallback(fonts,text,px) -> FallbackRun{runs,advance}",
+        "FontRun{font_index,glyphs(abs x, whole-text cluster),advance} per font sub-run"
+      ],
+      "caveats_bullets": [
+        "per-codepoint resolution; grapheme-cluster grouping (base+mark same font) deferred",
+        "OS font enumeration deferred — explicit in-memory stack only (fontconfig/CoreText 대체 later)",
+        "BIDI/script not combined here (single direction); itemise->font-split->shape pipeline = follow-up",
+        "production paint still §5.36 swash — shape_with_fallback = test forcing-consumer"
+      ],
+      "bindings": [
+        {
+          "file": "crates/pinion-text-font/src/fallback.rs",
+          "symbol": "font_runs",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-text-font/src/fallback.rs",
+          "symbol": "shape_with_fallback",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-text-font/src/fallback.rs",
+          "symbol": "FallbackRun",
+          "kind": "implements"
+        }
+      ]
+    },
     "5.37.2": {
       "title": "Text engine RPC channel — AI-first font/text introspect (R50.X sub-scope)",
       "parent_doc": "docs/GENERATED.md",
@@ -12625,6 +12666,54 @@
         "RTL mark x deferred (advance-mirror); mark-to-lig/mark-to-mark (Type 5/6); lookupFlag mark-skip",
         "non-zero mark advance over-advances pen (real combining marks ~0; documented); R50.6.x",
         "font fallback + styled runs = cross-cutting paint-wiring blockers (bigger future round)",
+        "cmap best_subtable + hhea int16[4] pre-existing cargo-doc dangling links (docs-round carry)"
+      ]
+    },
+    "R1044": {
+      "decision_summary": "§5.37.10 R50.13 font fallback (multi-font shaping): resolve each codepoint to the first font in an ordered stack with a real glyph, itemise into same-font runs (font_runs), shape each run in its own font, and place them left to right on one baseline (shape_with_fallback). An additive layer — shape_run stays single-font (GSUB/GPOS are per-font) and fallback composes it, mirroring how BIDI/script itemisation feeds the shaper. NotoSans Latin + NanumGothic Korean have complementary cmap coverage (가 is .notdef in Noto, a real glyph in Nanum), the forcing consumer. This is the #1 paint-wiring blocker the R1043 audit named: parley supplies font fallback, the self-host engine had none.",
+      "changes_bullets": [
+        "New §5.37.10 + src/fallback.rs: font_runs + shape_with_fallback over an ordered font stack",
+        "font_runs itemises by first-covering font (covered = glyph_id_for Some(g!=0); none => primary 0)",
+        "shape_with_fallback: shape each font-run in its font, abs pen across fonts, whole-text clusters",
+        "additive layer; shape_run stays single-font (GSUB/GPOS per-font); no pipeline ripple"
+      ],
+      "verification_bullets": [
+        "fallback 5 tests (Noto/Nanum): A가B splits Noto|Nanum|Noto, exact gids per font, pen+cluster",
+        "non-vacuous: 가 has no Noto glyph but a real Nanum glyph -> fallback genuinely selected Nanum",
+        "workspace test 0 fail (7401 passed); clippy --workspace vello + rustfmt clean; my files doc 0 new",
+        "validate T1=0; sections 67->68 (§5.37.10 created); 3 bindings backed"
+      ],
+      "impact_refs": [
+        "5.37.10",
+        "5.37.6"
+      ],
+      "carry_forward_bullets": [
+        "per-codepoint resolution; grapheme-cluster grouping (base+mark in one font) deferred",
+        "OS font enumeration deferred (in-memory stack only; fontconfig/CoreText replacement later)",
+        "unified itemise(bidi/script)+font-split+shape pipeline = follow-up; styled-runs still a paint blocker",
+        "cmap best_subtable + hhea int16[4] pre-existing cargo-doc dangling links (docs-round carry)"
+      ],
+      "publishable_decision_summary": "§5.37.10 R50.13 font fallback (multi-font shaping): resolve each codepoint to the first font in an ordered stack with a real glyph, itemise into same-font runs (font_runs), shape each run in its own font, and place them left to right on one baseline (shape_with_fallback). An additive layer — shape_run stays single-font (GSUB/GPOS are per-font) and fallback composes it, mirroring how BIDI/script itemisation feeds the shaper. NotoSans Latin + NanumGothic Korean have complementary cmap coverage (가 is .notdef in Noto, a real glyph in Nanum), the forcing consumer. This is the #1 paint-wiring blocker the R1043 audit named: parley supplies font fallback, the self-host engine had none.",
+      "publishable_changes_bullets": [
+        "New §5.37.10 + src/fallback.rs: font_runs + shape_with_fallback over an ordered font stack",
+        "font_runs itemises by first-covering font (covered = glyph_id_for Some(g!=0); none => primary 0)",
+        "shape_with_fallback: shape each font-run in its font, abs pen across fonts, whole-text clusters",
+        "additive layer; shape_run stays single-font (GSUB/GPOS per-font); no pipeline ripple"
+      ],
+      "publishable_verification_bullets": [
+        "fallback 5 tests (Noto/Nanum): A가B splits Noto|Nanum|Noto, exact gids per font, pen+cluster",
+        "non-vacuous: 가 has no Noto glyph but a real Nanum glyph -> fallback genuinely selected Nanum",
+        "workspace test 0 fail (7401 passed); clippy --workspace vello + rustfmt clean; my files doc 0 new",
+        "validate T1=0; sections 67->68 (§5.37.10 created); 3 bindings backed"
+      ],
+      "publishable_impact_refs": [
+        "5.37.10",
+        "5.37.6"
+      ],
+      "publishable_carry_forward_bullets": [
+        "per-codepoint resolution; grapheme-cluster grouping (base+mark in one font) deferred",
+        "OS font enumeration deferred (in-memory stack only; fontconfig/CoreText replacement later)",
+        "unified itemise(bidi/script)+font-split+shape pipeline = follow-up; styled-runs still a paint blocker",
         "cmap best_subtable + hhea int16[4] pre-existing cargo-doc dangling links (docs-round carry)"
       ]
     },

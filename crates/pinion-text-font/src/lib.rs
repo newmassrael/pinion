@@ -21,6 +21,7 @@
 
 pub mod atlas;
 mod error;
+pub mod fallback;
 mod font;
 pub mod line_layout;
 pub mod paragraph;
@@ -33,6 +34,7 @@ pub mod wrap;
 
 pub use atlas::{AtlasGlyph, GlyphAtlas};
 pub use error::{FieldValue, ParseError};
+pub use fallback::{FallbackRun, FontRun, FontRunRange, font_runs, shape_with_fallback};
 pub use font::Font;
 pub use line_layout::{ShapedLine, ShapedLines, layout_paragraph};
 pub use paragraph::{ShapedParagraph, shape_paragraph};
