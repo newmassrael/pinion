@@ -12761,6 +12761,58 @@
         "cmap best_subtable + hhea int16[4] pre-existing cargo-doc dangling links (docs-round carry)"
       ]
     },
+    "R1045": {
+      "decision_summary": "§5.45 §5.49 §5.38 GUI-side apply_wheel seam (sprag PR-18, consumer-forced): WidgetCore::apply_wheel(scene, cursor, delta, modifiers)->bool (default false), offered as stage 0 inside CoreShell::wheel_with_modifiers_for_window BEFORE the router two-stage (hover-External offer + Scene::Scroll fallback). A binding whose scroll authority is a ROW-granular view-state (terminal scrollback re-projected by offset_lines, not a pixel-clip Scene::Scroll) is served by NEITHER router stage: stage 1 pushes the wheel into the hovered producer External (embedding the human viewport offset in an AI-facing engine that carries no scene state = R1.7 layering violation), stage 2 needs a Scene::Scroll pixel-clip node a row-reprojected grid has none of. Position-bearing like apply_secondary_click — cursor, not focus, is the discriminator (wheel targets what is under the pointer, W3C/desktop), so 'focused' was dropped from the proposed signature. Placing the offer at the single runtime chokepoint (not the keyboard backend-orders split) is a DELIBERATE divergence: the wheel router is one stateful call (sub-pixel wheel_remainders carry inside it) with no clean shell-level interposition point, so the precedence is stated once and covers Vello/TUI/RPC scene-wheel uniformly. sprag terminal-pane scroll = forcing consumer.",
+      "changes_bullets": [
+        "pinion-core widget_core.rs: new WidgetCore::apply_wheel(scene, cursor:(f64,f64), delta:WheelDelta, modifiers)->bool, default false — a position-bearing GUI-side wheel hook (sibling of apply_secondary_click; focus-free)",
+        "pinion-runtime core_shell.rs: stage-0 offer inside CoreShell::wheel_with_modifiers_for_window BEFORE router.wheel_with_modifiers; sources cursor via routers.get(window_id).cursor_position(pid), runs V::apply_wheel under root_owner.run, returns (tail,true) on consume",
+        "dropped 'focused' from sprag's proposed signature: a wheel targets what is under the cursor (W3C/desktop), so cursor (not focus) is the discriminator — the correct sibling is apply_secondary_click, not focus-gated apply_key",
+        "single chokepoint covers all three wheel producers (Vello ShellCore::wheel_for_window, TUI ShellCoreTui::wheel, RPC scene/wheel deferred replay) with zero backend duplication; LINE_HEIGHT_PX already public (pinion_core::event) so px->rows needs no new export"
+      ],
+      "verification_bullets": [
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (pre-commit gate); cargo fmt --check clean",
+        "cargo test --workspace: 60/60 result lines ok, 0 failed / 0 panics",
+        "3 new core_shell tests: r1045 consume short-circuits router (ScrollState stays 0,0) / apply_wheel=false defers to router (offset 0,60) / no stored cursor not offered + no dispatch",
+        "2-lens adversarial review: correctness=SHIP (no HIGH/MED), architecture=SHIP-WITH-NITS; the one MED (acknowledge the deliberate chokepoint-placement divergence vs the keyboard backend-orders split) folded into the in-code comment",
+        "commit 0755ad9b; COMMITTED-NOT-PUSHED"
+      ],
+      "impact_refs": [
+        "5.45",
+        "5.49",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "sprag-native session: add wheel->use_pane_scroll(i).scroll_by(0, rows) handler beside the keyboard chords (px->rows via pinion_core::event::LINE_HEIGHT_PX or measured cell_h) — pinion seam now delivered, never edited from a pinion session",
+        "styled-run shaping + unified itemise pipeline remain the co-equal #1 paint-wiring blockers (R1044 carry)",
+        "apply_wheel shares one state scene + root_owner across windows (R680 per-window-Owner carry); a per-window pane binding owns its own hit-test, same as apply_secondary_click",
+        "nit: apply_secondary_click cursor is (f32,f32) vs apply_wheel (f64,f64) lossless — possible future harmonization; stage-0 does not gate on last_paint_scene like the router (harmless, binding declines)"
+      ],
+      "publishable_decision_summary": "§5.45 §5.49 §5.38 GUI-side apply_wheel seam (sprag PR-18, consumer-forced): WidgetCore::apply_wheel(scene, cursor, delta, modifiers)->bool (default false), offered as stage 0 inside CoreShell::wheel_with_modifiers_for_window BEFORE the router two-stage (hover-External offer + Scene::Scroll fallback). A binding whose scroll authority is a ROW-granular view-state (terminal scrollback re-projected by offset_lines, not a pixel-clip Scene::Scroll) is served by NEITHER router stage: stage 1 pushes the wheel into the hovered producer External (embedding the human viewport offset in an AI-facing engine that carries no scene state = R1.7 layering violation), stage 2 needs a Scene::Scroll pixel-clip node a row-reprojected grid has none of. Position-bearing like apply_secondary_click — cursor, not focus, is the discriminator (wheel targets what is under the pointer, W3C/desktop), so 'focused' was dropped from the proposed signature. Placing the offer at the single runtime chokepoint (not the keyboard backend-orders split) is a DELIBERATE divergence: the wheel router is one stateful call (sub-pixel wheel_remainders carry inside it) with no clean shell-level interposition point, so the precedence is stated once and covers Vello/TUI/RPC scene-wheel uniformly. sprag terminal-pane scroll = forcing consumer.",
+      "publishable_changes_bullets": [
+        "pinion-core widget_core.rs: new WidgetCore::apply_wheel(scene, cursor:(f64,f64), delta:WheelDelta, modifiers)->bool, default false — a position-bearing GUI-side wheel hook (sibling of apply_secondary_click; focus-free)",
+        "pinion-runtime core_shell.rs: stage-0 offer inside CoreShell::wheel_with_modifiers_for_window BEFORE router.wheel_with_modifiers; sources cursor via routers.get(window_id).cursor_position(pid), runs V::apply_wheel under root_owner.run, returns (tail,true) on consume",
+        "dropped 'focused' from sprag's proposed signature: a wheel targets what is under the cursor (W3C/desktop), so cursor (not focus) is the discriminator — the correct sibling is apply_secondary_click, not focus-gated apply_key",
+        "single chokepoint covers all three wheel producers (Vello ShellCore::wheel_for_window, TUI ShellCoreTui::wheel, RPC scene/wheel deferred replay) with zero backend duplication; LINE_HEIGHT_PX already public (pinion_core::event) so px->rows needs no new export"
+      ],
+      "publishable_verification_bullets": [
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (pre-commit gate); cargo fmt --check clean",
+        "cargo test --workspace: 60/60 result lines ok, 0 failed / 0 panics",
+        "3 new core_shell tests: r1045 consume short-circuits router (ScrollState stays 0,0) / apply_wheel=false defers to router (offset 0,60) / no stored cursor not offered + no dispatch",
+        "2-lens adversarial review: correctness=SHIP (no HIGH/MED), architecture=SHIP-WITH-NITS; the one MED (acknowledge the deliberate chokepoint-placement divergence vs the keyboard backend-orders split) folded into the in-code comment",
+        "commit 0755ad9b; COMMITTED-NOT-PUSHED"
+      ],
+      "publishable_impact_refs": [
+        "5.45",
+        "5.49",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "sprag-native session: add wheel->use_pane_scroll(i).scroll_by(0, rows) handler beside the keyboard chords (px->rows via pinion_core::event::LINE_HEIGHT_PX or measured cell_h) — pinion seam now delivered, never edited from a pinion session",
+        "styled-run shaping + unified itemise pipeline remain the co-equal #1 paint-wiring blockers (R1044 carry)",
+        "apply_wheel shares one state scene + root_owner across windows (R680 per-window-Owner carry); a per-window pane binding owns its own hit-test, same as apply_secondary_click",
+        "nit: apply_secondary_click cursor is (f32,f32) vs apply_wheel (f64,f64) lossless — possible future harmonization; stage-0 does not gate on last_paint_scene like the router (harmless, binding declines)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
