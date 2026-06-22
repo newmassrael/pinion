@@ -185,6 +185,17 @@ mod tests {
         // resolve to font 0 (Noto), 가 (U+AC00, 3 UTF-8 bytes) to font 1 (Nanum).
         let noto = font(NOTO);
         let nanum = font(NANUM);
+        // Non-vacuity guard: the split is only meaningful because the coverages
+        // are complementary at 가 — pin that so a fixture change can't make this
+        // pass for the wrong reason.
+        assert!(
+            !matches!(noto.glyph_id_for(0xAC00), Some(g) if g != 0),
+            "Noto must NOT cover 가"
+        );
+        assert!(
+            nanum.glyph_id_for(0xAC00).is_some_and(|g| g != 0),
+            "Nanum covers 가"
+        );
         let runs = font_runs(&[&noto, &nanum], "A가B");
         assert_eq!(
             runs,
@@ -277,5 +288,50 @@ mod tests {
         assert_eq!(r0.glyphs[0].cluster, 0);
         assert_eq!(r1.glyphs[0].cluster, 1);
         assert_eq!(r2.glyphs[0].cluster, 4);
+    }
+
+    #[test]
+    fn covered_by_both_resolves_to_the_first_font() {
+        // 'A' is in BOTH fonts with DIFFERENT gids, so the stack order alone
+        // decides — pins the first-match contract (a last-match bug would pick
+        // the other font). The reverse stack must pick the other font.
+        let noto = font(NOTO);
+        let nanum = font(NANUM);
+        let noto_a = noto.glyph_id_for(0x41).unwrap();
+        let nanum_a = nanum.glyph_id_for(0x41).unwrap();
+        assert_ne!(noto_a, nanum_a, "the two fonts give 'A' distinct gids");
+
+        let fwd = shape_with_fallback(&[&noto, &nanum], "A", PX);
+        assert_eq!(fwd.runs.len(), 1);
+        assert_eq!(fwd.runs[0].font_index, 0, "first covering font wins");
+        assert_eq!(fwd.runs[0].glyphs[0].glyph_id, noto_a, "shaped from Noto");
+
+        let rev = shape_with_fallback(&[&nanum, &noto], "A", PX);
+        assert_eq!(rev.runs[0].font_index, 0);
+        assert_eq!(
+            rev.runs[0].glyphs[0].glyph_id, nanum_a,
+            "reversed stack => Nanum"
+        );
+    }
+
+    #[test]
+    fn multi_glyph_run_offsets_each_glyph() {
+        // Run 0 = "AB" (two Noto glyphs): each glyph keeps its intra-run x under
+        // the whole-text pen offset (x = pen + g.x). With pen = 0 for run 0, the
+        // run must equal a standalone shape_run — a `x: pen` bug would collapse
+        // the second glyph onto the first.
+        let noto = font(NOTO);
+        let nanum = font(NANUM);
+        let shaped = shape_with_fallback(&[&noto, &nanum], "AB가", PX);
+        assert_eq!(shaped.runs.len(), 2, "AB | 가");
+        let solo = noto.shape_run("AB", PX);
+        assert_eq!(
+            shaped.runs[0].glyphs, solo.glyphs,
+            "run 0 == standalone shape_run (pen 0, cluster 0)"
+        );
+        assert!(
+            solo.glyphs[1].x > 0.0,
+            "B is offset from A — the intra-run g.x a `x: pen` bug would drop"
+        );
     }
 }

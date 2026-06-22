@@ -12717,6 +12717,50 @@
         "cmap best_subtable + hhea int16[4] pre-existing cargo-doc dangling links (docs-round carry)"
       ]
     },
+    "R1044.1": {
+      "decision_summary": "R1044 adversarial-review clearance (test rigor): two reviewers found 0 HIGH / 0 MED-correctness — the implementation, the new §5.37.10 section, layering, and sequencing were sound. The actionable gaps were test coverage: no test pinned fallback priority order (a position->rposition mutation would pass) nor the intra-run pen+g.x offset (every run was single-glyph, so x: pen would pass). Add a both-fonts-cover priority test (+ reverse stack) and a multi-glyph-run offset test, and a non-vacuity guard to the split test. LOW: 'the #1 paint-wiring blocker' is one of two co-equal blockers (styled-runs the other, disclosed in the R1044 carry).",
+      "changes_bullets": [
+        "Add covered_by_both_resolves_to_the_first_font (priority: first covering font + reverse stack)",
+        "Add multi_glyph_run_offsets_each_glyph (intra-run pen+g.x; run 0 == standalone shape_run)",
+        "Add non-vacuity guard to mixed_script_splits_on_coverage (Noto lacks Hangul, Nanum has it)"
+      ],
+      "verification_bullets": [
+        "2 read-only adversarial reviewers (quality-engineer + system-architect): 0 HIGH, 0 MED-correctness",
+        "fallback now 7 tests — priority + multi-glyph offset close the two mutation-survivable gaps",
+        "workspace test 0 fail (7403 passed); clippy --workspace vello + rustfmt clean",
+        "no production change — test-rigor clearance only"
+      ],
+      "impact_refs": [
+        "5.37.10"
+      ],
+      "carry_forward_bullets": [
+        "per-codepoint resolution; grapheme-cluster fallback (cross-font base+mark) deferred",
+        "OS font enumeration deferred; unified itemise+font-split+shape pipeline = follow-up",
+        "font fallback is one of two co-equal paint-wiring blockers (styled-runs the other)",
+        "cmap best_subtable + hhea int16[4] pre-existing cargo-doc dangling links (docs-round carry)"
+      ],
+      "publishable_decision_summary": "R1044 adversarial-review clearance (test rigor): two reviewers found 0 HIGH / 0 MED-correctness — the implementation, the new §5.37.10 section, layering, and sequencing were sound. The actionable gaps were test coverage: no test pinned fallback priority order (a position->rposition mutation would pass) nor the intra-run pen+g.x offset (every run was single-glyph, so x: pen would pass). Add a both-fonts-cover priority test (+ reverse stack) and a multi-glyph-run offset test, and a non-vacuity guard to the split test. LOW: 'the #1 paint-wiring blocker' is one of two co-equal blockers (styled-runs the other, disclosed in the R1044 carry).",
+      "publishable_changes_bullets": [
+        "Add covered_by_both_resolves_to_the_first_font (priority: first covering font + reverse stack)",
+        "Add multi_glyph_run_offsets_each_glyph (intra-run pen+g.x; run 0 == standalone shape_run)",
+        "Add non-vacuity guard to mixed_script_splits_on_coverage (Noto lacks Hangul, Nanum has it)"
+      ],
+      "publishable_verification_bullets": [
+        "2 read-only adversarial reviewers (quality-engineer + system-architect): 0 HIGH, 0 MED-correctness",
+        "fallback now 7 tests — priority + multi-glyph offset close the two mutation-survivable gaps",
+        "workspace test 0 fail (7403 passed); clippy --workspace vello + rustfmt clean",
+        "no production change — test-rigor clearance only"
+      ],
+      "publishable_impact_refs": [
+        "5.37.10"
+      ],
+      "publishable_carry_forward_bullets": [
+        "per-codepoint resolution; grapheme-cluster fallback (cross-font base+mark) deferred",
+        "OS font enumeration deferred; unified itemise+font-split+shape pipeline = follow-up",
+        "font fallback is one of two co-equal paint-wiring blockers (styled-runs the other)",
+        "cmap best_subtable + hhea int16[4] pre-existing cargo-doc dangling links (docs-round carry)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
