@@ -4381,7 +4381,8 @@
         "R50.7: Coverage/ClassDef + Script-Feature-Lookup nav → tables/layout/ (GPOS+GSUB 공유, 2nd consumer)",
         "R50.7 defers: GSUB single/multiple/alternate/contextual/reverse-chain + lookupFlag filtering",
         "R1039 (R50.10) shape_paragraph supersedes 'single visual run': itemize + L2 reorder now applied",
-        "R1040 shape_paragraph filters X9-removed controls (run-granularity BN filter); R1039 X9 gap cleared"
+        "R1040 shape_paragraph filters X9-removed controls (run-granularity BN filter); R1039 X9 gap cleared",
+        "R1041 wrap_paragraph (R50.11) supersedes 'single-line run 전제': greedy width line-breaking now exists"
       ],
       "alternatives_rejected": [
         {
@@ -4531,7 +4532,8 @@
         "EAW substrate: East_Asian_Width F/W/H (EastAsianWidth.txt) = $EastAsian for LB19a/LB21a/LB30.",
         "Pi/Pf gc subsets (UnicodeData.txt) sub-classify QU for LB15a/LB15b/LB19.",
         "LB9/LB10 = cluster-unit fold; SA->CM (gc Mn/Mc) deferred (suite has no SA combining mark).",
-        "EAW = (start,end) membership not (start,end,idx); the idx-helper Rule-of-Three lift still pends."
+        "EAW = (start,end) membership not (start,end,idx); the idx-helper Rule-of-Three lift still pends.",
+        "R1041 wrap_paragraph (R50.11) = first line-layout consumer of line_break_opportunities"
       ],
       "alternatives_rejected": [
         {
@@ -12345,6 +12347,54 @@
         "L3 combining-mark reorder + multi-paragraph + per-script shaper selection still deferred",
         "shape_paragraph is a test forcing-consumer; production paint still §5.36 swash until paint-wiring",
         "cargo-doc bidi.rs compute_sos_eos/bd16 + cmap best_subtable + hhea int16[4] pre-existing (unrelated)"
+      ]
+    },
+    "R1041": {
+      "decision_summary": "§5.37.7 R50.11 greedy line breaking: wrap_paragraph splits a paragraph into width-bounded logical lines over the UAX #14 break opportunities (first real line-layout consumer of line_break_opportunities). Greedy first-fit; mandatory breaks honoured; line width is reorder-invariant so break points are direction-correct. Returns LineRange byte ranges; per-line shape/reorder deferred.",
+      "changes_bullets": [
+        "New pinion-text-font/src/wrap.rs: wrap_paragraph(font,para,px,max_width)->Vec<LineRange>",
+        "Greedy first-fit line breaking over line_break_opportunities; O(n) per-segment measure",
+        "Mandatory breaks end a line; overflow segment emitted alone; line width reorder-invariant",
+        "First line-layout consumer of §5.37.7 line_break_opportunities (R1019/R1033)"
+      ],
+      "verification_bullets": [
+        "pinion-text-font 9 wrap tests (empty/unbounded/word-break/mandatory/overflow/tiling/oracle-fit)",
+        "adversarial 2-reviewer 0 HIGH: termination + tiling-no-zero-width + reorder-invariance proven",
+        "workspace test 0 fail; clippy --workspace vello + rustfmt clean; my files cargo doc 0 new",
+        "validate T1=0; entries 1050->1051; §5.37.6 single-line + §5.37.7 no-consumer caveats superseded"
+      ],
+      "impact_refs": [
+        "5.37.7",
+        "5.37.6"
+      ],
+      "carry_forward_bullets": [
+        "Per-line BIDI reorder + shaping (shape_paragraph per line w/ paragraph-context levels) = next round",
+        "Trailing-whitespace hang (UAX#14 width refinement) + Knuth-Plass optimal breaking deferred",
+        "Cross-opportunity kerning dropped in measure (sub-pixel under-estimate; exact at chosen break)",
+        "wrap_paragraph is a test forcing-consumer; production paint still §5.36 swash until paint-wiring"
+      ],
+      "publishable_decision_summary": "§5.37.7 R50.11 greedy line breaking: wrap_paragraph splits a paragraph into width-bounded logical lines over the UAX #14 break opportunities (first real line-layout consumer of line_break_opportunities). Greedy first-fit; mandatory breaks honoured; line width is reorder-invariant so break points are direction-correct. Returns LineRange byte ranges; per-line shape/reorder deferred.",
+      "publishable_changes_bullets": [
+        "New pinion-text-font/src/wrap.rs: wrap_paragraph(font,para,px,max_width)->Vec<LineRange>",
+        "Greedy first-fit line breaking over line_break_opportunities; O(n) per-segment measure",
+        "Mandatory breaks end a line; overflow segment emitted alone; line width reorder-invariant",
+        "First line-layout consumer of §5.37.7 line_break_opportunities (R1019/R1033)"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-text-font 9 wrap tests (empty/unbounded/word-break/mandatory/overflow/tiling/oracle-fit)",
+        "adversarial 2-reviewer 0 HIGH: termination + tiling-no-zero-width + reorder-invariance proven",
+        "workspace test 0 fail; clippy --workspace vello + rustfmt clean; my files cargo doc 0 new",
+        "validate T1=0; entries 1050->1051; §5.37.6 single-line + §5.37.7 no-consumer caveats superseded"
+      ],
+      "publishable_impact_refs": [
+        "5.37.7",
+        "5.37.6"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Per-line BIDI reorder + shaping (shape_paragraph per line w/ paragraph-context levels) = next round",
+        "Trailing-whitespace hang (UAX#14 width refinement) + Knuth-Plass optimal breaking deferred",
+        "Cross-opportunity kerning dropped in measure (sub-pixel under-estimate; exact at chosen break)",
+        "wrap_paragraph is a test forcing-consumer; production paint still §5.36 swash until paint-wiring"
       ]
     },
     "R232": {

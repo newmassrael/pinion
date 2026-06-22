@@ -28,6 +28,7 @@ mod reader;
 mod sfnt;
 pub mod shape;
 pub mod tables;
+pub mod wrap;
 
 pub use atlas::{AtlasGlyph, GlyphAtlas};
 pub use error::{FieldValue, ParseError};
@@ -44,3 +45,4 @@ pub use tables::gpos::Gpos;
 pub use tables::gsub::Gsub;
 pub use tables::loca::{Loca, LocaFormat};
 pub use tables::name::{LangTagRecord, Name, NameId, NameRecord};
+pub use wrap::{LineRange, wrap_paragraph};
