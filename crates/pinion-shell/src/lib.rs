@@ -66,6 +66,7 @@ pub mod executor;
 pub mod headless_screenshot;
 mod substrate;
 pub mod typeahead;
+pub mod vello_capture;
 
 // R51.175 §5.41 — shared Vello-side test fixture surface. Exposes a
 // minimal `VelloRenderer`-conforming `TestRenderer` plus
@@ -254,6 +255,29 @@ pub trait VelloRenderer:
     ) -> impl core::future::Future<Output = Result<Self, Self::Error>>
     where
         W: Into<vello::wgpu::SurfaceTarget<'static>>;
+
+    /// R1060 §5.16 — render `scene` to the live surface and read back
+    /// the **exact swapchain texture the window presents** as
+    /// premultiplied RGBA8 (the true present-stage fidelity readback
+    /// `scene/screenshot` exposes to AI clients). Unlike re-rasterizing
+    /// the scene offscreen, this observes blit / surface-config /
+    /// swapchain-staleness defects — a white or stale presented surface
+    /// the encoded scene is correct about. GPU-specific, so it lives on
+    /// this Vello trait rather than the backend-agnostic
+    /// [`WidgetRenderer`] (a TUI cell backend has no surface to read).
+    ///
+    /// Renders at the surface's current configured size; the returned
+    /// [`vello_capture::CapturedFrame`] carries the dimensions the
+    /// `scene/screenshot` wire reports.
+    ///
+    /// # Errors
+    /// See [`vello_capture::SurfaceCaptureError`] — a non-presentable
+    /// swapchain status or a staging-buffer map failure.
+    fn capture_rgba8(
+        &mut self,
+        scene: &VelloScene,
+        base_color: vello::peniko::Color,
+    ) -> Result<vello_capture::CapturedFrame, vello_capture::SurfaceCaptureError>;
 }
 
 /// Bridge a pinion-forge-emitted renderer struct into the
@@ -304,6 +328,35 @@ macro_rules! vello_renderer_impl {
                 W: ::core::convert::Into<::vello::wgpu::SurfaceTarget<'static>>,
             {
                 <$name>::new(target, width, height).await
+            }
+
+            // R1060 §5.16 — the live-surface capture is bridged HERE
+            // (in the shell-coupled macro), NOT forwarded to a template
+            // inherent method: the pinion-forge template must stay
+            // pinion-shell-free (forge consumers like `ai-introspect-demo`
+            // use the emitted renderer without depending on pinion-shell),
+            // so it cannot reference the `vello_capture` readback SSOT.
+            // This macro already requires pinion-shell, so it hands the
+            // renderer struct's wgpu fields (reachable because the macro
+            // expands in the struct's own module via `include!`) straight
+            // to the shared `capture_surface_rgba8`. GPU-less stub
+            // renderers cannot use this macro (no fields) and hand-impl
+            // the trait pair with a surface-less stub instead.
+            fn capture_rgba8(
+                &mut self,
+                scene: &::vello::Scene,
+                base_color: ::vello::peniko::Color,
+            ) -> ::core::result::Result<
+                $crate::vello_capture::CapturedFrame,
+                $crate::vello_capture::SurfaceCaptureError,
+            > {
+                $crate::vello_capture::capture_surface_rgba8(
+                    &self.context,
+                    &mut self.surface,
+                    &mut self.renderer,
+                    scene,
+                    base_color,
+                )
             }
         }
     };

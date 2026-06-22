@@ -42,7 +42,7 @@ use pinion_core::external::{
 use pinion_core::scene::{BoxNode, ContainerNode, Rect};
 use pinion_core::style::{BoxStyle, Color};
 use pinion_core::{Frame, Scene, WidgetCore};
-use pinion_shell::{WidgetView, run, vello_renderer_impl};
+use pinion_shell::{VelloContext, VelloRenderer, WidgetRenderer, WidgetView, run};
 
 /// Mirror of the pinion-forge codegen output: a renderer struct that
 /// stores nothing (no actual wgpu surface — the smoke test never
@@ -87,9 +87,69 @@ impl SmokeRenderer {
     }
 
     fn resize(&mut self, _width: u32, _height: u32) {}
+
+    /// R1060 §5.16 — stub capture mirroring the codegen template's
+    /// `capture_rgba8` signature so `vello_renderer_impl!` type-checks.
+    /// The smoke renderer owns no surface, so it reports the typed
+    /// `SurfaceUnavailable` error rather than a fabricated frame.
+    fn capture_rgba8(
+        &mut self,
+        _scene: &vello::Scene,
+        _base_color: vello::peniko::Color,
+    ) -> Result<
+        pinion_shell::vello_capture::CapturedFrame,
+        pinion_shell::vello_capture::SurfaceCaptureError,
+    > {
+        Err(
+            pinion_shell::vello_capture::SurfaceCaptureError::SurfaceUnavailable(
+                "SmokeRenderer: no live surface",
+            ),
+        )
+    }
 }
 
-vello_renderer_impl!(SmokeRenderer, SmokeRendererError);
+// R1060 §5.16 — GPU-less stub: hand-bridge the trait pair (the
+// `vello_renderer_impl!` macro hands wgpu fields to the surface-capture
+// SSOT, which this surfaceless smoke renderer lacks). Forwarding every
+// method to the inherent stubs still type-checks the full
+// `VelloRenderer` trait surface — the smoke test's whole purpose.
+impl WidgetRenderer for SmokeRenderer {
+    type Error = SmokeRendererError;
+    type Frame = vello::Scene;
+    type Context = VelloContext;
+
+    fn render(
+        &mut self,
+        frame: &vello::Scene,
+        ctx: VelloContext,
+    ) -> Result<(), SmokeRendererError> {
+        SmokeRenderer::render(self, frame, ctx.base_color)
+    }
+
+    fn resize(&mut self, width: u32, height: u32) {
+        SmokeRenderer::resize(self, width, height);
+    }
+}
+
+impl VelloRenderer for SmokeRenderer {
+    async fn new<W>(target: W, width: u32, height: u32) -> Result<Self, SmokeRendererError>
+    where
+        W: Into<vello::wgpu::SurfaceTarget<'static>>,
+    {
+        SmokeRenderer::new(target, width, height).await
+    }
+
+    fn capture_rgba8(
+        &mut self,
+        scene: &vello::Scene,
+        base_color: vello::peniko::Color,
+    ) -> Result<
+        pinion_shell::vello_capture::CapturedFrame,
+        pinion_shell::vello_capture::SurfaceCaptureError,
+    > {
+        SmokeRenderer::capture_rgba8(self, scene, base_color)
+    }
+}
 
 /// Minimal [`External`] opting in to the introspect channel so
 /// [`WidgetView::read_state`] has a query target. `value` is a

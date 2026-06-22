@@ -73,11 +73,9 @@ use std::num::NonZeroUsize;
 
 use vello::peniko::Color as PenikoColor;
 use vello::wgpu::{
-    self, Backends, BufferDescriptor, BufferUsages, CommandEncoderDescriptor, DeviceDescriptor,
-    Extent3d, Features, Instance, InstanceDescriptor, Limits, MapMode, MemoryHints, Origin3d,
-    PollType, PowerPreference, RequestAdapterOptions, TexelCopyBufferInfo, TexelCopyBufferLayout,
-    TexelCopyTextureInfo, TextureAspect, TextureDescriptor, TextureDimension, TextureFormat,
-    TextureUsages, TextureViewDescriptor,
+    self, Backends, DeviceDescriptor, Extent3d, Features, Instance, InstanceDescriptor, Limits,
+    MemoryHints, PowerPreference, RequestAdapterOptions, TextureDescriptor, TextureDimension,
+    TextureFormat, TextureUsages, TextureViewDescriptor,
 };
 use vello::{AaConfig, AaSupport, RenderParams, Renderer, RendererOptions, Scene as VelloScene};
 
@@ -146,13 +144,6 @@ impl From<std::io::Error> for HeadlessScreenshotError {
         Self::Io(value)
     }
 }
-
-/// wgpu `bytes_per_row` alignment for `copy_texture_to_buffer`. WebGPU
-/// spec mandates 256-byte row alignment for buffer copies; wgpu
-/// re-exports the constant as `COPY_BYTES_PER_ROW_ALIGNMENT`. Padding
-/// added here is stripped back out during readback so callers see the
-/// unpadded `width * height * 4` byte buffer.
-const ROW_ALIGN: u32 = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
 
 /// Headless wgpu + vello pipeline. Constructed once per process (the
 /// shader compile + adapter request is the bulk of the wall-clock
@@ -359,89 +350,37 @@ impl HeadlessScreenshot {
     }
 
     /// Copy `texture` (an `Rgba8Unorm`, `COPY_SRC` target of `width x height`)
-    /// back into a contiguous `width * height * 4` premultiplied-RGBA8 buffer
-    /// (row-major, top-left origin), stripping the wgpu `bytes_per_row`
-    /// alignment padding. Shared by [`Self::render_to_rgba8`] and
-    /// [`Self::render_sequence`].
+    /// back into a contiguous `width * height * 4` premultiplied-RGBA8 buffer.
+    ///
+    /// R1060 §5.16 — delegates to the texture → RGBA8 readback SSOT
+    /// ([`crate::vello_capture::texture_to_rgba8`]) that the live-surface
+    /// capture also calls. Headless targets are `Rgba8Unorm`, so the
+    /// SSOT's format-driven BGRA swizzle is a no-op and the output is
+    /// byte-identical to the pre-R1060 inline copy (the PR-17
+    /// [`Self::render_sequence`] accumulation tests guard the
+    /// equivalence).
     fn read_texture(
         &self,
         texture: &wgpu::Texture,
         width: u32,
         height: u32,
     ) -> Result<Vec<u8>, HeadlessScreenshotError> {
-        let unpadded_bytes_per_row = width * 4;
-        let padded_bytes_per_row = unpadded_bytes_per_row.div_ceil(ROW_ALIGN) * ROW_ALIGN;
-        let staging_size = u64::from(padded_bytes_per_row) * u64::from(height);
-        let staging = self.device.create_buffer(&BufferDescriptor {
-            label: Some("pinion-shell::HeadlessScreenshot staging"),
-            size: staging_size,
-            usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-
-        let mut encoder = self
-            .device
-            .create_command_encoder(&CommandEncoderDescriptor {
-                label: Some("pinion-shell::HeadlessScreenshot copy"),
-            });
-        encoder.copy_texture_to_buffer(
-            TexelCopyTextureInfo {
-                texture,
-                mip_level: 0,
-                origin: Origin3d::ZERO,
-                aspect: TextureAspect::All,
-            },
-            TexelCopyBufferInfo {
-                buffer: &staging,
-                layout: TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(padded_bytes_per_row),
-                    rows_per_image: Some(height),
-                },
-            },
-            Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-        );
-        self.queue.submit(std::iter::once(encoder.finish()));
-
-        let slice = staging.slice(..);
-        let (tx, rx) = std::sync::mpsc::sync_channel::<Result<(), wgpu::BufferAsyncError>>(1);
-        slice.map_async(MapMode::Read, move |result| {
-            // Receiver side may have been dropped if the caller
-            // gave up early (e.g. panic in a parallel test); silently
-            // tolerating the send-error keeps the wgpu side free of
-            // a dangling callback panic.
-            let _ = tx.send(result);
-        });
-        // wgpu requires an explicit poll to drive map_async on
-        // native backends (web backends progress via the JS event
-        // loop). `PollType::Wait` blocks until the queued work +
-        // map callback have both completed. wgpu 29 (R808) made `Wait`
-        // a struct variant; `wait_indefinitely()` is the no-timeout,
-        // most-recent-submission convenience constructor.
-        let _ = self.device.poll(PollType::wait_indefinitely());
-        rx.recv()
-            .map_err(|e| HeadlessScreenshotError::BufferMap(format!("{e}")))?
-            .map_err(|e| HeadlessScreenshotError::BufferMap(format!("{e}")))?;
-
-        let mut out = Vec::with_capacity((unpadded_bytes_per_row * height) as usize);
-        {
-            let mapped = slice.get_mapped_range();
-            // Strip per-row padding wgpu required for `bytes_per_row`
-            // alignment so the returned buffer is the contiguous
-            // `width * height * 4` RGBA8 raster the wire schema
-            // promises.
-            for row in 0..height as usize {
-                let row_start = row * padded_bytes_per_row as usize;
-                let row_end = row_start + unpadded_bytes_per_row as usize;
-                out.extend_from_slice(&mapped[row_start..row_end]);
+        crate::vello_capture::texture_to_rgba8(
+            &self.device,
+            &self.queue,
+            texture,
+            width,
+            height,
+            TextureFormat::Rgba8Unorm,
+        )
+        .map_err(|e| match e {
+            crate::vello_capture::SurfaceCaptureError::BufferMap(s) => {
+                HeadlessScreenshotError::BufferMap(s)
             }
-        }
-        staging.unmap();
-        Ok(out)
+            // `texture_to_rgba8` only ever surfaces `BufferMap`; the
+            // other capture-side variants are unreachable on this path.
+            other => HeadlessScreenshotError::BufferMap(other.to_string()),
+        })
     }
 
     /// Render + encode as PNG to `writer`. Convenience wrapper around

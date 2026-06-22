@@ -31,16 +31,17 @@ use core::fmt;
 
 use pinion_core::test_fixtures::{ContextMenuFixture, EchoButtonFixture, ScrollbarMultiFixture};
 
-use crate::{WidgetView, vello_renderer_impl};
+use crate::{VelloContext, VelloRenderer, WidgetRenderer, WidgetView};
 
 /// R51.175 §5.41 — minimal `VelloRenderer`-conforming renderer for
 /// fixture tests. Mirrors the pinion-forge codegen template: an
-/// inherent `async new` / `render` / `resize` triple wrapped by
-/// `vello_renderer_impl!` to satisfy the `WidgetView::Renderer`
-/// bound. The shell's dispatch path never touches the renderer, so
-/// the bodies are inert. Construction never fails — the error
-/// variant is an uninhabited enum so the `?` operator type-checks
-/// without forcing the caller to enumerate cases.
+/// inherent `async new` / `render` / `resize` / `capture_rgba8` set
+/// bridged into the trait pair (by hand since R1060 — a GPU-less stub
+/// cannot use the field-access `vello_renderer_impl!` macro) to satisfy
+/// the `WidgetView::Renderer` bound. The shell's dispatch path never
+/// touches the renderer, so the bodies are inert. Construction never
+/// fails — the error variant is an uninhabited enum so the `?` operator
+/// type-checks without forcing the caller to enumerate cases.
 pub struct TestRenderer;
 
 /// Uninhabited error type for [`TestRenderer`] — no runtime case
@@ -93,9 +94,69 @@ impl TestRenderer {
     /// Inert resize — dispatch tests never call this.
     #[allow(clippy::unused_self)]
     pub fn resize(&mut self, _w: u32, _h: u32) {}
+
+    /// R1060 §5.16 — stub capture: this fixture owns no live wgpu
+    /// surface (it never enters the `run` loop), so the present-stage
+    /// readback has nothing to read. Reports `SurfaceUnavailable` so a
+    /// dispatch test that reached the capture path sees a typed,
+    /// honest error rather than a fabricated frame.
+    ///
+    /// # Errors
+    ///
+    /// Always [`crate::vello_capture::SurfaceCaptureError::SurfaceUnavailable`]
+    /// — the fixture has no live surface to read back.
+    #[allow(clippy::unused_self)]
+    pub fn capture_rgba8(
+        &mut self,
+        _scene: &vello::Scene,
+        _base: vello::peniko::Color,
+    ) -> Result<crate::vello_capture::CapturedFrame, crate::vello_capture::SurfaceCaptureError>
+    {
+        Err(
+            crate::vello_capture::SurfaceCaptureError::SurfaceUnavailable(
+                "TestRenderer: no live surface",
+            ),
+        )
+    }
 }
 
-vello_renderer_impl!(TestRenderer, TestRendererError);
+// R1060 §5.16 — GPU-less stubs cannot use `vello_renderer_impl!` (it
+// hands the renderer's wgpu fields to the surface-capture SSOT, and
+// this fixture has none), so the trait pair is bridged by hand. Every
+// method still forwards to the inherent stub above, so the fixture
+// exercises the full `VelloRenderer` trait surface (a trait-shape
+// regression breaks this impl exactly as it would the macro).
+impl WidgetRenderer for TestRenderer {
+    type Error = TestRendererError;
+    type Frame = vello::Scene;
+    type Context = VelloContext;
+
+    fn render(&mut self, frame: &vello::Scene, ctx: VelloContext) -> Result<(), TestRendererError> {
+        TestRenderer::render(self, frame, ctx.base_color)
+    }
+
+    fn resize(&mut self, width: u32, height: u32) {
+        TestRenderer::resize(self, width, height);
+    }
+}
+
+impl VelloRenderer for TestRenderer {
+    async fn new<W>(target: W, width: u32, height: u32) -> Result<Self, TestRendererError>
+    where
+        W: Into<vello::wgpu::SurfaceTarget<'static>>,
+    {
+        TestRenderer::new(target, width, height).await
+    }
+
+    fn capture_rgba8(
+        &mut self,
+        scene: &vello::Scene,
+        base_color: vello::peniko::Color,
+    ) -> Result<crate::vello_capture::CapturedFrame, crate::vello_capture::SurfaceCaptureError>
+    {
+        TestRenderer::capture_rgba8(self, scene, base_color)
+    }
+}
 
 /// R51.175 §5.41 §5.23 R27 — Vello-side `WidgetView` impl for the
 /// shared reducer fixture. Pairs with

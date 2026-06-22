@@ -242,9 +242,28 @@ impl __NAME__ {
         W: ::std::convert::Into<::vello::wgpu::SurfaceTarget<'static>>,
     {
         let mut context = ::vello::util::RenderContext::new();
-        let surface = context
+        let mut surface = context
             .create_surface(target, width, height, ::vello::wgpu::PresentMode::AutoVsync)
             .await?;
+        // R1060 §5.16 — enable COPY_SRC on the swapchain surface so the
+        // live-surface capture (`scene/screenshot`, true present-stage
+        // fidelity readback) can copy the exact texture the window
+        // presents. Guarded by the surface's advertised usages: a surface
+        // that cannot be a copy source keeps its default usage and
+        // capture fails with a typed error, rather than a `configure`
+        // validation error breaking all rendering.
+        {
+            let device_handle = &context.devices[surface.dev_id];
+            if surface
+                .surface
+                .get_capabilities(device_handle.adapter())
+                .usages
+                .contains(::vello::wgpu::TextureUsages::COPY_SRC)
+            {
+                surface.config.usage |= ::vello::wgpu::TextureUsages::COPY_SRC;
+                context.configure_surface(&surface);
+            }
+        }
         let device_handle = &context.devices[surface.dev_id];
         // R1049 §5.16 — absorb transient wgpu uncaptured errors (e.g. a
         // `create_view` on a momentarily-invalid swapchain texture right
