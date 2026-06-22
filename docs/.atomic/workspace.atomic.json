@@ -4438,7 +4438,8 @@
         "R1043 defers: RTL mark x (advance-mirror), mark-to-lig/mark (Type 5/6), lookupFlag mark-skip",
         "R1043 supersedes the 'GPOS mark = R50.6.x/R50.7.x' caveats: mark-to-base (Type 4) now applied",
         "R50.14(R1050): PositionedGlyph + font_index:usize (which stack font shaped glyph; single-font=0)",
-        "R50.14.1(R1051): render_paragraph = first pixel consumer of multi-font ShapedParagraph"
+        "R50.14.1(R1051): render_paragraph = first pixel consumer of multi-font ShapedParagraph",
+        "R50.14.2(R1052): layout_paragraph rendered via render_lines (wrap->layout->render = pixels)"
       ],
       "alternatives_rejected": [
         {
@@ -4860,7 +4861,10 @@
         "atlas grow(ensure_width row-rewrite / ensure_height append)는 logical (x,y) 보존 → 기존 entry sub-rect 유효",
         "production paint 는 여전히 §5.36 swash — render_run(첫 consumer) + test 로만 검증, paint-wiring=후속",
         "R50.14.1(R1051): render_paragraph=2nd atlas consumer (per-font Vec<GlyphAtlas> for multi-font)",
-        "R50.14.1: composite() core (bbox+alpha-over) shared by render_run + render_paragraph (2 consumers)"
+        "R50.14.1: composite() core (bbox+alpha-over) shared by render_run + render_paragraph (2 consumers)",
+        "R50.14.2(R1052): render_glyphs = 3-consumer render core (run/para/lines); composite=sole caller",
+        "R50.14.2: render_lines(line_layout) = multi-line block raster = layout_paragraph 1st pixel consumer",
+        "R1052 changelog '7433 pass' over-counts by 1; actual workspace test = 7432 pass 0 fail"
       ],
       "alternatives_rejected": [
         {
@@ -4917,6 +4921,16 @@
         {
           "file": "crates/pinion-text-font/src/shape.rs",
           "symbol": "composite",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-text-font/src/shape.rs",
+          "symbol": "render_glyphs",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-text-font/src/line_layout.rs",
+          "symbol": "render_lines",
           "kind": "implements"
         }
       ]
@@ -13116,6 +13130,54 @@
         "shared-atlas glyph-id collision path not feasibly testable with Noto+Nanum (distinct gids); per-font Vec<GlyphAtlas> structurally precludes it",
         "FallbackRun (run-structured) confirmed zero pixel consumers; flat per-glyph font_index validated; do NOT retire FallbackRun until a GPU batcher confirms it does not want pre-grouped runs",
         "placement-building loop (shape.rs vs paragraph.rs) is a deferred 2nd seam — extract a shared builder when a 3rd (paint-wiring) renderer needs it"
+      ]
+    },
+    "R1052": {
+      "decision_summary": "R1052 §5.37.9/§5.37.6 render_lines (multi-line block rasterization, first pixel consumer of layout_paragraph); render_glyphs shared 3-consumer render core extracted, retiring the R1051-flagged placement-loop seam",
+      "changes_bullets": [
+        "line_layout.rs: render_lines(fonts,&ShapedLines,px)->Result<Coverage,RasterError> = render_glyphs over every line, each glyph placed at (g.x, line.baseline+g.y); first pixel consumer of layout_paragraph so wrap->layout->render now produces a multi-line pixel block",
+        "shape.rs: render_glyphs(fonts,px,impl IntoIterator<GlyphDraw>)->Coverage = per-font atlas + place + composite, the single render core; render_run + render_paragraph refactored into thin GlyphDraw-mapping adapters (render_run byte-identical); GlyphDraw named input struct (no positional tuple) fully retires the R1051 seam (3 consumers, zero residual dup)",
+        "lib.rs exports render_lines; composite doc de-staled (sole caller is now render_glyphs)"
+      ],
+      "verification_bullets": [
+        "pinion-text-font 273 pass 0 fail (lib 233, +4 render_lines tests: single-line ink==render_paragraph[only top shifts by baseline], stacks-by-line-height, 2nd-line-a-line-height-below-first internal geometry, empty)",
+        "render_run 15 byte-identical + render_paragraph 5 equivalent after the render_glyphs extraction; workspace cargo test 7433 pass 0 fail; clippy --workspace --all-targets --features pinion-runtime/vello 0; rustfmt clean; cargo doc 0 new (cmap/hhea pre-existing)",
+        "adversarial 2-reviewer (quality-engineer byte-identity/placement/bounds/test-tamper + system-architect SSOT/layering/seam-retirement, read-only parallel): 0 HIGH; MED (internal stacking-geometry test, stale composite doc, this §5.37.9 spec sync) cleared inline R1052.1",
+        "validate-workspace T1=0; production paint still §5.36 swash so all three renderers are test forcing-consumers"
+      ],
+      "impact_refs": [
+        "5.37.9",
+        "5.37.6"
+      ],
+      "carry_forward_bullets": [
+        "multi-font multi-line: render_lines is font_index-capable but layout_paragraph is single-font (wrap x fallback still deferred)",
+        "GPU upload still deferred: multi-font = N per-font atlases to bind (texture array / merge)",
+        "styled-run shaping (per-span font/weight/color) now sits on a complete CPU render path (run/paragraph/lines) — natural next round; per-span color breaks the single-Coverage mask (needs RGBA or per-color masks)",
+        "RTL / blank-line render_lines paths untested (render_glyphs is direction-agnostic, core tested via render_paragraph; honest LOW)",
+        "placement-loop seam fully retired (render_glyphs is the one render core); no further render-builder duplication remains"
+      ],
+      "publishable_decision_summary": "R1052 §5.37.9/§5.37.6 render_lines (multi-line block rasterization, first pixel consumer of layout_paragraph); render_glyphs shared 3-consumer render core extracted, retiring the R1051-flagged placement-loop seam",
+      "publishable_changes_bullets": [
+        "line_layout.rs: render_lines(fonts,&ShapedLines,px)->Result<Coverage,RasterError> = render_glyphs over every line, each glyph placed at (g.x, line.baseline+g.y); first pixel consumer of layout_paragraph so wrap->layout->render now produces a multi-line pixel block",
+        "shape.rs: render_glyphs(fonts,px,impl IntoIterator<GlyphDraw>)->Coverage = per-font atlas + place + composite, the single render core; render_run + render_paragraph refactored into thin GlyphDraw-mapping adapters (render_run byte-identical); GlyphDraw named input struct (no positional tuple) fully retires the R1051 seam (3 consumers, zero residual dup)",
+        "lib.rs exports render_lines; composite doc de-staled (sole caller is now render_glyphs)"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-text-font 273 pass 0 fail (lib 233, +4 render_lines tests: single-line ink==render_paragraph[only top shifts by baseline], stacks-by-line-height, 2nd-line-a-line-height-below-first internal geometry, empty)",
+        "render_run 15 byte-identical + render_paragraph 5 equivalent after the render_glyphs extraction; workspace cargo test 7433 pass 0 fail; clippy --workspace --all-targets --features pinion-runtime/vello 0; rustfmt clean; cargo doc 0 new (cmap/hhea pre-existing)",
+        "adversarial 2-reviewer (quality-engineer byte-identity/placement/bounds/test-tamper + system-architect SSOT/layering/seam-retirement, read-only parallel): 0 HIGH; MED (internal stacking-geometry test, stale composite doc, this §5.37.9 spec sync) cleared inline R1052.1",
+        "validate-workspace T1=0; production paint still §5.36 swash so all three renderers are test forcing-consumers"
+      ],
+      "publishable_impact_refs": [
+        "5.37.9",
+        "5.37.6"
+      ],
+      "publishable_carry_forward_bullets": [
+        "multi-font multi-line: render_lines is font_index-capable but layout_paragraph is single-font (wrap x fallback still deferred)",
+        "GPU upload still deferred: multi-font = N per-font atlases to bind (texture array / merge)",
+        "styled-run shaping (per-span font/weight/color) now sits on a complete CPU render path (run/paragraph/lines) — natural next round; per-span color breaks the single-Coverage mask (needs RGBA or per-color masks)",
+        "RTL / blank-line render_lines paths untested (render_glyphs is direction-agnostic, core tested via render_paragraph; honest LOW)",
+        "placement-loop seam fully retired (render_glyphs is the one render core); no further render-builder duplication remains"
       ]
     },
     "R232": {
