@@ -13220,6 +13220,58 @@
         "SCE bump = move submodule + this Cargo rev together in one commit or built-vs-vendored SCE drifts"
       ]
     },
+    "R1054": {
+      "decision_summary": "R1054 §5.37.6/.7/.10 multi-font multi-line (wrap+fallback): layout_paragraph_with_fallback + wrap_paragraph_with_fallback join R1050 font-fallback with R1052 wrapping (mixed-script paragraph wraps at true advances + each glyph tagged its fallback font); font_split_runs/greedy_break/assemble_lines lifted as 2nd-consumer SSOTs",
+      "changes_bullets": [
+        "line_layout.rs: layout_paragraph_with_fallback(fonts,paragraph,px,max)->ShapedLines wraps + shapes a mixed-script paragraph across a font stack with per-codepoint fallback; each glyph carries its fallback font_index so render_lines (already font_index-capable, unchanged) rasterizes it from fonts[font_index]",
+        "wrap.rs: wrap_paragraph_with_fallback(fonts,...) measures each inter-break segment via shape_with_fallback(...).advance (substrate reuse) so a mixed-script paragraph wraps at true advances, not the primary font's .notdef widths; greedy_break + cumulative_advances(measure closure) lifted as the shared break core (wrap_paragraph + fallback variant = 2 consumers; single-font byte-identical)",
+        "paragraph.rs: font_split_runs(fonts,paragraph,&[ItemRun])->Vec<PlacementRun> lifted pub(crate) as SSOT from shape_paragraph_with_fallback (byte-identical refactor); 2nd consumer = layout_paragraph_with_fallback per wrapped line",
+        "line_layout.rs: assemble_lines core (vertical metrics from fonts[0] + per-line stacking, build_runs closure) shared by layout_paragraph (single_font_runs feeder) and layout_paragraph_with_fallback (font_split_runs feeder); a 1-element stack reproduces single-font layout exactly",
+        "lib.rs exports wrap_paragraph_with_fallback + layout_paragraph_with_fallback; module + render_lines docs de-staled (fallback x wrapping now realized, no longer \"a later layer\")"
+      ],
+      "verification_bullets": [
+        "pinion-text-font 238 lib pass 0 fail (was 233, +5: wrap fallback-stack==single-font + Hangul-measured-in-Nanum [2-budget true-advance break + premise guard]; layout 1-stack==single-font + per-codepoint font_index across wrapped lines + single-line render_lines ink==render_paragraph[only top shifts by baseline])",
+        "single-font byte-identity preserved: wrap_paragraph_with_fallback(&[f])==wrap_paragraph(f) and layout_paragraph_with_fallback(&[f])==layout_paragraph(f); render_glyphs multi-font rasterization inherited (R1050/R1051) since render_lines is a thin adapter over it",
+        "cargo test --workspace -j2: 1339 pass 0 fail 2 ignored, exit 0 (no-vello local gate, no regression); clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings (NotoSans/NanumGothic doc_markdown backticks fixed); rustfmt clean",
+        "production paint still §5.36 swash — wrap/layout/render remain test forcing-consumers (CPU Coverage; GPU upload/screen unverified = deliberate spike boundary)"
+      ],
+      "impact_refs": [
+        "5.37.6",
+        "5.37.7",
+        "5.37.10"
+      ],
+      "carry_forward_bullets": [
+        "per-line vertical metrics come from fonts[0] only (line box = primary font ascent/descent); max-run-ascent line metrics across fallback fonts deferred (honest typographic simplification)",
+        "wrap segment width drops cross-opportunity + cross-font-run kerning (each segment/font-run shaped independently); sub-pixel under-estimate, exact at the chosen break (same disclosure as single-font wrap)",
+        "deferred: GPU upload of N per-font atlases (texture-array/merge bind); styled-run per-span COLOR (needs RGBA/per-color masks, single-Coverage mask breaks); script-aware fallback (cmap is script-blind); GPOS Type 5/6",
+        "RTL x fallback x wrap not exercised by a dedicated test (each leg proven separately: RTL wrap/L2 in layout_paragraph, RTL fallback in shape_paragraph_with_fallback); honest LOW"
+      ],
+      "publishable_decision_summary": "R1054 §5.37.6/.7/.10 multi-font multi-line (wrap+fallback): layout_paragraph_with_fallback + wrap_paragraph_with_fallback join R1050 font-fallback with R1052 wrapping (mixed-script paragraph wraps at true advances + each glyph tagged its fallback font); font_split_runs/greedy_break/assemble_lines lifted as 2nd-consumer SSOTs",
+      "publishable_changes_bullets": [
+        "line_layout.rs: layout_paragraph_with_fallback(fonts,paragraph,px,max)->ShapedLines wraps + shapes a mixed-script paragraph across a font stack with per-codepoint fallback; each glyph carries its fallback font_index so render_lines (already font_index-capable, unchanged) rasterizes it from fonts[font_index]",
+        "wrap.rs: wrap_paragraph_with_fallback(fonts,...) measures each inter-break segment via shape_with_fallback(...).advance (substrate reuse) so a mixed-script paragraph wraps at true advances, not the primary font's .notdef widths; greedy_break + cumulative_advances(measure closure) lifted as the shared break core (wrap_paragraph + fallback variant = 2 consumers; single-font byte-identical)",
+        "paragraph.rs: font_split_runs(fonts,paragraph,&[ItemRun])->Vec<PlacementRun> lifted pub(crate) as SSOT from shape_paragraph_with_fallback (byte-identical refactor); 2nd consumer = layout_paragraph_with_fallback per wrapped line",
+        "line_layout.rs: assemble_lines core (vertical metrics from fonts[0] + per-line stacking, build_runs closure) shared by layout_paragraph (single_font_runs feeder) and layout_paragraph_with_fallback (font_split_runs feeder); a 1-element stack reproduces single-font layout exactly",
+        "lib.rs exports wrap_paragraph_with_fallback + layout_paragraph_with_fallback; module + render_lines docs de-staled (fallback x wrapping now realized, no longer \"a later layer\")"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-text-font 238 lib pass 0 fail (was 233, +5: wrap fallback-stack==single-font + Hangul-measured-in-Nanum [2-budget true-advance break + premise guard]; layout 1-stack==single-font + per-codepoint font_index across wrapped lines + single-line render_lines ink==render_paragraph[only top shifts by baseline])",
+        "single-font byte-identity preserved: wrap_paragraph_with_fallback(&[f])==wrap_paragraph(f) and layout_paragraph_with_fallback(&[f])==layout_paragraph(f); render_glyphs multi-font rasterization inherited (R1050/R1051) since render_lines is a thin adapter over it",
+        "cargo test --workspace -j2: 1339 pass 0 fail 2 ignored, exit 0 (no-vello local gate, no regression); clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings (NotoSans/NanumGothic doc_markdown backticks fixed); rustfmt clean",
+        "production paint still §5.36 swash — wrap/layout/render remain test forcing-consumers (CPU Coverage; GPU upload/screen unverified = deliberate spike boundary)"
+      ],
+      "publishable_impact_refs": [
+        "5.37.6",
+        "5.37.7",
+        "5.37.10"
+      ],
+      "publishable_carry_forward_bullets": [
+        "per-line vertical metrics come from fonts[0] only (line box = primary font ascent/descent); max-run-ascent line metrics across fallback fonts deferred (honest typographic simplification)",
+        "wrap segment width drops cross-opportunity + cross-font-run kerning (each segment/font-run shaped independently); sub-pixel under-estimate, exact at the chosen break (same disclosure as single-font wrap)",
+        "deferred: GPU upload of N per-font atlases (texture-array/merge bind); styled-run per-span COLOR (needs RGBA/per-color masks, single-Coverage mask breaks); script-aware fallback (cmap is script-blind); GPOS Type 5/6",
+        "RTL x fallback x wrap not exercised by a dedicated test (each leg proven separately: RTL wrap/L2 in layout_paragraph, RTL fallback in shape_paragraph_with_fallback); honest LOW"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
