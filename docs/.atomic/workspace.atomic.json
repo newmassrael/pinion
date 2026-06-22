@@ -13631,6 +13631,80 @@
         "AppShell orchestration (capture_window_screenshot flag lifecycle) has no automated test harness -- it needs a winit EventLoopProxy, so a regression test would need $DISPLAY (CI flake risk, zero-flake policy); the single-owner fix eliminates the bug structurally and the live-capture path stays realgpu-verified like the demo sweep"
       ]
     },
+    "R1063": {
+      "decision_summary": "R1063 §5.37 -> production-paint seam (first wire): the self-hosted text engine's CPU Coverage AA mask now reaches real pixels. coverage_to_image_data (Coverage -> peniko::ImageData, straight-alpha RGBA8, mask-alpha x brush-colour) + draw_coverage (blit via vello draw_image at pen+left/top) in paint_adapter, reusing Vello's existing image-texture path instead of a hand-rolled wgpu glyph atlas. pinion-text-font becomes an optional pinion-runtime dep gated to the vello feature. Deliberately NOT rewiring the production Scene::Text arm off the §5.36 parley/swash bridge (wholesale swap risks Phase-B text regression) — this round delivers the seam + a CPU ZERO-FLAKE gate + a realgpu (lavapipe) forcing consumer only.",
+      "changes_bullets": [
+        "paint_adapter::coverage_to_image_data(&Coverage, Color) -> Option<peniko::ImageData>:",
+        "straight-alpha RGBA8, per-pixel alpha = mask x brush-colour alpha; None for an empty mask.",
+        "paint_adapter::draw_coverage(out, &Coverage, Color, pen_x, pen_y, transform):",
+        "blits via vello::Scene::draw_image at (pen + cov.left/top); reuses the §5.16 image path",
+        "rather than hand-rolling a wgpu glyph-atlas upload (the §5.37 roadmap's coverage-upload step).",
+        "pinion-text-font is now an optional pinion-runtime dep, tied to the vello feature (Coverage input).",
+        "NOT wired into the Scene::Text arm — production paint stays §5.36 parley/swash (deferred swap to",
+        "avoid regressing Phase-B text editing: caret / metrics / selection / fallback parity)."
+      ],
+      "verification_bullets": [
+        "pinion-runtime CPU seam tests (5, ZERO-FLAKE, GPU-free): empty -> None; per-pixel alpha +",
+        "constant-colour map; brush-alpha modulation; draw_coverage empty = 0 fills / non-empty = 1 fill",
+        "(asserted via vello encoding n_paths — proves the blit wires to the scene without a GPU).",
+        "Realgpu forcing consumer (pinion-shell tests/text_engine_paint_seam, #[ignore], lavapipe-verified):",
+        "shape \"Hi\" via §5.37 shape_paragraph -> render_paragraph -> Coverage, draw_coverage, render_to_rgba8;",
+        "asserts ink exists AND its bbox stays within the positioned mask footprint (placement correct end-to-end).",
+        "cargo test pinion-runtime(vello) + pinion-text-font: 724 passed / 0 failed.",
+        "cargo test pinion-shell: 232 passed / 0 failed.",
+        "clippy --workspace --all-targets --features pinion-runtime/vello: clean; rustfmt --check: clean.",
+        "(full --workspace test is parallel-link OOM in this env [known]; the affected crates run -j1 green.)"
+      ],
+      "impact_refs": [
+        "5.37",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "Rewire the production Scene::Text arm onto §5.37 (caret / metrics / selection / fallback parity) —",
+        "the regression-risky core step, deliberately deferred; needs a §5.37 production font-policy decision.",
+        "§5.37 has no decided production render font yet (Noto / Nanum are §5.37.1 parser test fixtures).",
+        "Per-glyph GPU atlas / N-per-font-atlas bind (multi-font) deferred — this seam blits one whole-paragraph",
+        "Coverage as a single image (fine for the forcing consumer; no glyph cache / atlas reuse yet).",
+        "styled-run per-span colour needs RGBA / per-colour masks (one Coverage carries a single colour) — carry.",
+        "Live-window (non-headless) path unverified: VELLO-002 windowed-GL; only headless render_to_rgba8 proven."
+      ],
+      "publishable_decision_summary": "R1063 §5.37 -> production-paint seam (first wire): the self-hosted text engine's CPU Coverage AA mask now reaches real pixels. coverage_to_image_data (Coverage -> peniko::ImageData, straight-alpha RGBA8, mask-alpha x brush-colour) + draw_coverage (blit via vello draw_image at pen+left/top) in paint_adapter, reusing Vello's existing image-texture path instead of a hand-rolled wgpu glyph atlas. pinion-text-font becomes an optional pinion-runtime dep gated to the vello feature. Deliberately NOT rewiring the production Scene::Text arm off the §5.36 parley/swash bridge (wholesale swap risks Phase-B text regression) — this round delivers the seam + a CPU ZERO-FLAKE gate + a realgpu (lavapipe) forcing consumer only.",
+      "publishable_changes_bullets": [
+        "paint_adapter::coverage_to_image_data(&Coverage, Color) -> Option<peniko::ImageData>:",
+        "straight-alpha RGBA8, per-pixel alpha = mask x brush-colour alpha; None for an empty mask.",
+        "paint_adapter::draw_coverage(out, &Coverage, Color, pen_x, pen_y, transform):",
+        "blits via vello::Scene::draw_image at (pen + cov.left/top); reuses the §5.16 image path",
+        "rather than hand-rolling a wgpu glyph-atlas upload (the §5.37 roadmap's coverage-upload step).",
+        "pinion-text-font is now an optional pinion-runtime dep, tied to the vello feature (Coverage input).",
+        "NOT wired into the Scene::Text arm — production paint stays §5.36 parley/swash (deferred swap to",
+        "avoid regressing Phase-B text editing: caret / metrics / selection / fallback parity)."
+      ],
+      "publishable_verification_bullets": [
+        "pinion-runtime CPU seam tests (5, ZERO-FLAKE, GPU-free): empty -> None; per-pixel alpha +",
+        "constant-colour map; brush-alpha modulation; draw_coverage empty = 0 fills / non-empty = 1 fill",
+        "(asserted via vello encoding n_paths — proves the blit wires to the scene without a GPU).",
+        "Realgpu forcing consumer (pinion-shell tests/text_engine_paint_seam, #[ignore], lavapipe-verified):",
+        "shape \"Hi\" via §5.37 shape_paragraph -> render_paragraph -> Coverage, draw_coverage, render_to_rgba8;",
+        "asserts ink exists AND its bbox stays within the positioned mask footprint (placement correct end-to-end).",
+        "cargo test pinion-runtime(vello) + pinion-text-font: 724 passed / 0 failed.",
+        "cargo test pinion-shell: 232 passed / 0 failed.",
+        "clippy --workspace --all-targets --features pinion-runtime/vello: clean; rustfmt --check: clean.",
+        "(full --workspace test is parallel-link OOM in this env [known]; the affected crates run -j1 green.)"
+      ],
+      "publishable_impact_refs": [
+        "5.37",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Rewire the production Scene::Text arm onto §5.37 (caret / metrics / selection / fallback parity) —",
+        "the regression-risky core step, deliberately deferred; needs a §5.37 production font-policy decision.",
+        "§5.37 has no decided production render font yet (Noto / Nanum are §5.37.1 parser test fixtures).",
+        "Per-glyph GPU atlas / N-per-font-atlas bind (multi-font) deferred — this seam blits one whole-paragraph",
+        "Coverage as a single image (fine for the forcing consumer; no glyph cache / atlas reuse yet).",
+        "styled-run per-span colour needs RGBA / per-colour masks (one Coverage carries a single colour) — carry.",
+        "Live-window (non-headless) path unverified: VELLO-002 windowed-GL; only headless render_to_rgba8 proven."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
