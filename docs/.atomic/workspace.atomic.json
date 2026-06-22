@@ -3708,7 +3708,9 @@
         "per-codepoint resolution; grapheme-cluster grouping (base+mark same font) deferred",
         "OS font enumeration deferred — explicit in-memory stack only (fontconfig/CoreText 대체 later)",
         "BIDI/script not combined here (single direction); itemise->font-split->shape pipeline = follow-up",
-        "production paint still §5.36 swash — shape_with_fallback = test forcing-consumer"
+        "production paint still §5.36 swash — shape_with_fallback = test forcing-consumer",
+        "R50.14(R1050): font-split pipeline follow-up = shape_paragraph_with_fallback (BIDI x fallback)",
+        "R50.14: font_runs 2nd consumer; per-glyph font_index; multi-line wrap x fallback still single-font"
       ],
       "bindings": [
         {
@@ -3724,6 +3726,11 @@
         {
           "file": "crates/pinion-text-font/src/fallback.rs",
           "symbol": "FallbackRun",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-text-font/src/paragraph.rs",
+          "symbol": "shape_paragraph_with_fallback",
           "kind": "implements"
         }
       ]
@@ -4429,7 +4436,8 @@
         "R50.6.2 GPOS mark-to-base (MarkBasePos Type 4, mark feature): mark anchored over preceding base",
         "R1043 PositionedGlyph gains y (baseline-rel, down); mark lifts off baseline, render_run honors y",
         "R1043 defers: RTL mark x (advance-mirror), mark-to-lig/mark (Type 5/6), lookupFlag mark-skip",
-        "R1043 supersedes the 'GPOS mark = R50.6.x/R50.7.x' caveats: mark-to-base (Type 4) now applied"
+        "R1043 supersedes the 'GPOS mark = R50.6.x/R50.7.x' caveats: mark-to-base (Type 4) now applied",
+        "R50.14(R1050): PositionedGlyph + font_index:usize (which stack font shaped glyph; single-font=0)"
       ],
       "alternatives_rejected": [
         {
@@ -12993,6 +13001,58 @@
         "on_uncaptured_error handler silently absorbs ALL uncaptured errors (Validation/OutOfMemory/Internal) for the device -> real GPU/shader/OOM bugs now degrade to stderr rather than crash (intended per PR-21; review LOW). If a future round needs fail-fast on persistent errors, scope the handler to surface-validation only or count+escalate",
         "Lost recovery is partial: a truly device-lost surface wants Instance::create_surface + device recreation; reconfigure-only handles the common surface-only-lost case (frame skipped + handler catches residual panic) (review LOW)",
         "sprag-side: no action (renderer is codegen, sprag has no surface code); re-run with RUST_BACKTRACE=1 if the crash recurs to confirm the reconfigure path recovers (PR-21 report follow-up)"
+      ]
+    },
+    "R1050": {
+      "decision_summary": "R1050 §5.37.10/§5.37.6 R50.14 unified itemise->font-split->shape pipeline: shape_paragraph_with_fallback combines BIDI/script itemisation with multi-font fallback; PositionedGlyph gains per-glyph font_index",
+      "changes_bullets": [
+        "paragraph.rs: shape_paragraph_with_fallback(fonts,paragraph,px)->ShapedParagraph = itemize(BIDI x script) per-run split by font_runs coverage, each shaped in its resolved font, placed in UAX#9 L2 visual order with RTL glyph mirror",
+        "shape_runs_visual generalised from single &Font + &[ItemRun] to fonts:&[&Font] + &[PlacementRun{level,font_index,range}]; shape_paragraph + line_layout::layout_paragraph feed it via shared single_font_runs (font 0); single-font path stays byte-identical",
+        "PositionedGlyph + font_index:usize (stack idx of the font that shaped the glyph; single-font=0); shape.rs/fallback.rs/paragraph.rs construction sites set it; flat ShapedParagraph output is per-glyph rasterizable for multi-font",
+        "font_runs gets a 2nd real consumer (was test-only at R1044); fallback.rs + paragraph.rs module docs reconcile the now-landed follow-up; lib.rs exports shape_paragraph_with_fallback"
+      ],
+      "verification_bullets": [
+        "pinion-text-font 271 pass 0 fail (lib 224, +6 fallback-paragraph tests incl R1050.1 clearance: font1-glyph-in-RTL-run-through-mirror, intra-item-run font split offset rebase)",
+        "workspace cargo test 40 suites 579 pass 0 fail; clippy --workspace --all-targets --features pinion-runtime/vello 0; rustfmt clean; cargo doc 0 new (cmap best_subtable + hhea int16[4] pre-existing, both outside touched files)",
+        "adversarial 2-reviewer (quality-engineer correctness+test-tamper / system-architect SSOT+layering, read-only parallel): 0 HIGH; MED test-gaps (RTL font!=0 through mirror, intra-run split rebase) + MED doc wording cleared inline R1050.1",
+        "validate-workspace T1=0; production paint still §5.36 swash so shape_paragraph_with_fallback is a test forcing-consumer"
+      ],
+      "impact_refs": [
+        "5.37.10",
+        "5.37.6"
+      ],
+      "carry_forward_bullets": [
+        "styled-run shaping (per-span font/weight/color) = remaining co-equal #1 paint-wiring blocker; extends the same run-splitting with a style break-cause",
+        "multi-line wrap x fallback still single-font (line_layout/wrap font-aware width measurement = later layer)",
+        "script-aware fallback: font_runs is cmap-coverage (script-blind); per-item-run loop kept as the right structure to grow into",
+        "dual output reps (FallbackRun run-structured vs flat per-glyph font_index) to reconcile at paint; flat form survives BIDI reorder",
+        "SA review: bias next 1-2 rounds toward a minimal paint-wiring spike to de-risk accumulated output-representation bets (GPU=VELLO env)",
+        "RTL multi-glyph run in a non-primary font not directly tested (no RTL-script fixture font); single-glyph mirror+font_index path covered"
+      ],
+      "publishable_decision_summary": "R1050 §5.37.10/§5.37.6 R50.14 unified itemise->font-split->shape pipeline: shape_paragraph_with_fallback combines BIDI/script itemisation with multi-font fallback; PositionedGlyph gains per-glyph font_index",
+      "publishable_changes_bullets": [
+        "paragraph.rs: shape_paragraph_with_fallback(fonts,paragraph,px)->ShapedParagraph = itemize(BIDI x script) per-run split by font_runs coverage, each shaped in its resolved font, placed in UAX#9 L2 visual order with RTL glyph mirror",
+        "shape_runs_visual generalised from single &Font + &[ItemRun] to fonts:&[&Font] + &[PlacementRun{level,font_index,range}]; shape_paragraph + line_layout::layout_paragraph feed it via shared single_font_runs (font 0); single-font path stays byte-identical",
+        "PositionedGlyph + font_index:usize (stack idx of the font that shaped the glyph; single-font=0); shape.rs/fallback.rs/paragraph.rs construction sites set it; flat ShapedParagraph output is per-glyph rasterizable for multi-font",
+        "font_runs gets a 2nd real consumer (was test-only at R1044); fallback.rs + paragraph.rs module docs reconcile the now-landed follow-up; lib.rs exports shape_paragraph_with_fallback"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-text-font 271 pass 0 fail (lib 224, +6 fallback-paragraph tests incl R1050.1 clearance: font1-glyph-in-RTL-run-through-mirror, intra-item-run font split offset rebase)",
+        "workspace cargo test 40 suites 579 pass 0 fail; clippy --workspace --all-targets --features pinion-runtime/vello 0; rustfmt clean; cargo doc 0 new (cmap best_subtable + hhea int16[4] pre-existing, both outside touched files)",
+        "adversarial 2-reviewer (quality-engineer correctness+test-tamper / system-architect SSOT+layering, read-only parallel): 0 HIGH; MED test-gaps (RTL font!=0 through mirror, intra-run split rebase) + MED doc wording cleared inline R1050.1",
+        "validate-workspace T1=0; production paint still §5.36 swash so shape_paragraph_with_fallback is a test forcing-consumer"
+      ],
+      "publishable_impact_refs": [
+        "5.37.10",
+        "5.37.6"
+      ],
+      "publishable_carry_forward_bullets": [
+        "styled-run shaping (per-span font/weight/color) = remaining co-equal #1 paint-wiring blocker; extends the same run-splitting with a style break-cause",
+        "multi-line wrap x fallback still single-font (line_layout/wrap font-aware width measurement = later layer)",
+        "script-aware fallback: font_runs is cmap-coverage (script-blind); per-item-run loop kept as the right structure to grow into",
+        "dual output reps (FallbackRun run-structured vs flat per-glyph font_index) to reconcile at paint; flat form survives BIDI reorder",
+        "SA review: bias next 1-2 rounds toward a minimal paint-wiring spike to de-risk accumulated output-representation bets (GPU=VELLO env)",
+        "RTL multi-glyph run in a non-primary font not directly tested (no RTL-script fixture font); single-glyph mirror+font_index path covered"
       ]
     },
     "R232": {
