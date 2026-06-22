@@ -4674,6 +4674,9 @@ dependencies = [
 [[package]]
 name = "pinion-text-font"
 version = "0.0.1"
+dependencies = [
+ "pinion-text-unicode",
+]
 
 [[package]]
 name = "pinion-text-unicode"

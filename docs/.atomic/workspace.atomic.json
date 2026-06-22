@@ -4379,7 +4379,8 @@
         "R50.6.1 supersedes the R50.6 'GPOS kerning=R50.6.x' / 'advance-only' caveats: pair-kern now applied",
         "R50.7: GSUB liga 합자 치환(LigatureSubst Type 4 + Extension Type 7) shape_run 적용 (cmap→GSUB→GPOS)",
         "R50.7: Coverage/ClassDef + Script-Feature-Lookup nav → tables/layout/ (GPOS+GSUB 공유, 2nd consumer)",
-        "R50.7 defers: GSUB single/multiple/alternate/contextual/reverse-chain + lookupFlag filtering"
+        "R50.7 defers: GSUB single/multiple/alternate/contextual/reverse-chain + lookupFlag filtering",
+        "R1039 (R50.10) shape_paragraph supersedes 'single visual run': itemize + L2 reorder now applied"
       ],
       "alternatives_rejected": [
         {
@@ -12245,6 +12246,56 @@
         "itemize logical-order only; visual reorder + shape-per-run = R1039 font integration (R50.10)",
         "itemize is a test forcing-consumer; production paint still §5.36 swash until paint-wiring",
         "cargo-doc bidi.rs:236/1353 pre-existing carry; module-tag R1038 since R50.10 reserved for font dep"
+      ]
+    },
+    "R1039": {
+      "decision_summary": "§5.37.6 R50.10 paragraph shaping: shape_paragraph itemises a paragraph (bidi level + script), orders runs for display via UAX #9 L2, shapes each run, and mirrors glyphs within RTL runs — the first cross-crate integration (pinion-text-font now consumes pinion-text-unicode). Supersedes shape_run's single-visual-run assumption.",
+      "changes_bullets": [
+        "New pinion-text-font/src/paragraph.rs: shape_paragraph(font,para,px)->ShapedParagraph (visual order)",
+        "R50.10: pinion-text-font now deps pinion-text-unicode (font->unicode, leaf, no cycle)",
+        "itemize -> reorder_visual(L2 per-run) -> shape_run per run -> RTL within-run glyph mirror",
+        "Re-export bidi::reorder_visual + resolved_levels from pinion-text-unicode root"
+      ],
+      "verification_bullets": [
+        "pinion-text-font 7 new paragraph tests (LTR==shape_run, RTL exact-x mirror, mixed, X9 safety)",
+        "workspace test 0 fail; clippy --workspace vello + rustfmt clean; my files cargo doc 0 new",
+        "validate T1=0; entries 1048->1049; §5.37.6 'single visual run' caveat superseded"
+      ],
+      "impact_refs": [
+        "5.37.6",
+        "5.37.4",
+        "5.37.5"
+      ],
+      "carry_forward_bullets": [
+        "X9-removed controls (RLE/LRE/RLO/LRO/PDF/BN) not filtered before L2 = follow-up (per-cp BN aware)",
+        "isolates (LRI/RLI/FSI/PDI) reorder correctly today; explicit-format honest-deferred + safety test",
+        "shape_paragraph is a test forcing-consumer; production paint still §5.36 swash until paint-wiring",
+        "L3 combining-mark reorder + multi-paragraph + per-script shaper selection deferred",
+        "cargo-doc cmap best_subtable + hhea int16[4] pre-existing carry (unrelated)"
+      ],
+      "publishable_decision_summary": "§5.37.6 R50.10 paragraph shaping: shape_paragraph itemises a paragraph (bidi level + script), orders runs for display via UAX #9 L2, shapes each run, and mirrors glyphs within RTL runs — the first cross-crate integration (pinion-text-font now consumes pinion-text-unicode). Supersedes shape_run's single-visual-run assumption.",
+      "publishable_changes_bullets": [
+        "New pinion-text-font/src/paragraph.rs: shape_paragraph(font,para,px)->ShapedParagraph (visual order)",
+        "R50.10: pinion-text-font now deps pinion-text-unicode (font->unicode, leaf, no cycle)",
+        "itemize -> reorder_visual(L2 per-run) -> shape_run per run -> RTL within-run glyph mirror",
+        "Re-export bidi::reorder_visual + resolved_levels from pinion-text-unicode root"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-text-font 7 new paragraph tests (LTR==shape_run, RTL exact-x mirror, mixed, X9 safety)",
+        "workspace test 0 fail; clippy --workspace vello + rustfmt clean; my files cargo doc 0 new",
+        "validate T1=0; entries 1048->1049; §5.37.6 'single visual run' caveat superseded"
+      ],
+      "publishable_impact_refs": [
+        "5.37.6",
+        "5.37.4",
+        "5.37.5"
+      ],
+      "publishable_carry_forward_bullets": [
+        "X9-removed controls (RLE/LRE/RLO/LRO/PDF/BN) not filtered before L2 = follow-up (per-cp BN aware)",
+        "isolates (LRI/RLI/FSI/PDI) reorder correctly today; explicit-format honest-deferred + safety test",
+        "shape_paragraph is a test forcing-consumer; production paint still §5.36 swash until paint-wiring",
+        "L3 combining-mark reorder + multi-paragraph + per-script shaper selection deferred",
+        "cargo-doc cmap best_subtable + hhea int16[4] pre-existing carry (unrelated)"
       ]
     },
     "R232": {

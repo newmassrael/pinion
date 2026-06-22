@@ -46,9 +46,12 @@ const ATLAS_WIDTH: usize = 256;
 ///
 /// `x` is the pen-origin x (device px, baseline-relative) — the exact `f32`
 /// advance accumulation, **not** yet snapped to the raster grid ([`render_run`]
-/// integer-snaps for a deterministic bitmap). `cluster` is the byte offset into
-/// the source `&str` of the codepoint that produced this glyph, so a caller can
-/// map a glyph back to its text (hit-testing / selection).
+/// integer-snaps for a deterministic bitmap). The origin is run-relative from
+/// [`shape_run`] and paragraph-relative from
+/// [`crate::paragraph::shape_paragraph`]. `cluster` is the byte offset of the
+/// source codepoint (into the run `&str` from [`shape_run`], into the whole
+/// paragraph from `shape_paragraph` — where it descends across a right-to-left
+/// run), so a caller can map a glyph back to its text (hit-testing / selection).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PositionedGlyph {
     /// Resolved glyph id (`.notdef` = 0 for an unmapped codepoint).

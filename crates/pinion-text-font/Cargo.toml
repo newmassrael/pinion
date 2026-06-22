@@ -7,8 +7,12 @@ license.workspace = true
 authors.workspace = true
 
 # R50.1 §5.37.1 — self-hosted OpenType binary parser.
-# 외부 dependency 0개 (thiserror 도 제거; 자체 ParseError + Display impl).
-# pinion-text 와의 의존 관계는 R50.10 통합 시점에 형성.
+# 외부 (crates.io) dependency 0개 (thiserror 도 제거; 자체 ParseError + Display impl).
+# R50.10 (R1039): font -> unicode 통합 — paragraph shaping 이 bidi/script
+# itemisation (pinion-text-unicode) 을 소비. unicode crate 는 leaf 라 cycle 없음.
+
+[dependencies]
+pinion-text-unicode = { path = "../pinion-text-unicode" }
 
 [lints]
 workspace = true

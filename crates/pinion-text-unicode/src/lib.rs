@@ -189,7 +189,7 @@ mod quick_check;
 mod range;
 
 pub mod bidi;
-pub use bidi::{BidiClass, bidi_class};
+pub use bidi::{BidiClass, bidi_class, reorder_visual, resolved_levels};
 
 pub mod linebreak;
 pub use linebreak::{BreakOpportunity, LineBreak, line_break_class, line_break_opportunities};
