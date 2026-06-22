@@ -12907,6 +12907,50 @@
         "RPC-only headless never reconciles (no winit paint loop -> compute_paint_scene_internal never runs): inherited set_viewport_size/R1006 limitation, not new (review LOW)"
       ]
     },
+    "R1048": {
+      "decision_summary": "§5.49 apply_wheel laid-out paint scene (sprag PR-18.1, a fix to the shipped R1045 apply_wheel). R1045's doc said the binding 'hit-tests cursor to the pane it owns', but the call site passed &mut self.scene = the un-laid-out model/state scene (the compose-root of input Externals): pane tags are paint-tree constructs absent from it and its nodes carry only zero rects, so rect_for_tag_absolute resolved None for every pane tag and a multi-pane binding could not map cursor->pane (a single-pane terminal never exposed the gap). The router itself hit-tests against last_paint_scene (the laid-out paint tree), not the state scene. Fix: apply_wheel's first param becomes paint:&Scene = the router's last_paint_scene (read-only), so the binding hit-tests cursor against pane rects via rect_for_tag_absolute on the same laid-out basis the router uses. Narrowed &mut->& deliberately (the wheel action mutates reactive scroll authority via a use_* hook, not the scene; External mutation stays on the router stage-1 offer_wheel_to_external path). Stage-0 now also gates on last_paint_scene() being present, which incidentally closes the R1045 arch-review LOW no-paint-scene nit.",
+      "changes_bullets": [
+        "pinion-core widget_core.rs: WidgetCore::apply_wheel first param scene:&mut Scene -> paint:&Scene (the addressed window's laid-out paint scene, read-only); doc rewritten to specify paint=router last_paint_scene and the binding hit-tests cursor via rect_for_tag_absolute",
+        "pinion-runtime core_shell.rs wheel_with_modifiers_for_window: stage-0 now passes router.last_paint_scene() instead of &mut self.scene; gates on BOTH cursor_position(pid) AND last_paint_scene() being present (the no-paint-scene guard also closes the R1045 arch-review LOW nit)",
+        "bug fixed: R1045 passed the un-laid-out model/state scene (compose-root of input Externals, pane tags absent + zero rects), so rect_for_tag_absolute resolved None for every pane tag -> multi-pane cursor->pane mapping impossible (single-pane terminal never exposed it)",
+        "narrowed &mut -> & deliberately: the wheel action mutates reactive scroll authority (a use_* hook under root_owner), not the scene; External mutation stays on the router stage-1 offer_wheel_to_external path"
+      ],
+      "verification_bullets": [
+        "cargo fmt --check + clippy --workspace --all-targets --features pinion-runtime/vello clean",
+        "cargo test --workspace: 194/194 result lines ok, 0 failed",
+        "new r1048 test: two-pane laid-out paint scene; cursor (50,50)->pane.0, (150,50)->pane.1, (350,350)->declines+router no-op; FAILS under the old model-scene behavior (all tags None) so it genuinely pins the fix; 3 R1045 tests unregressed",
+        "1-lens adversarial correctness+contract review SHIP-WITH-NITS: fix premise verified real (last_paint_scene is the laid-out scene the router itself hit-tests; model scene lacks pane tags+rects), borrow sound (router immutable borrow ends before tail()/&mut split), gate-tightening observationally identical (router no-ops on no-paint anyway), &Scene narrowing correct (External-mutation covered by stage-1), single funnel confirmed (no external caller passes a scene). Only LOW = doc 'no rect'->None mechanism wording, fixed",
+        "commit 4fa60078; COMMITTED-NOT-PUSHED"
+      ],
+      "impact_refs": [
+        "5.49"
+      ],
+      "carry_forward_bullets": [
+        "sprag-native session: sprag apply_wheel already hit-tests rect_for_tag_absolute(pane_tag/scrollbar_tag) -> now works unmodified (paint scene carries rects); change the param type &mut Scene -> &Scene on the sprag side (trivial), then live-verify scene/wheel over grid -> thumb moves (sprag R50)",
+        "PR-18/19/20 all delivered; PR-18.1 closes the multi-pane wheel hit-test gap that single-pane never exposed"
+      ],
+      "publishable_decision_summary": "§5.49 apply_wheel laid-out paint scene (sprag PR-18.1, a fix to the shipped R1045 apply_wheel). R1045's doc said the binding 'hit-tests cursor to the pane it owns', but the call site passed &mut self.scene = the un-laid-out model/state scene (the compose-root of input Externals): pane tags are paint-tree constructs absent from it and its nodes carry only zero rects, so rect_for_tag_absolute resolved None for every pane tag and a multi-pane binding could not map cursor->pane (a single-pane terminal never exposed the gap). The router itself hit-tests against last_paint_scene (the laid-out paint tree), not the state scene. Fix: apply_wheel's first param becomes paint:&Scene = the router's last_paint_scene (read-only), so the binding hit-tests cursor against pane rects via rect_for_tag_absolute on the same laid-out basis the router uses. Narrowed &mut->& deliberately (the wheel action mutates reactive scroll authority via a use_* hook, not the scene; External mutation stays on the router stage-1 offer_wheel_to_external path). Stage-0 now also gates on last_paint_scene() being present, which incidentally closes the R1045 arch-review LOW no-paint-scene nit.",
+      "publishable_changes_bullets": [
+        "pinion-core widget_core.rs: WidgetCore::apply_wheel first param scene:&mut Scene -> paint:&Scene (the addressed window's laid-out paint scene, read-only); doc rewritten to specify paint=router last_paint_scene and the binding hit-tests cursor via rect_for_tag_absolute",
+        "pinion-runtime core_shell.rs wheel_with_modifiers_for_window: stage-0 now passes router.last_paint_scene() instead of &mut self.scene; gates on BOTH cursor_position(pid) AND last_paint_scene() being present (the no-paint-scene guard also closes the R1045 arch-review LOW nit)",
+        "bug fixed: R1045 passed the un-laid-out model/state scene (compose-root of input Externals, pane tags absent + zero rects), so rect_for_tag_absolute resolved None for every pane tag -> multi-pane cursor->pane mapping impossible (single-pane terminal never exposed it)",
+        "narrowed &mut -> & deliberately: the wheel action mutates reactive scroll authority (a use_* hook under root_owner), not the scene; External mutation stays on the router stage-1 offer_wheel_to_external path"
+      ],
+      "publishable_verification_bullets": [
+        "cargo fmt --check + clippy --workspace --all-targets --features pinion-runtime/vello clean",
+        "cargo test --workspace: 194/194 result lines ok, 0 failed",
+        "new r1048 test: two-pane laid-out paint scene; cursor (50,50)->pane.0, (150,50)->pane.1, (350,350)->declines+router no-op; FAILS under the old model-scene behavior (all tags None) so it genuinely pins the fix; 3 R1045 tests unregressed",
+        "1-lens adversarial correctness+contract review SHIP-WITH-NITS: fix premise verified real (last_paint_scene is the laid-out scene the router itself hit-tests; model scene lacks pane tags+rects), borrow sound (router immutable borrow ends before tail()/&mut split), gate-tightening observationally identical (router no-ops on no-paint anyway), &Scene narrowing correct (External-mutation covered by stage-1), single funnel confirmed (no external caller passes a scene). Only LOW = doc 'no rect'->None mechanism wording, fixed",
+        "commit 4fa60078; COMMITTED-NOT-PUSHED"
+      ],
+      "publishable_impact_refs": [
+        "5.49"
+      ],
+      "publishable_carry_forward_bullets": [
+        "sprag-native session: sprag apply_wheel already hit-tests rect_for_tag_absolute(pane_tag/scrollbar_tag) -> now works unmodified (paint scene carries rects); change the param type &mut Scene -> &Scene on the sprag side (trivial), then live-verify scene/wheel over grid -> thumb moves (sprag R50)",
+        "PR-18/19/20 all delivered; PR-18.1 closes the multi-pane wheel hit-test gap that single-pane never exposed"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
