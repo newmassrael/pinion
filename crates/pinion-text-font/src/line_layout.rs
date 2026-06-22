@@ -34,7 +34,8 @@
 
 use crate::Font;
 use crate::paragraph::{shape_runs_visual, single_font_runs};
-use crate::shape::PositionedGlyph;
+use crate::raster::{Coverage, RasterError};
+use crate::shape::{GlyphDraw, PositionedGlyph, render_glyphs};
 use crate::wrap::{LineRange, wrap_paragraph};
 use pinion_text_unicode::{ItemRun, itemize};
 
@@ -139,6 +140,42 @@ pub fn layout_paragraph(
     }
 }
 
+/// Rasterize a wrapped, shaped paragraph ([`layout_paragraph`]) into one
+/// anti-aliased coverage bitmap, stacking every line at its baseline — the
+/// multi-line analogue of [`crate::paragraph::render_paragraph`]. Each line's
+/// glyphs are placed at `(glyph.x, line.baseline + glyph.y)` (line-relative pen x,
+/// block-top-relative baseline) and composited through one glyph atlas per stack
+/// font. `fonts` must be the stack the lines were shaped with: single-font
+/// [`layout_paragraph`] tags every glyph `font_index` 0, so a one-font stack
+/// suffices, but a multi-font stack is honoured for forward compatibility (when
+/// wrapping combines with fallback). Returns [`Coverage::empty`] for no lines or an
+/// empty stack. Production paint is still §5.36 swash, so this is a test
+/// forcing-consumer.
+///
+/// # Errors
+///
+/// Propagates a [`RasterError`] from any glyph's rasterization (a pathological
+/// `px_per_em` or a not-yet-supported composite glyph).
+pub fn render_lines(
+    fonts: &[&Font],
+    lines: &ShapedLines,
+    px_per_em: f32,
+) -> Result<Coverage, RasterError> {
+    render_glyphs(
+        fonts,
+        px_per_em,
+        lines.lines.iter().flat_map(|line| {
+            let baseline = line.baseline;
+            line.glyphs.iter().map(move |g| GlyphDraw {
+                font_index: g.font_index,
+                glyph_id: g.glyph_id,
+                pen_x: g.x,
+                pen_y: baseline + g.y,
+            })
+        }),
+    )
+}
+
 /// Clip the paragraph's itemised runs to the byte range `start..end`, keeping
 /// each run's resolved level and script. A line boundary always lands on a
 /// UAX #14 opportunity (a codepoint boundary), so a straddling run is split
@@ -161,10 +198,10 @@ fn clip_runs(runs: &[ItemRun], start: usize, end: usize) -> Vec<ItemRun> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ShapedLines, layout_paragraph};
-    use crate::Font;
+    use super::{ShapedLines, layout_paragraph, render_lines};
+    use crate::raster::Coverage;
     use crate::shape::shape_run;
-    use crate::shape_paragraph;
+    use crate::{Font, render_paragraph, shape_paragraph};
     use pinion_text_unicode::{is_removed_by_x9, reorder_visual, resolved_levels};
 
     const NOTO: &str = "tests/fonts/NotoSans-Regular.ttf";
@@ -376,6 +413,109 @@ mod tests {
         assert_ne!(
             sliced, alone,
             "paragraph-context vs isolated levels must differ for the test to bite"
+        );
+    }
+
+    // ---- render_lines (R1052 multi-line block rasterization) ----
+
+    #[test]
+    fn render_lines_empty_or_no_stack_is_empty() {
+        let f = font();
+        let none = layout_paragraph(&f, "", PX, 1000.0); // no lines
+        assert_eq!(
+            render_lines(&[&f], &none, PX).unwrap(),
+            Coverage::empty(),
+            "no lines => empty"
+        );
+        let one = layout_paragraph(&f, "A", PX, f32::MAX);
+        assert_eq!(
+            render_lines(&[], &one, PX).unwrap(),
+            Coverage::empty(),
+            "empty stack => empty"
+        );
+    }
+
+    #[test]
+    fn render_lines_single_line_ink_matches_render_paragraph() {
+        // One unwrapped line renders the SAME ink as render_paragraph; layout places
+        // the line at its baseline while render_paragraph uses origin 0, so only the
+        // bounding box `top` differs (by round(baseline)) — alpha and dimensions are
+        // identical. This pins render_lines onto the validated single-line renderer.
+        let f = font();
+        let text = "the quick brown fox";
+        let lines = layout_paragraph(&f, text, PX, f32::MAX);
+        assert_eq!(lines.lines.len(), 1, "unbounded width => one line");
+        let block = render_lines(&[&f], &lines, PX).unwrap();
+        let para = render_paragraph(&[&f], &shape_paragraph(&f, text, PX), PX).unwrap();
+        assert_eq!(block.alpha, para.alpha, "identical ink");
+        assert_eq!((block.width, block.height), (para.width, para.height));
+        assert_eq!(block.left, para.left);
+        #[allow(clippy::cast_possible_truncation)]
+        let baseline = lines.lines[0].baseline.round() as i32;
+        assert_eq!(
+            block.top,
+            para.top + baseline,
+            "shifted down by the baseline"
+        );
+    }
+
+    #[test]
+    fn render_lines_stacks_each_line_by_line_height() {
+        // Two identical lines via a mandatory break: the block grows over a single
+        // line by exactly one line box (the font's hhea line height), proving lines
+        // stack at stepped baselines instead of overdrawing at the same y.
+        let f = font();
+        let (_, line_height) = vmetrics(&f);
+        let one = render_lines(&[&f], &layout_paragraph(&f, "ab", PX, f32::MAX), PX).unwrap();
+        let two = render_lines(
+            &[&f],
+            &layout_paragraph(&f, "ab\u{2028}ab", PX, f32::MAX),
+            PX,
+        )
+        .unwrap();
+        assert!(!two.alpha.is_empty(), "two-line block has ink");
+        let grew = two.height.saturating_sub(one.height); // usize, two is the taller
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let expected = line_height.round() as usize;
+        assert!(
+            grew.abs_diff(expected) <= 2,
+            "two-line block taller than one by ~line_height ({line_height}); grew {grew}"
+        );
+    }
+
+    #[test]
+    fn render_lines_places_second_line_a_line_height_below_first() {
+        // Two single-glyph lines ("x" twice): the composite must show TWO separate
+        // ink bands — a blank-row gap between them — the second starting
+        // ~round(line_height) below the first. Pins internal per-line stacking
+        // geometry, not just the total height delta (an overdraw or mis-stepped
+        // baseline that preserved total extent would still be caught here).
+        let f = font();
+        let (_, line_height) = vmetrics(&f);
+        let cov =
+            render_lines(&[&f], &layout_paragraph(&f, "x\u{2028}x", PX, f32::MAX), PX).unwrap();
+        let inked: Vec<usize> = (0..cov.height)
+            .filter(|&r| {
+                cov.alpha[r * cov.width..(r + 1) * cov.width]
+                    .iter()
+                    .any(|&a| a != 0)
+            })
+            .collect();
+        assert!(inked.len() >= 2, "two lines must ink some rows");
+        // The largest jump between consecutive inked rows splits the two bands.
+        let gap_at = (1..inked.len())
+            .max_by_key(|&i| inked[i] - inked[i - 1])
+            .expect("at least two inked rows");
+        assert!(
+            inked[gap_at] - inked[gap_at - 1] > 1,
+            "stepped baselines leave a blank-row gap, not one merged band"
+        );
+        let step = inked[gap_at] - inked[0]; // top of band 1 minus top of band 0
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let expected = line_height.round() as usize;
+        assert!(
+            step.abs_diff(expected) <= 2,
+            "second line starts ~line_height ({expected}) below the first; got {step}"
         );
     }
 }

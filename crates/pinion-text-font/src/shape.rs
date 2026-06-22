@@ -193,39 +193,23 @@ pub fn shape_run(font: &Font, text: &str, px_per_em: f32) -> ShapedRun {
 /// `px_per_em` past the size cap, or a malformed / not-yet-supported composite).
 pub fn render_run(font: &Font, text: &str, px_per_em: f32) -> Result<Coverage, RasterError> {
     let run = shape_run(font, text, px_per_em);
-
-    // Rasterize each glyph at most once through a per-run atlas (a repeated glyph
-    // is a cache hit), remembering its integer-snapped pen x. Blank glyphs (space)
-    // advance the pen but pack nothing (width 0).
-    let mut atlas = GlyphAtlas::new(ATLAS_WIDTH);
-    let mut placed: Vec<PlacedGlyph> = Vec::new();
-    for glyph in &run.glyphs {
-        let entry = atlas.get_or_insert(font, glyph.glyph_id, px_per_em)?;
-        if entry.width == 0 {
-            continue;
-        }
-        #[allow(clippy::cast_possible_truncation)]
-        // pen x/y are finite accumulations; round() snaps onto the raster grid
-        // for deterministic placement. pen_y is non-zero only for an attached
-        // mark (baseline-relative, positive downward).
-        let (pen_x, pen_y) = (glyph.x.round() as i32, glyph.y.round() as i32);
-        placed.push(PlacedGlyph {
-            pen_x,
-            pen_y,
-            atlas: 0,
-            glyph: entry,
-        });
-    }
-    Ok(composite(std::slice::from_ref(&atlas), &placed))
+    // Single font (stack of one), so every glyph is atlas index 0 and the pen is
+    // the shaped baseline-relative origin (mark y carried through).
+    render_glyphs(
+        &[font],
+        px_per_em,
+        run.glyphs.iter().map(|g| GlyphDraw {
+            font_index: 0,
+            glyph_id: g.glyph_id,
+            pen_x: g.x,
+            pen_y: g.y,
+        }),
+    )
 }
 
 /// A glyph ready for compositing: its integer-snapped pen origin, the atlas that
-/// holds its pixels, and its packed sub-rect. The shared input vocabulary of
-/// [`composite`], built by [`render_run`] (one atlas, index 0) and
-/// [`crate::paragraph::render_paragraph`] (one atlas per stack font, index = the
-/// glyph's `font_index`). Both renderers build this list with near-identical
-/// loops — a deferred second seam to extract when a third (paint-wiring) renderer
-/// needs it.
+/// holds its pixels, and its packed sub-rect. Built by [`render_glyphs`] (the one
+/// place all renderers rasterize + place) and consumed by [`composite`].
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct PlacedGlyph {
     /// Pen-origin x in the combined bitmap (device px, integer-snapped).
@@ -241,13 +225,11 @@ pub(crate) struct PlacedGlyph {
 
 /// Composite placed glyphs into one AA coverage bitmap by same-color alpha-over.
 ///
-/// Each [`PlacedGlyph`] carries its integer-snapped pen origin (device px,
-/// baseline = row 0), the index of the [`GlyphAtlas`] in `atlases` that
-/// rasterized it (always 0 for single-font [`render_run`]; the glyph's font-stack
-/// index for multi-font [`crate::paragraph::render_paragraph`]), and its packed
+/// Each [`PlacedGlyph`] carries its integer-snapped pen origin (device px), the
+/// index of the [`GlyphAtlas`] in `atlases` that rasterized it, and its packed
 /// sub-rect. Returns [`Coverage::empty`] when nothing is placed (an empty or
-/// all-blank run). Shared by both renderers so the bounding-box union and the
-/// alpha-over are one SSOT.
+/// all-blank run). Called only by [`render_glyphs`] — the shared core under all
+/// three renderers — so the bounding-box union and the alpha-over are one SSOT.
 pub(crate) fn composite(atlases: &[GlyphAtlas], placed: &[PlacedGlyph]) -> Coverage {
     if placed.is_empty() {
         return Coverage::empty();
@@ -307,6 +289,68 @@ pub(crate) fn composite(atlases: &[GlyphAtlas], placed: &[PlacedGlyph]) -> Cover
         top: min_y,
         alpha,
     }
+}
+
+/// One glyph to draw: which stack font shaped it, its id, and its pen origin in
+/// the combined bitmap (device px; the caller folds in any per-line baseline). The
+/// per-glyph input to [`render_glyphs`].
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct GlyphDraw {
+    /// Index into the font stack of the font that shaped this glyph.
+    pub font_index: usize,
+    /// Glyph id, valid in `fonts[font_index]`.
+    pub glyph_id: u16,
+    /// Pen-origin x in the combined bitmap (device px, pre-snap).
+    pub pen_x: f32,
+    /// Pen-origin y in the combined bitmap (device px, pre-snap; the caller has
+    /// already added any line baseline to the glyph's baseline-relative y).
+    pub pen_y: f32,
+}
+
+/// Rasterize each glyph through its stack font's atlas and composite them into one
+/// AA coverage mask — the single render core under [`render_run`],
+/// [`crate::paragraph::render_paragraph`], and
+/// [`crate::line_layout::render_lines`]. One [`GlyphAtlas`] per stack font (so a
+/// glyph id shared across fonts never collides), each glyph rasterized by
+/// `fonts[font_index]`, blank glyphs (space) skipped, pens integer-snapped, then
+/// [`composite`]d. A glyph whose `font_index` is outside `fonts` is skipped
+/// (defensive). Returns [`Coverage::empty`] for an empty stack or no drawn glyph.
+///
+/// # Errors
+///
+/// Propagates a [`RasterError`] from any glyph's rasterization (a pathological
+/// `px_per_em` past the size cap, or a not-yet-supported composite glyph).
+pub(crate) fn render_glyphs(
+    fonts: &[&Font],
+    px_per_em: f32,
+    glyphs: impl IntoIterator<Item = GlyphDraw>,
+) -> Result<Coverage, RasterError> {
+    // One atlas per stack font; an empty stack yields no atlases (every glyph is
+    // then out of range and skipped, so the result is the empty coverage).
+    let mut atlases: Vec<GlyphAtlas> = (0..fonts.len())
+        .map(|_| GlyphAtlas::new(ATLAS_WIDTH))
+        .collect();
+    let mut placed: Vec<PlacedGlyph> = Vec::new();
+    for d in glyphs {
+        if d.font_index >= fonts.len() {
+            continue; // font_index past the stack (caller misuse) — drop, don't panic.
+        }
+        let entry =
+            atlases[d.font_index].get_or_insert(fonts[d.font_index], d.glyph_id, px_per_em)?;
+        if entry.width == 0 {
+            continue; // blank glyph (space): advances the pen, packs nothing.
+        }
+        #[allow(clippy::cast_possible_truncation)]
+        // pen x/y are finite accumulations; round() snaps onto the raster grid.
+        let (pen_x, pen_y) = (d.pen_x.round() as i32, d.pen_y.round() as i32);
+        placed.push(PlacedGlyph {
+            pen_x,
+            pen_y,
+            atlas: d.font_index,
+            glyph: entry,
+        });
+    }
+    Ok(composite(&atlases, &placed))
 }
 
 /// Same-color alpha-over of two `0..=255` coverage values: `out = d + s − d·s`,

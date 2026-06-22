@@ -48,10 +48,9 @@
 //! [`shape_paragraph`] is a test forcing-consumer until then.
 
 use crate::Font;
-use crate::atlas::GlyphAtlas;
 use crate::fallback::font_runs;
 use crate::raster::{Coverage, RasterError};
-use crate::shape::{ATLAS_WIDTH, PlacedGlyph, PositionedGlyph, composite, shape_run};
+use crate::shape::{GlyphDraw, PositionedGlyph, render_glyphs, shape_run};
 use pinion_text_unicode::{ItemRun, is_removed_by_x9, itemize, reorder_visual};
 
 /// A shaped paragraph: glyphs in visual (left-to-right) order with absolute
@@ -159,7 +158,7 @@ pub fn shape_paragraph_with_fallback(
 /// ([`shape_paragraph`] / [`shape_paragraph_with_fallback`]) becomes pixels.
 ///
 /// `fonts` must be the stack the paragraph was shaped with: each glyph is
-/// rasterized by `fonts[glyph.font_index]` through that font's own [`GlyphAtlas`]
+/// rasterized by `fonts[glyph.font_index]` through that font's own glyph atlas
 /// (one atlas per stack font, so the same glyph id in two fonts never collides),
 /// then all glyphs are composited by same-color alpha-over into one mask at their
 /// integer-snapped pen positions. The single-font [`shape_paragraph`] output
@@ -182,33 +181,16 @@ pub fn render_paragraph(
     shaped: &ShapedParagraph,
     px_per_em: f32,
 ) -> Result<Coverage, RasterError> {
-    if fonts.is_empty() {
-        return Ok(Coverage::empty());
-    }
-    let mut atlases: Vec<GlyphAtlas> = (0..fonts.len())
-        .map(|_| GlyphAtlas::new(ATLAS_WIDTH))
-        .collect();
-    let mut placed: Vec<PlacedGlyph> = Vec::new();
-    for g in &shaped.glyphs {
-        let fi = g.font_index;
-        if fi >= fonts.len() {
-            continue; // font_index past the stack (caller misuse) — drop, don't panic.
-        }
-        let entry = atlases[fi].get_or_insert(fonts[fi], g.glyph_id, px_per_em)?;
-        if entry.width == 0 {
-            continue; // blank glyph (space): advances the pen, packs nothing.
-        }
-        #[allow(clippy::cast_possible_truncation)]
-        // pen x/y are finite accumulations; round() snaps onto the raster grid.
-        let (pen_x, pen_y) = (g.x.round() as i32, g.y.round() as i32);
-        placed.push(PlacedGlyph {
-            pen_x,
-            pen_y,
-            atlas: fi,
-            glyph: entry,
-        });
-    }
-    Ok(composite(&atlases, &placed))
+    render_glyphs(
+        fonts,
+        px_per_em,
+        shaped.glyphs.iter().map(|g| GlyphDraw {
+            font_index: g.font_index,
+            glyph_id: g.glyph_id,
+            pen_x: g.x,
+            pen_y: g.y,
+        }),
+    )
 }
 
 /// Shape an already-itemised run list into one visually-ordered line: X9-filter

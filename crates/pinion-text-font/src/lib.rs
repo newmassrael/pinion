@@ -36,7 +36,7 @@ pub use atlas::{AtlasGlyph, GlyphAtlas};
 pub use error::{FieldValue, ParseError};
 pub use fallback::{FallbackRun, FontRun, FontRunRange, font_runs, shape_with_fallback};
 pub use font::Font;
-pub use line_layout::{ShapedLine, ShapedLines, layout_paragraph};
+pub use line_layout::{ShapedLine, ShapedLines, layout_paragraph, render_lines};
 pub use paragraph::{
     ShapedParagraph, render_paragraph, shape_paragraph, shape_paragraph_with_fallback,
 };
