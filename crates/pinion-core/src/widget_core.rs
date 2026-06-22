@@ -499,6 +499,75 @@ pub trait WidgetCore: 'static {
         false
     }
 
+    /// R1045 §5.45 §5.49 §5.38 — GUI-side wheel seam. The shell offers
+    /// every wheel / touchpad-pan event to this hook **before** the
+    /// [`InputRouter`](crate::input)'s two-stage default routing
+    /// (the hover-`External` wheel offer, then the
+    /// [`Scene::Scroll`](crate::scene::Scene::Scroll) pixel-clip
+    /// fallback). Returning `true` consumes the event — the router's
+    /// two-stage never runs, so the producing `External` stays
+    /// uncontaminated. Returning `false` (the default) defers to the
+    /// router exactly as every pre-R1045 binding does.
+    ///
+    /// Unlike [`Self::apply_key`] / [`Self::apply_composition`] /
+    /// [`Self::apply_middle_click`] (focus-gated, roving-tabindex), this
+    /// is a **position-bearing** hook like [`Self::apply_secondary_click`]:
+    /// a wheel scrolls whatever sits *under the pointer*, independent of
+    /// keyboard focus (the W3C / desktop convention), so `cursor` — not a
+    /// focused tag — is the discriminator. `cursor` is the pointer's
+    /// last window-local logical-pixel position (the same basis the
+    /// router hit-tests and the `External` offer normalises against); a
+    /// wheel with no stored cursor for the pointer never reaches this
+    /// hook (the shell short-circuits, matching the router's own
+    /// no-cursor no-op).
+    ///
+    /// This exists because a binding whose scroll authority is a
+    /// **row-granular view-state it owns** — a virtualized terminal /
+    /// log pane that re-projects scrollback by `offset_lines` rather than
+    /// pixel-clipping a `Scene::Scroll` subtree — cannot be served by
+    /// *either* router stage: stage 1 would push the wheel into the
+    /// hovered `External` (embedding the human-facing viewport offset in
+    /// a producer engine that "carries no scene state of its own" — a
+    /// layering violation), and stage 2 requires a `Scene::Scroll`
+    /// pixel-clip node the row-reprojected grid deliberately has none of
+    /// (a row offset is not a pixel offset). The binding overrides this
+    /// hook instead: it hit-tests `cursor` to the pane it owns and
+    /// advances that pane's own [`ScrollState`](crate::widgets::scroll::ScrollState)
+    /// (or equivalent reactive authority) at row granularity, keeping the
+    /// keyboard / drag / wheel writers on one SSOT.
+    ///
+    /// `delta` is the typed [`WheelDelta`](crate::event::WheelDelta)
+    /// verbatim ([`Pixels`](crate::event::WheelDelta::Pixels) for
+    /// high-resolution touchpads, [`Lines`](crate::event::WheelDelta::Lines)
+    /// for notched wheels), so the binding owns the unit conversion. To
+    /// turn a pixel delta into row steps without re-hardcoding the magic
+    /// constant, consume the exported
+    /// [`LINE_HEIGHT_PX`](crate::event::LINE_HEIGHT_PX) (the W3C 16-px
+    /// line basis the router's own `Lines` path uses) or divide by the
+    /// binding's measured cell height. `modifiers` carries the held W3C
+    /// four-bit surface for `Shift`-axis-remap / `Ctrl`-zoom conventions.
+    ///
+    /// Implementations run inside the binding's
+    /// [`Owner`](crate::reactive::Owner) root scope (the shell wraps the
+    /// call in `root_owner.run`, mirroring [`Self::apply_key`]), so
+    /// `use_*` reactive hooks resolve to the same instances the view fn
+    /// shares.
+    ///
+    /// Returns `true` if the wheel was handled (the shell bumps the
+    /// §5.34 revision, drains intents, and repaints on visible change);
+    /// `false` to defer to the router default. Default returns `false`
+    /// for every binding — widgets backed by a `Scene::Scroll` subtree
+    /// or a hover-`External` need no override and keep the router path.
+    #[must_use]
+    fn apply_wheel(
+        _scene: &mut Scene,
+        _cursor: (f64, f64),
+        _delta: crate::event::WheelDelta,
+        _modifiers: crate::input::Modifiers,
+    ) -> bool {
+        false
+    }
+
     // (R1020 §5.39) `focusable_tags()` was REMOVED. Keyboard focus
     // enumeration is no longer a hand-maintained binding-side list; it is
     // DERIVED from the paint scene by

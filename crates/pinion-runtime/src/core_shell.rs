@@ -2299,6 +2299,39 @@ impl<V: WidgetCore> CoreShell<V> {
         delta: WheelDelta,
         modifiers: pinion_core::Modifiers,
     ) -> (DispatchTail<V::State>, bool) {
+        // R1045 §5.45 §5.49 §5.38 — stage-0 GUI-side binding wheel seam.
+        // Offer the wheel to [`WidgetCore::apply_wheel`] BEFORE the
+        // router's two-stage default (hover-`External` offer + `Scene::Scroll`
+        // fallback), so a binding whose scroll authority is a row-granular
+        // view-state (a terminal scrollback re-projected by `offset_lines`,
+        // not a pixel-clip `Scene::Scroll` subtree) can handle the wheel at
+        // the GUI layer — leaving the producing `External` uncontaminated
+        // and the human-facing viewport offset on the binding's own SSOT.
+        // Position-bearing like `apply_secondary_click`: the wheel targets
+        // whatever the cursor hovers, so a pointer with no stored cursor
+        // never reaches the hook (matching the router's own no-cursor
+        // no-op). The `V::apply_wheel` call is wrapped in `root_owner.run`
+        // so the binding's `use_*` reactive hooks resolve — that wrap
+        // mirrors `apply_key`. The *ordering placement*, though, is a
+        // deliberate divergence from the keyboard split (where pinion-shell
+        // sequences `try_apply_key` then `scroll_key`): the wheel router is
+        // a single stateful call (the sub-pixel `wheel_remainders` carry
+        // lives inside it) with no clean shell-level point to interpose a
+        // pre-router hook, and ordering here means the precedence is stated
+        // ONCE rather than duplicated across all three producers — Vello
+        // `ShellCore::wheel_for_window`, TUI `ShellCoreTui::wheel`, and the
+        // RPC `scene/wheel` deferred replay all funnel through this method.
+        if let Some(cursor) = self
+            .routers
+            .get(window_id)
+            .and_then(|r| r.cursor_position(pid))
+        {
+            let owner = self.root_owner.clone();
+            let scene = &mut self.scene;
+            if owner.run(|| V::apply_wheel(scene, cursor, delta, modifiers)) {
+                return (self.tail(), true);
+            }
+        }
         let Self { scene, routers, .. } = self;
         let router = routers.entry(window_id.to_owned()).or_default();
         let dispatched = router.wheel_with_modifiers(pid, delta, modifiers, scene);
@@ -3458,6 +3491,184 @@ mod tests {
         let (_tail, dispatched) =
             core.wheel(PointerId::MOUSE, WheelDelta::Pixels { dx: 0.0, dy: 40.0 });
         assert!(!dispatched);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R1045 §5.45 §5.49 §5.38 — GUI-side `apply_wheel` seam (PR-18).
+    // `wheel_with_modifiers_for_window` offers the wheel to
+    // `WidgetCore::apply_wheel` (stage 0) BEFORE the router two-stage
+    // (External offer + Scroll fallback), so a binding that owns a
+    // row-granular scroll authority consumes the wheel before it can
+    // reach the producing External. The fixture records every offer and
+    // consumes / defers under a thread-local toggle, reset at the head of
+    // each test so the per-thread cell never leaks between sequential
+    // tests on the same worker thread (ZERO-FLAKE).
+    // ─────────────────────────────────────────────────────────────────
+
+    thread_local! {
+        /// Every `(cursor, delta)` the fixture's `apply_wheel` was offered.
+        static WHEEL_SEAM_LOG: std::cell::RefCell<Vec<((f64, f64), WheelDelta)>> =
+            const { std::cell::RefCell::new(Vec::new()) };
+        /// The verdict `apply_wheel` returns: `true` consumes, `false` defers.
+        static WHEEL_SEAM_HANDLED: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+    }
+
+    struct WheelSeamFixture;
+
+    impl WidgetCore for WheelSeamFixture {
+        type State = ButtonState;
+        type Event = ButtonEvent;
+
+        fn create_external() -> Box<dyn pinion_core::external::External> {
+            Box::new(pinion_core::widgets::button::ButtonExternal::new())
+        }
+
+        fn tag() -> &'static str {
+            "wheel_seam"
+        }
+
+        fn read_state(_scene: &Scene) -> Self::State {
+            ButtonState::Idle
+        }
+
+        fn view(_state: Self::State, _frame: &Frame) -> Scene {
+            // R55.G.17 — the paint scene must contain a node tagged `tag()`.
+            Scene::Container(pinion_core::scene::ContainerNode::new(vec![]).with_tag("wheel_seam"))
+        }
+
+        fn event_name(_event: Self::Event) -> &'static str {
+            "__internal__"
+        }
+
+        fn title() -> &'static str {
+            "WheelSeam"
+        }
+
+        fn apply_wheel(
+            _scene: &mut Scene,
+            cursor: (f64, f64),
+            delta: WheelDelta,
+            _modifiers: pinion_core::Modifiers,
+        ) -> bool {
+            WHEEL_SEAM_LOG.with(|log| log.borrow_mut().push((cursor, delta)));
+            WHEEL_SEAM_HANDLED.with(std::cell::Cell::get)
+        }
+    }
+
+    /// A paint scene with a single attached `ScrollState` covering the
+    /// cursor at (50, 50): if stage 0 fails to short-circuit, the router
+    /// two-stage moves this state — the tests read `state.offset()` to
+    /// prove which path ran.
+    fn wheel_seam_paint_scene(
+        state: &std::rc::Rc<pinion_core::widgets::scroll::ScrollState>,
+    ) -> Scene {
+        use pinion_core::scene::{BoxNode, ContainerNode, Rect, ScrollNode};
+        use pinion_core::style::{BoxStyle, Color};
+        let content = Scene::Box(BoxNode::filled(
+            Rect::new(0, 0, 200, 1000),
+            Color::default(),
+        ));
+        let scroll = ScrollNode::new(Rect::new(0, 0, 100, 100), content)
+            .with_state(std::rc::Rc::clone(state));
+        let mut root = Scene::Container(
+            ContainerNode::new(vec![Scene::Scroll(scroll)])
+                .with_style(BoxStyle::filled(Color::default())),
+        );
+        if let Scene::Container(c) = &mut root {
+            c.rect = Rect::new(0, 0, 200, 200);
+        }
+        root
+    }
+
+    #[test]
+    fn r1045_apply_wheel_consumes_before_router_two_stage() {
+        use pinion_core::widgets::scroll::ScrollState;
+        use std::rc::Rc;
+        WHEEL_SEAM_LOG.with(|l| l.borrow_mut().clear());
+        WHEEL_SEAM_HANDLED.with(|c| c.set(true));
+
+        let state = Rc::new(ScrollState::new());
+        state.set_max(500, 500);
+        let mut core: CoreShell<WheelSeamFixture> = CoreShell::new();
+        core.update_paint_scene(wheel_seam_paint_scene(&state));
+        let _ = core.cursor_moved(PointerId::MOUSE, 50.0, 50.0);
+
+        let (_tail, dispatched) =
+            core.wheel(PointerId::MOUSE, WheelDelta::Pixels { dx: 0.0, dy: 60.0 });
+        assert!(dispatched, "a consumed wheel reports dispatched=true");
+
+        // The binding was offered the exact window-local cursor + raw delta.
+        WHEEL_SEAM_LOG.with(|l| {
+            let log = l.borrow();
+            assert_eq!(log.len(), 1, "apply_wheel offered exactly once");
+            assert_eq!(log[0].0, (50.0, 50.0), "offered the stored cursor");
+            assert!(
+                matches!(log[0].1, WheelDelta::Pixels { dy, .. } if (dy - 60.0).abs() < f32::EPSILON),
+                "offered the raw WheelDelta, unit conversion left to the binding",
+            );
+        });
+        // Stage 0 consumed → the router two-stage never ran, so the
+        // attached Scroll state stays at the origin (no fallback scroll).
+        assert_eq!(
+            state.offset(),
+            (0, 0),
+            "consuming apply_wheel short-circuits the Scroll fallback",
+        );
+    }
+
+    #[test]
+    fn r1045_apply_wheel_false_defers_to_router_scroll() {
+        use pinion_core::widgets::scroll::ScrollState;
+        use std::rc::Rc;
+        WHEEL_SEAM_LOG.with(|l| l.borrow_mut().clear());
+        WHEEL_SEAM_HANDLED.with(|c| c.set(false));
+
+        let state = Rc::new(ScrollState::new());
+        state.set_max(500, 500);
+        let mut core: CoreShell<WheelSeamFixture> = CoreShell::new();
+        core.update_paint_scene(wheel_seam_paint_scene(&state));
+        let _ = core.cursor_moved(PointerId::MOUSE, 50.0, 50.0);
+
+        let (_tail, dispatched) =
+            core.wheel(PointerId::MOUSE, WheelDelta::Pixels { dx: 0.0, dy: 60.0 });
+        assert!(dispatched, "the router Scroll fallback dispatched");
+
+        // The binding was still OFFERED the wheel first (stage 0 precedes
+        // the router)...
+        WHEEL_SEAM_LOG.with(|l| assert_eq!(l.borrow().len(), 1, "offered before the router"));
+        // ...but declined, so the router two-stage scrolled the state —
+        // the pre-R1045 fallback is preserved byte-for-byte.
+        assert_eq!(
+            state.offset(),
+            (0, 60),
+            "apply_wheel=false defers to the router two-stage",
+        );
+    }
+
+    #[test]
+    fn r1045_apply_wheel_not_offered_without_a_cursor() {
+        use pinion_core::widgets::scroll::ScrollState;
+        use std::rc::Rc;
+        WHEEL_SEAM_LOG.with(|l| l.borrow_mut().clear());
+        WHEEL_SEAM_HANDLED.with(|c| c.set(true));
+
+        let state = Rc::new(ScrollState::new());
+        state.set_max(500, 500);
+        let mut core: CoreShell<WheelSeamFixture> = CoreShell::new();
+        core.update_paint_scene(wheel_seam_paint_scene(&state));
+        // No cursor_moved: the pointer has no stored position, so the
+        // wheel has no hover target to resolve.
+
+        let (_tail, dispatched) =
+            core.wheel(PointerId::MOUSE, WheelDelta::Pixels { dx: 0.0, dy: 60.0 });
+        assert!(!dispatched, "no stored cursor → wheel no-ops");
+        WHEEL_SEAM_LOG.with(|l| {
+            assert!(
+                l.borrow().is_empty(),
+                "apply_wheel is not offered without a cursor",
+            );
+        });
+        assert_eq!(state.offset(), (0, 0), "neither stage ran");
     }
 
     #[test]
