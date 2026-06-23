@@ -28,7 +28,9 @@
 //! ICD) — a hardware pass does not imply a CI software pass.
 
 use pinion_core::style::Color;
-use pinion_runtime::paint_adapter::{draw_atlased_glyphs, draw_coverage};
+use pinion_runtime::paint_adapter::{
+    draw_atlased_glyphs, draw_atlased_glyphs_styled, draw_coverage,
+};
 use pinion_shell::headless_screenshot::HeadlessScreenshot;
 use pinion_text_font::{Font, render_paragraph, render_paragraph_atlased, shape_paragraph};
 use vello::Scene as VelloScene;
@@ -273,5 +275,111 @@ fn self_hosted_atlas_reaches_pixels_per_glyph() {
         empty_column_between,
         "no fully-background column between the glyphs (ink x {min_x}..{max_x}) — \
          the two glyph quads merged (inter-glyph atlas bleed or a single blit)"
+    );
+}
+
+/// R1066 §5.37 → §5.16 — does per-glyph colour reach pixels distinctly? The
+/// styled-run paint a code editor needs (syntax highlighting): one grayscale
+/// atlas, glyphs in different colours. This forcing consumer paints "Hi" with the
+/// H red and the i blue through `draw_atlased_glyphs_styled`, renders HEADLESSLY,
+/// and asserts the red ink (the H) lies entirely LEFT of the blue ink (the i) —
+/// proving each glyph's quad sampled its own `(atlas, colour)` tint, not one
+/// shared colour. A uniform-colour path could not produce two colours; a
+/// colour/glyph mis-mapping would interleave or swap them.
+///
+/// `#[ignore]` / lavapipe like the sibling seam tests (see the first test header).
+#[test]
+#[ignore = "wgpu adapter cold-boot too slow for default test suite; run with --ignored"]
+fn self_hosted_atlas_paints_per_glyph_color() {
+    let font = Font::from_bytes(NOTO.to_vec()).expect("parse NotoSans fixture");
+    let shaped = shape_paragraph(&font, "Hi", PX);
+    let rendered = render_paragraph_atlased(&[&font], &shaped, PX).expect("atlas-render paragraph");
+    assert_eq!(rendered.placed.len(), 2, "Hi should atlas-place two glyphs");
+
+    // Footprint = union of the glyph quads, pinned to (MARGIN, MARGIN).
+    let (mut left, mut top, mut right, mut bottom) = (i32::MAX, i32::MAX, i32::MIN, i32::MIN);
+    for p in &rendered.placed {
+        let g = &p.glyph;
+        let (gx, gy) = (p.pen_x + g.left, p.pen_y + g.top);
+        left = left.min(gx);
+        top = top.min(gy);
+        right = right.max(gx + i32::try_from(g.width).expect("glyph width fits i32"));
+        bottom = bottom.max(gy + i32::try_from(g.height).expect("glyph height fits i32"));
+    }
+    let width = u32::try_from(right - left).expect("footprint width fits u32");
+    let height = u32::try_from(bottom - top).expect("footprint height fits u32");
+    let pen_x = f64::from(MARGIN) - f64::from(left);
+    let pen_y = f64::from(MARGIN) - f64::from(top);
+    let buf_w = width + 2 * MARGIN;
+    let buf_h = height + 2 * MARGIN;
+
+    // placed[0] = H (leftmost, LTR) -> red; placed[1] = i -> blue.
+    let colors = [Color::rgb(255, 0, 0), Color::rgb(0, 0, 255)];
+    let mut scene = VelloScene::new();
+    draw_atlased_glyphs_styled(
+        &mut scene,
+        &rendered,
+        &colors,
+        pen_x,
+        pen_y,
+        Affine::IDENTITY,
+    );
+
+    let mut shot = match HeadlessScreenshot::new() {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("skipping: no wgpu adapter ({e})");
+            return;
+        }
+    };
+    let rgba = shot
+        .render_to_rgba8(&scene, buf_w, buf_h, PenikoColor::BLACK)
+        .expect("headless render");
+
+    // Channel-dominant classifiers (the AA fringe premultiplies to a dim tint, so
+    // require a clearly-dominant channel with the other two suppressed).
+    let is_red = |x: u32, y: u32| {
+        let i = ((y * buf_w + x) * 4) as usize;
+        rgba[i] > 150 && rgba[i + 1] < 80 && rgba[i + 2] < 80
+    };
+    let is_blue = |x: u32, y: u32| {
+        let i = ((y * buf_w + x) * 4) as usize;
+        rgba[i + 2] > 150 && rgba[i] < 80 && rgba[i + 1] < 80
+    };
+    let bbox = |pred: &dyn Fn(u32, u32) -> bool| {
+        let (mut n, mut lo, mut hi) = (0u32, u32::MAX, 0u32);
+        for y in 0..buf_h {
+            for x in 0..buf_w {
+                if pred(x, y) {
+                    n += 1;
+                    lo = lo.min(x);
+                    hi = hi.max(x);
+                }
+            }
+        }
+        (n, lo, hi)
+    };
+
+    let (red_n, red_lo, red_hi) = bbox(&is_red);
+    let (blue_n, blue_lo, blue_hi) = bbox(&is_blue);
+
+    // Both colours reached pixels.
+    assert!(
+        red_n > 0,
+        "no red ink — the H glyph did not take its colour"
+    );
+    assert!(
+        blue_n > 0,
+        "no blue ink — the i glyph did not take its colour"
+    );
+
+    // The red glyph (H) is entirely LEFT of the blue glyph (i): max red x < min
+    // blue x. This is the per-glyph-colour witness — each quad sampled its own
+    // (atlas, colour) tint at its own position. A uniform colour, a swapped
+    // mapping, or bleed across the gap would break this ordering.
+    assert!(
+        red_hi < blue_lo,
+        "red ink (x {red_lo}..{red_hi}) is not entirely left of blue ink \
+         (x {blue_lo}..{blue_hi}) — per-glyph colour mis-mapped or bled"
     );
 }

@@ -1020,10 +1020,10 @@ pub fn draw_coverage(
     out.draw_image(&ImageBrush::new(image), place);
 }
 
-/// R1065 §5.37 → §5.16 — paint a [`RenderedGlyphs`] per glyph: upload each
-/// [`GlyphAtlas`] once, then draw one quad per [`PlacedGlyph`] sampling its
-/// sub-rect of that atlas, at baseline pen `(pen_x, pen_y)` (device px, y-down)
-/// in `color`, under `transform`.
+/// R1065 §5.37 → §5.16 — paint a [`RenderedGlyphs`] per glyph in one uniform
+/// `color`, at baseline pen `(pen_x, pen_y)` (device px, y-down) under
+/// `transform`. A thin wrapper over [`draw_atlased_glyphs_styled`] with `color`
+/// applied to every glyph.
 ///
 /// The §5.37.9 production-direction successor to [`draw_coverage`]: where
 /// `draw_coverage` blits one whole-paragraph mask, this keeps the cacheable
@@ -1040,19 +1040,57 @@ pub fn draw_atlased_glyphs(
     pen_y: f64,
     transform: Affine,
 ) {
-    // Upload each atlas once (tinted). An atlas with nothing packed yields `None`
-    // and is never referenced — blank glyphs (space) are not placed.
-    let brushes: Vec<Option<ImageBrush>> = rendered
-        .atlases
-        .iter()
-        .map(|atlas| {
-            atlas_to_image_data(atlas, color)
-                .map(|img| ImageBrush::new(img).with_quality(ImageQuality::Low))
-        })
-        .collect();
-    for p in &rendered.placed {
-        let Some(brush) = brushes.get(p.atlas).and_then(Option::as_ref) else {
-            continue; // defensive: a placement into an empty / out-of-range atlas.
+    let colors = vec![color; rendered.placed.len()];
+    draw_atlased_glyphs_styled(out, rendered, &colors, pen_x, pen_y, transform);
+}
+
+/// R1066 §5.37 → §5.16 — paint a [`RenderedGlyphs`] per glyph in **per-glyph
+/// colours** (`glyph_colors[i]` tints `rendered.placed[i]`) — the styled-run
+/// paint a code editor needs (syntax highlighting): one atlas, glyphs in many
+/// colours.
+///
+/// The atlas itself is grayscale (glyph *shape* is colour-independent); colour is
+/// applied at paint by tinting. So one tinted image is uploaded per distinct
+/// `(atlas, colour)` actually drawn — a K-colour run uploads K tints of an atlas,
+/// **not** N per-glyph images (the costly coverage rasterisation stays once-per
+/// glyph in the atlas; only the cheap tint is per colour). Each glyph is then the
+/// same per-quad `fill` as the uniform [`draw_atlased_glyphs`], nearest-sampled so
+/// adjacent shelf-packed glyphs never bleed.
+///
+/// `glyph_colors` aligns to `rendered.placed`; a glyph past the end of
+/// `glyph_colors` is skipped (defensive — the uniform wrapper always supplies one
+/// colour per glyph). A no-op for no placements.
+pub fn draw_atlased_glyphs_styled(
+    out: &mut VelloScene,
+    rendered: &RenderedGlyphs,
+    glyph_colors: &[Color],
+    pen_x: f64,
+    pen_y: f64,
+    transform: Affine,
+) {
+    // Pass 1: build one tinted brush per distinct (atlas, colour) actually drawn.
+    // `None` = that atlas has nothing packed (never referenced — blank glyphs are
+    // not placed).
+    let mut brushes: HashMap<(usize, Color), Option<ImageBrush>> = HashMap::new();
+    for (i, p) in rendered.placed.iter().enumerate() {
+        let Some(&color) = glyph_colors.get(i) else {
+            continue; // fewer colours than glyphs — drop the uncoloured tail.
+        };
+        brushes.entry((p.atlas, color)).or_insert_with(|| {
+            rendered.atlases.get(p.atlas).and_then(|atlas| {
+                atlas_to_image_data(atlas, color)
+                    .map(|img| ImageBrush::new(img).with_quality(ImageQuality::Low))
+            })
+        });
+    }
+
+    // Pass 2: fill each glyph's quad from its (atlas, colour) brush.
+    for (i, p) in rendered.placed.iter().enumerate() {
+        let Some(&color) = glyph_colors.get(i) else {
+            continue;
+        };
+        let Some(Some(brush)) = brushes.get(&(p.atlas, color)) else {
+            continue; // defensive: empty / out-of-range atlas.
         };
         let g = &p.glyph;
         // Device-space top-left of the glyph quad: baseline pen + the glyph's
@@ -2291,6 +2329,32 @@ mod tests {
             scene.encoding().n_paths,
             u32::try_from(rendered.placed.len()).unwrap()
         );
+    }
+
+    #[test]
+    fn draw_atlased_glyphs_styled_one_fill_per_colored_glyph() {
+        // Per-glyph colours still emit one quad per glyph. "Hi" in two colours ->
+        // two fills (the colour lives in the brush, invisible to n_paths; the pixel
+        // proof that each glyph took its own colour is the realgpu seam test).
+        let rendered = rendered_hi();
+        let colors = [Color::rgb(255, 0, 0), Color::rgb(0, 0, 255)];
+        let mut scene = VelloScene::new();
+        draw_atlased_glyphs_styled(&mut scene, &rendered, &colors, 10.0, 20.0, Affine::IDENTITY);
+        assert_eq!(
+            scene.encoding().n_paths,
+            u32::try_from(rendered.placed.len()).unwrap()
+        );
+    }
+
+    #[test]
+    fn draw_atlased_glyphs_styled_skips_uncolored_tail() {
+        // Fewer colours than glyphs: the uncoloured tail is dropped (defensive), so
+        // only the coloured prefix paints. "Hi" with one colour -> one fill.
+        let rendered = rendered_hi();
+        let colors = [Color::rgb(255, 0, 0)];
+        let mut scene = VelloScene::new();
+        draw_atlased_glyphs_styled(&mut scene, &rendered, &colors, 10.0, 20.0, Affine::IDENTITY);
+        assert_eq!(scene.encoding().n_paths, 1);
     }
 
     #[test]
