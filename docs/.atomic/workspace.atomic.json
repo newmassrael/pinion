@@ -13705,6 +13705,78 @@
         "Live-window (non-headless) path unverified: VELLO-002 windowed-GL; only headless render_to_rgba8 proven."
       ]
     },
+    "R1063.1": {
+      "decision_summary": "R1063.1 adversarial session-review clearance of R1063 (2 independent read-only reviewers: quality-engineer = correctness/test-rigor, system-architect = SSOT/north-star). Cleared 4 real findings, rejected over-flags with evidence. (1) coverage_to_image_data floored mask*color.a/255 where the same a*b/255 op rounds-to-nearest across the §5.37 pipeline (shape::over +127, raster +0.5) -> +127 round + CPU test (200*200->157). (2) the realgpu forcing consumer's bbox-subset-footprint assertion passed a solid-rectangle (shape-blind) impl -> added a glyph-negative-space assertion. (3) the seam docstring conflated the cacheable per-glyph GlyphAtlas (§5.37.9, the production GPU-text primitive) with the whole-paragraph composite it blits -> relabeled BRING-UP, next seam targets the atlas (composite flattens it away; must not become the Scene::Text primitive). (4) sharpened the deferred-rewire framing to a multi-round campaign. Over-flags rejected: conversion crate-placement correct (peniko type can't live in the zero-dep engine); test-only consumer = prescribed forcing-consumer pattern; ImageData construction = 2nd consumer (premature to lift); alpha format / placement / cast safety / empty-None verified correct.",
+      "changes_bullets": [
+        "paint_adapter coverage_to_image_data: floor -> round-to-nearest (+127) alpha modulation,",
+        "matching the §5.37 house convention (shape::over +127 / raster +0.5 both round); a bare",
+        "floor biased every AA run <=1 LSB darker than the engine. + CPU test pins 200*200 -> 157.",
+        "paint_adapter R1063 module doc: relabel BRING-UP seam; de-conflate the per-glyph GlyphAtlas",
+        "(§5.37.9, the production GPU-text primitive) vs the whole-paragraph composite mask this blits.",
+        "render_glyphs builds the atlas, composite flattens it away; the next seam must target the",
+        "atlas and this blit must NOT be generalised into the Scene::Text arm.",
+        "tests/text_engine_paint_seam: + glyph-negative-space assertion (a background pixel exists",
+        "strictly inside the ink bbox) so a solid-rectangle blit fails — pins the mask SHAPE (not",
+        "just its bounding box) reaching the surface."
+      ],
+      "verification_bullets": [
+        "pinion-runtime CPU seam tests: 6 pass (added rounds_alpha_modulation_to_nearest: 200*200 -> 157).",
+        "realgpu forcing consumer (lavapipe, #[ignore]): PASS with the new glyph-negative-space assertion",
+        "— a background pixel exists strictly inside the ink bbox, so the mask SHAPE (not just its",
+        "bounding box) is proven on the surface; a solid-rectangle blit now fails the test.",
+        "clippy -p pinion-runtime(vello) -p pinion-shell --all-targets: clean; rustfmt --check: clean.",
+        "Strictly additive over R1063 + a one-line rounding fix; no existing production path changed."
+      ],
+      "impact_refs": [
+        "5.37",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "NEXT SEAM must target the per-glyph GlyphAtlas (§5.37.9), NOT the whole-paragraph Coverage blit:",
+        "render_glyphs builds the atlas, composite flattens it away; a cacheable atlas sampled per",
+        "glyph-quad is what 60fps / AAA text needs. Do not ossify this bring-up blit into Scene::Text.",
+        "§5.37 -> production = multi-round CAMPAIGN: atlas-based paint, then caret/selection/metrics",
+        "parity vs the §5.36 bridge, then font-fallback policy + multi-font atlas binding — not a flip.",
+        "Dual text engines (§5.36 parley + §5.37) in pinion-runtime = sound strangler-fig transitional;",
+        "time-box the §5.36 -> §5.37 cutover so the dual-engine window does not become permanent.",
+        "ImageData straight-RGBA8 construction: lift only at a 3rd consumer (now 2: image_cache + seam)."
+      ],
+      "publishable_decision_summary": "R1063.1 adversarial session-review clearance of R1063 (2 independent read-only reviewers: quality-engineer = correctness/test-rigor, system-architect = SSOT/north-star). Cleared 4 real findings, rejected over-flags with evidence. (1) coverage_to_image_data floored mask*color.a/255 where the same a*b/255 op rounds-to-nearest across the §5.37 pipeline (shape::over +127, raster +0.5) -> +127 round + CPU test (200*200->157). (2) the realgpu forcing consumer's bbox-subset-footprint assertion passed a solid-rectangle (shape-blind) impl -> added a glyph-negative-space assertion. (3) the seam docstring conflated the cacheable per-glyph GlyphAtlas (§5.37.9, the production GPU-text primitive) with the whole-paragraph composite it blits -> relabeled BRING-UP, next seam targets the atlas (composite flattens it away; must not become the Scene::Text primitive). (4) sharpened the deferred-rewire framing to a multi-round campaign. Over-flags rejected: conversion crate-placement correct (peniko type can't live in the zero-dep engine); test-only consumer = prescribed forcing-consumer pattern; ImageData construction = 2nd consumer (premature to lift); alpha format / placement / cast safety / empty-None verified correct.",
+      "publishable_changes_bullets": [
+        "paint_adapter coverage_to_image_data: floor -> round-to-nearest (+127) alpha modulation,",
+        "matching the §5.37 house convention (shape::over +127 / raster +0.5 both round); a bare",
+        "floor biased every AA run <=1 LSB darker than the engine. + CPU test pins 200*200 -> 157.",
+        "paint_adapter R1063 module doc: relabel BRING-UP seam; de-conflate the per-glyph GlyphAtlas",
+        "(§5.37.9, the production GPU-text primitive) vs the whole-paragraph composite mask this blits.",
+        "render_glyphs builds the atlas, composite flattens it away; the next seam must target the",
+        "atlas and this blit must NOT be generalised into the Scene::Text arm.",
+        "tests/text_engine_paint_seam: + glyph-negative-space assertion (a background pixel exists",
+        "strictly inside the ink bbox) so a solid-rectangle blit fails — pins the mask SHAPE (not",
+        "just its bounding box) reaching the surface."
+      ],
+      "publishable_verification_bullets": [
+        "pinion-runtime CPU seam tests: 6 pass (added rounds_alpha_modulation_to_nearest: 200*200 -> 157).",
+        "realgpu forcing consumer (lavapipe, #[ignore]): PASS with the new glyph-negative-space assertion",
+        "— a background pixel exists strictly inside the ink bbox, so the mask SHAPE (not just its",
+        "bounding box) is proven on the surface; a solid-rectangle blit now fails the test.",
+        "clippy -p pinion-runtime(vello) -p pinion-shell --all-targets: clean; rustfmt --check: clean.",
+        "Strictly additive over R1063 + a one-line rounding fix; no existing production path changed."
+      ],
+      "publishable_impact_refs": [
+        "5.37",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "NEXT SEAM must target the per-glyph GlyphAtlas (§5.37.9), NOT the whole-paragraph Coverage blit:",
+        "render_glyphs builds the atlas, composite flattens it away; a cacheable atlas sampled per",
+        "glyph-quad is what 60fps / AAA text needs. Do not ossify this bring-up blit into Scene::Text.",
+        "§5.37 -> production = multi-round CAMPAIGN: atlas-based paint, then caret/selection/metrics",
+        "parity vs the §5.36 bridge, then font-fallback policy + multi-font atlas binding — not a flip.",
+        "Dual text engines (§5.36 parley + §5.37) in pinion-runtime = sound strangler-fig transitional;",
+        "time-box the §5.36 -> §5.37 cutover so the dual-engine window does not become permanent.",
+        "ImageData straight-RGBA8 construction: lift only at a 3rd consumer (now 2: image_cache + seam)."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
