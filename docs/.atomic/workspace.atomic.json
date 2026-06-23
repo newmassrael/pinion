@@ -3915,7 +3915,8 @@
         "caret risk: R1068 'measure=parley -> caret safe' void for eligible text; R1071 must exclude editable",
         "wire both arms or neither: measure-only or paint-only re-opens the box/glyph shaper mismatch",
         "vertical coherence is with the §5.37 paint arm (hhea), not guaranteed == parley (OS/2 typo)",
-        "(f32,f32)/line_count=1 = single-line interim; multi-line will reshape the TextMeasure return"
+        "(f32,f32)/line_count=1 = single-line interim; multi-line will reshape the TextMeasure return",
+        "R1072 (§5.37.14) wires paint+measure in the shell; caret-bearing editable text excluded"
       ],
       "alternatives_rejected": [
         {
@@ -3966,6 +3967,83 @@
           "file": "crates/pinion-runtime/src/text_engine.rs",
           "symbol": "single_line_overflows",
           "kind": "implements"
+        }
+      ]
+    },
+    "5.37.14": {
+      "title": "Production shell wiring (PINION_TEXT_ENGINE) + caret-bearing exclusion — §5.37 first shipping consumer (R1072 sub-scope)",
+      "parent_doc": "docs/GENERATED.md",
+      "parent_section": "5.37",
+      "decision_status": "active",
+      "intent": "Wire the §5.37 engine into the shell as its first shipping consumer: env-gated, threaded into both paint and measure, with editable text excluded.",
+      "rationale_bullets": [
+        "campaign step 4: the engine had zero shipping callers (R1070.1) -> land the consumer",
+        "wire-both-or-neither: paint + measure share one engine + one eligibility SSOT",
+        "caret-bearing exclusion resolves R1070.1: editable text keeps its parley caret/selection",
+        "0-regression default: PINION_TEXT_ENGINE unset -> parley paint+measure byte-identical"
+      ],
+      "inputs_bullets": [
+        "PINION_TEXT_ENGINE env (1/true/on/yes) — opt-in gate, read once at ShellCore construction",
+        "SelfHostedTextEngine::from_system_font (§5.37.11) — the parsed production font handle",
+        "TextNode.caret_bearing — the editable marker view_field sets, folded into eligibility SSOT",
+        "to_vello_cached_with_text_engine + compute_layout_with_text_measure — cached paint + measure seams"
+      ],
+      "outputs_bullets": [
+        "ShellCore.text_engine built by build_text_engine_from_env (or injected via set_text_engine)",
+        "text_cache_and_engine: disjoint (cache, engine) borrow feeding the cached production paint",
+        "measure threaded via text_measure_override into compute_paint_scene (live + pure + RPC producer)",
+        "caret_bearing folded into Scene::Text paint_hash so on/off leaves never share a cached fragment"
+      ],
+      "caveats_bullets": [
+        "default-off: only PINION_TEXT_ENGINE truthy (or set_text_engine) routes a leaf through §5.37",
+        "caret-bearing exclusion covers paint+measure; caret onto §5.37 (editable) is a later step",
+        "live multi-window GUI HW-gated (VELLO-002 GL hang); cached paint->pixels proven via lavapipe",
+        "styled-run/multi-line/decorated still parley (eligibility unchanged); widening is a later step"
+      ],
+      "alternatives_rejected": [
+        {
+          "alternative": "caret_bearing as a TextRole variant",
+          "reason": "rejected; conflates AT name-enrichment with shaper choice"
+        },
+        {
+          "alternative": "engine owned by AppShell not ShellCore",
+          "reason": "rejected; measure lives on ShellCore and must reach it"
+        },
+        {
+          "alternative": "integrate caret onto §5.37 to allow editable text",
+          "reason": "deferred; later caret/hit-test unify step"
+        }
+      ],
+      "bindings": [
+        {
+          "file": "crates/pinion-core/src/scene.rs",
+          "symbol": "TextNode::caret_bearing",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-runtime/src/paint_adapter.rs",
+          "symbol": "to_vello_cached_with_text_engine",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-shell/src/substrate.rs",
+          "symbol": "build_text_engine_from_env",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-shell/src/substrate.rs",
+          "symbol": "text_cache_and_engine",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-widget-paint/src/text_field.rs",
+          "symbol": "view_field",
+          "kind": "references"
+        },
+        {
+          "file": "crates/pinion-shell/tests/text_engine_paint_seam.rs",
+          "symbol": "self_hosted_cached_arm_reaches_pixels",
+          "kind": "references"
         }
       ]
     },
@@ -14560,6 +14638,68 @@
         "RPC scene/key {window,repeat} optional extension deferred (§5.49); GUI seam covers acceptance",
         "gate (b) assumes winit Focused precedes a stray redelivery; live confirm needs HW (VELLO-002)",
         "repeat path (a) source-confirmed; sprag overrides apply_key_repeat to drop repeat on ToggleDock"
+      ]
+    },
+    "R1072": {
+      "decision_summary": "R1072 §5.37.14 production shell wiring — the §5.37 self-hosted text engine's first shipping consumer (campaign step 4, resolving the R1070.1 \"zero shipping caller\" finding). The shell builds one PINION_TEXT_ENGINE-gated SelfHostedTextEngine at ShellCore construction (build_text_engine_from_env, or set_text_engine for a fixture) and threads it into BOTH arms together: paint via to_vello_cached_with_text_engine (the cached production walker, re-adding the variant R1068 dropped) and measure via compute_layout_with_text_measure (compute_paint_scene live + pure mirror + RPC producer; app.rs live + screenshot paint). Default-off (env unset) is byte-identical parley paint+measure, 0 regression. The R1070.1 caret-divergence constraint is resolved by a new TextNode.caret_bearing marker that view_field sets on editable text: it is folded into the shared eligibility SSOT self_hosted_text_eligible so BOTH paint and measure exclude caret-bearing leaves (an editable field's caret/selection/find/bracket/preedit rects all derive from one parley Layout whose advances §5.37 need not match). The marker is also folded into the Scene::Text paint_hash so two leaves differing only in which shaper paints them never share a cached fragment. wire-both-or-neither holds by construction: one engine + one eligibility predicate drive both arms.",
+      "changes_bullets": [
+        "TextNode.caret_bearing marker (pinion-core) + builder + Scene::Text paint_hash fold (cache coherence)",
+        "self_hosted_text_eligible gains !caret_bearing; TextMeasure::measure_text + NodeContext::Text thread it -> both arms exclude editable text via one SSOT",
+        "to_vello_cached_with_text_engine: cached production paint variant threading the engine through to_vello_cached_inner; to_vello_cached delegates with None (byte-identical)",
+        "view_field marks its editable text node caret_bearing (caret/selection stay parley-aligned)",
+        "ShellCore.text_engine: Option<SelfHostedTextEngine> built by env-gated build_text_engine_from_env (or injected via set_text_engine); text_cache_and_engine disjoint borrow; text_measure_override helper",
+        "compute_paint_scene (live internal + pure mirror + RPC producer) routes measure via compute_layout_with_text_measure; app.rs live + screenshot paint via to_vello_cached_with_text_engine"
+      ],
+      "verification_bullets": [
+        "new unit tests green: caret_bearing paint_hash fold (core) / eligibility both-arms + measure deferral (runtime text_engine) / cached engine variant + caret-decline paint (runtime paint_adapter) / NodeContext threading defers caret_bearing (runtime layout) / view_field marker (widget-paint) / shell measure-wiring + caret exclusion (shell substrate)",
+        "realgpu lavapipe 6/6 ZERO-FLAKE incl. new self_hosted_cached_arm_reaches_pixels (cached production path -> real pixels, run 3x)",
+        "cargo test --workspace -j2 (vello): exit 0, 0 failed; pinion-shell 78 lib + integration suites green",
+        "clippy --workspace --all-targets vello: 0 warn (render_window 1-line-over gets the sibling too_many_lines allow); rustfmt clean",
+        "non-vello build green (cargo check -p pinion-runtime -p pinion-rpc -p pinion-tui): ungated layout never names the vello engine (R1067 decoupling holds)",
+        "validate T1=0 (entries 1088->1089, sections 71->72 with +§5.37.14)"
+      ],
+      "impact_refs": [
+        "5.37.14",
+        "5.37.13",
+        "5.16",
+        "5.22"
+      ],
+      "carry_forward_bullets": [
+        "R1073+ engine widening: route styled-run colour / multi-line wrap (render_lines) / decoration through §5.37 (today parley via eligibility)",
+        "caret/hit-test unify onto §5.37 so editable text can route through the engine -- the eventual lift of the caret_bearing exclusion (editor-critical coherence the two-layout split leaves open)",
+        "live multi-window GUI of the engine is HW-gated (VELLO-002 GL hang); pixels proven headless via lavapipe only",
+        "cross-frame glyph-atlas GPU texture cache (atlas re-built per paint) / instanced glyph-quad batch (Vello API absent)",
+        "atlas inter-glyph gutter for fractional/HiDPI bleed (R1066 carry) / per-(atlas,colour) luminance-mask opt"
+      ],
+      "publishable_decision_summary": "R1072 §5.37.14 production shell wiring — the §5.37 self-hosted text engine's first shipping consumer (campaign step 4, resolving the R1070.1 \"zero shipping caller\" finding). The shell builds one PINION_TEXT_ENGINE-gated SelfHostedTextEngine at ShellCore construction (build_text_engine_from_env, or set_text_engine for a fixture) and threads it into BOTH arms together: paint via to_vello_cached_with_text_engine (the cached production walker, re-adding the variant R1068 dropped) and measure via compute_layout_with_text_measure (compute_paint_scene live + pure mirror + RPC producer; app.rs live + screenshot paint). Default-off (env unset) is byte-identical parley paint+measure, 0 regression. The R1070.1 caret-divergence constraint is resolved by a new TextNode.caret_bearing marker that view_field sets on editable text: it is folded into the shared eligibility SSOT self_hosted_text_eligible so BOTH paint and measure exclude caret-bearing leaves (an editable field's caret/selection/find/bracket/preedit rects all derive from one parley Layout whose advances §5.37 need not match). The marker is also folded into the Scene::Text paint_hash so two leaves differing only in which shaper paints them never share a cached fragment. wire-both-or-neither holds by construction: one engine + one eligibility predicate drive both arms.",
+      "publishable_changes_bullets": [
+        "TextNode.caret_bearing marker (pinion-core) + builder + Scene::Text paint_hash fold (cache coherence)",
+        "self_hosted_text_eligible gains !caret_bearing; TextMeasure::measure_text + NodeContext::Text thread it -> both arms exclude editable text via one SSOT",
+        "to_vello_cached_with_text_engine: cached production paint variant threading the engine through to_vello_cached_inner; to_vello_cached delegates with None (byte-identical)",
+        "view_field marks its editable text node caret_bearing (caret/selection stay parley-aligned)",
+        "ShellCore.text_engine: Option<SelfHostedTextEngine> built by env-gated build_text_engine_from_env (or injected via set_text_engine); text_cache_and_engine disjoint borrow; text_measure_override helper",
+        "compute_paint_scene (live internal + pure mirror + RPC producer) routes measure via compute_layout_with_text_measure; app.rs live + screenshot paint via to_vello_cached_with_text_engine"
+      ],
+      "publishable_verification_bullets": [
+        "new unit tests green: caret_bearing paint_hash fold (core) / eligibility both-arms + measure deferral (runtime text_engine) / cached engine variant + caret-decline paint (runtime paint_adapter) / NodeContext threading defers caret_bearing (runtime layout) / view_field marker (widget-paint) / shell measure-wiring + caret exclusion (shell substrate)",
+        "realgpu lavapipe 6/6 ZERO-FLAKE incl. new self_hosted_cached_arm_reaches_pixels (cached production path -> real pixels, run 3x)",
+        "cargo test --workspace -j2 (vello): exit 0, 0 failed; pinion-shell 78 lib + integration suites green",
+        "clippy --workspace --all-targets vello: 0 warn (render_window 1-line-over gets the sibling too_many_lines allow); rustfmt clean",
+        "non-vello build green (cargo check -p pinion-runtime -p pinion-rpc -p pinion-tui): ungated layout never names the vello engine (R1067 decoupling holds)",
+        "validate T1=0 (entries 1088->1089, sections 71->72 with +§5.37.14)"
+      ],
+      "publishable_impact_refs": [
+        "5.37.14",
+        "5.37.13",
+        "5.16",
+        "5.22"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R1073+ engine widening: route styled-run colour / multi-line wrap (render_lines) / decoration through §5.37 (today parley via eligibility)",
+        "caret/hit-test unify onto §5.37 so editable text can route through the engine -- the eventual lift of the caret_bearing exclusion (editor-critical coherence the two-layout split leaves open)",
+        "live multi-window GUI of the engine is HW-gated (VELLO-002 GL hang); pixels proven headless via lavapipe only",
+        "cross-frame glyph-atlas GPU texture cache (atlas re-built per paint) / instanced glyph-quad batch (Vello API absent)",
+        "atlas inter-glyph gutter for fractional/HiDPI bleed (R1066 carry) / per-(atlas,colour) luminance-mask opt"
       ]
     },
     "R232": {
