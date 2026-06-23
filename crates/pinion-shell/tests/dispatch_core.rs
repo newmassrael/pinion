@@ -4676,4 +4676,81 @@ mod r1071_multi_window_key_dispatch {
         assert!(core.is_key_dispatch_window(pinion_runtime::DEFAULT_WINDOW));
         assert!(!core.is_key_dispatch_window("pane-0"));
     }
+
+    #[test]
+    fn dock_does_not_bounce_when_close_moves_focus() {
+        // R1073 PR-27.4. The blind spot R1071 left open: the FIRST dispatch of a
+        // toggle press closes the focused window (dock), which moves OS focus to
+        // the successor window — so a stray re-delivery of the SAME physical
+        // press now lands on the NOW-focused window and slips through R1071's
+        // live-focus gate, firing a second time (dock -> undock bounce). The
+        // press-owner snapshot gates it: the press began on `pane-0`, so a
+        // re-delivery to `main` is dropped even though `main` is now focused.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+        APPLY_KEY_RETURNS.store(true, Ordering::SeqCst); // binding consumes the toggle
+
+        let mut core = ShellCore::<TestView>::new();
+        // The pane window holds OS focus; its press is admitted and toggles
+        // (dock). The owner of this Enter press is pinned to `pane-0`.
+        core.note_os_focus("pane-0", true);
+        assert!(core.key_press_for_window("pane-0", "Enter", false));
+        assert_eq!(toggle_count(), 1, "the focused pane's press toggles (dock)");
+
+        // The dock closed `pane-0`; OS focus moves to the successor `main`
+        // window (the close-driven handoff). Either winit ordering is modelled
+        // by the explicit blur(old)+focus(new) pair.
+        core.note_os_focus("pane-0", false);
+        core.note_os_focus(pinion_runtime::DEFAULT_WINDOW, true);
+
+        // The SAME physical press (no keyup between) is re-delivered to the
+        // now-focused successor window. R1071's gate would admit it (main IS
+        // focused); the owner snapshot drops it (the press began on pane-0).
+        assert!(
+            !core.key_press_for_window(pinion_runtime::DEFAULT_WINDOW, "Enter", false),
+            "a press re-delivered to the close-handoff successor window is gated out",
+        );
+        assert_eq!(
+            toggle_count(),
+            1,
+            "one physical press = one toggle even when the dispatch's own \
+             window-close moved OS focus to the delivery target",
+        );
+    }
+
+    #[test]
+    fn owner_clears_on_release_so_a_genuine_new_press_dispatches() {
+        // R1073 PR-27.4. The press-owner snapshot must not strand: a keyup ends
+        // the physical press, so a genuinely new press of the same key at the
+        // window that legitimately holds focus must dispatch again. Without the
+        // release-clear the snapshot would swallow all later presses at any
+        // other window.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+        APPLY_KEY_RETURNS.store(true, Ordering::SeqCst);
+
+        let mut core = ShellCore::<TestView>::new();
+        core.note_os_focus("pane-0", true);
+        assert!(core.key_press_for_window("pane-0", "Enter", false));
+        assert_eq!(toggle_count(), 1);
+
+        // The dock closed pane-0 and focus moved to main; the keyup is delivered
+        // to whatever window has focus now (the successor) — window-agnostic
+        // clear still releases the owner pinned to the destroyed pane-0.
+        core.note_os_focus("pane-0", false);
+        core.note_os_focus(pinion_runtime::DEFAULT_WINDOW, true);
+        core.note_key_state("Enter", false); // keyup ends the physical press
+
+        // A genuinely new press of Enter at the now-focused main window is a
+        // fresh rising edge — admitted.
+        assert!(
+            core.key_press_for_window(pinion_runtime::DEFAULT_WINDOW, "Enter", false),
+            "after the keyup clears the owner, a new press at the focused window dispatches",
+        );
+        assert_eq!(
+            toggle_count(),
+            2,
+            "the post-release press is a genuine new toggle"
+        );
+    }
 }

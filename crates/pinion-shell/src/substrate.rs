@@ -494,6 +494,38 @@ pub struct ShellCore<V: WidgetView> {
     /// held-key chord cache — it mirrors a winit/OS fact the key event itself
     /// does not carry, never scene data (§2 #7 unaffected).
     os_focused_window: Option<String>,
+
+    /// R1073 PR-27.4 §5.39 §5.16 §5.35 — per-key snapshot of the window that
+    /// owned each in-flight physical press's rising edge: keyed by the
+    /// canonical W3C key string ([`Self::note_key_state`]'s vocabulary),
+    /// valued by the OS-focused window the press was first admitted at. Set on
+    /// the admitted rising edge ([`Self::admit_key_press`]) and cleared on the
+    /// key's release edge ([`Self::note_key_state`] with `pressed == false`).
+    ///
+    /// This is the *press-time focus snapshot* that closes the R1071 gate's
+    /// blind spot (the sprag dock/undock double-toggle that survived R1071): a
+    /// toggle-class press whose FIRST dispatch closes the focused window moves
+    /// OS focus to the successor window, so a stray re-delivery of the SAME
+    /// physical press to that NOW-focused window passed R1071's live-focus gate
+    /// and fired a second time. Pinning the owner at the rising edge means
+    /// every later delivery of the press is gated against the window it began
+    /// on, not against the focus its own side-effect just moved — so a window
+    /// closing mid-dispatch can no longer re-admit the press.
+    ///
+    /// Lifecycle is tied to the press (release-clear), NOT to focus: blur /
+    /// [`CoreShell::clear_held_keys`](pinion_runtime::CoreShell::clear_held_keys)
+    /// deliberately does NOT clear it, so the gate is robust to either winit
+    /// focus-event ordering on the close-driven handoff. The release-clear is
+    /// keyed by the key string alone (window-agnostic), so a keyup delivered to
+    /// the successor window still clears an owner whose source window has been
+    /// destroyed. A keyup that reaches no window at all (the browser
+    /// missed-keyup convention) is the one residual that can strand an owner
+    /// until that key is next pressed-and-released anywhere — the same trust
+    /// the held-key cache already places in an eventual keyup.
+    ///
+    /// Out-of-band shell state alongside [`Self::os_focused_window`]; never
+    /// scene data (§2 #7 unaffected).
+    key_press_owner: HashMap<String, String>,
 }
 
 /// R763 §5.36 §5.22 — shell-owned state of an active pointer text
@@ -626,6 +658,7 @@ impl<V: WidgetView> ShellCore<V> {
             focusable_tags_per_window: HashMap::new(),
             text_select_drag: None,
             os_focused_window: None,
+            key_press_owner: HashMap::new(),
         };
         // (R1020 §5.39) Seed the focus enumeration from the binding's first
         // view — the scene-derived source the per-frame paint refresh uses —
@@ -2528,6 +2561,16 @@ impl<V: WidgetView> ShellCore<V> {
     /// shells are pure edge producers with zero policy copies (§2 #6);
     /// this is the winit-side forwarding funnel.
     pub fn note_key_state(&mut self, key: &str, pressed: bool) {
+        // R1073 PR-27.4 §5.39 §5.16 §5.35 — the release edge ends the physical
+        // press, so drop its [`Self::key_press_owner`] snapshot: the next
+        // `Pressed` for this key is a genuine new press whose gate must be
+        // re-decided against the live OS focus, not the prior press's owner.
+        // Window-agnostic on purpose — a keyup delivered to whatever window
+        // grabbed focus still clears an owner whose source window was closed by
+        // the press's own dispatch.
+        if !pressed {
+            self.key_press_owner.remove(key);
+        }
         self.core.note_key_state(key, pressed);
     }
 
@@ -2609,14 +2652,61 @@ impl<V: WidgetView> ShellCore<V> {
         }
     }
 
+    /// R1073 PR-27.4 §5.39 §5.16 §5.35 — the full key-dispatch admission gate:
+    /// decide whether a `Pressed` for `key` arriving at `window_id` may
+    /// dispatch, and pin the press's owner window on its admitted rising edge.
+    /// The single source of truth both the live GUI
+    /// (`AppShell::window_event`'s `KeyboardInput` arm) and the per-window seam
+    /// ([`Self::key_press_for_window`]) consult, so they can never diverge.
+    ///
+    /// Two regimes, distinguished by whether the key already has an in-flight
+    /// press owner ([`Self::key_press_owner`]):
+    ///
+    /// - **Rising edge** (no owner): admit iff `window_id` holds OS focus
+    ///   ([`Self::is_key_dispatch_window`], which fails OPEN when focus is
+    ///   unknown — single-window startup / focus-eventless platforms). On
+    ///   admit, snapshot `window_id` as the press owner.
+    /// - **Continuation** (owner exists — auto-repeat, or a stray re-delivery
+    ///   of the same physical press): admit iff the press arrives at its OWN
+    ///   owner window AND that window still holds OS focus. The conjunction
+    ///   catches BOTH multi-window re-delivery shapes with one rule:
+    ///   - a stray to the now-UNFOCUSED *source* window (R1071's case) fails
+    ///     the live-focus half (focus moved to the torn-off window), and
+    ///   - a stray to the now-FOCUSED *successor* window (R1071's blind spot,
+    ///     the close-during-dispatch double-toggle this round closes) fails the
+    ///     owner half (`window_id` is not the window the press began on).
+    ///
+    /// The owner is released only on the key's keyup ([`Self::note_key_state`]
+    /// with `pressed == false`), never on blur — so the gate is robust to
+    /// either winit focus-event ordering during the close-driven handoff.
+    /// Returns whether the press was ADMITTED (it then reaches the widget arc
+    /// regardless of whether a widget consumes it).
+    pub fn admit_key_press(&mut self, window_id: &str, key: &str) -> bool {
+        let admit = match self.key_press_owner.get(key) {
+            Some(owner) => owner == window_id && self.is_key_dispatch_window(window_id),
+            None => self.is_key_dispatch_window(window_id),
+        };
+        if admit {
+            // Pin the owner on the admitted rising edge only; a continuation
+            // (owner already present) leaves the snapshot untouched so a
+            // window-close handoff cannot re-point it at the successor window.
+            self.key_press_owner
+                .entry(key.to_owned())
+                .or_insert_with(|| window_id.to_owned());
+        }
+        admit
+    }
+
     /// R1071 PR-27 §5.39 §5.16 §5.35 — per-window named-key (shortcut)
     /// injection, the keyboard peer of the per-window pointer entries
-    /// ([`Self::mouse_pressed_for_window`] et al.). Applies the OS-focus gate
-    /// ([`Self::is_key_dispatch_window`]) then routes `key` through the
-    /// named-key arc ([`Self::handle_named_key_inner`]) carrying `repeat`.
-    /// Returns whether the gate ADMITTED the press (`true` = dispatched to the
-    /// widget arc regardless of whether a widget consumed it; `false` = gated
-    /// out because the press arrived at a non-focused window).
+    /// ([`Self::mouse_pressed_for_window`] et al.). Applies the full dispatch
+    /// gate ([`Self::admit_key_press`] — OS focus + R1073 press-owner snapshot)
+    /// then routes `key` through the named-key arc
+    /// ([`Self::handle_named_key_inner`]) carrying `repeat`. Returns whether the
+    /// gate ADMITTED the press (`true` = dispatched to the widget arc
+    /// regardless of whether a widget consumed it; `false` = gated out because
+    /// the press arrived at a non-focused window, or is a stray re-delivery of
+    /// a press already owned by another window).
     ///
     /// This is the substrate seam that makes the multi-window toggle
     /// double-dispatch reproducible and regression-testable headlessly — a
@@ -2630,7 +2720,7 @@ impl<V: WidgetView> ShellCore<V> {
     /// modifier state, so the real path reads the cache too); a test sets them
     /// via [`Self::set_modifiers`] before driving a modifier-bearing shortcut.
     pub fn key_press_for_window(&mut self, window_id: &str, key: &str, repeat: bool) -> bool {
-        if !self.is_key_dispatch_window(window_id) {
+        if !self.admit_key_press(window_id, key) {
             return false;
         }
         self.handle_named_key_inner(key, repeat);

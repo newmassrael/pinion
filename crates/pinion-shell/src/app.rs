@@ -1168,6 +1168,62 @@ impl<V: WidgetView> AppShell<V> {
         }
     }
 
+    /// R1073 PR-27.4 §5.39 §5.16 §5.35 — body of the
+    /// `WindowEvent::KeyboardInput` arm, extracted to keep `window_event`
+    /// under the workspace `clippy::too_many_lines` ceiling (the app.rs split
+    /// convention shared with [`Self::handle_mouse_button`] /
+    /// `handle_file_dnd`). `spec_id` is the addressed window's canonical
+    /// [`WindowSpec::id`](crate::WindowSpec).
+    fn handle_keyboard_input(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        spec_id: &str,
+        event: &winit::event::KeyEvent,
+    ) {
+        // R882 §5.39 §5.35 — held-key absolute state: BOTH edges feed the
+        // substrate's chord cache (pre-R882 the shell dropped `Released`
+        // entirely, so no "is Space held" fact existed). The winit `Key`
+        // converts to the same canonical string vocabulary the key dispatch
+        // uses (`named_key_str` — the §5.41 winit-free boundary); auto-repeat
+        // re-sends `Pressed`, which is idempotent against the cache. Dispatch
+        // stays press-edge-only.
+        let pressed = event.state == ElementState::Pressed;
+        // R1073 PR-27.4 §5.39 §5.16 §5.35 — resolve the canonical W3C key
+        // string ONCE (the §5.41 winit-free vocabulary) so the chord cache,
+        // the dispatch gate, and the press-owner snapshot all key on the
+        // identical string. `None` for keys with no canonical name (e.g. dead
+        // keys), which never bind an action.
+        let key_id: Option<&str> = match event.logical_key.as_ref() {
+            Key::Named(named) => named_key_str(named),
+            Key::Character(c) => Some(c),
+            _ => None,
+        };
+        if let Some(key_str) = key_id {
+            self.core.note_key_state(key_str, pressed);
+        }
+        // R1073 PR-27.4 §5.39 §5.16 §5.35 — dispatch gate, the SAME
+        // [`ShellCore::admit_key_press`] the per-window seam uses: act on a
+        // press only when it arrives at the window that owns the physical
+        // press (snapshotted at the press's rising edge) AND that window still
+        // holds OS focus. A stray re-delivery of one press mid-undock is
+        // dropped whether it lands on the now-unfocused source window (R1071)
+        // OR the now-focused successor window the closing window's own dispatch
+        // handed focus to (R1073 — the dock/undock double-toggle).
+        // `event.repeat` carries the OS auto-repeat flag to the binding (a
+        // toggle-class shortcut swallows it; text / nav keys keep repeating). A
+        // single-window binding always passes the gate (its one window owns
+        // every press and holds focus), so this is byte-identical to the
+        // pre-R1071 ungated dispatch for it.
+        let admit = pressed
+            && match key_id {
+                Some(key_str) => self.core.admit_key_press(spec_id, key_str),
+                None => self.core.is_key_dispatch_window(spec_id),
+            };
+        if admit {
+            self.handle_key_press(event_loop, &event.logical_key, event.repeat);
+        }
+    }
+
     /// R51.62 §5.40 — relay one winit `WindowEvent` to the
     /// `accesskit_winit::Adapter` (if attached).
     ///
@@ -1909,36 +1965,14 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
                 }
             }
             WindowEvent::KeyboardInput { event, .. } => {
-                // R882 §5.39 §5.35 — held-key absolute state: BOTH edges
-                // feed the substrate's chord cache (pre-R882 the shell
-                // dropped `Released` entirely, so no "is Space held"
-                // fact existed). The winit `Key` converts to the same
-                // canonical string vocabulary the key dispatch uses
-                // (`named_key_str` — the §5.41 winit-free boundary);
-                // auto-repeat re-sends `Pressed`, which is idempotent
-                // against the cache. Dispatch stays press-edge-only.
-                let pressed = event.state == ElementState::Pressed;
-                match event.logical_key.as_ref() {
-                    Key::Named(named) => {
-                        if let Some(key_str) = named_key_str(named) {
-                            self.core.note_key_state(key_str, pressed);
-                        }
-                    }
-                    Key::Character(c) => self.core.note_key_state(c, pressed),
-                    _ => {}
-                }
-                // R1071 PR-27 §5.39 §5.16 §5.35 — focused-window gate: act on
-                // a press only when it arrives at the OS-focused window, so a
-                // stray re-delivery of the same press to a now-unfocused
-                // window mid-undock does not toggle a second time. `event.repeat`
-                // carries the OS auto-repeat flag to the binding (a toggle-class
-                // shortcut swallows it; text / nav keys keep repeating). A
-                // single-window binding always passes the gate (its one window
-                // is the focused one), so this is byte-identical to the
-                // pre-R1071 ungated dispatch for it.
-                if pressed && self.core.is_key_dispatch_window(spec_id) {
-                    self.handle_key_press(event_loop, &event.logical_key, event.repeat);
-                }
+                // R1073 PR-27.4 §5.39 — extracted to `handle_keyboard_input`
+                // to keep this dispatcher under the workspace
+                // `clippy::too_many_lines` (100) ceiling (the app.rs split
+                // convention). `spec_id` borrows `self.windows`, so the
+                // `&mut self` helper needs an owned id (the file / mouse arcs
+                // do the same `to_owned()`).
+                let sid = spec_id.to_owned();
+                self.handle_keyboard_input(event_loop, &sid, &event);
             }
             // R56.2.a §5.13 §5.38 — IME composition events from the
             // platform input method (Wayland `text-input-v3`, X11
