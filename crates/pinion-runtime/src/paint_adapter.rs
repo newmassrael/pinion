@@ -2067,15 +2067,15 @@ fn stroke_rect(out: &mut VelloScene, r: Rect, border: Border, transform: Affine)
 ///
 /// This is necessary, not sufficient: [`paint_text_self_hosted`] additionally
 /// falls through to parley when the shaped text would not fit one line (soft
-/// wrap). Everything excluded here stays on the parley path. Layout / measure is
-/// parley regardless, so this scope never affects caret hit-testing.
+/// wrap). Everything excluded here stays on the parley path.
+///
+/// R1070 — a thin `TextNode`-shaped convenience over the eligibility SSOT
+/// [`crate::text_engine::self_hosted_text_eligible`], so the paint arm and the
+/// §5.37 measure arm share one definition of "eligible". Layout / measure picks
+/// the §5.37 box only when this same predicate holds, so paint and measure never
+/// disagree on which path renders a leaf.
 fn self_hosted_eligible(t: &TextNode) -> bool {
-    t.runs.is_empty()
-        && !t.content.contains('\n')
-        && matches!(t.style.text_align, pinion_core::style::TextAlign::Start)
-        && matches!(t.style.line_height, pinion_core::style::LineHeight::Normal)
-        && !t.style.decoration.underline
-        && !t.style.decoration.strikethrough
+    crate::text_engine::self_hosted_text_eligible(&t.content, &t.style, &t.runs)
 }
 
 /// R1068 §5.37 — paint an [`self_hosted_eligible`] `Scene::Text` leaf through the

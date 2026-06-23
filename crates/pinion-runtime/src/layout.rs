@@ -35,7 +35,7 @@
 
 use pinion_core::Scene;
 use pinion_core::scene::{
-    BoxNode, ContainerNode, ExternalNode, ImageNode, PathNode, Rect, ScrollAxis, TextNode,
+    BoxNode, ContainerNode, ExternalNode, ImageNode, PathNode, Rect, ScrollAxis, StyleRun, TextNode,
 };
 use pinion_core::style::{
     AlignItems, Display, FlexDirection, JustifyContent, LayoutStyle, SizeValue, TextStyle,
@@ -69,6 +69,37 @@ pub enum NodeContext {
         style: TextStyle,
         runs: Vec<pinion_core::scene::StyleRun>,
     },
+}
+
+/// R1070 §5.37 — measure-override seam for the opt-in self-hosted text engine.
+///
+/// `layout` is feature-ungated, so it must not name the `vello`-gated
+/// [`crate::text_engine::SelfHostedTextEngine`]; this trait is the decoupling
+/// boundary — the same `enumerate ⊥ parse` layering R1067 drew between
+/// `pinion-platform-fonts` (discovery) and `text_engine` (selection). The engine
+/// implements it so a single-style `Scene::Text` leaf can be *sized* by the §5.37
+/// engine, keeping the measured box self-consistent with the §5.37 paint arm
+/// ([`crate::paint_adapter::to_vello_with_text_engine`]) — closing the R1068
+/// paint-only gap where a string wider than the §5.37 advance overflowed the
+/// parley measured box.
+///
+/// An absent override (`None` passed to [`compute_layout_with_text_measure`]) or a
+/// `None` return is byte-identical to the pre-R1070 parley measure.
+pub trait TextMeasure {
+    /// Measure a `Scene::Text` leaf, or return `None` to defer to the parley
+    /// measure (every ineligible / declining case).
+    ///
+    /// `max_width` is taffy's resolved `Definite` available width (`None` for an
+    /// unbounded min-/max-content probe). The returned `(width, height)` is the
+    /// §5.37 line box in unrounded px; the caller applies the same integer ceil
+    /// snapping it applies to the parley measure.
+    fn measure_text(
+        &self,
+        content: &str,
+        style: &TextStyle,
+        runs: &[StyleRun],
+        max_width: Option<u32>,
+    ) -> Option<(f32, f32)>;
 }
 
 /// Compute the layout of `scene` against the given viewport extents.
@@ -125,7 +156,36 @@ pub fn compute_layout_with_scroll_dirty(
     viewport_w: u32,
     viewport_h: u32,
 ) -> bool {
-    compute_layout_inner(scene, cache, viewport_w, viewport_h, None)
+    compute_layout_inner(scene, cache, viewport_w, viewport_h, None, None)
+}
+
+/// R1070 §5.37 — variant of [`compute_layout_with_scroll_dirty`] that accepts an
+/// opt-in [`TextMeasure`] override.
+///
+/// When `text_measure` is `Some` and a `Scene::Text` leaf is eligible, the leaf
+/// is sized by the §5.37 self-hosted engine so the measured box registers with
+/// the §5.37 paint arm (real metric coherence: paint + measure self-consistent).
+/// Every other leaf — and `text_measure == None` — measures through parley
+/// exactly as [`compute_layout_with_scroll_dirty`], so passing `None` is
+/// byte-identical to it. Returns the same scroll-dirty bit.
+///
+/// This is the seam the shell wires the engine through (R1071+); the parley path
+/// stays the default everywhere else.
+///
+/// # Panics
+///
+/// Same conditions as [`compute_layout`] (taffy internal logic errors only,
+/// never on user-supplied scene shape).
+#[must_use]
+#[allow(clippy::cast_precision_loss)]
+pub fn compute_layout_with_text_measure(
+    scene: &mut Scene,
+    cache: &mut LayoutCache,
+    viewport_w: u32,
+    viewport_h: u32,
+    text_measure: Option<&dyn TextMeasure>,
+) -> bool {
+    compute_layout_inner(scene, cache, viewport_w, viewport_h, None, text_measure)
 }
 
 /// R55.G.2 §5.45 — extension point for laying out a `Scene::Scroll`
@@ -158,6 +218,7 @@ fn compute_layout_inner(
     viewport_w: u32,
     viewport_h: u32,
     unbounded: Option<ScrollAxis>,
+    text_measure: Option<&dyn TextMeasure>,
 ) -> bool {
     let width_unbounded = matches!(unbounded, Some(ScrollAxis::Horizontal | ScrollAxis::Both));
     let height_unbounded = matches!(unbounded, Some(ScrollAxis::Vertical | ScrollAxis::Both));
@@ -257,28 +318,47 @@ fn compute_layout_inner(
                         AvailableSpace::Definite(w) if w.is_finite() && w >= 0.0 => Some(w as u32),
                         _ => None,
                     };
-                    let layout = cache.layout_with_runs(content, style, runs, max_width);
-                    // R51.1 §5.12 — capture line count on the last
-                    // measure probe per node id; taffy may call this
-                    // closure multiple times during flex resolution
-                    // (MinContent / MaxContent / Definite). The final
-                    // call uses the resolved Definite width, which is
-                    // also what `apply` would re-measure against, so
-                    // overwriting on every call is correct.
-                    #[allow(clippy::cast_possible_truncation)]
-                    let line_count = layout.lines().count() as u32;
-                    text_lines.insert(node_id, line_count);
-                    // R47.7.6 — integer pixel snapping. parley returns
-                    // sub-pixel f32 widths; without `ceil` the value
-                    // oscillates `77.0`/`77.8` between adjacent
-                    // viewport widths, producing a visible 1-px text
-                    // jitter on mouse-drag resize. `ceil` rounds toward
-                    // "fits inside taffy's bound" so the result snaps
-                    // monotonically and the cached `rect.w` stays stable
-                    // across consecutive frames at the same content.
-                    TaffySize {
-                        width: layout.width().ceil(),
-                        height: layout.height().ceil(),
+                    // R1070 §5.37 — opt-in self-hosted measure. A supplied engine
+                    // override sizes an eligible single-style leaf by the §5.37
+                    // metrics so the measured box registers with the §5.37 paint
+                    // arm (closing the R1068 paint-only gap). `None` — no override,
+                    // ineligible, or a single line that would soft-wrap — is the
+                    // unchanged parley measure, so `text_measure == None` is
+                    // byte-identical to the pre-R1070 path.
+                    if let Some((w, h)) =
+                        text_measure.and_then(|tm| tm.measure_text(content, style, runs, max_width))
+                    {
+                        // The §5.37 arm renders exactly one line by construction.
+                        text_lines.insert(node_id, 1);
+                        // R47.7.6 integer pixel snapping (see the parley branch).
+                        TaffySize {
+                            width: w.ceil(),
+                            height: h.ceil(),
+                        }
+                    } else {
+                        let layout = cache.layout_with_runs(content, style, runs, max_width);
+                        // R51.1 §5.12 — capture line count on the last
+                        // measure probe per node id; taffy may call this
+                        // closure multiple times during flex resolution
+                        // (MinContent / MaxContent / Definite). The final
+                        // call uses the resolved Definite width, which is
+                        // also what `apply` would re-measure against, so
+                        // overwriting on every call is correct.
+                        #[allow(clippy::cast_possible_truncation)]
+                        let line_count = layout.lines().count() as u32;
+                        text_lines.insert(node_id, line_count);
+                        // R47.7.6 — integer pixel snapping. parley returns
+                        // sub-pixel f32 widths; without `ceil` the value
+                        // oscillates `77.0`/`77.8` between adjacent
+                        // viewport widths, producing a visible 1-px text
+                        // jitter on mouse-drag resize. `ceil` rounds toward
+                        // "fits inside taffy's bound" so the result snaps
+                        // monotonically and the cached `rect.w` stays stable
+                        // across consecutive frames at the same content.
+                        TaffySize {
+                            width: layout.width().ceil(),
+                            height: layout.height().ceil(),
+                        }
                     }
                 }
                 None => TaffySize::ZERO,
@@ -291,7 +371,10 @@ fn compute_layout_inner(
     // content (build also stops at Scroll), so any Scroll in the
     // tree now needs its content re-entered with its own taffy
     // pass. Content rects come out in scroll-local coordinates.
-    lay_out_scroll_contents(scene, cache);
+    // R1070 §5.37 — the same `text_measure` override flows into scrolled
+    // content so a text leaf eligible for the §5.37 engine inside a Scroll is sized
+    // by the engine too.
+    lay_out_scroll_contents(scene, cache, text_measure);
     // R55.G.5 §5.45 — automatic max-bound write. The content's
     // post-layout rect carries the true intrinsic size; pushing it
     // into the attached `ScrollState` here retires the pre-R55.G.5
@@ -313,11 +396,15 @@ fn compute_layout_inner(
 /// scroll's `viewport`. Recursion is handled by the inner
 /// [`compute_layout_inner`] call's own tail invocation, so nested
 /// Scrolls naturally cascade.
-fn lay_out_scroll_contents(scene: &mut Scene, cache: &mut LayoutCache) {
+fn lay_out_scroll_contents(
+    scene: &mut Scene,
+    cache: &mut LayoutCache,
+    text_measure: Option<&dyn TextMeasure>,
+) {
     match scene {
         Scene::Container(c) => {
             for child in &mut c.children {
-                lay_out_scroll_contents(child, cache);
+                lay_out_scroll_contents(child, cache, text_measure);
             }
         }
         Scene::Scroll(s) => {
@@ -331,7 +418,8 @@ fn lay_out_scroll_contents(scene: &mut Scene, cache: &mut LayoutCache) {
             // pass's `update_scroll_state_bounds` walks the same
             // ScrollState (parent-Scroll) after this returns, so the
             // outer accumulator is the canonical source of truth.
-            let _ = compute_layout_inner(s.content.as_mut(), cache, vw, vh, Some(axis));
+            let _ =
+                compute_layout_inner(s.content.as_mut(), cache, vw, vh, Some(axis), text_measure);
         }
         _ => {}
     }
@@ -1826,5 +1914,97 @@ mod tests {
         };
         assert_eq!(extract_w(&none_scene), extract_w(&some_auto_scene));
         assert_eq!(extract_w(&none_scene), 140, "intrinsic 140 preserved");
+    }
+
+    /// R1070 §5.37 — forcing consumer for the measure arm. With the self-hosted
+    /// engine supplied, an eligible single-style `Scene::Text` leaf is sized by
+    /// the §5.37 engine, NOT by parley: the measured box width equals the §5.37
+    /// shaped advance (ceil-snapped). The §5.37 paint arm declines whenever
+    /// `advance > rect.w`, so a box this wide guarantees the paint arm renders the
+    /// single line *inside* the box — zero overflow. This closes the R1068
+    /// paint-only gap where measure stayed parley and a string wider than the
+    /// §5.37 advance could overflow the parley box. `compute_layout` (no override)
+    /// is unchanged.
+    #[cfg(feature = "vello")]
+    #[test]
+    #[allow(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "advance (asserted > 0) / rect.w are small px values — exact in the f32/u32 round-trip"
+    )]
+    fn self_hosted_measure_box_registers_with_paint_advance() {
+        use crate::text_engine::SelfHostedTextEngine;
+        use pinion_text_font::{Font, shape_paragraph_with_fallback};
+
+        const NOTO: &[u8] =
+            include_bytes!("../../pinion-text-font/tests/fonts/NotoSans-Regular.ttf");
+        let font = Font::from_bytes(NOTO.to_vec()).expect("parse NotoSans fixture");
+        let px = 18.0_f32;
+        // The exact §5.37 advance the paint arm shapes; its decline test is
+        // `advance > rect.w`, so the measured box must be at least this wide.
+        let advance = shape_paragraph_with_fallback(&[&font], "Measure", px).advance;
+        let expected_w = advance.ceil() as u32;
+        assert!(
+            advance > 0.0,
+            "ink-bearing text shapes to a positive advance"
+        );
+
+        let engine = SelfHostedTextEngine::from_font(font);
+        let make_scene = || {
+            // Start-aligned flex row in a viewport far wider than the text, so the
+            // leaf measures at its intrinsic single-line size (no wrap pressure).
+            let text = Scene::Text(TextNode::styled(
+                "Measure",
+                Rect::default(),
+                TextStyle::new().with_size_px(18),
+            ));
+            Scene::Container(
+                ContainerNode::new(vec![text])
+                    .with_layout(LayoutStyle::new().flex(FlexDirection::Row)),
+            )
+        };
+        let measured = |scene: &Scene| -> u32 {
+            let Scene::Container(c) = scene else {
+                panic!("container")
+            };
+            let Scene::Text(t) = &c.children[0] else {
+                panic!("text")
+            };
+            t.rect.w
+        };
+
+        // §5.37 measure: the box width equals the §5.37 advance (ceil), proving the
+        // override took effect (the leaf is sized by §5.37, not by parley).
+        let mut some_scene = make_scene();
+        let mut cache_some = LayoutCache::new();
+        let _ = compute_layout_with_text_measure(
+            &mut some_scene,
+            &mut cache_some,
+            800,
+            200,
+            Some(&engine),
+        );
+        let some_w = measured(&some_scene);
+        assert_eq!(
+            some_w, expected_w,
+            "the §5.37 measured box width must equal the §5.37 shaped advance (ceil)"
+        );
+        // Coherence: the paint arm's decline test `advance > rect.w` is false, so it
+        // paints the single §5.37 line inside the box — zero overflow.
+        assert!(
+            advance <= some_w as f32,
+            "the §5.37 paint advance ({advance}) must fit the §5.37 measured box ({some_w})"
+        );
+
+        // Regression: with no override the leaf measures through parley exactly as
+        // before (`compute_layout` threads `None`) — a non-zero parley box.
+        let mut none_scene = make_scene();
+        let mut cache_none = LayoutCache::new();
+        compute_layout(&mut none_scene, &mut cache_none, 800, 200);
+        assert!(
+            measured(&none_scene) > 0,
+            "the parley measure path is unchanged and still produces a non-zero box"
+        );
     }
 }

@@ -17,7 +17,10 @@
 //! paint arm ([`crate::paint_adapter::to_vello_with_text_engine`]) consumes a
 //! [`SelfHostedTextEngine`] built from it; the parley path stays the default.
 
-use pinion_text_font::Font;
+use crate::layout::TextMeasure;
+use pinion_core::scene::StyleRun;
+use pinion_core::style::{LineHeight, TextAlign, TextStyle};
+use pinion_text_font::{Font, shape_paragraph_with_fallback};
 use std::path::PathBuf;
 
 /// R1068 §5.37 — a self-hosted text engine handle that caches the parsed
@@ -61,6 +64,116 @@ impl SelfHostedTextEngine {
     #[must_use]
     pub fn font(&self) -> &Font {
         &self.font
+    }
+}
+
+/// R1070 §5.37 — eligibility SSOT, shared by the paint arm
+/// (`crate::paint_adapter::self_hosted_eligible`) and the measure arm
+/// ([`SelfHostedTextEngine`]'s [`TextMeasure`] impl).
+///
+/// These are the NECESSARY conditions for a `Scene::Text` leaf to be both
+/// *rendered and sized* by the §5.37 self-hosted engine so paint and measure
+/// register exactly — every one is a case the arm would otherwise diverge from
+/// parley:
+///
+/// - **single style** (`runs` empty) — styled runs are the multi-style step;
+/// - **no hard line break** (`'\n'`) — the arm is one line, not a paragraph;
+/// - **default `Start` alignment** — the arm pens from the box left, so Center /
+///   End would shift versus parley;
+/// - **`Normal` line height** — the arm's baseline matches parley's natural line
+///   box only in `Normal` mode; a fixed / multiplied height moves parley's
+///   baseline by leading the arm does not model;
+/// - **undecorated** — underline / strikethrough are not drawn by the arm.
+///
+/// Necessary, not sufficient: both arms additionally decline a single line that
+/// would soft-wrap (see [`SelfHostedTextEngine::measure_text`] and
+/// `paint_text_self_hosted`). Everything excluded here stays on parley for BOTH
+/// measure and paint, so the two never disagree on which path renders a leaf.
+#[must_use]
+pub fn self_hosted_text_eligible(content: &str, style: &TextStyle, runs: &[StyleRun]) -> bool {
+    runs.is_empty()
+        && !content.contains('\n')
+        && matches!(style.text_align, TextAlign::Start)
+        && matches!(style.line_height, LineHeight::Normal)
+        && !style.decoration.underline
+        && !style.decoration.strikethrough
+}
+
+/// R1070 §5.37 — opt-in self-hosted MEASURE arm: size a single-style `Scene::Text`
+/// leaf by the §5.37 engine so its box registers with the §5.37 paint arm
+/// ([`crate::paint_adapter::to_vello_with_text_engine`]), closing the R1068
+/// paint-only gap where a string wider than the §5.37 advance overflowed the
+/// parley measured box.
+impl TextMeasure for SelfHostedTextEngine {
+    /// Returns `None` (defer to the parley measure — byte-identical to pre-R1070)
+    /// when the leaf is ineligible ([`self_hosted_text_eligible`]); the font is
+    /// malformed (`units_per_em` 0) or the size non-positive; nothing shapes
+    /// (empty content); or the single line would soft-wrap inside a bounded
+    /// `max_width`. That soft-wrap decline is the exact mirror of
+    /// `paint_text_self_hosted`'s — so whenever measure picks §5.37 the paint arm
+    /// also paints §5.37 (advance ≤ box, no overflow), and whenever measure defers
+    /// the paint arm declines too (advance > box). All-whitespace content shapes to
+    /// blank glyphs: measure sizes its whitespace advance while the paint arm
+    /// declines on no ink — harmless, since nothing inks to overflow.
+    ///
+    /// On the §5.37 path the box is `(advance, line_box_height)` where
+    /// `line_box_height = (ascender − descender + line_gap)·px/upem` — the same
+    /// `Normal` line box whose first baseline `(ascender + line_gap/2)·px/upem` the
+    /// paint arm pens at, so the ascent above and the descent + remaining
+    /// half-leading below fit the box exactly (full vertical coherence).
+    fn measure_text(
+        &self,
+        content: &str,
+        style: &TextStyle,
+        runs: &[StyleRun],
+        max_width: Option<u32>,
+    ) -> Option<(f32, f32)> {
+        if !self_hosted_text_eligible(content, style, runs) {
+            return None;
+        }
+        let font = &self.font;
+        // `units_per_em` is read from `head` at parse; 0 would be a malformed font.
+        let upem = f64::from(font.units_per_em());
+        if upem <= 0.0 {
+            return None;
+        }
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "font_size_px <= 2^24 px in practice — exact in f32"
+        )]
+        let px = style.font_size_px as f32;
+        if px <= 0.0 {
+            return None;
+        }
+        let shaped = shape_paragraph_with_fallback(&[font], content, px);
+        if shaped.glyphs.is_empty() {
+            return None;
+        }
+        // Soft-wrap decline mirror: a bounded box the single §5.37 line overflows is
+        // exactly what parley wraps to multiple lines — defer so the measured height
+        // reflects the wrap (and the paint arm, seeing advance > rect.w, also declines).
+        if let Some(w) = max_width {
+            #[allow(
+                clippy::cast_precision_loss,
+                reason = "max_width <= 2^24 px in practice — exact in f32"
+            )]
+            let bound = w as f32;
+            if shaped.advance > bound {
+                return None;
+            }
+        }
+        // §5.37 line box height from the font's own vertical metrics (descender is
+        // negative, so `ascender − descender + line_gap` is the full em box).
+        let line_box_height = (f64::from(font.ascender()) - f64::from(font.descender())
+            + f64::from(font.line_gap()))
+            * f64::from(px)
+            / upem;
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "a single line box height is a small positive px value — fits f32"
+        )]
+        let line_box_height = line_box_height as f32;
+        Some((shaped.advance, line_box_height))
     }
 }
 
