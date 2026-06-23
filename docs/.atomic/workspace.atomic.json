@@ -14231,6 +14231,50 @@
         "engine caches the Font, not the atlas (render_paragraph_atlased re-runs per paint); cross-frame GPU texture cache + per-(atlas,colour) luminance-mask + instanced quad remain on the seam carry."
       ]
     },
+    "R1069": {
+      "decision_summary": "R1069 §5.39 §5.16 PR-26 undock focus-FOLLOW (sprag): the keyboard-focus enumeration is derived from the DECLARED window topology (windows_signal), not the painted-window set alone, so a torn-off pane the binding has just declared but whose secondary window has not first-painted yet still contributes its focusables (derived from the pure view_for_window) — closing the reconcile-gap frame(s) where update_focusable_tags would drop a focus the binding placed on that pane (the undock focus-follow gap) and a one-shot focus_request would be consumed before the pane is enumerable. The fix lives in union_focusable_tags alone; focus_request / FocusManager / drain_focus_request are unchanged. Builds on R1064 PR-25 (click-to-focus union); single-window + steady-state byte-identical.",
+      "changes_bullets": [
+        "union_focusable_tags now folds the DECLARED window topology (windows_signal) — painted windows harvest their scene, declared-but-unpainted windows derive focusables from the pure view_for_window — not the painted-window set alone",
+        "New window_focusables(id): the harvested paint scene when the window painted (materialised, viewport-accurate), else the determined scene from V::view_for_window (pure per §6.3, no layout/viewport); the two agree once painted so harvest supersedes derivation with de-dup",
+        "New declared_window_ids(): reads V::windows_signal() under root_owner (the memoised signal the reconcile Effect subscribes and the dock tear-off mutates) — the declared topology is the SSOT the enumeration tracks AHEAD of paint",
+        "focus_request / FocusManager / drain_focus_request / refresh_window_focusables untouched: the dispatch-tail focus_set succeeds and every subsequent paint's declared-topology union keeps the pane enumerated, so update_focusable_tags never drops it — no pending mailbox, no frame-budget timer"
+      ],
+      "verification_bullets": [
+        "pinion-shell 75/0 lib (+3 r26_undock_focus_follow: declared-but-unpainted window contributes derived focusables / focus on a torn pane survives the primary-repaint gap / painted torn pane is not double-counted) + integration green (focus_scene_derived 4/0, pane_viewport_seam 6/0, click_focus_redraw 6/0, dispatch_core 137/0)",
+        "Single-window + multi-window steady-state byte-identical: windows_signal None -> declared set empty -> painted-only union (pre-R26 behaviour); all-declared-painted -> derivation empty -> painted harvest. Derivation runs ONLY during the undock reconcile gap",
+        "clippy --workspace --all-targets --features pinion-runtime/vello = 0 warn; rustfmt clean; mnemosyne validate-workspace T1=0",
+        "Acceptance (sprag undock): focus AUTO-FOLLOWS the torn pane with no extra click — the declared topology keeps it enumerated across the primary repaint that drops it from the dock (PR-25 gave click-to-focus; PR-26 gives auto-follow)"
+      ],
+      "impact_refs": [
+        "5.39",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "sprag-side PR-26 (sprag-native session, pinion must not edit it): route_key(ToggleDock) already calls focus_request::request(pane_tag) — the correct intent; with pinion honoring it across the window-creation race NO further sprag change is expected — verify live (undock, type immediately into the torn window without clicking)",
+        "§5.37 measure arm (metric coherence) shifts to R1070 — PR-26 took R1069 as the next interleaved consumer-forced seam (the R1064 PR-25 precedent interleaved seam rounds into the §5.37 campaign)"
+      ],
+      "publishable_decision_summary": "R1069 §5.39 §5.16 PR-26 undock focus-FOLLOW (sprag): the keyboard-focus enumeration is derived from the DECLARED window topology (windows_signal), not the painted-window set alone, so a torn-off pane the binding has just declared but whose secondary window has not first-painted yet still contributes its focusables (derived from the pure view_for_window) — closing the reconcile-gap frame(s) where update_focusable_tags would drop a focus the binding placed on that pane (the undock focus-follow gap) and a one-shot focus_request would be consumed before the pane is enumerable. The fix lives in union_focusable_tags alone; focus_request / FocusManager / drain_focus_request are unchanged. Builds on R1064 PR-25 (click-to-focus union); single-window + steady-state byte-identical.",
+      "publishable_changes_bullets": [
+        "union_focusable_tags now folds the DECLARED window topology (windows_signal) — painted windows harvest their scene, declared-but-unpainted windows derive focusables from the pure view_for_window — not the painted-window set alone",
+        "New window_focusables(id): the harvested paint scene when the window painted (materialised, viewport-accurate), else the determined scene from V::view_for_window (pure per §6.3, no layout/viewport); the two agree once painted so harvest supersedes derivation with de-dup",
+        "New declared_window_ids(): reads V::windows_signal() under root_owner (the memoised signal the reconcile Effect subscribes and the dock tear-off mutates) — the declared topology is the SSOT the enumeration tracks AHEAD of paint",
+        "focus_request / FocusManager / drain_focus_request / refresh_window_focusables untouched: the dispatch-tail focus_set succeeds and every subsequent paint's declared-topology union keeps the pane enumerated, so update_focusable_tags never drops it — no pending mailbox, no frame-budget timer"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-shell 75/0 lib (+3 r26_undock_focus_follow: declared-but-unpainted window contributes derived focusables / focus on a torn pane survives the primary-repaint gap / painted torn pane is not double-counted) + integration green (focus_scene_derived 4/0, pane_viewport_seam 6/0, click_focus_redraw 6/0, dispatch_core 137/0)",
+        "Single-window + multi-window steady-state byte-identical: windows_signal None -> declared set empty -> painted-only union (pre-R26 behaviour); all-declared-painted -> derivation empty -> painted harvest. Derivation runs ONLY during the undock reconcile gap",
+        "clippy --workspace --all-targets --features pinion-runtime/vello = 0 warn; rustfmt clean; mnemosyne validate-workspace T1=0",
+        "Acceptance (sprag undock): focus AUTO-FOLLOWS the torn pane with no extra click — the declared topology keeps it enumerated across the primary repaint that drops it from the dock (PR-25 gave click-to-focus; PR-26 gives auto-follow)"
+      ],
+      "publishable_impact_refs": [
+        "5.39",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "sprag-side PR-26 (sprag-native session, pinion must not edit it): route_key(ToggleDock) already calls focus_request::request(pane_tag) — the correct intent; with pinion honoring it across the window-creation race NO further sprag change is expected — verify live (undock, type immediately into the torn window without clicking)",
+        "§5.37 measure arm (metric coherence) shifts to R1070 — PR-26 took R1069 as the next interleaved consumer-forced seam (the R1064 PR-25 precedent interleaved seam rounds into the §5.37 campaign)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
