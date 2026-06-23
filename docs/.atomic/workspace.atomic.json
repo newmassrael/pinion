@@ -13829,6 +13829,64 @@
         "(R1063 carry retained) production Scene::Text rewire to 5.37 / 5.37 production font-policy / per-glyph GlyphAtlas paint seam / styled-run per-span color RGBA"
       ]
     },
+    "R1065": {
+      "decision_summary": "R1065: §5.37.9 atlas-based per-glyph paint seam (RenderedGlyphs -> per-glyph quad fill); succeeds R1063 whole-paragraph blit; grayscale-mask->RGBA8 SSOT lift",
+      "changes_bullets": [
+        "shape: render_glyphs = render_glyphs_atlased(RenderedGlyphs) + composite (byte-equivalent)",
+        "PlacedGlyph + RenderedGlyphs made pub; render_paragraph_atlased added; lib re-exports",
+        "paint_adapter: mask_to_image_data SSOT (coverage R1063 + atlas = 2nd consumer); atlas_to_image_data",
+        "draw_atlased_glyphs: upload atlas once, fill per-glyph quad sampling sub-rect, nearest (no bleed)",
+        "paragraph_glyph_draws lifts the 2 identical paragraph GlyphDraw maps (render_paragraph + atlased)"
+      ],
+      "verification_bullets": [
+        "pinion-runtime 428/0 (+4 atlas: empty->None / per-pixel tint+dims / per-glyph one-fill-each)",
+        "realgpu lavapipe 2/2 (Hi -> per-glyph quads, 2 separated ink clusters, in-footprint, no bleed) 3x",
+        "pinion-text-font green: render_paragraph/lines/run byte-equivalent (composite path unchanged)",
+        "clippy --workspace --all-targets vello 0 warn / rustfmt clean / validate T1=0 (1078->1079)",
+        "3b self-grep: mask_to_image_data 2 consumers (lifted); no 3rd RGBA-tint site; draw_atlased singular"
+      ],
+      "impact_refs": [
+        "5.37.9",
+        "5.37",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "SEAM only: production Scene::Text NOT rewired (gated on §5.37 font-policy + caret/metric parity)",
+        "atlas image rebuilt per-paint; cross-frame GPU texture cache deferred (per-paragraph reuse done)",
+        "multi-font fallback handled (per-atlas brush); GPU texture-array binding = perf, deferred",
+        "draw_coverage (R1063 whole-paragraph blit) retained as bring-up; draw_atlased = production dir",
+        "live-window (non-headless) path unverified (VELLO-002 GL hang); headless render_to_rgba8 only",
+        "styled-run per-span color RGBA / per-glyph cross-frame cache / instanced quad batch (AAA 60fps)"
+      ],
+      "publishable_decision_summary": "R1065: §5.37.9 atlas-based per-glyph paint seam (RenderedGlyphs -> per-glyph quad fill); succeeds R1063 whole-paragraph blit; grayscale-mask->RGBA8 SSOT lift",
+      "publishable_changes_bullets": [
+        "shape: render_glyphs = render_glyphs_atlased(RenderedGlyphs) + composite (byte-equivalent)",
+        "PlacedGlyph + RenderedGlyphs made pub; render_paragraph_atlased added; lib re-exports",
+        "paint_adapter: mask_to_image_data SSOT (coverage R1063 + atlas = 2nd consumer); atlas_to_image_data",
+        "draw_atlased_glyphs: upload atlas once, fill per-glyph quad sampling sub-rect, nearest (no bleed)",
+        "paragraph_glyph_draws lifts the 2 identical paragraph GlyphDraw maps (render_paragraph + atlased)"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-runtime 428/0 (+4 atlas: empty->None / per-pixel tint+dims / per-glyph one-fill-each)",
+        "realgpu lavapipe 2/2 (Hi -> per-glyph quads, 2 separated ink clusters, in-footprint, no bleed) 3x",
+        "pinion-text-font green: render_paragraph/lines/run byte-equivalent (composite path unchanged)",
+        "clippy --workspace --all-targets vello 0 warn / rustfmt clean / validate T1=0 (1078->1079)",
+        "3b self-grep: mask_to_image_data 2 consumers (lifted); no 3rd RGBA-tint site; draw_atlased singular"
+      ],
+      "publishable_impact_refs": [
+        "5.37.9",
+        "5.37",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "SEAM only: production Scene::Text NOT rewired (gated on §5.37 font-policy + caret/metric parity)",
+        "atlas image rebuilt per-paint; cross-frame GPU texture cache deferred (per-paragraph reuse done)",
+        "multi-font fallback handled (per-atlas brush); GPU texture-array binding = perf, deferred",
+        "draw_coverage (R1063 whole-paragraph blit) retained as bring-up; draw_atlased = production dir",
+        "live-window (non-headless) path unverified (VELLO-002 GL hang); headless render_to_rgba8 only",
+        "styled-run per-span color RGBA / per-glyph cross-frame cache / instanced quad batch (AAA 60fps)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
