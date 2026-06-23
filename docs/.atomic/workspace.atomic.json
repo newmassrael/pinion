@@ -13887,6 +13887,58 @@
         "styled-run per-span color RGBA / per-glyph cross-frame cache / instanced quad batch (AAA 60fps)"
       ]
     },
+    "R1066": {
+      "decision_summary": "R1066: §5.37 styled-run per-glyph colour for the atlas paint path (draw_atlased_glyphs_styled); one grayscale atlas, glyphs in many colours; uniform draw_atlased_glyphs now a wrapper",
+      "changes_bullets": [
+        "paint: draw_atlased_glyphs_styled(&[Color] per glyph) — 1 tinted image per distinct (atlas,colour)",
+        "draw_atlased_glyphs (uniform) now a thin wrapper -> styled with a uniform colour vec (fill body 1x)",
+        "atlas stays grayscale (shape colour-independent); colour applied at paint via per-colour tint",
+        "fewer colours than glyphs -> uncoloured tail dropped (defensive); nearest sampling kept (no bleed)"
+      ],
+      "verification_bullets": [
+        "pinion-runtime 430/0 (+2 styled CPU: 2-colour Hi one-fill-each / 1-colour tail-drop = 1 fill)",
+        "realgpu lavapipe 3/3 3x (Hi: H red entirely left of i blue = per-glyph colour distinct, no bleed)",
+        "uniform wrapper regression-clean (R1065 4 atlas tests pass through styled); pinion-shell green",
+        "clippy --workspace --all-targets vello 0 warn / rustfmt clean / validate T1=0 (1079->1080)",
+        "3b self-grep: fill body single-source in styled; with_quality/atlas tint not duplicated"
+      ],
+      "impact_refs": [
+        "5.37.9",
+        "5.37",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "SEAM only: not wired into production Scene::Text (gated on §5.37 font-policy, still un-formalized)",
+        "styled-run char->glyph->placed colour mapping is consumer job (production consumer absent)",
+        "per-(atlas,colour) = K tinted atlas images for K colours; alpha-mask + solid fill = future opt",
+        "cross-frame GPU texture cache deferred / instanced quad batch (Vello API lacks) / Scene::Text rewire"
+      ],
+      "publishable_decision_summary": "R1066: §5.37 styled-run per-glyph colour for the atlas paint path (draw_atlased_glyphs_styled); one grayscale atlas, glyphs in many colours; uniform draw_atlased_glyphs now a wrapper",
+      "publishable_changes_bullets": [
+        "paint: draw_atlased_glyphs_styled(&[Color] per glyph) — 1 tinted image per distinct (atlas,colour)",
+        "draw_atlased_glyphs (uniform) now a thin wrapper -> styled with a uniform colour vec (fill body 1x)",
+        "atlas stays grayscale (shape colour-independent); colour applied at paint via per-colour tint",
+        "fewer colours than glyphs -> uncoloured tail dropped (defensive); nearest sampling kept (no bleed)"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-runtime 430/0 (+2 styled CPU: 2-colour Hi one-fill-each / 1-colour tail-drop = 1 fill)",
+        "realgpu lavapipe 3/3 3x (Hi: H red entirely left of i blue = per-glyph colour distinct, no bleed)",
+        "uniform wrapper regression-clean (R1065 4 atlas tests pass through styled); pinion-shell green",
+        "clippy --workspace --all-targets vello 0 warn / rustfmt clean / validate T1=0 (1079->1080)",
+        "3b self-grep: fill body single-source in styled; with_quality/atlas tint not duplicated"
+      ],
+      "publishable_impact_refs": [
+        "5.37.9",
+        "5.37",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "SEAM only: not wired into production Scene::Text (gated on §5.37 font-policy, still un-formalized)",
+        "styled-run char->glyph->placed colour mapping is consumer job (production consumer absent)",
+        "per-(atlas,colour) = K tinted atlas images for K colours; alpha-mask + solid fill = future opt",
+        "cross-frame GPU texture cache deferred / instanced quad batch (Vello API lacks) / Scene::Text rewire"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
