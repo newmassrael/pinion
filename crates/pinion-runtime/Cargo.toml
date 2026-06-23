@@ -19,7 +19,12 @@ default = []
 # structural §5.37 → production-paint seam. Gated here because the conversion
 # returns a `peniko::ImageData` (vello type) and lives in the vello-only
 # paint_adapter module; non-GUI consumers never pull it.
-vello = ["dep:vello", "dep:pinion-text-font"]
+# R1067 §5.37.11 — `vello` additionally pulls `pinion-platform-fonts`, the OS
+# font-discovery layer that `text_engine::load_system_font` parses into a
+# §5.37 `Font` (the production font source). Gated with `pinion-text-font`
+# because the bridge's output type comes from that parser; a non-vello consumer
+# never needs a production font.
+vello = ["dep:vello", "dep:pinion-text-font", "dep:pinion-platform-fonts"]
 
 [dependencies]
 pinion-core = { path = "../pinion-core", version = "0.0.1" }
@@ -58,6 +63,12 @@ pinion-asset = { path = "../pinion-asset", version = "0.0.1" }
 # Optional + tied to the `vello` feature (the conversion targets a vello type),
 # so non-GUI / TUI / headless-non-GPU consumers never pull it.
 pinion-text-font = { path = "../pinion-text-font", version = "0.0.1", optional = true }
+# R1067 §5.37.11 — OS system-font discovery (the platform layer that feeds the
+# §5.37 in-memory font stack). `text_engine::load_system_font` discovers a
+# system font's bytes here, then parses them with `pinion-text-font`. Optional +
+# tied to the `vello` feature alongside the parser (a non-GUI consumer has no
+# production-paint path to need a system font).
+pinion-platform-fonts = { path = "../pinion-platform-fonts", version = "0.0.1", optional = true }
 
 [dev-dependencies]
 # R51.127 §5.41 — pull `pinion_core::test_fixtures::ButtonFixture` into

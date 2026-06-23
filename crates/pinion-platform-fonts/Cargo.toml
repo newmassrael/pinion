@@ -1,0 +1,21 @@
+[package]
+name = "pinion-platform-fonts"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1067 §5.37.11 — OS system-font discovery (the platform layer that feeds the §5.37 self-hosted text engine's in-memory font stack). Pure-std::fs enumeration of the OS's standard font directories → font-file bytes; the §5.37 engine's analogue of fontconfig / CoreText / DirectWrite enumeration. Linux implemented + verified; macOS / Windows are documented deferred stubs (need those OS CI runners, per the project's Mac/Win native deferral)."
+
+# §5.37.11 — pure platform layer: zero dependencies. Discovery is std::fs only
+# (no fontconfig C lib, no subprocess to `fc-match`) so the result is
+# deterministic given the filesystem and the crate stays pure-Rust per the
+# §5.37 "lifetime canonical, no black box" charter. Font *parsing* is NOT done
+# here — this layer returns raw bytes; `pinion-text-font::Font::from_bytes`
+# (consumed by `pinion-runtime`) is the parser. Keeping the parser dep out keeps
+# this crate as thin + OS-focused as its `pinion-platform-*` siblings
+# (clipboard / file-dialog / print / tray).
+[dependencies]
+
+[lints]
+workspace = true

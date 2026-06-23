@@ -4588,6 +4588,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "pinion-platform-fonts"
+version = "0.0.1"
+
+[[package]]
 name = "pinion-platform-print"
 version = "0.0.1"
 dependencies = [
@@ -4632,6 +4636,7 @@ dependencies = [
  "futures-executor",
  "pinion-asset",
  "pinion-core",
+ "pinion-platform-fonts",
  "pinion-text",
  "pinion-text-font",
  "taffy",

@@ -39,6 +39,8 @@ pub mod layout;
 pub mod paint_adapter;
 pub mod paint_cache_stats;
 pub mod render_fidelity;
+#[cfg(feature = "vello")]
+pub mod text_engine;
 pub mod window;
 
 pub use command::{
