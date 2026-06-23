@@ -1001,6 +1001,10 @@ pub fn atlas_to_image_data(atlas: &GlyphAtlas, color: Color) -> Option<ImageData
 /// (per [`Coverage`]: the top-left pixel lands at `(pen_x + left,
 /// pen_y + top)`). The image is drawn 1:1 (no scaling — it is already
 /// rasterised at the target px/em). A no-op for an empty mask.
+///
+/// Retained as the single-image alternative to the per-glyph
+/// [`draw_atlased_glyphs`]: one whole-paragraph upload, cheaper for a
+/// uniform-colour run, and the bring-up contrast witness for the atlas path.
 pub fn draw_coverage(
     out: &mut VelloScene,
     coverage: &Coverage,
@@ -1017,7 +1021,12 @@ pub fn draw_coverage(
             pen_x + f64::from(coverage.left),
             pen_y + f64::from(coverage.top),
         ));
-    out.draw_image(&ImageBrush::new(image), place);
+    // Nearest sampling for seam-wide consistency with the atlas path; for this
+    // 1:1 integer blit it is crisp and equivalent to the default bilinear.
+    out.draw_image(
+        &ImageBrush::new(image).with_quality(ImageQuality::Low),
+        place,
+    );
 }
 
 /// R1065 §5.37 → §5.16 — paint a [`RenderedGlyphs`] per glyph in one uniform
@@ -1029,9 +1038,14 @@ pub fn draw_coverage(
 /// `draw_coverage` blits one whole-paragraph mask, this keeps the cacheable
 /// per-glyph atlas — each glyph is a [`vello::Scene::fill`] of its device quad
 /// with the atlas image brush, `brush_transform` aligning the atlas sub-rect
-/// under the quad, and **nearest** sampling ([`ImageQuality::Low`]) so 1:1
-/// integer-snapped quads never bleed an adjacent shelf-packed glyph. A no-op for
-/// no placements.
+/// under the quad, and **nearest** sampling ([`ImageQuality::Low`]). With an
+/// integer-aligned device quad (integer pen + integer-translation `transform`,
+/// as every current caller passes) no glyph bleeds an adjacent shelf-packed atlas
+/// glyph — each covered pixel samples its own glyph's texel. A *fractional*
+/// placement (`HiDPI` fractional scale, sub-pixel scroll) can sample a neighbour
+/// at the quad edge: the atlas has no inter-glyph gutter yet, so that hardening is
+/// deferred to the production `HiDPI` consumer (no integer-pen caller bleeds today).
+/// A no-op for no placements.
 pub fn draw_atlased_glyphs(
     out: &mut VelloScene,
     rendered: &RenderedGlyphs,
@@ -1054,8 +1068,8 @@ pub fn draw_atlased_glyphs(
 /// `(atlas, colour)` actually drawn — a K-colour run uploads K tints of an atlas,
 /// **not** N per-glyph images (the costly coverage rasterisation stays once-per
 /// glyph in the atlas; only the cheap tint is per colour). Each glyph is then the
-/// same per-quad `fill` as the uniform [`draw_atlased_glyphs`], nearest-sampled so
-/// adjacent shelf-packed glyphs never bleed.
+/// same per-quad `fill` as the uniform [`draw_atlased_glyphs`] (nearest-sampled;
+/// the no-bleed guarantee is conditional on an integer-aligned quad — see there).
 ///
 /// `glyph_colors` aligns to `rendered.placed`; a glyph past the end of
 /// `glyph_colors` is skipped (defensive — the uniform wrapper always supplies one

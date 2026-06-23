@@ -167,3 +167,9 @@ jobs:
         run: |
           vulkaninfo --summary 2>/dev/null | head -30 || true
           cargo test -p pinion-shell --lib -- --ignored --skip r806
+          # R1066.1 — the §5.37 paint-seam pixel proofs (text_engine_paint_seam:
+          # R1063 coverage blit / R1065 atlas quads / R1066 per-glyph colour) are
+          # an integration test under tests/, which `--lib` above does NOT run, so
+          # they were CI-invisible (the only end-to-end pixel guards of the
+          # self-hosted text engine). Run that target explicitly under lavapipe.
+          cargo test -p pinion-shell --test text_engine_paint_seam -- --ignored

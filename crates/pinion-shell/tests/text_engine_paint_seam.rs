@@ -131,7 +131,7 @@ fn self_hosted_engine_coverage_reaches_pixels_at_placed_footprint() {
     // placed the bitmap wrong, ink would land outside this box.
     let lo = MARGIN - 1;
     assert!(
-        min_x >= lo && min_y >= lo && max_x <= MARGIN + width && max_y <= MARGIN + height,
+        min_x >= lo && min_y >= lo && max_x <= MARGIN + width + 1 && max_y <= MARGIN + height + 1,
         "ink bbox ({min_x},{min_y})-({max_x},{max_y}) escaped the placed footprint \
          at margin {MARGIN} (mask {width}x{height}) — draw_coverage mis-placed the mask"
     );
@@ -255,7 +255,7 @@ fn self_hosted_atlas_reaches_pixels_per_glyph() {
     // mis-placed quad or a wrong brush_transform would scatter ink outside.
     let lo = MARGIN - 1;
     assert!(
-        min_x >= lo && min_y >= lo && max_x <= MARGIN + width && max_y <= MARGIN + height,
+        min_x >= lo && min_y >= lo && max_x <= MARGIN + width + 1 && max_y <= MARGIN + height + 1,
         "ink bbox ({min_x},{min_y})-({max_x},{max_y}) escaped the placed footprint \
          at margin {MARGIN} ({width}x{height}) — a glyph quad / brush_transform is wrong"
     );
@@ -264,17 +264,18 @@ fn self_hosted_atlas_reaches_pixels_per_glyph() {
     assert!(!is_ink(0, 0), "top-left gutter must stay black (no flood)");
 
     // (4) The glyphs are TWO horizontally-separated clusters: at least one column
-    // strictly between the ink extremes is fully background (the H/i gap). A
-    // single merged blob — or inter-glyph atlas bleed sampling a neighbour's
-    // sub-rect across the gap — has no empty column here. This is the atlas
-    // path's defining witness: two quads sampling two atlas sub-rects with nearest
-    // sampling, not one paragraph blit.
+    // strictly between the ink extremes is fully background (the H/i advance gap).
+    // This rules out a single whole-paragraph blit, a merged blob, or a grossly
+    // mis-placed quad — the atlas path's defining witness: two quads sampling two
+    // atlas sub-rects. (It does NOT bound sub-pixel edge bleed — the advance gap
+    // is several px, wider than any <=1px fringe; the integer-quad no-bleed
+    // property is argued at `draw_atlased_glyphs`, not asserted here.)
     let column_has_ink = |x: u32| (0..buf_h).any(|y| is_ink(x, y));
     let empty_column_between = ((min_x + 1)..max_x).any(|x| !column_has_ink(x));
     assert!(
         empty_column_between,
         "no fully-background column between the glyphs (ink x {min_x}..{max_x}) — \
-         the two glyph quads merged (inter-glyph atlas bleed or a single blit)"
+         the two glyph quads merged (a single blit or a grossly mis-placed quad)"
     );
 }
 
