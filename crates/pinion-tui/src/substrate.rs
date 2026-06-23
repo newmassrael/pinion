@@ -940,9 +940,15 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         // unavailable. Held keys are real (the RPC-owned `HeldKeys`
         // cache, R882); the TUI's single `DEFAULT_WINDOW` router is
         // seeded at construction, so the snapshot is always `Some`.
-        let input_state_snapshot = self
-            .core
-            .input_state_snapshot(pinion_runtime::DEFAULT_WINDOW, None);
+        //
+        // R1074 `key_dispatch: None` is the same axis-unavailable
+        // honesty: the multi-window key-dispatch gate is a GUI-shell
+        // concept (per-OS-window focus routing), and a terminal is one
+        // process = one alternate screen with no `WindowId` to gate, so
+        // the TUI never builds a `KeyDispatchFocus`.
+        let input_state_snapshot =
+            self.core
+                .input_state_snapshot(pinion_runtime::DEFAULT_WINDOW, None, None);
         let resp_pair = {
             // Disjoint-field split mutable borrows. Mirror of the
             // pinion-shell substrate's `dispatch_rpc` borrow split.

@@ -1574,11 +1574,22 @@ impl<V: WidgetCore> CoreShell<V> {
     /// `None` for a known-unpainted window is the honest "no cursor
     /// event yet" answer, exactly as for a painted window the pointer
     /// never entered.
+    ///
+    /// R1074 §5.39 §5.16 — `key_dispatch` is the second backend-supplied
+    /// axis (alongside `modifiers`): the multi-window key-dispatch gate
+    /// state. The GUI shell, which owns the `os_focused_window` +
+    /// `key_press_owner` gate, passes `Some`; a single-OS-window backend
+    /// (the TUI) passes `None`. Kept a *parameter* rather than a
+    /// [`ShellCore`] field because the gate lives in the GUI shell, not
+    /// here ([[routing-and-focus-are-separate-axes]]) — this method stays
+    /// the ONE snapshot home (R886.1) while the producing state stays
+    /// where R1073 placed it.
     #[must_use]
     pub fn input_state_snapshot(
         &self,
         window_id: &str,
         modifiers: Option<pinion_core::Modifiers>,
+        key_dispatch: Option<pinion_core::KeyDispatchFocus>,
     ) -> Option<pinion_core::InputStateSnapshot> {
         if !self.is_window_known(window_id) {
             return None;
@@ -1590,6 +1601,7 @@ impl<V: WidgetCore> CoreShell<V> {
                 .routers
                 .get(window_id)
                 .and_then(|r| r.cursor_position(PointerId::MOUSE)),
+            key_dispatch,
         })
     }
 
@@ -4092,11 +4104,32 @@ mod tests {
         let mut core: CoreShell<TestButton> = CoreShell::new();
         core.note_key_state("Space", true);
         let snap = core
-            .input_state_snapshot(crate::DEFAULT_WINDOW, None)
+            .input_state_snapshot(crate::DEFAULT_WINDOW, None, None)
             .expect("default window router is seeded at construction");
         assert_eq!(snap.held_keys, vec!["Space"]);
         assert_eq!(snap.modifiers, None, "backend-supplied axis passes through");
-        assert!(core.input_state_snapshot("no-such-window", None).is_none());
+        assert_eq!(
+            snap.key_dispatch, None,
+            "key-dispatch axis unavailable here"
+        );
+        // R1074: the key-dispatch axis is the second backend-supplied
+        // leg — like `modifiers`, this home passes it through verbatim.
+        let kd = pinion_core::KeyDispatchFocus {
+            os_focused_window: Some(crate::DEFAULT_WINDOW.to_owned()),
+            key_press_owners: vec![("Space".to_owned(), crate::DEFAULT_WINDOW.to_owned())],
+        };
+        let snap2 = core
+            .input_state_snapshot(crate::DEFAULT_WINDOW, None, Some(kd.clone()))
+            .expect("default window known");
+        assert_eq!(
+            snap2.key_dispatch,
+            Some(kd),
+            "key-dispatch axis passes through"
+        );
+        assert!(
+            core.input_state_snapshot("no-such-window", None, None)
+                .is_none()
+        );
     }
 
     #[test]
@@ -4125,7 +4158,7 @@ mod tests {
         // Known-but-unpainted: the axis is available, the cursor leg
         // honestly reports "no cursor event yet" (a router fact).
         let snap = core
-            .input_state_snapshot("tear", None)
+            .input_state_snapshot("tear", None, None)
             .expect("known window answers even before its first paint");
         assert_eq!(snap.cursor, None, "never-painted window has no cursor yet");
 
@@ -4134,7 +4167,7 @@ mod tests {
             "removal edge drains the registry"
         );
         assert!(!core.is_window_known("tear"), "removed id is unknown again");
-        assert!(core.input_state_snapshot("tear", None).is_none());
+        assert!(core.input_state_snapshot("tear", None, None).is_none());
 
         // Idempotent re-registration (suspend/resume reuse arc).
         core.register_window("tear");

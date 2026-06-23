@@ -1113,7 +1113,11 @@ impl<V: WidgetView> ShellCore<V> {
             cache_stats: self.fragment_cache_stats_for_window(wid),
             frame_timings: self.frame_timings_for_window(wid),
             render_fidelity: self.render_fidelity_for_window(wid),
-            input_state: self.core.input_state_snapshot(wid, Some(self.modifiers)),
+            input_state: self.core.input_state_snapshot(
+                wid,
+                Some(self.modifiers),
+                Some(self.key_dispatch_focus()),
+            ),
             pacing_state: self.core.is_window_known(wid).then(|| {
                 match self.target_fps_for_window(wid) {
                     Some(fps) => pinion_rpc::PacingState::Override(fps),
@@ -2612,6 +2616,40 @@ impl<V: WidgetView> ShellCore<V> {
         self.key_press_owner.remove(key);
     }
 
+    /// R1074 §5.39 §5.16 — the READ projection of the multi-window
+    /// key-dispatch gate ([`Self::os_focused_window`] +
+    /// [`Self::key_press_owner`]) into the contract
+    /// [`pinion_core::KeyDispatchFocus`], so `scene/input_state` surfaces
+    /// the gate whose admit decision ([`Self::admit_key_press`]) an AI
+    /// otherwise cannot observe — the AI-first introspection peer of the
+    /// R1071/R1073 writes. This is the GUI-shell axis the
+    /// [`CoreShell::input_state_snapshot`](pinion_runtime::CoreShell::input_state_snapshot)
+    /// home leaves a `None`-able parameter for; the TUI never builds one
+    /// (single OS window, no gate).
+    ///
+    /// The owner pairs are **sorted by key**: `key_press_owner` is a
+    /// `HashMap` with no inherent order, and a snapshot a deterministic
+    /// RPC demo asserts on must be stable ([[zero-flake-policy]]).
+    ///
+    /// `pub` for the same reason as its write peers
+    /// ([`Self::admit_key_press`] / [`Self::note_os_focus`] /
+    /// [`Self::note_key_release`]): the live GUI builds the gate through
+    /// `winit`, so a headless `#[test]` drives the writes and observes
+    /// this read directly.
+    #[must_use]
+    pub fn key_dispatch_focus(&self) -> pinion_core::KeyDispatchFocus {
+        let mut key_press_owners: Vec<(String, String)> = self
+            .key_press_owner
+            .iter()
+            .map(|(key, window)| (key.clone(), window.clone()))
+            .collect();
+        key_press_owners.sort_by(|a, b| a.0.cmp(&b.0));
+        pinion_core::KeyDispatchFocus {
+            os_focused_window: self.os_focused_window.clone(),
+            key_press_owners,
+        }
+    }
+
     /// R882 §5.39 — whether the Space pan chord is currently held
     /// (see [`Self::note_key_state`]). Read by tests; press routing
     /// consults the substrate cache internally and release routing
@@ -2714,11 +2752,13 @@ impl<V: WidgetView> ShellCore<V> {
     ///     the close-during-dispatch double-toggle this round closes) fails the
     ///     owner half (`window_id` is not the window the press began on).
     ///
-    /// The owner is released only on the key's keyup ([`Self::note_key_state`]
-    /// with `pressed == false`), never on blur — so the gate is robust to
-    /// either winit focus-event ordering during the close-driven handoff.
-    /// Returns whether the press was ADMITTED (it then reaches the widget arc
-    /// regardless of whether a widget consumes it).
+    /// The owner is released only on the key's keyup ([`Self::note_key_release`]
+    /// — the dedicated seam R1073.1 split out of the chord cache so it can
+    /// cover `Escape` / `Tab` without polluting the RPC-exposed chord subset),
+    /// never on blur — so the gate is robust to either winit focus-event
+    /// ordering during the close-driven handoff. Returns whether the press was
+    /// ADMITTED (it then reaches the widget arc regardless of whether a widget
+    /// consumes it).
     pub fn admit_key_press(&mut self, window_id: &str, key: &str) -> bool {
         let admit = match self.key_press_owner.get(key) {
             Some(owner) => owner == window_id && self.is_key_dispatch_window(window_id),

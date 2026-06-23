@@ -204,6 +204,11 @@ impl HeldKeys {
 ///   cursor position, the state every `scene/click` / `scene/hover` /
 ///   `scene/drag` `x`/`y` writes. `None` until the first cursor
 ///   event lands in that window.
+/// * [`Self::key_dispatch`] — R1074 §5.39 §5.16, the multi-window
+///   keyboard-dispatch gate state ([`KeyDispatchFocus`]). `None` on a
+///   single-OS-window backend (the TUI), the "axis unavailable" honesty
+///   of [`Self::modifiers`]; `Some` on the GUI shell whose key routing
+///   is gated per OS window.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct InputStateSnapshot {
     /// Absolute modifier cache (`None` = backend tracks none).
@@ -212,6 +217,39 @@ pub struct InputStateSnapshot {
     pub held_keys: Vec<&'static str>,
     /// Last cursor position in the dispatch-scoped window.
     pub cursor: Option<(f64, f64)>,
+    /// R1074 §5.39 §5.16 — multi-window key-dispatch gate state, or
+    /// `None` on a single-OS-window backend. See [`KeyDispatchFocus`].
+    pub key_dispatch: Option<KeyDispatchFocus>,
+}
+
+/// R1074 §5.39 §5.16 — the multi-window keyboard-dispatch gate state,
+/// the READ peer of the R1071/R1073 `os_focused_window` +
+/// `key_press_owner` writes (the GUI shell's per-OS-window key routing
+/// gate). Present (`Some`) only on a backend that dispatches keys
+/// across multiple OS windows; a single-OS-window backend (the TUI: one
+/// process = one alternate screen, no `WindowId`) surfaces the whole
+/// axis as `None` — the same "axis unavailable, not empty" honesty as
+/// [`InputStateSnapshot::modifiers`].
+///
+/// Distinct from §5.39 *widget* focus (`FocusManager::focused_tag`,
+/// which widget receives keys): this is which *OS window* may dispatch
+/// keys at all ([[routing-and-focus-are-separate-axes]]). Exposing it
+/// makes the close-during-dispatch gate (R1073) — whose decision an AI
+/// otherwise cannot observe — introspectable: the gate admits a
+/// continuation press iff its window both owns the press
+/// ([`Self::key_press_owners`]) and is the OS-focused window
+/// ([`Self::os_focused_window`]).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct KeyDispatchFocus {
+    /// The OS-focused window id — the key-dispatch gate target — or
+    /// `None` when no window currently holds OS keyboard focus (the
+    /// gate then fails OPEN). Mirrors the shell's `os_focused_window`.
+    pub os_focused_window: Option<String>,
+    /// `(key, owning_window)` for every currently-held key, pinned at
+    /// the press rising edge and cleared on its release edge, **sorted
+    /// by key** for a deterministic snapshot. Mirrors the shell's
+    /// `key_press_owner`.
+    pub key_press_owners: Vec<(String, String)>,
 }
 
 /// R880.1 — the multi-select pointer-chord policy, decoded ONCE for every
@@ -1592,5 +1630,41 @@ mod drag_calibration_tests {
             !cal.traveled_beyond(100.0, 4.0),
             "teardown resets the discriminator"
         );
+    }
+
+    #[test]
+    fn input_state_snapshot_default_has_no_key_dispatch_axis() {
+        // A single-OS-window backend leaves the whole axis `None` — the
+        // "axis unavailable" honesty, distinct from "available but empty".
+        let snap = super::InputStateSnapshot::default();
+        assert_eq!(snap.key_dispatch, None, "default = axis unavailable");
+    }
+
+    #[test]
+    fn key_dispatch_focus_default_is_unfocused_and_unowned() {
+        let kd = super::KeyDispatchFocus::default();
+        assert_eq!(kd.os_focused_window, None, "no window holds OS focus");
+        assert!(kd.key_press_owners.is_empty(), "no key is held / owned");
+    }
+
+    #[test]
+    fn input_state_snapshot_carries_dispatch_focus() {
+        // The GUI shell populates the axis; the snapshot round-trips it
+        // verbatim (owners are the producer's responsibility to sort).
+        let kd = super::KeyDispatchFocus {
+            os_focused_window: Some("pane-1".to_owned()),
+            key_press_owners: vec![
+                ("Enter".to_owned(), "pane-1".to_owned()),
+                ("Space".to_owned(), "main".to_owned()),
+            ],
+        };
+        let snap = super::InputStateSnapshot {
+            key_dispatch: Some(kd.clone()),
+            ..Default::default()
+        };
+        assert_eq!(snap.key_dispatch.as_ref(), Some(&kd));
+        let got = snap.key_dispatch.unwrap();
+        assert_eq!(got.os_focused_window.as_deref(), Some("pane-1"));
+        assert_eq!(got.key_press_owners.len(), 2);
     }
 }

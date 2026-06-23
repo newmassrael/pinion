@@ -4522,6 +4522,16 @@ fn export_pdf_error_to_rpc(err: &ExportPdfError) -> RpcError {
 ///   cursor position (what every `scene/click` / `scene/hover` /
 ///   `scene/drag` write moves), or `null` before the first cursor
 ///   event.
+/// * `key_dispatch` — R1074 §5.39 §5.16, the multi-window
+///   keyboard-dispatch gate state, or `null` on a single-OS-window
+///   backend (the TUI), the same "axis unavailable" honesty as
+///   `modifiers`. When present:
+///   `{ os_focused_window: <string>|null, key_press_owners: {<key>: <window>} }`
+///   — `os_focused_window` is the OS-focused window the key gate admits
+///   for (`null` = no window focused → gate fails OPEN); `key_press_owners`
+///   maps each currently-held key to the window that owned its press's
+///   rising edge. Together they make the close-during-dispatch gate
+///   (R1073) — the admit decision — AI-observable.
 ///
 /// Read-only — `HandlerKind::Read` upstream skips the
 /// [`SceneRevision`] bump.
@@ -4545,10 +4555,25 @@ fn handle_scene_input_state(
     let cursor = snap
         .cursor
         .map_or(Value::Null, |(x, y)| serde_json::json!({ "x": x, "y": y }));
+    let key_dispatch = snap.key_dispatch.map_or(Value::Null, |kd| {
+        // Owners arrive sorted by key (the producer's stable snapshot);
+        // a JSON object keyed by key makes "which window owns this key"
+        // a direct AI lookup.
+        let owners: serde_json::Map<String, Value> = kd
+            .key_press_owners
+            .into_iter()
+            .map(|(key, window)| (key, Value::String(window)))
+            .collect();
+        serde_json::json!({
+            "os_focused_window": kd.os_focused_window,
+            "key_press_owners": owners,
+        })
+    });
     Ok(serde_json::json!({
         "modifiers": modifiers,
         "held_keys": snap.held_keys,
         "cursor": cursor,
+        "key_dispatch": key_dispatch,
     }))
 }
 

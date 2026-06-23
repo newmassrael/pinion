@@ -448,6 +448,99 @@ fn r890_1_non_string_window_param_is_rejected_not_silently_dropped() {
     assert_eq!(resp.id, Some(RequestId::Num(3)), "id echoes the request");
 }
 
+// ---- R1074 §5.39 §5.16 — scene/input_state surfaces the key-dispatch gate ----
+
+#[test]
+fn r1074_scene_input_state_surfaces_the_key_dispatch_gate() {
+    // The GUI shell supplies the multi-window key-dispatch axis; the wire
+    // renders it as `{ os_focused_window, key_press_owners }` so an AI can
+    // observe the close-during-dispatch gate's admit inputs (R1073).
+    let mut scene = counted_scene(7);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let snap = pinion_core::InputStateSnapshot {
+        key_dispatch: Some(pinion_core::KeyDispatchFocus {
+            os_focused_window: Some("pane-1".to_owned()),
+            key_press_owners: vec![
+                ("Enter".to_owned(), "pane-1".to_owned()),
+                ("Space".to_owned(), "main".to_owned()),
+            ],
+        }),
+        ..Default::default()
+    };
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision).with_input_state(snap);
+    let resp = dispatch(
+        &mut ctx,
+        r#"{"jsonrpc":"2.0","id":1,"method":"scene/input_state"}"#,
+    )
+    .expect("response frame");
+    let v: serde_json::Value = serde_json::from_str(&resp).expect("valid response json");
+    let kd = &v["result"]["key_dispatch"];
+    assert_eq!(
+        kd["os_focused_window"], "pane-1",
+        "OS-focused window observable"
+    );
+    assert_eq!(
+        kd["key_press_owners"]["Enter"], "pane-1",
+        "Enter's press owner is the pane it began on",
+    );
+    assert_eq!(
+        kd["key_press_owners"]["Space"], "main",
+        "Space's owner is independent of the focused window",
+    );
+}
+
+#[test]
+fn r1074_scene_input_state_key_dispatch_null_vs_empty_are_distinct() {
+    // Two distinct "nothing" states the wire must NOT conflate:
+    //  * axis unavailable (single-OS-window backend → `key_dispatch: null`)
+    //  * axis available, no window focused / no key held (the GUI before its
+    //    first focus event → present object with `os_focused_window: null`).
+    let mut scene = counted_scene(7);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+
+    // (1) None → null axis.
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+        .with_input_state(pinion_core::InputStateSnapshot::default());
+    let resp = dispatch(
+        &mut ctx,
+        r#"{"jsonrpc":"2.0","id":1,"method":"scene/input_state"}"#,
+    )
+    .expect("response frame");
+    let v: serde_json::Value = serde_json::from_str(&resp).expect("valid response json");
+    assert!(
+        v["result"]["key_dispatch"].is_null(),
+        "axis unavailable surfaces as null, not an empty object",
+    );
+
+    // (2) Some(default) → present object, fields empty.
+    let snap = pinion_core::InputStateSnapshot {
+        key_dispatch: Some(pinion_core::KeyDispatchFocus::default()),
+        ..Default::default()
+    };
+    let mut ctx2 = DispatchContext::new(&mut scene, &previews, &revision).with_input_state(snap);
+    let resp2 = dispatch(
+        &mut ctx2,
+        r#"{"jsonrpc":"2.0","id":1,"method":"scene/input_state"}"#,
+    )
+    .expect("response frame");
+    let v2: serde_json::Value = serde_json::from_str(&resp2).expect("valid response json");
+    let kd = &v2["result"]["key_dispatch"];
+    assert!(kd.is_object(), "axis present even with no window focused");
+    assert!(
+        kd["os_focused_window"].is_null(),
+        "no window focused → null field (gate fails open), not an absent axis",
+    );
+    assert!(
+        kd["key_press_owners"]
+            .as_object()
+            .expect("owners object")
+            .is_empty(),
+        "no key held → empty owners map",
+    );
+}
+
 #[test]
 fn r889_unknown_window_ctx_rejects_before_method_routing() {
     // The verdict threaded on the context rejects the WHOLE request

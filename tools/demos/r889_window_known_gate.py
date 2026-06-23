@@ -87,14 +87,14 @@ def body() -> None:
         s_main = _input_state(tf, "main")
         assert_eq(
             sorted(s_main.keys()),
-            ["cursor", "held_keys", "modifiers"],
-            "main input_state carries the full R885 key set",
+            ["cursor", "held_keys", "key_dispatch", "modifiers"],
+            "main input_state carries the full R885 + R1074 key set",
         )                                                                               # 5
         assert_eq(s_main["held_keys"], [], "no chord key held at boot (main)")          # 6
         s_insp = _input_state(tf, "inspector")
         assert_eq(
             sorted(s_insp.keys()),
-            ["cursor", "held_keys", "modifiers"],
+            ["cursor", "held_keys", "key_dispatch", "modifiers"],
             "inspector input_state available (known window, NOT Unavailable)",
         )                                                                               # 7
         assert_eq(s_insp["held_keys"], [], "no chord key held at boot (inspector)")     # 8

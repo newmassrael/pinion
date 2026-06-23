@@ -4789,4 +4789,58 @@ mod multi_window_key_dispatch_gate {
             "the stale dead-window focus identity is cleared",
         );
     }
+
+    #[test]
+    fn key_dispatch_focus_projects_the_gate_state_for_introspection() {
+        // R1074. The READ peer of the gate: `scene/input_state` must surface
+        // the multi-window key-dispatch state an AI otherwise cannot observe.
+        // `key_dispatch_focus` projects the live `os_focused_window` + per-key
+        // press owners into the contract struct, owners SORTED so a
+        // deterministic RPC demo is ZERO-FLAKE.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+        APPLY_KEY_RETURNS.store(true, Ordering::SeqCst);
+
+        let mut core = ShellCore::<TestView>::new();
+
+        // Pre-focus: no window OS-focused, no key held.
+        let kd0 = core.key_dispatch_focus();
+        assert_eq!(kd0.os_focused_window, None, "no OS focus before any event");
+        assert!(kd0.key_press_owners.is_empty(), "no key held → no owners");
+
+        // pane-0 takes OS focus; two keys are pressed-and-held there, pinning
+        // their press owners at the rising edge (admit_key_press).
+        core.note_os_focus("pane-0", true);
+        assert!(core.key_press_for_window("pane-0", "Space", false));
+        assert!(core.key_press_for_window("pane-0", "Enter", false));
+
+        let kd = core.key_dispatch_focus();
+        assert_eq!(
+            kd.os_focused_window.as_deref(),
+            Some("pane-0"),
+            "the OS-focused window is observable",
+        );
+        assert_eq!(
+            kd.key_press_owners,
+            vec![
+                ("Enter".to_owned(), "pane-0".to_owned()),
+                ("Space".to_owned(), "pane-0".to_owned()),
+            ],
+            "owners sorted by key (Enter < Space) — HashMap order is not stable",
+        );
+
+        // The live lifecycle is reflected: a keyup drops that key's owner.
+        core.note_key_release("Space");
+        let kd2 = core.key_dispatch_focus();
+        assert_eq!(
+            kd2.key_press_owners,
+            vec![("Enter".to_owned(), "pane-0".to_owned())],
+            "the released key's owner leaves the snapshot",
+        );
+        assert_eq!(
+            kd2.os_focused_window.as_deref(),
+            Some("pane-0"),
+            "a keyup does not change OS focus",
+        );
+    }
 }

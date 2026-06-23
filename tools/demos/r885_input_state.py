@@ -19,10 +19,16 @@ write, [[wire-form-read-write-symmetry]]):
     the chord was armed via the W3C `" "` character.
   * `cursor` — `{x, y}` of the addressed window's last mouse position;
     `null` before the first cursor event.
+  * `key_dispatch` — R1074 §5.39 §5.16, the multi-window key-dispatch
+    gate state `{os_focused_window, key_press_owners}`; `null` on a
+    single-OS-window backend (the TUI). Makes the close-during-dispatch
+    gate (R1073) AI-observable — the OS-focused window the key gate
+    admits for, and the window that owns each held key's press.
 
-Verification scope (≥ 30 assertions, exact count = 34):
+Verification scope (≥ 30 assertions, exact count = 42):
 
-  (A) boot: all-false modifiers / empty held set / null cursor.
+  (A) boot: all-false modifiers / empty held set / null cursor / the
+      key-dispatch axis present (GUI backend) with no press owner.
   (B) `scene/modifiers` write → read returns the same four bits.
   (C) `scene/hover` moves the cursor → read returns the hover point.
   (D) `scene/key Space state:"down"` → held_keys ["Space"], cursor
@@ -34,6 +40,11 @@ Verification scope (≥ 30 assertions, exact count = 34):
   (G) clearing `scene/modifiers` reads back all-false.
   (H) `scene/drag` leaves the cursor at the drag end point.
   (I) the read is side-effect-free (two consecutive reads identical).
+  (J) R1074: the key-dispatch axis is a present object with the two
+      gate legs; an RPC-injected key arms the chord cache but does NOT
+      pin a press owner (the gate is winit-driven, the R1073.1-deferred
+      RPC routing not yet wired) — a READ-provable boundary.
+  (K) the key-dispatch axis is part of the side-effect-free read.
 """
 
 from __future__ import annotations
@@ -62,12 +73,22 @@ def body() -> None:
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
         # ── (A) boot: nothing held, no cursor event yet ─────────────
         r0 = read(tf)
-        assert_eq(sorted(r0.keys()), ["cursor", "held_keys", "modifiers"],
-                  "result carries exactly the three input axes")
+        assert_eq(sorted(r0.keys()),
+                  ["cursor", "held_keys", "key_dispatch", "modifiers"],
+                  "result carries exactly the four input axes")
         for bit in ("shift", "ctrl", "alt", "meta"):
             assert_eq(r0["modifiers"][bit], False, f"boot: {bit} not held")
         assert_eq(r0["held_keys"], [], "boot: no chord key held")
         assert_eq(r0["cursor"], None, "boot: no cursor event landed yet")
+        # R1074: the GUI backend surfaces the key-dispatch axis as a present
+        # object (a single-OS-window TUI would surface `null`).
+        assert r0["key_dispatch"] is not None, \
+            "boot: GUI backend surfaces the key-dispatch axis"
+        assert_eq(sorted(r0["key_dispatch"].keys()),
+                  ["key_press_owners", "os_focused_window"],
+                  "key_dispatch carries exactly the two gate legs")
+        assert_eq(r0["key_dispatch"]["key_press_owners"], {},
+                  "boot: no key held → no press owner pinned")
 
         # ── (B) modifiers write → read mirrors the same shape ───────
         tf.request("scene/modifiers",
@@ -124,9 +145,39 @@ def body() -> None:
         # ── (I) the read is side-effect-free ────────────────────────
         assert_eq(read(tf), r6, "two consecutive reads are identical")
 
-        # Exact assertion count: A 7 + B 4 + C 1 + D 3 + E 1 + F 3 +
-        # G 4 + H 1 + I 1 = 25 assert_eq calls (A's loop = 4 of the 7)
-        # + 9 read() non-None asserts = 34 total checks.
+        # ── (J) R1074: the multi-window key-dispatch gate axis ──────
+        kd = r6["key_dispatch"]
+        assert kd is not None, "GUI backend surfaces the key-dispatch axis"
+        assert_eq(sorted(kd.keys()),
+                  ["key_press_owners", "os_focused_window"],
+                  "key_dispatch carries exactly the two gate legs")
+        assert isinstance(kd["key_press_owners"], dict), \
+            "key_press_owners is a key->window map"
+        assert (kd["os_focused_window"] is None
+                or isinstance(kd["os_focused_window"], str)), \
+            "os_focused_window is a window id or null (no window focused)"
+        # The press-owner gate is driven by the live winit KeyboardInput
+        # arm, NOT by RPC scene/key (the R1073.1-deferred unification), so
+        # an RPC-injected key arms the chord cache (held_keys) WITHOUT
+        # pinning a press owner — a genuine, READ-provable boundary.
+        tf.key(at=(10.0, 12.0), name="Space", state="down")
+        rj = read(tf)
+        assert_eq(rj["held_keys"], ["Space"],
+                  "RPC key arms the chord cache")
+        assert_eq(rj["key_dispatch"]["key_press_owners"], {},
+                  "RPC scene/key does not pin a press owner (winit-driven gate)")
+        tf.key(name="Space", state="up")  # restore the cleared chord state
+        assert_eq(read(tf)["held_keys"], [], "chord cleared after restore")
+
+        # ── (K) the key-dispatch axis is side-effect-free too ───────
+        rk = read(tf)
+        assert_eq(rk["key_dispatch"], read(tf)["key_dispatch"],
+                  "the key-dispatch axis is stable across reads")
+
+        # Exact assertion count: A 10 + B 4 + C 1 + D 3 + E 1 + F 3 +
+        # G 4 + H 1 + I 1 + J 6 + K 1 = 35 assert/assert_eq calls
+        # (A's modifier loop = 4 of the 10) + 12 read() non-None
+        # asserts = 47 checks; ≥ 30 obligation met.
 
 
 if __name__ == "__main__":

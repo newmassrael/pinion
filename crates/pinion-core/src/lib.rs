@@ -76,7 +76,8 @@ pub use file_dialog::{
 pub use frame::Frame;
 pub use input::{
     CompositionEvent, DRAG_CLICK_THRESHOLD_PX, DragCalibration, DragLatch, HeldKeys,
-    InputStateSnapshot, Modifiers, SelectionChord, edit_field_keymap, forward_key_to_field,
+    InputStateSnapshot, KeyDispatchFocus, Modifiers, SelectionChord, edit_field_keymap,
+    forward_key_to_field,
 };
 pub use intent::{Intent, IntentTag};
 pub use reactive::{
