@@ -14924,6 +14924,58 @@
         "key_press_owners empty over RPC (winit-driven gate); RPC owner pinning = the deferred unification"
       ]
     },
+    "R1075": {
+      "decision_summary": "R1075 §5.39 §5.16 §5.49: route RPC scene/key through admit_key_press so the RPC and GUI key paths share one gate; RPC keys pin press owners (R1074 introspection live for RPC)",
+      "changes_bullets": [
+        "drain_key_for_window routes dispatching edge through admit_key_press (Down) / is_key_dispatch_window (atomic Press)",
+        "Up edge calls note_key_release, clearing the press owner an RPC keydown pinned",
+        "RPC scene/key down now pins key_press_owner, observable via scene/input_state (R1074 axis live for RPC)",
+        "headless / no-OS-focus default fails the gate OPEN -> single-window dispatch byte-identical",
+        "RPC and GUI key paths now share one gate (no RPC bypass), closing the R1073.1-deferred (b) unification"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 exit 0: 197 suites, 7519 pass, 0 fail (+1 vs R1074 7518)",
+        "new gate test rpc_scene_key_routes_through_the_unified_gate (pin/clear/gate-out); r882 chord + pinion-shell 255 unchanged",
+        "clippy --workspace --all-targets vello 0 warnings; rustfmt clean",
+        "r885 demo (J) flipped: RPC down pins {Space:main}, keyup clears (50 checks); r889 PASS",
+        "multi-window scene/key demos r670b + r672 PASS = hidden windows unfocused, gate fails open, no regression"
+      ],
+      "impact_refs": [
+        "5.39",
+        "5.16",
+        "5.49"
+      ],
+      "carry_forward_bullets": [
+        "chord-cache vs gate vocabulary: RPC note_key_state caches any key (pre-existing); GUI splits chord/gate vocab for Escape/Tab",
+        "live multi-window verify HW-gated (VELLO-002); headless dispatch_rpc seam + RPC shape only",
+        "atomic legacy Press gates without pinning (no keyup to clear an owner)"
+      ],
+      "publishable_decision_summary": "R1075 §5.39 §5.16 §5.49: route RPC scene/key through admit_key_press so the RPC and GUI key paths share one gate; RPC keys pin press owners (R1074 introspection live for RPC)",
+      "publishable_changes_bullets": [
+        "drain_key_for_window routes dispatching edge through admit_key_press (Down) / is_key_dispatch_window (atomic Press)",
+        "Up edge calls note_key_release, clearing the press owner an RPC keydown pinned",
+        "RPC scene/key down now pins key_press_owner, observable via scene/input_state (R1074 axis live for RPC)",
+        "headless / no-OS-focus default fails the gate OPEN -> single-window dispatch byte-identical",
+        "RPC and GUI key paths now share one gate (no RPC bypass), closing the R1073.1-deferred (b) unification"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 exit 0: 197 suites, 7519 pass, 0 fail (+1 vs R1074 7518)",
+        "new gate test rpc_scene_key_routes_through_the_unified_gate (pin/clear/gate-out); r882 chord + pinion-shell 255 unchanged",
+        "clippy --workspace --all-targets vello 0 warnings; rustfmt clean",
+        "r885 demo (J) flipped: RPC down pins {Space:main}, keyup clears (50 checks); r889 PASS",
+        "multi-window scene/key demos r670b + r672 PASS = hidden windows unfocused, gate fails open, no regression"
+      ],
+      "publishable_impact_refs": [
+        "5.39",
+        "5.16",
+        "5.49"
+      ],
+      "publishable_carry_forward_bullets": [
+        "chord-cache vs gate vocabulary: RPC note_key_state caches any key (pre-existing); GUI splits chord/gate vocab for Escape/Tab",
+        "live multi-window verify HW-gated (VELLO-002); headless dispatch_rpc seam + RPC shape only",
+        "atomic legacy Press gates without pinning (no keyup to clear an owner)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
