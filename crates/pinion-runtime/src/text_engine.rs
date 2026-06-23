@@ -83,15 +83,29 @@ impl SelfHostedTextEngine {
 /// - **`Normal` line height** — the arm's baseline matches parley's natural line
 ///   box only in `Normal` mode; a fixed / multiplied height moves parley's
 ///   baseline by leading the arm does not model;
-/// - **undecorated** — underline / strikethrough are not drawn by the arm.
+/// - **undecorated** — underline / strikethrough are not drawn by the arm;
+/// - **not caret-bearing** (`caret_bearing` false) — a [`TextField`] derives its
+///   caret / selection / hit-test geometry from a separate parley shaping of this
+///   same string ([`pinion_core::scene::TextNode::caret_bearing`]), so re-shaping
+///   the painted glyphs through §5.37 would drift those overlays off the text;
+///   editable text therefore stays on parley for both arms (the R1070.1
+///   "exclude caret-bearing text" contract).
 ///
 /// Necessary, not sufficient: both arms additionally decline a single line that
 /// would soft-wrap (see [`SelfHostedTextEngine::measure_text`] and
 /// `paint_text_self_hosted`). Everything excluded here stays on parley for BOTH
 /// measure and paint, so the two never disagree on which path renders a leaf.
+///
+/// [`TextField`]: pinion_core::widgets::text_field
 #[must_use]
-pub fn self_hosted_text_eligible(content: &str, style: &TextStyle, runs: &[StyleRun]) -> bool {
-    runs.is_empty()
+pub fn self_hosted_text_eligible(
+    content: &str,
+    style: &TextStyle,
+    runs: &[StyleRun],
+    caret_bearing: bool,
+) -> bool {
+    !caret_bearing
+        && runs.is_empty()
         && !content.contains('\n')
         && matches!(style.text_align, TextAlign::Start)
         && matches!(style.line_height, LineHeight::Normal)
@@ -193,8 +207,9 @@ impl TextMeasure for SelfHostedTextEngine {
         style: &TextStyle,
         runs: &[StyleRun],
         max_width: Option<u32>,
+        caret_bearing: bool,
     ) -> Option<(f32, f32)> {
-        if !self_hosted_text_eligible(content, style, runs) {
+        if !self_hosted_text_eligible(content, style, runs, caret_bearing) {
             return None;
         }
         let font = &self.font;
@@ -417,7 +432,13 @@ mod tests {
         let f = engine.font();
         let px = 20.0_f32;
         let (_w, h) = engine
-            .measure_text("Measure", &TextStyle::new().with_size_px(20), &[], None)
+            .measure_text(
+                "Measure",
+                &TextStyle::new().with_size_px(20),
+                &[],
+                None,
+                false,
+            )
             .expect("eligible single-line text measures via §5.37");
         let upem = f64::from(f.units_per_em());
         let expected_h = (f64::from(f.ascender()) - f64::from(f.descender())
@@ -456,18 +477,22 @@ mod tests {
         let advance_u = advance.ceil() as u32;
         assert!(
             engine
-                .measure_text("Measure", &style, &[], Some(advance_u / 2))
+                .measure_text("Measure", &style, &[], Some(advance_u / 2), false)
                 .is_none(),
             "a bound below the advance must defer to parley (soft-wrap)"
         );
         assert!(
             engine
-                .measure_text("Measure", &style, &[], Some(advance_u))
+                .measure_text("Measure", &style, &[], Some(advance_u), false)
                 .is_some(),
             "a bound at/above the advance fits one §5.37 line"
         );
         // Unbounded probe (taffy min/max-content) always fits a single line.
-        assert!(engine.measure_text("Measure", &style, &[], None).is_some());
+        assert!(
+            engine
+                .measure_text("Measure", &style, &[], None, false)
+                .is_some()
+        );
     }
 
     #[test]
@@ -478,14 +503,57 @@ mod tests {
         let engine = noto_engine();
         let base = TextStyle::new().with_size_px(20);
         // hard line break — the arm is single-line.
-        assert!(engine.measure_text("a\nb", &base, &[], None).is_none());
+        assert!(
+            engine
+                .measure_text("a\nb", &base, &[], None, false)
+                .is_none()
+        );
         // styled runs — the multi-style step.
         let run = StyleRun::new(0, 1, base.clone());
-        assert!(engine.measure_text("ab", &base, &[run], None).is_none());
+        assert!(
+            engine
+                .measure_text("ab", &base, &[run], None, false)
+                .is_none()
+        );
         // decorated — the arm draws no underline/strikethrough.
         let underlined = base
             .clone()
             .with_decoration(pinion_core::style::TextDecoration::underline());
-        assert!(engine.measure_text("ab", &underlined, &[], None).is_none());
+        assert!(
+            engine
+                .measure_text("ab", &underlined, &[], None, false)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn caret_bearing_text_defers_to_parley_for_both_arms() {
+        // R1072 — the R1070.1 caret contract: an editable TextField's text is
+        // single-style / single-line / Start / Normal / undecorated (so it
+        // would otherwise be eligible), but its caret / selection / hit-test
+        // geometry comes from a separate parley shaping. The shared eligibility
+        // SSOT rejects it when `caret_bearing` is set, so MEASURE defers to
+        // parley — and because `paint_adapter::self_hosted_eligible` consults
+        // the same predicate, PAINT defers too (both arms together).
+        use crate::layout::TextMeasure;
+        let engine = noto_engine();
+        let style = TextStyle::new().with_size_px(20);
+        // Identical content/style: eligible when not caret-bearing, deferred
+        // when it is — the only difference is the marker.
+        assert!(
+            engine
+                .measure_text("Name", &style, &[], None, false)
+                .is_some(),
+            "a non-caret single-style line is eligible for §5.37 measure"
+        );
+        assert!(
+            engine
+                .measure_text("Name", &style, &[], None, true)
+                .is_none(),
+            "the same line, caret-bearing, must defer to parley measure"
+        );
+        // The eligibility SSOT itself is the single decision point shared with paint.
+        assert!(self_hosted_text_eligible("Name", &style, &[], false));
+        assert!(!self_hosted_text_eligible("Name", &style, &[], true));
     }
 }

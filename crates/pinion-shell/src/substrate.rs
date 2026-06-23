@@ -47,10 +47,11 @@ use pinion_rpc::{
     DeferredInput, DispatchContext, DragButton, KeyWireState, LayoutNode, PreviewLedger, Request,
     dispatch_parsed, parse_request,
 };
+use pinion_runtime::text_engine::SelfHostedTextEngine;
 use pinion_runtime::{
     CommandExecutor, CoreShell, DispatchTail, FocusManager, FrameTiming, FrameTimingStats,
-    FrameTimingsSnapshot, IntentQueue, Modifiers, PanRelease, PointerId, Touch, TouchPhase,
-    clamp_frame_dt, compute_layout, compute_layout_with_scroll_dirty, rect_for_tag,
+    FrameTimingsSnapshot, IntentQueue, Modifiers, PanRelease, PointerId, TextMeasure, Touch,
+    TouchPhase, clamp_frame_dt, compute_layout_with_text_measure, rect_for_tag,
     walk_scene_and_drain_immediate,
 };
 use pinion_text::LayoutCache;
@@ -184,10 +185,26 @@ pub struct ShellCore<V: WidgetView> {
     /// holds parley state directly.
     ///
     /// R51.83 §5.40 — private. The vello-side paint pipeline reaches
-    /// the cache through [`Self::text_cache_mut`]; substrate-internal
+    /// the cache through [`Self::text_cache_and_engine`]; substrate-internal
     /// callers (`compute_paint_scene`, `dispatch_rpc`'s producer
     /// closure) use the field directly.
     text_cache: LayoutCache,
+    /// R1072 §5.37 — opt-in self-hosted text engine, the shipping consumer of
+    /// the §5.37 paint + measure arms. `Some` when the `PINION_TEXT_ENGINE`
+    /// environment variable selected it at construction AND a usable system font
+    /// was found; `None` (the default) keeps every text leaf on parley, so the
+    /// shell paints and measures byte-identically to the pre-R1072 path.
+    ///
+    /// Threaded through BOTH arms together (the R1070.1 wire-both contract): the
+    /// measure pass ([`compute_layout_with_text_measure`]) via
+    /// [`Self::text_measure_override`] and the production paint
+    /// ([`pinion_runtime::paint_adapter::to_vello_cached_with_text_engine`]) via
+    /// [`Self::text_engine`]. Eligible non-editable single-line text routes to
+    /// §5.37; caret-bearing (editable) text stays on parley (shared eligibility
+    /// SSOT). Built once at init — its parsed font is a per-process constant, so
+    /// the [`FragmentCache`](pinion_runtime::paint_adapter::FragmentCache) stays
+    /// coherent across frames.
+    text_engine: Option<SelfHostedTextEngine>,
     /// R51.67 §5.40 — `NodeId` → widget tag map from the most recent
     /// `TreeUpdate`. Refreshed at the end of every `render` (when an
     /// adapter is attached). Consumed by `handle_action_request` so
@@ -591,6 +608,7 @@ impl<V: WidgetView> ShellCore<V> {
             focus: FocusManager::new(),
             modifiers: Modifiers::empty(),
             text_cache: LayoutCache::new(),
+            text_engine: build_text_engine_from_env(),
             last_access_tag_map: HashMap::new(),
             last_access_nodes: HashMap::new(),
             access_emit_initial: true,
@@ -686,6 +704,44 @@ impl<V: WidgetView> Default for ShellCore<V> {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// R1072 §5.37 — build the opt-in self-hosted text engine when the
+/// `PINION_TEXT_ENGINE` environment variable selects it at construction.
+///
+/// `Some` only when the variable is set to a truthy value (`1` / `true` / `on` /
+/// `yes`, case-insensitive) AND a usable system font is found
+/// ([`SelfHostedTextEngine::from_system_font`]). Any other case — unset, falsey,
+/// or no installed font — returns `None`, so the shell stays on parley (the
+/// 0-regression default). A font-load failure is logged, never fatal.
+fn build_text_engine_from_env() -> Option<SelfHostedTextEngine> {
+    let requested = std::env::var("PINION_TEXT_ENGINE").is_ok_and(|v| {
+        matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "on" | "yes"
+        )
+    });
+    if !requested {
+        return None;
+    }
+    match SelfHostedTextEngine::from_system_font() {
+        Ok(engine) => Some(engine),
+        Err(e) => {
+            eprintln!("shell: PINION_TEXT_ENGINE set but no usable system font: {e}");
+            None
+        }
+    }
+}
+
+/// R1072 §5.37 — the [`TextMeasure`] override for the layout pass, or `None` when
+/// the self-hosted engine is disabled.
+///
+/// A free fn over a borrowed engine option (not a `&self` method) so the measure
+/// call can hold the override alongside a disjoint `&mut self.text_cache` borrow —
+/// a `&self` method would borrow all of `self` and conflict with the cache.
+/// Callers pass `self.text_engine.as_ref()`.
+fn text_measure_override(engine: Option<&SelfHostedTextEngine>) -> Option<&dyn TextMeasure> {
+    engine.map(|e| e as &dyn TextMeasure)
 }
 
 /// R705 §5.39 §5.40 — resolve the focus-ring target tag (SSOT).
@@ -1303,18 +1359,31 @@ impl<V: WidgetView> ShellCore<V> {
             .map(String::as_str)
     }
 
-    /// R51.83 §5.40 — mutable borrow of the §5.36 [`LayoutCache`] for
-    /// the vello-side paint pipeline.
+    /// R51.83 §5.40 / R1072 §5.37 — the §5.36 [`LayoutCache`] (mutable) and the
+    /// opt-in self-hosted [`SelfHostedTextEngine`] (shared) for the vello-side
+    /// paint pipeline, borrowed as DISJOINT fields.
     ///
-    /// `paint_adapter::to_vello` walks the paint scene and consults
-    /// the cache for every `Scene::Text` node (shape once, hit on
-    /// every subsequent frame). The accessor is the single
-    /// surface-side entry point: substrate-internal callers
-    /// (`compute_paint_scene`'s `compute_layout` call) use the field
-    /// directly so the surface boundary stays explicit.
+    /// `paint_adapter::to_vello_cached_with_text_engine` walks the paint scene,
+    /// consults the cache for every `Scene::Text` node (shape once, hit on every
+    /// subsequent frame), and routes eligible leaves through `engine` when it is
+    /// `Some`. Returning both from one `&mut self` borrow lets the paint site
+    /// pass the cache (`&mut`) and the engine (`&`) together without a `self`
+    /// double-borrow. The single surface-side entry point: substrate-internal
+    /// callers (`compute_paint_scene`'s layout call) use the fields directly so
+    /// the surface boundary stays explicit.
     #[must_use]
-    pub fn text_cache_mut(&mut self) -> &mut LayoutCache {
-        &mut self.text_cache
+    pub fn text_cache_and_engine(&mut self) -> (&mut LayoutCache, Option<&SelfHostedTextEngine>) {
+        (&mut self.text_cache, self.text_engine.as_ref())
+    }
+
+    /// R1072 §5.37 — inject a specific self-hosted text engine, overriding the
+    /// `PINION_TEXT_ENGINE` env selection made at construction. The seam a test
+    /// drives with a bundled font fixture (system font discovery is
+    /// environment-dependent and would skip the §5.37 arms on a font-less
+    /// machine), and the hook a future caller uses to supply an embedded brand
+    /// font. Pass `None` to force the parley path.
+    pub fn set_text_engine(&mut self, engine: Option<SelfHostedTextEngine>) {
+        self.text_engine = engine;
     }
 
     /// R51.83 §5.40 — Shift modifier bit from the cached
@@ -2584,7 +2653,7 @@ impl<V: WidgetView> ShellCore<V> {
     ///    the shared `text_cache`.
     ///
     /// R51.83 §5.40: the underlying `cached_state` / `text_cache`
-    /// fields are private, so this method (and [`Self::text_cache_mut`]
+    /// fields are private, so this method (and [`Self::text_cache_and_engine`]
     /// for the paint adapter borrow) is the only way for the surface
     /// to drive the pipeline. Pure with respect to substrate state
     /// modulo the timing field + `text_cache` LRU + the root owner's
@@ -2715,9 +2784,21 @@ impl<V: WidgetView> ShellCore<V> {
                     None => V::view(cached_state, &frame),
                 })
             };
+            // R1072 §5.37 — the opt-in self-hosted measure override (None unless
+            // `PINION_TEXT_ENGINE` is enabled). Borrows `self.text_engine` as a
+            // field disjoint from the `&mut self.text_cache` the layout passes
+            // take; `Copy`, so the same override threads through every re-pass.
+            // Paired with the §5.37 paint arm at the `text_cache_and_engine`
+            // site so both arms size + render eligible text identically.
+            let text_measure = text_measure_override(self.text_engine.as_ref());
             let mut scene = run_view();
-            let scroll_dirty =
-                compute_layout_with_scroll_dirty(&mut scene, &mut self.text_cache, w, h);
+            let scroll_dirty = compute_layout_with_text_measure(
+                &mut scene,
+                &mut self.text_cache,
+                w,
+                h,
+                text_measure,
+            );
             // R57.X.scrollbar §5.45 — first-paint chicken-and-egg fix.
             // The layout pass writes the post-layout
             // [`ScrollState::set_max`] *after* `V::view` has already
@@ -2734,7 +2815,13 @@ impl<V: WidgetView> ShellCore<V> {
             // `scroll_dirty` at `false` and the guard short-circuits.
             if scroll_dirty {
                 scene = run_view();
-                compute_layout(&mut scene, &mut self.text_cache, w, h);
+                let _ = compute_layout_with_text_measure(
+                    &mut scene,
+                    &mut self.text_cache,
+                    w,
+                    h,
+                    text_measure,
+                );
             }
             // R1012 §5.23 §5.22 — per-pane viewport publish. The freshly laid-out
             // scene carries each pane Container's measured pixel rect; publish
@@ -2768,7 +2855,13 @@ impl<V: WidgetView> ShellCore<V> {
             // introspection paint never publishes (the R1006 contract, inherited).
             if self.core.publish_pane_viewports(&scene) {
                 scene = run_view();
-                compute_layout(&mut scene, &mut self.text_cache, w, h);
+                let _ = compute_layout_with_text_measure(
+                    &mut scene,
+                    &mut self.text_cache,
+                    w,
+                    h,
+                    text_measure,
+                );
             }
             scene
         };
@@ -3094,7 +3187,18 @@ impl<V: WidgetView> ShellCore<V> {
             Some(id) => V::view_for_window(id, cached_state, &frame),
             None => V::view(cached_state, &frame),
         });
-        compute_layout(&mut paint_scene, &mut self.text_cache, w, h);
+        // R1072 §5.37 — measure the introspection mirror with the same opt-in
+        // engine the production paint path uses, so `scene/layout` reports the
+        // boxes that were (or would be) painted via §5.37 (Scene-as-data coherence,
+        // §2 #7). `None` keeps it parley-identical.
+        let text_measure = text_measure_override(self.text_engine.as_ref());
+        let _ = compute_layout_with_text_measure(
+            &mut paint_scene,
+            &mut self.text_cache,
+            w,
+            h,
+            text_measure,
+        );
         // R705.1 §2 #7 — see `compute_paint_scene_internal`: this auxiliary
         // (re-store / headless) render also consumed the current reactive
         // state, so reset the dirty flag in lockstep.
@@ -3563,6 +3667,11 @@ impl<V: WidgetView> ShellCore<V> {
             let revision = &self.revision;
             let focus_ptr = &mut self.focus;
             let text_cache_ptr = &mut self.text_cache;
+            // R1072 §5.37 — the opt-in engine measure for the RPC-side producer,
+            // so a `scene/snapshot from: paint` (and the post-dispatch
+            // InputRouter finalize) sees the same §5.37 boxes the winit paint
+            // path does. Disjoint field borrow alongside `text_cache_ptr`.
+            let text_engine_ptr = &self.text_engine;
             // R670.B §5.16 — per-window view fn dispatch. Single-
             // window paths (`window_id == None`) keep using `V::view`
             // exactly as before for bit-identical legacy behaviour;
@@ -3588,12 +3697,20 @@ impl<V: WidgetView> ShellCore<V> {
                 // [`Self::compute_paint_scene`]. Idempotent on
                 // steady-state — Signal equality-skip floors the
                 // dirty bit at false.
-                if compute_layout_with_scroll_dirty(&mut paint, text_cache_ptr, w, h) {
+                let text_measure = text_measure_override(text_engine_ptr.as_ref());
+                if compute_layout_with_text_measure(&mut paint, text_cache_ptr, w, h, text_measure)
+                {
                     paint = root_owner.run(|| match producer_window_id.as_deref() {
                         Some(id) => V::view_for_window(id, cached_state, &frame),
                         None => V::view(cached_state, &frame),
                     });
-                    compute_layout(&mut paint, text_cache_ptr, w, h);
+                    let _ = compute_layout_with_text_measure(
+                        &mut paint,
+                        text_cache_ptr,
+                        w,
+                        h,
+                        text_measure,
+                    );
                 }
                 // R705 §5.39 §2 #1/#7 — inject the focus ring as the
                 // final paint step so `scene/snapshot from: paint` (and
@@ -5073,13 +5190,153 @@ mod r26_undock_focus_follow_tests {
 }
 
 #[cfg(test)]
+mod r1072_text_engine_wiring_tests {
+    //! R1072 §5.37 — the shell is the §5.37 self-hosted engine's first SHIPPING
+    //! consumer: `compute_paint_scene` threads `text_measure_override(self.text_engine.as_ref())`
+    //! into the layout pass, and `text_cache_and_engine` feeds the same engine to
+    //! the cached paint. These tests prove the MEASURE half deterministically with
+    //! the bundled `NotoSans` fixture (the paint half's pixel proof lives in the
+    //! realgpu seam test `tests/text_engine_paint_seam.rs`). Both arms share the
+    //! eligibility SSOT, so a caret-bearing leaf stays parley in the shell too.
+    use super::{ShellCore, build_text_engine_from_env};
+    use crate::test_fixtures::TestRenderer;
+    use crate::{SizeStrategy, WidgetView};
+    use pinion_a11y::WidgetA11y;
+    use pinion_core::external::External;
+    use pinion_core::scene::{ContainerNode, Rect, TextNode};
+    use pinion_core::style::{AlignItems, FlexDirection, LayoutStyle, TextStyle};
+    use pinion_core::test_fixtures::ButtonFixture;
+    use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
+    use pinion_core::{Frame, Scene, WidgetCore};
+    use pinion_runtime::TextMeasure;
+    use pinion_runtime::text_engine::SelfHostedTextEngine;
+    use pinion_text_font::Font;
+
+    const NOTO: &[u8] = include_bytes!("../../pinion-text-font/tests/fonts/NotoSans-Regular.ttf");
+    const LABEL: &str = "Measure";
+    const FIELD: &str = "Editable";
+    const PX: u32 = 18;
+
+    /// A binding whose paint scene is a Start-aligned flex row of two text leaves:
+    /// an eligible static label and a caret-bearing (editable) leaf, both measured
+    /// at intrinsic single-line width (the layout shape `compute_layout`'s §5.37
+    /// measure sizes exactly to the shaped advance).
+    struct TextEngineFixture;
+
+    impl WidgetCore for TextEngineFixture {
+        type State = ButtonState;
+        type Event = ButtonEvent;
+
+        fn create_external() -> Box<dyn External> {
+            Box::new(ButtonExternal::new())
+        }
+        fn tag() -> &'static str {
+            "text_engine_fixture"
+        }
+        fn read_state(scene: &Scene) -> Self::State {
+            <ButtonFixture as WidgetCore>::read_state(scene)
+        }
+        fn view(_state: Self::State, _frame: &Frame) -> Scene {
+            let style = TextStyle::new().with_size_px(PX);
+            let label = Scene::Text(TextNode::styled(LABEL, Rect::default(), style.clone()));
+            let field =
+                Scene::Text(TextNode::styled(FIELD, Rect::default(), style).caret_bearing());
+            Scene::Container(
+                ContainerNode::new(vec![label, field]).with_layout(
+                    LayoutStyle::new()
+                        .flex(FlexDirection::Row)
+                        .with_align_items(AlignItems::Start),
+                ),
+            )
+        }
+        fn event_name(event: Self::Event) -> &'static str {
+            <ButtonFixture as WidgetCore>::event_name(event)
+        }
+        fn title() -> &'static str {
+            "TextEngine"
+        }
+    }
+
+    impl WidgetA11y for TextEngineFixture {}
+
+    impl WidgetView for TextEngineFixture {
+        type Renderer = TestRenderer;
+        fn initial_size_strategy() -> SizeStrategy {
+            SizeStrategy::Fixed {
+                width: 800,
+                height: 200,
+            }
+        }
+    }
+
+    /// Measured width of the first `Scene::Text` whose content matches.
+    fn text_width(scene: &Scene, content: &str) -> Option<u32> {
+        match scene {
+            Scene::Text(t) if t.content == content => Some(t.rect.w),
+            Scene::Container(c) => c.children.iter().find_map(|ch| text_width(ch, content)),
+            Scene::Scroll(s) => text_width(&s.content, content),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn shell_threads_engine_into_measure_and_excludes_caret_bearing() {
+        let font = Font::from_bytes(NOTO.to_vec()).expect("parse NotoSans fixture");
+        let engine = SelfHostedTextEngine::from_font(font);
+        // The exact §5.37 box width the shell measure should size the eligible
+        // label to (its own measure arm, computed before the engine is moved in).
+        let (w, _h) = engine
+            .measure_text(LABEL, &TextStyle::new().with_size_px(PX), &[], None, false)
+            .expect("the eligible label is measurable via §5.37");
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let expected_label_w = w.ceil() as u32;
+
+        let mut sc = ShellCore::<TextEngineFixture>::new();
+        // Engine OFF (PINION_TEXT_ENGINE unset in the test process): parley measure.
+        let off = sc.compute_paint_scene(800, 200);
+        let off_field_w = text_width(&off, FIELD).expect("field text node present");
+
+        // Inject the §5.37 engine — the shipping wiring `set_text_engine` exposes.
+        sc.set_text_engine(Some(engine));
+        let on = sc.compute_paint_scene(800, 200);
+        let on_label_w = text_width(&on, LABEL).expect("label text node present");
+        let on_field_w = text_width(&on, FIELD).expect("field text node present");
+
+        // (1) The engine reached the shell's MEASURE pass: the eligible label is
+        // sized to the §5.37 box width, not parley's.
+        assert_eq!(
+            on_label_w, expected_label_w,
+            "the shell measured the eligible label through §5.37"
+        );
+        // (2) The caret-bearing (editable) leaf is excluded from §5.37 in the shell
+        // measure too — identical box width engine on vs off (both arms together).
+        assert_eq!(
+            on_field_w, off_field_w,
+            "the caret-bearing leaf stays on parley with the engine enabled (shell-level exclusion)"
+        );
+    }
+
+    #[test]
+    fn default_construction_builds_no_engine() {
+        // 0-regression default: with `PINION_TEXT_ENGINE` unset the shell builds no
+        // engine, so every leaf stays on parley (byte-identical to pre-R1072). Guard
+        // on the env so a developer who opted in does not see a spurious failure.
+        if std::env::var("PINION_TEXT_ENGINE").is_err() {
+            assert!(
+                build_text_engine_from_env().is_none(),
+                "no engine without the opt-in env var"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
 mod r863_bounds_union_tests {
-    use super::{
-        AccessNode, LayoutCache, Scene, compute_layout, rect_for_tag, resolve_access_bounds,
-    };
+    use super::{AccessNode, LayoutCache, Scene, rect_for_tag, resolve_access_bounds};
     use pinion_a11y::AriaRole;
     use pinion_core::scene::ContainerNode;
     use pinion_core::style::{FlexDirection, LayoutStyle, Size};
+    use pinion_runtime::compute_layout;
 
     /// A frozen-split-shaped scene: a flex row of two fixed-width strips
     /// tagged like a frozen grid's two panes for one logical row (`g_frow0`

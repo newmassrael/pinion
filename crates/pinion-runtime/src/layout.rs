@@ -68,6 +68,11 @@ pub enum NodeContext {
         content: String,
         style: TextStyle,
         runs: Vec<pinion_core::scene::StyleRun>,
+        /// R1072 §5.37 — mirrors
+        /// [`TextNode::caret_bearing`](pinion_core::scene::TextNode::caret_bearing)
+        /// so the §5.37 measure override excludes editable text exactly as the
+        /// paint arm does (shared eligibility SSOT).
+        caret_bearing: bool,
     },
 }
 
@@ -100,12 +105,22 @@ pub trait TextMeasure {
     /// unbounded min-/max-content probe). The returned `(width, height)` is the
     /// §5.37 line box in unrounded px; the caller applies the same integer ceil
     /// snapping it applies to the parley measure.
+    ///
+    /// R1072 §5.37 — `caret_bearing` is the leaf's
+    /// [`TextNode::caret_bearing`](pinion_core::scene::TextNode::caret_bearing)
+    /// marker: an editable [`TextField`] derives its caret / selection / hit-test
+    /// geometry from a separate parley shaping, so a caret-bearing leaf must
+    /// defer to parley for measure too (the eligibility SSOT folds it in, so
+    /// measure and paint exclude editable text together).
+    ///
+    /// [`TextField`]: pinion_core::widgets::text_field
     fn measure_text(
         &self,
         content: &str,
         style: &TextStyle,
         runs: &[StyleRun],
         max_width: Option<u32>,
+        caret_bearing: bool,
     ) -> Option<(f32, f32)>;
 }
 
@@ -323,6 +338,7 @@ fn compute_layout_inner(
                     content,
                     style,
                     runs,
+                    caret_bearing,
                 }) => {
                     // available_space.width.Definite → parley wrap point
                     // (multi-line); MinContent / MaxContent → no wrap
@@ -340,9 +356,9 @@ fn compute_layout_inner(
                     // ineligible, or a single line that would soft-wrap — is the
                     // unchanged parley measure, so `text_measure == None` is
                     // byte-identical to the pre-R1070 path.
-                    if let Some((w, h)) =
-                        text_measure.and_then(|tm| tm.measure_text(content, style, runs, max_width))
-                    {
+                    if let Some((w, h)) = text_measure.and_then(|tm| {
+                        tm.measure_text(content, style, runs, max_width, *caret_bearing)
+                    }) {
                         // The §5.37 arm renders exactly one line by construction.
                         text_lines.insert(node_id, 1);
                         // R47.7.6 integer pixel snapping (see the parley branch).
@@ -558,6 +574,7 @@ fn build(scene: &Scene, tree: &mut TaffyTree<NodeContext>) -> LayoutShadow {
                 content: t.content.clone(),
                 style: t.style.clone(),
                 runs: t.runs.clone(),
+                caret_bearing: t.caret_bearing,
             },
         )
         .expect("taffy new_leaf_with_context failed")
@@ -2045,6 +2062,68 @@ mod tests {
         assert!(
             measured(&none_scene).0 > 0,
             "the parley measure path is unchanged and still produces a non-zero box"
+        );
+    }
+
+    /// R1072 §5.37 — the caret-bearing marker flows `TextNode` →
+    /// `NodeContext::Text` → the measure callback → the shared eligibility SSOT,
+    /// so even with an engine override a caret-bearing (editable) leaf measures
+    /// through parley — keeping its parley-shaped caret / selection aligned. Its
+    /// box is the parley box (engine on == engine off), not the §5.37 advance.
+    #[cfg(feature = "vello")]
+    #[test]
+    fn caret_bearing_leaf_defers_to_parley_measure_through_node_context() {
+        use crate::text_engine::SelfHostedTextEngine;
+        use pinion_text_font::Font;
+
+        const NOTO: &[u8] =
+            include_bytes!("../../pinion-text-font/tests/fonts/NotoSans-Regular.ttf");
+        let font = Font::from_bytes(NOTO.to_vec()).expect("parse NotoSans fixture");
+        let engine = SelfHostedTextEngine::from_font(font);
+
+        let make_scene = || {
+            let text = Scene::Text(
+                TextNode::styled(
+                    "Measure",
+                    Rect::default(),
+                    TextStyle::new().with_size_px(18),
+                )
+                .caret_bearing(),
+            );
+            Scene::Container(
+                ContainerNode::new(vec![text]).with_layout(
+                    LayoutStyle::new()
+                        .flex(FlexDirection::Row)
+                        .with_align_items(AlignItems::Start),
+                ),
+            )
+        };
+        let measured = |scene: &Scene| -> (u32, u32) {
+            let Scene::Container(c) = scene else {
+                panic!("container")
+            };
+            let Scene::Text(t) = &c.children[0] else {
+                panic!("text")
+            };
+            (t.rect.w, t.rect.h)
+        };
+
+        // Engine supplied, but the leaf is caret-bearing → deferred to parley.
+        let mut on_scene = make_scene();
+        let mut cache_on = LayoutCache::new();
+        let _ =
+            compute_layout_with_text_measure(&mut on_scene, &mut cache_on, 800, 200, Some(&engine));
+
+        // Parley baseline (no override).
+        let mut off_scene = make_scene();
+        let mut cache_off = LayoutCache::new();
+        compute_layout(&mut off_scene, &mut cache_off, 800, 200);
+
+        assert_eq!(
+            measured(&on_scene),
+            measured(&off_scene),
+            "a caret-bearing leaf measures identically with the engine on or off \
+             (excluded from §5.37 — both arms together)"
         );
     }
 }

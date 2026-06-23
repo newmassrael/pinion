@@ -843,8 +843,15 @@ pub fn view_field(
     // caret drops down, glyphs run right. Pinning the text node's
     // width to the same `max_width` makes taffy wrap the painted glyphs
     // at the identical break points, so paint and geometry agree.
+    // R1072 §5.37 — mark the field text caret-bearing so the opt-in self-hosted
+    // text engine never re-shapes it: the caret / selection / find / bracket /
+    // preedit rects above were all derived from this same string's parley
+    // `Layout`, so painting the glyphs through §5.37 (whose advances need not
+    // match parley's) would drift every overlay off the text. Editable text
+    // stays fully on parley (the R1070.1 caret contract).
     let mut text_node =
-        pinion_core::scene::TextNode::styled(effective_text.clone(), Rect::default(), text_style);
+        pinion_core::scene::TextNode::styled(effective_text.clone(), Rect::default(), text_style)
+            .caret_bearing();
     // R767 §5.36 — paint the field's styled runs (rich text). The paint
     // adapter emits one Vello glyph run per `StyleRun` (R713); the same
     // `runs` were just shaped into the caret / selection geometry above
@@ -1624,6 +1631,36 @@ mod tests {
                 "Test input",
             );
             assert!(scene.contains_tag("tf_test"));
+        });
+    }
+
+    #[test]
+    fn view_field_text_node_is_caret_bearing() {
+        // R1072 §5.37 — the field's text node owns externally-shaped caret /
+        // selection / hit-test geometry (all derived from one parley `Layout`),
+        // so it must be marked caret-bearing to keep the opt-in §5.37 engine from
+        // re-shaping it (which would drift the caret off the painted glyphs).
+        with_owner(|| {
+            let theme = Theme::light();
+            let scene = view_field(
+                "tf_test",
+                TextFieldState::Idle,
+                0,
+                &theme,
+                &TextFieldStyle::default(),
+                "Test input",
+            );
+            // Idle posture: the field container holds exactly the text node.
+            let Scene::Container(c) = &scene else {
+                panic!("view_field must return a Container");
+            };
+            let Scene::Text(t) = &c.children[0] else {
+                panic!("the field's first child is the text node");
+            };
+            assert!(
+                t.caret_bearing,
+                "the editable field's text node must be caret-bearing"
+            );
         });
     }
 

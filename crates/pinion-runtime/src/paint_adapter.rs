@@ -597,11 +597,52 @@ pub fn to_vello_cached<F>(
 ) where
     F: Fn(&BoxNode) -> Option<Color>,
 {
-    // R1068 §5.37 — the cached production walker does NOT yet carry the opt-in
-    // self-hosted text engine: only the uncached `to_vello_with_text_engine`
-    // exposes it (the arm is proven by tests). Wiring the engine through the
-    // FragmentCache path — and the shell's opt-in flag — is the next campaign
-    // step (R1070), so the cached walker is unchanged here (parley `Scene::Text`).
+    // R1072 §5.37 — the engine-free cached walk: forwards `None`, so `Scene::Text`
+    // paints via parley exactly as before (byte-identical to the pre-R1072 body).
+    to_vello_cached_with_text_engine(
+        scene,
+        fill_hook,
+        text_cache,
+        image_cache,
+        fragment_cache,
+        None,
+        out,
+    );
+}
+
+/// R1072 §5.37 → production `Scene::Text` — the cached production paint walker
+/// ([`to_vello_cached`]) with the opt-in self-hosted text engine.
+///
+/// This is the cached sibling of [`to_vello_with_text_engine`]: the shell's
+/// per-window paint cycle uses the [`FragmentCache`], so wiring the engine into
+/// production needs the engine to flow through the cached walker too (R1068 added
+/// the uncached arm only; this closes the cached gap). When `engine` is `Some`,
+/// every eligible [`self_hosted_eligible`] `Scene::Text` leaf the walk reaches —
+/// inside a freshly-encoded subtree or a cache miss — paints through §5.37;
+/// `engine = None` is byte-identical to the pre-R1072 [`to_vello_cached`].
+///
+/// CACHE COHERENCE: the engine is a per-window, per-cache-lifetime constant (the
+/// shell builds it once at init, gated by `PINION_TEXT_ENGINE`), so a fragment
+/// cached while the engine is enabled stays valid for replay — the engine choice
+/// never changes mid-session. The leaf's caret-bearing marker is folded into the
+/// `Scene::Text` paint hash ([`pinion_core::scene::Scene::paint_hash`]) so two
+/// leaves differing only in which shaper paints them never share a fragment.
+///
+/// WIRE BOTH ARMS OR NEITHER: pair this with the measure override
+/// [`compute_layout_with_text_measure`](crate::layout::compute_layout_with_text_measure)
+/// using the SAME engine (see that fn's contract).
+#[allow(clippy::too_many_arguments)]
+pub fn to_vello_cached_with_text_engine<F>(
+    scene: &Scene,
+    fill_hook: &F,
+    text_cache: &mut LayoutCache,
+    image_cache: &mut ImageCache,
+    fragment_cache: &mut FragmentCache,
+    engine: Option<&SelfHostedTextEngine>,
+    out: &mut VelloScene,
+) where
+    F: Fn(&BoxNode) -> Option<Color>,
+{
     fragment_cache.begin_paint();
     to_vello_cached_inner(
         scene,
@@ -609,6 +650,7 @@ pub fn to_vello_cached<F>(
         text_cache,
         image_cache,
         fragment_cache,
+        engine,
         out,
         Affine::IDENTITY,
     );
@@ -651,6 +693,7 @@ fn to_vello_cached_inner<F>(
     text_cache: &mut LayoutCache,
     image_cache: &mut ImageCache,
     fragment_cache: &mut FragmentCache,
+    engine: Option<&SelfHostedTextEngine>,
     out: &mut VelloScene,
     transform: Affine,
 ) where
@@ -682,6 +725,7 @@ fn to_vello_cached_inner<F>(
                 text_cache,
                 image_cache,
                 fragment_cache,
+                engine,
                 &mut sub,
                 Affine::IDENTITY,
             );
@@ -724,6 +768,7 @@ fn to_vello_cached_inner<F>(
                     text_cache,
                     image_cache,
                     fragment_cache,
+                    engine,
                     &mut sub,
                     transform,
                 );
@@ -737,7 +782,7 @@ fn to_vello_cached_inner<F>(
                 stroke_rect(&mut sub, b.rect, border, transform);
             }
         }
-        Scene::Text(t) => paint_text(&mut sub, t, text_cache, None, transform),
+        Scene::Text(t) => paint_text(&mut sub, t, text_cache, engine, transform),
         Scene::Scroll(s) => {
             let viewport_clip = KurboRect::new(
                 f64::from(s.viewport.x),
@@ -755,6 +800,7 @@ fn to_vello_cached_inner<F>(
                 text_cache,
                 image_cache,
                 fragment_cache,
+                engine,
                 &mut sub,
                 child_transform,
             );
@@ -2063,7 +2109,11 @@ fn stroke_rect(out: &mut VelloScene, r: Rect, border: Border, transform: Affine)
 ///   line-box only in `Normal` mode (see [`paint_text_self_hosted`]); a fixed /
 ///   multiplied line height moves parley's baseline by leading the arm does not
 ///   model;
-/// - **undecorated** — underline / strikethrough are not drawn by the arm.
+/// - **undecorated** — underline / strikethrough are not drawn by the arm;
+/// - **not caret-bearing** — an editable [`TextField`] derives its caret /
+///   selection / hit-test geometry from a separate parley shaping
+///   ([`TextNode::caret_bearing`](pinion_core::scene::TextNode::caret_bearing)),
+///   so the arm must not re-shape it (R1072 / R1070.1 caret contract).
 ///
 /// This is necessary, not sufficient: [`paint_text_self_hosted`] additionally
 /// falls through to parley when the shaped text would not fit one line (soft
@@ -2075,7 +2125,7 @@ fn stroke_rect(out: &mut VelloScene, r: Rect, border: Border, transform: Affine)
 /// the §5.37 box only when this same predicate holds, so paint and measure never
 /// disagree on which path renders a leaf.
 fn self_hosted_eligible(t: &TextNode) -> bool {
-    crate::text_engine::self_hosted_text_eligible(&t.content, &t.style, &t.runs)
+    crate::text_engine::self_hosted_text_eligible(&t.content, &t.style, &t.runs, t.caret_bearing)
 }
 
 /// R1068 §5.37 — paint an [`self_hosted_eligible`] `Scene::Text` leaf through the
@@ -2989,6 +3039,124 @@ mod tests {
             with_engine.encoding().n_paths,
             without_engine.encoding().n_paths,
             "out-of-scope styled-run text falls through to parley unchanged"
+        );
+    }
+
+    #[test]
+    fn r1072_cached_arm_routes_text_through_self_hosted_engine() {
+        // R1072 §5.37 — the CACHED production paint walker, now engine-aware. The
+        // shell paints through `to_vello_cached*`, so the R1068 uncached arm alone
+        // never reached production; this closes that gap. A single-style
+        // `Scene::Text` leaf inside the FragmentCache path routes through §5.37
+        // when an engine is supplied (one atlas fill per placed glyph), and
+        // `engine = None` is byte-identical to `to_vello_cached`. NotoSans fixture
+        // keeps the glyph-count deterministic.
+        let font = pinion_text_font::Font::from_bytes(NOTO_FIXTURE.to_vec())
+            .expect("parse NotoSans fixture");
+        let engine = SelfHostedTextEngine::from_font(font);
+
+        let scene = Scene::Text(TextNode::styled(
+            "Hi",
+            Rect::new(0, 0, 200, 32),
+            TextStyle::new().with_size_px(16),
+        ));
+
+        // engine = None : byte-identical to the engine-free cached walker (the
+        // delegation `to_vello_cached` → `..with_text_engine(None)` stays intact).
+        let mut none_cached = VelloScene::new();
+        to_vello_cached_with_text_engine(
+            &scene,
+            &|_| None,
+            &mut LayoutCache::new(),
+            &mut ImageCache::new(),
+            &mut FragmentCache::new(),
+            None,
+            &mut none_cached,
+        );
+        let mut plain_cached = VelloScene::new();
+        to_vello_cached(
+            &scene,
+            &|_| None,
+            &mut LayoutCache::new(),
+            &mut ImageCache::new(),
+            &mut FragmentCache::new(),
+            &mut plain_cached,
+        );
+        assert_eq!(
+            none_cached.encoding().n_paths,
+            plain_cached.encoding().n_paths,
+            "engine=None cached walk == to_vello_cached (forwarding intact)"
+        );
+
+        // engine = Some : routes "Hi" through §5.37 — one atlas fill per glyph.
+        let mut self_hosted = VelloScene::new();
+        to_vello_cached_with_text_engine(
+            &scene,
+            &|_| None,
+            &mut LayoutCache::new(),
+            &mut ImageCache::new(),
+            &mut FragmentCache::new(),
+            Some(&engine),
+            &mut self_hosted,
+        );
+        let shaped = pinion_text_font::shape_paragraph_with_fallback(&[engine.font()], "Hi", 16.0);
+        let rendered = pinion_text_font::render_paragraph_atlased(&[engine.font()], &shaped, 16.0)
+            .expect("atlas-render Hi");
+        assert!(!rendered.placed.is_empty(), "Hi atlas-places glyphs");
+        assert_eq!(
+            self_hosted.encoding().n_paths,
+            u32::try_from(rendered.placed.len()).expect("glyph count fits u32"),
+            "cached self-hosted arm emits one fill per placed glyph (routed through §5.37)"
+        );
+    }
+
+    #[test]
+    fn r1072_caret_bearing_text_declines_self_hosted_arm() {
+        // R1072 §5.37 — the R1070.1 caret contract at the PAINT arm: a
+        // caret-bearing (editable) leaf is otherwise eligible (single-style /
+        // single-line / Start / Normal / undecorated) but must NOT route through
+        // §5.37 — its caret / selection geometry is shaped by parley, so the
+        // glyphs must stay parley too or the caret drifts off them. With an engine
+        // supplied it paints byte-identically to the same node with no engine.
+        let font = pinion_text_font::Font::from_bytes(NOTO_FIXTURE.to_vec())
+            .expect("parse NotoSans fixture");
+        let engine = SelfHostedTextEngine::from_font(font);
+
+        let scene = Scene::Text(
+            TextNode::styled(
+                "Hi",
+                Rect::new(0, 0, 200, 32),
+                TextStyle::new().with_size_px(16),
+            )
+            .caret_bearing(),
+        );
+        let Scene::Text(node) = &scene else {
+            unreachable!()
+        };
+        assert!(
+            !self_hosted_eligible(node),
+            "a caret-bearing node is excluded from the self-hosted arm"
+        );
+
+        let mut with_engine = VelloScene::new();
+        to_vello_with_text_engine(
+            &scene,
+            &|_| None,
+            &mut LayoutCache::new(),
+            Some(&engine),
+            &mut with_engine,
+        );
+        let mut without_engine = VelloScene::new();
+        to_vello(
+            &scene,
+            &|_| None,
+            &mut LayoutCache::new(),
+            &mut without_engine,
+        );
+        assert_eq!(
+            with_engine.encoding().n_paths,
+            without_engine.encoding().n_paths,
+            "caret-bearing text falls through to parley unchanged (caret stays aligned)"
         );
     }
 

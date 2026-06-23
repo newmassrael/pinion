@@ -632,3 +632,105 @@ fn self_hosted_paint_arm_reaches_pixels_through_to_vello() {
          (ascender+half-leading) — baseline formula did not drive placement"
     );
 }
+
+/// R1072 §5.37 → SHIPPING path — does the CACHED production walker (the one the
+/// shell actually paints through, `to_vello_cached*`) reach pixels with the
+/// self-hosted engine? The R1068 sibling above drives the *uncached* arm; this
+/// drives `to_vello_cached_with_text_engine` through a [`FragmentCache`], the
+/// exact entry `AppShell::render_window` uses. It proves the §5.37 glyphs survive
+/// the cache's `append`-into-`out` path (not just the uncached direct draw),
+/// closing the R1068 cached gap end-to-end — the campaign's actual shipping
+/// consumer reaching real pixels.
+///
+/// `#[ignore]` / lavapipe like the sibling seam tests (see the file header). The
+/// CI GPU job runs it via `--test text_engine_paint_seam --ignored`.
+#[test]
+#[ignore = "wgpu adapter cold-boot too slow for default test suite; run with --ignored"]
+fn self_hosted_cached_arm_reaches_pixels() {
+    use pinion_runtime::image_cache::ImageCache;
+    use pinion_runtime::paint_adapter::{FragmentCache, to_vello_cached_with_text_engine};
+
+    const BOX_W: u32 = 240;
+    const BOX_H: u32 = 40;
+
+    let engine = match SelfHostedTextEngine::from_system_font() {
+        Ok(engine) => engine,
+        Err(LoadFontError::NoSystemFont) => {
+            eprintln!("skipping: no system font installed on this host");
+            return;
+        }
+    };
+
+    let rect = Rect::new(MARGIN, MARGIN, BOX_W, BOX_H);
+    let scene = Scene::Text(TextNode::styled(
+        "Hi",
+        rect,
+        TextStyle::new()
+            .with_size_px(24)
+            .with_fg(Color::rgb(255, 255, 255)),
+    ));
+
+    // The exact production entry: cached walker + per-window caches + engine.
+    let mut vello = VelloScene::new();
+    let mut text_cache = LayoutCache::new();
+    let mut image_cache = ImageCache::new();
+    let mut fragment_cache = FragmentCache::new();
+    to_vello_cached_with_text_engine(
+        &scene,
+        &|_| None,
+        &mut text_cache,
+        &mut image_cache,
+        &mut fragment_cache,
+        Some(&engine),
+        &mut vello,
+    );
+
+    let buf_w = BOX_W + 2 * MARGIN;
+    let buf_h = BOX_H + 2 * MARGIN;
+    let mut shot = match HeadlessScreenshot::new() {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("skipping: no wgpu adapter ({e})");
+            return;
+        }
+    };
+    let rgba = shot
+        .render_to_rgba8(&vello, buf_w, buf_h, PenikoColor::BLACK)
+        .expect("headless render");
+    assert_eq!(rgba.len(), (buf_w * buf_h * 4) as usize);
+
+    let is_ink = |x: u32, y: u32| -> bool {
+        let i = ((y * buf_w + x) * 4) as usize;
+        rgba[i] > 180 && rgba[i + 1] > 180 && rgba[i + 2] > 180
+    };
+    let mut ink_count = 0u32;
+    let (mut min_x, mut min_y, mut max_x, mut max_y) = (u32::MAX, u32::MAX, 0u32, 0u32);
+    for y in 0..buf_h {
+        for x in 0..buf_w {
+            if is_ink(x, y) {
+                ink_count += 1;
+                min_x = min_x.min(x);
+                min_y = min_y.min(y);
+                max_x = max_x.max(x);
+                max_y = max_y.max(y);
+            }
+        }
+    }
+
+    // (1) The §5.37 arm reached pixels through the CACHED production walker.
+    assert!(
+        ink_count > 0,
+        "the cached self-hosted arm produced no ink through to_vello_cached_with_text_engine"
+    );
+    // (2) Ink lands inside the box — the cache's append path preserved placement.
+    assert!(
+        min_x + 1 >= MARGIN
+            && min_y + 1 >= MARGIN
+            && max_x <= MARGIN + BOX_W + 1
+            && max_y <= MARGIN + BOX_H + 1,
+        "ink bbox ({min_x},{min_y})-({max_x},{max_y}) escaped the text box \
+         ({MARGIN},{MARGIN})+{BOX_W}x{BOX_H} through the cached path"
+    );
+    // (3) The gutter is black (no flood through the append path).
+    assert!(!is_ink(0, 0), "top-left gutter must stay black (no flood)");
+}

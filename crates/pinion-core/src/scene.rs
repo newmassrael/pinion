@@ -546,6 +546,11 @@ impl Scene {
                 for run in &t.runs {
                     run.hash(&mut h);
                 }
+                // R1072 §5.37 — fold the caret-bearing marker: it selects which
+                // shaper paints this leaf (§5.37 vs parley) when the engine is
+                // enabled, so two leaves identical but for this flag must not
+                // share a cached paint fragment.
+                t.caret_bearing.hash(&mut h);
                 h.finish()
             }
             Scene::Path(p) => {
@@ -1670,6 +1675,26 @@ pub struct TextNode {
     /// without a consumer; strict-YAGNI removed it so the enum
     /// surfaces only roles the pipeline actually honours.
     pub role: Option<TextRole>,
+    /// R1072 §5.37 — this text owns externally-shaped caret / selection /
+    /// hit-test geometry, so the opt-in self-hosted text engine must NOT
+    /// re-shape it.
+    ///
+    /// A [`TextField`](crate::widgets::text_field) derives its caret rect,
+    /// selection bands, find / bracket highlights, IME-preedit underline, and
+    /// click-to-position hit-test all from ONE parley [`Layout`] of this same
+    /// string (the `field_shaping` SSOT). The §5.37 engine shapes with its own
+    /// font and advances, which need not match parley's — so painting an
+    /// editable field's glyphs through §5.37 while those overlays stay parley
+    /// would drift the caret off the glyphs. `true` keeps both *measure* and
+    /// *paint* of this leaf on parley (the eligibility SSOT
+    /// `text_engine::self_hosted_text_eligible` rejects it for BOTH arms), so
+    /// caret-bearing text stays self-consistent. `false` (the default, every
+    /// static label) leaves the leaf eligible for the §5.37 arms.
+    ///
+    /// Integrating the caret into §5.37 (so editable text could route through
+    /// the engine too) is a later campaign step; until then this marker is the
+    /// R1070.1 "exclude caret-bearing text" contract.
+    pub caret_bearing: bool,
 }
 
 /// R51.81 §5.40 — accessibility role hint attached to a [`TextNode`].
@@ -1712,7 +1737,19 @@ impl TextNode {
             line_count: 0,
             runs: Vec::new(),
             role: None,
+            caret_bearing: false,
         }
+    }
+
+    /// R1072 §5.37 — mark this text as owning externally-shaped caret /
+    /// selection / hit-test geometry (builder form). See
+    /// [`TextNode::caret_bearing`]; a [`TextField`](crate::widgets::text_field)
+    /// sets this so the §5.37 self-hosted engine never re-shapes its editable
+    /// text (which would drift the caret off the painted glyphs).
+    #[must_use]
+    pub fn caret_bearing(mut self) -> Self {
+        self.caret_bearing = true;
+        self
     }
 
     /// Attach a §5.20 intent tag to this node (builder form).
@@ -5417,6 +5454,17 @@ mod tests {
             TextStyle::new().with_fg(Color::rgb(1, 2, 3)),
         ));
         assert_ne!(a.paint_hash(), b.paint_hash());
+    }
+
+    #[test]
+    fn r1072_paint_hash_changes_when_caret_bearing_changes() {
+        // R1072 §5.37 — the caret-bearing marker selects which shaper paints the
+        // leaf (§5.37 vs parley) when the engine is enabled, so two otherwise
+        // identical Text leaves must NOT share a cached paint fragment: the hash
+        // must fold the flag.
+        let plain = Scene::Text(TextNode::new("x", rect_a()));
+        let caret = Scene::Text(TextNode::new("x", rect_a()).caret_bearing());
+        assert_ne!(plain.paint_hash(), caret.paint_hash());
     }
 
     #[test]

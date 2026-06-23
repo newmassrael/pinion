@@ -727,6 +727,11 @@ impl<V: WidgetView> AppShell<V> {
     /// when its [`RenderState`] is `Suspended` (GPU released, mobile
     /// platform cycle). Mirrors the pre-R670.B `let RenderState::
     /// Active { .. } = &mut self.render else { return; }` guard.
+    // R1072 §5.37 — the per-window paint cycle (present, encode, render, capture,
+    // fidelity record) is a cohesive orchestration sequence; the engine-aware
+    // cached-paint wiring tipped it 1 line over the pedantic limit. Same idiom the
+    // sibling `headless_screenshot` render methods carry.
+    #[allow(clippy::too_many_lines)]
     fn render_window(&mut self, window_id: WindowId) {
         // R670.B §5.16 — read the slot's spec id + inner size first
         // without holding a long-lived `&mut self.windows` borrow,
@@ -864,12 +869,16 @@ impl<V: WidgetView> AppShell<V> {
             // observes it (§2 #1 + #7). The pre-R705 opaque
             // `paint_adapter::paint_focus_ring` vello stroke is retired.
             let encode_start = Instant::now();
-            paint_adapter::to_vello_cached(
+            // R1072 §5.37 — engine-aware cached paint: cache (mut) + opt-in engine
+            // (shared) from one disjoint-field borrow. `None` = pre-R1072 path.
+            let (text_cache, text_engine) = self.core.text_cache_and_engine();
+            paint_adapter::to_vello_cached_with_text_engine(
                 &paint_scene,
                 &|_b: &BoxNode| None,
-                self.core.text_cache_mut(),
+                text_cache,
                 &mut slot.image_cache,
                 &mut slot.fragment_cache,
+                text_engine,
                 &mut slot.vello_scene,
             );
             encode_us = instant_delta_us(encode_start, Instant::now());
@@ -2959,12 +2968,16 @@ fn try_headless_screenshot<V: WidgetView>() -> bool {
     // when they would diverge.
     let mut fragment_cache = paint_adapter::FragmentCache::new();
     let mut image_cache = image_cache::ImageCache::new();
-    paint_adapter::to_vello_cached(
+    // R1072 §5.37 — same engine-aware cached paint as the live winit path, so a
+    // headless `PINION_SCREENSHOT` is pixel-faithful to the window painted via §5.37.
+    let (text_cache, text_engine) = core.text_cache_and_engine();
+    paint_adapter::to_vello_cached_with_text_engine(
         &paint_scene,
         &|_b: &BoxNode| None,
-        core.text_cache_mut(),
+        text_cache,
         &mut image_cache,
         &mut fragment_cache,
+        text_engine,
         &mut vello_scene,
     );
     let mut shot = match crate::HeadlessScreenshot::new() {
