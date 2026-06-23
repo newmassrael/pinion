@@ -64,13 +64,14 @@ use vello::kurbo::{
 };
 use vello::peniko::{
     Blob, Brush as PenikoBrush, Color as PenikoColor, Extend as PenikoExtend, Fill,
-    Gradient as PenikoGradient, ImageAlphaType, ImageBrush, ImageData, ImageFormat,
+    Gradient as PenikoGradient, ImageAlphaType, ImageBrush, ImageData, ImageFormat, ImageQuality,
 };
 // R1063 §5.37 → production-paint seam — the self-hosted text engine's CPU AA
-// coverage mask. `pinion-text-font` is gated to the `vello` feature (see the
-// crate Cargo.toml), so this import is reachable only inside the vello-only
-// paint_adapter module.
-use pinion_text_font::Coverage;
+// coverage mask, plus (R1065) the per-glyph [`GlyphAtlas`] surface a per-glyph
+// paint path samples. `pinion-text-font` is gated to the `vello` feature (see
+// the crate Cargo.toml), so these imports are reachable only inside the
+// vello-only paint_adapter module.
+use pinion_text_font::{Coverage, GlyphAtlas, RenderedGlyphs};
 
 /// Build a Vello scene from a pinion [`Scene`] tree. `fill_hook` is
 /// consulted for each [`BoxNode`] visited; a `Some(color)` return
@@ -920,32 +921,36 @@ pub fn to_peniko(c: Color) -> PenikoColor {
 // bridge, then multi-font atlas binding — not a single `Scene::Text` rewire.
 // ---------------------------------------------------------------------------
 
-/// R1063 §5.37 → §5.16 — convert a self-hosted [`Coverage`] AA mask into a
-/// `peniko::ImageData` ready for [`vello::Scene::draw_image`].
+/// R1065 §5.37 → §5.16 — pack a grayscale AA coverage buffer into a straight-alpha
+/// RGBA8 [`ImageData`] tinted by `color`.
 ///
-/// The mask supplies per-pixel **alpha**; `color` supplies the constant RGB
-/// (and its own alpha modulates the mask, so a translucent brush dims the
-/// whole run). Pixels are straight (un-premultiplied) RGBA8 with
-/// [`ImageAlphaType::Alpha`], matching the §5.16 [`ImageCache`] image path so
-/// Vello composites the run with `src-over` antialiasing exactly like a raster
-/// image leaf.
+/// `alpha` is one mask byte per pixel, row-major `width × height`. The mask
+/// supplies per-pixel **alpha**; `color` supplies the constant RGB (and its own
+/// alpha modulates the mask, so a translucent brush dims the whole run). Pixels
+/// are straight (un-premultiplied) RGBA8 with [`ImageAlphaType::Alpha`], matching
+/// the §5.16 [`ImageCache`] image path so Vello composites with `src-over`
+/// antialiasing exactly like a raster image leaf.
 ///
-/// Returns `None` for an empty mask (a space / control glyph — nothing to
-/// paint), or when the mask's dimensions do not fit a `u32` (defensive; the
-/// rasterizer caps each axis well under that).
-#[must_use]
-pub fn coverage_to_image_data(coverage: &Coverage, color: Color) -> Option<ImageData> {
-    if coverage.is_empty() {
+/// The SSOT pixel conversion (R1065 lift) shared by the whole-paragraph
+/// [`coverage_to_image_data`] (R1063) and the per-glyph-atlas
+/// [`atlas_to_image_data`] (R1065). Returns `None` for an empty buffer (a space /
+/// control glyph, or an atlas with nothing packed — nothing to paint), or when
+/// the dimensions do not fit a `u32` (defensive; the rasterizer caps each axis
+/// well under that).
+fn mask_to_image_data(
+    alpha: &[u8],
+    width: usize,
+    height: usize,
+    color: Color,
+) -> Option<ImageData> {
+    if alpha.is_empty() {
         return None;
     }
-    let (Ok(width), Ok(height)) = (
-        u32::try_from(coverage.width),
-        u32::try_from(coverage.height),
-    ) else {
+    let (Ok(width), Ok(height)) = (u32::try_from(width), u32::try_from(height)) else {
         return None;
     };
-    let mut rgba = Vec::with_capacity(coverage.alpha.len() * 4);
-    for &mask in &coverage.alpha {
+    let mut rgba = Vec::with_capacity(alpha.len() * 4);
+    for &mask in alpha {
         // Modulate the mask coverage by the brush colour's own alpha, rounding
         // to nearest (`+ 127`) to match the §5.37 pipeline's house convention
         // for this `a·b / 255` operation — the atlas compositor `shape::over`
@@ -967,6 +972,25 @@ pub fn coverage_to_image_data(coverage: &Coverage, color: Color) -> Option<Image
         width,
         height,
     })
+}
+
+/// R1063 §5.37 → §5.16 — convert a self-hosted [`Coverage`] AA mask into a
+/// `peniko::ImageData` ready for [`vello::Scene::draw_image`]. A thin wrapper
+/// over the SSOT [`mask_to_image_data`]: the mask supplies per-pixel alpha,
+/// `color` the constant RGB (its own alpha modulating the mask). Returns `None`
+/// for an empty mask.
+#[must_use]
+pub fn coverage_to_image_data(coverage: &Coverage, color: Color) -> Option<ImageData> {
+    mask_to_image_data(&coverage.alpha, coverage.width, coverage.height, color)
+}
+
+/// R1065 §5.37 → §5.16 — convert a whole [`GlyphAtlas`] bitmap into one tinted
+/// `peniko::ImageData`, uploaded once and sampled per glyph-quad by
+/// [`draw_atlased_glyphs`]. A thin wrapper over the SSOT [`mask_to_image_data`].
+/// Returns `None` for an atlas with no packed pixels (no glyph rasterized yet).
+#[must_use]
+pub fn atlas_to_image_data(atlas: &GlyphAtlas, color: Color) -> Option<ImageData> {
+    mask_to_image_data(atlas.alpha(), atlas.width(), atlas.height(), color)
 }
 
 /// R1063 §5.37 → §5.16 — blit a self-hosted [`Coverage`] mask into the Vello
@@ -994,6 +1018,65 @@ pub fn draw_coverage(
             pen_y + f64::from(coverage.top),
         ));
     out.draw_image(&ImageBrush::new(image), place);
+}
+
+/// R1065 §5.37 → §5.16 — paint a [`RenderedGlyphs`] per glyph: upload each
+/// [`GlyphAtlas`] once, then draw one quad per [`PlacedGlyph`] sampling its
+/// sub-rect of that atlas, at baseline pen `(pen_x, pen_y)` (device px, y-down)
+/// in `color`, under `transform`.
+///
+/// The §5.37.9 production-direction successor to [`draw_coverage`]: where
+/// `draw_coverage` blits one whole-paragraph mask, this keeps the cacheable
+/// per-glyph atlas — each glyph is a [`vello::Scene::fill`] of its device quad
+/// with the atlas image brush, `brush_transform` aligning the atlas sub-rect
+/// under the quad, and **nearest** sampling ([`ImageQuality::Low`]) so 1:1
+/// integer-snapped quads never bleed an adjacent shelf-packed glyph. A no-op for
+/// no placements.
+pub fn draw_atlased_glyphs(
+    out: &mut VelloScene,
+    rendered: &RenderedGlyphs,
+    color: Color,
+    pen_x: f64,
+    pen_y: f64,
+    transform: Affine,
+) {
+    // Upload each atlas once (tinted). An atlas with nothing packed yields `None`
+    // and is never referenced — blank glyphs (space) are not placed.
+    let brushes: Vec<Option<ImageBrush>> = rendered
+        .atlases
+        .iter()
+        .map(|atlas| {
+            atlas_to_image_data(atlas, color)
+                .map(|img| ImageBrush::new(img).with_quality(ImageQuality::Low))
+        })
+        .collect();
+    for p in &rendered.placed {
+        let Some(brush) = brushes.get(p.atlas).and_then(Option::as_ref) else {
+            continue; // defensive: a placement into an empty / out-of-range atlas.
+        };
+        let g = &p.glyph;
+        // Device-space top-left of the glyph quad: baseline pen + the glyph's
+        // pen origin + its rasterized-bitmap offset (`left`/`top`).
+        let dst_x = pen_x + f64::from(p.pen_x) + f64::from(g.left);
+        let dst_y = pen_y + f64::from(p.pen_y) + f64::from(g.top);
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "atlas pixel coords/dims are well under 2^53 — exact in f64"
+        )]
+        let (gw, gh, gx, gy) = (g.width as f64, g.height as f64, g.x as f64, g.y as f64);
+        let quad = KurboRect::new(dst_x, dst_y, dst_x + gw, dst_y + gh);
+        // Map atlas-pixel space → user space: image pixel `(g.x + u, g.y + v)`
+        // must land at `(dst_x + u, dst_y + v)` — a pure translation (the glyph is
+        // rasterised at the target px/em, so no scaling).
+        let brush_transform = Affine::translate((dst_x - gx, dst_y - gy));
+        out.fill(
+            Fill::NonZero,
+            transform,
+            brush,
+            Some(brush_transform),
+            &quad,
+        );
+    }
 }
 
 /// R991.1 §5.16 — emit one parley [`GlyphRun`](pinion_text::parley::GlyphRun)'s
@@ -2120,6 +2203,94 @@ mod tests {
             Affine::IDENTITY,
         );
         assert_eq!(scene.encoding().n_paths, 1);
+    }
+
+    // R1065 §5.37.9 → §5.16 — per-glyph GlyphAtlas → peniko::ImageData + the
+    // per-glyph-quad paint path (the production-direction successor to the
+    // whole-paragraph draw_coverage blit).
+
+    /// `NotoSans` (Latin) — the §5.37.1 parser fixture, reused to drive the shaper.
+    /// The §5.37 integer-snap invariant makes rasterisation reproducible, so these
+    /// are ZERO-FLAKE. Production font policy for §5.37 is a separate, later
+    /// decision; this is a dev forcing consumer.
+    const NOTO_FIXTURE: &[u8] =
+        include_bytes!("../../pinion-text-font/tests/fonts/NotoSans-Regular.ttf");
+
+    /// Shape + atlas-place `"Hi"` at 32 px through the real §5.37 engine.
+    fn rendered_hi() -> pinion_text_font::RenderedGlyphs {
+        let font = pinion_text_font::Font::from_bytes(NOTO_FIXTURE.to_vec())
+            .expect("parse NotoSans fixture");
+        let shaped = pinion_text_font::shape_paragraph(&font, "Hi", 32.0);
+        pinion_text_font::render_paragraph_atlased(&[&font], &shaped, 32.0)
+            .expect("atlas-render Hi")
+    }
+
+    #[test]
+    fn atlas_to_image_data_empty_atlas_is_none() {
+        // An atlas with nothing packed (no glyph rasterised) has no pixels, so the
+        // seam emits no image — the draw_atlased_glyphs no-op contract.
+        let atlas = GlyphAtlas::new(64);
+        assert!(atlas_to_image_data(&atlas, Color::rgb(0, 0, 0)).is_none());
+    }
+
+    #[test]
+    fn atlas_to_image_data_tints_packed_atlas() {
+        // The packed atlas bitmap becomes one tinted image of matching dimensions:
+        // every pixel carries the brush RGB and the atlas coverage as alpha —
+        // inked where a glyph packed, transparent in the gaps. A width/height swap
+        // (wrong GPU row stride) is caught by the explicit dimension asserts; the
+        // linear per-pixel check alone would not see it.
+        let rendered = rendered_hi();
+        let atlas = &rendered.atlases[0];
+        let img = atlas_to_image_data(atlas, Color::rgb(7, 8, 9)).expect("packed atlas");
+        assert_eq!(usize::try_from(img.width).unwrap(), atlas.width());
+        assert_eq!(usize::try_from(img.height).unwrap(), atlas.height());
+        let px = img.data.data();
+        assert_eq!(px.len(), atlas.alpha().len() * 4);
+        for (i, &cov) in atlas.alpha().iter().enumerate() {
+            assert_eq!(&px[i * 4..i * 4 + 4], &[7, 8, 9, cov], "pixel {i}");
+        }
+        // Non-vacuous: the atlas carries both ink and (right-of-shelf) blank pixels.
+        assert!(atlas.alpha().iter().any(|&a| a > 0), "atlas has no ink");
+        assert!(atlas.alpha().contains(&0), "atlas has no blank pixel");
+    }
+
+    #[test]
+    fn draw_atlased_glyphs_empty_emits_nothing() {
+        // No placements -> no fills; must not panic, scene untouched.
+        let mut scene = VelloScene::new();
+        draw_atlased_glyphs(
+            &mut scene,
+            &pinion_text_font::RenderedGlyphs::default(),
+            Color::rgb(0, 0, 0),
+            4.0,
+            8.0,
+            Affine::IDENTITY,
+        );
+        assert_eq!(scene.encoding().n_paths, 0);
+    }
+
+    #[test]
+    fn draw_atlased_glyphs_emits_one_fill_per_glyph() {
+        // The defining contrast with draw_coverage: that blits ONE whole-paragraph
+        // path; this draws one quad PER glyph. "Hi" is two inked glyphs, so the
+        // scene encodes exactly two fills — proof the atlas is kept per-glyph, not
+        // flattened into a single mask.
+        let rendered = rendered_hi();
+        assert_eq!(rendered.placed.len(), 2, "Hi should shape to two glyphs");
+        let mut scene = VelloScene::new();
+        draw_atlased_glyphs(
+            &mut scene,
+            &rendered,
+            Color::rgb(255, 0, 0),
+            10.0,
+            20.0,
+            Affine::IDENTITY,
+        );
+        assert_eq!(
+            scene.encoding().n_paths,
+            u32::try_from(rendered.placed.len()).unwrap()
+        );
     }
 
     #[test]

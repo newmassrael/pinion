@@ -51,7 +51,9 @@
 use crate::Font;
 use crate::fallback::font_runs;
 use crate::raster::{Coverage, RasterError};
-use crate::shape::{GlyphDraw, PositionedGlyph, render_glyphs, shape_run};
+use crate::shape::{
+    GlyphDraw, PositionedGlyph, RenderedGlyphs, render_glyphs, render_glyphs_atlased, shape_run,
+};
 use pinion_text_unicode::{ItemRun, is_removed_by_x9, itemize, reorder_visual};
 
 /// A shaped paragraph: glyphs in visual (left-to-right) order with absolute
@@ -197,16 +199,41 @@ pub fn render_paragraph(
     shaped: &ShapedParagraph,
     px_per_em: f32,
 ) -> Result<Coverage, RasterError> {
-    render_glyphs(
-        fonts,
-        px_per_em,
-        shaped.glyphs.iter().map(|g| GlyphDraw {
-            font_index: g.font_index,
-            glyph_id: g.glyph_id,
-            pen_x: g.x,
-            pen_y: g.y,
-        }),
-    )
+    render_glyphs(fonts, px_per_em, paragraph_glyph_draws(shaped))
+}
+
+/// The atlas analog of [`render_paragraph`]: shape-place the paragraph's glyphs
+/// into one [`GlyphAtlas`](crate::GlyphAtlas) per stack font and return the
+/// [`RenderedGlyphs`] (atlases + per-glyph placements) *without* compositing them
+/// into a single mask. The §5.37.9 surface a per-glyph GPU text path paints —
+/// each atlas uploaded once, each glyph drawn as a quad sampling its sub-rect —
+/// the production-direction successor (R1065) to the whole-paragraph
+/// [`render_paragraph`] composite (R1063). Production paint is still §5.36 swash,
+/// so this is the paint-seam forcing consumer.
+///
+/// # Errors
+///
+/// Propagates a [`RasterError`] from any glyph's rasterization (a pathological
+/// `px_per_em` past the size cap, or a not-yet-supported composite glyph).
+pub fn render_paragraph_atlased(
+    fonts: &[&Font],
+    shaped: &ShapedParagraph,
+    px_per_em: f32,
+) -> Result<RenderedGlyphs, RasterError> {
+    render_glyphs_atlased(fonts, px_per_em, paragraph_glyph_draws(shaped))
+}
+
+/// The per-glyph [`GlyphDraw`] stream for a shaped paragraph — the shared input
+/// to [`render_paragraph`] (which composites it) and [`render_paragraph_atlased`]
+/// (which keeps the per-glyph atlas placements), so the two never drift. Each
+/// glyph is rasterized by `fonts[font_index]` at its integer-snapped pen.
+fn paragraph_glyph_draws(shaped: &ShapedParagraph) -> impl Iterator<Item = GlyphDraw> + '_ {
+    shaped.glyphs.iter().map(|g| GlyphDraw {
+        font_index: g.font_index,
+        glyph_id: g.glyph_id,
+        pen_x: g.x,
+        pen_y: g.y,
+    })
 }
 
 /// Shape an already-itemised run list into one visually-ordered line: X9-filter

@@ -28,9 +28,9 @@
 //! ICD) — a hardware pass does not imply a CI software pass.
 
 use pinion_core::style::Color;
-use pinion_runtime::paint_adapter::draw_coverage;
+use pinion_runtime::paint_adapter::{draw_atlased_glyphs, draw_coverage};
 use pinion_shell::headless_screenshot::HeadlessScreenshot;
-use pinion_text_font::{Font, render_paragraph, shape_paragraph};
+use pinion_text_font::{Font, render_paragraph, render_paragraph_atlased, shape_paragraph};
 use vello::Scene as VelloScene;
 use vello::kurbo::Affine;
 use vello::peniko::Color as PenikoColor;
@@ -160,5 +160,118 @@ fn self_hosted_engine_coverage_reaches_pixels_at_placed_footprint() {
         interior_background,
         "no background pixel inside the ink bbox ({min_x},{min_y})-({max_x},{max_y}) — \
          the mask SHAPE did not reach the surface (a solid-rectangle blit looks like this)"
+    );
+}
+
+/// R1065 §5.37.9 → §5.16 — does the per-glyph GlyphAtlas reach pixels as separate
+/// quads? The production-direction successor to draw_coverage: instead of blitting
+/// one whole-paragraph mask, `draw_atlased_glyphs` uploads each atlas once and
+/// draws one quad per glyph sampling its sub-rect. This forcing consumer shapes
+/// "Hi" through `render_paragraph_atlased`, paints it with `draw_atlased_glyphs`
+/// onto a black target, renders HEADLESSLY to RGBA8, and asserts the two glyphs
+/// land as two horizontally-separated ink clusters within the placed footprint —
+/// proving (a) the atlas reached pixels, (b) placement is correct through the GPU,
+/// and (c) the glyphs are distinct quads with a background gap (no inter-glyph
+/// atlas bleed), not one merged blob.
+///
+/// `#[ignore]` / lavapipe like the sibling seam test (see that test's header).
+#[test]
+#[ignore = "wgpu adapter cold-boot too slow for default test suite; run with --ignored"]
+fn self_hosted_atlas_reaches_pixels_per_glyph() {
+    // --- §5.37: shape + atlas-place "Hi" (no composite — keep per-glyph). ----
+    let font = Font::from_bytes(NOTO.to_vec()).expect("parse NotoSans fixture");
+    let shaped = shape_paragraph(&font, "Hi", PX);
+    let rendered = render_paragraph_atlased(&[&font], &shaped, PX).expect("atlas-render paragraph");
+
+    // Premise: "Hi" is two inked glyphs, each a placement into atlas 0.
+    assert_eq!(rendered.placed.len(), 2, "Hi should atlas-place two glyphs");
+
+    // --- footprint: the union of the glyph quads (what composite() would size
+    // the mask to), pinned so its top-left ink lands at (MARGIN, MARGIN). -----
+    let (mut left, mut top, mut right, mut bottom) = (i32::MAX, i32::MAX, i32::MIN, i32::MIN);
+    for p in &rendered.placed {
+        let g = &p.glyph;
+        let (gx, gy) = (p.pen_x + g.left, p.pen_y + g.top);
+        left = left.min(gx);
+        top = top.min(gy);
+        right = right.max(gx + i32::try_from(g.width).expect("glyph width fits i32"));
+        bottom = bottom.max(gy + i32::try_from(g.height).expect("glyph height fits i32"));
+    }
+    let width = u32::try_from(right - left).expect("footprint width fits u32");
+    let height = u32::try_from(bottom - top).expect("footprint height fits u32");
+    let pen_x = f64::from(MARGIN) - f64::from(left);
+    let pen_y = f64::from(MARGIN) - f64::from(top);
+    let buf_w = width + 2 * MARGIN;
+    let buf_h = height + 2 * MARGIN;
+
+    // --- paint the atlas per-glyph onto a black target, render headlessly. ---
+    let mut scene = VelloScene::new();
+    draw_atlased_glyphs(
+        &mut scene,
+        &rendered,
+        Color::rgb(255, 255, 255),
+        pen_x,
+        pen_y,
+        Affine::IDENTITY,
+    );
+
+    let mut shot = match HeadlessScreenshot::new() {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("skipping: no wgpu adapter ({e})");
+            return;
+        }
+    };
+    let rgba = shot
+        .render_to_rgba8(&scene, buf_w, buf_h, PenikoColor::BLACK)
+        .expect("headless render");
+    assert_eq!(rgba.len(), (buf_w * buf_h * 4) as usize);
+
+    let is_ink = |x: u32, y: u32| -> bool {
+        let i = ((y * buf_w + x) * 4) as usize;
+        rgba[i] > 180 && rgba[i + 1] > 180 && rgba[i + 2] > 180
+    };
+
+    let mut ink_count = 0u32;
+    let (mut min_x, mut min_y, mut max_x, mut max_y) = (u32::MAX, u32::MAX, 0u32, 0u32);
+    for y in 0..buf_h {
+        for x in 0..buf_w {
+            if is_ink(x, y) {
+                ink_count += 1;
+                min_x = min_x.min(x);
+                min_y = min_y.min(y);
+                max_x = max_x.max(x);
+                max_y = max_y.max(y);
+            }
+        }
+    }
+
+    // (1) The atlas reached pixels.
+    assert!(ink_count > 0, "the per-glyph atlas produced no visible ink");
+
+    // (2) All ink lies within the placed footprint (1px GPU-AA slop) — a
+    // mis-placed quad or a wrong brush_transform would scatter ink outside.
+    let lo = MARGIN - 1;
+    assert!(
+        min_x >= lo && min_y >= lo && max_x <= MARGIN + width && max_y <= MARGIN + height,
+        "ink bbox ({min_x},{min_y})-({max_x},{max_y}) escaped the placed footprint \
+         at margin {MARGIN} ({width}x{height}) — a glyph quad / brush_transform is wrong"
+    );
+
+    // (3) The gutter is black (no flood).
+    assert!(!is_ink(0, 0), "top-left gutter must stay black (no flood)");
+
+    // (4) The glyphs are TWO horizontally-separated clusters: at least one column
+    // strictly between the ink extremes is fully background (the H/i gap). A
+    // single merged blob — or inter-glyph atlas bleed sampling a neighbour's
+    // sub-rect across the gap — has no empty column here. This is the atlas
+    // path's defining witness: two quads sampling two atlas sub-rects with nearest
+    // sampling, not one paragraph blit.
+    let column_has_ink = |x: u32| (0..buf_h).any(|y| is_ink(x, y));
+    let empty_column_between = ((min_x + 1)..max_x).any(|x| !column_has_ink(x));
+    assert!(
+        empty_column_between,
+        "no fully-background column between the glyphs (ink x {min_x}..{max_x}) — \
+         the two glyph quads merged (inter-glyph atlas bleed or a single blit)"
     );
 }

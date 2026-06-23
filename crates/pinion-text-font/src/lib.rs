@@ -40,11 +40,12 @@ pub use line_layout::{
     ShapedLine, ShapedLines, layout_paragraph, layout_paragraph_with_fallback, render_lines,
 };
 pub use paragraph::{
-    ShapedParagraph, render_paragraph, shape_paragraph, shape_paragraph_with_fallback,
+    ShapedParagraph, render_paragraph, render_paragraph_atlased, shape_paragraph,
+    shape_paragraph_with_fallback,
 };
 pub use raster::{Coverage, RasterError};
 pub use sfnt::{Flavor as SfntFlavor, OffsetTable, TableRecord, find_table, parse_sfnt};
-pub use shape::{PositionedGlyph, ShapedRun};
+pub use shape::{PlacedGlyph, PositionedGlyph, RenderedGlyphs, ShapedRun};
 pub use tables::gdef::{Gdef, GlyphClass};
 pub use tables::glyf::{
     Component, ComponentArgs, ComponentTransform, CompositeGlyph, Glyf, Glyph, GlyphHeader,

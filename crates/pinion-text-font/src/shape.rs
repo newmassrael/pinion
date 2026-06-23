@@ -249,19 +249,39 @@ pub fn render_run(font: &Font, text: &str, px_per_em: f32) -> Result<Coverage, R
 }
 
 /// A glyph ready for compositing: its integer-snapped pen origin, the atlas that
-/// holds its pixels, and its packed sub-rect. Built by [`render_glyphs`] (the one
-/// place all renderers rasterize + place) and consumed by [`composite`].
+/// holds its pixels, and its packed sub-rect. Built by [`render_glyphs_atlased`]
+/// (the one place all renderers rasterize + place), consumed by [`composite`]
+/// (whole-paragraph mask) and — public since R1065 — by a per-glyph paint path
+/// that draws one quad sampling [`Self::glyph`]'s sub-rect of `atlases[atlas]`.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct PlacedGlyph {
+pub struct PlacedGlyph {
     /// Pen-origin x in the combined bitmap (device px, integer-snapped).
     pub pen_x: i32,
     /// Pen-origin y (device px; baseline = 0, negative above, positive downward
     /// for a combining mark).
     pub pen_y: i32,
-    /// Index into the `atlases` slice of the atlas holding this glyph's pixels.
+    /// Index into [`RenderedGlyphs::atlases`] of the atlas holding this glyph's
+    /// pixels.
     pub atlas: usize,
     /// The glyph's packed sub-rect and pen offset in `atlases[atlas]`.
     pub glyph: AtlasGlyph,
+}
+
+/// The pre-composite output of [`render_glyphs_atlased`]: one [`GlyphAtlas`] per
+/// stack font plus every drawn glyph's placement into them.
+///
+/// This is the §5.37.9 atlas surface a per-glyph GPU text path paints — each
+/// atlas uploaded once, each [`PlacedGlyph`] drawn as one quad sampling its
+/// sub-rect — *before* [`composite`] flattens it into a single whole-paragraph
+/// [`Coverage`]. R1063 wired the flattened mask to pixels (a bring-up seam);
+/// R1065 exposes this un-flattened form so paint can keep the atlas.
+#[derive(Debug, Clone, Default)]
+pub struct RenderedGlyphs {
+    /// One [`GlyphAtlas`] per stack font (so a glyph id shared across fonts never
+    /// collides); index with [`PlacedGlyph::atlas`].
+    pub atlases: Vec<GlyphAtlas>,
+    /// Every drawn (non-blank) glyph, integer-snapped, in input order.
+    pub placed: Vec<PlacedGlyph>,
 }
 
 /// Composite placed glyphs into one AA coverage bitmap by same-color alpha-over.
@@ -366,8 +386,32 @@ pub(crate) fn render_glyphs(
     px_per_em: f32,
     glyphs: impl IntoIterator<Item = GlyphDraw>,
 ) -> Result<Coverage, RasterError> {
+    let rendered = render_glyphs_atlased(fonts, px_per_em, glyphs)?;
+    Ok(composite(&rendered.atlases, &rendered.placed))
+}
+
+/// Rasterize each glyph through its stack font's atlas and place it — the atlas
+/// build under [`render_glyphs`], stopping *before* [`composite`] flattens the
+/// per-glyph atlas into one mask. Returns the [`RenderedGlyphs`] (atlases +
+/// per-glyph placements) the §5.37.9 paint path consumes (R1065).
+///
+/// One [`GlyphAtlas`] per stack font (so a glyph id shared across fonts never
+/// collides), each glyph rasterized by `fonts[font_index]`, blank glyphs (space)
+/// skipped, pens integer-snapped. A glyph whose `font_index` is outside `fonts`
+/// is skipped (defensive). Empty atlases / placements for an empty stack or no
+/// drawn glyph.
+///
+/// # Errors
+///
+/// Propagates a [`RasterError`] from any glyph's rasterization (a pathological
+/// `px_per_em` past the size cap, or a not-yet-supported composite glyph).
+pub(crate) fn render_glyphs_atlased(
+    fonts: &[&Font],
+    px_per_em: f32,
+    glyphs: impl IntoIterator<Item = GlyphDraw>,
+) -> Result<RenderedGlyphs, RasterError> {
     // One atlas per stack font; an empty stack yields no atlases (every glyph is
-    // then out of range and skipped, so the result is the empty coverage).
+    // then out of range and skipped, so the result has no placements).
     let mut atlases: Vec<GlyphAtlas> = (0..fonts.len())
         .map(|_| GlyphAtlas::new(ATLAS_WIDTH))
         .collect();
@@ -391,7 +435,7 @@ pub(crate) fn render_glyphs(
             glyph: entry,
         });
     }
-    Ok(composite(&atlases, &placed))
+    Ok(RenderedGlyphs { atlases, placed })
 }
 
 /// Same-color alpha-over of two `0..=255` coverage values: `out = d + s − d·s`,
