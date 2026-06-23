@@ -2492,9 +2492,12 @@ impl<V: WidgetView> ShellCore<V> {
     ///
     /// R1075 §5.39 §5.16 §5.49 — the dispatching edge is gated by the SAME
     /// [`Self::admit_key_press`] the live winit arm uses, so this is no longer
-    /// a gate bypass: an RPC key acts only on the OS-focused, press-owning
-    /// window, and a `Down` edge makes the press owner observable through
-    /// `scene/input_state` (the R1074 introspection, now live for RPC keys).
+    /// a gate bypass: a `Down` edge acts only on the window that holds OS focus
+    /// AND owns the in-flight press (pinned at its rising edge), while the legacy
+    /// atomic `Press` acts on the OS-focused window alone (it has no keyup to
+    /// clear an owner, so it gates without pinning). A `Down` makes the press
+    /// owner observable through `scene/input_state` (the R1074 introspection,
+    /// now live for RPC keys).
     fn drain_key_for_window(
         &mut self,
         window_id: &str,
@@ -2523,14 +2526,17 @@ impl<V: WidgetView> ShellCore<V> {
         }
         // R1075 §5.39 §5.16 §5.49 — route the dispatching edge through the SAME
         // gate as the live winit `KeyboardInput` arm (`AppShell::handle_keyboard_input`),
-        // so the RPC `scene/key` path is no longer a gate bypass: a key only
-        // acts on the window that owns its press AND holds OS focus. A `Down`
-        // edge pins the press owner at its rising edge ([`Self::admit_key_press`],
-        // cleared by the matching keyup above); the legacy atomic `Press` has no
-        // keyup, so it gates without pinning ([`Self::is_key_dispatch_window`])
-        // to avoid stranding an owner. With no OS-focus event (the headless /
-        // single-window default) the gate fails OPEN, so this is byte-identical
-        // to the pre-R1075 ungated dispatch there.
+        // so the RPC `scene/key` path is no longer a gate bypass. A `Down` edge is
+        // admitted only when the window holds OS focus AND owns the in-flight press,
+        // pinning the press owner at its rising edge ([`Self::admit_key_press`],
+        // cleared by the matching keyup above). The legacy atomic `Press` has no
+        // keyup to clear an owner, so it gates on OS focus alone, without pinning
+        // ([`Self::is_key_dispatch_window`]), to avoid stranding one. With no
+        // OS-focus event (the headless / single-window default) the gate fails
+        // OPEN, so the DISPATCH decision is identical to the pre-R1075 ungated path
+        // there; a `Down` additionally records the press owner — new introspectable
+        // state, observable only through the field R1074 added (no prior observable
+        // behaviour changes).
         let admit = if state.held_edge() == Some(true) {
             self.admit_key_press(window_id, key)
         } else {

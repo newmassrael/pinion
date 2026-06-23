@@ -25,7 +25,7 @@ write, [[wire-form-read-write-symmetry]]):
     gate (R1073) AI-observable — the OS-focused window the key gate
     admits for, and the window that owns each held key's press.
 
-Verification scope (≥ 30 assertions, exact count = 50):
+Verification scope (≥ 30 assertions, exact count = 51):
 
   (A) boot: all-false modifiers / empty held set / null cursor / the
       key-dispatch axis present (GUI backend) with no press owner.
@@ -183,8 +183,8 @@ def body() -> None:
 
         # Exact assertion count: A 10 + B 4 + C 1 + D 3 + E 1 + F 3 +
         # G 4 + H 1 + I 1 + J 9 + K 1 = 38 assert/assert_eq calls
-        # (A's modifier loop = 4 of the 10) + 12 read() non-None
-        # asserts = 50 checks; ≥ 30 obligation met.
+        # (A's modifier loop = 4 of the 10) + 13 read() non-None
+        # asserts = 51 checks; ≥ 30 obligation met.
 
 
 if __name__ == "__main__":
