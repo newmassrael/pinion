@@ -1120,7 +1120,13 @@ impl<V: WidgetView> ShellCore<V> {
     /// re-folding the union ([`Self::union_focusable_tags`]) removes its tags
     /// from the Tab order / click-focus set, and the §5.39 stale-focus guard
     /// inside `update_focusable_tags` drops focus if it pointed at one of the
-    /// now-unpainted widgets.
+    /// now-unpainted widgets. R26 §5.16 — the tags actually leave the union only
+    /// because [`crate::AppShell::reconcile_windows`]'s drop-pass removes the spec
+    /// from `windows_signal` BEFORE calling this, so the closed window is also
+    /// un-declared and the R26 declared-topology derivation does not re-add its
+    /// tags. Calling `remove_window` on a STILL-declared window would re-derive
+    /// and keep its tags enumerated (no such caller exists — the reconcile drop is
+    /// the only producer).
     ///
     /// Refuses to remove the [`pinion_runtime::DEFAULT_WINDOW`]
     /// primary id — the substrate's primary scope is aliased to
@@ -4008,20 +4014,36 @@ impl<V: WidgetView> ShellCore<V> {
     }
 
     /// R26 §5.39 §5.16 — the focusable tags of one window: its harvested paint
-    /// scene when the window has painted (the materialised truth — viewport-
-    /// accurate, what is actually on screen), otherwise the DETERMINED scene
-    /// derived from the pure view fn for a window the binding declares but has
-    /// not painted yet (the undock reconcile gap). The two agree once the window
-    /// paints — [`Scene::collect_focusable_tags`] reads only the view-assigned
-    /// `tag` + [`LayoutStyle::focusable`](pinion_core::style::LayoutStyle), which
-    /// layout never touches — so the harvest supersedes the derivation with no
-    /// observable change (and [`Self::union_focusable_tags`] de-dupes either way).
+    /// scene if the window has painted (the materialised truth on screen),
+    /// otherwise the DETERMINED scene derived from the pure view fn for a window
+    /// the binding declares but has not painted yet (the undock reconcile gap).
+    /// The derivation runs ONLY for that transient — a painted window
+    /// short-circuits to the cache, so a steady-state multi-window binding (all
+    /// declared windows painted) adds no extra view run.
     ///
-    /// The derivation runs under `root_owner` for parity with the live paint's
-    /// view dispatch (so `Owner::cache` hooks resolve to the same reactive state)
-    /// and is side-effect-free per §6.3 — the same purity the boot-seed
+    /// Harvest and derivation yield the SAME set when the window's focusable
+    /// nodes are not viewport-gated: [`Scene::collect_focusable_tags`] reads only
+    /// the view-assigned `tag` + [`LayoutStyle::focusable`](pinion_core::style::LayoutStyle),
+    /// which layout never touches, so the harvest supersedes the derivation with
+    /// no change once the window paints (and [`Self::union_focusable_tags`]
+    /// de-dupes either way). CAVEAT — the *set of emitted nodes* (distinct from a
+    /// painted node's marker) is the view fn's choice and may read a viewport
+    /// signal: this standalone derivation publishes no pane viewport, so
+    /// `use_pane_viewport_size` reads its `(0, 0)` "unmeasured" sentinel, and a
+    /// view that gates focusable rows on the measured viewport (a virtualized
+    /// list) derives that `(0, 0)` projection until first paint, then the harvest
+    /// corrects it. The dock/undock model — one static top-level focusable per
+    /// torn window — is not viewport-gated, so it derives exactly; no current
+    /// consumer gates focusables on the viewport.
+    ///
+    /// Runs under `root_owner` for parity with the live paint's view dispatch (so
+    /// `Owner::cache` hooks resolve to the same reactive state) and is
+    /// side-effect-free per §6.3 — the same purity, AND the same precondition: a
+    /// view fn must not create a bare `Effect::new` (it would double-execute on
+    /// this extra run; §6.3 keeps a view's `Effect`s inside an `Owner::cache`
+    /// factory), the invariant the boot-seed
     /// ([`Self::refresh_focusable_from_view`]) already depends on, now exercised
-    /// for secondary windows too. No layout / viewport size is needed.
+    /// for secondary windows too. No layout / viewport pass is needed.
     fn window_focusables(&self, window_id: &str) -> Vec<String> {
         if let Some(tags) = self.focusable_tags_per_window.get(window_id) {
             return tags.clone();
@@ -4048,6 +4070,16 @@ impl<V: WidgetView> ShellCore<V> {
     /// enumeration tracks AHEAD of paint, so a just-declared window's pane is
     /// enumerable on the same dispatch that declared it, not a few frames later
     /// when its OS window first paints.
+    ///
+    /// Correctness rests on the SAME `Owner::cache` identity contract
+    /// [`crate::AppShell::reconcile_windows`] relies on: [`WidgetView::windows_signal`]
+    /// must memoise its `Rc<Signal<..>>` (keyed `(TypeId::<V>, key)`) so this read
+    /// and the AppShell-side reconcile resolve the POINTER-EQUAL signal. A binding
+    /// that returned a fresh signal per call would let focus enumerate against one
+    /// instance while reconcile acts on another — the two would silently diverge.
+    /// Reading via `Signal::get` subscribes `root_owner` to the signal, but that
+    /// subscription is idempotent (already established at `resumed`) and read-only
+    /// (`get` never dirties), so it adds no paint.
     fn declared_window_ids(&self) -> Vec<String> {
         let core = &self.core;
         core.root_owner().run(|| {
@@ -4832,18 +4864,73 @@ mod r26_undock_focus_follow_tests {
         );
     }
 
-    /// Once the torn window first-paints, its harvested contribution supersedes
-    /// the derivation with no double count (first-occurrence dedup).
+    /// The derive -> harvest transition with no double count: the torn tag is
+    /// present DERIVED before its window paints, and still present exactly ONCE
+    /// after it paints (now harvested). The torn window is then in BOTH the
+    /// declared set and the painted cache, so this also pins the declared∪painted
+    /// dedup (`union_focusable_tags` folds it once via first-occurrence).
     #[test]
-    fn painted_torn_pane_is_not_double_counted() {
+    fn torn_tag_survives_derive_to_harvest_transition_without_double_count() {
         let mut sc = ShellCore::<DockFollowFixture>::new();
+        // Pre-paint: present via derivation (declared-but-unpainted).
+        assert_eq!(
+            sc.focus()
+                .tab_order()
+                .iter()
+                .filter(|t| t.as_str() == TORN_TAG)
+                .count(),
+            1,
+            "derived torn tag present exactly once before its window paints",
+        );
+
+        // The torn window first-paints — its harvested contribution now also
+        // covers the tag (declared AND painted).
         sc.refresh_window_focusables(TORN_WINDOW, vec![TORN_TAG.to_owned()]);
 
         let order = sc.focus().tab_order().to_vec();
         assert_eq!(
             order.iter().filter(|t| t.as_str() == TORN_TAG).count(),
             1,
-            "the torn tag appears once — harvest supersedes derivation, deduped: {order:?}",
+            "after paint the torn tag still appears once — harvest supersedes \
+             derivation, declared∪painted deduped: {order:?}",
+        );
+    }
+
+    /// The §5.39 modal guard contains the derived tag: a torn pane the declared
+    /// topology enumerates is NOT focusable while a modal trap is up — `focus_set`
+    /// resolves against the modal members (`active_order`), and the derived tag is
+    /// not a member. R26 adds tags to `tab_order`; it does not widen the modal
+    /// trap. (The guard itself lives in `FocusManager`; this pins the interaction
+    /// with R26's enumeration.)
+    #[test]
+    fn derived_torn_tag_is_not_focusable_while_a_modal_is_active() {
+        let mut sc = ShellCore::<DockFollowFixture>::new();
+        // The torn tag is enumerated (derived).
+        assert!(
+            sc.focus()
+                .tab_order()
+                .iter()
+                .any(|t| t.as_str() == TORN_TAG),
+        );
+
+        // Open a modal trap over the primary control only.
+        sc.focus.push_modal_scope(vec![MAIN_TAG.to_owned()]);
+        assert_eq!(
+            sc.focus().focused(),
+            Some(MAIN_TAG),
+            "the modal auto-focuses its first member",
+        );
+
+        // The derived torn tag, though in tab_order, is not a modal member:
+        // focus_set must reject it and the modal focus must not move.
+        assert!(
+            !sc.focus.focus_set(TORN_TAG),
+            "a non-member derived tag cannot steal focus from the modal trap",
+        );
+        assert_eq!(
+            sc.focus().focused(),
+            Some(MAIN_TAG),
+            "modal focus unchanged"
         );
     }
 }
