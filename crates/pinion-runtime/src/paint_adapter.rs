@@ -77,7 +77,7 @@ use pinion_text_font::{
 // R1068 §5.37 → production Scene::Text — the opt-in self-hosted paint arm's
 // cached font handle (the parley path stays the default; see
 // [`to_vello_with_text_engine`]).
-use crate::text_engine::SelfHostedTextEngine;
+use crate::text_engine::{LineBoxMetrics, SelfHostedTextEngine, single_line_overflows};
 
 /// Build a Vello scene from a pinion [`Scene`] tree. `fill_hook` is
 /// consulted for each [`BoxNode`] visited; a `Some(color)` return
@@ -2091,15 +2091,19 @@ fn self_hosted_eligible(t: &TextNode) -> bool {
 /// than one line — the arm renders only one line, so it declines rather than
 /// overflow.
 ///
-/// Baseline: `Normal` line height (guaranteed by [`self_hosted_eligible`]) makes
-/// parley's natural line box `ascent + descent + line_gap` with the first
-/// baseline at `ascent + line_gap/2` (half-leading split above). The arm computes
-/// that **same** baseline from the §5.37 font's own `ascender` + `line_gap`
-/// metrics — so vertical placement registers with parley's, with no dependency on
-/// parley. Horizontal placement starts at the box left (`Start` alignment, also
-/// guaranteed eligible). Measure is still parley, so the box may be wider than the
-/// §5.37 advance (text sits left-aligned inside it, as parley `Start` text would);
-/// sizing the box to §5.37 (full metric coherence) is the next campaign step.
+/// Baseline: `Normal` line height (guaranteed by [`self_hosted_eligible`]) makes the
+/// first baseline sit at `ascent + line_gap/2` (half-leading split above) in the
+/// `ascent + descent + line_gap` line box. The arm reads that baseline from the
+/// SSOT [`LineBoxMetrics`] (shared with the R1070 measure arm's box height), so
+/// paint + measure register exactly. NOTE: this hhea-derived baseline is the §5.37
+/// engine's own; it reproduces parley's `Normal` baseline by intent (R1068 pixel-
+/// verified the ink to ±2px) but is not guaranteed bit-identical to parley, which
+/// may use `OS/2` typo metrics — see [`LineBoxMetrics`]. Horizontal placement starts
+/// at the box left (`Start` alignment, also guaranteed eligible). As of R1070 the
+/// measure arm sizes the eligible box to §5.37 too (when wired through
+/// [`compute_layout_with_text_measure`](crate::layout::compute_layout_with_text_measure));
+/// the single shared decline [`single_line_overflows`] keeps paint and measure from
+/// splitting.
 fn paint_text_self_hosted(
     out: &mut VelloScene,
     t: &TextNode,
@@ -2107,15 +2111,9 @@ fn paint_text_self_hosted(
     parent_transform: Affine,
 ) -> bool {
     let font = engine.font();
-    // `units_per_em` is read from `head` at parse; 0 would be a malformed font.
-    // Guard rather than divide-by-zero, falling through to parley.
-    let upem = f64::from(font.units_per_em());
-    if upem <= 0.0 {
-        return false;
-    }
     #[allow(
         clippy::cast_precision_loss,
-        reason = "font_size_px / rect.w <= 2^24 px in practice — exact in f32"
+        reason = "font_size_px <= 2^24 px in practice — exact in f32"
     )]
     let px = t.style.font_size_px as f32;
     if px <= 0.0 {
@@ -2125,15 +2123,11 @@ fn paint_text_self_hosted(
     if shaped.glyphs.is_empty() {
         return false;
     }
-    // Soft-wrap guard: a bounded box that the §5.37 single line would overflow is
-    // exactly what parley wraps to multiple lines — decline so parley renders it
-    // (the arm is single-line only).
-    #[allow(
-        clippy::cast_precision_loss,
-        reason = "rect.w <= 2^24 px in practice — exact in f32"
-    )]
-    let box_w = t.rect.w as f32;
-    if t.rect.w > 0 && shaped.advance > box_w {
+    // Soft-wrap guard (shared SSOT comparison): a bounded box the §5.37 single line
+    // would overflow is exactly what parley wraps to multiple lines — decline so
+    // parley renders it (the arm is single-line only). `rect.w == 0` is an unmeasured
+    // box → `None` → never declines, matching the measure arm's taffy-unbounded probe.
+    if single_line_overflows(shaped.advance, (t.rect.w > 0).then_some(t.rect.w)) {
         return false;
     }
     let Ok(rendered) = render_paragraph_atlased(&[font], &shaped, px) else {
@@ -2146,10 +2140,13 @@ fn paint_text_self_hosted(
         // emits nothing, but this keeps the fall-through contract uniform).
         return false;
     }
-    // Baseline = ascent + half-leading, matching parley's `Normal` line box's
-    // first baseline, computed from the §5.37 font's own metrics (no parley dep).
-    let baseline =
-        (f64::from(font.ascender()) + f64::from(font.line_gap()) / 2.0) * f64::from(px) / upem;
+    // Baseline from the SSOT [`LineBoxMetrics`] shared with the measure arm's box
+    // height, so paint + measure register exactly; `else` defers on a malformed
+    // font (upem 0).
+    let Some(metrics) = LineBoxMetrics::from_font(font, px) else {
+        return false;
+    };
+    let baseline = metrics.baseline_px;
     let transform =
         parent_transform * Affine::translate((f64::from(t.rect.x), f64::from(t.rect.y)));
     let needs_clip = matches!(

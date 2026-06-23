@@ -85,6 +85,13 @@ pub enum NodeContext {
 ///
 /// An absent override (`None` passed to [`compute_layout_with_text_measure`]) or a
 /// `None` return is byte-identical to the pre-R1070 parley measure.
+///
+/// A named trait, not a bare `dyn Fn(..) -> Option<(f32, f32)>`: the §5.37 measure
+/// surface is expected to grow (multi-line per-line metrics + baselines for
+/// caller-side caret when styled-runs / multi-line route through §5.37 — R1072+),
+/// so a documentable, ratified seam reads better than an anonymous closure and can
+/// gain methods without becoming a second measure entry point. The single-method
+/// `(f32, f32)` shape is the single-line interim; expect it to widen.
 pub trait TextMeasure {
     /// Measure a `Scene::Text` leaf, or return `None` to defer to the parley
     /// measure (every ineligible / declining case).
@@ -171,6 +178,14 @@ pub fn compute_layout_with_scroll_dirty(
 ///
 /// This is the seam the shell wires the engine through (R1071+); the parley path
 /// stays the default everywhere else.
+///
+/// WIRE BOTH ARMS OR NEITHER: pair this with
+/// [`to_vello_with_text_engine`](crate::paint_adapter::to_vello_with_text_engine)
+/// using the SAME engine. Enabling the engine for measure but not paint (or
+/// vice-versa) re-opens a coherence gap — a box sized by §5.37 filled by parley
+/// glyphs, or a parley-sized box the §5.37 paint arm declines into. The shared
+/// eligibility SSOT ([`crate::text_engine::self_hosted_text_eligible`]) guarantees
+/// the two arms agree on WHICH leaves are eligible, not that both are enabled.
 ///
 /// # Panics
 ///
@@ -1954,28 +1969,47 @@ mod tests {
         let make_scene = || {
             // Start-aligned flex row in a viewport far wider than the text, so the
             // leaf measures at its intrinsic single-line size (no wrap pressure).
+            // `align_items: Start` keeps the cross axis (height) intrinsic too — the
+            // default `Stretch` would inflate rect.h to the container, masking the
+            // §5.37 box height.
             let text = Scene::Text(TextNode::styled(
                 "Measure",
                 Rect::default(),
                 TextStyle::new().with_size_px(18),
             ));
             Scene::Container(
-                ContainerNode::new(vec![text])
-                    .with_layout(LayoutStyle::new().flex(FlexDirection::Row)),
+                ContainerNode::new(vec![text]).with_layout(
+                    LayoutStyle::new()
+                        .flex(FlexDirection::Row)
+                        .with_align_items(AlignItems::Start),
+                ),
             )
         };
-        let measured = |scene: &Scene| -> u32 {
+        let measured = |scene: &Scene| -> (u32, u32) {
             let Scene::Container(c) = scene else {
                 panic!("container")
             };
             let Scene::Text(t) = &c.children[0] else {
                 panic!("text")
             };
-            t.rect.w
+            (t.rect.w, t.rect.h)
         };
+        // Independent (non-LineBoxMetrics) expected height = the ceil'd hhea line box.
+        let f = engine.font();
+        let upem = f64::from(f.units_per_em());
+        let expected_h = ((f64::from(f.ascender()) - f64::from(f.descender())
+            + f64::from(f.line_gap()))
+            * f64::from(px)
+            / upem)
+            .ceil() as u32;
 
-        // §5.37 measure: the box width equals the §5.37 advance (ceil), proving the
-        // override took effect (the leaf is sized by §5.37, not by parley).
+        // §5.37 measure: the box (w, h) equals the §5.37 advance.ceil × hhea line box,
+        // proving the override took effect (the leaf is sized by §5.37, not parley).
+        // Width == advance.ceil holds HERE because the leaf is laid out at its
+        // INTRINSIC size — a Start flex row with no grow/shrink in a viewport far
+        // wider than the text. Under flex grow/shrink taffy would resolve a different
+        // rect.w; the universal invariant the paint arm relies on is the weaker
+        // `advance <= rect.w` (no overflow), asserted next.
         let mut some_scene = make_scene();
         let mut cache_some = LayoutCache::new();
         let _ = compute_layout_with_text_measure(
@@ -1985,13 +2019,19 @@ mod tests {
             200,
             Some(&engine),
         );
-        let some_w = measured(&some_scene);
+        let (some_w, some_h) = measured(&some_scene);
         assert_eq!(
             some_w, expected_w,
-            "the §5.37 measured box width must equal the §5.37 shaped advance (ceil)"
+            "the intrinsic §5.37 box width must equal the §5.37 shaped advance (ceil)"
         );
-        // Coherence: the paint arm's decline test `advance > rect.w` is false, so it
-        // paints the single §5.37 line inside the box — zero overflow.
+        assert_eq!(
+            some_h, expected_h,
+            "the §5.37 box height must equal the hhea line box (ceil)"
+        );
+        // Coherence (the UNIVERSAL invariant): the paint arm's decline test
+        // `advance > rect.w` is false, so it paints the single §5.37 line inside the
+        // box — zero overflow. This holds under grow/shrink too (a grown box is only
+        // wider), unlike the exact-width equality above.
         assert!(
             advance <= some_w as f32,
             "the §5.37 paint advance ({advance}) must fit the §5.37 measured box ({some_w})"
@@ -2003,7 +2043,7 @@ mod tests {
         let mut cache_none = LayoutCache::new();
         compute_layout(&mut none_scene, &mut cache_none, 800, 200);
         assert!(
-            measured(&none_scene) > 0,
+            measured(&none_scene).0 > 0,
             "the parley measure path is unchanged and still produces a non-zero box"
         );
     }
