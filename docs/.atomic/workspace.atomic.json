@@ -14872,6 +14872,58 @@
         "honest carry: live multi-window GUI is HW-gated (VELLO-002 GL hang); the Escape/Tab live resolution (dispatch_named_key_str inside handle_keyboard_input) is inspection-verified like the rest of the winit live path — its decomposition IS unit-tested (resolver covers Escape/Tab + is a named_key_str superset) and the gate IS seam-tested (drops successor strays for any key string)"
       ]
     },
+    "R1074": {
+      "decision_summary": "R1074 §5.39 §5.16 §5.49: scene/input_state surfaces the multi-window key-dispatch gate (os_focused_window + per-key press owners) for AI introspection",
+      "changes_bullets": [
+        "KeyDispatchFocus{os_focused_window, key_press_owners(sorted)} contract added to pinion-core input",
+        "InputStateSnapshot gains key_dispatch: Option<KeyDispatchFocus>; None = single-OS-window backend (TUI)",
+        "input_state_snapshot gains key_dispatch param (modifiers-parity axis); stays the one snapshot home",
+        "GUI shell key_dispatch_focus() projects os_focused_window + key_press_owner sorted into the axis",
+        "scene/input_state wire: key_dispatch null (unavailable) or {os_focused_window, key_press_owners}"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 exit 0: 197 suites, 7518 pass, 0 fail (+6 vs R1073.1 7512)",
+        "new tests: pinion-core 3 + pinion-shell gate projection 1 + pinion-rpc wire 2; runtime pass-through extended",
+        "clippy --workspace --all-targets vello 0 warnings; rustfmt clean",
+        "r885 demo +R1074 sections (47 checks) PASS; r889 multi-window 3-key set fixed PASS",
+        "inline cleared: admit_key_press doc owner-release ref stale note_key_state -> note_key_release"
+      ],
+      "impact_refs": [
+        "5.39",
+        "5.16",
+        "5.49"
+      ],
+      "carry_forward_bullets": [
+        "R1073.1-deferred: route window-addressed scene/key through admit_key_press (RPC key -> single gate)",
+        "os_focused_window live multi-window verify HW-gated (VELLO-002); headless seam + RPC shape only",
+        "key_press_owners empty over RPC (winit-driven gate); RPC owner pinning = the deferred unification"
+      ],
+      "publishable_decision_summary": "R1074 §5.39 §5.16 §5.49: scene/input_state surfaces the multi-window key-dispatch gate (os_focused_window + per-key press owners) for AI introspection",
+      "publishable_changes_bullets": [
+        "KeyDispatchFocus{os_focused_window, key_press_owners(sorted)} contract added to pinion-core input",
+        "InputStateSnapshot gains key_dispatch: Option<KeyDispatchFocus>; None = single-OS-window backend (TUI)",
+        "input_state_snapshot gains key_dispatch param (modifiers-parity axis); stays the one snapshot home",
+        "GUI shell key_dispatch_focus() projects os_focused_window + key_press_owner sorted into the axis",
+        "scene/input_state wire: key_dispatch null (unavailable) or {os_focused_window, key_press_owners}"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 exit 0: 197 suites, 7518 pass, 0 fail (+6 vs R1073.1 7512)",
+        "new tests: pinion-core 3 + pinion-shell gate projection 1 + pinion-rpc wire 2; runtime pass-through extended",
+        "clippy --workspace --all-targets vello 0 warnings; rustfmt clean",
+        "r885 demo +R1074 sections (47 checks) PASS; r889 multi-window 3-key set fixed PASS",
+        "inline cleared: admit_key_press doc owner-release ref stale note_key_state -> note_key_release"
+      ],
+      "publishable_impact_refs": [
+        "5.39",
+        "5.16",
+        "5.49"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R1073.1-deferred: route window-addressed scene/key through admit_key_press (RPC key -> single gate)",
+        "os_focused_window live multi-window verify HW-gated (VELLO-002); headless seam + RPC shape only",
+        "key_press_owners empty over RPC (winit-driven gate); RPC owner pinning = the deferred unification"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
