@@ -13777,6 +13777,58 @@
         "ImageData straight-RGBA8 construction: lift only at a 3rd consumer (now 2: image_cache + seam)."
       ]
     },
+    "R1064": {
+      "decision_summary": "R1064 §5.39 §5.16 PR-25 per-window keyboard-focus enumeration union (sprag undock): the binding-wide FocusManager tab_order is the UNION of every painted window's focusable tags, no longer DEFAULT_WINDOW-gated, so a torn-off pane drawn only in its secondary window is focusable on click and its External (PTY) receives keyboard input. Keyed per window (R1021 publish_pane_viewports precedent); union-not-replace prevents a secondary paint clobbering the primary's docked panes.",
+      "changes_bullets": [
+        "Removed the DEFAULT_WINDOW gate on focus enumeration in ShellCore::compute_paint_scene_internal — every painted window now refreshes its focusable contribution, not the primary alone",
+        "ShellCore.focusable_tags_per_window per-window map + refresh_window_focusables (record window tags, re-fold) + union_focusable_tags (DEFAULT_WINDOW first, remaining windows by sorted id, de-dup first-occurrence)",
+        "refresh_focusable_from_view now routes the programmatic primary re-enumeration through the DEFAULT_WINDOW entry, so a focus request on the primary view no longer clobbers secondary windows' focusable panes",
+        "remove_window drops the closed window's focus entry + re-folds the union, so its tags leave the Tab order and the 5.39 stale-focus guard drops focus pointed at the now-unpainted pane",
+        "Keyed per window (the R1021 publish_pane_viewports precedent); union (not replace) is what stops a secondary paint clobbering the primary's docked panes — the exact hazard the pre-R25.1 gate guarded against"
+      ],
+      "verification_bullets": [
+        "pinion-shell 424/0 (+5 r25_focus_union: secondary-window paint records its focusable contribution [white-box, no primary gate] / pure mirror skips the refresh [R1006 contract] / secondary pane joins the union without clobbering the primary's panes AND live focus survives / closing a window drops its tag + its stale focus / single-window enumeration is verbatim)",
+        "pinion-runtime 137/0 (FocusManager untouched — the windowing union lives shell-side, so the focus state machine stays a single-enumeration machine)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello = 0 warn; rustfmt clean; mnemosyne validate-workspace T1=0 (entries 1077)",
+        "Single-window binding: union over one map entry equals that window's collect_focusable_tags() verbatim — byte-identical to the pre-R25.1 primary-only enumeration",
+        "Acceptance (sprag undock): a torn-off pane drawn only in its secondary window resolves as a focusable click target, so click-to-focus focuses it and keyboard input routes to its External (PTY); docked primary panes unchanged"
+      ],
+      "impact_refs": [
+        "5.39",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "Cross-window Tab traversal order = primary-then-sorted-id (R25.2 left it open as a pinion design choice); the minimal requirement was secondary pane focusable + click-focus + input-reach, all met",
+        "sprag-side PR-25 (sprag-native session, pinion must not edit it): the undock pane is already drawn with with_focusable(true), so it becomes focusable on click with NO further sprag change — verify live (click undock window, type, full_text changes)",
+        "Window-close re-fold is unconditional in remove_window (rare dock tear-down, off the paint path); a window that held no focusables re-folds to the same union (idempotent)",
+        "(R1063 carry retained) production Scene::Text rewire to 5.37 / 5.37 production font-policy / per-glyph GlyphAtlas paint seam / styled-run per-span color RGBA"
+      ],
+      "publishable_decision_summary": "R1064 §5.39 §5.16 PR-25 per-window keyboard-focus enumeration union (sprag undock): the binding-wide FocusManager tab_order is the UNION of every painted window's focusable tags, no longer DEFAULT_WINDOW-gated, so a torn-off pane drawn only in its secondary window is focusable on click and its External (PTY) receives keyboard input. Keyed per window (R1021 publish_pane_viewports precedent); union-not-replace prevents a secondary paint clobbering the primary's docked panes.",
+      "publishable_changes_bullets": [
+        "Removed the DEFAULT_WINDOW gate on focus enumeration in ShellCore::compute_paint_scene_internal — every painted window now refreshes its focusable contribution, not the primary alone",
+        "ShellCore.focusable_tags_per_window per-window map + refresh_window_focusables (record window tags, re-fold) + union_focusable_tags (DEFAULT_WINDOW first, remaining windows by sorted id, de-dup first-occurrence)",
+        "refresh_focusable_from_view now routes the programmatic primary re-enumeration through the DEFAULT_WINDOW entry, so a focus request on the primary view no longer clobbers secondary windows' focusable panes",
+        "remove_window drops the closed window's focus entry + re-folds the union, so its tags leave the Tab order and the 5.39 stale-focus guard drops focus pointed at the now-unpainted pane",
+        "Keyed per window (the R1021 publish_pane_viewports precedent); union (not replace) is what stops a secondary paint clobbering the primary's docked panes — the exact hazard the pre-R25.1 gate guarded against"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-shell 424/0 (+5 r25_focus_union: secondary-window paint records its focusable contribution [white-box, no primary gate] / pure mirror skips the refresh [R1006 contract] / secondary pane joins the union without clobbering the primary's panes AND live focus survives / closing a window drops its tag + its stale focus / single-window enumeration is verbatim)",
+        "pinion-runtime 137/0 (FocusManager untouched — the windowing union lives shell-side, so the focus state machine stays a single-enumeration machine)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello = 0 warn; rustfmt clean; mnemosyne validate-workspace T1=0 (entries 1077)",
+        "Single-window binding: union over one map entry equals that window's collect_focusable_tags() verbatim — byte-identical to the pre-R25.1 primary-only enumeration",
+        "Acceptance (sprag undock): a torn-off pane drawn only in its secondary window resolves as a focusable click target, so click-to-focus focuses it and keyboard input routes to its External (PTY); docked primary panes unchanged"
+      ],
+      "publishable_impact_refs": [
+        "5.39",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Cross-window Tab traversal order = primary-then-sorted-id (R25.2 left it open as a pinion design choice); the minimal requirement was secondary pane focusable + click-focus + input-reach, all met",
+        "sprag-side PR-25 (sprag-native session, pinion must not edit it): the undock pane is already drawn with with_focusable(true), so it becomes focusable on click with NO further sprag change — verify live (click undock window, type, full_text changes)",
+        "Window-close re-fold is unconditional in remove_window (rare dock tear-down, off the paint path); a window that held no focusables re-folds to the same union (idempotent)",
+        "(R1063 carry retained) production Scene::Text rewire to 5.37 / 5.37 production font-policy / per-glyph GlyphAtlas paint seam / styled-run per-span color RGBA"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
