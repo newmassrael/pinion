@@ -27,11 +27,14 @@
 //! adapter locally to match CI: `WGPU_ADAPTER_NAME=llvmpipe` (or the lavapipe
 //! ICD) — a hardware pass does not imply a CI software pass.
 
-use pinion_core::style::Color;
+use pinion_core::scene::{Rect, Scene, TextNode};
+use pinion_core::style::{Color, TextStyle};
 use pinion_runtime::paint_adapter::{
-    draw_atlased_glyphs, draw_atlased_glyphs_styled, draw_coverage,
+    draw_atlased_glyphs, draw_atlased_glyphs_styled, draw_coverage, to_vello_with_text_engine,
 };
+use pinion_runtime::text_engine::{LoadFontError, SelfHostedTextEngine, load_system_font};
 use pinion_shell::headless_screenshot::HeadlessScreenshot;
+use pinion_text::LayoutCache;
 use pinion_text_font::{Font, render_paragraph, render_paragraph_atlased, shape_paragraph};
 use vello::Scene as VelloScene;
 use vello::kurbo::Affine;
@@ -382,5 +385,250 @@ fn self_hosted_atlas_paints_per_glyph_color() {
         red_hi < blue_lo,
         "red ink (x {red_lo}..{red_hi}) is not entirely left of blue ink \
          (x {blue_lo}..{blue_hi}) — per-glyph colour mis-mapped or bled"
+    );
+}
+
+/// R1067 §5.37.11 — does a font *discovered from the OS* reach real pixels? The
+/// sibling tests above all shape the bundled NotoSans parser FIXTURE; this one
+/// closes the production-connection loop end to end:
+/// `text_engine::load_system_font` (OS discovery via `pinion-platform-fonts` →
+/// `Font::from_bytes`) → `shape_paragraph` → `render_paragraph_atlased` →
+/// `draw_atlased_glyphs` → headless RGBA8. It proves the whole R1067 chain — a
+/// real installed system font, not a committed fixture, becomes pixels through
+/// the §5.37 engine and the R1065 atlas seam.
+///
+/// Assertions are font-AGNOSTIC (which system font resolves varies per machine):
+/// ink exists, ink lands inside the placed glyphs' own footprint, the gutter
+/// stays black, and the glyph SHAPE (not a solid rectangle) survived. No exact
+/// metric / glyph-count assertion — that would reintroduce the system-font
+/// pixel-determinism debt. Skips cleanly when the host has no installed font (the
+/// default-gate `text_engine` + `pinion-platform-fonts` tests carry the non-GPU
+/// proof) or no wgpu adapter.
+///
+/// `#[ignore]` / lavapipe like the sibling seam tests (see the first test header).
+#[test]
+#[ignore = "wgpu adapter cold-boot too slow for default test suite; run with --ignored"]
+fn discovered_system_font_reaches_pixels() {
+    // --- §5.37.11: discover + parse a real OS font, then shape "Hi". ---------
+    let font = match load_system_font() {
+        Ok(font) => font,
+        Err(LoadFontError::NoSystemFont) => {
+            eprintln!("skipping: no system font installed on this host");
+            return;
+        }
+    };
+    let shaped = shape_paragraph(&font, "Hi", PX);
+    let rendered = render_paragraph_atlased(&[&font], &shaped, PX).expect("atlas-render paragraph");
+    assert!(
+        !rendered.placed.is_empty(),
+        "the system font shaped \"Hi\" into no glyphs"
+    );
+
+    // --- footprint = union of the glyph quads, pinned to (MARGIN, MARGIN). ---
+    let (mut left, mut top, mut right, mut bottom) = (i32::MAX, i32::MAX, i32::MIN, i32::MIN);
+    for p in &rendered.placed {
+        let g = &p.glyph;
+        let (gx, gy) = (p.pen_x + g.left, p.pen_y + g.top);
+        left = left.min(gx);
+        top = top.min(gy);
+        right = right.max(gx + i32::try_from(g.width).expect("glyph width fits i32"));
+        bottom = bottom.max(gy + i32::try_from(g.height).expect("glyph height fits i32"));
+    }
+    let width = u32::try_from(right - left).expect("footprint width fits u32");
+    let height = u32::try_from(bottom - top).expect("footprint height fits u32");
+    let pen_x = f64::from(MARGIN) - f64::from(left);
+    let pen_y = f64::from(MARGIN) - f64::from(top);
+    let buf_w = width + 2 * MARGIN;
+    let buf_h = height + 2 * MARGIN;
+
+    let mut scene = VelloScene::new();
+    draw_atlased_glyphs(
+        &mut scene,
+        &rendered,
+        Color::rgb(255, 255, 255),
+        pen_x,
+        pen_y,
+        Affine::IDENTITY,
+    );
+
+    let mut shot = match HeadlessScreenshot::new() {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("skipping: no wgpu adapter ({e})");
+            return;
+        }
+    };
+    let rgba = shot
+        .render_to_rgba8(&scene, buf_w, buf_h, PenikoColor::BLACK)
+        .expect("headless render");
+    assert_eq!(rgba.len(), (buf_w * buf_h * 4) as usize);
+
+    let is_ink = |x: u32, y: u32| -> bool {
+        let i = ((y * buf_w + x) * 4) as usize;
+        rgba[i] > 180 && rgba[i + 1] > 180 && rgba[i + 2] > 180
+    };
+
+    let mut ink_count = 0u32;
+    let (mut min_x, mut min_y, mut max_x, mut max_y) = (u32::MAX, u32::MAX, 0u32, 0u32);
+    for y in 0..buf_h {
+        for x in 0..buf_w {
+            if is_ink(x, y) {
+                ink_count += 1;
+                min_x = min_x.min(x);
+                min_y = min_y.min(y);
+                max_x = max_x.max(x);
+                max_y = max_y.max(y);
+            }
+        }
+    }
+
+    // (1) The system font reached pixels.
+    assert!(
+        ink_count > 0,
+        "the discovered system font produced no visible ink on the surface"
+    );
+
+    // (2) All ink lies within the placed footprint (1px GPU-AA slop).
+    let lo = MARGIN - 1;
+    assert!(
+        min_x >= lo && min_y >= lo && max_x <= MARGIN + width + 1 && max_y <= MARGIN + height + 1,
+        "ink bbox ({min_x},{min_y})-({max_x},{max_y}) escaped the placed footprint \
+         at margin {MARGIN} ({width}x{height})"
+    );
+
+    // (3) The gutter is black (no flood).
+    assert!(!is_ink(0, 0), "top-left gutter must stay black (no flood)");
+
+    // (4) Shape fidelity: the glyph's negative space survived (not a solid blit).
+    let mut interior_background = false;
+    'scan: for y in (min_y + 1)..max_y {
+        for x in (min_x + 1)..max_x {
+            if !is_ink(x, y) {
+                interior_background = true;
+                break 'scan;
+            }
+        }
+    }
+    assert!(
+        interior_background,
+        "no background pixel inside the ink bbox — the system font's glyph SHAPE \
+         did not reach the surface (a solid-rectangle blit looks like this)"
+    );
+}
+
+/// R1068 §5.37 → production `Scene::Text` — does the opt-in paint arm reach
+/// pixels through the REAL paint walker? The R1067 test above drives the atlas
+/// seam directly; this one drives the full production path:
+/// `Scene::Text` → `to_vello_with_text_engine(Some(engine))` → `paint_text`'s
+/// §5.37 arm → headless RGBA8. It proves the campaign's actual connection — a
+/// `Scene::Text` node, painted by the production walker with the self-hosted
+/// engine opted in, becomes pixels — not just that the low-level seam works.
+///
+/// Font-agnostic assertions (system font varies): ink exists, lands inside the
+/// text node's box (proving the font-ascent baseline placement is correct), and
+/// the gutter outside the box is black. Skips when no system font / no wgpu
+/// adapter.
+///
+/// `#[ignore]` / lavapipe like the sibling seam tests (see the first test header).
+#[test]
+#[ignore = "wgpu adapter cold-boot too slow for default test suite; run with --ignored"]
+fn self_hosted_paint_arm_reaches_pixels_through_to_vello() {
+    // A single-style label box, generous so the glyphs (Visible overflow) sit
+    // inside it. The §5.37 arm activates for this node (single style, single
+    // line, no decoration).
+    const BOX_W: u32 = 240;
+    const BOX_H: u32 = 40;
+
+    let engine = match SelfHostedTextEngine::from_system_font() {
+        Ok(engine) => engine,
+        Err(LoadFontError::NoSystemFont) => {
+            eprintln!("skipping: no system font installed on this host");
+            return;
+        }
+    };
+
+    let rect = Rect::new(MARGIN, MARGIN, BOX_W, BOX_H);
+    // White text on the black render target so the ink classifier sees it
+    // (the default fg_color is black).
+    let scene = Scene::Text(TextNode::styled(
+        "Hi",
+        rect,
+        TextStyle::new()
+            .with_size_px(24)
+            .with_fg(Color::rgb(255, 255, 255)),
+    ));
+
+    let mut vello = VelloScene::new();
+    let mut cache = LayoutCache::new();
+    to_vello_with_text_engine(&scene, &|_| None, &mut cache, Some(&engine), &mut vello);
+
+    let buf_w = BOX_W + 2 * MARGIN;
+    let buf_h = BOX_H + 2 * MARGIN;
+    let mut shot = match HeadlessScreenshot::new() {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("skipping: no wgpu adapter ({e})");
+            return;
+        }
+    };
+    let rgba = shot
+        .render_to_rgba8(&vello, buf_w, buf_h, PenikoColor::BLACK)
+        .expect("headless render");
+    assert_eq!(rgba.len(), (buf_w * buf_h * 4) as usize);
+
+    let is_ink = |x: u32, y: u32| -> bool {
+        let i = ((y * buf_w + x) * 4) as usize;
+        rgba[i] > 180 && rgba[i + 1] > 180 && rgba[i + 2] > 180
+    };
+
+    let mut ink_count = 0u32;
+    let (mut min_x, mut min_y, mut max_x, mut max_y) = (u32::MAX, u32::MAX, 0u32, 0u32);
+    for y in 0..buf_h {
+        for x in 0..buf_w {
+            if is_ink(x, y) {
+                ink_count += 1;
+                min_x = min_x.min(x);
+                min_y = min_y.min(y);
+                max_x = max_x.max(x);
+                max_y = max_y.max(y);
+            }
+        }
+    }
+
+    // (1) The §5.37 arm reached pixels through the production walker.
+    assert!(
+        ink_count > 0,
+        "the self-hosted paint arm produced no ink through to_vello_with_text_engine"
+    );
+
+    // (2) Ink lands inside the text node's box (1px slop): the §5.37 baseline
+    // (font ascent below the box top) placed the glyphs within [MARGIN, MARGIN+H].
+    assert!(
+        min_x + 1 >= MARGIN
+            && min_y + 1 >= MARGIN
+            && max_x <= MARGIN + BOX_W + 1
+            && max_y <= MARGIN + BOX_H + 1,
+        "ink bbox ({min_x},{min_y})-({max_x},{max_y}) escaped the text box \
+         ({MARGIN},{MARGIN})+{BOX_W}x{BOX_H} — baseline placement is wrong"
+    );
+
+    // (3) The gutter is black (no flood).
+    assert!(!is_ink(0, 0), "top-left gutter must stay black (no flood)");
+
+    // (4) The baseline math actually drove placement. "Hi" has no descenders, so
+    // its lowest inked row sits on the baseline. The arm computes the baseline as
+    // (ascender + line_gap/2) * px / upem below the box top — assert the lowest
+    // ink row matches that, ±2px (AA + pixel snap). This pins R1068's baseline fix
+    // (the Normal-line-box first baseline, incl. half-leading) rather than merely
+    // "ink is somewhere in the box". font/px-agnostic: it reads the engine font's
+    // own metrics.
+    let f = engine.font();
+    let upem = f64::from(f.units_per_em());
+    let baseline_y =
+        f64::from(MARGIN) + (f64::from(f.ascender()) + f64::from(f.line_gap()) / 2.0) * 24.0 / upem;
+    assert!(
+        (f64::from(max_y) - baseline_y).abs() <= 2.0,
+        "lowest ink row {max_y} should sit on the computed baseline {baseline_y:.1} \
+         (ascender+half-leading) — baseline formula did not drive placement"
     );
 }

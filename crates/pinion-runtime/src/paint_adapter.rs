@@ -71,7 +71,13 @@ use vello::peniko::{
 // paint path samples. `pinion-text-font` is gated to the `vello` feature (see
 // the crate Cargo.toml), so these imports are reachable only inside the
 // vello-only paint_adapter module.
-use pinion_text_font::{Coverage, GlyphAtlas, RenderedGlyphs};
+use pinion_text_font::{
+    Coverage, GlyphAtlas, RenderedGlyphs, render_paragraph_atlased, shape_paragraph_with_fallback,
+};
+// R1068 §5.37 → production Scene::Text — the opt-in self-hosted paint arm's
+// cached font handle (the parley path stays the default; see
+// [`to_vello_with_text_engine`]).
+use crate::text_engine::SelfHostedTextEngine;
 
 /// Build a Vello scene from a pinion [`Scene`] tree. `fill_hook` is
 /// consulted for each [`BoxNode`] visited; a `Some(color)` return
@@ -102,6 +108,32 @@ pub fn to_vello<F>(scene: &Scene, fill_hook: &F, text_cache: &mut LayoutCache, o
 where
     F: Fn(&BoxNode) -> Option<Color>,
 {
+    // R1068 §5.37 — the default path supplies no self-hosted engine, so
+    // `Scene::Text` paints via parley exactly as before (byte-identical).
+    to_vello_with_text_engine(scene, fill_hook, text_cache, None, out);
+}
+
+/// R1068 §5.37 → production `Scene::Text` — [`to_vello`] with an opt-in
+/// self-hosted text engine.
+///
+/// When `engine` is `Some`, **single-style, single-line, undecorated**
+/// `Scene::Text` leaves paint through the §5.37 self-hosted engine
+/// (`shape_paragraph_with_fallback` → `render_paragraph_atlased` →
+/// [`draw_atlased_glyphs`]) instead of parley; every other text (styled runs,
+/// wrapped / multi-line, underline / strikethrough) still takes the parley
+/// path, and `engine = None` is byte-identical to the pre-R1068 [`to_vello`].
+/// Layout / measure is unchanged (still parley), so caret hit-testing and text
+/// editing are unaffected — this arm swaps paint only. The opt-in flag the
+/// campaign describes is the caller's choice to pass `Some(&engine)`.
+pub fn to_vello_with_text_engine<F>(
+    scene: &Scene,
+    fill_hook: &F,
+    text_cache: &mut LayoutCache,
+    engine: Option<&SelfHostedTextEngine>,
+    out: &mut VelloScene,
+) where
+    F: Fn(&BoxNode) -> Option<Color>,
+{
     // R740 §5.16 — the uncached walker is the stateless reference /
     // test path (production uses `to_vello_cached` with the per-window
     // persistent cache). A per-call throwaway `ImageCache` keeps this
@@ -113,6 +145,7 @@ where
         fill_hook,
         text_cache,
         &mut image_cache,
+        engine,
         out,
         Affine::IDENTITY,
     );
@@ -140,6 +173,7 @@ fn to_vello_inner<F>(
     fill_hook: &F,
     text_cache: &mut LayoutCache,
     image_cache: &mut ImageCache,
+    engine: Option<&SelfHostedTextEngine>,
     out: &mut VelloScene,
     transform: Affine,
 ) where
@@ -150,7 +184,15 @@ fn to_vello_inner<F>(
             paint_box_shadows(out, c.rect, &c.style, transform);
             fill_box_bg(out, c.rect, &c.style, c.style.fill, transform);
             for child in &c.children {
-                to_vello_inner(child, fill_hook, text_cache, image_cache, out, transform);
+                to_vello_inner(
+                    child,
+                    fill_hook,
+                    text_cache,
+                    image_cache,
+                    engine,
+                    out,
+                    transform,
+                );
             }
         }
         Scene::Box(b) => {
@@ -161,7 +203,7 @@ fn to_vello_inner<F>(
                 stroke_rect(out, b.rect, border, transform);
             }
         }
-        Scene::Text(t) => paint_text(out, t, text_cache, transform),
+        Scene::Text(t) => paint_text(out, t, text_cache, engine, transform),
         Scene::Scroll(s) => {
             // R55.E.1 — viewport clip in the parent's coordinate
             // frame; Vello applies the supplied transform to the
@@ -188,6 +230,7 @@ fn to_vello_inner<F>(
                 fill_hook,
                 text_cache,
                 image_cache,
+                engine,
                 out,
                 child_transform,
             );
@@ -554,6 +597,11 @@ pub fn to_vello_cached<F>(
 ) where
     F: Fn(&BoxNode) -> Option<Color>,
 {
+    // R1068 §5.37 — the cached production walker does NOT yet carry the opt-in
+    // self-hosted text engine: only the uncached `to_vello_with_text_engine`
+    // exposes it (the arm is proven by tests). Wiring the engine through the
+    // FragmentCache path — and the shell's opt-in flag — is the next campaign
+    // step (R1070), so the cached walker is unchanged here (parley `Scene::Text`).
     fragment_cache.begin_paint();
     to_vello_cached_inner(
         scene,
@@ -689,7 +737,7 @@ fn to_vello_cached_inner<F>(
                 stroke_rect(&mut sub, b.rect, border, transform);
             }
         }
-        Scene::Text(t) => paint_text(&mut sub, t, text_cache, transform),
+        Scene::Text(t) => paint_text(&mut sub, t, text_cache, None, transform),
         Scene::Scroll(s) => {
             let viewport_clip = KurboRect::new(
                 f64::from(s.viewport.x),
@@ -2002,13 +2050,150 @@ fn stroke_rect(out: &mut VelloScene, r: Rect, border: Border, transform: Affine)
 /// API, so the visual result is the same as `Clip` until R47.x lands
 /// the custom truncation pass. [`TextOverflow::Visible`] (default)
 /// skips the clip wrap entirely.
+/// R1068 §5.37 — is this `Scene::Text` leaf *eligible* for the opt-in self-hosted
+/// paint arm? These are the NECESSARY conditions under which the arm can paint
+/// the text so it registers exactly with what parley laid out — every one is a
+/// case the arm would otherwise render differently from parley:
+///
+/// - **single style** (`runs` empty) — styled runs are the multi-style step;
+/// - **no hard line break** (`'\n'`) — the arm renders one line, not a paragraph;
+/// - **default `Start` alignment** — the arm pens from the box left, so Center /
+///   End would shift versus parley;
+/// - **`Normal` line height** — the arm's baseline matches parley's natural
+///   line-box only in `Normal` mode (see [`paint_text_self_hosted`]); a fixed /
+///   multiplied line height moves parley's baseline by leading the arm does not
+///   model;
+/// - **undecorated** — underline / strikethrough are not drawn by the arm.
+///
+/// This is necessary, not sufficient: [`paint_text_self_hosted`] additionally
+/// falls through to parley when the shaped text would not fit one line (soft
+/// wrap). Everything excluded here stays on the parley path. Layout / measure is
+/// parley regardless, so this scope never affects caret hit-testing.
+fn self_hosted_eligible(t: &TextNode) -> bool {
+    t.runs.is_empty()
+        && !t.content.contains('\n')
+        && matches!(t.style.text_align, pinion_core::style::TextAlign::Start)
+        && matches!(t.style.line_height, pinion_core::style::LineHeight::Normal)
+        && !t.style.decoration.underline
+        && !t.style.decoration.strikethrough
+}
+
+/// R1068 §5.37 — paint an [`self_hosted_eligible`] `Scene::Text` leaf through the
+/// self-hosted engine: shape with the engine's font, rasterise per glyph into the
+/// atlas, and blit each glyph via [`draw_atlased_glyphs`] at the box-relative
+/// baseline. Returns `true` when it painted, `false` when the caller must fall
+/// through to the parley path — a fall-through is always a safe parley render,
+/// never a blank.
+///
+/// Falls through (returns `false`) when: the size is non-positive; nothing shapes
+/// / nothing inks (whitespace); a glyph fails to rasterise; or the shaped advance
+/// **exceeds the box width** (`rect.w`), i.e. parley would soft-wrap it to more
+/// than one line — the arm renders only one line, so it declines rather than
+/// overflow.
+///
+/// Baseline: `Normal` line height (guaranteed by [`self_hosted_eligible`]) makes
+/// parley's natural line box `ascent + descent + line_gap` with the first
+/// baseline at `ascent + line_gap/2` (half-leading split above). The arm computes
+/// that **same** baseline from the §5.37 font's own `ascender` + `line_gap`
+/// metrics — so vertical placement registers with parley's, with no dependency on
+/// parley. Horizontal placement starts at the box left (`Start` alignment, also
+/// guaranteed eligible). Measure is still parley, so the box may be wider than the
+/// §5.37 advance (text sits left-aligned inside it, as parley `Start` text would);
+/// sizing the box to §5.37 (full metric coherence) is the next campaign step.
+fn paint_text_self_hosted(
+    out: &mut VelloScene,
+    t: &TextNode,
+    engine: &SelfHostedTextEngine,
+    parent_transform: Affine,
+) -> bool {
+    let font = engine.font();
+    // `units_per_em` is read from `head` at parse; 0 would be a malformed font.
+    // Guard rather than divide-by-zero, falling through to parley.
+    let upem = f64::from(font.units_per_em());
+    if upem <= 0.0 {
+        return false;
+    }
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "font_size_px / rect.w <= 2^24 px in practice — exact in f32"
+    )]
+    let px = t.style.font_size_px as f32;
+    if px <= 0.0 {
+        return false;
+    }
+    let shaped = shape_paragraph_with_fallback(&[font], &t.content, px);
+    if shaped.glyphs.is_empty() {
+        return false;
+    }
+    // Soft-wrap guard: a bounded box that the §5.37 single line would overflow is
+    // exactly what parley wraps to multiple lines — decline so parley renders it
+    // (the arm is single-line only).
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "rect.w <= 2^24 px in practice — exact in f32"
+    )]
+    let box_w = t.rect.w as f32;
+    if t.rect.w > 0 && shaped.advance > box_w {
+        return false;
+    }
+    let Ok(rendered) = render_paragraph_atlased(&[font], &shaped, px) else {
+        // Rasterisation error (e.g. a not-yet-supported composite glyph) — fall
+        // through to the parley path rather than dropping the text.
+        return false;
+    };
+    if rendered.placed.is_empty() {
+        // All-whitespace / blank-glyph content — let parley handle it (it also
+        // emits nothing, but this keeps the fall-through contract uniform).
+        return false;
+    }
+    // Baseline = ascent + half-leading, matching parley's `Normal` line box's
+    // first baseline, computed from the §5.37 font's own metrics (no parley dep).
+    let baseline =
+        (f64::from(font.ascender()) + f64::from(font.line_gap()) / 2.0) * f64::from(px) / upem;
+    let transform =
+        parent_transform * Affine::translate((f64::from(t.rect.x), f64::from(t.rect.y)));
+    let needs_clip = matches!(
+        t.style.overflow,
+        TextOverflow::Clip | TextOverflow::Ellipsis
+    );
+    if needs_clip {
+        let clip_rect = KurboRect::new(
+            f64::from(t.rect.x),
+            f64::from(t.rect.y),
+            f64::from(t.rect.x.saturating_add(t.rect.w)),
+            f64::from(t.rect.y.saturating_add(t.rect.h)),
+        );
+        out.push_clip_layer(Fill::NonZero, parent_transform, &clip_rect);
+    }
+    // pen origin (0, baseline) in the box-translated frame; glyph pen_y is
+    // baseline-relative (0 on the baseline) so the baseline lands at `baseline`.
+    draw_atlased_glyphs(out, &rendered, t.style.fg_color, 0.0, baseline, transform);
+    if needs_clip {
+        out.pop_layer();
+    }
+    true
+}
+
 fn paint_text(
     out: &mut VelloScene,
     t: &TextNode,
     cache: &mut LayoutCache,
+    engine: Option<&SelfHostedTextEngine>,
     parent_transform: Affine,
 ) {
     if t.content.is_empty() {
+        return;
+    }
+    // R1068 §5.37 → production Scene::Text — opt-in self-hosted paint arm. When
+    // an engine is supplied AND this leaf is eligible (see `self_hosted_eligible`)
+    // AND the self-hosted paint succeeds (it declines, e.g., when the text would
+    // soft-wrap), paint through §5.37 and return. Otherwise (no engine, ineligible,
+    // or declined) fall through to the unchanged parley path below, so
+    // `engine == None` is byte-identical to the pre-R1068 `paint_text`.
+    if let Some(engine) = engine
+        && self_hosted_eligible(t)
+        && paint_text_self_hosted(out, t, engine, parent_transform)
+    {
         return;
     }
     // R51.27 §5.37.4 — UAX #9 L4 mirroring is applied inside
@@ -2683,6 +2868,131 @@ mod tests {
         assert_eq!(cache.len(), 1, "first paint populates cache");
         to_vello(&scene, &|_| None, &mut cache, &mut vello);
         assert_eq!(cache.len(), 1, "repeat paint hits cache, no growth");
+    }
+
+    #[test]
+    fn r1068_self_hosted_arm_routes_single_style_text_and_none_is_byte_identical() {
+        // R1068 §5.37 — the opt-in self-hosted paint arm, the campaign's
+        // production-Scene::Text connection. Forcing consumer (default gate):
+        // a single-style `Scene::Text` leaf paints through §5.37 when an engine
+        // is supplied (one atlas fill per glyph), and `engine = None` is
+        // byte-identical to the pre-R1068 `to_vello` (0 regression). Drives the
+        // real production paint entry (`to_vello_with_text_engine`), not a
+        // call-and-ignore. Uses the bundled NotoSans fixture so the glyph-count
+        // assertion is deterministic (system discovery is environment-dependent;
+        // the realgpu seam test carries the system-font pixel proof).
+        let font = pinion_text_font::Font::from_bytes(NOTO_FIXTURE.to_vec())
+            .expect("parse NotoSans fixture");
+        let engine = SelfHostedTextEngine::from_font(font);
+
+        // Default TextStyle = Visible overflow (no clip), so n_paths counts only
+        // the glyph fills.
+        let scene = Scene::Text(TextNode::styled(
+            "Hi",
+            Rect::new(0, 0, 200, 32),
+            TextStyle::new().with_size_px(16),
+        ));
+
+        // 0-regression: `engine = None` is byte-identical to `to_vello` BY
+        // CONSTRUCTION — `to_vello` is a one-line forward to
+        // `to_vello_with_text_engine(.., None, ..)` (see its body), so the two
+        // issue the identical call sequence. This assertion is a sanity check on
+        // that forwarding (a path-count is weaker than byte-identity, but a
+        // mismatch here would mean the forward broke), not the proof itself.
+        let mut parley_default = VelloScene::new();
+        let mut cache_a = LayoutCache::new();
+        to_vello(&scene, &|_| None, &mut cache_a, &mut parley_default);
+
+        let mut engine_none = VelloScene::new();
+        let mut cache_b = LayoutCache::new();
+        to_vello_with_text_engine(&scene, &|_| None, &mut cache_b, None, &mut engine_none);
+        assert_eq!(
+            engine_none.encoding().n_paths,
+            parley_default.encoding().n_paths,
+            "engine=None must issue the same path count as to_vello (forwarding intact)"
+        );
+
+        // engine = Some routes "Hi" through §5.37: one atlas fill per placed glyph.
+        let mut self_hosted = VelloScene::new();
+        let mut cache_c = LayoutCache::new();
+        to_vello_with_text_engine(
+            &scene,
+            &|_| None,
+            &mut cache_c,
+            Some(&engine),
+            &mut self_hosted,
+        );
+
+        let shaped = pinion_text_font::shape_paragraph_with_fallback(&[engine.font()], "Hi", 16.0);
+        let rendered = pinion_text_font::render_paragraph_atlased(&[engine.font()], &shaped, 16.0)
+            .expect("atlas-render Hi");
+        assert!(!rendered.placed.is_empty(), "Hi atlas-places glyphs");
+        assert_eq!(
+            self_hosted.encoding().n_paths,
+            u32::try_from(rendered.placed.len()).expect("glyph count fits u32"),
+            "self-hosted arm emits one fill per placed glyph (routed through §5.37, not parley)"
+        );
+
+        // Self-consistent advance: shaped pen-x is monotone left-to-right, so the
+        // §5.37 caret/advance never overlaps or reverses (the parity the campaign
+        // requires is §5.37's own self-consistency, not byte-parity with parley).
+        let xs: Vec<f32> = shaped.glyphs.iter().map(|g| g.x).collect();
+        assert!(
+            xs.windows(2).all(|w| w[1] >= w[0]),
+            "shaped glyph pen-x is monotone (self-consistent advance)"
+        );
+    }
+
+    #[test]
+    fn r1068_self_hosted_arm_falls_through_to_parley_for_styled_runs() {
+        // R1068 §5.37 — out-of-scope text (multi-style runs / decorations /
+        // multi-line) must take the parley path even with an engine supplied, so
+        // the arm never half-renders a case it does not fully handle. A styled-run
+        // node with an engine must paint identically to the same node with no
+        // engine (both parley).
+        let font = pinion_text_font::Font::from_bytes(NOTO_FIXTURE.to_vec())
+            .expect("parse NotoSans fixture");
+        let engine = SelfHostedTextEngine::from_font(font);
+
+        let runs = vec![pinion_core::scene::StyleRun::new(
+            0,
+            2,
+            TextStyle::new().with_size_px(16),
+        )];
+        let scene = Scene::Text(
+            TextNode::styled(
+                "Hi",
+                Rect::new(0, 0, 200, 32),
+                TextStyle::new().with_size_px(16),
+            )
+            .with_runs(runs),
+        );
+        let Scene::Text(node) = &scene else {
+            unreachable!()
+        };
+        assert!(
+            !self_hosted_eligible(node),
+            "a styled-run node is out of the self-hosted arm's scope"
+        );
+
+        let mut with_engine = VelloScene::new();
+        let mut cache_a = LayoutCache::new();
+        to_vello_with_text_engine(
+            &scene,
+            &|_| None,
+            &mut cache_a,
+            Some(&engine),
+            &mut with_engine,
+        );
+
+        let mut without_engine = VelloScene::new();
+        let mut cache_b = LayoutCache::new();
+        to_vello(&scene, &|_| None, &mut cache_b, &mut without_engine);
+        assert_eq!(
+            with_engine.encoding().n_paths,
+            without_engine.encoding().n_paths,
+            "out-of-scope styled-run text falls through to parley unchanged"
+        );
     }
 
     #[test]
