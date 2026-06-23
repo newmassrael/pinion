@@ -75,8 +75,8 @@ use parley::{Affinity, BreakReason, Cursor, Selection};
 /// assert_eq!(byte, 3);
 /// ```
 #[must_use]
-pub fn byte_offset_for_point(layout: &Layout, x: f32, y: f32) -> usize {
-    Cursor::from_point(layout, x, y).index()
+pub fn byte_offset_for_point(layout: &impl TextLayout, x: f32, y: f32) -> usize {
+    layout.byte_at_point(x, y)
 }
 
 /// Caret rectangle in layout-space (f32 coordinates).
@@ -180,35 +180,11 @@ impl CaretRect {
 /// ```
 #[must_use]
 pub fn caret_rect_for_byte_offset(
-    layout: &Layout,
+    layout: &impl TextLayout,
     byte_index: usize,
     caret_width: f32,
 ) -> CaretRect {
-    let cursor = Cursor::from_byte_index(layout, byte_index, Affinity::Downstream);
-    // f64 → f32 narrowing — parley's BoundingBox holds f64 corners
-    // for sub-pixel precision, but the pinion paint pipeline rounds
-    // to u32 at the §5.38 [`caret_rect`] seam anyway. The
-    // intermediate f32 form is the canonical pinion paint-space
-    // type (matches `Layout::measure` and the §5.36 GlyphRun
-    // stream). The geometry width is parley f32 already (no narrow
-    // on this seam).
-    let bbox = cursor.geometry(layout, caret_width);
-    #[allow(
-        clippy::cast_possible_truncation,
-        reason = "layout-space coords fit f32 in every realistic UI viewport"
-    )]
-    let (x, y) = (bbox.x0 as f32, bbox.y0 as f32);
-    #[allow(
-        clippy::cast_possible_truncation,
-        reason = "layout-space dims fit f32 in every realistic UI viewport"
-    )]
-    let (width, height) = (bbox.width() as f32, bbox.height() as f32);
-    CaretRect {
-        x,
-        y,
-        width,
-        height,
-    }
+    layout.caret_rect(byte_index, caret_width)
 }
 
 /// R764 §5.36 §5.22 — per-line selection rectangles for the byte range
@@ -228,30 +204,12 @@ pub fn caret_rect_for_byte_offset(
 /// The ends are passed in any order — parley swaps internally so the
 /// caller may hand `(anchor, caret)` directly without normalising.
 #[must_use]
-pub fn selection_rects_for_range(layout: &Layout, start: usize, end: usize) -> Vec<CaretRect> {
-    if start == end {
-        return Vec::new();
-    }
-    let selection = Selection::new(
-        Cursor::from_byte_index(layout, start, Affinity::Downstream),
-        Cursor::from_byte_index(layout, end, Affinity::Downstream),
-    );
-    selection
-        .geometry(layout)
-        .into_iter()
-        .map(|(bbox, _line_ix)| {
-            #[allow(
-                clippy::cast_possible_truncation,
-                reason = "layout-space coords fit f32 in every realistic UI viewport"
-            )]
-            CaretRect::new(
-                bbox.x0 as f32,
-                bbox.y0 as f32,
-                bbox.width() as f32,
-                bbox.height() as f32,
-            )
-        })
-        .collect()
+pub fn selection_rects_for_range(
+    layout: &impl TextLayout,
+    start: usize,
+    end: usize,
+) -> Vec<CaretRect> {
+    layout.selection_rects(start, end)
 }
 
 /// R764 §5.36 §5.22 / R766 — byte offset after moving the caret `delta`
@@ -295,32 +253,12 @@ pub fn selection_rects_for_range(layout: &Layout, start: usize, end: usize) -> V
 /// setters.
 #[must_use]
 pub fn byte_offset_for_line_move(
-    layout: &Layout,
+    layout: &impl TextLayout,
     byte: usize,
     delta: isize,
     goal_x: Option<f32>,
 ) -> (usize, f32) {
-    let here = caret_rect_for_byte_offset(layout, byte, 1.0);
-    let gx = goal_x.unwrap_or(here.x);
-    if delta == 0 {
-        return (byte, gx);
-    }
-    // Step 1: parley resolves the target line + document-boundary clamp.
-    let moved = Selection::from_byte_index(layout, byte, Affinity::Downstream)
-        .move_lines(layout, delta, false)
-        .focus()
-        .index();
-    let there = caret_rect_for_byte_offset(layout, moved, 1.0);
-    // No band change ⇒ document boundary (move_lines snapped to
-    // line_start / line_end on the same line): parley's result is the
-    // canonical "to start of first line" / "to end of last line", keep it.
-    if (there.y - here.y).abs() <= here.height * 0.5 {
-        return (moved, gx);
-    }
-    // Step 2: interior move — override the drifted column with the
-    // persisted goal, hit-testing at the centre of the resolved line.
-    let corrected = byte_offset_for_point(layout, gx, there.y + there.height * 0.5);
-    (corrected, gx)
+    layout.line_move(byte, delta, goal_x)
 }
 
 /// R766 §5.36 §5.22 — byte offset of the **visual** line boundary
@@ -344,14 +282,8 @@ pub fn byte_offset_for_line_move(
 /// the retained anchor (mirror of the `ArrowUp` / `ArrowDown` shift
 /// path). The returned offset is a char boundary.
 #[must_use]
-pub fn byte_offset_for_line_boundary(layout: &Layout, byte: usize, end: bool) -> usize {
-    let selection = Selection::from_byte_index(layout, byte, Affinity::Downstream);
-    let moved = if end {
-        selection.line_end(layout, false)
-    } else {
-        selection.line_start(layout, false)
-    };
-    moved.focus().index()
+pub fn byte_offset_for_line_boundary(layout: &impl TextLayout, byte: usize, end: bool) -> usize {
+    layout.line_boundary(byte, end)
 }
 
 /// R956 §5.36 §5.22 — geometry of one **visual line** in a shaped
@@ -394,6 +326,23 @@ pub struct VisualLineMetric {
     pub starts_logical_line: bool,
 }
 
+impl VisualLineMetric {
+    /// R1077 §5.36 §5.37 — public constructor for `#[non_exhaustive]`
+    /// [`VisualLineMetric`] (mirrors [`CaretRect::new`]). A second
+    /// [`TextLayout`] implementor in another crate (the §5.37
+    /// `SelfHostedLayout` in `pinion-runtime`) builds visual-line metrics
+    /// from its own per-line geometry, which the struct-literal form
+    /// forbids across the crate boundary.
+    #[must_use]
+    pub const fn new(y: f32, height: f32, starts_logical_line: bool) -> Self {
+        Self {
+            y,
+            height,
+            starts_logical_line,
+        }
+    }
+}
+
 /// R956 §5.36 §5.22 — per-**visual-line** geometry for a shaped
 /// [`Layout`], one [`VisualLineMetric`] per displayed row in top-to-bottom
 /// order. Wraps [`parley::Layout::lines`] + [`parley::Line::metrics`] /
@@ -424,23 +373,8 @@ pub struct VisualLineMetric {
 /// assert!(lines[1].y > lines[0].y);                 // second sits lower
 /// ```
 #[must_use]
-pub fn visual_line_metrics(layout: &Layout) -> Vec<VisualLineMetric> {
-    let mut out = Vec::new();
-    // The first line always opens logical line 0; thereafter a line opens
-    // a new logical line iff its predecessor was terminated by a hard
-    // `\n` (parley `BreakReason::Explicit`). Soft-wrap / emergency breaks
-    // continue the current logical line.
-    let mut starts_logical_line = true;
-    for line in layout.lines() {
-        let metrics = line.metrics();
-        out.push(VisualLineMetric {
-            y: metrics.block_min_coord,
-            height: metrics.block_max_coord - metrics.block_min_coord,
-            starts_logical_line,
-        });
-        starts_logical_line = line.break_reason() == BreakReason::Explicit;
-    }
-    out
+pub fn visual_line_metrics(layout: &impl TextLayout) -> Vec<VisualLineMetric> {
+    layout.visual_lines()
 }
 
 /// R987 §5.22 §5.36 — the vertical span `(top_y, height)` of the **logical**
@@ -483,6 +417,214 @@ pub fn logical_line_span(metrics: &[VisualLineMetric], caret_y: f32) -> Option<(
     let top = metrics[start].y;
     let bottom = metrics[end].y + metrics[end].height;
     Some((top, bottom - top))
+}
+
+/// R1077 §5.36 §5.37 — the shaper-agnostic caret / hit-test / line-metric
+/// surface a [`TextField`](pinion_core::widgets::text_field) reads, so the
+/// editable-text geometry stops naming one concrete shaper. parley
+/// ([`Layout`](crate::Layout)) is the first implementor; the self-hosted
+/// §5.37 engine is the second (a `SelfHostedLayout` wrapper in
+/// `pinion-runtime`, the crate that sees both shapers). The free functions
+/// in this module ([`caret_rect_for_byte_offset`] etc.) are thin generic
+/// delegators over this trait, so every existing call site keeps compiling
+/// while the implementor becomes a choice rather than a hard-wired type.
+///
+/// The named surface is exactly the directive's three capabilities — advance,
+/// cluster boundary, visual-line metric: [`caret_rect`](Self::caret_rect)
+/// (advance → where is byte *b*), [`byte_at_point`](Self::byte_at_point)
+/// (cluster boundary → which byte at a point), and
+/// [`visual_lines`](Self::visual_lines) (visual-line metric).
+/// [`selection_rects`](Self::selection_rects) is the fourth required method
+/// because each shaper resolves a multi-line selection from its own native
+/// per-line byte range (parley's `Selection::geometry`, §5.37's
+/// `ShapedLine::range`), not derivable from the three primitives without
+/// leaking per-line extents.
+///
+/// [`line_move`](Self::line_move) and [`line_boundary`](Self::line_boundary)
+/// are **derived** vertical-navigation defaults expressed purely in terms of
+/// the required methods — a second implementor inherits them for free.
+/// parley overrides both to keep its bespoke `Selection` navigation
+/// byte-identical to the pre-R1077 helpers.
+pub trait TextLayout {
+    /// Caret rectangle (layout-space f32) for the caret insertion position
+    /// at `byte_index`, `caret_width` wide. See
+    /// [`caret_rect_for_byte_offset`].
+    fn caret_rect(&self, byte_index: usize, caret_width: f32) -> CaretRect;
+
+    /// UTF-8 byte offset of the nearest caret position to the layout-space
+    /// point `(x, y)`. See [`byte_offset_for_point`].
+    fn byte_at_point(&self, x: f32, y: f32) -> usize;
+
+    /// Per-visual-line selection bands for the byte range `[start, end)`.
+    /// See [`selection_rects_for_range`].
+    fn selection_rects(&self, start: usize, end: usize) -> Vec<CaretRect>;
+
+    /// Per-visual-line geometry, top-to-bottom. See [`visual_line_metrics`].
+    fn visual_lines(&self) -> Vec<VisualLineMetric>;
+
+    /// Byte offset after moving the caret `delta` visual lines from `byte`,
+    /// holding the goal column `goal_x`. Derived default; see
+    /// [`byte_offset_for_line_move`] for the contract. An overshoot past the
+    /// first / last visual line snaps to that line's start / end (parley's
+    /// document-boundary behaviour), reproduced here from the primitives.
+    fn line_move(&self, byte: usize, delta: isize, goal_x: Option<f32>) -> (usize, f32) {
+        let here = self.caret_rect(byte, 1.0);
+        let gx = goal_x.unwrap_or(here.x);
+        if delta == 0 {
+            return (byte, gx);
+        }
+        let lines = self.visual_lines();
+        if lines.is_empty() {
+            return (byte, gx);
+        }
+        // The owning visual row is the *last* whose box contains the caret's
+        // top, mirroring [`logical_line_span`] (overlapping line boxes).
+        let cur = lines
+            .iter()
+            .rposition(|m| here.y >= m.y && here.y < m.y + m.height)
+            .unwrap_or(0);
+        #[allow(
+            clippy::cast_possible_wrap,
+            reason = "visual line counts fit isize in every realistic document"
+        )]
+        let target = cur as isize + delta;
+        if target < 0 {
+            let m = &lines[0];
+            return (self.byte_at_point(0.0, m.y + m.height * 0.5), gx);
+        }
+        let last = lines.len() - 1;
+        #[allow(
+            clippy::cast_sign_loss,
+            reason = "target >= 0 is checked on the line above"
+        )]
+        let target = target as usize;
+        if target > last {
+            let m = &lines[last];
+            return (self.byte_at_point(f32::MAX, m.y + m.height * 0.5), gx);
+        }
+        let m = &lines[target];
+        (self.byte_at_point(gx, m.y + m.height * 0.5), gx)
+    }
+
+    /// Byte offset of the start (`end = false`, `Home`) or end (`end = true`,
+    /// `End`) of the visual line containing `byte`. Derived default; see
+    /// [`byte_offset_for_line_boundary`]. Resolves by hit-testing the line's
+    /// far-left / far-right edge at the caret's vertical midpoint.
+    fn line_boundary(&self, byte: usize, end: bool) -> usize {
+        let here = self.caret_rect(byte, 1.0);
+        let y_mid = here.y + here.height * 0.5;
+        let x = if end { f32::MAX } else { 0.0 };
+        self.byte_at_point(x, y_mid)
+    }
+}
+
+impl TextLayout for Layout {
+    fn caret_rect(&self, byte_index: usize, caret_width: f32) -> CaretRect {
+        let cursor = Cursor::from_byte_index(self, byte_index, Affinity::Downstream);
+        // f64 -> f32 narrowing — parley's BoundingBox holds f64 corners for
+        // sub-pixel precision, but the pinion paint pipeline rounds to u32 at
+        // the §5.38 caret_rect seam anyway.
+        let bbox = cursor.geometry(self, caret_width);
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "layout-space coords fit f32 in every realistic UI viewport"
+        )]
+        let (x, y) = (bbox.x0 as f32, bbox.y0 as f32);
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "layout-space dims fit f32 in every realistic UI viewport"
+        )]
+        let (width, height) = (bbox.width() as f32, bbox.height() as f32);
+        CaretRect {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    fn byte_at_point(&self, x: f32, y: f32) -> usize {
+        Cursor::from_point(self, x, y).index()
+    }
+
+    fn selection_rects(&self, start: usize, end: usize) -> Vec<CaretRect> {
+        if start == end {
+            return Vec::new();
+        }
+        let selection = Selection::new(
+            Cursor::from_byte_index(self, start, Affinity::Downstream),
+            Cursor::from_byte_index(self, end, Affinity::Downstream),
+        );
+        selection
+            .geometry(self)
+            .into_iter()
+            .map(|(bbox, _line_ix)| {
+                #[allow(
+                    clippy::cast_possible_truncation,
+                    reason = "layout-space coords fit f32 in every realistic UI viewport"
+                )]
+                CaretRect::new(
+                    bbox.x0 as f32,
+                    bbox.y0 as f32,
+                    bbox.width() as f32,
+                    bbox.height() as f32,
+                )
+            })
+            .collect()
+    }
+
+    fn visual_lines(&self) -> Vec<VisualLineMetric> {
+        let mut out = Vec::new();
+        // The first line always opens logical line 0; thereafter a line opens
+        // a new logical line iff its predecessor was terminated by a hard
+        // `\n` (parley `BreakReason::Explicit`).
+        let mut starts_logical_line = true;
+        for line in self.lines() {
+            let metrics = line.metrics();
+            out.push(VisualLineMetric {
+                y: metrics.block_min_coord,
+                height: metrics.block_max_coord - metrics.block_min_coord,
+                starts_logical_line,
+            });
+            starts_logical_line = line.break_reason() == BreakReason::Explicit;
+        }
+        out
+    }
+
+    // parley overrides the derived navigation with its bespoke `Selection`
+    // machinery so the geometry stays byte-identical to the pre-R1077 free
+    // functions (goal-column drift correction + document-boundary clamp).
+    fn line_move(&self, byte: usize, delta: isize, goal_x: Option<f32>) -> (usize, f32) {
+        let here = self.caret_rect(byte, 1.0);
+        let gx = goal_x.unwrap_or(here.x);
+        if delta == 0 {
+            return (byte, gx);
+        }
+        // Step 1: parley resolves the target line + document-boundary clamp.
+        let moved = Selection::from_byte_index(self, byte, Affinity::Downstream)
+            .move_lines(self, delta, false)
+            .focus()
+            .index();
+        let there = self.caret_rect(moved, 1.0);
+        // No band change ⇒ document boundary: keep parley's canonical result.
+        if (there.y - here.y).abs() <= here.height * 0.5 {
+            return (moved, gx);
+        }
+        // Step 2: interior move — override the drifted column with the goal,
+        // hit-testing at the centre of the resolved line.
+        let corrected = self.byte_at_point(gx, there.y + there.height * 0.5);
+        (corrected, gx)
+    }
+
+    fn line_boundary(&self, byte: usize, end: bool) -> usize {
+        let selection = Selection::from_byte_index(self, byte, Affinity::Downstream);
+        let moved = if end {
+            selection.line_end(self, false)
+        } else {
+            selection.line_start(self, false)
+        };
+        moved.focus().index()
+    }
 }
 
 #[cfg(test)]

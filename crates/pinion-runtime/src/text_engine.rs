@@ -20,6 +20,7 @@
 use crate::layout::TextMeasure;
 use pinion_core::scene::StyleRun;
 use pinion_core::style::{LineHeight, TextAlign, TextStyle};
+use pinion_text::{CaretRect, TextLayout, VisualLineMetric};
 use pinion_text_font::{Font, shape_paragraph_with_fallback};
 use std::path::PathBuf;
 
@@ -242,6 +243,126 @@ impl TextMeasure for SelfHostedTextEngine {
         )]
         let height = metrics.height_px as f32;
         Some((shaped.advance, height))
+    }
+}
+
+/// R1077 §5.37 — the §5.37 self-hosted engine's implementor of the
+/// shaper-agnostic [`pinion_text::TextLayout`] caret / hit-test / line-metric
+/// surface: the second implementor beside parley ([`pinion_text::Layout`]),
+/// which is what makes the editable-text caret geometry stop naming one
+/// concrete shaper (the R1077 directive).
+///
+/// It is a **local newtype** in this crate — the one crate that deps both
+/// `pinion-text` (the trait) and `pinion-text-font` (the §5.37 shaping output)
+/// — so the `impl` is orphan-rule-legal (a foreign trait on a local type).
+///
+/// Scope: a single §5.37 line, the engine's shipping frontier
+/// ([`self_hosted_text_eligible`] excludes hard breaks and soft wrap). It is
+/// built from the same [`shape_paragraph_with_fallback`] the measure arm uses
+/// and the same [`LineBoxMetrics`] the §5.37 paint baseline sits inside, so a
+/// caret drawn over this layout registers with the §5.37 *paint* glyphs by
+/// construction. Multi-line §5.37 caret geometry arrives with multi-line
+/// §5.37 paint.
+///
+/// LTR single line: the caret stops are the per-glyph pen origins (each
+/// glyph's `x` is the insertion point *before* it) plus the trailing advance
+/// (the insertion point after the last glyph, byte = `content.len()`),
+/// ascending in both byte and x.
+pub struct SelfHostedLayout {
+    /// Caret stops `(byte, x)` ascending: one per glyph pen-origin plus the
+    /// trailing `(content_len, advance)`. `x` is layout-space device px.
+    stops: Vec<(usize, f32)>,
+    /// Total line advance (device px) — the x of the end-of-text caret and the
+    /// right clamp for hit-testing.
+    advance: f32,
+    /// UTF-8 byte length of the shaped content (the end-of-text caret byte).
+    content_len: usize,
+    /// `Normal` line-box height (device px) from [`LineBoxMetrics`] — the caret
+    /// and selection-band height, the same box the §5.37 paint line occupies.
+    height: f32,
+}
+
+impl SelfHostedLayout {
+    /// Shape `content` as a single §5.37 line at `px` using `engine`'s font and
+    /// return the queryable layout. `None` on a malformed font (`units_per_em`
+    /// 0 — [`LineBoxMetrics::from_font`] declines), matching the measure arm's
+    /// defer-to-parley.
+    #[must_use]
+    pub fn shape(engine: &SelfHostedTextEngine, content: &str, px: f32) -> Option<Self> {
+        let metrics = LineBoxMetrics::from_font(engine.font(), px)?;
+        let shaped = shape_paragraph_with_fallback(&[engine.font()], content, px);
+        let mut stops: Vec<(usize, f32)> = Vec::with_capacity(shaped.glyphs.len() + 1);
+        for g in &shaped.glyphs {
+            // One stop per distinct cluster: a ligature maps several glyphs to
+            // one cluster (keep the first pen origin); ascending LTR clusters
+            // keep `stops` sorted by byte for the binary search in `x_at`.
+            if stops.last().is_none_or(|&(b, _)| b != g.cluster) {
+                stops.push((g.cluster, g.x));
+            }
+        }
+        stops.push((content.len(), shaped.advance));
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "a single line box height is a small positive px value — fits f32"
+        )]
+        let height = metrics.height_px as f32;
+        Some(Self {
+            stops,
+            advance: shaped.advance,
+            content_len: content.len(),
+            height,
+        })
+    }
+
+    /// Layout-space x of the caret stop at `byte`. A byte that is not a glyph
+    /// boundary (rare for a valid char-boundary caret) clamps to the next
+    /// stop's x, or the trailing advance past the end — mirroring parley's
+    /// total `Cursor::from_byte_index`.
+    fn x_at(&self, byte: usize) -> f32 {
+        match self.stops.binary_search_by_key(&byte, |&(b, _)| b) {
+            Ok(i) => self.stops[i].1,
+            Err(i) => self.stops.get(i).map_or(self.advance, |&(_, x)| x),
+        }
+    }
+}
+
+impl TextLayout for SelfHostedLayout {
+    fn caret_rect(&self, byte_index: usize, caret_width: f32) -> CaretRect {
+        CaretRect::new(self.x_at(byte_index), 0.0, caret_width, self.height)
+    }
+
+    fn byte_at_point(&self, x: f32, _y: f32) -> usize {
+        // Single line: `y` selects the (only) line. Clamp x to the line extent
+        // first — a point left of / right of the text snaps to the first / last
+        // caret stop (parley's total `Cursor::from_point`), and the clamp also
+        // sidesteps f32 precision loss when the derived `line_boundary` default
+        // probes with `f32::MAX`.
+        if x <= 0.0 {
+            return self.stops.first().map_or(0, |&(b, _)| b);
+        }
+        if x >= self.advance {
+            return self.content_len;
+        }
+        // Interior: the caret stop nearest in x (nearest-insertion semantics).
+        self.stops
+            .iter()
+            .min_by(|a, b| (a.1 - x).abs().total_cmp(&(b.1 - x).abs()))
+            .map_or(0, |&(b, _)| b)
+    }
+
+    fn selection_rects(&self, start: usize, end: usize) -> Vec<CaretRect> {
+        if start == end {
+            return Vec::new();
+        }
+        let xs = self.x_at(start);
+        let xe = self.x_at(end);
+        let (lo, hi) = if xs <= xe { (xs, xe) } else { (xe, xs) };
+        vec![CaretRect::new(lo, 0.0, hi - lo, self.height)]
+    }
+
+    fn visual_lines(&self) -> Vec<VisualLineMetric> {
+        // One §5.37 line: it opens logical line 0, box top at the layout origin.
+        vec![VisualLineMetric::new(0.0, self.height, true)]
     }
 }
 
@@ -555,5 +676,135 @@ mod tests {
         // The eligibility SSOT itself is the single decision point shared with paint.
         assert!(self_hosted_text_eligible("Name", &style, &[], false));
         assert!(!self_hosted_text_eligible("Name", &style, &[], true));
+    }
+
+    // R1077 §5.37 — SelfHostedLayout is the second `TextLayout` implementor
+    // (parley is the first). These exercise the §5.37 caret / hit-test /
+    // line-metric geometry through the same public free functions a TextField
+    // calls, proving the inverted surface is genuinely shaper-agnostic. The
+    // Noto fixture shapes ASCII deterministically, so the geometry is pinned
+    // exactly (ZERO-FLAKE) — independent of any system font.
+
+    const SHL_PX: f32 = 20.0;
+
+    fn shl_abc() -> SelfHostedLayout {
+        SelfHostedLayout::shape(&noto_engine(), "abc", SHL_PX).expect("noto shapes abc")
+    }
+
+    #[test]
+    fn self_hosted_layout_caret_x_matches_shaped_pen_origins() {
+        // caret-before-glyph-i == that glyph's pen origin; the end caret sits at
+        // the line advance. Recomputed straight from the shaper (independent of
+        // the layout's stored stops), so this checks the mapping, not the impl.
+        let layout = shl_abc();
+        let shaped = shape_paragraph_with_fallback(&[noto_engine().font()], "abc", SHL_PX);
+        for (i, g) in shaped.glyphs.iter().enumerate() {
+            assert_eq!(g.cluster, i, "ascii is one glyph per byte");
+            let caret = pinion_text::caret_rect_for_byte_offset(&layout, i, 1.0);
+            assert!(
+                (caret.x - g.x).abs() < 1e-4,
+                "caret x at byte {i} ({}) must equal pen origin {}",
+                caret.x,
+                g.x
+            );
+        }
+        let end = pinion_text::caret_rect_for_byte_offset(&layout, "abc".len(), 1.0);
+        assert!(
+            (end.x - shaped.advance).abs() < 1e-4,
+            "end caret sits at the advance"
+        );
+        assert!((end.width - 1.0).abs() < 1e-6, "caret width passes through");
+    }
+
+    #[test]
+    fn self_hosted_layout_hit_test_round_trips_and_clamps() {
+        let layout = shl_abc();
+        let mid = pinion_text::visual_line_metrics(&layout)[0].height * 0.5;
+        for b in 0..="abc".len() {
+            let x = pinion_text::caret_rect_for_byte_offset(&layout, b, 1.0).x;
+            assert_eq!(
+                pinion_text::byte_offset_for_point(&layout, x, mid),
+                b,
+                "hit-test round-trips byte {b}"
+            );
+        }
+        // A point left of / right of the text clamps to line start / end.
+        assert_eq!(pinion_text::byte_offset_for_point(&layout, -50.0, mid), 0);
+        assert_eq!(
+            pinion_text::byte_offset_for_point(&layout, 1.0e6, mid),
+            "abc".len()
+        );
+    }
+
+    #[test]
+    fn self_hosted_layout_visual_line_is_single_logical_box() {
+        let layout = shl_abc();
+        let f = noto_engine();
+        let f = f.font();
+        let lines = pinion_text::visual_line_metrics(&layout);
+        assert_eq!(lines.len(), 1, "a single §5.37 line yields one visual line");
+        assert!(lines[0].y.abs() < 1e-6, "box top at the layout origin");
+        assert!(lines[0].starts_logical_line, "it opens logical line 0");
+        // Independent hhea height recomputation (mirrors the measure test).
+        let upem = f64::from(f.units_per_em());
+        let expected_h = (f64::from(f.ascender()) - f64::from(f.descender())
+            + f64::from(f.line_gap()))
+            * f64::from(SHL_PX)
+            / upem;
+        assert!(
+            (f64::from(lines[0].height) - expected_h).abs() < 1e-3,
+            "line box height {} must equal the hhea box {expected_h}",
+            lines[0].height
+        );
+    }
+
+    #[test]
+    fn self_hosted_layout_selection_band_spans_the_range() {
+        let layout = shl_abc();
+        assert!(
+            pinion_text::selection_rects_for_range(&layout, 2, 2).is_empty(),
+            "a collapsed range has no band"
+        );
+        let bands = pinion_text::selection_rects_for_range(&layout, 1, 3);
+        assert_eq!(bands.len(), 1, "a single line is one selection band");
+        let x1 = pinion_text::caret_rect_for_byte_offset(&layout, 1, 1.0).x;
+        let x3 = pinion_text::caret_rect_for_byte_offset(&layout, 3, 1.0).x;
+        assert!(
+            (bands[0].x - x1).abs() < 1e-6,
+            "band starts at the range start"
+        );
+        assert!(
+            (bands[0].width - (x3 - x1)).abs() < 1e-4,
+            "band spans start..end"
+        );
+        assert!(bands[0].y.abs() < 1e-6, "band sits at the line top");
+    }
+
+    #[test]
+    fn self_hosted_layout_inherits_derived_line_navigation() {
+        // The derived `line_move` / `line_boundary` defaults (the trait's, which
+        // parley overrides but §5.37 inherits) drive a single line: Home / Up to
+        // the start, End / Down to the end.
+        let layout = shl_abc();
+        assert_eq!(
+            pinion_text::byte_offset_for_line_boundary(&layout, 2, false),
+            0,
+            "Home -> line start"
+        );
+        assert_eq!(
+            pinion_text::byte_offset_for_line_boundary(&layout, 2, true),
+            3,
+            "End -> line end"
+        );
+        assert_eq!(
+            pinion_text::byte_offset_for_line_move(&layout, 1, -1, None).0,
+            0,
+            "Up on a single line -> start"
+        );
+        assert_eq!(
+            pinion_text::byte_offset_for_line_move(&layout, 1, 1, None).0,
+            3,
+            "Down on a single line -> end"
+        );
     }
 }
