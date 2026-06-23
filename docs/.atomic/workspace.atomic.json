@@ -15024,6 +15024,58 @@
         "param-struct threshold at the 4th backend-supplied input axis (positional Option tail transposition risk)"
       ]
     },
+    "R1076": {
+      "decision_summary": "R1076 PR-28 §5.39 §5.16 §5.35: consume winit is_synthetic — focus-transition synthetic key events excluded from gate/owner/dispatch, fixing the sprag dock-toggle focus-follow flap",
+      "changes_bullets": [
+        "app.rs KeyboardInput arm reads is_synthetic (dropped pre-R1076) and threads it to handle_keyboard_input",
+        "new ShellCore::apply_key_edge: synthetic edge -> no gate/owner/dispatch; physical -> byte-identical inline gate",
+        "synthetic Press/Release no longer dispatch, pin, or clear the press owner (physical key unchanged across focus)",
+        "passive chord cache (note_key_state) still updated on all edges (held-state continuity, byte-identical)",
+        "fixes sprag dock-toggle flap: held shortcut dispatch moves focus -> synthetic Press re-fired the toggle"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 exit 0: 197 suites, 7520 pass, 0 fail (+1 vs R1075 7519)",
+        "new dispatch_core synthetic_focus_change_events_do_not_reflap_the_toggle (physical pin+dispatch / synthetic no-op / keyup clears)",
+        "R1071/R1073/R1075 gate suite + r882 RPC chord unchanged; pinion-shell 256; clippy vello 0; rustfmt clean",
+        "r885 keyboard-path RPC regression PASS (winit-arm fix, RPC path byte-identical)",
+        "no RPC demo: synthetic is winit-only; live acceptance = sprag SPRAG_GUI_LOG (HW-gated VELLO-002)"
+      ],
+      "impact_refs": [
+        "5.39",
+        "5.16",
+        "5.35"
+      ],
+      "carry_forward_bullets": [
+        "live multi-window synthetic verify HW-gated (VELLO-002); headless apply_key_edge seam + sprag SPRAG_GUI_LOG acceptance",
+        "sprag = pin bump only (no code change); focus-follow + dock toggle were correct, pinion dispatched the synthetic events",
+        "no RPC demo: synthetic is winit-only, no RPC-observable surface (R1071/R1073 HW-gated pattern)"
+      ],
+      "publishable_decision_summary": "R1076 PR-28 §5.39 §5.16 §5.35: consume winit is_synthetic — focus-transition synthetic key events excluded from gate/owner/dispatch, fixing the sprag dock-toggle focus-follow flap",
+      "publishable_changes_bullets": [
+        "app.rs KeyboardInput arm reads is_synthetic (dropped pre-R1076) and threads it to handle_keyboard_input",
+        "new ShellCore::apply_key_edge: synthetic edge -> no gate/owner/dispatch; physical -> byte-identical inline gate",
+        "synthetic Press/Release no longer dispatch, pin, or clear the press owner (physical key unchanged across focus)",
+        "passive chord cache (note_key_state) still updated on all edges (held-state continuity, byte-identical)",
+        "fixes sprag dock-toggle flap: held shortcut dispatch moves focus -> synthetic Press re-fired the toggle"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 exit 0: 197 suites, 7520 pass, 0 fail (+1 vs R1075 7519)",
+        "new dispatch_core synthetic_focus_change_events_do_not_reflap_the_toggle (physical pin+dispatch / synthetic no-op / keyup clears)",
+        "R1071/R1073/R1075 gate suite + r882 RPC chord unchanged; pinion-shell 256; clippy vello 0; rustfmt clean",
+        "r885 keyboard-path RPC regression PASS (winit-arm fix, RPC path byte-identical)",
+        "no RPC demo: synthetic is winit-only; live acceptance = sprag SPRAG_GUI_LOG (HW-gated VELLO-002)"
+      ],
+      "publishable_impact_refs": [
+        "5.39",
+        "5.16",
+        "5.35"
+      ],
+      "publishable_carry_forward_bullets": [
+        "live multi-window synthetic verify HW-gated (VELLO-002); headless apply_key_edge seam + sprag SPRAG_GUI_LOG acceptance",
+        "sprag = pin bump only (no code change); focus-follow + dock toggle were correct, pinion dispatched the synthetic events",
+        "no RPC demo: synthetic is winit-only, no RPC-observable surface (R1071/R1073 HW-gated pattern)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
