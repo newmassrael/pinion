@@ -2843,9 +2843,12 @@ impl<V: WidgetView> ShellCore<V> {
     /// R1076 PR-28 §5.39 §5.16 §5.35 — the live winit key-edge gate decision: the
     /// synthetic-aware home `AppShell::handle_keyboard_input` delegates to (it
     /// updates the passive chord cache [`Self::note_key_state`] separately, for
-    /// both edges). Returns whether the edge should DISPATCH to the widget arc
-    /// (`handle_key_press`), maintaining the press-owner lifecycle as the side
-    /// effect.
+    /// both edges). Returns `Some(repeat)` when the edge should DISPATCH — the
+    /// caller runs `handle_key_press` with that auto-repeat flag — and `None`
+    /// when it is gated out, maintaining the press-owner lifecycle as the side
+    /// effect. **R1078 PR-28.2**: `repeat` is DERIVED from the press-owner gate
+    /// (`Some(true)` = the key was already owned = a continuation), NOT winit's
+    /// `event.repeat`, which winit resets on every focus transition (see the body).
     ///
     /// `is_synthetic` is winit's flag for a focus-transition key-state
     /// notification — a `Pressed` emitted for every held key when a window GAINS
@@ -2861,13 +2864,15 @@ impl<V: WidgetView> ShellCore<V> {
     /// `Pressed` from forwarding a phantom keystroke to the newly-focused
     /// widget's External (e.g. a stray newline into a terminal PTY).
     ///
-    /// For a physical edge (`is_synthetic == false`) this is byte-identical to
-    /// the pre-R1076 inline gate: a `Pressed` admits through
+    /// For a physical edge (`is_synthetic == false`) the DISPATCH DECISION is
+    /// byte-identical to the pre-R1076 inline gate: a `Pressed` admits through
     /// [`Self::admit_key_press`] (`gate_key`) or [`Self::is_key_dispatch_window`]
     /// (a key the shell does not dispatch — media / dead keys, `gate_key`
-    /// `None`); a `Released` clears the press owner. This is the headless seam
-    /// that makes the synthetic exclusion regression-testable without a winit
-    /// `EventLoop` (the R1071 `key_press_for_window` discipline).
+    /// `None`); a `Released` clears the press owner. The derived `repeat`
+    /// (R1078) equals winit's `event.repeat` for a single-window hold and only
+    /// corrects it across focus transitions. This is the headless seam that
+    /// makes the synthetic exclusion AND the repeat derivation regression-testable
+    /// without a winit `EventLoop` (the R1071 `key_press_for_window` discipline).
     #[must_use]
     pub fn apply_key_edge(
         &mut self,
@@ -2875,20 +2880,34 @@ impl<V: WidgetView> ShellCore<V> {
         gate_key: Option<&str>,
         pressed: bool,
         is_synthetic: bool,
-    ) -> bool {
+    ) -> Option<bool> {
         if is_synthetic {
-            return false;
+            return None;
         }
         if pressed {
             match gate_key {
-                Some(key) => self.admit_key_press(window_id, key),
-                None => self.is_key_dispatch_window(window_id),
+                Some(key) => {
+                    // R1078 PR-28.2 — derive the auto-repeat flag from the press-owner
+                    // gate BEFORE `admit_key_press` pins it: an owner already present
+                    // means the key was physically held when this `Pressed` arrived,
+                    // i.e. a continuation (auto-repeat). This is the focus-transition-
+                    // robust repeat source — winit resets its own repeat detector on
+                    // every focus change, so a held shortcut whose dispatch bounces OS
+                    // focus would see `event.repeat == false` on each auto-repeat (the
+                    // residual sprag dock flap R1076 left).
+                    let is_repeat = self.key_press_owner.contains_key(key);
+                    self.admit_key_press(window_id, key).then_some(is_repeat)
+                }
+                // A key the shell does not dispatch (media / dead key): gate on OS
+                // focus, never a repeat (not owner-tracked, `handle_key_press` no-ops
+                // on it anyway).
+                None => self.is_key_dispatch_window(window_id).then_some(false),
             }
         } else {
             if let Some(key) = gate_key {
                 self.note_key_release(key);
             }
-            false
+            None
         }
     }
 

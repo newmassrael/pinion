@@ -1224,11 +1224,20 @@ impl<V: WidgetView> AppShell<V> {
         // the matching physical keyup. For a physical edge it is byte-identical to
         // the pre-R1076 inline gate (R1071 OS-focus + R1073 press-owner snapshot,
         // `gate_key` `None` = a media / dead key the shell does not dispatch).
-        if self
+        // R1078 PR-28.2 — `apply_key_edge` returns `Some(repeat)` for a dispatched
+        // edge with the auto-repeat flag DERIVED from the press-owner gate, not
+        // winit's `event.repeat`. winit resets its own repeat detector on every
+        // focus transition (`x11/event_processor.rs`: the first non-synthetic event
+        // after a focus gain is never flagged a repeat), so a held shortcut whose
+        // dispatch bounces OS focus would see `event.repeat == false` on each
+        // auto-repeat and a repeat-dropping toggle would never drop (the residual
+        // sprag dock flap after R1076). The press-owner survives focus transitions
+        // by design, so it is the focus-robust repeat source.
+        if let Some(repeat) = self
             .core
             .apply_key_edge(spec_id, gate_key, pressed, is_synthetic)
         {
-            self.handle_key_press(event_loop, &event.logical_key, event.repeat);
+            self.handle_key_press(event_loop, &event.logical_key, repeat);
         }
     }
 

@@ -4902,9 +4902,10 @@ mod multi_window_key_dispatch_gate {
         // pane-0 holds OS focus; a PHYSICAL press would dispatch and pins the
         // press owner.
         core.note_os_focus("pane-0", true);
-        assert!(
+        assert_eq!(
             core.apply_key_edge("pane-0", Some("Enter"), true, false),
-            "a physical press at the focused window dispatches",
+            Some(false),
+            "a physical press at the focused window dispatches (first press, not a repeat)",
         );
         assert_eq!(
             core.key_dispatch_focus().key_press_owners,
@@ -4920,11 +4921,13 @@ mod multi_window_key_dispatch_gate {
         // window and a synthetic Pressed to the now-focused successor. Neither may
         // dispatch, pin, or clear.
         assert!(
-            !core.apply_key_edge("pane-0", Some("Enter"), false, true),
+            core.apply_key_edge("pane-0", Some("Enter"), false, true)
+                .is_none(),
             "a synthetic release does not dispatch",
         );
         assert!(
-            !core.apply_key_edge(pinion_runtime::DEFAULT_WINDOW, Some("Enter"), true, true),
+            core.apply_key_edge(pinion_runtime::DEFAULT_WINDOW, Some("Enter"), true, true)
+                .is_none(),
             "a synthetic press does not dispatch (no re-toggle, no flap)",
         );
         assert_eq!(
@@ -4934,7 +4937,10 @@ mod multi_window_key_dispatch_gate {
         );
 
         // The matching PHYSICAL keyup (the user finally lets go) clears the owner.
-        assert!(!core.apply_key_edge(pinion_runtime::DEFAULT_WINDOW, Some("Enter"), false, false));
+        assert!(
+            core.apply_key_edge(pinion_runtime::DEFAULT_WINDOW, Some("Enter"), false, false)
+                .is_none()
+        );
         assert!(
             core.key_dispatch_focus().key_press_owners.is_empty(),
             "the physical keyup clears the owner",
@@ -4942,13 +4948,68 @@ mod multi_window_key_dispatch_gate {
 
         // A `gate_key` None (a media / dead key the shell does not dispatch) gates
         // on OS focus alone, pinning no owner (apply_key_edge's None branch).
-        assert!(
+        assert_eq!(
             core.apply_key_edge(pinion_runtime::DEFAULT_WINDOW, None, true, false),
-            "a physical media key gates on OS focus",
+            Some(false),
+            "a physical media key gates on OS focus (never a repeat)",
         );
         assert!(
             core.key_dispatch_focus().key_press_owners.is_empty(),
             "the media key pins no owner",
+        );
+    }
+
+    #[test]
+    fn held_key_repeat_is_derived_from_the_press_owner_not_winit() {
+        // R1078 PR-28.2. The residual flap R1076 left: winit resets its OWN repeat
+        // detector on every focus transition (winit x11/event_processor.rs: "the
+        // first non-synthetic event ... will not be flagged as a repeat"), so a held
+        // shortcut whose dispatch bounces OS focus sees `event.repeat == false` on
+        // each auto-repeat -> a repeat-dropping toggle never drops -> flap. The fix:
+        // `apply_key_edge` derives the repeat flag from the press-owner gate (the
+        // per-key physical-held state that DOES survive focus transitions — synthetic
+        // excluded, cleared only on the physical keyup), so `Some(true)` reaches a
+        // continuation press regardless of winit's reset flag.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+        let mut core = ShellCore::<TestView>::new();
+        core.note_os_focus("pane-0", true);
+
+        // First physical press: no owner yet -> derived repeat = false (acts once).
+        assert_eq!(
+            core.apply_key_edge("pane-0", Some("Enter"), true, false),
+            Some(false),
+            "the first physical press is not a repeat",
+        );
+
+        // The dispatch bounces OS focus (undock = new window) and back; winit would
+        // now report repeat=false for the next real press. The synthetic edges are
+        // excluded, so the physical owner of `Enter` survives the round trip.
+        core.note_os_focus("pane-0", false);
+        core.note_os_focus(pinion_runtime::DEFAULT_WINDOW, true);
+        let _ = core.apply_key_edge("pane-0", Some("Enter"), false, true); // synthetic release
+        let _ = core.apply_key_edge(pinion_runtime::DEFAULT_WINDOW, Some("Enter"), true, true); // synthetic press
+        core.note_os_focus(pinion_runtime::DEFAULT_WINDOW, false);
+        core.note_os_focus("pane-0", true);
+
+        // The real auto-repeat at the owner window: winit's flag would be false, but
+        // the owner is still pinned -> derived repeat = true. A repeat-dropping
+        // toggle now drops it, so the focus-follow flap cannot self-sustain.
+        assert_eq!(
+            core.apply_key_edge("pane-0", Some("Enter"), true, false),
+            Some(true),
+            "a continuation press at the owner window derives repeat=true (winit says false)",
+        );
+
+        // The physical keyup clears the owner; the next press is a fresh non-repeat.
+        assert_eq!(
+            core.apply_key_edge("pane-0", Some("Enter"), false, false),
+            None
+        );
+        assert_eq!(
+            core.apply_key_edge("pane-0", Some("Enter"), true, false),
+            Some(false),
+            "after the keyup a new press is not a repeat",
         );
     }
 }
