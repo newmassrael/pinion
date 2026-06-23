@@ -1376,13 +1376,21 @@ impl<V: WidgetView> ShellCore<V> {
         (&mut self.text_cache, self.text_engine.as_ref())
     }
 
-    /// R1072 §5.37 — inject a specific self-hosted text engine, overriding the
-    /// `PINION_TEXT_ENGINE` env selection made at construction. The seam a test
-    /// drives with a bundled font fixture (system font discovery is
-    /// environment-dependent and would skip the §5.37 arms on a font-less
-    /// machine), and the hook a future caller uses to supply an embedded brand
-    /// font. Pass `None` to force the parley path.
-    pub fn set_text_engine(&mut self, engine: Option<SelfHostedTextEngine>) {
+    /// R1072 §5.37 / R1072.1 — TEST-ONLY injection of a specific self-hosted text
+    /// engine with a bundled font fixture (system font discovery is
+    /// environment-dependent and would skip the §5.37 arms on a font-less CI box).
+    ///
+    /// Deliberately `#[cfg(test)]`: production builds the engine ONCE at
+    /// construction ([`build_text_engine_from_env`]), BEFORE any paint, so the
+    /// per-window [`FragmentCache`](pinion_runtime::paint_adapter::FragmentCache)
+    /// — keyed on `Scene::paint_hash`, which does NOT fold engine on/off — stays
+    /// coherent (the engine choice is a per-process constant). A public
+    /// *mid-session* mutator would defeat that: a fragment cached under one engine
+    /// would replay under the other with no key change. A future embedded-brand-
+    /// font need is therefore a CONSTRUCTION-time seam, not a runtime setter
+    /// (R1072.1 adversarial-audit clearance: removed the public mutator footgun).
+    #[cfg(test)]
+    fn set_text_engine(&mut self, engine: Option<SelfHostedTextEngine>) {
         self.text_engine = engine;
     }
 
@@ -2770,12 +2778,13 @@ impl<V: WidgetView> ShellCore<V> {
         // all re-run the SAME `V::view` / `V::view_for_window` dispatch; factor
         // it into one closure so the dispatch lives in exactly one place. The
         // closure captures only `&self.core` (disjoint from the `&mut
-        // self.text_cache` the `compute_layout`s borrow) and is scoped to this
+        // self.text_cache` the layout passes borrow) and is scoped to this
         // block so its `&self.core` borrow drops before the later `&mut self`
-        // paint-loop work. NOTE: only the dispatch is shared — the first pass
-        // lays out via `compute_layout_with_scroll_dirty` (to read the dirty
-        // bit), the re-passes via plain `compute_layout`; folding the layout in
-        // too would double-lay-out the first pass.
+        // paint-loop work. NOTE: only the dispatch is shared — every pass lays
+        // out via `compute_layout_with_text_measure` (R1072, threading the same
+        // engine override); the first pass reads its scroll-dirty bool return,
+        // the re-passes discard it. Folding the layout into the dispatch closure
+        // would double-lay-out the first pass.
         let mut paint_scene = {
             let core = &self.core;
             let run_view = || {
@@ -2808,7 +2817,7 @@ impl<V: WidgetView> ShellCore<V> {
             // the application's lifetime `max == 0` resolves to "content
             // fits viewport" and paints a full-track thumb the user sees
             // as "scrollbar maxed out at startup". Re-running `V::view` +
-            // `compute_layout` once when the layout pass actually moved
+            // the layout pass once when it actually moved
             // a bound lets the scrollbar widget pick up the freshly-
             // written max on the same paint cycle. Idempotent on
             // steady-state frames — Signal equality-skip floors
@@ -2830,7 +2839,7 @@ impl<V: WidgetView> ShellCore<V> {
             // pre-view `set_viewport_size` publish above: a pane size is
             // layout-derived (known only here, after layout), so — like the
             // scroll-dirty bit (R774) — the publish returns a dirty bit and we
-            // re-run `view` + `compute_layout` once when it fires, so the re-run
+            // re-run `view` + the layout pass once when it fires, so the re-run
             // reads the post-reflow producer state on this same paint. Idempotent
             // on steady-state frames (Signal equality-skip floors `pane_dirty` at
             // `false`).
@@ -5294,14 +5303,25 @@ mod r1072_text_engine_wiring_tests {
         let mut sc = ShellCore::<TextEngineFixture>::new();
         // Engine OFF (PINION_TEXT_ENGINE unset in the test process): parley measure.
         let off = sc.compute_paint_scene(800, 200);
+        let off_label_w = text_width(&off, LABEL).expect("label text node present");
         let off_field_w = text_width(&off, FIELD).expect("field text node present");
 
-        // Inject the §5.37 engine — the shipping wiring `set_text_engine` exposes.
+        // Inject the §5.37 engine via the test-only construction seam.
         sc.set_text_engine(Some(engine));
         let on = sc.compute_paint_scene(800, 200);
         let on_label_w = text_width(&on, LABEL).expect("label text node present");
         let on_field_w = text_width(&on, FIELD).expect("field text node present");
 
+        // (0) R1072.1 — self-validate that this test is DISCRIMINATING: the §5.37
+        // measure must differ from the off-path parley measure, else assertion (1)
+        // below would pass vacuously. NotoSans (the injected fixture) differs
+        // metrically from the host's resolved sans-serif, so on != off. A failure
+        // here means this host's sans-serif IS the fixture font — swap the fixture,
+        // do not weaken the proof.
+        assert_ne!(
+            on_label_w, off_label_w,
+            "§5.37 width must differ from parley's, or assertion (1) is vacuous"
+        );
         // (1) The engine reached the shell's MEASURE pass: the eligible label is
         // sized to the §5.37 box width, not parley's.
         assert_eq!(

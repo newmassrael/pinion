@@ -727,11 +727,6 @@ impl<V: WidgetView> AppShell<V> {
     /// when its [`RenderState`] is `Suspended` (GPU released, mobile
     /// platform cycle). Mirrors the pre-R670.B `let RenderState::
     /// Active { .. } = &mut self.render else { return; }` guard.
-    // R1072 §5.37 — the per-window paint cycle (present, encode, render, capture,
-    // fidelity record) is a cohesive orchestration sequence; the engine-aware
-    // cached-paint wiring tipped it 1 line over the pedantic limit. Same idiom the
-    // sibling `headless_screenshot` render methods carry.
-    #[allow(clippy::too_many_lines)]
     fn render_window(&mut self, window_id: WindowId) {
         // R670.B §5.16 — read the slot's spec id + inner size first
         // without holding a long-lived `&mut self.windows` borrow,
@@ -795,6 +790,12 @@ impl<V: WidgetView> AppShell<V> {
             .core
             .compute_paint_scene_for_window(&spec_id, w.get(), h.get());
         let build_us = instant_delta_us(frame_start, Instant::now());
+        // R668 §5.16 / R1072.1 — `IntrinsicAfterFirstPaint` resize hook, extracted
+        // into `apply_pending_intrinsic_resize`: walk the first painted scene for
+        // its content size, clamp to `[min, max]`, request the new winit inner-size
+        // (applied next frame via `Resized`). Runs BEFORE the encode so the encode
+        // uses the current size; a no-op for `Fixed` strategy + steady-state paints.
+        self.apply_pending_intrinsic_resize(window_id, &paint_scene, w, h);
         // Assigned exactly once inside the paint scope below; the
         // scope's `else { return; }` arms diverge, so the fall-through
         // path that reaches `record_frame_timing` always assigns both.
@@ -818,37 +819,9 @@ impl<V: WidgetView> AppShell<V> {
             let Some(slot) = self.windows.get_mut(&window_id) else {
                 return;
             };
-            let RenderState::Active { window, renderer } = &mut slot.render else {
+            let RenderState::Active { renderer, .. } = &mut slot.render else {
                 return;
             };
-            // R668 §5.16 — `IntrinsicAfterFirstPaint` post-first-paint
-            // resize hook (per-window since R670.B). The first painted
-            // scene now carries layout-computed rects on every node, so
-            // walking the tree ([`Scene::intrinsic_content_size`]) gives
-            // us the tight (width, height) the content actually wants;
-            // clamp to `[min, max]` and forward to
-            // `Window::request_inner_size`. winit emits a
-            // `WindowEvent::Resized` on acceptance which re-enters the
-            // layout pass at the new viewport on the next paint. The
-            // hook drains itself — `Fixed`-strategy paints and every
-            // steady-state paint after the first land on the `None`
-            // branch and skip out.
-            if let Some((min, max)) = slot.pending_intrinsic_resize.take() {
-                let (content_w, content_h) = paint_scene.intrinsic_content_size();
-                let target_w = content_w.clamp(min.0, max.0);
-                let target_h = content_h.clamp(min.1, max.1);
-                if (target_w, target_h) != (w.get(), h.get()) {
-                    let _ = window.request_inner_size(LogicalSize::new(
-                        f64::from(target_w),
-                        f64::from(target_h),
-                    ));
-                    // Force-request a redraw so the next event-loop pass
-                    // re-enters `render` against the updated inner_size
-                    // and paints the final layout immediately rather than
-                    // idling on the now-undersized first-paint frame.
-                    window.request_redraw();
-                }
-            }
             slot.vello_scene.reset();
             let base = paint_adapter::root_background(&paint_scene);
             // R682 §5.16 atomic 1 — cached path. The per-window
@@ -1023,6 +996,50 @@ impl<V: WidgetView> AppShell<V> {
         // disagree because they read this one signal.
         self.core
             .set_immediate_subtree_for_window(target_window, has_immediate_subtree);
+    }
+
+    /// R668 §5.16 / R1072.1 — the `IntrinsicAfterFirstPaint` post-first-paint
+    /// resize hook, extracted from [`Self::render_window`] (the same discipline
+    /// `publish_ime_for_window` / `emit_accesskit_for_window` follow to keep the
+    /// parent under the `clippy::too_many_lines = 100` ceiling — preferred over a
+    /// lint suppression).
+    ///
+    /// The first painted scene carries layout-computed rects on every node, so
+    /// walking the tree ([`Scene::intrinsic_content_size`]) gives the tight
+    /// `(width, height)` the content wants; clamp to `[min, max]` and forward to
+    /// [`Window::request_inner_size`]. winit emits a `WindowEvent::Resized` on
+    /// acceptance which re-enters the layout pass at the new viewport next paint.
+    /// Self-draining: `Fixed`-strategy paints and every steady-state paint after
+    /// the first take the `None` branch and no-op. A vanished slot / non-`Active`
+    /// render state is also a no-op.
+    fn apply_pending_intrinsic_resize(
+        &mut self,
+        window_id: WindowId,
+        paint_scene: &pinion_core::Scene,
+        w: core::num::NonZeroU32,
+        h: core::num::NonZeroU32,
+    ) {
+        let Some(slot) = self.windows.get_mut(&window_id) else {
+            return;
+        };
+        let RenderState::Active { window, .. } = &mut slot.render else {
+            return;
+        };
+        let Some((min, max)) = slot.pending_intrinsic_resize.take() else {
+            return;
+        };
+        let (content_w, content_h) = paint_scene.intrinsic_content_size();
+        let target_w = content_w.clamp(min.0, max.0);
+        let target_h = content_h.clamp(min.1, max.1);
+        if (target_w, target_h) != (w.get(), h.get()) {
+            let _ = window
+                .request_inner_size(LogicalSize::new(f64::from(target_w), f64::from(target_h)));
+            // Force-request a redraw so the next event-loop pass re-enters
+            // `render` against the updated inner_size and paints the final
+            // layout immediately rather than idling on the now-undersized
+            // first-paint frame.
+            window.request_redraw();
+        }
     }
 
     /// R670.B §5.16 — per-window IME candidate publish helper.

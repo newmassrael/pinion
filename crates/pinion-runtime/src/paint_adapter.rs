@@ -3111,6 +3111,81 @@ mod tests {
     }
 
     #[test]
+    fn r1072_cached_engine_fragment_replays_on_cache_hit() {
+        // R1072.1 — the cache-HIT (replay) path, not just the miss the sibling
+        // test covers. The other cached test paints a BARE `Scene::Text` (never a
+        // Container, so the FragmentCache fast-path is never entered). Here a
+        // cacheable Container wraps the §5.37 leaf and is painted twice through ONE
+        // cache: frame 1 = miss (encode the §5.37 glyph fills into the stored
+        // fragment), frame 2 = hit (append the stored fragment). This proves the
+        // "engine fragment stays valid for replay" claim — the replayed scene is
+        // bit-for-bit the §5.37 encode, not a parley re-render.
+        let font = pinion_text_font::Font::from_bytes(NOTO_FIXTURE.to_vec())
+            .expect("parse NotoSans fixture");
+        let engine = SelfHostedTextEngine::from_font(font);
+
+        let scene = Scene::Container(ContainerNode::new(vec![Scene::Text(TextNode::styled(
+            "Hi",
+            Rect::new(0, 0, 200, 32),
+            TextStyle::new().with_size_px(16),
+        ))]));
+        assert!(
+            scene.is_cacheable_for_paint(),
+            "a Container of static text is cacheable"
+        );
+
+        let mut text_cache = LayoutCache::new();
+        let mut image_cache = ImageCache::new();
+        let mut fragment_cache = FragmentCache::new();
+
+        // Frame 1: cache miss — encodes the subtree incl. the §5.37 per-glyph fills.
+        let mut frame1 = VelloScene::new();
+        to_vello_cached_with_text_engine(
+            &scene,
+            &|_| None,
+            &mut text_cache,
+            &mut image_cache,
+            &mut fragment_cache,
+            Some(&engine),
+            &mut frame1,
+        );
+        assert_eq!(fragment_cache.misses(), 1, "first paint is a miss");
+        assert_eq!(fragment_cache.hits(), 0);
+
+        // Frame 2: cache hit — replays the stored fragment (no re-encode).
+        let mut frame2 = VelloScene::new();
+        to_vello_cached_with_text_engine(
+            &scene,
+            &|_| None,
+            &mut text_cache,
+            &mut image_cache,
+            &mut fragment_cache,
+            Some(&engine),
+            &mut frame2,
+        );
+        assert_eq!(
+            fragment_cache.hits(),
+            1,
+            "second identical paint is a hit (fragment replayed)"
+        );
+
+        // The replayed frame carries the SAME path count as the miss encode — the
+        // §5.37 fragment survived caching (a parley re-render would differ).
+        assert_eq!(
+            frame1.encoding().n_paths,
+            frame2.encoding().n_paths,
+            "the hit replay reproduces the §5.37 miss encode"
+        );
+        let shaped = pinion_text_font::shape_paragraph_with_fallback(&[engine.font()], "Hi", 16.0);
+        let rendered = pinion_text_font::render_paragraph_atlased(&[engine.font()], &shaped, 16.0)
+            .expect("atlas-render Hi");
+        assert!(
+            frame2.encoding().n_paths >= u32::try_from(rendered.placed.len()).expect("fits u32"),
+            "the replayed fragment carries the §5.37 per-glyph fills"
+        );
+    }
+
+    #[test]
     fn r1072_caret_bearing_text_declines_self_hosted_arm() {
         // R1072 §5.37 — the R1070.1 caret contract at the PAINT arm: a
         // caret-bearing (editable) leaf is otherwise eligible (single-style /

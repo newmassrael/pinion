@@ -549,7 +549,11 @@ impl Scene {
                 // R1072 §5.37 — fold the caret-bearing marker: it selects which
                 // shaper paints this leaf (§5.37 vs parley) when the engine is
                 // enabled, so two leaves identical but for this flag must not
-                // share a cached paint fragment.
+                // share a cached paint fragment. The bit is hashed
+                // unconditionally; with the engine off it is a nil dedup effect
+                // (a node's marker is frame-stable, so its own hash is steady
+                // frame-to-frame — only a label/field sharing identical text
+                // would have deduped, and they sit in distinct containers).
                 t.caret_bearing.hash(&mut h);
                 h.finish()
             }
