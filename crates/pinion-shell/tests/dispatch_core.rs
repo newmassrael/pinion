@@ -4534,7 +4534,7 @@ mod r684_headless_rpc_floating_window_finalize {
 // physical press once a second (undock) window exists.
 // ─────────────────────────────────────────────────────────────────────
 
-mod r1071_multi_window_key_dispatch {
+mod multi_window_key_dispatch_gate {
     use std::sync::atomic::Ordering;
 
     use super::{
@@ -4739,7 +4739,11 @@ mod r1071_multi_window_key_dispatch {
         // clear still releases the owner pinned to the destroyed pane-0.
         core.note_os_focus("pane-0", false);
         core.note_os_focus(pinion_runtime::DEFAULT_WINDOW, true);
-        core.note_key_state("Enter", false); // keyup ends the physical press
+        // R1073.1: the owner gate's release seam (the keyup), separate from the
+        // chord cache `note_key_state` so it can cover Escape/Tab too —
+        // window-agnostic, so it releases the owner pinned to the destroyed
+        // pane-0 even though the keyup arrives at the successor.
+        core.note_key_release("Enter");
 
         // A genuinely new press of Enter at the now-focused main window is a
         // fresh rising edge — admitted.
@@ -4751,6 +4755,38 @@ mod r1071_multi_window_key_dispatch {
             toggle_count(),
             2,
             "the post-release press is a genuine new toggle"
+        );
+    }
+
+    #[test]
+    fn remove_window_clears_stale_os_focus() {
+        // R1073.1 PR-27.4. The shell reconciles its OS-focus authority on the
+        // one lifecycle event it controls — window destruction — instead of
+        // trusting a `Focused(false)` a destroyed window may never emit. A
+        // stale `os_focused_window` pointing at a torn-down window would make
+        // the gate fail CLOSED for every live window (swallowing all input);
+        // `remove_window` clears it so the gate fails OPEN until a real focus
+        // event lands.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+
+        let mut core = ShellCore::<TestView>::new();
+        core.note_os_focus("pane-0", true);
+        assert!(
+            !core.is_key_dispatch_window(pinion_runtime::DEFAULT_WINDOW),
+            "with pane-0 OS-focused, main is gated",
+        );
+
+        // Tear pane-0 down with no subsequent winit Focused event.
+        core.remove_window("pane-0");
+
+        assert!(
+            core.is_key_dispatch_window(pinion_runtime::DEFAULT_WINDOW),
+            "after the focused window is destroyed, the gate fails open (not closed)",
+        );
+        assert!(
+            core.is_key_dispatch_window("pane-0"),
+            "the stale dead-window focus identity is cleared",
         );
     }
 }

@@ -1172,55 +1172,68 @@ impl<V: WidgetView> AppShell<V> {
     /// `WindowEvent::KeyboardInput` arm, extracted to keep `window_event`
     /// under the workspace `clippy::too_many_lines` ceiling (the app.rs split
     /// convention shared with [`Self::handle_mouse_button`] /
-    /// `handle_file_dnd`). `spec_id` is the addressed window's canonical
-    /// [`WindowSpec::id`](crate::WindowSpec).
+    /// `handle_file_dnd`). Takes the `Copy` [`WindowId`] (not a borrowed
+    /// `spec_id`) and re-resolves the canonical [`WindowSpec::id`](crate::WindowSpec)
+    /// internally, so the high-frequency keyboard / auto-repeat path allocates
+    /// nothing (the sibling mouse / file arms `to_owned()` because they are
+    /// low-frequency).
     fn handle_keyboard_input(
         &mut self,
         event_loop: &ActiveEventLoop,
-        spec_id: &str,
+        window_id: WindowId,
         event: &winit::event::KeyEvent,
     ) {
-        // R882 §5.39 §5.35 — held-key absolute state: BOTH edges feed the
-        // substrate's chord cache (pre-R882 the shell dropped `Released`
-        // entirely, so no "is Space held" fact existed). The winit `Key`
-        // converts to the same canonical string vocabulary the key dispatch
-        // uses (`named_key_str` — the §5.41 winit-free boundary); auto-repeat
-        // re-sends `Pressed`, which is idempotent against the cache. Dispatch
-        // stays press-edge-only.
+        // R683 §5.16 — re-resolve `WindowId` → canonical spec id (the same
+        // fallback `window_event` uses); borrows `self.windows`, disjoint from
+        // the `self.core` calls below.
+        let spec_id: &str = self
+            .windows
+            .get(&window_id)
+            .map_or(pinion_runtime::DEFAULT_WINDOW, |s| &*s.spec_id);
         let pressed = event.state == ElementState::Pressed;
-        // R1073 PR-27.4 §5.39 §5.16 §5.35 — resolve the canonical W3C key
-        // string ONCE (the §5.41 winit-free vocabulary) so the chord cache,
-        // the dispatch gate, and the press-owner snapshot all key on the
-        // identical string. `None` for keys with no canonical name (e.g. dead
-        // keys), which never bind an action.
-        let key_id: Option<&str> = match event.logical_key.as_ref() {
-            Key::Named(named) => named_key_str(named),
-            Key::Character(c) => Some(c),
-            _ => None,
+        // R1073.1 PR-27.4 §5.39 §5.16 §5.35 — resolve TWO vocabularies in one
+        // match. `chord_key` (R882 §5.41 `named_key_str`) feeds the chord cache
+        // on BOTH edges — auto-repeat re-sends `Pressed`, idempotent against the
+        // cache. `gate_key` (`dispatch_named_key_str`, a superset adding the
+        // shell-reserved `Escape` / `Tab`) feeds the press-owner gate, so EVERY
+        // key `handle_key_press` dispatches is covered, not just chord keys.
+        let (chord_key, gate_key): (Option<&str>, Option<&str>) = match event.logical_key.as_ref() {
+            Key::Named(named) => (named_key_str(named), dispatch_named_key_str(named)),
+            Key::Character(c) => (Some(c), Some(c)),
+            _ => (None, None),
         };
-        if let Some(key_str) = key_id {
+        if let Some(key_str) = chord_key {
             self.core.note_key_state(key_str, pressed);
         }
-        // R1073 PR-27.4 §5.39 §5.16 §5.35 — dispatch gate, the SAME
-        // [`ShellCore::admit_key_press`] the per-window seam uses: act on a
-        // press only when it arrives at the window that owns the physical
-        // press (snapshotted at the press's rising edge) AND that window still
-        // holds OS focus. A stray re-delivery of one press mid-undock is
-        // dropped whether it lands on the now-unfocused source window (R1071)
-        // OR the now-focused successor window the closing window's own dispatch
-        // handed focus to (R1073 — the dock/undock double-toggle).
-        // `event.repeat` carries the OS auto-repeat flag to the binding (a
-        // toggle-class shortcut swallows it; text / nav keys keep repeating). A
-        // single-window binding always passes the gate (its one window owns
-        // every press and holds focus), so this is byte-identical to the
-        // pre-R1071 ungated dispatch for it.
-        let admit = pressed
-            && match key_id {
+        if pressed {
+            // R1073 PR-27.4 §5.39 §5.16 §5.35 — dispatch gate, the SAME
+            // [`ShellCore::admit_key_press`] the per-window seam uses: act on a
+            // press only when it arrives at the window that owns the physical
+            // press (snapshotted at the press's rising edge) AND that window
+            // still holds OS focus. A stray re-delivery of one press mid-undock
+            // is dropped whether it lands on the now-unfocused source window
+            // (R1071) OR the now-focused successor window the closing window's
+            // own dispatch handed focus to (R1073 — the dock/undock
+            // double-toggle). `event.repeat` carries the OS auto-repeat flag to
+            // the binding (a toggle-class shortcut swallows it; text / nav keys
+            // keep repeating). A single-window binding always passes the gate
+            // (its one window owns every press and holds focus), so this is
+            // byte-identical to the pre-R1071 ungated dispatch for it.
+            // `None` = a key the shell does not dispatch (media / dead keys),
+            // where the gate result is moot; kept on the focus gate for
+            // uniformity with no behavioural effect.
+            let admit = match gate_key {
                 Some(key_str) => self.core.admit_key_press(spec_id, key_str),
                 None => self.core.is_key_dispatch_window(spec_id),
             };
-        if admit {
-            self.handle_key_press(event_loop, &event.logical_key, event.repeat);
+            if admit {
+                self.handle_key_press(event_loop, &event.logical_key, event.repeat);
+            }
+        } else if let Some(key_str) = gate_key {
+            // R1073.1 PR-27.4 §5.39 — release edge ends the physical press:
+            // drop the owner snapshot so the next press re-decides against live
+            // focus. Window-agnostic clear (see [`ShellCore::note_key_release`]).
+            self.core.note_key_release(key_str);
         }
     }
 
@@ -1965,14 +1978,14 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
                 }
             }
             WindowEvent::KeyboardInput { event, .. } => {
-                // R1073 PR-27.4 §5.39 — extracted to `handle_keyboard_input`
-                // to keep this dispatcher under the workspace
+                // R1073 PR-27.4 §5.39 — extracted to `handle_keyboard_input` to
+                // keep this dispatcher under the workspace
                 // `clippy::too_many_lines` (100) ceiling (the app.rs split
-                // convention). `spec_id` borrows `self.windows`, so the
-                // `&mut self` helper needs an owned id (the file / mouse arcs
-                // do the same `to_owned()`).
-                let sid = spec_id.to_owned();
-                self.handle_keyboard_input(event_loop, &sid, &event);
+                // convention). Passes the `Copy` `window_id` (the helper
+                // re-resolves `spec_id` itself) so the keyboard / auto-repeat
+                // hot path allocates nothing — unlike the rarer mouse / file
+                // arms that `to_owned()` the borrowed `spec_id`.
+                self.handle_keyboard_input(event_loop, window_id, &event);
             }
             // R56.2.a §5.13 §5.38 — IME composition events from the
             // platform input method (Wayland `text-input-v3`, X11
@@ -2268,6 +2281,26 @@ fn named_key_str(named: NamedKey) -> Option<&'static str> {
         NamedKey::F11 => Some("F11"),
         NamedKey::F12 => Some("F12"),
         _ => None,
+    }
+}
+
+/// R1073.1 PR-27.4 §5.39 — the DISPATCH key vocabulary for the press-owner gate
+/// ([`crate::ShellCore::admit_key_press`]): a superset of [`named_key_str`] that
+/// adds the two shell-reserved keys [`named_key_str`] deliberately excludes from
+/// its R1009 content-surface / chord vocabulary — `Escape` and `Tab`. Those are
+/// not forwarded to a content surface and are not chord keys, but
+/// [`AppShell::handle_key_press`] DOES dispatch them (Escape → modal-cancel /
+/// `event_loop.exit`, Tab → focus traverse), so the close-during-dispatch gate
+/// must see them too: a future `Escape`-closes-a-window binding gets the same
+/// one-press-one-action protection as `Enter`. Used ONLY for the owner gate +
+/// its release ([`crate::ShellCore::note_key_release`]); the chord cache keeps
+/// the narrower [`named_key_str`] vocabulary. `None` only for keys the shell
+/// does not dispatch at all (media / browser keys, dead keys).
+fn dispatch_named_key_str(named: NamedKey) -> Option<&'static str> {
+    match named {
+        NamedKey::Escape => Some("Escape"),
+        NamedKey::Tab => Some("Tab"),
+        other => named_key_str(other),
     }
 }
 
@@ -2836,7 +2869,10 @@ mod r1009_named_key_str_tests {
     #[test]
     fn escape_and_tab_stay_none_filtered_upstream() {
         // Escape / Tab are offered to the focused widget by the dedicated arms
-        // in handle_key_press, so the bridge deliberately does NOT surface them.
+        // in handle_key_press, so the CONTENT / chord bridge deliberately does
+        // NOT surface them. R1073.1: the separate DISPATCH-gate vocabulary
+        // (`dispatch_named_key_str`) DOES cover them — see
+        // `dispatch_gate_vocabulary_adds_escape_tab` below.
         assert_eq!(named_key_str(NamedKey::Escape), None);
         assert_eq!(named_key_str(NamedKey::Tab), None);
     }
@@ -2848,6 +2884,63 @@ mod r1009_named_key_str_tests {
         assert_eq!(named_key_str(NamedKey::MediaPlayPause), None);
         assert_eq!(named_key_str(NamedKey::BrowserBack), None);
         assert_eq!(named_key_str(NamedKey::AudioVolumeUp), None);
+    }
+}
+
+#[cfg(test)]
+mod r1073_dispatch_gate_vocabulary_tests {
+    //! R1073.1 PR-27.4 §5.39 — `dispatch_named_key_str` is the press-owner
+    //! gate's key vocabulary: a SUPERSET of the content/chord `named_key_str`
+    //! that additionally covers the two shell-reserved keys `handle_key_press`
+    //! dispatches (`Escape` → exit / modal-cancel, `Tab` → focus traverse), so
+    //! the close-during-dispatch gate sees them — without widening the R1009
+    //! content / RPC chord vocabulary. Pure table, no `EventLoop` needed.
+
+    use super::{dispatch_named_key_str, named_key_str};
+    use winit::keyboard::NamedKey;
+
+    #[test]
+    fn dispatch_gate_vocabulary_adds_escape_tab() {
+        // The whole point of R1073.1: the gate vocabulary covers the reserved
+        // keys the content vocabulary excludes, so a window-closing Escape gets
+        // the same one-press-one-action gating as Enter.
+        assert_eq!(dispatch_named_key_str(NamedKey::Escape), Some("Escape"));
+        assert_eq!(dispatch_named_key_str(NamedKey::Tab), Some("Tab"));
+        assert_eq!(
+            named_key_str(NamedKey::Escape),
+            None,
+            "content vocab still excludes them"
+        );
+        assert_eq!(named_key_str(NamedKey::Tab), None);
+    }
+
+    #[test]
+    fn dispatch_gate_vocabulary_is_a_superset_of_named_key_str() {
+        // Every key the content vocabulary names, the gate vocabulary names
+        // identically — the gate only ADDS, never diverges, on the shared keys.
+        for key in [
+            NamedKey::Enter,
+            NamedKey::Space,
+            NamedKey::ArrowLeft,
+            NamedKey::Backspace,
+            NamedKey::F5,
+            NamedKey::PageDown,
+        ] {
+            assert_eq!(
+                dispatch_named_key_str(key),
+                named_key_str(key),
+                "{key:?} shared"
+            );
+        }
+    }
+
+    #[test]
+    fn non_dispatched_keys_stay_none_in_the_gate_vocabulary() {
+        // Keys the shell does not dispatch are absent from the gate too, so the
+        // `None` branch in `handle_keyboard_input` only ever covers keys that
+        // would not dispatch anyway (gate result moot).
+        assert_eq!(dispatch_named_key_str(NamedKey::MediaPlayPause), None);
+        assert_eq!(dispatch_named_key_str(NamedKey::BrowserBack), None);
     }
 }
 

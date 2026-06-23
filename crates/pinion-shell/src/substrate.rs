@@ -496,11 +496,16 @@ pub struct ShellCore<V: WidgetView> {
     os_focused_window: Option<String>,
 
     /// R1073 PR-27.4 §5.39 §5.16 §5.35 — per-key snapshot of the window that
-    /// owned each in-flight physical press's rising edge: keyed by the
-    /// canonical W3C key string ([`Self::note_key_state`]'s vocabulary),
+    /// owned each in-flight physical press's rising edge: keyed by the canonical
+    /// W3C *dispatch* key string (every key `AppShell::handle_key_press` acts
+    /// on, INCLUDING the shell-reserved `Escape` / `Tab` — a superset of the
+    /// R1009 content / chord vocabularies, resolved by `dispatch_named_key_str`),
     /// valued by the OS-focused window the press was first admitted at. Set on
     /// the admitted rising edge ([`Self::admit_key_press`]) and cleared on the
-    /// key's release edge ([`Self::note_key_state`] with `pressed == false`).
+    /// key's release edge ([`Self::note_key_release`]) — a lifecycle owned by
+    /// the gate, NOT piggybacked on the chord cache ([`Self::note_key_state`]),
+    /// so it can cover `Escape` / `Tab` without polluting the RPC-exposed chord
+    /// `held_names` subset.
     ///
     /// This is the *press-time focus snapshot* that closes the R1071 gate's
     /// blind spot (the sprag dock/undock double-toggle that survived R1071): a
@@ -1275,6 +1280,23 @@ impl<V: WidgetView> ShellCore<V> {
         // paint path (a rare dock tear-down), so the O(windows) fold is free.
         let union = self.union_focusable_tags();
         self.focus.update_focusable_tags(union);
+        // R1073.1 PR-27.4 §5.39 §5.16 §5.35 — reconcile the OS-focus identity
+        // on the one lifecycle event the shell itself controls (destruction),
+        // rather than trusting a platform `Focused(false)` that a destroyed
+        // window may never emit. If `os_focused_window` still names the window
+        // being torn down, a stale `Some(dead)` would make
+        // [`Self::is_key_dispatch_window`] return `false` for EVERY live window
+        // (`dead != live`), silently swallowing all keystrokes until the next
+        // focus event — worse than the double-toggle it guards. Clearing to
+        // `None` re-arms the fail-open default until a real `Focused(true)`
+        // lands. `key_press_owner` is deliberately NOT reconciled here: an
+        // in-flight press whose own dispatch closed this window is exactly the
+        // stray the gate must still drop, so its owner must survive the close
+        // (it self-clears on the keyup, [`Self::note_key_release`]); clearing
+        // it on destruction would re-open the now-focused-successor stray.
+        if self.os_focused_window.as_deref() == Some(window_id) {
+            self.os_focused_window = None;
+        }
         // CoreShell::remove_window returns true on at least one
         // runtime-side removal; the OR with shell_side surfaces "any
         // per-window state existed" so the AppShell-side reconcile
@@ -2561,17 +2583,33 @@ impl<V: WidgetView> ShellCore<V> {
     /// shells are pure edge producers with zero policy copies (§2 #6);
     /// this is the winit-side forwarding funnel.
     pub fn note_key_state(&mut self, key: &str, pressed: bool) {
-        // R1073 PR-27.4 §5.39 §5.16 §5.35 — the release edge ends the physical
-        // press, so drop its [`Self::key_press_owner`] snapshot: the next
-        // `Pressed` for this key is a genuine new press whose gate must be
-        // re-decided against the live OS focus, not the prior press's owner.
-        // Window-agnostic on purpose — a keyup delivered to whatever window
-        // grabbed focus still clears an owner whose source window was closed by
-        // the press's own dispatch.
-        if !pressed {
-            self.key_press_owner.remove(key);
-        }
         self.core.note_key_state(key, pressed);
+    }
+
+    /// R1073.1 PR-27.4 §5.39 §5.16 §5.35 — the release edge of the press-owner
+    /// gate: end the physical press of `key` by dropping its
+    /// [`Self::key_press_owner`] snapshot, so the next `Pressed` for `key` is a
+    /// genuine new rising edge whose admission is re-decided against the live OS
+    /// focus ([`Self::admit_key_press`]), not the prior press's owner.
+    ///
+    /// The lifecycle peer of [`Self::admit_key_press`] (press → pin owner;
+    /// release → drop owner), deliberately SEPARATE from the chord-cache funnel
+    /// [`Self::note_key_state`]: the owner gate keys on the *dispatch* vocabulary
+    /// (every key `handle_key_press` acts on — including the shell-reserved
+    /// `Escape` / `Tab` that the R1009 content-surface / chord vocabularies
+    /// exclude), so its lifecycle cannot ride on the chord cache without
+    /// polluting the RPC-exposed [`CoreShell::held_names`](pinion_runtime::CoreShell::held_names)
+    /// chord subset.
+    ///
+    /// Window-agnostic on purpose: a keyup delivered to whatever window grabbed
+    /// OS focus still clears an owner whose source window was closed by the
+    /// press's own dispatch (the close-during-dispatch case). Cleared only here
+    /// (and never on blur), so the gate stays robust to either winit
+    /// focus-event ordering on a close-driven handoff. The live GUI calls this
+    /// from the `KeyboardInput` release edge; a test drives it directly to model
+    /// a keyup.
+    pub fn note_key_release(&mut self, key: &str) {
+        self.key_press_owner.remove(key);
     }
 
     /// R882 §5.39 — whether the Space pan chord is currently held
