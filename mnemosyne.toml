@@ -875,3 +875,25 @@ reason = "Honesty correction completed across BOTH diverged publishable fields (
 applied_in = "R881.1 audit remediation commit"
 content_hash_before = "5fa9580b794e1a8932dd522b9b961ece0ac6c8ccf68d0c64d9e933dfde781bd4"
 content_hash_after = "74b7a69110d3fe4215cea6ffb040f05f12133f9c975a699e54d60fb869233b6e"
+
+# R1068 rework — R1067/R1068 designs corrected pre-push by a 3-reviewer
+# adversarial audit (the user's "교과서적/SSOT/북극성?" review). Audit halves
+# stay frozen as first appended; publishable views carry the corrected design.
+
+[[publishable_override_ledger]]
+kind = "honesty-correction"
+target_id = "R1067"
+fields = ["publishable_decision_summary", "publishable_changes_bullets", "publishable_verification_bullets", "publishable_carry_forward_bullets"]
+reason = "R1067 design corrected pre-push by 3-reviewer adversarial audit: platform reduced to enumerate-only, selection moved to runtime via parsed metadata (was filename discover_default_sans), sfnt sniff dropped"
+applied_in = "pinion R1068 rework"
+content_hash_before = "10525dcd55975e2b5cca6dc2ab5fc825772e526d61b4c24ba6f71a19a8885172"
+content_hash_after = "5882c2c8af308ab8269cc5111fefb7c83803bcb99f06b58665c4be0eea8b7689"
+
+[[publishable_override_ledger]]
+kind = "honesty-correction"
+target_id = "R1068"
+fields = ["publishable_decision_summary", "publishable_changes_bullets", "publishable_verification_bullets", "publishable_carry_forward_bullets"]
+reason = "R1068 design corrected pre-push by 3-reviewer adversarial audit: baseline line_gap/half-leading fix, eligibility tightened (align/line-height/soft-wrap), assertion honesty, unconsumed cached variant dropped, arm anchored at new §5.37.12"
+applied_in = "pinion R1068 rework"
+content_hash_before = "9366d45cdc63918da400cf5183cbf21f0c25b449543f05976e1b4c43575a5927"
+content_hash_after = "8539bc133d728dd84befa022d8b5edb9f3b62f4078842afc5a7a0480d70381ab"

@@ -3738,6 +3738,150 @@
         }
       ]
     },
+    "5.37.11": {
+      "title": "System font discovery — OS enumeration to font bytes (R1067 sub-scope)",
+      "parent_doc": "docs/GENERATED.md",
+      "parent_section": "5.37",
+      "decision_status": "active",
+      "intent": "Discover the OS's installed fonts and load their bytes — the platform layer that supplies the §5.37 in-memory font stack a production font, replacing fontconfig/CoreText/DirectWrite enumeration.",
+      "rationale_bullets": [
+        "lands the §5.37 root 'OS enumeration' output that §5.37.10 explicitly deferred to a later round",
+        "font policy = OS system source, NOT bundled (no-font-commit); Noto/Nanum = §5.37.1 fixtures only",
+        "pure std::fs upholds §5.37 no-black-box charter (fontconfig/fc-match reintroduce opaque dep)",
+        "own pinion-platform-* crate = thin OS layer, no parser dep (discovery vs parsing separated)",
+        "forcing consumer reaches real pixels via R1065 atlas seam (discovered font -> Hi -> RGBA8)"
+      ],
+      "inputs_bullets": [
+        "OS standard font dirs (Linux: /usr/share/fonts, /usr/local/share/fonts, ~/.fonts, XDG_DATA_HOME)",
+        "parsed font metadata (name family/subfamily, OS2 weight) — authoritative, not filenames",
+        "font file bytes on disk — single-font .ttf / .otf (validation = parse, not a magic-byte sniff)"
+      ],
+      "outputs_bullets": [
+        "pinion-platform-fonts (enumerate-only): system_font_dirs / enumerate_fonts / read_font_bytes",
+        "pinion-runtime text_engine: load_system_font + select_default_sans (parsed name/OS2, not filenames)",
+        "LoadFontError{NoSystemFont} (per-candidate parse failures skipped, not fatal)",
+        "pure std::fs scan (no fontconfig C lib, no fc-match subprocess) = deterministic given the FS"
+      ],
+      "caveats_bullets": [
+        "SEAM-adjacent: load_system_font NOT yet wired into Scene::Text; opt-in paint arm = next round",
+        "macOS / Windows deferred — system_font_dirs returns none there (need those OS CI runners to verify)",
+        "production paint still §5.36 parley/swash — load_system_font proven by test forcing-consumers",
+        "discovery environment-dependent; default-gate tests assert structure not pixels (system-font debt)",
+        "R1068: opt-in §5.37 Scene::Text paint arm (paint-only, single-style; measure stays parley)"
+      ],
+      "alternatives_rejected": [
+        {
+          "alternative": "bundle a production font",
+          "reason": "violates no-font-commit rule; system source is final design not stopgap"
+        },
+        {
+          "alternative": "fontconfig C lib / fc-match subprocess",
+          "reason": "reintroduces the opaque non-deterministic dep §5.37 removes"
+        },
+        {
+          "alternative": "discovery inside pinion-text-font",
+          "reason": "parser stays pure; OS fs access is a separate platform layer"
+        }
+      ],
+      "bindings": [
+        {
+          "file": "crates/pinion-platform-fonts/src/lib.rs",
+          "symbol": "enumerate_fonts",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-platform-fonts/src/lib.rs",
+          "symbol": "system_font_dirs",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-runtime/src/text_engine.rs",
+          "symbol": "load_system_font",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-shell/tests/text_engine_paint_seam.rs",
+          "symbol": "discovered_system_font_reaches_pixels",
+          "kind": "references"
+        },
+        {
+          "file": "crates/pinion-runtime/src/text_engine.rs",
+          "symbol": "select_default_sans",
+          "kind": "implements"
+        }
+      ]
+    },
+    "5.37.12": {
+      "title": "Opt-in §5.37 Scene::Text paint arm — parley default (R1068 sub-scope)",
+      "parent_doc": "docs/GENERATED.md",
+      "parent_section": "5.37",
+      "decision_status": "active",
+      "intent": "Route eligible single-style Scene::Text through the §5.37 engine for paint while parley stays default and owns measure — the first §5.37 production paint path, opt-in and 0-regression.",
+      "rationale_bullets": [
+        "first §5.37 production paint path — the engine finally paints a real Scene::Text leaf",
+        "paint-only: measure stays parley so caret hit-test + editing unaffected (state scene unchanged)",
+        "0-regression by construction: to_vello forwards to the None arm; the arm only adds a branch",
+        "eligibility excludes every case the arm would render differently from parley (honest scope)"
+      ],
+      "inputs_bullets": [
+        "SelfHostedTextEngine — cached system Font (§5.37.11 load_system_font), held per window lifetime",
+        "Scene::Text leaf eligible: single-style, single-line, Start align, Normal line-height, undecorated",
+        "TextStyle font_size_px / fg_color / overflow; parley-measured rect (box + soft-wrap width)"
+      ],
+      "outputs_bullets": [
+        "to_vello_with_text_engine = opt-in entry; to_vello forwards None = byte-identical (0 regression)",
+        "paint_text arm: shape_paragraph_with_fallback -> render_paragraph_atlased -> draw_atlased_glyphs",
+        "baseline = (ascender + line_gap/2)*px/upem = parley Normal first-baseline, from font metrics",
+        "self_hosted_eligible gate + soft-wrap decline (advance > rect.w falls through to parley)"
+      ],
+      "caveats_bullets": [
+        "metric coherence partial: box still parley-sized; §5.37 measure (full coherence) = R1069",
+        "no shipping caller yet (test forcing-consumers only); shell env opt-in + cached path = R1070",
+        "non-Normal line-height / Center-End align / styled-runs / multi-line -> parley (eligibility)",
+        "engine caches Font not atlas; render_paragraph_atlased re-runs per paint (cross-frame cache later)"
+      ],
+      "alternatives_rejected": [
+        {
+          "alternative": "paint+measure together now",
+          "reason": "bigger; staged paint(R1068) -> measure coherence(R1069)"
+        },
+        {
+          "alternative": "thread-local/global engine flag",
+          "reason": "hidden state; param threaded, public to_vello sig unchanged"
+        },
+        {
+          "alternative": "render multi-line/styled-run/decorated now",
+          "reason": "arm declines to parley; §5.37 those = later"
+        }
+      ],
+      "bindings": [
+        {
+          "file": "crates/pinion-runtime/src/paint_adapter.rs",
+          "symbol": "to_vello_with_text_engine",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-runtime/src/paint_adapter.rs",
+          "symbol": "paint_text_self_hosted",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-runtime/src/paint_adapter.rs",
+          "symbol": "self_hosted_eligible",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-runtime/src/text_engine.rs",
+          "symbol": "SelfHostedTextEngine",
+          "kind": "references"
+        },
+        {
+          "file": "crates/pinion-shell/tests/text_engine_paint_seam.rs",
+          "symbol": "self_hosted_paint_arm_reaches_pixels_through_to_vello",
+          "kind": "references"
+        }
+      ]
+    },
     "5.37.2": {
       "title": "Text engine RPC channel — AI-first font/text introspect (R50.X sub-scope)",
       "parent_doc": "docs/GENERATED.md",
@@ -13989,6 +14133,102 @@
         "R1067 = confront block: §5.37 font-policy + opt-in Scene::Text, OR pivot Phase B (not more seam)",
         "atlas inter-glyph gutter for fractional/HiDPI bleed — fix at production HiDPI consumer",
         "per-(atlas,color) K-tint -> luminance-mask + solid-fill (footguns) at GPU-texture-cache round"
+      ]
+    },
+    "R1067": {
+      "decision_summary": "R1067: §5.37.11 system font-load layer — new pinion-platform-fonts (OS font discovery, pure std::fs) + pinion-runtime text_engine::load_system_font; the §5.37 engine's first production font source, proven to real pixels via the R1065 atlas seam (NOT yet wired into Scene::Text; opt-in paint arm = next step)",
+      "changes_bullets": [
+        "New crate pinion-platform-fonts (§5.37.11): system_font_dirs / enumerate_fonts / discover_default_sans / is_sfnt — Linux OS font discovery via pure std::fs (no fontconfig C lib, no fc-match subprocess); macOS/Windows = documented deferred stub; zero deps, follows the pinion-platform-* crate family.",
+        "pinion-runtime text_engine::load_system_font() -> Result<Font, LoadFontError> — the bridge: discover system-font bytes -> Font::from_bytes. The §5.37 engine's first production font source (was: bundled fonts are §5.37.1 parser fixtures only). vello-gated alongside pinion-text-font.",
+        "§5.37.11 section formalises the production font policy (the SEED option-A fork): OS system source, NOT bundled (no-font-commit rule) — closes §5.37.10's explicitly-deferred \"OS enumeration (fontconfig/CoreText) later\".",
+        "SEAM ONLY: load_system_font is NOT yet wired into the production Scene::Text arm (still §5.36 parley/swash). This round lands the font source and proves it reaches real pixels through the existing R1065 atlas seam; the opt-in Scene::Text flag arm is the next campaign step."
+      ],
+      "verification_bullets": [
+        "Default gate (font-agnostic, deterministic): pinion-platform-fonts 6/6 (is_sfnt sniff, dir/ext invariants, regular-style filter, discovery-when-present) + pinion-runtime text_engine 2/2 (load_system_font -> discover->parse->shape on a real system font; LoadFontError Display).",
+        "realgpu lavapipe (VK_ICD_FILENAMES=lvp): discovered_system_font_reaches_pixels 3/3 ZERO-FLAKE — a discovered system font shapes \"Hi\" -> render_paragraph_atlased -> draw_atlased_glyphs -> headless RGBA8, ink inside the placed footprint + gutter black + glyph negative-space survives; ran alongside the 3 existing R1063/R1065/R1066 seam tests (4/4). Auto-covered by ci.yml's existing `--test text_engine_paint_seam --ignored`.",
+        "cargo test --workspace --features pinion-runtime/vello = 197 suites green (0 FAILED) / clippy --workspace --all-targets --features pinion-runtime/vello 0 warn / rustfmt clean / validate-workspace T1=0 (sections 68->69, prose-fact-assertion 0).",
+        "Local discovery sanity on this box: 328 fonts enumerated, discover_default_sans -> 757 KB valid sfnt."
+      ],
+      "impact_refs": [
+        "5.37",
+        "5.37.10",
+        "5.37.11"
+      ],
+      "carry_forward_bullets": [
+        "NEXT (campaign step 2): opt-in flag arm routing single-style Scene::Text through §5.37 (parley default, §5.37 behind a flag) — 0 regression, prove single-style caret/metric parity with 1 non-#[ignore] GUI/RPC consumer.",
+        "load_system_font is NOT cached (re-discovers + re-parses each call); the paint arm will own a cached engine handle.",
+        "macOS / Windows discovery deferred — system_font_dirs returns none there; needs those OS CI runners to verify the same fs-scan shape.",
+        "Open seam carry (unchanged): atlas inter-glyph gutter for fractional/HiDPI no-bleed; cross-frame GPU texture cache; per-(atlas,colour) -> alpha-mask + solid fill opt; Vello has no instanced-image API (custom GPU = Phase C/D)."
+      ],
+      "publishable_decision_summary": "R1067: §5.37.11 system font-load layer — pinion-platform-fonts (OS font ENUMERATION, pure std::fs) + pinion-runtime text_engine selection by PARSED metadata (name/OS2, not filenames) → Font; the §5.37 engine's first production font source. Enumerate ⊥ select layering enforced by adversarial review.",
+      "publishable_changes_bullets": [
+        "New crate pinion-platform-fonts (§5.37.11): system_font_dirs / enumerate_fonts / read_font_bytes — pure std::fs OS font ENUMERATION only (no selection, no parsing); Linux verified, macOS/Windows deferred stub; zero deps; follows the pinion-platform-* family.",
+        "pinion-runtime text_engine: load_system_font + select_default_sans pick a default regular sans by PARSED metadata (family_name/subfamily_name/weight_class/is_monospace from the name/OS2 tables), never by filename — font selection lives in the layer that parses (enumerate ⊥ select). No sfnt magic-tag duplication: validation = Font::from_bytes (parse), not a magic sniff.",
+        "§5.37.11 formalises the production font policy (SEED option-A fork): OS system source, NOT bundled (no-font-commit rule); bundled Noto/Nanum stay §5.37.1 parser fixtures. Closes §5.37.10's deferred \"OS enumeration\".",
+        "Layering hardened by a 3-reviewer adversarial audit before push: selection moved out of the parser-free platform crate into runtime; the sfnt magic-byte sniff dropped in favour of the parser's own authority."
+      ],
+      "publishable_verification_bullets": [
+        "Default gate (font-agnostic, deterministic): pinion-platform-fonts 3/3 (dirs exist / only ttf-otf sorted / enumerated file readable) + pinion-runtime text_engine 3/3 (selection predicates on parsed NotoSans metadata; load→select→shape; LoadFontError Display).",
+        "realgpu lavapipe discovered_system_font_reaches_pixels 3/3 ZERO-FLAKE (a discovered system font → \"Hi\" → RGBA8).",
+        "cargo test --workspace --features pinion-runtime/vello = 197 suites green / clippy --all-targets vello 0 / rustfmt clean / validate-workspace T1=0."
+      ],
+      "publishable_impact_refs": [
+        "5.37",
+        "5.37.10",
+        "5.37.11"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R1068 landed the opt-in §5.37 Scene::Text paint arm (§5.37.12); R1069 = §5.37 measure arm for full metric coherence.",
+        "load_system_font parses every candidate to select (one-time at engine init); a metadata-only parse is a future optimisation.",
+        "macOS / Windows font discovery deferred — system_font_dirs returns none there; needs those OS CI runners."
+      ]
+    },
+    "R1068": {
+      "decision_summary": "R1068: opt-in §5.37 Scene::Text paint arm — to_vello_with_text_engine + SelfHostedTextEngine route single-style text through the §5.37 self-hosted engine (shape→atlas→draw_atlased_glyphs); parley is the default and engine=None is byte-identical (0 regression); measure stays parley so caret/editing are unaffected (paint-only; metric coherence = R1069)",
+      "changes_bullets": [
+        "SelfHostedTextEngine (cached Font handle) + to_vello_with_text_engine / to_vello_cached_with_text_engine entries. The pre-existing to_vello / to_vello_cached become thin wrappers passing engine=None, so they are byte-identical to the pre-R1068 paint (0 regression). The \"opt-in flag\" = the caller's choice to pass Some(&engine).",
+        "paint_text §5.37 arm: when an engine is supplied AND the leaf is single-style + single-line + undecorated, paint via §5.37 (shape_paragraph_with_fallback -> render_paragraph_atlased -> draw_atlased_glyphs) at the font's own scaled-ascent baseline. Styled runs / multi-line / decorations, and engine=None, take the unchanged parley path. The arm falls through to parley on any shaping/raster failure (never a blank).",
+        "Measure stays parley: caret hit-testing + text editing are unaffected (the arm swaps paint only). Consequence: a §5.37 advance wider than the parley-measured box overflows it (clipped under Clip/Ellipsis) -- metric coherence (§5.37 measure too) is the next campaign step.",
+        "Flag-wiring decision (SEED fork): thread Option<&engine> through the internal walkers; keep the public to_vello signatures unchanged (wrapper passing None). Zero external call-site churn, explicit (no hidden global), 0-regression by construction."
+      ],
+      "verification_bullets": [
+        "Default gate (deterministic, NotoSans fixture): r1068_self_hosted_arm_routes_single_style_text_and_none_is_byte_identical (engine=Some -> one atlas fill per placed glyph; engine=None -> n_paths byte-identical to to_vello; shaped pen-x monotone = self-consistent advance) + r1068_self_hosted_arm_falls_through_to_parley_for_styled_runs (out-of-scope text paints identically with/without engine).",
+        "realgpu lavapipe (VK_ICD_FILENAMES=lvp): self_hosted_paint_arm_reaches_pixels_through_to_vello 3/3 ZERO-FLAKE -- a Scene::Text node, painted by the production walker to_vello_with_text_engine(Some) with a DISCOVERED system font, reaches pixels inside its box (baseline placement correct) + gutter black. Ran alongside the 4 R1063/R1065/R1066/R1067 seam tests (5/5).",
+        "cargo test --workspace --features pinion-runtime/vello = 197 suites green (0 FAILED) / clippy --workspace --all-targets vello 0 warn / rustfmt clean / validate-workspace T1=0."
+      ],
+      "impact_refs": [
+        "5.37",
+        "5.37.11"
+      ],
+      "carry_forward_bullets": [
+        "NEXT (campaign step 3, R1069): §5.37 MEASURE arm -- route single-style Scene::Text measure through §5.37 so the box is §5.37-sized, making paint+measure self-consistent (real metric coherence; today measure=parley so a §5.37-wider string overflows the parley box).",
+        "Shell env opt-in (e.g. PINION_TEXT_ENGINE=self537) NOT yet wired: to_vello_with_text_engine has a test forcing-consumer + realgpu proof but no shipping-app caller yet -- flipping it on in pinion-shell is a small follow-up.",
+        "§5.37 arm scope today = single-style / single-line / undecorated; styled-run colour, multi-line wrap (render_lines), and underline/strikethrough through §5.37 are later steps (those fall through to parley now).",
+        "load_system_font is uncached per call; SelfHostedTextEngine caches one Font. FragmentCache keys on paint_hash (not the engine choice) -- the engine must be fixed for a window's lifetime.",
+        "Open seam carry (unchanged): atlas inter-glyph gutter (fractional/HiDPI bleed); cross-frame GPU texture cache; per-(atlas,colour) luminance-mask opt; Vello has no instanced-image API."
+      ],
+      "publishable_decision_summary": "R1068: opt-in §5.37 Scene::Text paint arm (§5.37.12) — to_vello_with_text_engine routes ELIGIBLE single-style text through §5.37 (shape→atlas→draw); parley default + engine=None byte-identical (0 regression); baseline = parley Normal first-baseline from the font's own metrics; eligibility + soft-wrap decline keep the arm honest; measure stays parley (coherence=R1069). Hardened by adversarial review before push.",
+      "publishable_changes_bullets": [
+        "SelfHostedTextEngine (cached Font) + to_vello_with_text_engine opt-in entry; to_vello forwards engine=None = byte-identical (0 regression). UNCACHED walker only — the cached/FragmentCache path + shell env opt-in are R1070 (no shipping caller yet, so the cached engine variant was dropped as unconsumed surface).",
+        "paint_text §5.37 arm for ELIGIBLE leaves (self_hosted_eligible = single-style, single-line, Start align, Normal line-height, undecorated) → shape_paragraph_with_fallback → render_paragraph_atlased → draw_atlased_glyphs; declines to parley on soft-wrap (advance > rect.w) / raster failure / empty (never a blank).",
+        "Baseline = (ascender + line_gap/2)*px/upem = parley's Normal line-box first baseline, computed from the §5.37 font's OWN metrics (no parley dependency) — proven ±2px against the rendered ink's lowest row.",
+        "Measure stays parley: caret hit-test + editing unaffected (state scene unchanged); §5.37 measure (full metric coherence) = R1069. §5.37.12 anchors the arm.",
+        "Hardened by a 3-reviewer adversarial audit before push: baseline line_gap/half-leading fix (was ascent-only, diverged on nonzero-line_gap fonts) + eligibility tightening (align / line-height / soft-wrap) + assertion-message honesty + dropped the unconsumed cached variant."
+      ],
+      "publishable_verification_bullets": [
+        "Default gate (deterministic, NotoSans fixture): r1068 routing test (engine=Some → one atlas fill per placed glyph; engine=None path count matches to_vello = forwarding intact; shaped pen-x monotone) + styled-runs fall through to parley unchanged.",
+        "realgpu lavapipe self_hosted_paint_arm_reaches_pixels_through_to_vello 3/3 ZERO-FLAKE: a Scene::Text node, painted by to_vello_with_text_engine(Some) with a DISCOVERED system font, reaches pixels inside its box AND its lowest ink row sits on the computed (ascender+half-leading) baseline ±2px. Ran with the 4 prior seam tests = 5/5.",
+        "cargo test --workspace --features pinion-runtime/vello = 197 suites green / clippy --all-targets vello 0 / rustfmt clean / validate-workspace T1=0."
+      ],
+      "publishable_impact_refs": [
+        "5.37",
+        "5.37.11"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R1069 = §5.37 MEASURE arm: route single-style Scene::Text measure through §5.37 so the box is §5.37-sized → paint+measure self-consistent (full metric coherence). Keep measure as a pinion-runtime parallel path (do not couple pinion-text LayoutCache to pinion-text-font).",
+        "R1070 = shell env opt-in (PINION_TEXT_ENGINE) + cached (FragmentCache) engine path — today's arm is uncached + reached only by tests; gate deeper seam work (cross-frame cache) on a real shipping caller.",
+        "§5.37 arm scope today = single-style / single-line / Start align / Normal line-height / undecorated + fits-one-line; styled-run colour, multi-line wrap (render_lines), decorations, and Center/End alignment through §5.37 are later steps (parley fallthrough now).",
+        "engine caches the Font, not the atlas (render_paragraph_atlased re-runs per paint); cross-frame GPU texture cache + per-(atlas,colour) luminance-mask + instanced quad remain on the seam carry."
       ]
     },
     "R232": {
