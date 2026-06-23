@@ -411,6 +411,30 @@ pub struct ShellCore<V: WidgetView> {
     /// the divergence this record exposes).
     render_fidelity_per_window: HashMap<String, pinion_runtime::RenderFidelity>,
 
+    /// R25.1 §5.39 §5.16 — per-window keyboard-focus enumeration. Each painted
+    /// window stores the focusable tags IT draws (its
+    /// [`Scene::collect_focusable_tags`] walk); the binding-wide
+    /// [`FocusManager`] `tab_order` is the UNION of these
+    /// ([`Self::union_focusable_tags`]), refreshed by every window's paint
+    /// ([`Self::refresh_window_focusables`]) — no longer
+    /// [`pinion_runtime::DEFAULT_WINDOW`]-gated.
+    ///
+    /// Pre-R25.1 the enumeration was primary-only, so a focusable widget drawn
+    /// solely in a secondary window (a torn-off / undock pane in its own
+    /// `pane-{i}` window) was absent from the focus set: clicking it resolved to
+    /// no focusable tag, so keyboard input never routed to its `External`
+    /// (sprag undock, "the detached terminal eats no input"). Keying per window
+    /// — the R1021 [`pinion_runtime::CoreShell::publish_pane_viewports`]
+    /// precedent — lets a secondary window's pane JOIN the Tab order / click-
+    /// focus set without REPLACING the primary's enumeration (a naive whole-
+    /// `tab_order` replace from each window would clobber the primary's docked
+    /// panes, the exact hazard the pre-R25.1 gate guarded against). A single-
+    /// window binding holds one entry, so the union equals that window's tags
+    /// verbatim — byte-identical to the pre-R25.1 primary-only enumeration. The
+    /// matching removal edge is [`Self::remove_window`], which drops the entry
+    /// and re-folds so a closed window's tags leave the union.
+    focusable_tags_per_window: HashMap<String, Vec<String>>,
+
     /// R763 §5.36 §5.22 — in-progress pointer-driven text selection.
     ///
     /// Set on a press inside a focused text field — the binding's
@@ -560,6 +584,7 @@ impl<V: WidgetView> ShellCore<V> {
             fragment_cache_stats_per_window: HashMap::new(),
             frame_timings_per_window: HashMap::new(),
             render_fidelity_per_window: HashMap::new(),
+            focusable_tags_per_window: HashMap::new(),
             text_select_drag: None,
         };
         // (R1020 §5.39) Seed the focus enumeration from the binding's first
@@ -1082,14 +1107,20 @@ impl<V: WidgetView> ShellCore<V> {
     /// entry for `window_id`.
     ///
     /// Walks the per-window `HashMap`s lifted onto `ShellCore` since
-    /// R680 atomic 2 / R681 atomic 3 / R682 atomic 3 / R829 / R831
+    /// R680 atomic 2 / R681 atomic 3 / R682 atomic 3 / R829 / R831 / R25.1
     /// (`redraw_requested_per_window`, `last_paint_instants`,
     /// `target_fps_per_window`, `fragment_cache_stats_per_window`,
     /// `frame_timings_per_window`, `pending_immediate_dt_per_window`,
-    /// `sim_accumulator_per_window`) and drops the entry keyed by
-    /// `window_id`. Then forwards into
+    /// `sim_accumulator_per_window`, `focusable_tags_per_window`) and drops the
+    /// entry keyed by `window_id`. Then forwards into
     /// [`pinion_runtime::CoreShell::remove_window`] which drains the
     /// runtime-side per-window state (`routers`, `window_owners`).
+    ///
+    /// R25.1 §5.39 — dropping the closed window's focusable contribution and
+    /// re-folding the union ([`Self::union_focusable_tags`]) removes its tags
+    /// from the Tab order / click-focus set, and the §5.39 stale-focus guard
+    /// inside `update_focusable_tags` drops focus if it pointed at one of the
+    /// now-unpainted widgets.
     ///
     /// Refuses to remove the [`pinion_runtime::DEFAULT_WINDOW`]
     /// primary id — the substrate's primary scope is aliased to
@@ -1117,7 +1148,16 @@ impl<V: WidgetView> ShellCore<V> {
                 .remove(window_id)
                 .is_some()
             | self.frame_timings_per_window.remove(window_id).is_some()
-            | self.render_fidelity_per_window.remove(window_id).is_some();
+            | self.render_fidelity_per_window.remove(window_id).is_some()
+            | self.focusable_tags_per_window.remove(window_id).is_some();
+        // R25.1 §5.39 — re-fold the focus enumeration without the closed
+        // window's tags. Idempotent when the window held no focusables (the
+        // union is unchanged and `update_focusable_tags` re-finds the focused
+        // tag); when it DID, those tags leave the Tab order and a focus that
+        // pointed at one of them is dropped by the §5.39 stale guard. Off the
+        // paint path (a rare dock tear-down), so the O(windows) fold is free.
+        let union = self.union_focusable_tags();
+        self.focus.update_focusable_tags(union);
         // CoreShell::remove_window returns true on at least one
         // runtime-side removal; the OR with shell_side surfaces "any
         // per-window state existed" so the AppShell-side reconcile
@@ -2596,16 +2636,23 @@ impl<V: WidgetView> ShellCore<V> {
         // tree carries them unchanged). A node marked `.with_focusable(true)`
         // joins the Tab order by being painted; a conditionally-painted node
         // (a dynamic pane, an inline editor) joins / leaves automatically with
-        // no binding-side list. Primary window only — the single FocusManager
-        // is binding-wide (the R1006 viewport-publish precedent); a secondary
-        // window's enumeration must not clobber it. `update_focusable_tags`
-        // already drops stale focus and is modal-guarded (§5.39). A binding
-        // with no focus stops paints no focusable node, so the enumeration is
-        // correctly empty.
-        if window_key == pinion_runtime::DEFAULT_WINDOW {
-            self.focus
-                .update_focusable_tags(paint_scene.collect_focusable_tags());
-        }
+        // no binding-side list.
+        //
+        // R25.1 §5.39 §5.16 — refresh THIS window's contribution and re-fold the
+        // union across every painted window. No longer primary-gated: a torn-off
+        // (undock) pane drawn only in its secondary window must join the Tab
+        // order / click-focus set, or it cannot receive keyboard focus and its
+        // PTY never sees input (sprag undock). The union is keyed per window (the
+        // R1021 `publish_pane_viewports` precedent), so a secondary window's
+        // paint refreshes its own tags without clobbering the primary's; the
+        // §5.39 stale-focus drop + modal guard inside `update_focusable_tags` now
+        // act against the union (focus drops only when the tag is painted in no
+        // window). A single-window binding has one entry, so the union is its
+        // window's `collect_focusable_tags()` verbatim — byte-identical to the
+        // pre-R25.1 primary-only enumeration. The side-effect-free mirror
+        // (`compute_paint_scene_pure_internal`) never reaches this fn, so an
+        // introspection paint never enumerates (the R1006 contract, inherited).
+        self.refresh_window_focusables(window_key, paint_scene.collect_focusable_tags());
         // R681 §2 #4 atomic 1 / R831 — per-window immediate-mode tick.
         // The paint scene the view fn just produced may contain one or
         // more [`Scene::ImmediateModeNode`]s; each driver advances its
@@ -3129,10 +3176,12 @@ impl<V: WidgetView> ShellCore<V> {
         // binding-wide state and `apply_focus_ring` reads the single
         // `FocusManager` in EVERY window's producer, so a shared-state tag
         // rendered in more than one window must repaint all of them on a focus
-        // change (R1024.1: not a cross-window "steal" — R1020 enumerates focus
-        // from the primary paint only). A click that moves no focus (re-click
-        // the focused widget, a tagged non-focusable decoration, an empty-
-        // background click while already cleared) requests nothing.
+        // change (R1024.1: not a cross-window "steal" — the enumeration is the
+        // R25.1 union across windows, so a secondary window's pane is a
+        // legitimate focus target, but the focused tag is still single-valued).
+        // A click that moves no focus (re-click the focused widget, a tagged
+        // non-focusable decoration, an empty-background click while already
+        // cleared) requests nothing.
         if focus_changed {
             self.revision.bump();
             self.request_redraw();
@@ -3877,6 +3926,67 @@ impl<V: WidgetView> ShellCore<V> {
         self.request_redraw();
     }
 
+    /// R25.1 §5.39 §5.16 — record `window_key`'s focusable-tag contribution and
+    /// re-fold the binding-wide [`FocusManager`] enumeration as the union across
+    /// every painted window.
+    ///
+    /// The single `FocusManager` is binding-wide, but a focusable widget is
+    /// drawn in exactly one window at a time (the dock model), so a secondary
+    /// window's pane must JOIN the Tab order / click-focus set, not REPLACE the
+    /// primary's — the pre-R25.1 [`pinion_runtime::DEFAULT_WINDOW`] gate dropped
+    /// every secondary window's enumeration, leaving a torn-off pane unfocusable
+    /// (sprag undock). Keying per window (the R1021
+    /// [`pinion_runtime::CoreShell::publish_pane_viewports`] precedent) lets each
+    /// window refresh only its own tags; the fold
+    /// ([`Self::union_focusable_tags`]) recombines them.
+    ///
+    /// [`FocusManager::update_focusable_tags`] still applies the §5.39 stale-
+    /// focus drop + modal guard, now against the union — focus drops only when
+    /// the focused tag is painted in NO window. A single-window binding has one
+    /// entry, so the union equals that window's tags verbatim: byte-identical to
+    /// the pre-R25.1 primary-only enumeration.
+    fn refresh_window_focusables(&mut self, window_key: &str, tags: Vec<String>) {
+        self.focusable_tags_per_window
+            .insert(window_key.to_owned(), tags);
+        let union = self.union_focusable_tags();
+        self.focus.update_focusable_tags(union);
+    }
+
+    /// R25.1 §5.39 — fold the per-window focusable enumerations into one Tab
+    /// order: [`pinion_runtime::DEFAULT_WINDOW`] first (so a single-window
+    /// binding's order is its window's verbatim), then the remaining windows by
+    /// sorted id, de-duplicated first-occurrence (a shared-state tag rendered in
+    /// two windows joins the order once, at its earliest window).
+    ///
+    /// Cross-window Tab traversal order is a pinion design choice (R25.2 leaves
+    /// it open): primary-then-sorted is deterministic and keeps the single-
+    /// window order unchanged. Click-to-focus is order-independent — it resolves
+    /// the clicked tag against this set ([`FocusManager::resolve_focusable`]), so
+    /// a secondary window's pane is focusable on click the moment it joins here.
+    fn union_focusable_tags(&self) -> Vec<String> {
+        let mut others: Vec<&str> = self
+            .focusable_tags_per_window
+            .keys()
+            .map(String::as_str)
+            .filter(|k| *k != pinion_runtime::DEFAULT_WINDOW)
+            .collect();
+        others.sort_unstable();
+
+        let mut order: Vec<String> = Vec::new();
+        let mut seen: HashSet<&str> = HashSet::new();
+        for key in std::iter::once(pinion_runtime::DEFAULT_WINDOW).chain(others) {
+            let Some(tags) = self.focusable_tags_per_window.get(key) else {
+                continue;
+            };
+            for tag in tags {
+                if seen.insert(tag.as_str()) {
+                    order.push(tag.clone());
+                }
+            }
+        }
+        order
+    }
+
     /// (R1020 §5.39) Re-derive the keyboard focus enumeration from a fresh,
     /// side-effect-free run of [`WidgetCore::view`] over the current cached
     /// state, feeding [`FocusManager::update_focusable_tags`]. Used by
@@ -3898,6 +4008,13 @@ impl<V: WidgetView> ShellCore<V> {
     /// `Effect::new` would fire eagerly on this extra view run and double-
     /// execute — no current binding does that, but it is the invariant this
     /// re-derive (and the boot-seed run) depends on.
+    ///
+    /// R25.1 §5.39 §5.16 — runs the global `V::view` (the primary
+    /// [`pinion_runtime::DEFAULT_WINDOW`] enumeration), so it refreshes the
+    /// primary's per-window contribution and re-folds the union
+    /// ([`Self::refresh_window_focusables`]) rather than replacing the whole
+    /// `tab_order`: a programmatic focus request on the primary view must not
+    /// drop a secondary window's focusable panes from the enumeration.
     fn refresh_focusable_from_view(&mut self) {
         let cached_state = *self.core.cached_state();
         let frame = Frame::with_dt(0.0);
@@ -3905,8 +4022,10 @@ impl<V: WidgetView> ShellCore<V> {
             let core = &self.core;
             core.root_owner().run(|| V::view(cached_state, &frame))
         };
-        self.focus
-            .update_focusable_tags(scene.collect_focusable_tags());
+        self.refresh_window_focusables(
+            pinion_runtime::DEFAULT_WINDOW,
+            scene.collect_focusable_tags(),
+        );
     }
 
     /// R51.159 §5.23 — install or replace the
@@ -4334,6 +4453,149 @@ mod r1006_viewport_seam_tests {
         assert_eq!(
             sc.core.root_owner().run(pinion_core::use_viewport_size),
             (800, 600),
+        );
+    }
+}
+
+#[cfg(test)]
+mod r25_focus_union_tests {
+    //! R25.1 §5.39 §5.16 — per-window keyboard-focus enumeration (sprag undock
+    //! PR-25). The binding-wide `FocusManager` Tab order is the UNION of every
+    //! painted window's focusable tags, not the primary window's alone, so a
+    //! torn-off (undock) pane drawn only in its own secondary window is
+    //! focusable on click and its `External` (a PTY) receives keyboard input.
+    use super::ShellCore;
+    use pinion_core::test_fixtures::EchoButtonFixture;
+
+    /// `EchoButtonFixture`'s view (via `ButtonFixture::view`) paints one
+    /// `.with_focusable(true)` Container tagged `"test_btn"`, so every painted
+    /// window contributes exactly this tag to the focus enumeration.
+    const FIXTURE_TAG: &str = "test_btn";
+
+    /// The pre-R25.1 gate enumerated focus from the primary paint ONLY, so a
+    /// window painted as a secondary left the Tab order empty and its widget
+    /// unfocusable. With the gate removed, a secondary-window paint feeds the
+    /// enumeration, so the clicked tag resolves to a focusable target (input
+    /// then routes to that pane). This is the sprag-undock acceptance core.
+    #[test]
+    fn secondary_window_paint_enumerates_focus_with_no_primary_gate() {
+        let mut sc = ShellCore::<EchoButtonFixture>::new();
+        // `new()` boot-seeds the primary (`DEFAULT_WINDOW`) enumeration; a
+        // secondary window has contributed nothing yet.
+        assert!(
+            !sc.focusable_tags_per_window.contains_key("pane-0"),
+            "boot: the secondary window has no focus contribution",
+        );
+
+        // Paint the secondary (undock) window. Pre-R25.1 the `DEFAULT_WINDOW`
+        // gate dropped this enumeration entirely; now the paint records the
+        // window's focusable contribution into the per-window map.
+        let _ = sc.compute_paint_scene_for_window("pane-0", 64, 48);
+
+        assert_eq!(
+            sc.focusable_tags_per_window.get("pane-0"),
+            Some(&vec![FIXTURE_TAG.to_owned()]),
+            "the secondary-window paint records its focusables (no primary gate)",
+        );
+        // ...and the union exposes the tag as a focusable click target, so
+        // `click_to_focus_for_window` would focus it and route input there.
+        assert_eq!(
+            sc.focus().resolve_focusable(FIXTURE_TAG),
+            Some(FIXTURE_TAG.to_owned()),
+            "the secondary pane's tag is a focusable click target",
+        );
+    }
+
+    /// A single-window binding's enumeration is its window's tags verbatim —
+    /// the union over one entry — so the primary path is byte-identical to the
+    /// pre-R25.1 primary-only enumeration.
+    #[test]
+    fn primary_only_enumeration_is_verbatim() {
+        let mut sc = ShellCore::<EchoButtonFixture>::new();
+        let _ = sc.compute_paint_scene(64, 48);
+        assert_eq!(
+            sc.focus().tab_order().to_vec(),
+            vec![FIXTURE_TAG.to_owned()]
+        );
+    }
+
+    /// The side-effect-free introspection mirror must NOT enumerate focus (the
+    /// R1006 contract, inherited): `compute_paint_scene_pure_*` never reaches
+    /// the per-window refresh, so a `scene/*` recompute leaves focus untouched.
+    #[test]
+    fn pure_mirror_paint_does_not_enumerate_focus() {
+        let mut sc = ShellCore::<EchoButtonFixture>::new();
+        // A secondary-window run through the side-effect-free mirror must NOT
+        // record a per-window focus contribution (the R1006 contract).
+        let _ = sc.compute_paint_scene_pure_for_window("pane-0", 64, 48);
+        assert!(
+            !sc.focusable_tags_per_window.contains_key("pane-0"),
+            "the pure paint mirror must not enumerate focus (R1006 contract)",
+        );
+    }
+
+    /// The union JOINS a secondary window's pane without REPLACING the
+    /// primary's docked panes — the exact clobber the pre-R25.1 gate guarded
+    /// against. The secondary window contributes ONLY its own tag (as a real
+    /// undock window does — it does not draw the primary's docked panes), yet
+    /// the primary's focusables and its live focus both survive. Driven through
+    /// the seam SSOT (`refresh_window_focusables`) with distinct per-window
+    /// tags the shared fixture cannot produce.
+    #[test]
+    fn secondary_pane_joins_union_without_clobbering_primary() {
+        let mut sc = ShellCore::<EchoButtonFixture>::new();
+
+        // Primary window draws two docked panes; focus one (as a click would).
+        sc.refresh_window_focusables(
+            pinion_runtime::DEFAULT_WINDOW,
+            vec!["dock0".to_owned(), "dock1".to_owned()],
+        );
+        assert!(sc.focus.focus_set("dock0"));
+
+        // A torn-off pane paints in its own secondary window, contributing
+        // ONLY its tag — it must join, not replace.
+        sc.refresh_window_focusables("pane-2", vec!["torn".to_owned()]);
+
+        assert_eq!(
+            sc.focus().tab_order().to_vec(),
+            vec!["dock0".to_owned(), "dock1".to_owned(), "torn".to_owned()],
+            "secondary pane joins the union primary-first; primary panes survive",
+        );
+        assert_eq!(
+            sc.focus().focused(),
+            Some("dock0"),
+            "primary focus is not dropped — its tag is still painted",
+        );
+        assert!(
+            sc.focus.focus_set("torn"),
+            "the torn pane is a focusable target, so a click on it can focus it",
+        );
+    }
+
+    /// Closing a window drops its focusable contribution from the union, and
+    /// the §5.39 stale-focus guard drops focus that pointed at one of its
+    /// now-unpainted widgets.
+    #[test]
+    fn closing_a_window_drops_its_focusables_and_stale_focus() {
+        let mut sc = ShellCore::<EchoButtonFixture>::new();
+        sc.refresh_window_focusables(pinion_runtime::DEFAULT_WINDOW, vec!["dock0".to_owned()]);
+        sc.refresh_window_focusables("pane-2", vec!["torn".to_owned()]);
+        assert!(sc.focus.focus_set("torn"));
+
+        assert!(
+            sc.remove_window("pane-2"),
+            "the window held shell-side state"
+        );
+
+        assert_eq!(
+            sc.focus().tab_order().to_vec(),
+            vec!["dock0".to_owned()],
+            "the closed window's tag leaves the Tab order",
+        );
+        assert_eq!(
+            sc.focus().focused(),
+            None,
+            "focus on the now-unpainted pane is dropped (§5.39 stale guard)",
         );
     }
 }
