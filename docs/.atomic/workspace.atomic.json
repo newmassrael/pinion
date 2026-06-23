@@ -3882,6 +3882,78 @@
         }
       ]
     },
+    "5.37.13": {
+      "title": "Opt-in §5.37 Scene::Text measure arm — metric coherence (R1070 sub-scope)",
+      "parent_doc": "docs/GENERATED.md",
+      "parent_section": "5.37",
+      "decision_status": "active",
+      "intent": "Route eligible single-style Scene::Text measure through the §5.37 engine via an ungated TextMeasure seam so the box is §5.37-sized; paint+measure register exactly, parley default, 0-regression.",
+      "rationale_bullets": [
+        "closes the R1068 paint-only gap: measure was parley, a §5.37-wider line overflowed the box",
+        "measure<->paint coherence: box = §5.37 advance.ceil, so paint never declines (advance <= rect.w)",
+        "0-regression by construction: text_measure=None is the unchanged parley measure path",
+        "decoupled across the feature-gate: ungated layout never names the vello-gated engine type"
+      ],
+      "inputs_bullets": [
+        "SelfHostedTextEngine (§5.37.11 Font) — the same cached handle the paint arm uses",
+        "Scene::Text eligible via shared SSOT self_hosted_text_eligible (paint+measure: one predicate)",
+        "taffy Definite available width (max_width) — the soft-wrap bound, None on min/max-content probe",
+        "font ascender/descender/line_gap/units_per_em — the §5.37 vertical metrics"
+      ],
+      "outputs_bullets": [
+        "layout::TextMeasure trait + compute_layout_with_text_measure(.., Option<&dyn TextMeasure>)",
+        "box = (advance, (ascender-descender+line_gap)*px/upem); caller ceil-snaps both, line_count=1",
+        "same Normal line box whose first baseline (ascender+line_gap/2)*px/upem the paint arm pens at",
+        "soft-wrap decline mirror: advance > max_width -> None (parley wraps) = exact paint-arm mirror"
+      ],
+      "caveats_bullets": [
+        "paint not yet wired to this box width; shell env opt-in (PINION_TEXT_ENGINE) wiring = R1071",
+        "all-whitespace: measure sizes the whitespace advance, paint declines on no ink -- harmless (no ink)",
+        "compute_layout_with_text_measure returns the scroll-dirty bit (superset of _with_scroll_dirty)",
+        "multi-line/styled-run/Center-End/non-Normal/decorated -> parley (eligibility), same scope as paint"
+      ],
+      "alternatives_rejected": [
+        {
+          "alternative": "couple LayoutCache to pinion-text-font",
+          "reason": "rejected; breaks ungated layout, mixes discovery+parse"
+        },
+        {
+          "alternative": "measure replicates paint's placed.is_empty() ink check",
+          "reason": "rejected; rasterizer state, costly/probe"
+        },
+        {
+          "alternative": "reactive Computed measure cache",
+          "reason": "deferred; no 4th-consumer pressure (YAGNI)"
+        }
+      ],
+      "bindings": [
+        {
+          "file": "crates/pinion-runtime/src/layout.rs",
+          "symbol": "TextMeasure",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-runtime/src/layout.rs",
+          "symbol": "compute_layout_with_text_measure",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-runtime/src/text_engine.rs",
+          "symbol": "&lt;SelfHostedTextEngine as TextMeasure&gt;::measure_text",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-runtime/src/text_engine.rs",
+          "symbol": "self_hosted_text_eligible",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-runtime/src/layout.rs",
+          "symbol": "self_hosted_measure_box_registers_with_paint_advance",
+          "kind": "references"
+        }
+      ]
+    },
     "5.37.2": {
       "title": "Text engine RPC channel — AI-first font/text introspect (R50.X sub-scope)",
       "parent_doc": "docs/GENERATED.md",
@@ -14317,6 +14389,60 @@
       "publishable_carry_forward_bullets": [
         "Phase-D scaling ceiling (document-as-debt, NOT now): union_focusable_tags is recomputed imperatively per paint and re-derives declared-but-unpainted windows; if dozens of dockable panels churn tear-off frequently, lift to a reactive Computed over (painted-cache union declared-signal). Free at rest today (no declared-unpainted -> cache short-circuit); revisit on measured pressure",
         "End-to-end undock-follow (real drain_focus_request + reconcile_windows + winit) is verified live on the sprag side; the pinion unit tests pin the enabling property (declared window contributes derived tags / survives the primary-repaint gap / modal containment)"
+      ]
+    },
+    "R1070": {
+      "decision_summary": "R1070 §5.37.13 opt-in Scene::Text MEASURE arm — close the R1068 paint-only gap. An ungated layout::TextMeasure trait lets the vello-gated SelfHostedTextEngine size an eligible single-style Scene::Text leaf by the §5.37 engine (advance + (ascender-descender+line_gap)*px/upem line box), so the measured box registers exactly with the §5.37 paint arm (paint never declines: advance <= rect.w). compute_layout_with_text_measure(.., Option<&dyn TextMeasure>) is the seam; eligibility is the shared SSOT self_hosted_text_eligible (paint+measure: one predicate); the soft-wrap decline mirrors the paint arm (advance > max_width -> None -> parley wraps). text_measure=None is byte-identical to the pre-R1070 parley measure (0 regression). Decoupled across the feature gate — ungated layout never names the vello engine type (the R1067 enumerate-perp-parse layering). Measure-only: paint not yet wired to this box width; shell env opt-in (PINION_TEXT_ENGINE) = R1071.",
+      "changes_bullets": [
+        "layout::TextMeasure trait (ungated seam) + compute_layout_with_text_measure(.., Option<&dyn TextMeasure>) returning the scroll-dirty bit; threaded through compute_layout_inner + lay_out_scroll_contents so scrolled text is sized too",
+        "measure closure: a supplied engine override sizes an eligible single-style leaf by §5.37 (advance.ceil width, line-box-height.ceil, line_count=1); the None branch is the unchanged parley measure (text_measure==None is byte-identical to pre-R1070)",
+        "text_engine: self_hosted_text_eligible eligibility SSOT (paint+measure share one predicate; paint_adapter::self_hosted_eligible now delegates) + impl TextMeasure for SelfHostedTextEngine using §5.37 advance + vertical metrics",
+        "box height = (ascender-descender+line_gap)*px/upem = the Normal line box whose first baseline (ascender+line_gap/2)*px/upem the paint arm pens at, so ascent above + descent + half-leading below fit exactly (vertical coherence)",
+        "soft-wrap decline mirror: advance > max_width returns None so parley wraps (and the paint arm, seeing advance > rect.w, also declines) -- measure and paint never disagree on which path renders"
+      ],
+      "verification_bullets": [
+        "new forcing consumer self_hosted_measure_box_registers_with_paint_advance: the §5.37-measured box width == the §5.37 shaped advance.ceil; advance <= rect.w so the paint arm never declines (overflow 0); compute_layout (None) still yields a non-zero parley box",
+        "pinion-runtime 436/0 (435 prior + 1 new); the R1068 paint byte-identical test + the existing layout measure tests stay green = engine=None regression 0",
+        "cargo test --workspace --features pinion-runtime/vello exit 0 (no downstream regression); clippy --workspace --all-targets --features pinion-runtime/vello 0 warn; rustfmt --check clean",
+        "mnemosyne validate-workspace T1=0, T3 reject=0/warn=0, sections 70->71 (+§5.37.13), prose-fact-assertion 0"
+      ],
+      "impact_refs": [
+        "5.37",
+        "5.37.13",
+        "5.37.12",
+        "5.36"
+      ],
+      "carry_forward_bullets": [
+        "R1071 (campaign step 4): shell env opt-in (PINION_TEXT_ENGINE) wires the engine through compute_layout_with_text_measure for real GUI use -- today only the test forcing-consumer drives it, no shipping caller; the cached compute_layout variant is the shell's call site",
+        "extend the §5.37 arm: styled-run colour / multi-line wrap (render_lines) / decoration (today these fall through to parley via eligibility)",
+        "all-whitespace leaf: §5.37 measure sizes the whitespace advance while the paint arm declines on no ink -- harmless (nothing inks to overflow); not worth replicating paint's placed.is_empty() in the per-probe measure",
+        "carry (paint, R1054~): atlas inter-glyph gutter (fractional/HiDPI bleed); cross-frame GPU texture cache; per-(atlas,colour)->luminance-mask; instanced quad (Vello API absent); per-line vmetrics; wrap cross-font kern; GSUB Type2; GPOS Type5"
+      ],
+      "publishable_decision_summary": "R1070 §5.37.13 opt-in Scene::Text MEASURE arm — close the R1068 paint-only gap. An ungated layout::TextMeasure trait lets the vello-gated SelfHostedTextEngine size an eligible single-style Scene::Text leaf by the §5.37 engine (advance + (ascender-descender+line_gap)*px/upem line box), so the measured box registers exactly with the §5.37 paint arm (paint never declines: advance <= rect.w). compute_layout_with_text_measure(.., Option<&dyn TextMeasure>) is the seam; eligibility is the shared SSOT self_hosted_text_eligible (paint+measure: one predicate); the soft-wrap decline mirrors the paint arm (advance > max_width -> None -> parley wraps). text_measure=None is byte-identical to the pre-R1070 parley measure (0 regression). Decoupled across the feature gate — ungated layout never names the vello engine type (the R1067 enumerate-perp-parse layering). Measure-only: paint not yet wired to this box width; shell env opt-in (PINION_TEXT_ENGINE) = R1071.",
+      "publishable_changes_bullets": [
+        "layout::TextMeasure trait (ungated seam) + compute_layout_with_text_measure(.., Option<&dyn TextMeasure>) returning the scroll-dirty bit; threaded through compute_layout_inner + lay_out_scroll_contents so scrolled text is sized too",
+        "measure closure: a supplied engine override sizes an eligible single-style leaf by §5.37 (advance.ceil width, line-box-height.ceil, line_count=1); the None branch is the unchanged parley measure (text_measure==None is byte-identical to pre-R1070)",
+        "text_engine: self_hosted_text_eligible eligibility SSOT (paint+measure share one predicate; paint_adapter::self_hosted_eligible now delegates) + impl TextMeasure for SelfHostedTextEngine using §5.37 advance + vertical metrics",
+        "box height = (ascender-descender+line_gap)*px/upem = the Normal line box whose first baseline (ascender+line_gap/2)*px/upem the paint arm pens at, so ascent above + descent + half-leading below fit exactly (vertical coherence)",
+        "soft-wrap decline mirror: advance > max_width returns None so parley wraps (and the paint arm, seeing advance > rect.w, also declines) -- measure and paint never disagree on which path renders"
+      ],
+      "publishable_verification_bullets": [
+        "new forcing consumer self_hosted_measure_box_registers_with_paint_advance: the §5.37-measured box width == the §5.37 shaped advance.ceil; advance <= rect.w so the paint arm never declines (overflow 0); compute_layout (None) still yields a non-zero parley box",
+        "pinion-runtime 436/0 (435 prior + 1 new); the R1068 paint byte-identical test + the existing layout measure tests stay green = engine=None regression 0",
+        "cargo test --workspace --features pinion-runtime/vello exit 0 (no downstream regression); clippy --workspace --all-targets --features pinion-runtime/vello 0 warn; rustfmt --check clean",
+        "mnemosyne validate-workspace T1=0, T3 reject=0/warn=0, sections 70->71 (+§5.37.13), prose-fact-assertion 0"
+      ],
+      "publishable_impact_refs": [
+        "5.37",
+        "5.37.13",
+        "5.37.12",
+        "5.36"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R1071 (campaign step 4): shell env opt-in (PINION_TEXT_ENGINE) wires the engine through compute_layout_with_text_measure for real GUI use -- today only the test forcing-consumer drives it, no shipping caller; the cached compute_layout variant is the shell's call site",
+        "extend the §5.37 arm: styled-run colour / multi-line wrap (render_lines) / decoration (today these fall through to parley via eligibility)",
+        "all-whitespace leaf: §5.37 measure sizes the whitespace advance while the paint arm declines on no ink -- harmless (nothing inks to overflow); not worth replicating paint's placed.is_empty() in the per-probe measure",
+        "carry (paint, R1054~): atlas inter-glyph gutter (fractional/HiDPI bleed); cross-frame GPU texture cache; per-(atlas,colour)->luminance-mask; instanced quad (Vello API absent); per-line vmetrics; wrap cross-font kern; GSUB Type2; GPOS Type5"
       ]
     },
     "R232": {
