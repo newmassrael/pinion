@@ -3890,7 +3890,7 @@
       "intent": "Route eligible single-style Scene::Text measure through the §5.37 engine via an ungated TextMeasure seam so the box is §5.37-sized; paint+measure register exactly, parley default, 0-regression.",
       "rationale_bullets": [
         "closes the R1068 paint-only gap: measure was parley, a §5.37-wider line overflowed the box",
-        "measure<->paint coherence: box = §5.37 advance.ceil, so paint never declines (advance <= rect.w)",
+        "measure<->paint coherence: advance <= rect.w so paint never declines (= advance.ceil intrinsic only)",
         "0-regression by construction: text_measure=None is the unchanged parley measure path",
         "decoupled across the feature-gate: ungated layout never names the vello-gated engine type"
       ],
@@ -3910,7 +3910,12 @@
         "paint not yet wired to this box width; shell env opt-in (PINION_TEXT_ENGINE) wiring = R1071",
         "all-whitespace: measure sizes the whitespace advance, paint declines on no ink -- harmless (no ink)",
         "compute_layout_with_text_measure returns the scroll-dirty bit (superset of _with_scroll_dirty)",
-        "multi-line/styled-run/Center-End/non-Normal/decorated -> parley (eligibility), same scope as paint"
+        "multi-line/styled-run/Center-End/non-Normal/decorated -> parley (eligibility), same scope as paint",
+        "R1070.1: metric+soft-wrap math lifted to shared SSOT (LineBoxMetrics/single_line_overflows)",
+        "caret risk: R1068 'measure=parley -> caret safe' void for eligible text; R1071 must exclude editable",
+        "wire both arms or neither: measure-only or paint-only re-opens the box/glyph shaper mismatch",
+        "vertical coherence is with the §5.37 paint arm (hhea), not guaranteed == parley (OS/2 typo)",
+        "(f32,f32)/line_count=1 = single-line interim; multi-line will reshape the TextMeasure return"
       ],
       "alternatives_rejected": [
         {
@@ -3951,6 +3956,16 @@
           "file": "crates/pinion-runtime/src/layout.rs",
           "symbol": "self_hosted_measure_box_registers_with_paint_advance",
           "kind": "references"
+        },
+        {
+          "file": "crates/pinion-runtime/src/text_engine.rs",
+          "symbol": "LineBoxMetrics",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-runtime/src/text_engine.rs",
+          "symbol": "single_line_overflows",
+          "kind": "implements"
         }
       ]
     },
@@ -14442,6 +14457,58 @@
         "R1071 (campaign step 4): shell env opt-in (PINION_TEXT_ENGINE) wires the engine through compute_layout_with_text_measure for real GUI use -- today only the test forcing-consumer drives it, no shipping caller; the cached compute_layout variant is the shell's call site",
         "extend the §5.37 arm: styled-run colour / multi-line wrap (render_lines) / decoration (today these fall through to parley via eligibility)",
         "all-whitespace leaf: §5.37 measure sizes the whitespace advance while the paint arm declines on no ink -- harmless (nothing inks to overflow); not worth replicating paint's placed.is_empty() in the per-probe measure",
+        "carry (paint, R1054~): atlas inter-glyph gutter (fractional/HiDPI bleed); cross-frame GPU texture cache; per-(atlas,colour)->luminance-mask; instanced quad (Vello API absent); per-line vmetrics; wrap cross-font kern; GSUB Type2; GPOS Type5"
+      ]
+    },
+    "R1070.1": {
+      "decision_summary": "R1070.1 §5.37.13 audit-clearance: 3 read-only adversarial reviewers (craft/honesty, SSOT/structure, north-star/long-term) + author re-verification of R1070. Structure SURVIVED (eligibility genuinely single-source; the TextMeasure seam is forced by real layering -- compute_layout is consumed by non-vello pinion-rpc/pinion-tui so layout cannot name the vello-gated engine, confirmed by a green non-vello build; decoupling cycle-free). CLEARED the real defects: the §5.37 vertical-metric + soft-wrap math was DUPLICATED across paint and measure (held by prose, not code) -> lifted to shared SSOT helpers LineBoxMetrics + single_line_overflows consumed by both arms; 'full vertical coherence' was untested and overclaimed parley-equality (hhea vs OS/2 typo) -> height now asserted independently + the claim narrowed to coherence with the §5.37 PAINT arm; the soft-wrap decline path was untested -> covered; 'box == advance.ceil' was stated unconditionally (breaks under flex grow) -> qualified to the intrinsic case, with advance<=rect.w named as the universal no-overflow invariant. RECORDED not code-fixed (engine is default-off): the caret divergence (R1068's 'measure=parley -> caret unaffected' is void for eligible editable text), the wire-both-or-neither contract, and the (f32,f32) single-line interim -> binding R1071 constraints. Logic unchanged on the parley path; pinion-runtime 439/0.",
+      "changes_bullets": [
+        "SSOT lift (D1): the §5.37 vertical-metric and soft-wrap math, duplicated between the paint arm (paint_adapter::paint_text_self_hosted) and the measure arm (measure_text), is lifted to shared helpers in text_engine -- LineBoxMetrics::from_font (baseline_px + height_px from one hhea source) and single_line_overflows (the advance>bound decline comparison); both arms now consume them so 'paint+measure register exactly' is enforced by code, not prose",
+        "tests (D2/D3): +3 measure_text unit tests -- box height == an INDEPENDENTLY recomputed hhea line box (the R1070 test asserted width only); the soft-wrap decline path (max_width<advance -> None, the mirror the R1070 test never hit); ineligible leaves (newline/styled-run/decorated) defer to parley",
+        "test (D4): the layout forcing-consumer now asserts height too (align_items=Start so the cross-axis is not stretched) and qualifies box==advance.ceil to the INTRINSIC case, naming advance<=rect.w (no overflow) as the universal invariant that also holds under flex grow/shrink",
+        "honesty (D2/D5/D6): docstrings corrected -- 'full vertical coherence' -> coherence with the §5.37 PAINT arm (hhea), not guaranteed == parley (OS/2 typo metrics); 'exact mirror' -> exact for ink-bearing content (all-whitespace asymmetry named); TextMeasure trait-vs-closure rationale declared; wire-both-or-neither contract documented on compute_layout_with_text_measure",
+        "§5.37.13: rationale invariant corrected (advance<=rect.w, not unconditional box==advance.ceil); caveats added for the caret divergence (R1068 'measure=parley -> caret safe' is void for eligible editable text -> R1071 must exclude caret-bearing leaves or unify caret onto §5.37), wire-both contract, hhea-vs-parley parity, and the single-line (f32,f32)/line_count=1 interim"
+      ],
+      "verification_bullets": [
+        "3 read-only adversarial reviewers (craft/honesty, SSOT/structure, north-star/long-term) + author re-verification against the code. SURVIVED: eligibility is genuinely single-source; the TextMeasure seam is forced by real layering (compute_layout is consumed by non-vello pinion-rpc/pinion-tui, so layout must stay ungated and cannot name the vello-gated engine) -- confirmed by a green non-vello build; decoupling is cycle-free; API fan-out is principled delegation",
+        "CLEARED defects: D1 metric/soft-wrap duplication (lifted to SSOT); D2 untested+overclaimed vertical coherence (height now asserted independently + claim narrowed to §5.37-paint coherence); D3 untested decline path (now covered); D4 unconditional box==advance.ceil (qualified to intrinsic + universal invariant named)",
+        "RECORDED not code-fixed (engine is default-off, no shipping caller): caret divergence + wire-both contract + (f32,f32) single-line interim -> binding R1071 constraints in §5.37.13; sequencing critique (fold into R1071 shell-wiring) accepted as the next-step directive",
+        "pinion-runtime 439/0 (436 + 3 new measure_text tests); R1068 paint byte-identical test still green = the SSOT lift preserved paint behaviour; clippy --workspace --all-targets vello 0; rustfmt clean; non-vello cargo check --workspace exit 0; validate-workspace T1=0"
+      ],
+      "impact_refs": [
+        "5.37.13",
+        "5.37.12",
+        "5.37"
+      ],
+      "carry_forward_bullets": [
+        "R1071 (campaign step 4, now the directed next step): wire the shell to build one SelfHostedTextEngine per window and thread it into BOTH paint (to_vello_with_text_engine) and measure (compute_layout_with_text_measure) behind a PINION_TEXT_ENGINE env opt-in (default parley) -- the review's strongest strategic finding is that the engine still has zero shipping callers, so R1071 must land the consumer rather than add more single-line capability",
+        "R1071 caret constraint: an eligible EDITABLE leaf gets a §5.37-sized box but a parley-computed caret -> R1071 wiring must exclude caret-bearing/editable text from the engine, or the campaign must unify caret/hit-test onto §5.37 (the editor-critical coherence the two-layout split leaves open); R1068's 'measure=parley -> caret unaffected' rationale no longer holds for eligible text",
+        "R1072+: extend the §5.37 arm to styled-runs / multi-line (render_lines) / decoration -- the editor's real text -- which will reshape TextMeasure's (f32,f32) return into per-line metrics + baselines; the single-line subset must not keep accreting before this lands (avoid the >3-round single-axis local optimum)",
+        "carry (paint, R1054~): atlas inter-glyph gutter (fractional/HiDPI bleed); cross-frame GPU texture cache; per-(atlas,colour)->luminance-mask; instanced quad (Vello API absent); per-line vmetrics; wrap cross-font kern; GSUB Type2; GPOS Type5"
+      ],
+      "publishable_decision_summary": "R1070.1 §5.37.13 audit-clearance: 3 read-only adversarial reviewers (craft/honesty, SSOT/structure, north-star/long-term) + author re-verification of R1070. Structure SURVIVED (eligibility genuinely single-source; the TextMeasure seam is forced by real layering -- compute_layout is consumed by non-vello pinion-rpc/pinion-tui so layout cannot name the vello-gated engine, confirmed by a green non-vello build; decoupling cycle-free). CLEARED the real defects: the §5.37 vertical-metric + soft-wrap math was DUPLICATED across paint and measure (held by prose, not code) -> lifted to shared SSOT helpers LineBoxMetrics + single_line_overflows consumed by both arms; 'full vertical coherence' was untested and overclaimed parley-equality (hhea vs OS/2 typo) -> height now asserted independently + the claim narrowed to coherence with the §5.37 PAINT arm; the soft-wrap decline path was untested -> covered; 'box == advance.ceil' was stated unconditionally (breaks under flex grow) -> qualified to the intrinsic case, with advance<=rect.w named as the universal no-overflow invariant. RECORDED not code-fixed (engine is default-off): the caret divergence (R1068's 'measure=parley -> caret unaffected' is void for eligible editable text), the wire-both-or-neither contract, and the (f32,f32) single-line interim -> binding R1071 constraints. Logic unchanged on the parley path; pinion-runtime 439/0.",
+      "publishable_changes_bullets": [
+        "SSOT lift (D1): the §5.37 vertical-metric and soft-wrap math, duplicated between the paint arm (paint_adapter::paint_text_self_hosted) and the measure arm (measure_text), is lifted to shared helpers in text_engine -- LineBoxMetrics::from_font (baseline_px + height_px from one hhea source) and single_line_overflows (the advance>bound decline comparison); both arms now consume them so 'paint+measure register exactly' is enforced by code, not prose",
+        "tests (D2/D3): +3 measure_text unit tests -- box height == an INDEPENDENTLY recomputed hhea line box (the R1070 test asserted width only); the soft-wrap decline path (max_width<advance -> None, the mirror the R1070 test never hit); ineligible leaves (newline/styled-run/decorated) defer to parley",
+        "test (D4): the layout forcing-consumer now asserts height too (align_items=Start so the cross-axis is not stretched) and qualifies box==advance.ceil to the INTRINSIC case, naming advance<=rect.w (no overflow) as the universal invariant that also holds under flex grow/shrink",
+        "honesty (D2/D5/D6): docstrings corrected -- 'full vertical coherence' -> coherence with the §5.37 PAINT arm (hhea), not guaranteed == parley (OS/2 typo metrics); 'exact mirror' -> exact for ink-bearing content (all-whitespace asymmetry named); TextMeasure trait-vs-closure rationale declared; wire-both-or-neither contract documented on compute_layout_with_text_measure",
+        "§5.37.13: rationale invariant corrected (advance<=rect.w, not unconditional box==advance.ceil); caveats added for the caret divergence (R1068 'measure=parley -> caret safe' is void for eligible editable text -> R1071 must exclude caret-bearing leaves or unify caret onto §5.37), wire-both contract, hhea-vs-parley parity, and the single-line (f32,f32)/line_count=1 interim"
+      ],
+      "publishable_verification_bullets": [
+        "3 read-only adversarial reviewers (craft/honesty, SSOT/structure, north-star/long-term) + author re-verification against the code. SURVIVED: eligibility is genuinely single-source; the TextMeasure seam is forced by real layering (compute_layout is consumed by non-vello pinion-rpc/pinion-tui, so layout must stay ungated and cannot name the vello-gated engine) -- confirmed by a green non-vello build; decoupling is cycle-free; API fan-out is principled delegation",
+        "CLEARED defects: D1 metric/soft-wrap duplication (lifted to SSOT); D2 untested+overclaimed vertical coherence (height now asserted independently + claim narrowed to §5.37-paint coherence); D3 untested decline path (now covered); D4 unconditional box==advance.ceil (qualified to intrinsic + universal invariant named)",
+        "RECORDED not code-fixed (engine is default-off, no shipping caller): caret divergence + wire-both contract + (f32,f32) single-line interim -> binding R1071 constraints in §5.37.13; sequencing critique (fold into R1071 shell-wiring) accepted as the next-step directive",
+        "pinion-runtime 439/0 (436 + 3 new measure_text tests); R1068 paint byte-identical test still green = the SSOT lift preserved paint behaviour; clippy --workspace --all-targets vello 0; rustfmt clean; non-vello cargo check --workspace exit 0; validate-workspace T1=0"
+      ],
+      "publishable_impact_refs": [
+        "5.37.13",
+        "5.37.12",
+        "5.37"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R1071 (campaign step 4, now the directed next step): wire the shell to build one SelfHostedTextEngine per window and thread it into BOTH paint (to_vello_with_text_engine) and measure (compute_layout_with_text_measure) behind a PINION_TEXT_ENGINE env opt-in (default parley) -- the review's strongest strategic finding is that the engine still has zero shipping callers, so R1071 must land the consumer rather than add more single-line capability",
+        "R1071 caret constraint: an eligible EDITABLE leaf gets a §5.37-sized box but a parley-computed caret -> R1071 wiring must exclude caret-bearing/editable text from the engine, or the campaign must unify caret/hit-test onto §5.37 (the editor-critical coherence the two-layout split leaves open); R1068's 'measure=parley -> caret unaffected' rationale no longer holds for eligible text",
+        "R1072+: extend the §5.37 arm to styled-runs / multi-line (render_lines) / decoration -- the editor's real text -- which will reshape TextMeasure's (f32,f32) return into per-line metrics + baselines; the single-line subset must not keep accreting before this lands (avoid the >3-round single-axis local optimum)",
         "carry (paint, R1054~): atlas inter-glyph gutter (fractional/HiDPI bleed); cross-frame GPU texture cache; per-(atlas,colour)->luminance-mask; instanced quad (Vello API absent); per-line vmetrics; wrap cross-font kern; GSUB Type2; GPOS Type5"
       ]
     },
