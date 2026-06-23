@@ -4884,4 +4884,71 @@ mod multi_window_key_dispatch_gate {
             "an RPC key to a non-focused window is gated out (no owner pinned)",
         );
     }
+
+    #[test]
+    fn synthetic_focus_change_events_do_not_reflap_the_toggle() {
+        // R1076 PR-28. The sprag dock flap: a held Ctrl+Shift+Enter dispatches the
+        // toggle once, which MOVES OS focus (undock = a new focused window). winit
+        // then emits a SYNTHETIC `Released` of the still-held key to the old window
+        // and a SYNTHETIC `Pressed` to the new one (`is_synthetic`, X11/Windows).
+        // Dispatched as real edges, that synthetic `Pressed` fires the toggle
+        // again -> self-sustaining flap. `apply_key_edge` excludes synthetic edges
+        // from the gate, the press-owner lifecycle, AND dispatch (the returned
+        // `should_dispatch` is the gate the live arm runs `handle_key_press` on).
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+        let mut core = ShellCore::<TestView>::new();
+
+        // pane-0 holds OS focus; a PHYSICAL press would dispatch and pins the
+        // press owner.
+        core.note_os_focus("pane-0", true);
+        assert!(
+            core.apply_key_edge("pane-0", Some("Enter"), true, false),
+            "a physical press at the focused window dispatches",
+        );
+        assert_eq!(
+            core.key_dispatch_focus().key_press_owners,
+            vec![("Enter".to_owned(), "pane-0".to_owned())],
+            "the physical press pins the owner",
+        );
+
+        // The toggle's side effect moved OS focus to the successor window.
+        core.note_os_focus("pane-0", false);
+        core.note_os_focus(pinion_runtime::DEFAULT_WINDOW, true);
+
+        // winit emits a synthetic Released of the still-held Enter to the old
+        // window and a synthetic Pressed to the now-focused successor. Neither may
+        // dispatch, pin, or clear.
+        assert!(
+            !core.apply_key_edge("pane-0", Some("Enter"), false, true),
+            "a synthetic release does not dispatch",
+        );
+        assert!(
+            !core.apply_key_edge(pinion_runtime::DEFAULT_WINDOW, Some("Enter"), true, true),
+            "a synthetic press does not dispatch (no re-toggle, no flap)",
+        );
+        assert_eq!(
+            core.key_dispatch_focus().key_press_owners,
+            vec![("Enter".to_owned(), "pane-0".to_owned())],
+            "synthetic edges pin no new owner and clear none — the physical owner survives",
+        );
+
+        // The matching PHYSICAL keyup (the user finally lets go) clears the owner.
+        assert!(!core.apply_key_edge(pinion_runtime::DEFAULT_WINDOW, Some("Enter"), false, false));
+        assert!(
+            core.key_dispatch_focus().key_press_owners.is_empty(),
+            "the physical keyup clears the owner",
+        );
+
+        // A `gate_key` None (a media / dead key the shell does not dispatch) gates
+        // on OS focus alone, pinning no owner (apply_key_edge's None branch).
+        assert!(
+            core.apply_key_edge(pinion_runtime::DEFAULT_WINDOW, None, true, false),
+            "a physical media key gates on OS focus",
+        );
+        assert!(
+            core.key_dispatch_focus().key_press_owners.is_empty(),
+            "the media key pins no owner",
+        );
+    }
 }

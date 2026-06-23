@@ -2840,6 +2840,58 @@ impl<V: WidgetView> ShellCore<V> {
         true
     }
 
+    /// R1076 PR-28 §5.39 §5.16 §5.35 — the live winit key-edge gate decision: the
+    /// synthetic-aware home `AppShell::handle_keyboard_input` delegates to (it
+    /// updates the passive chord cache [`Self::note_key_state`] separately, for
+    /// both edges). Returns whether the edge should DISPATCH to the widget arc
+    /// (`handle_key_press`), maintaining the press-owner lifecycle as the side
+    /// effect.
+    ///
+    /// `is_synthetic` is winit's flag for a focus-transition key-state
+    /// notification — a `Pressed` emitted for every held key when a window GAINS
+    /// OS focus, a `Released` when it LOSES focus (X11 / Windows only). These are
+    /// not user intent: a held shortcut whose dispatch MOVES OS focus would
+    /// otherwise self-toggle (the sprag dock/undock flap — the toggle moves
+    /// focus, the focus change emits a synthetic `Pressed` of the still-held
+    /// shortcut, which fires the toggle again, holding-loop). So a synthetic edge
+    /// drives NEITHER the gate, NOR the press owner ([`Self::admit_key_press`]
+    /// pin / [`Self::note_key_release`] clear), NOR dispatch — the physical key
+    /// is unchanged across the transition, so the owner a real keydown pinned
+    /// survives until the matching PHYSICAL keyup. This also stops a synthetic
+    /// `Pressed` from forwarding a phantom keystroke to the newly-focused
+    /// widget's External (e.g. a stray newline into a terminal PTY).
+    ///
+    /// For a physical edge (`is_synthetic == false`) this is byte-identical to
+    /// the pre-R1076 inline gate: a `Pressed` admits through
+    /// [`Self::admit_key_press`] (`gate_key`) or [`Self::is_key_dispatch_window`]
+    /// (a key the shell does not dispatch — media / dead keys, `gate_key`
+    /// `None`); a `Released` clears the press owner. This is the headless seam
+    /// that makes the synthetic exclusion regression-testable without a winit
+    /// `EventLoop` (the R1071 `key_press_for_window` discipline).
+    #[must_use]
+    pub fn apply_key_edge(
+        &mut self,
+        window_id: &str,
+        gate_key: Option<&str>,
+        pressed: bool,
+        is_synthetic: bool,
+    ) -> bool {
+        if is_synthetic {
+            return false;
+        }
+        if pressed {
+            match gate_key {
+                Some(key) => self.admit_key_press(window_id, key),
+                None => self.is_key_dispatch_window(window_id),
+            }
+        } else {
+            if let Some(key) = gate_key {
+                self.note_key_release(key);
+            }
+            false
+        }
+    }
+
     /// R51.80 §5.16 §5.36 — compute one frame's paint scene from the
     /// cached state.
     ///

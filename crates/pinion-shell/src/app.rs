@@ -1182,6 +1182,7 @@ impl<V: WidgetView> AppShell<V> {
         event_loop: &ActiveEventLoop,
         window_id: WindowId,
         event: &winit::event::KeyEvent,
+        is_synthetic: bool,
     ) {
         // R683 §5.16 — re-resolve `WindowId` → canonical spec id (the same
         // fallback `window_event` uses); borrows `self.windows`, disjoint from
@@ -1202,38 +1203,32 @@ impl<V: WidgetView> AppShell<V> {
             Key::Character(c) => (Some(c), Some(c)),
             _ => (None, None),
         };
+        // Passive chord cache tracks PHYSICAL held state on both edges — for
+        // synthetic events too, so a key held across a focus transition stays
+        // armed (the R882 pan chord's focus continuity). Auto-repeat re-sends
+        // `Pressed`, idempotent against the cache.
         if let Some(key_str) = chord_key {
             self.core.note_key_state(key_str, pressed);
         }
-        if pressed {
-            // R1073 PR-27.4 §5.39 §5.16 §5.35 — dispatch gate, the SAME
-            // [`ShellCore::admit_key_press`] the per-window seam uses: act on a
-            // press only when it arrives at the window that owns the physical
-            // press (snapshotted at the press's rising edge) AND that window
-            // still holds OS focus. A stray re-delivery of one press mid-undock
-            // is dropped whether it lands on the now-unfocused source window
-            // (R1071) OR the now-focused successor window the closing window's
-            // own dispatch handed focus to (R1073 — the dock/undock
-            // double-toggle). `event.repeat` carries the OS auto-repeat flag to
-            // the binding (a toggle-class shortcut swallows it; text / nav keys
-            // keep repeating). A single-window binding always passes the gate
-            // (its one window owns every press and holds focus), so this is
-            // byte-identical to the pre-R1071 ungated dispatch for it.
-            // `None` = a key the shell does not dispatch (media / dead keys),
-            // where the gate result is moot; kept on the focus gate for
-            // uniformity with no behavioural effect.
-            let admit = match gate_key {
-                Some(key_str) => self.core.admit_key_press(spec_id, key_str),
-                None => self.core.is_key_dispatch_window(spec_id),
-            };
-            if admit {
-                self.handle_key_press(event_loop, &event.logical_key, event.repeat);
-            }
-        } else if let Some(key_str) = gate_key {
-            // R1073.1 PR-27.4 §5.39 — release edge ends the physical press:
-            // drop the owner snapshot so the next press re-decides against live
-            // focus. Window-agnostic clear (see [`ShellCore::note_key_release`]).
-            self.core.note_key_release(key_str);
+        // R1076 PR-28 §5.39 §5.16 §5.35 — gate the key-edge decision through the
+        // synthetic-aware ShellCore seam. winit emits SYNTHETIC key events (a
+        // `Pressed` for every held key when a window GAINS OS focus, a `Released`
+        // when it LOSES focus; `is_synthetic` on X11 / Windows) only to sync key
+        // state to a newly-(un)focused window — they are NOT user intent.
+        // Dispatching them as real presses self-sustains a dock-toggle flap: a
+        // held shortcut's dispatch moves OS focus, the focus change emits a
+        // synthetic `Pressed`, which fires the toggle again. `apply_key_edge`
+        // excludes synthetic events from the gate, the press-owner lifecycle
+        // (R1071 pin / R1073.1 clear), and dispatch; the physical key is unchanged
+        // across the transition, so the owner a real keydown pinned survives to
+        // the matching physical keyup. For a physical edge it is byte-identical to
+        // the pre-R1076 inline gate (R1071 OS-focus + R1073 press-owner snapshot,
+        // `gate_key` `None` = a media / dead key the shell does not dispatch).
+        if self
+            .core
+            .apply_key_edge(spec_id, gate_key, pressed, is_synthetic)
+        {
+            self.handle_key_press(event_loop, &event.logical_key, event.repeat);
         }
     }
 
@@ -1977,7 +1972,11 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
                     self.core.window_blurred();
                 }
             }
-            WindowEvent::KeyboardInput { event, .. } => {
+            WindowEvent::KeyboardInput {
+                event,
+                is_synthetic,
+                ..
+            } => {
                 // R1073 PR-27.4 §5.39 — extracted to `handle_keyboard_input` to
                 // keep this dispatcher under the workspace
                 // `clippy::too_many_lines` (100) ceiling (the app.rs split
@@ -1985,7 +1984,9 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
                 // re-resolves `spec_id` itself) so the keyboard / auto-repeat
                 // hot path allocates nothing — unlike the rarer mouse / file
                 // arms that `to_owned()` the borrowed `spec_id`.
-                self.handle_keyboard_input(event_loop, window_id, &event);
+                // R1076 PR-28 §5.39 — `is_synthetic` (winit focus-transition
+                // key-state sync, dropped pre-R1076) gates the dock-toggle flap.
+                self.handle_keyboard_input(event_loop, window_id, &event, is_synthetic);
             }
             // R56.2.a §5.13 §5.38 — IME composition events from the
             // platform input method (Wayland `text-input-v3`, X11
