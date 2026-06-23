@@ -14275,6 +14275,50 @@
         "§5.37 measure arm (metric coherence) shifts to R1070 — PR-26 took R1069 as the next interleaved consumer-forced seam (the R1064 PR-25 precedent interleaved seam rounds into the §5.37 campaign)"
       ]
     },
+    "R1069.1": {
+      "decision_summary": "R1069.1 §5.39 §5.16 PR-26 audit-clearance: 3 read-only adversarial reviewers (craft/honesty, SSOT/reactive, north-star/structure) + author re-verification cleared R1069. Verdict: mechanism and structure sound — the hybrid (harvest painted windows / derive declared-but-unpainted from the pure view_for_window) is R1020-faithful (uniform derivation would regress against scene-derived-from-the-PAINTED-scene); reactive subscription is benign (get subscribes but never dirties); SSOT clean (one windows_signal, two readers via Owner::cache identity); all edge cases correct (remove_window/dock-back, painted-but-undeclared, modal containment, R1006 pure mirror). One real doc-honesty regression FIXED: window_focusables claimed harvest and derivation universally agree, but a viewport-gated focusable SET diverges until first paint (the derivation reads use_pane_viewport_size's (0,0) sentinel) — zero behavioural impact (no current consumer gates focusables on the viewport). No logic change.",
+      "changes_bullets": [
+        "window_focusables doc: scoped the \"harvest == derivation\" claim to non-viewport-gated focusable SETS — a view gating focusable rows on use_pane_viewport_size derives its (0,0) unmeasured projection until first paint, then the harvest corrects it (gap-transient; the dock/undock pane is a static top-level focusable, not viewport-gated, so no current consumer is affected)",
+        "Restated the §6.3 no-bare-Effect precondition (the derivation runs view_for_window every gap frame — more exposure than the boot-seed the caveat was written for) and noted the derivation runs ONLY for declared-but-unpainted windows (a painted window short-circuits to the cache = no extra view run at steady state)",
+        "declared_window_ids doc: named the Owner::cache signal-identity contract its correctness rests on (resolves the SAME pointer-equal Rc the AppShell reconcile acts on); noted Signal::get subscribes root_owner but is idempotent and read-only (never dirties), so it adds no paint",
+        "remove_window doc: the §5.39 stale-focus drop is observable only because reconcile removes the spec from windows_signal BEFORE remove_window (the closed window is then un-declared); a still-declared remove would re-derive and keep the tags (no such caller exists)"
+      ],
+      "verification_bullets": [
+        "pinion-shell 76/0 lib: +1 modal-guard test (a derived torn tag is NOT focusable while a modal trap is up — focus_set resolves against modal members, the derived tag is not one) + renamed/strengthened the dedup test to exercise the derive->harvest transition (torn tag present exactly once both BEFORE and AFTER its window paints)",
+        "Logic byte-identical (doc + test only); clippy --workspace --all-targets --features pinion-runtime/vello = 0 warn; rustfmt clean; mnemosyne validate-workspace T1=0",
+        "Reviewer findings re-verified against code: Signal::get subscribes but never dirties (signal.rs) + subscription dedups + Weak cleanup = benign, same class as refresh_focusable_from_view; collect_focusable_tags reads only tag + LayoutStyle::focusable (scene.rs) so a non-gated derivation equals the harvest; windows_signal Owner::cache identity holds (lib.rs ptr_eq test); R1006 pure mirror never reaches the enumeration",
+        "Accepted tradeoffs RECORDED not fixed: the per-paint union re-fold is free at steady state (declared-unpainted set empty -> cache short-circuit); a reactive Computed is the eventual end-state but has no 4th-consumer pressure (YAGNI); the unit tests are seam-level because the real drain_focus_request + reconcile_windows path lives behind winit in app.rs"
+      ],
+      "impact_refs": [
+        "5.39",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "Phase-D scaling ceiling (document-as-debt, NOT now): union_focusable_tags is recomputed imperatively per paint and re-derives declared-but-unpainted windows; if dozens of dockable panels churn tear-off frequently, lift to a reactive Computed over (painted-cache union declared-signal). Free at rest today (no declared-unpainted -> cache short-circuit); revisit on measured pressure",
+        "End-to-end undock-follow (real drain_focus_request + reconcile_windows + winit) is verified live on the sprag side; the pinion unit tests pin the enabling property (declared window contributes derived tags / survives the primary-repaint gap / modal containment)"
+      ],
+      "publishable_decision_summary": "R1069.1 §5.39 §5.16 PR-26 audit-clearance: 3 read-only adversarial reviewers (craft/honesty, SSOT/reactive, north-star/structure) + author re-verification cleared R1069. Verdict: mechanism and structure sound — the hybrid (harvest painted windows / derive declared-but-unpainted from the pure view_for_window) is R1020-faithful (uniform derivation would regress against scene-derived-from-the-PAINTED-scene); reactive subscription is benign (get subscribes but never dirties); SSOT clean (one windows_signal, two readers via Owner::cache identity); all edge cases correct (remove_window/dock-back, painted-but-undeclared, modal containment, R1006 pure mirror). One real doc-honesty regression FIXED: window_focusables claimed harvest and derivation universally agree, but a viewport-gated focusable SET diverges until first paint (the derivation reads use_pane_viewport_size's (0,0) sentinel) — zero behavioural impact (no current consumer gates focusables on the viewport). No logic change.",
+      "publishable_changes_bullets": [
+        "window_focusables doc: scoped the \"harvest == derivation\" claim to non-viewport-gated focusable SETS — a view gating focusable rows on use_pane_viewport_size derives its (0,0) unmeasured projection until first paint, then the harvest corrects it (gap-transient; the dock/undock pane is a static top-level focusable, not viewport-gated, so no current consumer is affected)",
+        "Restated the §6.3 no-bare-Effect precondition (the derivation runs view_for_window every gap frame — more exposure than the boot-seed the caveat was written for) and noted the derivation runs ONLY for declared-but-unpainted windows (a painted window short-circuits to the cache = no extra view run at steady state)",
+        "declared_window_ids doc: named the Owner::cache signal-identity contract its correctness rests on (resolves the SAME pointer-equal Rc the AppShell reconcile acts on); noted Signal::get subscribes root_owner but is idempotent and read-only (never dirties), so it adds no paint",
+        "remove_window doc: the §5.39 stale-focus drop is observable only because reconcile removes the spec from windows_signal BEFORE remove_window (the closed window is then un-declared); a still-declared remove would re-derive and keep the tags (no such caller exists)"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-shell 76/0 lib: +1 modal-guard test (a derived torn tag is NOT focusable while a modal trap is up — focus_set resolves against modal members, the derived tag is not one) + renamed/strengthened the dedup test to exercise the derive->harvest transition (torn tag present exactly once both BEFORE and AFTER its window paints)",
+        "Logic byte-identical (doc + test only); clippy --workspace --all-targets --features pinion-runtime/vello = 0 warn; rustfmt clean; mnemosyne validate-workspace T1=0",
+        "Reviewer findings re-verified against code: Signal::get subscribes but never dirties (signal.rs) + subscription dedups + Weak cleanup = benign, same class as refresh_focusable_from_view; collect_focusable_tags reads only tag + LayoutStyle::focusable (scene.rs) so a non-gated derivation equals the harvest; windows_signal Owner::cache identity holds (lib.rs ptr_eq test); R1006 pure mirror never reaches the enumeration",
+        "Accepted tradeoffs RECORDED not fixed: the per-paint union re-fold is free at steady state (declared-unpainted set empty -> cache short-circuit); a reactive Computed is the eventual end-state but has no 4th-consumer pressure (YAGNI); the unit tests are seam-level because the real drain_focus_request + reconcile_windows path lives behind winit in app.rs"
+      ],
+      "publishable_impact_refs": [
+        "5.39",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Phase-D scaling ceiling (document-as-debt, NOT now): union_focusable_tags is recomputed imperatively per paint and re-derives declared-but-unpainted windows; if dozens of dockable panels churn tear-off frequently, lift to a reactive Computed over (painted-cache union declared-signal). Free at rest today (no declared-unpainted -> cache short-circuit); revisit on measured pressure",
+        "End-to-end undock-follow (real drain_focus_request + reconcile_windows + winit) is verified live on the sprag side; the pinion unit tests pin the enabling property (declared window contributes derived tags / survives the primary-repaint gap / modal containment)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
