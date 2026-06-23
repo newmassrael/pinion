@@ -2639,17 +2639,19 @@ impl<V: WidgetView> ShellCore<V> {
         // no binding-side list.
         //
         // R25.1 §5.39 §5.16 — refresh THIS window's contribution and re-fold the
-        // union across every painted window. No longer primary-gated: a torn-off
-        // (undock) pane drawn only in its secondary window must join the Tab
-        // order / click-focus set, or it cannot receive keyboard focus and its
-        // PTY never sees input (sprag undock). The union is keyed per window (the
-        // R1021 `publish_pane_viewports` precedent), so a secondary window's
-        // paint refreshes its own tags without clobbering the primary's; the
-        // §5.39 stale-focus drop + modal guard inside `update_focusable_tags` now
-        // act against the union (focus drops only when the tag is painted in no
-        // window). A single-window binding has one entry, so the union is its
-        // window's `collect_focusable_tags()` verbatim — byte-identical to the
-        // pre-R25.1 primary-only enumeration. The side-effect-free mirror
+        // union across the declared topology (R26: painted windows PLUS windows
+        // declared in `windows_signal` but not yet painted). No longer
+        // primary-gated: a torn-off (undock) pane drawn only in its secondary
+        // window must join the Tab order / click-focus set, or it cannot receive
+        // keyboard focus and its PTY never sees input (sprag undock). The union is
+        // keyed per window (the R1021 `publish_pane_viewports` precedent), so a
+        // secondary window's paint refreshes its own tags without clobbering the
+        // primary's; the §5.39 stale-focus drop + modal guard inside
+        // `update_focusable_tags` now act against the union (focus drops only when
+        // the tag is in no declared window). A single-window binding has one entry
+        // and no declared signal, so the union is its window's
+        // `collect_focusable_tags()` verbatim — byte-identical to the pre-R25.1
+        // primary-only enumeration. The side-effect-free mirror
         // (`compute_paint_scene_pure_internal`) never reaches this fn, so an
         // introspection paint never enumerates (the R1006 contract, inherited).
         self.refresh_window_focusables(window_key, paint_scene.collect_focusable_tags());
@@ -3942,9 +3944,10 @@ impl<V: WidgetView> ShellCore<V> {
     ///
     /// [`FocusManager::update_focusable_tags`] still applies the §5.39 stale-
     /// focus drop + modal guard, now against the union — focus drops only when
-    /// the focused tag is painted in NO window. A single-window binding has one
-    /// entry, so the union equals that window's tags verbatim: byte-identical to
-    /// the pre-R25.1 primary-only enumeration.
+    /// the focused tag is in NO declared window (R26: painted OR declared-but-
+    /// unpainted). A single-window binding has one entry and no declared signal,
+    /// so the union equals that window's tags verbatim: byte-identical to the
+    /// pre-R25.1 primary-only enumeration.
     fn refresh_window_focusables(&mut self, window_key: &str, tags: Vec<String>) {
         self.focusable_tags_per_window
             .insert(window_key.to_owned(), tags);
@@ -3952,11 +3955,28 @@ impl<V: WidgetView> ShellCore<V> {
         self.focus.update_focusable_tags(union);
     }
 
-    /// R25.1 §5.39 — fold the per-window focusable enumerations into one Tab
-    /// order: [`pinion_runtime::DEFAULT_WINDOW`] first (so a single-window
-    /// binding's order is its window's verbatim), then the remaining windows by
-    /// sorted id, de-duplicated first-occurrence (a shared-state tag rendered in
-    /// two windows joins the order once, at its earliest window).
+    /// R25.1 §5.39 / R26 §5.39 §5.16 — fold the focusable enumerations of every
+    /// window in the DECLARED topology into one Tab order:
+    /// [`pinion_runtime::DEFAULT_WINDOW`] first (so a single-window binding's
+    /// order is its window's verbatim), then the remaining windows by sorted id,
+    /// de-duplicated first-occurrence (a shared-state tag rendered in two windows
+    /// joins the order once, at its earliest window).
+    ///
+    /// R26 §5.39 §5.16 — the window set is the union of the *painted* windows
+    /// ([`Self::focusable_tags_per_window`]) AND the windows the binding
+    /// currently *declares* via [`WidgetView::windows_signal`]. A window the
+    /// binding has just declared — a torn-off undock pane pushed into the signal
+    /// — but whose OS window has not first-painted yet still contributes, via
+    /// [`Self::window_focusables`] deriving its focusables from the pure
+    /// [`WidgetView::view_for_window`] (§2 #7 scene-as-data: a window's focusable
+    /// set is a pure function of state, knowable with no painted surface). This
+    /// closes the `reconcile_windows` gap frame(s) where a torn-off pane's tag is
+    /// in NO painted scene: without it [`FocusManager::update_focusable_tags`]
+    /// would drop a focus the binding placed on that pane (the undock
+    /// focus-follow gap) and a one-shot
+    /// [`pinion_core::focus_request`] would be consumed before the pane is
+    /// enumerable. A single-window binding declares no signal, so the declared
+    /// set is empty and this is byte-identical to the pre-R26 painted-only union.
     ///
     /// Cross-window Tab traversal order is a pinion design choice (R25.2 leaves
     /// it open): primary-then-sorted is deterministic and keeps the single-
@@ -3964,27 +3984,82 @@ impl<V: WidgetView> ShellCore<V> {
     /// the clicked tag against this set ([`FocusManager::resolve_focusable`]), so
     /// a secondary window's pane is focusable on click the moment it joins here.
     fn union_focusable_tags(&self) -> Vec<String> {
+        let declared = self.declared_window_ids();
         let mut others: Vec<&str> = self
             .focusable_tags_per_window
             .keys()
             .map(String::as_str)
+            .chain(declared.iter().map(String::as_str))
             .filter(|k| *k != pinion_runtime::DEFAULT_WINDOW)
             .collect();
         others.sort_unstable();
+        others.dedup();
 
         let mut order: Vec<String> = Vec::new();
-        let mut seen: HashSet<&str> = HashSet::new();
+        let mut seen: HashSet<String> = HashSet::new();
         for key in std::iter::once(pinion_runtime::DEFAULT_WINDOW).chain(others) {
-            let Some(tags) = self.focusable_tags_per_window.get(key) else {
-                continue;
-            };
-            for tag in tags {
-                if seen.insert(tag.as_str()) {
-                    order.push(tag.clone());
+            for tag in self.window_focusables(key) {
+                if seen.insert(tag.clone()) {
+                    order.push(tag);
                 }
             }
         }
         order
+    }
+
+    /// R26 §5.39 §5.16 — the focusable tags of one window: its harvested paint
+    /// scene when the window has painted (the materialised truth — viewport-
+    /// accurate, what is actually on screen), otherwise the DETERMINED scene
+    /// derived from the pure view fn for a window the binding declares but has
+    /// not painted yet (the undock reconcile gap). The two agree once the window
+    /// paints — [`Scene::collect_focusable_tags`] reads only the view-assigned
+    /// `tag` + [`LayoutStyle::focusable`](pinion_core::style::LayoutStyle), which
+    /// layout never touches — so the harvest supersedes the derivation with no
+    /// observable change (and [`Self::union_focusable_tags`] de-dupes either way).
+    ///
+    /// The derivation runs under `root_owner` for parity with the live paint's
+    /// view dispatch (so `Owner::cache` hooks resolve to the same reactive state)
+    /// and is side-effect-free per §6.3 — the same purity the boot-seed
+    /// ([`Self::refresh_focusable_from_view`]) already depends on, now exercised
+    /// for secondary windows too. No layout / viewport size is needed.
+    fn window_focusables(&self, window_id: &str) -> Vec<String> {
+        if let Some(tags) = self.focusable_tags_per_window.get(window_id) {
+            return tags.clone();
+        }
+        let cached_state = *self.core.cached_state();
+        let frame = Frame::with_dt(0.0);
+        let core = &self.core;
+        core.root_owner().run(|| {
+            let scene = if window_id == pinion_runtime::DEFAULT_WINDOW {
+                V::view(cached_state, &frame)
+            } else {
+                V::view_for_window(window_id, cached_state, &frame)
+            };
+            scene.collect_focusable_tags()
+        })
+    }
+
+    /// R26 §5.39 §5.16 — the window ids the binding currently DECLARES via
+    /// [`WidgetView::windows_signal`], or empty for a single-window binding (the
+    /// signal defaults to `None`). Read under `root_owner` so the opt-in
+    /// `Owner::cache`-memoised signal resolves to the same handle the
+    /// `reconcile_windows` Effect subscribes (and that the binding's dock
+    /// tear-off mutates) — the declared topology is the SSOT the focus
+    /// enumeration tracks AHEAD of paint, so a just-declared window's pane is
+    /// enumerable on the same dispatch that declared it, not a few frames later
+    /// when its OS window first paints.
+    fn declared_window_ids(&self) -> Vec<String> {
+        let core = &self.core;
+        core.root_owner().run(|| {
+            V::windows_signal()
+                .map(|sig| {
+                    sig.get()
+                        .into_iter()
+                        .map(|spec| spec.id.into_owned())
+                        .collect()
+                })
+                .unwrap_or_default()
+        })
     }
 
     /// (R1020 §5.39) Re-derive the keyboard focus enumeration from a fresh,
@@ -4596,6 +4671,179 @@ mod r25_focus_union_tests {
             sc.focus().focused(),
             None,
             "focus on the now-unpainted pane is dropped (§5.39 stale guard)",
+        );
+    }
+}
+
+#[cfg(test)]
+mod r26_undock_focus_follow_tests {
+    //! R26 §5.39 §5.16 — undock focus-FOLLOW (sprag PR-26). PR-25 made a
+    //! torn-off pane focusable on CLICK once its own window painted; R26 makes
+    //! focus AUTO-FOLLOW across the window-creation race. A pane the binding
+    //! declares in `windows_signal` (the undock) contributes its focusables —
+    //! derived from the pure `view_for_window` — BEFORE its OS window first
+    //! paints, so a focus the binding placed on it is not dropped in the
+    //! `reconcile_windows` gap and no extra click is needed.
+    use super::ShellCore;
+    use crate::test_fixtures::TestRenderer;
+    use crate::{SizeStrategy, WidgetView, WindowSpec};
+    use pinion_a11y::WidgetA11y;
+    use pinion_core::external::External;
+    use pinion_core::scene::ContainerNode;
+    use pinion_core::style::LayoutStyle;
+    use pinion_core::test_fixtures::ButtonFixture;
+    use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
+    use pinion_core::{Frame, Owner, Scene, Signal, WidgetCore};
+    use std::rc::Rc;
+
+    const MAIN_TAG: &str = "main_btn";
+    /// The torn-off (undock) secondary window id; declared in `windows_signal`.
+    const TORN_WINDOW: &str = "float.left";
+    const TORN_TAG: &str = "torn_pane";
+
+    /// A bare focusable Tab stop (`collect_focusable_tags` reads tag +
+    /// `LayoutStyle::focusable`).
+    fn focusable(tag: &'static str) -> Scene {
+        Scene::Container(
+            ContainerNode::new(Vec::new())
+                .with_tag(tag)
+                .with_layout(LayoutStyle::new().with_focusable(true)),
+        )
+    }
+
+    /// A dock binding: the primary paints one focusable (`main_btn`); ONE
+    /// declared secondary window (`float.left`, the torn-off pane) whose
+    /// `view_for_window` paints the focusable `torn_pane`. The fixture DECLARES
+    /// the secondary in `windows_signal` but each test chooses when (if ever) to
+    /// paint it — modelling the undock `reconcile_windows` gap.
+    struct DockFollowFixture;
+
+    impl WidgetCore for DockFollowFixture {
+        type State = ButtonState;
+        type Event = ButtonEvent;
+
+        fn create_external() -> Box<dyn External> {
+            Box::new(ButtonExternal::new())
+        }
+        fn tag() -> &'static str {
+            MAIN_TAG
+        }
+        fn read_state(scene: &Scene) -> Self::State {
+            <ButtonFixture as WidgetCore>::read_state(scene)
+        }
+        fn view(_state: Self::State, _frame: &Frame) -> Scene {
+            focusable(MAIN_TAG)
+        }
+        fn event_name(event: Self::Event) -> &'static str {
+            <ButtonFixture as WidgetCore>::event_name(event)
+        }
+        fn title() -> &'static str {
+            "DockFollow"
+        }
+    }
+
+    impl WidgetA11y for DockFollowFixture {}
+
+    impl WidgetView for DockFollowFixture {
+        type Renderer = TestRenderer;
+
+        fn initial_size_strategy() -> SizeStrategy {
+            SizeStrategy::Fixed {
+                width: 8,
+                height: 8,
+            }
+        }
+
+        fn windows_signal() -> Option<Rc<Signal<Vec<WindowSpec>>>> {
+            // Memoise via `Owner::cache` so every shell-side call returns the
+            // same handle (the R683 identity-stability contract).
+            Owner::current().map(|owner| {
+                owner.cache::<Signal<Vec<WindowSpec>>, _>("dock_follow_windows", || {
+                    Signal::new(vec![
+                        WindowSpec::main(
+                            "DockFollow",
+                            SizeStrategy::Fixed {
+                                width: 8,
+                                height: 8,
+                            },
+                        ),
+                        WindowSpec::new(
+                            TORN_WINDOW,
+                            "Torn",
+                            SizeStrategy::Fixed {
+                                width: 8,
+                                height: 8,
+                            },
+                        ),
+                    ])
+                })
+            })
+        }
+
+        fn view_for_window(window_id: &str, state: Self::State, frame: &Frame) -> Scene {
+            if window_id == TORN_WINDOW {
+                focusable(TORN_TAG)
+            } else {
+                Self::view(state, frame)
+            }
+        }
+    }
+
+    /// The core R26 seam: a window DECLARED in `windows_signal` but never
+    /// painted still contributes its focusables (derived from `view_for_window`)
+    /// to the enumeration. `new()` boot-seeds through the same union, so the
+    /// torn pane is enumerable from boot — before any secondary paint.
+    #[test]
+    fn declared_but_unpainted_window_contributes_derived_focusables() {
+        let sc = ShellCore::<DockFollowFixture>::new();
+        let order = sc.focus().tab_order().to_vec();
+        assert!(
+            order.contains(&MAIN_TAG.to_owned()),
+            "the primary focusable is enumerated: {order:?}",
+        );
+        assert!(
+            order.contains(&TORN_TAG.to_owned()),
+            "the declared-but-unpainted torn pane contributes its DERIVED focusable: {order:?}",
+        );
+    }
+
+    /// The undock focus-follow guarantee: the binding places focus on the torn
+    /// pane (as `drain_focus_request` does after `toggle_pane_floating`), then
+    /// the PRIMARY repaints WITHOUT the pane (it left the dock). Pre-R26 the
+    /// union was painted-only, so this repaint dropped focus to `None` (the dead
+    /// undock window). With R26 the declared topology keeps the pane enumerated,
+    /// so focus follows it into its new window with no extra click.
+    #[test]
+    fn focus_on_torn_pane_survives_the_primary_repaint_gap() {
+        let mut sc = ShellCore::<DockFollowFixture>::new();
+        assert!(
+            sc.focus.focus_set(TORN_TAG),
+            "the torn pane is a focusable target before its window paints",
+        );
+
+        // The primary repaints, contributing ONLY its own focusable — the torn
+        // pane has left the dock and its secondary window has not painted yet.
+        sc.refresh_window_focusables(pinion_runtime::DEFAULT_WINDOW, vec![MAIN_TAG.to_owned()]);
+
+        assert_eq!(
+            sc.focus().focused(),
+            Some(TORN_TAG),
+            "focus on the torn pane is NOT dropped — the declared topology keeps it enumerated",
+        );
+    }
+
+    /// Once the torn window first-paints, its harvested contribution supersedes
+    /// the derivation with no double count (first-occurrence dedup).
+    #[test]
+    fn painted_torn_pane_is_not_double_counted() {
+        let mut sc = ShellCore::<DockFollowFixture>::new();
+        sc.refresh_window_focusables(TORN_WINDOW, vec![TORN_TAG.to_owned()]);
+
+        let order = sc.focus().tab_order().to_vec();
+        assert_eq!(
+            order.iter().filter(|t| t.as_str() == TORN_TAG).count(),
+            1,
+            "the torn tag appears once — harvest supersedes derivation, deduped: {order:?}",
         );
     }
 }
