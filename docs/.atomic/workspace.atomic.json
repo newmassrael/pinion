@@ -14512,6 +14512,56 @@
         "carry (paint, R1054~): atlas inter-glyph gutter (fractional/HiDPI bleed); cross-frame GPU texture cache; per-(atlas,colour)->luminance-mask; instanced quad (Vello API absent); per-line vmetrics; wrap cross-font kern; GSUB Type2; GPOS Type5"
       ]
     },
+    "R1071": {
+      "decision_summary": "R1071 §5.39 §5.35 §5.16 PR-27 multi-window key dispatch (sprag dock/undock): a toggle-class shortcut (Ctrl+Shift+Enter) bounced once a second window existed because the shell offered EVERY winit Pressed (OS auto-repeat, plus a stray re-delivery of one press across the undock focus handoff) to the binding with no way to tell them apart, and routed keys globally ignoring which window they arrived at. Fix = two gates + a seam: (1) WidgetCore::apply_key_repeat exposes the platform KeyEvent.repeat flag to the binding (default delegates to apply_key, so 100+ impls byte-unchanged) so a toggle binding swallows auto-repeat; (2) ShellCore tracks the OS-focused window (note_os_focus) and a press acts only on it (is_key_dispatch_window, fail-open) so a stray re-delivery to a now-unfocused window is dropped; (3) ShellCore::key_press_for_window is the per-window key seam (pointer-seam peer) making the double-dispatch headlessly reproducible. a11y/RPC/TUI stay repeat=false; single-window byte-identical.",
+      "changes_bullets": [
+        "WidgetCore::apply_key_repeat default-delegates to apply_key; shell carries KeyEvent.repeat",
+        "CoreShell::apply_key_repeat added; apply_key = repeat=false wrapper (a11y/RPC/TUI paths unchanged)",
+        "ShellCore note_os_focus/is_key_dispatch_window: a key acts only on the OS-focused window (fail-open)",
+        "ShellCore::key_press_for_window per-window key seam; headless multi-window double-dispatch repro",
+        "AppShell KeyboardInput focused-window gate + event.repeat thread; Focused arm note_os_focus"
+      ],
+      "verification_bullets": [
+        "dispatch_core 4 tests: held-once / stray-gated / single-window-unchanged / focus-order-robust",
+        "pinion-core apply_key_repeat default-delegation test (repeat true+false both route to apply_key)",
+        "100+ apply_key impls byte-unchanged via default; a11y/RPC/TUI dispatch stay repeat=false",
+        "workspace test green / clippy --all-targets vello 0 / rustfmt clean / validate T1=0"
+      ],
+      "impact_refs": [
+        "5.39",
+        "5.35",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "RPC scene/key {window,repeat} optional extension deferred (§5.49); GUI seam covers acceptance",
+        "gate (b) assumes winit Focused precedes a stray redelivery; live confirm needs HW (VELLO-002)",
+        "repeat path (a) source-confirmed; sprag overrides apply_key_repeat to drop repeat on ToggleDock"
+      ],
+      "publishable_decision_summary": "R1071 §5.39 §5.35 §5.16 PR-27 multi-window key dispatch (sprag dock/undock): a toggle-class shortcut (Ctrl+Shift+Enter) bounced once a second window existed because the shell offered EVERY winit Pressed (OS auto-repeat, plus a stray re-delivery of one press across the undock focus handoff) to the binding with no way to tell them apart, and routed keys globally ignoring which window they arrived at. Fix = two gates + a seam: (1) WidgetCore::apply_key_repeat exposes the platform KeyEvent.repeat flag to the binding (default delegates to apply_key, so 100+ impls byte-unchanged) so a toggle binding swallows auto-repeat; (2) ShellCore tracks the OS-focused window (note_os_focus) and a press acts only on it (is_key_dispatch_window, fail-open) so a stray re-delivery to a now-unfocused window is dropped; (3) ShellCore::key_press_for_window is the per-window key seam (pointer-seam peer) making the double-dispatch headlessly reproducible. a11y/RPC/TUI stay repeat=false; single-window byte-identical.",
+      "publishable_changes_bullets": [
+        "WidgetCore::apply_key_repeat default-delegates to apply_key; shell carries KeyEvent.repeat",
+        "CoreShell::apply_key_repeat added; apply_key = repeat=false wrapper (a11y/RPC/TUI paths unchanged)",
+        "ShellCore note_os_focus/is_key_dispatch_window: a key acts only on the OS-focused window (fail-open)",
+        "ShellCore::key_press_for_window per-window key seam; headless multi-window double-dispatch repro",
+        "AppShell KeyboardInput focused-window gate + event.repeat thread; Focused arm note_os_focus"
+      ],
+      "publishable_verification_bullets": [
+        "dispatch_core 4 tests: held-once / stray-gated / single-window-unchanged / focus-order-robust",
+        "pinion-core apply_key_repeat default-delegation test (repeat true+false both route to apply_key)",
+        "100+ apply_key impls byte-unchanged via default; a11y/RPC/TUI dispatch stay repeat=false",
+        "workspace test green / clippy --all-targets vello 0 / rustfmt clean / validate T1=0"
+      ],
+      "publishable_impact_refs": [
+        "5.39",
+        "5.35",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "RPC scene/key {window,repeat} optional extension deferred (§5.49); GUI seam covers acceptance",
+        "gate (b) assumes winit Focused precedes a stray redelivery; live confirm needs HW (VELLO-002)",
+        "repeat path (a) source-confirmed; sprag overrides apply_key_repeat to drop repeat on ToggleDock"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
