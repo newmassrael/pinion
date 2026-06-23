@@ -3998,7 +3998,9 @@
         "default-off: only PINION_TEXT_ENGINE truthy (or set_text_engine) routes a leaf through §5.37",
         "caret-bearing exclusion covers paint+measure; caret onto §5.37 (editable) is a later step",
         "live multi-window GUI HW-gated (VELLO-002 GL hang); cached paint->pixels proven via lavapipe",
-        "styled-run/multi-line/decorated still parley (eligibility unchanged); widening is a later step"
+        "styled-run/multi-line/decorated still parley (eligibility unchanged); widening is a later step",
+        "default-on flip TBD: env-gated until box==parley proven across fonts (else silent reflow) (R1072.1)",
+        "set_text_engine cfg(test)-only; production builds at construction (mid-session swap breaks cache)"
       ],
       "alternatives_rejected": [
         {
@@ -14700,6 +14702,64 @@
         "live multi-window GUI of the engine is HW-gated (VELLO-002 GL hang); pixels proven headless via lavapipe only",
         "cross-frame glyph-atlas GPU texture cache (atlas re-built per paint) / instanced glyph-quad batch (Vello API absent)",
         "atlas inter-glyph gutter for fractional/HiDPI bleed (R1066 carry) / per-(atlas,colour) luminance-mask opt"
+      ]
+    },
+    "R1072.1": {
+      "decision_summary": "R1072.1 §5.37.14 adversarial audit-clearance (user \"교과서적/SSOT/북극성?\" request → 3 read-only reviewers [craft/honesty, SSOT/structure, north-star/long-term] + author re-verification of R1072). STRUCTURE SURVIVED: SSOT confirmed single-source (self_hosted_text_eligible is the one predicate both arms consult; !caret_bearing lives only there; text_cache_mut fully repurposed, zero dead code; layering verified by a green non-vello build); all three production measure paths (live + pure mirror + RPC producer) + both paint entries threaded; the caret_bearing marker is correctly placed (not TextRole, not structural detection) and the paint_hash fold is necessary; north-star verdict = honest disclosed transition, principled (not band-aid) caret exclusion. CLEARED the real defects: (HIGH) set_text_engine was a pub mid-session mutator whose own doc invited a \"future brand font\" caller, but it silently defeats the FragmentCache coherence invariant (paint_hash folds caret_bearing, NOT engine on/off) → gated #[cfg(test)] (production builds the engine once at construction, before any cache; a future brand-font need is a construction-time seam); (MED) the \"engine fragment stays valid for replay\" claim was tested only for cache-MISS (every cached test used a bare Scene::Text that never enters the cacheable-Container fast path) → added a Container-wrapped miss-then-hit replay test; (MED) the shell measure test's load-bearing assertion silently depended on host parley-font != NotoSans fixture → added a self-validating assert_ne(on_label, off_label); (MED/NIT) render_window's too_many_lines suppression was a workaround (the sibling allows are on #[ignore]d test fns) → extracted apply_pending_intrinsic_resize (the same discipline publish_ime_for_window / emit_accesskit_for_window already follow), allow removed; (NIT) stale \"plain compute_layout\" comments at the re-pass sites + a byte-identical cache-key precision note. OVER-FLAGS rejected with evidence: the 8-arg to_vello_cached_with_text_engine signature is a pre-existing to_vello_cached pattern R1072 follows (PaintContext bundling = separate cross-cutting carry, not this round); default_construction_builds_no_engine is near-tautological but harmless (documents the 0-regression default). DIRECTIONAL (recorded, not code): name the parity gate that flips PINION_TEXT_ENGINE default-on so wired-but-off cannot ossify (§5.37.14 caveat); make R1073 the caret/hit-test §5.37 unification (dissolving the caret_bearing island) BEFORE easier static-text widenings, since editable text is the surface the self-hosted editor needs.",
+      "changes_bullets": [
+        "HIGH: set_text_engine gated #[cfg(test)] + honest doc — removes the public mid-session mutator that defeats the documented FragmentCache coherence invariant",
+        "MED: new r1072_cached_engine_fragment_replays_on_cache_hit — Container-wrapped §5.37 leaf, miss-then-hit through one FragmentCache, asserts hits/misses + replay reproduces the §5.37 encode",
+        "MED: shell measure test gains assert_ne(on_label_w, off_label_w) — converts the implicit \"parley != NotoSans\" host assumption into a self-validating non-vacuity guard",
+        "MED/NIT: extracted apply_pending_intrinsic_resize from render_window (the established publish_ime/emit_accesskit extraction discipline) — #[allow(too_many_lines)] removed, no suppression",
+        "NIT: stale \"plain compute_layout\" re-pass comments updated to the engine-threaded variant; paint_hash caret_bearing-fold precision note (changes hash not pixels)",
+        "§5.37.14 caveats: default-on flip criterion (env-gated until box==parley proven) + set_text_engine cfg(test) construction-only contract"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 (vello): exit 0, 0 failed (pinion-runtime 444 = 443 + cache-HIT replay; pinion-shell full suite green incl. the render_window extraction path)",
+        "realgpu lavapipe 6/6 (the §5.37 seam tests, incl. self_hosted_cached_arm_reaches_pixels) — production paint walker unchanged in R1072.1",
+        "clippy --workspace --all-targets vello: 0 warn (render_window now under the 100-line ceiling via extraction, no allow); rustfmt clean",
+        "non-vello build green (cargo check -p pinion-runtime --no-default-features per the SSOT reviewer): ungated layout never names the vello engine",
+        "shell wiring test assert_ne passes locally (on_label_w != off_label_w): the non-vacuity guard holds in this environment",
+        "validate T1=0 (entries 1089->1090, sections 72; §5.37.14 caveats appended)"
+      ],
+      "impact_refs": [
+        "5.37.14",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "R1073 directed next step (north-star review): caret/hit-test §5.37 unification — make TextField's caret/selection/hit-test consume a shaper-agnostic Layout so caret_bearing dissolves and editable text routes through §5.37; do this BEFORE styled-run/multi-line widening (editable is the editor-self-host surface)",
+        "default-on flip criterion (state explicitly when chosen): PINION_TEXT_ENGINE flips default-on once §5.37 box==parley box is proven across bundled + top-N system fonts, OR parley is removed from the static-text path — until then env-gated to avoid silent reflow",
+        "to_vello_cached* 8-arg signature -> bundle (text_cache, image_cache, fragment_cache, engine) into a PaintContext struct (pre-existing; a separate cross-cutting refactor touching all call sites)",
+        "cross-frame glyph-atlas GPU texture cache / atlas inter-glyph gutter (fractional/HiDPI bleed, R1066) / instanced glyph-quad batch (Vello API absent)",
+        "live multi-window GUI of the engine HW-gated (VELLO-002 GL hang); pixels proven headless via lavapipe only"
+      ],
+      "publishable_decision_summary": "R1072.1 §5.37.14 adversarial audit-clearance (user \"교과서적/SSOT/북극성?\" request → 3 read-only reviewers [craft/honesty, SSOT/structure, north-star/long-term] + author re-verification of R1072). STRUCTURE SURVIVED: SSOT confirmed single-source (self_hosted_text_eligible is the one predicate both arms consult; !caret_bearing lives only there; text_cache_mut fully repurposed, zero dead code; layering verified by a green non-vello build); all three production measure paths (live + pure mirror + RPC producer) + both paint entries threaded; the caret_bearing marker is correctly placed (not TextRole, not structural detection) and the paint_hash fold is necessary; north-star verdict = honest disclosed transition, principled (not band-aid) caret exclusion. CLEARED the real defects: (HIGH) set_text_engine was a pub mid-session mutator whose own doc invited a \"future brand font\" caller, but it silently defeats the FragmentCache coherence invariant (paint_hash folds caret_bearing, NOT engine on/off) → gated #[cfg(test)] (production builds the engine once at construction, before any cache; a future brand-font need is a construction-time seam); (MED) the \"engine fragment stays valid for replay\" claim was tested only for cache-MISS (every cached test used a bare Scene::Text that never enters the cacheable-Container fast path) → added a Container-wrapped miss-then-hit replay test; (MED) the shell measure test's load-bearing assertion silently depended on host parley-font != NotoSans fixture → added a self-validating assert_ne(on_label, off_label); (MED/NIT) render_window's too_many_lines suppression was a workaround (the sibling allows are on #[ignore]d test fns) → extracted apply_pending_intrinsic_resize (the same discipline publish_ime_for_window / emit_accesskit_for_window already follow), allow removed; (NIT) stale \"plain compute_layout\" comments at the re-pass sites + a byte-identical cache-key precision note. OVER-FLAGS rejected with evidence: the 8-arg to_vello_cached_with_text_engine signature is a pre-existing to_vello_cached pattern R1072 follows (PaintContext bundling = separate cross-cutting carry, not this round); default_construction_builds_no_engine is near-tautological but harmless (documents the 0-regression default). DIRECTIONAL (recorded, not code): name the parity gate that flips PINION_TEXT_ENGINE default-on so wired-but-off cannot ossify (§5.37.14 caveat); make R1073 the caret/hit-test §5.37 unification (dissolving the caret_bearing island) BEFORE easier static-text widenings, since editable text is the surface the self-hosted editor needs.",
+      "publishable_changes_bullets": [
+        "HIGH: set_text_engine gated #[cfg(test)] + honest doc — removes the public mid-session mutator that defeats the documented FragmentCache coherence invariant",
+        "MED: new r1072_cached_engine_fragment_replays_on_cache_hit — Container-wrapped §5.37 leaf, miss-then-hit through one FragmentCache, asserts hits/misses + replay reproduces the §5.37 encode",
+        "MED: shell measure test gains assert_ne(on_label_w, off_label_w) — converts the implicit \"parley != NotoSans\" host assumption into a self-validating non-vacuity guard",
+        "MED/NIT: extracted apply_pending_intrinsic_resize from render_window (the established publish_ime/emit_accesskit extraction discipline) — #[allow(too_many_lines)] removed, no suppression",
+        "NIT: stale \"plain compute_layout\" re-pass comments updated to the engine-threaded variant; paint_hash caret_bearing-fold precision note (changes hash not pixels)",
+        "§5.37.14 caveats: default-on flip criterion (env-gated until box==parley proven) + set_text_engine cfg(test) construction-only contract"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 (vello): exit 0, 0 failed (pinion-runtime 444 = 443 + cache-HIT replay; pinion-shell full suite green incl. the render_window extraction path)",
+        "realgpu lavapipe 6/6 (the §5.37 seam tests, incl. self_hosted_cached_arm_reaches_pixels) — production paint walker unchanged in R1072.1",
+        "clippy --workspace --all-targets vello: 0 warn (render_window now under the 100-line ceiling via extraction, no allow); rustfmt clean",
+        "non-vello build green (cargo check -p pinion-runtime --no-default-features per the SSOT reviewer): ungated layout never names the vello engine",
+        "shell wiring test assert_ne passes locally (on_label_w != off_label_w): the non-vacuity guard holds in this environment",
+        "validate T1=0 (entries 1089->1090, sections 72; §5.37.14 caveats appended)"
+      ],
+      "publishable_impact_refs": [
+        "5.37.14",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R1073 directed next step (north-star review): caret/hit-test §5.37 unification — make TextField's caret/selection/hit-test consume a shaper-agnostic Layout so caret_bearing dissolves and editable text routes through §5.37; do this BEFORE styled-run/multi-line widening (editable is the editor-self-host surface)",
+        "default-on flip criterion (state explicitly when chosen): PINION_TEXT_ENGINE flips default-on once §5.37 box==parley box is proven across bundled + top-N system fonts, OR parley is removed from the static-text path — until then env-gated to avoid silent reflow",
+        "to_vello_cached* 8-arg signature -> bundle (text_cache, image_cache, fragment_cache, engine) into a PaintContext struct (pre-existing; a separate cross-cutting refactor touching all call sites)",
+        "cross-frame glyph-atlas GPU texture cache / atlas inter-glyph gutter (fractional/HiDPI bleed, R1066) / instanced glyph-quad batch (Vello API absent)",
+        "live multi-window GUI of the engine HW-gated (VELLO-002 GL hang); pixels proven headless via lavapipe only"
       ]
     },
     "R232": {
