@@ -895,22 +895,29 @@ pub fn to_peniko(c: Color) -> PenikoColor {
 }
 
 // ---------------------------------------------------------------------------
-// R1063 §5.37 → §5.16 — self-hosted text engine → production-paint seam.
+// R1063 §5.37 → §5.16 — self-hosted text engine → production-paint BRING-UP seam.
 //
 // The §5.37 self-hosted engine (`pinion-text-font`) shapes + rasterises text
-// to a single CPU [`Coverage`] AA mask (`render_paragraph` / `render_lines`),
-// with zero external deps. It had no production pixel consumer — every layer
+// with zero external deps but had no production pixel consumer — every layer
 // was a test forcing-consumer. This is the first wire reaching real pixels:
-// the coverage mask is uploaded as a `peniko::ImageData` and blitted through
-// Vello's existing image-texture path ([`vello::Scene::draw_image`], the same
-// pipeline `Scene::Image` already uses), rather than hand-rolling a wgpu
-// glyph-atlas upload. The §5.37 roadmap names exactly this — "the one CPU
-// coverage mask is what a GPU text path uploads".
+// `render_paragraph` / `render_lines`' composited [`Coverage`] AA mask is
+// uploaded as a `peniko::ImageData` and blitted through Vello's existing
+// image-texture path ([`vello::Scene::draw_image`], the same pipeline
+// `Scene::Image` uses), rather than hand-rolling a wgpu texture upload.
 //
-// This round delivers the *seam* + forcing consumers; rewiring the production
-// `Scene::Text` arm off the §5.36 parley/swash bridge (caret / metrics /
-// selection / fallback parity) is a deliberately separate, later step — a
-// wholesale swap risks regressing Phase-B text editing.
+// IMPORTANT — this is a BRING-UP seam, NOT the production text primitive. It
+// blits the *whole-paragraph composited* mask (one texture per paragraph,
+// re-uploaded each frame it changes). The production GPU-text primitive is the
+// per-glyph [`GlyphAtlas`](pinion_text_font::GlyphAtlas) (§5.37.9), which
+// `render_glyphs` builds and `composite` then flattens away before this seam
+// sees it — a cacheable atlas sampled per glyph-quad is what a 60fps / AAA text
+// path needs. The next wiring round must target the atlas; this whole-paragraph
+// blit must NOT be generalised into the `Scene::Text` arm.
+//
+// So this round delivers a *seam* + forcing consumers only. The §5.37 →
+// production migration is a multi-round campaign — atlas-based paint, then
+// caret / selection / metrics / fallback parity against the §5.36 parley/swash
+// bridge, then multi-font atlas binding — not a single `Scene::Text` rewire.
 // ---------------------------------------------------------------------------
 
 /// R1063 §5.37 → §5.16 — convert a self-hosted [`Coverage`] AA mask into a
@@ -939,13 +946,17 @@ pub fn coverage_to_image_data(coverage: &Coverage, color: Color) -> Option<Image
     };
     let mut rgba = Vec::with_capacity(coverage.alpha.len() * 4);
     for &mask in &coverage.alpha {
-        // Modulate the mask coverage by the brush colour's own alpha. The
-        // product is bounded by 255 (255*255/255), so the cast never truncates.
+        // Modulate the mask coverage by the brush colour's own alpha, rounding
+        // to nearest (`+ 127`) to match the §5.37 pipeline's house convention
+        // for this `a·b / 255` operation — the atlas compositor `shape::over`
+        // and the rasterizer's coverage quantization both round, so flooring
+        // here would bias every antialiased run ≤1 LSB darker than the engine.
+        // The product is bounded by 255·255 + 127 = 65152 < u16::MAX.
         #[allow(
             clippy::cast_possible_truncation,
-            reason = "u16 product / 255 is in 0..=255, fits u8 exactly"
+            reason = "(u16 product + 127) / 255 is in 0..=255, fits u8 exactly"
         )]
-        let out_a = (u16::from(mask) * u16::from(color.a) / 255) as u8;
+        let out_a = ((u16::from(mask) * u16::from(color.a) + 127) / 255) as u8;
         rgba.extend_from_slice(&[color.r, color.g, color.b, out_a]);
     }
     let pixels: Arc<dyn AsRef<[u8]> + Send + Sync> = Arc::new(rgba);
@@ -2050,6 +2061,23 @@ mod tests {
         };
         let img = coverage_to_image_data(&cov, Color::rgba(0, 0, 0, 128)).expect("non-empty");
         assert_eq!(img.data.data(), &[0, 0, 0, 128]);
+    }
+
+    #[test]
+    fn coverage_to_image_data_rounds_alpha_modulation_to_nearest() {
+        // mask 200 x brush-alpha 200 = 40000; 40000/255 = 156.86. Round-to-nearest
+        // is 157 (floor would give 156). Pins the §5.37 house convention
+        // (shape::over / raster quantization both round) so a regression to a
+        // bare floor — a ≤1-LSB darkening of every AA run — fails here.
+        let cov = Coverage {
+            width: 1,
+            height: 1,
+            left: 0,
+            top: 0,
+            alpha: vec![200],
+        };
+        let img = coverage_to_image_data(&cov, Color::rgba(0, 0, 0, 200)).expect("non-empty");
+        assert_eq!(img.data.data(), &[0, 0, 0, 157]);
     }
 
     #[test]

@@ -137,4 +137,28 @@ fn self_hosted_engine_coverage_reaches_pixels_at_placed_footprint() {
     // (3) The MARGIN gutter is black — a far-corner control proving the blit is
     // local to the footprint and did not flood the surface.
     assert!(!is_ink(0, 0), "top-left gutter must stay black (no flood)");
+
+    // (4) Shape fidelity: the glyph's NEGATIVE SPACE survived to the surface.
+    // Assertions (1)-(2) bound where ink lands but do NOT distinguish the glyph
+    // shape from a solid rectangle — a buggy draw_coverage that ignored
+    // coverage.alpha and filled the whole footprint would pass them (its ink
+    // bbox equals the footprint). "Hi" has interstitial background (the gap
+    // between the H and the i, the counters / the space above the i's stem), so
+    // at least one pixel strictly INSIDE the ink bbox must be background. A
+    // solid-rectangle blit has none and fails here — this is what pins that the
+    // engine's per-pixel mask shape, not just its bounding box, reached pixels.
+    let mut interior_background = false;
+    'scan: for y in (min_y + 1)..max_y {
+        for x in (min_x + 1)..max_x {
+            if !is_ink(x, y) {
+                interior_background = true;
+                break 'scan;
+            }
+        }
+    }
+    assert!(
+        interior_background,
+        "no background pixel inside the ink bbox ({min_x},{min_y})-({max_x},{max_y}) — \
+         the mask SHAPE did not reach the surface (a solid-rectangle blit looks like this)"
+    );
 }
