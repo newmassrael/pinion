@@ -25,7 +25,7 @@ write, [[wire-form-read-write-symmetry]]):
     gate (R1073) AI-observable — the OS-focused window the key gate
     admits for, and the window that owns each held key's press.
 
-Verification scope (≥ 30 assertions, exact count = 42):
+Verification scope (≥ 30 assertions, exact count = 50):
 
   (A) boot: all-false modifiers / empty held set / null cursor / the
       key-dispatch axis present (GUI backend) with no press owner.
@@ -40,10 +40,11 @@ Verification scope (≥ 30 assertions, exact count = 42):
   (G) clearing `scene/modifiers` reads back all-false.
   (H) `scene/drag` leaves the cursor at the drag end point.
   (I) the read is side-effect-free (two consecutive reads identical).
-  (J) R1074: the key-dispatch axis is a present object with the two
-      gate legs; an RPC-injected key arms the chord cache but does NOT
-      pin a press owner (the gate is winit-driven, the R1073.1-deferred
-      RPC routing not yet wired) — a READ-provable boundary.
+  (J) R1074/R1075: the key-dispatch axis is a present object with the
+      two gate legs; an RPC-injected key now routes through the SAME
+      admit_key_press gate as the live winit arm (R1075) — a down edge
+      PINS the press owner (read back as {key: window}) and a keyup
+      clears it, so the RPC/GUI key paths share one gate.
   (K) the key-dispatch axis is part of the side-effect-free read.
 """
 
@@ -156,18 +157,24 @@ def body() -> None:
         assert (kd["os_focused_window"] is None
                 or isinstance(kd["os_focused_window"], str)), \
             "os_focused_window is a window id or null (no window focused)"
-        # The press-owner gate is driven by the live winit KeyboardInput
-        # arm, NOT by RPC scene/key (the R1073.1-deferred unification), so
-        # an RPC-injected key arms the chord cache (held_keys) WITHOUT
-        # pinning a press owner — a genuine, READ-provable boundary.
+        assert_eq(kd["key_press_owners"], {},
+                  "owners cleared by the section-F release")
+        # R1075: the RPC scene/key path now routes through the SAME
+        # admit_key_press gate as the live winit arm, so a down edge PINS
+        # the press owner (observable here) and a keyup clears it — the
+        # RPC/GUI key paths share one gate (no RPC bypass). The key drains
+        # on the default window scope ("main"), which owns the press.
         tf.key(at=(10.0, 12.0), name="Space", state="down")
         rj = read(tf)
         assert_eq(rj["held_keys"], ["Space"],
                   "RPC key arms the chord cache")
-        assert_eq(rj["key_dispatch"]["key_press_owners"], {},
-                  "RPC scene/key does not pin a press owner (winit-driven gate)")
-        tf.key(name="Space", state="up")  # restore the cleared chord state
-        assert_eq(read(tf)["held_keys"], [], "chord cleared after restore")
+        assert_eq(rj["key_dispatch"]["key_press_owners"], {"Space": "main"},
+                  "RPC down pins the press owner via the unified gate (R1075)")
+        tf.key(name="Space", state="up")  # release: clears chord AND owner
+        ru = read(tf)
+        assert_eq(ru["held_keys"], [], "chord cleared after release")
+        assert_eq(ru["key_dispatch"]["key_press_owners"], {},
+                  "keyup clears the press owner (note_key_release)")
 
         # ── (K) the key-dispatch axis is side-effect-free too ───────
         rk = read(tf)
@@ -175,9 +182,9 @@ def body() -> None:
                   "the key-dispatch axis is stable across reads")
 
         # Exact assertion count: A 10 + B 4 + C 1 + D 3 + E 1 + F 3 +
-        # G 4 + H 1 + I 1 + J 6 + K 1 = 35 assert/assert_eq calls
+        # G 4 + H 1 + I 1 + J 9 + K 1 = 38 assert/assert_eq calls
         # (A's modifier loop = 4 of the 10) + 12 read() non-None
-        # asserts = 47 checks; ≥ 30 obligation met.
+        # asserts = 50 checks; ≥ 30 obligation met.
 
 
 if __name__ == "__main__":

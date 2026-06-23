@@ -4843,4 +4843,45 @@ mod multi_window_key_dispatch_gate {
             "a keyup does not change OS focus",
         );
     }
+
+    #[test]
+    fn rpc_scene_key_routes_through_the_unified_gate() {
+        // R1075. The RPC `scene/key` drain now shares `admit_key_press` with the
+        // live winit arm — no RPC bypass. A `Down` edge pins the press owner
+        // (observable through the R1074 introspection), a keyup clears it, and a
+        // key drained on a window that does NOT hold OS focus is gated out.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+        let mut core = ShellCore::<TestView>::new();
+        let mut no_resize = |_: u32, _: u32| {};
+        let main = pinion_runtime::DEFAULT_WINDOW; // "main" — always a known window
+
+        // (1) main holds OS focus → the RPC key (default scope = main) is
+        // admitted and pins the press owner.
+        core.note_os_focus(main, true);
+        let down = r#"{"jsonrpc":"2.0","method":"scene/key","params":{"at":{"x":5.0,"y":5.0},"key":"Enter","state":"down"},"id":1}"#;
+        let _ = core.dispatch_rpc(down, &mut no_resize);
+        assert_eq!(
+            core.key_dispatch_focus().key_press_owners,
+            vec![("Enter".to_owned(), main.to_owned())],
+            "RPC down pins the press owner through the same admit_key_press gate",
+        );
+
+        // (2) keyup clears the owner (note_key_release on the release edge).
+        let up = r#"{"jsonrpc":"2.0","method":"scene/key","params":{"key":"Enter","state":"up"},"id":2}"#;
+        let _ = core.dispatch_rpc(up, &mut no_resize);
+        assert!(
+            core.key_dispatch_focus().key_press_owners.is_empty(),
+            "RPC keyup clears the press owner",
+        );
+
+        // (3) another window now holds OS focus → an RPC key drained on main is
+        // gated out: the single gate, no RPC bypass, so no owner is pinned.
+        core.note_os_focus("side", true);
+        let _ = core.dispatch_rpc(down, &mut no_resize);
+        assert!(
+            core.key_dispatch_focus().key_press_owners.is_empty(),
+            "an RPC key to a non-focused window is gated out (no owner pinned)",
+        );
+    }
 }

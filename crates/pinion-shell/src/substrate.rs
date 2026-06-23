@@ -2489,6 +2489,12 @@ impl<V: WidgetView> ShellCore<V> {
     /// and RPC chords cannot diverge. `character` picks the dispatch
     /// half: `handle_character_key` (the R666 single-codepoint
     /// `V::keybinding` arc) vs `handle_named_key`.
+    ///
+    /// R1075 §5.39 §5.16 §5.49 — the dispatching edge is gated by the SAME
+    /// [`Self::admit_key_press`] the live winit arm uses, so this is no longer
+    /// a gate bypass: an RPC key acts only on the OS-focused, press-owning
+    /// window, and a `Down` edge makes the press owner observable through
+    /// `scene/input_state` (the R1074 introspection, now live for RPC keys).
     fn drain_key_for_window(
         &mut self,
         window_id: &str,
@@ -2508,6 +2514,29 @@ impl<V: WidgetView> ShellCore<V> {
             self.note_key_state(key, held);
         }
         if !state.dispatches() {
+            // R1075 §5.39 §5.49 — the release edge ends the physical press:
+            // drop the press owner so the next press re-decides against live
+            // OS focus, unifying with the winit arm's `note_key_release`
+            // (only `Up` is non-dispatching, so this is the keyup edge).
+            self.note_key_release(key);
+            return;
+        }
+        // R1075 §5.39 §5.16 §5.49 — route the dispatching edge through the SAME
+        // gate as the live winit `KeyboardInput` arm (`AppShell::handle_keyboard_input`),
+        // so the RPC `scene/key` path is no longer a gate bypass: a key only
+        // acts on the window that owns its press AND holds OS focus. A `Down`
+        // edge pins the press owner at its rising edge ([`Self::admit_key_press`],
+        // cleared by the matching keyup above); the legacy atomic `Press` has no
+        // keyup, so it gates without pinning ([`Self::is_key_dispatch_window`])
+        // to avoid stranding an owner. With no OS-focus event (the headless /
+        // single-window default) the gate fails OPEN, so this is byte-identical
+        // to the pre-R1075 ungated dispatch there.
+        let admit = if state.held_edge() == Some(true) {
+            self.admit_key_press(window_id, key)
+        } else {
+            self.is_key_dispatch_window(window_id)
+        };
+        if !admit {
             return;
         }
         self.cursor_moved_for_window(window_id, PointerId::MOUSE, at.0, at.1);
