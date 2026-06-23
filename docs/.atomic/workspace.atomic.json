@@ -14976,6 +14976,54 @@
         "atomic legacy Press gates without pinning (no keyup to clear an owner)"
       ]
     },
+    "R1075.1": {
+      "decision_summary": "R1075.1 §5.39 §5.16 §5.49 audit-clearance: 3-reviewer adversarial review confirmed code correctness clean; retract phantom chord/gate vocab carry + tighten 2 doc summaries + fix r885 self-count",
+      "changes_bullets": [
+        "retract phantom 'Escape/Tab vocab divergence' carry: HeldKeys::note tracks Space only, RPC gates raw string -> converges",
+        "tighten drain_key_for_window doc: Down=focus+ownership pin, atomic Press=focus-only (no strand)",
+        "tighten 'byte-identical' to dispatch-identical + new owner-record side effect (observable only via R1074 field)",
+        "fix r885 self-reported count: 13 read() sites not 12 (50 -> 51 checks)"
+      ],
+      "verification_bullets": [
+        "3 read-only adversarial reviewers (craft/SSOT/north-star) + author re-verify; code = no must-fix defect, structure SSOT-clean",
+        "HeldKeys::note (input.rs:149) confirmed Space-only -> the carried 'vocab divergence' is unobservable (phantom), retracted",
+        "clippy -p pinion-shell --all-targets vello 0; rustfmt clean; r885 demo PASS (51 checks); doc-only, binary unchanged",
+        "deferred (conscious): param-struct at 4th backend axis (YAGNI, 2 axes ok); SEED banner slim trim (gitignored, dedicated pass)"
+      ],
+      "impact_refs": [
+        "5.39",
+        "5.16",
+        "5.49"
+      ],
+      "carry_forward_bullets": [
+        "key-routing line (R1071-R1075) COMPLETE; do not widen further; pivot to R1076 caret/§5.37 (north-star directive)",
+        "winit named_key_str pre-filter is the redundant copy vs HeldKeys::note internal filter (a HeldKeys-growth round)",
+        "param-struct threshold at the 4th backend-supplied input axis (positional Option tail transposition risk)"
+      ],
+      "publishable_decision_summary": "R1075.1 §5.39 §5.16 §5.49 audit-clearance: 3-reviewer adversarial review confirmed code correctness clean; retract phantom chord/gate vocab carry + tighten 2 doc summaries + fix r885 self-count",
+      "publishable_changes_bullets": [
+        "retract phantom 'Escape/Tab vocab divergence' carry: HeldKeys::note tracks Space only, RPC gates raw string -> converges",
+        "tighten drain_key_for_window doc: Down=focus+ownership pin, atomic Press=focus-only (no strand)",
+        "tighten 'byte-identical' to dispatch-identical + new owner-record side effect (observable only via R1074 field)",
+        "fix r885 self-reported count: 13 read() sites not 12 (50 -> 51 checks)"
+      ],
+      "publishable_verification_bullets": [
+        "3 read-only adversarial reviewers (craft/SSOT/north-star) + author re-verify; code = no must-fix defect, structure SSOT-clean",
+        "HeldKeys::note (input.rs:149) confirmed Space-only -> the carried 'vocab divergence' is unobservable (phantom), retracted",
+        "clippy -p pinion-shell --all-targets vello 0; rustfmt clean; r885 demo PASS (51 checks); doc-only, binary unchanged",
+        "deferred (conscious): param-struct at 4th backend axis (YAGNI, 2 axes ok); SEED banner slim trim (gitignored, dedicated pass)"
+      ],
+      "publishable_impact_refs": [
+        "5.39",
+        "5.16",
+        "5.49"
+      ],
+      "publishable_carry_forward_bullets": [
+        "key-routing line (R1071-R1075) COMPLETE; do not widen further; pivot to R1076 caret/§5.37 (north-star directive)",
+        "winit named_key_str pre-filter is the redundant copy vs HeldKeys::note internal filter (a HeldKeys-growth round)",
+        "param-struct threshold at the 4th backend-supplied input axis (positional Option tail transposition risk)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
