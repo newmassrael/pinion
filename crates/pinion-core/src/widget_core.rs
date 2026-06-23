@@ -341,6 +341,43 @@ pub trait WidgetCore: 'static {
         false
     }
 
+    /// R1071 PR-27 §5.39 §5.35 — repeat-aware key entry point. The shell
+    /// dispatches every keyboard press through this hook, carrying the
+    /// platform `KeyEvent.repeat` flag (winit `KeyEvent::repeat`,
+    /// crossterm `KeyEventKind::Repeat`): `false` for the leading press,
+    /// `true` for every OS auto-repeat re-send of a held key.
+    ///
+    /// The default delegates to [`Self::apply_key`] **ignoring** the flag —
+    /// the repeat-agnostic behaviour every existing binding already has, so
+    /// the 100+ `apply_key` impls stay byte-unchanged and a held arrow key
+    /// keeps scrolling / a held character keeps inserting. Override this
+    /// (instead of, or in addition to, `apply_key`) only when a key's
+    /// effect must NOT auto-repeat — a *toggle-class* shortcut. The
+    /// motivating consumer is sprag's dock/undock `Ctrl+Shift+Enter`: a
+    /// single physical press must toggle exactly once, so its binding
+    /// returns `false` (defer / no-op) for `repeat == true` while still
+    /// letting plain text / nav keys repeat. Auto-repeat re-dispatch of a
+    /// toggle is what bounced a re-docked pane straight back out (the
+    /// pre-R1071 shell offered every `Pressed`, repeat or not, to the
+    /// binding with no way to tell them apart).
+    ///
+    /// `scene` / `focused` / `modifiers` carry the same authoritative
+    /// surfaces as [`Self::apply_key`] — see that hook's contract. The
+    /// shell's a11y activation path (Click → `apply_key("Enter")`) and the
+    /// §5.49 RPC `scene/key` injection both dispatch with `repeat == false`
+    /// (a synthesised activation is never an auto-repeat).
+    #[must_use]
+    fn apply_key_repeat(
+        scene: &mut Scene,
+        focused: Option<&str>,
+        key: &str,
+        modifiers: crate::input::Modifiers,
+        repeat: bool,
+    ) -> bool {
+        let _ = repeat;
+        Self::apply_key(scene, focused, key, modifiers)
+    }
+
     /// R772.1 §5.38 — the canonical [`Self::apply_key`] body for a binding
     /// whose model is a single root [`Scene::External`] carrying its whole
     /// keyboard model on the `"key"` invoke wire — the command-menu family
@@ -1102,5 +1139,77 @@ mod r51_166_tests {
         // Intent is still usable after both calls — confirms borrow,
         // not move.
         assert_eq!(intent.tag_str(), "echo_reducer.shared");
+    }
+}
+
+#[cfg(test)]
+mod r1071_apply_key_repeat_tests {
+    //! R1071 PR-27 §5.39 §5.35 — the default [`WidgetCore::apply_key_repeat`]
+    //! contract: it forwards to [`WidgetCore::apply_key`] for BOTH repeat
+    //! values, so the 100+ bindings that only override `apply_key` are
+    //! repeat-agnostic (a held key keeps acting) with zero per-impl change.
+    use super::WidgetCore;
+    use crate::Frame;
+    use crate::external::External;
+    use crate::input::Modifiers;
+    use crate::scene::{ContainerNode, Scene};
+
+    /// Minimal fixture: `apply_key` returns `true` only for `"Enter"`, so a
+    /// test can prove the repeat variant routes through it verbatim.
+    struct EnterFixture;
+
+    impl WidgetCore for EnterFixture {
+        type State = ();
+        type Event = ();
+
+        fn create_external() -> Box<dyn External> {
+            unreachable!("repeat-delegation test does not paint")
+        }
+        fn tag() -> &'static str {
+            "enter_fixture"
+        }
+        fn read_state(_: &Scene) -> Self::State {}
+        fn view((): Self::State, _: &Frame) -> Scene {
+            unreachable!("repeat-delegation test does not paint")
+        }
+        fn event_name((): Self::Event) -> &'static str {
+            "__internal__"
+        }
+        fn title() -> &'static str {
+            "EnterFixture"
+        }
+        fn apply_key(_: &mut Scene, _: Option<&str>, key: &str, _: Modifiers) -> bool {
+            key == "Enter"
+        }
+    }
+
+    #[test]
+    fn default_repeat_delegates_to_apply_key_for_both_flags() {
+        let mut scene = Scene::Container(ContainerNode::new(Vec::new()));
+        // repeat == false (the leading press) and repeat == true (an OS
+        // auto-repeat re-send) must yield the SAME verdict as apply_key —
+        // the default impl ignores the flag entirely.
+        for repeat in [false, true] {
+            assert!(
+                <EnterFixture as WidgetCore>::apply_key_repeat(
+                    &mut scene,
+                    Some("enter_fixture"),
+                    "Enter",
+                    Modifiers::empty(),
+                    repeat,
+                ),
+                "Enter delegates to apply_key regardless of repeat={repeat}",
+            );
+            assert!(
+                !<EnterFixture as WidgetCore>::apply_key_repeat(
+                    &mut scene,
+                    Some("enter_fixture"),
+                    "Space",
+                    Modifiers::empty(),
+                    repeat,
+                ),
+                "unhandled key stays unhandled regardless of repeat={repeat}",
+            );
+        }
     }
 }

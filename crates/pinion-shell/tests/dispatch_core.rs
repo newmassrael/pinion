@@ -138,6 +138,12 @@ impl ExternalIntrospect for TestExternal {
 static TEST_LOCK: Mutex<()> = Mutex::new(());
 static APPLY_KEY_LOG: Mutex<Vec<(Option<String>, String)>> = Mutex::new(Vec::new());
 static APPLY_KEY_RETURNS: AtomicBool = AtomicBool::new(false);
+// R1071 PR-27 §5.39 §5.35 — when set, `TestView::apply_key_repeat` mimics a
+// toggle-class binding (sprag dock/undock `Ctrl+Shift+Enter`): it swallows OS
+// auto-repeat (`repeat == true`) WITHOUT touching `apply_key`, so a held key
+// toggles once. Default `false` → the override is transparent (delegates to
+// `apply_key` for every flag), keeping the unrelated dispatch tests unchanged.
+static APPLY_KEY_DROP_REPEAT: AtomicBool = AtomicBool::new(false);
 static CHILD_INVOKE_LOG: Mutex<Vec<(String, AccessAction)>> = Mutex::new(Vec::new());
 static CHILD_INVOKE_RETURNS: AtomicBool = AtomicBool::new(false);
 // R51.78 §5.37 — keybinding lookup mock. `true` makes
@@ -233,6 +239,7 @@ static OBSERVED_OWNER_ID_APPLY_MIDDLE_CLICK: Mutex<Option<u64>> = Mutex::new(Non
 fn reset_mocks() {
     APPLY_KEY_LOG.lock().unwrap().clear();
     APPLY_KEY_RETURNS.store(false, Ordering::SeqCst);
+    APPLY_KEY_DROP_REPEAT.store(false, Ordering::SeqCst);
     CHILD_INVOKE_LOG.lock().unwrap().clear();
     CHILD_INVOKE_RETURNS.store(false, Ordering::SeqCst);
     KEYBINDING_RETURNS_SOME.store(false, Ordering::SeqCst);
@@ -335,6 +342,24 @@ impl WidgetCore for TestView {
         *OBSERVED_OWNER_ID_APPLY_KEY.lock().unwrap() =
             pinion_core::Owner::current().map(|o| o.id());
         APPLY_KEY_RETURNS.load(Ordering::SeqCst)
+    }
+
+    fn apply_key_repeat(
+        scene: &mut Scene,
+        focused: Option<&str>,
+        key: &str,
+        modifiers: pinion_core::Modifiers,
+        repeat: bool,
+    ) -> bool {
+        // R1071 PR-27 §5.39 §5.35 — a toggle-class binding swallows OS
+        // auto-repeat so a held shortcut toggles once. Flag off → identical
+        // to the trait default body (delegate to `apply_key`), so the
+        // dispatch tests that route through `apply_key_repeat` with
+        // `repeat == false` observe the unchanged `APPLY_KEY_LOG` behaviour.
+        if repeat && APPLY_KEY_DROP_REPEAT.load(Ordering::SeqCst) {
+            return false;
+        }
+        Self::apply_key(scene, focused, key, modifiers)
     }
 
     fn apply_composition(
@@ -4497,5 +4522,158 @@ mod r684_headless_rpc_floating_window_finalize {
             !core.has_last_paint_scene_for_window("any_unknown_window_id"),
             "no router slot materialises for a rejected window id",
         );
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// R1071 PR-27 §5.39 §5.16 §5.35 — multi-window key dispatch: the toggle
+// double-dispatch fix (auto-repeat suppression + focused-window gate) and
+// its per-window injection seam (`key_press_for_window`). These reproduce —
+// headlessly, with no winit EventLoop / wgpu device / external key injector —
+// the sprag dock/undock bounce: a toggle-class shortcut firing twice for one
+// physical press once a second (undock) window exists.
+// ─────────────────────────────────────────────────────────────────────
+
+mod r1071_multi_window_key_dispatch {
+    use std::sync::atomic::Ordering;
+
+    use super::{
+        APPLY_KEY_DROP_REPEAT, APPLY_KEY_LOG, APPLY_KEY_RETURNS, ShellCore, TEST_LOCK, TestView,
+        reset_mocks,
+    };
+
+    /// How many times the (handled) toggle binding actually toggled — one
+    /// `apply_key` log entry per real dispatch (a repeat the binding swallows
+    /// adds none).
+    fn toggle_count() -> usize {
+        APPLY_KEY_LOG.lock().unwrap().len()
+    }
+
+    #[test]
+    fn held_toggle_fires_once_auto_repeat_suppressed() {
+        // (a) auto-repeat path. A toggle binding swallows `repeat == true`, so
+        // a held `Ctrl+Shift+Enter` (leading press + N OS auto-repeats)
+        // toggles exactly once — the pre-R1071 shell offered every `Pressed`
+        // (repeat or not) to the binding with no way to tell them apart, so a
+        // held key bounced the pane.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+        APPLY_KEY_RETURNS.store(true, Ordering::SeqCst); // binding consumes the toggle
+        APPLY_KEY_DROP_REPEAT.store(true, Ordering::SeqCst); // toggle-class: drop repeat
+
+        let mut core = ShellCore::<TestView>::new();
+        // Pane window holds OS focus (post-undock); the gate admits it.
+        core.note_os_focus("pane-0", true);
+
+        // Leading press: repeat == false → toggles.
+        assert!(core.key_press_for_window("pane-0", "Enter", false));
+        // Three OS auto-repeats while the key stays held: repeat == true →
+        // admitted by the gate but swallowed by the binding.
+        for _ in 0..3 {
+            assert!(
+                core.key_press_for_window("pane-0", "Enter", true),
+                "the gate still admits the press; the binding drops the repeat",
+            );
+        }
+
+        assert_eq!(
+            toggle_count(),
+            1,
+            "one physical press = one toggle despite three auto-repeats",
+        );
+    }
+
+    #[test]
+    fn stray_press_to_unfocused_window_is_gated_out() {
+        // (b) focus-handoff path. The undock moved OS focus to the torn pane;
+        // a stray re-delivery of the SAME press (repeat == false) to the
+        // now-unfocused source window must NOT toggle a second time.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+        APPLY_KEY_RETURNS.store(true, Ordering::SeqCst);
+
+        let mut core = ShellCore::<TestView>::new();
+        // The pane window is focused; its press is admitted and toggles.
+        core.note_os_focus("pane-0", true);
+        assert!(core.key_press_for_window("pane-0", "Enter", false));
+        assert_eq!(toggle_count(), 1, "the focused window's press toggles");
+
+        // The toggle re-docked the pane: OS focus returns to the main window.
+        core.note_os_focus("pane-0", false);
+        core.note_os_focus(pinion_runtime::DEFAULT_WINDOW, true);
+
+        // A stray duplicate of the same press lands on the now-unfocused
+        // pane window — gated out, no second toggle.
+        assert!(
+            !core.key_press_for_window("pane-0", "Enter", false),
+            "a press to a non-focused window is gated out",
+        );
+        assert_eq!(
+            toggle_count(),
+            1,
+            "the gated stray press does not toggle again",
+        );
+    }
+
+    #[test]
+    fn single_window_dispatch_is_byte_unchanged() {
+        // R27.3 contract. The single-window path is unaffected: before any
+        // focus event the gate fails OPEN, and once the lone window is focused
+        // its presses dispatch — both verdicts are "admit", so a held key
+        // still repeats for an ordinary (non-toggle) binding.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+        APPLY_KEY_RETURNS.store(true, Ordering::SeqCst);
+        // No DROP_REPEAT flag → ordinary repeat-agnostic binding.
+
+        let mut core = ShellCore::<TestView>::new();
+
+        // Pre-focus-event: os_focused_window is None → fail open.
+        assert!(
+            core.is_key_dispatch_window(pinion_runtime::DEFAULT_WINDOW),
+            "unknown OS focus fails open (single-window startup)",
+        );
+        assert!(core.key_press_for_window(pinion_runtime::DEFAULT_WINDOW, "Enter", false));
+
+        // After the lone window is focused, its presses still dispatch, and a
+        // held key (repeat == true) still reaches a non-suppressing binding.
+        core.note_os_focus(pinion_runtime::DEFAULT_WINDOW, true);
+        assert!(core.key_press_for_window(pinion_runtime::DEFAULT_WINDOW, "Enter", false));
+        assert!(core.key_press_for_window(pinion_runtime::DEFAULT_WINDOW, "Enter", true));
+
+        assert_eq!(
+            toggle_count(),
+            3,
+            "every press dispatches for a single-window repeat-agnostic binding",
+        );
+    }
+
+    #[test]
+    fn note_os_focus_survives_either_event_ordering() {
+        // The gate's OS-focus tracking is robust to winit's two focus-event
+        // orderings on a window handoff: a late blur(old) must not clobber a
+        // focus(new) that already landed.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+
+        let mut core = ShellCore::<TestView>::new();
+
+        // Ordering 1: focus(new) BEFORE blur(old).
+        core.note_os_focus("pane-0", true);
+        core.note_os_focus(pinion_runtime::DEFAULT_WINDOW, false); // stale blur of a non-focused id
+        assert!(
+            core.is_key_dispatch_window("pane-0"),
+            "a stale blur of a different window does not clear the live focus",
+        );
+
+        // Ordering 2: blur(old) BEFORE focus(new).
+        core.note_os_focus("pane-0", false); // the focused window blurs → cleared
+        assert!(
+            core.is_key_dispatch_window("anything"),
+            "after the focused window blurs with no successor, the gate fails open",
+        );
+        core.note_os_focus(pinion_runtime::DEFAULT_WINDOW, true);
+        assert!(core.is_key_dispatch_window(pinion_runtime::DEFAULT_WINDOW));
+        assert!(!core.is_key_dispatch_window("pane-0"));
     }
 }

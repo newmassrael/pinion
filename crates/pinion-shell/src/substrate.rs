@@ -456,6 +456,27 @@ pub struct ShellCore<V: WidgetView> {
     /// so a stray cross-window or multi-pointer move cannot extend the
     /// wrong field's selection.
     text_select_drag: Option<TextSelectDrag>,
+
+    /// R1071 PR-27 §5.39 §5.16 §5.35 — the window that currently holds the
+    /// OS keyboard focus, tracked from winit `WindowEvent::Focused`
+    /// ([`Self::note_os_focus`]). `None` until the first focus event (single-
+    /// window startup) and whenever the focused window blurs without a new
+    /// window taking focus.
+    ///
+    /// The keyboard dispatch gate ([`Self::is_key_dispatch_window`]) consults
+    /// it so a key press is acted on ONLY when it arrives at the OS-focused
+    /// window — the fix for the multi-window toggle double-dispatch (sprag
+    /// dock/undock): during an undock the newly-torn window grabs OS focus,
+    /// and a stray re-delivery of the same press to the now-unfocused source
+    /// window is dropped instead of toggling a second time. Single-window
+    /// bindings always pass the gate (the one window is the focused one, and
+    /// the pre-focus-event `None` fails OPEN), so this is byte-identical to
+    /// the pre-R1071 global dispatch for them.
+    ///
+    /// Out-of-band shell state, like the [`Self::modifiers`] cache and the
+    /// held-key chord cache — it mirrors a winit/OS fact the key event itself
+    /// does not carry, never scene data (§2 #7 unaffected).
+    os_focused_window: Option<String>,
 }
 
 /// R763 §5.36 §5.22 — shell-owned state of an active pointer text
@@ -586,6 +607,7 @@ impl<V: WidgetView> ShellCore<V> {
             render_fidelity_per_window: HashMap::new(),
             focusable_tags_per_window: HashMap::new(),
             text_select_drag: None,
+            os_focused_window: None,
         };
         // (R1020 §5.39) Seed the focus enumeration from the binding's first
         // view — the scene-derived source the per-frame paint refresh uses —
@@ -1361,8 +1383,21 @@ impl<V: WidgetView> ShellCore<V> {
     /// are swallowed quietly (same shape as an unmatched
     /// [`WidgetView::keybinding`]).
     pub fn apply_key(&mut self, key: &str) {
+        self.apply_key_inner(key, false);
+    }
+
+    /// R1071 PR-27 §5.39 §5.35 — body of [`Self::apply_key`] carrying the
+    /// platform auto-repeat flag through to [`CoreShell::apply_key_repeat`]
+    /// (and thence the binding's [`WidgetCore::apply_key_repeat`]). The
+    /// public `apply_key` is the `repeat == false` wrapper; the GUI keyboard
+    /// path ([`Self::handle_character_key_inner`]) and the per-window seam
+    /// ([`Self::key_press_for_window`]) pass the real flag.
+    pub(crate) fn apply_key_inner(&mut self, key: &str, repeat: bool) {
         let focused = self.focus.focused().map(str::to_owned);
-        if let Some(tail) = self.core.apply_key(focused.as_deref(), key, self.modifiers) {
+        if let Some(tail) =
+            self.core
+                .apply_key_repeat(focused.as_deref(), key, self.modifiers, repeat)
+        {
             self.revision.bump();
             self.handle_tail(&tail);
         }
@@ -1558,10 +1593,21 @@ impl<V: WidgetView> ShellCore<V> {
     /// dispatch). Matches the pre-R51.78 inline behaviour in
     /// `AppShell::handle_key_press` byte-for-byte.
     pub fn handle_character_key(&mut self, c: &str) {
+        self.handle_character_key_inner(c, false);
+    }
+
+    /// R1071 PR-27 §5.39 §5.35 — body of [`Self::handle_character_key`]
+    /// carrying the platform auto-repeat flag. The typed-event
+    /// ([`Self::forward`]) branch is repeat-agnostic (a `keybinding`-mapped
+    /// character has no auto-repeat distinction); the raw-key branch threads
+    /// `repeat` to [`Self::apply_key_inner`] so a binding that overrides
+    /// [`WidgetCore::apply_key_repeat`] sees it. The public method is the
+    /// `repeat == false` wrapper.
+    pub(crate) fn handle_character_key_inner(&mut self, c: &str, repeat: bool) {
         if let Some(ev) = V::keybinding(c) {
             self.forward(ev);
         } else {
-            self.apply_key(c);
+            self.apply_key_inner(c, repeat);
         }
     }
 
@@ -1582,6 +1628,17 @@ impl<V: WidgetView> ShellCore<V> {
     /// dialog binding's `apply_key` can map Escape → cancel instead of
     /// terminating the app.
     pub fn handle_named_key(&mut self, key_str: &str) {
+        self.handle_named_key_inner(key_str, false);
+    }
+
+    /// R1071 PR-27 §5.39 §5.35 — body of [`Self::handle_named_key`] carrying
+    /// the platform auto-repeat flag through to the widget arc
+    /// ([`Self::try_apply_key_inner`] → [`WidgetCore::apply_key_repeat`]).
+    /// The scroll-routing fallback is deliberately repeat-agnostic: a held
+    /// arrow / `PageDown` over a scroll container SHOULD keep scrolling, so
+    /// the flag only reaches the widget that may want to suppress it. The
+    /// public method is the `repeat == false` wrapper.
+    pub(crate) fn handle_named_key_inner(&mut self, key_str: &str, repeat: bool) {
         // R51.187 §5.45 R55.C.3 — give `V::apply_key` the first
         // chance on the key (widget-bound shortcut: Slider's
         // arrows, Toggle's Space, Button's Enter, etc.). If the
@@ -1590,7 +1647,7 @@ impl<V: WidgetView> ShellCore<V> {
         // over a scroll container still scrolls. The two arcs are
         // mutually exclusive — a widget that consumes the key
         // never lets the scroll arc fire.
-        if !self.try_apply_key(key_str) {
+        if !self.try_apply_key_inner(key_str, repeat) {
             self.scroll_key(PointerId::MOUSE, key_str);
         }
     }
@@ -1607,10 +1664,21 @@ impl<V: WidgetView> ShellCore<V> {
     /// fallthrough that an unhandled arrow / page key wants but an
     /// unhandled `Escape` does not.
     pub fn try_apply_key(&mut self, key_str: &str) -> bool {
+        self.try_apply_key_inner(key_str, false)
+    }
+
+    /// R1071 PR-27 §5.39 §5.35 — body of [`Self::try_apply_key`] carrying the
+    /// platform auto-repeat flag through to [`CoreShell::apply_key_repeat`]
+    /// (and the binding's [`WidgetCore::apply_key_repeat`]). The public
+    /// method is the `repeat == false` wrapper; the GUI named-key path
+    /// ([`Self::handle_named_key_inner`]), the Escape / Tab offer-first arcs,
+    /// and the per-window seam ([`Self::key_press_for_window`]) pass the real
+    /// flag.
+    pub(crate) fn try_apply_key_inner(&mut self, key_str: &str, repeat: bool) -> bool {
         let focused = self.focus.focused().map(str::to_owned);
-        if let Some(tail) = self
-            .core
-            .apply_key(focused.as_deref(), key_str, self.modifiers)
+        if let Some(tail) =
+            self.core
+                .apply_key_repeat(focused.as_deref(), key_str, self.modifiers, repeat)
         {
             self.revision.bump();
             // R705.1 — `handle_tail` arms `redraw_requested` whenever the
@@ -2421,6 +2489,75 @@ impl<V: WidgetView> ShellCore<V> {
     pub fn window_blurred(&mut self) {
         self.focus.save();
         self.core.clear_held_keys();
+    }
+
+    /// R1071 PR-27 §5.39 §5.16 §5.35 — record a winit `WindowEvent::Focused`
+    /// edge for `window_id`, maintaining the [`Self::os_focused_window`] the
+    /// keyboard gate reads. Called from `AppShell`'s `Focused` arm (which
+    /// carries the canonical [`WindowSpec::id`](crate::WindowSpec)) alongside
+    /// the existing [`Self::window_focused`] / [`Self::window_blurred`] focus
+    /// save/restore — separate concerns: that pair owns the `FocusManager`
+    /// snapshot, this owns the OS-focus identity for keyboard routing.
+    ///
+    /// Robust to either winit focus-event ordering (`blur(old)` before
+    /// `focus(new)` or vice-versa): a `focus` always wins, and a `blur` only
+    /// clears when it is the currently-focused window that blurred, so a
+    /// `focus(new)` that already landed is never clobbered by a late
+    /// `blur(old)`.
+    pub fn note_os_focus(&mut self, window_id: &str, focused: bool) {
+        if focused {
+            self.os_focused_window = Some(window_id.to_owned());
+        } else if self.os_focused_window.as_deref() == Some(window_id) {
+            self.os_focused_window = None;
+        }
+    }
+
+    /// R1071 PR-27 §5.39 §5.16 §5.35 — whether a key press arriving at
+    /// `window_id` should be dispatched. `true` when `window_id` holds the OS
+    /// keyboard focus, OR when no focus is known yet (`None` — single-window
+    /// startup before the first `Focused`, or a platform that omits focus
+    /// events): the gate fails OPEN so it never silently swallows input.
+    ///
+    /// A single-window binding has exactly one window, which is the focused
+    /// one, so every key passes — byte-identical to the pre-R1071 ungated
+    /// global dispatch. In a multi-window binding mid-undock, a stray
+    /// re-delivery of a press to the now-unfocused source window fails the
+    /// gate (the torn-off window grabbed focus), so a toggle-class shortcut
+    /// fires exactly once per physical press instead of bouncing.
+    #[must_use]
+    pub fn is_key_dispatch_window(&self, window_id: &str) -> bool {
+        match &self.os_focused_window {
+            Some(focused) => focused == window_id,
+            None => true,
+        }
+    }
+
+    /// R1071 PR-27 §5.39 §5.16 §5.35 — per-window named-key (shortcut)
+    /// injection, the keyboard peer of the per-window pointer entries
+    /// ([`Self::mouse_pressed_for_window`] et al.). Applies the OS-focus gate
+    /// ([`Self::is_key_dispatch_window`]) then routes `key` through the
+    /// named-key arc ([`Self::handle_named_key_inner`]) carrying `repeat`.
+    /// Returns whether the gate ADMITTED the press (`true` = dispatched to the
+    /// widget arc regardless of whether a widget consumed it; `false` = gated
+    /// out because the press arrived at a non-focused window).
+    ///
+    /// This is the substrate seam that makes the multi-window toggle
+    /// double-dispatch reproducible and regression-testable headlessly — a
+    /// `#[test]` drives "a key (with `repeat`) arrives at window X" with no
+    /// winit `EventLoop`, wgpu device, or external key injector, exactly as
+    /// the pointer seam lets tests drive per-window clicks. `AppShell`'s
+    /// `WindowEvent::KeyboardInput` arm drives the SAME gate for the live GUI.
+    ///
+    /// Modifiers are read from the out-of-band [`Self::modifiers`] cache (the
+    /// winit `ModifiersChanged` mirror — winit's `KeyEvent` carries no
+    /// modifier state, so the real path reads the cache too); a test sets them
+    /// via [`Self::set_modifiers`] before driving a modifier-bearing shortcut.
+    pub fn key_press_for_window(&mut self, window_id: &str, key: &str, repeat: bool) -> bool {
+        if !self.is_key_dispatch_window(window_id) {
+            return false;
+        }
+        self.handle_named_key_inner(key, repeat);
+        true
     }
 
     /// R51.80 §5.16 §5.36 — compute one frame's paint scene from the

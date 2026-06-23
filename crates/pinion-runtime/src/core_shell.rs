@@ -1759,19 +1759,37 @@ impl<V: WidgetCore> CoreShell<V> {
         key: &str,
         modifiers: pinion_core::Modifiers,
     ) -> Option<DispatchTail<V::State>> {
-        // R51.152 §5.22 — wrap `V::apply_key` in
-        // `root_owner.run(...)` so [`pinion_core::Owner::current`]
-        // resolves to this binding's root scope from inside the
-        // widget's keyboard handler. Application code (typeahead
-        // cursors, per-binding scratch state, etc.) can call
-        // `Owner::current().cache(...)` (R51.150) to persist heap
-        // allocations across dispatch calls instead of reaching for
-        // a `thread_local!` workaround. The `Owner` clone is a cheap
-        // `Rc` bump; the borrow split lets the closure mutate
-        // `self.scene` while the owner field stays untouched.
+        // R1071 PR-27 §5.39 §5.35 — the legacy (no-repeat) entry point is
+        // the `repeat == false` case of the repeat-aware dispatch. Every
+        // existing caller (the a11y Click → `apply_key("Enter")` path, the
+        // §5.49 RPC `scene/key` injection, the TUI bridge, unit tests) is a
+        // synthesised single activation, never an OS auto-repeat, so they
+        // all pass `false` and stay byte-unchanged.
+        self.apply_key_repeat(focused, key, modifiers, false)
+    }
+
+    /// R1071 PR-27 §5.39 §5.35 — repeat-aware key dispatch: the variant the
+    /// pinion-shell keyboard path drives so the platform `KeyEvent.repeat`
+    /// flag reaches the binding's [`WidgetCore::apply_key_repeat`]. A
+    /// toggle-class binding (sprag dock/undock `Ctrl+Shift+Enter`) reads
+    /// `repeat` to swallow auto-repeat so one held press toggles once;
+    /// repeat-agnostic bindings inherit the default that forwards to
+    /// [`WidgetCore::apply_key`] unchanged. [`Self::apply_key`] is the
+    /// `repeat == false` wrapper.
+    ///
+    /// Same `root_owner.run(...)` wrap as [`Self::apply_key`] so
+    /// [`pinion_core::Owner::current`] resolves to this binding's root scope
+    /// from inside the widget's keyboard handler (R51.152).
+    pub fn apply_key_repeat(
+        &mut self,
+        focused: Option<&str>,
+        key: &str,
+        modifiers: pinion_core::Modifiers,
+        repeat: bool,
+    ) -> Option<DispatchTail<V::State>> {
         let owner = self.root_owner.clone();
         let scene = &mut self.scene;
-        let handled = owner.run(|| V::apply_key(scene, focused, key, modifiers));
+        let handled = owner.run(|| V::apply_key_repeat(scene, focused, key, modifiers, repeat));
         if handled { Some(self.tail()) } else { None }
     }
 

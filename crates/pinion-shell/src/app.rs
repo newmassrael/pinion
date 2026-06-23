@@ -1093,7 +1093,7 @@ impl<V: WidgetView> AppShell<V> {
     /// without a winit `ActiveEventLoop`. R51.78 pushes the substrate
     /// logic into [`ShellCore`] and leaves only the winit↔substrate
     /// adapter shape here.
-    fn handle_key_press(&mut self, event_loop: &ActiveEventLoop, logical_key: &Key) {
+    fn handle_key_press(&mut self, event_loop: &ActiveEventLoop, logical_key: &Key, repeat: bool) {
         match logical_key.as_ref() {
             // R693 §5.39 — while a modal focus trap is active, Escape
             // dismisses the modal, not the window: route it to the
@@ -1109,7 +1109,10 @@ impl<V: WidgetView> AppShell<V> {
                 // close-window convention when no widget consumes it AND
                 // no modal trap is up — you cannot Escape past an open
                 // modal to quit (WAI-ARIA modal contract).
-                let handled = self.core.try_apply_key("Escape");
+                // R1071 PR-27 §5.39 §5.35 — carry the OS auto-repeat flag to
+                // the binding (a modal dialog's Escape→cancel is idempotent,
+                // but the binding owns the policy uniformly across keys).
+                let handled = self.core.try_apply_key_inner("Escape", repeat);
                 if !handled && !self.core.focus_is_modal() {
                     event_loop.exit();
                 }
@@ -1124,15 +1127,15 @@ impl<V: WidgetView> AppShell<V> {
                 // gets first refusal before the shell default). Every
                 // non-editor widget reports Tab unhandled, so traversal is
                 // byte-unchanged for them.
-                if !self.core.try_apply_key("Tab") {
+                if !self.core.try_apply_key_inner("Tab", repeat) {
                     self.core
                         .handle_focus_traverse(self.core.modifiers_shift_key());
                 }
             }
-            Key::Character(c) => self.core.handle_character_key(c),
+            Key::Character(c) => self.core.handle_character_key_inner(c, repeat),
             Key::Named(named) => {
                 if let Some(key_str) = named_key_str(named) {
-                    self.core.handle_named_key(key_str);
+                    self.core.handle_named_key_inner(key_str, repeat);
                 }
             }
             _ => {}
@@ -1864,6 +1867,12 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
                     .set_modifiers(winit_modifiers_to_pinion(modifiers.state()));
             }
             WindowEvent::Focused(focused) => {
+                // R1071 PR-27 §5.39 §5.16 §5.35 — track which window holds the
+                // OS keyboard focus for the key-dispatch gate (separate from
+                // the FocusManager save/restore below: that owns the focused-
+                // widget snapshot, this owns the OS-focus identity keyboard
+                // routing keys on).
+                self.core.note_os_focus(spec_id, focused);
                 // R51.59 §5.39 — Window blur / refocus. ARIA Focus
                 // Order asks the framework to reinstate the focused
                 // widget when the user returns to the window.
@@ -1892,8 +1901,17 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
                     Key::Character(c) => self.core.note_key_state(c, pressed),
                     _ => {}
                 }
-                if pressed {
-                    self.handle_key_press(event_loop, &event.logical_key);
+                // R1071 PR-27 §5.39 §5.16 §5.35 — focused-window gate: act on
+                // a press only when it arrives at the OS-focused window, so a
+                // stray re-delivery of the same press to a now-unfocused
+                // window mid-undock does not toggle a second time. `event.repeat`
+                // carries the OS auto-repeat flag to the binding (a toggle-class
+                // shortcut swallows it; text / nav keys keep repeating). A
+                // single-window binding always passes the gate (its one window
+                // is the focused one), so this is byte-identical to the
+                // pre-R1071 ungated dispatch for it.
+                if pressed && self.core.is_key_dispatch_window(spec_id) {
+                    self.handle_key_press(event_loop, &event.logical_key, event.repeat);
                 }
             }
             // R56.2.a §5.13 §5.38 — IME composition events from the
