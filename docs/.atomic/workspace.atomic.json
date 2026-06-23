@@ -15132,6 +15132,54 @@
         "VisualLineMetric::new + CaretRect::new = two identical #[non_exhaustive] constructors; a third would justify a shared derive/macro (not yet — 2nd instance only)"
       ]
     },
+    "R1078": {
+      "decision_summary": "R1078 §5.39 §5.16 §5.35 PR-28.2 — derive the key auto-repeat flag from the press-owner gate, not winit event.repeat (winit resets its repeat detector on every focus transition); closes the residual sprag dock-toggle flap R1076 left",
+      "changes_bullets": [
+        "apply_key_edge return bool→Option<bool>: Some(repeat)=dispatch with the DERIVED auto-repeat flag, None=gated out; is_repeat = key_press_owner.contains_key(gate_key) computed BEFORE admit pins it (an owner already present = the key was physically held when this Pressed arrived = a continuation/auto-repeat)",
+        "app.rs handle_keyboard_input now passes the derived repeat to handle_key_press, replacing winit event.repeat: winit resets its OWN repeat detector on every focus transition (winit-0.30.13 x11/event_processor.rs:921-924: the first non-synthetic event after a focus gain is never flagged a repeat), so a held shortcut whose dispatch bounces OS focus saw repeat=false on every auto-repeat → a repeat-dropping toggle never dropped → the residual sprag dock flap R1076 left",
+        "press-owner is the focus-robust per-key physical-held source (synthetic excluded R1076, cleared only on the physical keyup R1073.1) — reused, NO new state; the chord cache HeldKeys tracks Space only, so the sprag handoff PR-28.2's proposed cache-based fix would have been a no-op for Enter (review finding)",
+        "single-window physical path byte-identical: derived repeat == winit event.repeat (owner-absent first press=false, owner-present auto-repeat=true); only CORRECTED across focus transitions",
+        "sprag = pin bump only (cross-repo rule); RPC scene/key path unchanged (key_press_for_window keeps caller-supplied repeat — single injection, no autorepeat/focus bounce)"
+      ],
+      "verification_bullets": [
+        "updated the R1076 synthetic test (5 asserts → Option<bool>) + new held_key_repeat_is_derived_from_the_press_owner_not_winit: first press Some(false), a continuation press at the owner window AFTER a focus bounce derives Some(true) (winit would report false), keyup None, a fresh press after keyup Some(false)",
+        "workspace cargo test -j2 = 0 fail (197 suites); clippy --workspace --all-targets --features pinion-runtime/vello = 0; cargo fmt --check clean",
+        "the winit repeat-reset is confirmed from the vendored winit-0.30.13 source comment (x11/event_processor.rs:921-924), not inferred — the root-cause half of the sprag PR-28.2 handoff is evidence-grounded",
+        "honest: live multi-window is HW-gated (VELLO-002 GL hang) — the headless apply_key_edge seam is the regression guard; the acceptance criterion is sprag's SPRAG_GUI_LOG showing the dock toggle exactly once on a Ctrl+Shift+Enter hold, verified in a sprag-native session (pin bump, no sprag code change)"
+      ],
+      "impact_refs": [
+        "5.39",
+        "5.16",
+        "5.35"
+      ],
+      "carry_forward_bullets": [
+        "live sprag SPRAG_GUI_LOG hold-verify pending in a sprag-native session: pin bump → Ctrl+Shift+Enter hold = dock toggle exactly once (windows 1→2 once, no flap), no bare-Enter phantom input",
+        "RPC scene/key repeat stays caller-supplied (key_press_for_window) — single injection, no focus bounce or autorepeat; if an AI-driven repeated down ever needs a derived repeat, that seam would derive too (no forcing consumer yet)"
+      ],
+      "publishable_decision_summary": "R1078 §5.39 §5.16 §5.35 PR-28.2 — derive the key auto-repeat flag from the press-owner gate, not winit event.repeat (winit resets its repeat detector on every focus transition); closes the residual sprag dock-toggle flap R1076 left",
+      "publishable_changes_bullets": [
+        "apply_key_edge return bool→Option<bool>: Some(repeat)=dispatch with the DERIVED auto-repeat flag, None=gated out; is_repeat = key_press_owner.contains_key(gate_key) computed BEFORE admit pins it (an owner already present = the key was physically held when this Pressed arrived = a continuation/auto-repeat)",
+        "app.rs handle_keyboard_input now passes the derived repeat to handle_key_press, replacing winit event.repeat: winit resets its OWN repeat detector on every focus transition (winit-0.30.13 x11/event_processor.rs:921-924: the first non-synthetic event after a focus gain is never flagged a repeat), so a held shortcut whose dispatch bounces OS focus saw repeat=false on every auto-repeat → a repeat-dropping toggle never dropped → the residual sprag dock flap R1076 left",
+        "press-owner is the focus-robust per-key physical-held source (synthetic excluded R1076, cleared only on the physical keyup R1073.1) — reused, NO new state; the chord cache HeldKeys tracks Space only, so the sprag handoff PR-28.2's proposed cache-based fix would have been a no-op for Enter (review finding)",
+        "single-window physical path byte-identical: derived repeat == winit event.repeat (owner-absent first press=false, owner-present auto-repeat=true); only CORRECTED across focus transitions",
+        "sprag = pin bump only (cross-repo rule); RPC scene/key path unchanged (key_press_for_window keeps caller-supplied repeat — single injection, no autorepeat/focus bounce)"
+      ],
+      "publishable_verification_bullets": [
+        "updated the R1076 synthetic test (5 asserts → Option<bool>) + new held_key_repeat_is_derived_from_the_press_owner_not_winit: first press Some(false), a continuation press at the owner window AFTER a focus bounce derives Some(true) (winit would report false), keyup None, a fresh press after keyup Some(false)",
+        "workspace cargo test -j2 = 0 fail (197 suites); clippy --workspace --all-targets --features pinion-runtime/vello = 0; cargo fmt --check clean",
+        "the winit repeat-reset is confirmed from the vendored winit-0.30.13 source comment (x11/event_processor.rs:921-924), not inferred — the root-cause half of the sprag PR-28.2 handoff is evidence-grounded",
+        "honest: live multi-window is HW-gated (VELLO-002 GL hang) — the headless apply_key_edge seam is the regression guard; the acceptance criterion is sprag's SPRAG_GUI_LOG showing the dock toggle exactly once on a Ctrl+Shift+Enter hold, verified in a sprag-native session (pin bump, no sprag code change)"
+      ],
+      "publishable_impact_refs": [
+        "5.39",
+        "5.16",
+        "5.35"
+      ],
+      "publishable_carry_forward_bullets": [
+        "live sprag SPRAG_GUI_LOG hold-verify pending in a sprag-native session: pin bump → Ctrl+Shift+Enter hold = dock toggle exactly once (windows 1→2 once, no flap), no bare-Enter phantom input",
+        "RPC scene/key repeat stays caller-supplied (key_press_for_window) — single injection, no focus bounce or autorepeat; if an AI-driven repeated down ever needs a derived repeat, that seam would derive too (no forcing consumer yet)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
