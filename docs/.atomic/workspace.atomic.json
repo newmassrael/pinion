@@ -13939,6 +13939,58 @@
         "cross-frame GPU texture cache deferred / instanced quad batch (Vello API lacks) / Scene::Text rewire"
       ]
     },
+    "R1066.1": {
+      "decision_summary": "R1066.1: audit-clearance (3 adversarial read-only reviewers on R1065+R1066) — CI gap (seam pixel tests --lib-invisible) + no-bleed docstring honesty (integer-pen precondition) + atlas-gutter carry",
+      "changes_bullets": [
+        "ci.yml GPU job runs --test text_engine_paint_seam (seam pixel proofs were CI-invisible)",
+        "draw_atlased_glyphs* doc: no-bleed is conditional on integer-aligned quad (HiDPI fractional = carry)",
+        "draw_coverage: nearest ImageQuality::Low (seam consistency) + retained single-blit role doc note",
+        "seam test: bleed comment softened to what it proves (separation, not <=1px edge); symmetric +-1 slop"
+      ],
+      "verification_bullets": [
+        "3 reviewers (SSOT/test-rigor/direction): craft textbook + SSOT-clean; 1 HIGH(CI) + 2 MED honesty",
+        "self-verified: CI --lib excludes tests/ confirmed; §5.37 engine has 0 production callers",
+        "pinion-runtime 430/0 / realgpu lavapipe 3/3 3x (draw_coverage nearest + loosened slop still green)",
+        "clippy --workspace --all-targets vello 0 warn / rustfmt clean / validate T1=0 (1080->1081)",
+        "over-flags rejected w/ evidence: throwaway-design = disclosed deferral (alpha-mask has footguns)"
+      ],
+      "impact_refs": [
+        "5.37.9",
+        "5.37",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "DIRECTION: §5.37 engine has ZERO production callers — R1063~R1066 deepened an unused seam (drift)",
+        "R1067 = confront block: §5.37 font-policy + opt-in Scene::Text, OR pivot Phase B (not more seam)",
+        "atlas inter-glyph gutter for fractional/HiDPI bleed — fix at production HiDPI consumer",
+        "per-(atlas,color) K-tint -> luminance-mask + solid-fill (footguns) at GPU-texture-cache round"
+      ],
+      "publishable_decision_summary": "R1066.1: audit-clearance (3 adversarial read-only reviewers on R1065+R1066) — CI gap (seam pixel tests --lib-invisible) + no-bleed docstring honesty (integer-pen precondition) + atlas-gutter carry",
+      "publishable_changes_bullets": [
+        "ci.yml GPU job runs --test text_engine_paint_seam (seam pixel proofs were CI-invisible)",
+        "draw_atlased_glyphs* doc: no-bleed is conditional on integer-aligned quad (HiDPI fractional = carry)",
+        "draw_coverage: nearest ImageQuality::Low (seam consistency) + retained single-blit role doc note",
+        "seam test: bleed comment softened to what it proves (separation, not <=1px edge); symmetric +-1 slop"
+      ],
+      "publishable_verification_bullets": [
+        "3 reviewers (SSOT/test-rigor/direction): craft textbook + SSOT-clean; 1 HIGH(CI) + 2 MED honesty",
+        "self-verified: CI --lib excludes tests/ confirmed; §5.37 engine has 0 production callers",
+        "pinion-runtime 430/0 / realgpu lavapipe 3/3 3x (draw_coverage nearest + loosened slop still green)",
+        "clippy --workspace --all-targets vello 0 warn / rustfmt clean / validate T1=0 (1080->1081)",
+        "over-flags rejected w/ evidence: throwaway-design = disclosed deferral (alpha-mask has footguns)"
+      ],
+      "publishable_impact_refs": [
+        "5.37.9",
+        "5.37",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "DIRECTION: §5.37 engine has ZERO production callers — R1063~R1066 deepened an unused seam (drift)",
+        "R1067 = confront block: §5.37 font-policy + opt-in Scene::Text, OR pivot Phase B (not more seam)",
+        "atlas inter-glyph gutter for fractional/HiDPI bleed — fix at production HiDPI consumer",
+        "per-(atlas,color) K-tint -> luminance-mask + solid-fill (footguns) at GPU-texture-cache round"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
