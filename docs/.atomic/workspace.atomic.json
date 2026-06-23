@@ -15076,6 +15076,62 @@
         "no RPC demo: synthetic is winit-only, no RPC-observable surface (R1071/R1073 HW-gated pattern)"
       ]
     },
+    "R1077": {
+      "decision_summary": "R1077 §5.36 §5.37 §5.37.14 — caret/hit-test §5.37 interface inversion: shaper-agnostic TextLayout trait, parley impl byte-identical, §5.37 SelfHostedLayout as the second implementor (caret_bearing coupling dissolved; editable flip stays gated)",
+      "changes_bullets": [
+        "pinion-text new TextLayout trait = shaper-agnostic caret surface (directive's advance + cluster-boundary + visual-line-metric): caret_rect / byte_at_point / selection_rects / visual_lines required; line_move / line_boundary default-derived from them",
+        "pinion-text impl TextLayout for parley Layout = the moved caret.rs bodies (parley overrides line_move/line_boundary to keep its Selection navigation); the 7 public free fns become generic &impl TextLayout delegators so all 77 call sites + caret suite are byte-identical",
+        "pinion-text VisualLineMetric::new constructor (mirrors CaretRect::new) so a second implementor in another crate can build #[non_exhaustive] metrics",
+        "pinion-runtime SelfHostedLayout = local newtype over §5.37 ShapedRun + LineBoxMetrics, impl TextLayout (second implementor) — fills the §5.37 gaps: per-glyph advance via pen-origin caret stops, single logical-line box, x-clamped nearest-stop hit-test; orphan-safe (foreign trait on a local type, in the one crate depping both shapers)",
+        "editable→§5.37 flip NOT done (gated per §5.37.14): view_field layout source unchanged, caret_bearing marker stays as pure shaper-selection policy — only the parley coupling of the caret geometry dissolves"
+      ],
+      "verification_bullets": [
+        "pinion-text caret suite byte-identical (55 lib tests green) — the inversion is pure delegation; parley Cursor/Selection logic is unchanged, only relocated into impl methods",
+        "pinion-runtime vello arm 444→449 (+5 SelfHostedLayout tests): caret-x == shaped pen origins / hit-test round-trips every byte + clamps far-left→start far-right→end / single visual line box == independently-recomputed hhea box / selection band spans the range / inherited line_move+line_boundary defaults (Home/Up→start, End/Down→end); exact geometry, Noto fixture, ZERO-FLAKE",
+        "workspace cargo test -j2 = 0 fail (197 suites); clippy --workspace --all-targets --features pinion-runtime/vello = 0; cargo fmt --check clean",
+        "§5.37 tests pin geometry via an independent re-shape (not a restatement of the impl), the same discipline as the measure-height test",
+        "honest: substrate round — no user-visible change and no RPC demo (caret-shaper internals have no §7 surface; consistent with the §5.37 R1015-R1019 algorithm-slice precedent of test-as-forcing-consumer); cross-shaper box-parity (parley ≈ §5.37) is NOT proven and is the gated default-on flip's precondition, not this round"
+      ],
+      "impact_refs": [
+        "5.36",
+        "5.37",
+        "5.37.14",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "editable→§5.37 caret flip (relax the caret_bearing exclusion, route view_field's layout source through §5.37 when eligible) — GATED per §5.37.14 \"default-on flip TBD until box == parley proven across fonts\"; needs a ZERO-FLAKE cross-shaper box-parity proof first",
+        "multi-line / multi-paragraph §5.37 caret — SelfHostedLayout is single-line (the engine's shipping frontier); the multi-line caret arrives with multi-line §5.37 paint/measure",
+        "styled-run / RTL §5.37 caret geometry — today LTR single-style single-line (mirrors the §5.37 eligibility set)",
+        "VisualLineMetric::new + CaretRect::new = two identical #[non_exhaustive] constructors; a third would justify a shared derive/macro (not yet — 2nd instance only)"
+      ],
+      "publishable_decision_summary": "R1077 §5.36 §5.37 §5.37.14 — caret/hit-test §5.37 interface inversion: shaper-agnostic TextLayout trait, parley impl byte-identical, §5.37 SelfHostedLayout as the second implementor (caret_bearing coupling dissolved; editable flip stays gated)",
+      "publishable_changes_bullets": [
+        "pinion-text new TextLayout trait = shaper-agnostic caret surface (directive's advance + cluster-boundary + visual-line-metric): caret_rect / byte_at_point / selection_rects / visual_lines required; line_move / line_boundary default-derived from them",
+        "pinion-text impl TextLayout for parley Layout = the moved caret.rs bodies (parley overrides line_move/line_boundary to keep its Selection navigation); the 7 public free fns become generic &impl TextLayout delegators so all 77 call sites + caret suite are byte-identical",
+        "pinion-text VisualLineMetric::new constructor (mirrors CaretRect::new) so a second implementor in another crate can build #[non_exhaustive] metrics",
+        "pinion-runtime SelfHostedLayout = local newtype over §5.37 ShapedRun + LineBoxMetrics, impl TextLayout (second implementor) — fills the §5.37 gaps: per-glyph advance via pen-origin caret stops, single logical-line box, x-clamped nearest-stop hit-test; orphan-safe (foreign trait on a local type, in the one crate depping both shapers)",
+        "editable→§5.37 flip NOT done (gated per §5.37.14): view_field layout source unchanged, caret_bearing marker stays as pure shaper-selection policy — only the parley coupling of the caret geometry dissolves"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-text caret suite byte-identical (55 lib tests green) — the inversion is pure delegation; parley Cursor/Selection logic is unchanged, only relocated into impl methods",
+        "pinion-runtime vello arm 444→449 (+5 SelfHostedLayout tests): caret-x == shaped pen origins / hit-test round-trips every byte + clamps far-left→start far-right→end / single visual line box == independently-recomputed hhea box / selection band spans the range / inherited line_move+line_boundary defaults (Home/Up→start, End/Down→end); exact geometry, Noto fixture, ZERO-FLAKE",
+        "workspace cargo test -j2 = 0 fail (197 suites); clippy --workspace --all-targets --features pinion-runtime/vello = 0; cargo fmt --check clean",
+        "§5.37 tests pin geometry via an independent re-shape (not a restatement of the impl), the same discipline as the measure-height test",
+        "honest: substrate round — no user-visible change and no RPC demo (caret-shaper internals have no §7 surface; consistent with the §5.37 R1015-R1019 algorithm-slice precedent of test-as-forcing-consumer); cross-shaper box-parity (parley ≈ §5.37) is NOT proven and is the gated default-on flip's precondition, not this round"
+      ],
+      "publishable_impact_refs": [
+        "5.36",
+        "5.37",
+        "5.37.14",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "editable→§5.37 caret flip (relax the caret_bearing exclusion, route view_field's layout source through §5.37 when eligible) — GATED per §5.37.14 \"default-on flip TBD until box == parley proven across fonts\"; needs a ZERO-FLAKE cross-shaper box-parity proof first",
+        "multi-line / multi-paragraph §5.37 caret — SelfHostedLayout is single-line (the engine's shipping frontier); the multi-line caret arrives with multi-line §5.37 paint/measure",
+        "styled-run / RTL §5.37 caret geometry — today LTR single-style single-line (mirrors the §5.37 eligibility set)",
+        "VisualLineMetric::new + CaretRect::new = two identical #[non_exhaustive] constructors; a third would justify a shared derive/macro (not yet — 2nd instance only)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
