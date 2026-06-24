@@ -2655,6 +2655,29 @@ pub struct LayoutStyle {
     /// the focus enumeration — additive, bit-identical for existing
     /// bindings.
     pub focusable: bool,
+    /// (R1080 §5.51) Drag-and-drop drop target. When `true`, the §5.51
+    /// R742 router resolves a drop *over this node or any of its
+    /// descendants* to THIS node's [`tag`](crate::Scene::tag) — the
+    /// nearest opted-in ancestor wins — instead of the deepest tagged
+    /// leaf the cursor happens to be over
+    /// ([`Scene::is_drop_target`](crate::Scene::is_drop_target),
+    /// consumed by the router's `resolve_drop_point`).
+    ///
+    /// The motivating case is a dock panel whose content (a terminal, an
+    /// editor) is itself a deeper tagged node: a drag-to-dock coordinator
+    /// wants the PANEL as the drop region, not the content leaf. Marking
+    /// the panel root a drop target makes the [`DropPoint`] the router
+    /// hands the coordinator name the panel, with the cursor normalised
+    /// over the panel's rect — so the coordinator classifies the
+    /// edge-vs-centre zone directly.
+    ///
+    /// `false` (the default) leaves the router on the deepest-tagged-hit
+    /// resolution every pre-R1080 drag used — additive, bit-identical for
+    /// existing R742 consumers (a reorder row IS its own deepest tag, so
+    /// it needs no marking).
+    ///
+    /// [`DropPoint`]: crate::external::DropPoint
+    pub drop_target: bool,
 }
 
 impl LayoutStyle {
@@ -2683,6 +2706,9 @@ impl LayoutStyle {
             pointer_transparent: false,
             // (R1020 §5.39) `false` = not a Tab stop, the pre-R1020 default.
             focusable: false,
+            // (R1080 §5.51) `false` = deepest-tagged drop resolution, the
+            // pre-R1080 default.
+            drop_target: false,
         }
     }
 
@@ -2724,6 +2750,18 @@ impl LayoutStyle {
     #[must_use]
     pub const fn with_focusable(mut self, focusable: bool) -> Self {
         self.focusable = focusable;
+        self
+    }
+
+    /// (R1080 §5.51) Builder: mark this node a drag-and-drop drop target.
+    /// The §5.51 R742 router then resolves a drop over this node or any
+    /// descendant to this node's [`tag`](crate::Scene::tag) (nearest
+    /// opted-in ancestor wins), so a drag coordinator receives the
+    /// semantic drop region rather than the deepest tagged leaf. See
+    /// [`Self::drop_target`] for the dock-panel rationale.
+    #[must_use]
+    pub const fn with_drop_target(mut self, drop_target: bool) -> Self {
+        self.drop_target = drop_target;
         self
     }
 
@@ -2840,6 +2878,9 @@ impl core::hash::Hash for LayoutStyle {
         // (R1020 §5.39) Same single-byte `false`-default invariant —
         // pre-R1020 cache keys stay bit-identical.
         self.focusable.hash(hasher);
+        // (R1080 §5.51) Same single-byte `false`-default invariant —
+        // pre-R1080 cache keys stay bit-identical.
+        self.drop_target.hash(hasher);
     }
 }
 

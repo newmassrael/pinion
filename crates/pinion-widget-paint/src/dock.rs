@@ -1109,15 +1109,37 @@ pub fn dock_drop_zone_for(panel_rect: Rect, cursor_x: f64, cursor_y: f64) -> Doc
     let y0 = f64::from(panel_rect.y);
     let w = f64::from(panel_rect.w);
     let h = f64::from(panel_rect.h);
-    // Half-open containment (mirror of `rect_contains`): the right /
-    // bottom edges belong to the next panel over.
-    if cursor_x < x0 || cursor_y < y0 || cursor_x >= x0 + w || cursor_y >= y0 + h {
+    // Normalise the absolute cursor into the panel rect, then classify with
+    // the shared SSOT [`dock_drop_zone_normalized`]. A cursor outside the
+    // rect normalises to a coordinate outside `[0.0, 1.0)`, which that
+    // classifier rejects with [`DockDropZone::None`] — exactly the half-open
+    // `rect_contains` containment this function applied inline pre-R1080.
+    dock_drop_zone_normalized((cursor_x - x0) / w, (cursor_y - y0) / h)
+}
+
+/// (R1080 §5.51) Classify a cursor already normalised over a panel rect
+/// (`x_rel` / `y_rel` in `[0.0, 1.0)`, left / top = `0.0`) into a
+/// [`DockDropZone`] — the SSOT zone geometry shared by
+/// [`dock_drop_zone_for`] (which normalises an absolute cursor first) and the
+/// §5.51 R742 pointer drag coordinator (which receives a pre-normalised
+/// [`DropPoint`](pinion_core::external::DropPoint) over the drop-target
+/// panel). One classifier, two callers — the edge-band fraction
+/// ([`DOCK_EDGE_ZONE_FRAC`]) and the Left → Right → Top → Bottom tie order
+/// cannot drift between the absolute and pointer-normalised paths.
+///
+/// Containment is **half-open**: a coordinate `< 0.0` or `>= 1.0` on either
+/// axis is outside the panel and yields [`DockDropZone::None`], mirroring
+/// [`dock_drop_zone_for`]'s `rect_contains` semantics so adjacent panels tile
+/// without a one-pixel double-claim seam.
+#[must_use]
+pub fn dock_drop_zone_normalized(x_rel: f64, y_rel: f64) -> DockDropZone {
+    // Half-open [0.0, 1.0): outside the panel on either axis → no zone.
+    if !(0.0..1.0).contains(&x_rel) || !(0.0..1.0).contains(&y_rel) {
         return DockDropZone::None;
     }
-    // Normalised distance from each edge, in [0.0, 1.0).
-    let from_left = (cursor_x - x0) / w;
+    let from_left = x_rel;
     let from_right = 1.0 - from_left;
-    let from_top = (cursor_y - y0) / h;
+    let from_top = y_rel;
     let from_bottom = 1.0 - from_top;
     // Centre rectangle: at least one band-width clear of every edge.
     let nearest = from_left.min(from_right).min(from_top).min(from_bottom);
@@ -3644,7 +3666,7 @@ mod drop_zone_tests {
     //! tiebreak precedence, half-open containment, and degenerate-rect
     //! handling.
 
-    use super::{DOCK_EDGE_ZONE_FRAC, DockDropZone, dock_drop_zone_for};
+    use super::{DOCK_EDGE_ZONE_FRAC, DockDropZone, dock_drop_zone_for, dock_drop_zone_normalized};
     use pinion_core::scene::Rect;
 
     /// Canonical 400×400 panel at offset (100, 100). With
@@ -3755,6 +3777,67 @@ mod drop_zone_tests {
             dock_drop_zone_for(Rect::new(0, 0, 100, 0), 50.0, 0.0),
             DockDropZone::None
         );
+    }
+
+    // R1080 §5.51 — the normalised classifier the pointer drag coordinator
+    // consumes directly (a `DropPoint` is already cursor-over-rect 0..1).
+
+    #[test]
+    fn r1080_drop_zone_normalized_classifies_center_and_edges() {
+        // Dead centre (0.5, 0.5): nearest edge 0.5 >= 0.25 → Center.
+        assert_eq!(dock_drop_zone_normalized(0.5, 0.5), DockDropZone::Center);
+        // 0.125 in from each edge (< 0.25 band) on the mid-axis.
+        assert_eq!(dock_drop_zone_normalized(0.125, 0.5), DockDropZone::Left);
+        assert_eq!(dock_drop_zone_normalized(0.875, 0.5), DockDropZone::Right);
+        assert_eq!(dock_drop_zone_normalized(0.5, 0.125), DockDropZone::Top);
+        assert_eq!(dock_drop_zone_normalized(0.5, 0.875), DockDropZone::Bottom);
+    }
+
+    #[test]
+    fn r1080_drop_zone_normalized_is_half_open_outside_is_none() {
+        // Half-open [0.0, 1.0): below 0 or at/above 1 on either axis → None.
+        assert_eq!(dock_drop_zone_normalized(-0.01, 0.5), DockDropZone::None);
+        assert_eq!(dock_drop_zone_normalized(0.5, -0.01), DockDropZone::None);
+        assert_eq!(dock_drop_zone_normalized(1.0, 0.5), DockDropZone::None);
+        assert_eq!(dock_drop_zone_normalized(0.5, 1.0), DockDropZone::None);
+        // 0.0 (left / top edge) is inside; just inside the right edge too.
+        assert_eq!(dock_drop_zone_normalized(0.0, 0.5), DockDropZone::Left);
+    }
+
+    #[test]
+    fn r1080_drop_zone_normalized_corner_tiebreak_is_left_then_right() {
+        // Top-left corner tie (from_left == from_top) → Left precedence.
+        assert_eq!(dock_drop_zone_normalized(0.1, 0.1), DockDropZone::Left);
+        // Bottom-right corner tie (from_right == from_bottom) → Right.
+        assert_eq!(dock_drop_zone_normalized(0.9, 0.9), DockDropZone::Right);
+        // Band inner boundary is Center (half-open >= frac).
+        assert_eq!(
+            dock_drop_zone_normalized(DOCK_EDGE_ZONE_FRAC, 0.5),
+            DockDropZone::Center
+        );
+    }
+
+    #[test]
+    fn r1080_drop_zone_for_equals_normalized_over_a_sweep() {
+        // SSOT proof: the absolute classifier is exactly the normalised one
+        // fed the cursor-over-rect coordinate, across a grid spanning inside,
+        // the edges, and outside the canonical panel — so the two R742 drop
+        // paths (absolute resolver, pointer DropPoint) can never disagree on
+        // a zone. Steps land on band boundaries (0.25 of 400 = 100) and the
+        // half-open right/bottom edges (x/y = 500).
+        let rect = panel();
+        let (x0, y0) = (f64::from(rect.x), f64::from(rect.y));
+        let (width, height) = (f64::from(rect.w), f64::from(rect.h));
+        for xi in (80..=520).step_by(20) {
+            for yi in (80..=520).step_by(20) {
+                let (cx, cy) = (f64::from(xi), f64::from(yi));
+                assert_eq!(
+                    dock_drop_zone_for(rect, cx, cy),
+                    dock_drop_zone_normalized((cx - x0) / width, (cy - y0) / height),
+                    "absolute and normalised disagree at ({cx}, {cy})"
+                );
+            }
+        }
     }
 }
 

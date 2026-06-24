@@ -1717,7 +1717,15 @@ impl InputRouter {
     /// hit-test needs no `view()` rebuild.
     fn resolve_drop_point(&self, x: f64, y: f64) -> Option<DropPoint> {
         let paint = self.last_paint_scene.as_ref()?;
-        let tag = resolve_hover_tag(paint, x, y)?;
+        // R1080 §5.51 — prefer the nearest opted-in drop target (a dock
+        // panel, a tab strip — `LayoutStyle::drop_target`) so the
+        // coordinator receives the semantic drop region with the cursor
+        // normalised over THAT region's rect. Falls back to the deepest
+        // tagged hit when no node in the path opted in (the reorder-row
+        // case, where the drop target is itself the deepest tag), so every
+        // pre-R1080 R742 consumer is bit-identical.
+        let tag =
+            resolve_drop_target_tag(paint, x, y).or_else(|| resolve_hover_tag(paint, x, y))?;
         let rect = rect_for_tag(paint, &tag)?;
         let (x_rel, y_rel) = normalize_cursor(rect, x, y);
         Some(DropPoint { tag, x_rel, y_rel })
@@ -1785,6 +1793,36 @@ fn resolve_hover_tag(paint_scene: &Scene, x: f64, y: f64) -> Option<String> {
         };
         if let Some(tag) = scene.tag() {
             return Some(tag.to_string());
+        }
+    }
+    None
+}
+
+/// R1080 §5.51 — hit-test `paint_scene` at `(x, y)` and return the nearest
+/// ancestor that opted in as a drop target
+/// ([`Scene::is_drop_target`](pinion_core::Scene::is_drop_target)) AND carries
+/// a tag. `None` when no node in the hit path is a drop target — then
+/// [`InputRouter::resolve_drop_point`] falls back to [`resolve_hover_tag`]'s
+/// deepest tagged hit (the reorder-row case, where the drop target is itself
+/// the deepest tag, so no marking is needed).
+///
+/// This is the semantic drop region a drag coordinator classifies: a dock
+/// panel whose content is a deeper tagged child resolves to the PANEL, not the
+/// content leaf, with the cursor normalised over the panel's rect. The walk is
+/// deepest-first so the *innermost* opted-in target wins when drop targets nest
+/// (a panel inside a panel).
+fn resolve_drop_target_tag(paint_scene: &Scene, x: f64, y: f64) -> Option<String> {
+    let xu = floor_clamp_u32(x);
+    let yu = floor_clamp_u32(y);
+    let hit = paint_scene.hit_test(xu, yu)?;
+    for k in (0..=hit.segments.len()).rev() {
+        let Some(scene) = paint_scene.lookup_path_ref(&hit.segments[..k]) else {
+            continue;
+        };
+        if scene.is_drop_target() {
+            if let Some(tag) = scene.tag() {
+                return Some(tag.to_string());
+            }
         }
     }
     None
@@ -5408,6 +5446,88 @@ mod tests {
             double_count, 2,
             "exactly two DoubleClick fires across 4 presses"
         );
+    }
+
+    // ----- R1080 §5.51 drop-target resolution -----
+
+    /// R1080 §5.51 — `resolve_drop_target_tag` climbs to the nearest
+    /// `LayoutStyle::drop_target` ancestor, so a drag coordinator gets the
+    /// semantic drop region (a dock panel) rather than the deeper tagged
+    /// content leaf the cursor is literally over. `resolve_hover_tag` stays
+    /// on the deepest tag (hover unchanged), and `resolve_drop_point`
+    /// normalises over the PANEL rect — what the dock zone classifier needs.
+    #[test]
+    fn r1080_drop_target_climbs_over_deeper_content_tag() {
+        use pinion_core::scene::{BoxNode, ContainerNode};
+        use pinion_core::style::{Color, LayoutStyle};
+
+        // A panel (drop target, tag "panel", 0..400) whose content is a
+        // deeper tagged child ("panel#content", 50..350) — the dock shape.
+        let content = Scene::Box(
+            BoxNode::filled(Rect::new(50, 50, 300, 300), Color::default())
+                .with_tag("panel#content"),
+        );
+        let mut panel = ContainerNode::new(vec![content])
+            .with_tag("panel")
+            .with_layout(LayoutStyle::new().with_drop_target(true));
+        panel.rect = Rect::new(0, 0, 400, 400);
+        let scene = Scene::Container(panel);
+
+        // Cursor at (200, 200): inside both the content and the panel.
+        assert_eq!(
+            resolve_drop_target_tag(&scene, 200.0, 200.0).as_deref(),
+            Some("panel"),
+            "drop resolution climbs to the drop-target panel",
+        );
+        assert_eq!(
+            resolve_hover_tag(&scene, 200.0, 200.0).as_deref(),
+            Some("panel#content"),
+            "hover stays on the deepest tag (unchanged)",
+        );
+
+        // The DropPoint names the panel, normalised over the PANEL rect
+        // (400 wide): (200 - 0) / 400 = 0.5 — the panel centre, what the
+        // dock zone classifier reads, not a content-relative coordinate.
+        let mut router = InputRouter::new();
+        let (mut state_scene, _) = state_with_button();
+        router.update_paint_scene(scene, &mut state_scene);
+        let dp = router
+            .resolve_drop_point(200.0, 200.0)
+            .expect("over a drop target");
+        assert_eq!(dp.tag, "panel");
+        assert!(
+            (dp.x_rel - 0.5).abs() < 1e-6 && (dp.y_rel - 0.5).abs() < 1e-6,
+            "normalised over the panel rect, not the content",
+        );
+    }
+
+    /// R1080 §5.51 — with no drop-target ancestor the drop resolution is
+    /// bit-identical to pre-R1080: `resolve_drop_target_tag` is `None` and
+    /// `resolve_drop_point` falls back to the deepest tagged hit.
+    #[test]
+    fn r1080_drop_resolution_falls_back_to_deepest_tag_without_drop_target() {
+        use pinion_core::scene::{BoxNode, ContainerNode};
+        use pinion_core::style::Color;
+
+        let content = Scene::Box(
+            BoxNode::filled(Rect::new(50, 50, 300, 300), Color::default())
+                .with_tag("panel#content"),
+        );
+        let mut panel = ContainerNode::new(vec![content]).with_tag("panel");
+        panel.rect = Rect::new(0, 0, 400, 400);
+        let scene = Scene::Container(panel);
+
+        assert_eq!(resolve_drop_target_tag(&scene, 200.0, 200.0), None);
+        let mut router = InputRouter::new();
+        let (mut state_scene, _) = state_with_button();
+        router.update_paint_scene(scene, &mut state_scene);
+        let dp = router
+            .resolve_drop_point(200.0, 200.0)
+            .expect("over a tagged region");
+        // Deepest tag = the content; normalised over the CONTENT rect
+        // (300 wide at offset 50): (200 - 50) / 300 = 0.5.
+        assert_eq!(dp.tag, "panel#content");
+        assert!((dp.x_rel - 0.5).abs() < 1e-6);
     }
 
     // ----- R742 §5.51 drag-and-drop session -----

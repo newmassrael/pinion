@@ -170,6 +170,30 @@ impl Scene {
         }
     }
 
+    /// (R1080 §5.51) Drag-and-drop drop-target flag — reads the node's
+    /// [`crate::style::LayoutStyle::drop_target`] marker. The §5.51 R742
+    /// router's `resolve_drop_point` resolves a drop over this node or any
+    /// descendant to this node's [`tag`](Self::tag) (nearest opted-in
+    /// ancestor wins) instead of the deepest tagged leaf, so a drag
+    /// coordinator receives the semantic drop region (e.g. a dock panel,
+    /// not its content). [`Scene::Effect`] carries no layout sidecar and
+    /// is never a drop target.
+    #[must_use]
+    pub fn is_drop_target(&self) -> bool {
+        match self {
+            Scene::Box(n) => n.layout.drop_target,
+            Scene::Text(n) => n.layout.drop_target,
+            Scene::Path(n) => n.layout.drop_target,
+            Scene::Image(n) => n.layout.drop_target,
+            Scene::Container(n) => n.layout.drop_target,
+            Scene::External(n) => n.layout.drop_target,
+            Scene::Scroll(n) => n.layout.drop_target,
+            Scene::ImmediateModeNode(n) => n.layout.drop_target,
+            Scene::TextGrid(n) => n.layout.drop_target,
+            Scene::Effect(_) => false,
+        }
+    }
+
     /// (R1020 §5.39) Keyboard focus-stop flag — reads the node's
     /// [`crate::style::LayoutStyle::focusable`] marker.
     /// [`Self::collect_focusable_tags`] enumerates the tags of nodes
