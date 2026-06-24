@@ -15228,6 +15228,56 @@
         "R1078 sprag live SPRAG_GUI_LOG hold-verify still pending in a sprag-native session (pin bump; Ctrl+Shift+Enter hold = dock toggle exactly once)"
       ]
     },
+    "R1079": {
+      "decision_summary": "R1079 §5.37 single-line cross-shaper box parity: the §5.37 line box now selects hhea vs OS/2 typo metrics by the same USE_TYPO_METRICS rule parley (skrifa) uses, fixing a live 25%-of-em divergence on the canonical bundled NanumGothic — the precondition for the eventual default-on flip",
+      "changes_bullets": [
+        "pinion-text-font: new Font::vertical_line_metrics() + VerticalLineMetrics + select_line_metrics(os2,hhea) applying skrifa 0.42.1's line-metric selection (USE_TYPO_METRICS fsSelection bit set -> OS/2 sTypoAscender/Descender/LineGap; else hhea; else hhea-zero fallback to OS/2 typo-or-Windows metrics, mirroring FreeType sfobjs.c)",
+        "pinion-runtime: LineBoxMetrics::from_font (the §5.37 measure + paint-baseline + caret SSOT) now reads vertical_line_metrics() instead of raw hhea, so a single §5.37 line box and baseline register with parley's for the same font; engine still env-gated off (PINION_TEXT_ENGINE) so the default parley path is byte-identical",
+        "empirical find: NanumGothic (a §5.37 canonical bundled font) sets USE_TYPO_METRICS with typo box 1250 vs hhea 1000 = a live 250-upem (25%-of-em) line-box divergence every prior NotoSans-only §5.37 test missed (NotoSans typo==hhea by luck); the fix closes it",
+        "stale \"not guaranteed identical to parley\" parity caveats in LineBoxMetrics / measure_text / paint_text_self_hosted docs refreshed to the now-matched single-line parity",
+        "scope single-line only: multi-line line_layout still reads hhea directly (test-only, not wired into the production arms) and adopts the selector at R1080 multi-line widening — documented, not silently inconsistent"
+      ],
+      "verification_bullets": [
+        "pinion-text-font select_line_metrics 4-branch unit tests (typo-set / hhea / hhea-zero->typo / hhea-zero->Windows), byte-built OS/2 + hhea tables, zero external dep (crate identity preserved) — 254 lib tests pass",
+        "pinion-runtime box_parity_matches_parley_metric_engine_via_skrifa: §5.37 box == skrifa::Metrics box (font-unit +/-0.5 and px +/-0.01) on NanumGothic + NotoSans, with a regression witness asserting the pre-R1079 hhea box DIVERGES for Nanum / agrees for Noto — 450 vello lib tests pass",
+        "workspace 197 suites · 7531 pass · 0 fail · 0 panics; clippy --workspace --all-targets vello 0; rustfmt clean; validate-workspace T1=0 (entries 1099->1100, sections 72)",
+        "honest: skrifa is a test-only dev-dep (pinned to parley 0.9's 0.42) used as the faithful oracle since parley sizes line boxes through skrifa::Metrics (parley/src/layout/data.rs, MetricsRelative 1.0); ZERO-FLAKE — the same committed fixture both shapers see, no system-font resolution"
+      ],
+      "impact_refs": [
+        "5.37",
+        "5.36"
+      ],
+      "carry_forward_bullets": [
+        "R1080 = §5.37 static-text widening: wire the already-built multi-line layout_paragraph / render_lines (R1050/R1052, currently test-only) into the paint + measure arms (they call single-line shape_paragraph_with_fallback only), and adopt vertical_line_metrics() in line_layout so multi-line shares the parity selector",
+        "single-line box parity is now PROVEN, so the default-on flip (PINION_TEXT_ENGINE) + the editable §5.37.14 ungate unblock once widening (multi-line, styled-run, alignment) AND their own box parity land",
+        "eligibility exclusions remaining as widening candidates (ranked): hard line break (gateway) > styled runs (multi-style) > Center/End alignment > fixed/multiplied line-height > underline/strikethrough decoration > caret-bearing editable (unlocks with multi-line)",
+        "sprag live multi-window §5.37 verify stays a separate sprag-native session (HW-gated); no pinion edits to sprag"
+      ],
+      "publishable_decision_summary": "R1079 §5.37 single-line cross-shaper box parity: the §5.37 line box now selects hhea vs OS/2 typo metrics by the same USE_TYPO_METRICS rule parley (skrifa) uses, fixing a live 25%-of-em divergence on the canonical bundled NanumGothic — the precondition for the eventual default-on flip",
+      "publishable_changes_bullets": [
+        "pinion-text-font: new Font::vertical_line_metrics() + VerticalLineMetrics + select_line_metrics(os2,hhea) applying skrifa 0.42.1's line-metric selection (USE_TYPO_METRICS fsSelection bit set -> OS/2 sTypoAscender/Descender/LineGap; else hhea; else hhea-zero fallback to OS/2 typo-or-Windows metrics, mirroring FreeType sfobjs.c)",
+        "pinion-runtime: LineBoxMetrics::from_font (the §5.37 measure + paint-baseline + caret SSOT) now reads vertical_line_metrics() instead of raw hhea, so a single §5.37 line box and baseline register with parley's for the same font; engine still env-gated off (PINION_TEXT_ENGINE) so the default parley path is byte-identical",
+        "empirical find: NanumGothic (a §5.37 canonical bundled font) sets USE_TYPO_METRICS with typo box 1250 vs hhea 1000 = a live 250-upem (25%-of-em) line-box divergence every prior NotoSans-only §5.37 test missed (NotoSans typo==hhea by luck); the fix closes it",
+        "stale \"not guaranteed identical to parley\" parity caveats in LineBoxMetrics / measure_text / paint_text_self_hosted docs refreshed to the now-matched single-line parity",
+        "scope single-line only: multi-line line_layout still reads hhea directly (test-only, not wired into the production arms) and adopts the selector at R1080 multi-line widening — documented, not silently inconsistent"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-text-font select_line_metrics 4-branch unit tests (typo-set / hhea / hhea-zero->typo / hhea-zero->Windows), byte-built OS/2 + hhea tables, zero external dep (crate identity preserved) — 254 lib tests pass",
+        "pinion-runtime box_parity_matches_parley_metric_engine_via_skrifa: §5.37 box == skrifa::Metrics box (font-unit +/-0.5 and px +/-0.01) on NanumGothic + NotoSans, with a regression witness asserting the pre-R1079 hhea box DIVERGES for Nanum / agrees for Noto — 450 vello lib tests pass",
+        "workspace 197 suites · 7531 pass · 0 fail · 0 panics; clippy --workspace --all-targets vello 0; rustfmt clean; validate-workspace T1=0 (entries 1099->1100, sections 72)",
+        "honest: skrifa is a test-only dev-dep (pinned to parley 0.9's 0.42) used as the faithful oracle since parley sizes line boxes through skrifa::Metrics (parley/src/layout/data.rs, MetricsRelative 1.0); ZERO-FLAKE — the same committed fixture both shapers see, no system-font resolution"
+      ],
+      "publishable_impact_refs": [
+        "5.37",
+        "5.36"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R1080 = §5.37 static-text widening: wire the already-built multi-line layout_paragraph / render_lines (R1050/R1052, currently test-only) into the paint + measure arms (they call single-line shape_paragraph_with_fallback only), and adopt vertical_line_metrics() in line_layout so multi-line shares the parity selector",
+        "single-line box parity is now PROVEN, so the default-on flip (PINION_TEXT_ENGINE) + the editable §5.37.14 ungate unblock once widening (multi-line, styled-run, alignment) AND their own box parity land",
+        "eligibility exclusions remaining as widening candidates (ranked): hard line break (gateway) > styled runs (multi-style) > Center/End alignment > fixed/multiplied line-height > underline/strikethrough decoration > caret-bearing editable (unlocks with multi-line)",
+        "sprag live multi-window §5.37 verify stays a separate sprag-native session (HW-gated); no pinion edits to sprag"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
