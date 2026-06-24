@@ -66,14 +66,14 @@ use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 
 use pinion_core::external::{
-    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    Backend, BackendFallback, BackendSupport, DragPayload, DropPoint, External, ExternalIntrospect,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
 use pinion_core::input::PointerWireEvent;
 use pinion_core::intent::Intent;
 use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
 use pinion_core::style::{
-    AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
+    AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, SizeValue, TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme};
 use std::rc::Rc;
@@ -1062,7 +1062,7 @@ pub const DOCK_EDGE_ZONE_FRAC: f64 = 0.25;
 /// into `CenterTab` / `CenterSwap`) or finer corner zones can land
 /// without breaking downstream `match` arms.
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum DockDropZone {
     /// Cursor is outside the panel rect, or the rect is degenerate
     /// (zero width or height). No drop target.
@@ -1193,6 +1193,36 @@ fn zone_split_geometry(zone: DockDropZone) -> Option<(SplitterOrientation, DockS
     }
 }
 
+/// (R1081 §5.51) Map a classified drop — the dragged `source` panel, the
+/// `target` panel under the cursor, and the [`DockDropZone`] the cursor
+/// fell in — to the [`DockReorganizeIntent`] that performs it: a centre
+/// drop swaps, an edge drop splits the target along the perpendicular
+/// axis with the source in the near slot. Returns `None` for the
+/// non-actionable [`DockDropZone::None`] (and, defensively, any future
+/// zone [`zone_split_geometry`] declines to map).
+///
+/// The single source of truth for the zone → intent mapping, shared by
+/// the cursor-driven [`resolve_dock_drop`], the symbolic `reorganize`
+/// invoke, and the §5.51 R742 pointer drag-release coordinator
+/// ([`DockPanelExternal::drag_release`]) so the three paths cannot drift.
+fn intent_for_zone(source: &str, target: &str, zone: DockDropZone) -> Option<DockReorganizeIntent> {
+    match zone {
+        DockDropZone::None => None,
+        DockDropZone::Center => Some(DockReorganizeIntent::Swap {
+            source: source.to_string(),
+            target: target.to_string(),
+        }),
+        edge => zone_split_geometry(edge).map(|(orientation, position)| {
+            DockReorganizeIntent::SplitInsert {
+                source: source.to_string(),
+                target: target.to_string(),
+                orientation,
+                position,
+            }
+        }),
+    }
+}
+
 /// (R686 §5.16 §5.45) Parse the wire string a reorganize gesture
 /// payload carries (`"Center"` / `"Left"` / `"Right"` / `"Top"` /
 /// `"Bottom"`) into a [`DockDropZone`]. `"None"` and any unrecognised
@@ -1207,6 +1237,21 @@ fn parse_drop_zone(s: &str) -> Option<DockDropZone> {
         "Top" => Some(DockDropZone::Top),
         "Bottom" => Some(DockDropZone::Bottom),
         _ => None,
+    }
+}
+
+/// (R1081 §5.51) Inverse of [`parse_drop_zone`]: the wire string a
+/// [`DockDropZone`] serialises to in the `DockPanelExternal`
+/// `drop_preview` introspection (and that the `reorganize` invoke
+/// echoes). The variant names round-trip through [`parse_drop_zone`].
+fn zone_wire_name(zone: DockDropZone) -> &'static str {
+    match zone {
+        DockDropZone::None => "None",
+        DockDropZone::Left => "Left",
+        DockDropZone::Right => "Right",
+        DockDropZone::Top => "Top",
+        DockDropZone::Bottom => "Bottom",
+        DockDropZone::Center => "Center",
     }
 }
 
@@ -1358,68 +1403,45 @@ pub fn resolve_dock_drop(
         if *panel_id == source_panel_id {
             continue;
         }
-        match dock_drop_zone_for(*rect, cursor_x, cursor_y) {
-            DockDropZone::None => {}
-            DockDropZone::Center => {
-                return Some(DockReorganizeIntent::Swap {
-                    source: source_panel_id.to_string(),
-                    target: (*panel_id).to_string(),
-                });
-            }
-            // `edge` is one of Left/Right/Top/Bottom here (None + Center
-            // handled above), so `zone_split_geometry` always returns
-            // `Some`. The `if let` keeps the SSOT mapping in one place
-            // without a panic path — a hypothetical future non-edge zone
-            // would simply be skipped rather than crashing the resolver.
-            edge => {
-                if let Some((orientation, position)) = zone_split_geometry(edge) {
-                    return Some(DockReorganizeIntent::SplitInsert {
-                        source: source_panel_id.to_string(),
-                        target: (*panel_id).to_string(),
-                        orientation,
-                        position,
-                    });
-                }
-            }
+        // Classify the cursor over this panel and map the zone to its
+        // intent through the [`intent_for_zone`] SSOT (shared with the
+        // symbolic `reorganize` invoke + the R742 pointer coordinator).
+        // `DockDropZone::None` yields `None` → keep scanning the next
+        // panel, exactly as the pre-R1081 per-arm `match` did.
+        let zone = dock_drop_zone_for(*rect, cursor_x, cursor_y);
+        if let Some(intent) = intent_for_zone(source_panel_id, panel_id, zone) {
+            return Some(intent);
         }
     }
     None
 }
 
-/// (R686 §5.16 §5.45) AI-native drag-to-reorganize handle — the
-/// [`External`] a dock editor registers (via
-/// [`WidgetCore::create_extra_externals`](pinion_core::WidgetCore::create_extra_externals))
-/// to apply topology edits through the
-/// [`scene/invoke`](pinion_core::external::ExternalIntrospect::invoke)
-/// channel.
+/// (R1081 §5.51) The dock reorganize **coordinator** — the reorganize-
+/// commit machine, extracted from [`DockReorganizeExternal`] so the two
+/// drives that reorganize a dock share ONE counter + topology + undo:
 ///
-/// ## Why invoke-driven, not pointer-driven
+/// * the **symbolic / RPC** drive ([`DockReorganizeExternal`]'s
+///   `invoke("drop" | "reorganize")`), and
+/// * the **pointer** drive (the §5.51 R742
+///   [`DockPanelExternal::drag_release`] mouse gesture).
 ///
-/// A live mouse drag-to-reorganize needs three things at drop time: the
-/// **absolute** cursor position, the layout rects of **every** panel,
-/// and the dragged panel's identity. The `InputRouter`'s capture lock
-/// (R51.34) routes all pointer events to the **source** panel
-/// exclusively while a drag is in flight, and an [`External`] only ever
-/// sees rect-relative coordinates — so no single pointer-receiving
-/// widget can resolve the drop on its own. The entity that *does* hold
-/// the full picture is the AI client (or shell drag session), which
-/// reads `scene/layout` for the rects and owns the cursor. That client
-/// classifies the drop with [`resolve_dock_drop`] / [`dock_drop_zone_for`]
-/// and applies it here — the §2 #2 RPC-as-primary-path contract. A
-/// pointer-driven mouse gesture with a live drop-zone overlay is a
-/// thin consumer that layers on top (a future round) once the shell
-/// grows a drag-session that feeds absolute cursor + layout to a
-/// resolver.
+/// Shared as an `Rc<DockReorganizer>`: the editor binding builds one and
+/// hands clones to the invoke external + every panel external, so a
+/// pointer drop and an AI invoke mint split ids from the same
+/// `split_seq` (no `reorg-split-{n}` collision) and push onto the same
+/// undo stack (one workspace history). Extracting the machine *with* its
+/// second consumer — not before it existed — is the abstraction-needs-a-
+/// second-consumer discipline: the `Rc` shape is precisely what the
+/// pointer coordinator needs, so it lands when that coordinator does.
 ///
 /// ## State
 ///
 /// Holds a shared `Rc<Signal<DockTopology>>` — the live topology the
 /// dock editor's view fn reads. A successful reorganize calls
-/// `Signal::set` with the mutated topology, and the view fn's reactive
-/// subscription re-renders the new layout. The external also exposes
-/// the current topology as queryable JSON (`query("topology")`) for
-/// §2 #7 scene-as-data introspection.
-pub struct DockReorganizeExternal {
+/// `Signal::set` with the mutated topology (or records a reversible edit
+/// when an undo stack is attached), and the view fn's reactive
+/// subscription re-renders the new layout.
+pub struct DockReorganizer {
     /// Live topology the dock editor view fn reads. Mutated via
     /// `Signal::set` on a successful reorganize → reactive re-render.
     topology: Rc<Signal<DockTopology>>,
@@ -1441,9 +1463,36 @@ pub struct DockReorganizeExternal {
     undo: Option<Rc<UndoStack>>,
 }
 
-impl core::fmt::Debug for DockReorganizeExternal {
+/// (R686 §5.16 §5.45) AI-native drag-to-reorganize handle — the
+/// [`External`] a dock editor registers (via
+/// [`WidgetCore::create_extra_externals`](pinion_core::WidgetCore::create_extra_externals))
+/// to apply topology edits through the
+/// [`scene/invoke`](pinion_core::external::ExternalIntrospect::invoke)
+/// channel.
+///
+/// ## The invoke drive over a shared coordinator
+///
+/// This external is the **symbolic / RPC** drive of dock reorganize: an
+/// AI client reading `scene/layout` classifies a drop with
+/// [`resolve_dock_drop`] / [`dock_drop_zone_for`] and applies it through
+/// `invoke("drop" | "reorganize")` — the §2 #2 RPC-as-primary-path
+/// contract. R1081 §5.51 added the **pointer** drive
+/// ([`DockPanelExternal`]'s R742 mouse gesture); both share one
+/// [`Rc<DockReorganizer>`] so a pointer drop and an AI invoke mint split
+/// ids from one counter and push one undo history. The external is a
+/// thin [`ExternalIntrospect`] facade over that coordinator — it still
+/// exposes the live topology as queryable JSON (`query("topology")`) for
+/// §2 #7 scene-as-data introspection.
+pub struct DockReorganizeExternal {
+    /// The shared reorganize-commit machine. `Rc` so the editor binding
+    /// hands the *same* coordinator to the R742 panel externals
+    /// ([`reorganizer`](Self::reorganizer)).
+    reorganizer: Rc<DockReorganizer>,
+}
+
+impl core::fmt::Debug for DockReorganizer {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("DockReorganizeExternal")
+        f.debug_struct("DockReorganizer")
             .field("split_seq", &self.split_seq.get())
             .field("reorganize_ratio", &self.reorganize_ratio)
             .field("last_outcome", &self.last_outcome.borrow())
@@ -1451,10 +1500,10 @@ impl core::fmt::Debug for DockReorganizeExternal {
     }
 }
 
-impl DockReorganizeExternal {
-    /// Construct a reorganize handle over a shared topology signal.
+impl DockReorganizer {
+    /// Construct a reorganize coordinator over a shared topology signal.
     /// The editor binding creates the `Rc<Signal<DockTopology>>` (via
-    /// `Owner::cache`) and hands a clone here so the external + the
+    /// `Owner::cache`) and hands a clone here so the coordinator + the
     /// view fn share one source of truth.
     #[must_use]
     pub fn new(topology: Rc<Signal<DockTopology>>) -> Self {
@@ -1471,23 +1520,47 @@ impl DockReorganizeExternal {
     /// reversible [`SignalEdit<DockTopology>`], so `invoke "undo"` /
     /// `"redo"` on the stack step the whole layout back and forth — the
     /// editor's workspace history (Phase D seed). Without this the
-    /// external mutates the topology signal directly (the R686 behavior).
+    /// coordinator mutates the topology signal directly (the R686 behavior).
     #[must_use]
     pub fn with_undo(mut self, stack: Rc<UndoStack>) -> Self {
         self.undo = Some(stack);
         self
     }
 
-    /// Diagnostic: how many splits this external has minted so far.
+    /// Diagnostic: how many splits this coordinator has minted so far.
     #[must_use]
     pub fn split_seq(&self) -> u64 {
         self.split_seq.get()
     }
 
+    /// Read the last gesture outcome summary (`"<source> -> <target>"` on
+    /// a successful edit, `"rejected: …"` / `"no drop target"` otherwise),
+    /// for `query("last_outcome")` and the pointer coordinator's
+    /// drop confirmation. `None` before any gesture.
+    #[must_use]
+    pub fn last_outcome(&self) -> Option<String> {
+        self.last_outcome.borrow().clone()
+    }
+
+    /// Clone the shared topology signal this coordinator mutates, so a
+    /// panel external sharing this `Rc` can read the live topology JSON
+    /// for introspection through one handle.
+    #[must_use]
+    pub fn topology(&self) -> Rc<Signal<DockTopology>> {
+        Rc::clone(&self.topology)
+    }
+
+    /// Record a non-applying outcome string (e.g. `"no drop target"` when
+    /// a pointer drop landed over empty space) so `query("last_outcome")`
+    /// reflects the gesture even when no topology edit happened.
+    pub fn note_outcome(&self, outcome: impl Into<String>) {
+        *self.last_outcome.borrow_mut() = Some(outcome.into());
+    }
+
     /// Apply a resolved [`DockReorganizeIntent`] to the live topology,
-    /// returning a human-readable outcome summary on success. Shared
-    /// by the `invoke("reorganize", …)` wire and exposed for direct
-    /// use by an in-process drag session.
+    /// returning a human-readable outcome summary on success. Shared by
+    /// the `invoke("reorganize" | "drop", …)` wire and the R742 pointer
+    /// [`DockPanelExternal::drag_release`] coordinator.
     ///
     /// # Errors
     ///
@@ -1513,6 +1586,59 @@ impl DockReorganizeExternal {
             self.topology.set(next);
         }
         Ok(summary)
+    }
+}
+
+impl core::fmt::Debug for DockReorganizeExternal {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("DockReorganizeExternal")
+            .field("reorganizer", &self.reorganizer)
+            .finish()
+    }
+}
+
+impl DockReorganizeExternal {
+    /// Construct a reorganize external over a freshly-built coordinator
+    /// for `topology` — the convenience constructor for an invoke-only
+    /// editor that does not (yet) wire pointer panels. Equivalent to
+    /// [`from_reorganizer`](Self::from_reorganizer) of a new coordinator.
+    #[must_use]
+    pub fn new(topology: Rc<Signal<DockTopology>>) -> Self {
+        Self::from_reorganizer(Rc::new(DockReorganizer::new(topology)))
+    }
+
+    /// Wrap an existing shared [`DockReorganizer`] — the path the editor
+    /// binding uses to give the invoke external **and** the R742 panel
+    /// externals the *same* coordinator (one `split_seq`, one undo stack).
+    #[must_use]
+    pub fn from_reorganizer(reorganizer: Rc<DockReorganizer>) -> Self {
+        Self { reorganizer }
+    }
+
+    /// Clone the shared coordinator handle so the binding can hand it to
+    /// the R742 [`DockPanelExternal`]s via
+    /// [`DockPanelExternal::with_reorganizer`].
+    #[must_use]
+    pub fn reorganizer(&self) -> Rc<DockReorganizer> {
+        Rc::clone(&self.reorganizer)
+    }
+
+    /// Diagnostic: how many splits the shared coordinator has minted.
+    #[must_use]
+    pub fn split_seq(&self) -> u64 {
+        self.reorganizer.split_seq()
+    }
+
+    /// Apply a resolved [`DockReorganizeIntent`] through the shared
+    /// coordinator. Retained on the external surface for direct-use
+    /// callers (the editor demo's boot seeding) that hold the external
+    /// rather than the coordinator.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the coordinator's [`TopologyError`] unchanged.
+    pub fn apply_intent(&self, intent: &DockReorganizeIntent) -> Result<String, TopologyError> {
+        self.reorganizer.apply_intent(intent)
     }
 }
 
@@ -1555,15 +1681,15 @@ impl ExternalIntrospect for DockReorganizeExternal {
                 // §2 #7 scene-as-data — the live topology as queryable
                 // JSON. serde cannot fail for the well-formed topology
                 // tree; fall back to Null defensively rather than panic.
-                serde_json::to_value(self.topology.get())
+                serde_json::to_value(self.reorganizer.topology().get())
                     .ok()
                     .map(IntrospectValue::Json)
             }
             "split_seq" => Some(IntrospectValue::Int(
-                i64::try_from(self.split_seq.get()).unwrap_or(i64::MAX),
+                i64::try_from(self.reorganizer.split_seq()).unwrap_or(i64::MAX),
             )),
-            "last_outcome" => Some(match self.last_outcome.borrow().as_deref() {
-                Some(s) => IntrospectValue::Text(s.to_string()),
+            "last_outcome" => Some(match self.reorganizer.last_outcome() {
+                Some(s) => IntrospectValue::Text(s),
                 None => IntrospectValue::Null,
             }),
             _ => None,
@@ -1653,13 +1779,13 @@ impl ExternalIntrospect for DockReorganizeExternal {
                 else {
                     // Dropped over no valid target (empty space or the
                     // source itself) — a cancel, not a failure.
-                    *self.last_outcome.borrow_mut() = Some("no drop target".to_string());
+                    self.reorganizer.note_outcome("no drop target");
                     return Ok(IntrospectValue::Null);
                 };
                 match self.apply_intent(&intent) {
                     Ok(summary) => Ok(IntrospectValue::Text(summary)),
                     Err(e) => {
-                        *self.last_outcome.borrow_mut() = Some(format!("rejected: {e}"));
+                        self.reorganizer.note_outcome(format!("rejected: {e}"));
                         Err(InvokeError::Rejected)
                     }
                 }
@@ -1676,27 +1802,13 @@ impl ExternalIntrospect for DockReorganizeExternal {
                     return Err(InvokeError::TypeMismatch);
                 };
                 let zone = parse_drop_zone(zone_str).ok_or(InvokeError::Rejected)?;
-                let intent = match zone {
-                    DockDropZone::Center => DockReorganizeIntent::Swap {
-                        source: source.to_string(),
-                        target: target.to_string(),
-                    },
-                    DockDropZone::None => return Err(InvokeError::Rejected),
-                    edge => {
-                        let (orientation, position) =
-                            zone_split_geometry(edge).ok_or(InvokeError::Rejected)?;
-                        DockReorganizeIntent::SplitInsert {
-                            source: source.to_string(),
-                            target: target.to_string(),
-                            orientation,
-                            position,
-                        }
-                    }
-                };
+                // Zone → intent through the [`intent_for_zone`] SSOT; a
+                // `None`/unmappable zone is a rejected gesture.
+                let intent = intent_for_zone(source, target, zone).ok_or(InvokeError::Rejected)?;
                 match self.apply_intent(&intent) {
                     Ok(summary) => Ok(IntrospectValue::Text(summary)),
                     Err(e) => {
-                        *self.last_outcome.borrow_mut() = Some(format!("rejected: {e}"));
+                        self.reorganizer.note_outcome(format!("rejected: {e}"));
                         Err(InvokeError::Rejected)
                     }
                 }
@@ -1900,13 +2012,123 @@ pub fn view_dock_panel(
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Column)
-                    .with_align_items(AlignItems::Stretch),
+                    .with_align_items(AlignItems::Stretch)
+                    // (R1080/R1081 §5.51) Every dock panel opts in as a drop
+                    // target so the R742 router climbs a cursor over the
+                    // panel's deeper content tag to THIS root, handing the
+                    // pointer coordinator the panel id + a cursor normalised
+                    // over the whole panel rect (the zone classifier's input).
+                    .with_drop_target(true),
             ),
     )
 }
 
 fn composite_tag(panel_tag: &str, suffix: &'static str) -> String {
     format!("{panel_tag}#{suffix}")
+}
+
+/// (R1081 §5.51) Edge-band percentage for the drop-zone highlight
+/// overlay — the integer-percent (`SizeValue::Percent`) mirror of
+/// [`DOCK_EDGE_ZONE_FRAC`] (`0.25`) the strip sizing needs. Kept in sync
+/// with the float fraction by `dock_edge_zone_pct_matches_frac`.
+const DOCK_EDGE_ZONE_PCT: u8 = 25;
+
+/// (R1081 §5.51) Alpha the drop-zone highlight tint is drawn at (~40% of
+/// the [`ColorRole::Accent`] colour) so the docked-into band reads as a
+/// translucent overlay, not an opaque fill that hides the panel content.
+const DOCK_DROP_HIGHLIGHT_ALPHA: u8 = 0x66;
+
+/// (R1081 §5.51) Build the drop-zone highlight overlay a dock panel
+/// paints while it is the live drop target of an in-flight R742 drag — an
+/// absolutely-positioned, pointer-transparent layer covering the whole
+/// panel, tinting the band the drop would dock into:
+/// `Left`/`Right`/`Top`/`Bottom` = the [`DOCK_EDGE_ZONE_FRAC`] edge strip,
+/// `Center` = the centre square. The geometry mirrors
+/// [`dock_drop_zone_normalized`], so the affordance the user sees matches
+/// the edit the drop performs.
+///
+/// `pointer_transparent` so the overlay never intercepts the drag, and
+/// `absolute_position(0, 0)` + 100%×100% so it sits on top without
+/// disturbing the panel's header / content flex flow. [`DockDropZone::None`]
+/// paints an empty (zero-band) overlay.
+#[must_use]
+pub fn dock_drop_zone_highlight(zone: DockDropZone, theme: &Theme) -> Scene {
+    let overlay_layout = || {
+        LayoutStyle::new()
+            .with_absolute_position(0, 0)
+            .with_size(
+                Size::auto()
+                    .with_width(SizeValue::Percent(100))
+                    .with_height(SizeValue::Percent(100)),
+            )
+            .with_pointer_transparent(true)
+    };
+    // (direction, justify, align, strip width%, strip height%) per zone —
+    // justify pins the strip to the near edge, the percents size the band.
+    let edge = DOCK_EDGE_ZONE_PCT;
+    let center = 100 - 2 * DOCK_EDGE_ZONE_PCT;
+    let (dir, justify, align, w, h) = match zone {
+        DockDropZone::None => {
+            return Scene::Container(ContainerNode::new(vec![]).with_layout(overlay_layout()));
+        }
+        DockDropZone::Left => (
+            FlexDirection::Row,
+            JustifyContent::Start,
+            AlignItems::Stretch,
+            edge,
+            100,
+        ),
+        DockDropZone::Right => (
+            FlexDirection::Row,
+            JustifyContent::End,
+            AlignItems::Stretch,
+            edge,
+            100,
+        ),
+        DockDropZone::Top => (
+            FlexDirection::Column,
+            JustifyContent::Start,
+            AlignItems::Stretch,
+            100,
+            edge,
+        ),
+        DockDropZone::Bottom => (
+            FlexDirection::Column,
+            JustifyContent::End,
+            AlignItems::Stretch,
+            100,
+            edge,
+        ),
+        DockDropZone::Center => (
+            FlexDirection::Row,
+            JustifyContent::Center,
+            AlignItems::Center,
+            center,
+            center,
+        ),
+    };
+    let tint = theme
+        .resolve(ColorRole::Accent)
+        .with_alpha(DOCK_DROP_HIGHLIGHT_ALPHA);
+    let strip = Scene::Container(
+        ContainerNode::new(vec![])
+            .with_style(BoxStyle::filled(tint))
+            .with_layout(
+                LayoutStyle::new().with_size(
+                    Size::auto()
+                        .with_width(SizeValue::Percent(w))
+                        .with_height(SizeValue::Percent(h)),
+                ),
+            ),
+    );
+    Scene::Container(
+        ContainerNode::new(vec![strip]).with_layout(
+            overlay_layout()
+                .flex(dir)
+                .with_justify(justify)
+                .with_align_items(align),
+        ),
+    )
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -2207,200 +2429,245 @@ where
     }
 }
 
-/// (R683.B §5.16) Cursor snapshot captured on the first
-/// `pointer_move` under capture lock. The drag distance is computed
-/// as `(x_rel - cursor_x_at_press, y_rel - cursor_y_at_press)` each
-/// subsequent frame; the L∞ norm (`max(|Δx|, |Δy|)`) crosses the
-/// `tear_off_threshold_frac` to fire the intent.
-#[derive(Debug, Clone, Copy)]
-struct DockDragStart {
-    cursor_x: f32,
-    cursor_y: f32,
+/// (R1081 §5.51) The dragged-panel + drop-zone the R742 pointer
+/// coordinator resolves under the cursor, shared across every panel
+/// external through one injected `Rc<Signal<Option<DockDropPreview>>>`
+/// so the *target* panel's view fn paints the drop affordance while the
+/// *source* panel drives the gesture. `None` between drags / when the
+/// cursor is over no actionable panel zone.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct DockDropPreview {
+    /// The panel being dragged (the gesture's source).
+    pub source: String,
+    /// The panel under the cursor the drop would dock into — the
+    /// [`LayoutStyle::drop_target`](pinion_core::style::LayoutStyle::drop_target)
+    /// root tag the router (R1080) resolved.
+    pub target: String,
+    /// Where over `target` the cursor sits → which split / swap the drop
+    /// performs.
+    pub zone: DockDropZone,
 }
 
-/// (R683.B §5.16, R683.C `InputRouter` routing fix)
-/// Drag-to-tear-off External for the [`view_dock_panel`] header strip.
-/// Registered by the binding via
+/// (R1081 §5.51) The `DragPayload::kind` discriminator a dock-panel drag
+/// carries, so a future cross-widget drop target can match dock panels
+/// before reading the payload value (the panel id).
+pub const DOCK_PANEL_DRAG_KIND: &str = "dock-panel";
+
+/// (R683.B §5.16 → R1081 §5.51) Drag-to-dock / drag-to-tear-off
+/// [`External`] for the [`view_dock_panel`] header strip. Registered by
+/// the binding via
 /// [`WidgetCore::create_extra_externals`](pinion_core::WidgetCore::create_extra_externals)
 /// against the **panel root tag** (e.g. `"inspector"`, the
-/// [`DockPanelStyle::tag`]), NOT the composite `"inspector#header"`
-/// tag the paint emits on the header strip. The R51.42 `dispatch_send`
-/// and `forward_pointer_move` paths always split a composite paint tag
-/// at `#` and look up the state-scene External by the primary half, so
-/// the External must live at the panel root tag for the `InputRouter`
-/// to route events to it. R683.B's first-cut emit registered the
-/// External at the composite tag, which made `dispatch_send` silently
-/// skip every press: no `pointer_move` ever reached the External and
-/// the tear-off arc was unobservable from the `InputRouter` side.
-/// R683.C surfaced and corrected the mismatch.
+/// [`DockPanelStyle::tag`]), NOT the composite `"inspector#header"` tag
+/// the paint emits on the header strip — the R51.42 `dispatch_send` path
+/// splits a composite paint tag at `#` and looks up the state-scene
+/// External by the primary half, so the External must live at the panel
+/// root for the `InputRouter` to route events to it.
 ///
-/// ## Wire
+/// ## The pointer drive (R742, replacing the R683 capture threshold)
 ///
-/// `wants_pointer_capture = true` so the cursor lock survives the
-/// press → drag → release span (the user can drag well past the
-/// header strip before tear-off fires). Each `pointer_move` under
-/// capture lock checks the L∞ delta from the press-time frame
-/// against [`DockPanelStyle::tear_off_threshold_frac`]; on first
-/// crossing the external emits a [`TEAR_OFF_EVENT`] intent with the
-/// panel id as the `IntrospectValue::Text` payload + sets the
-/// `fired_for_drag` guard so subsequent moves do not re-fire.
+/// R1081 §5.51 moved this external off the pre-R742 capture mechanism
+/// ([`wants_pointer_capture`](External::wants_pointer_capture) +
+/// `pointer_move` L∞ threshold) onto the §5.51 R742 drag-session hooks —
+/// the two are mutually exclusive (both = a double-driven gesture). The
+/// `InputRouter` drives the gesture:
 ///
-/// `PointerUp` / `PointerCancel` (delivered via the
-/// [`ExternalIntrospect::invoke`] `"send"` channel) clear the drag
-/// snapshot + the `fired_for_drag` guard so the next press starts a
-/// fresh cycle.
+/// 1. **`PointerDown`** dispatches `"header:PointerDown"` /
+///    `"content:PointerDown"` through `invoke("send", …)`, which arms
+///    ([`is_drag_armed`](Self::is_drag_armed)) only for a header press.
+/// 2. **[`begin_drag`](External::begin_drag)** (called right after) opens
+///    a session iff armed, returning a [`DragPayload`](pinion_core::external::DragPayload)
+///    of kind [`DOCK_PANEL_DRAG_KIND`] carrying the panel id.
+/// 3. **[`drag_to`](External::drag_to)** (every cursor move) resolves the
+///    [`DropPoint`](pinion_core::external::DropPoint) over the nearest
+///    opted-in drop-target panel (R1080) and writes the shared
+///    [`DockDropPreview`] so the target panel's view highlights the zone.
+/// 4. **[`drag_release`](External::drag_release)** classifies the drop:
+///    over a *different* panel with a valid zone and an attached
+///    [`DockReorganizer`] → the panel docks (split / swap) through the
+///    shared coordinator; over **no** panel (the cursor escaped every
+///    drop target — dragged out of the dock / window) → the panel
+///    **tears off** into a floating window (the R683 outcome, now
+///    release-driven); anything else (dropped back on itself, a dead
+///    zone, or no coordinator) → a no-op snap-back.
+/// 5. **[`drag_cancel`](External::drag_cancel)** (OS abort) discards the
+///    gesture without committing.
 ///
-/// ## Sub-region discriminator
+/// ## Two modes by coordinator presence
 ///
-/// Because the External lives at the panel root tag, the InputRouter
-/// dispatches `send` events for clicks on EITHER the header OR the
-/// content sub-region (both paint tags split to the same primary).
-/// The R51.42 wire-payload prefix is the sub-index: `"header:PointerDown"`,
-/// `"content:PointerDown"`, etc. Only `"header:*"` events arm the
-/// drag — `"content:*"` clears `is_drag_armed` so a press on the
-/// content area's empty space cannot accidentally fire `tear_off` on a
-/// drag past the threshold. The pre-R683.C unit tests that called
-/// `invoke("send", Text("PointerUp"))` with bare event names continue
-/// to work for the teardown half (bare events split to no sub-index
-/// and clear the drag state too); the production invoking-via-
-/// InputRouter path always carries a sub-index prefix.
+/// * **dock-or-float** — a [`DockReorganizer`] is attached
+///   ([`with_reorganizer`](Self::with_reorganizer)): drops onto other
+///   panels reorganize the shared topology, escape-drops float. The
+///   editor consumer.
+/// * **tear-off-only** — no coordinator: every escape-drop floats and a
+///   drop onto another panel is a no-op (the panel has no topology to
+///   reorganize). The flat `hello-dock-panels` consumer.
 ///
-/// ## Pattern of operations
+/// ## Direct AI tear-off
 ///
-/// 1. Construct: `DockPanelExternal::new(panel_id, threshold_frac)`.
-/// 2. Application's `create_extra_externals` registers the External
-///    against the **panel root tag** (matching the view fn's panel
-///    root Container tag — typically the same `panel_id` passed to
-///    `DockPanelExternal::new`).
-/// 3. User presses on the header + drags past the threshold — the
-///    InputRouter dispatches `"header:PointerDown"` (arms the drag)
-///    + `pointer_move` frames; the External emits the `tear_off`
-///    intent.
-/// 4. Binding's `WidgetCore::update` reducer catches the dotted
-///    intent `{panel_tag}.tear_off` (the runtime walker prefixes the
-///    bare `TEAR_OFF_EVENT` with the registered External tag, which is
-///    now the panel root tag, not the composite header tag) + pushes
-///    a fresh `WindowSpec` onto its `Signal<Vec<WindowSpec>>`.
-/// 5. R683.A `reconcile_windows` Effect picks up the signal change +
-///    spawns the new floating window with the torn-off panel's content.
-#[allow(clippy::doc_markdown, clippy::doc_lazy_continuation)]
+/// `invoke("tear_off")` enqueues the same `tear_off` intent without a
+/// pointer drag (R683.C) — the path an AI client drives the dock-back of
+/// a freshly-floated panel before the router has a paint scene for the
+/// new window.
+#[allow(clippy::doc_markdown)]
 pub struct DockPanelExternal {
-    /// Stable panel identifier carried into the tear-off intent
-    /// payload. The binding's reducer + the
-    /// `Signal<Vec<WindowSpec>>` push use this to determine which
-    /// panel was torn off + what content the new window should
-    /// host.
+    /// Stable panel identifier carried into the `tear_off` intent
+    /// payload + the R742 [`DragPayload`](pinion_core::external::DragPayload)
+    /// value. The binding's reducer + the `Signal<Vec<WindowSpec>>` push
+    /// use this to decide which panel floated; the coordinator uses it as
+    /// the reorganize `source`.
     panel_id: Cow<'static, str>,
-    /// Tear-off threshold as a fraction of the header rect extent
-    /// (matches [`DockPanelStyle::tear_off_threshold_frac`]). The
-    /// external receives a copy of the style's value at
-    /// construction so the threshold can be queried + introspected.
-    tear_off_threshold_frac: f32,
-    /// Drag-start snapshot. `None` between presses; `Some` once
-    /// the first `pointer_move` under capture lock calibrates.
-    drag_start: Cell<Option<DockDragStart>>,
-    /// Whether the `tear_off` intent has already been emitted for
-    /// the current drag. Guards against multi-fire (every
-    /// `pointer_move` past the threshold would otherwise re-fire,
-    /// pushing N+1 `WindowSpec`s per single user drag).
-    fired_for_drag: Cell<bool>,
     /// Pending intents waiting for the framework's
-    /// [`External::drain_intents`] poll. v1 fires exactly one
-    /// `tear_off` per drag, so the queue depth is `≤ 1` in steady
-    /// state, but the `VecDeque` shape leaves room for future
-    /// multi-event drags (e.g. an `tear_off_armed` precursor +
-    /// `tear_off` final).
+    /// [`External::drain_intents`] poll. v1 enqueues exactly one
+    /// `tear_off` per gesture, so the queue depth is `≤ 1` in steady
+    /// state; the `VecDeque` leaves room for future multi-event drags.
     pending_intents: RefCell<VecDeque<Intent>>,
-    /// R683.C §5.16 — drag-arm flag. Set to `true` on
-    /// `invoke("send", "header:PointerDown")` (the InputRouter
-    /// dispatches this when the user presses on the header strip
-    /// because the External lives at the panel root tag + the R51.42
-    /// payload format prefixes the sub-index). Cleared on
-    /// `"content:PointerDown"` (a press on the content area must NOT
-    /// drive tear-off), `"PointerUp"` / `"PointerCancel"` (drag
-    /// teardown), or via direct construction default. `pointer_move`
-    /// gates its drag math on this flag so content-area drags do not
-    /// fire `tear_off` accidentally.
-    ///
-    /// Defaults to `true` for backward-compat with the R683.B unit
-    /// tests that called `pointer_move` directly without simulating
-    /// the press arc — production flows always go through the
-    /// InputRouter's `dispatch_send` which sets the flag explicitly.
+    /// R683.C §5.16 — drag-arm flag, the
+    /// [`begin_drag`](External::begin_drag) gate. Set `true` on
+    /// `invoke("send", "header:PointerDown")`, `false` on
+    /// `"content:PointerDown"` (a content press must not start a panel
+    /// drag), re-armed on `PointerUp` / `PointerCancel`. Defaults `true`
+    /// so a direct `begin_drag` (unit tests, AI invoke) arms without
+    /// simulating the press arc.
     is_drag_armed: Cell<bool>,
+    /// Diagnostic: a drag session this panel began is in flight (between
+    /// [`begin_drag`](External::begin_drag) and the matching
+    /// release / cancel). Surfaced via `query("dragging")`.
+    dragging: Cell<bool>,
+    /// Diagnostic: the last [`drag_release`](External::drag_release) tore
+    /// the panel off (escaped every drop target) rather than docking /
+    /// snapping back. Surfaced via `query("tear_off_fired")`.
+    tear_off_fired: Cell<bool>,
+    /// (R1081 §5.51) The shared reorganize coordinator. `Some` puts the
+    /// panel in dock-or-float mode (drops onto other panels reorganize
+    /// the shared topology); `None` is tear-off-only. Cloned from the
+    /// editor's one [`Rc<DockReorganizer>`] so a pointer dock and an AI
+    /// invoke share one `split_seq` + undo stack.
+    reorganizer: Option<Rc<DockReorganizer>>,
+    /// (R1081 §5.51) The shared live drop-preview, written by whichever
+    /// panel is the drag source and read by every panel's view fn to
+    /// paint the zone affordance. `None` = no overlay binding (the
+    /// gesture still docks / tears off, just without the preview paint).
+    drop_preview: Option<Rc<Signal<Option<DockDropPreview>>>>,
 }
 
 impl core::fmt::Debug for DockPanelExternal {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("DockPanelExternal")
             .field("panel_id", &self.panel_id)
-            .field("tear_off_threshold_frac", &self.tear_off_threshold_frac)
-            .field("drag_start", &self.drag_start.get())
-            .field("fired_for_drag", &self.fired_for_drag.get())
+            .field("is_drag_armed", &self.is_drag_armed.get())
+            .field("dragging", &self.dragging.get())
+            .field("tear_off_fired", &self.tear_off_fired.get())
             .finish_non_exhaustive()
     }
 }
 
 impl DockPanelExternal {
-    /// Construct a dock-panel tear-off External for the given
-    /// panel id + threshold. The threshold must match
-    /// [`DockPanelStyle::tear_off_threshold_frac`] the view fn
-    /// uses — they are paired (visual + drag detection) for the
-    /// canonical UX.
+    /// Construct a dock-panel drag External for the given panel id.
+    /// Tear-off-only by default (no topology to reorganize); call
+    /// [`with_reorganizer`](Self::with_reorganizer) to enter dock-or-float
+    /// mode and [`with_drop_preview`](Self::with_drop_preview) to wire the
+    /// live zone affordance.
+    ///
+    /// R1081 §5.51 dropped the per-panel `tear_off_threshold_frac`
+    /// argument: the click-vs-drag threshold is now the `InputRouter`'s
+    /// `DRAG_CLICK_THRESHOLD_PX` SSOT (a press-release in place stays a
+    /// click; any real drag opens the session), so the panel no longer
+    /// carries its own distance threshold.
     #[must_use]
-    pub fn new(panel_id: impl Into<Cow<'static, str>>, tear_off_threshold_frac: f32) -> Self {
+    pub fn new(panel_id: impl Into<Cow<'static, str>>) -> Self {
         Self {
             panel_id: panel_id.into(),
-            tear_off_threshold_frac,
-            drag_start: Cell::new(None),
-            fired_for_drag: Cell::new(false),
             pending_intents: RefCell::new(VecDeque::new()),
             is_drag_armed: Cell::new(true),
+            dragging: Cell::new(false),
+            tear_off_fired: Cell::new(false),
+            reorganizer: None,
+            drop_preview: None,
         }
     }
 
+    /// (R1081 §5.51) Share the editor's reorganize coordinator so a drop
+    /// onto another panel docks (split / swap) through the same
+    /// `split_seq` + undo history the AI `invoke` path uses. Without it
+    /// the panel is tear-off-only.
+    #[must_use]
+    pub fn with_reorganizer(mut self, reorganizer: Rc<DockReorganizer>) -> Self {
+        self.reorganizer = Some(reorganizer);
+        self
+    }
+
+    /// (R1081 §5.51) Share the live drop-preview signal the binding also
+    /// reads in its view fn to paint the target panel's zone overlay. One
+    /// signal is injected into every panel external so the source panel's
+    /// `drag_to` updates the affordance the target panel paints.
+    #[must_use]
+    pub fn with_drop_preview(mut self, preview: Rc<Signal<Option<DockDropPreview>>>) -> Self {
+        self.drop_preview = Some(preview);
+        self
+    }
+
     /// Read the panel id this external carries — the payload the
-    /// `tear_off` intent ships.
+    /// `tear_off` intent + the R742 drag carry.
     #[must_use]
     pub fn panel_id(&self) -> &str {
         &self.panel_id
     }
 
-    /// Read the tear-off threshold fraction.
-    #[must_use]
-    pub fn tear_off_threshold_frac(&self) -> f32 {
-        self.tear_off_threshold_frac
-    }
-
-    /// Diagnostic: drag-in-progress flag. `true` between the
-    /// press-time `pointer_move` calibration and the `PointerUp`
-    /// / `PointerCancel` clear.
+    /// Diagnostic: a drag session this panel began is in flight.
     #[must_use]
     pub fn is_dragging(&self) -> bool {
-        self.drag_start.get().is_some()
+        self.dragging.get()
     }
 
-    /// Diagnostic: whether the `tear_off` intent has fired for the
-    /// current drag. `false` until the threshold is crossed; back
-    /// to `false` after the release clears the cycle.
+    /// Diagnostic: whether the last release tore the panel off (vs
+    /// docked / snapped back).
     #[must_use]
     pub fn tear_off_fired(&self) -> bool {
-        self.fired_for_drag.get()
+        self.tear_off_fired.get()
     }
 
-    /// Pure projection: compute the L∞ cursor delta against the
-    /// press-time snapshot. Returns `None` before the drag
-    /// calibrates. Exposed `pub(crate)` for unit tests; not part of
-    /// the public surface.
-    pub(crate) fn cursor_delta_l_inf(&self, x_rel: f32, y_rel: f32) -> Option<f32> {
-        let snapshot = self.drag_start.get()?;
-        let dx = (x_rel - snapshot.cursor_x).abs();
-        let dy = (y_rel - snapshot.cursor_y).abs();
-        Some(dx.max(dy))
+    /// (R1081 §5.51) Classify a resolved [`DropPoint`] into the dock
+    /// preview it implies: `None` when the cursor is over no panel, over
+    /// this same panel (a self-drop is a no-op), or in a dead zone
+    /// ([`DockDropZone::None`]); otherwise `Some` with the target panel +
+    /// zone. The single classifier `drag_to` (preview) and `drag_release`
+    /// (commit) share so the painted affordance and the applied edit
+    /// cannot disagree.
+    fn resolve_preview(&self, over: Option<&DropPoint>) -> Option<DockDropPreview> {
+        let over = over?;
+        // The drop target is the panel ROOT (R1080 marks only the root
+        // `.drop_target`), but split defensively at `#` in case a future
+        // nested target resolves to a composite tag.
+        let target = over.tag.split('#').next().unwrap_or(over.tag.as_str());
+        if target == self.panel_id.as_ref() {
+            return None;
+        }
+        let zone = dock_drop_zone_normalized(f64::from(over.x_rel), f64::from(over.y_rel));
+        if zone == DockDropZone::None {
+            return None;
+        }
+        Some(DockDropPreview {
+            source: self.panel_id.to_string(),
+            target: target.to_string(),
+            zone,
+        })
     }
 
-    /// Enqueue the `tear_off` intent. Internal helper —
-    /// `pointer_move` calls this exactly once per drag when the
-    /// threshold is crossed.
+    /// (R1081 §5.51) Write the shared drop-preview, deduping against the
+    /// current value so a stationary cursor mid-drag does not churn
+    /// repaints. No-op when no preview signal is wired.
+    fn set_drop_preview(&self, preview: Option<DockDropPreview>) {
+        if let Some(sig) = &self.drop_preview {
+            if sig.get() != preview {
+                sig.set(preview);
+            }
+        }
+    }
+
+    /// Enqueue the `tear_off` intent — the binding's reducer turns it
+    /// into a `WindowSpec` push. Called by `drag_release` on an
+    /// escape-drop and by the direct `invoke("tear_off")` channel.
     fn enqueue_tear_off(&self) {
         self.pending_intents.borrow_mut().push_back(Intent {
             tag: Cow::Borrowed(TEAR_OFF_EVENT),
@@ -2422,53 +2689,81 @@ impl External for DockPanelExternal {
         ThreadOwnership::UiThreadSync
     }
 
-    /// Capture lock so the cursor stays pinned to the header strip
-    /// for the duration of the press, even when the cursor strays
-    /// outside the header rect (the natural tear-off path —
-    /// dragging the panel out of its dock slot toward a new window
-    /// position).
-    fn wants_pointer_capture(&self) -> bool {
-        true
+    /// (R1081 §5.51) R742 drag-source arm. The `InputRouter` calls this
+    /// right after the `PointerDown` dispatch (which set
+    /// [`is_drag_armed`](Self::is_drag_armed) via `invoke("send", …)`),
+    /// so a press on the header opens a session and a press on the
+    /// content body does not. Returns a [`DragPayload`] of kind
+    /// [`DOCK_PANEL_DRAG_KIND`] carrying the panel id. Called on `&self`
+    /// (arming is observation of the press the send-arm already recorded)
+    /// — the [`dragging`](Self::dragging) / [`tear_off_fired`](Self::tear_off_fired)
+    /// diagnostics are interior-mutable.
+    fn begin_drag(&self) -> Option<DragPayload> {
+        if !self.is_drag_armed.get() {
+            return None;
+        }
+        self.dragging.set(true);
+        self.tear_off_fired.set(false);
+        Some(DragPayload {
+            kind: Cow::Borrowed(DOCK_PANEL_DRAG_KIND),
+            value: IntrospectValue::Text(self.panel_id.to_string()),
+        })
     }
 
-    /// R51.34 §5.15 + §5.35 — calibrate drag-start on the first
-    /// frame, accumulate delta on subsequent frames, fire
-    /// [`TEAR_OFF_EVENT`] intent once when the L∞ delta crosses
-    /// [`DockPanelStyle::tear_off_threshold_frac`].
-    ///
-    /// R683.C drag-arm gate: production flows that route through the
-    /// `InputRouter`'s `forward_pointer_move` always carry a press
-    /// arc (`"header:PointerDown"` or `"content:PointerDown"`) that
-    /// sets [`Self::is_drag_armed`]. Pressing on the content area
-    /// disarms the drag so the tear-off intent does not fire on a
-    /// drag through the panel's content body. Pre-R683.C unit tests
-    /// that exercise this method without simulating the press arc
-    /// continue to work because the construction default is `armed =
-    /// true`.
-    fn pointer_move(&mut self, x_rel: f32, y_rel: f32) {
-        if !self.is_drag_armed.get() {
+    /// (R1081 §5.51) R742 live update — resolve the drop the cursor is
+    /// over into the shared [`DockDropPreview`] so the target panel paints
+    /// the zone affordance. `None` over no actionable panel.
+    fn drag_to(&mut self, _payload: &DragPayload, over: Option<DropPoint>) {
+        self.set_drop_preview(self.resolve_preview(over.as_ref()));
+    }
+
+    /// (R1081 §5.51) R742 drop commit. Over a *different* panel with a
+    /// valid zone and an attached coordinator → dock (split / swap)
+    /// through the shared [`DockReorganizer`]; over **no** panel (cursor
+    /// escaped every drop target) → tear off into a floating window;
+    /// anything else → a no-op snap-back. A self-drop / dead-zone / panel
+    /// drop without a coordinator does NOT tear off (only an escape-drop
+    /// floats), so a click on the header (released over its own panel)
+    /// snaps back and the router's trailing click still fires.
+    fn drag_release(&mut self, _payload: &DragPayload, over: Option<DropPoint>) {
+        self.dragging.set(false);
+        self.set_drop_preview(None);
+        self.is_drag_armed.set(true);
+        // 1. Dock: a valid drop over another panel, with a coordinator.
+        if let (Some(reorganizer), Some(preview)) = (
+            self.reorganizer.as_ref(),
+            self.resolve_preview(over.as_ref()),
+        ) {
+            self.tear_off_fired.set(false);
+            // `resolve_preview` already rejected the dead zone, so
+            // `intent_for_zone` is `Some`; the `if let` keeps the SSOT
+            // mapping panic-free. A rejected apply (stale id / collision)
+            // leaves the topology unchanged and is recorded on the
+            // coordinator's `last_outcome`.
+            if let Some(intent) = intent_for_zone(&preview.source, &preview.target, preview.zone) {
+                let _ = reorganizer.apply_intent(&intent);
+            }
             return;
         }
-        if self.drag_start.get().is_none() {
-            self.drag_start.set(Some(DockDragStart {
-                cursor_x: x_rel,
-                cursor_y: y_rel,
-            }));
-            return;
-        }
-        if self.fired_for_drag.get() {
-            // Tear-off already fired — no more work for this drag.
-            // The binding's reducer will have already pushed a new
-            // WindowSpec; subsequent cursor jitter must not re-fire.
-            return;
-        }
-        let Some(delta) = self.cursor_delta_l_inf(x_rel, y_rel) else {
-            return;
-        };
-        if delta >= self.tear_off_threshold_frac {
+        // 2. Tear off only when the cursor escaped every drop target.
+        if over.is_none() {
             self.enqueue_tear_off();
-            self.fired_for_drag.set(true);
+            self.tear_off_fired.set(true);
+        } else {
+            // Dropped back on a panel (self / dead zone / no coordinator)
+            // → snap back, no commit.
+            self.tear_off_fired.set(false);
         }
+    }
+
+    /// (R937.1 §5.51) R742 drag abort — the OS revoked the gesture.
+    /// Discard it: clear the preview + diagnostics WITHOUT committing a
+    /// dock or a tear-off.
+    fn drag_cancel(&mut self, _payload: &DragPayload) {
+        self.dragging.set(false);
+        self.tear_off_fired.set(false);
+        self.set_drop_preview(None);
+        self.is_drag_armed.set(true);
     }
 
     fn is_dirty(&self) -> bool {
@@ -2495,9 +2790,12 @@ impl ExternalIntrospect for DockPanelExternal {
     fn schema(&self) -> IntrospectSchema {
         IntrospectSchema::new(&[
             ("panel_id", "string"),
-            ("tear_off_threshold_frac", "float"),
             ("dragging", "bool"),
             ("tear_off_fired", "bool"),
+            // R1081 §5.51 — the live drop the in-flight drag is over
+            // (`{source, target, zone}` or null), so an AI agent observes
+            // the same drop-zone affordance the user sees.
+            ("drop_preview", "json"),
             ("send", "string"),
             // R683.C §5.16 §5.49 — direct tear-off invoke channel.
             // See `invoke` rustdoc.
@@ -2508,23 +2806,30 @@ impl ExternalIntrospect for DockPanelExternal {
     fn query(&self, path: &str) -> Option<IntrospectValue> {
         match path {
             "panel_id" => Some(IntrospectValue::Text(self.panel_id.to_string())),
-            "tear_off_threshold_frac" => Some(IntrospectValue::Float(f64::from(
-                self.tear_off_threshold_frac,
-            ))),
             "dragging" => Some(IntrospectValue::Bool(self.is_dragging())),
             "tear_off_fired" => Some(IntrospectValue::Bool(self.tear_off_fired())),
+            // R1081 §5.51 — the shared live preview (any panel's external
+            // reads the one shared signal). Null when no drag is in
+            // flight / no preview signal is wired.
+            "drop_preview" => Some(match self.drop_preview.as_ref().and_then(|s| s.get()) {
+                Some(p) => IntrospectValue::Json(serde_json::json!({
+                    "source": p.source,
+                    "target": p.target,
+                    "zone": zone_wire_name(p.zone),
+                })),
+                None => IntrospectValue::Null,
+            }),
             _ => None,
         }
     }
 
     fn intervene(&mut self, path: &str, _value: IntrospectValue) -> Result<(), InterveneError> {
         match path {
-            // Every slot is framework-owned or construction-time
-            // fixed. AI clients drive the tear-off through the
-            // `invoke("send", ...)` channel + the binding's
-            // reducer + the windows_signal push — not by
-            // intervening on dragging / tear_off_fired directly.
-            "panel_id" | "tear_off_threshold_frac" | "dragging" | "tear_off_fired" => {
+            // Every slot is framework-owned. AI clients drive the gesture
+            // through the `invoke("send", ...)` / `invoke("tear_off")`
+            // channels + the shared coordinator — not by intervening on
+            // dragging / tear_off_fired / drop_preview directly.
+            "panel_id" | "dragging" | "tear_off_fired" | "drop_preview" => {
                 Err(InterveneError::ReadOnly)
             }
             _ => Err(InterveneError::UnknownPath),
@@ -2551,39 +2856,31 @@ impl ExternalIntrospect for DockPanelExternal {
     ///   the drag so a press on the content body does not propagate
     ///   into tear-off when the user drags through the content area.
     /// * `"header:PointerUp"` / `"PointerUp"` / `"header:PointerCancel"`
-    ///   / `"PointerCancel"` — drag teardown. Clears `drag_start`,
-    ///   `fired_for_drag`, and re-arms (`is_drag_armed = true`) so
-    ///   the next press starts a fresh cycle.
+    ///   / `"PointerCancel"` — re-arm (`is_drag_armed = true`) so the next
+    ///   press starts fresh. The real drag teardown is the R742
+    ///   `drag_release` / `drag_cancel`; this send path only fires for the
+    ///   click-up case (a press-release in place the router replays as a
+    ///   trailing `PointerUp`).
     /// * `"header:PointerLeave"` / `"content:PointerLeave"` / bare
-    ///   `"PointerLeave"` — no-op (the hover-leave does not clear
-    ///   capture).
+    ///   `"PointerLeave"` — no-op (the hover-leave does not affect arming).
     /// * Other / unknown event names — `InvokeError::UnknownPath`.
     fn invoke(
         &mut self,
         path: &str,
         args: IntrospectValue,
     ) -> Result<IntrospectValue, InvokeError> {
-        // R683.C §5.16 §5.49 — direct tear-off invoke. The drag path
+        // R683.C §5.16 §5.49 — direct tear-off invoke. The pointer path
         // requires a populated `InputRouter::last_paint_scene` for the
-        // addressed window; on freshly-spawned floating windows under
-        // headless RPC, the router has no paint scene until winit's
-        // next paint cycle fires `finalize_frame_for_window`. The
-        // direct `tear_off` invoke bypasses the drag simulation so AI
-        // clients can drive the dock-back gesture without depending on
-        // winit's paint timing. Mirror of [`TEAR_OFF_EVENT`] enqueue —
-        // same intent, same payload, same single-fire guard.
+        // addressed window; on a freshly-spawned floating window under
+        // headless RPC the router has no paint scene until winit's next
+        // paint cycle. This channel bypasses the pointer drag so AI
+        // clients drive the dock-back without depending on winit's paint
+        // timing. Mirror of the R742 escape-drop tear-off — same intent,
+        // same payload.
         if path == TEAR_OFF_EVENT {
-            // Idempotent on the firing guard: re-invoking on an
-            // already-fired drag is allowed (the binding's reducer
-            // toggles `is_panel_floating(...)`, so a second call when
-            // already torn off becomes the dock-back). Reset the drag
-            // bookkeeping (drag_start / fired_for_drag / is_drag_armed)
-            // to the same fresh state a `PointerUp` / `PointerCancel`
-            // would produce so subsequent pointer-driven drags start
-            // a fresh calibration cycle.
             self.enqueue_tear_off();
-            self.drag_start.set(None);
-            self.fired_for_drag.set(false);
+            self.dragging.set(false);
+            self.tear_off_fired.set(true);
             self.is_drag_armed.set(true);
             return Ok(IntrospectValue::Null);
         }
@@ -2594,17 +2891,15 @@ impl ExternalIntrospect for DockPanelExternal {
         // Split `"sub_index:Event[:mods]"` into `(Some(sub_index), Event)`
         // or `(None, raw_event)` if no `:` separator is present — via the
         // R880.1 `split_send_payload` `:` grammar SSOT, so a held-modifier
-        // release ("t0:PointerUp:c") still resets the drag-arm state (the
-        // hand-rolled split_once read "PointerUp:c" as the event name and
-        // returned UnknownPath, skipping the Up arm's reset).
+        // release ("t0:PointerUp:c") still re-arms (the hand-rolled
+        // split_once read "PointerUp:c" as the event name and returned
+        // UnknownPath, skipping the Up arm).
         let (sub_index, event_name) = match pinion_core::composite_tag::split_send_payload(raw) {
             Some((sub, ev, _mods)) => (Some(sub), ev),
             None => (None, raw),
         };
         match PointerWireEvent::from_wire_name(event_name) {
             Some(PointerWireEvent::Up | PointerWireEvent::Cancel) => {
-                self.drag_start.set(None);
-                self.fired_for_drag.set(false);
                 self.is_drag_armed.set(true);
                 Ok(IntrospectValue::Null)
             }
@@ -2655,14 +2950,18 @@ mod tests {
     //!     `{tag}#content`.
 
     use super::{
-        CONTENT_TAG_SUFFIX, DockPanelExternal, DockPanelStyle, HEADER_TAG_SUFFIX, TEAR_OFF_EVENT,
-        composite_tag, view_dock_panel,
+        CONTENT_TAG_SUFFIX, DockDropZone, DockNode, DockPanelExternal, DockPanelStyle,
+        DockReorganizer, DockTopology, HEADER_TAG_SUFFIX, TEAR_OFF_EVENT, composite_tag,
+        dock_drop_zone_highlight, view_dock_panel,
     };
-    use pinion_core::external::{External, ExternalIntrospect, IntrospectValue};
+    use pinion_core::external::{
+        DragPayload, DropPoint, External, ExternalIntrospect, IntrospectValue,
+    };
     use pinion_core::intent::Intent;
-    use pinion_core::reactive::Owner;
+    use pinion_core::reactive::{Owner, Signal};
     use pinion_core::scene::{ContainerNode, Scene};
     use pinion_core::theme::Theme;
+    use std::rc::Rc;
 
     const PANEL_TAG: &str = "test_panel";
 
@@ -2783,140 +3082,228 @@ mod tests {
         assert!((style.tear_off_threshold_frac - 0.25).abs() < f32::EPSILON);
     }
 
+    // ─────────────────────────────────────────────────────────────────
+    // R1081 §5.51 — DockPanelExternal R742 pointer drag (replacing the
+    // R683 capture + L∞-threshold tear-off). The router arms via
+    // `invoke("send", "header:PointerDown")`, opens a session with
+    // `begin_drag`, feeds `drag_to` / `drag_release` a `DropPoint`, and
+    // the panel docks (with a coordinator), tears off (escape-drop), or
+    // snaps back. Headless: we drive the hooks directly.
+    // ─────────────────────────────────────────────────────────────────
+
+    /// Two-leaf topology `a | b` for the reorganize tests.
+    fn ab_topology() -> DockTopology {
+        DockTopology::new(DockNode::split_horizontal(
+            "root_h",
+            0.5,
+            DockNode::leaf("a"),
+            DockNode::leaf("b"),
+        ))
+    }
+
+    /// A `DropPoint` over panel `tag` at normalised `(x_rel, y_rel)`.
+    fn drop_point(tag: &str, x_rel: f32, y_rel: f32) -> DropPoint {
+        DropPoint {
+            tag: tag.to_string(),
+            x_rel,
+            y_rel,
+        }
+    }
+
+    fn dummy_payload() -> DragPayload {
+        DragPayload {
+            kind: std::borrow::Cow::Borrowed("dock-panel"),
+            value: IntrospectValue::Text("a".to_string()),
+        }
+    }
+
     #[test]
-    fn r683_dock_panel_external_first_pointer_move_calibrates_no_intent() {
-        let mut ext = DockPanelExternal::new("inspector_panel", 0.5);
-        ext.pointer_move(0.3, 0.5);
+    fn r1081_begin_drag_arms_on_header_not_content() {
+        let ext = DockPanelExternal::new("a");
+        // Header press arms (default `is_drag_armed = true`).
+        assert!(ext.begin_drag().is_some(), "header press opens a session");
         assert!(ext.is_dragging());
+        // A content press disarms → no session.
+        let mut ext2 = DockPanelExternal::new("a");
+        ext2.invoke(
+            "send",
+            IntrospectValue::Text("content:PointerDown".to_string()),
+        )
+        .expect("send parses");
+        assert!(
+            ext2.begin_drag().is_none(),
+            "content press must not start a drag",
+        );
+    }
+
+    #[test]
+    fn r1081_drag_to_writes_shared_preview_for_target_panel() {
+        let preview = Rc::new(Signal::new(None));
+        let mut ext = DockPanelExternal::new("a").with_drop_preview(Rc::clone(&preview));
+        let _ = ext.begin_drag();
+        // Cursor over panel "b" near its left edge → Left zone.
+        ext.drag_to(&dummy_payload(), Some(drop_point("b", 0.1, 0.5)));
+        let p = preview.get().expect("preview written");
+        assert_eq!(p.source, "a");
+        assert_eq!(p.target, "b");
+        assert_eq!(p.zone, DockDropZone::Left);
+        // Cursor back over self → preview clears (a self-drop is a no-op).
+        ext.drag_to(&dummy_payload(), Some(drop_point("a", 0.5, 0.5)));
+        assert!(preview.get().is_none(), "self-hover clears the preview");
+    }
+
+    #[test]
+    fn r1081_drag_release_over_another_panel_reorganizes_via_shared_coordinator() {
+        let topology = Rc::new(Signal::new(ab_topology()));
+        let reorganizer = Rc::new(DockReorganizer::new(Rc::clone(&topology)));
+        let mut ext = DockPanelExternal::new("a").with_reorganizer(Rc::clone(&reorganizer));
+        let _ = ext.begin_drag();
+        // Drop "a" on the centre of "b" → swap.
+        ext.drag_release(&dummy_payload(), Some(drop_point("b", 0.5, 0.5)));
+        assert!(!ext.tear_off_fired(), "a dock is not a tear-off");
+        assert_eq!(
+            reorganizer.last_outcome().as_deref(),
+            Some("a -> b"),
+            "the shared coordinator applied the swap",
+        );
+    }
+
+    #[test]
+    fn r1081_drag_release_over_no_panel_tears_off() {
+        let topology = Rc::new(Signal::new(ab_topology()));
+        let reorganizer = Rc::new(DockReorganizer::new(topology));
+        let mut ext = DockPanelExternal::new("a").with_reorganizer(reorganizer);
+        let _ = ext.begin_drag();
+        // Released over no drop target (escaped the dock).
+        ext.drag_release(&dummy_payload(), None);
+        assert!(ext.tear_off_fired(), "escape-drop tears off");
+        let mut received: Vec<Intent> = Vec::new();
+        ext.drain_intents(&mut |i| received.push(i));
+        assert_eq!(received.len(), 1, "exactly one tear_off");
+        assert_eq!(received[0].tag.as_ref(), TEAR_OFF_EVENT);
+        assert_eq!(received[0].payload.as_str(), Some("a"));
+    }
+
+    #[test]
+    fn r1081_drag_release_back_on_self_snaps_back_no_tear_off() {
+        // A click on the header (press-release in place, over its own
+        // panel) must NOT tear off — only an escape-drop floats.
+        let mut ext = DockPanelExternal::new("a");
+        let _ = ext.begin_drag();
+        ext.drag_release(&dummy_payload(), Some(drop_point("a", 0.5, 0.5)));
+        assert!(!ext.tear_off_fired(), "self-drop snaps back");
+        let mut received: Vec<Intent> = Vec::new();
+        ext.drain_intents(&mut |i| received.push(i));
+        assert!(received.is_empty(), "no tear_off on a self-drop");
+    }
+
+    #[test]
+    fn r1081_tear_off_only_mode_no_coordinator_drop_on_panel_is_noop() {
+        // Without a reorganizer (the flat hello-dock-panels consumer) a
+        // drop onto another panel snaps back; only an escape-drop floats.
+        let mut ext = DockPanelExternal::new("a");
+        let _ = ext.begin_drag();
+        ext.drag_release(&dummy_payload(), Some(drop_point("b", 0.5, 0.5)));
         assert!(!ext.tear_off_fired());
         let mut received: Vec<Intent> = Vec::new();
         ext.drain_intents(&mut |i| received.push(i));
-        assert!(
-            received.is_empty(),
-            "press-time frame must not enqueue any intent",
-        );
+        assert!(received.is_empty(), "no coordinator + panel drop = no-op");
     }
 
     #[test]
-    fn r683_dock_panel_external_drag_past_threshold_fires_tear_off() {
-        let mut ext = DockPanelExternal::new("inspector_panel", 0.5);
-        // Press at (0.3, 0.5); move to (0.85, 0.5) — Δx = 0.55, past 0.5.
-        ext.pointer_move(0.3, 0.5);
-        ext.pointer_move(0.85, 0.5);
+    fn r1081_drag_cancel_discards_without_committing() {
+        let topology = Rc::new(Signal::new(ab_topology()));
+        let reorganizer = Rc::new(DockReorganizer::new(topology));
+        let preview = Rc::new(Signal::new(None));
+        let mut ext = DockPanelExternal::new("a")
+            .with_reorganizer(Rc::clone(&reorganizer))
+            .with_drop_preview(Rc::clone(&preview));
+        let _ = ext.begin_drag();
+        ext.drag_to(&dummy_payload(), Some(drop_point("b", 0.5, 0.5)));
+        assert!(preview.get().is_some(), "preview shows mid-drag");
+        ext.drag_cancel(&dummy_payload());
+        assert!(!ext.is_dragging());
+        assert!(preview.get().is_none(), "cancel clears the preview");
+        assert_eq!(reorganizer.last_outcome(), None, "cancel commits nothing");
+    }
+
+    #[test]
+    fn r1081_drag_release_clears_the_shared_preview() {
+        let preview = Rc::new(Signal::new(None));
+        let mut ext = DockPanelExternal::new("a").with_drop_preview(Rc::clone(&preview));
+        let _ = ext.begin_drag();
+        ext.drag_to(&dummy_payload(), Some(drop_point("b", 0.5, 0.5)));
+        assert!(preview.get().is_some());
+        ext.drag_release(&dummy_payload(), None);
+        assert!(preview.get().is_none(), "release clears the overlay");
+    }
+
+    #[test]
+    fn r1081_invoke_tear_off_enqueues_without_a_pointer_drag() {
+        // R683.C direct AI tear-off — still valid (dock-back of a floated
+        // panel before the router has its paint scene).
+        let mut ext = DockPanelExternal::new("a");
+        ext.invoke(TEAR_OFF_EVENT, IntrospectValue::Null)
+            .expect("direct tear_off invoke");
         assert!(ext.tear_off_fired());
-        let mut received: Vec<Intent> = Vec::new();
-        ext.drain_intents(&mut |i| received.push(i));
-        assert_eq!(received.len(), 1, "exactly one tear_off per drag");
-        assert_eq!(received[0].tag.as_ref(), TEAR_OFF_EVENT);
-        assert_eq!(received[0].payload.as_str(), Some("inspector_panel"));
-    }
-
-    #[test]
-    fn r683_dock_panel_external_subsequent_moves_past_threshold_do_not_refire() {
-        let mut ext = DockPanelExternal::new("p1", 0.3);
-        ext.pointer_move(0.0, 0.5);
-        ext.pointer_move(0.5, 0.5); // crosses threshold, fires once
-        // Continue dragging further — must NOT re-fire.
-        ext.pointer_move(0.7, 0.5);
-        ext.pointer_move(0.9, 0.5);
-        let mut received: Vec<Intent> = Vec::new();
-        ext.drain_intents(&mut |i| received.push(i));
-        assert_eq!(
-            received.len(),
-            1,
-            "multi-fire guard must keep total tear_offs = 1 per drag",
-        );
-    }
-
-    #[test]
-    fn r683_dock_panel_external_pointer_up_clears_drag_state() {
-        let mut ext = DockPanelExternal::new("p1", 0.5);
-        ext.pointer_move(0.3, 0.5);
-        ext.pointer_move(0.85, 0.5); // fires
-        assert!(ext.tear_off_fired());
-        // Drain the intent off the queue (mirror of framework's
-        // per-frame drain) before checking state — the drain
-        // empties the queue but does not clear the
-        // tear_off_fired guard (the guard clears on PointerUp).
         let mut received: Vec<Intent> = Vec::new();
         ext.drain_intents(&mut |i| received.push(i));
         assert_eq!(received.len(), 1);
-        // PointerUp clears both.
-        ext.invoke("send", IntrospectValue::Text("PointerUp".to_string()))
-            .expect("invoke send PointerUp returns Ok");
-        assert!(!ext.is_dragging());
-        assert!(!ext.tear_off_fired());
+        assert_eq!(received[0].tag.as_ref(), TEAR_OFF_EVENT);
     }
 
     #[test]
-    fn r880_1_pointer_up_with_modifier_segment_still_clears() {
-        // "t0:PointerUp:c" (the R781 modifier segment) must still reset the
-        // drag-arm state — the pre-R880.1 hand-rolled split read
-        // "PointerUp:c" as the event name, returned UnknownPath, and the
-        // Up arm's reset was skipped.
-        let mut ext = DockPanelExternal::new("p1", 0.5);
-        ext.pointer_move(0.3, 0.5);
-        assert!(ext.is_dragging());
+    fn r1081_shared_coordinator_means_one_split_seq_across_both_panels() {
+        // Two panel externals sharing ONE coordinator: a split minted by
+        // one is visible to the other (no `reorg-split-{n}` collision).
+        let topology = Rc::new(Signal::new(ab_topology()));
+        let reorganizer = Rc::new(DockReorganizer::new(topology));
+        let mut a = DockPanelExternal::new("a").with_reorganizer(Rc::clone(&reorganizer));
+        let mut b = DockPanelExternal::new("b").with_reorganizer(Rc::clone(&reorganizer));
+        let _ = a.begin_drag();
+        // Dock "a" to the left edge of "b" → a SplitInsert mints split 0.
+        a.drag_release(&dummy_payload(), Some(drop_point("b", 0.05, 0.5)));
+        assert_eq!(reorganizer.split_seq(), 1, "one split minted");
+        // The other panel's external sees the same bumped counter.
+        let _ = b.begin_drag();
+        b.drag_release(&dummy_payload(), Some(drop_point("a", 0.05, 0.5)));
+        assert_eq!(
+            reorganizer.split_seq(),
+            2,
+            "second split mints id 1, not a colliding 0",
+        );
+    }
+
+    #[test]
+    fn r880_1_pointer_up_with_modifier_segment_still_re_arms() {
+        // "t0:PointerUp:c" (the R781 modifier segment) must still parse
+        // through the split_send_payload SSOT and hit the Up arm — the
+        // pre-R880.1 hand-rolled split read "PointerUp:c" as the event
+        // name and returned UnknownPath.
+        let mut ext = DockPanelExternal::new("a");
+        // Disarm via a content press, then the modifier-tagged release
+        // re-arms so the next header drag opens a session.
+        ext.invoke(
+            "send",
+            IntrospectValue::Text("content:PointerDown".to_string()),
+        )
+        .expect("content press parses");
+        assert!(ext.begin_drag().is_none(), "content press disarmed");
         ext.invoke("send", IntrospectValue::Text("t0:PointerUp:c".to_string()))
             .expect("modifier-held release still parses");
-        assert!(!ext.is_dragging());
-    }
-
-    #[test]
-    fn r683_dock_panel_external_pointer_cancel_also_clears() {
-        let mut ext = DockPanelExternal::new("p1", 0.5);
-        ext.pointer_move(0.3, 0.5);
-        assert!(ext.is_dragging());
-        ext.invoke("send", IntrospectValue::Text("PointerCancel".to_string()))
-            .expect("invoke send PointerCancel returns Ok");
-        assert!(!ext.is_dragging());
-    }
-
-    #[test]
-    fn r683_dock_panel_external_short_drag_no_intent() {
-        let mut ext = DockPanelExternal::new("p1", 0.5);
-        ext.pointer_move(0.5, 0.5);
-        // Move only 0.2 — under threshold 0.5.
-        ext.pointer_move(0.7, 0.5);
-        let mut received: Vec<Intent> = Vec::new();
-        ext.drain_intents(&mut |i| received.push(i));
-        assert!(
-            received.is_empty(),
-            "drag below threshold must not enqueue tear_off",
-        );
-        assert!(!ext.tear_off_fired());
-    }
-
-    #[test]
-    fn r683_dock_panel_external_l_inf_diagonal_drag_fires_on_y_axis_too() {
-        // L∞ norm: max(|Δx|, |Δy|). Pure y drag past threshold
-        // must fire (the canonical "drag panel down out of slot"
-        // gesture).
-        let mut ext = DockPanelExternal::new("p1", 0.4);
-        ext.pointer_move(0.5, 0.0);
-        // Cursor moves down by 0.5 (above threshold 0.4) but x
-        // unchanged.
-        ext.pointer_move(0.5, 0.5);
-        assert!(ext.tear_off_fired(), "y-axis drag past threshold must fire");
-    }
-
-    #[test]
-    fn r683_dock_panel_external_cursor_delta_l_inf_pre_calibration_is_none() {
-        let ext = DockPanelExternal::new("p1", 0.5);
-        // Before any pointer_move call, no snapshot exists.
-        assert!(ext.cursor_delta_l_inf(0.5, 0.5).is_none());
+        assert!(ext.begin_drag().is_some(), "release re-armed the drag");
     }
 
     #[test]
     fn r683_dock_panel_external_introspect_schema_includes_canonical_paths() {
-        let ext = DockPanelExternal::new("p1", 0.5);
+        let ext = DockPanelExternal::new("p1");
         let schema = ext.schema();
         let fields: Vec<&str> = schema.fields.iter().map(|(n, _)| *n).collect();
         for needed in [
             "panel_id",
-            "tear_off_threshold_frac",
             "dragging",
             "tear_off_fired",
+            "drop_preview",
             "send",
         ] {
             assert!(fields.contains(&needed), "schema must include {needed}");
@@ -2925,23 +3312,75 @@ mod tests {
 
     #[test]
     fn r683_dock_panel_external_query_panel_id() {
-        let ext = DockPanelExternal::new("my_panel", 0.5);
+        let ext = DockPanelExternal::new("my_panel");
         let val = ext.query("panel_id").expect("queryable");
         assert_eq!(val.as_str(), Some("my_panel"));
     }
 
     #[test]
     fn r683_dock_panel_external_query_tear_off_fired_starts_false() {
-        let ext = DockPanelExternal::new("p1", 0.5);
+        let ext = DockPanelExternal::new("p1");
         let val = ext.query("tear_off_fired").expect("queryable");
         assert_eq!(val, IntrospectValue::Bool(false));
     }
 
     #[test]
+    fn r1081_query_drop_preview_reflects_the_live_drag() {
+        let preview = Rc::new(Signal::new(None));
+        let mut ext = DockPanelExternal::new("a").with_drop_preview(Rc::clone(&preview));
+        // No drag → null.
+        assert_eq!(ext.query("drop_preview"), Some(IntrospectValue::Null));
+        let _ = ext.begin_drag();
+        ext.drag_to(&dummy_payload(), Some(drop_point("b", 0.5, 0.5)));
+        let IntrospectValue::Json(obj) = ext.query("drop_preview").expect("queryable") else {
+            panic!("drop_preview must be JSON mid-drag");
+        };
+        assert_eq!(obj.get("source").and_then(|v| v.as_str()), Some("a"));
+        assert_eq!(obj.get("target").and_then(|v| v.as_str()), Some("b"));
+        assert_eq!(obj.get("zone").and_then(|v| v.as_str()), Some("Center"));
+    }
+
+    #[test]
     fn r683_dock_panel_external_invoke_unknown_event_returns_err() {
-        let mut ext = DockPanelExternal::new("p1", 0.5);
+        let mut ext = DockPanelExternal::new("p1");
         let res = ext.invoke("send", IntrospectValue::Text("UnknownEvent".to_string()));
         assert!(res.is_err());
+    }
+
+    #[test]
+    fn r1081_view_dock_panel_root_opts_in_as_drop_target() {
+        run_in_owner(|| {
+            let style = DockPanelStyle::m3_default(PANEL_TAG);
+            let scene = view_dock_panel("Title", empty_content(), &theme_light(), &style);
+            let Scene::Container(outer) = &scene else {
+                panic!()
+            };
+            assert!(
+                outer.layout.drop_target,
+                "every dock panel opts in as a drop target for the R742 router climb",
+            );
+        });
+    }
+
+    #[test]
+    fn r1081_dock_drop_zone_highlight_paints_the_classified_band() {
+        run_in_owner(|| {
+            let theme = theme_light();
+            // An edge zone → one tinted strip child sized to the band.
+            let Scene::Container(left) = dock_drop_zone_highlight(DockDropZone::Left, &theme)
+            else {
+                panic!()
+            };
+            assert!(left.layout.pointer_transparent, "overlay never grabs input");
+            assert_eq!(left.layout.absolute_position, Some((0, 0)));
+            assert_eq!(left.children.len(), 1, "edge zone paints one strip");
+            // None → an empty overlay (no band).
+            let Scene::Container(none) = dock_drop_zone_highlight(DockDropZone::None, &theme)
+            else {
+                panic!()
+            };
+            assert!(none.children.is_empty(), "None paints no band");
+        });
     }
 
     #[test]
@@ -2963,14 +3402,19 @@ mod tests {
 
     #[test]
     fn r683_dock_panel_external_panel_id_accessor_returns_construction_value() {
-        let ext = DockPanelExternal::new("inspector", 0.5);
+        let ext = DockPanelExternal::new("inspector");
         assert_eq!(ext.panel_id(), "inspector");
     }
 
     #[test]
-    fn r683_dock_panel_external_threshold_accessor() {
-        let ext = DockPanelExternal::new("p1", 0.42);
-        assert!((ext.tear_off_threshold_frac() - 0.42).abs() < f32::EPSILON);
+    fn dock_edge_zone_pct_matches_frac() {
+        // The integer-percent overlay band must mirror the float zone
+        // classifier fraction so the painted affordance and the
+        // classified drop region cannot drift.
+        assert!(
+            (f64::from(super::DOCK_EDGE_ZONE_PCT) / 100.0 - super::DOCK_EDGE_ZONE_FRAC).abs()
+                < f64::EPSILON,
+        );
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -3856,8 +4300,8 @@ mod reorganize_tests {
     use std::rc::Rc;
 
     use super::{
-        DockNode, DockReorganizeExternal, DockReorganizeIntent, DockSplitPosition, DockTopology,
-        resolve_dock_drop,
+        DockNode, DockReorganizeExternal, DockReorganizeIntent, DockReorganizer, DockSplitPosition,
+        DockTopology, resolve_dock_drop,
     };
     use crate::splitter::SplitterOrientation as Orient;
     use pinion_core::external::{ExternalIntrospect, InterveneError, IntrospectValue, InvokeError};
@@ -3988,7 +4432,9 @@ mod reorganize_tests {
         use pinion_core::undo::UndoStack;
         let signal = Rc::new(Signal::new(abc_topology()));
         let stack = Rc::new(UndoStack::new());
-        let mut ext = DockReorganizeExternal::new(Rc::clone(&signal)).with_undo(Rc::clone(&stack));
+        let mut ext = DockReorganizeExternal::from_reorganizer(Rc::new(
+            DockReorganizer::new(Rc::clone(&signal)).with_undo(Rc::clone(&stack)),
+        ));
         assert_eq!(signal.get().panel_ids(), vec!["a", "b", "c"], "boot layout");
         // Swap a <-> b: recorded as one reversible topology edit.
         ext.invoke(

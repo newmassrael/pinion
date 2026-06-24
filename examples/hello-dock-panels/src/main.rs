@@ -239,10 +239,6 @@ const MAIN_SPLIT_RATIO_DEFAULT: f32 = 0.32;
 /// Chrome / Firefox / Safari Inspector "Elements pane + Computed
 /// pane" canonical proportion.
 const LEFT_SPLIT_RATIO_DEFAULT: f32 = 0.55;
-/// Tear-off threshold fraction — matches M3 + dock substrate's
-/// [`DockPanelStyle::m3_default`] (header drag past half its own width
-/// fires the `tear_off` intent).
-const TEAR_OFF_FRAC_DEFAULT: f32 = 0.5;
 
 /// Viewport header label rendered above the viewport Button. Static
 /// text so the inspector tree has a stable Text[0] leaf.
@@ -865,24 +861,15 @@ impl WidgetCore for DockPanelsView {
             // `pinion_widget_paint::dock::DockPanelExternal` rustdoc.
             ExtraExternal::new(
                 INSPECTOR_PANEL_TAG,
-                Box::new(DockPanelExternal::new(
-                    INSPECTOR_PANEL_TAG,
-                    TEAR_OFF_FRAC_DEFAULT,
-                )),
+                Box::new(DockPanelExternal::new(INSPECTOR_PANEL_TAG)),
             ),
             ExtraExternal::new(
                 PROPERTY_PANEL_TAG,
-                Box::new(DockPanelExternal::new(
-                    PROPERTY_PANEL_TAG,
-                    TEAR_OFF_FRAC_DEFAULT,
-                )),
+                Box::new(DockPanelExternal::new(PROPERTY_PANEL_TAG)),
             ),
             ExtraExternal::new(
                 VIEWPORT_PANEL_TAG,
-                Box::new(DockPanelExternal::new(
-                    VIEWPORT_PANEL_TAG,
-                    TEAR_OFF_FRAC_DEFAULT,
-                )),
+                Box::new(DockPanelExternal::new(VIEWPORT_PANEL_TAG)),
             ),
             ExtraExternal::new(
                 MAIN_SPLITTER_TAG,

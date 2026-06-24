@@ -57,7 +57,8 @@ use pinion_core::{Frame, Owner, Scene, Signal, WidgetCore};
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
 use pinion_widget_paint::button::{ButtonColors, ButtonStyle, view_button};
 use pinion_widget_paint::dock::{
-    DockNode, DockReorganizeExternal, DockSplitState, DockTopology, view_dock_surface,
+    DockNode, DockReorganizeExternal, DockReorganizer, DockSplitState, DockTopology,
+    view_dock_surface,
 };
 use pinion_widget_paint::splitter::SplitterExternal;
 use std::rc::Rc;
@@ -532,7 +533,9 @@ impl WidgetCore for DockPanelsEditorView {
         // consumer); the `UndoStackExternal` surfaces undo/redo to RPC.
         externals.push(ExtraExternal::new(
             DOCK_REORGANIZE_TAG,
-            Box::new(DockReorganizeExternal::new(topology_signal).with_undo(use_dock_undo())),
+            Box::new(DockReorganizeExternal::from_reorganizer(Rc::new(
+                DockReorganizer::new(topology_signal).with_undo(use_dock_undo()),
+            ))),
         ));
         externals.push(ExtraExternal::new(
             DOCK_UNDO_TAG,
