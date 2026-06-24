@@ -122,16 +122,17 @@ pub fn self_hosted_text_eligible(
 /// same lift discipline R1070 applied to eligibility ([`self_hosted_text_eligible`]),
 /// now applied to the metric math itself (R1070.1 audit-clearance).
 ///
-/// `descender` is negative (`hhea`), so `ascender − descender + line_gap` is the
-/// full em box; the first baseline sits at `ascender + line_gap/2` (half-leading
-/// split above the ascent), so the ascent above the baseline and the descent +
-/// remaining half-leading below it fill `height_px` by construction.
+/// `descender` is negative, so `ascender − descender + line_gap` is the full line
+/// box; the first baseline sits at `ascender + line_gap/2` (half-leading split
+/// above the ascent), so the ascent above the baseline and the descent + remaining
+/// half-leading below it fill `height_px` by construction.
 ///
-/// PARLEY PARITY (honesty note): this is the §5.37 engine's OWN line box, derived
-/// from `hhea`. parley may instead derive its line box from `OS/2` typo metrics
-/// (when the `USE_TYPO_METRICS` `fsSelection` bit is set), so this box is
-/// guaranteed self-consistent with the §5.37 *paint* arm, NOT guaranteed identical
-/// to parley's box for the same font.
+/// PARLEY PARITY (R1079): the metrics come from [`Font::vertical_line_metrics`],
+/// which applies the same `OS/2` `USE_TYPO_METRICS` selection parley uses (via
+/// `skrifa::metrics::Metrics`), so for a single line this box matches parley's for
+/// the same font — the precondition for flipping the §5.37 engine on by default.
+/// Pre-R1079 this read `hhea` directly and diverged on fonts like `NanumGothic`
+/// that set `USE_TYPO_METRICS` with typo metrics ≠ `hhea` (a 25%-of-em line box).
 #[derive(Clone, Copy)]
 pub(crate) struct LineBoxMetrics {
     /// First-baseline offset from the box top, device px = `(ascender + line_gap/2)·px/upem`.
@@ -149,9 +150,12 @@ impl LineBoxMetrics {
             return None;
         }
         let scale = f64::from(px) / upem;
-        let ascender = f64::from(font.ascender());
-        let descender = f64::from(font.descender());
-        let line_gap = f64::from(font.line_gap());
+        // R1079 §5.37 — the OS/2 `USE_TYPO_METRICS`-aware selection parley uses,
+        // not raw `hhea`, so the box registers with parley's for the same font.
+        let vm = font.vertical_line_metrics();
+        let ascender = f64::from(vm.ascender);
+        let descender = f64::from(vm.descender);
+        let line_gap = f64::from(vm.line_gap);
         Some(Self {
             baseline_px: (ascender + line_gap / 2.0) * scale,
             height_px: (ascender - descender + line_gap) * scale,
@@ -199,9 +203,9 @@ impl TextMeasure for SelfHostedTextEngine {
     /// On the §5.37 path the box is `(advance, height)` from the SSOT
     /// [`LineBoxMetrics`], whose `height_px` is the same `Normal` line box the paint
     /// baseline `baseline_px` sits inside — so measure and the §5.37 *paint* arm
-    /// register exactly (vertical coherence WITH THE §5.37 PAINT ARM; this hhea-derived
-    /// box is not guaranteed identical to parley's, which may use `OS/2` typo metrics —
-    /// see [`LineBoxMetrics`]).
+    /// register exactly. Since R1079 that box uses the same `OS/2` `USE_TYPO_METRICS`
+    /// selection parley applies (see [`LineBoxMetrics`]), so for a single line it also
+    /// matches parley's box for the same font.
     fn measure_text(
         &self,
         content: &str,
@@ -492,6 +496,9 @@ mod tests {
     const NOTO_FIXTURE: &[u8] =
         include_bytes!("../../pinion-text-font/tests/fonts/NotoSans-Regular.ttf");
 
+    const NANUM_FIXTURE: &[u8] =
+        include_bytes!("../../pinion-text-font/tests/fonts/NanumGothic-Regular.ttf");
+
     #[test]
     fn selection_predicates_read_parsed_metadata_not_filename() {
         // Deterministic forcing consumer for the selection logic: the bundled
@@ -557,7 +564,10 @@ mod tests {
         // R1070.1 — pins the §5.37 measure HEIGHT (the R1070 test asserted width
         // only). The expected height is recomputed here straight from the font's
         // raw hhea metrics — NOT via LineBoxMetrics — so this is an independent
-        // check of the box-height formula, not a restatement of the impl.
+        // check of the box-height formula, not a restatement of the impl. (For
+        // NotoSans typo == hhea, so this hhea oracle equals the R1079 selected box;
+        // `box_parity_matches_parley_metric_engine_via_skrifa` covers the typo !=
+        // hhea path on NanumGothic.)
         use crate::layout::TextMeasure;
         let engine = noto_engine();
         let f = engine.font();
@@ -589,6 +599,74 @@ mod tests {
             m.baseline_px,
             m.height_px
         );
+    }
+
+    #[test]
+    fn box_parity_matches_parley_metric_engine_via_skrifa() {
+        // R1079 §5.37 cross-shaper box parity — the precondition for flipping the
+        // engine on by default. parley sizes a `Normal` line box from
+        // `skrifa::metrics::Metrics` as `ascent - descent + leading`
+        // (parley/src/layout/data.rs: `MetricsRelative(1.0)`), so `skrifa::Metrics`
+        // IS parley's metric engine and is the faithful oracle here — ZERO-FLAKE,
+        // no system-font resolution, the same committed fixture both shapers see.
+        use skrifa::metrics::Metrics;
+        use skrifa::prelude::{FontRef, LocationRef, Size};
+
+        // parley's line box for `bytes` in font design units (`Size::unscaled`).
+        let parley_box_fu = |bytes: &[u8]| -> f32 {
+            let fr = FontRef::new(bytes).expect("skrifa parses the fixture");
+            let m = Metrics::new(&fr, Size::unscaled(), LocationRef::default());
+            m.ascent - m.descent + m.leading
+        };
+
+        for (name, bytes, diverges) in [
+            ("NotoSans", NOTO_FIXTURE, false),
+            ("NanumGothic", NANUM_FIXTURE, true),
+        ] {
+            let font = Font::from_bytes(bytes.to_vec()).expect("parse fixture");
+            let vm = font.vertical_line_metrics();
+            let s537_box_fu =
+                f32::from(vm.ascender) - f32::from(vm.descender) + f32::from(vm.line_gap);
+            let parley_fu = parley_box_fu(bytes);
+            // Font-unit boxes are integer-valued, so ±0.5 (half a unit) is far
+            // tighter than the 250-unit divergence this rules out — an exact check
+            // in practice while staying clippy-clean (no float `==`).
+            assert!(
+                (s537_box_fu - parley_fu).abs() < 0.5,
+                "{name}: §5.37 line box {s537_box_fu} must equal parley's {parley_fu} (font units)"
+            );
+
+            // Regression witness: the pre-R1079 raw-hhea box diverges exactly for a
+            // font that sets USE_TYPO_METRICS with typo != hhea (NanumGothic), and
+            // agrees for the trivial case (NotoSans, typo == hhea).
+            let hhea_box_fu = f32::from(font.ascender()) - f32::from(font.descender())
+                + f32::from(font.line_gap());
+            if diverges {
+                assert!(
+                    (hhea_box_fu - parley_fu).abs() > 0.5,
+                    "{name} must exercise the typo != hhea divergence the fix closes \
+                     (hhea box {hhea_box_fu} vs parley {parley_fu})"
+                );
+            } else {
+                assert!(
+                    (hhea_box_fu - parley_fu).abs() < 0.5,
+                    "{name} is the trivial-parity case (typo == hhea)"
+                );
+            }
+
+            // The px-scaled production path ([`LineBoxMetrics::from_font`]) also
+            // tracks parley's metrics at a real size.
+            let px = 24.0_f32;
+            let fr = FontRef::new(bytes).expect("skrifa parses the fixture");
+            let m_px = Metrics::new(&fr, Size::new(px), LocationRef::default());
+            let parley_px = f64::from(m_px.ascent - m_px.descent + m_px.leading);
+            let lbm = LineBoxMetrics::from_font(&font, px).expect("valid head");
+            assert!(
+                (lbm.height_px - parley_px).abs() < 0.01,
+                "{name}: §5.37 box height {} must equal parley's {parley_px} at {px}px",
+                lbm.height_px
+            );
+        }
     }
 
     #[test]

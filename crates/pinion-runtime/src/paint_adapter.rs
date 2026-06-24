@@ -2145,10 +2145,10 @@ fn self_hosted_eligible(t: &TextNode) -> bool {
 /// first baseline sit at `ascent + line_gap/2` (half-leading split above) in the
 /// `ascent + descent + line_gap` line box. The arm reads that baseline from the
 /// SSOT [`LineBoxMetrics`] (shared with the R1070 measure arm's box height), so
-/// paint + measure register exactly. NOTE: this hhea-derived baseline is the §5.37
-/// engine's own; it reproduces parley's `Normal` baseline by intent (R1068 pixel-
-/// verified the ink to ±2px) but is not guaranteed bit-identical to parley, which
-/// may use `OS/2` typo metrics — see [`LineBoxMetrics`]. Horizontal placement starts
+/// paint + measure register exactly. Since R1079 that baseline uses the same `OS/2`
+/// `USE_TYPO_METRICS` selection parley applies (see [`LineBoxMetrics`]), so it
+/// matches parley's `Normal` baseline for the same font (R1068 had pixel-verified
+/// the ink to ±2px under the prior hhea-only derivation). Horizontal placement starts
 /// at the box left (`Start` alignment, also guaranteed eligible). As of R1070 the
 /// measure arm sizes the eligible box to §5.37 too (when wired through
 /// [`compute_layout_with_text_measure`](crate::layout::compute_layout_with_text_measure));

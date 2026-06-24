@@ -35,7 +35,7 @@ pub mod wrap;
 pub use atlas::{AtlasGlyph, GlyphAtlas};
 pub use error::{FieldValue, ParseError};
 pub use fallback::{FallbackRun, FontRun, FontRunRange, font_runs, shape_with_fallback};
-pub use font::Font;
+pub use font::{Font, VerticalLineMetrics};
 pub use line_layout::{
     ShapedLine, ShapedLines, layout_paragraph, layout_paragraph_with_fallback, render_lines,
 };

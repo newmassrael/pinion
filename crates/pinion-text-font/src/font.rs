@@ -50,6 +50,26 @@ pub struct Font {
     pub gdef: Option<Gdef>,
 }
 
+/// R1079 §5.37 — the vertical metrics (font design units) that size and baseline
+/// a single line box: ascent above the baseline, descent below it (negative, the
+/// `hhea` / `OS/2` typo sign convention), and the line gap distributed around the
+/// line.
+///
+/// Returned by [`Font::vertical_line_metrics`], which selects between the `hhea`
+/// and `OS/2` typographic metrics by the same OpenType / `FreeType` rule parley
+/// applies (via `skrifa::metrics::Metrics`), so a §5.37 line box registers with
+/// parley's for the same font (cross-shaper box parity — the precondition for
+/// flipping the §5.37 engine on by default).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VerticalLineMetrics {
+    /// Ascent above the baseline (positive).
+    pub ascender: i16,
+    /// Descent below the baseline (negative).
+    pub descender: i16,
+    /// Line gap — extra leading distributed around the line box.
+    pub line_gap: i16,
+}
+
 impl Font {
     /// Parse a font from raw bytes.
     ///
@@ -125,22 +145,54 @@ impl Font {
         self.maxp.num_glyphs
     }
 
-    /// 추천 typographic ascender — from hhea. Apple-style 동기화면 OS/2.sTypoAscender 도 동일.
+    /// Raw `hhea` ascender (design units). This is the unselected `hhea` value
+    /// (a faithful raw-table reading); for sizing / baselining a line box use
+    /// [`Self::vertical_line_metrics`], which applies the `OS/2`
+    /// `USE_TYPO_METRICS` selection parley uses.
     #[must_use]
     pub fn ascender(&self) -> i16 {
         self.hhea.ascender
     }
 
-    /// 추천 typographic descender (음수) — from hhea.
+    /// Raw `hhea` descender (design units, negative). For the line-box-selected
+    /// descent see [`Self::vertical_line_metrics`].
     #[must_use]
     pub fn descender(&self) -> i16 {
         self.hhea.descender
     }
 
-    /// Line gap — from hhea.
+    /// Raw `hhea` line gap (design units). For the line-box-selected line gap see
+    /// [`Self::vertical_line_metrics`].
     #[must_use]
     pub fn line_gap(&self) -> i16 {
         self.hhea.line_gap
+    }
+
+    /// R1079 §5.37 — the vertical metrics for a single line box, selected between
+    /// the `hhea` and `OS/2` typographic metrics by the OpenType / `FreeType` rule
+    /// parley applies (via `skrifa::metrics::Metrics`), so a §5.37 line box
+    /// matches parley's for the same font (cross-shaper box parity).
+    ///
+    /// The rule (skrifa 0.42.1 `metrics.rs`, after `FreeType` `sfobjs.c`):
+    ///
+    /// 1. If the `OS/2` `fsSelection` `USE_TYPO_METRICS` bit (bit 7) is set, use
+    ///    the `OS/2` `sTypoAscender` / `sTypoDescender` / `sTypoLineGap`.
+    /// 2. Otherwise use the `hhea` `ascender` / `descender` / `lineGap`.
+    /// 3. If those `hhea` metrics are both zero (a malformed font), fall back to
+    ///    the `OS/2` typo metrics when non-zero, else the `OS/2` Windows metrics.
+    ///
+    /// Many fonts (e.g. `NanumGothic`) set `USE_TYPO_METRICS` with typo metrics
+    /// that differ from `hhea`, so reading `hhea` directly (the [`Self::ascender`]
+    /// path) sizes the line box differently from parley. Variable-font `MVAR`
+    /// metric deltas are not applied — §5.37 shapes the default instance, where
+    /// skrifa applies no delta either.
+    ///
+    /// Single-line scope: the multi-line `line_layout` path still reads `hhea`
+    /// directly (it is not wired into the production arms yet) and adopts this
+    /// selector when multi-line measure/paint lands.
+    #[must_use]
+    pub fn vertical_line_metrics(&self) -> VerticalLineMetrics {
+        select_line_metrics(&self.os2, &self.hhea)
     }
 
     /// Glyph advance width in design units. None if `glyph_id` ≥ `num_glyphs`.
@@ -326,6 +378,51 @@ impl Font {
     }
 }
 
+/// `OS/2` `fsSelection` bit 7 — when set, the typographic metrics are the
+/// preferred line metrics (OpenType spec; `FreeType` / skrifa / parley honour it).
+const USE_TYPO_METRICS: u16 = 1 << 7;
+
+/// R1079 §5.37 — select the line-box vertical metrics from `os2` + `hhea`,
+/// mirroring `skrifa::metrics::Metrics` (parley's metric source). See
+/// [`Font::vertical_line_metrics`] for the rule and rationale. A §5.37 [`Font`]
+/// always carries both tables, so skrifa's "OS/2 table exists" guards always hold
+/// here (skrifa treats them as optional for fonts that may lack them).
+fn select_line_metrics(os2: &Os2, hhea: &Hhea) -> VerticalLineMetrics {
+    // (1) USE_TYPO_METRICS set -> OS/2 typographic metrics.
+    if os2.fs_selection & USE_TYPO_METRICS != 0 {
+        return VerticalLineMetrics {
+            ascender: os2.s_typo_ascender,
+            descender: os2.s_typo_descender,
+            line_gap: os2.s_typo_line_gap,
+        };
+    }
+    // (2) Otherwise the hhea metrics.
+    let mut m = VerticalLineMetrics {
+        ascender: hhea.ascender,
+        descender: hhea.descender,
+        line_gap: hhea.line_gap,
+    };
+    // (3) `FreeType` fallback for a font whose hhea ascent and descent are both
+    // zero: the OS/2 typo metrics when non-zero, else the Windows metrics. skrifa
+    // leaves the line gap at its hhea value in the Windows branch, so we override
+    // only ascender / descender there.
+    if m.ascender == 0 && m.descender == 0 {
+        if os2.s_typo_ascender != 0 || os2.s_typo_descender != 0 {
+            m.ascender = os2.s_typo_ascender;
+            m.descender = os2.s_typo_descender;
+            m.line_gap = os2.s_typo_line_gap;
+        } else {
+            // usWinAscent / usWinDescent are positive magnitudes; the descender
+            // convention here is negative, so negate the Windows descent. Real
+            // fonts keep these within i16; clamp defensively on a pathological
+            // value rather than wrap.
+            m.ascender = i16::try_from(os2.us_win_ascent).unwrap_or(i16::MAX);
+            m.descender = i16::try_from(os2.us_win_descent).map_or(i16::MIN, |d| -d);
+        }
+    }
+    m
+}
+
 /// Parse an optional sfnt table: `Ok(None)` when the tag is absent, the parsed
 /// value when present, and a propagated [`ParseError`] when a present table is
 /// malformed. The single bridge for the optional GPOS / GSUB / GDEF tables.
@@ -342,5 +439,126 @@ fn optional_table<T>(
         // variant (rather than `Err(_)`) makes that contract compiler-enforced.
         Err(ParseError::TableNotFound { .. }) => Ok(None),
         Err(e) => Err(e),
+    }
+}
+
+#[cfg(test)]
+mod line_metric_tests {
+    use super::{Hhea, Os2, USE_TYPO_METRICS, VerticalLineMetrics, select_line_metrics};
+
+    /// Build an `OS/2` v0 table (78 bytes) with the line-metric fields set; the
+    /// rest are inert. Field order mirrors the `OS/2` spec / [`Os2::parse`].
+    fn os2_table(fs_selection: u16, typo: (i16, i16, i16), win: (u16, u16)) -> Os2 {
+        let mut b = Vec::with_capacity(78);
+        b.extend_from_slice(&0u16.to_be_bytes()); // version 0
+        b.extend_from_slice(&500i16.to_be_bytes()); // x_avg_char_width
+        b.extend_from_slice(&400u16.to_be_bytes()); // us_weight_class
+        b.extend_from_slice(&5u16.to_be_bytes()); // us_width_class
+        b.extend_from_slice(&0u16.to_be_bytes()); // fs_type
+        for _ in 0..10 {
+            b.extend_from_slice(&0i16.to_be_bytes()); // sub / super / strikeout
+        }
+        b.extend_from_slice(&0i16.to_be_bytes()); // s_family_class
+        b.extend_from_slice(&[0u8; 10]); // panose
+        for _ in 0..4 {
+            b.extend_from_slice(&0u32.to_be_bytes()); // ul_unicode_range1..4
+        }
+        b.extend_from_slice(b"TEST"); // ach_vend_id
+        b.extend_from_slice(&fs_selection.to_be_bytes());
+        b.extend_from_slice(&0x20u16.to_be_bytes()); // us_first_char_index
+        b.extend_from_slice(&0xFFFFu16.to_be_bytes()); // us_last_char_index
+        b.extend_from_slice(&typo.0.to_be_bytes()); // s_typo_ascender
+        b.extend_from_slice(&typo.1.to_be_bytes()); // s_typo_descender
+        b.extend_from_slice(&typo.2.to_be_bytes()); // s_typo_line_gap
+        b.extend_from_slice(&win.0.to_be_bytes()); // us_win_ascent
+        b.extend_from_slice(&win.1.to_be_bytes()); // us_win_descent
+        assert_eq!(b.len(), 78);
+        Os2::parse(&b).expect("valid v0 OS/2")
+    }
+
+    /// Build a minimal `hhea` (36 bytes) with the given line metrics.
+    fn hhea_table(ascender: i16, descender: i16, line_gap: i16) -> Hhea {
+        let mut b = Vec::with_capacity(36);
+        b.extend_from_slice(&1u16.to_be_bytes()); // major
+        b.extend_from_slice(&0u16.to_be_bytes()); // minor
+        b.extend_from_slice(&ascender.to_be_bytes());
+        b.extend_from_slice(&descender.to_be_bytes());
+        b.extend_from_slice(&line_gap.to_be_bytes());
+        b.extend_from_slice(&1500u16.to_be_bytes()); // advance_width_max
+        b.extend_from_slice(&0i16.to_be_bytes()); // min_left_side_bearing
+        b.extend_from_slice(&0i16.to_be_bytes()); // min_right_side_bearing
+        b.extend_from_slice(&1200i16.to_be_bytes()); // x_max_extent
+        b.extend_from_slice(&1i16.to_be_bytes()); // caret_slope_rise
+        b.extend_from_slice(&0i16.to_be_bytes()); // caret_slope_run
+        b.extend_from_slice(&0i16.to_be_bytes()); // caret_offset
+        for _ in 0..4 {
+            b.extend_from_slice(&0i16.to_be_bytes()); // reserved
+        }
+        b.extend_from_slice(&0i16.to_be_bytes()); // metric_data_format
+        b.extend_from_slice(&1u16.to_be_bytes()); // number_of_h_metrics
+        assert_eq!(b.len(), 36);
+        Hhea::parse(&b).expect("valid hhea")
+    }
+
+    #[test]
+    fn use_typo_metrics_set_selects_os2_typo() {
+        // Bit set: OS/2 typo metrics win over a differing hhea (the NanumGothic
+        // shape — hhea box 844 - (-156) + 0 = 1000, typo box 856 - (-144) + 250 = 1250).
+        let os2 = os2_table(USE_TYPO_METRICS, (856, -144, 250), (885, 198));
+        let hhea = hhea_table(844, -156, 0);
+        assert_eq!(
+            select_line_metrics(&os2, &hhea),
+            VerticalLineMetrics {
+                ascender: 856,
+                descender: -144,
+                line_gap: 250
+            }
+        );
+    }
+
+    #[test]
+    fn use_typo_metrics_clear_selects_hhea() {
+        // Bit clear: hhea wins, the OS/2 typo metrics are ignored.
+        let os2 = os2_table(0, (856, -144, 250), (885, 198));
+        let hhea = hhea_table(800, -200, 100);
+        assert_eq!(
+            select_line_metrics(&os2, &hhea),
+            VerticalLineMetrics {
+                ascender: 800,
+                descender: -200,
+                line_gap: 100
+            }
+        );
+    }
+
+    #[test]
+    fn zero_hhea_falls_back_to_os2_typo() {
+        // Bit clear + hhea ascent/descent both zero -> OS/2 typo (when non-zero).
+        let os2 = os2_table(0, (820, -180, 90), (900, 200));
+        let hhea = hhea_table(0, 0, 0);
+        assert_eq!(
+            select_line_metrics(&os2, &hhea),
+            VerticalLineMetrics {
+                ascender: 820,
+                descender: -180,
+                line_gap: 90
+            }
+        );
+    }
+
+    #[test]
+    fn zero_hhea_and_zero_typo_falls_back_to_windows_metrics() {
+        // Bit clear + hhea zero + typo zero -> Windows metrics; usWinDescent is a
+        // positive magnitude, negated to the signed convention; line gap stays 0.
+        let os2 = os2_table(0, (0, 0, 0), (1000, 300));
+        let hhea = hhea_table(0, 0, 0);
+        assert_eq!(
+            select_line_metrics(&os2, &hhea),
+            VerticalLineMetrics {
+                ascender: 1000,
+                descender: -300,
+                line_gap: 0
+            }
+        );
     }
 }

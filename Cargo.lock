@@ -4639,6 +4639,7 @@ dependencies = [
  "pinion-platform-fonts",
  "pinion-text",
  "pinion-text-font",
+ "skrifa 0.42.1",
  "taffy",
  "vello",
 ]

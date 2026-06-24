@@ -75,6 +75,12 @@ pinion-platform-fonts = { path = "../pinion-platform-fonts", version = "0.0.1", 
 # the `core_shell` substrate test suite so the runtime + TUI crates
 # share one canonical WidgetCore binding instead of two copies.
 pinion-core = { path = "../pinion-core", version = "0.0.1", features = ["test-fixtures"] }
+# R1079 §5.37 — `skrifa::metrics::Metrics` IS parley's line-metric source
+# (parley/src/layout/data.rs shapes line boxes through it), so the
+# `box_parity_matches_parley_metric_engine_via_skrifa` test uses it as the
+# faithful cross-shaper oracle. Test-only; pinned to parley 0.9's skrifa so the
+# oracle tracks the production shaper's exact metric selection.
+skrifa = "0.42"
 
 [lints]
 workspace = true
