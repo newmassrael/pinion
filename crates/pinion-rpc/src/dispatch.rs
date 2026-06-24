@@ -49,6 +49,7 @@ use crate::layout_query::{LayoutQueryError, LayoutQueryParams, layout_query};
 use crate::locate::{
     BboxError, LocateError, LocateOutcome, LocateRegionOutcome, bbox, locate, locate_region,
 };
+use crate::methods::rpc_methods;
 use crate::preview::{
     ApplyError, ApplyOutcome, PreviewId, PreviewLedger, PreviewView, ProposeError, ProposeOutcome,
     TypedProposal, ViewBlueprint, apply_preview, cancel_preview, list_previews, propose_change,
@@ -1353,7 +1354,7 @@ pub fn unknown_window_verdict(
 #[must_use]
 #[allow(
     clippy::too_many_lines,
-    reason = "the routing match is the single source of truth for method names — growing with each method addition is the textbook canonical evolution path (currently 23 scene/* + 11 font/* + 1 text/* + 4 focus/*)"
+    reason = "the routing match is the single source of truth for method names — growing with each method addition is the textbook canonical evolution path (currently 23 scene/* + 11 font/* + 1 text/* + 4 focus/* + 1 rpc/*; mirrored by the rpc/methods RPC_METHODS catalog, kept in sync by the catalog_matches_dispatch_match_arms test)"
 )]
 pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Option<String> {
     let scene: &mut Scene = &mut *ctx.scene;
@@ -1725,6 +1726,7 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
             HandlerKind::Read,
         ),
         "scene/pacing_state" => (handle_scene_pacing_state(pacing_state), HandlerKind::Read),
+        "rpc/methods" => (handle_rpc_methods(), HandlerKind::Read),
         "scene/windows" => (handle_scene_windows(declared_windows), HandlerKind::Read),
         "scene/window_move" => {
             #[allow(
@@ -2354,6 +2356,15 @@ fn handle_scene_windows(windows: Option<Vec<DeclaredWindow>>) -> Result<Value, R
         );
     };
     Ok(serde_json::json!({ "windows": windows }))
+}
+
+/// R1089 §5.7 §5.12 §2 #7 — `rpc/methods` handler: serialize the
+/// [`crate::RPC_METHODS`] catalog so an AI can DISCOVER the wire surface
+/// instead of needing every method's literal string. Context-free (the
+/// catalog is a const), so it never errors except on a serialize fault.
+fn handle_rpc_methods() -> Result<Value, RpcError> {
+    serde_json::to_value(rpc_methods())
+        .map_err(|e| RpcError::invalid_params(format!("serialize: {e}")))
 }
 
 /// R979 §5.40 §2 #7 — `scene/access` handler: dump the accessibility tree.

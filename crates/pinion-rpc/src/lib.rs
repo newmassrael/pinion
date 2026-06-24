@@ -26,6 +26,7 @@ pub mod intervene;
 pub mod invoke;
 pub mod layout_query;
 pub mod locate;
+pub mod methods;
 pub mod path;
 pub mod preview;
 pub mod query;
@@ -90,6 +91,7 @@ pub use layout_query::{
 pub use locate::{
     BboxError, LocateError, LocateOutcome, LocateRegionOutcome, bbox, locate, locate_region,
 };
+pub use methods::{RPC_METHODS, RpcMethods, rpc_methods};
 pub use path::{PathError, ResolvedPath, resolve};
 pub use preview::{
     ApplyContext, ApplyError, ApplyOutcome, DEFAULT_CAPACITY, DEFAULT_TTL, Entry as PreviewEntry,
