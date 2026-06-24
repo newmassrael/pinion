@@ -289,6 +289,16 @@ impl SelfHostedLayout {
     /// defer-to-parley.
     #[must_use]
     pub fn shape(engine: &SelfHostedTextEngine, content: &str, px: f32) -> Option<Self> {
+        // R1078.1 audit — fail fast on the documented single-line precondition. The
+        // §5.37 measure/paint eligibility gate (`self_hosted_text_eligible`) already
+        // excludes `\n`, so production never reaches here with a hard break; this
+        // catches a future caller that treats `SelfHostedLayout` as a general
+        // multi-line layout (the single-line shaper would mis-place the break glyph
+        // and `visual_lines` returns exactly one line).
+        debug_assert!(
+            !content.contains('\n'),
+            "SelfHostedLayout::shape is single-line; multi-line text stays on parley",
+        );
         let metrics = LineBoxMetrics::from_font(engine.font(), px)?;
         let shaped = shape_paragraph_with_fallback(&[engine.font()], content, px);
         let mut stops: Vec<(usize, f32)> = Vec::with_capacity(shaped.glyphs.len() + 1);

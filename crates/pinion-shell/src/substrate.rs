@@ -2873,6 +2873,19 @@ impl<V: WidgetView> ShellCore<V> {
     /// corrects it across focus transitions. This is the headless seam that
     /// makes the synthetic exclusion AND the repeat derivation regression-testable
     /// without a winit `EventLoop` (the R1071 `key_press_for_window` discipline).
+    ///
+    /// **Residual (honest, R1078.1 audit):** the derived `repeat` inherits the
+    /// R1073.1 missed-keyup residual. If a physical keyup never reaches this seam
+    /// (it is delivered to no window — the only way an owner is left stranded,
+    /// since [`Self::note_key_release`] is the sole clear path and `remove_window`
+    /// deliberately does not reconcile the owner), the stranded owner makes the
+    /// *next genuine first press at that same window* derive `repeat == true` and
+    /// be dropped ONCE; the next physical keyup then clears the owner and a fresh
+    /// press acts normally. A press at any *other* window is gated out by
+    /// [`Self::admit_key_press`] (owner ≠ window), not mis-flagged. This is the
+    /// same eventual-keyup trust the press-owner gate already makes; clear-on-blur
+    /// stays rejected (it reintroduces the winit focus-ordering dependence the
+    /// press-time snapshot removed). Far milder than the infinite flap it fixes.
     #[must_use]
     pub fn apply_key_edge(
         &mut self,

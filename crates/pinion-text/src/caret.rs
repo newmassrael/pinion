@@ -429,6 +429,16 @@ pub fn logical_line_span(metrics: &[VisualLineMetric], caret_y: f32) -> Option<(
 /// delegators over this trait, so every existing call site keeps compiling
 /// while the implementor becomes a choice rather than a hard-wired type.
 ///
+/// Crate home (R1078.1 audit): the trait lives here in `pinion-text` because the
+/// caret functions it abstracts already did, and `pinion-text` is the lowest crate
+/// both shapers can reach (`pinion-text-font`, the §5.37 engine, is a sibling that
+/// does not dep this crate — hence the §5.37 impl is a newtype in `pinion-runtime`,
+/// the crate that deps both). The §5.36 and §5.37 plan has parley superseded; when
+/// the parley impl is eventually removed, `pinion-text` persists as the contract layer
+/// (trait + [`CaretRect`] + [`VisualLineMetric`]) and only its parley `impl` is
+/// dropped — so the trait does not need to relocate. Revisit only if `pinion-text`
+/// is itself dissolved.
+///
 /// The named surface is exactly the directive's three capabilities — advance,
 /// cluster boundary, visual-line metric: [`caret_rect`](Self::caret_rect)
 /// (advance → where is byte *b*), [`byte_at_point`](Self::byte_at_point)
