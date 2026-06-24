@@ -3897,6 +3897,43 @@ impl<V: WidgetView> ShellCore<V> {
         // nothing.
         let declared_windows =
             (request.method == "scene/windows").then(|| self.declared_window_specs());
+        // R1088 §5.16 §5.41 §2 #7 PR-31 — the WRITE peer of
+        // `scene/windows`: `scene/window_move` writes the binding's
+        // declared-position signal (the SAME `windows_signal` the read
+        // `declared_window_specs` projects, so introspect + intervene
+        // cannot disagree about the SSOT). Pre-resolved here, before the
+        // disjoint-field borrow split below, because the resolve runs
+        // under `root_owner`; gated on the method so every other dispatch
+        // pays nothing. The closure captures the resolved signal (NOT
+        // `self`), so it can be `&mut`-borrowed into the DispatchContext
+        // inside the split block without re-borrowing `self.core`.
+        let reposition_signal = (request.method == "scene/window_move")
+            .then(|| self.core.root_owner().run(V::windows_signal))
+            .flatten();
+        let mut reposition_request = |id: &str, x: i32, y: i32| -> bool {
+            let Some(signal) = reposition_signal.as_ref() else {
+                return false;
+            };
+            let mut specs = signal.get();
+            let Some(spec) = specs.iter_mut().find(|s| s.id.as_ref() == id) else {
+                return false;
+            };
+            // An explicit AI reposition PINS the window (a `None`
+            // WM-placed window becomes `Some` pinned) — unlike the
+            // conservative user-`Moved` feedback, which only refreshes an
+            // already-declared position. Re-setting the current position
+            // is an accepted committing no-op (the signal equality-skip
+            // would absorb it anyway; the guard skips the Vec rebuild and
+            // keeps it explicit). Writing the signal fires the reconcile
+            // move pass, which drives the live OS window — declared
+            // becomes eventual-actual.
+            if spec.position == Some((x, y)) {
+                return true;
+            }
+            spec.position = Some((x, y));
+            signal.set(specs);
+            true
+        };
         // R684 atomic 3 §5.16 §5.41 §5.49 — record the viewport the
         // produce closure ran with so the post-dispatch finalize can
         // populate the addressed window's
@@ -4113,6 +4150,11 @@ impl<V: WidgetView> ShellCore<V> {
             if let Some(windows) = declared_windows {
                 ctx = ctx.with_declared_windows(windows);
             }
+            // R1088 §5.16 §5.41 §2 #7 PR-31 — the `scene/window_move`
+            // write peer. Its closure resolved a signal above only for
+            // that method (a harmless no-op closure otherwise), so this
+            // attaches unconditionally without per-dispatch cost.
+            ctx = ctx.with_reposition_request(&mut reposition_request);
             // R1060 §5.12 §5.16 — the AppShell windowed entry pre-captured
             // the addressed window's live presented surface (only when the
             // method is `scene/screenshot`); hand it to the dispatcher so

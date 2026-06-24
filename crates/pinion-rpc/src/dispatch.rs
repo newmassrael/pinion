@@ -78,6 +78,7 @@ use crate::theme::{
     ThemeTokensOutcome, parse_palette_value, set_theme_mode, set_theme_palettes, theme_tokens,
 };
 use crate::wait_for::{WaitForError, WaitOutcome, wait_for};
+use crate::window_move::{WindowMoveError, WindowMoveParams, window_move};
 
 /// JSON-RPC 2.0 request envelope.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -287,6 +288,19 @@ pub struct DispatchContext<'a> {
     /// iteration. Asynchronous — AI clients pair with
     /// `scene/wait_for_frame` for stable observation.
     pub resize_request: Option<&'a mut (dyn FnMut(u32, u32) + 'a)>,
+    /// (R1088 §5.16 §5.41 §2 #7 PR-31) The WRITE peer of the
+    /// `scene/windows` read: `scene/window_move` invokes this closure
+    /// with `(window_id, x, y)` and the application writes the new
+    /// logical-pixel position into the binding's `Signal<Vec<WindowSpec>>`
+    /// (the reconcile move pass then drives the live OS window). Returns
+    /// `true` when a declared window matched the id; `false` →
+    /// `WindowMoveError::UnknownWindow`. Absent on single-window / TUI
+    /// bindings (no `windows_signal`).
+    #[allow(
+        clippy::type_complexity,
+        reason = "the resize_request sibling above carries the same boxed-FnMut shape un-aliased; a one-field type alias for the dispatch context's reposition hook would obscure the parallel more than it clarifies"
+    )]
+    pub reposition_request: Option<&'a mut (dyn FnMut(&str, i32, i32) -> bool + 'a)>,
     /// (R705 §5.12 §2 #7) The named window's most recently painted
     /// scene — the exact tree that produced the pixels on screen.
     /// `scene/snapshot from: paint` serializes THIS borrow when present
@@ -974,6 +988,7 @@ impl<'a> DispatchContext<'a> {
             paint_producer: None,
             access_producer: None,
             resize_request: None,
+            reposition_request: None,
             last_paint_scene: None,
             font_registry: None,
             focus_manager: None,
@@ -1030,6 +1045,21 @@ impl<'a> DispatchContext<'a> {
     #[must_use]
     pub fn with_resize_request(mut self, request: &'a mut (dyn FnMut(u32, u32) + 'a)) -> Self {
         self.resize_request = Some(request);
+        self
+    }
+
+    /// Builder: attach the window reposition request closure (R1088
+    /// §5.16 §5.41 §2 #7 PR-31 — the `scene/window_move` WRITE peer of
+    /// the `scene/windows` read). The closure is invoked with
+    /// `(window_id, x, y)`; it writes the new logical-pixel position into
+    /// the binding's `Signal<Vec<WindowSpec>>` and returns whether a
+    /// declared window matched.
+    #[must_use]
+    pub fn with_reposition_request(
+        mut self,
+        request: &'a mut (dyn FnMut(&str, i32, i32) -> bool + 'a),
+    ) -> Self {
+        self.reposition_request = Some(request);
         self
     }
 
@@ -1323,7 +1353,7 @@ pub fn unknown_window_verdict(
 #[must_use]
 #[allow(
     clippy::too_many_lines,
-    reason = "the routing match is the single source of truth for method names — growing with each method addition is the textbook canonical evolution path (currently 22 scene/* + 11 font/* + 1 text/* + 4 focus/*)"
+    reason = "the routing match is the single source of truth for method names — growing with each method addition is the textbook canonical evolution path (currently 23 scene/* + 11 font/* + 1 text/* + 4 focus/*)"
 )]
 pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Option<String> {
     let scene: &mut Scene = &mut *ctx.scene;
@@ -1339,6 +1369,7 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
     // `scene/access` invokes it once to dump the AccessKit projection.
     let mut access_producer = ctx.access_producer.take();
     let mut resize_request = ctx.resize_request.take();
+    let mut reposition_request = ctx.reposition_request.take();
     // R51.73 §5.40 — same split-borrow pattern for the focus manager:
     // `focus/set` mutates, `focus/get` reads; both need exclusive
     // access during the route arm.
@@ -1695,6 +1726,20 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
         ),
         "scene/pacing_state" => (handle_scene_pacing_state(pacing_state), HandlerKind::Read),
         "scene/windows" => (handle_scene_windows(declared_windows), HandlerKind::Read),
+        "scene/window_move" => {
+            #[allow(
+                clippy::option_as_ref_deref,
+                reason = "dyn FnMut is not DerefMut; manual reborrow required"
+            )]
+            let req = reposition_request.as_mut().map(|p| &mut **p);
+            (
+                handle_scene_window_move(req, request.params.as_ref()),
+                // Async — the signal write fires reconcile + the actual OS
+                // move lands when the shell next reconciles. No OCC bump
+                // here (mirrors `scene/resize`).
+                HandlerKind::Read,
+            )
+        }
         "scene/input_state" => (handle_scene_input_state(input_state), HandlerKind::Read),
         "scene/animate_settle" => (
             handle_scene_animate_settle(runtime_owner),
@@ -5297,6 +5342,35 @@ fn resize_error_to_rpc(err: ResizeError) -> RpcError {
     let variant = match err {
         ResizeError::ClosureUnavailable => "ClosureUnavailable",
         ResizeError::InvalidSize => "InvalidSize",
+    };
+    RpcError::invalid_params(variant)
+}
+
+/// R1088 §5.16 §5.41 §2 #7 PR-31 — `scene/window_move` dispatch entry.
+/// Invokes the application's `reposition_request` closure with the
+/// requested declared window id + logical `(x, y)` position. The WRITE
+/// peer of the `scene/windows` read.
+fn handle_scene_window_move<F>(
+    reposition_request: Option<&mut F>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError>
+where
+    F: FnMut(&str, i32, i32) -> bool + ?Sized,
+{
+    let params = require_params(params)?;
+    let typed: WindowMoveParams = serde_json::from_value(params.clone())
+        .map_err(|e| RpcError::invalid_params(format!("params shape: {e}")))?;
+    match window_move(typed, reposition_request) {
+        Ok(outcome) => serde_json::to_value(outcome)
+            .map_err(|e| RpcError::invalid_params(format!("serialize: {e}"))),
+        Err(err) => Err(window_move_error_to_rpc(err)),
+    }
+}
+
+fn window_move_error_to_rpc(err: WindowMoveError) -> RpcError {
+    let variant = match err {
+        WindowMoveError::ClosureUnavailable => "ClosureUnavailable",
+        WindowMoveError::UnknownWindow => "UnknownWindow",
     };
     RpcError::invalid_params(variant)
 }

@@ -194,6 +194,18 @@ struct WindowSlot<R: VelloRenderer> {
     /// `capture_window_screenshot` immediately after. `None` between
     /// captures.
     last_capture: Option<crate::vello_capture::CapturedFrame>,
+    /// R1088 §5.16 §5.41 §2 #7 PR-31 — the last outer position the SHELL
+    /// commanded for this window via `Window::set_outer_position` (the
+    /// reconcile move pass or the `Suspended`-resume re-apply), in logical
+    /// px, that has not yet been observed echoing back as a
+    /// `WindowEvent::Moved`. [`AppShell::note_window_moved`] suppresses a
+    /// `Moved` equal to it (our own command echoing) and writes back only
+    /// a DIVERGENT one (a user / WM title-bar drag), so a shell-driven
+    /// move does not loop and a user move converges the declared
+    /// `windows_signal` on the actual position. `None` once the echo is
+    /// consumed, or when the shell has commanded no position (every
+    /// WM-placed window — the typical `"main"`).
+    last_commanded_position: Option<(i32, i32)>,
 }
 
 impl<R: VelloRenderer> WindowSlot<R> {
@@ -224,6 +236,7 @@ impl<R: VelloRenderer> WindowSlot<R> {
             scaled_scene: VelloScene::new(),
             pending_capture: false,
             last_capture: None,
+            last_commanded_position: None,
         }
     }
 }
@@ -1551,9 +1564,17 @@ impl<V: WidgetView> AppShell<V> {
         // the diff is unit-tested in `r1087_window_position_move_diff_tests`.)
         for (spec_id, (x, y)) in window_position_moves(&old_specs, &new_specs) {
             if let Some(window_id) = self.spec_id_to_window_id.get(spec_id.as_str()).copied() {
-                if let Some(slot) = self.windows.get(&window_id) {
-                    if let Some(window) = Self::slot_window(slot) {
+                if let Some(slot) = self.windows.get_mut(&window_id) {
+                    // Clone the arc first so the immutable `slot_window`
+                    // borrow ends before the `last_commanded_position`
+                    // mutation below.
+                    if let Some(window) = Self::slot_window(slot).cloned() {
                         window.set_outer_position(LogicalPosition::new(f64::from(x), f64::from(y)));
+                        // R1088 §5.16 PR-31 — latch the commanded position
+                        // so the OS `Moved` echo this `set_outer_position`
+                        // triggers is recognised + suppressed by
+                        // `note_window_moved`, not mistaken for a user drag.
+                        slot.last_commanded_position = Some((x, y));
                     }
                 }
             }
@@ -1568,6 +1589,10 @@ impl<V: WidgetView> AppShell<V> {
         self.drain_redraw_to_winit();
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "cohesive single-window creation routine — winit Window + GPU renderer + AccessKit adapter + slot assembly are one transactional unit; the R1088 Suspended-resume position re-apply belongs inline beside the create-time with_position it mirrors"
+    )]
     fn resume_spec(
         &mut self,
         event_loop: &ActiveEventLoop,
@@ -1593,6 +1618,18 @@ impl<V: WidgetView> AppShell<V> {
         let strategy = spec.strategy;
         let (init_w, init_h) = strategy.initial_logical_size();
         let window = if let Some(w) = cached_window {
+            // R1088 §5.16 §5.41 PR-31 — re-apply the declared position on a
+            // `Suspended(Some)` resume. `with_position` only applies at
+            // CREATE (the `else` branch); a cached window reused across a
+            // suspend/resume cycle would otherwise keep its pre-suspend OS
+            // position, drifting the live window from the declared
+            // `windows_signal` (R1087.1 finding ②). This closes the
+            // move-pass apply gap for the mobile-lifecycle resume path. The
+            // matching `last_commanded_position` latch is stamped on the
+            // rebuilt slot below (suppresses the resulting `Moved` echo).
+            if let Some((x, y)) = spec.position {
+                w.set_outer_position(LogicalPosition::new(f64::from(x), f64::from(y)));
+            }
             w
         } else {
             let mut attrs = Window::default_attributes()
@@ -1723,7 +1760,7 @@ impl<V: WidgetView> AppShell<V> {
             self.proxy.clone(),
         );
         let window_id = window.id();
-        let slot = WindowSlot::build(
+        let mut slot = WindowSlot::build(
             RenderState::Active {
                 window,
                 renderer: Box::new(renderer),
@@ -1733,6 +1770,13 @@ impl<V: WidgetView> AppShell<V> {
             pending_intrinsic_resize,
             scale_factor,
         );
+        // R1088 §5.16 §5.41 §2 #7 PR-31 — latch the declared position the
+        // create (`with_position`) or `Suspended`-resume re-apply just
+        // commanded, so the window's first `WindowEvent::Moved` (the OS
+        // echo of that placement) is suppressed by `note_window_moved`
+        // rather than written back as if it were a user drag. `None` for a
+        // WM-placed window leaves the latch empty.
+        slot.last_commanded_position = spec.position;
         self.windows.insert(window_id, slot);
         self.spec_id_to_window_id.insert(spec.id.clone(), window_id);
         if make_primary {
@@ -1760,6 +1804,78 @@ impl<V: WidgetView> AppShell<V> {
                 window.request_redraw();
             }
         }
+    }
+
+    /// R1088 §5.16 §5.41 §2 #7 PR-31 — feed a winit `WindowEvent::Moved`
+    /// back into `windows_signal` so the DECLARED position converges on the
+    /// actual one (the architecture-A ideal: a user native title-bar drag
+    /// writes the position SSOT, and `scene/windows` then reads the live
+    /// placement, declared == actual).
+    ///
+    /// **Echo suppression.** The reconcile move pass and the
+    /// `Suspended`-resume re-apply record every position they command in
+    /// [`WindowSlot::last_commanded_position`]. A `Moved` equal to that
+    /// latch is the shell's OWN `set_outer_position` echoing back — it is
+    /// consumed (the latch clears) and NOT written, so a shell- or
+    /// RPC-driven move does not loop (`command -> Moved -> signal write ->
+    /// reconcile -> command -> ...`). A `Moved` that DIVERGES is a user /
+    /// WM drag and is written back.
+    ///
+    /// **Conservative scope.** Only a window that ALREADY declares a
+    /// position (the floating tear-off panels) is updated; a `None`
+    /// WM-placed window (the typical `"main"`) is left WM-managed — one
+    /// user drag must not silently convert it into a pinned window.
+    ///
+    /// The write syncs [`Self::last_known_specs`] to the same snapshot
+    /// before emitting, so the signal write fires the reconcile effect but
+    /// hits its `new == old` fast path: the OS window is NOT re-commanded
+    /// back to where the user just put it.
+    fn note_window_moved(&mut self, window_id: WindowId, position: PhysicalPosition<i32>) {
+        let Some(slot) = self.windows.get(&window_id) else {
+            return;
+        };
+        let scale = slot.scale_factor;
+        let spec_id = slot.spec_id.clone();
+        let commanded = slot.last_commanded_position;
+        // winit reports the outer position in PHYSICAL px; the signal +
+        // `scene/windows` are LOGICAL px (§5.21). `to_logical::<i32>`
+        // divides by the per-window scale and rounds (winit's i32 `Pixel`),
+        // matching the `set_outer_position(LogicalPosition)` the move pass
+        // issues (winit multiplies logical -> physical on the way out).
+        let logical: LogicalPosition<i32> = position.to_logical(scale);
+        let logical = (logical.x, logical.y);
+        // Echo of our own command? Consume the latch (clear it) without
+        // writing. `moved_is_command_echo` is the pure, unit-tested core.
+        if moved_is_command_echo(commanded, logical) {
+            if let Some(slot) = self.windows.get_mut(&window_id) {
+                slot.last_commanded_position = None;
+            }
+            return;
+        }
+        // A user / WM move. Write it into the declared signal — but only
+        // for an already-positioned window (see the conservative-scope
+        // note above).
+        let Some(signal) = self.windows_signal.as_ref() else {
+            return;
+        };
+        let mut specs = signal.get();
+        let Some(spec) = specs
+            .iter_mut()
+            .find(|s| s.id.as_ref() == spec_id.as_ref() && s.position.is_some())
+        else {
+            return;
+        };
+        if spec.position == Some(logical) {
+            return;
+        }
+        spec.position = Some(logical);
+        // Sync the reconcile cache to the snapshot we are about to emit, so
+        // the signal write does NOT re-command the OS window to where the
+        // user just dragged it (the move pass would otherwise emit a
+        // redundant `set_outer_position`). The effect still fires + lands
+        // on the `new == old` fast path.
+        (*self.last_known_specs.borrow_mut()).clone_from(&specs);
+        signal.set(specs);
     }
 }
 
@@ -2081,6 +2197,16 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
                     // fast drag costs at most one paint per frame.
                     window.request_redraw();
                 }
+            }
+            // R1088 §5.16 §5.41 §2 #7 PR-31 — OS window move. Feed the new
+            // outer position back into `windows_signal` so the DECLARED
+            // position converges on the actual one (a user title-bar drag
+            // writes the position SSOT; `scene/windows` then reads it).
+            // Echo of the shell's own `set_outer_position` is suppressed
+            // inside `note_window_moved`. Extracted (like the scale arm) to
+            // keep `window_event` under the 100-line ceiling.
+            WindowEvent::Moved(position) => {
+                self.note_window_moved(window_id, position);
             }
             // R1027 §5.16 — DPI / scale change. Extracted to
             // `note_scale_factor_changed` to keep this dispatcher under the
@@ -2740,6 +2866,22 @@ fn window_position_moves(old: &[WindowSpec], new: &[WindowSpec]) -> Vec<(String,
     moves
 }
 
+/// R1088 §5.16 §5.41 §2 #7 PR-31 — is this `WindowEvent::Moved` the echo of
+/// a position the shell just commanded via `set_outer_position`? `true`
+/// when `commanded` is set and equals the incoming `logical` position
+/// within 1px (absorbing logical<->physical round-trip rounding under a
+/// fractional DPI scale). The pure core of
+/// [`AppShell::note_window_moved`]'s echo suppression, split out so the
+/// own-command-vs-user-drag classification is unit-testable without a live
+/// winit event loop (the actual `Moved` delivery + `set_outer_position`
+/// effect stay HW-gated, like every real-window behaviour).
+fn moved_is_command_echo(commanded: Option<(i32, i32)>, logical: (i32, i32)) -> bool {
+    matches!(
+        commanded,
+        Some((cx, cy)) if (logical.0 - cx).abs() <= 1 && (logical.1 - cy).abs() <= 1
+    )
+}
+
 #[cfg(test)]
 mod r1087_window_position_move_diff_tests {
     //! R1087 §5.16 §5.41 PR-31 — the pure `window_position_moves` diff
@@ -2824,6 +2966,47 @@ mod r1087_window_position_move_diff_tests {
             window_position_moves(&old, &new),
             vec![("a".to_owned(), (1, 1)), ("b".to_owned(), (2, 2))]
         );
+    }
+}
+
+#[cfg(test)]
+mod r1088_moved_echo_tests {
+    //! R1088 §5.16 §5.41 §2 #7 PR-31 — the pure echo-vs-user-move
+    //! classification (`moved_is_command_echo`) that gates
+    //! `note_window_moved`'s write-back. The live `Moved` delivery is
+    //! HW-gated; this is the testable decision core.
+    use super::moved_is_command_echo;
+
+    #[test]
+    fn no_command_is_a_user_move() {
+        // Latch empty (a WM-placed window the shell never commanded) →
+        // never an echo; every Moved is a user/WM move.
+        assert!(!moved_is_command_echo(None, (100, 80)));
+    }
+
+    #[test]
+    fn exact_match_is_an_echo() {
+        assert!(moved_is_command_echo(Some((120, 90)), (120, 90)));
+    }
+
+    #[test]
+    fn one_pixel_rounding_is_still_an_echo() {
+        // logical<->physical round-trip under a fractional scale can land
+        // 1px off; that is still our own command, not a user drag.
+        assert!(moved_is_command_echo(Some((120, 90)), (121, 89)));
+        assert!(moved_is_command_echo(Some((120, 90)), (119, 91)));
+    }
+
+    #[test]
+    fn two_pixels_off_is_a_user_move() {
+        // Beyond the rounding tolerance → a genuine user/WM drag.
+        assert!(!moved_is_command_echo(Some((120, 90)), (122, 90)));
+        assert!(!moved_is_command_echo(Some((120, 90)), (120, 88)));
+    }
+
+    #[test]
+    fn divergent_position_is_a_user_move() {
+        assert!(!moved_is_command_echo(Some((120, 90)), (400, 300)));
     }
 }
 

@@ -42,6 +42,7 @@ pub mod text;
 pub mod text_state;
 pub mod theme;
 pub mod wait_for;
+pub mod window_move;
 
 #[cfg(test)]
 pub(crate) mod test_fixtures;
@@ -123,3 +124,4 @@ pub use theme::{
     theme_tokens,
 };
 pub use wait_for::{WaitForError, WaitOutcome, wait_for};
+pub use window_move::{WindowMoveError, WindowMoveOutcome, WindowMoveParams, window_move};
