@@ -16056,6 +16056,58 @@
         "Suspended(Some) move-pass apply still skips a no-arc window; converges on next create (mobile-deferred, unchanged from R1087)"
       ]
     },
+    "R1089": {
+      "decision_summary": "rpc/methods self-describing wire surface: the meta-method returning the dispatch method catalog so an AI DISCOVERS the surface (scene/window_move et al.) instead of needing literal strings; catalog verified-complete against the routing match by a source cross-check test. Pivot from the SEED-named R1089 live drag-follow (HW-gated + undemoable headless).",
+      "changes_bullets": [
+        "rpc/methods meta-method: returns the catalog of every dispatch method name so an AI discovers the wire surface (§2 #7 applied to the protocol)",
+        "RPC_METHODS const = the SSOT public surface (72 sorted names incl rpc/methods itself) + RpcMethods{methods,count} response",
+        "catalog_matches_dispatch_match_arms test parses the dispatch routing match out of the source and asserts set-equality (completeness verified, no drift, no macro magic, no runtime reflection)",
+        "directly motivated by R1088: scene/window_move + scene/windows were reachable only by literal string",
+        "MVP = names only; per-method kind (read/mutate) + param schema = the next slice at a consumer (YAGNI)",
+        "PIVOT from the SEED-named R1089 live drag-follow (HW-gated at its core + the headless slice is undemoable): chose the buildable+demoable AI-first north-star gap instead"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace 7617 pass / 0 fail; +4 methods unit (cross-check / sorted-unique / lists-itself / count)",
+        "the cross-check test passing GUARANTEES the catalog == the 72 routing-match arms (completeness, not just soundness)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic); cargo fmt --check clean",
+        "tools/demos/r1089_rpc_methods.py >=30 asserts PASS (A-G: shape / known-methods / namespaces / self-reference / discover-then-use / negative-control -32601)"
+      ],
+      "impact_refs": [
+        "5.7",
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "live drag-follow (the SEED's original R1089) deferred HW-gated: needs a real pointer grab (winit drag_window / set_outer_position-under-grab) so the follow can't be demo'd headlessly; its AI value (reposition) already shipped R1088",
+        "drag-follow also has a coordinate-ownership architecture fork (External-driven follow with a window-logical->screen seam vs shell-driven follow) + a §5.15 input-forwarding contract extension (absolute cursor into drag_to) — resolve deliberately when a real-GPU host can verify",
+        "rpc/methods MVP is names-only: per-method kind (read/mutate) + param schema are the natural enrichment at a consumer",
+        "catalog completeness is TEST-enforced (source cross-check), not compile-enforced — a deliberate choice (macro-generated arms are forbidden); the test is the no-drift guarantee"
+      ],
+      "publishable_decision_summary": "rpc/methods self-describing wire surface: the meta-method returning the dispatch method catalog so an AI DISCOVERS the surface (scene/window_move et al.) instead of needing literal strings; catalog verified-complete against the routing match by a source cross-check test. Pivot from the SEED-named R1089 live drag-follow (HW-gated + undemoable headless).",
+      "publishable_changes_bullets": [
+        "rpc/methods meta-method: returns the catalog of every dispatch method name so an AI discovers the wire surface (§2 #7 applied to the protocol)",
+        "RPC_METHODS const = the SSOT public surface (72 sorted names incl rpc/methods itself) + RpcMethods{methods,count} response",
+        "catalog_matches_dispatch_match_arms test parses the dispatch routing match out of the source and asserts set-equality (completeness verified, no drift, no macro magic, no runtime reflection)",
+        "directly motivated by R1088: scene/window_move + scene/windows were reachable only by literal string",
+        "MVP = names only; per-method kind (read/mutate) + param schema = the next slice at a consumer (YAGNI)",
+        "PIVOT from the SEED-named R1089 live drag-follow (HW-gated at its core + the headless slice is undemoable): chose the buildable+demoable AI-first north-star gap instead"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace 7617 pass / 0 fail; +4 methods unit (cross-check / sorted-unique / lists-itself / count)",
+        "the cross-check test passing GUARANTEES the catalog == the 72 routing-match arms (completeness, not just soundness)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic); cargo fmt --check clean",
+        "tools/demos/r1089_rpc_methods.py >=30 asserts PASS (A-G: shape / known-methods / namespaces / self-reference / discover-then-use / negative-control -32601)"
+      ],
+      "publishable_impact_refs": [
+        "5.7",
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "live drag-follow (the SEED's original R1089) deferred HW-gated: needs a real pointer grab (winit drag_window / set_outer_position-under-grab) so the follow can't be demo'd headlessly; its AI value (reposition) already shipped R1088",
+        "drag-follow also has a coordinate-ownership architecture fork (External-driven follow with a window-logical->screen seam vs shell-driven follow) + a §5.15 input-forwarding contract extension (absolute cursor into drag_to) — resolve deliberately when a real-GPU host can verify",
+        "rpc/methods MVP is names-only: per-method kind (read/mutate) + param schema are the natural enrichment at a consumer",
+        "catalog completeness is TEST-enforced (source cross-check), not compile-enforced — a deliberate choice (macro-generated arms are forbidden); the test is the no-drift guarantee"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
