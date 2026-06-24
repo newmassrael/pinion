@@ -15426,6 +15426,56 @@
         "sprag consumes the full PR-29 seam in a separate sprag-native session (pin-bump + per-panel coordinator registration + preview); pinion never edits sprag"
       ]
     },
+    "R1082": {
+      "decision_summary": "R1082 §5.51 §5.45 live dock drag-to-dock editor wiring: thread the R1081 drop-preview into the view (view_dock_panel active_drop_zone param + view_dock_surface drop_zone closure -> dock_drop_zone_highlight overlay on the targeted panel) and wire hello-dock-panels-editor to share ONE cached Rc<DockReorganizer> + ONE Rc<Signal<Option<DockDropPreview>>> across a DockPanelExternal per leaf and the invoke DockReorganizeExternal, so a live header drag docks/floats panels with a reactive zone affordance",
+      "changes_bullets": [
+        "view_dock_panel (pinion-widget-paint/src/dock.rs) gained active_drop_zone: Option<DockDropZone>: Some(zone) appends dock_drop_zone_highlight(zone, theme) as an out-of-flow (absolute, pointer_transparent) last child over the band the drop docks into; None (every static/floating panel) paints nothing",
+        "view_dock_surface / view_dock_surface_node gained a drop_zone: Fn(&str)->Option<DockDropZone> closure (peer of panel_content/split_state) threading the per-leaf live zone to view_dock_panel; static surfaces pass |_| None",
+        "hello-dock-panels-editor: use_editor_reorganizer() caches ONE Rc<DockReorganizer> (deps resolved before the Owner::cache factory per the no-nested-cache rule) + use_drop_preview() caches ONE Rc<Signal<Option<DockDropPreview>>>; create_extra_externals registers a DockPanelExternal per leaf (panel root tag) sharing both, and DockReorganizeExternal::from_reorganizer(same Rc); the view reads the preview and maps panel_id -> Some(zone) for the drop target",
+        "BUGFIX (latent, pre-R1082): create_extra_externals rebuilt the coordinator (fresh split_seq=0) on every run; the R688 dynamic external set re-runs it on each topology change, so a second reorganize would mint a colliding reorg-split-0. Caching the coordinator makes split_seq persist",
+        "hello-dock-panels (tear-off-only): the 2 view_dock_panel calls pass None (no reorganize topology -> no live overlay)"
+      ],
+      "verification_bullets": [
+        "workspace tests 0 failed (pinion-widget-paint 510 incl. new R1082 forcing-consumer tests: view_dock_panel Some(zone)->3-children out-of-flow overlay / None & None-zone->2 children, view_dock_surface threads the zone to the targeted leaf; hello-dock-panels-editor 31 incl. create_extra_externals registers 4 splitters + 5 panels + reorganize + undo = 11, and use_editor_reorganizer/use_drop_preview memoise one shared Rc)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings; cargo fmt --all --check clean; validate-workspace T1=0; validate-code-refs exit 0",
+        "HONEST: the headless tests prove the scene structure + the sharing wiring; the LIVE native-pointer drag-to-dock (winit CursorMoved/MouseInput -> begin_drag/drag_to/drag_release) is NOT machine-verified here -- acceptance = the libXtst drive (XTestFakeMotionEvent + XTestFakeButtonEvent on DISPLAY=:0, ffmpeg x11grab before/after) which is HW-gated (VELLO GL), to run on a real-GPU host"
+      ],
+      "impact_refs": [
+        "5.51",
+        "5.45",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "R1082.1 = adversarial audit-clearance over R1081+R1082 (3 read-only reviewers: craft/honesty, SSOT/structure, north-star/AI-introspect + author grep re-verify), per the project cadence; then PR-29 is feature-complete in pinion",
+        "LIVE acceptance still owed: run the libXtst native-pointer drive on a real-GPU host to witness a header drag docking a panel (split/swap) + the zone overlay + an escape-drop float; CI stays headless-scene-assertion",
+        "sprag consumes the full PR-29 seam in a separate sprag-native session (pin-bump pinion rev + per-panel coordinator/preview registration in sprag's own shell); pinion never edits sprag",
+        "DockPanelStyle::tear_off_threshold_frac remains gesture-vestigial (declared-defer a DockPanelStyle cleanup round)"
+      ],
+      "publishable_decision_summary": "R1082 §5.51 §5.45 live dock drag-to-dock editor wiring: thread the R1081 drop-preview into the view (view_dock_panel active_drop_zone param + view_dock_surface drop_zone closure -> dock_drop_zone_highlight overlay on the targeted panel) and wire hello-dock-panels-editor to share ONE cached Rc<DockReorganizer> + ONE Rc<Signal<Option<DockDropPreview>>> across a DockPanelExternal per leaf and the invoke DockReorganizeExternal, so a live header drag docks/floats panels with a reactive zone affordance",
+      "publishable_changes_bullets": [
+        "view_dock_panel (pinion-widget-paint/src/dock.rs) gained active_drop_zone: Option<DockDropZone>: Some(zone) appends dock_drop_zone_highlight(zone, theme) as an out-of-flow (absolute, pointer_transparent) last child over the band the drop docks into; None (every static/floating panel) paints nothing",
+        "view_dock_surface / view_dock_surface_node gained a drop_zone: Fn(&str)->Option<DockDropZone> closure (peer of panel_content/split_state) threading the per-leaf live zone to view_dock_panel; static surfaces pass |_| None",
+        "hello-dock-panels-editor: use_editor_reorganizer() caches ONE Rc<DockReorganizer> (deps resolved before the Owner::cache factory per the no-nested-cache rule) + use_drop_preview() caches ONE Rc<Signal<Option<DockDropPreview>>>; create_extra_externals registers a DockPanelExternal per leaf (panel root tag) sharing both, and DockReorganizeExternal::from_reorganizer(same Rc); the view reads the preview and maps panel_id -> Some(zone) for the drop target",
+        "BUGFIX (latent, pre-R1082): create_extra_externals rebuilt the coordinator (fresh split_seq=0) on every run; the R688 dynamic external set re-runs it on each topology change, so a second reorganize would mint a colliding reorg-split-0. Caching the coordinator makes split_seq persist",
+        "hello-dock-panels (tear-off-only): the 2 view_dock_panel calls pass None (no reorganize topology -> no live overlay)"
+      ],
+      "publishable_verification_bullets": [
+        "workspace tests 0 failed (pinion-widget-paint 510 incl. new R1082 forcing-consumer tests: view_dock_panel Some(zone)->3-children out-of-flow overlay / None & None-zone->2 children, view_dock_surface threads the zone to the targeted leaf; hello-dock-panels-editor 31 incl. create_extra_externals registers 4 splitters + 5 panels + reorganize + undo = 11, and use_editor_reorganizer/use_drop_preview memoise one shared Rc)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings; cargo fmt --all --check clean; validate-workspace T1=0; validate-code-refs exit 0",
+        "HONEST: the headless tests prove the scene structure + the sharing wiring; the LIVE native-pointer drag-to-dock (winit CursorMoved/MouseInput -> begin_drag/drag_to/drag_release) is NOT machine-verified here -- acceptance = the libXtst drive (XTestFakeMotionEvent + XTestFakeButtonEvent on DISPLAY=:0, ffmpeg x11grab before/after) which is HW-gated (VELLO GL), to run on a real-GPU host"
+      ],
+      "publishable_impact_refs": [
+        "5.51",
+        "5.45",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R1082.1 = adversarial audit-clearance over R1081+R1082 (3 read-only reviewers: craft/honesty, SSOT/structure, north-star/AI-introspect + author grep re-verify), per the project cadence; then PR-29 is feature-complete in pinion",
+        "LIVE acceptance still owed: run the libXtst native-pointer drive on a real-GPU host to witness a header drag docking a panel (split/swap) + the zone overlay + an escape-drop float; CI stays headless-scene-assertion",
+        "sprag consumes the full PR-29 seam in a separate sprag-native session (pin-bump pinion rev + per-panel coordinator/preview registration in sprag's own shell); pinion never edits sprag",
+        "DockPanelStyle::tear_off_threshold_frac remains gesture-vestigial (declared-defer a DockPanelStyle cleanup round)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
