@@ -618,6 +618,13 @@ pub enum TopologyError {
         /// The well's panel count (`active` must be `< count`).
         count: usize,
     },
+    /// (R1085 §5.51) [`DockTopology::set_active_tab`] was given a
+    /// `well_id` that names no [`DockNode::Tabs`] well — either no node
+    /// in the topology carries that id, or the id belongs to a
+    /// [`DockNode::Leaf`] panel / [`DockNode::Split`] divider rather than
+    /// a tab well. The `activate_tab` gesture resolved a stale / wrong-kind
+    /// id; the activation cannot proceed without inventing a target well.
+    TabsWellNotFound(String),
 }
 
 impl core::fmt::Display for TopologyError {
@@ -660,6 +667,7 @@ impl core::fmt::Display for TopologyError {
                 f,
                 "tab well {tabs_id:?} active index {active} is out of range for {count} panel(s)"
             ),
+            Self::TabsWellNotFound(id) => write!(f, "tab-well id {id:?} not found in topology"),
         }
     }
 }
@@ -1009,6 +1017,44 @@ impl DockTopology {
         let new_root = tabify_into_rec(&removed, target, &mut source_id, &mut new_tabs_id);
         Self::try_new(new_root)
     }
+
+    /// (R1085 §5.51) Make tab `index` the visible tab of the
+    /// [`DockNode::Tabs`] well identified by `well_id` — the tab-well
+    /// navigation primitive (click a tab / `activate_tab` invoke).
+    ///
+    /// Returns a new validated topology with that well's
+    /// [`DockNode::Tabs::active`] set to `index`. Unlike the
+    /// reorganize mutations ([`Self::swap_leaves`] / [`Self::tabify`] /
+    /// [`Self::split_leaf_into`]) this is **not a move**: no panel
+    /// changes location, no id is minted, only the well's visible-tab
+    /// index changes. Every other node is preserved byte-for-byte.
+    ///
+    /// `index == active` is an accepted no-op (the well rebuilds with the
+    /// same active), mirroring [`Self::swap_leaves`]'s `a == b` /
+    /// [`Self::tabify`]'s `source == target` idempotent discipline — the
+    /// caller (the coordinator) decides whether to record / republish.
+    ///
+    /// # Errors
+    ///
+    /// * [`TopologyError::TabsWellNotFound`] if `well_id` names no
+    ///   [`DockNode::Tabs`] well (no such id, or the id belongs to a
+    ///   [`DockNode::Leaf`] panel / [`DockNode::Split`] divider).
+    /// * [`TopologyError::ActiveOutOfRange`] if `index >= panels.len()`
+    ///   for the well — surfaced by the [`Self::try_new`] validation gate
+    ///   (the single invariant checker), not re-implemented here.
+    pub fn set_active_tab(
+        &self,
+        well_id: &str,
+        index: usize,
+    ) -> Result<DockTopology, TopologyError> {
+        let Some(new_root) = set_active_in_well_rec(&self.root, well_id, index) else {
+            return Err(TopologyError::TabsWellNotFound(well_id.to_string()));
+        };
+        // `try_new` validates the new `active` against the well's panel
+        // count (and re-checks every other invariant), so an out-of-range
+        // index becomes `ActiveOutOfRange` from the one validation gate.
+        Self::try_new(new_root)
+    }
 }
 
 /// (R686 §5.16 §5.45) Which slot of a newly created
@@ -1341,6 +1387,52 @@ fn activate_in_shared_well(node: &DockNode, source: &str, target: &str) -> Optio
                 });
             }
             activate_in_shared_well(second, source, target).map(|s| DockNode::Split {
+                id: id.clone(),
+                orientation: *orientation,
+                ratio: *ratio,
+                first: first.clone(),
+                second: Box::new(s),
+            })
+        }
+    }
+}
+
+/// (R1085 §5.51) Rebuild the tree with the [`DockNode::Tabs`] well whose
+/// `id == well_id` carrying `active = index`, returning `Some(new_root)`.
+/// Returns `None` when no `Tabs` well carries that id (the id is absent,
+/// or belongs to a [`DockNode::Leaf`] / [`DockNode::Split`]) — the caller
+/// ([`DockTopology::set_active_tab`]) maps that to
+/// [`TopologyError::TabsWellNotFound`]. The rebuilt well keeps its `id` +
+/// `panels` (only `active` changes); every other node is cloned
+/// unchanged. The new `index` is *not* range-checked here — the well's
+/// own panel count is the authority and [`DockTopology::try_new`]
+/// validates it, so a stale index surfaces as one `ActiveOutOfRange` from
+/// the single validation gate rather than a check duplicated here.
+fn set_active_in_well_rec(node: &DockNode, well_id: &str, index: usize) -> Option<DockNode> {
+    match node {
+        DockNode::Leaf { .. } => None,
+        DockNode::Tabs { id, panels, .. } => (id.as_ref() == well_id).then(|| DockNode::Tabs {
+            id: id.clone(),
+            panels: panels.clone(),
+            active: index,
+        }),
+        DockNode::Split {
+            id,
+            orientation,
+            ratio,
+            first,
+            second,
+        } => {
+            if let Some(f) = set_active_in_well_rec(first, well_id, index) {
+                return Some(DockNode::Split {
+                    id: id.clone(),
+                    orientation: *orientation,
+                    ratio: *ratio,
+                    first: Box::new(f),
+                    second: second.clone(),
+                });
+            }
+            set_active_in_well_rec(second, well_id, index).map(|s| DockNode::Split {
                 id: id.clone(),
                 orientation: *orientation,
                 ratio: *ratio,
@@ -2136,6 +2228,66 @@ impl DockReorganizer {
             DockReorganizeIntent::Swap { .. } => {}
         }
         let summary = format!("{} -> {}", intent.source(), intent.target());
+        Ok(self.commit(next, summary))
+    }
+
+    /// (R1085 §5.51) Make tab `index` the visible tab of the
+    /// [`DockNode::Tabs`] well `well_id` — the tab-well **navigation**
+    /// gesture, shared by the `activate_tab` invoke (AI / RPC primary)
+    /// and (R1086) the pointer tab-strip click. Distinct from
+    /// [`Self::apply_intent`]: that funnels the drag-produced
+    /// [`DockReorganizeIntent`]s (moves that mint ids); this only changes
+    /// which tab is visible, so it touches no `split_seq` / `tabs_seq`. It
+    /// shares the *same* [`Self::commit`] funnel, so the `last_outcome` +
+    /// undo-or-set bookkeeping has one writer regardless of gesture.
+    ///
+    /// (R1084 §5.51) Total over the empty surface: `None` (empty dock) has
+    /// no well to navigate, so the call is the identity no-op
+    /// `Ok("empty surface — no-op")` — no panic, the signal stays `None`.
+    ///
+    /// `index == active` is an accepted no-op that still commits (records +
+    /// republishes), matching [`Self::apply_intent`]'s idempotent-gesture
+    /// behaviour; the pointer drive (R1086) guards the already-active click
+    /// at the gesture layer so re-clicking a live tab does not churn undo.
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`TopologyError`] from [`DockTopology::set_active_tab`]
+    /// when the gesture cannot apply ([`TopologyError::TabsWellNotFound`]
+    /// for a stale / wrong-kind id, [`TopologyError::ActiveOutOfRange`]
+    /// for an index past the well's end). Records the rejection in
+    /// `last_outcome` (the one SSOT) and leaves the live topology
+    /// unchanged.
+    pub fn activate_tab(&self, well_id: &str, index: usize) -> Result<String, TopologyError> {
+        let Some(current) = self.topology.get() else {
+            let outcome = "empty surface — no-op".to_string();
+            *self.last_outcome.borrow_mut() = Some(outcome.clone());
+            return Ok(outcome);
+        };
+        let next = match current.set_active_tab(well_id, index) {
+            Ok(next) => next,
+            Err(e) => {
+                // Record the rejection here so every drive (the AI invoke
+                // path + the R1086 pointer click) surfaces `"rejected: …"`
+                // through `query("last_outcome")` — one outcome SSOT.
+                *self.last_outcome.borrow_mut() = Some(format!("rejected: {e}"));
+                return Err(e);
+            }
+        };
+        let summary = format!("activate {well_id}#{index}");
+        Ok(self.commit(next, summary))
+    }
+
+    /// (R1085 §5.51) The single topology-commit funnel — the **sole
+    /// writer** of the dock-surface signal. Records `summary` as the
+    /// `last_outcome`, then either pushes a reversible
+    /// [`SignalEdit<Option<DockTopology>>`] (when an undo stack is
+    /// attached — which applies it) or sets the signal directly (the R686
+    /// path). Shared by [`Self::apply_intent`] (drag-produced moves) and
+    /// [`Self::activate_tab`] (tab navigation) so neither duplicates the
+    /// `last_outcome` + undo-or-set bookkeeping — the R1082.1 sole-writer
+    /// invariant, now the funnel both gestures pass through.
+    fn commit(&self, next: DockTopology, summary: String) -> String {
         *self.last_outcome.borrow_mut() = Some(summary.clone());
         // (R749 §5.52) When an undo stack is attached, record the topology
         // change as a reversible edit (which applies it); else mutate the
@@ -2145,7 +2297,7 @@ impl DockReorganizer {
         } else {
             self.topology.set(Some(next));
         }
-        Ok(summary)
+        summary
     }
 }
 
@@ -2215,6 +2367,19 @@ impl DockReorganizeExternal {
     pub fn apply_intent(&self, intent: &DockReorganizeIntent) -> Result<String, TopologyError> {
         self.reorganizer.apply_intent(intent)
     }
+
+    /// (R1085 §5.51) Make tab `index` the visible tab of well `well_id`
+    /// through the shared coordinator. Retained on the external surface
+    /// for direct-use callers (the editor's boot seeding) that hold the
+    /// external rather than the coordinator, mirroring
+    /// [`Self::apply_intent`].
+    ///
+    /// # Errors
+    ///
+    /// Propagates the coordinator's [`TopologyError`] unchanged.
+    pub fn activate_tab(&self, well_id: &str, index: usize) -> Result<String, TopologyError> {
+        self.reorganizer.activate_tab(well_id, index)
+    }
 }
 
 impl External for DockReorganizeExternal {
@@ -2257,6 +2422,12 @@ impl ExternalIntrospect for DockReorganizeExternal {
             ("drop_preview", "json"),
             ("drop", "json"),
             ("reorganize", "json"),
+            // (R1085 §5.51) Tab-well navigation: make tab `index` of well
+            // `well_id` visible (`{"well_id": "...", "index": N}`). The
+            // AI-first primary for tab activation — discoverable here so an
+            // agent reasoning over a `Tabs` well can switch tabs symbolically
+            // (no pixels), the §2 #2 RPC-as-primary-path contract.
+            ("activate_tab", "json"),
         ])
     }
 
@@ -2324,12 +2495,22 @@ impl ExternalIntrospect for DockReorganizeExternal {
     ///   where `zone` is a [`DockDropZone`] variant name. The path an
     ///   AI agent reasoning over panel ids (no pixels) uses to express
     ///   "dock console to the left of viewport" directly.
+    /// * (R1085 §5.51) **`activate_tab`** — *tab navigation* driven.
+    ///   Payload `{"well_id": "<tabs-id>", "index": N}`. Makes tab `index`
+    ///   the visible tab of the [`DockNode::Tabs`] well `well_id`
+    ///   ([`DockReorganizer::activate_tab`]) — the AI-first primary for
+    ///   switching tabs symbolically. Returns
+    ///   `"activate <well_id>#<index>"` on success; rejects a stale /
+    ///   wrong-kind `well_id` or an out-of-range `index` with
+    ///   [`InvokeError::Rejected`]. Over the empty surface it is the
+    ///   identity no-op `Ok("empty surface — no-op")`.
     ///
-    /// Both return the outcome summary `"<source> -> <target>"` on a
-    /// successful edit and leave the live topology unchanged on
+    /// `drop` / `reorganize` return the outcome summary
+    /// `"<source> -> <target>"` on a successful edit (and `activate_tab`
+    /// its own summary) and leave the live topology unchanged on
     /// [`InvokeError::Rejected`] (stale id / root removal / id
-    /// collision); [`InvokeError::TypeMismatch`] for a malformed
-    /// payload.
+    /// collision / out-of-range tab); [`InvokeError::TypeMismatch`] for a
+    /// malformed payload.
     fn invoke(
         &mut self,
         path: &str,
@@ -2403,6 +2584,29 @@ impl ExternalIntrospect for DockReorganizeExternal {
                 // `None`/unmappable zone is a rejected gesture.
                 let intent = intent_for_zone(source, target, zone).ok_or(InvokeError::Rejected)?;
                 match self.apply_intent(&intent) {
+                    Ok(summary) => Ok(IntrospectValue::Text(summary)),
+                    Err(_) => Err(InvokeError::Rejected),
+                }
+            }
+            "activate_tab" => {
+                let IntrospectValue::Json(obj) = args else {
+                    return Err(InvokeError::TypeMismatch);
+                };
+                let well_id = obj.get("well_id").and_then(serde_json::Value::as_str);
+                let index = obj.get("index").and_then(serde_json::Value::as_u64);
+                let (Some(well_id), Some(index)) = (well_id, index) else {
+                    return Err(InvokeError::TypeMismatch);
+                };
+                // A well-formed but out-of-range / unknown-well index is a
+                // rejected gesture (not a malformed payload). `usize::try_from`
+                // only fails on a >usize::MAX index, which is always out of
+                // range, so it folds into the same rejection.
+                let Ok(index) = usize::try_from(index) else {
+                    return Err(InvokeError::Rejected);
+                };
+                // `activate_tab` records the `"rejected: …"` outcome itself
+                // (the one SSOT), so the caller only maps the error.
+                match self.activate_tab(well_id, index) {
                     Ok(summary) => Ok(IntrospectValue::Text(summary)),
                     Err(_) => Err(InvokeError::Rejected),
                 }
@@ -5573,6 +5777,167 @@ mod reorganize_tests {
             .expect("tabify applies");
         assert_eq!(ext.query("tabs_seq"), Some(IntrospectValue::Int(1)));
     }
+
+    // ── R1085 §5.51 — tab-well navigation (`activate_tab`) ──────────
+
+    /// `a | w0[x, y, z]@0` — a leaf beside a 3-tab well visible on `x`.
+    fn well_topology() -> DockTopology {
+        use std::borrow::Cow;
+        DockTopology::new(DockNode::split_horizontal(
+            "root_h",
+            0.5,
+            DockNode::leaf("a"),
+            DockNode::tabs("w0", ["x", "y", "z"].map(Cow::from), 0),
+        ))
+    }
+
+    /// `active` of the first [`DockNode::Tabs`] well in pre-order.
+    fn first_well_active(node: &DockNode) -> Option<usize> {
+        match node {
+            DockNode::Tabs { active, .. } => Some(*active),
+            DockNode::Leaf { .. } => None,
+            DockNode::Split { first, second, .. } => {
+                first_well_active(first).or_else(|| first_well_active(second))
+            }
+        }
+    }
+
+    #[test]
+    fn r1085_activate_tab_invoke_flips_active_and_returns_summary() {
+        let signal = Rc::new(Signal::new(Some(well_topology())));
+        let mut ext = DockReorganizeExternal::new(Rc::clone(&signal));
+        let out = ext
+            .invoke(
+                "activate_tab",
+                IntrospectValue::Json(serde_json::json!({"well_id":"w0","index":2})),
+            )
+            .expect("activate ok");
+        assert_eq!(out, IntrospectValue::Text("activate w0#2".to_string()));
+        // The live signal (the SSOT query("topology") reads from) flipped.
+        assert_eq!(first_well_active(signal.get().unwrap().root()), Some(2));
+    }
+
+    #[test]
+    fn r1085_activate_tab_records_last_outcome_for_introspection() {
+        let signal = Rc::new(Signal::new(Some(well_topology())));
+        let mut ext = DockReorganizeExternal::new(Rc::clone(&signal));
+        ext.invoke(
+            "activate_tab",
+            IntrospectValue::Json(serde_json::json!({"well_id":"w0","index":1})),
+        )
+        .expect("activate ok");
+        // An AI confirms the gesture through the one outcome SSOT.
+        assert_eq!(
+            ext.query("last_outcome"),
+            Some(IntrospectValue::Text("activate w0#1".to_string())),
+        );
+    }
+
+    #[test]
+    fn r1085_activate_tab_invoke_malformed_payload_is_type_mismatch() {
+        let signal = Rc::new(Signal::new(Some(well_topology())));
+        let mut ext = DockReorganizeExternal::new(signal);
+        // Not a JSON object.
+        assert_eq!(
+            ext.invoke("activate_tab", IntrospectValue::Text("nope".into())),
+            Err(InvokeError::TypeMismatch),
+        );
+        // Missing `index`.
+        assert_eq!(
+            ext.invoke(
+                "activate_tab",
+                IntrospectValue::Json(serde_json::json!({"well_id":"w0"})),
+            ),
+            Err(InvokeError::TypeMismatch),
+        );
+        // Missing `well_id`.
+        assert_eq!(
+            ext.invoke(
+                "activate_tab",
+                IntrospectValue::Json(serde_json::json!({"index":1})),
+            ),
+            Err(InvokeError::TypeMismatch),
+        );
+    }
+
+    #[test]
+    fn r1085_activate_tab_invoke_out_of_range_or_unknown_well_is_rejected() {
+        let signal = Rc::new(Signal::new(Some(well_topology())));
+        let mut ext = DockReorganizeExternal::new(Rc::clone(&signal));
+        // Index past the well's end — a well-formed but rejected gesture.
+        assert_eq!(
+            ext.invoke(
+                "activate_tab",
+                IntrospectValue::Json(serde_json::json!({"well_id":"w0","index":9})),
+            ),
+            Err(InvokeError::Rejected),
+        );
+        // Unknown well id.
+        assert_eq!(
+            ext.invoke(
+                "activate_tab",
+                IntrospectValue::Json(serde_json::json!({"well_id":"nope","index":0})),
+            ),
+            Err(InvokeError::Rejected),
+        );
+        // The live topology is untouched by either rejection.
+        assert_eq!(first_well_active(signal.get().unwrap().root()), Some(0));
+        // ...and the rejection is observable through the outcome SSOT.
+        let IntrospectValue::Text(outcome) = ext.query("last_outcome").unwrap() else {
+            panic!("last_outcome is text after a rejection");
+        };
+        assert!(outcome.starts_with("rejected:"), "got {outcome:?}");
+    }
+
+    #[test]
+    fn r1085_activate_tab_on_empty_surface_is_identity_noop() {
+        let signal: Rc<Signal<Option<DockTopology>>> = Rc::new(Signal::new(None));
+        let mut ext = DockReorganizeExternal::new(Rc::clone(&signal));
+        let out = ext
+            .invoke(
+                "activate_tab",
+                IntrospectValue::Json(serde_json::json!({"well_id":"w0","index":1})),
+            )
+            .expect("empty-surface activate is a no-op, not an error");
+        assert_eq!(
+            out,
+            IntrospectValue::Text("empty surface — no-op".to_string()),
+        );
+        assert!(signal.get().is_none(), "empty surface stays empty");
+    }
+
+    #[test]
+    fn r1085_activate_tab_with_undo_is_reversible() {
+        use pinion_core::undo::UndoStack;
+        let signal = Rc::new(Signal::new(Some(well_topology())));
+        let stack = Rc::new(UndoStack::new());
+        let reorganizer =
+            Rc::new(DockReorganizer::new(Rc::clone(&signal)).with_undo(Rc::clone(&stack)));
+        reorganizer.activate_tab("w0", 2).expect("activate ok");
+        assert_eq!(first_well_active(signal.get().unwrap().root()), Some(2));
+        assert_eq!(stack.len(), 1, "one recorded navigation edit");
+        assert!(stack.undo());
+        assert_eq!(
+            first_well_active(signal.get().unwrap().root()),
+            Some(0),
+            "undo restored the prior active tab",
+        );
+        assert!(stack.redo());
+        assert_eq!(first_well_active(signal.get().unwrap().root()), Some(2));
+    }
+
+    #[test]
+    fn r1085_schema_advertises_activate_tab() {
+        let signal = Rc::new(Signal::new(Some(well_topology())));
+        let ext = DockReorganizeExternal::new(signal);
+        assert!(
+            ext.schema()
+                .fields
+                .iter()
+                .any(|(k, _)| *k == "activate_tab"),
+            "activate_tab is discoverable in the schema (AI-first primary)",
+        );
+    }
 }
 
 #[cfg(test)]
@@ -6060,6 +6425,97 @@ mod tabify_tests {
             panels.iter().map(Cow::as_ref).collect::<Vec<_>>(),
             vec!["a", "b"],
         );
+    }
+
+    // ── model: set_active_tab (R1085 tab navigation) ────────────────
+
+    /// `a | w0[x, y, z]@0` — a leaf beside a 3-tab well visible on `x`.
+    fn leaf_beside_well() -> DockTopology {
+        DockTopology::new(DockNode::split_horizontal(
+            "root_h",
+            0.5,
+            DockNode::leaf("a"),
+            DockNode::tabs("w0", ["x", "y", "z"].map(Cow::from), 0),
+        ))
+    }
+
+    #[test]
+    fn r1085_set_active_tab_flips_visible_tab() {
+        let next = leaf_beside_well()
+            .set_active_tab("w0", 2)
+            .expect("activate ok");
+        let (id, panels, active) = first_tabs(next.root()).expect("well");
+        assert_eq!(id, "w0", "well id preserved");
+        assert_eq!(
+            panels.iter().map(Cow::as_ref).collect::<Vec<_>>(),
+            vec!["x", "y", "z"],
+            "panels + order unchanged (navigation is not a move)",
+        );
+        assert_eq!(active, 2, "z is now the visible tab");
+    }
+
+    #[test]
+    fn r1085_set_active_tab_same_index_is_accepted_noop() {
+        // Activating the already-visible tab is an accepted idempotent
+        // no-op (mirrors swap_leaves(a, a) / tabify(s, s)).
+        let next = leaf_beside_well()
+            .set_active_tab("w0", 0)
+            .expect("activate ok");
+        let (_, _, active) = first_tabs(next.root()).expect("well");
+        assert_eq!(active, 0);
+    }
+
+    #[test]
+    fn r1085_set_active_tab_out_of_range_is_active_out_of_range() {
+        // The single validation gate (try_new) catches an index past the
+        // well's end — not a check re-implemented in set_active_tab.
+        let err = leaf_beside_well()
+            .set_active_tab("w0", 3)
+            .expect_err("index 3 past a 3-panel well");
+        assert_eq!(
+            err,
+            TopologyError::ActiveOutOfRange {
+                tabs_id: "w0".to_string(),
+                active: 3,
+                count: 3,
+            }
+        );
+    }
+
+    #[test]
+    fn r1085_set_active_tab_unknown_well_is_tabs_well_not_found() {
+        let err = leaf_beside_well()
+            .set_active_tab("nope", 0)
+            .expect_err("no such well");
+        assert_eq!(err, TopologyError::TabsWellNotFound("nope".to_string()));
+    }
+
+    #[test]
+    fn r1085_set_active_tab_on_leaf_or_split_id_is_tabs_well_not_found() {
+        // A panel id ("a", "x") or a Split id ("root_h") is in the same id
+        // namespace but is NOT a tab well — set_active_tab rejects it
+        // rather than mistaking it for one.
+        let topo = leaf_beside_well();
+        for non_well in ["a", "x", "root_h"] {
+            assert_eq!(
+                topo.set_active_tab(non_well, 0),
+                Err(TopologyError::TabsWellNotFound(non_well.to_string())),
+                "{non_well:?} is not a tab well",
+            );
+        }
+    }
+
+    #[test]
+    fn r1085_set_active_tab_finds_well_nested_in_split_leaves_siblings_intact() {
+        let next = leaf_beside_well()
+            .set_active_tab("w0", 1)
+            .expect("activate ok");
+        // The well (nested in root_h.second) flipped to y...
+        let (_, _, active) = first_tabs(next.root()).expect("well");
+        assert_eq!(active, 1);
+        // ...and the sibling leaf `a` + the split id are untouched.
+        assert_eq!(next.panel_ids(), vec!["a", "x", "y", "z"]);
+        assert_eq!(next.split_ids(), vec!["root_h"]);
     }
 }
 
