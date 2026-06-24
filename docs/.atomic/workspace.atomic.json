@@ -15278,6 +15278,54 @@
         "sprag live multi-window §5.37 verify stays a separate sprag-native session (HW-gated); no pinion edits to sprag"
       ]
     },
+    "R1080": {
+      "decision_summary": "R1080 §5.51 PR-29 foundation: router drop-target opt-in (LayoutStyle::drop_target -> resolve_drop_point climbs to the nearest opted-in ancestor, else deepest-tagged) + dock_drop_zone_normalized SSOT - the two seams the dock pointer drag coordinator (R1081) builds on",
+      "changes_bullets": [
+        "pinion-core: LayoutStyle::drop_target flag (mirrors pointer_transparent/focusable - field + with_drop_target builder + hashed) + Scene::is_drop_target() accessor; default false = pre-R1080 bit-identical",
+        "pinion-runtime: resolve_drop_point now climbs to the nearest drop_target ancestor (new resolve_drop_target_tag) so a coordinator gets the semantic drop region (a dock panel) with the cursor normalised over THAT rect, not the deepest tagged content leaf; falls back to resolve_hover_tag (deepest tag) when nothing opted in -> every pre-R1080 R742 consumer (reorder/file_browser) bit-identical; hover resolution untouched",
+        "pinion-widget-paint: dock_drop_zone_normalized(x_rel,y_rel) extracted as the SSOT zone classifier; dock_drop_zone_for normalises an absolute cursor then delegates (byte-identical: degenerate guard + half-open [0,1) containment + DOCK_EDGE_ZONE_FRAC + L>R>T>B tie order). Two callers (absolute resolver + pointer DropPoint) share one classifier",
+        "separation of concerns: the router resolves WHICH drop target (it holds the painted tree); the coordinator classifies WHICH zone (pure geometry). The router opt-in is PR-29 option (ii) - robust where binding content tags do not follow {panel}#... (sprag's sprag_gui.pane.i), unlike the rejected prefix-match (i)"
+      ],
+      "verification_bullets": [
+        "pinion-runtime: r1080_drop_target_climbs_over_deeper_content_tag (panel drop_target over a panel#content child -> resolve_drop_target_tag=panel / resolve_hover_tag=content / DropPoint normalised over the panel rect = 0.5) + r1080_drop_resolution_falls_back_to_deepest_tag_without_drop_target (no marking -> None -> deepest tag, content-rect normalised) = forcing consumers for the router seam",
+        "pinion-widget-paint: 3 dock_drop_zone_normalized tests (center/edges, half-open out-of-bounds, corner tie-break) + r1080_drop_zone_for_equals_normalized_over_a_sweep (24x24 grid over inside/edges/outside -> absolute == normalised, the SSOT-extraction-is-faithful proof)",
+        "workspace 197 suites * 7537 pass (+6) * 0 fail * 0 panic; clippy --workspace --all-targets vello 0; rustfmt clean; validate T1=0 (entries 1100->1101, sections 72)",
+        "additive: drop_target default false leaves the router on deepest-tagged-hit for every existing drag (reorder, file_browser) - proven by the fallback test + the full suite green; the dock_drop_zone_for refactor is byte-identical (existing r686 zone tests unchanged + the sweep)"
+      ],
+      "impact_refs": [
+        "5.51",
+        "5.39"
+      ],
+      "carry_forward_bullets": [
+        "R1081 = the dock pointer drag coordinator (PR-29 form A): upgrade DockPanelExternal with R742 begin_drag/drag_to/drag_release/drag_cancel - begin_drag gated on is_drag_armed (header sub-press), drag_to classifies over.tag->panel + dock_drop_zone_normalized then writes an introspectable drop-preview, drag_release applies reorganize-or-tear-off, drag_cancel reverts",
+        "SSOT extraction first: the reorganize-commit machinery (apply_intent -> topology Signal + split_seq + undo) lives in DockReorganizeExternal - extract a shared DockReorganizer so the pointer path and the invoke path are ONE coordinator (external.rs R742 rustdoc: every drop candidate belongs to that one coordinator), never duplicated",
+        "then view_dock_panel marks the panel root .drop_target(true) (consume A) + reads the drop-preview -> inject_highlight zone band; preview = injected Rc<Signal> (splitter attach_ratio precedent) for reactive cross-view repaint + query slot for AI introspection (reorder precedent)",
+        "sprag consumes the full seam in a separate sprag-native session (pin-bump + per-panel coordinator registration + preview wiring); pinion never edits sprag"
+      ],
+      "publishable_decision_summary": "R1080 §5.51 PR-29 foundation: router drop-target opt-in (LayoutStyle::drop_target -> resolve_drop_point climbs to the nearest opted-in ancestor, else deepest-tagged) + dock_drop_zone_normalized SSOT - the two seams the dock pointer drag coordinator (R1081) builds on",
+      "publishable_changes_bullets": [
+        "pinion-core: LayoutStyle::drop_target flag (mirrors pointer_transparent/focusable - field + with_drop_target builder + hashed) + Scene::is_drop_target() accessor; default false = pre-R1080 bit-identical",
+        "pinion-runtime: resolve_drop_point now climbs to the nearest drop_target ancestor (new resolve_drop_target_tag) so a coordinator gets the semantic drop region (a dock panel) with the cursor normalised over THAT rect, not the deepest tagged content leaf; falls back to resolve_hover_tag (deepest tag) when nothing opted in -> every pre-R1080 R742 consumer (reorder/file_browser) bit-identical; hover resolution untouched",
+        "pinion-widget-paint: dock_drop_zone_normalized(x_rel,y_rel) extracted as the SSOT zone classifier; dock_drop_zone_for normalises an absolute cursor then delegates (byte-identical: degenerate guard + half-open [0,1) containment + DOCK_EDGE_ZONE_FRAC + L>R>T>B tie order). Two callers (absolute resolver + pointer DropPoint) share one classifier",
+        "separation of concerns: the router resolves WHICH drop target (it holds the painted tree); the coordinator classifies WHICH zone (pure geometry). The router opt-in is PR-29 option (ii) - robust where binding content tags do not follow {panel}#... (sprag's sprag_gui.pane.i), unlike the rejected prefix-match (i)"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-runtime: r1080_drop_target_climbs_over_deeper_content_tag (panel drop_target over a panel#content child -> resolve_drop_target_tag=panel / resolve_hover_tag=content / DropPoint normalised over the panel rect = 0.5) + r1080_drop_resolution_falls_back_to_deepest_tag_without_drop_target (no marking -> None -> deepest tag, content-rect normalised) = forcing consumers for the router seam",
+        "pinion-widget-paint: 3 dock_drop_zone_normalized tests (center/edges, half-open out-of-bounds, corner tie-break) + r1080_drop_zone_for_equals_normalized_over_a_sweep (24x24 grid over inside/edges/outside -> absolute == normalised, the SSOT-extraction-is-faithful proof)",
+        "workspace 197 suites * 7537 pass (+6) * 0 fail * 0 panic; clippy --workspace --all-targets vello 0; rustfmt clean; validate T1=0 (entries 1100->1101, sections 72)",
+        "additive: drop_target default false leaves the router on deepest-tagged-hit for every existing drag (reorder, file_browser) - proven by the fallback test + the full suite green; the dock_drop_zone_for refactor is byte-identical (existing r686 zone tests unchanged + the sweep)"
+      ],
+      "publishable_impact_refs": [
+        "5.51",
+        "5.39"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R1081 = the dock pointer drag coordinator (PR-29 form A): upgrade DockPanelExternal with R742 begin_drag/drag_to/drag_release/drag_cancel - begin_drag gated on is_drag_armed (header sub-press), drag_to classifies over.tag->panel + dock_drop_zone_normalized then writes an introspectable drop-preview, drag_release applies reorganize-or-tear-off, drag_cancel reverts",
+        "SSOT extraction first: the reorganize-commit machinery (apply_intent -> topology Signal + split_seq + undo) lives in DockReorganizeExternal - extract a shared DockReorganizer so the pointer path and the invoke path are ONE coordinator (external.rs R742 rustdoc: every drop candidate belongs to that one coordinator), never duplicated",
+        "then view_dock_panel marks the panel root .drop_target(true) (consume A) + reads the drop-preview -> inject_highlight zone band; preview = injected Rc<Signal> (splitter attach_ratio precedent) for reactive cross-view repaint + query slot for AI introspection (reorder precedent)",
+        "sprag consumes the full seam in a separate sprag-native session (pin-bump + per-panel coordinator registration + preview wiring); pinion never edits sprag"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
