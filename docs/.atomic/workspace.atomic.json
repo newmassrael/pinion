@@ -15372,6 +15372,60 @@
         "font/metrics exposing the selected line metrics is YAGNI (scene/layout already gives the rendered box) - an additive field if a future AI consumer needs it"
       ]
     },
+    "R1081": {
+      "decision_summary": "R1081 §5.51 §5.45 §5.16 dock pointer drag-to-dock coordinator: extract Rc<DockReorganizer> so the invoke (RPC) drive and the new R742 pointer drive share one split_seq + undo stack; migrate DockPanelExternal off capture+L∞-threshold onto R742 begin_drag/drag_to/drag_release/drag_cancel (dock onto another panel via the shared coordinator, escape-drop tears off, self/dead-zone snaps back); view_dock_panel opts in .drop_target(true) so the R1080 router climb resolves a cursor over deeper content to the panel root",
+      "changes_bullets": [
+        "DockReorganizer (pinion-widget-paint/src/dock.rs): the reorganize-commit machine (apply_intent -> topology Signal + split_seq + reorganize_ratio + last_outcome + undo) extracted out of DockReorganizeExternal into a shareable Rc<DockReorganizer>; DockReorganizeExternal is now a thin ExternalIntrospect facade (new/from_reorganizer/reorganizer()/split_seq/apply_intent delegate); with_undo moved to the coordinator (editor demo + r749 test build the coordinator explicitly)",
+        "intent_for_zone(source, target, zone) -> Option<DockReorganizeIntent>: zone->intent SSOT now shared by resolve_dock_drop, the symbolic reorganize invoke, and the R742 drag_release (3 consumers; the two pre-existing paths are behaviour-preserving)",
+        "DockPanelExternal R742 migration: removed wants_pointer_capture + pointer_move L∞ threshold + tear_off_threshold_frac; added begin_drag (is_drag_armed header/content gate -> DragPayload kind dock-panel), drag_to (resolve_preview -> shared drop-preview), drag_release (reorganize-or-tear-off-or-snapback), drag_cancel (discard); with_reorganizer/with_drop_preview builders; DockPanelExternal::new dropped the frac arg (router DRAG_CLICK_THRESHOLD_PX is the click-vs-drag SSOT)",
+        "DockDropPreview {source,target,zone} (serde) + shared Rc<Signal<Option<DockDropPreview>>>: drag_to writes it deduped, query(\"drop_preview\") exposes {source,target,zone} JSON for AI introspection; DockDropZone gained serde derives; zone_wire_name inverse of parse_drop_zone",
+        "view_dock_panel root now .with_drop_target(true) (every dock panel is a drop target for the R1080 climb); dock_drop_zone_highlight(zone, theme) pure affordance primitive (absolute, pointer_transparent overlay tinting the classified band) + DOCK_EDGE_ZONE_PCT/DOCK_DROP_HIGHLIGHT_ALPHA consts",
+        "hello-dock-panels: DockPanelExternal::new single-arg (frac removed); hello-dock-panels-editor: DockReorganizeExternal::from_reorganizer(Rc::new(DockReorganizer::new(topology).with_undo(...)))"
+      ],
+      "verification_bullets": [
+        "workspace tests 0 failed (pinion-widget-paint 508 passed incl. the migrated R683 tests + new R1081 R742 tests: begin_drag arm gate, drag_to preview, drag_release reorganize/tear-off/snap-back, drag_cancel revert, shared-coordinator one-split_seq-no-collision, query drop_preview, drop_target marking, highlight per-zone)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings; cargo fmt --all --check clean",
+        "mnemosyne validate-workspace T1 orphan total=0; validate-code-refs exit 0 (the new §5.51 citations resolve)",
+        "HONEST: substrate + headless tests only -- the live pointer drag-to-dock is NOT wired into a demo yet (R1082: editor binding shares one reorganizer + preview across panel externals, reads the preview -> overlay); a real native-pointer drive needs the libXtst harness (HW-gated)"
+      ],
+      "impact_refs": [
+        "5.51",
+        "5.45",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "R1082 = live demo wiring: hello-dock-panels-editor (or a combined demo) creates one Rc<DockReorganizer> + one Rc<Signal<Option<DockDropPreview>>>, registers a DockPanelExternal per leaf via view_dock_surface sharing both, threads the preview into view_dock_panel (active_drop_zone param) -> dock_drop_zone_highlight overlay; verify the live native pointer path with the libXtst drive (XTestFakeMotionEvent + before/after x11grab)",
+        "R1082.1 = adversarial audit-clearance (3 read-only reviewer + author re-verify) per the project cadence (R1080->R1080.1)",
+        "DockPanelStyle::tear_off_threshold_frac is now vestigial for the gesture (the External no longer consumes it; the router owns the click-vs-drag threshold) -- declared-defer a DockPanelStyle cleanup unless a future min-drag-distance refinement reuses it",
+        "sprag consumes the full PR-29 seam in a separate sprag-native session (pin-bump + per-panel coordinator registration + preview); pinion never edits sprag"
+      ],
+      "publishable_decision_summary": "R1081 §5.51 §5.45 §5.16 dock pointer drag-to-dock coordinator: extract Rc<DockReorganizer> so the invoke (RPC) drive and the new R742 pointer drive share one split_seq + undo stack; migrate DockPanelExternal off capture+L∞-threshold onto R742 begin_drag/drag_to/drag_release/drag_cancel (dock onto another panel via the shared coordinator, escape-drop tears off, self/dead-zone snaps back); view_dock_panel opts in .drop_target(true) so the R1080 router climb resolves a cursor over deeper content to the panel root",
+      "publishable_changes_bullets": [
+        "DockReorganizer (pinion-widget-paint/src/dock.rs): the reorganize-commit machine (apply_intent -> topology Signal + split_seq + reorganize_ratio + last_outcome + undo) extracted out of DockReorganizeExternal into a shareable Rc<DockReorganizer>; DockReorganizeExternal is now a thin ExternalIntrospect facade (new/from_reorganizer/reorganizer()/split_seq/apply_intent delegate); with_undo moved to the coordinator (editor demo + r749 test build the coordinator explicitly)",
+        "intent_for_zone(source, target, zone) -> Option<DockReorganizeIntent>: zone->intent SSOT now shared by resolve_dock_drop, the symbolic reorganize invoke, and the R742 drag_release (3 consumers; the two pre-existing paths are behaviour-preserving)",
+        "DockPanelExternal R742 migration: removed wants_pointer_capture + pointer_move L∞ threshold + tear_off_threshold_frac; added begin_drag (is_drag_armed header/content gate -> DragPayload kind dock-panel), drag_to (resolve_preview -> shared drop-preview), drag_release (reorganize-or-tear-off-or-snapback), drag_cancel (discard); with_reorganizer/with_drop_preview builders; DockPanelExternal::new dropped the frac arg (router DRAG_CLICK_THRESHOLD_PX is the click-vs-drag SSOT)",
+        "DockDropPreview {source,target,zone} (serde) + shared Rc<Signal<Option<DockDropPreview>>>: drag_to writes it deduped, query(\"drop_preview\") exposes {source,target,zone} JSON for AI introspection; DockDropZone gained serde derives; zone_wire_name inverse of parse_drop_zone",
+        "view_dock_panel root now .with_drop_target(true) (every dock panel is a drop target for the R1080 climb); dock_drop_zone_highlight(zone, theme) pure affordance primitive (absolute, pointer_transparent overlay tinting the classified band) + DOCK_EDGE_ZONE_PCT/DOCK_DROP_HIGHLIGHT_ALPHA consts",
+        "hello-dock-panels: DockPanelExternal::new single-arg (frac removed); hello-dock-panels-editor: DockReorganizeExternal::from_reorganizer(Rc::new(DockReorganizer::new(topology).with_undo(...)))"
+      ],
+      "publishable_verification_bullets": [
+        "workspace tests 0 failed (pinion-widget-paint 508 passed incl. the migrated R683 tests + new R1081 R742 tests: begin_drag arm gate, drag_to preview, drag_release reorganize/tear-off/snap-back, drag_cancel revert, shared-coordinator one-split_seq-no-collision, query drop_preview, drop_target marking, highlight per-zone)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings; cargo fmt --all --check clean",
+        "mnemosyne validate-workspace T1 orphan total=0; validate-code-refs exit 0 (the new §5.51 citations resolve)",
+        "HONEST: substrate + headless tests only -- the live pointer drag-to-dock is NOT wired into a demo yet (R1082: editor binding shares one reorganizer + preview across panel externals, reads the preview -> overlay); a real native-pointer drive needs the libXtst harness (HW-gated)"
+      ],
+      "publishable_impact_refs": [
+        "5.51",
+        "5.45",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R1082 = live demo wiring: hello-dock-panels-editor (or a combined demo) creates one Rc<DockReorganizer> + one Rc<Signal<Option<DockDropPreview>>>, registers a DockPanelExternal per leaf via view_dock_surface sharing both, threads the preview into view_dock_panel (active_drop_zone param) -> dock_drop_zone_highlight overlay; verify the live native pointer path with the libXtst drive (XTestFakeMotionEvent + before/after x11grab)",
+        "R1082.1 = adversarial audit-clearance (3 read-only reviewer + author re-verify) per the project cadence (R1080->R1080.1)",
+        "DockPanelStyle::tear_off_threshold_frac is now vestigial for the gesture (the External no longer consumes it; the router owns the click-vs-drag threshold) -- declared-defer a DockPanelStyle cleanup unless a future min-drag-distance refinement reuses it",
+        "sprag consumes the full PR-29 seam in a separate sprag-native session (pin-bump + per-panel coordinator registration + preview); pinion never edits sprag"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
