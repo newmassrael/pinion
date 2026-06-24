@@ -91,7 +91,7 @@ pub use layout_query::{
 pub use locate::{
     BboxError, LocateError, LocateOutcome, LocateRegionOutcome, bbox, locate, locate_region,
 };
-pub use methods::{MethodEntry, MethodOcc, RPC_METHODS, RpcMethods, rpc_methods};
+pub use methods::{MethodEntry, MethodOcc, OCC_DOC, RPC_METHODS, RpcMethods, rpc_methods};
 pub use path::{PathError, ResolvedPath, resolve};
 pub use preview::{
     ApplyContext, ApplyError, ApplyOutcome, DEFAULT_CAPACITY, DEFAULT_TTL, Entry as PreviewEntry,

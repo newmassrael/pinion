@@ -1852,30 +1852,22 @@ impl<V: WidgetView> AppShell<V> {
             }
             return;
         }
-        // A user / WM move. Write it into the declared signal — but only
-        // for an already-positioned window (see the conservative-scope
-        // note above).
+        // A user / WM move. Compute the write-back via the pure, unit-tested
+        // `user_move_writeback` (the conservative-scope filter + idempotency
+        // skip + spec lookup live there); `None` = nothing to write.
         let Some(signal) = self.windows_signal.as_ref() else {
             return;
         };
-        let mut specs = signal.get();
-        let Some(spec) = specs
-            .iter_mut()
-            .find(|s| s.id.as_ref() == spec_id.as_ref() && s.position.is_some())
-        else {
+        let Some(new_specs) = user_move_writeback(signal.get(), spec_id.as_ref(), logical) else {
             return;
         };
-        if spec.position == Some(logical) {
-            return;
-        }
-        spec.position = Some(logical);
         // Sync the reconcile cache to the snapshot we are about to emit, so
         // the signal write does NOT re-command the OS window to where the
         // user just dragged it (the move pass would otherwise emit a
         // redundant `set_outer_position`). The effect still fires + lands
         // on the `new == old` fast path.
-        (*self.last_known_specs.borrow_mut()).clone_from(&specs);
-        signal.set(specs);
+        (*self.last_known_specs.borrow_mut()).clone_from(&new_specs);
+        signal.set(new_specs);
     }
 }
 
@@ -2869,17 +2861,56 @@ fn window_position_moves(old: &[WindowSpec], new: &[WindowSpec]) -> Vec<(String,
 /// R1088 §5.16 §5.41 §2 #7 PR-31 — is this `WindowEvent::Moved` the echo of
 /// a position the shell just commanded via `set_outer_position`? `true`
 /// when `commanded` is set and equals the incoming `logical` position
-/// within 1px (absorbing logical<->physical round-trip rounding under a
-/// fractional DPI scale). The pure core of
-/// [`AppShell::note_window_moved`]'s echo suppression, split out so the
-/// own-command-vs-user-drag classification is unit-testable without a live
-/// winit event loop (the actual `Moved` delivery + `set_outer_position`
+/// within 1px.
+///
+/// R1091: the 1px tolerance is NOT for logical<->physical rounding — that
+/// round-trip is EXACT for an integer-logical command (`round(round(L*s)/s)
+/// == L` for every integer `L` across DPI scales). It absorbs **window-
+/// manager placement imprecision**: `set_outer_position` is a REQUEST a WM
+/// may honour off-by-a-pixel (edge-snapping, decoration insets, tiling
+/// quantization), so the OS `Moved` echo can land 1px off our command
+/// without being a user drag — and treating that as a user move would
+/// re-write the signal and risk a command/echo nudge loop. Cost: a
+/// deliberate 1px user nudge of a just-commanded window is misclassified as
+/// an echo and swallowed, which is below intent resolution and acceptable.
+///
+/// The pure core of [`AppShell::note_window_moved`]'s echo suppression,
+/// split out so the own-command-vs-user-drag classification is unit-testable
+/// without a live winit event loop (the `Moved` delivery + `set_outer_position`
 /// effect stay HW-gated, like every real-window behaviour).
 fn moved_is_command_echo(commanded: Option<(i32, i32)>, logical: (i32, i32)) -> bool {
     matches!(
         commanded,
         Some((cx, cy)) if (logical.0 - cx).abs() <= 1 && (logical.1 - cy).abs() <= 1
     )
+}
+
+/// R1088/R1091 §5.16 §5.41 §2 #7 PR-31 — the pure write-back core of
+/// [`AppShell::note_window_moved`]: given the current declared `specs`, the
+/// moved window's `spec_id`, and its new `logical` position, return the
+/// updated `specs` to emit, or `None` to skip.
+///
+/// Conservative scope: only a window that ALREADY declares a position is
+/// written (a `None` WM-placed window — the typical `"main"` — is left
+/// WM-managed; one user drag must not silently pin it). A missing id, an
+/// id whose spec has no declared position, or an unchanged position all
+/// return `None` (no emit). Split out (R1091, mirroring `moved_is_command_echo`
+/// and `window_position_moves`) so the conservative-scope filter + the
+/// idempotency skip are unit-tested without a live `Moved` event — the OS
+/// delivery and `signal.set` effect are the only HW-gated parts.
+fn user_move_writeback(
+    mut specs: Vec<WindowSpec>,
+    spec_id: &str,
+    logical: (i32, i32),
+) -> Option<Vec<WindowSpec>> {
+    let spec = specs
+        .iter_mut()
+        .find(|s| s.id.as_ref() == spec_id && s.position.is_some())?;
+    if spec.position == Some(logical) {
+        return None;
+    }
+    spec.position = Some(logical);
+    Some(specs)
 }
 
 #[cfg(test)]
@@ -2972,10 +3003,27 @@ mod r1087_window_position_move_diff_tests {
 #[cfg(test)]
 mod r1088_moved_echo_tests {
     //! R1088 §5.16 §5.41 §2 #7 PR-31 — the pure echo-vs-user-move
-    //! classification (`moved_is_command_echo`) that gates
-    //! `note_window_moved`'s write-back. The live `Moved` delivery is
-    //! HW-gated; this is the testable decision core.
-    use super::moved_is_command_echo;
+    //! classification (`moved_is_command_echo`) + the write-back core
+    //! (`user_move_writeback`, R1091) that together gate
+    //! `note_window_moved`. The live `Moved` delivery is HW-gated; these are
+    //! the testable decision cores.
+    use super::{WindowSpec, moved_is_command_echo, user_move_writeback};
+    use crate::SizeStrategy;
+
+    fn spec(id: &'static str, pos: Option<(i32, i32)>) -> WindowSpec {
+        let s = WindowSpec::new(
+            id,
+            id,
+            SizeStrategy::Fixed {
+                width: 100,
+                height: 100,
+            },
+        );
+        match pos {
+            Some((x, y)) => s.with_position(x, y),
+            None => s,
+        }
+    }
 
     #[test]
     fn no_command_is_a_user_move() {
@@ -2990,16 +3038,16 @@ mod r1088_moved_echo_tests {
     }
 
     #[test]
-    fn one_pixel_rounding_is_still_an_echo() {
-        // logical<->physical round-trip under a fractional scale can land
-        // 1px off; that is still our own command, not a user drag.
+    fn one_pixel_off_is_still_an_echo() {
+        // R1091: a WM may honour set_outer_position 1px off (snap / inset);
+        // that is still our own command echoing, not a user drag.
         assert!(moved_is_command_echo(Some((120, 90)), (121, 89)));
         assert!(moved_is_command_echo(Some((120, 90)), (119, 91)));
     }
 
     #[test]
     fn two_pixels_off_is_a_user_move() {
-        // Beyond the rounding tolerance → a genuine user/WM drag.
+        // Beyond the WM-imprecision tolerance → a genuine user/WM drag.
         assert!(!moved_is_command_echo(Some((120, 90)), (122, 90)));
         assert!(!moved_is_command_echo(Some((120, 90)), (120, 88)));
     }
@@ -3007,6 +3055,47 @@ mod r1088_moved_echo_tests {
     #[test]
     fn divergent_position_is_a_user_move() {
         assert!(!moved_is_command_echo(Some((120, 90)), (400, 300)));
+    }
+
+    // ── user_move_writeback (R1091 S2) — the conservative-scope + ──────
+    //    idempotency write-back core, previously untested.
+
+    #[test]
+    fn writeback_writes_an_already_positioned_window() {
+        let specs = vec![spec("main", None), spec("torn-x", Some((40, 50)))];
+        let out =
+            user_move_writeback(specs, "torn-x", (200, 130)).expect("a positioned window writes");
+        let torn = out.iter().find(|s| s.id.as_ref() == "torn-x").unwrap();
+        assert_eq!(torn.position, Some((200, 130)));
+        // The other window is untouched.
+        assert_eq!(
+            out.iter()
+                .find(|s| s.id.as_ref() == "main")
+                .unwrap()
+                .position,
+            None
+        );
+    }
+
+    #[test]
+    fn writeback_skips_a_wm_placed_none_window() {
+        // Conservative scope: a None (WM-placed) window must NOT be pinned by
+        // one user drag → None (no emit).
+        let specs = vec![spec("main", None)];
+        assert!(user_move_writeback(specs, "main", (300, 220)).is_none());
+    }
+
+    #[test]
+    fn writeback_skips_unchanged_position() {
+        // Idempotent: already at the moved position → None (no churn).
+        let specs = vec![spec("torn-x", Some((40, 50)))];
+        assert!(user_move_writeback(specs, "torn-x", (40, 50)).is_none());
+    }
+
+    #[test]
+    fn writeback_skips_missing_id() {
+        let specs = vec![spec("torn-x", Some((40, 50)))];
+        assert!(user_move_writeback(specs, "ghost", (10, 10)).is_none());
     }
 }
 

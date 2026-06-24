@@ -953,13 +953,16 @@ pub use pinion_runtime::PacingState;
 /// can read where each torn-off panel's window is **declared to sit**, not
 /// merely that it exists.
 ///
-/// **Declared, not live-actual:** this is the position the binding wrote and
-/// the shell drives the OS window toward, NOT a read-back of the window's
-/// current OS position. pinion does not (yet) feed winit `WindowEvent::Moved`
-/// back into the signal, so after a user native title-bar drag the declared
-/// value can lag the actual one. The `Declared*` naming keeps that honest;
-/// closing the loop (`Moved` → signal) is owed alongside the R1088
-/// drag-follow. For shell/RPC-driven moves declared == eventual-actual.
+/// **Declared, not a live OS read-back:** this is the position the binding
+/// wrote and the shell drives the OS window toward, NOT a query of the
+/// window's current OS position. R1088 (`note_window_moved`) DOES feed a user
+/// `WindowEvent::Moved` back into the signal so declared converges on actual
+/// — but only for an ALREADY-positioned window; a `null` WM-placed window is
+/// deliberately left WM-managed (one user drag must not pin it), so its
+/// actual position is never reflected here. And that feedback's live delivery
+/// is HW-gated (unverified headlessly). So `null` can lag a user drag, and the
+/// `Declared*` naming keeps the read honest as the declared intent, not a live
+/// read-back. For shell/RPC-driven moves declared == eventual-actual.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct DeclaredWindow {
     /// AI-facing window handle (the `{window: "<id>"}` scope key).

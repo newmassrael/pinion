@@ -4719,10 +4719,13 @@ impl<V: WidgetView> ShellCore<V> {
     /// observes WHERE each torn-off panel's window is **declared to sit**,
     /// not merely that it exists (the §2 #7 obligation for the new
     /// `WindowSpec::position` state). It is the DECLARED position (what the
-    /// binding wrote / the shell drives toward), not a live OS read-back —
-    /// pinion does not yet feed `WindowEvent::Moved` back into the signal, so
-    /// a user native-drag can lag it (owed with the R1088 drag-follow); the
-    /// `pinion_rpc::DeclaredWindow` naming keeps that honest. Resolved only
+    /// binding wrote / the shell drives toward), not a live OS read-back. R1088
+    /// (`AppShell::note_window_moved`) DOES feed a user `WindowEvent::Moved`
+    /// back into the signal for an already-positioned window (declared
+    /// converges on actual), but a `None` WM-placed window is left WM-managed
+    /// and its drag is never reflected, and the live feedback is HW-gated — so
+    /// the `pinion_rpc::DeclaredWindow` naming keeps the read honest as
+    /// declared intent. Resolved only
     /// for the `scene/windows` method (gated at the dispatch call site), so
     /// every other dispatch pays nothing.
     fn declared_window_specs(&self) -> Vec<pinion_rpc::DeclaredWindow> {

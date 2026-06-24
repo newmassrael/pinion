@@ -1,5 +1,5 @@
-//! `rpc/methods` — the self-describing wire surface (R1089 §5.7 §5.12 §2 #7;
-//! R1090 adds the per-method OCC class).
+//! `rpc/methods` — the method-DISCOVERY wire surface (R1089 §5.7 §5.12 §2 #7;
+//! R1090 per-method OCC class; R1091 audit-clearance).
 //!
 //! Every other dispatch method is reachable only by an AI that already
 //! knows its literal string — there was no way to ASK the wire what it
@@ -8,6 +8,12 @@
 //! (`scene/window_move`, `scene/windows`, …) instead of needing each
 //! literal baked in. The §2 #7 scene-as-data principle applied to the
 //! protocol itself.
+//!
+//! **Discovery, not yet full self-description.** This lists method NAMES +
+//! their `occ`, but NOT param schemas — so an AI learns a method EXISTS
+//! without learning how to CALL it (the param shape is still out-of-band).
+//! Per-method param schema is the next slice; until then this is a method
+//! directory, not a round-trippable protocol description.
 //!
 //! **Per-method `occ` (R1090).** Each entry carries its [`MethodOcc`] — the
 //! method's `SceneRevision` optimistic-concurrency class, mirroring the
@@ -21,17 +27,27 @@
 //! (`scene/apply_preview`). `occ: "mutate"` means the dispatcher bumps the
 //! OCC token synchronously on `Ok`. So `occ` answers "do I need to re-read
 //! the revision after calling this" (optimistic-concurrency), NOT "is this
-//! call free of effects". The honest field name (`occ`, not `kind`) keeps
-//! that distinction on the wire, not just in this doc.
+//! call free of effects". To keep that caveat ON THE WIRE — not just in
+//! this rustdoc the AI never sees — the `rpc/methods` response carries an
+//! [`OCC_DOC`] legend string; the field name `occ` (not `kind`) reinforces
+//! it. (R1091 fix: the prior doc claimed the distinction was "on the wire"
+//! when it lived only in source.)
 //!
-//! **Catalog SSOT + no drift.** [`RPC_METHODS`] is the public surface; the
+//! **Catalog vs. router — a source cross-check (not a type guarantee).**
+//! [`RPC_METHODS`] is the public surface; the
 //! `catalog_matches_dispatch_match_arms` test parses the `dispatch_parsed`
-//! routing match (the actual router) out of the source — scoped to the
-//! `match request.method.as_str()` region — and asserts set-equality on
-//! BOTH name AND `occ` (each arm's `HandlerKind`), so a method added to the
-//! match, or an `occ` that drifts from its arm, fails CI. The catalog is
-//! verified-complete against the router without macro magic or runtime
-//! reflection.
+//! routing match out of the source — scoped to the
+//! `match request.method.as_str()` region, comment-stripped, with a
+//! camelCase-inclusive name charset — and asserts set-equality on BOTH name
+//! AND `occ` (each arm's `HandlerKind`), so a method added/retagged without
+//! a catalog edit fails CI. This is a SOURCE-TEXT check: robust for the
+//! current single-match router, but a future refactor that splits the match
+//! or renames the scrutinee would need the parser re-audited (a macro
+//! generating arm + entry together would be the structural guarantee, but
+//! macro-generated arms are a deliberate readability non-goal). R1091 fixed
+//! a real instance — a lowercase-only name filter silently dropped the
+//! camelCase `scene/waitFor` from BOTH the parser and the catalog while the
+//! cross-check stayed green over an incomplete surface.
 //!
 //! **MVP scope.** Names + `occ`. Per-method param schema is the natural
 //! next slice, added when a consumer needs it
@@ -130,11 +146,22 @@ pub const RPC_METHODS: &[(&str, MethodOcc)] = &[
     ("scene/text_state", MethodOcc::Read),
     ("scene/theme_tokens", MethodOcc::Read),
     ("scene/tick", MethodOcc::Mutate),
+    ("scene/waitFor", MethodOcc::Read),
     ("scene/wheel", MethodOcc::Read),
     ("scene/window_move", MethodOcc::Read),
     ("scene/windows", MethodOcc::Read),
     ("text/normalize", MethodOcc::Read),
 ];
+
+/// Wire legend for the [`MethodEntry::occ`] field, carried in every
+/// `rpc/methods` response so the "`read` is NOT side-effect-free" caveat
+/// reaches a wire-only consumer (an AI reading the JSON), not just a reader
+/// of this crate's source.
+pub const OCC_DOC: &str = "occ is the SceneRevision optimistic-concurrency class, NOT a side-effect flag: \
+     'mutate' bumps the OCC revision token synchronously; 'read' does not — but 'read' \
+     still includes methods that change state (deferred input, async effects like \
+     scene/window_move, focus, self-bumping), so re-read state after any call you are \
+     unsure about. occ answers 'must I re-read the revision', not 'is this call inert'.";
 
 /// One catalog entry on the wire: a method name + its [`MethodOcc`].
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -153,6 +180,11 @@ pub struct RpcMethods {
     pub methods: Vec<MethodEntry>,
     /// `methods.len()` — a convenience count so a client need not re-count.
     pub count: usize,
+    /// The [`OCC_DOC`] legend — the `occ`-semantics caveat carried ON THE
+    /// WIRE so a JSON consumer does not misread `occ: "read"` as "inert".
+    /// Owned (not `&'static str`) so the response stays `Deserialize`,
+    /// matching `MethodEntry`.
+    pub occ_doc: String,
 }
 
 /// Build the `rpc/methods` response from the [`RPC_METHODS`] catalog.
@@ -167,6 +199,7 @@ pub fn rpc_methods() -> RpcMethods {
             })
             .collect(),
         count: RPC_METHODS.len(),
+        occ_doc: OCC_DOC.to_owned(),
     }
 }
 
@@ -174,11 +207,20 @@ pub fn rpc_methods() -> RpcMethods {
 mod tests {
     use super::*;
 
-    /// The `occ` a source line tags (its `HandlerKind`), if any.
+    /// Strip a trailing `//` line comment so `HandlerKind::…` mentioned in
+    /// prose (e.g. the `scene/apply_preview` arm's explanatory comment)
+    /// cannot be mistaken for the arm's real kind tag.
+    fn strip_comment(line: &str) -> &str {
+        line.split("//").next().unwrap_or(line)
+    }
+
+    /// The `occ` a source line's CODE (comment stripped) tags via its
+    /// `HandlerKind`, if any.
     fn line_occ(line: &str) -> Option<MethodOcc> {
-        if line.contains("HandlerKind::Mutate") {
+        let code = strip_comment(line);
+        if code.contains("HandlerKind::Mutate") {
             Some(MethodOcc::Mutate)
-        } else if line.contains("HandlerKind::Read") {
+        } else if code.contains("HandlerKind::Read") {
             Some(MethodOcc::Read)
         } else {
             None
@@ -209,7 +251,14 @@ mod tests {
             if t.starts_with("_ =>") {
                 break; // default arm — end of the named-method region
             }
-            // Arm start: a line beginning with `"ns/method" =>`.
+            // Arm start: a line beginning with `"ns/method" =>`. The name
+            // charset is ALPHANUMERIC (camelCase included, e.g.
+            // `scene/waitFor`) + `_` + `/` — a structural check, NOT a
+            // lowercase filter. R1091: the prior `is_ascii_lowercase`
+            // filter did double duty (scoping AND silent exclusion), so a
+            // camelCase arm was dropped from BOTH the parser and the
+            // catalog and the cross-check passed green over an incomplete
+            // surface. The charset now admits every routable arm.
             if let Some(rest) = t.strip_prefix('"') {
                 if let Some(close) = rest.find('"') {
                     let name = &rest[..close];
@@ -218,7 +267,7 @@ mod tests {
                         && name.contains('/')
                         && name
                             .chars()
-                            .all(|c| c.is_ascii_lowercase() || c == '_' || c == '/')
+                            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '/')
                     {
                         match line_occ(t) {
                             Some(occ) => arms.push((name.to_owned(), occ)), // single-line arm
@@ -313,5 +362,54 @@ mod tests {
         assert_eq!(resp.count, resp.methods.len());
         assert_eq!(resp.count, RPC_METHODS.len());
         assert_eq!(resp.methods[0].name, RPC_METHODS[0].0);
+    }
+
+    #[test]
+    fn camelcase_method_is_catalogued() {
+        // R1091 M1 regression: `scene/waitFor` is a routed camelCase method
+        // (§5.12 wait-for). A lowercase-only parser+catalog silently dropped
+        // it while the cross-check passed green. It must now be present —
+        // `catalog_matches_dispatch_match_arms` would also fail if absent,
+        // but this pins the specific camelCase case so it can't regress
+        // silently again.
+        assert!(
+            RPC_METHODS.contains(&("scene/waitFor", MethodOcc::Read)),
+            "the camelCase scene/waitFor must be in the catalog (M1 blind spot)"
+        );
+        assert!(
+            RPC_METHODS
+                .iter()
+                .any(|(n, _)| n.chars().any(|c| c.is_ascii_uppercase())),
+            "at least one camelCase method exists; the parser must not exclude it"
+        );
+    }
+
+    #[test]
+    fn comment_mentioning_handlerkind_does_not_bind_occ() {
+        // R1091 S3: a `// … HandlerKind::Mutate …` comment must NOT be read
+        // as a kind tag. strip_comment removes it before line_occ.
+        assert_eq!(
+            line_occ("    // contrast: HandlerKind::Mutate would bump here"),
+            None
+        );
+        assert_eq!(
+            line_occ("        (handle(), HandlerKind::Read), // not Mutate"),
+            Some(MethodOcc::Read)
+        );
+    }
+
+    #[test]
+    fn response_carries_occ_legend_on_the_wire() {
+        // R1091 Finding 1: the occ caveat must ride ON THE WIRE, not only in
+        // rustdoc. The legend names the trap explicitly.
+        let resp = rpc_methods();
+        assert_eq!(resp.occ_doc, OCC_DOC);
+        assert!(resp.occ_doc.contains("NOT a side-effect flag"));
+        assert!(resp.occ_doc.contains("read"));
+        let json = serde_json::to_value(&resp).unwrap();
+        assert!(
+            json.get("occ_doc").and_then(|v| v.as_str()).is_some(),
+            "occ_doc must serialize onto the wire"
+        );
     }
 }

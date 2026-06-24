@@ -76,7 +76,13 @@ def body() -> None:
             occ = m.get("occ")
             assert isinstance(name, str) and name, f"entry name must be a non-empty string; got {m!r}"
             assert name.count("/") == 1, f"name must be one 'ns/method'; got {name!r}"
-            assert name == name.lower(), f"names are lowercase; got {name!r}"
+            # R1091: names are identifiers, NOT lowercase-only — `scene/waitFor`
+            # is camelCase. The old `name == name.lower()` assertion baked the
+            # M1 blind spot in as if it were a design property.
+            ns_part, method_part = name.split("/")
+            assert ns_part.replace("_", "").isalnum() and method_part.replace("_", "").isalnum(), (
+                f"name must be ns/method identifiers; got {name!r}"
+            )
             assert occ in _OCC, f"occ must be read|mutate; got {occ!r} for {name!r}"
             names.append(name)
         assert names == sorted(names), "the catalog must be sorted by name"
@@ -88,6 +94,7 @@ def body() -> None:
         for expected in (
             "scene/windows",       # R1087 read
             "scene/window_move",   # R1088 write peer
+            "scene/waitFor",       # R1091 M1: a camelCase method that was silently dropped
             "scene/query",
             "scene/snapshot",
             "scene/invoke",
@@ -97,6 +104,11 @@ def body() -> None:
             "text/normalize",
         ):
             assert expected in name_set, f"catalog must list {expected!r}; missing"
+        # A camelCase method exists and is discoverable (regression for the
+        # lowercase-filter blind spot that hid scene/waitFor).
+        assert any(any(c.isupper() for c in n) for n in names), (
+            "the catalog must include camelCase methods (e.g. scene/waitFor)"
+        )
 
         # ── (D) every namespace is represented ────────────────────
         namespaces = {n.split("/")[0] for n in names}
@@ -124,6 +136,12 @@ def body() -> None:
         assert occs == _OCC, f"both read and mutate must appear; got {occs!r}"
         mutate_count = sum(1 for m in methods if m["occ"] == "mutate")
         assert 5 <= mutate_count < count, f"mutate count should be a real subset; got {mutate_count}"
+        # R1091 Finding 1: the occ caveat must ride ON THE WIRE (occ_doc), not
+        # only in the framework's Rust source — a JSON-only AI must be able to
+        # learn that "read" is not "inert".
+        occ_doc = cat.get("occ_doc")
+        assert isinstance(occ_doc, str) and occ_doc, f"response must carry occ_doc; got {occ_doc!r}"
+        assert "NOT a side-effect flag" in occ_doc, "occ_doc must state read != effect-free"
 
         # ── (G) discovery loop: learn a method, then call it ──────
         assert "scene/windows" in name_set, "precondition for the discovery loop"
@@ -155,6 +173,7 @@ def body() -> None:
 
 if __name__ == "__main__":
     sys.exit(run_demo(
-        "R1089/R1090 §5.7 §5.12 §2 #7 — rpc/methods self-describing wire surface (names + occ)",
+        "R1089/R1090/R1091 §5.7 §5.12 §2 #7 — rpc/methods discovery surface "
+        "(names + occ + occ_doc; camelCase-complete)",
         body,
     ))
