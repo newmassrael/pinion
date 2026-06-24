@@ -15476,6 +15476,58 @@
         "DockPanelStyle::tear_off_threshold_frac remains gesture-vestigial (declared-defer a DockPanelStyle cleanup round)"
       ]
     },
+    "R1082.1": {
+      "decision_summary": "R1082.1 §5.51 §5.45 PR-29 (R1081+R1082) adversarial audit-clearance (3 read-only reviewers: craft/honesty, SSOT/structure, north-star/AI-introspect + author grep re-verification): structure SURVIVED (reviewer #2 zero structural defects; the DockReorganizer extraction is byte-identical, intent_for_zone is the sole construction site, the split_seq-reset bugfix is real). Cleared 2 real code gaps + 2 doc-honesty items; refuted 1 reviewer over-flag with evidence",
+      "changes_bullets": [
+        "CODE (reviewer #1 MED): DockReorganizer::apply_intent now records the rejection outcome ITSELF on Err (one last_outcome SSOT), so the R742 pointer drag_release (which drops the Result with `let _`) still surfaces \"rejected: …\" to query(\"last_outcome\") -- pre-fix the comment claimed this but apply_intent ?-returned before the last_outcome write, and only the invoke paths recorded it. Removed the 2 now-redundant note_outcome(\"rejected\") calls in the invoke drop/reorganize arms",
+        "CODE (reviewer #3 MED, AI-first gap): DockReorganizeExternal -- the canonical AI reorganize surface -- gained with_drop_preview + query(\"drop_preview\") + schema slot, so an AI client driving reorganize through one well-known tag now OBSERVES the in-flight pointer drag (not only the committed last_outcome). The {source,target,zone} projection lifted to DockDropPreview::to_introspect() + drop_preview_introspect() SSOT (shared by both surfaces' query); the editor wires the same preview Rc into the reorganize external",
+        "DOC (reviewer #1 MED): rewrote the stale view_dock_panel rustdoc (was \"{tag}#header composite / tracks drag distance / emits TEAR_OFF_EVENT past the threshold\" -- all false post-R1081: registered at the panel ROOT tag, R742 session, no L∞ threshold)",
+        "DOC (reviewer #1 LOW): softened dock_drop_zone_highlight \"geometry mirrors dock_drop_zone_normalized\" -- the band FRACTION mirrors DOCK_EDGE_ZONE_FRAC and the painted band is always the cursor's currently-classified zone, but the strips are rectangular (the classifier's nearest-edge corner wedges are not drawn)",
+        "REFUTED (reviewer #1 NIT): the DockDropPreview/DockDropZone serde derives are NOT dead -- Signal<T> requires T: Clone + PartialEq + Serialize + DeserializeOwned (pinion-core reactive/signal.rs:43), so they are load-bearing for Signal<Option<DockDropPreview>> (the exact E0599 hit during R1081). Fixed the missing_fields_in_debug clippy lint the new drop_preview field introduced (Debug now reports has_drop_preview)"
+      ],
+      "verification_bullets": [
+        "workspace tests 0 failed (pinion-widget-paint 512: +r1082_1_drop_preview_observable_on_canonical_reorganize_external [null -> set preview -> {source,target,zone} JSON + schema slot] + r1082_1_apply_intent_records_rejection_outcome [stale-id apply -> last_outcome starts_with \"rejected:\"]); demos 31+33",
+        "clippy --workspace --all-targets --features pinion-runtime/vello 0 warnings (after fixing the Debug missing-field lint); cargo fmt --all --check clean; validate-workspace T1=0; validate-code-refs exit 0",
+        "binary-AFFECTING (unlike R1080.1 doc-only): apply_intent rejection-recording + the new drop_preview query slot are real behaviour changes, both test-covered"
+      ],
+      "impact_refs": [
+        "5.51",
+        "5.45",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "PR-29 is now feature-complete IN PINION (coordinator + R742 pointer hooks + live editor wiring + canonical-surface introspection + audit-cleared). The remaining owed item is the LIVE native-pointer acceptance: run the libXtst drive (XTestFakeMotionEvent + XTestFakeButtonEvent on DISPLAY=:0, ffmpeg x11grab before/after) on a real-GPU host to witness a header drag docking a panel + the zone overlay + an escape-drop float; CI stays headless-scene-assertion (HW-gated, VELLO GL)",
+        "DECLARED-DEFER (reviewer #3 design note, non-blocking): view_dock_panel marks .drop_target(true) unconditionally, so a binding cannot pin a non-dockable panel (e.g. a toolbar/status bar) without forking the substrate fn. When a 3rd consumer needs a pinned panel, lift drop_target to a DockPanelStyle field (default true) rather than the hardcoded literal -- 2nd-consumer-gate keeps it deferred for now",
+        "sprag consumes the full PR-29 seam in a separate sprag-native session (pin-bump pinion rev + per-panel coordinator/preview registration); pinion never edits sprag",
+        "DockPanelStyle::tear_off_threshold_frac remains gesture-vestigial (declared-defer a DockPanelStyle cleanup round)",
+        "ALL R1081/R1082/R1082.1 commits are local, NOT pushed -- await explicit user push consent"
+      ],
+      "publishable_decision_summary": "R1082.1 §5.51 §5.45 PR-29 (R1081+R1082) adversarial audit-clearance (3 read-only reviewers: craft/honesty, SSOT/structure, north-star/AI-introspect + author grep re-verification): structure SURVIVED (reviewer #2 zero structural defects; the DockReorganizer extraction is byte-identical, intent_for_zone is the sole construction site, the split_seq-reset bugfix is real). Cleared 2 real code gaps + 2 doc-honesty items; refuted 1 reviewer over-flag with evidence",
+      "publishable_changes_bullets": [
+        "CODE (reviewer #1 MED): DockReorganizer::apply_intent now records the rejection outcome ITSELF on Err (one last_outcome SSOT), so the R742 pointer drag_release (which drops the Result with `let _`) still surfaces \"rejected: …\" to query(\"last_outcome\") -- pre-fix the comment claimed this but apply_intent ?-returned before the last_outcome write, and only the invoke paths recorded it. Removed the 2 now-redundant note_outcome(\"rejected\") calls in the invoke drop/reorganize arms",
+        "CODE (reviewer #3 MED, AI-first gap): DockReorganizeExternal -- the canonical AI reorganize surface -- gained with_drop_preview + query(\"drop_preview\") + schema slot, so an AI client driving reorganize through one well-known tag now OBSERVES the in-flight pointer drag (not only the committed last_outcome). The {source,target,zone} projection lifted to DockDropPreview::to_introspect() + drop_preview_introspect() SSOT (shared by both surfaces' query); the editor wires the same preview Rc into the reorganize external",
+        "DOC (reviewer #1 MED): rewrote the stale view_dock_panel rustdoc (was \"{tag}#header composite / tracks drag distance / emits TEAR_OFF_EVENT past the threshold\" -- all false post-R1081: registered at the panel ROOT tag, R742 session, no L∞ threshold)",
+        "DOC (reviewer #1 LOW): softened dock_drop_zone_highlight \"geometry mirrors dock_drop_zone_normalized\" -- the band FRACTION mirrors DOCK_EDGE_ZONE_FRAC and the painted band is always the cursor's currently-classified zone, but the strips are rectangular (the classifier's nearest-edge corner wedges are not drawn)",
+        "REFUTED (reviewer #1 NIT): the DockDropPreview/DockDropZone serde derives are NOT dead -- Signal<T> requires T: Clone + PartialEq + Serialize + DeserializeOwned (pinion-core reactive/signal.rs:43), so they are load-bearing for Signal<Option<DockDropPreview>> (the exact E0599 hit during R1081). Fixed the missing_fields_in_debug clippy lint the new drop_preview field introduced (Debug now reports has_drop_preview)"
+      ],
+      "publishable_verification_bullets": [
+        "workspace tests 0 failed (pinion-widget-paint 512: +r1082_1_drop_preview_observable_on_canonical_reorganize_external [null -> set preview -> {source,target,zone} JSON + schema slot] + r1082_1_apply_intent_records_rejection_outcome [stale-id apply -> last_outcome starts_with \"rejected:\"]); demos 31+33",
+        "clippy --workspace --all-targets --features pinion-runtime/vello 0 warnings (after fixing the Debug missing-field lint); cargo fmt --all --check clean; validate-workspace T1=0; validate-code-refs exit 0",
+        "binary-AFFECTING (unlike R1080.1 doc-only): apply_intent rejection-recording + the new drop_preview query slot are real behaviour changes, both test-covered"
+      ],
+      "publishable_impact_refs": [
+        "5.51",
+        "5.45",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "PR-29 is now feature-complete IN PINION (coordinator + R742 pointer hooks + live editor wiring + canonical-surface introspection + audit-cleared). The remaining owed item is the LIVE native-pointer acceptance: run the libXtst drive (XTestFakeMotionEvent + XTestFakeButtonEvent on DISPLAY=:0, ffmpeg x11grab before/after) on a real-GPU host to witness a header drag docking a panel + the zone overlay + an escape-drop float; CI stays headless-scene-assertion (HW-gated, VELLO GL)",
+        "DECLARED-DEFER (reviewer #3 design note, non-blocking): view_dock_panel marks .drop_target(true) unconditionally, so a binding cannot pin a non-dockable panel (e.g. a toolbar/status bar) without forking the substrate fn. When a 3rd consumer needs a pinned panel, lift drop_target to a DockPanelStyle field (default true) rather than the hardcoded literal -- 2nd-consumer-gate keeps it deferred for now",
+        "sprag consumes the full PR-29 seam in a separate sprag-native session (pin-bump pinion rev + per-panel coordinator/preview registration); pinion never edits sprag",
+        "DockPanelStyle::tear_off_threshold_frac remains gesture-vestigial (declared-defer a DockPanelStyle cleanup round)",
+        "ALL R1081/R1082/R1082.1 commits are local, NOT pushed -- await explicit user push consent"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
