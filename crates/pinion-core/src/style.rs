@@ -2561,6 +2561,29 @@ pub struct LayoutStyle {
     pub align_items: AlignItems,
     pub gap: u32,
     pub size: Size,
+    /// (R1086 §5.21) Per-axis **minimum** size — mirrors CSS
+    /// `min-width` / `min-height`, lowered to taffy `Style.min_size`.
+    ///
+    /// The default [`Size::auto`] (both axes [`SizeValue::Auto`]) maps to
+    /// taffy's `min_size: Auto`, which for a **flex item** is the CSS
+    /// *automatic minimum size* — the item cannot shrink below its
+    /// content's min-content size on the main axis. That is taffy's
+    /// pre-R1086 behaviour, so the `Auto` default keeps every existing
+    /// binding's layout graph (and the §5.16 paint-fragment cache key)
+    /// bit-identical.
+    ///
+    /// Setting an axis to [`SizeValue::Px(0)`] **overrides** that
+    /// automatic minimum to zero, letting a flex child shrink below its
+    /// content — the missing half of the CSS `flex-basis: 0;
+    /// flex-grow: r` proportional-distribution idiom (R684 added
+    /// `flex_basis`; without `min-*: 0` a large-content child still
+    /// clamps to content and overflows its ratio share). The
+    /// `pinion-widget-paint` `view_splitter` sets the main-axis `min` to
+    /// `Px(0)` on its ratio children so a big-content panel (a terminal
+    /// grid, an image, a nested scroll area) distributes by ratio instead
+    /// of pinning to content; the cross axis stays `Auto` so
+    /// [`AlignItems::Stretch`] still fills it.
+    pub min_size: Size,
     pub flex_grow: f32,
     pub padding: crate::scene::Rect,
     pub margin: crate::scene::Rect,
@@ -2702,6 +2725,9 @@ impl LayoutStyle {
                 width: SizeValue::Auto,
                 height: SizeValue::Auto,
             },
+            // (R1086 §5.21) Both axes `Auto` = taffy `min_size: Auto` =
+            // the CSS automatic flex minimum (pre-R1086 behaviour).
+            min_size: Size::auto(),
             flex_grow: 0.0,
             padding: crate::scene::Rect::new(0, 0, 0, 0),
             margin: crate::scene::Rect::new(0, 0, 0, 0),
@@ -2824,6 +2850,18 @@ impl LayoutStyle {
         self
     }
 
+    /// (R1086 §5.21) Builder: per-axis minimum size (CSS `min-width` /
+    /// `min-height`). See [`Self::min_size`] for the contract. The
+    /// canonical use is a flex child wanting to shrink below its content:
+    /// `with_min_size(Size::auto().with_height(SizeValue::Px(0)))` zeroes
+    /// the main-axis automatic minimum so `flex-basis: 0; flex-grow: r`
+    /// distributes by ratio rather than clamping to content.
+    #[must_use]
+    pub const fn with_min_size(mut self, min_size: Size) -> Self {
+        self.min_size = min_size;
+        self
+    }
+
     /// Builder: flex-grow factor (`0.0` = don't expand, `1.0` =
     /// take remaining main-axis space).
     #[must_use]
@@ -2869,6 +2907,12 @@ impl core::hash::Hash for LayoutStyle {
         self.align_items.hash(hasher);
         self.gap.hash(hasher);
         self.size.hash(hasher);
+        // (R1086 §5.21) `Size` derives `Hash`; the `Size::auto()` default
+        // (both axes `Auto`) hashes to the same byte image pre-R1086 cache
+        // keys produced (no `min_size` field then = taffy `Auto`), so the
+        // §5.16 paint-fragment cache stays bit-identical for every existing
+        // binding.
+        self.min_size.hash(hasher);
         self.flex_grow.to_bits().hash(hasher);
         self.padding.hash(hasher);
         self.margin.hash(hasher);
@@ -4022,6 +4066,70 @@ mod tests {
             hasher_a.finish(),
             hasher_b.finish(),
             "flex_basis must participate in LayoutStyle::hash",
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R1086 §5.21 — LayoutStyle::min_size (CSS min-width/min-height;
+    // the flex-shrink-below-content half of flex-basis:0 + flex-grow:r).
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r1086_layout_style_min_size_default_is_auto() {
+        // Backward-compat pin: the default must be both-axes `Auto` so
+        // the taffy translation lowers to `min_size: Auto` = the CSS
+        // automatic flex minimum, preserving every pre-R1086 binding's
+        // layout bit-identically.
+        let style = LayoutStyle::new();
+        assert_eq!(style.min_size, Size::auto());
+    }
+
+    #[test]
+    fn r1086_layout_style_with_min_size_sets_field() {
+        // Main-axis min:0 on a Column flex child (the splitter idiom):
+        // height min zeroed, width left Auto so cross-axis Stretch fills.
+        let style = LayoutStyle::new().with_min_size(Size::auto().with_height(SizeValue::Px(0)));
+        assert_eq!(style.min_size.height, SizeValue::Px(0));
+        assert_eq!(
+            style.min_size.width,
+            SizeValue::Auto,
+            "cross axis stays Auto so AlignItems::Stretch still fills it",
+        );
+    }
+
+    #[test]
+    fn r1086_layout_style_min_size_chains_with_flex_props() {
+        // The full proportional-flex idiom round-trips through the
+        // builder chain: flex_basis:0 + flex_grow:r + min(main):0.
+        let style = LayoutStyle::new()
+            .with_flex_basis(SizeValue::Px(0))
+            .with_flex_grow(0.5)
+            .with_min_size(Size::auto().with_width(SizeValue::Px(0)));
+        assert_eq!(style.flex_basis, Some(SizeValue::Px(0)));
+        assert!((style.flex_grow - 0.5).abs() < f32::EPSILON);
+        assert_eq!(style.min_size.width, SizeValue::Px(0));
+    }
+
+    #[test]
+    fn r1086_layout_style_hash_includes_min_size() {
+        // Hash divergence pin: a min_size change must invalidate the
+        // R682 paint-fragment cache (else a splitter child that gained
+        // min:0 would alias the pre-fix cache slot and never re-layout).
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let mut hasher_a = DefaultHasher::new();
+        LayoutStyle::new().hash(&mut hasher_a);
+
+        let mut hasher_b = DefaultHasher::new();
+        LayoutStyle::new()
+            .with_min_size(Size::auto().with_height(SizeValue::Px(0)))
+            .hash(&mut hasher_b);
+
+        assert_ne!(
+            hasher_a.finish(),
+            hasher_b.finish(),
+            "min_size must participate in LayoutStyle::hash",
         );
     }
 

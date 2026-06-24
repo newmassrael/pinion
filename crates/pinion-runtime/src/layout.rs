@@ -741,6 +741,17 @@ fn to_taffy_style(layout: &LayoutStyle) -> TaffyStyle {
         width: to_dimension(layout.size.width),
         height: to_dimension(layout.size.height),
     };
+    // (R1086 §5.21) `LayoutStyle::min_size` lowering. The `Size::auto()`
+    // default lowers to `Dimension::Auto` per axis = taffy's struct
+    // default `min_size`, so the layout graph stays bit-identical for
+    // every pre-R1086 binding. A `SizeValue::Px(0)` axis overrides taffy's
+    // CSS automatic flex minimum to zero, letting a flex child shrink
+    // below its content (the `flex-basis: 0; flex-grow: r; min: 0` idiom
+    // `view_splitter` uses for its ratio children).
+    s.min_size = TaffySize {
+        width: to_dimension(layout.min_size.width),
+        height: to_dimension(layout.min_size.height),
+    };
     s.flex_grow = layout.flex_grow;
     // (R684 §5.21) `LayoutStyle::flex_basis` lowering. `None` maps to
     // `Dimension::Auto` (taffy's default — intrinsic content drives
@@ -880,6 +891,100 @@ mod tests {
         assert_eq!(a.rect.h, 80);
         assert_eq!(b.rect.y, 90);
         assert_eq!(b.rect.h, 60);
+    }
+
+    // (R1086 §5.21) A flex child whose content is an 800px-tall box —
+    // intrinsic min-content (800) is larger than its 0.5 ratio share of a
+    // 600px viewport (300). `flex_basis:0 + flex_grow:0.5` alone is NOT
+    // enough: taffy's CSS automatic flex minimum pins the child to its
+    // content (800) so both children overflow. `min_size.height = Px(0)`
+    // overrides that automatic minimum, letting the child distribute by
+    // ratio. Mirrors sprag's vertical-reorganize-keeps-both-panels guard.
+    fn big_content_child(flex_grow: f32, min_zero: bool) -> Scene {
+        let inner = Scene::Box(
+            BoxNode::filled(Rect::default(), Color::default())
+                .with_layout(LayoutStyle::new().with_size(Size::px(100, 800))),
+        );
+        let mut layout = LayoutStyle::new()
+            .with_flex_basis(SizeValue::Px(0))
+            .with_flex_grow(flex_grow);
+        if min_zero {
+            layout = layout.with_min_size(Size::auto().with_height(SizeValue::Px(0)));
+        }
+        Scene::Container(ContainerNode::new(vec![inner]).with_layout(layout))
+    }
+
+    #[test]
+    fn r1086_min_size_height_zero_lets_large_content_flex_child_distribute_by_ratio() {
+        let parent = LayoutStyle::new().flex(FlexDirection::Column);
+        let mut scene = Scene::Container(
+            ContainerNode::new(vec![
+                big_content_child(0.5, true),
+                big_content_child(0.5, true),
+            ])
+            .with_layout(parent),
+        );
+        compute_layout(&mut scene, &mut cache(), 960, 600);
+        let Scene::Container(c) = &scene else {
+            panic!("container")
+        };
+        let Scene::Container(a) = &c.children[0] else {
+            panic!("first child")
+        };
+        let Scene::Container(b) = &c.children[1] else {
+            panic!("second child")
+        };
+        // Each child shrinks to its 0.5 * 600 = 300 ratio share (±2 for
+        // taffy f32→u32 rounding), NOT its 800px content.
+        assert!(
+            a.rect.h.abs_diff(300) <= 2,
+            "first child h={} (~300)",
+            a.rect.h
+        );
+        assert!(
+            b.rect.h.abs_diff(300) <= 2,
+            "second child h={} (~300)",
+            b.rect.h
+        );
+        // Both panels stay within the 600px viewport (the acceptance bar).
+        assert_eq!(a.rect.y, 0);
+        assert!(
+            b.rect.y + b.rect.h <= 600,
+            "second panel must stay on-screen: y={} h={}",
+            b.rect.y,
+            b.rect.h,
+        );
+    }
+
+    #[test]
+    fn r1086_without_min_override_large_content_flex_child_clamps_and_overflows() {
+        // Regression witness: with min_size left at the `Auto` default,
+        // taffy's automatic flex minimum clamps each child to its 800px
+        // content → the second panel lands off-screen (the bug PR-30
+        // fixes). This pins the mechanism so a taffy upgrade that silently
+        // changed the automatic-minimum behaviour would surface here.
+        let parent = LayoutStyle::new().flex(FlexDirection::Column);
+        let mut scene = Scene::Container(
+            ContainerNode::new(vec![
+                big_content_child(0.5, false),
+                big_content_child(0.5, false),
+            ])
+            .with_layout(parent),
+        );
+        compute_layout(&mut scene, &mut cache(), 960, 600);
+        let Scene::Container(c) = &scene else {
+            panic!("container")
+        };
+        let Scene::Container(b) = &c.children[1] else {
+            panic!("second child")
+        };
+        // Clamped to 800px content → second panel starts at y=800, fully
+        // off the 600px viewport.
+        assert!(
+            b.rect.y >= 600,
+            "without min:0 the second panel overflows off-screen, got y={}",
+            b.rect.y,
+        );
     }
 
     #[test]

@@ -255,18 +255,39 @@ fn handle_fill_for_dragging(theme: &Theme, dragging: bool) -> Color {
     }
 }
 
-/// (R685 §5.21 §5.16) Apply the CSS-canonical
-/// `flex-basis: 0; flex-grow: <ratio>` flex-item idiom **directly**
-/// to a child `Scene`'s `LayoutStyle`. Returns the scene with the
-/// flex props set, ready to drop into a parent flex container.
+/// (R1086 §5.21 §5.16) Set the three `LayoutStyle` fields that make a
+/// child a CSS-canonical proportional flex item: `flex-basis: 0`,
+/// `flex-grow: <ratio>`, and `min: 0` on the **main** axis (`min_size`).
+///
+/// The `min_size` is the R1086 addition. Without it, taffy's CSS
+/// *automatic minimum size* pins a flex item to its content's
+/// min-content extent on the main axis, so a panel whose content is
+/// larger than its ratio share (a terminal grid, an image, a nested
+/// scroll area) cannot shrink and overflows — the `flex-basis: 0`
+/// alone was the incomplete half of the idiom. Zeroing the main-axis
+/// `min` lets the flex pass distribute by ratio regardless of content
+/// size. The cross axis is left untouched (`Auto`) so the outer
+/// container's [`AlignItems::Stretch`] still fills it.
+fn set_flex_main(layout: &mut LayoutStyle, flex_grow: f32, min_size: Size) {
+    layout.flex_basis = Some(SizeValue::Px(0));
+    layout.flex_grow = flex_grow;
+    layout.min_size = min_size;
+}
+
+/// (R685 §5.21 §5.16; R1086 main-axis `min: 0`) Apply the CSS-canonical
+/// `flex-basis: 0; flex-grow: <ratio>; min-<main>: 0` flex-item idiom
+/// **directly** to a child `Scene`'s `LayoutStyle`. Returns the scene
+/// with the flex props set, ready to drop into a parent flex container.
+/// `orientation` selects which axis is the main axis the `min: 0`
+/// applies to (`Horizontal` → width, `Vertical` → height).
 ///
 /// Every `Scene` variant carrying a `layout: LayoutStyle` field
 /// (`Container` / `Text` / `Box` / `Image` / `External` /
-/// `ImmediateModeNode`) has its existing layout extended in place.
-/// The two variants without a `layout` field (`Scroll` / `Effect`)
-/// auto-wrap in a thin Container carrying the flex props — both
-/// can still participate in flex distribution without the caller
-/// having to write a wrapper manually.
+/// `ImmediateModeNode`) has its existing layout extended in place via
+/// [`set_flex_main`]. The two variants without a `layout` field
+/// (`Scroll` / `Effect`) auto-wrap in a thin Container carrying the same
+/// flex props — both can still participate in flex distribution without
+/// the caller having to write a wrapper manually.
 ///
 /// ## Why direct application (not wrapping)
 ///
@@ -286,37 +307,36 @@ fn handle_fill_for_dragging(theme: &Theme, dragging: bool) -> Color {
 /// path requires a `layout` field on the scene; the wrap is a
 /// single Container with no `BoxStyle` (so the scene's visual
 /// shape stays bit-identical) carrying just the flex props.
-fn apply_flex_main(scene: Scene, flex_grow: f32) -> Scene {
-    let basis = Some(SizeValue::Px(0));
+fn apply_flex_main(scene: Scene, flex_grow: f32, orientation: SplitterOrientation) -> Scene {
+    // (R1086 §5.21) Zero the MAIN-axis minimum only; the cross axis stays
+    // `Auto` so the outer container's `AlignItems::Stretch` fills it.
+    let min_size = match orientation {
+        SplitterOrientation::Horizontal => Size::auto().with_width(SizeValue::Px(0)),
+        SplitterOrientation::Vertical => Size::auto().with_height(SizeValue::Px(0)),
+    };
     match scene {
         Scene::Container(mut c) => {
-            c.layout.flex_basis = basis;
-            c.layout.flex_grow = flex_grow;
+            set_flex_main(&mut c.layout, flex_grow, min_size);
             Scene::Container(c)
         }
         Scene::Text(mut t) => {
-            t.layout.flex_basis = basis;
-            t.layout.flex_grow = flex_grow;
+            set_flex_main(&mut t.layout, flex_grow, min_size);
             Scene::Text(t)
         }
         Scene::Box(mut b) => {
-            b.layout.flex_basis = basis;
-            b.layout.flex_grow = flex_grow;
+            set_flex_main(&mut b.layout, flex_grow, min_size);
             Scene::Box(b)
         }
         Scene::Image(mut i) => {
-            i.layout.flex_basis = basis;
-            i.layout.flex_grow = flex_grow;
+            set_flex_main(&mut i.layout, flex_grow, min_size);
             Scene::Image(i)
         }
         Scene::External(mut e) => {
-            e.layout.flex_basis = basis;
-            e.layout.flex_grow = flex_grow;
+            set_flex_main(&mut e.layout, flex_grow, min_size);
             Scene::External(e)
         }
         Scene::ImmediateModeNode(mut im) => {
-            im.layout.flex_basis = basis;
-            im.layout.flex_grow = flex_grow;
+            set_flex_main(&mut im.layout, flex_grow, min_size);
             Scene::ImmediateModeNode(im)
         }
         // `Scroll` and `Effect` have no `layout` field. Plus the
@@ -328,7 +348,8 @@ fn apply_flex_main(scene: Scene, flex_grow: f32) -> Scene {
             ContainerNode::new(vec![other]).with_layout(
                 LayoutStyle::new()
                     .with_flex_basis(SizeValue::Px(0))
-                    .with_flex_grow(flex_grow),
+                    .with_flex_grow(flex_grow)
+                    .with_min_size(min_size),
             ),
         ),
     }
@@ -490,8 +511,8 @@ pub fn view_splitter(
     // which handles every variant with a `layout` field directly
     // and auto-wraps the two variants without one (`Scroll`,
     // `Effect`).
-    let left_child = apply_flex_main(left, ratio);
-    let right_child = apply_flex_main(right, one_minus_ratio);
+    let left_child = apply_flex_main(left, ratio, style.orientation);
+    let right_child = apply_flex_main(right, one_minus_ratio, style.orientation);
     // R683.C / R686.A §5.16 — fill the splitter Container with the
     // active theme's `Surface` colour. This fill is **load-bearing**,
     // not a transient BLACK-clear workaround (the R685 Smell 12
@@ -1184,7 +1205,7 @@ mod tests {
             )),
         ];
         for layoutless in cases {
-            let wrapped = apply_flex_main(layoutless, 0.42);
+            let wrapped = apply_flex_main(layoutless, 0.42, SplitterOrientation::Horizontal);
             let Scene::Container(c) = &wrapped else {
                 panic!("layout-less scene must auto-wrap in a Container");
             };
@@ -1197,6 +1218,19 @@ mod tests {
                 (c.layout.flex_grow - 0.42).abs() < f32::EPSILON,
                 "auto-wrap must carry the requested flex_grow",
             );
+            // (R1086 §5.21) The wrapper also zeroes the main-axis min so a
+            // big-content Scroll/Effect distributes by ratio (Horizontal →
+            // width); the cross axis stays Auto for Stretch.
+            assert_eq!(
+                c.layout.min_size.width,
+                SizeValue::Px(0),
+                "auto-wrap must zero the main-axis (width) min",
+            );
+            assert_eq!(
+                c.layout.min_size.height,
+                SizeValue::Auto,
+                "cross-axis (height) min stays Auto for Stretch",
+            );
             assert_eq!(
                 c.children.len(),
                 1,
@@ -1207,6 +1241,147 @@ mod tests {
                 "wrapper carries no tag (bit-identical visual shape)",
             );
         }
+    }
+
+    /// (R1086 §5.21) A dock-style panel whose content is taller than its
+    /// ratio share — a fixed `content_h`-px box, mirroring a terminal
+    /// grid / image whose intrinsic main-axis size overflows a small slot.
+    fn big_panel(tag: &'static str, content_h: u32) -> Scene {
+        use pinion_core::scene::{BoxNode, Rect};
+        use pinion_core::style::{Color, LayoutStyle, Size};
+        Scene::Container(
+            ContainerNode::new(vec![Scene::Box(
+                BoxNode::filled(Rect::default(), Color::TRANSPARENT)
+                    .with_layout(LayoutStyle::new().with_size(Size::px(100, content_h))),
+            )])
+            .with_tag(tag),
+        )
+    }
+
+    #[test]
+    fn r1086_view_splitter_zeroes_main_axis_min_on_ratio_children() {
+        use pinion_core::style::SizeValue;
+        run_in_owner(|| {
+            let ratio: Rc<Signal<f32>> = Rc::new(Signal::new(0.5));
+            // Vertical splitter: main axis = height.
+            let v = view_splitter(
+                empty_panel("top"),
+                empty_panel("bottom"),
+                &ratio,
+                &theme_light(),
+                &SplitterStyle::m3_default(SplitterOrientation::Vertical, TEST_TAG),
+                false,
+            );
+            let Scene::Container(outer) = &v else {
+                panic!("outer")
+            };
+            for idx in [0usize, 2] {
+                let Scene::Container(child) = &outer.children[idx] else {
+                    panic!("vertical panel {idx}")
+                };
+                assert_eq!(
+                    child.layout.min_size.height,
+                    SizeValue::Px(0),
+                    "vertical: main-axis (height) min zeroed",
+                );
+                assert_eq!(
+                    child.layout.min_size.width,
+                    SizeValue::Auto,
+                    "vertical: cross-axis (width) min stays Auto for Stretch",
+                );
+            }
+            // Horizontal splitter: main axis = width.
+            let h = view_splitter(
+                empty_panel("left"),
+                empty_panel("right"),
+                &ratio,
+                &theme_light(),
+                &SplitterStyle::m3_default(SplitterOrientation::Horizontal, TEST_TAG),
+                false,
+            );
+            let Scene::Container(outer) = &h else {
+                panic!("outer")
+            };
+            for idx in [0usize, 2] {
+                let Scene::Container(child) = &outer.children[idx] else {
+                    panic!("horizontal panel {idx}")
+                };
+                assert_eq!(
+                    child.layout.min_size.width,
+                    SizeValue::Px(0),
+                    "horizontal: main-axis (width) min zeroed",
+                );
+                assert_eq!(
+                    child.layout.min_size.height,
+                    SizeValue::Auto,
+                    "horizontal: cross-axis (height) min stays Auto for Stretch",
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn r1086_vertical_splitter_distributes_large_content_both_panels_onscreen() {
+        use pinion_runtime::layout::compute_layout;
+        use pinion_text::LayoutCache;
+        run_in_owner(|| {
+            let ratio: Rc<Signal<f32>> = Rc::new(Signal::new(0.5));
+            let style = SplitterStyle::m3_default(SplitterOrientation::Vertical, TEST_TAG);
+            // Each panel's content is 800px tall — larger than the 0.5
+            // share of a 600px viewport. Pre-R1086 (no main-axis min:0)
+            // both clamp to 800 and the bottom panel falls off-screen
+            // (the sprag P2 drag-to-dock symptom this PR fixes).
+            let scene = view_splitter(
+                big_panel("top", 800),
+                big_panel("bottom", 800),
+                &ratio,
+                &theme_light(),
+                &style,
+                false,
+            );
+            let mut cache = LayoutCache::new();
+            let mut scene = scene;
+            compute_layout(&mut scene, &mut cache, 960, 600);
+            let Scene::Container(outer) = &scene else {
+                panic!("outer")
+            };
+            let Scene::Container(top) = &outer.children[0] else {
+                panic!("top")
+            };
+            let Scene::Container(handle) = &outer.children[1] else {
+                panic!("handle")
+            };
+            let Scene::Container(bottom) = &outer.children[2] else {
+                panic!("bottom")
+            };
+            // Distributed by ratio over the (600 - handle) budget — each
+            // ~half — NOT clamped to the 800px content.
+            let expected = (600 - style.handle_extent_px) / 2;
+            assert!(
+                top.rect.h.abs_diff(expected) <= 2,
+                "top distributes by ratio, h={} (~{expected})",
+                top.rect.h,
+            );
+            // The bottom panel stays on-screen (the acceptance bar).
+            assert!(
+                bottom.rect.y + bottom.rect.h <= 600,
+                "bottom panel must stay on-screen: y={} h={}",
+                bottom.rect.y,
+                bottom.rect.h,
+            );
+            // The handle keeps its thickness — it compressed to 0 under
+            // the pre-fix overflow.
+            assert_eq!(
+                handle.rect.h, style.handle_extent_px,
+                "handle keeps its thickness when distribution succeeds",
+            );
+            // Panels + handle fill the viewport exactly.
+            assert_eq!(
+                top.rect.h + handle.rect.h + bottom.rect.h,
+                600,
+                "panels + handle cover the viewport",
+            );
+        });
     }
 
     #[test]
