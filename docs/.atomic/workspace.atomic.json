@@ -16156,6 +16156,62 @@
         "live drag-follow still deferred HW-gated (real-GPU-host round): §5.15 input-forwarding contract extension + coordinate-ownership fork"
       ]
     },
+    "R1091": {
+      "decision_summary": "Adversarial audit-clearance of R1088-R1090 (3 read-only reviewers craft/SSOT/north-star + author grep): structure SURVIVED but the review found 1 MUST-FIX — the rpc/methods catalog silently omitted the camelCase scene/waitFor because a lowercase-only filter in BOTH the parser and the catalog hid it while the cross-check passed green — plus SHOULD-fixes (occ honesty was source-only not on the wire; note_window_moved write-back untested; cross-check matched HandlerKind in comments; 1px-tolerance rationale wrong; stale Moved-feedback docs). All cleared inline.",
+      "changes_bullets": [
+        "★M1 MUST-FIX: scene/waitFor (camelCase, §5.12 wait-for) was routed but ABSENT from RPC_METHODS — a lowercase-only filter in BOTH the cross-check parser AND the catalog hid it while the test passed green over an incomplete surface; added it (occ Read, count 73) + parser charset to alphanumeric (camelCase-inclusive structural check, no longer double-duty scoping+exclusion)",
+        "Finding 1: occ honesty was claimed \"on the wire\" but lived only in Rust source — added an OCC_DOC legend to the rpc/methods response so the \"read != side-effect-free\" caveat reaches a JSON-only AI",
+        "S2: extracted note_window_moved write-back to a pure user_move_writeback + 4 unit tests (was untested — only the echo classifier was extracted/tested)",
+        "S3: cross-check parser now strips // comments before HandlerKind detection (the apply_preview arm's explanatory comment survived only by coincidence)",
+        "S4: fixed the 1px-tolerance rationale — the integer logical<->physical round-trip is EXACT; the real reason is WM placement imprecision (prevents a command/echo nudge loop)",
+        "stale-doc: DeclaredWindow + declared_window_specs docs predicted R1088 Moved-feedback as a future fix that already landed — corrected to declared-converges-on-actual for positioned windows; softened \"self-describing\"->discovery + \"GUARANTEES/verified-complete\"->honest source-text-check"
+      ],
+      "verification_bullets": [
+        "3 read-only reviewers (craft / SSOT / north-star, parallel-safe) + author grep; structure SURVIVED (no other must-fix); the M1 defect was real AND author-introduced (the adversarial review earned its keep)",
+        "cargo test --workspace 7625 pass / 0 fail; +7 tests (3 methods: camelCase-catalogued / comment-not-bound / occ_doc-on-wire; 4 app: user_move_writeback behaviors)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello clean; cargo fmt clean; r1089 demo fixed (drops the name==lower() blind spot, asserts scene/waitFor + occ_doc + a camelCase method), >=30 PASS",
+        "refuted/defended by reviewers: window_id naming correct + consistent with font_id/glyph_id; window-position SSOT coherent (one signal, derived caches, OS=eventual-actual convergence); MethodOcc<->HandlerKind is a cross-checked faithful mirror, no third encoding"
+      ],
+      "impact_refs": [
+        "5.7",
+        "5.12",
+        "5.16",
+        "5.41"
+      ],
+      "carry_forward_bullets": [
+        "WindowMoveOutcome.requested is structurally always-true (dead-on-wire) but kept for ResizeOutcome sibling consistency — NIT; revisit if a second outcome shape diverges",
+        "the cross-check is a source-text parser (robust for the single-match router); a future router refactor that splits the match or renames the scrutinee needs the parser re-audited — a macro generating arm+entry would be the structural guarantee but macro-generated arms are a deliberate readability non-goal",
+        "LESSON: a filter doing double duty (region-scoping AND membership-exclusion) silently drops valid data while the guard test passes green — separate scoping from membership, and never let the cross-check share the catalog's blind spot",
+        "live drag-follow still HW-gated (real-GPU-host round); rpc/methods param schema still the next slice (discoverability without callability)"
+      ],
+      "publishable_decision_summary": "Adversarial audit-clearance of R1088-R1090 (3 read-only reviewers craft/SSOT/north-star + author grep): structure SURVIVED but the review found 1 MUST-FIX — the rpc/methods catalog silently omitted the camelCase scene/waitFor because a lowercase-only filter in BOTH the parser and the catalog hid it while the cross-check passed green — plus SHOULD-fixes (occ honesty was source-only not on the wire; note_window_moved write-back untested; cross-check matched HandlerKind in comments; 1px-tolerance rationale wrong; stale Moved-feedback docs). All cleared inline.",
+      "publishable_changes_bullets": [
+        "★M1 MUST-FIX: scene/waitFor (camelCase, §5.12 wait-for) was routed but ABSENT from RPC_METHODS — a lowercase-only filter in BOTH the cross-check parser AND the catalog hid it while the test passed green over an incomplete surface; added it (occ Read, count 73) + parser charset to alphanumeric (camelCase-inclusive structural check, no longer double-duty scoping+exclusion)",
+        "Finding 1: occ honesty was claimed \"on the wire\" but lived only in Rust source — added an OCC_DOC legend to the rpc/methods response so the \"read != side-effect-free\" caveat reaches a JSON-only AI",
+        "S2: extracted note_window_moved write-back to a pure user_move_writeback + 4 unit tests (was untested — only the echo classifier was extracted/tested)",
+        "S3: cross-check parser now strips // comments before HandlerKind detection (the apply_preview arm's explanatory comment survived only by coincidence)",
+        "S4: fixed the 1px-tolerance rationale — the integer logical<->physical round-trip is EXACT; the real reason is WM placement imprecision (prevents a command/echo nudge loop)",
+        "stale-doc: DeclaredWindow + declared_window_specs docs predicted R1088 Moved-feedback as a future fix that already landed — corrected to declared-converges-on-actual for positioned windows; softened \"self-describing\"->discovery + \"GUARANTEES/verified-complete\"->honest source-text-check"
+      ],
+      "publishable_verification_bullets": [
+        "3 read-only reviewers (craft / SSOT / north-star, parallel-safe) + author grep; structure SURVIVED (no other must-fix); the M1 defect was real AND author-introduced (the adversarial review earned its keep)",
+        "cargo test --workspace 7625 pass / 0 fail; +7 tests (3 methods: camelCase-catalogued / comment-not-bound / occ_doc-on-wire; 4 app: user_move_writeback behaviors)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello clean; cargo fmt clean; r1089 demo fixed (drops the name==lower() blind spot, asserts scene/waitFor + occ_doc + a camelCase method), >=30 PASS",
+        "refuted/defended by reviewers: window_id naming correct + consistent with font_id/glyph_id; window-position SSOT coherent (one signal, derived caches, OS=eventual-actual convergence); MethodOcc<->HandlerKind is a cross-checked faithful mirror, no third encoding"
+      ],
+      "publishable_impact_refs": [
+        "5.7",
+        "5.12",
+        "5.16",
+        "5.41"
+      ],
+      "publishable_carry_forward_bullets": [
+        "WindowMoveOutcome.requested is structurally always-true (dead-on-wire) but kept for ResizeOutcome sibling consistency — NIT; revisit if a second outcome shape diverges",
+        "the cross-check is a source-text parser (robust for the single-match router); a future router refactor that splits the match or renames the scrutinee needs the parser re-audited — a macro generating arm+entry would be the structural guarantee but macro-generated arms are a deliberate readability non-goal",
+        "LESSON: a filter doing double duty (region-scoping AND membership-exclusion) silently drops valid data while the guard test passes green — separate scoping from membership, and never let the cross-check share the catalog's blind spot",
+        "live drag-follow still HW-gated (real-GPU-host round); rpc/methods param schema still the next slice (discoverability without callability)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
