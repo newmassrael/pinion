@@ -15326,6 +15326,52 @@
         "sprag consumes the full seam in a separate sprag-native session (pin-bump + per-panel coordinator registration + preview wiring); pinion never edits sprag"
       ]
     },
+    "R1080.1": {
+      "decision_summary": "R1080.1 §5.51 §5.39 §5.37 R1079+R1080 adversarial audit-clearance (3-reviewer + author re-verification): structure SURVIVED (zero must-fix code defects); 4 doc-honesty items cleared + 3 reviewer over-flags corrected by author grep; binary-neutral",
+      "changes_bullets": [
+        "DropPoint doc (external.rs) \"clamped at the edges\" corrected - normalize_cursor does NOT clamp; values are 0..1 by-construction because tag is the hit region under the cursor, not by an explicit clamp (reviewer #1 HIGH, author-confirmed)",
+        "font/metrics RPC (MetricsOutcome) doc clarified - ascender/descender/line_gap are the RAW hhea table values, NOT the USE_TYPO_METRICS-selected line box (vertical_line_metrics is the selector; the rendered box is observable via scene/layout). reviewer #2 Finding1, downgraded CRITICAL->MED: it is a font-file inspector and scene/layout already exposes the rendered box",
+        "layout.rs + paint-seam (pinion-shell) test comments - note the raw-hhea oracle equals the R1079 selected box only because NotoSans typo==hhea (consistency with the text_engine.rs note). reviewer #2 Finding2/3 MED",
+        "LayoutStyle::drop_target doc - documents that this router-input flag is not serialised into scene/snapshot (the pointer_transparent/focusable precedent); its effect is observed via the coordinator drop-preview, and the AI reorganize path is geometric (resolve_dock_drop). reviewer #3 non-defect, honest record"
+      ],
+      "verification_bullets": [
+        "author re-verification corrected 3 reviewer over-flags: (a) reviewer #3 \"drop_target absent from snapshot = HIGH\" REFUTED - snapshot.rs omits ALL LayoutStyle flags incl. focusable/pointer_transparent; focus.rs is the dedicated-computed-method precedent; resolve_dock_drop is geometric (panel_rects:&[(&str,Rect)], no drop_target) so the AI path is unaffected, a dedicated RPC is YAGNI; (b) reviewer #1 \"different traversal directions justify the double hit_test\" is factually wrong - both resolve_hover_tag and resolve_drop_target_tag are .rev() deepest-first; (c) reviewer #1 \"450 vs 452\" non-defect - 450 was correct at R1079, +2 from R1080",
+        "structure SURVIVED (zero must-fix code defects): skrifa oracle textbook (source-traced as parley's metric engine), win-clamp defensive/spec-justified, multi-line deferral honestly documented, drop_target algorithm-slice with forcing-consumer tests (R1015-R1019 precedent), zone SSOT byte-identical (24x24 sweep), routing perp focus preserved, no scope creep",
+        "binary-neutral (doc + comment only): workspace 197 suites * 7537 pass * 0 fail (identical to R1080) / clippy --workspace --all-targets vello 0 / fmt clean / validate T1=0 (entries 1101->1102)"
+      ],
+      "impact_refs": [
+        "5.51",
+        "5.39",
+        "5.37"
+      ],
+      "carry_forward_bullets": [
+        "next R1081 = dock pointer drag coordinator (PR-29 form A): extract Rc<DockReorganizer> (one coordinator for invoke + pointer paths) + DockPanelExternal R742 hooks replacing the capture tear-off + introspectable drop-preview (splitter Rc<Signal> precedent) + view_dock_panel .drop_target(true) marking + migrate the R683 tests + adapt the hello-dock-panels demo. Blast radius confirmed: dock.rs + its R683 tests + 1 demo",
+        "deferred non-issue: resolve_drop_point's double hit_test is combinable (both walks are deepest-first) but kept as two named single-concern functions; drag-move cadence makes the micro-opt irrelevant",
+        "font/metrics exposing the selected line metrics is YAGNI (scene/layout already gives the rendered box) - an additive field if a future AI consumer needs it"
+      ],
+      "publishable_decision_summary": "R1080.1 §5.51 §5.39 §5.37 R1079+R1080 adversarial audit-clearance (3-reviewer + author re-verification): structure SURVIVED (zero must-fix code defects); 4 doc-honesty items cleared + 3 reviewer over-flags corrected by author grep; binary-neutral",
+      "publishable_changes_bullets": [
+        "DropPoint doc (external.rs) \"clamped at the edges\" corrected - normalize_cursor does NOT clamp; values are 0..1 by-construction because tag is the hit region under the cursor, not by an explicit clamp (reviewer #1 HIGH, author-confirmed)",
+        "font/metrics RPC (MetricsOutcome) doc clarified - ascender/descender/line_gap are the RAW hhea table values, NOT the USE_TYPO_METRICS-selected line box (vertical_line_metrics is the selector; the rendered box is observable via scene/layout). reviewer #2 Finding1, downgraded CRITICAL->MED: it is a font-file inspector and scene/layout already exposes the rendered box",
+        "layout.rs + paint-seam (pinion-shell) test comments - note the raw-hhea oracle equals the R1079 selected box only because NotoSans typo==hhea (consistency with the text_engine.rs note). reviewer #2 Finding2/3 MED",
+        "LayoutStyle::drop_target doc - documents that this router-input flag is not serialised into scene/snapshot (the pointer_transparent/focusable precedent); its effect is observed via the coordinator drop-preview, and the AI reorganize path is geometric (resolve_dock_drop). reviewer #3 non-defect, honest record"
+      ],
+      "publishable_verification_bullets": [
+        "author re-verification corrected 3 reviewer over-flags: (a) reviewer #3 \"drop_target absent from snapshot = HIGH\" REFUTED - snapshot.rs omits ALL LayoutStyle flags incl. focusable/pointer_transparent; focus.rs is the dedicated-computed-method precedent; resolve_dock_drop is geometric (panel_rects:&[(&str,Rect)], no drop_target) so the AI path is unaffected, a dedicated RPC is YAGNI; (b) reviewer #1 \"different traversal directions justify the double hit_test\" is factually wrong - both resolve_hover_tag and resolve_drop_target_tag are .rev() deepest-first; (c) reviewer #1 \"450 vs 452\" non-defect - 450 was correct at R1079, +2 from R1080",
+        "structure SURVIVED (zero must-fix code defects): skrifa oracle textbook (source-traced as parley's metric engine), win-clamp defensive/spec-justified, multi-line deferral honestly documented, drop_target algorithm-slice with forcing-consumer tests (R1015-R1019 precedent), zone SSOT byte-identical (24x24 sweep), routing perp focus preserved, no scope creep",
+        "binary-neutral (doc + comment only): workspace 197 suites * 7537 pass * 0 fail (identical to R1080) / clippy --workspace --all-targets vello 0 / fmt clean / validate T1=0 (entries 1101->1102)"
+      ],
+      "publishable_impact_refs": [
+        "5.51",
+        "5.39",
+        "5.37"
+      ],
+      "publishable_carry_forward_bullets": [
+        "next R1081 = dock pointer drag coordinator (PR-29 form A): extract Rc<DockReorganizer> (one coordinator for invoke + pointer paths) + DockPanelExternal R742 hooks replacing the capture tear-off + introspectable drop-preview (splitter Rc<Signal> precedent) + view_dock_panel .drop_target(true) marking + migrate the R683 tests + adapt the hello-dock-panels demo. Blast radius confirmed: dock.rs + its R683 tests + 1 demo",
+        "deferred non-issue: resolve_drop_point's double hit_test is combinable (both walks are deepest-first) but kept as two named single-concern functions; drag-move cadence makes the micro-opt irrelevant",
+        "font/metrics exposing the selected line metrics is YAGNI (scene/layout already gives the rendered box) - an additive field if a future AI consumer needs it"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
