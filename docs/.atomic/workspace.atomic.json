@@ -15180,6 +15180,54 @@
         "RPC scene/key repeat stays caller-supplied (key_press_for_window) — single injection, no focus bounce or autorepeat; if an AI-driven repeated down ever needs a derived repeat, that seam would derive too (no forcing consumer yet)"
       ]
     },
+    "R1078.1": {
+      "decision_summary": "R1078.1 §5.39 §5.16 §5.36 §5.37 adversarial audit-clearance (3 read-only reviewers + author re-verify): structure SURVIVED, no must-fix code defect; cleared the stranded-owner repeat doc-honesty residual + a single-line fail-fast assert + a trait-home note; rejected the Option<bool> over-flag",
+      "changes_bullets": [
+        "apply_key_edge doc: honest Residual note — the R1078 derived repeat inherits R1073.1's missed-keyup residual; key_press_owner clears ONLY via note_key_release (remove_window:1296 deliberately skips it), so a stranded owner makes the next genuine first press at that SAME window derive repeat=true and drop ONCE (self-heals on the next keyup); a press at any OTHER window is gated out by admit_key_press (owner != window). clear-on-blur stays rejected (reintroduces winit focus-ordering dependence). Far milder than the infinite flap it fixes",
+        "SelfHostedLayout::shape: debug_assert the single-line precondition — production is gated by self_hosted_text_eligible's \\n exclusion, but a future caller treating SelfHostedLayout as a general multi-line layout would mis-place the break glyph (shape_paragraph_with_fallback is single-paragraph; layout_paragraph is the wrapping one); fail-fast per the \"fail fast and fail clearly\" principle (2 reviewers converged)",
+        "TextLayout trait doc: crate-home note — the trait stays in pinion-text (the lowest crate both shapers reach; the §5.37 sibling pinion-text-font does not dep it, hence the newtype-in-runtime impl). When parley is superseded, pinion-text persists as the contract layer (trait + CaretRect + VisualLineMetric) and only its parley impl drops, so the trait needs no relocation",
+        "REJECTED over-flag (evidence): apply_key_edge Option<bool> -> named enum — idiomatic, single call site, well-documented (the if-let-Some(repeat) binding is clear); the R1075.1 over-structuring rejection precedent applies (a bespoke enum is boilerplate for one consumer)"
+      ],
+      "verification_bullets": [
+        "3 read-only adversarial reviewers (craft/honesty, SSOT/structure, north-star) in parallel + author grep+read re-verify; all 3 concur NO must-fix code defect — trait design, byte-identical parley path, two-repeat-paths SSOT-legitimacy, required/derived split, orphan-rule home, AI-introspection, and no-scope-creep all verified CLEAN",
+        "author re-verify by grep (not trusting the reviewers): key_press_owner is mutated ONLY by admit_key_press or_insert + note_key_release remove (remove_window:1296 deliberately skips it) = the stranded-owner residual is real and narrow; shape_paragraph_with_fallback is the single-paragraph shaper (layout_paragraph is the multi-line wrapper) = the single-line precondition is genuinely unenforced. Reviewer #1's chord-cache mitigation was itself wrong (HeldKeys is Space-only) but its conclusion (narrow + self-healing) holds",
+        "doc + 1 debug_assert only; §5.37 5 SelfHostedLayout tests + 2 keyboard-gate tests green (debug_assert does not fire on the single-line fixtures); workspace test 0 fail (197 suites); clippy --workspace --all-targets --features pinion-runtime/vello 0; cargo fmt --check clean; validate T1=0 (entries 1098->1099)"
+      ],
+      "impact_refs": [
+        "5.39",
+        "5.16",
+        "5.36",
+        "5.37"
+      ],
+      "carry_forward_bullets": [
+        "box-parity proof font-axis roadmap (DejaVu / Noto / Liberation fixtures x alignment x decoration x line-height, with a numeric pixel-diff tolerance) — the R1079 cross-shaper box-parity round (reviewer #3 rec 2)",
+        "editable->§5.37 flip ungate needs a dedicated test suite (editable §5.37 caret/selection round-trip + multi-window focus-cross) BEFORE the caret_bearing exclusion is removed — the flip round, a §5.37.14 sub-section (reviewer #3 rec 3)",
+        "R1078 sprag live SPRAG_GUI_LOG hold-verify still pending in a sprag-native session (pin bump; Ctrl+Shift+Enter hold = dock toggle exactly once)"
+      ],
+      "publishable_decision_summary": "R1078.1 §5.39 §5.16 §5.36 §5.37 adversarial audit-clearance (3 read-only reviewers + author re-verify): structure SURVIVED, no must-fix code defect; cleared the stranded-owner repeat doc-honesty residual + a single-line fail-fast assert + a trait-home note; rejected the Option<bool> over-flag",
+      "publishable_changes_bullets": [
+        "apply_key_edge doc: honest Residual note — the R1078 derived repeat inherits R1073.1's missed-keyup residual; key_press_owner clears ONLY via note_key_release (remove_window:1296 deliberately skips it), so a stranded owner makes the next genuine first press at that SAME window derive repeat=true and drop ONCE (self-heals on the next keyup); a press at any OTHER window is gated out by admit_key_press (owner != window). clear-on-blur stays rejected (reintroduces winit focus-ordering dependence). Far milder than the infinite flap it fixes",
+        "SelfHostedLayout::shape: debug_assert the single-line precondition — production is gated by self_hosted_text_eligible's \\n exclusion, but a future caller treating SelfHostedLayout as a general multi-line layout would mis-place the break glyph (shape_paragraph_with_fallback is single-paragraph; layout_paragraph is the wrapping one); fail-fast per the \"fail fast and fail clearly\" principle (2 reviewers converged)",
+        "TextLayout trait doc: crate-home note — the trait stays in pinion-text (the lowest crate both shapers reach; the §5.37 sibling pinion-text-font does not dep it, hence the newtype-in-runtime impl). When parley is superseded, pinion-text persists as the contract layer (trait + CaretRect + VisualLineMetric) and only its parley impl drops, so the trait needs no relocation",
+        "REJECTED over-flag (evidence): apply_key_edge Option<bool> -> named enum — idiomatic, single call site, well-documented (the if-let-Some(repeat) binding is clear); the R1075.1 over-structuring rejection precedent applies (a bespoke enum is boilerplate for one consumer)"
+      ],
+      "publishable_verification_bullets": [
+        "3 read-only adversarial reviewers (craft/honesty, SSOT/structure, north-star) in parallel + author grep+read re-verify; all 3 concur NO must-fix code defect — trait design, byte-identical parley path, two-repeat-paths SSOT-legitimacy, required/derived split, orphan-rule home, AI-introspection, and no-scope-creep all verified CLEAN",
+        "author re-verify by grep (not trusting the reviewers): key_press_owner is mutated ONLY by admit_key_press or_insert + note_key_release remove (remove_window:1296 deliberately skips it) = the stranded-owner residual is real and narrow; shape_paragraph_with_fallback is the single-paragraph shaper (layout_paragraph is the multi-line wrapper) = the single-line precondition is genuinely unenforced. Reviewer #1's chord-cache mitigation was itself wrong (HeldKeys is Space-only) but its conclusion (narrow + self-healing) holds",
+        "doc + 1 debug_assert only; §5.37 5 SelfHostedLayout tests + 2 keyboard-gate tests green (debug_assert does not fire on the single-line fixtures); workspace test 0 fail (197 suites); clippy --workspace --all-targets --features pinion-runtime/vello 0; cargo fmt --check clean; validate T1=0 (entries 1098->1099)"
+      ],
+      "publishable_impact_refs": [
+        "5.39",
+        "5.16",
+        "5.36",
+        "5.37"
+      ],
+      "publishable_carry_forward_bullets": [
+        "box-parity proof font-axis roadmap (DejaVu / Noto / Liberation fixtures x alignment x decoration x line-height, with a numeric pixel-diff tolerance) — the R1079 cross-shaper box-parity round (reviewer #3 rec 2)",
+        "editable->§5.37 flip ungate needs a dedicated test suite (editable §5.37 caret/selection round-trip + multi-window focus-cross) BEFORE the caret_bearing exclusion is removed — the flip round, a §5.37.14 sub-section (reviewer #3 rec 3)",
+        "R1078 sprag live SPRAG_GUI_LOG hold-verify still pending in a sprag-native session (pin bump; Ctrl+Shift+Enter hold = dock toggle exactly once)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
