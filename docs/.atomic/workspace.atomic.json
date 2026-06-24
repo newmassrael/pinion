@@ -16108,6 +16108,54 @@
         "catalog completeness is TEST-enforced (source cross-check), not compile-enforced — a deliberate choice (macro-generated arms are forbidden); the test is the no-drift guarantee"
       ]
     },
+    "R1090": {
+      "decision_summary": "rpc/methods per-method occ enrichment: each catalog entry carries its SceneRevision OCC class (read/mutate, mirroring the arm HandlerKind), honestly named occ NOT kind because occ:read is NOT side-effect-free (deferred/async/out-of-OCC/self-bump methods are read yet change state); the cross-check verifies occ from the source match arm so it cannot drift.",
+      "changes_bullets": [
+        "rpc/methods entries gain occ (read|mutate) = the SceneRevision OCC class per method, so an AI knows which calls bump the optimistic-concurrency token",
+        "MethodOcc enum + MethodEntry{name,occ}; RPC_METHODS = &[(name, MethodOcc)] SSOT; response methods now [{name,occ}]",
+        "★honest naming occ NOT kind: occ:read is NOT side-effect-free — scene/window_move/key/wheel/resize/focus/set/apply_preview are occ:read yet change state (deferred/async/out-of-OCC/self-bump); the field name keeps that on the wire",
+        "cross-check extended: parse the match request.method region, assert (name, occ-from-HandlerKind) == catalog so occ drift fails CI (not just names)",
+        "generated the 72 (name,occ) pairs by scripting the same match-region parse, so the catalog matched source first-time; demo evolved to the {name,occ} shape + asserts the occ honesty"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace green; +1 methods unit (occ_is_honest) on top of R1089's 4",
+        "the extended cross-check passing GUARANTEES every (name, occ) == its routing-match arm + HandlerKind (occ no-drift)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello clean; cargo fmt clean (fmt --check first masked its exit behind a pipe = false-green; re-ran, it wanted comment re-align, applied)",
+        "tools/demos/r1089_rpc_methods.py updated to {name,occ} + occ-honesty section, >=30 asserts PASS (A-H); R1087/R1088 no regression"
+      ],
+      "impact_refs": [
+        "5.7",
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "occ is the OCC/revision-bump class, NOT a true effect-classification — a reliable \"does this change anything\" flag would need per-method curation (no source SSOT), so it is deliberately NOT built; occ + the per-method doc are the honest verifiable signal",
+        "MVP = names + occ; per-method param schema is the next slice at a consumer (param shapes live in each handler, no central SSOT yet)",
+        "live drag-follow still deferred HW-gated (real-GPU-host round): §5.15 input-forwarding contract extension + coordinate-ownership fork"
+      ],
+      "publishable_decision_summary": "rpc/methods per-method occ enrichment: each catalog entry carries its SceneRevision OCC class (read/mutate, mirroring the arm HandlerKind), honestly named occ NOT kind because occ:read is NOT side-effect-free (deferred/async/out-of-OCC/self-bump methods are read yet change state); the cross-check verifies occ from the source match arm so it cannot drift.",
+      "publishable_changes_bullets": [
+        "rpc/methods entries gain occ (read|mutate) = the SceneRevision OCC class per method, so an AI knows which calls bump the optimistic-concurrency token",
+        "MethodOcc enum + MethodEntry{name,occ}; RPC_METHODS = &[(name, MethodOcc)] SSOT; response methods now [{name,occ}]",
+        "★honest naming occ NOT kind: occ:read is NOT side-effect-free — scene/window_move/key/wheel/resize/focus/set/apply_preview are occ:read yet change state (deferred/async/out-of-OCC/self-bump); the field name keeps that on the wire",
+        "cross-check extended: parse the match request.method region, assert (name, occ-from-HandlerKind) == catalog so occ drift fails CI (not just names)",
+        "generated the 72 (name,occ) pairs by scripting the same match-region parse, so the catalog matched source first-time; demo evolved to the {name,occ} shape + asserts the occ honesty"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace green; +1 methods unit (occ_is_honest) on top of R1089's 4",
+        "the extended cross-check passing GUARANTEES every (name, occ) == its routing-match arm + HandlerKind (occ no-drift)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello clean; cargo fmt clean (fmt --check first masked its exit behind a pipe = false-green; re-ran, it wanted comment re-align, applied)",
+        "tools/demos/r1089_rpc_methods.py updated to {name,occ} + occ-honesty section, >=30 asserts PASS (A-H); R1087/R1088 no regression"
+      ],
+      "publishable_impact_refs": [
+        "5.7",
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "occ is the OCC/revision-bump class, NOT a true effect-classification — a reliable \"does this change anything\" flag would need per-method curation (no source SSOT), so it is deliberately NOT built; occ + the per-method doc are the honest verifiable signal",
+        "MVP = names + occ; per-method param schema is the next slice at a consumer (param shapes live in each handler, no central SSOT yet)",
+        "live drag-follow still deferred HW-gated (real-GPU-host round): §5.15 input-forwarding contract extension + coordinate-ownership fork"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
