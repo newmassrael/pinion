@@ -1649,11 +1649,13 @@ fn r1087_windows_reports_id_title_and_position() {
             id: "main".to_owned(),
             title: "Main".to_owned(),
             position: None,
+            declared_size: Some((880, 600)),
         },
         DeclaredWindow {
             id: "torn-inspector".to_owned(),
             title: "Inspector".to_owned(),
             position: Some((120, 80)),
+            declared_size: Some((360, 360)),
         },
     ];
     let mut ctx =
@@ -1665,8 +1667,58 @@ fn r1087_windows_reports_id_title_and_position() {
         resp.result,
         Some(serde_json::json!({
             "windows": [
-                { "id": "main", "title": "Main", "position": null },
-                { "id": "torn-inspector", "title": "Inspector", "position": [120, 80] },
+                { "id": "main", "title": "Main", "position": null, "declared_size": [880, 600] },
+                {
+                    "id": "torn-inspector", "title": "Inspector",
+                    "position": [120, 80], "declared_size": [360, 360],
+                },
+            ]
+        })),
+    );
+}
+
+#[test]
+fn r1092_windows_reports_declared_size_with_null_for_intrinsic() {
+    // R1092 §5.16 §5.41 §2 #7 — `declared_size` completes the window-geometry
+    // introspection surface: a Fixed/OpenResizable window reports `[w, h]`; an
+    // IntrinsicAfterFirstPaint window (content-sized) reports `null`, the same
+    // `null`-means-system-determined honesty `position` uses for a WM-placed
+    // window. The two axes are independent: a window can declare a size but
+    // not a position (WM-placed but Fixed-sized), and vice-versa.
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let windows = vec![
+        DeclaredWindow {
+            id: "fixed-dialog".to_owned(),
+            title: "Dialog".to_owned(),
+            position: Some((40, 40)),
+            declared_size: Some((400, 300)),
+        },
+        DeclaredWindow {
+            id: "intrinsic-popover".to_owned(),
+            title: "Popover".to_owned(),
+            position: None,
+            declared_size: None,
+        },
+    ];
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_declared_windows(windows);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/windows","id":9}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(resp.error.is_none(), "{:?}", resp.error);
+    assert_eq!(
+        resp.result,
+        Some(serde_json::json!({
+            "windows": [
+                {
+                    "id": "fixed-dialog", "title": "Dialog",
+                    "position": [40, 40], "declared_size": [400, 300],
+                },
+                {
+                    "id": "intrinsic-popover", "title": "Popover",
+                    "position": null, "declared_size": null,
+                },
             ]
         })),
     );

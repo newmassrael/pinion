@@ -458,6 +458,32 @@ impl SizeStrategy {
             Self::OpenResizable { min, .. } => min,
         }
     }
+
+    /// R1092 §5.16 §5.41 §2 #7 — the window's **declared** logical-pixel
+    /// open size for AI introspection (`scene/windows`), or `None` when
+    /// the binding does not declare one up-front.
+    ///
+    /// `Fixed` and `OpenResizable` declare an exact open size, so they
+    /// report it. `IntrinsicAfterFirstPaint` does **not**: it opens at
+    /// `min` only as a floor, then walks the window to the content bbox
+    /// after the first paint, so its eventual size is content-determined
+    /// — reported `None`, exactly the honesty
+    /// [`WindowSpec::position`](WindowSpec::position) uses for a
+    /// WM-placed (`None`) window. This is deliberately **distinct** from
+    /// [`Self::initial_logical_size`] (the literal pixels the window is
+    /// *created* at, which returns `min` for `Intrinsic`): that answers
+    /// "what size does the shell open the window at"; this answers "what
+    /// size did the binding DECLARE" — and an `Intrinsic` window
+    /// declares none, so reporting its `min` would mislead an AI into
+    /// reading a transient floor as the final geometry.
+    #[must_use]
+    pub const fn declared_size(self) -> Option<(u32, u32)> {
+        match self {
+            Self::Fixed { width, height } => Some((width, height)),
+            Self::OpenResizable { size, .. } => Some(size),
+            Self::IntrinsicAfterFirstPaint { .. } => None,
+        }
+    }
 }
 
 /// R670 §5.16 §5.41 — Phase B (R700+) multi-window foundation.
@@ -1124,6 +1150,50 @@ mod tests {
         };
         assert_eq!(s.initial_logical_size(), (1000, 700));
         assert_eq!(s.min_inner_floor(), None);
+    }
+
+    // R1092 §5.16 §5.41 §2 #7 — `declared_size` is the AI-introspection
+    // projection (`scene/windows`): an exact declared open size for the
+    // size-declaring strategies, `None` for the content-intrinsic one.
+    // It is NOT `initial_logical_size`: `Intrinsic` opens at `min` (a
+    // floor) but declares no final size, so `declared_size` honestly
+    // reports `None` — the same `None`-means-system-determined contract
+    // `WindowSpec::position` uses for a WM-placed window.
+
+    #[test]
+    fn r1092_fixed_declares_its_open_size() {
+        let s = SizeStrategy::Fixed {
+            width: 880,
+            height: 600,
+        };
+        assert_eq!(s.declared_size(), Some((880, 600)));
+    }
+
+    #[test]
+    fn r1092_open_resizable_declares_its_open_size() {
+        // The open `size` is declared even though the floor (`min`) is
+        // independent — an AI reads the geometry it was created at.
+        let s = SizeStrategy::OpenResizable {
+            size: (1000, 700),
+            min: Some((200, 100)),
+        };
+        assert_eq!(s.declared_size(), Some((1000, 700)));
+    }
+
+    #[test]
+    fn r1092_intrinsic_declares_no_size_despite_having_a_min_floor() {
+        // The honesty case: `Intrinsic` opens at `min` then resizes to
+        // content, so its eventual size is NOT declared. `declared_size`
+        // returns `None` (content-determined) while `initial_logical_size`
+        // still returns the `min` creation floor — the two answers differ
+        // on purpose, and conflating them would tell an AI a transient
+        // floor is the final window geometry.
+        let s = SizeStrategy::IntrinsicAfterFirstPaint {
+            min: (320, 240),
+            max: (1280, 800),
+        };
+        assert_eq!(s.declared_size(), None);
+        assert_eq!(s.initial_logical_size(), (320, 240));
     }
 
     // R670 §5.16 §5.41 — [`WindowSpec`] + [`WidgetView::windows`]

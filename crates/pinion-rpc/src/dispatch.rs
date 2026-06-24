@@ -947,22 +947,26 @@ pub use pinion_runtime::PacingState;
 /// of these (`pinion-shell` depends on `pinion-rpc`, so the domain → wire
 /// map runs shell-side; this crate owns only the wire shape, the
 /// `InputStateSnapshot`/`PacingState` read-payload precedent). `position`
-/// is the binding's **declared** logical-pixel placement (`[x, y]` on the
-/// wire, `null` for a window-manager-placed window) — scene-as-data
+/// reports the binding's **declared** logical-pixel geometry — `position`
+/// (`[x, y]`, R1087) and `declared_size` (`[w, h]`, R1092), each `null` when
+/// that axis is system-determined rather than declared — scene-as-data
 /// observability for the floating-panel-as-positioned-window model so an AI
-/// can read where each torn-off panel's window is **declared to sit**, not
-/// merely that it exists.
+/// can read **where each torn-off panel's window is declared to sit and how
+/// big it is declared to be**, not merely that it exists.
 ///
-/// **Declared, not a live OS read-back:** this is the position the binding
+/// **Declared, not a live OS read-back:** this is the geometry the binding
 /// wrote and the shell drives the OS window toward, NOT a query of the
-/// window's current OS position. R1088 (`note_window_moved`) DOES feed a user
-/// `WindowEvent::Moved` back into the signal so declared converges on actual
-/// — but only for an ALREADY-positioned window; a `null` WM-placed window is
-/// deliberately left WM-managed (one user drag must not pin it), so its
-/// actual position is never reflected here. And that feedback's live delivery
-/// is HW-gated (unverified headlessly). So `null` can lag a user drag, and the
-/// `Declared*` naming keeps the read honest as the declared intent, not a live
-/// read-back. For shell/RPC-driven moves declared == eventual-actual.
+/// window's current OS rect. R1088 (`note_window_moved`) DOES feed a user
+/// `WindowEvent::Moved` back into the signal so the declared *position*
+/// converges on actual — but only for an ALREADY-positioned window; a `null`
+/// WM-placed window is deliberately left WM-managed (one user drag must not
+/// pin it), so its actual position is never reflected here. And that
+/// feedback's live delivery is HW-gated (unverified headlessly). `declared_size`
+/// likewise tracks the binding's declared open size (`SizeStrategy`), never a
+/// live `WindowEvent::Resized` read-back. So either axis can lag a user
+/// drag/resize, and the `Declared*` naming keeps the read honest as declared
+/// intent, not a live read-back. For shell/RPC-driven moves declared ==
+/// eventual-actual.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct DeclaredWindow {
     /// AI-facing window handle (the `{window: "<id>"}` scope key).
@@ -972,6 +976,16 @@ pub struct DeclaredWindow {
     /// Declared outer position in logical pixels, or `null` when
     /// placement is left to the window manager (every pre-R1087 window).
     pub position: Option<(i32, i32)>,
+    /// R1092 §5.16 §5.41 §2 #7 — declared open size in logical pixels, or
+    /// `null` when the size is content-determined rather than declared
+    /// up-front. `Some` mirrors a `SizeStrategy::Fixed`/`OpenResizable` open
+    /// size; `null` is an `IntrinsicAfterFirstPaint` window, whose final size
+    /// is the post-first-paint content bbox (the shell knows only a transient
+    /// `min` floor at declare time, not the eventual geometry) — the same
+    /// `null`-means-system-determined honesty [`position`](Self::position)
+    /// uses for a WM-placed window. The SSOT is
+    /// `pinion_shell::SizeStrategy::declared_size`.
+    pub declared_size: Option<(u32, u32)>,
 }
 
 impl<'a> DispatchContext<'a> {

@@ -4702,7 +4702,9 @@ impl<V: WidgetView> ShellCore<V> {
 
     /// R1087 §5.16 §5.41 §2 #7 PR-31 — the windows the binding currently
     /// DECLARES, projected to the `scene/windows` wire shape
-    /// ([`pinion_rpc::DeclaredWindow`]: id + title + declared position).
+    /// ([`pinion_rpc::DeclaredWindow`]: id + title + declared geometry —
+    /// position [R1087] and `declared_size` [R1092], each `null` when that
+    /// axis is system-determined rather than declared).
     ///
     /// Reads the reactive [`WidgetView::windows_signal`] when the binding
     /// opted into one (the dock tear-off arc — the SSOT
@@ -4740,6 +4742,11 @@ impl<V: WidgetView> ShellCore<V> {
                 id: spec.id.into_owned(),
                 title: spec.title,
                 position: spec.position,
+                // R1092 — declared open size from the SSOT
+                // `SizeStrategy::declared_size` (`None` for a
+                // content-intrinsic window, mirroring `position`'s
+                // `None`-means-system-determined honesty).
+                declared_size: spec.strategy.declared_size(),
             })
             .collect()
     }
