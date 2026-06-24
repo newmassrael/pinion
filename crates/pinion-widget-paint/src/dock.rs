@@ -1846,15 +1846,32 @@ pub fn resolve_dock_drop(
 ///
 /// ## State
 ///
-/// Holds a shared `Rc<Signal<DockTopology>>` — the live topology the
-/// dock editor's view fn reads. A successful reorganize calls
-/// `Signal::set` with the mutated topology (or records a reversible edit
-/// when an undo stack is attached), and the view fn's reactive
-/// subscription re-renders the new layout.
+/// Holds a shared `Rc<Signal<Option<DockTopology>>>` — the live dock
+/// surface the editor's view fn reads. `None` is the **empty dock** (no
+/// docked panels — every pane torn off / floating), a first-class state
+/// of tiling / terminal-multiplexer hosts. A successful reorganize calls
+/// `Signal::set` with `Some(mutated)` (or records a reversible edit when
+/// an undo stack is attached), and the view fn's reactive subscription
+/// re-renders the new layout.
+///
+/// ## Total over the empty surface (R1084 §5.51)
+///
+/// The coordinator is total over `Option<DockTopology>`: a reorganize on
+/// `None` is the **identity no-op** — an empty surface has no source to
+/// drag and no target to drop onto, so "nothing changes" is the honest
+/// result over the whole input type, not defensive code. The reorganize
+/// gestures all *preserve* the panel count (`Swap` trivially; both
+/// `SplitInsert` and `Tabify` are moves), so the coordinator never produces
+/// `Some → None`: `None` arrives only as input (the empty surface a binding
+/// hands in), and even then a pointer drag cannot originate on it — only the
+/// `invoke` path can reach an empty-surface reorganize, and it gets the no-op.
+/// [`DockTopology`]'s `leaf >= 1` invariant is therefore untouched —
+/// absence is modelled by the `Option`, not by a degenerate topology.
 pub struct DockReorganizer {
-    /// Live topology the dock editor view fn reads. Mutated via
-    /// `Signal::set` on a successful reorganize → reactive re-render.
-    topology: Rc<Signal<DockTopology>>,
+    /// Live dock surface the editor view fn reads — `None` = empty dock.
+    /// Mutated via `Signal::set(Some(..))` on a successful reorganize →
+    /// reactive re-render.
+    topology: Rc<Signal<Option<DockTopology>>>,
     /// Monotonic counter feeding the stable id of each generated
     /// split (`reorg-split-{seq}`). Bumped only when a `SplitInsert`
     /// actually lands, so ids stay gap-minimal + collision-free.
@@ -1922,12 +1939,13 @@ impl core::fmt::Debug for DockReorganizer {
 }
 
 impl DockReorganizer {
-    /// Construct a reorganize coordinator over a shared topology signal.
-    /// The editor binding creates the `Rc<Signal<DockTopology>>` (via
-    /// `Owner::cache`) and hands a clone here so the coordinator + the
-    /// view fn share one source of truth.
+    /// Construct a reorganize coordinator over a shared dock-surface
+    /// signal. The binding creates the `Rc<Signal<Option<DockTopology>>>`
+    /// (via `Owner::cache`) and hands a clone here so the coordinator +
+    /// the view fn share one source of truth. `None` = the empty dock; a
+    /// reorganize on it is the identity no-op (see the type docs).
     #[must_use]
-    pub fn new(topology: Rc<Signal<DockTopology>>) -> Self {
+    pub fn new(topology: Rc<Signal<Option<DockTopology>>>) -> Self {
         Self {
             topology,
             split_seq: Cell::new(0),
@@ -1939,7 +1957,7 @@ impl DockReorganizer {
     }
 
     /// (R749 §5.52) Record every applied reorganize onto `stack` as a
-    /// reversible [`SignalEdit<DockTopology>`], so `invoke "undo"` /
+    /// reversible [`SignalEdit<Option<DockTopology>>`], so `invoke "undo"` /
     /// `"redo"` on the stack step the whole layout back and forth — the
     /// editor's workspace history (Phase D seed). Without this the
     /// coordinator mutates the topology signal directly (the R686 behavior).
@@ -1971,11 +1989,11 @@ impl DockReorganizer {
         self.last_outcome.borrow().clone()
     }
 
-    /// Clone the shared topology signal this coordinator mutates, so a
+    /// Clone the shared dock-surface signal this coordinator mutates, so a
     /// panel external sharing this `Rc` can read the live topology JSON
-    /// for introspection through one handle.
+    /// for introspection through one handle. `None` = empty dock.
     #[must_use]
-    pub fn topology(&self) -> Rc<Signal<DockTopology>> {
+    pub fn topology(&self) -> Rc<Signal<Option<DockTopology>>> {
         Rc::clone(&self.topology)
     }
 
@@ -1991,13 +2009,24 @@ impl DockReorganizer {
     /// the `invoke("reorganize" | "drop", …)` wire and the R742 pointer
     /// [`DockPanelExternal::drag_release`] coordinator.
     ///
+    /// (R1084 §5.51) When the surface is empty (`None`) the call is the
+    /// identity no-op — `Ok("empty surface — no-op")`, no panic, no
+    /// counter bump, the signal stays `None`. See the type docs for why
+    /// this is the total definition rather than defensive code.
+    ///
     /// # Errors
     ///
     /// Returns the [`TopologyError`] from the underlying mutation when
     /// the gesture cannot apply (stale panel id, root removal, id
     /// collision). The live topology is left unchanged on error.
     pub fn apply_intent(&self, intent: &DockReorganizeIntent) -> Result<String, TopologyError> {
-        let current = self.topology.get();
+        let Some(current) = self.topology.get() else {
+            // (R1084 §5.51) Empty dock surface: no panel to drag, none to
+            // drop onto — the identity no-op over the whole input type.
+            let outcome = "empty surface — no-op".to_string();
+            *self.last_outcome.borrow_mut() = Some(outcome.clone());
+            return Ok(outcome);
+        };
         // (R1083 §5.51) Mint the stable id the gesture needs — a tab-well id
         // for `Tabify`, a split id otherwise. `Swap` ignores it.
         let new_id = match intent {
@@ -2035,9 +2064,9 @@ impl DockReorganizer {
         // change as a reversible edit (which applies it); else mutate the
         // signal directly (the R686 path).
         if let Some(stack) = &self.undo {
-            stack.record(SignalEdit::to(&self.topology, next, summary.clone()));
+            stack.record(SignalEdit::to(&self.topology, Some(next), summary.clone()));
         } else {
-            self.topology.set(next);
+            self.topology.set(Some(next));
         }
         Ok(summary)
     }
@@ -2058,7 +2087,7 @@ impl DockReorganizeExternal {
     /// editor that does not (yet) wire pointer panels. Equivalent to
     /// [`from_reorganizer`](Self::from_reorganizer) of a new coordinator.
     #[must_use]
-    pub fn new(topology: Rc<Signal<DockTopology>>) -> Self {
+    pub fn new(topology: Rc<Signal<Option<DockTopology>>>) -> Self {
         Self::from_reorganizer(Rc::new(DockReorganizer::new(topology)))
     }
 
@@ -2156,9 +2185,12 @@ impl ExternalIntrospect for DockReorganizeExternal {
             // panels are wired / no drag is in flight.
             "drop_preview" => Some(drop_preview_introspect(self.drop_preview.as_ref())),
             "topology" => {
-                // §2 #7 scene-as-data — the live topology as queryable
-                // JSON. serde cannot fail for the well-formed topology
-                // tree; fall back to Null defensively rather than panic.
+                // §2 #7 scene-as-data — the live dock surface as queryable
+                // JSON. (R1084) `None` (empty dock) serialises to JSON
+                // `null`, so an AI client reads the empty surface as `null`
+                // rather than a fabricated tree. serde cannot fail for the
+                // well-formed `Option<topology>`; fall back to Null
+                // defensively rather than panic.
                 serde_json::to_value(self.reorganizer.topology().get())
                     .ok()
                     .map(IntrospectValue::Json)
@@ -3726,7 +3758,7 @@ mod tests {
 
     #[test]
     fn r1081_drag_release_over_another_panel_reorganizes_via_shared_coordinator() {
-        let topology = Rc::new(Signal::new(ab_topology()));
+        let topology = Rc::new(Signal::new(Some(ab_topology())));
         let reorganizer = Rc::new(DockReorganizer::new(Rc::clone(&topology)));
         let mut ext = DockPanelExternal::new("a").with_reorganizer(Rc::clone(&reorganizer));
         let _ = ext.begin_drag();
@@ -3742,7 +3774,7 @@ mod tests {
 
     #[test]
     fn r1081_drag_release_over_no_panel_tears_off() {
-        let topology = Rc::new(Signal::new(ab_topology()));
+        let topology = Rc::new(Signal::new(Some(ab_topology())));
         let reorganizer = Rc::new(DockReorganizer::new(topology));
         let mut ext = DockPanelExternal::new("a").with_reorganizer(reorganizer);
         let _ = ext.begin_drag();
@@ -3784,7 +3816,7 @@ mod tests {
 
     #[test]
     fn r1081_drag_cancel_discards_without_committing() {
-        let topology = Rc::new(Signal::new(ab_topology()));
+        let topology = Rc::new(Signal::new(Some(ab_topology())));
         let reorganizer = Rc::new(DockReorganizer::new(topology));
         let preview = Rc::new(Signal::new(None));
         let mut ext = DockPanelExternal::new("a")
@@ -3828,7 +3860,7 @@ mod tests {
     fn r1081_shared_coordinator_means_one_split_seq_across_both_panels() {
         // Two panel externals sharing ONE coordinator: a split minted by
         // one is visible to the other (no `reorg-split-{n}` collision).
-        let topology = Rc::new(Signal::new(ab_topology()));
+        let topology = Rc::new(Signal::new(Some(ab_topology())));
         let reorganizer = Rc::new(DockReorganizer::new(topology));
         let mut a = DockPanelExternal::new("a").with_reorganizer(Rc::clone(&reorganizer));
         let mut b = DockPanelExternal::new("b").with_reorganizer(Rc::clone(&reorganizer));
@@ -4936,7 +4968,7 @@ mod reorganize_tests {
         // R1082.1 audit fix: the in-flight pointer drag must be observable
         // on the DockReorganizeExternal (the canonical AI reorganize tag),
         // not only on the per-panel externals.
-        let topology = Rc::new(Signal::new(abc_topology()));
+        let topology = Rc::new(Signal::new(Some(abc_topology())));
         let preview = Rc::new(Signal::new(None));
         let reorganizer = Rc::new(DockReorganizer::new(topology));
         let ext = DockReorganizeExternal::from_reorganizer(reorganizer)
@@ -4970,7 +5002,7 @@ mod reorganize_tests {
         // R1082.1 audit fix: apply_intent is the SSOT for last_outcome on
         // BOTH success and rejection, so a failed pointer drag (which drops
         // the Result) still surfaces "rejected: …" to query("last_outcome").
-        let topology = Rc::new(Signal::new(abc_topology()));
+        let topology = Rc::new(Signal::new(Some(abc_topology())));
         let reorganizer = DockReorganizer::new(topology);
         // Swap onto a stale panel id → TopologyError.
         let err = reorganizer
@@ -5086,7 +5118,7 @@ mod reorganize_tests {
 
     #[test]
     fn r686_external_invoke_center_swaps_topology_signal() {
-        let signal = Rc::new(Signal::new(abc_topology()));
+        let signal = Rc::new(Signal::new(Some(abc_topology())));
         let mut ext = DockReorganizeExternal::new(Rc::clone(&signal));
         let payload = IntrospectValue::Json(serde_json::json!({
             "source": "a", "target": "b", "zone": "Center",
@@ -5094,18 +5126,22 @@ mod reorganize_tests {
         let result = ext.invoke("reorganize", payload).unwrap();
         assert!(matches!(result, IntrospectValue::Text(_)));
         // The shared signal now holds the swapped topology.
-        assert_eq!(signal.get().panel_ids(), vec!["b", "a", "c"]);
+        assert_eq!(signal.get().unwrap().panel_ids(), vec!["b", "a", "c"]);
     }
 
     #[test]
     fn r749_with_undo_makes_reorganize_reversible() {
         use pinion_core::undo::UndoStack;
-        let signal = Rc::new(Signal::new(abc_topology()));
+        let signal = Rc::new(Signal::new(Some(abc_topology())));
         let stack = Rc::new(UndoStack::new());
         let mut ext = DockReorganizeExternal::from_reorganizer(Rc::new(
             DockReorganizer::new(Rc::clone(&signal)).with_undo(Rc::clone(&stack)),
         ));
-        assert_eq!(signal.get().panel_ids(), vec!["a", "b", "c"], "boot layout");
+        assert_eq!(
+            signal.get().unwrap().panel_ids(),
+            vec!["a", "b", "c"],
+            "boot layout"
+        );
         // Swap a <-> b: recorded as one reversible topology edit.
         ext.invoke(
             "reorganize",
@@ -5113,7 +5149,7 @@ mod reorganize_tests {
         )
         .unwrap();
         assert_eq!(
-            signal.get().panel_ids(),
+            signal.get().unwrap().panel_ids(),
             vec!["b", "a", "c"],
             "reorganize applied"
         );
@@ -5121,13 +5157,13 @@ mod reorganize_tests {
         // Undo restores the prior layout; redo re-applies it.
         assert!(stack.undo());
         assert_eq!(
-            signal.get().panel_ids(),
+            signal.get().unwrap().panel_ids(),
             vec!["a", "b", "c"],
             "undo restored the layout"
         );
         assert!(stack.redo());
         assert_eq!(
-            signal.get().panel_ids(),
+            signal.get().unwrap().panel_ids(),
             vec!["b", "a", "c"],
             "redo re-applied"
         );
@@ -5135,7 +5171,7 @@ mod reorganize_tests {
 
     #[test]
     fn r686_external_invoke_edge_split_inserts_and_bumps_seq() {
-        let signal = Rc::new(Signal::new(abc_topology()));
+        let signal = Rc::new(Signal::new(Some(abc_topology())));
         let mut ext = DockReorganizeExternal::new(Rc::clone(&signal));
         assert_eq!(ext.split_seq(), 0);
         let payload = IntrospectValue::Json(serde_json::json!({
@@ -5147,16 +5183,17 @@ mod reorganize_tests {
         assert!(
             signal
                 .get()
+                .unwrap()
                 .split_ids()
                 .iter()
                 .any(|id| id.starts_with("reorg-split-"))
         );
-        assert_eq!(signal.get().leaf_count(), 3);
+        assert_eq!(signal.get().unwrap().leaf_count(), 3);
     }
 
     #[test]
     fn r686_external_invoke_swap_does_not_bump_seq() {
-        let signal = Rc::new(Signal::new(abc_topology()));
+        let signal = Rc::new(Signal::new(Some(abc_topology())));
         let mut ext = DockReorganizeExternal::new(signal);
         ext.invoke(
             "reorganize",
@@ -5169,7 +5206,7 @@ mod reorganize_tests {
 
     #[test]
     fn r686_external_invoke_non_json_payload_is_type_mismatch() {
-        let signal = Rc::new(Signal::new(abc_topology()));
+        let signal = Rc::new(Signal::new(Some(abc_topology())));
         let mut ext = DockReorganizeExternal::new(signal);
         let err = ext
             .invoke("reorganize", IntrospectValue::Text("a:b:Center".into()))
@@ -5179,7 +5216,7 @@ mod reorganize_tests {
 
     #[test]
     fn r686_external_invoke_unknown_zone_is_rejected() {
-        let signal = Rc::new(Signal::new(abc_topology()));
+        let signal = Rc::new(Signal::new(Some(abc_topology())));
         let mut ext = DockReorganizeExternal::new(signal);
         let err = ext
             .invoke(
@@ -5194,7 +5231,7 @@ mod reorganize_tests {
 
     #[test]
     fn r686_external_invoke_stale_panel_rejected_topology_unchanged() {
-        let signal = Rc::new(Signal::new(abc_topology()));
+        let signal = Rc::new(Signal::new(Some(abc_topology())));
         let mut ext = DockReorganizeExternal::new(Rc::clone(&signal));
         let before = signal.get();
         let err = ext
@@ -5212,7 +5249,7 @@ mod reorganize_tests {
 
     #[test]
     fn r686_external_unknown_action_is_unknown_path() {
-        let signal = Rc::new(Signal::new(abc_topology()));
+        let signal = Rc::new(Signal::new(Some(abc_topology())));
         let mut ext = DockReorganizeExternal::new(signal);
         let err = ext.invoke("teleport", IntrospectValue::Null).unwrap_err();
         assert_eq!(err, InvokeError::UnknownPath);
@@ -5238,7 +5275,7 @@ mod reorganize_tests {
         // The client hands raw cursor + observed rects; the substrate
         // classifies the centre of "b" + swaps "a" onto it — no client
         // re-implements dock_drop_zone_for.
-        let signal = Rc::new(Signal::new(abc_topology()));
+        let signal = Rc::new(Signal::new(Some(abc_topology())));
         let mut ext = DockReorganizeExternal::new(Rc::clone(&signal));
         let payload = IntrospectValue::Json(serde_json::json!({
             "source": "a",
@@ -5247,14 +5284,14 @@ mod reorganize_tests {
         }));
         let result = ext.invoke("drop", payload).unwrap();
         assert!(matches!(result, IntrospectValue::Text(_)));
-        assert_eq!(signal.get().panel_ids(), vec!["b", "a", "c"]);
+        assert_eq!(signal.get().unwrap().panel_ids(), vec!["b", "a", "c"]);
         // Centre = swap → no split minted.
         assert_eq!(ext.split_seq(), 0);
     }
 
     #[test]
     fn r687_external_drop_edge_resolves_split_insert_in_substrate() {
-        let signal = Rc::new(Signal::new(abc_topology()));
+        let signal = Rc::new(Signal::new(Some(abc_topology())));
         let mut ext = DockReorganizeExternal::new(Rc::clone(&signal));
         // Cursor near b's left edge (b spans x=200..400).
         let payload = IntrospectValue::Json(serde_json::json!({
@@ -5264,10 +5301,15 @@ mod reorganize_tests {
         }));
         ext.invoke("drop", payload).unwrap();
         assert_eq!(ext.split_seq(), 1, "edge drop mints a reorg split");
-        assert_eq!(signal.get().leaf_count(), 3, "a relocated, not duplicated");
+        assert_eq!(
+            signal.get().unwrap().leaf_count(),
+            3,
+            "a relocated, not duplicated"
+        );
         assert!(
             signal
                 .get()
+                .unwrap()
                 .split_ids()
                 .iter()
                 .any(|id| id.starts_with("reorg-split-"))
@@ -5277,7 +5319,7 @@ mod reorganize_tests {
     #[test]
     fn r687_external_drop_over_source_is_noop() {
         // Cursor over "a" itself (the source) → no valid target → cancel.
-        let signal = Rc::new(Signal::new(abc_topology()));
+        let signal = Rc::new(Signal::new(Some(abc_topology())));
         let mut ext = DockReorganizeExternal::new(Rc::clone(&signal));
         let before = signal.get();
         let payload = IntrospectValue::Json(serde_json::json!({
@@ -5293,7 +5335,7 @@ mod reorganize_tests {
 
     #[test]
     fn r687_external_drop_malformed_payload_is_type_mismatch() {
-        let signal = Rc::new(Signal::new(abc_topology()));
+        let signal = Rc::new(Signal::new(Some(abc_topology())));
         let mut ext = DockReorganizeExternal::new(signal);
         // Missing cursor field.
         let err = ext
@@ -5309,7 +5351,7 @@ mod reorganize_tests {
 
     #[test]
     fn r686_external_query_topology_returns_json() {
-        let signal = Rc::new(Signal::new(abc_topology()));
+        let signal = Rc::new(Signal::new(Some(abc_topology())));
         let ext = DockReorganizeExternal::new(signal);
         let IntrospectValue::Json(value) = ext.query("topology").unwrap() else {
             panic!("topology query must return JSON");
@@ -5323,7 +5365,7 @@ mod reorganize_tests {
 
     #[test]
     fn r686_external_intervene_slots_are_read_only() {
-        let signal = Rc::new(Signal::new(abc_topology()));
+        let signal = Rc::new(Signal::new(Some(abc_topology())));
         let mut ext = DockReorganizeExternal::new(signal);
         assert_eq!(
             ext.intervene("topology", IntrospectValue::Null),
@@ -5333,6 +5375,86 @@ mod reorganize_tests {
             ext.intervene("nonexistent", IntrospectValue::Null),
             Err(InterveneError::UnknownPath),
         );
+    }
+
+    // ── R1084 §5.51 — total over the empty (`None`) dock surface ────
+
+    #[test]
+    fn r1084_apply_intent_on_empty_surface_is_identity_no_op() {
+        let signal: Rc<Signal<Option<DockTopology>>> = Rc::new(Signal::new(None));
+        let reorganizer = DockReorganizer::new(Rc::clone(&signal));
+        let outcome = reorganizer
+            .apply_intent(&DockReorganizeIntent::Tabify {
+                source: "a".into(),
+                target: "b".into(),
+            })
+            .expect("an empty-surface reorganize is Ok(no-op), not Err");
+        assert_eq!(outcome, "empty surface — no-op");
+        assert!(signal.get().is_none(), "the empty surface stays empty");
+        assert_eq!(reorganizer.split_seq(), 0, "no id minted on a no-op");
+        assert_eq!(reorganizer.tabs_seq(), 0);
+        assert_eq!(
+            reorganizer.last_outcome().as_deref(),
+            Some("empty surface — no-op"),
+        );
+    }
+
+    #[test]
+    fn r1084_apply_intent_with_undo_on_empty_surface_records_nothing() {
+        let signal: Rc<Signal<Option<DockTopology>>> = Rc::new(Signal::new(None));
+        let stack = Rc::new(pinion_core::undo::UndoStack::new());
+        let reorganizer = DockReorganizer::new(Rc::clone(&signal)).with_undo(Rc::clone(&stack));
+        reorganizer
+            .apply_intent(&DockReorganizeIntent::Swap {
+                source: "a".into(),
+                target: "b".into(),
+            })
+            .expect("no-op Ok");
+        assert!(!stack.can_undo(), "a no-op records no reversible edit");
+        assert!(signal.get().is_none());
+    }
+
+    #[test]
+    fn r1084_invoke_reorganize_on_empty_surface_is_no_op_not_error() {
+        let signal: Rc<Signal<Option<DockTopology>>> = Rc::new(Signal::new(None));
+        let mut ext = DockReorganizeExternal::new(Rc::clone(&signal));
+        // An AI client may target an empty dock; the honest result is no-op.
+        let res = ext.invoke(
+            "reorganize",
+            IntrospectValue::Json(serde_json::json!({
+                "source": "a", "target": "b", "zone": "Center",
+            })),
+        );
+        assert!(
+            res.is_ok(),
+            "empty-surface reorganize is a no-op, not an error"
+        );
+        assert!(signal.get().is_none());
+    }
+
+    #[test]
+    fn r1084_query_topology_is_json_null_on_empty_surface() {
+        let signal: Rc<Signal<Option<DockTopology>>> = Rc::new(Signal::new(None));
+        let ext = DockReorganizeExternal::new(signal);
+        // §2 #7 — the empty dock reads as JSON null, not a fabricated tree.
+        assert_eq!(
+            ext.query("topology"),
+            Some(IntrospectValue::Json(serde_json::Value::Null)),
+        );
+    }
+
+    #[test]
+    fn r1084_some_surface_still_reorganizes_under_the_option_signal() {
+        // The Some path is unchanged by the Option lift.
+        let signal = Rc::new(Signal::new(Some(abc_topology())));
+        let reorganizer = DockReorganizer::new(Rc::clone(&signal));
+        reorganizer
+            .apply_intent(&DockReorganizeIntent::Swap {
+                source: "a".into(),
+                target: "b".into(),
+            })
+            .expect("swap applies");
+        assert_eq!(signal.get().unwrap().panel_ids(), vec!["b", "a", "c"]);
     }
 }
 
@@ -5648,7 +5770,7 @@ mod tabify_tests {
 
     #[test]
     fn r1083_apply_intent_tabify_mints_well_id_and_bumps_only_tabs_seq() {
-        let signal = Rc::new(Signal::new(ab_topology()));
+        let signal = Rc::new(Signal::new(Some(ab_topology())));
         let reorganizer = DockReorganizer::new(Rc::clone(&signal));
         let outcome = reorganizer
             .apply_intent(&DockReorganizeIntent::Tabify {
@@ -5657,7 +5779,7 @@ mod tabify_tests {
             })
             .expect("tabify applies");
         assert_eq!(outcome, "a -> b");
-        let topo = signal.get();
+        let topo = signal.get().expect("topology present after tabify");
         let (id, panels, _) = first_tabs(topo.root()).expect("well minted");
         assert_eq!(
             id, "reorg-tabs-0",

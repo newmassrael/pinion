@@ -191,16 +191,21 @@ fn use_split_ratio(
         .cache(cache_key, || Signal::new(initial_ratio))
 }
 
-/// (R686 §5.16 §5.45) The live editor topology, owned by the binding
-/// as a reactive `Signal<DockTopology>` so drag-to-reorganize gestures
-/// can mutate it. Seeded once (first `Owner::cache` resolution) with
-/// [`build_editor_topology`]; the [`DockReorganizeExternal`] holds a
-/// clone and `set`s a mutated topology on each gesture, and the view
-/// fn's `get()` subscription re-renders the new layout.
-fn use_editor_topology() -> Rc<Signal<DockTopology>> {
+/// (R686 §5.16 §5.45) The live editor dock surface, owned by the binding
+/// as a reactive `Signal<Option<DockTopology>>` so drag-to-reorganize
+/// gestures can mutate it. (R1084 §5.51) The dock-surface signal is
+/// `Option`-typed because an empty dock (`None`) is a first-class state
+/// of the dock model — the editor seeds `Some(build_editor_topology())`
+/// and never empties, but it shares the universal `Option` surface type
+/// the reorganize coordinator is total over. The [`DockReorganizeExternal`]
+/// holds a clone and `set`s `Some(mutated)` on each gesture; the view fn's
+/// `get()` subscription re-renders the new layout.
+fn use_editor_topology() -> Rc<Signal<Option<DockTopology>>> {
     Owner::current()
         .expect("hello-dock-panels-editor: view fn runs inside owner scope")
-        .cache("editor_topology", || Signal::new(build_editor_topology()))
+        .cache("editor_topology", || {
+            Signal::new(Some(build_editor_topology()))
+        })
 }
 
 /// (R749 §5.52) The shared reorganize [`UndoStack`] — the editor's
@@ -545,31 +550,38 @@ impl WidgetCore for DockPanelsEditorView {
         // `CoreShell::reconcile_externals` re-runs this factory when the
         // topology Signal changes, so the new split registers its
         // `SplitterExternal` (and becomes drag-resizable) automatically.
-        let topology = use_editor_topology().get();
         // (R1081/R1082 §5.51) The ONE shared coordinator + drop-preview —
         // cached so they persist across this factory's re-runs (the R688
         // dynamic external set re-runs on each topology change).
         let reorganizer = use_editor_reorganizer();
         let preview = use_drop_preview();
-        // (R1083) One external per Split + one per panel (`panel_count`
-        // counts tab-well panels individually, unlike `leaf_count`) + the
-        // reorganize + undo anchors.
-        let mut externals = Vec::with_capacity(topology.split_count() + topology.panel_count() + 2);
-        topology.for_each_split(|id, orientation, ratio| {
-            let signal = use_split_ratio(id.to_string(), ratio);
-            let external = SplitterExternal::new(orientation).attach_ratio(signal);
-            externals.push(ExtraExternal::new(id.to_string(), Box::new(external)));
-        });
-        // (R1082 §5.51) One R742 drag External per panel, registered at the
-        // panel root tag (= panel_id, the view_dock_panel root). Each shares
-        // the ONE coordinator (a pointer dock + an AI invoke mint from one
-        // split_seq) and the ONE preview (the dragged panel's drag_to writes
-        // the affordance the target panel paints).
-        for panel_id in topology.panel_ids() {
-            let panel = DockPanelExternal::new(panel_id.to_string())
-                .with_reorganizer(Rc::clone(&reorganizer))
-                .with_drop_preview(Rc::clone(&preview));
-            externals.push(ExtraExternal::new(panel_id.to_string(), Box::new(panel)));
+        let mut externals = Vec::new();
+        // (R1084 §5.51) The dock surface may be empty (`None`, a first-class
+        // state); only a `Some(topology)` contributes splitter + panel
+        // externals. The reorganize + undo anchors register unconditionally
+        // (an AI client can `invoke` reorganize on an empty surface — it is
+        // the identity no-op). The editor seeds `Some` and never empties, but
+        // it shares the universal `Option` dock surface.
+        if let Some(topology) = use_editor_topology().get() {
+            // (R1083) One external per Split + one per panel (`panel_count`
+            // counts tab-well panels individually, unlike `leaf_count`).
+            externals.reserve(topology.split_count() + topology.panel_count());
+            topology.for_each_split(|id, orientation, ratio| {
+                let signal = use_split_ratio(id.to_string(), ratio);
+                let external = SplitterExternal::new(orientation).attach_ratio(signal);
+                externals.push(ExtraExternal::new(id.to_string(), Box::new(external)));
+            });
+            // (R1082 §5.51) One R742 drag External per panel, registered at the
+            // panel root tag (= panel_id, the view_dock_panel root). Each shares
+            // the ONE coordinator (a pointer dock + an AI invoke mint from one
+            // split_seq) and the ONE preview (the dragged panel's drag_to writes
+            // the affordance the target panel paints).
+            for panel_id in topology.panel_ids() {
+                let panel = DockPanelExternal::new(panel_id.to_string())
+                    .with_reorganizer(Rc::clone(&reorganizer))
+                    .with_drop_preview(Rc::clone(&preview));
+                externals.push(ExtraExternal::new(panel_id.to_string(), Box::new(panel)));
+            }
         }
         // (R686/R1081/R1082.1 §5.45 §5.51) The invoke (RPC) drive of dock
         // reorganize shares the SAME coordinator AND the SAME live preview as
@@ -634,21 +646,27 @@ impl WidgetCore for DockPanelsEditorView {
         // panel id to the live zone iff that panel is the current drop
         // target — the panel under the cursor paints its zone affordance.
         let preview = use_drop_preview().get();
-        view_dock_surface(
-            &topology,
-            |panel_id| panel_content_for(panel_id, state, &theme),
-            |split_id, initial_ratio| DockSplitState {
-                ratio_signal: use_split_ratio(split_id.to_string(), initial_ratio),
-                dragging: false,
-            },
-            |panel_id| {
-                preview
-                    .as_ref()
-                    .filter(|p| p.target == panel_id)
-                    .map(|p| p.zone)
-            },
-            &theme,
-        )
+        // (R1084 §5.51) The dock surface is total over the empty (`None`)
+        // state — an empty dock paints a bare container. The editor seeds
+        // `Some` and never empties, but the view honours the universal Option.
+        match topology {
+            Some(topology) => view_dock_surface(
+                &topology,
+                |panel_id| panel_content_for(panel_id, state, &theme),
+                |split_id, initial_ratio| DockSplitState {
+                    ratio_signal: use_split_ratio(split_id.to_string(), initial_ratio),
+                    dragging: false,
+                },
+                |panel_id| {
+                    preview
+                        .as_ref()
+                        .filter(|p| p.target == panel_id)
+                        .map(|p| p.zone)
+                },
+                &theme,
+            ),
+            None => Scene::Container(ContainerNode::new(vec![])),
+        }
     }
 
     fn event_name(event: Self::Event) -> &'static str {
@@ -969,7 +987,7 @@ mod tests {
                 "Owner::cache memoises the topology signal"
             );
             assert_eq!(
-                a.get().panel_ids(),
+                a.get().unwrap().panel_ids(),
                 vec!["toolbar", "outliner", "viewport", "properties", "console"],
             );
         });
@@ -989,7 +1007,7 @@ mod tests {
             .unwrap();
             // Signal now holds the swapped topology.
             assert_eq!(
-                topo.get().panel_ids(),
+                topo.get().unwrap().panel_ids(),
                 vec!["toolbar", "outliner", "console", "properties", "viewport"],
             );
             // The view fn reads the mutated topology + still renders the
@@ -1010,6 +1028,7 @@ mod tests {
             let topo = use_editor_topology();
             let mutated = topo
                 .get()
+                .unwrap()
                 .remove_leaf("console")
                 .unwrap()
                 .split_leaf_into(
@@ -1021,7 +1040,7 @@ mod tests {
                     DockSplitPosition::Second,
                 )
                 .unwrap();
-            topo.set(mutated);
+            topo.set(Some(mutated));
             let scene =
                 <DockPanelsEditorView as WidgetCore>::view(ButtonState::Idle, &Frame::default());
             assert!(
