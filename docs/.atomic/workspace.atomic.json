@@ -16260,6 +16260,40 @@
         "LESSON: when the named next-slice (param schema) has no uniform SSOT to cross-check, completing an ADJACENT honest gap on the same surface (window geometry: position->size, same declared-not-live discipline) is higher-value than forcing the messy slice without a consumer."
       ]
     },
+    "R1092.1": {
+      "decision_summary": "LIVE VERIFICATION finding (0 LOC, no round): the R1088 carry \"live OS Moved / set_outer_position-under-grab NOT verified headlessly (HW-gated)\" is CLEARED for the platform-feasibility question it gated. On re-checking the actual environment (the dev box HAS a real :0 Xorg + gnome-shell/mutter + GPU + libXtst, contradicting the earlier \"environment can't\" framing), a throwaway ctypes(libX11/libXtst)+xwininfo probe drove the EXISTING scene/window_move over a real visible hello-dock-panels floating window and read the actual OS geometry. Result: mutter honors set_outer_position to the pixel, INCLUDING during an active pointer grab. Conclusion: live dock tear-off drag-follow is PLATFORM-FEASIBLE on mutter; no follower-window fallback needed; only the coordinator code + winit CursorMoved-during-grab delivery remain (buildable, R1080-R1085 pattern). No production code changed; the probe is a scratchpad throwaway (not committed).",
+      "changes_bullets": [
+        "No production code change (0 LOC). This entry records a live-verification finding against the existing R1087/R1088 window-position substrate, run via a throwaway ctypes+xwininfo probe (scratchpad, not committed per the no-temp-test-files rule)."
+      ],
+      "verification_bullets": [
+        "Probe drove scene/window_move over a REAL visible hello-dock-panels floating window on :0 (Xorg + gnome-shell/mutter, real GPU, scale 1.0); OS geometry read via xwininfo. (1) Plain move: RPC-commanded logical delta == observed OS physical delta to the pixel ((520,260)=>(520,260)); constant +37px Y = gnome title-bar decoration, cancels in the delta. (2) Under an ACTIVE pointer grab, cross-checked two independent ways that AGREE pixel-exact: (2a) XGrabPointer active grab held by the probe -> commanded (510,290) == OS (510,290); (2b) real synthesized button-1 hold over the main window (winit implicit grab, zero physical motion -> no app-drag/WM-move trips) -> commanded (-260,-180) == OS (-260,-180). So a pointer grab does NOT block ConfigureWindow for a different window on this WM. Probe safety: try/finally always released the button + ungrabbed + restored the cursor; no stray process; X auto-releases grabs on client exit (a post-completion XCloseDisplay/use-after-close segfault was cosmetic, after all results printed + cursor restored)."
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.41"
+      ],
+      "carry_forward_bullets": [
+        "Still HW-gated (genuinely): the winit CursorMoved-during-grab -> set_outer_position DELIVERY path (the full live coordinator running, not an RPC-injected move) is still only verifiable by a human-observed live drag; that is the coordinator round's acceptance, not a platform unknown anymore.",
+        "The coordinator itself (threshold detach -> per-move reposition -> redock/cancel) + the additive drag-API contract extension exposing the absolute cursor remain to be BUILT (buildable + unit-testable headlessly, R1080-R1085 pattern); R1093 default is still the Phase B DCC campaign unless the tear-off coordinator is explicitly prioritized.",
+        "LESSON: when a carry says \"HW-gated / can't verify\", re-check the ACTUAL environment before repeating the label — a real :0 display was present all along; the true constraint was consent-to-occupy-the-live-desktop + non-deterministic visual verification, not impossibility. A 50-line ctypes+xwininfo delta probe closed the platform unknown deterministically."
+      ],
+      "publishable_decision_summary": "LIVE VERIFICATION finding (0 LOC, no round): the R1088 carry \"live OS Moved / set_outer_position-under-grab NOT verified headlessly (HW-gated)\" is CLEARED for the platform-feasibility question it gated. On re-checking the actual environment (the dev box HAS a real :0 Xorg + gnome-shell/mutter + GPU + libXtst, contradicting the earlier \"environment can't\" framing), a throwaway ctypes(libX11/libXtst)+xwininfo probe drove the EXISTING scene/window_move over a real visible hello-dock-panels floating window and read the actual OS geometry. Result: mutter honors set_outer_position to the pixel, INCLUDING during an active pointer grab. Conclusion: live dock tear-off drag-follow is PLATFORM-FEASIBLE on mutter; no follower-window fallback needed; only the coordinator code + winit CursorMoved-during-grab delivery remain (buildable, R1080-R1085 pattern). No production code changed; the probe is a scratchpad throwaway (not committed).",
+      "publishable_changes_bullets": [
+        "No production code change (0 LOC). This entry records a live-verification finding against the existing R1087/R1088 window-position substrate, run via a throwaway ctypes+xwininfo probe (scratchpad, not committed per the no-temp-test-files rule)."
+      ],
+      "publishable_verification_bullets": [
+        "Probe drove scene/window_move over a REAL visible hello-dock-panels floating window on :0 (Xorg + gnome-shell/mutter, real GPU, scale 1.0); OS geometry read via xwininfo. (1) Plain move: RPC-commanded logical delta == observed OS physical delta to the pixel ((520,260)=>(520,260)); constant +37px Y = gnome title-bar decoration, cancels in the delta. (2) Under an ACTIVE pointer grab, cross-checked two independent ways that AGREE pixel-exact: (2a) XGrabPointer active grab held by the probe -> commanded (510,290) == OS (510,290); (2b) real synthesized button-1 hold over the main window (winit implicit grab, zero physical motion -> no app-drag/WM-move trips) -> commanded (-260,-180) == OS (-260,-180). So a pointer grab does NOT block ConfigureWindow for a different window on this WM. Probe safety: try/finally always released the button + ungrabbed + restored the cursor; no stray process; X auto-releases grabs on client exit (a post-completion XCloseDisplay/use-after-close segfault was cosmetic, after all results printed + cursor restored)."
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.41"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Still HW-gated (genuinely): the winit CursorMoved-during-grab -> set_outer_position DELIVERY path (the full live coordinator running, not an RPC-injected move) is still only verifiable by a human-observed live drag; that is the coordinator round's acceptance, not a platform unknown anymore.",
+        "The coordinator itself (threshold detach -> per-move reposition -> redock/cancel) + the additive drag-API contract extension exposing the absolute cursor remain to be BUILT (buildable + unit-testable headlessly, R1080-R1085 pattern); R1093 default is still the Phase B DCC campaign unless the tear-off coordinator is explicitly prioritized.",
+        "LESSON: when a carry says \"HW-gated / can't verify\", re-check the ACTUAL environment before repeating the label — a real :0 display was present all along; the true constraint was consent-to-occupy-the-live-desktop + non-deterministic visual verification, not impossibility. A 50-line ctypes+xwininfo delta probe closed the platform unknown deterministically."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
