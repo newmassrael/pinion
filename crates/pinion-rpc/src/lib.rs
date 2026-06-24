@@ -57,8 +57,8 @@ pub use commands::{
     CommandsError, PendingCommandView, list_in_flight_commands, list_pending_commands,
 };
 pub use dispatch::{
-    ClickButton, DeferredInput, DispatchContext, DragButton, KeyWireState, PacingState, Request,
-    RequestId, Response, RpcError, dispatch, dispatch_parsed, parse_request,
+    ClickButton, DeclaredWindow, DeferredInput, DispatchContext, DragButton, KeyWireState,
+    PacingState, Request, RequestId, Response, RpcError, dispatch, dispatch_parsed, parse_request,
     unknown_window_verdict,
 };
 pub use dry_run::{DryRunError, dry_run};

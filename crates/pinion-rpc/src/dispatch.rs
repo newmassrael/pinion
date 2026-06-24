@@ -451,6 +451,17 @@ pub struct DispatchContext<'a> {
     /// [`PacingState::DefaultPolicy`] ("no override installed", a
     /// real value of the axis).
     pub pacing_state: Option<PacingState>,
+    /// R1087 §5.16 §5.41 §2 #7 PR-31 — the windows the binding currently
+    /// DECLARES (id + title + position), resolved by the embedder before
+    /// dispatch from [`pinion_shell::WidgetView::windows_signal`] (the
+    /// [`Self::input_state`] by-value pattern). Consumed by
+    /// `scene/windows` — the scene-as-data READ that makes a torn-off
+    /// panel's floating-window placement observable, not just its
+    /// existence. `None` surfaces `DeclaredWindowsUnavailable` (a backend
+    /// or fixture that resolved no declared set), distinct from an empty
+    /// list ("the binding declares no windows"). Resolved only for the
+    /// `scene/windows` method, so every other dispatch pays nothing.
+    pub declared_windows: Option<Vec<DeclaredWindow>>,
     /// R889 §5.49 — the embedder's unknown-window verdict: `Some(id)`
     /// when the request's out-of-band `{window: "<id>"}` scope names a
     /// window the binding does not know
@@ -914,6 +925,28 @@ pub enum DeferredInput {
 // wire API surface stays `pinion_rpc::PacingState`.
 pub use pinion_runtime::PacingState;
 
+/// R1087 §5.16 §5.41 §2 #7 PR-31 — one entry in the `scene/windows`
+/// read: a window the binding currently DECLARES, projected to the wire.
+///
+/// The shell maps each [`pinion_shell::WindowSpec`] it reconciles into one
+/// of these (`pinion-shell` depends on `pinion-rpc`, so the domain → wire
+/// map runs shell-side; this crate owns only the wire shape, the
+/// `InputStateSnapshot`/`PacingState` read-payload precedent). `position`
+/// is the SSOT logical-pixel placement (`[x, y]` on the wire, `null` for a
+/// window-manager-placed window) — scene-as-data observability for the
+/// floating-panel-as-positioned-window model so an AI can read where every
+/// torn-off panel's window sits, not just that it exists.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct DeclaredWindow {
+    /// AI-facing window handle (the `{window: "<id>"}` scope key).
+    pub id: String,
+    /// OS window title (the platform decoration string).
+    pub title: String,
+    /// Declared outer position in logical pixels, or `null` when
+    /// placement is left to the window manager (every pre-R1087 window).
+    pub position: Option<(i32, i32)>,
+}
+
 impl<'a> DispatchContext<'a> {
     /// Build a context from the three borrowed runtime handles.
     /// `paint_producer` starts unset — callers that want
@@ -945,6 +978,7 @@ impl<'a> DispatchContext<'a> {
             screenshot: None,
             input_state: None,
             pacing_state: None,
+            declared_windows: None,
             unknown_window: None,
         }
     }
@@ -1150,6 +1184,15 @@ impl<'a> DispatchContext<'a> {
         self
     }
 
+    /// Builder: install the binding's declared-window set for the
+    /// dispatch (R1087 §5.16 §5.41 §2 #7 PR-31). Consumed by
+    /// `scene/windows`; absent -> `DeclaredWindowsUnavailable`.
+    #[must_use]
+    pub fn with_declared_windows(mut self, windows: Vec<DeclaredWindow>) -> Self {
+        self.declared_windows = Some(windows);
+        self
+    }
+
     /// Builder: record the embedder's unknown-window verdict (R889
     /// §5.49). [`dispatch_parsed`] rejects the request with `-32602
     /// unknown_window` before method routing; see
@@ -1331,6 +1374,9 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
     let input_state = ctx.input_state.take();
     // R888 §5.49 — same single-consumer take as `input_state`.
     let pacing_state = ctx.pacing_state.take();
+    // R1087 §5.16 §5.41 §2 #7 — declared-window set; same single-consumer
+    // take. `scene/windows` is the only reader; owned (carries a `Vec`).
+    let declared_windows = ctx.declared_windows.take();
     // R50.X.1 §5.37.2 — font registry is shared (read-only borrow);
     // copy the optional reference out for the dispatch lifetime so
     // the registry slot itself is not consumed.
@@ -1639,6 +1685,7 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
             HandlerKind::Read,
         ),
         "scene/pacing_state" => (handle_scene_pacing_state(pacing_state), HandlerKind::Read),
+        "scene/windows" => (handle_scene_windows(declared_windows), HandlerKind::Read),
         "scene/input_state" => (handle_scene_input_state(input_state), HandlerKind::Read),
         "scene/animate_settle" => (
             handle_scene_animate_settle(runtime_owner),
@@ -2227,6 +2274,30 @@ fn handle_scene_pacing_state(state: Option<PacingState>) -> Result<Value, RpcErr
         PacingState::Override(n) => Value::Number(n.into()),
     };
     Ok(serde_json::json!({ "fps": fps }))
+}
+
+/// R1087 §5.16 §5.41 §2 #7 PR-31 — `scene/windows` handler: list the
+/// windows the binding currently DECLARES, each with its title and
+/// declared logical-pixel position (`[x, y]` or `null` for
+/// window-manager placement).
+///
+/// Read-only — `HandlerKind::Read` upstream skips the [`SceneRevision`]
+/// bump. `None` (no declared set resolved — a backend/fixture that does
+/// not thread one) errors with `DeclaredWindowsUnavailable`, the
+/// `PacingStateUnavailable` honesty parity; an empty `Vec` is a real
+/// value ("the binding declares no windows", e.g. a single-window binding
+/// that opted out of `windows_signal`). This is the scene-as-data READ
+/// for the floating-panel-as-positioned-window model: an AI reads where
+/// every torn-off panel's OS window sits, satisfying §2 #7 for the
+/// position state the binding's tear-off reducer produces.
+fn handle_scene_windows(windows: Option<Vec<DeclaredWindow>>) -> Result<Value, RpcError> {
+    let Some(windows) = windows else {
+        return Err(
+            RpcError::invalid_params("declared windows unavailable for this dispatch")
+                .with_data_string("DeclaredWindowsUnavailable"),
+        );
+    };
+    Ok(serde_json::json!({ "windows": windows }))
 }
 
 /// R979 §5.40 §2 #7 — `scene/access` handler: dump the accessibility tree.

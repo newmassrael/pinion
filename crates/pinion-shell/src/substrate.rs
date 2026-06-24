@@ -3888,6 +3888,15 @@ impl<V: WidgetView> ShellCore<V> {
         // input state, pacing, unknown-window verdict) before the
         // split-borrow block; see [`Self::window_scoped_rpc_reads`].
         let window_reads = self.window_scoped_rpc_reads(&request, window_id);
+        // R1087 §5.16 §5.41 §2 #7 PR-31 — resolve the binding's declared
+        // window set for `scene/windows` only (a GLOBAL read, not
+        // window-scoped, so it lives here rather than in
+        // `window_scoped_rpc_reads`). Computed before the disjoint-field
+        // borrow split below because it reads `windows_signal` under
+        // `root_owner`; gated on the method so every other dispatch pays
+        // nothing.
+        let declared_windows =
+            (request.method == "scene/windows").then(|| self.declared_window_specs());
         // R684 atomic 3 §5.16 §5.41 §5.49 — record the viewport the
         // produce closure ran with so the post-dispatch finalize can
         // populate the addressed window's
@@ -4098,6 +4107,11 @@ impl<V: WidgetView> ShellCore<V> {
             }
             if let Some(pacing) = window_reads.pacing_state {
                 ctx = ctx.with_pacing_state(pacing);
+            }
+            // R1087 §5.16 §5.41 §2 #7 PR-31 — the declared-window set
+            // (resolved above, only for `scene/windows`).
+            if let Some(windows) = declared_windows {
+                ctx = ctx.with_declared_windows(windows);
             }
             // R1060 §5.12 §5.16 — the AppShell windowed entry pre-captured
             // the addressed window's live presented surface (only when the
@@ -4642,6 +4656,42 @@ impl<V: WidgetView> ShellCore<V> {
                 })
                 .unwrap_or_default()
         })
+    }
+
+    /// R1087 §5.16 §5.41 §2 #7 PR-31 — the windows the binding currently
+    /// DECLARES, projected to the `scene/windows` wire shape
+    /// ([`pinion_rpc::DeclaredWindow`]: id + title + declared position).
+    ///
+    /// Reads the reactive [`WidgetView::windows_signal`] when the binding
+    /// opted into one (the dock tear-off arc — the SSOT
+    /// [`crate::AppShell::reconcile_windows`] also tracks), otherwise the
+    /// compile-time [`WidgetView::windows`] list (every single-window +
+    /// frozen multi-window binding), so the read is honest for ALL binding
+    /// shapes — a single-window binding still reports its `"main"` window.
+    /// Read under `root_owner` for the same `Owner::cache` signal-identity
+    /// contract [`Self::declared_window_ids`] documents.
+    ///
+    /// This is the scene-as-data observability for the
+    /// floating-panel-as-positioned-window model: the position a binding's
+    /// tear-off reducer writes into the signal is read back here, so an AI
+    /// observes WHERE each torn-off panel's OS window sits, not merely that
+    /// it exists (the §2 #7 obligation for the new `WindowSpec::position`
+    /// state). Resolved only for the `scene/windows` method (gated at the
+    /// dispatch call site), so every other dispatch pays nothing.
+    fn declared_window_specs(&self) -> Vec<pinion_rpc::DeclaredWindow> {
+        let core = &self.core;
+        let specs = core.root_owner().run(|| match V::windows_signal() {
+            Some(sig) => sig.get(),
+            None => V::windows(),
+        });
+        specs
+            .into_iter()
+            .map(|spec| pinion_rpc::DeclaredWindow {
+                id: spec.id.into_owned(),
+                title: spec.title,
+                position: spec.position,
+            })
+            .collect()
     }
 
     /// (R1020 §5.39) Re-derive the keyboard focus enumeration from a fresh,

@@ -1535,6 +1535,25 @@ impl<V: WidgetView> AppShell<V> {
                 self.resume_spec(event_loop, spec, None, false);
             }
         }
+        // R1087 §5.16 PR-31 — move pass: a spec present in BOTH old and
+        // new whose declared position changed reconciles the live OS
+        // window to the new logical-pixel position. Without this the
+        // add/drop passes (id-keyed) would silently swallow a same-id
+        // position change — `window_position_moves` keeps the reconcile
+        // TOTAL over the field. The drag-follow PR-31 builds on top
+        // writes the position signal each pointer move; this is where
+        // each write lands on the real window. (The live move is
+        // HW-gated like every real-window behaviour; the diff is
+        // unit-tested in `r1087_window_position_move_diff_tests`.)
+        for (spec_id, (x, y)) in window_position_moves(&old_specs, &new_specs) {
+            if let Some(window_id) = self.spec_id_to_window_id.get(spec_id.as_str()).copied() {
+                if let Some(slot) = self.windows.get(&window_id) {
+                    if let Some(window) = Self::slot_window(slot) {
+                        window.set_outer_position(LogicalPosition::new(f64::from(x), f64::from(y)));
+                    }
+                }
+            }
+        }
         // Update the cache so the next `reconcile_windows` call
         // diffs against the snapshot the shell just acted on.
         *self.last_known_specs.borrow_mut() = new_specs;
@@ -1575,6 +1594,15 @@ impl<V: WidgetView> AppShell<V> {
             let mut attrs = Window::default_attributes()
                 .with_title(spec.title.clone())
                 .with_inner_size(LogicalSize::new(f64::from(init_w), f64::from(init_h)));
+            // R1087 §5.16 PR-31 — honour the declared logical-pixel outer
+            // position when the binding pins one (the floating dock-panel
+            // tear-off opens its window under the cursor at detach).
+            // `None` — every pre-R1087 spec — leaves placement to the
+            // window manager exactly as before (byte-identical). winit
+            // applies the per-monitor DPI scale to the logical coords.
+            if let Some((x, y)) = spec.position {
+                attrs = attrs.with_position(LogicalPosition::new(f64::from(x), f64::from(y)));
+            }
             // R835 §5.16 — windowless test mode. `PINION_HIDDEN_WINDOW`
             // creates the shell window UNMAPPED (`visible = false`): Vello
             // still renders to the GPU surface and `scene/snapshot` /
@@ -2648,6 +2676,133 @@ fn winit_ime_to_composition(
                 (Vec::new(), false)
             }
         }
+    }
+}
+
+/// R1087 §5.16 §5.41 PR-31 — the pure **move-pass** diff for
+/// [`AppShell::reconcile_windows`]: which already-open windows must have
+/// their OS position reconciled because the binding re-declared a
+/// different [`WindowSpec::position`].
+///
+/// A window appears here iff its `id` is present in **both** `old` and
+/// `new` (so it is neither an add nor a drop — those passes key on id
+/// alone) AND `new` declares a position (`Some`) that differs from what
+/// `old` declared (`old.position != Some(new_pos)`, which also fires when
+/// `old` left placement to the window manager — `None` → first declared
+/// position). A `new` spec that drops back to `None` is **not** a move:
+/// `set_outer_position` cannot hand a window back to WM auto-placement, so
+/// the declared `None` simply leaves the window where it is.
+///
+/// Splitting this out of `reconcile_windows` keeps the genuinely-new logic
+/// pure and unit-testable with no winit event loop (the apply —
+/// `Window::set_outer_position` — stays in the imperative reconcile, its
+/// live effect HW-gated like every other real-window behaviour). It also
+/// makes `reconcile_windows` **total** over the `position` field: pre-R1087
+/// the add/drop passes would silently swallow a same-id position change
+/// (the top-level `new_specs == old_specs` guard sees the diff, then
+/// neither pass acts on it).
+fn window_position_moves(old: &[WindowSpec], new: &[WindowSpec]) -> Vec<(String, (i32, i32))> {
+    let mut moves = Vec::new();
+    for spec in new {
+        let Some(new_pos) = spec.position else {
+            continue;
+        };
+        // Only an id present in `old` is a move — an id only in `new` is
+        // an ADD (resume_spec applies its initial position via
+        // `with_position`, not this pass).
+        if let Some(old_spec) = old.iter().find(|o| o.id == spec.id) {
+            if old_spec.position != Some(new_pos) {
+                moves.push((spec.id.as_ref().to_owned(), new_pos));
+            }
+        }
+    }
+    moves
+}
+
+#[cfg(test)]
+mod r1087_window_position_move_diff_tests {
+    //! R1087 §5.16 §5.41 PR-31 — the pure `window_position_moves` diff
+    //! that drives `reconcile_windows`'s move pass. Forcing consumer for
+    //! the move logic (the live drag-follow runtime consumer is the next
+    //! PR-31 slice) per the test-as-forcing-consumer discipline.
+    use super::{WindowSpec, window_position_moves};
+    use crate::SizeStrategy;
+
+    fn fixed(id: &'static str) -> WindowSpec {
+        WindowSpec::new(
+            id,
+            id,
+            SizeStrategy::Fixed {
+                width: 100,
+                height: 100,
+            },
+        )
+    }
+
+    #[test]
+    fn unchanged_specs_yield_no_moves() {
+        let a = vec![fixed("main"), fixed("torn-x").with_position(40, 50)];
+        // Same lists → the idempotent fast-path never reaches the move
+        // pass, but the diff itself must also report nothing.
+        assert_eq!(window_position_moves(&a, &a), Vec::new());
+    }
+
+    #[test]
+    fn same_id_position_change_is_a_move() {
+        let old = vec![fixed("main"), fixed("torn-x").with_position(40, 50)];
+        let new = vec![fixed("main"), fixed("torn-x").with_position(120, 80)];
+        assert_eq!(
+            window_position_moves(&old, &new),
+            vec![("torn-x".to_owned(), (120, 80))]
+        );
+    }
+
+    #[test]
+    fn first_declared_position_on_existing_window_is_a_move() {
+        // Window existed WM-placed (None); binding now pins a position.
+        let old = vec![fixed("main"), fixed("torn-x")];
+        let new = vec![fixed("main"), fixed("torn-x").with_position(10, 10)];
+        assert_eq!(
+            window_position_moves(&old, &new),
+            vec![("torn-x".to_owned(), (10, 10))]
+        );
+    }
+
+    #[test]
+    fn add_with_position_is_not_a_move() {
+        // `torn-x` is only in `new` → an ADD (resume_spec places it), not
+        // a move. The move pass must leave it to the add pass.
+        let old = vec![fixed("main")];
+        let new = vec![fixed("main"), fixed("torn-x").with_position(10, 10)];
+        assert_eq!(window_position_moves(&old, &new), Vec::new());
+    }
+
+    #[test]
+    fn dropping_back_to_none_is_not_a_move() {
+        // A re-declared `None` cannot un-position a live window
+        // (set_outer_position has no "hand back to WM" form), so it is
+        // deliberately not reported as a move.
+        let old = vec![fixed("torn-x").with_position(40, 50)];
+        let new = vec![fixed("torn-x")];
+        assert_eq!(window_position_moves(&old, &new), Vec::new());
+    }
+
+    #[test]
+    fn multiple_simultaneous_moves_all_reported_in_new_order() {
+        let old = vec![
+            fixed("a").with_position(0, 0),
+            fixed("b").with_position(0, 0),
+            fixed("c").with_position(5, 5),
+        ];
+        let new = vec![
+            fixed("a").with_position(1, 1),
+            fixed("b").with_position(2, 2),
+            fixed("c").with_position(5, 5), // unchanged
+        ];
+        assert_eq!(
+            window_position_moves(&old, &new),
+            vec![("a".to_owned(), (1, 1)), ("b".to_owned(), (2, 2))]
+        );
     }
 }
 

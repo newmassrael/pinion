@@ -456,6 +456,26 @@ fn floating_window_title(panel_id: &str) -> String {
     format!("hello-dock-panels — {panel_id} (floating)")
 }
 
+/// R1087 §5.16 §5.41 PR-31 — the declared logical-pixel position a
+/// torn-off panel's floating window opens at. Pre-R1087 floating windows
+/// were left to the window manager (overlapping at its default spot); a
+/// distinct per-panel cascade offset is the first consumer of
+/// [`WindowSpec::with_position`] — it proves the position flows the binding
+/// → `windows_signal` → `reconcile_windows` → real window arc, and keeps a
+/// multi-tear-off cascade from stacking exactly. The PR-31 drag-follow
+/// (next slice) replaces this fixed offset with the live cursor position
+/// written each pointer move; the SSOT seam is identical (a position on
+/// the spec the shell reconciles).
+fn floating_window_position(panel_id: &str) -> (i32, i32) {
+    let step = match panel_id {
+        INSPECTOR_PANEL_TAG => 0,
+        PROPERTY_PANEL_TAG => 1,
+        VIEWPORT_PANEL_TAG => 2,
+        _ => 3,
+    };
+    (120 + step * 40, 90 + step * 40)
+}
+
 /// `true` iff a floating window for `panel_id` currently exists in
 /// `panels` (the `Signal<Vec<WindowSpec>>` snapshot).
 fn is_panel_floating(panels: &[WindowSpec], panel_id: &str) -> bool {
@@ -483,14 +503,20 @@ fn toggle_panel_floating(panel_id: &str) {
     if let Some(idx) = current.iter().position(|w| w.id == target) {
         current.remove(idx);
     } else {
-        current.push(WindowSpec::new(
-            Cow::Owned(target),
-            floating_window_title(panel_id),
-            SizeStrategy::Fixed {
-                width: FLOATING_W,
-                height: FLOATING_H,
-            },
-        ));
+        let (x, y) = floating_window_position(panel_id);
+        current.push(
+            WindowSpec::new(
+                Cow::Owned(target),
+                floating_window_title(panel_id),
+                SizeStrategy::Fixed {
+                    width: FLOATING_W,
+                    height: FLOATING_H,
+                },
+            )
+            // R1087 §5.16 §5.41 PR-31 — open the floating window at a
+            // declared position (the first `with_position` consumer).
+            .with_position(x, y),
+        );
     }
     signal.set(current);
 }

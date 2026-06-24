@@ -468,13 +468,15 @@ impl SizeStrategy {
 /// floating against a main editor canvas, Settings dialog as a
 /// secondary modal, popover-class overlays, …).
 ///
-/// The triple `(id, title, strategy)` is intentionally minimal: no
-/// position, no decorations, no parent-window relationship,
-/// no transparency hint. Every extra knob can be added behind a
-/// follow-up builder method as a concrete Phase B widget catalog
-/// binding surfaces the substrate-incompleteness signal — this round
-/// only lands what multi-window dispatch + RPC `{window: "<id>"}`
-/// scoping needs.
+/// The core `(id, title, strategy)` triple stays minimal: no
+/// decorations, no parent-window relationship, no transparency hint.
+/// Every extra knob lands behind a follow-up builder method as a concrete
+/// Phase B widget catalog binding surfaces the substrate-incompleteness
+/// signal — R1087 (PR-31 dock tear-off) added the first such field,
+/// [`position`](Self::position) (via [`with_position`](Self::with_position)),
+/// because the floating-panel-follows-cursor model needs a declared,
+/// reconcilable window placement; the rest (decorations, parent
+/// relationship, transparency) await their own forcing consumers.
 ///
 /// `id` is the AI-facing scene/RPC handle (`scene/snapshot {window:
 /// "main"}` / `scene/click {window: "inspector", at: …}`). The
@@ -531,6 +533,29 @@ pub struct WindowSpec {
     /// contract; multi-window bindings can mix strategies per spec
     /// (main: `Fixed`, inspector: `IntrinsicAfterFirstPaint`, …).
     pub strategy: SizeStrategy,
+    /// R1087 §5.16 §5.41 PR-31 — declared **outer** window position in
+    /// **logical** pixels (`(x, y)`, top-left, the same logical frame
+    /// [`SizeStrategy`] sizes in; the OS applies the per-monitor DPI
+    /// scale). `None` (the default for every pre-R1087 binding) leaves
+    /// placement to the window manager exactly as before — byte-identical.
+    ///
+    /// This is the SSOT for the **floating-panel-as-positioned-window**
+    /// model (the PR-31 dock tear-off): a binding declares where a torn-off
+    /// panel's window sits, and the shell reconciles the real OS window to
+    /// match. Honoured at create time by [`crate::AppShell`]'s `resume_spec`
+    /// (`with_position`) and on a same-id position change by the
+    /// `reconcile_windows` move pass (`Window::set_outer_position`), so the
+    /// declared position stays the single source of truth across the
+    /// window's lifetime — a position write to the reactive
+    /// [`pinion_core::Signal<Vec<WindowSpec>>`] is all a binding needs to
+    /// move a window (the drag-follow that PR-31 builds on top).
+    ///
+    /// `#[serde(default)]` so a `Signal<Vec<WindowSpec>>` value serialized
+    /// before this field existed (or any wire form omitting it)
+    /// deserializes to `None` — additive, never a breaking change to the
+    /// reactive primitive's serde shape.
+    #[serde(default)]
+    pub position: Option<(i32, i32)>,
 }
 
 impl WindowSpec {
@@ -546,6 +571,7 @@ impl WindowSpec {
             id: Cow::Borrowed("main"),
             title: title.into(),
             strategy,
+            position: None,
         }
     }
 
@@ -567,7 +593,26 @@ impl WindowSpec {
             id: id.into(),
             title: title.into(),
             strategy,
+            position: None,
         }
+    }
+
+    /// R1087 §5.16 §5.41 PR-31 — declare the window's initial **outer**
+    /// position in **logical** pixels (top-left). Builder form so the
+    /// `#[non_exhaustive]` struct stays constructed only through `main` /
+    /// `new`; chains after either. A binding placing a torn-off dock panel
+    /// under the cursor at detach calls
+    /// `WindowSpec::new(id, title, strategy).with_position(x, y)`.
+    ///
+    /// Setting this on an *already-open* window (re-pushing the spec into
+    /// the reactive signal with a new position) drives the
+    /// `reconcile_windows` move pass — the position is the SSOT the shell
+    /// reconciles the OS window to, so a binding moves a window by writing
+    /// the signal, never by reaching for a winit handle.
+    #[must_use]
+    pub fn with_position(mut self, x: i32, y: i32) -> Self {
+        self.position = Some((x, y));
+        self
     }
 }
 
@@ -1264,6 +1309,59 @@ mod tests {
         let restored: WindowSpec = serde_json::from_str(&json).expect("deserialise");
         assert_eq!(spec, restored);
         assert_eq!(restored.id, Cow::Borrowed("torn-panel-42"));
+    }
+
+    #[test]
+    fn r1087_window_spec_position_round_trips_and_defaults_when_absent() {
+        // R1087 §5.16 PR-31 — `with_position` is the only mutator;
+        // default is `None` (window-manager placement). A declared
+        // position round-trips through serde, and a `Signal<Vec<WindowSpec>>`
+        // value serialized before the field existed (JSON omitting
+        // `position`) deserializes to `None` via `#[serde(default)]` —
+        // additive, never a breaking change to the reactive primitive.
+        let placed = WindowSpec::new(
+            "torn-inspector",
+            "Inspector",
+            SizeStrategy::Fixed {
+                width: 200,
+                height: 150,
+            },
+        )
+        .with_position(120, 90);
+        assert_eq!(placed.position, Some((120, 90)));
+        let restored: WindowSpec =
+            serde_json::from_str(&serde_json::to_string(&placed).expect("serialise"))
+                .expect("deserialise");
+        assert_eq!(placed, restored);
+        assert_eq!(restored.position, Some((120, 90)));
+
+        // The default builder leaves placement to the window manager.
+        let wm_placed = WindowSpec::main(
+            "Main",
+            SizeStrategy::Fixed {
+                width: 1,
+                height: 1,
+            },
+        );
+        assert_eq!(wm_placed.position, None);
+
+        // Legacy JSON (no `position` key) deserializes to `None` via
+        // `#[serde(default)]`. Derive it by stripping the key from a
+        // current serialize so the test stays robust to `SizeStrategy`'s
+        // exact JSON shape. `position` is the last field, so it serializes
+        // as the trailing `,"position":null`.
+        let current = serde_json::to_string(&wm_placed).expect("serialise");
+        assert!(
+            current.contains("\"position\":null"),
+            "current shape carries position:null (serde(default) does not skip): {current}"
+        );
+        let legacy = current.replace(",\"position\":null", "");
+        assert!(
+            !legacy.contains("position"),
+            "legacy JSON omits the position key: {legacy}"
+        );
+        let from_legacy: WindowSpec = serde_json::from_str(&legacy).expect("legacy deserialise");
+        assert_eq!(from_legacy.position, None);
     }
 
     // R683 §5.16 §5.41 — [`WidgetView::windows_signal`] opt-in

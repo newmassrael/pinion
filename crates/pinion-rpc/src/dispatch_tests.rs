@@ -1615,6 +1615,78 @@ fn r888_pacing_state_reports_override_including_paused_zero() {
     }
 }
 
+// ---- R1087 §5.16 §5.41 §2 #7 PR-31 — scene/windows (declared windows) ----
+
+#[test]
+fn r1087_windows_without_declared_set_is_unavailable() {
+    // No embedder pre-resolve (a backend/fixture that threads no declared
+    // set) -> DeclaredWindowsUnavailable, the PacingStateUnavailable honesty
+    // parity — NOT a fake empty list.
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/windows","id":7}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    let err = resp.error.expect("must error without a declared set");
+    assert_eq!(err.code, -32602);
+    assert_eq!(
+        err.data.as_ref().and_then(Value::as_str),
+        Some("DeclaredWindowsUnavailable"),
+    );
+}
+
+#[test]
+fn r1087_windows_reports_id_title_and_position() {
+    // A torn-off panel's positioned floating window is observable as
+    // scene-as-data: id + title + `[x, y]` position; a WM-placed window
+    // reports `null` position.
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let windows = vec![
+        DeclaredWindow {
+            id: "main".to_owned(),
+            title: "Main".to_owned(),
+            position: None,
+        },
+        DeclaredWindow {
+            id: "torn-inspector".to_owned(),
+            title: "Inspector".to_owned(),
+            position: Some((120, 80)),
+        },
+    ];
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_declared_windows(windows);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/windows","id":7}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(resp.error.is_none(), "{:?}", resp.error);
+    assert_eq!(
+        resp.result,
+        Some(serde_json::json!({
+            "windows": [
+                { "id": "main", "title": "Main", "position": null },
+                { "id": "torn-inspector", "title": "Inspector", "position": [120, 80] },
+            ]
+        })),
+    );
+}
+
+#[test]
+fn r1087_windows_empty_declared_set_is_a_real_empty_list() {
+    // An empty Vec is a real value ("binding declares no windows"),
+    // distinct from the unavailable error above.
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_declared_windows(Vec::new());
+    let req = r#"{"jsonrpc":"2.0","method":"scene/windows","id":7}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(resp.error.is_none(), "{:?}", resp.error);
+    assert_eq!(resp.result, Some(serde_json::json!({ "windows": [] })));
+}
+
 #[test]
 fn scene_set_fps_rejects_missing_negative_and_non_integer() {
     for bad in [r"{}", r#"{"fps":-1}"#, r#"{"fps":"x"}"#, r#"{"fps":1.5}"#] {
