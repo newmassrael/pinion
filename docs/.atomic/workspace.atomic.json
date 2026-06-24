@@ -15528,6 +15528,58 @@
         "ALL R1081/R1082/R1082.1 commits are local, NOT pushed -- await explicit user push consent"
       ]
     },
+    "R1082.2": {
+      "decision_summary": "R1082.2 §5.51 §5.45 PR-29 deeper audit-driven cleanup (user re-challenge \"hack/smell 없이 교과서적? SSOT? 북극성?\" + 1 independent read-only reviewer on the R1082.1 clearance code, which itself had never been reviewed): the R683→R742 migration left dead config + actively-false docs that the R1082.1 clearance only half-swept. Removed the dead DockPanelStyle::tear_off_threshold_frac config; rewrote the false module/field/test-module docs to the R742 reality; tightened drop_preview intervene precision. Confirmed the clearance code itself is textbook (apply_intent SSOT, binding-injected preview)",
+      "changes_bullets": [
+        "Removed DEAD config DockPanelStyle::tear_off_threshold_frac (field) + with_tear_off_threshold_frac (builder) + the 2 round-trip tests: R1081 moved the click-vs-drag threshold to InputRouter::DRAG_CLICK_THRESHOLD_PX, so nothing read the frac (begin_drag/drag_to/drag_release never consult it) — dead weight competing with the real router SSOT (YAGNI/no-speculative-config)",
+        "Rewrote 4 stale/FALSE doc regions to the R742 reality: (1) module head + Role + the '## Tear-off wire' section (described the removed capture+L∞-threshold model verbatim: 'captures the pointer on PointerDown ... each pointer_move under capture lock checks the cursor distance against tear_off_threshold_frac; when the threshold is crossed') -> now '## Drag wire (R742)'; (2) TEAR_OFF_EVENT const doc; (3) DockPanelStyle.tag field doc (claimed 'registered against the header tag' — FALSE, it is the panel ROOT tag per R683.C); (4) the test-module header (listed removed threshold/calibration/L∞ tests) -> the actual R742 tests",
+        "drop_preview intervene: a write attempt now returns InterveneError::ReadOnly (precise — it is a read-only observation slot) instead of UnknownPath, matching topology/split_seq/last_outcome",
+        "CONFIRMED textbook by the independent reviewer + author: apply_intent rejection-recording is correct SSOT (no double-borrow); the binding-injected drop_preview shared across DockPanelExternal + DockReorganizeExternal is MORE textbook than a coordinator-hub (matches the Owner::cache binding-owns-signals idiom + keeps DockReorganizer single-responsibility + the preview is pointer-only while the coordinator is shared); to_introspect pub method mirrors the CellValue::to_introspect type-owns-its-wire-shape idiom — NOT folded (over-refactor refuted)"
+      ],
+      "verification_bullets": [
+        "workspace tests 0 failed (pinion-widget-paint 511, -1 = removed the dead with_tear_off_threshold_frac round-trip test; demos 31+33)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello 0 warnings (fixed 4 doc_markdown missing-backticks in the rewritten test-module header); cargo fmt --all --check clean; validate-workspace T1=0; validate-code-refs exit 0",
+        "final staleness sweep: 0 residual 'capture lock'/'press-time frame'/'fired_for_drag'/'drag_start'/'past the threshold' in non-historical dock docs; the remaining 'L∞/capture/threshold' mentions are all in migration-explaining (accurate historical) context"
+      ],
+      "impact_refs": [
+        "5.51",
+        "5.45",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "VERDICT (PR-29 R1080→R1082.2): core structure is textbook (coordinator extraction byte-identical + 2nd-consumer-justified, R742 migration, intent_for_zone/zone_wire_name/to_introspect/DOCK_EDGE_ZONE_PCT-via-test SSOT, apply_intent sole last_outcome writer, one shared coordinator + one shared preview, crate boundary intact, AI-introspection first-class) — confirmed by 4 read-only reviewers across R1082.1+R1082.2 + author verification. The re-challenge surfaced and fixed the one remaining non-textbook residue: stale migration docs + dead config",
+        "CONSIDERED-AND-REJECTED forks (documented, not silent): preview-in-coordinator (would broaden coordinator SRP + break the binding-owns-signals idiom); to_introspect fold (CellValue type-owns-wire idiom)",
+        "DECLARED-DEFER (YAGNI/2nd-consumer-gate): view_dock_panel unconditional .drop_target(true) -> lift to a DockPanelStyle field when a consumer needs a pinned (non-dockable) panel",
+        "STILL OWED: live native-pointer libXtst acceptance (HW-gated, real-GPU host)",
+        "sprag's PR-29 seam consumption (separate sprag-native session) must also drop tear_off_threshold_frac usage if any; pinion never edits sprag",
+        "ALL R1081→R1082.2 commits (68d21cc3..1503e866, now 7) are local, NOT pushed — await explicit user push consent"
+      ],
+      "publishable_decision_summary": "R1082.2 §5.51 §5.45 PR-29 deeper audit-driven cleanup (user re-challenge \"hack/smell 없이 교과서적? SSOT? 북극성?\" + 1 independent read-only reviewer on the R1082.1 clearance code, which itself had never been reviewed): the R683→R742 migration left dead config + actively-false docs that the R1082.1 clearance only half-swept. Removed the dead DockPanelStyle::tear_off_threshold_frac config; rewrote the false module/field/test-module docs to the R742 reality; tightened drop_preview intervene precision. Confirmed the clearance code itself is textbook (apply_intent SSOT, binding-injected preview)",
+      "publishable_changes_bullets": [
+        "Removed DEAD config DockPanelStyle::tear_off_threshold_frac (field) + with_tear_off_threshold_frac (builder) + the 2 round-trip tests: R1081 moved the click-vs-drag threshold to InputRouter::DRAG_CLICK_THRESHOLD_PX, so nothing read the frac (begin_drag/drag_to/drag_release never consult it) — dead weight competing with the real router SSOT (YAGNI/no-speculative-config)",
+        "Rewrote 4 stale/FALSE doc regions to the R742 reality: (1) module head + Role + the '## Tear-off wire' section (described the removed capture+L∞-threshold model verbatim: 'captures the pointer on PointerDown ... each pointer_move under capture lock checks the cursor distance against tear_off_threshold_frac; when the threshold is crossed') -> now '## Drag wire (R742)'; (2) TEAR_OFF_EVENT const doc; (3) DockPanelStyle.tag field doc (claimed 'registered against the header tag' — FALSE, it is the panel ROOT tag per R683.C); (4) the test-module header (listed removed threshold/calibration/L∞ tests) -> the actual R742 tests",
+        "drop_preview intervene: a write attempt now returns InterveneError::ReadOnly (precise — it is a read-only observation slot) instead of UnknownPath, matching topology/split_seq/last_outcome",
+        "CONFIRMED textbook by the independent reviewer + author: apply_intent rejection-recording is correct SSOT (no double-borrow); the binding-injected drop_preview shared across DockPanelExternal + DockReorganizeExternal is MORE textbook than a coordinator-hub (matches the Owner::cache binding-owns-signals idiom + keeps DockReorganizer single-responsibility + the preview is pointer-only while the coordinator is shared); to_introspect pub method mirrors the CellValue::to_introspect type-owns-its-wire-shape idiom — NOT folded (over-refactor refuted)"
+      ],
+      "publishable_verification_bullets": [
+        "workspace tests 0 failed (pinion-widget-paint 511, -1 = removed the dead with_tear_off_threshold_frac round-trip test; demos 31+33)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello 0 warnings (fixed 4 doc_markdown missing-backticks in the rewritten test-module header); cargo fmt --all --check clean; validate-workspace T1=0; validate-code-refs exit 0",
+        "final staleness sweep: 0 residual 'capture lock'/'press-time frame'/'fired_for_drag'/'drag_start'/'past the threshold' in non-historical dock docs; the remaining 'L∞/capture/threshold' mentions are all in migration-explaining (accurate historical) context"
+      ],
+      "publishable_impact_refs": [
+        "5.51",
+        "5.45",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "VERDICT (PR-29 R1080→R1082.2): core structure is textbook (coordinator extraction byte-identical + 2nd-consumer-justified, R742 migration, intent_for_zone/zone_wire_name/to_introspect/DOCK_EDGE_ZONE_PCT-via-test SSOT, apply_intent sole last_outcome writer, one shared coordinator + one shared preview, crate boundary intact, AI-introspection first-class) — confirmed by 4 read-only reviewers across R1082.1+R1082.2 + author verification. The re-challenge surfaced and fixed the one remaining non-textbook residue: stale migration docs + dead config",
+        "CONSIDERED-AND-REJECTED forks (documented, not silent): preview-in-coordinator (would broaden coordinator SRP + break the binding-owns-signals idiom); to_introspect fold (CellValue type-owns-wire idiom)",
+        "DECLARED-DEFER (YAGNI/2nd-consumer-gate): view_dock_panel unconditional .drop_target(true) -> lift to a DockPanelStyle field when a consumer needs a pinned (non-dockable) panel",
+        "STILL OWED: live native-pointer libXtst acceptance (HW-gated, real-GPU host)",
+        "sprag's PR-29 seam consumption (separate sprag-native session) must also drop tear_off_threshold_frac usage if any; pinion never edits sprag",
+        "ALL R1081→R1082.2 commits (68d21cc3..1503e866, now 7) are local, NOT pushed — await explicit user push consent"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
