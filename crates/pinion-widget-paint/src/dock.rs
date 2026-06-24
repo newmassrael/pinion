@@ -1488,6 +1488,12 @@ pub struct DockReorganizeExternal {
     /// hands the *same* coordinator to the R742 panel externals
     /// ([`reorganizer`](Self::reorganizer)).
     reorganizer: Rc<DockReorganizer>,
+    /// (R1082.1 §5.51) A clone of the ONE shared live drop-preview the
+    /// R742 panels write — so the canonical reorganize surface an AI
+    /// client talks to can `query("drop_preview")` and OBSERVE an
+    /// in-flight pointer drag (not only the committed `last_outcome`).
+    /// `None` for an invoke-only editor with no pointer panels.
+    drop_preview: Option<Rc<Signal<Option<DockDropPreview>>>>,
 }
 
 impl core::fmt::Debug for DockReorganizer {
@@ -1571,7 +1577,18 @@ impl DockReorganizer {
         let current = self.topology.get();
         let seq = self.split_seq.get();
         let new_split_id = format!("{REORG_SPLIT_ID_PREFIX}{seq}");
-        let next = intent.apply(&current, new_split_id, self.reorganize_ratio)?;
+        let next = match intent.apply(&current, new_split_id, self.reorganize_ratio) {
+            Ok(next) => next,
+            Err(e) => {
+                // Record the rejection here so EVERY drive (the AI invoke
+                // path + the R742 pointer drag_release) surfaces
+                // `"rejected: …"` through `query("last_outcome")` — one
+                // outcome SSOT, no per-caller bookkeeping (the pointer path
+                // drops the `Result`, relying on this record).
+                *self.last_outcome.borrow_mut() = Some(format!("rejected: {e}"));
+                return Err(e);
+            }
+        };
         if matches!(intent, DockReorganizeIntent::SplitInsert { .. }) {
             self.split_seq.set(seq + 1);
         }
@@ -1593,6 +1610,7 @@ impl core::fmt::Debug for DockReorganizeExternal {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("DockReorganizeExternal")
             .field("reorganizer", &self.reorganizer)
+            .field("has_drop_preview", &self.drop_preview.is_some())
             .finish()
     }
 }
@@ -1612,7 +1630,21 @@ impl DockReorganizeExternal {
     /// externals the *same* coordinator (one `split_seq`, one undo stack).
     #[must_use]
     pub fn from_reorganizer(reorganizer: Rc<DockReorganizer>) -> Self {
-        Self { reorganizer }
+        Self {
+            reorganizer,
+            drop_preview: None,
+        }
+    }
+
+    /// (R1082.1 §5.51) Share the ONE live drop-preview signal the R742
+    /// panels write, so this canonical reorganize surface exposes
+    /// `query("drop_preview")` — an AI client driving / observing
+    /// reorganize through one well-known tag sees the in-flight pointer
+    /// drag, not just the committed outcome.
+    #[must_use]
+    pub fn with_drop_preview(mut self, preview: Rc<Signal<Option<DockDropPreview>>>) -> Self {
+        self.drop_preview = Some(preview);
+        self
     }
 
     /// Clone the shared coordinator handle so the binding can hand it to
@@ -1670,6 +1702,11 @@ impl ExternalIntrospect for DockReorganizeExternal {
             ("topology", "json"),
             ("split_seq", "int"),
             ("last_outcome", "string"),
+            // R1082.1 §5.51 — the in-flight pointer drag observed on the
+            // canonical reorganize surface (`{source, target, zone}` or
+            // null), so an AI client watching one tag sees both the
+            // committed `last_outcome` and the live drag.
+            ("drop_preview", "json"),
             ("drop", "json"),
             ("reorganize", "json"),
         ])
@@ -1677,6 +1714,10 @@ impl ExternalIntrospect for DockReorganizeExternal {
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
         match path {
+            // R1082.1 §5.51 — the shared live drag-preview (same SSOT
+            // projection the panel externals expose). Null when no pointer
+            // panels are wired / no drag is in flight.
+            "drop_preview" => Some(drop_preview_introspect(self.drop_preview.as_ref())),
             "topology" => {
                 // §2 #7 scene-as-data — the live topology as queryable
                 // JSON. serde cannot fail for the well-formed topology
@@ -1782,12 +1823,11 @@ impl ExternalIntrospect for DockReorganizeExternal {
                     self.reorganizer.note_outcome("no drop target");
                     return Ok(IntrospectValue::Null);
                 };
+                // `apply_intent` records the `"rejected: …"` outcome itself
+                // (the one SSOT), so the caller only maps the error.
                 match self.apply_intent(&intent) {
                     Ok(summary) => Ok(IntrospectValue::Text(summary)),
-                    Err(e) => {
-                        self.reorganizer.note_outcome(format!("rejected: {e}"));
-                        Err(InvokeError::Rejected)
-                    }
+                    Err(_) => Err(InvokeError::Rejected),
                 }
             }
             "reorganize" => {
@@ -1807,10 +1847,7 @@ impl ExternalIntrospect for DockReorganizeExternal {
                 let intent = intent_for_zone(source, target, zone).ok_or(InvokeError::Rejected)?;
                 match self.apply_intent(&intent) {
                     Ok(summary) => Ok(IntrospectValue::Text(summary)),
-                    Err(e) => {
-                        self.reorganizer.note_outcome(format!("rejected: {e}"));
-                        Err(InvokeError::Rejected)
-                    }
+                    Err(_) => Err(InvokeError::Rejected),
                 }
             }
             _ => Err(InvokeError::UnknownPath),
@@ -1932,10 +1969,12 @@ pub const CONTENT_TAG_SUFFIX: &str = "content";
 /// canonical id) so AI introspection + future dock topology code
 /// can locate the panel root.
 ///
-/// The header strip is the drag handle for tear-off: the
-/// [`DockPanelExternal`] the binding registers against the
-/// `{tag}#header` composite-tag receives `PointerDown` + tracks
-/// drag distance + emits [`TEAR_OFF_EVENT`] past the threshold.
+/// The header strip is the drag handle: the [`DockPanelExternal`] the
+/// binding registers against the **panel root tag** (R683.C — NOT the
+/// `{tag}#header` composite) opens an R742 drag session on a header press
+/// ([`begin_drag`](External::begin_drag)) and, on release, docks the
+/// panel onto another panel (via the shared [`DockReorganizer`]) or tears
+/// it off into a floating window — see the [`DockPanelExternal`] rustdoc.
 ///
 /// # Panics
 ///
@@ -2058,10 +2097,14 @@ const DOCK_DROP_HIGHLIGHT_ALPHA: u8 = 0x66;
 /// paints while it is the live drop target of an in-flight R742 drag — an
 /// absolutely-positioned, pointer-transparent layer covering the whole
 /// panel, tinting the band the drop would dock into:
-/// `Left`/`Right`/`Top`/`Bottom` = the [`DOCK_EDGE_ZONE_FRAC`] edge strip,
-/// `Center` = the centre square. The geometry mirrors
-/// [`dock_drop_zone_normalized`], so the affordance the user sees matches
-/// the edit the drop performs.
+/// `Left`/`Right`/`Top`/`Bottom` = a [`DOCK_EDGE_ZONE_FRAC`]-wide edge
+/// strip, `Center` = the centre square. The band *fraction* is the
+/// [`DOCK_EDGE_ZONE_FRAC`] the classifier uses, and the band painted is
+/// always the one for the cursor's currently-classified zone — so the
+/// highlighted band tracks the zone the drop would perform. (The strips
+/// are rectangular bands, the conventional dock-overlay affordance; the
+/// classifier's nearest-edge corner wedges are not drawn — only the
+/// winning zone's full band is.)
 ///
 /// `pointer_transparent` so the overlay never intercepts the drag, and
 /// `absolute_position(0, 0)` + 100%×100% so it sits on top without
@@ -2488,6 +2531,34 @@ pub struct DockDropPreview {
     pub zone: DockDropZone,
 }
 
+impl DockDropPreview {
+    /// (R1082.1 §5.51) Project to the introspection JSON
+    /// (`{source, target, zone}`, the `zone` as its [`zone_wire_name`]) —
+    /// the SSOT both `query("drop_preview")` surfaces share
+    /// ([`DockPanelExternal`] and the canonical [`DockReorganizeExternal`])
+    /// so the wire shape cannot drift between the two AI surfaces.
+    #[must_use]
+    pub fn to_introspect(&self) -> IntrospectValue {
+        IntrospectValue::Json(serde_json::json!({
+            "source": self.source,
+            "target": self.target,
+            "zone": zone_wire_name(self.zone),
+        }))
+    }
+}
+
+/// (R1082.1 §5.51) Project a shared drop-preview signal to its
+/// introspection value — `Null` when no signal is wired or no drag is in
+/// flight, else [`DockDropPreview::to_introspect`]. Shared by both AI
+/// surfaces' `query("drop_preview")`.
+fn drop_preview_introspect(
+    preview: Option<&Rc<Signal<Option<DockDropPreview>>>>,
+) -> IntrospectValue {
+    preview
+        .and_then(|s| s.get())
+        .map_or(IntrospectValue::Null, |p| p.to_introspect())
+}
+
 /// (R1081 §5.51) The `DragPayload::kind` discriminator a dock-panel drag
 /// carries, so a future cross-widget drop target can match dock panels
 /// before reading the payload value (the panel id).
@@ -2777,9 +2848,11 @@ impl External for DockPanelExternal {
             self.tear_off_fired.set(false);
             // `resolve_preview` already rejected the dead zone, so
             // `intent_for_zone` is `Some`; the `if let` keeps the SSOT
-            // mapping panic-free. A rejected apply (stale id / collision)
-            // leaves the topology unchanged and is recorded on the
-            // coordinator's `last_outcome`.
+            // mapping panic-free. Dropping the `Result` is intentional: a
+            // rejected apply (stale id / collision) leaves the topology
+            // unchanged and `apply_intent` itself records `"rejected: …"`
+            // on `last_outcome`, so an AI client observes the failure with
+            // no per-caller bookkeeping here.
             if let Some(intent) = intent_for_zone(&preview.source, &preview.target, preview.zone) {
                 let _ = reorganizer.apply_intent(&intent);
             }
@@ -2851,14 +2924,7 @@ impl ExternalIntrospect for DockPanelExternal {
             // R1081 §5.51 — the shared live preview (any panel's external
             // reads the one shared signal). Null when no drag is in
             // flight / no preview signal is wired.
-            "drop_preview" => Some(match self.drop_preview.as_ref().and_then(|s| s.get()) {
-                Some(p) => IntrospectValue::Json(serde_json::json!({
-                    "source": p.source,
-                    "target": p.target,
-                    "zone": zone_wire_name(p.zone),
-                })),
-                None => IntrospectValue::Null,
-            }),
+            "drop_preview" => Some(drop_preview_introspect(self.drop_preview.as_ref())),
             _ => None,
         }
     }
@@ -4381,8 +4447,8 @@ mod reorganize_tests {
     use std::rc::Rc;
 
     use super::{
-        DockNode, DockReorganizeExternal, DockReorganizeIntent, DockReorganizer, DockSplitPosition,
-        DockTopology, resolve_dock_drop,
+        DockDropPreview, DockDropZone, DockNode, DockReorganizeExternal, DockReorganizeIntent,
+        DockReorganizer, DockSplitPosition, DockTopology, resolve_dock_drop,
     };
     use crate::splitter::SplitterOrientation as Orient;
     use pinion_core::external::{ExternalIntrospect, InterveneError, IntrospectValue, InvokeError};
@@ -4397,6 +4463,62 @@ mod reorganize_tests {
             DockNode::leaf("a"),
             DockNode::split_horizontal("inner_h", 0.5, DockNode::leaf("b"), DockNode::leaf("c")),
         ))
+    }
+
+    #[test]
+    fn r1082_1_drop_preview_observable_on_canonical_reorganize_external() {
+        // R1082.1 audit fix: the in-flight pointer drag must be observable
+        // on the DockReorganizeExternal (the canonical AI reorganize tag),
+        // not only on the per-panel externals.
+        let topology = Rc::new(Signal::new(abc_topology()));
+        let preview = Rc::new(Signal::new(None));
+        let reorganizer = Rc::new(DockReorganizer::new(topology));
+        let ext = DockReorganizeExternal::from_reorganizer(reorganizer)
+            .with_drop_preview(Rc::clone(&preview));
+        // No drag → null.
+        assert_eq!(ext.query("drop_preview"), Some(IntrospectValue::Null));
+        // A panel's drag_to writes the shared signal → the canonical
+        // external observes it via the same SSOT projection.
+        preview.set(Some(DockDropPreview {
+            source: "a".to_string(),
+            target: "b".to_string(),
+            zone: DockDropZone::Right,
+        }));
+        let IntrospectValue::Json(obj) = ext.query("drop_preview").expect("queryable") else {
+            panic!("drop_preview must be JSON during a drag");
+        };
+        assert_eq!(obj.get("source").and_then(|v| v.as_str()), Some("a"));
+        assert_eq!(obj.get("target").and_then(|v| v.as_str()), Some("b"));
+        assert_eq!(obj.get("zone").and_then(|v| v.as_str()), Some("Right"));
+        // The slot is declared in the schema.
+        assert!(
+            ext.schema()
+                .fields
+                .iter()
+                .any(|(n, _)| *n == "drop_preview")
+        );
+    }
+
+    #[test]
+    fn r1082_1_apply_intent_records_rejection_outcome() {
+        // R1082.1 audit fix: apply_intent is the SSOT for last_outcome on
+        // BOTH success and rejection, so a failed pointer drag (which drops
+        // the Result) still surfaces "rejected: …" to query("last_outcome").
+        let topology = Rc::new(Signal::new(abc_topology()));
+        let reorganizer = DockReorganizer::new(topology);
+        // Swap onto a stale panel id → TopologyError.
+        let err = reorganizer
+            .apply_intent(&DockReorganizeIntent::Swap {
+                source: "a".to_string(),
+                target: "ghost".to_string(),
+            })
+            .unwrap_err();
+        let outcome = reorganizer.last_outcome().expect("rejection recorded");
+        assert!(
+            outcome.starts_with("rejected:"),
+            "apply_intent records the rejection itself: {outcome}",
+        );
+        assert!(outcome.contains(&err.to_string()));
     }
 
     /// Side-by-side layout for the three panels (each 200×400).

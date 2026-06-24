@@ -568,13 +568,17 @@ impl WidgetCore for DockPanelsEditorView {
                 .with_drop_preview(Rc::clone(&preview));
             externals.push(ExtraExternal::new(panel_id.to_string(), Box::new(panel)));
         }
-        // (R686/R1081 §5.45 §5.51) The invoke (RPC) drive of dock reorganize
-        // shares the SAME coordinator as the pointer panels.
+        // (R686/R1081/R1082.1 §5.45 §5.51) The invoke (RPC) drive of dock
+        // reorganize shares the SAME coordinator AND the SAME live preview as
+        // the pointer panels, so an AI client driving reorganize through this
+        // one canonical tag also observes the in-flight pointer drag via
+        // query("drop_preview").
         externals.push(ExtraExternal::new(
             DOCK_REORGANIZE_TAG,
-            Box::new(DockReorganizeExternal::from_reorganizer(Rc::clone(
-                &reorganizer,
-            ))),
+            Box::new(
+                DockReorganizeExternal::from_reorganizer(Rc::clone(&reorganizer))
+                    .with_drop_preview(Rc::clone(&preview)),
+            ),
         ));
         externals.push(ExtraExternal::new(
             DOCK_UNDO_TAG,
