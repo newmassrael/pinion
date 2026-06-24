@@ -205,8 +205,8 @@ pub trait WidgetCore: 'static {
     ///
     /// Override to `true` **only** when the tag set is a projection of
     /// runtime-mutable reactive state — e.g. a dock editor whose
-    /// `create_extra_externals` walks a `Signal<DockTopology>` and mints
-    /// a `SplitterExternal` per split, so a reorganize gesture that
+    /// `create_extra_externals` walks a `Signal<Option<DockTopology>>` and
+    /// mints a `SplitterExternal` per split, so a reorganize gesture that
     /// spawns `reorg-split-{n}` must register a routable
     /// [`External`] for the new surface mid-session. Such a binding
     /// pays the reactive reconcile cost (re-run + tag diff each frame)

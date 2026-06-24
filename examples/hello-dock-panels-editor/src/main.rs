@@ -564,8 +564,9 @@ impl WidgetCore for DockPanelsEditorView {
         // it shares the universal `Option` dock surface.
         if let Some(topology) = use_editor_topology().get() {
             // (R1083) One external per Split + one per panel (`panel_count`
-            // counts tab-well panels individually, unlike `leaf_count`).
-            externals.reserve(topology.split_count() + topology.panel_count());
+            // counts tab-well panels individually, unlike `leaf_count`) + the
+            // two unconditional reorganize + undo anchors pushed below.
+            externals.reserve(topology.split_count() + topology.panel_count() + 2);
             topology.for_each_split(|id, orientation, ratio| {
                 let signal = use_split_ratio(id.to_string(), ratio);
                 let external = SplitterExternal::new(orientation).attach_ratio(signal);
@@ -604,8 +605,8 @@ impl WidgetCore for DockPanelsEditorView {
 
     fn external_set_is_dynamic() -> bool {
         // (R689 §5.16 §5.35) The factory above walks the live
-        // `Signal<DockTopology>`, so a runtime reorganize that mints a
-        // `reorg-split-{n}` changes the returned tag set. Opt into
+        // `Signal<Option<DockTopology>>` (R1084), so a runtime reorganize
+        // that mints a `reorg-split-{n}` changes the returned tag set. Opt into
         // `CoreShell::reconcile_externals` so the new SplitterExternal
         // registers a routable target (and becomes drag-resizable);
         // every static binding leaves this at the `false` default.

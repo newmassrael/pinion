@@ -810,30 +810,32 @@ impl DockTopology {
     // (immutable / functional form): it produces a *new* validated
     // topology rather than mutating in place. This is the textbook
     // canonical shape for an editable document with undo/redo —
-    // the binding holds a `Signal<DockTopology>`, computes the next
-    // value, and `set`s it (or discards it on `Err`), so the reactive
+    // the binding holds a `Signal<Option<DockTopology>>` (R1084: `None`
+    // = empty dock), computes the next value, and `set`s it (or discards
+    // it on `Err`), so the reactive
     // re-render is a clean swap. Every result flows back through
     // [`Self::try_new`] so an invalid intermediate tree (a generated id
     // colliding with an existing one, say) surfaces as a typed error
     // instead of corrupting the live topology.
     // ─────────────────────────────────────────────────────────────────
 
-    /// (R686 §5.16 §5.45) Swap the two named leaves' positions in the
+    /// (R686 §5.16 §5.45) Swap the two named panels' positions in the
     /// tree — the panel previously at `panel_id_a`'s location now sits
     /// where `panel_id_b` was, and vice versa. The tree *shape* (every
-    /// Split, every ratio, every split id) is unchanged; only which
-    /// panel occupies which leaf slot changes.
+    /// Split, every ratio, every split id) is unchanged; only which panel
+    /// occupies which slot changes. (R1083) A swapped panel may live
+    /// inside a [`DockNode::Tabs`] well — it is relabelled in place.
     ///
-    /// This is the [`DockDropZone::Center`] gesture: dragging panel A
-    /// onto panel B's centre swaps them (v1 has no tab-stacking, so a
-    /// centre drop is a swap).
+    /// No drop zone produces a swap: R1083 made the centre gesture
+    /// [`DockTopology::tabify`] (a tab-stack). `swap_leaves` remains the
+    /// primitive for an explicit programmatic swap.
     ///
-    /// `panel_id_a == panel_id_b` (dropping a panel on itself) is a
+    /// `panel_id_a == panel_id_b` (swapping a panel with itself) is a
     /// well-defined no-op that returns the topology unchanged.
     ///
     /// # Errors
     ///
-    /// [`TopologyError::PanelNotFound`] if either id names no leaf.
+    /// [`TopologyError::PanelNotFound`] if either id names no panel.
     pub fn swap_leaves(
         &self,
         panel_id_a: &str,
@@ -941,9 +943,19 @@ impl DockTopology {
     /// * `target` already inside a [`DockNode::Tabs`] well → `source` is
     ///   appended and becomes the visible tab; `new_tabs_id` is unused.
     ///
-    /// `source == target` (dropping a panel on its own centre) is a
-    /// well-defined no-op returning the topology unchanged. The leaf count
-    /// is invariant — one panel relocates, none created or destroyed.
+    /// Two drops are well-defined without relocating a panel: `source ==
+    /// target` (dropping a panel on its own centre) is an unchanged no-op;
+    /// and a drop where `source` and `target` **already share a tab well**
+    /// is an *in-well activation* — `source` becomes the visible tab, the
+    /// well's `id` and panel order preserved. (R1084.1) The latter must NOT
+    /// re-mint the well id: a same-well drop runs the remove-then-restack
+    /// path only if unguarded, and for a 2-panel well that path collapses
+    /// the well to a `Leaf` and re-promotes it under `new_tabs_id` — losing
+    /// the stable well id that keys the binding's per-well state. The
+    /// reachable trigger is the RPC `reorganize`/`drop` path naming an
+    /// inactive well member as `source` (a pointer drag can only originate
+    /// on the visible tab, so it cannot reach this). Otherwise the leaf
+    /// count is invariant — one panel relocates, none created or destroyed.
     ///
     /// # Errors
     ///
@@ -956,9 +968,9 @@ impl DockTopology {
     /// # Panics
     ///
     /// Never in practice: the internal source-removal is guarded to be
-    /// unreachable as a tree-emptying operation, because `source != target`
-    /// and both are verified present, so `target` always survives the
-    /// removal.
+    /// unreachable as a tree-emptying operation, because the cross-pane path
+    /// runs only when `source != target` and they are in different panes,
+    /// both verified present, so `target` always survives the removal.
     pub fn tabify(
         &self,
         source: &str,
@@ -973,14 +985,23 @@ impl DockTopology {
             return Err(TopologyError::PanelNotFound(target.to_string()));
         }
         if source == target {
-            return Ok(Self {
-                root: self.root.clone(),
-            });
+            // Unchanged no-op — but route through `try_new` (the input is
+            // already valid) to keep the single-construction-path invariant
+            // uniform, matching `swap_leaves`' `a == b` discipline.
+            return Self::try_new(self.root.clone());
         }
-        // Remove source from its current location first (collapsing its old
-        // split / shrinking its old well), then stack it onto target. Both
-        // exist and differ, so removal always leaves target in place and can
-        // never empty the tree — `remove_leaf_rec` never returns `None` here.
+        // (R1084.1) Same-well drop: `source` + `target` are already stacked
+        // together, so stacking is a membership no-op — bring `source`
+        // forward (active), preserving the well id + order. Skipping this
+        // would re-mint the well id via the collapse-then-re-promote path.
+        if let Some(new_root) = activate_in_shared_well(&self.root, source, target) {
+            return Self::try_new(new_root);
+        }
+        // Cross-pane drop: remove source from its current location (collapsing
+        // its old split / shrinking its old well), then stack it onto target.
+        // They are in different panes and both present, so removal leaves
+        // target in place and never empties the tree — `remove_leaf_rec`
+        // never returns `None` here.
         let removed = remove_leaf_rec(&self.root, source)
             .expect("tabify: source removal cannot empty the tree (target still present)");
         let mut source_id = Some(Cow::Owned(source.to_string()));
@@ -1276,6 +1297,57 @@ fn tabify_into_rec(
             first: Box::new(tabify_into_rec(first, target, source_id, new_tabs_id)),
             second: Box::new(tabify_into_rec(second, target, source_id, new_tabs_id)),
         },
+    }
+}
+
+/// (R1084.1 §5.51) If `source` and `target` are both panels of the **same**
+/// [`DockNode::Tabs`] well, rebuild the tree with that well's `active` set to
+/// `source`'s index — preserving the well `id` and panel order — and return
+/// `Some`. Returns `None` when they are in different panes (the caller then
+/// uses the remove-then-restack path). A same-well tabify is a membership
+/// no-op, so bringing `source` forward is the only meaningful effect; the
+/// stable well id MUST survive it (it keys the binding's per-well state), so
+/// this never goes through the id-re-minting collapse/restack path.
+fn activate_in_shared_well(node: &DockNode, source: &str, target: &str) -> Option<DockNode> {
+    match node {
+        DockNode::Leaf { .. } => None,
+        DockNode::Tabs { id, panels, .. } => {
+            let src_idx = panels.iter().position(|p| p.as_ref() == source)?;
+            // Only this well's *own* members count — `source` is here, so the
+            // well shares both iff `target` is here too.
+            panels
+                .iter()
+                .any(|p| p.as_ref() == target)
+                .then(|| DockNode::Tabs {
+                    id: id.clone(),
+                    panels: panels.clone(),
+                    active: src_idx,
+                })
+        }
+        DockNode::Split {
+            id,
+            orientation,
+            ratio,
+            first,
+            second,
+        } => {
+            if let Some(f) = activate_in_shared_well(first, source, target) {
+                return Some(DockNode::Split {
+                    id: id.clone(),
+                    orientation: *orientation,
+                    ratio: *ratio,
+                    first: Box::new(f),
+                    second: second.clone(),
+                });
+            }
+            activate_in_shared_well(second, source, target).map(|s| DockNode::Split {
+                id: id.clone(),
+                orientation: *orientation,
+                ratio: *ratio,
+                first: first.clone(),
+                second: Box::new(s),
+            })
+        }
     }
 }
 
@@ -1670,24 +1742,29 @@ fn parse_json_rect(v: &serde_json::Value) -> Option<Rect> {
 /// from a cursor position over a layout, or by the
 /// [`DockReorganizeExternal`] from an AI client's invoke payload.
 ///
-/// The two variants mirror the two drop outcomes a tab-less v1 dock
-/// supports:
-/// * `Swap` — the cursor landed in a panel's **centre**; the dragged
-///   panel and the target trade places ([`DockTopology::swap_leaves`]).
+/// The three drop outcomes:
+/// * `Tabify` — the cursor landed in a panel's **centre**; the dragged
+///   panel stacks onto the target as a tab well ([`DockTopology::tabify`]).
+///   (R1083) This is what a centre drop produces; [`intent_for_zone`] is
+///   the single source of that mapping.
 /// * `SplitInsert` — the cursor landed near a panel's **edge**; the
 ///   dragged panel docks to that side, splitting the target. The
 ///   `orientation` + `position` are pre-resolved from the edge zone
 ///   (so the intent carries no invalid-zone state), and applying it
 ///   moves the dragged panel via [`DockTopology::remove_leaf`] then
 ///   re-inserts it via [`DockTopology::split_leaf_into`].
+/// * `Swap` — trade the two panels' places ([`DockTopology::swap_leaves`]).
+///   A valid public mutation, but **no drop zone produces it** (pre-R1083
+///   a centre drop swapped; R1083 made centre `Tabify`). Reachable only by
+///   constructing it directly (tests / a future explicit swap gesture).
 ///
-/// `#[non_exhaustive]` so a future tab-stack outcome can land without
-/// breaking downstream `match` arms.
+/// `#[non_exhaustive]` so a further outcome can land without breaking
+/// downstream `match` arms.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DockReorganizeIntent {
-    /// Swap the dragged `source` panel with the `target` panel
-    /// (centre drop).
+    /// Swap the dragged `source` panel with the `target` panel. A valid
+    /// mutation that no drop zone emits (centre now [`Self::Tabify`]).
     Swap {
         /// Panel being dragged.
         source: String,
@@ -1796,9 +1873,9 @@ impl DockReorganizeIntent {
 /// the same coordinate space. The dragged `source_panel_id` is skipped
 /// (you cannot drop a panel onto itself), and the first remaining panel
 /// whose rect contains the cursor decides the gesture: a centre hit
-/// produces [`DockReorganizeIntent::Swap`], an edge hit a
-/// [`DockReorganizeIntent::SplitInsert`] with the edge mapped to a
-/// split orientation + position.
+/// produces [`DockReorganizeIntent::Tabify`] (pre-R1083 it was `Swap`),
+/// an edge hit a [`DockReorganizeIntent::SplitInsert`] with the edge
+/// mapped to a split orientation + position.
 ///
 /// Returns `None` when the cursor is outside every non-source panel, or
 /// over the source itself.
@@ -1888,7 +1965,7 @@ pub struct DockReorganizer {
     last_outcome: RefCell<Option<String>>,
     /// (R749 §5.52) When attached via [`with_undo`](Self::with_undo) each
     /// applied reorganize is recorded as a reversible
-    /// [`SignalEdit<DockTopology>`] onto this stack (the **third**
+    /// [`SignalEdit<Option<DockTopology>>`] onto this stack (the **third**
     /// [`UndoCommand`](pinion_core::undo::UndoCommand) consumer — editor
     /// workspace history), instead of mutating the topology signal
     /// directly. `None` = the R686 direct-mutate behavior.
@@ -2167,6 +2244,11 @@ impl ExternalIntrospect for DockReorganizeExternal {
         IntrospectSchema::new(&[
             ("topology", "json"),
             ("split_seq", "int"),
+            // (R1084.1 §5.51) Symmetric with `split_seq` — how many tab-well
+            // ids the coordinator has minted (one per applied `Tabify`), so an
+            // AI auto-discovering capabilities sees tab-well-mint progress as a
+            // first-class observable, not only split-mint progress.
+            ("tabs_seq", "int"),
             ("last_outcome", "string"),
             // R1082.1 §5.51 — the in-flight pointer drag observed on the
             // canonical reorganize surface (`{source, target, zone}` or
@@ -2197,6 +2279,9 @@ impl ExternalIntrospect for DockReorganizeExternal {
             }
             "split_seq" => Some(IntrospectValue::Int(
                 i64::try_from(self.reorganizer.split_seq()).unwrap_or(i64::MAX),
+            )),
+            "tabs_seq" => Some(IntrospectValue::Int(
+                i64::try_from(self.reorganizer.tabs_seq()).unwrap_or(i64::MAX),
             )),
             "last_outcome" => Some(match self.reorganizer.last_outcome() {
                 Some(s) => IntrospectValue::Text(s),
@@ -5117,7 +5202,12 @@ mod reorganize_tests {
     }
 
     #[test]
-    fn r686_external_invoke_center_swaps_topology_signal() {
+    fn r1083_external_invoke_center_tabifies_topology_signal() {
+        // (R1083) A centre drop now TABIFIES (was a swap pre-R1083). The
+        // panel_ids happen to coincide with a swap's ([b,a,c]), so this test
+        // pins the STRUCTURAL distinction: a tabify produces a `Tabs` well
+        // (a swap would leave three `Leaf`s) — otherwise a silent revert to
+        // swap routing would slip past.
         let signal = Rc::new(Signal::new(Some(abc_topology())));
         let mut ext = DockReorganizeExternal::new(Rc::clone(&signal));
         let payload = IntrospectValue::Json(serde_json::json!({
@@ -5125,8 +5215,13 @@ mod reorganize_tests {
         }));
         let result = ext.invoke("reorganize", payload).unwrap();
         assert!(matches!(result, IntrospectValue::Text(_)));
-        // The shared signal now holds the swapped topology.
-        assert_eq!(signal.get().unwrap().panel_ids(), vec!["b", "a", "c"]);
+        let topo = signal.get().unwrap();
+        let json = serde_json::to_string(&topo).expect("serialize topology");
+        assert!(
+            json.contains("\"type\":\"Tabs\""),
+            "a centre drop must tabify into a well, not swap: {json}",
+        );
+        assert_eq!(topo.panel_ids(), vec!["b", "a", "c"]);
     }
 
     #[test]
@@ -5455,6 +5550,28 @@ mod reorganize_tests {
             })
             .expect("swap applies");
         assert_eq!(signal.get().unwrap().panel_ids(), vec!["b", "a", "c"]);
+    }
+
+    #[test]
+    fn r1084_1_schema_and_query_expose_tabs_seq_symmetric_with_split_seq() {
+        // (R1084.1) tab-well-mint progress is a first-class observable, like
+        // split-mint progress — advertised in the schema + answerable.
+        let signal = Rc::new(Signal::new(Some(abc_topology())));
+        let reorganizer = Rc::new(DockReorganizer::new(Rc::clone(&signal)));
+        let ext = DockReorganizeExternal::from_reorganizer(Rc::clone(&reorganizer));
+        assert!(
+            ext.schema().fields.iter().any(|(k, _)| *k == "tabs_seq"),
+            "tabs_seq is advertised in the schema",
+        );
+        assert_eq!(ext.query("tabs_seq"), Some(IntrospectValue::Int(0)));
+        // A tabify bumps it; an AI observes the mint count through the schema key.
+        reorganizer
+            .apply_intent(&DockReorganizeIntent::Tabify {
+                source: "a".into(),
+                target: "b".into(),
+            })
+            .expect("tabify applies");
+        assert_eq!(ext.query("tabs_seq"), Some(IntrospectValue::Int(1)));
     }
 }
 
@@ -5874,6 +5991,74 @@ mod tabify_tests {
         assert!(
             json.contains("\"type\":\"Tabs\""),
             "internally-tagged Tabs: {json}"
+        );
+    }
+
+    // ── R1084.1 §5.51 — same-well tabify preserves the stable well id ──
+
+    #[test]
+    fn r1084_1_same_well_tabify_preserves_id_and_activates_source() {
+        // A 2-panel well; tabify an INACTIVE member onto its well-mate. Only
+        // reachable via the RPC path (a pointer drag can't grab an inactive
+        // tab). Pre-fix this collapsed the well to a Leaf then re-promoted it
+        // under a fresh id; the stable well id MUST be preserved.
+        let topology = DockTopology::new(DockNode::tabs("w0", ["b", "c"].map(Cow::from), 0));
+        let next = topology
+            .tabify("c", "b", "reorg-tabs-0")
+            .expect("tabify ok");
+        let (id, panels, active) = first_tabs(next.root()).expect("still one well");
+        assert_eq!(id, "w0", "the stable well id is preserved, not re-minted");
+        assert_eq!(
+            panels.iter().map(Cow::as_ref).collect::<Vec<_>>(),
+            vec!["b", "c"],
+            "panel order preserved (membership unchanged)",
+        );
+        assert_eq!(
+            active, 1,
+            "the dropped source (c) is brought forward / active"
+        );
+    }
+
+    #[test]
+    fn r1084_1_same_well_tabify_in_larger_well_preserves_id_and_order() {
+        let topology = DockTopology::new(DockNode::tabs("w0", ["a", "b", "c"].map(Cow::from), 0));
+        let next = topology
+            .tabify("c", "a", "reorg-tabs-9")
+            .expect("tabify ok");
+        let (id, panels, active) = first_tabs(next.root()).expect("well");
+        assert_eq!(id, "w0", "well id preserved");
+        assert_eq!(
+            panels.iter().map(Cow::as_ref).collect::<Vec<_>>(),
+            vec!["a", "b", "c"],
+            "order unchanged on an in-well activation",
+        );
+        assert_eq!(active, 2, "c activated in place");
+    }
+
+    #[test]
+    fn r1084_1_cross_pane_tabify_still_relocates_source_out_of_its_well() {
+        // The same-well guard is NARROW: a panel in well w0 tabified onto a
+        // SEPARATE pane must still relocate (the remove+restack path), not be
+        // mistaken for a same-well activation.
+        let topology = DockTopology::new(DockNode::split_horizontal(
+            "root_h",
+            0.5,
+            DockNode::leaf("a"),
+            DockNode::tabs("w0", ["b", "c"].map(Cow::from), 0),
+        ));
+        // b leaves w0 (w0 had 2 → collapses to Leaf{c}) and stacks onto a.
+        let next = topology
+            .tabify("b", "a", "reorg-tabs-0")
+            .expect("tabify ok");
+        assert_eq!(next.panel_count(), 3, "no panel created/destroyed");
+        let (id, panels, _) = first_tabs(next.root()).expect("a new well a+b exists");
+        assert_eq!(
+            id, "reorg-tabs-0",
+            "cross-pane tabify mints the fresh well id"
+        );
+        assert_eq!(
+            panels.iter().map(Cow::as_ref).collect::<Vec<_>>(),
+            vec!["a", "b"],
         );
     }
 }
