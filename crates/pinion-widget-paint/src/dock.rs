@@ -1,37 +1,36 @@
-//! R683.B §5.16 §5.41 — backend-agnostic Dock-panel primitive +
-//! drag-to-tear-off [`External`].
+//! R683.B §5.16 §5.41 (R1081 §5.51 R742) — backend-agnostic Dock-panel
+//! primitive + drag-to-dock / drag-to-tear-off [`External`].
 //!
 //! ## Role
 //!
 //! A **`DockPanel`** is the atomic unit of a multi-pane DCC / IDE /
 //! CAD layout (the Phase B → D north star surface). Each panel
-//! carries a header strip the user can grab + drag past a threshold
-//! to **tear it off** into a new floating window — the canonical
-//! pro-tool authoring affordance every Photoshop / Figma / Unreal
-//! Editor / `VSCode` panel system ships.
+//! carries a header strip the user can grab + drag: dropping it onto
+//! another panel **docks** it there (split / swap, via the shared
+//! [`DockReorganizer`]), and dragging it out of the dock **tears it
+//! off** into a new floating window — the canonical pro-tool
+//! authoring affordance every Photoshop / Figma / Unreal Editor /
+//! `VSCode` panel system ships.
 //!
-//! v1 ships the **panel primitive** + tear-off detection only. The
-//! topology composition (recursive split tree with `Horizontal` /
-//! `Vertical` orientations and nested
-//! splitters) is application-level for v1, composed via
-//! [`splitter::view_splitter`](crate::splitter::view_splitter) +
-//! [`view_dock_panel`]. The substrate-as-topology lift is deferred
-//! per [[abstraction-needs-second-consumer]] — R683.B atomic 4's
-//! `hello-dock-panels` is the 1st consumer; a 2nd consumer with a
-//! different topology shape (e.g. an `editor` binding with main
-//! viewport + outliner + properties + console + asset browser) will
-//! surface the topology-level abstraction's actual contract.
+//! The topology composition (recursive split tree, [`DockTopology`] +
+//! the [`view_dock_surface`] walker) was lifted into this crate at the
+//! R685 2nd-consumer gate ([[abstraction-needs-second-consumer]]); the
+//! `hello-dock-panels-editor` binding is the consumer that surfaced its
+//! contract.
 //!
-//! ## Tear-off wire
+//! ## Drag wire (R742 §5.51)
 //!
-//! [`DockPanelExternal`] captures the pointer on `PointerDown`
-//! against the panel's header tag. Each `pointer_move` under
-//! capture lock checks the cursor distance from the press-time
-//! frame against [`DockPanelStyle::tear_off_threshold_frac`]; when
-//! the threshold is crossed the external emits a `tear_off` intent
-//! with the panel id as `IntrospectValue::Text` payload. The
-//! intent fires exactly once per drag (subsequent moves past the
-//! threshold do not re-fire).
+//! [`DockPanelExternal`] is the §5.51 R742 drag source. On a header
+//! `PointerDown` it arms; the framework opens a drag session
+//! ([`begin_drag`](pinion_core::external::External::begin_drag)) and,
+//! on each cursor move, hands the panel the drop location under the
+//! *absolute* cursor (the router resolves the nearest opted-in
+//! `LayoutStyle::drop_target` panel, R1080). On release the panel
+//! either docks onto the target panel through the shared coordinator,
+//! or — when the cursor escaped every drop target — emits a `tear_off`
+//! intent with the panel id as `IntrospectValue::Text` payload. The
+//! click-vs-drag threshold is the framework's `DRAG_CLICK_THRESHOLD_PX`
+//! SSOT (a press-release in place stays a click), NOT a per-panel knob.
 //!
 //! The binding's [`WidgetCore::update`](pinion_core::WidgetCore::update)
 //! reducer matches against the dotted wire form
@@ -1742,7 +1741,10 @@ impl ExternalIntrospect for DockReorganizeExternal {
             // Topology mutation flows through `invoke("drop", …)` /
             // `invoke("reorganize", …)`, not direct slot writes — every
             // edit must pass the mutation primitives' validation gate.
-            "topology" | "split_seq" | "last_outcome" => Err(InterveneError::ReadOnly),
+            // `drop_preview` is a read-only observation slot (R1082.1).
+            "topology" | "split_seq" | "last_outcome" | "drop_preview" => {
+                Err(InterveneError::ReadOnly)
+            }
             _ => Err(InterveneError::UnknownPath),
         }
     }
@@ -1855,12 +1857,12 @@ impl ExternalIntrospect for DockReorganizeExternal {
     }
 }
 
-/// R683.B §5.16 — symbolic event name the
-/// [`DockPanelExternal`] emits when the user's drag exceeds the
-/// configured threshold. Constant (not raw literal) so binding-side
-/// reducer match arms can spell the dotted intent tag via
-/// [`intent_tag!`](pinion_core::intent_tag) without duplicating the
-/// literal: `intent_tag!(PANEL_TAG, dock::TEAR_OFF_EVENT)`.
+/// R683.B §5.16 (R1081 §5.51) — symbolic event name the
+/// [`DockPanelExternal`] emits when a drag escapes every drop target
+/// and tears the panel off into a floating window. Constant (not raw
+/// literal) so binding-side reducer match arms can spell the dotted
+/// intent tag via [`intent_tag!`](pinion_core::intent_tag) without
+/// duplicating the literal: `intent_tag!(PANEL_TAG, dock::TEAR_OFF_EVENT)`.
 pub const TEAR_OFF_EVENT: &str = "tear_off";
 
 /// R683.B §5.16 — sidecar carrying [`view_dock_panel`]'s
@@ -1868,10 +1870,7 @@ pub const TEAR_OFF_EVENT: &str = "tear_off";
 /// so future axes (resize handles, close button, collapse arrow)
 /// land via builders without breaking the constructor surface.
 ///
-/// Use [`Self::m3_default`] for the M3-canonical 28-px header strip
-/// plus a 0.5 tear-off-threshold-fraction (the user must drag the header across
-/// half its own width before the tear-off intent fires — matches the
-/// `VSCode` / `IntelliJ` pane tear-off feel).
+/// Use [`Self::m3_default`] for the M3-canonical 28-px header strip.
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct DockPanelStyle {
@@ -1881,24 +1880,13 @@ pub struct DockPanelStyle {
     /// 28 px; pro-tool authoring surfaces (DCC / IDE panels) use
     /// 24-32 px for compactness.
     pub header_height_px: u32,
-    /// Fraction of the header extent the cursor must travel from
-    /// the press point before [`TEAR_OFF_EVENT`] fires. Default
-    /// `0.5` — half the header width matches the implicit
-    /// `VSCode` / `JetBrains` feel (the user has to commit to the
-    /// drag).
-    ///
-    /// Cursor delta is computed via the L∞ norm (`max(|Δx_rel|,
-    /// |Δy_rel|)`) so diagonal drag past either axis fires. Pure
-    /// horizontal or pure vertical drag through `Δx_rel =
-    /// tear_off_threshold_frac` is the canonical UX trigger.
-    pub tear_off_threshold_frac: f32,
-    /// Paint-side tag the panel's outer
-    /// [`Scene::Container`] carries. The header strip is tagged
-    /// `{tag}#header` (composite-tag convention R51.42); the
-    /// content area is tagged `{tag}#content`. The
-    /// [`DockPanelExternal`] is registered against the header tag
-    /// so deepest-tagged hit-test routes `PointerDown` on the
-    /// header to it.
+    /// Paint-side tag the panel's outer [`Scene::Container`] carries.
+    /// The header strip is tagged `{tag}#header` (composite-tag
+    /// convention R51.42); the content area is tagged `{tag}#content`.
+    /// The [`DockPanelExternal`] is registered against this **panel
+    /// root tag** (R683.C, NOT the `{tag}#header` composite) — the
+    /// router splits a composite paint tag at `#` and routes header /
+    /// content presses to the root external by the primary half.
     pub tag: Cow<'static, str>,
     /// Font size for the header title text. M3 label-medium token
     /// = 12 sp by default; reads tightly against the 28-px header
@@ -1907,29 +1895,15 @@ pub struct DockPanelStyle {
 }
 
 impl DockPanelStyle {
-    /// (R683.B §5.16) M3-canonical default: 28-px header, 0.5
-    /// tear-off fraction, 12-px header font.
+    /// (R683.B §5.16) M3-canonical default: 28-px header, 12-px header
+    /// font.
     #[must_use]
     pub fn m3_default(tag: impl Into<Cow<'static, str>>) -> Self {
         Self {
             header_height_px: 28,
-            tear_off_threshold_frac: 0.5,
             tag: tag.into(),
             header_font_size_px: 12,
         }
-    }
-
-    /// Override the tear-off threshold fraction. Floor `0.0` makes
-    /// the tear-off fire on the very first `pointer_move`; ceiling
-    /// `1.0` requires the cursor to drag a full header-extent past
-    /// the press point before firing. Out-of-range inputs degrade
-    /// the UX but do not abort (the L∞ delta saturates at `1.0`
-    /// inside the header rect; under capture lock `x_rel` / `y_rel`
-    /// can exceed `[0.0, 1.0]`).
-    #[must_use]
-    pub fn with_tear_off_threshold_frac(mut self, frac: f32) -> Self {
-        self.tear_off_threshold_frac = frac;
-        self
     }
 
     /// Override the header strip height in logical pixels. Touch
@@ -3024,36 +2998,33 @@ impl ExternalIntrospect for DockPanelExternal {
 
 #[cfg(test)]
 mod tests {
-    //! R683.B §5.16 — Dock-panel paint + tear-off wire tests.
+    //! R683.B §5.16 (R1081 §5.51 R742) — Dock-panel paint + R742 drag
+    //! wire tests.
     //!
-    //! Pins the load-bearing invariants the
-    //! [`hello-dock-panels`](crate) + future `DockSurface` consumers
-    //! rely on:
+    //! Pins the load-bearing invariants the dock consumers rely on:
     //!
-    //! 1. **Paint shape**: outer Container carries `tag` + 2
-    //!    children (header strip + content wrapper). Header tagged
-    //!    `{tag}#header`, content tagged `{tag}#content`.
-    //! 2. **Header height**: header child's layout matches
-    //!    `header_height_px` style.
-    //! 3. **Header text**: header contains a `TextNode` with the
-    //!    supplied title.
-    //! 4. **Tear-off threshold default**: 0.5 (M3 default).
-    //! 5. **Drag calibration**: first `pointer_move` snapshots; no
-    //!    intent fires.
-    //! 6. **Threshold crossing**: drag past threshold fires exactly
-    //!    one `tear_off` intent with the panel id payload.
-    //! 7. **Single-fire guard**: subsequent moves past threshold do
-    //!    not re-fire.
-    //! 8. **`PointerUp` clears state**: `drag_start` + fired guard
-    //!    both reset on the canonical release.
-    //! 9. **Threshold not reached**: short drag → release → no
-    //!    intent fired.
-    //! 10. **L∞ delta semantics**: diagonal drag fires when EITHER
-    //!     axis crosses the threshold.
-    //! 11. **Introspect schema + query**: `panel_id` / threshold /
-    //!     `dragging` / `tear_off_fired` all queryable.
-    //! 12. **Composite tag format**: `{tag}#header` /
-    //!     `{tag}#content`.
+    //! 1. **Paint shape**: outer Container carries `tag` + 2 children
+    //!    (header strip + content wrapper). Header tagged `{tag}#header`,
+    //!    content tagged `{tag}#content`. With an active drop zone a
+    //!    third out-of-flow overlay child is appended.
+    //! 2. **Header height / text**: header child's layout matches
+    //!    `header_height_px`; header holds the title `TextNode`.
+    //! 3. **`.drop_target(true)`**: every panel root opts in for the
+    //!    R1080 router climb.
+    //! 4. **R742 `begin_drag` arm gate**: a header press opens a session,
+    //!    a content press does not.
+    //! 5. **`drag_to` preview**: writes the shared `DockDropPreview` for
+    //!    the target panel; a self-hover clears it.
+    //! 6. **`drag_release` outcome**: a valid drop over another panel
+    //!    docks via the shared coordinator; an escape-drop (`over` =
+    //!    None) tears off; a self / dead-zone / no-coordinator drop
+    //!    snaps back (no tear-off).
+    //! 7. **`drag_cancel`**: discards without committing; clears preview.
+    //! 8. **Shared coordinator**: two panel externals + the invoke
+    //!    external mint from one `split_seq` (no collision).
+    //! 9. **Introspect schema + query**: `panel_id` / `dragging` /
+    //!    `tear_off_fired` / `drop_preview` queryable.
+    //! 10. **Composite tag format**: `{tag}#header` / `{tag}#content`.
 
     use super::{
         CONTENT_TAG_SUFFIX, DockDropZone, DockNode, DockPanelExternal, DockPanelStyle,
@@ -3177,15 +3148,8 @@ mod tests {
     fn r683_dock_panel_style_m3_default_carries_canonical_defaults() {
         let style = DockPanelStyle::m3_default(PANEL_TAG);
         assert_eq!(style.header_height_px, 28);
-        assert!((style.tear_off_threshold_frac - 0.5).abs() < f32::EPSILON);
         assert_eq!(style.header_font_size_px, 12);
         assert_eq!(style.tag.as_ref(), PANEL_TAG);
-    }
-
-    #[test]
-    fn r683_dock_panel_style_with_tear_off_threshold_override() {
-        let style = DockPanelStyle::m3_default(PANEL_TAG).with_tear_off_threshold_frac(0.25);
-        assert!((style.tear_off_threshold_frac - 0.25).abs() < f32::EPSILON);
     }
 
     // ─────────────────────────────────────────────────────────────────
