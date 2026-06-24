@@ -1297,14 +1297,18 @@ impl InputRouter {
         // release must not depend on that staying true).
         if let Some(session) = self.drag_sessions.remove(&id) {
             self.captured_targets.remove(&id);
-            let over = self
-                .cursors
-                .get(&id)
-                .copied()
-                .and_then(|(x, y)| self.resolve_drop_point(x, y));
+            let cursor = self.cursors.get(&id).copied();
+            let over = cursor.and_then(|(x, y)| self.resolve_drop_point(x, y));
             let (primary, _) = split_subindex(&session.source_tag);
             if let Some(external) = find_external_by_tag(state_scene, primary) {
-                external.handle.drag_release(&session.payload, over);
+                // R1093 §5.15 — forward the release cursor via the `_at`
+                // sibling (default delegates to `drag_release`). On the rare
+                // path where no cursor was ever recorded for this pointer,
+                // fall back to the cursor-less hook.
+                match cursor {
+                    Some(c) => external.handle.drag_release_at(&session.payload, over, c),
+                    None => external.handle.drag_release(&session.payload, over),
+                }
             }
             // R794 §5.51 — a drag and a click are mutually exclusive. Only a
             // press-release *in place* (the cursor never left the press point
@@ -1702,7 +1706,12 @@ impl InputRouter {
         let over = self.resolve_drop_point(x, y);
         let (primary, _) = split_subindex(&source);
         if let Some(external) = find_external_by_tag(state_scene, primary) {
-            external.handle.drag_to(&payload, over);
+            // R1093 §5.15 — forward the absolute window-logical cursor too
+            // (the `_at` default delegates to `drag_to`, so pre-R1093 sources
+            // are unaffected). A follow-the-cursor coordinator reads it; the
+            // rect-relative `over` is `None` once the cursor escapes every
+            // tag, so the cursor is the only live pointer signal then.
+            external.handle.drag_to_at(&payload, over, (x, y));
         }
     }
 
@@ -5613,6 +5622,35 @@ mod tests {
                 payload.value.as_i64().unwrap_or(-1)
             ));
         }
+        // R1093 — record the absolute cursor the router now forwards, then
+        // delegate to the cursor-less hooks so the pre-R1093 `to:`/`drop:`
+        // log assertions still hold (this stub deliberately exercises BOTH).
+        fn drag_to_at(
+            &mut self,
+            payload: &DragPayload,
+            over: Option<DropPoint>,
+            cursor: (f64, f64),
+        ) {
+            // Format the f64 directly (whole values print without a decimal);
+            // no truncating `as i64` cast, so this stays clippy-pedantic clean.
+            self.log
+                .lock()
+                .expect("poisoned")
+                .push(format!("at:{}:{}", cursor.0, cursor.1));
+            self.drag_to(payload, over);
+        }
+        fn drag_release_at(
+            &mut self,
+            payload: &DragPayload,
+            over: Option<DropPoint>,
+            cursor: (f64, f64),
+        ) {
+            self.log
+                .lock()
+                .expect("poisoned")
+                .push(format!("drop_at:{}:{}", cursor.0, cursor.1));
+            self.drag_release(payload, over);
+        }
         fn drag_cancel(&mut self, payload: &DragPayload) {
             self.log
                 .lock()
@@ -5732,6 +5770,43 @@ mod tests {
         assert!(
             !log[..drop_at].iter().any(|s| s.contains("PointerLeave")),
             "no stray leave mid-drag: {log:?}"
+        );
+    }
+
+    #[test]
+    fn r1093_router_forwards_absolute_cursor_to_drag_source() {
+        // R1093 §5.15 — the router must hand the drag source the ABSOLUTE
+        // window-logical cursor on every move + the release, via
+        // `drag_to_at`/`drag_release_at`. The DropPoint is rect-relative and
+        // goes `None` once the cursor escapes every tag, so the absolute
+        // cursor is the only live pointer signal a follow-the-cursor
+        // coordinator can read.
+        let mut router = InputRouter::new();
+        let (mut state, log) = state_with_dnd();
+        router.update_paint_scene(paint_with_two_rows(), &mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 20.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        // Move into row 1 (still over a tag) then OFF every tag (escape):
+        // the cursor must be forwarded in BOTH cases, even when `over` is None.
+        router.cursor_moved(PointerId::MOUSE, 100.0, 60.0, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 400.0, 400.0, &mut state);
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        let log = read(&log);
+        // The in-tag move forwarded the cursor at (100, 60)…
+        assert!(
+            log.iter().any(|s| s == "at:100:60"),
+            "cursor at in-tag move: {log:?}"
+        );
+        // …and the escape move forwarded the cursor at (400, 400) even though
+        // the DropPoint there is None (off every tag) — the whole point.
+        assert!(
+            log.iter().any(|s| s == "at:400:400"),
+            "absolute cursor must be forwarded even when over is None: {log:?}"
+        );
+        // The release forwarded the final cursor too.
+        assert!(
+            log.iter().any(|s| s == "drop_at:400:400"),
+            "release cursor forwarded: {log:?}"
         );
     }
 

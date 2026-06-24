@@ -634,8 +634,11 @@ pub trait External: core::fmt::Debug {
     /// statechart sees no spurious `PointerLeave` mid-drag, exactly like
     /// capture) and, on every subsequent cursor move, resolves the drop
     /// location under the *absolute* cursor and forwards it back to this
-    /// widget via [`drag_to`](Self::drag_to), then once via
-    /// [`drag_release`](Self::drag_release) on the matching `pointer_up`.
+    /// widget via [`drag_to_at`](Self::drag_to_at) (the rect-relative
+    /// [`DropPoint`] **plus** the absolute window-logical cursor; its default
+    /// delegates to the cursor-less [`drag_to`](Self::drag_to)), then once
+    /// via [`drag_release_at`](Self::drag_release_at) on the matching
+    /// `pointer_up`.
     ///
     /// Why the *source* receives the updates, not the hovered target: an
     /// `External` only ever sees rect-relative coordinates and the router
@@ -675,6 +678,40 @@ pub trait External: core::fmt::Debug {
     /// source afterwards, so a press-release-in-place (no real drag) still
     /// reaches the statechart as a click. Default no-op.
     fn drag_release(&mut self, _payload: &DragPayload, _over: Option<DropPoint>) {}
+
+    /// R1093 §5.15 §5.51 — live drag update WITH the absolute cursor. The
+    /// §5.15 input-forwarding ENRICHMENT (not a break): [`drag_to`](Self::drag_to)
+    /// forwards only the rect-relative [`DropPoint`] — which is `None` the
+    /// moment the cursor escapes every tagged region, exactly the dock
+    /// tear-off case — so a coordinator that must place something **at the
+    /// cursor** (a floating window that follows the pointer) had no way to
+    /// read where the cursor actually is. This additive sibling also carries
+    /// the absolute **window-logical** cursor `(x, y)` the router already
+    /// holds (the same coordinate frame `scene/layout` reports). The router
+    /// calls THIS method on every move; its default delegates to
+    /// [`drag_to`](Self::drag_to) (dropping the cursor), so every pre-R1093
+    /// drag source is bit-identical and no widget receives both calls.
+    /// Override this **instead of** `drag_to` to receive the cursor.
+    fn drag_to_at(&mut self, payload: &DragPayload, over: Option<DropPoint>, _cursor: (f64, f64)) {
+        self.drag_to(payload, over);
+    }
+
+    /// R1093 §5.15 §5.51 — drop commit WITH the absolute window-logical
+    /// cursor `(x, y)`, the release sibling of [`drag_to_at`](Self::drag_to_at).
+    /// The router calls this once on `pointer_up`; its default delegates to
+    /// [`drag_release`](Self::drag_release) so pre-R1093 sources are
+    /// unaffected. A coordinator that opens a floating window where the drag
+    /// was released reads the cursor here (the cursor is in the SOURCE
+    /// window's logical frame; converting to a desktop position additionally
+    /// needs the source window's outer position, which the shell owns).
+    fn drag_release_at(
+        &mut self,
+        payload: &DragPayload,
+        over: Option<DropPoint>,
+        _cursor: (f64, f64),
+    ) {
+        self.drag_release(payload, over);
+    }
 
     /// R937.1 §5.51 — drag ABORT. Called once when the OS revokes an
     /// in-flight drag this widget started (winit `TouchPhase::Cancelled` —
@@ -1085,6 +1122,58 @@ mod tests {
     fn stub_poll_state_is_none() {
         let mut stub = StubExternal::new();
         assert!(stub.poll_state().is_none());
+    }
+
+    #[test]
+    fn drag_at_methods_default_delegate_to_cursorless() {
+        use std::cell::Cell;
+        // R1093 — a drag source that overrides ONLY the pre-R1093
+        // cursor-less hooks. The additive `drag_to_at`/`drag_release_at`
+        // defaults must route into them, so every existing source stays
+        // bit-identical (the cursor is simply dropped) and no source ever
+        // receives both the `_at` call AND the cursor-less one.
+        #[derive(Debug)]
+        struct RecordingSource {
+            to_calls: Cell<u32>,
+            release_calls: Cell<u32>,
+        }
+        impl External for RecordingSource {
+            fn backends(&self) -> BackendSupport {
+                BackendSupport::new(&[Backend::Gui], BackendFallback::Skip)
+            }
+            fn repaint_ownership(&self) -> RepaintOwner {
+                RepaintOwner::Framework
+            }
+            fn thread_ownership(&self) -> ThreadOwnership {
+                ThreadOwnership::UiThreadSync
+            }
+            fn drag_to(&mut self, _p: &DragPayload, _o: Option<DropPoint>) {
+                self.to_calls.set(self.to_calls.get() + 1);
+            }
+            fn drag_release(&mut self, _p: &DragPayload, _o: Option<DropPoint>) {
+                self.release_calls.set(self.release_calls.get() + 1);
+            }
+        }
+        let mut src = RecordingSource {
+            to_calls: Cell::new(0),
+            release_calls: Cell::new(0),
+        };
+        let payload = DragPayload {
+            kind: Cow::Borrowed("dock-panel"),
+            value: IntrospectValue::Text("inspector".to_owned()),
+        };
+        src.drag_to_at(&payload, None, (12.0, 34.0));
+        src.drag_release_at(&payload, None, (56.0, 78.0));
+        assert_eq!(
+            src.to_calls.get(),
+            1,
+            "drag_to_at default must delegate to drag_to"
+        );
+        assert_eq!(
+            src.release_calls.get(),
+            1,
+            "drag_release_at default must delegate to drag_release"
+        );
     }
 
     #[test]

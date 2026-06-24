@@ -3356,6 +3356,14 @@ fn drop_preview_introspect(
         .map_or(IntrospectValue::Null, |p| p.to_introspect())
 }
 
+/// (R1093 §5.15 §5.51 §2 #7) Project the forwarded drag cursor onto the wire:
+/// `[x, y]` (window-logical pixels) when a drag has run, else null.
+fn drag_cursor_introspect(cursor: Option<(f64, f64)>) -> IntrospectValue {
+    cursor.map_or(IntrospectValue::Null, |(x, y)| {
+        IntrospectValue::Json(serde_json::json!([x, y]))
+    })
+}
+
 /// (R1081 §5.51) The `DragPayload::kind` discriminator a dock-panel drag
 /// carries, so a future cross-widget drop target can match dock panels
 /// before reading the payload value (the panel id).
@@ -3446,6 +3454,16 @@ pub struct DockPanelExternal {
     /// the panel off (escaped every drop target) rather than docking /
     /// snapping back. Surfaced via `query("tear_off_fired")`.
     tear_off_fired: Cell<bool>,
+    /// (R1093 §5.15 §5.51 §2 #7) The last absolute **window-logical** cursor
+    /// the router forwarded during the in-flight drag (via
+    /// [`drag_to_at`](External::drag_to_at) / [`drag_release_at`](External::drag_release_at)),
+    /// or `None` before any drag. Reset on [`begin_drag`](External::begin_drag)
+    /// and persists after release so an AI can read where the gesture went.
+    /// Surfaced as scene-as-data via `query("drag_cursor")` (`[x, y]` / null)
+    /// — the observability seam a follow-the-cursor tear-off coordinator
+    /// reads (the cursor is in the SOURCE window's frame; the desktop
+    /// position additionally needs the source window's outer position).
+    drag_cursor: Cell<Option<(f64, f64)>>,
     /// (R1081 §5.51) The shared reorganize coordinator. `Some` puts the
     /// panel in dock-or-float mode (drops onto other panels reorganize
     /// the shared topology); `None` is tear-off-only. Cloned from the
@@ -3466,6 +3484,7 @@ impl core::fmt::Debug for DockPanelExternal {
             .field("is_drag_armed", &self.is_drag_armed.get())
             .field("dragging", &self.dragging.get())
             .field("tear_off_fired", &self.tear_off_fired.get())
+            .field("drag_cursor", &self.drag_cursor.get())
             .finish_non_exhaustive()
     }
 }
@@ -3490,6 +3509,7 @@ impl DockPanelExternal {
             is_drag_armed: Cell::new(true),
             dragging: Cell::new(false),
             tear_off_fired: Cell::new(false),
+            drag_cursor: Cell::new(None),
             reorganizer: None,
             drop_preview: None,
         }
@@ -3612,6 +3632,8 @@ impl External for DockPanelExternal {
         }
         self.dragging.set(true);
         self.tear_off_fired.set(false);
+        // R1093 — a fresh gesture clears the previous drag's last cursor.
+        self.drag_cursor.set(None);
         Some(DragPayload {
             kind: Cow::Borrowed(DOCK_PANEL_DRAG_KIND),
             value: IntrospectValue::Text(self.panel_id.to_string()),
@@ -3666,6 +3688,30 @@ impl External for DockPanelExternal {
         }
     }
 
+    /// (R1093 §5.15 §5.51 §2 #7) Record the absolute window-logical cursor
+    /// the router forwards, then delegate to the cursor-less
+    /// [`drag_to`](Self::drag_to) so the existing preview/dock logic is
+    /// unchanged. The recorded cursor is exposed as scene-as-data via
+    /// `query("drag_cursor")`.
+    fn drag_to_at(&mut self, payload: &DragPayload, over: Option<DropPoint>, cursor: (f64, f64)) {
+        self.drag_cursor.set(Some(cursor));
+        self.drag_to(payload, over);
+    }
+
+    /// (R1093 §5.15 §5.51 §2 #7) Record the release cursor, then delegate to
+    /// the cursor-less [`drag_release`](Self::drag_release). The cursor
+    /// persists after the gesture so an AI can read where the drop landed
+    /// (reset on the next [`begin_drag`](Self::begin_drag)).
+    fn drag_release_at(
+        &mut self,
+        payload: &DragPayload,
+        over: Option<DropPoint>,
+        cursor: (f64, f64),
+    ) {
+        self.drag_cursor.set(Some(cursor));
+        self.drag_release(payload, over);
+    }
+
     /// (R937.1 §5.51) R742 drag abort — the OS revoked the gesture.
     /// Discard it: clear the preview + diagnostics WITHOUT committing a
     /// dock or a tear-off.
@@ -3706,6 +3752,12 @@ impl ExternalIntrospect for DockPanelExternal {
             // (`{source, target, zone}` or null), so an AI agent observes
             // the same drop-zone affordance the user sees.
             ("drop_preview", "json"),
+            // R1093 §5.15 §5.51 §2 #7 — the absolute window-logical cursor
+            // of the in-flight/last drag (`[x, y]` or null), so an AI reads
+            // the live pointer the router forwards even when the cursor has
+            // escaped every tagged region (the tear-off case `drop_preview`
+            // goes null on).
+            ("drag_cursor", "json"),
             ("send", "string"),
             // R683.C §5.16 §5.49 — direct tear-off invoke channel.
             // See `invoke` rustdoc.
@@ -3722,6 +3774,8 @@ impl ExternalIntrospect for DockPanelExternal {
             // reads the one shared signal). Null when no drag is in
             // flight / no preview signal is wired.
             "drop_preview" => Some(drop_preview_introspect(self.drop_preview.as_ref())),
+            // R1093 §5.15 §5.51 §2 #7 — the forwarded absolute cursor.
+            "drag_cursor" => Some(drag_cursor_introspect(self.drag_cursor.get())),
             _ => None,
         }
     }
@@ -3731,8 +3785,8 @@ impl ExternalIntrospect for DockPanelExternal {
             // Every slot is framework-owned. AI clients drive the gesture
             // through the `invoke("send", ...)` / `invoke("tear_off")`
             // channels + the shared coordinator — not by intervening on
-            // dragging / tear_off_fired / drop_preview directly.
-            "panel_id" | "dragging" | "tear_off_fired" | "drop_preview" => {
+            // dragging / tear_off_fired / drop_preview / drag_cursor directly.
+            "panel_id" | "dragging" | "tear_off_fired" | "drop_preview" | "drag_cursor" => {
                 Err(InterveneError::ReadOnly)
             }
             _ => Err(InterveneError::UnknownPath),
@@ -3855,7 +3909,7 @@ mod tests {
         dock_drop_zone_highlight, view_dock_panel,
     };
     use pinion_core::external::{
-        DragPayload, DropPoint, External, ExternalIntrospect, IntrospectValue,
+        DragPayload, DropPoint, External, ExternalIntrospect, InterveneError, IntrospectValue,
     };
     use pinion_core::intent::Intent;
     use pinion_core::reactive::{Owner, Signal};
@@ -4197,10 +4251,55 @@ mod tests {
             "dragging",
             "tear_off_fired",
             "drop_preview",
+            "drag_cursor",
             "send",
         ] {
             assert!(fields.contains(&needed), "schema must include {needed}");
         }
+    }
+
+    #[test]
+    fn r1093_drag_cursor_records_forwarded_cursor_and_resets_per_gesture() {
+        // R1093 §5.15 — the drag_cursor slot is null until a drag forwards a
+        // cursor, then carries the absolute [x, y]; a fresh begin_drag resets
+        // it; and it is read-only (driven by the router, not intervene).
+        let mut ext = DockPanelExternal::new("p1");
+        assert_eq!(
+            ext.query("drag_cursor"),
+            Some(IntrospectValue::Null),
+            "drag_cursor is null before any drag"
+        );
+        let _ = ext.begin_drag();
+        // A move forwards the cursor even when over is None (escaped tags).
+        ext.drag_to_at(&dummy_payload(), None, (123.0, 45.0));
+        assert_eq!(
+            ext.query("drag_cursor"),
+            Some(IntrospectValue::Json(serde_json::json!([123.0, 45.0]))),
+            "drag_cursor mirrors the forwarded move cursor"
+        );
+        // The release cursor overwrites it and persists post-gesture.
+        ext.drag_release_at(&dummy_payload(), None, (200.0, 88.0));
+        assert_eq!(
+            ext.query("drag_cursor"),
+            Some(IntrospectValue::Json(serde_json::json!([200.0, 88.0]))),
+            "drag_cursor mirrors the release cursor and persists after the drop"
+        );
+        // A new gesture clears the stale cursor.
+        let _ = ext.begin_drag();
+        assert_eq!(
+            ext.query("drag_cursor"),
+            Some(IntrospectValue::Null),
+            "begin_drag resets drag_cursor for the fresh gesture"
+        );
+        // The slot is framework-owned, not AI-writable.
+        assert_eq!(
+            ext.intervene(
+                "drag_cursor",
+                IntrospectValue::Json(serde_json::json!([1.0, 2.0]))
+            ),
+            Err(InterveneError::ReadOnly),
+            "drag_cursor is read-only (router-driven)"
+        );
     }
 
     #[test]
