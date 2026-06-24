@@ -81,6 +81,7 @@ use pinion_core::reactive::Signal;
 use pinion_core::undo::{SignalEdit, UndoStack};
 
 use crate::splitter::{SplitterOrientation, SplitterStyle, view_splitter};
+use crate::tabs::{TabsStyle, view_tabs};
 
 // ─────────────────────────────────────────────────────────────────────
 // R685 §5.16 §5.49 — DockSurface topology composition substrate.
@@ -256,6 +257,50 @@ pub enum DockNode {
         /// `DockPanelExternal::new` first argument.
         panel_id: Cow<'static, str>,
     },
+    /// (R1083 §5.51) Tab well — a stack of ≥2 panels sharing one pane
+    /// slot, exactly one of them visible at a time (the [`Self::Tabs::active`]
+    /// index). The tabbed-docking leaf: dropping panel A onto panel B's
+    /// centre ([`DockDropZone::Center`]) merges them into a `Tabs` well
+    /// the user clicks between, the VS Code / Unreal docking idiom.
+    ///
+    /// ## Invariants (enforced by [`DockTopology::try_new`])
+    ///
+    /// * `panels.len() >= 2` — a single-panel well is a [`Self::Leaf`],
+    ///   not a degenerate `Tabs`. The mutation primitives keep this
+    ///   canonical: a well that loses a panel down to one collapses back
+    ///   to a `Leaf` ([`remove_leaf_rec`]). There is therefore exactly
+    ///   one representation for each panel count — no `Leaf` vs
+    ///   `Tabs[1]` ambiguity.
+    /// * `active < panels.len()` — the visible tab index is always in
+    ///   range.
+    /// * Every `panels[i]` is a unique non-empty panel id sharing the
+    ///   one topology id namespace with [`Self::Leaf::panel_id`] +
+    ///   [`Self::Split::id`] + this well's own [`Self::Tabs::id`].
+    ///
+    /// ## Why a stable well `id` (mirrors [`Self::Split::id`])
+    ///
+    /// Like a Split, a tab well is a bindable runtime entity — the tab
+    /// strip is hit-tested (click a tab to switch active) and a future
+    /// selection `Signal<usize>` binds to it. Positional addressing
+    /// would be fragile under topology mutation (every reorganize
+    /// rewrites the tree), so the well carries a stable id the binding
+    /// keys its per-well state on. A `Tabify` gesture that creates a
+    /// fresh well mints `reorg-tabs-{seq}` ([`REORG_TABS_ID_PREFIX`]);
+    /// tabifying into an existing well keeps that well's id.
+    Tabs {
+        /// Stable tab-well identifier — the [`view_tabs`] strip tag +
+        /// the future per-well selection-signal lookup key. Shares the
+        /// one topology id namespace (unique against every panel id +
+        /// Split id + other well id).
+        id: Cow<'static, str>,
+        /// The ≥2 panels stacked in this well, in tab order. Each is a
+        /// stable panel id, addressable exactly like a [`Self::Leaf`]'s
+        /// `panel_id` (same `panel_handle` callback, same
+        /// `DockPanelExternal` registration).
+        panels: Vec<Cow<'static, str>>,
+        /// Index into `panels` of the visible tab. Always `< panels.len()`.
+        active: usize,
+    },
 }
 
 impl DockNode {
@@ -307,14 +352,49 @@ impl DockNode {
         }
     }
 
+    /// (R1083 §5.51) Convenience constructor for a tab well. `id` is the
+    /// stable well identifier ([`DockNode::Tabs::id`]); `panels` are the
+    /// stacked panel ids in tab order (must be ≥2 + unique for a valid
+    /// topology); `active` is the visible tab index (must be `< panels.len()`).
+    /// The invariants are enforced at [`DockTopology::try_new`], not here.
+    #[must_use]
+    pub fn tabs(
+        id: impl Into<Cow<'static, str>>,
+        panels: impl IntoIterator<Item = Cow<'static, str>>,
+        active: usize,
+    ) -> Self {
+        Self::Tabs {
+            id: id.into(),
+            panels: panels.into_iter().collect(),
+            active,
+        }
+    }
+
     /// (R685 §5.16) Count of [`DockNode::Leaf`] nodes in the
     /// sub-tree rooted at `self`. Useful for `panel_views` callback
     /// validation + persistence size limits.
     #[must_use]
     pub fn leaf_count(&self) -> usize {
         match self {
-            Self::Leaf { .. } => 1,
+            // (R1083) A tab well is one leaf of the split tree — one pane
+            // slot — regardless of how many panels it stacks. Use
+            // [`Self::panel_count`] for the total-panels figure.
+            Self::Leaf { .. } | Self::Tabs { .. } => 1,
             Self::Split { first, second, .. } => first.leaf_count() + second.leaf_count(),
+        }
+    }
+
+    /// (R1083 §5.51) Count of distinct panels in the sub-tree rooted at
+    /// `self` — every [`DockNode::Leaf`] contributes 1, every
+    /// [`DockNode::Tabs`] contributes its stacked-panel count. Equals
+    /// `panel_ids().len()`; the number of [`DockPanelExternal`]s a
+    /// binding registers (one per panel, tabbed or not).
+    #[must_use]
+    pub fn panel_count(&self) -> usize {
+        match self {
+            Self::Leaf { .. } => 1,
+            Self::Tabs { panels, .. } => panels.len(),
+            Self::Split { first, second, .. } => first.panel_count() + second.panel_count(),
         }
     }
 
@@ -326,7 +406,9 @@ impl DockNode {
     #[must_use]
     pub fn split_count(&self) -> usize {
         match self {
-            Self::Leaf { .. } => 0,
+            // A tab well carries no Split divider — only Split nodes pair
+            // with a ratio signal.
+            Self::Leaf { .. } | Self::Tabs { .. } => 0,
             Self::Split { first, second, .. } => 1 + first.split_count() + second.split_count(),
         }
     }
@@ -337,7 +419,7 @@ impl DockNode {
     /// align with `panel_ids()[i]` deterministically.
     #[must_use]
     pub fn panel_ids(&self) -> Vec<&str> {
-        let mut out = Vec::with_capacity(self.leaf_count());
+        let mut out = Vec::with_capacity(self.panel_count());
         self.collect_panel_ids(&mut out);
         out
     }
@@ -345,6 +427,12 @@ impl DockNode {
     fn collect_panel_ids<'a>(&'a self, out: &mut Vec<&'a str>) {
         match self {
             Self::Leaf { panel_id, .. } => out.push(panel_id.as_ref()),
+            // (R1083) Every stacked panel is independently addressable —
+            // emit them in tab order so `panel_ids()` indices stay stable
+            // across serialization round-trips.
+            Self::Tabs { panels, .. } => {
+                out.extend(panels.iter().map(Cow::as_ref));
+            }
             Self::Split { first, second, .. } => {
                 first.collect_panel_ids(out);
                 second.collect_panel_ids(out);
@@ -504,6 +592,32 @@ pub enum TopologyError {
     /// last leaf cannot be removed. The binding closes the whole window
     /// instead.
     RootRemoval,
+    /// (R1083 §5.51) Two [`DockNode::Tabs`] wells carry the same `id`.
+    /// Like a duplicate Split id, the binding's per-well state
+    /// (selection signal / tab-strip tag) would collide.
+    DuplicateTabsId(String),
+    /// (R1083 §5.51) A [`DockNode::Tabs`] well carries fewer than two
+    /// panels. A single-panel well is not a canonical `Tabs` — it must
+    /// be a [`DockNode::Leaf`]; the mutation primitives collapse a well
+    /// back to a leaf when it shrinks to one panel, so a `< 2` well can
+    /// only arise from a hand-built tree.
+    TabsTooFew {
+        /// The offending well's [`DockNode::Tabs::id`].
+        tabs_id: String,
+        /// How many panels the well carries (`< 2`).
+        count: usize,
+    },
+    /// (R1083 §5.51) A [`DockNode::Tabs`] well's `active` index is not
+    /// `< panels.len()` — the visible-tab index points past the end of
+    /// the stack.
+    ActiveOutOfRange {
+        /// The offending well's [`DockNode::Tabs::id`].
+        tabs_id: String,
+        /// The out-of-range visible-tab index.
+        active: usize,
+        /// The well's panel count (`active` must be `< count`).
+        count: usize,
+    },
 }
 
 impl core::fmt::Display for TopologyError {
@@ -531,6 +645,20 @@ impl core::fmt::Display for TopologyError {
             Self::RootRemoval => write!(
                 f,
                 "cannot remove the topology's sole panel (an empty topology has no valid layout)"
+            ),
+            Self::DuplicateTabsId(id) => write!(f, "duplicate tab-well id: {id:?}"),
+            Self::TabsTooFew { tabs_id, count } => write!(
+                f,
+                "tab well {tabs_id:?} has {count} panel(s); a well must stack at least 2 \
+                 (a single panel is a Leaf, not a Tabs)"
+            ),
+            Self::ActiveOutOfRange {
+                tabs_id,
+                active,
+                count,
+            } => write!(
+                f,
+                "tab well {tabs_id:?} active index {active} is out of range for {count} panel(s)"
             ),
         }
     }
@@ -651,11 +779,20 @@ impl DockTopology {
         self.root.for_each_split(&mut f);
     }
 
-    /// (R685 §5.16) Count of leaf nodes. Equals
-    /// `self.panel_ids().len()`.
+    /// (R685 §5.16) Count of leaf panes (each [`DockNode::Leaf`] **and**
+    /// each [`DockNode::Tabs`] well counts as one). For the total panel
+    /// count (tab-well panels counted individually) use [`Self::panel_count`].
     #[must_use]
     pub fn leaf_count(&self) -> usize {
         self.root.leaf_count()
+    }
+
+    /// (R1083 §5.51) Count of distinct panels — equals
+    /// `self.panel_ids().len()`. Each [`DockNode::Leaf`] contributes 1,
+    /// each [`DockNode::Tabs`] well its stacked-panel count.
+    #[must_use]
+    pub fn panel_count(&self) -> usize {
+        self.root.panel_count()
     }
 
     /// (R685 §5.16) Count of Split nodes. Equals the signal-pool
@@ -791,6 +928,66 @@ impl DockTopology {
             None => Err(TopologyError::RootRemoval),
         }
     }
+
+    /// (R1083 §5.51) Merge the dragged `source` panel into `target`'s pane
+    /// as a tab well — the [`DockDropZone::Center`] gesture's substrate
+    /// side (replacing the tab-less v1 swap). `source` is removed from its
+    /// current location (its old split collapses / its old well shrinks),
+    /// then stacked onto `target`:
+    ///
+    /// * `target` a bare [`DockNode::Leaf`] → becomes a fresh
+    ///   [`DockNode::Tabs`] well `[target, source]` keyed on `new_tabs_id`,
+    ///   `source` the visible tab.
+    /// * `target` already inside a [`DockNode::Tabs`] well → `source` is
+    ///   appended and becomes the visible tab; `new_tabs_id` is unused.
+    ///
+    /// `source == target` (dropping a panel on its own centre) is a
+    /// well-defined no-op returning the topology unchanged. The leaf count
+    /// is invariant — one panel relocates, none created or destroyed.
+    ///
+    /// # Errors
+    ///
+    /// * [`TopologyError::PanelNotFound`] if `source` or `target` names no
+    ///   panel.
+    /// * [`TopologyError::DuplicateTabsId`] / [`TopologyError::IdCollision`]
+    ///   if `new_tabs_id` collides with an existing id (only when a fresh
+    ///   well is minted; surfaced by the [`Self::try_new`] gate).
+    ///
+    /// # Panics
+    ///
+    /// Never in practice: the internal source-removal is guarded to be
+    /// unreachable as a tree-emptying operation, because `source != target`
+    /// and both are verified present, so `target` always survives the
+    /// removal.
+    pub fn tabify(
+        &self,
+        source: &str,
+        target: &str,
+        new_tabs_id: impl Into<Cow<'static, str>>,
+    ) -> Result<DockTopology, TopologyError> {
+        let ids = self.root.panel_ids();
+        if !ids.contains(&source) {
+            return Err(TopologyError::PanelNotFound(source.to_string()));
+        }
+        if !ids.contains(&target) {
+            return Err(TopologyError::PanelNotFound(target.to_string()));
+        }
+        if source == target {
+            return Ok(Self {
+                root: self.root.clone(),
+            });
+        }
+        // Remove source from its current location first (collapsing its old
+        // split / shrinking its old well), then stack it onto target. Both
+        // exist and differ, so removal always leaves target in place and can
+        // never empty the tree — `remove_leaf_rec` never returns `None` here.
+        let removed = remove_leaf_rec(&self.root, source)
+            .expect("tabify: source removal cannot empty the tree (target still present)");
+        let mut source_id = Some(Cow::Owned(source.to_string()));
+        let mut new_tabs_id = Some(new_tabs_id.into());
+        let new_root = tabify_into_rec(&removed, target, &mut source_id, &mut new_tabs_id);
+        Self::try_new(new_root)
+    }
 }
 
 /// (R686 §5.16 §5.45) Which slot of a newly created
@@ -827,6 +1024,18 @@ fn swap_panel_ids_rec(node: &mut DockNode, a: &str, b: &str) {
                 *panel_id = Cow::Owned(b.to_string());
             } else if panel_id.as_ref() == b {
                 *panel_id = Cow::Owned(a.to_string());
+            }
+        }
+        // (R1083) A swapped panel may live inside a tab well — relabel it
+        // in place. Panel ids are unique so at most one of `a` / `b` is in
+        // any one well, but a well could hold one of each (both relabel).
+        DockNode::Tabs { panels, .. } => {
+            for panel_id in panels {
+                if panel_id.as_ref() == a {
+                    *panel_id = Cow::Owned(b.to_string());
+                } else if panel_id.as_ref() == b {
+                    *panel_id = Cow::Owned(a.to_string());
+                }
             }
         }
         DockNode::Split { first, second, .. } => {
@@ -882,7 +1091,32 @@ fn split_leaf_rec(
                 second: Box::new(second),
             }
         }
-        DockNode::Leaf { .. } => node.clone(),
+        // (R1083) An edge drop landing on a panel that lives in a tab well
+        // splits the **whole well** — the stacked panels stay together as
+        // one child of the new Split, the dragged panel becomes the
+        // sibling. (The router resolves the well's active panel as the
+        // drop target, and that panel is in this well.)
+        DockNode::Tabs { panels, .. } if panels.iter().any(|p| p.as_ref() == target) => {
+            let ins = insertion.take().expect(
+                "split_leaf_rec: target well visited more than once (unique-id invariant broken)",
+            );
+            let existing = node.clone();
+            let inserted = DockNode::Leaf {
+                panel_id: ins.new_leaf_id,
+            };
+            let (first, second) = match ins.position {
+                DockSplitPosition::First => (inserted, existing),
+                DockSplitPosition::Second => (existing, inserted),
+            };
+            DockNode::Split {
+                id: ins.split_id,
+                orientation: ins.orientation,
+                ratio: ins.ratio,
+                first: Box::new(first),
+                second: Box::new(second),
+            }
+        }
+        DockNode::Leaf { .. } | DockNode::Tabs { .. } => node.clone(),
         DockNode::Split {
             id,
             orientation,
@@ -916,6 +1150,40 @@ fn remove_leaf_rec(node: &DockNode, target: &str) -> Option<DockNode> {
             } else {
                 Some(node.clone())
             }
+        }
+        // (R1083) Removing a panel from a tab well shrinks the well; a
+        // well that drops to a single panel collapses back to a [`Leaf`]
+        // (the ≥2 canonical invariant). A well never returns `None` — it
+        // always retains ≥1 panel — so it never signals the parent Split
+        // to promote a sibling (only a bare target [`Leaf`] does that).
+        DockNode::Tabs { id, panels, active } => {
+            let Some(removed_idx) = panels.iter().position(|p| p.as_ref() == target) else {
+                return Some(node.clone());
+            };
+            let mut remaining: Vec<Cow<'static, str>> = panels.clone();
+            remaining.remove(removed_idx);
+            if remaining.len() == 1 {
+                return Some(DockNode::Leaf {
+                    panel_id: remaining.into_iter().next().expect("len == 1"),
+                });
+            }
+            // Keep the visible tab pointing at the same panel where
+            // possible: a removal before `active` shifts it down one; a
+            // removal of (or past the new end at) `active` clamps to the
+            // last tab.
+            let mut new_active = if *active > removed_idx {
+                active - 1
+            } else {
+                *active
+            };
+            if new_active >= remaining.len() {
+                new_active = remaining.len() - 1;
+            }
+            Some(DockNode::Tabs {
+                id: id.clone(),
+                panels: remaining,
+                active: new_active,
+            })
         }
         DockNode::Split {
             id,
@@ -952,6 +1220,65 @@ fn remove_leaf_rec(node: &DockNode, target: &str) -> Option<DockNode> {
     }
 }
 
+/// (R1083 §5.51) Rebuild `node`, stacking `source` onto the pane that
+/// holds `target`. The caller has verified both panels exist + differ, so
+/// `source` is consumed at exactly one node (threaded through an `Option`
+/// like [`SplitInsertion`], the "inserted at most once" structural
+/// guarantee). `new_tabs_id` is taken only when `target` is a bare
+/// [`DockNode::Leaf`] promoted to a fresh well — tabifying into an
+/// existing well leaves it untouched.
+fn tabify_into_rec(
+    node: &DockNode,
+    target: &str,
+    source_id: &mut Option<Cow<'static, str>>,
+    new_tabs_id: &mut Option<Cow<'static, str>>,
+) -> DockNode {
+    match node {
+        // target is a bare leaf → promote to a 2-tab well, source visible.
+        DockNode::Leaf { panel_id } if panel_id.as_ref() == target => {
+            let id = new_tabs_id
+                .take()
+                .expect("tabify_into_rec: target visited more than once (unique-id invariant)");
+            let source = source_id
+                .take()
+                .expect("tabify_into_rec: source consumed more than once");
+            DockNode::Tabs {
+                id,
+                panels: vec![panel_id.clone(), source],
+                active: 1,
+            }
+        }
+        // target already in a well → append source, make it the visible tab.
+        DockNode::Tabs { id, panels, .. } if panels.iter().any(|p| p.as_ref() == target) => {
+            let source = source_id
+                .take()
+                .expect("tabify_into_rec: source consumed more than once");
+            let mut panels = panels.clone();
+            let new_active = panels.len();
+            panels.push(source);
+            DockNode::Tabs {
+                id: id.clone(),
+                panels,
+                active: new_active,
+            }
+        }
+        DockNode::Leaf { .. } | DockNode::Tabs { .. } => node.clone(),
+        DockNode::Split {
+            id,
+            orientation,
+            ratio,
+            first,
+            second,
+        } => DockNode::Split {
+            id: id.clone(),
+            orientation: *orientation,
+            ratio: *ratio,
+            first: Box::new(tabify_into_rec(first, target, source_id, new_tabs_id)),
+            second: Box::new(tabify_into_rec(second, target, source_id, new_tabs_id)),
+        },
+    }
+}
+
 /// (R685.C atomic 1 §5.16) Discriminator for the unified id-namespace
 /// validator — tracks whether an id was first seen as a panel or
 /// a Split, so duplicate detection produces the right error
@@ -961,6 +1288,9 @@ fn remove_leaf_rec(node: &DockNode, target: &str) -> Option<DockNode> {
 enum NodeKind {
     Panel,
     Split,
+    /// (R1083 §5.51) A [`DockNode::Tabs`] well's own `id` (distinct from
+    /// the panel ids it stacks, which are [`NodeKind::Panel`]).
+    Tabs,
 }
 
 /// (R685.B / R685.C §5.16) Internal recursive validator. Walks the
@@ -969,6 +1299,24 @@ enum NodeKind {
 /// cross-namespace collision detection. Validates every Split's
 /// ratio for finiteness + bounds; rejects empty ids on first
 /// encounter.
+/// (R1083 §5.51) Insert a panel id into the unified id namespace,
+/// emitting the right error variant on collision. Shared by the
+/// [`DockNode::Leaf`] and [`DockNode::Tabs`] validation arms so a panel
+/// id collides identically whether it sits in a bare leaf or a tab well.
+/// The empty-id check is the caller's (it precedes this for both arms).
+fn insert_panel_id(
+    seen: &mut std::collections::HashMap<String, NodeKind>,
+    panel_id: &str,
+) -> Result<(), TopologyError> {
+    match seen.insert(panel_id.to_string(), NodeKind::Panel) {
+        None => Ok(()),
+        Some(NodeKind::Panel) => Err(TopologyError::DuplicatePanelId(panel_id.to_string())),
+        Some(NodeKind::Split | NodeKind::Tabs) => {
+            Err(TopologyError::IdCollision(panel_id.to_string()))
+        }
+    }
+}
+
 fn validate_node(
     node: &DockNode,
     seen: &mut std::collections::HashMap<String, NodeKind>,
@@ -978,11 +1326,44 @@ fn validate_node(
             if panel_id.is_empty() {
                 return Err(TopologyError::EmptyId);
             }
-            match seen.insert(panel_id.to_string(), NodeKind::Panel) {
-                None => Ok(()),
-                Some(NodeKind::Panel) => Err(TopologyError::DuplicatePanelId(panel_id.to_string())),
-                Some(NodeKind::Split) => Err(TopologyError::IdCollision(panel_id.to_string())),
+            insert_panel_id(seen, panel_id.as_ref())
+        }
+        DockNode::Tabs { id, panels, active } => {
+            // The well's own id shares the topology id namespace.
+            if id.is_empty() {
+                return Err(TopologyError::EmptyId);
             }
+            match seen.insert(id.to_string(), NodeKind::Tabs) {
+                None => {}
+                Some(NodeKind::Tabs) => return Err(TopologyError::DuplicateTabsId(id.to_string())),
+                Some(NodeKind::Panel | NodeKind::Split) => {
+                    return Err(TopologyError::IdCollision(id.to_string()));
+                }
+            }
+            // Canonical-form invariants: a well stacks ≥2 panels and the
+            // visible index is in range.
+            if panels.len() < 2 {
+                return Err(TopologyError::TabsTooFew {
+                    tabs_id: id.to_string(),
+                    count: panels.len(),
+                });
+            }
+            if *active >= panels.len() {
+                return Err(TopologyError::ActiveOutOfRange {
+                    tabs_id: id.to_string(),
+                    active: *active,
+                    count: panels.len(),
+                });
+            }
+            // Each stacked panel id is a panel in the shared namespace —
+            // collides with Leaf panel ids exactly as a duplicate would.
+            for panel_id in panels {
+                if panel_id.is_empty() {
+                    return Err(TopologyError::EmptyId);
+                }
+                insert_panel_id(seen, panel_id.as_ref())?;
+            }
+            Ok(())
         }
         DockNode::Split {
             id,
@@ -1005,7 +1386,7 @@ fn validate_node(
                 Some(NodeKind::Split) => {
                     return Err(TopologyError::DuplicateSplitId(id.to_string()));
                 }
-                Some(NodeKind::Panel) => {
+                Some(NodeKind::Panel | NodeKind::Tabs) => {
                     return Err(TopologyError::IdCollision(id.to_string()));
                 }
             }
@@ -1078,8 +1459,9 @@ pub enum DockDropZone {
     /// Cursor is near the panel's bottom edge — dock the dragged panel
     /// below, splitting the target vertically.
     Bottom,
-    /// Cursor is in the panel's centre rectangle — swap the dragged
-    /// panel with the target (no tabs in v1, so centre = swap).
+    /// Cursor is in the panel's centre rectangle — stack the dragged
+    /// panel onto the target as a tab well ([`DockReorganizeIntent::Tabify`],
+    /// R1083). (Pre-R1083 v1 had no tabs, so a centre drop swapped.)
     Center,
 }
 
@@ -1175,6 +1557,14 @@ pub const DEFAULT_REORGANIZE_RATIO: f32 = 0.5;
 /// the boot topology's ids.
 pub const REORG_SPLIT_ID_PREFIX: &str = "reorg-split-";
 
+/// (R1083 §5.51) Prefix for the stable tab-well ids the
+/// [`DockReorganizeExternal`] mints when a [`DockReorganizeIntent::Tabify`]
+/// gesture creates a **new** well (`reorg-tabs-{seq}`). Distinct from any
+/// binding-declared well id + the [`REORG_SPLIT_ID_PREFIX`] split ids so a
+/// generated well id never collides. A tabify that joins an *existing*
+/// well leaves the minted id unused (a harmless gap in the sequence).
+pub const REORG_TABS_ID_PREFIX: &str = "reorg-tabs-";
+
 /// (R686 §5.16 §5.45) Map an edge [`DockDropZone`] to the
 /// `(orientation, position)` a [`DockTopology::split_leaf_into`] needs:
 /// a left/right drop splits the target **horizontally**, a top/bottom
@@ -1207,7 +1597,12 @@ fn zone_split_geometry(zone: DockDropZone) -> Option<(SplitterOrientation, DockS
 fn intent_for_zone(source: &str, target: &str, zone: DockDropZone) -> Option<DockReorganizeIntent> {
     match zone {
         DockDropZone::None => None,
-        DockDropZone::Center => Some(DockReorganizeIntent::Swap {
+        // (R1083 §5.51) A centre drop now stacks the dragged panel onto the
+        // target as a tab well (the tabbed-docking gesture), superseding the
+        // tab-less v1 swap. `DockReorganizeIntent::Swap` remains a valid
+        // public mutation (an explicit AI `reorganize`/test can request it)
+        // but no zone produces it.
+        DockDropZone::Center => Some(DockReorganizeIntent::Tabify {
             source: source.to_string(),
             target: target.to_string(),
         }),
@@ -1312,6 +1707,15 @@ pub enum DockReorganizeIntent {
         /// Which slot of the new split the dragged panel occupies.
         position: DockSplitPosition,
     },
+    /// (R1083 §5.51) Stack the dragged `source` panel onto the `target`
+    /// as a tab well (centre drop) — [`DockTopology::tabify`].
+    Tabify {
+        /// Panel being dragged (moves: removed from its old slot, then
+        /// stacked onto the target's pane).
+        source: String,
+        /// Panel the source stacks onto (becomes / joins a tab well).
+        target: String,
+    },
 }
 
 impl DockReorganizeIntent {
@@ -1319,7 +1723,9 @@ impl DockReorganizeIntent {
     #[must_use]
     pub fn source(&self) -> &str {
         match self {
-            Self::Swap { source, .. } | Self::SplitInsert { source, .. } => source,
+            Self::Swap { source, .. }
+            | Self::SplitInsert { source, .. }
+            | Self::Tabify { source, .. } => source,
         }
     }
 
@@ -1327,33 +1733,37 @@ impl DockReorganizeIntent {
     #[must_use]
     pub fn target(&self) -> &str {
         match self {
-            Self::Swap { target, .. } | Self::SplitInsert { target, .. } => target,
+            Self::Swap { target, .. }
+            | Self::SplitInsert { target, .. }
+            | Self::Tabify { target, .. } => target,
         }
     }
 
     /// (R686 §5.16 §5.45) Apply this gesture to `topology`, producing a
-    /// new validated topology. `new_split_id` is the stable id for the
-    /// divider a `SplitInsert` creates (ignored by `Swap`); `ratio` is
-    /// the initial split fraction (typically
-    /// [`DEFAULT_REORGANIZE_RATIO`]).
+    /// new validated topology. `new_id` is the stable id any minting
+    /// gesture needs — the divider id a `SplitInsert` creates, or the
+    /// fresh tab-well id a `Tabify` mints (ignored by `Swap`, and by a
+    /// `Tabify` that joins an existing well). `ratio` is the initial
+    /// split fraction (typically [`DEFAULT_REORGANIZE_RATIO`]; used only
+    /// by `SplitInsert`).
     ///
-    /// `SplitInsert` is a **move**: the source panel is removed from
-    /// its current slot (collapsing its old parent split) and
-    /// re-inserted beside the target. Composing the two mutation
-    /// primitives this way keeps the leaf count invariant (one panel
-    /// relocated, none created or destroyed).
+    /// `SplitInsert` + `Tabify` are **moves**: the source panel is
+    /// removed from its current slot (collapsing its old parent split /
+    /// shrinking its old well) and re-placed beside / onto the target.
+    /// Composing the mutation primitives this way keeps the panel count
+    /// invariant (one panel relocated, none created or destroyed).
     ///
     /// # Errors
     ///
     /// Propagates the underlying mutation primitives' errors:
     /// [`TopologyError::PanelNotFound`] if `source` or `target` names
-    /// no leaf, [`TopologyError::RootRemoval`] if `source` is the sole
-    /// panel, or a duplicate/collision error if `new_split_id` clashes
+    /// no panel, [`TopologyError::RootRemoval`] if `source` is the sole
+    /// panel, or a duplicate/collision error if `new_id` clashes
     /// with an existing id.
     pub fn apply(
         &self,
         topology: &DockTopology,
-        new_split_id: impl Into<Cow<'static, str>>,
+        new_id: impl Into<Cow<'static, str>>,
         ratio: f32,
     ) -> Result<DockTopology, TopologyError> {
         match self {
@@ -1366,11 +1776,12 @@ impl DockReorganizeIntent {
             } => topology.remove_leaf(source)?.split_leaf_into(
                 target,
                 source.clone(),
-                new_split_id,
+                new_id,
                 *orientation,
                 ratio,
                 *position,
             ),
+            Self::Tabify { source, target } => topology.tabify(source, target, new_id),
         }
     }
 }
@@ -1448,6 +1859,11 @@ pub struct DockReorganizer {
     /// split (`reorg-split-{seq}`). Bumped only when a `SplitInsert`
     /// actually lands, so ids stay gap-minimal + collision-free.
     split_seq: Cell<u64>,
+    /// (R1083 §5.51) Monotonic counter feeding the stable id of each
+    /// generated tab well (`reorg-tabs-{seq}`). Bumped on every applied
+    /// [`DockReorganizeIntent::Tabify`]; a tabify that joins an existing
+    /// well leaves the minted id unused (a harmless sequence gap).
+    tabs_seq: Cell<u64>,
     /// Initial ratio each generated split seeds (even split by default).
     reorganize_ratio: f32,
     /// Last gesture outcome, surfaced via `query("last_outcome")` for
@@ -1515,6 +1931,7 @@ impl DockReorganizer {
         Self {
             topology,
             split_seq: Cell::new(0),
+            tabs_seq: Cell::new(0),
             reorganize_ratio: DEFAULT_REORGANIZE_RATIO,
             last_outcome: RefCell::new(None),
             undo: None,
@@ -1536,6 +1953,13 @@ impl DockReorganizer {
     #[must_use]
     pub fn split_seq(&self) -> u64 {
         self.split_seq.get()
+    }
+
+    /// (R1083 §5.51) Diagnostic: how many tab-well ids this coordinator
+    /// has minted (one per applied [`DockReorganizeIntent::Tabify`]).
+    #[must_use]
+    pub fn tabs_seq(&self) -> u64 {
+        self.tabs_seq.get()
     }
 
     /// Read the last gesture outcome summary (`"<source> -> <target>"` on
@@ -1574,9 +1998,15 @@ impl DockReorganizer {
     /// collision). The live topology is left unchanged on error.
     pub fn apply_intent(&self, intent: &DockReorganizeIntent) -> Result<String, TopologyError> {
         let current = self.topology.get();
-        let seq = self.split_seq.get();
-        let new_split_id = format!("{REORG_SPLIT_ID_PREFIX}{seq}");
-        let next = match intent.apply(&current, new_split_id, self.reorganize_ratio) {
+        // (R1083 §5.51) Mint the stable id the gesture needs — a tab-well id
+        // for `Tabify`, a split id otherwise. `Swap` ignores it.
+        let new_id = match intent {
+            DockReorganizeIntent::Tabify { .. } => {
+                format!("{REORG_TABS_ID_PREFIX}{}", self.tabs_seq.get())
+            }
+            _ => format!("{REORG_SPLIT_ID_PREFIX}{}", self.split_seq.get()),
+        };
+        let next = match intent.apply(&current, new_id, self.reorganize_ratio) {
             Ok(next) => next,
             Err(e) => {
                 // Record the rejection here so EVERY drive (the AI invoke
@@ -1588,8 +2018,16 @@ impl DockReorganizer {
                 return Err(e);
             }
         };
-        if matches!(intent, DockReorganizeIntent::SplitInsert { .. }) {
-            self.split_seq.set(seq + 1);
+        // Bump only the counter the applied gesture drew from, so each id
+        // sequence stays collision-free.
+        match intent {
+            DockReorganizeIntent::SplitInsert { .. } => {
+                self.split_seq.set(self.split_seq.get() + 1);
+            }
+            DockReorganizeIntent::Tabify { .. } => {
+                self.tabs_seq.set(self.tabs_seq.get() + 1);
+            }
+            DockReorganizeIntent::Swap { .. } => {}
         }
         let summary = format!("{} -> {}", intent.source(), intent.target());
         *self.last_outcome.borrow_mut() = Some(summary.clone());
@@ -1892,17 +2330,25 @@ pub struct DockPanelStyle {
     /// = 12 sp by default; reads tightly against the 28-px header
     /// strip.
     pub header_font_size_px: u32,
+    /// (R1083 §5.51) Whether [`view_dock_panel`] paints the title header
+    /// strip. Default `true`. A panel rendered as the visible tab of a
+    /// [`DockNode::Tabs`] well sets this `false` — the well's tab strip
+    /// *is* the header, so the per-panel header would be redundant. The
+    /// `{tag}#header` composite hit-region simply isn't emitted when
+    /// suppressed; the panel root `drop_target` + content are unchanged.
+    pub show_header: bool,
 }
 
 impl DockPanelStyle {
     /// (R683.B §5.16) M3-canonical default: 28-px header, 12-px header
-    /// font.
+    /// font, header shown.
     #[must_use]
     pub fn m3_default(tag: impl Into<Cow<'static, str>>) -> Self {
         Self {
             header_height_px: 28,
             tag: tag.into(),
             header_font_size_px: 12,
+            show_header: true,
         }
     }
 
@@ -1911,6 +2357,14 @@ impl DockPanelStyle {
     #[must_use]
     pub const fn with_header_height_px(mut self, height: u32) -> Self {
         self.header_height_px = height;
+        self
+    }
+
+    /// (R1083 §5.51) Override whether the title header strip is painted
+    /// (default `true`). A tab-well's active panel sets this `false`.
+    #[must_use]
+    pub const fn with_show_header(mut self, show_header: bool) -> Self {
+        self.show_header = show_header;
         self
     }
 }
@@ -2025,10 +2479,16 @@ pub fn view_dock_panel(
             .with_tag(content_tag)
             .with_layout(LayoutStyle::new().with_flex_grow(1.0)),
     );
-    // The header + content lay out in the Column flex flow; the optional
-    // drop-zone overlay is an absolutely-positioned (out-of-flow) last
-    // child painted on top, so it never shifts the panel content.
-    let mut children = vec![header, content_wrapper];
+    // The header (when shown) + content lay out in the Column flex flow;
+    // the optional drop-zone overlay is an absolutely-positioned
+    // (out-of-flow) last child painted on top, so it never shifts content.
+    // (R1083) A tab-well's active panel suppresses the header — the well's
+    // tab strip supplies the title row instead.
+    let mut children = if style.show_header {
+        vec![header, content_wrapper]
+    } else {
+        vec![content_wrapper]
+    };
     if let Some(zone) = active_drop_zone {
         if zone != DockDropZone::None {
             children.push(dock_drop_zone_highlight(zone, theme));
@@ -2457,6 +2917,48 @@ where
                 theme,
                 &style,
                 drop_zone(panel_id.as_ref()),
+            )
+        }
+        // (R1083 §5.51) A tab well renders a [`view_tabs`] strip (keyed on
+        // the well's stable id) above the active panel's content. The
+        // active panel uses [`view_dock_panel`] with the header suppressed
+        // — the strip is the title row — so it keeps the panel root
+        // `drop_target` + content + drop affordance, and a drop onto the
+        // well resolves the *active* panel id as the target (which lives in
+        // this well, so an edge drop splits the whole well + a centre drop
+        // tabifies into it). `active < panels.len()` by topology invariant.
+        DockNode::Tabs { id, panels, active } => {
+            let labels: Vec<&str> = panels.iter().map(Cow::as_ref).collect();
+            let strip = view_tabs(
+                id.clone(),
+                &labels,
+                Some(*active),
+                theme,
+                &TabsStyle::m3_default(),
+            );
+            let active_panel_id = panels[*active].as_ref();
+            let style =
+                DockPanelStyle::m3_default(active_panel_id.to_string()).with_show_header(false);
+            let active_view = view_dock_panel(
+                active_panel_id,
+                panel_content(active_panel_id),
+                theme,
+                &style,
+                drop_zone(active_panel_id),
+            );
+            // The strip is fixed-height; the active panel grows to fill the
+            // remaining pane height (it has no intrinsic flex-grow, so wrap
+            // it in a grow container).
+            let active_grow = Scene::Container(
+                ContainerNode::new(vec![active_view])
+                    .with_layout(LayoutStyle::new().with_flex_grow(1.0)),
+            );
+            Scene::Container(
+                ContainerNode::new(vec![strip, active_grow]).with_layout(
+                    LayoutStyle::new()
+                        .flex(FlexDirection::Column)
+                        .with_align_items(AlignItems::Stretch),
+                ),
             )
         }
         DockNode::Split {
@@ -4495,12 +4997,13 @@ mod reorganize_tests {
     }
 
     #[test]
-    fn r686_resolve_center_drop_is_swap() {
-        // Drop "a" onto b's centre (300, 200).
+    fn r1083_resolve_center_drop_is_tabify() {
+        // (R1083 §5.51) A centre drop now tabifies (supersedes the tab-less
+        // v1 swap). Drop "a" onto b's centre (300, 200).
         let intent = resolve_dock_drop(&abc_rects(), "a", 300.0, 200.0).unwrap();
         assert_eq!(
             intent,
-            DockReorganizeIntent::Swap {
+            DockReorganizeIntent::Tabify {
                 source: "a".into(),
                 target: "b".into()
             },
@@ -4829,6 +5332,426 @@ mod reorganize_tests {
         assert_eq!(
             ext.intervene("nonexistent", IntrospectValue::Null),
             Err(InterveneError::UnknownPath),
+        );
+    }
+}
+
+#[cfg(test)]
+mod tabify_tests {
+    //! R1083 §5.51 — tabbed docking: the [`DockNode::Tabs`] well model,
+    //! the [`DockTopology::tabify`] mutation, the `Center → Tabify`
+    //! intent routing, and the [`view_dock_surface`] tab-strip render.
+    //!
+    //! The forcing consumer for the tab-well slice: there is no §7 RPC
+    //! surface unique to tabs (the gesture rides the existing R1081/R1082
+    //! reorganize coordinator), so these unit tests are the deliverable —
+    //! exercising the model + routing + render directly, per
+    //! [[needed-feature-test-as-forcing-consumer]].
+
+    use std::borrow::Cow;
+    use std::rc::Rc;
+
+    use super::{
+        DockDropZone, DockNode, DockReorganizeIntent, DockReorganizer, DockSplitState,
+        DockTopology, TopologyError, intent_for_zone, view_dock_surface,
+    };
+    use pinion_core::reactive::{Owner, Signal};
+    use pinion_core::scene::Scene;
+    use pinion_core::theme::Theme;
+
+    /// `a | b` — two side-by-side leaves.
+    fn ab_topology() -> DockTopology {
+        DockTopology::new(DockNode::split_horizontal(
+            "root_h",
+            0.5,
+            DockNode::leaf("a"),
+            DockNode::leaf("b"),
+        ))
+    }
+
+    /// First [`DockNode::Tabs`] node found in pre-order, as
+    /// `(id, panels, active)`.
+    fn first_tabs(node: &DockNode) -> Option<(&str, &[Cow<'static, str>], usize)> {
+        match node {
+            DockNode::Tabs { id, panels, active } => Some((id.as_ref(), panels, *active)),
+            DockNode::Leaf { .. } => None,
+            DockNode::Split { first, second, .. } => {
+                first_tabs(first).or_else(|| first_tabs(second))
+            }
+        }
+    }
+
+    fn collect_tags(scene: &Scene, out: &mut Vec<String>) {
+        if let Scene::Container(c) = scene {
+            if let Some(t) = &c.tag {
+                out.push(t.to_string());
+            }
+            for child in &c.children {
+                collect_tags(child, out);
+            }
+        }
+    }
+
+    fn has_tag(scene: &Scene, tag: &str) -> bool {
+        let mut tags = Vec::new();
+        collect_tags(scene, &mut tags);
+        tags.iter().any(|t| t == tag)
+    }
+
+    // ── model: tabify ───────────────────────────────────────────────
+
+    #[test]
+    fn r1083_tabify_two_leaves_creates_well_source_relocated() {
+        let topology = ab_topology();
+        let next = topology.tabify("a", "b", "w0").expect("tabify ok");
+        // The whole tree collapses to a single well (the root split is
+        // gone — a was removed, b promoted, then b + a stacked).
+        let (id, panels, active) = first_tabs(next.root()).expect("a well exists");
+        assert_eq!(id, "w0");
+        assert_eq!(
+            panels.iter().map(Cow::as_ref).collect::<Vec<_>>(),
+            vec!["b", "a"],
+            "target first, dragged source stacked after",
+        );
+        assert_eq!(active, 1, "the dropped source becomes the visible tab");
+        // Panel count invariant: one relocated, none created / destroyed.
+        assert_eq!(next.leaf_count(), 1, "the well is one pane slot");
+        assert_eq!(next.panel_count(), 2, "two panels total");
+        assert_eq!(next.split_count(), 0);
+    }
+
+    #[test]
+    fn r1083_tabify_into_existing_well_appends_and_activates() {
+        // (b, c) already a well beside leaf a.
+        let topology = DockTopology::new(DockNode::split_horizontal(
+            "root_h",
+            0.5,
+            DockNode::leaf("a"),
+            DockNode::tabs("w0", [Cow::from("b"), Cow::from("c")], 0),
+        ));
+        let next = topology.tabify("a", "b", "unused").expect("tabify ok");
+        let (id, panels, active) = first_tabs(next.root()).expect("a well exists");
+        assert_eq!(id, "w0", "joins the existing well, keeps its id");
+        assert_eq!(
+            panels.iter().map(Cow::as_ref).collect::<Vec<_>>(),
+            vec!["b", "c", "a"],
+            "source appended to the existing well",
+        );
+        assert_eq!(active, 2, "the newly-tabified panel is the visible tab");
+        assert_eq!(next.panel_count(), 3);
+    }
+
+    #[test]
+    fn r1083_tabify_self_is_noop() {
+        let topology = ab_topology();
+        let next = topology
+            .tabify("a", "a", "w0")
+            .expect("self-drop is a no-op");
+        assert!(first_tabs(next.root()).is_none(), "no well minted");
+        assert_eq!(next.panel_ids(), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn r1083_tabify_unknown_panel_errors() {
+        let topology = ab_topology();
+        assert_eq!(
+            topology.tabify("zzz", "b", "w0"),
+            Err(TopologyError::PanelNotFound("zzz".to_string())),
+        );
+        assert_eq!(
+            topology.tabify("a", "zzz", "w0"),
+            Err(TopologyError::PanelNotFound("zzz".to_string())),
+        );
+    }
+
+    // ── model: remove from a well (shrink / collapse) ───────────────
+
+    #[test]
+    fn r1083_remove_from_well_shrinks_then_collapses_to_leaf() {
+        let topology = DockTopology::new(DockNode::tabs("w0", ["a", "b", "c"].map(Cow::from), 2));
+        // Remove the active (last) tab → shrinks, active clamps to new end.
+        let shrunk = topology.remove_leaf("c").expect("shrink ok");
+        let (id, panels, active) = first_tabs(shrunk.root()).expect("still a well");
+        assert_eq!(id, "w0");
+        assert_eq!(
+            panels.iter().map(Cow::as_ref).collect::<Vec<_>>(),
+            vec!["a", "b"]
+        );
+        assert_eq!(active, 1, "active 2 clamps to the new last index");
+        // Removing again drops to one panel → collapses back to a Leaf.
+        let collapsed = shrunk.remove_leaf("b").expect("collapse ok");
+        assert!(
+            matches!(collapsed.root(), DockNode::Leaf { panel_id } if panel_id == "a"),
+            "a 1-panel well collapses to a Leaf",
+        );
+    }
+
+    #[test]
+    fn r1083_remove_before_active_shifts_active_down() {
+        let topology = DockTopology::new(DockNode::tabs("w0", ["a", "b", "c"].map(Cow::from), 2));
+        let next = topology.remove_leaf("a").expect("ok");
+        let (_, panels, active) = first_tabs(next.root()).expect("well");
+        assert_eq!(
+            panels.iter().map(Cow::as_ref).collect::<Vec<_>>(),
+            vec!["b", "c"]
+        );
+        assert_eq!(active, 1, "active 'c' tracked down from index 2 to 1");
+    }
+
+    // ── model: split a tabbed well as a whole ───────────────────────
+
+    #[test]
+    fn r1083_edge_split_targeting_a_well_keeps_it_intact() {
+        let topology = DockTopology::new(DockNode::tabs("w0", ["a", "b"].map(Cow::from), 0));
+        let next = topology
+            .split_leaf_into(
+                "a", // a lives in the well; the whole well splits
+                "newp",
+                "s0",
+                super::SplitterOrientation::Horizontal,
+                0.5,
+                super::DockSplitPosition::First,
+            )
+            .expect("split ok");
+        let DockNode::Split { first, second, .. } = next.root() else {
+            panic!("expected a Split root");
+        };
+        assert!(
+            matches!(first.as_ref(), DockNode::Leaf { panel_id } if panel_id == "newp"),
+            "inserted leaf takes the First slot",
+        );
+        assert!(
+            matches!(second.as_ref(), DockNode::Tabs { id, .. } if id == "w0"),
+            "the whole well stays together as the sibling",
+        );
+        assert_eq!(next.panel_count(), 3);
+    }
+
+    // ── validation ──────────────────────────────────────────────────
+
+    #[test]
+    fn r1083_validate_rejects_too_few_tabs() {
+        let err = DockTopology::try_new(DockNode::tabs("w0", [Cow::from("a")], 0)).unwrap_err();
+        assert_eq!(
+            err,
+            TopologyError::TabsTooFew {
+                tabs_id: "w0".into(),
+                count: 1
+            }
+        );
+    }
+
+    #[test]
+    fn r1083_validate_rejects_active_out_of_range() {
+        let err =
+            DockTopology::try_new(DockNode::tabs("w0", ["a", "b"].map(Cow::from), 5)).unwrap_err();
+        assert_eq!(
+            err,
+            TopologyError::ActiveOutOfRange {
+                tabs_id: "w0".into(),
+                active: 5,
+                count: 2
+            },
+        );
+    }
+
+    #[test]
+    fn r1083_validate_rejects_duplicate_well_id() {
+        let err = DockTopology::try_new(DockNode::split_horizontal(
+            "root_h",
+            0.5,
+            DockNode::tabs("dup", ["a", "b"].map(Cow::from), 0),
+            DockNode::tabs("dup", ["c", "d"].map(Cow::from), 0),
+        ))
+        .unwrap_err();
+        assert_eq!(err, TopologyError::DuplicateTabsId("dup".to_string()));
+    }
+
+    #[test]
+    fn r1083_validate_rejects_well_id_colliding_with_panel() {
+        // The well's own id collides with a leaf panel id → IdCollision.
+        let err = DockTopology::try_new(DockNode::split_horizontal(
+            "root_h",
+            0.5,
+            DockNode::leaf("x"),
+            DockNode::tabs("x", ["a", "b"].map(Cow::from), 0),
+        ))
+        .unwrap_err();
+        assert_eq!(err, TopologyError::IdCollision("x".to_string()));
+    }
+
+    #[test]
+    fn r1083_validate_rejects_panel_in_well_duplicating_a_leaf() {
+        let err = DockTopology::try_new(DockNode::split_horizontal(
+            "root_h",
+            0.5,
+            DockNode::leaf("a"),
+            DockNode::tabs("w0", ["a", "b"].map(Cow::from), 0),
+        ))
+        .unwrap_err();
+        assert_eq!(err, TopologyError::DuplicatePanelId("a".to_string()));
+    }
+
+    // ── accessors + swap with a well ────────────────────────────────
+
+    #[test]
+    fn r1083_panel_ids_includes_well_panels_in_tab_order() {
+        let topology = DockTopology::new(DockNode::split_horizontal(
+            "root_h",
+            0.5,
+            DockNode::leaf("a"),
+            DockNode::tabs("w0", ["b", "c"].map(Cow::from), 0),
+        ));
+        assert_eq!(topology.panel_ids(), vec!["a", "b", "c"]);
+        assert_eq!(topology.panel_count(), 3);
+        assert_eq!(topology.leaf_count(), 2, "leaf a + the well = 2 pane slots");
+        assert_eq!(topology.split_count(), 1);
+    }
+
+    #[test]
+    fn r1083_swap_relabels_a_panel_inside_a_well() {
+        let topology = DockTopology::new(DockNode::split_horizontal(
+            "root_h",
+            0.5,
+            DockNode::leaf("a"),
+            DockNode::tabs("w0", ["b", "c"].map(Cow::from), 0),
+        ));
+        let next = topology.swap_leaves("a", "c").expect("swap ok");
+        let (_, panels, _) = first_tabs(next.root()).expect("well");
+        assert_eq!(
+            panels.iter().map(Cow::as_ref).collect::<Vec<_>>(),
+            vec!["b", "a"],
+            "c (in the well) swapped with the outer a",
+        );
+    }
+
+    // ── routing: Center → Tabify SSOT ───────────────────────────────
+
+    #[test]
+    fn r1083_intent_for_zone_center_is_tabify() {
+        assert_eq!(
+            intent_for_zone("a", "b", DockDropZone::Center),
+            Some(DockReorganizeIntent::Tabify {
+                source: "a".into(),
+                target: "b".into()
+            }),
+        );
+        // Edges still split; None still maps to nothing.
+        assert!(matches!(
+            intent_for_zone("a", "b", DockDropZone::Left),
+            Some(DockReorganizeIntent::SplitInsert { .. })
+        ));
+        assert_eq!(intent_for_zone("a", "b", DockDropZone::None), None);
+    }
+
+    // ── coordinator: live apply through the existing R1082 path ─────
+
+    #[test]
+    fn r1083_apply_intent_tabify_mints_well_id_and_bumps_only_tabs_seq() {
+        let signal = Rc::new(Signal::new(ab_topology()));
+        let reorganizer = DockReorganizer::new(Rc::clone(&signal));
+        let outcome = reorganizer
+            .apply_intent(&DockReorganizeIntent::Tabify {
+                source: "a".into(),
+                target: "b".into(),
+            })
+            .expect("tabify applies");
+        assert_eq!(outcome, "a -> b");
+        let topo = signal.get();
+        let (id, panels, _) = first_tabs(topo.root()).expect("well minted");
+        assert_eq!(
+            id, "reorg-tabs-0",
+            "fresh well id minted from the tabs sequence"
+        );
+        assert_eq!(
+            panels.iter().map(Cow::as_ref).collect::<Vec<_>>(),
+            vec!["b", "a"]
+        );
+        assert_eq!(reorganizer.tabs_seq(), 1, "tabs counter advanced");
+        assert_eq!(
+            reorganizer.split_seq(),
+            0,
+            "split counter untouched by a tabify"
+        );
+    }
+
+    // ── render: the tab-well walker arm ─────────────────────────────
+
+    fn split_state_for(initial_ratio: f32) -> DockSplitState {
+        DockSplitState {
+            ratio_signal: Rc::new(Signal::new(initial_ratio)),
+            dragging: false,
+        }
+    }
+
+    #[test]
+    fn r1083_walker_renders_tab_strip_keyed_on_well_id_with_active_content() {
+        Owner::new().run(|| {
+            let topology = DockTopology::new(DockNode::tabs("w0", ["a", "b"].map(Cow::from), 1));
+            let scene = view_dock_surface(
+                &topology,
+                |id| {
+                    Scene::Container(
+                        pinion_core::scene::ContainerNode::new(vec![])
+                            .with_tag(format!("{id}_content")),
+                    )
+                },
+                |_, _| split_state_for(0.5),
+                |_| None,
+                &Theme::light(),
+            );
+            // The tab strip is keyed on the well id, one composite tag per tab.
+            assert!(has_tag(&scene, "w0"), "tab strip tagged with the well id");
+            assert!(has_tag(&scene, "w0#0"), "tab 0 composite tag");
+            assert!(has_tag(&scene, "w0#1"), "tab 1 composite tag");
+            // Only the active panel (index 1 = "b") renders its content +
+            // its drop-target panel root; the inactive tab's content is not
+            // painted.
+            assert!(has_tag(&scene, "b"), "active panel root present");
+            assert!(has_tag(&scene, "b_content"), "active panel content present");
+            assert!(
+                !has_tag(&scene, "a_content"),
+                "inactive tab content not painted"
+            );
+        });
+    }
+
+    #[test]
+    fn r1083_walker_active_panel_suppresses_its_own_header() {
+        Owner::new().run(|| {
+            let topology = DockTopology::new(DockNode::tabs("w0", ["a", "b"].map(Cow::from), 0));
+            let scene = view_dock_surface(
+                &topology,
+                |id| {
+                    Scene::Container(
+                        pinion_core::scene::ContainerNode::new(vec![])
+                            .with_tag(format!("{id}_content")),
+                    )
+                },
+                |_, _| split_state_for(0.5),
+                |_| None,
+                &Theme::light(),
+            );
+            // The tab strip is the title row → no per-panel `{tag}#header`.
+            assert!(
+                !has_tag(&scene, "a#header"),
+                "the active tab-well panel suppresses its redundant header",
+            );
+            assert!(has_tag(&scene, "a#content"), "but keeps its content region");
+        });
+    }
+
+    // ── persistence: the Tabs wire shape round-trips ────────────────
+
+    #[test]
+    fn r1083_tabs_node_serde_round_trips() {
+        let node = DockNode::tabs("w0", ["a", "b", "c"].map(Cow::from), 1);
+        let json = serde_json::to_string(&node).expect("serialize");
+        let parsed: DockNode = serde_json::from_str(&json).expect("parse");
+        assert_eq!(parsed, node);
+        assert!(
+            json.contains("\"type\":\"Tabs\""),
+            "internally-tagged Tabs: {json}"
         );
     }
 }

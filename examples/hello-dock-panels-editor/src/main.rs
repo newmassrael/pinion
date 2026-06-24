@@ -551,7 +551,10 @@ impl WidgetCore for DockPanelsEditorView {
         // dynamic external set re-runs on each topology change).
         let reorganizer = use_editor_reorganizer();
         let preview = use_drop_preview();
-        let mut externals = Vec::with_capacity(topology.split_count() + topology.leaf_count() + 2);
+        // (R1083) One external per Split + one per panel (`panel_count`
+        // counts tab-well panels individually, unlike `leaf_count`) + the
+        // reorganize + undo anchors.
+        let mut externals = Vec::with_capacity(topology.split_count() + topology.panel_count() + 2);
         topology.for_each_split(|id, orientation, ratio| {
             let signal = use_split_ratio(id.to_string(), ratio);
             let external = SplitterExternal::new(orientation).attach_ratio(signal);

@@ -47,6 +47,8 @@
 //!
 //! [`RadioGroup`]: pinion_core::widgets::radio_group::RadioGroup
 
+use std::borrow::Cow;
+
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, SizeValue, TextStyle,
@@ -144,7 +146,9 @@ pub fn composite_tab_tag(strip_tag: &str, index: usize) -> String {
 ///
 /// - `tag` — strip container tag; the input router hit-tests this as
 ///   the `TabList` scope, and per-tab tags are the composite form
-///   `{tag}#{index}` ([`composite_tab_tag`]).
+///   `{tag}#{index}` ([`composite_tab_tag`]). Accepts an owned `String`
+///   so a consumer with a dynamic strip id (R1083 dock tab wells, whose
+///   id is minted at runtime) can tag the strip, not only `&'static str`.
 /// - `labels` — one visible label per tab; index `i` becomes the tab
 ///   tagged `{tag}#{i}`. The label is also the tab's AT accessible
 ///   name (WAI-ARIA name-from-contents).
@@ -163,16 +167,17 @@ pub fn composite_tab_tag(strip_tag: &str, index: usize) -> String {
 /// grow-to-fill label region above a fixed-height indicator bar.
 #[must_use]
 pub fn view_tabs(
-    tag: &'static str,
+    tag: impl Into<Cow<'static, str>>,
     labels: &[&str],
     selected_index: Option<usize>,
     theme: &Theme,
     style: &TabsStyle,
 ) -> Scene {
+    let tag: Cow<'static, str> = tag.into();
     let mut tabs: Vec<Scene> = Vec::with_capacity(labels.len());
     for (i, label) in labels.iter().enumerate() {
         tabs.push(build_tab(
-            tag,
+            &tag,
             i,
             label,
             selected_index == Some(i),
@@ -201,7 +206,7 @@ pub fn view_tabs(
 /// Compose one tab: a grow-to-fill centered label region above a
 /// fixed-height active-indicator bar.
 fn build_tab(
-    strip_tag: &'static str,
+    strip_tag: &str,
     index: usize,
     label: &str,
     is_selected: bool,
