@@ -621,7 +621,9 @@ fn self_hosted_paint_arm_reaches_pixels_through_to_vello() {
     // ink row matches that, ±2px (AA + pixel snap). This pins R1068's baseline fix
     // (the Normal-line-box first baseline, incl. half-leading) rather than merely
     // "ink is somewhere in the box". font/px-agnostic: it reads the engine font's
-    // own metrics.
+    // own metrics. (NotoSans typo == hhea, so this raw-hhea baseline equals the
+    // R1079 USE_TYPO_METRICS-selected one the paint arm now uses; a typo != hhea
+    // font would read `vertical_line_metrics` here.)
     let f = engine.font();
     let upem = f64::from(f.units_per_em());
     let baseline_y =

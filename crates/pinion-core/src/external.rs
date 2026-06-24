@@ -296,10 +296,13 @@ pub struct DragPayload {
 /// `tag` is the full paint tag directly under the cursor — a composite
 /// `widget#sub` when the hovered region is a sub-element (the reorder
 /// row / dock panel / tab the cursor is over). `x_rel` / `y_rel` are the
-/// cursor position normalised over that tag's post-layout rect
-/// (`0.0`..=`1.0`, clamped at the edges), so the source coordinator can
-/// classify before / after / centre without re-reading layout — the
-/// generalisation of the dock resolver's edge-vs-centre zone test.
+/// cursor position normalised over that tag's post-layout rect, in
+/// `0.0`..`1.0` because `tag` is the region the cursor is over — the
+/// normalisation is NOT itself clamped, so a value outside that range
+/// would mean the cursor had left the rect. The source coordinator
+/// classifies before / after / centre from these without re-reading
+/// layout — the generalisation of the dock resolver's edge-vs-centre
+/// zone test.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DropPoint {
     /// Full paint tag under the cursor (possibly composite `widget#sub`).

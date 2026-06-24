@@ -2012,6 +2012,10 @@ mod tests {
             (t.rect.w, t.rect.h)
         };
         // Independent (non-LineBoxMetrics) expected height = the ceil'd hhea line box.
+        // For NotoSans typo == hhea, so this raw-hhea oracle equals the R1079
+        // USE_TYPO_METRICS-selected box `LineBoxMetrics::from_font` now uses; a
+        // typo != hhea font would need `vertical_line_metrics` here (see the §5.37
+        // `box_parity_matches_parley_metric_engine_via_skrifa` NanumGothic case).
         let f = engine.font();
         let upem = f64::from(f.units_per_em());
         let expected_h = ((f64::from(f.ascender()) - f64::from(f.descender())

@@ -469,6 +469,13 @@ pub struct MetricsParams {
 /// Aggregate font metrics from `head` / `hhea` / `maxp` / `OS/2` /
 /// `post`. All values are raw design-space units; convert to pixels
 /// via `(value * font_size) / units_per_em`.
+///
+/// `ascender` / `descender` / `line_gap` are the **raw `hhea`** table
+/// values — NOT the `OS/2` `USE_TYPO_METRICS`-selected line-box metrics the
+/// §5.37 engine uses for line layout (R1079). The two differ for a font
+/// like `NanumGothic` that sets `USE_TYPO_METRICS` with typo metrics ≠ hhea;
+/// the selector is `Font::vertical_line_metrics`, and the rendered line box
+/// is observable as a laid-out `Scene::Text` rect via `scene/layout`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MetricsOutcome {
     pub units_per_em: u16,

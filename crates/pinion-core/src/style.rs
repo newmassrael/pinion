@@ -2676,6 +2676,14 @@ pub struct LayoutStyle {
     /// existing R742 consumers (a reorder row IS its own deepest tag, so
     /// it needs no marking).
     ///
+    /// Like [`Self::pointer_transparent`] / [`Self::focusable`], this is a
+    /// router-input flag, not serialised into `scene/snapshot` (which carries
+    /// the visual [`BoxStyle`], not the layout sidecar). What
+    /// an agent observes is its EFFECT — which tag a drop resolves to — via the
+    /// drag coordinator's drop-preview introspection. The AI-driven dock
+    /// reorganize path is geometric (`resolve_dock_drop` over `scene/layout`
+    /// rects) and reads no drop-target flag.
+    ///
     /// [`DropPoint`]: crate::external::DropPoint
     pub drop_target: bool,
 }
