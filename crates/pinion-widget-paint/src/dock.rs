@@ -1942,12 +1942,19 @@ pub const CONTENT_TAG_SUFFIX: &str = "content";
 /// Never panics on its own — `title` is borrowed verbatim into a
 /// `TextNode`; `content` is moved into the content container
 /// without inspection.
+/// (R1081 §5.51) `active_drop_zone` is `Some(zone)` while this panel is
+/// the live drop target of an in-flight R742 drag (the binding reads the
+/// shared [`DockDropPreview`] and passes `Some(preview.zone)` for the
+/// matching panel) — the panel then paints a [`dock_drop_zone_highlight`]
+/// overlay over the band the drop would dock into. `None` (the default
+/// for every static / floating panel) paints no overlay.
 #[must_use]
 pub fn view_dock_panel(
     title: &str,
     content: Scene,
     theme: &Theme,
     style: &DockPanelStyle,
+    active_drop_zone: Option<DockDropZone>,
 ) -> Scene {
     let header_tag = composite_tag(&style.tag, HEADER_TAG_SUFFIX);
     let content_tag = composite_tag(&style.tag, CONTENT_TAG_SUFFIX);
@@ -2005,8 +2012,17 @@ pub fn view_dock_panel(
             .with_tag(content_tag)
             .with_layout(LayoutStyle::new().with_flex_grow(1.0)),
     );
+    // The header + content lay out in the Column flex flow; the optional
+    // drop-zone overlay is an absolutely-positioned (out-of-flow) last
+    // child painted on top, so it never shifts the panel content.
+    let mut children = vec![header, content_wrapper];
+    if let Some(zone) = active_drop_zone {
+        if zone != DockDropZone::None {
+            children.push(dock_drop_zone_highlight(zone, theme));
+        }
+    }
     Scene::Container(
-        ContainerNode::new(vec![header, content_wrapper])
+        ContainerNode::new(children)
             .with_tag(style.tag.clone())
             .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainer)))
             .with_layout(
@@ -2363,18 +2379,32 @@ pub struct DockSplitState {
 /// this function just stitches the supplied state through the
 /// [`view_splitter`](crate::splitter::view_splitter) /
 /// [`view_dock_panel`](crate::dock::view_dock_panel) composition.
+/// (R1081 §5.51) `drop_zone` maps a leaf `panel_id` to the live
+/// [`DockDropZone`] the in-flight R742 drag is over that panel, or `None`
+/// when it is not the drop target — the binding's closure reads the
+/// shared [`DockDropPreview`] (`|id| preview.filter(|p| p.target == id).map(|p| p.zone)`),
+/// so the panel under the cursor paints the zone overlay reactively. A
+/// static (no-drag) surface passes `|_| None`.
 #[must_use]
-pub fn view_dock_surface<P, S>(
+pub fn view_dock_surface<P, S, Z>(
     topology: &DockTopology,
     panel_content: P,
     split_state: S,
+    drop_zone: Z,
     theme: &Theme,
 ) -> Scene
 where
     P: Fn(&str) -> Scene,
     S: Fn(&str, f32) -> DockSplitState,
+    Z: Fn(&str) -> Option<DockDropZone>,
 {
-    view_dock_surface_node(topology.root(), &panel_content, &split_state, theme)
+    view_dock_surface_node(
+        topology.root(),
+        &panel_content,
+        &split_state,
+        &drop_zone,
+        theme,
+    )
 }
 
 /// (R685.B §5.16) Internal recursive helper — walks one
@@ -2386,15 +2416,17 @@ where
 /// `orientation`, and forwards the topology's declared `ratio` as
 /// the initial-value seed for the binding's reactive Signal
 /// constructor.
-fn view_dock_surface_node<P, S>(
+fn view_dock_surface_node<P, S, Z>(
     node: &DockNode,
     panel_content: &P,
     split_state: &S,
+    drop_zone: &Z,
     theme: &Theme,
 ) -> Scene
 where
     P: Fn(&str) -> Scene,
     S: Fn(&str, f32) -> DockSplitState,
+    Z: Fn(&str) -> Option<DockDropZone>,
 {
     match node {
         DockNode::Leaf { panel_id } => {
@@ -2402,7 +2434,13 @@ where
             // Walker builds the panel style from the topology's
             // panel_id — no caller drift possible (SSOT).
             let style = DockPanelStyle::m3_default(panel_id.clone());
-            view_dock_panel(panel_id.as_ref(), content, theme, &style)
+            view_dock_panel(
+                panel_id.as_ref(),
+                content,
+                theme,
+                &style,
+                drop_zone(panel_id.as_ref()),
+            )
         }
         DockNode::Split {
             id,
@@ -2415,8 +2453,10 @@ where
             // Walker builds the splitter style from the topology's
             // id + orientation — SSOT.
             let style = SplitterStyle::m3_default(*orientation, id.clone());
-            let first_scene = view_dock_surface_node(first, panel_content, split_state, theme);
-            let second_scene = view_dock_surface_node(second, panel_content, split_state, theme);
+            let first_scene =
+                view_dock_surface_node(first, panel_content, split_state, drop_zone, theme);
+            let second_scene =
+                view_dock_surface_node(second, panel_content, split_state, drop_zone, theme);
             view_splitter(
                 first_scene,
                 second_scene,
@@ -2981,7 +3021,7 @@ mod tests {
     fn r683_view_dock_panel_outer_container_carries_tag_and_two_children() {
         run_in_owner(|| {
             let style = DockPanelStyle::m3_default(PANEL_TAG);
-            let scene = view_dock_panel("My Panel", empty_content(), &theme_light(), &style);
+            let scene = view_dock_panel("My Panel", empty_content(), &theme_light(), &style, None);
             let Scene::Container(outer) = &scene else {
                 panic!()
             };
@@ -2994,7 +3034,7 @@ mod tests {
     fn r683_view_dock_panel_header_tagged_with_composite_suffix() {
         run_in_owner(|| {
             let style = DockPanelStyle::m3_default(PANEL_TAG);
-            let scene = view_dock_panel("Title", empty_content(), &theme_light(), &style);
+            let scene = view_dock_panel("Title", empty_content(), &theme_light(), &style, None);
             let Scene::Container(outer) = &scene else {
                 panic!()
             };
@@ -3012,7 +3052,7 @@ mod tests {
     fn r683_view_dock_panel_content_tagged_with_composite_suffix() {
         run_in_owner(|| {
             let style = DockPanelStyle::m3_default(PANEL_TAG);
-            let scene = view_dock_panel("Title", empty_content(), &theme_light(), &style);
+            let scene = view_dock_panel("Title", empty_content(), &theme_light(), &style, None);
             let Scene::Container(outer) = &scene else {
                 panic!()
             };
@@ -3030,7 +3070,7 @@ mod tests {
     fn r683_view_dock_panel_header_height_matches_style() {
         run_in_owner(|| {
             let style = DockPanelStyle::m3_default(PANEL_TAG).with_header_height_px(32);
-            let scene = view_dock_panel("Title", empty_content(), &theme_light(), &style);
+            let scene = view_dock_panel("Title", empty_content(), &theme_light(), &style, None);
             let Scene::Container(outer) = &scene else {
                 panic!()
             };
@@ -3051,7 +3091,7 @@ mod tests {
     fn r683_view_dock_panel_header_contains_title_text() {
         run_in_owner(|| {
             let style = DockPanelStyle::m3_default(PANEL_TAG);
-            let scene = view_dock_panel("Inspector", empty_content(), &theme_light(), &style);
+            let scene = view_dock_panel("Inspector", empty_content(), &theme_light(), &style, None);
             let Scene::Container(outer) = &scene else {
                 panic!()
             };
@@ -3351,7 +3391,7 @@ mod tests {
     fn r1081_view_dock_panel_root_opts_in_as_drop_target() {
         run_in_owner(|| {
             let style = DockPanelStyle::m3_default(PANEL_TAG);
-            let scene = view_dock_panel("Title", empty_content(), &theme_light(), &style);
+            let scene = view_dock_panel("Title", empty_content(), &theme_light(), &style, None);
             let Scene::Container(outer) = &scene else {
                 panic!()
             };
@@ -3359,6 +3399,47 @@ mod tests {
                 outer.layout.drop_target,
                 "every dock panel opts in as a drop target for the R742 router climb",
             );
+        });
+    }
+
+    #[test]
+    fn r1082_view_dock_panel_with_active_zone_appends_overlay_child() {
+        run_in_owner(|| {
+            let style = DockPanelStyle::m3_default(PANEL_TAG);
+            // None → just header + content (no overlay), the static case.
+            let Scene::Container(plain) =
+                view_dock_panel("T", empty_content(), &theme_light(), &style, None)
+            else {
+                panic!()
+            };
+            assert_eq!(plain.children.len(), 2, "no active zone = no overlay");
+            // Some(zone) → the overlay is an out-of-flow third child on top.
+            let Scene::Container(active) = view_dock_panel(
+                "T",
+                empty_content(),
+                &theme_light(),
+                &style,
+                Some(DockDropZone::Right),
+            ) else {
+                panic!()
+            };
+            assert_eq!(active.children.len(), 3, "active zone appends an overlay");
+            let Scene::Container(overlay) = &active.children[2] else {
+                panic!("overlay is the last child")
+            };
+            assert_eq!(overlay.layout.absolute_position, Some((0, 0)));
+            assert!(overlay.layout.pointer_transparent);
+            // None-zone is a no-op overlay (no extra child).
+            let Scene::Container(none_zone) = view_dock_panel(
+                "T",
+                empty_content(),
+                &theme_light(),
+                &style,
+                Some(DockDropZone::None),
+            ) else {
+                panic!()
+            };
+            assert_eq!(none_zone.children.len(), 2, "None zone paints no overlay");
         });
     }
 
@@ -3441,7 +3522,7 @@ mod tests {
 
         run_in_owner(|| {
             let style = DockPanelStyle::m3_default(PANEL_TAG);
-            let panel = view_dock_panel("Inspector", empty_content(), &theme_light(), &style);
+            let panel = view_dock_panel("Inspector", empty_content(), &theme_light(), &style, None);
             let mut cache = LayoutCache::new();
             let mut scene = panel;
             let panel_w: u32 = 400;
@@ -4751,7 +4832,7 @@ mod surface_tests {
     //! panel ids / split ids / orientations / initial ratios;
     //! callbacks supply only panel content + reactive split state).
 
-    use super::{DockNode, DockSplitState, DockTopology, view_dock_surface};
+    use super::{DockDropZone, DockNode, DockSplitState, DockTopology, view_dock_surface};
     use pinion_core::reactive::{Owner, Signal};
     use pinion_core::scene::{ContainerNode, Scene};
     use pinion_core::style::{BoxStyle, Color, FlexDirection};
@@ -4801,6 +4882,7 @@ mod surface_tests {
                     panel_content_for("viewport")
                 },
                 |_, _| panic!("split_state should not fire for single-leaf"),
+                |_| None,
                 &theme_light(),
             );
             let Scene::Container(outer) = &scene else {
@@ -4808,6 +4890,30 @@ mod surface_tests {
             };
             assert_eq!(outer.tag.as_deref(), Some("viewport"));
             assert_eq!(outer.children.len(), 2);
+        });
+    }
+
+    #[test]
+    fn r1082_dock_surface_threads_drop_zone_to_the_targeted_panel() {
+        run_in_owner(|| {
+            // The walker hands each leaf its live zone via the drop_zone
+            // closure → only the targeted panel paints the overlay.
+            let topology = DockTopology::single("viewport");
+            let scene = view_dock_surface(
+                &topology,
+                |_| panel_content_for("viewport"),
+                |_, _| panic!("split_state should not fire for single-leaf"),
+                |id| (id == "viewport").then_some(DockDropZone::Bottom),
+                &theme_light(),
+            );
+            let Scene::Container(outer) = &scene else {
+                panic!()
+            };
+            assert_eq!(
+                outer.children.len(),
+                3,
+                "the targeted panel gains the drop-zone overlay",
+            );
         });
     }
 
@@ -4829,6 +4935,7 @@ mod surface_tests {
                     cc.borrow_mut().push((split_id.to_string(), initial_ratio));
                     split_state_for(initial_ratio)
                 },
+                |_| None,
                 &theme_light(),
             );
             let Scene::Container(outer) = &scene else {
@@ -4856,6 +4963,7 @@ mod surface_tests {
                 &topology,
                 panel_content_for,
                 |_split_id, initial_ratio| split_state_for(initial_ratio),
+                |_| None,
                 &theme_light(),
             );
             let Scene::Container(outer) = &scene else {
@@ -4884,6 +4992,7 @@ mod surface_tests {
                     cc.borrow_mut().push((split_id.to_string(), initial_ratio));
                     split_state_for(initial_ratio)
                 },
+                |_| None,
                 &theme_light(),
             );
             assert_eq!(
@@ -4924,6 +5033,7 @@ mod surface_tests {
                     cc.borrow_mut().push(split_id.to_string());
                     split_state_for(initial_ratio)
                 },
+                |_| None,
                 &theme_light(),
             );
             assert_eq!(
@@ -4976,6 +5086,7 @@ mod surface_tests {
                     sc.borrow_mut().push((split_id.to_string(), initial_ratio));
                     split_state_for(initial_ratio)
                 },
+                |_| None,
                 &theme_light(),
             );
             assert_eq!(
@@ -5018,6 +5129,7 @@ mod surface_tests {
                     *cc.borrow_mut() += 1;
                     split_state_for(initial_ratio)
                 },
+                |_| None,
                 &theme_light(),
             );
             assert_eq!(*count.borrow(), topology.split_count());

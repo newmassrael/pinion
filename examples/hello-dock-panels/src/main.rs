@@ -719,11 +719,14 @@ where
         view_floating_placeholder_for(panel_id, theme)
     } else {
         let style = DockPanelStyle::m3_default(panel_id);
+        // Flat tear-off-only demo — no reorganize topology, so no live
+        // drop-zone overlay (the gesture floats panels, never docks).
         view_dock_panel(
             panel_title_for(panel_id),
             content_fn(state, theme),
             theme,
             &style,
+            None,
         )
     }
 }
@@ -800,7 +803,7 @@ fn view_floating_panel(panel_id: &str, state: ButtonState) -> Scene {
         }
     };
     let style = DockPanelStyle::m3_default(panel_tag);
-    view_dock_panel(panel_title_for(panel_tag), content, &theme, &style)
+    view_dock_panel(panel_title_for(panel_tag), content, &theme, &style, None)
 }
 
 // ─── trait wiring ────────────────────────────────────────────────────

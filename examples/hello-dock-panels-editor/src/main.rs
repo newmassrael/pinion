@@ -57,8 +57,8 @@ use pinion_core::{Frame, Owner, Scene, Signal, WidgetCore};
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
 use pinion_widget_paint::button::{ButtonColors, ButtonStyle, view_button};
 use pinion_widget_paint::dock::{
-    DockNode, DockReorganizeExternal, DockReorganizer, DockSplitState, DockTopology,
-    view_dock_surface,
+    DockDropPreview, DockNode, DockPanelExternal, DockReorganizeExternal, DockReorganizer,
+    DockSplitState, DockTopology, view_dock_surface,
 };
 use pinion_widget_paint::splitter::SplitterExternal;
 use std::rc::Rc;
@@ -209,6 +209,33 @@ fn use_editor_topology() -> Rc<Signal<DockTopology>> {
 /// Both reach the same `Rc` (the `use_undo_stack` sharing).
 fn use_dock_undo() -> Rc<UndoStack> {
     use_undo_stack(DOCK_UNDO_KEY)
+}
+
+/// (R1081/R1082 §5.51) The ONE shared reorganize coordinator. Cached (not
+/// rebuilt per `create_extra_externals` run) so the `split_seq` + undo
+/// stack persist across reorganizes — and so the invoke
+/// [`DockReorganizeExternal`] and every R742 [`DockPanelExternal`] share
+/// the same counter (no `reorg-split-{n}` collision). The topology +
+/// undo deps are resolved BEFORE the cache factory (the `Owner::cache`
+/// factory must not nest another `cache` resolution).
+fn use_editor_reorganizer() -> Rc<DockReorganizer> {
+    let topology = use_editor_topology();
+    let undo = use_dock_undo();
+    Owner::current()
+        .expect("hello-dock-panels-editor: view fn runs inside owner scope")
+        .cache("editor_reorganizer", move || {
+            DockReorganizer::new(topology).with_undo(undo)
+        })
+}
+
+/// (R1082 §5.51) The ONE shared live drop-preview the R742 panel
+/// externals write (the dragged panel's `drag_to`) and the view fn reads
+/// (to paint the target panel's zone overlay). Cached so every panel
+/// external + the view fn reach the same signal.
+fn use_drop_preview() -> Rc<Signal<Option<DockDropPreview>>> {
+    Owner::current()
+        .expect("hello-dock-panels-editor: view fn runs inside owner scope")
+        .cache("editor_drop_preview", || Signal::new(None))
 }
 
 fn use_viewport_click_counter() -> Rc<Signal<u32>> {
@@ -518,23 +545,35 @@ impl WidgetCore for DockPanelsEditorView {
         // `CoreShell::reconcile_externals` re-runs this factory when the
         // topology Signal changes, so the new split registers its
         // `SplitterExternal` (and becomes drag-resizable) automatically.
-        let topology_signal = use_editor_topology();
-        let topology = topology_signal.get();
-        let mut externals = Vec::with_capacity(topology.split_count() + 1);
+        let topology = use_editor_topology().get();
+        // (R1081/R1082 §5.51) The ONE shared coordinator + drop-preview —
+        // cached so they persist across this factory's re-runs (the R688
+        // dynamic external set re-runs on each topology change).
+        let reorganizer = use_editor_reorganizer();
+        let preview = use_drop_preview();
+        let mut externals = Vec::with_capacity(topology.split_count() + topology.leaf_count() + 2);
         topology.for_each_split(|id, orientation, ratio| {
             let signal = use_split_ratio(id.to_string(), ratio);
             let external = SplitterExternal::new(orientation).attach_ratio(signal);
             externals.push(ExtraExternal::new(id.to_string(), Box::new(external)));
         });
-        // (R686 §5.45) The drag-to-reorganize handle — shares the
-        // topology signal so an applied gesture re-renders the view.
-        // (R749 §5.52) `with_undo` records each reorganize onto the shared
-        // history, making panel moves reversible (the 3rd UndoCommand
-        // consumer); the `UndoStackExternal` surfaces undo/redo to RPC.
+        // (R1082 §5.51) One R742 drag External per panel, registered at the
+        // panel root tag (= panel_id, the view_dock_panel root). Each shares
+        // the ONE coordinator (a pointer dock + an AI invoke mint from one
+        // split_seq) and the ONE preview (the dragged panel's drag_to writes
+        // the affordance the target panel paints).
+        for panel_id in topology.panel_ids() {
+            let panel = DockPanelExternal::new(panel_id.to_string())
+                .with_reorganizer(Rc::clone(&reorganizer))
+                .with_drop_preview(Rc::clone(&preview));
+            externals.push(ExtraExternal::new(panel_id.to_string(), Box::new(panel)));
+        }
+        // (R686/R1081 §5.45 §5.51) The invoke (RPC) drive of dock reorganize
+        // shares the SAME coordinator as the pointer panels.
         externals.push(ExtraExternal::new(
             DOCK_REORGANIZE_TAG,
-            Box::new(DockReorganizeExternal::from_reorganizer(Rc::new(
-                DockReorganizer::new(topology_signal).with_undo(use_dock_undo()),
+            Box::new(DockReorganizeExternal::from_reorganizer(Rc::clone(
+                &reorganizer,
             ))),
         ));
         externals.push(ExtraExternal::new(
@@ -583,12 +622,23 @@ impl WidgetCore for DockPanelsEditorView {
         // (R686) The split_state callback keys `use_split_ratio` on the
         // raw split id (Cow) so a reorganize-minted runtime split id
         // resolves an Owner::cache slot without a `&'static str` bridge.
+        // (R1082 §5.51) Read the shared drop-preview (subscribes the view,
+        // so a drag's `drag_to` re-renders the overlay). The closure maps a
+        // panel id to the live zone iff that panel is the current drop
+        // target — the panel under the cursor paints its zone affordance.
+        let preview = use_drop_preview().get();
         view_dock_surface(
             &topology,
             |panel_id| panel_content_for(panel_id, state, &theme),
             |split_id, initial_ratio| DockSplitState {
                 ratio_signal: use_split_ratio(split_id.to_string(), initial_ratio),
                 dragging: false,
+            },
+            |panel_id| {
+                preview
+                    .as_ref()
+                    .filter(|p| p.target == panel_id)
+                    .map(|p| p.zone)
             },
             &theme,
         )
@@ -851,19 +901,54 @@ mod tests {
     }
 
     #[test]
-    fn r686_editor_create_extra_externals_registers_4_splitters_plus_reorganize() {
+    fn r686_editor_create_extra_externals_registers_splitters_panels_reorganize() {
         run_in_owner(|| {
             let externals = <DockPanelsEditorView as WidgetCore>::create_extra_externals();
-            // 4 SplitterExternals + 1 DockReorganizeExternal (R686) +
-            // 1 UndoStackExternal (R749 §5.52 reorganize history).
-            assert_eq!(externals.len(), 6);
+            // 4 SplitterExternals + 5 R742 DockPanelExternals (one per leaf,
+            // R1082) + 1 DockReorganizeExternal (R686) + 1 UndoStackExternal
+            // (R749 §5.52 reorganize history).
+            assert_eq!(externals.len(), 11);
             let tags: Vec<&str> = externals.iter().map(|e| e.tag.as_ref()).collect();
-            assert!(tags.contains(&SPLIT_OUTER_TAG));
-            assert!(tags.contains(&SPLIT_INNER_V_TAG));
-            assert!(tags.contains(&SPLIT_MIDDLE_H_TAG));
-            assert!(tags.contains(&SPLIT_INNER_H_TAG));
+            for split in [
+                SPLIT_OUTER_TAG,
+                SPLIT_INNER_V_TAG,
+                SPLIT_MIDDLE_H_TAG,
+                SPLIT_INNER_H_TAG,
+            ] {
+                assert!(tags.contains(&split), "splitter {split} registered");
+            }
+            for panel in [
+                TOOLBAR_PANEL_TAG,
+                OUTLINER_PANEL_TAG,
+                VIEWPORT_PANEL_TAG,
+                PROPERTIES_PANEL_TAG,
+                CONSOLE_PANEL_TAG,
+            ] {
+                assert!(
+                    tags.contains(&panel),
+                    "R742 panel external {panel} registered"
+                );
+            }
             assert!(tags.contains(&DOCK_REORGANIZE_TAG));
             assert!(tags.contains(&DOCK_UNDO_TAG));
+        });
+    }
+
+    #[test]
+    fn r1082_panel_externals_share_one_coordinator_with_the_invoke_path() {
+        run_in_owner(|| {
+            // The cached coordinator is the SAME Rc the invoke external + every
+            // panel external hold, so a split minted through one is visible to
+            // all (no reorg-split-{n} collision across drives).
+            let a = use_editor_reorganizer();
+            let b = use_editor_reorganizer();
+            assert!(Rc::ptr_eq(&a, &b), "Owner::cache memoises the coordinator");
+            let preview_a = use_drop_preview();
+            let preview_b = use_drop_preview();
+            assert!(
+                Rc::ptr_eq(&preview_a, &preview_b),
+                "one shared preview signal"
+            );
         });
     }
 
