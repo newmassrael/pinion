@@ -4674,10 +4674,15 @@ impl<V: WidgetView> ShellCore<V> {
     /// This is the scene-as-data observability for the
     /// floating-panel-as-positioned-window model: the position a binding's
     /// tear-off reducer writes into the signal is read back here, so an AI
-    /// observes WHERE each torn-off panel's OS window sits, not merely that
-    /// it exists (the §2 #7 obligation for the new `WindowSpec::position`
-    /// state). Resolved only for the `scene/windows` method (gated at the
-    /// dispatch call site), so every other dispatch pays nothing.
+    /// observes WHERE each torn-off panel's window is **declared to sit**,
+    /// not merely that it exists (the §2 #7 obligation for the new
+    /// `WindowSpec::position` state). It is the DECLARED position (what the
+    /// binding wrote / the shell drives toward), not a live OS read-back —
+    /// pinion does not yet feed `WindowEvent::Moved` back into the signal, so
+    /// a user native-drag can lag it (owed with the R1088 drag-follow); the
+    /// `pinion_rpc::DeclaredWindow` naming keeps that honest. Resolved only
+    /// for the `scene/windows` method (gated at the dispatch call site), so
+    /// every other dispatch pays nothing.
     fn declared_window_specs(&self) -> Vec<pinion_rpc::DeclaredWindow> {
         let core = &self.core;
         let specs = core.root_owner().run(|| match V::windows_signal() {

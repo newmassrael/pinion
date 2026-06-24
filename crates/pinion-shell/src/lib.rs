@@ -533,15 +533,17 @@ pub struct WindowSpec {
     /// contract; multi-window bindings can mix strategies per spec
     /// (main: `Fixed`, inspector: `IntrinsicAfterFirstPaint`, …).
     pub strategy: SizeStrategy,
-    /// R1087 §5.16 §5.41 PR-31 — declared **outer** window position in
-    /// **logical** pixels (`(x, y)`, top-left, the same logical frame
-    /// [`SizeStrategy`] sizes in; the OS applies the per-monitor DPI
-    /// scale). `None` (the default for every pre-R1087 binding) leaves
-    /// placement to the window manager exactly as before — byte-identical.
+    /// R1087 §5.16 §5.41 PR-31 — the binding's **declared** **outer**
+    /// window position in **logical** pixels (`(x, y)`, top-left, the same
+    /// logical frame [`SizeStrategy`] sizes in; the OS applies the
+    /// per-monitor DPI scale). `None` (the default for every pre-R1087
+    /// binding) leaves placement to the window manager exactly as before —
+    /// the *placement behaviour* is byte-identical (the serde *shape* is
+    /// additive, see the `#[serde(default)]` note below).
     ///
     /// This is the SSOT for the **floating-panel-as-positioned-window**
     /// model (the PR-31 dock tear-off): a binding declares where a torn-off
-    /// panel's window sits, and the shell reconciles the real OS window to
+    /// panel's window should sit, and the shell drives the real OS window to
     /// match. Honoured at create time by [`crate::AppShell`]'s `resume_spec`
     /// (`with_position`) and on a same-id position change by the
     /// `reconcile_windows` move pass (`Window::set_outer_position`), so the
@@ -550,10 +552,28 @@ pub struct WindowSpec {
     /// [`pinion_core::Signal<Vec<WindowSpec>>`] is all a binding needs to
     /// move a window (the drag-follow that PR-31 builds on top).
     ///
+    /// **Declared, not live-actual (a one-way SSOT for now).** The flow is
+    /// signal → OS (`set_outer_position`); pinion does NOT yet feed winit
+    /// `WindowEvent::Moved` back into the signal, so a USER native-dragging a
+    /// floating window by its title bar moves the real window while this
+    /// field (and `scene/windows`) keep the last *declared* value. This is
+    /// consistent with the create-time-intent model the rest of `WindowSpec`
+    /// follows (`strategy` is read once at create; a runtime `Resized` is
+    /// never written back either) and is honest as long as the wire stays
+    /// named `Declared*`. Closing the loop (`Moved` → write the signal, so an
+    /// external move becomes just another writer of this same SSOT — the
+    /// architecture-A ideal) is owed alongside the R1088 drag-follow, where
+    /// the shell-initiated-move loop-safety context lives.
+    ///
     /// `#[serde(default)]` so a `Signal<Vec<WindowSpec>>` value serialized
-    /// before this field existed (or any wire form omitting it)
-    /// deserializes to `None` — additive, never a breaking change to the
-    /// reactive primitive's serde shape.
+    /// before this field existed (or any wire form omitting it) deserializes
+    /// to `None` — additive on the READ side. The field deliberately carries
+    /// no `skip_serializing_if`: a write emits an explicit `"position":null`
+    /// (more observable than an absent key, and `WindowSpec` is an internal
+    /// reactive-primitive payload, not a frozen external wire contract). So
+    /// the serialized *shape* changed at R1087 (gains a `position` key) even
+    /// though placement behaviour did not — do not "fix" this by adding
+    /// `skip_serializing_if`; the explicit null is intentional.
     #[serde(default)]
     pub position: Option<(i32, i32)>,
 }
@@ -1356,6 +1376,14 @@ mod tests {
             "current shape carries position:null (serde(default) does not skip): {current}"
         );
         let legacy = current.replace(",\"position\":null", "");
+        // Fail loudly if a future field lands after `position` (so it is no
+        // longer the trailing `,"position":null`): otherwise the strip would
+        // silently no-op and this test would stop exercising the omitted-key
+        // path.
+        assert_ne!(
+            legacy, current,
+            "the strip must actually remove the position key"
+        );
         assert!(
             !legacy.contains("position"),
             "legacy JSON omits the position key: {legacy}"

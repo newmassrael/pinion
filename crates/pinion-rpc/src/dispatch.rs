@@ -932,10 +932,19 @@ pub use pinion_runtime::PacingState;
 /// of these (`pinion-shell` depends on `pinion-rpc`, so the domain → wire
 /// map runs shell-side; this crate owns only the wire shape, the
 /// `InputStateSnapshot`/`PacingState` read-payload precedent). `position`
-/// is the SSOT logical-pixel placement (`[x, y]` on the wire, `null` for a
-/// window-manager-placed window) — scene-as-data observability for the
-/// floating-panel-as-positioned-window model so an AI can read where every
-/// torn-off panel's window sits, not just that it exists.
+/// is the binding's **declared** logical-pixel placement (`[x, y]` on the
+/// wire, `null` for a window-manager-placed window) — scene-as-data
+/// observability for the floating-panel-as-positioned-window model so an AI
+/// can read where each torn-off panel's window is **declared to sit**, not
+/// merely that it exists.
+///
+/// **Declared, not live-actual:** this is the position the binding wrote and
+/// the shell drives the OS window toward, NOT a read-back of the window's
+/// current OS position. pinion does not (yet) feed winit `WindowEvent::Moved`
+/// back into the signal, so after a user native title-bar drag the declared
+/// value can lag the actual one. The `Declared*` naming keeps that honest;
+/// closing the loop (`Moved` → signal) is owed alongside the R1088
+/// drag-follow. For shell/RPC-driven moves declared == eventual-actual.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct DeclaredWindow {
     /// AI-facing window handle (the `{window: "<id>"}` scope key).
@@ -2288,8 +2297,10 @@ fn handle_scene_pacing_state(state: Option<PacingState>) -> Result<Value, RpcErr
 /// value ("the binding declares no windows", e.g. a single-window binding
 /// that opted out of `windows_signal`). This is the scene-as-data READ
 /// for the floating-panel-as-positioned-window model: an AI reads where
-/// every torn-off panel's OS window sits, satisfying §2 #7 for the
-/// position state the binding's tear-off reducer produces.
+/// each torn-off panel's window is **declared to sit** (see
+/// [`DeclaredWindow`] — declared, not a live OS-position read-back),
+/// satisfying §2 #7 for the position state the binding's tear-off reducer
+/// produces.
 fn handle_scene_windows(windows: Option<Vec<DeclaredWindow>>) -> Result<Value, RpcError> {
     let Some(windows) = windows else {
         return Err(

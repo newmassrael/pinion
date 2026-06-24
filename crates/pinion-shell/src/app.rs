@@ -1536,15 +1536,19 @@ impl<V: WidgetView> AppShell<V> {
             }
         }
         // R1087 §5.16 PR-31 — move pass: a spec present in BOTH old and
-        // new whose declared position changed reconciles the live OS
-        // window to the new logical-pixel position. Without this the
-        // add/drop passes (id-keyed) would silently swallow a same-id
-        // position change — `window_position_moves` keeps the reconcile
-        // TOTAL over the field. The drag-follow PR-31 builds on top
-        // writes the position signal each pointer move; this is where
-        // each write lands on the real window. (The live move is
-        // HW-gated like every real-window behaviour; the diff is
-        // unit-tested in `r1087_window_position_move_diff_tests`.)
+        // new whose declared position changed drives the live OS window to
+        // the new logical-pixel position. `window_position_moves` is a TOTAL
+        // diff (every same-id position change appears; without it the
+        // id-keyed add/drop passes would silently swallow it). The apply
+        // here is best-effort: a window with no live arc — a
+        // `Suspended(Some)` mobile state, `slot_window` → `None` — is skipped
+        // and reconciles on its next create (mobile-lifecycle, deferred with
+        // mobile). The silent skip on a missing `spec_id_to_window_id` entry
+        // mirrors the drop pass's identical pattern (absence ⇒ creation
+        // already failed + the loop is exiting). The drag-follow PR-31 builds
+        // on top writes the position signal each pointer move; this is where
+        // each write lands on the real window. (The live move is HW-gated;
+        // the diff is unit-tested in `r1087_window_position_move_diff_tests`.)
         for (spec_id, (x, y)) in window_position_moves(&old_specs, &new_specs) {
             if let Some(window_id) = self.spec_id_to_window_id.get(spec_id.as_str()).copied() {
                 if let Some(slot) = self.windows.get(&window_id) {
@@ -2696,11 +2700,28 @@ fn winit_ime_to_composition(
 /// Splitting this out of `reconcile_windows` keeps the genuinely-new logic
 /// pure and unit-testable with no winit event loop (the apply —
 /// `Window::set_outer_position` — stays in the imperative reconcile, its
-/// live effect HW-gated like every other real-window behaviour). It also
-/// makes `reconcile_windows` **total** over the `position` field: pre-R1087
-/// the add/drop passes would silently swallow a same-id position change
-/// (the top-level `new_specs == old_specs` guard sees the diff, then
-/// neither pass acts on it).
+/// live effect HW-gated like every other real-window behaviour).
+///
+/// **This DIFF is total** over the `position` field: every same-id position
+/// change appears in the returned `Vec` (pre-R1087 the add/drop passes would
+/// silently swallow it — the top-level `new_specs == old_specs` guard sees
+/// the diff, then neither id-keyed pass acts on it). The *apply* the caller
+/// then performs is best-effort per window: a window with a live arc moves
+/// immediately; a window with no live arc — a `Suspended(Some)` mobile state
+/// ([`crate::AppShell::slot_window`] returns `None`) — reconciles on its next
+/// create instead, not here (a mobile-lifecycle gap deferred with mobile,
+/// not a desktop one). So "total" describes the diff, not the OS effect.
+///
+/// `old.position != Some(new_pos)` also fires when `old` left placement to the
+/// window manager (`None` → first declared position). A `new` spec that drops
+/// back to `None` is **not** a move: `set_outer_position` cannot hand a window
+/// back to WM auto-placement, so the declared `None` leaves the window where
+/// it is.
+///
+/// O(N²) (`find` inside the `new` loop) unlike the `HashSet` add/drop passes:
+/// deliberately accepted — N is the window count (a handful), so a map would
+/// be premature; the add/drop passes go `HashSet` only because their set
+/// difference can span many ids.
 fn window_position_moves(old: &[WindowSpec], new: &[WindowSpec]) -> Vec<(String, (i32, i32))> {
     let mut moves = Vec::new();
     for spec in new {

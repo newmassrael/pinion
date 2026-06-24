@@ -117,7 +117,7 @@ def _wait_listed(tf: RpcSubprocess, window_id: str) -> dict:
 
 def _wait_unlisted(tf: RpcSubprocess, window_id: str) -> None:
     wait_until(
-        lambda: _window_by_id(tf, window_id) is None or None,
+        lambda: _window_by_id(tf, window_id) is None,
         desc=f"scene/windows drops {window_id}",
     )
 
