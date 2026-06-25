@@ -477,6 +477,17 @@ pub struct DispatchContext<'a> {
     /// list ("the binding declares no windows"). Resolved only for the
     /// `scene/windows` method, so every other dispatch pays nothing.
     pub declared_windows: Option<Vec<DeclaredWindow>>,
+    /// R1099 §5.51 §2 #7 PR-33 — the cross-window drop the embedder resolved
+    /// for THIS request's absolute cursor (the `scene/cross_window_drop`
+    /// READ). [`pinion_core::scene::Scene`] is not `Clone`, so the shell
+    /// resolves in place — borrowing every window's stored paint scene before
+    /// the dispatch borrow split — and threads the small owned result here;
+    /// the handler validates the request carried a cursor and serialises it.
+    /// `None` either when the method is not `scene/cross_window_drop` or when
+    /// the cursor landed on no window's drop target (the handler distinguishes
+    /// the two via the request params: a missing cursor is an error, a valid
+    /// cursor with no target is a `null` drop).
+    pub cross_window_drop: Option<pinion_runtime::CrossWindowDrop>,
     /// R889 §5.49 — the embedder's unknown-window verdict: `Some(id)`
     /// when the request's out-of-band `{window: "<id>"}` scope names a
     /// window the binding does not know
@@ -1021,6 +1032,7 @@ impl<'a> DispatchContext<'a> {
             input_state: None,
             pacing_state: None,
             declared_windows: None,
+            cross_window_drop: None,
             unknown_window: None,
         }
     }
@@ -1250,6 +1262,16 @@ impl<'a> DispatchContext<'a> {
         self
     }
 
+    /// Builder: install the embedder's pre-resolved cross-window drop for the
+    /// dispatch (R1099 §5.51 §2 #7 PR-33). Consumed by
+    /// `scene/cross_window_drop`. Absent on bindings the shell did not resolve
+    /// it for (a non-cross-window method, or a cursor over no drop target).
+    #[must_use]
+    pub fn with_cross_window_drop(mut self, drop: pinion_runtime::CrossWindowDrop) -> Self {
+        self.cross_window_drop = Some(drop);
+        self
+    }
+
     /// Builder: record the embedder's unknown-window verdict (R889
     /// §5.49). [`dispatch_parsed`] rejects the request with `-32602
     /// unknown_window` before method routing; see
@@ -1435,6 +1457,7 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
     // R1087 §5.16 §5.41 §2 #7 — declared-window set; same single-consumer
     // take. `scene/windows` is the only reader; owned (carries a `Vec`).
     let declared_windows = ctx.declared_windows.take();
+    let cross_window_drop = ctx.cross_window_drop.take();
     // R50.X.1 §5.37.2 — font registry is shared (read-only borrow);
     // copy the optional reference out for the dispatch lifetime so
     // the registry slot itself is not consumed.
@@ -1745,6 +1768,10 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
         "scene/pacing_state" => (handle_scene_pacing_state(pacing_state), HandlerKind::Read),
         "rpc/methods" => (handle_rpc_methods(), HandlerKind::Read),
         "scene/windows" => (handle_scene_windows(declared_windows), HandlerKind::Read),
+        "scene/cross_window_drop" => (
+            handle_scene_cross_window_drop(cross_window_drop, request.params.as_ref()),
+            HandlerKind::Read,
+        ),
         "scene/window_move" => {
             #[allow(
                 clippy::option_as_ref_deref,
@@ -5401,6 +5428,19 @@ fn window_move_error_to_rpc(err: WindowMoveError) -> RpcError {
         WindowMoveError::UnknownWindow => "UnknownWindow",
     };
     RpcError::invalid_params(variant)
+}
+
+fn handle_scene_cross_window_drop(
+    resolved: Option<pinion_runtime::CrossWindowDrop>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError> {
+    match crate::cross_window_drop::cross_window_drop(params, resolved) {
+        Ok(outcome) => serde_json::to_value(outcome)
+            .map_err(|e| RpcError::invalid_params(format!("serialize: {e}"))),
+        Err(crate::cross_window_drop::CrossWindowDropError::MissingCursor) => {
+            Err(RpcError::invalid_params("MissingCursor"))
+        }
+    }
 }
 
 fn handle_scene_cancel_preview(

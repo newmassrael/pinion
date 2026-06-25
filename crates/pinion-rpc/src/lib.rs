@@ -15,6 +15,7 @@ pub mod animation_state;
 pub mod cache_stats;
 pub mod caret_state;
 pub mod commands;
+pub mod cross_window_drop;
 pub mod dispatch;
 pub mod dry_run;
 pub mod export_pdf;
@@ -57,6 +58,10 @@ pub use cache_stats::{CacheStatsError, CacheStatsOutcome, CacheStatsRect, cache_
 pub use caret_state::{CaretStateError, CaretStateOutcome, caret_state};
 pub use commands::{
     CommandsError, PendingCommandView, list_in_flight_commands, list_pending_commands,
+};
+pub use cross_window_drop::{
+    CrossWindowDropError, CrossWindowDropOutcome, CrossWindowDropParams, ResolvedCrossWindowDrop,
+    cross_window_drop,
 };
 pub use dispatch::{
     ClickButton, DeclaredWindow, DeferredInput, DispatchContext, DragButton, KeyWireState,

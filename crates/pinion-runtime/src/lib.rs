@@ -51,7 +51,10 @@ pub use core_shell::{CoreShell, DEFAULT_WINDOW, DispatchTail, StateChange};
 pub use focus::FocusManager;
 pub use frame_pacing::{FixedTimestep, MAX_FRAME_DT_SECS, PacingState, clamp_frame_dt, substep};
 pub use frame_timing::{FRAME_TIMING_WINDOW, FrameTiming, FrameTimingStats, FrameTimingsSnapshot};
-pub use input::{InputRouter, Modifiers, PanRelease, PointerId, Touch, TouchPhase, rect_for_tag};
+pub use input::{
+    CrossWindowDrop, InputRouter, Modifiers, PanRelease, PointerId, Touch, TouchPhase,
+    rect_for_tag, resolve_cross_window_drop,
+};
 pub use intent_queue::{IntentQueue, walk_scene_and_drain, walk_scene_and_drain_immediate};
 pub use layout::{
     TextMeasure, compute_layout, compute_layout_with_scroll_dirty, compute_layout_with_text_measure,

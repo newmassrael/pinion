@@ -105,6 +105,7 @@ pub const RPC_METHODS: &[(&str, MethodOcc)] = &[
     ("scene/caret_state", MethodOcc::Read),
     ("scene/click", MethodOcc::Mutate),
     ("scene/commands", MethodOcc::Read),
+    ("scene/cross_window_drop", MethodOcc::Read),
     ("scene/double_click", MethodOcc::Mutate),
     ("scene/drag", MethodOcc::Mutate),
     ("scene/drop_file", MethodOcc::Mutate),

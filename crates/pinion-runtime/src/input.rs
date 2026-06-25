@@ -2000,6 +2000,17 @@ where
 {
     for (spec_id, scene, (ox, oy)) in windows {
         let (lx, ly) = (abs_cursor.0 - ox, abs_cursor.1 - oy);
+        // A cursor left of / above this window is NOT inside it. The
+        // per-window `resolve_drop_target_tag` only ever sees in-window
+        // cursors, so it hit-tests through `floor_clamp_u32`, which clamps a
+        // negative coordinate to 0 — spuriously hitting the top-left node. The
+        // cross-window caller DOES pass out-of-window cursors (that is the
+        // whole point), so it must reject the negative half here; the
+        // beyond-right / beyond-bottom half needs no guard (no node covers a
+        // positive coordinate past the window's extent, so the hit-test misses).
+        if lx < 0.0 || ly < 0.0 {
+            continue;
+        }
         let Some(tag) = resolve_drop_target_tag(scene, lx, ly) else {
             continue;
         };
@@ -3274,6 +3285,23 @@ mod tests {
             resolve_cross_window_drop(ba, (50.0, 50.0)).unwrap().window,
             "b"
         );
+    }
+
+    #[test]
+    fn r1099_cursor_up_left_of_a_window_does_not_spuriously_hit() {
+        // A cursor LEFT of / ABOVE a window must not resolve it: the hit-test
+        // clamps a negative local coordinate to 0, which would otherwise hit
+        // the top-left panel. (Regression: the per-window resolver never saw
+        // out-of-window cursors; the cross-window one does.)
+        let floating = window_with_drop_panel("torn", Rect::new(0, 0, 360, 360));
+        let windows = [("torn", &floating, (1040.0, 200.0))];
+        // abs (900, 50) is up-left of the floater at (1040, 200) → local
+        // (-140, -150). The clamp would hit (0, 0) = the panel; the guard rejects it.
+        assert!(resolve_cross_window_drop(windows, (900.0, 50.0)).is_none());
+        // A genuinely-inside abs cursor still resolves.
+        let inside = resolve_cross_window_drop(windows, (1100.0, 300.0)).expect("inside resolves");
+        assert_eq!(inside.window, "torn");
+        assert!(inside.point.x_rel >= 0.0 && inside.point.y_rel >= 0.0);
     }
 
     #[test]

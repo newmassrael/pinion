@@ -3897,6 +3897,14 @@ impl<V: WidgetView> ShellCore<V> {
         // nothing.
         let declared_windows =
             (request.method == "scene/windows").then(|| self.declared_window_specs());
+        // R1099 §5.51 §2 #7 PR-33 — pre-resolve the cross-window drop here (the
+        // only place with `&self` access to every window's paint scene, before
+        // the borrow split below; Scene is not Clone so it cannot be deferred
+        // into a closure). Gated on the method so every other dispatch pays
+        // nothing.
+        let cross_window_drop = (request.method == "scene/cross_window_drop")
+            .then(|| self.resolve_cross_window_drop_for_request(request.params.as_ref()))
+            .flatten();
         // R1088 §5.16 §5.41 §2 #7 PR-31 — the WRITE peer of
         // `scene/windows`: `scene/window_move` writes the binding's
         // declared-position signal (the SAME `windows_signal` the read
@@ -4149,6 +4157,9 @@ impl<V: WidgetView> ShellCore<V> {
             // (resolved above, only for `scene/windows`).
             if let Some(windows) = declared_windows {
                 ctx = ctx.with_declared_windows(windows);
+            }
+            if let Some(drop) = cross_window_drop {
+                ctx = ctx.with_cross_window_drop(drop);
             }
             // R1088 §5.16 §5.41 §2 #7 PR-31 — the `scene/window_move`
             // write peer. Its closure resolved a signal above only for
@@ -4749,6 +4760,40 @@ impl<V: WidgetView> ShellCore<V> {
                 declared_size: spec.strategy.declared_size(),
             })
             .collect()
+    }
+
+    /// R1099 §5.51 §2 #7 PR-33 — resolve the cross-window drop for the absolute
+    /// desktop cursor in `params` (the `scene/cross_window_drop` READ). Borrows
+    /// every declared window's stored paint scene + declared outer position and
+    /// runs [`pinion_runtime::resolve_cross_window_drop`].
+    ///
+    /// Done here, `&self`, before the dispatch borrow split, because
+    /// [`pinion_core::scene::Scene`] is not `Clone` — the resolution cannot own
+    /// cloned scenes, so it runs in place and the dispatch context carries only
+    /// the small owned result. A `None` declared position means WM-placed at the
+    /// desktop origin (the same `(0, 0)` convention `scene/windows` reports).
+    /// `None` result when the request names no cursor (the handler maps that to
+    /// `MissingCursor`) or the cursor lands on no window's drop target.
+    fn resolve_cross_window_drop_for_request(
+        &self,
+        params: Option<&serde_json::Value>,
+    ) -> Option<pinion_runtime::CrossWindowDrop> {
+        let cursor = pinion_rpc::cross_window_drop::parse_params(params)?;
+        let specs = self.declared_window_specs();
+        let windows: Vec<(&str, &Scene, (f64, f64))> = specs
+            .iter()
+            .filter_map(|w| {
+                let scene = self.core.last_paint_scene_for_window(&w.id)?;
+                let pos = w
+                    .position
+                    .map_or((0.0, 0.0), |(x, y)| (f64::from(x), f64::from(y)));
+                Some((w.id.as_str(), scene, pos))
+            })
+            .collect();
+        pinion_runtime::resolve_cross_window_drop(
+            windows.iter().map(|&(id, scene, pos)| (id, scene, pos)),
+            (cursor.x, cursor.y),
+        )
     }
 
     /// (R1020 §5.39) Re-derive the keyboard focus enumeration from a fresh,
