@@ -5694,6 +5694,205 @@ mod r26_undock_focus_follow_tests {
 }
 
 #[cfg(test)]
+mod r1104_cross_window_exclusion_tests {
+    //! R1104 §5.51 §2 #7 PR-33 — fast-suite coverage for the shell's
+    //! cross-window drop SOURCE-EXCLUSION (the R1102.1 review SHOULD-FIX:
+    //! `cross_window_drop_at` / `resolve_cross_window_live` were exercised only
+    //! by the CI demo `r1102_cross_window_redock`, which a local fast run skips).
+    //!
+    //! Two POSITIONED declared windows — `main` at the desktop origin (WM-placed)
+    //! and a floater at `(800, 100)` — each given an injected post-layout paint
+    //! scene holding one opted-in drop target, let a headless `#[test]` drive the
+    //! exclusion both ways without a window:
+    //!   * the source window is skipped (a same-window drop must not surface as a
+    //!     cross-window drop), and
+    //!   * a cursor that escaped the source INTO another window resolves THAT
+    //!     window — including the executable floater→main direction R1103 drives.
+    use super::ShellCore;
+    use crate::test_fixtures::TestRenderer;
+    use crate::{SizeStrategy, WidgetView, WindowSpec};
+    use pinion_a11y::WidgetA11y;
+    use pinion_core::external::External;
+    use pinion_core::scene::{ContainerNode, Rect};
+    use pinion_core::style::LayoutStyle;
+    use pinion_core::test_fixtures::ButtonFixture;
+    use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
+    use pinion_core::{Frame, Owner, Scene, Signal, WidgetCore};
+    use std::rc::Rc;
+
+    const FLOAT_WINDOW: &str = "float.right";
+    const FLOAT_X: i32 = 800;
+    const FLOAT_Y: i32 = 100;
+
+    /// A one-window post-layout paint scene: a single opted-in drop-target panel
+    /// tagged `tag` at the window-local `rect`, inside a root filling the window.
+    /// Mirrors the runtime `window_with_drop_panel` helper so the shell test
+    /// feeds `resolve_cross_window_drop` the same shape a real paint produces.
+    fn drop_panel_scene(tag: &str, rect: Rect) -> Scene {
+        let mut panel = Scene::Container(
+            ContainerNode::new(vec![])
+                .with_tag(tag.to_string())
+                .with_layout(LayoutStyle::new().with_drop_target(true)),
+        );
+        if let Scene::Container(c) = &mut panel {
+            c.rect = rect;
+        }
+        let mut root = Scene::Container(ContainerNode::new(vec![panel]));
+        if let Scene::Container(c) = &mut root {
+            c.rect = Rect::new(0, 0, 1000, 800);
+        }
+        root
+    }
+
+    /// Two POSITIONED declared windows; the tests inject each window's paint scene
+    /// directly (the dock panels), so `view_for_window` is only the declaration
+    /// stub `windows_signal` + `declared_window_specs` need.
+    struct CrossWindowFixture;
+
+    impl WidgetCore for CrossWindowFixture {
+        type State = ButtonState;
+        type Event = ButtonEvent;
+
+        fn create_external() -> Box<dyn External> {
+            Box::new(ButtonExternal::new())
+        }
+        fn tag() -> &'static str {
+            "main_btn"
+        }
+        fn read_state(scene: &Scene) -> Self::State {
+            <ButtonFixture as WidgetCore>::read_state(scene)
+        }
+        fn view(_state: Self::State, _frame: &Frame) -> Scene {
+            Scene::Container(ContainerNode::new(vec![]).with_tag("main_btn"))
+        }
+        fn event_name(event: Self::Event) -> &'static str {
+            <ButtonFixture as WidgetCore>::event_name(event)
+        }
+        fn title() -> &'static str {
+            "CrossWindow"
+        }
+    }
+
+    impl WidgetA11y for CrossWindowFixture {}
+
+    impl WidgetView for CrossWindowFixture {
+        type Renderer = TestRenderer;
+
+        fn initial_size_strategy() -> SizeStrategy {
+            SizeStrategy::Fixed {
+                width: 1000,
+                height: 800,
+            }
+        }
+
+        fn windows_signal() -> Option<Rc<Signal<Vec<WindowSpec>>>> {
+            Owner::current().map(|owner| {
+                owner.cache::<Signal<Vec<WindowSpec>>, _>("cross_window_windows", || {
+                    Signal::new(vec![
+                        WindowSpec::main(
+                            "CrossWindow",
+                            SizeStrategy::Fixed {
+                                width: 1000,
+                                height: 800,
+                            },
+                        ),
+                        WindowSpec::new(
+                            FLOAT_WINDOW,
+                            "Float",
+                            SizeStrategy::Fixed {
+                                width: 200,
+                                height: 200,
+                            },
+                        )
+                        .with_position(FLOAT_X, FLOAT_Y),
+                    ])
+                })
+            })
+        }
+
+        fn view_for_window(_window_id: &str, state: Self::State, frame: &Frame) -> Scene {
+            Self::view(state, frame)
+        }
+    }
+
+    /// A 2-window shell with each window's dock panel injected as its paint scene:
+    /// `main`'s at local `(500, 400, 100, 100)`, the floater's at `(10, 10, 80, 80)`.
+    fn shell_with_two_dock_windows() -> ShellCore<CrossWindowFixture> {
+        let mut sc = ShellCore::<CrossWindowFixture>::new();
+        sc.core.set_paint_scene_for_window(
+            "main",
+            drop_panel_scene("main_dock", Rect::new(500, 400, 100, 100)),
+        );
+        sc.core.set_paint_scene_for_window(
+            FLOAT_WINDOW,
+            drop_panel_scene("torn", Rect::new(10, 10, 80, 80)),
+        );
+        sc
+    }
+
+    #[test]
+    fn cross_window_drop_excludes_the_source_window() {
+        let sc = shell_with_two_dock_windows();
+        // (550, 450) is over main's dock panel (main is at the desktop origin).
+        let own = sc
+            .cross_window_drop_at((550.0, 450.0), None)
+            .expect("the abs cursor resolves main's dock when nothing is excluded");
+        assert_eq!(own.window, "main");
+        assert_eq!(own.point.tag, "main_dock");
+        // Excluding the source while the cursor is over ONLY the source resolves
+        // nothing — a same-window drop must not surface as a cross-window drop.
+        assert!(
+            sc.cross_window_drop_at((550.0, 450.0), Some("main"))
+                .is_none(),
+            "the source window is excluded and the cursor is over no OTHER window",
+        );
+    }
+
+    #[test]
+    fn cross_window_drop_resolves_the_other_window_the_cursor_escaped_into() {
+        let sc = shell_with_two_dock_windows();
+        // (840, 140) is floater-local (40, 40) — over the floater's `torn` panel,
+        // and over no main panel. Excluding the source (main) resolves the floater.
+        let into = sc
+            .cross_window_drop_at((840.0, 140.0), Some("main"))
+            .expect("the escaped cursor resolves the floater");
+        assert_eq!(into.window, FLOAT_WINDOW);
+        assert_eq!(into.point.tag, "torn");
+    }
+
+    #[test]
+    fn resolve_cross_window_live_maps_source_local_to_abs_then_excludes_source() {
+        let sc = shell_with_two_dock_windows();
+        // Source = the floater (origin 800, 100). A captured drag whose local
+        // cursor is (-250, 350) maps to abs (550, 450) — over MAIN's dock. This is
+        // the executable floater→main redock direction R1103 drives.
+        let back = sc
+            .resolve_cross_window_live(FLOAT_WINDOW, (-250.0, 350.0))
+            .expect("the floater's drag escaped into main's dock");
+        assert_eq!(back.window, "main");
+        assert_eq!(back.point.tag, "main_dock");
+        // Source = main. A local cursor at (840, 140) escapes into the floater.
+        let out = sc
+            .resolve_cross_window_live("main", (840.0, 140.0))
+            .expect("main's drag escaped into the floater");
+        assert_eq!(out.window, FLOAT_WINDOW);
+        assert_eq!(out.point.tag, "torn");
+    }
+
+    #[test]
+    fn resolve_cross_window_live_is_none_when_the_cursor_stays_over_the_source() {
+        let sc = shell_with_two_dock_windows();
+        // Source = main, local (550, 450) over main's OWN dock: the source is
+        // excluded, the cursor reaches no other window → None (a same-window drag).
+        assert!(
+            sc.resolve_cross_window_live("main", (550.0, 450.0))
+                .is_none(),
+            "a drag that stays over the source's own dock is not cross-window",
+        );
+    }
+}
+
+#[cfg(test)]
 mod r1072_text_engine_wiring_tests {
     //! R1072 §5.37 — the shell is the §5.37 self-hosted engine's first SHIPPING
     //! consumer: `compute_paint_scene` threads `text_measure_override(self.text_engine.as_ref())`
