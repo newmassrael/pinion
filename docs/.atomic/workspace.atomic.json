@@ -16456,6 +16456,50 @@
         "libXtst live native-pointer dock acceptance still HW-gated (real-GPU host)"
       ]
     },
+    "R1095.1": {
+      "decision_summary": "PR-31 live-tear-off (R1087-R1094) audit-clearance: 3 read-only adversarial reviewers (craft/SSOT/architecture) + author state-machine trace. Structure SURVIVED — substrate is textbook (single-source WindowSpec.position with echo-suppressed Moved feedback, complete idempotent non-toggling state machine, dependency-graph-enforced layering, honest declared-SSOT/OS-sink split). Zero substrate must-fix; the one MUST-FIX was a stale public-API doc (WindowSpec.position still described the pre-R1088 one-way world). Cleared inline + dropped a duplicate floating_window_id SSOT. Remaining items are the parked HW grab-move + the deferred 2nd-consumer lift, now documented in-code.",
+      "changes_bullets": [
+        "MUST-FIX: WindowSpec.position doc rewritten — R1088 closed the Moved->signal loop (was self-contradicting \"owed alongside R1088\")",
+        "flat example floating_window_id now delegates to lifted dock:: SSOT; dropped duplicate \"torn-\" prefix const + format logic",
+        "docs: follow_desktop_position \"main\"-origin precondition (floating-header re-drag = parked scope); editor is dock-only (escape no-op); cursor-less toggle reachability corrected"
+      ],
+      "verification_bullets": [
+        "3 read-only adversarial reviewers (craft / SSOT / architecture) + author state-machine trace",
+        "structure SURVIVED: substrate textbook, 0 substrate must-fix; the 1 MUST-FIX was a stale public-API doc",
+        "cargo test --workspace 7650 pass / 0 fail (doc + output-identical delegation, no count change)",
+        "clippy vello + fmt clean; floating_window_id output-identical (r683_c format test + r1094 demo PASS)"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.41",
+        "5.51"
+      ],
+      "carry_forward_bullets": [
+        "follow_desktop_position source-window-id enrichment owed at the live-grab-move round (re-dragging an already-floating header reports a torn-<panel> frame, not \"main\") — now documented in-code, folds into the parked HW round",
+        "the flat example follow/redock/desktop-conversion trio lift into a dock substrate is owed at the editor float-to-window 2nd consumer — now documented at the editor's dock-only note"
+      ],
+      "publishable_decision_summary": "PR-31 live-tear-off (R1087-R1094) audit-clearance: 3 read-only adversarial reviewers (craft/SSOT/architecture) + author state-machine trace. Structure SURVIVED — substrate is textbook (single-source WindowSpec.position with echo-suppressed Moved feedback, complete idempotent non-toggling state machine, dependency-graph-enforced layering, honest declared-SSOT/OS-sink split). Zero substrate must-fix; the one MUST-FIX was a stale public-API doc (WindowSpec.position still described the pre-R1088 one-way world). Cleared inline + dropped a duplicate floating_window_id SSOT. Remaining items are the parked HW grab-move + the deferred 2nd-consumer lift, now documented in-code.",
+      "publishable_changes_bullets": [
+        "MUST-FIX: WindowSpec.position doc rewritten — R1088 closed the Moved->signal loop (was self-contradicting \"owed alongside R1088\")",
+        "flat example floating_window_id now delegates to lifted dock:: SSOT; dropped duplicate \"torn-\" prefix const + format logic",
+        "docs: follow_desktop_position \"main\"-origin precondition (floating-header re-drag = parked scope); editor is dock-only (escape no-op); cursor-less toggle reachability corrected"
+      ],
+      "publishable_verification_bullets": [
+        "3 read-only adversarial reviewers (craft / SSOT / architecture) + author state-machine trace",
+        "structure SURVIVED: substrate textbook, 0 substrate must-fix; the 1 MUST-FIX was a stale public-API doc",
+        "cargo test --workspace 7650 pass / 0 fail (doc + output-identical delegation, no count change)",
+        "clippy vello + fmt clean; floating_window_id output-identical (r683_c format test + r1094 demo PASS)"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.41",
+        "5.51"
+      ],
+      "publishable_carry_forward_bullets": [
+        "follow_desktop_position source-window-id enrichment owed at the live-grab-move round (re-dragging an already-floating header reports a torn-<panel> frame, not \"main\") — now documented in-code, folds into the parked HW round",
+        "the flat example follow/redock/desktop-conversion trio lift into a dock substrate is owed at the editor float-to-window 2nd consumer — now documented at the editor's dock-only note"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
