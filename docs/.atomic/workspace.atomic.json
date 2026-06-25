@@ -16924,6 +16924,66 @@
         "next still R1103 (cross-window redock EXECUTION) per the grounded SEED plan"
       ]
     },
+    "R1103": {
+      "decision_summary": "R1103 §5.51 §2 #7 PR-33 slice 3: cross-window redock EXECUTES. A floating panel returning to the slot-bearing main window now re-docks (its WindowSpec removed), driven by an AI-primary invoke(tear_off_redock_at) channel; a non-main target fires + is observable but no-ops (only main has a dock slot to host). Zone-specific placement is slice 4.",
+      "changes_bullets": [
+        "DockPanelExternal::invoke gains a tear_off_redock_at arm (AI-primary driver)",
+        "parses {window,target,x_rel,y_rel} JSON; mirrors drag_release_at cross-window arm",
+        "no live-pointer dependency (R1095 follow-coord carry blocks live floater->main)",
+        "schema lists tear_off_redock_at; json_rel helper for f64->f32 normalised cursor",
+        "hello-dock-panels reducer: tear_off_redock_at arm executes only when window==main",
+        "non-main target (another floater, no slot) fires + observable but no-ops",
+        "MAIN_WINDOW_ID const replaces 3 bare \"main\" literals"
+      ],
+      "verification_bullets": [
+        "demo r1103_cross_window_redock_execute 40 assert: tear off 2, mixed invoke",
+        "(inspector->non-main rejected + property->main executed in one drain barrier)",
+        "plus accept-after-reject (same panel rejected for non-main, accepted for main)",
+        "3 unit dock.rs: invoke enqueues dock-at / defaults omitted zone / rejects bad payload",
+        "1 unit example: reducer redock-at main executes but non-main is a no-op",
+        "cargo test --workspace green; clippy vello -D pedantic clean; fmt clean"
+      ],
+      "impact_refs": [
+        "5.51",
+        "5.15",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "slice 4 (R1104): flat reducer dock-at-zone (honour target/x_rel/y_rel into slot)",
+        "slice 4 also: fix r683 real cross-window drag-back (RED carried since R1094)",
+        "live pointer floater->main parked until R1095 moving-source follow-coord cleared",
+        "shell resolve_cross_window_live source-exclusion still CI-demo-only (R1102.1 owed)"
+      ],
+      "publishable_decision_summary": "R1103 §5.51 §2 #7 PR-33 slice 3: cross-window redock EXECUTES. A floating panel returning to the slot-bearing main window now re-docks (its WindowSpec removed), driven by an AI-primary invoke(tear_off_redock_at) channel; a non-main target fires + is observable but no-ops (only main has a dock slot to host). Zone-specific placement is slice 4.",
+      "publishable_changes_bullets": [
+        "DockPanelExternal::invoke gains a tear_off_redock_at arm (AI-primary driver)",
+        "parses {window,target,x_rel,y_rel} JSON; mirrors drag_release_at cross-window arm",
+        "no live-pointer dependency (R1095 follow-coord carry blocks live floater->main)",
+        "schema lists tear_off_redock_at; json_rel helper for f64->f32 normalised cursor",
+        "hello-dock-panels reducer: tear_off_redock_at arm executes only when window==main",
+        "non-main target (another floater, no slot) fires + observable but no-ops",
+        "MAIN_WINDOW_ID const replaces 3 bare \"main\" literals"
+      ],
+      "publishable_verification_bullets": [
+        "demo r1103_cross_window_redock_execute 40 assert: tear off 2, mixed invoke",
+        "(inspector->non-main rejected + property->main executed in one drain barrier)",
+        "plus accept-after-reject (same panel rejected for non-main, accepted for main)",
+        "3 unit dock.rs: invoke enqueues dock-at / defaults omitted zone / rejects bad payload",
+        "1 unit example: reducer redock-at main executes but non-main is a no-op",
+        "cargo test --workspace green; clippy vello -D pedantic clean; fmt clean"
+      ],
+      "publishable_impact_refs": [
+        "5.51",
+        "5.15",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "slice 4 (R1104): flat reducer dock-at-zone (honour target/x_rel/y_rel into slot)",
+        "slice 4 also: fix r683 real cross-window drag-back (RED carried since R1094)",
+        "live pointer floater->main parked until R1095 moving-source follow-coord cleared",
+        "shell resolve_cross_window_live source-exclusion still CI-demo-only (R1102.1 owed)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
