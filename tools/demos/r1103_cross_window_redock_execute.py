@@ -31,14 +31,15 @@ Section roadmap (>=30 assertions across A-F):
       placeholders), every redock_at null, none detached.
   (B) Tear off TWO panels (inspector + property) via the toggle invoke — three
       declared windows, both slots show placeholders, both real tags gone.
-  (C) The mixed invoke — the headline + the boundary in one synchronisation
-      barrier. Invoke a redock of inspector onto a NON-main window (another
-      floater, no slot) AND a redock of property onto MAIN, then wait for the
-      window count to drop to two. Property's execution (3 -> 2 windows) is the
-      barrier proving the drain cycle ran; in that SAME settled snapshot the
-      property floater is GONE (main executed) while the inspector floater
-      SURVIVES (the non-main target was rejected). Both panels' redock_at record
-      their firing either way.
+  (C) The mixed invoke — the headline + the boundary together. Invoke a redock
+      of inspector onto a NON-main window (another floater, no slot) AND a redock
+      of property onto MAIN. Each `scene/invoke` drains + reduces its OWN intent
+      synchronously in that RPC's tail, so once both invokes have returned both
+      have reduced: the inspector redock no-oped (its floater untouched) and
+      property's executed (its floater gone, window count 3 -> 2). The proof the
+      inspector was REJECTED (not merely un-run) is firing-witness + survival:
+      its redock_at recorded the non-main target it fired (C.8/C.9) AND its
+      floater SURVIVES property's execution — not a timing race.
   (D) Content restored — main hosts the real property panel again (placeholder
       gone), while the inspector slot still shows its placeholder (still floating).
   (E) Read-only — `scene/intervene` on redock_at is rejected (router-driven).
@@ -175,10 +176,12 @@ def body() -> None:
         # ── (C) mixed invoke — non-main rejected, main executed ──────
         _section("C: redock inspector→non-main (rejected) + property→main (executed)")
         # Inspector onto ANOTHER floater (no dock slot to host it) — fires but
-        # must execute nothing. Property onto MAIN — fires AND executes. The
-        # property execution (3 -> 2 windows) is the synchronisation barrier:
-        # by the time the count settles, the inspector intent was drained in the
-        # same reduce cycle, so a surviving inspector floater proves the reject.
+        # must execute nothing. Property onto MAIN — fires AND executes. Each
+        # scene/invoke drains + reduces its OWN intent synchronously in that RPC's
+        # tail, so once both invokes return both have reduced: inspector no-oped,
+        # property removed its floater. The reject (vs un-run) is proven by
+        # firing-witness + survival — C.8/C.9 assert inspector's redock_at fired
+        # the non-main target, and torn-inspector SURVIVES property's execution.
         _redock_into(tf, _INSPECTOR, _torn(_PROPERTY), target=_INSPECTOR)
         _redock_into(tf, _PROPERTY, _MAIN, target=_VIEWPORT)
         wait_until(lambda: len(_windows(tf)) == 2, desc="C.1 the window count drops to two")

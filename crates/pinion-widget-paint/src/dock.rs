@@ -4074,10 +4074,15 @@ impl DockPanelExternal {
 
     /// (R1100 §5.51 §5.16 §2 #7 PR-33) Enqueue the cross-window dock-at redock:
     /// the floated panel was released over `target_window`'s dock zone `point`.
-    /// The binding reducer re-inserts the panel into that window's dock at the
-    /// zone (classifying edge-vs-centre from `point`'s normalised cursor, the
-    /// same zone-geometry SSOT the same-window drop uses) and drops the panel's
-    /// floating window. Distinct from [`Self::enqueue_tear_off_redock`]
+    /// The payload carries the panel id, the target window, and the drop zone
+    /// (`point.tag` + the normalised `x_rel`/`y_rel` the same-window drop's
+    /// zone-geometry SSOT classifies). What the binding reducer DOES with it is
+    /// binding-defined: it redocks the panel into `target_window`, and a
+    /// topology-bearing binding MAY place it at the classified zone — but the
+    /// flat `hello-dock-panels` reducer (R1103) just drops the floating window so
+    /// the panel re-installs in its fixed home slot; honouring the zone is its
+    /// deferred slice-4 dock-at-zone (it needs a `DockTopology`, which that flat
+    /// demo lacks). Distinct from [`Self::enqueue_tear_off_redock`]
     /// (remove-only restore) — see [`TEAR_OFF_REDOCK_AT_EVENT`].
     fn enqueue_tear_off_redock_at(&self, target_window: &str, point: &DropPoint) {
         let payload = serde_json::json!({

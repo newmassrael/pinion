@@ -1244,7 +1244,7 @@ fn inspector_host_window() -> String {
     if is_panel_floating(&panels, INSPECTOR_PANEL_TAG) {
         floating_window_id(INSPECTOR_PANEL_TAG)
     } else {
-        "main".to_owned()
+        MAIN_WINDOW_ID.to_owned()
     }
 }
 
@@ -1350,7 +1350,7 @@ impl WidgetView for DockPanelsView {
     /// `torn-`) paint their hosted panel via [`view_floating_panel`].
     fn view_for_window(window_id: &str, state: Self::State, _frame: &Frame) -> Scene {
         match window_id {
-            "main" => view_main_dock(state),
+            id if id == MAIN_WINDOW_ID => view_main_dock(state),
             other => match other.strip_prefix(DEFAULT_FLOATING_WINDOW_PREFIX) {
                 Some(panel_id) => view_floating_panel(panel_id, state),
                 None => view_main_dock(state),
