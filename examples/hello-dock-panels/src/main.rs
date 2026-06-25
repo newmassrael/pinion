@@ -105,8 +105,8 @@ use pinion_widget_paint::devtools::{
     scene_to_tree_item, scene_type_name,
 };
 use pinion_widget_paint::dock::{
-    DockPanelExternal, DockPanelStyle, FloatingPlaceholderStyle, view_dock_panel,
-    view_floating_placeholder,
+    DEFAULT_FLOATING_WINDOW_PREFIX, DockPanelExternal, DockPanelStyle, FloatingPlaceholderStyle,
+    floating_window_id as dock_floating_window_id, view_dock_panel, view_floating_placeholder,
 };
 use pinion_widget_paint::splitter::{
     SplitterExternal, SplitterOrientation, SplitterStyle, view_splitter,
@@ -278,11 +278,6 @@ const PROPERTY_PANE_FONT_PX: u32 = 14;
 /// Property pane placeholder when no selection is active or the
 /// resolved path is stale.
 const PROPERTY_PANE_NO_SELECTION_TEXT: &str = "(no selection)";
-
-/// Floating-window id prefix the binding mints when a panel is torn
-/// off. The view_for_window dispatch reads back this prefix to know
-/// which panel a floating window hosts.
-const FLOATING_WINDOW_PREFIX: &str = "torn-";
 
 /// R683.C §5.16 §5.49 — the raw-scene path identifying the
 /// `Container[viewport_btn]` node inside the unwrapped
@@ -473,9 +468,12 @@ fn apply_collapsed(item: &mut TreeItem, collapsed: &BTreeSet<String>) {
 /// Construct the canonical floating-window id for `panel_id`. Used by
 /// both the reducer (to push / locate `WindowSpec` entries) and
 /// `view_for_window` (to strip the prefix and dispatch to
-/// [`view_floating_panel`]).
+/// [`view_floating_panel`]). A thin binding wrapper over the lifted
+/// [`dock_floating_window_id`] + [`DEFAULT_FLOATING_WINDOW_PREFIX`] SSOT
+/// (the binding always mints at the default prefix) — no duplicate `"torn-"`
+/// literal or id-format logic of its own.
 fn floating_window_id(panel_id: &str) -> String {
-    format!("{FLOATING_WINDOW_PREFIX}{panel_id}")
+    dock_floating_window_id(DEFAULT_FLOATING_WINDOW_PREFIX, panel_id)
 }
 
 /// Human-readable title for a floating window hosting `panel_id`.
@@ -489,10 +487,11 @@ fn floating_window_title(panel_id: &str) -> String {
 /// distinct per-panel cascade offset is the first consumer of
 /// [`WindowSpec::with_position`] — it proves the position flows the binding
 /// → `windows_signal` → `reconcile_windows` → real window arc, and keeps a
-/// multi-tear-off cascade from stacking exactly. The PR-31 drag-follow
-/// (next slice) replaces this fixed offset with the live cursor position
-/// written each pointer move; the SSOT seam is identical (a position on
-/// the spec the shell reconciles).
+/// multi-tear-off cascade from stacking exactly. R1094's drag-follow
+/// ([`follow_desktop_position`]) now COEXISTS with this: the AI `tear_off`
+/// toggle (+ the cursor-less escape fallback) opens at this deterministic
+/// cascade, a live header drag opens at the cursor — two policies over the
+/// one SSOT seam (a position on the spec the shell reconciles).
 fn floating_window_position(panel_id: &str) -> (i32, i32) {
     let step = match panel_id {
         INSPECTOR_PANEL_TAG => 0,
@@ -521,6 +520,15 @@ fn is_panel_floating(panels: &[WindowSpec], panel_id: &str) -> bool {
 /// window whose position pinion never learned falls back to the desktop
 /// origin, so the window still *tracks* the cursor (the offset is then
 /// relative to (0, 0) instead of the real frame).
+///
+/// PRECONDITION: the drag SOURCE is the main window — true for the only
+/// headlessly-reachable path (a docked panel's header torn out). Re-dragging
+/// an ALREADY-FLOATING panel's own header reports a cursor in that
+/// `torn-<panel>` window's frame, for which adding the `"main"` origin is
+/// wrong; that path lives in the parked live-grab-move scope and needs the
+/// `tear_off_follow` payload to carry the source window id (folded into the
+/// live-grab / editor-2nd-consumer round). Today no binding re-drags a
+/// floating header, so the hard-coded `"main"` is correct in practice.
 #[allow(
     clippy::cast_possible_truncation,
     reason = "logical-pixel cursor → i32 outer position; sub-pixel is irrelevant to window placement"
@@ -1291,7 +1299,7 @@ impl WidgetView for DockPanelsView {
     fn view_for_window(window_id: &str, state: Self::State, _frame: &Frame) -> Scene {
         match window_id {
             "main" => view_main_dock(state),
-            other => match other.strip_prefix(FLOATING_WINDOW_PREFIX) {
+            other => match other.strip_prefix(DEFAULT_FLOATING_WINDOW_PREFIX) {
                 Some(panel_id) => view_floating_panel(panel_id, state),
                 None => view_main_dock(state),
             },

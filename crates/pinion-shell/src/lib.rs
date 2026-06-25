@@ -578,18 +578,20 @@ pub struct WindowSpec {
     /// [`pinion_core::Signal<Vec<WindowSpec>>`] is all a binding needs to
     /// move a window (the drag-follow that PR-31 builds on top).
     ///
-    /// **Declared, not live-actual (a one-way SSOT for now).** The flow is
-    /// signal → OS (`set_outer_position`); pinion does NOT yet feed winit
-    /// `WindowEvent::Moved` back into the signal, so a USER native-dragging a
-    /// floating window by its title bar moves the real window while this
-    /// field (and `scene/windows`) keep the last *declared* value. This is
-    /// consistent with the create-time-intent model the rest of `WindowSpec`
-    /// follows (`strategy` is read once at create; a runtime `Resized` is
-    /// never written back either) and is honest as long as the wire stays
-    /// named `Declared*`. Closing the loop (`Moved` → write the signal, so an
-    /// external move becomes just another writer of this same SSOT — the
-    /// architecture-A ideal) is owed alongside the R1088 drag-follow, where
-    /// the shell-initiated-move loop-safety context lives.
+    /// **Declared SSOT, converged on actual (R1088 closed the loop).** The
+    /// flow is signal → OS (`set_outer_position`); the reverse is closed too —
+    /// a USER native-dragging a floating window by its title bar fires
+    /// `WindowEvent::Moved`, which [`crate::AppShell`]'s `note_window_moved`
+    /// writes back into this signal (an external move becomes just another
+    /// writer of this same SSOT — the architecture-A ideal), so `scene/windows`
+    /// reports the converged position rather than a stale declared one. The
+    /// shell's OWN commanded moves are echo-suppressed (a
+    /// `last_commanded_position` latch + the pure `moved_is_command_echo`) so
+    /// the write-back never storms, and a WM-placed (`None`) window is
+    /// conservatively NOT pinned by a stray `Moved`. Only POSITION closes the
+    /// loop: `strategy` stays create-time-intent (read once at create; a
+    /// runtime `Resized` is not written back) — position is the axis the live
+    /// tear-off drag-follow needs.
     ///
     /// `#[serde(default)]` so a `Signal<Vec<WindowSpec>>` value serialized
     /// before this field existed (or any wire form omitting it) deserializes

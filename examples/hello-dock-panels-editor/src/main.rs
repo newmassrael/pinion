@@ -577,6 +577,14 @@ impl WidgetCore for DockPanelsEditorView {
             // the ONE coordinator (a pointer dock + an AI invoke mint from one
             // split_seq) and the ONE preview (the dragged panel's drag_to writes
             // the affordance the target panel paints).
+            //
+            // R1095.1 — this editor is DOCK-ONLY: it consumes the reorganizer
+            // (dock / split / tabify) but has no `windows_signal` and wires NO
+            // tear-off reducer arm, so an escape-drop's `tear_off`/`tear_off_follow`/
+            // `tear_off_redock` intents (and the panel's `detached` latch) are an
+            // intentional no-op here. Float-to-window is the deferred PR-31
+            // 2nd consumer (it would also unlock lifting the flat example's
+            // follow/redock/desktop-conversion trio into a dock substrate).
             for panel_id in topology.panel_ids() {
                 let panel = DockPanelExternal::new(panel_id.to_string())
                     .with_reorganizer(Rc::clone(&reorganizer))

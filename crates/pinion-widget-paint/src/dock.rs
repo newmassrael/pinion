@@ -3848,9 +3848,14 @@ impl External for DockPanelExternal {
         // so a degenerate gesture whose only escaped sample is the release
         // still floats. Non-toggling — it cannot remove the window the
         // follow created (the R1071-R1078 double-toggle lesson). The
-        // cursor-less fallback (no `_at` ever ran: pre-R1093 unit paths /
-        // direct `drag_release`) keeps the legacy `tear_off` toggle so an
-        // escape still floats without a forwarded cursor.
+        // cursor-less fallback keeps the legacy `tear_off` toggle so an
+        // escape still floats without a forwarded cursor. It runs when no
+        // `_at` ever ran — pre-R1093 unit paths / direct `drag_release`, OR
+        // the genuinely-degenerate router edge of press -> CursorLeft (button
+        // held, zero intervening moves) -> outside release, where the router
+        // has already dropped `cursors[id]`. The toggle is idempotent +
+        // graceful there (it cannot orphan); live pointer use essentially
+        // always has a forwarded cursor and takes the follow arm above.
         if over.is_none() {
             if let Some(cursor) = self.drag_cursor.get() {
                 self.enqueue_tear_off_follow(cursor);
