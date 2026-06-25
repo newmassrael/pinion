@@ -431,6 +431,58 @@ pub enum CaptureNormalize<'a> {
     Tag(&'a str),
 }
 
+/// R1101 §5.15 §5.51 — the live-drag context the router forwards to a drag
+/// SOURCE on every move ([`External::drag_to_at`]) and the matching release
+/// ([`External::drag_release_at`]). One struct rather than the widening
+/// positional-argument ladder the `_at` pair had grown into (3 → 4 → … args):
+/// the [`CaptureNormalize`] precedent applied to forwarding data. A new
+/// dimension of drag context is a new field here, NOT a new positional arg
+/// every `External` impl and call site must re-thread — so adding one leaves
+/// the `drag_to_at` / `drag_release_at` SIGNATURE (and thus every drag source's
+/// impl) untouched; only the router and the test builders that *construct* a
+/// `DragUpdate` change.
+///
+/// Every field is data the **router alone** holds — a source `External` only
+/// ever sees rect-relative coordinates — so the router is the single producer
+/// and the source consumes. In particular [`became_drag`](Self::became_drag) is
+/// the router's click-vs-drag verdict: a drag source MUST read it rather than
+/// re-derive "is this press a drag yet" from its own distance tracking. A
+/// private re-derivation drifts from the router's SSOT because it cannot see
+/// the real press point (only the router's `press_gestures` does); it can only
+/// approximate the origin with the first post-move sample, so it latches later
+/// and at a different distance (the R1097 → R1101 `detach_latch` clearance).
+///
+/// Not `#[non_exhaustive]`: the router (pinion-runtime) and the drag-source
+/// tests construct it with a struct literal across crate boundaries, exactly
+/// as they construct [`DropPoint`] — the established precedent for a
+/// cross-crate-constructed drag data carrier. `#[non_exhaustive]` would forbid
+/// that literal and force a positional constructor, relocating the very
+/// arg-ladder this struct removes.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DragUpdate<'a> {
+    /// The drop location currently under the cursor (the full tag + cursor
+    /// normalised over its rect), or `None` over no tagged region — the
+    /// rect-relative signal [`drag_to`](External::drag_to) already carried.
+    pub over: Option<DropPoint>,
+    /// The absolute **window-logical** cursor `(x, y)` the router holds (the
+    /// same frame `scene/layout` reports). The only live pointer signal once
+    /// `over` goes `None` (the cursor escaped every tag — the tear-off case).
+    pub cursor: (f64, f64),
+    /// The spec id of the window whose drop target `over` resolved in, when the
+    /// cursor escaped THIS (the source's) window into ANOTHER and the shell
+    /// resolved the drop there (`pinion_runtime::resolve_cross_window_drop`).
+    /// `None` = the own / source window (every same-window drag). The shell
+    /// composes this; the per-window router stays cross-window-blind, so the
+    /// window dimension rides the `_at` path only.
+    pub over_window: Option<&'a str>,
+    /// The router's click-vs-drag verdict for the in-flight press: `true` once
+    /// it strayed past `DRAG_CLICK_THRESHOLD_PX` *from the real press point*.
+    /// The single SSOT the router owns (`press_gestures`) — a drag source reads
+    /// it to decide "is this a drag yet" (a dock panel tearing off) instead of
+    /// opening its own latch, which would drift.
+    pub became_drag: bool,
+}
+
 /// The 8-point integration contract (§5.15). Items 1-3 are required;
 /// items 4-7 have no-op defaults so authors override selectively.
 ///
@@ -679,58 +731,38 @@ pub trait External: core::fmt::Debug {
     /// reaches the statechart as a click. Default no-op.
     fn drag_release(&mut self, _payload: &DragPayload, _over: Option<DropPoint>) {}
 
-    /// R1093 §5.15 §5.51 — live drag update WITH the absolute cursor. The
-    /// §5.15 input-forwarding ENRICHMENT (not a break): [`drag_to`](Self::drag_to)
-    /// forwards only the rect-relative [`DropPoint`] — which is `None` the
-    /// moment the cursor escapes every tagged region, exactly the dock
-    /// tear-off case — so a coordinator that must place something **at the
-    /// cursor** (a floating window that follows the pointer) had no way to
-    /// read where the cursor actually is. This additive sibling also carries
-    /// the absolute **window-logical** cursor `(x, y)` the router already
-    /// holds (the same coordinate frame `scene/layout` reports). The router
-    /// calls THIS method on every move; its default delegates to
-    /// [`drag_to`](Self::drag_to) (dropping the cursor), so every pre-R1093
-    /// drag source is bit-identical and no widget receives both calls.
-    /// Override this **instead of** `drag_to` to receive the cursor.
-    /// R1100 §5.51 PR-33 — `over_window` is the spec id of the window whose
-    /// drop target `over` was resolved in, when the cursor escaped THIS
-    /// (the drag source's) window and the shell resolved the drop in ANOTHER
-    /// window ([`pinion_runtime::resolve_cross_window_drop`]). `None` means the
-    /// own / source window (the pre-R1100 case — every same-window drag). A
-    /// cross-window-aware coordinator (a dock panel that can redock into a
-    /// different window) reads it to distinguish a same-window *reorganize*
-    /// from a cross-window *redock*; single-window widgets ignore it (the
-    /// default drops it). The per-window `InputRouter` stays cross-window-blind
-    /// — the shell composes the cross-window resolution and passes it here, so
-    /// the window dimension rides the abs-cursor (`_at`) path only, never the
-    /// rect-relative [`drag_to`](Self::drag_to) base every single-window drag
-    /// uses.
-    fn drag_to_at(
-        &mut self,
-        payload: &DragPayload,
-        over: Option<DropPoint>,
-        _cursor: (f64, f64),
-        _over_window: Option<&str>,
-    ) {
-        self.drag_to(payload, over);
+    /// R1093 §5.15 §5.51 — live drag update WITH the full [`DragUpdate`]
+    /// context. The §5.15 input-forwarding ENRICHMENT (not a break):
+    /// [`drag_to`](Self::drag_to) forwards only the rect-relative [`DropPoint`]
+    /// — which is `None` the moment the cursor escapes every tagged region,
+    /// exactly the dock tear-off case — so a coordinator that must place
+    /// something **at the cursor** (a floating window that follows the pointer)
+    /// had no way to read where the cursor actually is, whether the press has
+    /// become a drag, or which window the cursor escaped into. The router calls
+    /// THIS method on every move with all of that ([`DragUpdate::cursor`] /
+    /// [`became_drag`](DragUpdate::became_drag) / [`over_window`](DragUpdate::over_window));
+    /// its default delegates to [`drag_to`](Self::drag_to) with just the
+    /// rect-relative `over`, so every pre-R1093 drag source is bit-identical and
+    /// no widget receives both calls. Override this **instead of** `drag_to` to
+    /// receive the context. (R1101 collapsed the former positional `cursor` /
+    /// `over_window` args into [`DragUpdate`]; see that struct for why a drag
+    /// source consumes [`became_drag`](DragUpdate::became_drag) rather than
+    /// re-deriving it.)
+    fn drag_to_at(&mut self, payload: &DragPayload, update: &DragUpdate) {
+        self.drag_to(payload, update.over.clone());
     }
 
-    /// R1093 §5.15 §5.51 — drop commit WITH the absolute window-logical
-    /// cursor `(x, y)`, the release sibling of [`drag_to_at`](Self::drag_to_at).
-    /// The router calls this once on `pointer_up`; its default delegates to
-    /// [`drag_release`](Self::drag_release) so pre-R1093 sources are
-    /// unaffected. A coordinator that opens a floating window where the drag
-    /// was released reads the cursor here (the cursor is in the SOURCE
+    /// R1093 §5.15 §5.51 — drop commit WITH the full [`DragUpdate`] context,
+    /// the release sibling of [`drag_to_at`](Self::drag_to_at). The router calls
+    /// this once on `pointer_up`; its default delegates to
+    /// [`drag_release`](Self::drag_release) with just `over` so pre-R1093
+    /// sources are unaffected. A coordinator that opens a floating window where
+    /// the drag was released reads [`DragUpdate::cursor`] here (in the SOURCE
     /// window's logical frame; converting to a desktop position additionally
-    /// needs the source window's outer position, which the shell owns).
-    fn drag_release_at(
-        &mut self,
-        payload: &DragPayload,
-        over: Option<DropPoint>,
-        _cursor: (f64, f64),
-        _over_window: Option<&str>,
-    ) {
-        self.drag_release(payload, over);
+    /// needs the source window's outer position, which the shell owns) and
+    /// [`over_window`](DragUpdate::over_window) to redock into another window.
+    fn drag_release_at(&mut self, payload: &DragPayload, update: &DragUpdate) {
+        self.drag_release(payload, update.over.clone());
     }
 
     /// R937.1 §5.51 — drag ABORT. Called once when the OS revokes an
@@ -1182,8 +1214,20 @@ mod tests {
             kind: Cow::Borrowed("dock-panel"),
             value: IntrospectValue::Text("inspector".to_owned()),
         };
-        src.drag_to_at(&payload, None, (12.0, 34.0), None);
-        src.drag_release_at(&payload, None, (56.0, 78.0), None);
+        let to_update = DragUpdate {
+            over: None,
+            cursor: (12.0, 34.0),
+            over_window: None,
+            became_drag: false,
+        };
+        let release_update = DragUpdate {
+            over: None,
+            cursor: (56.0, 78.0),
+            over_window: None,
+            became_drag: false,
+        };
+        src.drag_to_at(&payload, &to_update);
+        src.drag_release_at(&payload, &release_update);
         assert_eq!(
             src.to_calls.get(),
             1,

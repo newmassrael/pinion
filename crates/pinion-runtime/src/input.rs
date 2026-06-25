@@ -82,7 +82,9 @@ use std::time::Instant;
 
 use pinion_core::composite_tag::{compose_send_payload, split_subindex};
 use pinion_core::event::WheelDelta;
-use pinion_core::external::{CaptureNormalize, DragPayload, DropPoint, IntrospectValue};
+use pinion_core::external::{
+    CaptureNormalize, DragPayload, DragUpdate, DropPoint, IntrospectValue,
+};
 use pinion_core::input::PointerWireEvent;
 use pinion_core::scene::{ExternalNode, Rect, Scene};
 use pinion_core::widgets::scroll::ScrollState;
@@ -1307,13 +1309,23 @@ impl InputRouter {
                 // fall back to the cursor-less hook.
                 match cursor {
                     // R1100 §5.51 PR-33 — `over_window: None` here = the drop
-                    // resolved in THIS window (or escaped every window). The
-                    // shell composes the cross-window fallback (slice 2) and
-                    // re-dispatches with the resolving window when the cursor
-                    // escaped this window into another's dock zone.
-                    Some(c) => external
-                        .handle
-                        .drag_release_at(&session.payload, over, c, None),
+                    // resolved in THIS window (or escaped every window). Filling
+                    // it for a cross-window release is the shell's job (slice 2):
+                    // the per-window router is cross-window-blind, so it always
+                    // passes `None` and the shell composes the resolving window
+                    // by what mechanism slice 2 settles (it is NOT a router
+                    // re-dispatch — this press's session is owned here).
+                    // `became_drag` is the router's click-vs-drag verdict the
+                    // source consumes (R1101).
+                    Some(c) => external.handle.drag_release_at(
+                        &session.payload,
+                        &DragUpdate {
+                            over,
+                            cursor: c,
+                            over_window: None,
+                            became_drag,
+                        },
+                    ),
                     None => external.handle.drag_release(&session.payload, over),
                 }
             }
@@ -1710,18 +1722,31 @@ impl InputRouter {
         };
         let source = session.source_tag.clone();
         let payload = session.payload.clone();
+        // R1101 §5.51 — the router's click-vs-drag verdict (read here, while
+        // `&self` is free, before the `state_scene` borrow). The source
+        // consumes this instead of re-deriving it from its own distance
+        // tracking (the F1 clearance — see [`DragUpdate::became_drag`]).
+        let became_drag = self.press_became_drag(id);
         let over = self.resolve_drop_point(x, y);
         let (primary, _) = split_subindex(&source);
         if let Some(external) = find_external_by_tag(state_scene, primary) {
-            // R1093 §5.15 — forward the absolute window-logical cursor too
-            // (the `_at` default delegates to `drag_to`, so pre-R1093 sources
-            // are unaffected). A follow-the-cursor coordinator reads it; the
-            // rect-relative `over` is `None` once the cursor escapes every
-            // tag, so the cursor is the only live pointer signal then.
-            // R1100 §5.51 PR-33 — `over_window: None` = own-window resolve;
-            // the shell's cross-window composition (slice 2) supplies the
-            // resolving window when the cursor escapes into another window.
-            external.handle.drag_to_at(&payload, over, (x, y), None);
+            // R1093 §5.15 — forward the full [`DragUpdate`] context (the `_at`
+            // default delegates to `drag_to` with just `over`, so pre-R1093
+            // sources are unaffected). A follow-the-cursor coordinator reads the
+            // cursor; the rect-relative `over` is `None` once the cursor escapes
+            // every tag, so the cursor is the only live pointer signal then.
+            // R1100 §5.51 PR-33 — `over_window: None` = own-window resolve; the
+            // shell's cross-window composition (slice 2) supplies the resolving
+            // window when the cursor escapes into another window.
+            external.handle.drag_to_at(
+                &payload,
+                &DragUpdate {
+                    over,
+                    cursor: (x, y),
+                    over_window: None,
+                    became_drag,
+                },
+            );
         }
     }
 
@@ -1992,9 +2017,12 @@ pub struct CrossWindowDrop {
 /// is transformed into each window's local frame (`abs - outer`) and the SAME
 /// opted-in drop-target hit-test ([`resolve_drop_target_tag`]) runs against
 /// that window's scene. Windows are tried in iteration order; the FIRST that
-/// resolves a drop target wins — the shell orders them so the **non-source**
-/// (and, where it matters, topmost) window is preferred, since a cross-window
-/// redock targets a *different* window than the dragged one.
+/// resolves a drop target wins. Ordering — including any source-window
+/// exclusion or topmost-first preference a live cross-window redock wants — is
+/// the **caller's** concern: this resolver imposes none and simply takes the
+/// iterator as given. (The current `scene/cross_window_drop` caller passes the
+/// declared window order and does not yet exclude the source window; that
+/// refinement lands with the live cross-window redock wiring, not here.)
 ///
 /// Unlike [`InputRouter::resolve_drop_point`], this takes NO hover-tag
 /// fallback: a cross-window drop must land on a real opted-in drop region (a
@@ -5838,33 +5866,22 @@ mod tests {
         // R1093 — record the absolute cursor the router now forwards, then
         // delegate to the cursor-less hooks so the pre-R1093 `to:`/`drop:`
         // log assertions still hold (this stub deliberately exercises BOTH).
-        fn drag_to_at(
-            &mut self,
-            payload: &DragPayload,
-            over: Option<DropPoint>,
-            cursor: (f64, f64),
-            _over_window: Option<&str>,
-        ) {
+        // R1101 — the cursor / over / window now ride one [`DragUpdate`].
+        fn drag_to_at(&mut self, payload: &DragPayload, update: &DragUpdate) {
             // Format the f64 directly (whole values print without a decimal);
             // no truncating `as i64` cast, so this stays clippy-pedantic clean.
             self.log
                 .lock()
                 .expect("poisoned")
-                .push(format!("at:{}:{}", cursor.0, cursor.1));
-            self.drag_to(payload, over);
+                .push(format!("at:{}:{}", update.cursor.0, update.cursor.1));
+            self.drag_to(payload, update.over.clone());
         }
-        fn drag_release_at(
-            &mut self,
-            payload: &DragPayload,
-            over: Option<DropPoint>,
-            cursor: (f64, f64),
-            _over_window: Option<&str>,
-        ) {
+        fn drag_release_at(&mut self, payload: &DragPayload, update: &DragUpdate) {
             self.log
                 .lock()
                 .expect("poisoned")
-                .push(format!("drop_at:{}:{}", cursor.0, cursor.1));
-            self.drag_release(payload, over);
+                .push(format!("drop_at:{}:{}", update.cursor.0, update.cursor.1));
+            self.drag_release(payload, update.over.clone());
         }
         fn drag_cancel(&mut self, payload: &DragPayload) {
             self.log

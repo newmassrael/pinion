@@ -65,10 +65,11 @@ use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 
 use pinion_core::external::{
-    Backend, BackendFallback, BackendSupport, DragPayload, DropPoint, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    Backend, BackendFallback, BackendSupport, DragPayload, DragUpdate, DropPoint, External,
+    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
+    RepaintOwner, ThreadOwnership,
 };
-use pinion_core::input::{DragLatch, PointerWireEvent};
+use pinion_core::input::PointerWireEvent;
 use pinion_core::intent::Intent;
 use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
 use pinion_core::style::{
@@ -3865,20 +3866,16 @@ pub struct DockPanelExternal {
     /// (remove the floating window this gesture created), whereas a drag
     /// that never escaped snaps back with no window churn. Reset on
     /// [`begin_drag`](External::begin_drag); surfaced via `query("detached")`.
+    ///
+    /// R1101 §5.51 — set from the router's click-vs-drag verdict
+    /// ([`DragUpdate::became_drag`]) on each move, NOT a private per-panel
+    /// `DragLatch`. The R1097 `detach_latch` re-derived that verdict from the
+    /// first post-move sample (it could not see the real press point), drifting
+    /// from the router's SSOT; the panel now consumes the verdict the router
+    /// already owns. Threshold-based tear-off is unchanged in behaviour (the
+    /// panel still tears off once the press becomes a drag, even while over a
+    /// dock zone — browser-tab / Blender immediacy), only its source of truth.
     detached: Cell<bool>,
-    /// (R1097 §5.51 PR-32) The press-to-drag latch over
-    /// [`DRAG_CLICK_THRESHOLD_PX`](pinion_core::DRAG_CLICK_THRESHOLD_PX) that
-    /// drives **threshold-based** tear-off detach. Opened at the grab cursor
-    /// (this gesture's first [`drag_to_at`](External::drag_to_at) sample —
-    /// `begin_drag` is cursor-less), it latches once the drag strays past the
-    /// standard drag threshold, at which point the panel tears into a live
-    /// floating follower **regardless of whether the cursor is still over a
-    /// dock zone** (browser-tab / Blender detached-drag; supersedes R1094's
-    /// escape-based "detach only on `over==None`"). The 4th consumer of the
-    /// R880 [`DragLatch`] contract, so the detach distance can never disagree
-    /// with the router's own click-vs-drag determination. `None` between
-    /// gestures; reset on [`begin_drag`](External::begin_drag).
-    detach_latch: Cell<Option<DragLatch>>,
     /// (R1081 §5.51) The shared reorganize coordinator. `Some` puts the
     /// panel in dock-or-float mode (drops onto other panels reorganize
     /// the shared topology); `None` is tear-off-only. Cloned from the
@@ -3901,10 +3898,6 @@ impl core::fmt::Debug for DockPanelExternal {
             .field("tear_off_fired", &self.tear_off_fired.get())
             .field("drag_cursor", &self.drag_cursor.get())
             .field("detached", &self.detached.get())
-            .field(
-                "detach_latched",
-                &self.detach_latch.get().is_some_and(|l| l.live()),
-            )
             .finish_non_exhaustive()
     }
 }
@@ -3931,7 +3924,6 @@ impl DockPanelExternal {
             tear_off_fired: Cell::new(false),
             drag_cursor: Cell::new(None),
             detached: Cell::new(false),
-            detach_latch: Cell::new(None),
             reorganizer: None,
             drop_preview: None,
         }
@@ -4106,11 +4098,9 @@ impl External for DockPanelExternal {
         // R1093 — a fresh gesture clears the previous drag's last cursor.
         self.drag_cursor.set(None);
         // R1094 — and the live-follower latch (this gesture has not yet
-        // escaped a drop target).
+        // escaped a drop target). R1101 — detach is now driven by the router's
+        // per-move `became_drag` verdict, so there is no private latch to reset.
         self.detached.set(false);
-        // R1097 PR-32 — and the threshold-detach latch (re-grabbed at this
-        // gesture's first move, since begin_drag carries no cursor).
-        self.detach_latch.set(None);
         Some(DragPayload {
             kind: Cow::Borrowed(DOCK_PANEL_DRAG_KIND),
             value: IntrospectValue::Text(self.panel_id.to_string()),
@@ -4199,51 +4189,45 @@ impl External for DockPanelExternal {
     }
 
     /// (R1093 §5.15 §5.51 §2 #7) Record the absolute window-logical cursor
-    /// the router forwards, then delegate to the cursor-less
+    /// the router forwards, drive threshold-based tear-off from the router's
+    /// click-vs-drag verdict, then delegate to the cursor-less
     /// [`drag_to`](Self::drag_to) so the existing preview/dock logic is
     /// unchanged. The recorded cursor is exposed as scene-as-data via
     /// `query("drag_cursor")`.
-    fn drag_to_at(
-        &mut self,
-        payload: &DragPayload,
-        over: Option<DropPoint>,
-        cursor: (f64, f64),
-        over_window: Option<&str>,
-    ) {
-        self.drag_cursor.set(Some(cursor));
-        // R1097 PR-32 — THRESHOLD-based detach (supersedes R1094 escape-based).
-        // Open the latch at the grab cursor (this gesture's first sample, as
-        // begin_drag is cursor-less) and advance it; once the drag strays past
-        // DRAG_CLICK_THRESHOLD_PX it latches and the panel tears into a live
-        // floating follower — even while the cursor is still over a dock zone
-        // (browser-tab / Blender immediacy). The follower (visual) and the
-        // drop decision are decoupled: the gesture stays captured by the SOURCE
-        // window's router, so `over` keeps resolving the source window's dock
-        // zones for the redock/split preview below. Reuses the R880 DragLatch
-        // contract (4th consumer) so the detach distance never disagrees with
-        // the router's click-vs-drag determination.
-        let mut latch = self
-            .detach_latch
-            .get()
-            .unwrap_or_else(|| DragLatch::new(cursor));
-        let crossed = latch.advance(cursor);
-        self.detach_latch.set(Some(latch));
-        if crossed {
+    fn drag_to_at(&mut self, payload: &DragPayload, update: &DragUpdate) {
+        self.drag_cursor.set(Some(update.cursor));
+        // R1101 §5.51 — THRESHOLD-based detach, sourced from the router's
+        // click-vs-drag verdict ([`DragUpdate::became_drag`]) instead of the
+        // R1097 private `detach_latch`. Once the router declares this press a
+        // drag, the panel tears into a live floating follower — even while the
+        // cursor is still over a dock zone (browser-tab / Blender immediacy).
+        // The follower (visual) and the drop decision are decoupled: the
+        // gesture stays captured by the SOURCE window's router, so `over` keeps
+        // resolving the source window's dock zones for the redock/split preview
+        // below. Consuming the router's verdict (rather than re-deriving it from
+        // the first post-move sample) is single-SSOT AND more correct: the
+        // router measures from the real press point, which `begin_drag` — being
+        // cursor-less — never sees.
+        if update.became_drag {
             self.detached.set(true);
         }
         // While detached, the follower tracks the cursor on EVERY move (the
         // ensure+position follow), whether or not it is over a zone — and the
         // preview below still highlights a dock zone underneath it, so follow +
-        // redock preview coexist in one gesture (PR-32 §2). A sub-threshold
-        // wobble (still a click) does neither.
+        // redock preview coexist in one gesture (PR-32 §2). A press still in the
+        // click dead-zone (`became_drag` false) does neither.
         if self.detached.get() {
-            self.enqueue_tear_off_follow(cursor);
+            self.enqueue_tear_off_follow(update.cursor);
         }
         // R1100 PR-33 — a cross-window `over` (`over_window: Some`) names ANOTHER
         // window's dock zone; do NOT paint it into THIS window's drop preview
         // (the cross-window redock affordance is the target window's overlay, a
         // later slice). A same-window `over` keeps the existing preview path.
-        let same_window_over = if over_window.is_some() { None } else { over };
+        let same_window_over = if update.over_window.is_some() {
+            None
+        } else {
+            update.over.clone()
+        };
         self.drag_to(payload, same_window_over);
     }
 
@@ -4255,20 +4239,14 @@ impl External for DockPanelExternal {
     /// delegates to the cursor-less [`drag_release`](Self::drag_release): own
     /// reorganize / escape-float / snap-back). The cursor persists after the
     /// gesture so an AI can read where the drop landed.
-    fn drag_release_at(
-        &mut self,
-        payload: &DragPayload,
-        over: Option<DropPoint>,
-        cursor: (f64, f64),
-        over_window: Option<&str>,
-    ) {
-        self.drag_cursor.set(Some(cursor));
+    fn drag_release_at(&mut self, payload: &DragPayload, update: &DragUpdate) {
+        self.drag_cursor.set(Some(update.cursor));
         // R1100 PR-33 — cross-window dock-at: the drop resolved in a DIFFERENT
         // window's dock zone. Re-insert the panel there + drop its floating
         // window. This is NOT a same-window reorganize (the panel is not in
         // this window's topology) — it is the dock-at redock the per-window
         // router could never resolve.
-        if let (Some(target_window), Some(point)) = (over_window, over.as_ref()) {
+        if let (Some(target_window), Some(point)) = (update.over_window, update.over.as_ref()) {
             self.enqueue_tear_off_redock_at(target_window, point);
             self.dragging.set(false);
             self.set_drop_preview(None);
@@ -4279,7 +4257,7 @@ impl External for DockPanelExternal {
             self.tear_off_fired.set(false);
             return;
         }
-        self.drag_release(payload, over);
+        self.drag_release(payload, update.over.clone());
     }
 
     /// (R937.1 §5.51) R742 drag abort — the OS revoked the gesture.
@@ -4495,7 +4473,8 @@ mod tests {
     use crate::tabs::composite_tab_tag;
     use pinion_a11y::AccessNode;
     use pinion_core::external::{
-        DragPayload, DropPoint, External, ExternalIntrospect, InterveneError, IntrospectValue,
+        DragPayload, DragUpdate, DropPoint, External, ExternalIntrospect, InterveneError,
+        IntrospectValue,
     };
     use pinion_core::intent::Intent;
     use pinion_core::reactive::{Owner, Signal};
@@ -4647,6 +4626,26 @@ mod tests {
         DragPayload {
             kind: std::borrow::Cow::Borrowed("dock-panel"),
             value: IntrospectValue::Text("a".to_string()),
+        }
+    }
+
+    /// (R1101 §5.51) Build the [`DragUpdate`] the router forwards: the
+    /// rect-relative `over`, the absolute `cursor`, the resolving `over_window`
+    /// (`None` = own window), and the router's click-vs-drag `became_drag`
+    /// verdict — which the panel now CONSUMES (the F1 clearance) instead of
+    /// re-deriving with a private latch. A test plays the router's role by
+    /// passing the verdict explicitly.
+    fn upd(
+        over: Option<DropPoint>,
+        cursor: (f64, f64),
+        over_window: Option<&str>,
+        became_drag: bool,
+    ) -> DragUpdate<'_> {
+        DragUpdate {
+            over,
+            cursor,
+            over_window,
+            became_drag,
         }
     }
 
@@ -4858,14 +4857,14 @@ mod tests {
         );
         let _ = ext.begin_drag();
         // A move forwards the cursor even when over is None (escaped tags).
-        ext.drag_to_at(&dummy_payload(), None, (123.0, 45.0), None);
+        ext.drag_to_at(&dummy_payload(), &upd(None, (123.0, 45.0), None, false));
         assert_eq!(
             ext.query("drag_cursor"),
             Some(IntrospectValue::Json(serde_json::json!([123.0, 45.0]))),
             "drag_cursor mirrors the forwarded move cursor"
         );
         // The release cursor overwrites it and persists post-gesture.
-        ext.drag_release_at(&dummy_payload(), None, (200.0, 88.0), None);
+        ext.drag_release_at(&dummy_payload(), &upd(None, (200.0, 88.0), None, false));
         assert_eq!(
             ext.query("drag_cursor"),
             Some(IntrospectValue::Json(serde_json::json!([200.0, 88.0]))),
@@ -4909,16 +4908,18 @@ mod tests {
         )
     }
 
-    /// (R1097 PR-32) Drive a gesture past the threshold-detach distance: the
-    /// first sample is the grab (sets the [`DragLatch`] origin, no follow), the
-    /// second strays past `DRAG_CLICK_THRESHOLD_PX` so the panel tears into a
-    /// follower (one follow). `over_panel` rides both samples — a detaching
-    /// move can be over a panel OR escaped (`None`), since PR-32 decoupled
-    /// detach from escape. The caller has already `begin_drag`'d.
+    /// (R1097 PR-32 / R1101) Drive a gesture into a detach: the first sample is
+    /// the grab (the router has not yet called it a drag — `became_drag` false,
+    /// no follow), the second carries the router's drag verdict (`became_drag`
+    /// true) so the panel tears into a follower (one follow). `over_panel` rides
+    /// both samples — a detaching move can be over a panel OR escaped (`None`),
+    /// since PR-32 decoupled detach from escape. The caller has already
+    /// `begin_drag`'d. (R1101: detach now keys off the verdict, not distance, so
+    /// `far` need only differ from the grab to read as a moved drag.)
     fn cross_detach(ext: &mut DockPanelExternal, over_panel: Option<&str>, far: (f64, f64)) {
         let over = || over_panel.map(|p| drop_point(p, 0.5, 0.5));
-        ext.drag_to_at(&dummy_payload(), over(), (10.0, 10.0), None);
-        ext.drag_to_at(&dummy_payload(), over(), far, None);
+        ext.drag_to_at(&dummy_payload(), &upd(over(), (10.0, 10.0), None, false));
+        ext.drag_to_at(&dummy_payload(), &upd(over(), far, None, true));
     }
 
     // ── R1100 §5.51 PR-33 — cross-window dock-at redock (slice 1) ─────
@@ -4935,9 +4936,12 @@ mod tests {
         ext.drain_intents(&mut |i| drained.push(i)); // consume the follow(s)
         ext.drag_release_at(
             &dummy_payload(),
-            Some(drop_point("viewport", 0.25, 0.5)),
-            (200.0, 100.0),
-            Some("main"),
+            &upd(
+                Some(drop_point("viewport", 0.25, 0.5)),
+                (200.0, 100.0),
+                Some("main"),
+                false,
+            ),
         );
         let mut after: Vec<Intent> = Vec::new();
         ext.drain_intents(&mut |i| after.push(i));
@@ -4968,7 +4972,7 @@ mod tests {
         cross_detach(&mut ext, None, (640.0, 300.0));
         let mut drained: Vec<Intent> = Vec::new();
         ext.drain_intents(&mut |i| drained.push(i));
-        ext.drag_release_at(&dummy_payload(), None, (700.0, 320.0), None);
+        ext.drag_release_at(&dummy_payload(), &upd(None, (700.0, 320.0), None, false));
         let mut after: Vec<Intent> = Vec::new();
         ext.drain_intents(&mut |i| after.push(i));
         assert!(
@@ -4990,7 +4994,10 @@ mod tests {
         cross_detach(&mut ext, None, (640.0, 300.0));
         let mut drained: Vec<Intent> = Vec::new();
         ext.drain_intents(&mut |i| drained.push(i));
-        ext.drag_release_at(&dummy_payload(), None, (900.0, 50.0), Some("main"));
+        ext.drag_release_at(
+            &dummy_payload(),
+            &upd(None, (900.0, 50.0), Some("main"), false),
+        );
         let mut after: Vec<Intent> = Vec::new();
         ext.drain_intents(&mut |i| after.push(i));
         assert!(
@@ -5003,18 +5010,20 @@ mod tests {
 
     #[test]
     fn r1097_threshold_move_detaches_into_a_follower() {
-        // R1097 §5.51 PR-32 — a drag that strays past DRAG_CLICK_THRESHOLD_PX
-        // tears the panel into a live floating follower: latch `detached` +
-        // emit one ensure+position follow carrying the panel id and cursor.
-        // The first sample is the grab (the latch origin), so it does not
-        // detach; the crossing move does (supersedes R1094 escape-based).
+        // R1097 §5.51 PR-32 / R1101 — once the router declares the press a drag
+        // (`became_drag`), the panel tears into a live floating follower: latch
+        // `detached` + emit one ensure+position follow carrying the panel id and
+        // cursor. The grab sample (router still calls it a click) does not
+        // detach; the move carrying the drag verdict does (supersedes R1094
+        // escape-based; R1101 sources the verdict from the router, not a private
+        // latch).
         let mut ext = DockPanelExternal::new("a");
         let _ = ext.begin_drag();
         assert!(!ext.detached(), "fresh gesture has not detached");
-        ext.drag_to_at(&dummy_payload(), None, (100.0, 100.0), None); // grab
+        ext.drag_to_at(&dummy_payload(), &upd(None, (100.0, 100.0), None, false)); // grab
         assert!(!ext.detached(), "the grab sample alone does not detach");
-        ext.drag_to_at(&dummy_payload(), None, (640.0, 300.0), None); // > threshold
-        assert!(ext.detached(), "crossing the drag threshold detaches");
+        ext.drag_to_at(&dummy_payload(), &upd(None, (640.0, 300.0), None, true)); // > threshold
+        assert!(ext.detached(), "the router's drag verdict detaches");
         let mut received: Vec<Intent> = Vec::new();
         ext.drain_intents(&mut |i| received.push(i));
         assert_eq!(received.len(), 1, "one follow on the move that detached");
@@ -5023,6 +5032,44 @@ mod tests {
             follow_fields(&received[0].payload),
             ("a".to_string(), 640.0, 300.0),
         );
+    }
+
+    #[test]
+    fn r1101_detach_keys_off_router_verdict_not_distance() {
+        // R1101 (F1 clearance) — the panel detaches from the router's
+        // click-vs-drag verdict ([`DragUpdate::became_drag`]), NOT its own
+        // distance computation. Proven by inverting the geometry against the
+        // verdict: a FAR move the router still classifies a click
+        // (`became_drag: false`) does NOT detach — the R1097 private
+        // `detach_latch`, measuring its own distance from the first sample,
+        // would have — and a NEAR move the router calls a drag
+        // (`became_drag: true`) DOES detach, where that sub-threshold distance
+        // would not. The router owns the SSOT (it sees the real press point);
+        // the panel consumes it.
+        let mut ext = DockPanelExternal::new("a");
+        let _ = ext.begin_drag();
+        // Far in pixels, but the router has not called this press a drag yet.
+        ext.drag_to_at(&dummy_payload(), &upd(None, (5000.0, 5000.0), None, false));
+        assert!(
+            !ext.detached(),
+            "a far move the router still calls a click does not detach",
+        );
+        let mut received: Vec<Intent> = Vec::new();
+        ext.drain_intents(&mut |i| received.push(i));
+        assert!(
+            received.is_empty(),
+            "no follow while the router calls it a click",
+        );
+        // A one-pixel move, but the router's verdict has flipped to drag.
+        ext.drag_to_at(&dummy_payload(), &upd(None, (5001.0, 5000.0), None, true));
+        assert!(
+            ext.detached(),
+            "a near move the router calls a drag detaches",
+        );
+        received.clear();
+        ext.drain_intents(&mut |i| received.push(i));
+        assert_eq!(received.len(), 1, "one follow once the verdict is a drag");
+        assert_eq!(received[0].tag.as_ref(), TEAR_OFF_FOLLOW_EVENT);
     }
 
     #[test]
@@ -5056,8 +5103,8 @@ mod tests {
         // router's own click-vs-drag SSOT shares).
         let mut ext = DockPanelExternal::new("a");
         let _ = ext.begin_drag();
-        ext.drag_to_at(&dummy_payload(), None, (100.0, 100.0), None); // grab
-        ext.drag_to_at(&dummy_payload(), None, (102.0, 101.0), None); // < threshold
+        ext.drag_to_at(&dummy_payload(), &upd(None, (100.0, 100.0), None, false)); // grab
+        ext.drag_to_at(&dummy_payload(), &upd(None, (102.0, 101.0), None, false)); // < threshold
         assert!(!ext.detached(), "a sub-threshold wobble stays a click");
         let mut received: Vec<Intent> = Vec::new();
         ext.drain_intents(&mut |i| received.push(i));
@@ -5072,9 +5119,9 @@ mod tests {
         // sub-threshold, emits no follow.
         let mut ext = DockPanelExternal::new("a");
         let _ = ext.begin_drag();
-        ext.drag_to_at(&dummy_payload(), None, (10.0, 20.0), None); // grab
-        ext.drag_to_at(&dummy_payload(), None, (30.0, 40.0), None); // detach + follow
-        ext.drag_to_at(&dummy_payload(), None, (50.0, 60.0), None); // follow
+        ext.drag_to_at(&dummy_payload(), &upd(None, (10.0, 20.0), None, false)); // grab
+        ext.drag_to_at(&dummy_payload(), &upd(None, (30.0, 40.0), None, true)); // detach + follow
+        ext.drag_to_at(&dummy_payload(), &upd(None, (50.0, 60.0), None, true)); // follow
         let mut received: Vec<Intent> = Vec::new();
         ext.drain_intents(&mut |i| received.push(i));
         assert_eq!(received.len(), 2, "one follow per move after the grab");
@@ -5099,7 +5146,7 @@ mod tests {
         let mut ext = DockPanelExternal::new("a");
         let _ = ext.begin_drag();
         cross_detach(&mut ext, None, (640.0, 300.0));
-        ext.drag_release_at(&dummy_payload(), None, (700.0, 320.0), None);
+        ext.drag_release_at(&dummy_payload(), &upd(None, (700.0, 320.0), None, false));
         assert!(ext.tear_off_fired(), "escape-drop floats");
         assert!(ext.detached());
         let mut received: Vec<Intent> = Vec::new();
@@ -5146,9 +5193,7 @@ mod tests {
         cross_detach(&mut ext, None, (640.0, 300.0)); // detach
         ext.drag_release_at(
             &dummy_payload(),
-            Some(drop_point("a", 0.5, 0.5)),
-            (120.0, 40.0),
-            None,
+            &upd(Some(drop_point("a", 0.5, 0.5)), (120.0, 40.0), None, false),
         );
         assert!(!ext.detached(), "restore clears the latch");
         assert!(
@@ -5191,15 +5236,11 @@ mod tests {
         let _ = ext.begin_drag();
         ext.drag_to_at(
             &dummy_payload(),
-            Some(drop_point("a", 0.5, 0.5)),
-            (100.0, 100.0),
-            None,
+            &upd(Some(drop_point("a", 0.5, 0.5)), (100.0, 100.0), None, false),
         );
         ext.drag_release_at(
             &dummy_payload(),
-            Some(drop_point("a", 0.5, 0.5)),
-            (100.0, 100.0),
-            None,
+            &upd(Some(drop_point("a", 0.5, 0.5)), (100.0, 100.0), None, false),
         );
         let mut received: Vec<Intent> = Vec::new();
         ext.drain_intents(&mut |i| received.push(i));
@@ -5219,9 +5260,7 @@ mod tests {
         // first so the reorganizer re-places a single panel.
         ext.drag_release_at(
             &dummy_payload(),
-            Some(drop_point("b", 0.5, 0.5)),
-            (300.0, 300.0),
-            None,
+            &upd(Some(drop_point("b", 0.5, 0.5)), (300.0, 300.0), None, false),
         );
         assert!(!ext.detached());
         let mut received: Vec<Intent> = Vec::new();
