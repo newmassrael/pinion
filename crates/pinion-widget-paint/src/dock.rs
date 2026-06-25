@@ -3800,11 +3800,23 @@ fn drag_cursor_introspect(cursor: Option<(f64, f64)>) -> IntrospectValue {
 /// binding adds that window's outer origin to reach a desktop position
 /// (the widget crate must not know about windows — the gap(b) the
 /// coordinator closes binding-side).
-fn tear_off_follow_payload(panel_id: &str, cursor: (f64, f64)) -> IntrospectValue {
+///
+/// (R1107 §5.51) `source_window` names WHICH window's frame the cursor is in
+/// (`DragUpdate::source_window`, threaded from the driving router) so the
+/// binding adds the CORRECT window's origin — re-dragging an already-floating
+/// header reports a cursor in that floater's frame, not main's. `None` (the
+/// cursor-less degenerate fallback, or a single-window shell) → the binding's
+/// primary window. Emitted as `null` when absent so an AI reads the SSOT.
+fn tear_off_follow_payload(
+    panel_id: &str,
+    cursor: (f64, f64),
+    source_window: Option<&str>,
+) -> IntrospectValue {
     IntrospectValue::Json(serde_json::json!({
         "panel": panel_id,
         "x": cursor.0,
         "y": cursor.1,
+        "source_window": source_window,
     }))
 }
 
@@ -3950,6 +3962,15 @@ pub struct DockPanelExternal {
     /// contract now that R1102 wires the shell's `over_window` resolution live.
     /// Reset on [`begin_drag`](External::begin_drag) for the fresh gesture.
     last_redock_at: RefCell<Option<serde_json::Value>>,
+    /// (R1107 §5.51 §2 #7) The window the most recent live tear-off move was
+    /// measured in (`DragUpdate::source_window`) — the source window the
+    /// binding adds the outer origin of to place the follower. Recorded each
+    /// `drag_to_at`, reset on `begin_drag`. Surfaced via
+    /// `query("source_window")` so an AI observes WHICH window a follow drag is
+    /// in (a docked tear-off reports `"main"`; re-dragging a floating header
+    /// reports that `torn-<panel>` window). `None` before any move / a
+    /// cursor-less gesture.
+    last_source_window: RefCell<Option<String>>,
     /// (R1081 §5.51) The shared reorganize coordinator. `Some` puts the
     /// panel in dock-or-float mode (drops onto other panels reorganize
     /// the shared topology); `None` is tear-off-only. Cloned from the
@@ -4000,6 +4021,7 @@ impl DockPanelExternal {
             drag_cursor: Cell::new(None),
             detached: Cell::new(false),
             last_redock_at: RefCell::new(None),
+            last_source_window: RefCell::new(None),
             reorganizer: None,
             drop_preview: None,
         }
@@ -4105,10 +4127,13 @@ impl DockPanelExternal {
     /// for a live tear-off drag move at `cursor` (window-logical). The
     /// binding reducer creates the panel's floating window if absent and
     /// writes its position; non-toggling so repeated moves only reposition.
-    fn enqueue_tear_off_follow(&self, cursor: (f64, f64)) {
+    /// (R1107 §5.51) `source_window` names the window the cursor is measured
+    /// in (`DragUpdate::source_window`) so the binding converts to a desktop
+    /// position via the RIGHT origin.
+    fn enqueue_tear_off_follow(&self, cursor: (f64, f64), source_window: Option<&str>) {
         self.pending_intents.borrow_mut().push_back(Intent {
             tag: Cow::Borrowed(TEAR_OFF_FOLLOW_EVENT),
-            payload: tear_off_follow_payload(&self.panel_id, cursor),
+            payload: tear_off_follow_payload(&self.panel_id, cursor, source_window),
         });
     }
 
@@ -4206,6 +4231,8 @@ impl External for DockPanelExternal {
         self.detached.set(false);
         // R1102 — and the last cross-window redock diagnostic.
         *self.last_redock_at.borrow_mut() = None;
+        // R1107 — and the last follow-drag source window.
+        *self.last_source_window.borrow_mut() = None;
         Some(DragPayload {
             kind: Cow::Borrowed(DOCK_PANEL_DRAG_KIND),
             value: IntrospectValue::Text(self.panel_id.to_string()),
@@ -4274,7 +4301,11 @@ impl External for DockPanelExternal {
         // always has a forwarded cursor and takes the follow arm above.
         if over.is_none() {
             if let Some(cursor) = self.drag_cursor.get() {
-                self.enqueue_tear_off_follow(cursor);
+                // R1107 — the cursor-less degenerate fallback (`drag_release`
+                // carries no `DragUpdate`) has no source window; `None` →
+                // the binding's primary window. The live follow arm in
+                // `drag_to_at` carries the real `source_window`.
+                self.enqueue_tear_off_follow(cursor, None);
             } else {
                 self.enqueue_tear_off();
             }
@@ -4301,6 +4332,10 @@ impl External for DockPanelExternal {
     /// `query("drag_cursor")`.
     fn drag_to_at(&mut self, payload: &DragPayload, update: &DragUpdate) {
         self.drag_cursor.set(Some(update.cursor));
+        // R1107 §5.51 §2 #7 — record the window this move was measured in so an
+        // AI observes it via `query("source_window")` and the binding converts
+        // the cursor to a desktop position via the right origin.
+        *self.last_source_window.borrow_mut() = update.source_window.map(str::to_owned);
         // R1101 §5.51 — THRESHOLD-based detach, sourced from the router's
         // click-vs-drag verdict ([`DragUpdate::became_drag`]) instead of the
         // R1097 private `detach_latch`. Once the router declares this press a
@@ -4322,7 +4357,10 @@ impl External for DockPanelExternal {
         // redock preview coexist in one gesture (PR-32 §2). A press still in the
         // click dead-zone (`became_drag` false) does neither.
         if self.detached.get() {
-            self.enqueue_tear_off_follow(update.cursor);
+            // R1107 §5.51 — carry the SOURCE window (the one the router that
+            // drove this update belongs to) so the binding converts the
+            // window-logical cursor to a desktop position via the right origin.
+            self.enqueue_tear_off_follow(update.cursor, update.source_window);
         }
         // R1100 PR-33 — a cross-window `over` (`over_window: Some`) names ANOTHER
         // window's dock zone; do NOT paint it into THIS window's drop preview
@@ -4420,6 +4458,9 @@ impl ExternalIntrospect for DockPanelExternal {
             // observes that a drag redocked into ANOTHER window's zone — the
             // live firing of the R1100 contract the R1102 shell wiring enables.
             ("redock_at", "json"),
+            // R1107 §5.51 §2 #7 — the window the last follow-drag move was
+            // measured in (`"main"` / a `torn-<panel>` id / null).
+            ("source_window", "string"),
             ("send", "string"),
             // R683.C §5.16 §5.49 — direct tear-off invoke channel.
             // See `invoke` rustdoc.
@@ -4452,6 +4493,13 @@ impl ExternalIntrospect for DockPanelExternal {
                     .clone()
                     .map_or(IntrospectValue::Null, IntrospectValue::Json),
             ),
+            // R1107 §5.51 §2 #7 — the window the last follow-drag was measured in.
+            "source_window" => Some(
+                self.last_source_window
+                    .borrow()
+                    .clone()
+                    .map_or(IntrospectValue::Null, IntrospectValue::Text),
+            ),
             _ => None,
         }
     }
@@ -4464,7 +4512,7 @@ impl ExternalIntrospect for DockPanelExternal {
             // dragging / tear_off_fired / drop_preview / drag_cursor /
             // detached directly.
             "panel_id" | "dragging" | "tear_off_fired" | "drop_preview" | "drag_cursor"
-            | "detached" | "redock_at" => Err(InterveneError::ReadOnly),
+            | "detached" | "redock_at" | "source_window" => Err(InterveneError::ReadOnly),
             _ => Err(InterveneError::UnknownPath),
         }
     }
@@ -4795,6 +4843,9 @@ mod tests {
             over,
             cursor,
             over_window,
+            // R1107 — existing tests do not exercise the source window; the
+            // R1107 follow tests build `DragUpdate` directly with a value.
+            source_window: None,
             became_drag,
         }
     }
@@ -5070,6 +5121,73 @@ mod tests {
         let over = || over_panel.map(|p| drop_point(p, 0.5, 0.5));
         ext.drag_to_at(&dummy_payload(), &upd(over(), (10.0, 10.0), None, false));
         ext.drag_to_at(&dummy_payload(), &upd(over(), far, None, true));
+    }
+
+    // ── R1107 §5.51 §2 #7 — the follow-drag SOURCE window ────────────
+
+    #[test]
+    fn r1107_follow_payload_and_diagnostic_carry_source_window() {
+        let mut ext = DockPanelExternal::new("viewport");
+        let _ = ext.begin_drag();
+        // A move whose router belongs to the FLOATING window the header is being
+        // re-dragged in: `source_window` names that window, not main, so the
+        // binding adds the right origin.
+        let update = DragUpdate {
+            over: None,
+            cursor: (40.0, 25.0),
+            over_window: None,
+            source_window: Some("torn-viewport"),
+            became_drag: true,
+        };
+        ext.drag_to_at(&dummy_payload(), &update);
+        // The emitted tear_off_follow carries the source window.
+        let mut received: Vec<Intent> = Vec::new();
+        ext.drain_intents(&mut |i| received.push(i));
+        let follow = received
+            .iter()
+            .find(|i| i.tag.as_ref() == TEAR_OFF_FOLLOW_EVENT)
+            .expect("a tear_off_follow fired");
+        let IntrospectValue::Json(v) = &follow.payload else {
+            panic!("follow payload is Json");
+        };
+        assert_eq!(
+            v.get("source_window").and_then(serde_json::Value::as_str),
+            Some("torn-viewport"),
+            "the follow payload names the window the cursor was measured in",
+        );
+        // And it is observable as scene-as-data (§2 #7).
+        assert_eq!(
+            ext.query("source_window"),
+            Some(IntrospectValue::Text("torn-viewport".to_string())),
+        );
+    }
+
+    #[test]
+    fn r1107_source_window_is_read_only_and_resets_per_gesture() {
+        let mut ext = DockPanelExternal::new("viewport");
+        let _ = ext.begin_drag();
+        ext.drag_to_at(
+            &dummy_payload(),
+            &DragUpdate {
+                over: None,
+                cursor: (1.0, 1.0),
+                over_window: None,
+                source_window: Some("torn-viewport"),
+                became_drag: true,
+            },
+        );
+        assert_eq!(
+            ext.query("source_window"),
+            Some(IntrospectValue::Text("torn-viewport".to_string())),
+        );
+        // Router-owned diagnostic — an AI cannot poke it directly.
+        assert!(matches!(
+            ext.intervene("source_window", IntrospectValue::Null),
+            Err(InterveneError::ReadOnly),
+        ));
+        // A fresh gesture clears it.
+        let _ = ext.begin_drag();
+        assert_eq!(ext.query("source_window"), Some(IntrospectValue::Null));
     }
 
     // ── R1100 §5.51 PR-33 — cross-window dock-at redock (slice 1) ─────

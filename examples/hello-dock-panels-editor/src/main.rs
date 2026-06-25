@@ -387,43 +387,49 @@ fn redock_panel_floating(panel_id: &str) {
     }
 }
 
-/// (R1105 §5.16 §5.41 PR-31) Convert a SOURCE-window-logical cursor into a
-/// desktop outer position for the live tear-off follow — the floating window
-/// opens at the desktop point under the cursor = the main window's declared
+/// (R1105/R1107 §5.16 §5.41 PR-31) Convert a SOURCE-window-logical cursor into
+/// a desktop outer position for the live tear-off follow — the floating window
+/// opens at the desktop point under the cursor = the SOURCE window's declared
 /// outer origin + the cursor (the `DockPanelExternal` reports cursors in the
-/// main window's frame; the widget crate must not know about windows).
+/// driving window's frame; the widget crate must not know about windows).
 ///
-/// PRECONDITION (same as the flat demo): the drag SOURCE is the main window
-/// — true for the only headlessly-reachable path (a docked panel torn out).
-/// Re-dragging an ALREADY-FLOATING panel's own header reports a cursor in
-/// that `torn-<panel>` window's frame, for which adding the `"main"` origin
-/// is wrong; that path is the parked live-grab-move scope and needs the
-/// `tear_off_follow` payload to carry the source window id (the R1095.1
-/// carry, unchanged — the editor tears off only from main, so hard-coding
-/// `"main"` stays correct in practice here too).
+/// (R1107) `source_window` names which window the cursor is measured in
+/// (`DragUpdate::source_window`, threaded through the `tear_off_follow`
+/// payload). This CLEARS the R1095.1 latent defect: re-dragging an
+/// already-floating panel's own header reports a cursor in that
+/// `torn-<panel>` window's frame, so its origin — not main's — is the right
+/// one to add. `None` (the cursor-less degenerate fallback) → the main
+/// window. A source window absent from `panels` (never positioned) falls back
+/// to the desktop origin, so the follower still tracks the cursor.
 #[allow(
     clippy::cast_possible_truncation,
     reason = "logical-pixel cursor → i32 outer position; sub-pixel is irrelevant to window placement"
 )]
-fn follow_desktop_position(panels: &[WindowSpec], cursor: (f64, f64)) -> (i32, i32) {
+fn follow_desktop_position(
+    panels: &[WindowSpec],
+    source_window: Option<&str>,
+    cursor: (f64, f64),
+) -> (i32, i32) {
+    let source = source_window.unwrap_or(MAIN_WINDOW_ID);
     let (ox, oy) = panels
         .iter()
-        .find(|w| w.id.as_ref() == MAIN_WINDOW_ID)
+        .find(|w| w.id.as_ref() == source)
         .and_then(|w| w.position)
         .unwrap_or((0, 0));
     (ox + cursor.0.round() as i32, oy + cursor.1.round() as i32)
 }
 
-/// (R1105 §5.16 §5.41 PR-31) Ensure `panel_id` has a floating window and
+/// (R1105/R1107 §5.16 §5.41 PR-31) Ensure `panel_id` has a floating window and
 /// write its outer position from the desktop-converted cursor (the live
 /// follow). Idempotent: creates on the first escaped move, repositions on
 /// every subsequent move. `Signal::set`'s equality-skip collapses a
 /// stationary cursor. Non-toggling — the AI dock-back stays on
-/// [`toggle_panel_floating`].
-fn follow_panel_floating(panel_id: &str, cursor: (f64, f64)) {
+/// [`toggle_panel_floating`]. `source_window` (R1107) is the window the
+/// cursor is measured in, so the desktop conversion uses the right origin.
+fn follow_panel_floating(panel_id: &str, source_window: Option<&str>, cursor: (f64, f64)) {
     let signal = use_editor_windows();
     let mut current = signal.get();
-    let pos = follow_desktop_position(&current, cursor);
+    let pos = follow_desktop_position(&current, source_window, cursor);
     let target = floating_window_id(panel_id);
     if let Some(spec) = current.iter_mut().find(|w| w.id == target) {
         spec.position = Some(pos);
@@ -952,7 +958,12 @@ impl WidgetCore for DockPanelsEditorView {
                             v.get("y").and_then(serde_json::Value::as_f64),
                         )
                     {
-                        follow_panel_floating(panel, (x, y));
+                        // R1107 — the window the cursor is measured in (null for
+                        // the degenerate fallback → main); converts to a desktop
+                        // position via the right origin.
+                        let source_window =
+                            v.get("source_window").and_then(serde_json::Value::as_str);
+                        follow_panel_floating(panel, source_window, (x, y));
                     }
                     return Vec::new();
                 }
@@ -1853,7 +1864,7 @@ mod tests {
     #[test]
     fn r1105_follow_desktop_position_adds_main_origin() {
         // No known main origin → relative to desktop (0,0).
-        assert_eq!(follow_desktop_position(&[], (10.0, 20.0)), (10, 20));
+        assert_eq!(follow_desktop_position(&[], None, (10.0, 20.0)), (10, 20));
         // With a positioned main window, the cursor is offset by its origin.
         let main_at = vec![
             WindowSpec::new(
@@ -1866,14 +1877,17 @@ mod tests {
             )
             .with_position(200, 150),
         ];
-        assert_eq!(follow_desktop_position(&main_at, (10.0, 20.0)), (210, 170));
+        assert_eq!(
+            follow_desktop_position(&main_at, None, (10.0, 20.0)),
+            (210, 170)
+        );
     }
 
     #[test]
     fn r1105_follow_panel_floating_creates_then_repositions() {
         run_in_owner(|| {
             let windows = use_editor_windows();
-            follow_panel_floating(OUTLINER_PANEL_TAG, (50.0, 60.0));
+            follow_panel_floating(OUTLINER_PANEL_TAG, None, (50.0, 60.0));
             let spec = windows
                 .get()
                 .into_iter()
@@ -1881,7 +1895,7 @@ mod tests {
                 .expect("first escaped move creates the floating window");
             assert_eq!(spec.position, Some((50, 60)));
             // A later move repositions the SAME window (non-toggling, no second window).
-            follow_panel_floating(OUTLINER_PANEL_TAG, (90.0, 100.0));
+            follow_panel_floating(OUTLINER_PANEL_TAG, None, (90.0, 100.0));
             let after = windows.get();
             assert_eq!(after.len(), 2, "still one floating window");
             let spec = after
@@ -2000,6 +2014,87 @@ mod tests {
                 use_editor_reorganizer().last_outcome().as_deref(),
                 Some("viewport -> console"),
                 "the relocate fired through the shared reorganizer",
+            );
+        });
+    }
+
+    #[test]
+    fn r1107_follow_desktop_position_uses_source_window_origin() {
+        // The R1095.1 latent-defect fix: re-dragging an already-floating panel's
+        // header reports a cursor in THAT window's frame, so its origin — not
+        // main's — is the right one to add.
+        let main = WindowSpec::new(
+            Cow::Borrowed(MAIN_WINDOW_ID),
+            "main",
+            SizeStrategy::Fixed {
+                width: MAIN_W,
+                height: MAIN_H,
+            },
+        )
+        .with_position(100, 50);
+        let floater = WindowSpec::new(
+            Cow::Owned(floating_window_id(VIEWPORT_PANEL_TAG)),
+            "torn",
+            SizeStrategy::Fixed {
+                width: FLOATING_W,
+                height: FLOATING_H,
+            },
+        )
+        .with_position(600, 400);
+        let panels = vec![main, floater];
+        // Source = the floater → add the floater's origin (600,400).
+        assert_eq!(
+            follow_desktop_position(&panels, Some("torn-viewport"), (10.0, 20.0)),
+            (610, 420),
+            "a floater-source follow adds the FLOATER's origin (not main's)",
+        );
+        // Source = main (a docked tear-off) → add main's origin (100,50).
+        assert_eq!(
+            follow_desktop_position(&panels, Some(MAIN_WINDOW_ID), (10.0, 20.0)),
+            (110, 70),
+        );
+        // None (degenerate fallback) → main.
+        assert_eq!(
+            follow_desktop_position(&panels, None, (10.0, 20.0)),
+            (110, 70)
+        );
+    }
+
+    #[test]
+    fn r1107_follow_intent_threads_source_window_to_reposition() {
+        run_in_owner(|| {
+            let windows = use_editor_windows();
+            // Seed a positioned floating viewport (as if torn off).
+            toggle_panel_floating(VIEWPORT_PANEL_TAG);
+            let floater_origin = windows
+                .get()
+                .into_iter()
+                .find(|w| w.id.as_ref() == "torn-viewport")
+                .and_then(|w| w.position)
+                .expect("floater positioned");
+            // A follow whose source IS that floater repositions it relative to
+            // its own origin (the payload carries the source_window the router
+            // would have stamped).
+            let intent = Intent {
+                tag: tear_off_tag(VIEWPORT_PANEL_TAG, TEAR_OFF_FOLLOW_EVENT),
+                payload: IntrospectValue::Json(serde_json::json!({
+                    "panel": VIEWPORT_PANEL_TAG,
+                    "x": 12.0,
+                    "y": 8.0,
+                    "source_window": "torn-viewport",
+                })),
+            };
+            let _ = <DockPanelsEditorView as WidgetCore>::update(ButtonState::Idle, &intent);
+            let moved = windows
+                .get()
+                .into_iter()
+                .find(|w| w.id.as_ref() == "torn-viewport")
+                .and_then(|w| w.position)
+                .expect("floater still present");
+            assert_eq!(
+                moved,
+                (floater_origin.0 + 12, floater_origin.1 + 8),
+                "the follow repositioned the floater relative to ITS own origin",
             );
         });
     }

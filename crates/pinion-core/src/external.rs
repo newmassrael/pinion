@@ -475,6 +475,19 @@ pub struct DragUpdate<'a> {
     /// composes this; the per-window router stays cross-window-blind, so the
     /// window dimension rides the `_at` path only.
     pub over_window: Option<&'a str>,
+    /// (R1107 §5.16 §5.41 §5.51) The spec id of the window the drag is happening
+    /// IN — the window whose router is driving this gesture, so `cursor` is in
+    /// THIS window's logical frame. The symmetric peer of `over_window` (the
+    /// TARGET window): `over_window` names where the drop lands, `source_window`
+    /// names where the cursor is measured. A tear-off follow needs it to convert
+    /// the window-logical cursor to a DESKTOP position via the SOURCE window's
+    /// outer origin — re-dragging an already-floating panel's header reports a
+    /// cursor in that floating window's frame, not the main window's, so a
+    /// binding that assumed `"main"` placed the follower wrong. `None` = the
+    /// router did not record its window id (a single-window / pre-R1107 path);
+    /// the binding falls back to its primary window. The router fills it from
+    /// its own window id, which the shell sets at the per-window dispatch choke.
+    pub source_window: Option<&'a str>,
     /// The router's click-vs-drag verdict for the in-flight press: `true` once
     /// it strayed past `DRAG_CLICK_THRESHOLD_PX` *from the real press point*.
     /// The single SSOT the router owns (`press_gestures`) — a drag source reads
@@ -1218,12 +1231,14 @@ mod tests {
             over: None,
             cursor: (12.0, 34.0),
             over_window: None,
+            source_window: None,
             became_drag: false,
         };
         let release_update = DragUpdate {
             over: None,
             cursor: (56.0, 78.0),
             over_window: None,
+            source_window: None,
             became_drag: false,
         };
         src.drag_to_at(&payload, &to_update);

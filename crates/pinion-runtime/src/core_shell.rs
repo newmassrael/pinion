@@ -1958,6 +1958,9 @@ impl<V: WidgetCore> CoreShell<V> {
     ) -> (DispatchTail<V::State>, bool) {
         let Self { scene, routers, .. } = self;
         let router = routers.entry(window_id.to_owned()).or_default();
+        // R1107 §5.51 — stamp the router's own window id so a tear-off follow's
+        // `DragUpdate::source_window` names the window the cursor is measured in.
+        router.ensure_window(window_id);
         let pan_dispatched = router.cursor_moved_with_modifiers(pid, x, y, modifiers, scene);
         (self.tail(), pan_dispatched)
     }
@@ -2236,6 +2239,9 @@ impl<V: WidgetCore> CoreShell<V> {
     ) -> DispatchTail<V::State> {
         let Self { scene, routers, .. } = self;
         let router = routers.entry(window_id.to_owned()).or_default();
+        // R1107 §5.51 — stamp the window id for a drag-release `DragUpdate`
+        // (the tear-off redock / final follow reads `source_window`).
+        router.ensure_window(window_id);
         router.pointer_up_with_modifiers(pid, scene, modifiers);
         self.tail()
     }

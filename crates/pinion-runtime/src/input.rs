@@ -374,6 +374,17 @@ pub struct InputRouter {
     /// remainder in its own gesture state instead — one carry per
     /// contiguous delta stream, whichever producer owns the stream.
     wheel_remainders: HashMap<PointerId, WheelRemainder>,
+    /// (R1107 §5.16 §5.41 §5.51) This router's own window spec id — the
+    /// window it dispatches for. `None` until the shell stamps it via
+    /// [`ensure_window`](Self::ensure_window) at the per-window dispatch
+    /// choke. Filled into [`DragUpdate::source_window`] so a drag source can
+    /// convert its window-logical cursor to a desktop position via the
+    /// CORRECT window's outer origin (a re-dragged floating header reports a
+    /// cursor in its own frame, not the main window's). The router otherwise
+    /// stays window-id-blind for cross-window resolution (that rides the
+    /// shell-composed `over_window`); knowing its OWN id is a different, local
+    /// fact.
+    window_id: Option<String>,
 }
 
 /// R881.1 §5.35 — one pointer's wheel remainder: the scroll container
@@ -517,6 +528,19 @@ impl InputRouter {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// (R1107 §5.16 §5.41 §5.51) Stamp this router's own window spec id the
+    /// first time the shell dispatches for it (idempotent — a router's window
+    /// never changes, so the first stamp wins and later calls are no-ops).
+    /// The shell calls this at the per-window drag-dispatch choke (it holds
+    /// the `window_id` map key), so [`DragUpdate::source_window`] is set
+    /// before any drag builds an update. A router that never saw a drag
+    /// dispatch keeps `None` (harmless — `source_window` then falls back).
+    pub fn ensure_window(&mut self, window_id: &str) {
+        if self.window_id.is_none() {
+            self.window_id = Some(window_id.to_owned());
+        }
     }
 
     /// Current hover target tag for `id`, when any. Mainly for tests
@@ -1374,6 +1398,7 @@ impl InputRouter {
                             over,
                             cursor: c,
                             over_window: over_window.as_deref(),
+                            source_window: self.window_id.as_deref(),
                             became_drag,
                         },
                     ),
@@ -1800,6 +1825,7 @@ impl InputRouter {
                     over,
                     cursor: (x, y),
                     over_window: over_window.as_deref(),
+                    source_window: self.window_id.as_deref(),
                     became_drag,
                 },
             );

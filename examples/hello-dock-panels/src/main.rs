@@ -533,49 +533,53 @@ fn is_panel_floating(panels: &[WindowSpec], panel_id: &str) -> bool {
     panels.iter().any(|w| w.id == target)
 }
 
-/// R1094 §5.16 §5.41 PR-31 — the gap(b) conversion the live tear-off
+/// R1094/R1107 §5.16 §5.41 PR-31 — the gap(b) conversion the live tear-off
 /// follow needs: turn a SOURCE-window-logical cursor into a desktop
 /// outer position for the floating window. The `DockPanelExternal`
-/// reports a cursor in the main window's frame (the widget crate must
+/// reports a cursor in the driving window's frame (the widget crate must
 /// not know about windows), so the floating window opens at the desktop
-/// point under the cursor = the main window's declared outer origin + the
+/// point under the cursor = the SOURCE window's declared outer origin + the
 /// cursor. The origin is read from the topology signal (the R1088
-/// `WindowEvent::Moved` write-back keeps it current); a WM-placed main
-/// window whose position pinion never learned falls back to the desktop
+/// `WindowEvent::Moved` write-back keeps it current); a WM-placed window
+/// whose position pinion never learned falls back to the desktop
 /// origin, so the window still *tracks* the cursor (the offset is then
 /// relative to (0, 0) instead of the real frame).
 ///
-/// PRECONDITION: the drag SOURCE is the main window — true for the only
-/// headlessly-reachable path (a docked panel's header torn out). Re-dragging
-/// an ALREADY-FLOATING panel's own header reports a cursor in that
-/// `torn-<panel>` window's frame, for which adding the `"main"` origin is
-/// wrong; that path lives in the parked live-grab-move scope and needs the
-/// `tear_off_follow` payload to carry the source window id (folded into the
-/// live-grab / editor-2nd-consumer round). Today no binding re-drags a
-/// floating header, so the hard-coded `"main"` is correct in practice.
+/// (R1107) `source_window` names which window's frame the cursor is in
+/// (`DragUpdate::source_window`, threaded through the `tear_off_follow`
+/// payload). This CLEARS the R1095.1 latent defect: re-dragging an
+/// ALREADY-FLOATING panel's own header reports a cursor in that
+/// `torn-<panel>` window's frame, so adding ITS origin — not main's — is
+/// correct. `None` (the cursor-less degenerate fallback) → the main window.
 #[allow(
     clippy::cast_possible_truncation,
     reason = "logical-pixel cursor → i32 outer position; sub-pixel is irrelevant to window placement"
 )]
-fn follow_desktop_position(panels: &[WindowSpec], cursor: (f64, f64)) -> (i32, i32) {
+fn follow_desktop_position(
+    panels: &[WindowSpec],
+    source_window: Option<&str>,
+    cursor: (f64, f64),
+) -> (i32, i32) {
+    let source = source_window.unwrap_or(MAIN_WINDOW_ID);
     let (ox, oy) = panels
         .iter()
-        .find(|w| w.id.as_ref() == MAIN_WINDOW_ID)
+        .find(|w| w.id.as_ref() == source)
         .and_then(|w| w.position)
         .unwrap_or((0, 0));
     (ox + cursor.0.round() as i32, oy + cursor.1.round() as i32)
 }
 
-/// R1094 §5.16 §5.41 PR-31 — ensure `panel_id` has a floating window and
+/// R1094/R1107 §5.16 §5.41 PR-31 — ensure `panel_id` has a floating window and
 /// write its outer position from the desktop-converted cursor. Idempotent:
 /// creates the window on the first escaped move, then repositions it on
 /// every subsequent move (the live follow). `Signal::set`'s equality-skip
 /// collapses a stationary cursor to no repaint. Non-toggling — the AI
-/// dock-back stays on [`toggle_panel_floating`].
-fn follow_panel_floating(panel_id: &str, cursor: (f64, f64)) {
+/// dock-back stays on [`toggle_panel_floating`]. `source_window` (R1107) is
+/// the window the cursor is measured in, for the right desktop origin.
+fn follow_panel_floating(panel_id: &str, source_window: Option<&str>, cursor: (f64, f64)) {
     let signal = use_windows_topology();
     let mut current = signal.get();
-    let pos = follow_desktop_position(&current, cursor);
+    let pos = follow_desktop_position(&current, source_window, cursor);
     let target = floating_window_id(panel_id);
     if let Some(spec) = current.iter_mut().find(|w| w.id == target) {
         spec.position = Some(pos);
@@ -1101,7 +1105,11 @@ impl WidgetCore for DockPanelsView {
                         v.get("y").and_then(serde_json::Value::as_f64),
                     )
                 {
-                    follow_panel_floating(panel, (x, y));
+                    // R1107 — the window the cursor is measured in (null for the
+                    // degenerate fallback → main), so the desktop conversion
+                    // uses the right origin.
+                    let source_window = v.get("source_window").and_then(serde_json::Value::as_str);
+                    follow_panel_floating(panel, source_window, (x, y));
                 }
             }
             // R1094 §5.16 §5.41 PR-31 — redock / restore. A drag that had
@@ -1522,7 +1530,7 @@ mod tests {
         // gap(b): the floating desktop position is the main window's outer
         // origin + the window-logical cursor. No main spec / unknown
         // position falls back to the desktop origin (still tracks).
-        assert_eq!(follow_desktop_position(&[], (10.0, 20.0)), (10, 20));
+        assert_eq!(follow_desktop_position(&[], None, (10.0, 20.0)), (10, 20));
         let main_at = vec![
             WindowSpec::new(
                 Cow::Borrowed("main"),
@@ -1534,7 +1542,10 @@ mod tests {
             )
             .with_position(200, 150),
         ];
-        assert_eq!(follow_desktop_position(&main_at, (10.0, 20.0)), (210, 170));
+        assert_eq!(
+            follow_desktop_position(&main_at, None, (10.0, 20.0)),
+            (210, 170)
+        );
     }
 
     #[test]
@@ -1544,7 +1555,7 @@ mod tests {
             assert_eq!(signal.get().len(), 1, "boot: single main window");
             // First escaped move creates the floater at the cursor (main at
             // the desktop origin → declared position == cursor).
-            follow_panel_floating(INSPECTOR_PANEL_TAG, (640.0, 300.0));
+            follow_panel_floating(INSPECTOR_PANEL_TAG, None, (640.0, 300.0));
             let after_create = signal.get();
             assert_eq!(after_create.len(), 2, "follow creates the floater");
             let torn = after_create
@@ -1557,7 +1568,7 @@ mod tests {
                 "opens at the escape cursor"
             );
             // A subsequent move repositions the SAME window (no second push).
-            follow_panel_floating(INSPECTOR_PANEL_TAG, (700.0, 320.0));
+            follow_panel_floating(INSPECTOR_PANEL_TAG, None, (700.0, 320.0));
             let after_move = signal.get();
             assert_eq!(after_move.len(), 2, "follow repositions, never duplicates");
             let torn = after_move
@@ -1572,7 +1583,7 @@ mod tests {
     fn r1094_follow_then_redock_removes_the_floating_window() {
         Owner::new().run(|| {
             let signal = use_windows_topology();
-            follow_panel_floating(PROPERTY_PANEL_TAG, (300.0, 200.0));
+            follow_panel_floating(PROPERTY_PANEL_TAG, None, (300.0, 200.0));
             assert_eq!(signal.get().len(), 2, "property floats");
             redock_panel_floating(PROPERTY_PANEL_TAG);
             let after = signal.get();
@@ -1594,7 +1605,7 @@ mod tests {
             let mut specs = signal.get();
             specs[0].position = Some((100, 60));
             signal.set(specs);
-            follow_panel_floating(VIEWPORT_PANEL_TAG, (40.0, 30.0));
+            follow_panel_floating(VIEWPORT_PANEL_TAG, None, (40.0, 30.0));
             let torn = signal
                 .get()
                 .into_iter()
