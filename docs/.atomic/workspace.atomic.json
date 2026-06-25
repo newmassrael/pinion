@@ -17028,6 +17028,52 @@
         "r683 live drag-back stays RED until (b); follow model drifts for a moving source"
       ]
     },
+    "R1104.1": {
+      "decision_summary": "R1104.1 §5.51 §2 #7 PR-33 session review-clearance: a 3-reviewer read-only adversarial review (SSOT/smell + architecture/northern-star + test-honesty) judged R1103/R1104 core textbook (settle_cross_window_redock lift correctly scoped, redock payload single-producer SSOT, AI-invoke driver §2#2-aligned not a workaround, both R1104 audit grounding-out claims independently verified TRUE, layering clean, no R1102.1-style over-representation in test claims). Cleared the 3 real defects found inline: a MAIN_WINDOW_ID half-migration (2 missed production sites), a stale R1100 rustdoc overstating zone-honoring the reducer never did, and a wrong 'drain barrier' demo narrative (each scene/invoke reduces synchronously in its own tail).",
+      "changes_bullets": [
+        "MAIN_WINDOW_ID: migrate 2 missed production sites (inspector_host_window + view_for_window)",
+        "enqueue_tear_off_redock_at rustdoc: drop stale \"re-inserts at the zone\" claim (R1100)",
+        "rustdoc now: payload carries the zone; flat reducer returns to home slot (zone = slice 4)",
+        "r1103 demo section C: replace wrong \"drain barrier\" narrative with synchronous-tail mechanism"
+      ],
+      "verification_bullets": [
+        "3 read-only adversarial reviewers (SSOT/smell, architecture/northern-star, test-honesty)",
+        "verdict: core textbook (settle SSOT scoped right, payload single producer, audit claims TRUE)",
+        "clearance fixes only: cargo test --workspace green; clippy(vello) + fmt clean; demos pass",
+        "no behavior change (rustdoc + comments + 2 literal->const); all r1103/r1104 tests still green"
+      ],
+      "impact_refs": [
+        "5.51",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "drop_panel_scene (shell test) ~dup of window_with_drop_panel (runtime test) = 2 consumers",
+        "3rd consumer -> lift to pinion-core::test_fixtures (below rule-of-three now)",
+        "MAIN_WINDOW_ID test-module literals kept as independent oracles (not production SSOT)"
+      ],
+      "publishable_decision_summary": "R1104.1 §5.51 §2 #7 PR-33 session review-clearance: a 3-reviewer read-only adversarial review (SSOT/smell + architecture/northern-star + test-honesty) judged R1103/R1104 core textbook (settle_cross_window_redock lift correctly scoped, redock payload single-producer SSOT, AI-invoke driver §2#2-aligned not a workaround, both R1104 audit grounding-out claims independently verified TRUE, layering clean, no R1102.1-style over-representation in test claims). Cleared the 3 real defects found inline: a MAIN_WINDOW_ID half-migration (2 missed production sites), a stale R1100 rustdoc overstating zone-honoring the reducer never did, and a wrong 'drain barrier' demo narrative (each scene/invoke reduces synchronously in its own tail).",
+      "publishable_changes_bullets": [
+        "MAIN_WINDOW_ID: migrate 2 missed production sites (inspector_host_window + view_for_window)",
+        "enqueue_tear_off_redock_at rustdoc: drop stale \"re-inserts at the zone\" claim (R1100)",
+        "rustdoc now: payload carries the zone; flat reducer returns to home slot (zone = slice 4)",
+        "r1103 demo section C: replace wrong \"drain barrier\" narrative with synchronous-tail mechanism"
+      ],
+      "publishable_verification_bullets": [
+        "3 read-only adversarial reviewers (SSOT/smell, architecture/northern-star, test-honesty)",
+        "verdict: core textbook (settle SSOT scoped right, payload single producer, audit claims TRUE)",
+        "clearance fixes only: cargo test --workspace green; clippy(vello) + fmt clean; demos pass",
+        "no behavior change (rustdoc + comments + 2 literal->const); all r1103/r1104 tests still green"
+      ],
+      "publishable_impact_refs": [
+        "5.51",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "drop_panel_scene (shell test) ~dup of window_with_drop_panel (runtime test) = 2 consumers",
+        "3rd consumer -> lift to pinion-core::test_fixtures (below rule-of-three now)",
+        "MAIN_WINDOW_ID test-module literals kept as independent oracles (not production SSOT)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
