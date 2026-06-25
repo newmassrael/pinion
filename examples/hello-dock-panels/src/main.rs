@@ -208,6 +208,33 @@ const PROPERTY_TEAR_OFF_INTENT_TAG: &str = intent_tag!("property", "tear_off");
 /// Viewport panel's `tear_off` intent (same convention).
 const VIEWPORT_TEAR_OFF_INTENT_TAG: &str = intent_tag!("viewport", "tear_off");
 
+/// R1094 §5.16 §5.41 PR-31 — the live-follow tear-off intents, one per
+/// panel. Emitted on every drag move that has escaped every drop target
+/// (the [`pinion_widget_paint::dock::TEAR_OFF_FOLLOW_EVENT`] the
+/// `DockPanelExternal` enqueues, prefixed with the panel root tag). The
+/// reducer ensures the panel's floating window exists and writes its
+/// position from the forwarded cursor — non-toggling so per-move re-emits
+/// only reposition. The bare event string mirrors `dock::TEAR_OFF_FOLLOW_EVENT`
+/// (`intent_tag!` needs string literals, the same `tear_off` /
+/// `dock::TEAR_OFF_EVENT` split the toggle tags above use).
+const INSPECTOR_TEAR_OFF_FOLLOW_INTENT_TAG: &str = intent_tag!("inspector", "tear_off_follow");
+/// Property panel's live-follow intent (same convention).
+const PROPERTY_TEAR_OFF_FOLLOW_INTENT_TAG: &str = intent_tag!("property", "tear_off_follow");
+/// Viewport panel's live-follow intent (same convention).
+const VIEWPORT_TEAR_OFF_FOLLOW_INTENT_TAG: &str = intent_tag!("viewport", "tear_off_follow");
+
+/// R1094 §5.16 §5.41 PR-31 — the redock / restore tear-off intents, one
+/// per panel ([`pinion_widget_paint::dock::TEAR_OFF_REDOCK_EVENT`]).
+/// Emitted when a drag that had torn the panel off ends back in the dock
+/// (redock over a zone) or snaps back / cancels (restore). The reducer
+/// removes the panel's floating window if present (idempotent no-op
+/// otherwise).
+const INSPECTOR_TEAR_OFF_REDOCK_INTENT_TAG: &str = intent_tag!("inspector", "tear_off_redock");
+/// Property panel's redock / restore intent (same convention).
+const PROPERTY_TEAR_OFF_REDOCK_INTENT_TAG: &str = intent_tag!("property", "tear_off_redock");
+/// Viewport panel's redock / restore intent (same convention).
+const VIEWPORT_TEAR_OFF_REDOCK_INTENT_TAG: &str = intent_tag!("viewport", "tear_off_redock");
+
 /// Inspector tree-row click intent (same as hello-multi-window's R675
 /// arc). The `TreeRowClickExternal` registered at `inspector_tree`
 /// emits a bare `click` event the runtime prefixes to
@@ -481,6 +508,73 @@ fn floating_window_position(panel_id: &str) -> (i32, i32) {
 fn is_panel_floating(panels: &[WindowSpec], panel_id: &str) -> bool {
     let target = floating_window_id(panel_id);
     panels.iter().any(|w| w.id == target)
+}
+
+/// R1094 §5.16 §5.41 PR-31 — the gap(b) conversion the live tear-off
+/// follow needs: turn a SOURCE-window-logical cursor into a desktop
+/// outer position for the floating window. The `DockPanelExternal`
+/// reports a cursor in the main window's frame (the widget crate must
+/// not know about windows), so the floating window opens at the desktop
+/// point under the cursor = the main window's declared outer origin + the
+/// cursor. The origin is read from the topology signal (the R1088
+/// `WindowEvent::Moved` write-back keeps it current); a WM-placed main
+/// window whose position pinion never learned falls back to the desktop
+/// origin, so the window still *tracks* the cursor (the offset is then
+/// relative to (0, 0) instead of the real frame).
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "logical-pixel cursor → i32 outer position; sub-pixel is irrelevant to window placement"
+)]
+fn follow_desktop_position(panels: &[WindowSpec], cursor: (f64, f64)) -> (i32, i32) {
+    let (ox, oy) = panels
+        .iter()
+        .find(|w| w.id.as_ref() == "main")
+        .and_then(|w| w.position)
+        .unwrap_or((0, 0));
+    (ox + cursor.0.round() as i32, oy + cursor.1.round() as i32)
+}
+
+/// R1094 §5.16 §5.41 PR-31 — ensure `panel_id` has a floating window and
+/// write its outer position from the desktop-converted cursor. Idempotent:
+/// creates the window on the first escaped move, then repositions it on
+/// every subsequent move (the live follow). `Signal::set`'s equality-skip
+/// collapses a stationary cursor to no repaint. Non-toggling — the AI
+/// dock-back stays on [`toggle_panel_floating`].
+fn follow_panel_floating(panel_id: &str, cursor: (f64, f64)) {
+    let signal = use_windows_topology();
+    let mut current = signal.get();
+    let pos = follow_desktop_position(&current, cursor);
+    let target = floating_window_id(panel_id);
+    if let Some(spec) = current.iter_mut().find(|w| w.id == target) {
+        spec.position = Some(pos);
+    } else {
+        current.push(
+            WindowSpec::new(
+                Cow::Owned(target),
+                floating_window_title(panel_id),
+                SizeStrategy::Fixed {
+                    width: FLOATING_W,
+                    height: FLOATING_H,
+                },
+            )
+            .with_position(pos.0, pos.1),
+        );
+    }
+    signal.set(current);
+}
+
+/// R1094 §5.16 §5.41 PR-31 — remove `panel_id`'s floating window
+/// (redock / restore). Idempotent no-op when the panel is already docked,
+/// so a redock intent that arrives without a window (an editor escape the
+/// binding never floated) is harmless.
+fn redock_panel_floating(panel_id: &str) {
+    let signal = use_windows_topology();
+    let mut current = signal.get();
+    let target = floating_window_id(panel_id);
+    if let Some(idx) = current.iter().position(|w| w.id == target) {
+        current.remove(idx);
+        signal.set(current);
+    }
 }
 
 /// Reducer mutation for a `tear_off` intent. Idempotent on the
@@ -959,6 +1053,37 @@ impl WidgetCore for DockPanelsView {
                     toggle_panel_floating(panel_id);
                 }
             }
+            // R1094 §5.16 §5.41 PR-31 — live tear-off follow. A drag move
+            // escaped every dock zone: ensure the panel's floating window
+            // exists and write its outer position from the forwarded
+            // (window-logical) cursor, desktop-converted. Non-toggling, so
+            // every per-move re-emit only repositions.
+            tag if tag == INSPECTOR_TEAR_OFF_FOLLOW_INTENT_TAG
+                || tag == PROPERTY_TEAR_OFF_FOLLOW_INTENT_TAG
+                || tag == VIEWPORT_TEAR_OFF_FOLLOW_INTENT_TAG =>
+            {
+                if let IntrospectValue::Json(v) = &intent.payload
+                    && let (Some(panel), Some(x), Some(y)) = (
+                        v.get("panel").and_then(serde_json::Value::as_str),
+                        v.get("x").and_then(serde_json::Value::as_f64),
+                        v.get("y").and_then(serde_json::Value::as_f64),
+                    )
+                {
+                    follow_panel_floating(panel, (x, y));
+                }
+            }
+            // R1094 §5.16 §5.41 PR-31 — redock / restore. A drag that had
+            // torn the panel off ended back in the dock (redock over a
+            // zone) or snapped back / cancelled (restore): remove the
+            // floating window this gesture created.
+            tag if tag == INSPECTOR_TEAR_OFF_REDOCK_INTENT_TAG
+                || tag == PROPERTY_TEAR_OFF_REDOCK_INTENT_TAG
+                || tag == VIEWPORT_TEAR_OFF_REDOCK_INTENT_TAG =>
+            {
+                if let IntrospectValue::Text(panel_id) = &intent.payload {
+                    redock_panel_floating(panel_id);
+                }
+            }
             // Cross-panel select — inspector tree row click writes
             // the resolved tree path into the shared `selected_path`
             // Signal so the viewport repaints with the highlight wrap
@@ -1329,6 +1454,97 @@ mod tests {
                 "dock-back must remove the floating spec"
             );
             assert!(after_dock.iter().all(|w| w.id != "torn-inspector"));
+        });
+    }
+
+    #[test]
+    fn r1094_follow_desktop_position_adds_main_origin() {
+        // gap(b): the floating desktop position is the main window's outer
+        // origin + the window-logical cursor. No main spec / unknown
+        // position falls back to the desktop origin (still tracks).
+        assert_eq!(follow_desktop_position(&[], (10.0, 20.0)), (10, 20));
+        let main_at = vec![
+            WindowSpec::new(
+                Cow::Borrowed("main"),
+                "m",
+                SizeStrategy::Fixed {
+                    width: MAIN_W,
+                    height: MAIN_H,
+                },
+            )
+            .with_position(200, 150),
+        ];
+        assert_eq!(follow_desktop_position(&main_at, (10.0, 20.0)), (210, 170));
+    }
+
+    #[test]
+    fn r1094_follow_creates_then_repositions_one_floating_window() {
+        Owner::new().run(|| {
+            let signal = use_windows_topology();
+            assert_eq!(signal.get().len(), 1, "boot: single main window");
+            // First escaped move creates the floater at the cursor (main at
+            // the desktop origin → declared position == cursor).
+            follow_panel_floating(INSPECTOR_PANEL_TAG, (640.0, 300.0));
+            let after_create = signal.get();
+            assert_eq!(after_create.len(), 2, "follow creates the floater");
+            let torn = after_create
+                .iter()
+                .find(|w| w.id == "torn-inspector")
+                .expect("torn-inspector");
+            assert_eq!(
+                torn.position,
+                Some((640, 300)),
+                "opens at the escape cursor"
+            );
+            // A subsequent move repositions the SAME window (no second push).
+            follow_panel_floating(INSPECTOR_PANEL_TAG, (700.0, 320.0));
+            let after_move = signal.get();
+            assert_eq!(after_move.len(), 2, "follow repositions, never duplicates");
+            let torn = after_move
+                .iter()
+                .find(|w| w.id == "torn-inspector")
+                .expect("torn-inspector");
+            assert_eq!(torn.position, Some((700, 320)), "tracks the live cursor");
+        });
+    }
+
+    #[test]
+    fn r1094_follow_then_redock_removes_the_floating_window() {
+        Owner::new().run(|| {
+            let signal = use_windows_topology();
+            follow_panel_floating(PROPERTY_PANEL_TAG, (300.0, 200.0));
+            assert_eq!(signal.get().len(), 2, "property floats");
+            redock_panel_floating(PROPERTY_PANEL_TAG);
+            let after = signal.get();
+            assert_eq!(after.len(), 1, "redock removes the floater");
+            assert!(after.iter().all(|w| w.id != "torn-property"));
+            // Idempotent: a redock with no floating window is a no-op.
+            redock_panel_floating(PROPERTY_PANEL_TAG);
+            assert_eq!(signal.get().len(), 1, "redock of a docked panel is a no-op");
+        });
+    }
+
+    #[test]
+    fn r1094_follow_honors_a_moved_main_origin() {
+        Owner::new().run(|| {
+            let signal = use_windows_topology();
+            // Simulate the R1088 `WindowEvent::Moved` write-back: main
+            // learns its desktop origin. The follow opens the floater
+            // offset by it (gap(b) end to end).
+            let mut specs = signal.get();
+            specs[0].position = Some((100, 60));
+            signal.set(specs);
+            follow_panel_floating(VIEWPORT_PANEL_TAG, (40.0, 30.0));
+            let torn = signal
+                .get()
+                .into_iter()
+                .find(|w| w.id == "torn-viewport")
+                .expect("torn-viewport");
+            assert_eq!(
+                torn.position,
+                Some((140, 90)),
+                "desktop = main origin + cursor"
+            );
         });
     }
 

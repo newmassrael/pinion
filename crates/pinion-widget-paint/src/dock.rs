@@ -2624,6 +2624,28 @@ impl ExternalIntrospect for DockReorganizeExternal {
 /// duplicating the literal: `intent_tag!(PANEL_TAG, dock::TEAR_OFF_EVENT)`.
 pub const TEAR_OFF_EVENT: &str = "tear_off";
 
+/// R1094 §5.16 §5.41 §5.51 — symbolic event the [`DockPanelExternal`]
+/// emits on **every** drag move that has escaped every drop target: the
+/// live follow signal a follow-the-cursor tear-off coordinator consumes.
+/// Unlike the toggling [`TEAR_OFF_EVENT`] this is **ensure-only** — the
+/// binding reducer creates the panel's floating window if absent and
+/// writes its outer position from the forwarded cursor, never removes.
+/// Reusing the toggle on every move would double-toggle against the
+/// release that also fires (the R1071-R1078 lesson), so the live drag
+/// path pairs this with [`TEAR_OFF_REDOCK_EVENT`] (remove-only) and
+/// leaves `tear_off` as the discrete AI dock-back toggle. Payload is the
+/// follow JSON `{panel, x, y}` ([`IntrospectValue::Json`], window-logical
+/// cursor) — the panel id locates the window, the cursor positions it.
+pub const TEAR_OFF_FOLLOW_EVENT: &str = "tear_off_follow";
+
+/// R1094 §5.16 §5.41 §5.51 — symbolic event the [`DockPanelExternal`]
+/// emits when a drag that had torn the panel into a live floating
+/// follower ends back in the dock: released over a dock zone (redock) or
+/// snapped back / cancelled (restore). **Remove-only** — the binding
+/// reducer drops the panel's floating window if present, an idempotent
+/// no-op otherwise. Payload is the panel id ([`IntrospectValue::Text`]).
+pub const TEAR_OFF_REDOCK_EVENT: &str = "tear_off_redock";
+
 /// R683.B §5.16 — sidecar carrying [`view_dock_panel`]'s
 /// binding-local visual + behavioural constants. `#[non_exhaustive]`
 /// so future axes (resize handles, close button, collapse arrow)
@@ -3364,6 +3386,21 @@ fn drag_cursor_introspect(cursor: Option<(f64, f64)>) -> IntrospectValue {
     })
 }
 
+/// R1094 §5.16 §5.41 §5.51 — build the [`TEAR_OFF_FOLLOW_EVENT`] payload:
+/// the panel id plus the forwarded window-logical cursor, so the binding
+/// reducer both locates the panel's floating window and writes its
+/// position. The widget reports a cursor in the SOURCE window's frame; the
+/// binding adds that window's outer origin to reach a desktop position
+/// (the widget crate must not know about windows — the gap(b) the
+/// coordinator closes binding-side).
+fn tear_off_follow_payload(panel_id: &str, cursor: (f64, f64)) -> IntrospectValue {
+    IntrospectValue::Json(serde_json::json!({
+        "panel": panel_id,
+        "x": cursor.0,
+        "y": cursor.1,
+    }))
+}
+
 /// (R1081 §5.51) The `DragPayload::kind` discriminator a dock-panel drag
 /// carries, so a future cross-widget drop target can match dock panels
 /// before reading the payload value (the panel id).
@@ -3464,6 +3501,15 @@ pub struct DockPanelExternal {
     /// reads (the cursor is in the SOURCE window's frame; the desktop
     /// position additionally needs the source window's outer position).
     drag_cursor: Cell<Option<(f64, f64)>>,
+    /// (R1094 §5.16 §5.41 §5.51) `true` once the in-flight (or last) drag
+    /// escaped every drop target at least once, emitting a
+    /// [`TEAR_OFF_FOLLOW_EVENT`] that tore the panel into a live floating
+    /// follower. Drives the release / cancel arms: a snap-back or cancel
+    /// of a drag that DID detach emits [`TEAR_OFF_REDOCK_EVENT`] to restore
+    /// (remove the floating window this gesture created), whereas a drag
+    /// that never escaped snaps back with no window churn. Reset on
+    /// [`begin_drag`](External::begin_drag); surfaced via `query("detached")`.
+    detached: Cell<bool>,
     /// (R1081 §5.51) The shared reorganize coordinator. `Some` puts the
     /// panel in dock-or-float mode (drops onto other panels reorganize
     /// the shared topology); `None` is tear-off-only. Cloned from the
@@ -3485,6 +3531,7 @@ impl core::fmt::Debug for DockPanelExternal {
             .field("dragging", &self.dragging.get())
             .field("tear_off_fired", &self.tear_off_fired.get())
             .field("drag_cursor", &self.drag_cursor.get())
+            .field("detached", &self.detached.get())
             .finish_non_exhaustive()
     }
 }
@@ -3510,6 +3557,7 @@ impl DockPanelExternal {
             dragging: Cell::new(false),
             tear_off_fired: Cell::new(false),
             drag_cursor: Cell::new(None),
+            detached: Cell::new(false),
             reorganizer: None,
             drop_preview: None,
         }
@@ -3553,6 +3601,14 @@ impl DockPanelExternal {
     #[must_use]
     pub fn tear_off_fired(&self) -> bool {
         self.tear_off_fired.get()
+    }
+
+    /// (R1094 §5.16 §5.41 §5.51) Diagnostic: whether the in-flight (or
+    /// last) drag tore the panel into a live floating follower (escaped a
+    /// drop target mid-drag, emitting [`TEAR_OFF_FOLLOW_EVENT`]).
+    #[must_use]
+    pub fn detached(&self) -> bool {
+        self.detached.get()
     }
 
     /// (R1081 §5.51) Classify a resolved [`DropPoint`] into the dock
@@ -3602,6 +3658,27 @@ impl DockPanelExternal {
             payload: IntrospectValue::Text(self.panel_id.to_string()),
         });
     }
+
+    /// (R1094 §5.16 §5.41 §5.51) Enqueue the ensure+position follow intent
+    /// for a live tear-off drag move at `cursor` (window-logical). The
+    /// binding reducer creates the panel's floating window if absent and
+    /// writes its position; non-toggling so repeated moves only reposition.
+    fn enqueue_tear_off_follow(&self, cursor: (f64, f64)) {
+        self.pending_intents.borrow_mut().push_back(Intent {
+            tag: Cow::Borrowed(TEAR_OFF_FOLLOW_EVENT),
+            payload: tear_off_follow_payload(&self.panel_id, cursor),
+        });
+    }
+
+    /// (R1094 §5.16 §5.41 §5.51) Enqueue the remove-only redock / restore
+    /// intent. The binding reducer removes the panel's floating window if
+    /// present (idempotent no-op otherwise).
+    fn enqueue_tear_off_redock(&self) {
+        self.pending_intents.borrow_mut().push_back(Intent {
+            tag: Cow::Borrowed(TEAR_OFF_REDOCK_EVENT),
+            payload: IntrospectValue::Text(self.panel_id.to_string()),
+        });
+    }
 }
 
 impl External for DockPanelExternal {
@@ -3634,6 +3711,9 @@ impl External for DockPanelExternal {
         self.tear_off_fired.set(false);
         // R1093 — a fresh gesture clears the previous drag's last cursor.
         self.drag_cursor.set(None);
+        // R1094 — and the live-follower latch (this gesture has not yet
+        // escaped a drop target).
+        self.detached.set(false);
         Some(DragPayload {
             kind: Cow::Borrowed(DOCK_PANEL_DRAG_KIND),
             value: IntrospectValue::Text(self.panel_id.to_string()),
@@ -3665,6 +3745,14 @@ impl External for DockPanelExternal {
             self.resolve_preview(over.as_ref()),
         ) {
             self.tear_off_fired.set(false);
+            // R1094 — if the drag had torn the panel into a live floating
+            // follower before landing back on a dock zone, remove that
+            // window first so the reorganizer re-places a single panel
+            // (redock). A drag that never escaped leaves `detached` false
+            // and skips the redock.
+            if self.detached.get() {
+                self.enqueue_tear_off_redock();
+            }
             // `resolve_preview` already rejected the dead zone, so
             // `intent_for_zone` is `Some`; the `if let` keeps the SSOT
             // mapping panic-free. Dropping the `Result` is intentional: a
@@ -3675,17 +3763,37 @@ impl External for DockPanelExternal {
             if let Some(intent) = intent_for_zone(&preview.source, &preview.target, preview.zone) {
                 let _ = reorganizer.apply_intent(&intent);
             }
+            self.detached.set(false);
             return;
         }
-        // 2. Tear off only when the cursor escaped every drop target.
+        // 2. Escape-drop → the panel floats. The live follow already
+        // created + positioned the window during the drag; the release
+        // emits a final ensure+position at the release cursor (idempotent)
+        // so a degenerate gesture whose only escaped sample is the release
+        // still floats. Non-toggling — it cannot remove the window the
+        // follow created (the R1071-R1078 double-toggle lesson). The
+        // cursor-less fallback (no `_at` ever ran: pre-R1093 unit paths /
+        // direct `drag_release`) keeps the legacy `tear_off` toggle so an
+        // escape still floats without a forwarded cursor.
         if over.is_none() {
-            self.enqueue_tear_off();
+            if let Some(cursor) = self.drag_cursor.get() {
+                self.enqueue_tear_off_follow(cursor);
+            } else {
+                self.enqueue_tear_off();
+            }
+            self.detached.set(true);
             self.tear_off_fired.set(true);
-        } else {
-            // Dropped back on a panel (self / dead zone / no coordinator)
-            // → snap back, no commit.
-            self.tear_off_fired.set(false);
+            return;
         }
+        // 3. Snapped back over a panel / dead zone / no coordinator. A drag
+        // that had detached returns home → restore by removing the floating
+        // window this gesture created; a drag that never escaped is the
+        // plain snap-back (no commit, today's behaviour).
+        if self.detached.get() {
+            self.enqueue_tear_off_redock();
+        }
+        self.detached.set(false);
+        self.tear_off_fired.set(false);
     }
 
     /// (R1093 §5.15 §5.51 §2 #7) Record the absolute window-logical cursor
@@ -3695,6 +3803,16 @@ impl External for DockPanelExternal {
     /// `query("drag_cursor")`.
     fn drag_to_at(&mut self, payload: &DragPayload, over: Option<DropPoint>, cursor: (f64, f64)) {
         self.drag_cursor.set(Some(cursor));
+        // R1094 — a move that has escaped every drop target tears the
+        // panel into a live floating follower: latch `detached` and emit
+        // the ensure+position follow so the floating window is created (on
+        // the first escape) and tracks the cursor (on every subsequent
+        // escaped move). Over a panel the existing preview path runs and no
+        // follow fires — the panel is still a dock-drop candidate.
+        if over.is_none() {
+            self.detached.set(true);
+            self.enqueue_tear_off_follow(cursor);
+        }
         self.drag_to(payload, over);
     }
 
@@ -3720,6 +3838,12 @@ impl External for DockPanelExternal {
         self.tear_off_fired.set(false);
         self.set_drop_preview(None);
         self.is_drag_armed.set(true);
+        // R1094 — a cancelled drag that had torn the panel into a live
+        // floating follower restores by removing that window.
+        if self.detached.get() {
+            self.enqueue_tear_off_redock();
+        }
+        self.detached.set(false);
     }
 
     fn is_dirty(&self) -> bool {
@@ -3758,6 +3882,11 @@ impl ExternalIntrospect for DockPanelExternal {
             // escaped every tagged region (the tear-off case `drop_preview`
             // goes null on).
             ("drag_cursor", "json"),
+            // R1094 §5.16 §5.41 §5.51 — whether the in-flight/last drag
+            // tore the panel into a live floating follower (escaped a drop
+            // target). Paired with `scene/windows` (the floating window's
+            // live declared position), an AI observes a tear-off + follow.
+            ("detached", "bool"),
             ("send", "string"),
             // R683.C §5.16 §5.49 — direct tear-off invoke channel.
             // See `invoke` rustdoc.
@@ -3776,6 +3905,8 @@ impl ExternalIntrospect for DockPanelExternal {
             "drop_preview" => Some(drop_preview_introspect(self.drop_preview.as_ref())),
             // R1093 §5.15 §5.51 §2 #7 — the forwarded absolute cursor.
             "drag_cursor" => Some(drag_cursor_introspect(self.drag_cursor.get())),
+            // R1094 §5.16 §5.41 §5.51 — the live-follower latch.
+            "detached" => Some(IntrospectValue::Bool(self.detached())),
             _ => None,
         }
     }
@@ -3785,10 +3916,10 @@ impl ExternalIntrospect for DockPanelExternal {
             // Every slot is framework-owned. AI clients drive the gesture
             // through the `invoke("send", ...)` / `invoke("tear_off")`
             // channels + the shared coordinator — not by intervening on
-            // dragging / tear_off_fired / drop_preview / drag_cursor directly.
-            "panel_id" | "dragging" | "tear_off_fired" | "drop_preview" | "drag_cursor" => {
-                Err(InterveneError::ReadOnly)
-            }
+            // dragging / tear_off_fired / drop_preview / drag_cursor /
+            // detached directly.
+            "panel_id" | "dragging" | "tear_off_fired" | "drop_preview" | "drag_cursor"
+            | "detached" => Err(InterveneError::ReadOnly),
             _ => Err(InterveneError::UnknownPath),
         }
     }
@@ -3905,8 +4036,8 @@ mod tests {
 
     use super::{
         CONTENT_TAG_SUFFIX, DockDropZone, DockNode, DockPanelExternal, DockPanelStyle,
-        DockReorganizer, DockTopology, HEADER_TAG_SUFFIX, TEAR_OFF_EVENT, composite_tag,
-        dock_drop_zone_highlight, view_dock_panel,
+        DockReorganizer, DockTopology, HEADER_TAG_SUFFIX, TEAR_OFF_EVENT, TEAR_OFF_FOLLOW_EVENT,
+        TEAR_OFF_REDOCK_EVENT, composite_tag, dock_drop_zone_highlight, view_dock_panel,
     };
     use pinion_core::external::{
         DragPayload, DropPoint, External, ExternalIntrospect, InterveneError, IntrospectValue,
@@ -4252,6 +4383,7 @@ mod tests {
             "tear_off_fired",
             "drop_preview",
             "drag_cursor",
+            "detached",
             "send",
         ] {
             assert!(fields.contains(&needed), "schema must include {needed}");
@@ -4299,6 +4431,260 @@ mod tests {
             ),
             Err(InterveneError::ReadOnly),
             "drag_cursor is read-only (router-driven)"
+        );
+    }
+
+    /// (R1094) Extract `(panel, x, y)` from a [`TEAR_OFF_FOLLOW_EVENT`]
+    /// payload for the live-follow assertions below.
+    fn follow_fields(payload: &IntrospectValue) -> (String, f64, f64) {
+        let IntrospectValue::Json(v) = payload else {
+            panic!("tear_off_follow payload must be Json; got {payload:?}");
+        };
+        (
+            v.get("panel")
+                .and_then(serde_json::Value::as_str)
+                .expect("panel field")
+                .to_string(),
+            v.get("x")
+                .and_then(serde_json::Value::as_f64)
+                .expect("x field"),
+            v.get("y")
+                .and_then(serde_json::Value::as_f64)
+                .expect("y field"),
+        )
+    }
+
+    #[test]
+    fn r1094_escaped_move_emits_follow_and_latches_detached() {
+        // R1094 §5.16 §5.41 §5.51 — a drag move past every drop target
+        // (over = None) tears the panel into a live floating follower:
+        // latch `detached` + emit one ensure+position follow carrying the
+        // panel id and the window-logical cursor.
+        let mut ext = DockPanelExternal::new("a");
+        let _ = ext.begin_drag();
+        assert!(!ext.detached(), "fresh gesture has not detached");
+        ext.drag_to_at(&dummy_payload(), None, (640.0, 300.0));
+        assert!(ext.detached(), "an escaped move detaches");
+        let mut received: Vec<Intent> = Vec::new();
+        ext.drain_intents(&mut |i| received.push(i));
+        assert_eq!(received.len(), 1, "one follow per escaped move");
+        assert_eq!(received[0].tag.as_ref(), TEAR_OFF_FOLLOW_EVENT);
+        assert_eq!(
+            follow_fields(&received[0].payload),
+            ("a".to_string(), 640.0, 300.0),
+        );
+    }
+
+    #[test]
+    fn r1094_each_escaped_move_emits_a_follow_for_live_tracking() {
+        // Per-move follow: every escaped move re-emits the position so the
+        // floating window tracks the cursor (the binding reducer dedups a
+        // stationary cursor at `Signal::set`, not here).
+        let mut ext = DockPanelExternal::new("a");
+        let _ = ext.begin_drag();
+        ext.drag_to_at(&dummy_payload(), None, (10.0, 20.0));
+        ext.drag_to_at(&dummy_payload(), None, (30.0, 40.0));
+        ext.drag_to_at(&dummy_payload(), None, (50.0, 60.0));
+        let mut received: Vec<Intent> = Vec::new();
+        ext.drain_intents(&mut |i| received.push(i));
+        assert_eq!(received.len(), 3, "one follow per escaped move");
+        assert!(
+            received
+                .iter()
+                .all(|i| i.tag.as_ref() == TEAR_OFF_FOLLOW_EVENT)
+        );
+        assert_eq!(
+            follow_fields(&received[2].payload),
+            ("a".to_string(), 50.0, 60.0),
+            "the last follow carries the latest cursor",
+        );
+    }
+
+    #[test]
+    fn r1094_move_over_a_panel_does_not_follow() {
+        // A move that stays over a drop target is a dock candidate, not a
+        // tear-off: no follow, `detached` stays false.
+        let mut ext = DockPanelExternal::new("a");
+        let _ = ext.begin_drag();
+        ext.drag_to_at(
+            &dummy_payload(),
+            Some(drop_point("b", 0.5, 0.5)),
+            (100.0, 100.0),
+        );
+        assert!(!ext.detached(), "a move over a panel does not detach");
+        let mut received: Vec<Intent> = Vec::new();
+        ext.drain_intents(&mut |i| received.push(i));
+        assert!(received.is_empty(), "no follow over a drop target");
+    }
+
+    #[test]
+    fn r1094_escape_release_with_cursor_emits_follow_not_toggle() {
+        // The router path forwards a cursor (drag_release_at), so an
+        // escape-drop emits the non-toggling follow (final position), NOT
+        // the legacy `tear_off` toggle that would race the live follow
+        // (the R1071-R1078 double-toggle lesson).
+        let mut ext = DockPanelExternal::new("a");
+        let _ = ext.begin_drag();
+        ext.drag_to_at(&dummy_payload(), None, (640.0, 300.0));
+        ext.drag_release_at(&dummy_payload(), None, (700.0, 320.0));
+        assert!(ext.tear_off_fired(), "escape-drop floats");
+        assert!(ext.detached());
+        let mut received: Vec<Intent> = Vec::new();
+        ext.drain_intents(&mut |i| received.push(i));
+        assert_eq!(received.len(), 2, "move follow then release follow");
+        assert!(
+            received
+                .iter()
+                .all(|i| i.tag.as_ref() == TEAR_OFF_FOLLOW_EVENT)
+        );
+        assert_eq!(
+            follow_fields(&received[1].payload),
+            ("a".to_string(), 700.0, 320.0),
+            "the release follow carries the release cursor",
+        );
+    }
+
+    #[test]
+    fn r1094_cursorless_escape_release_keeps_the_legacy_toggle() {
+        // The pre-R1093 cursor-less path (direct `drag_release`, no `_at`)
+        // has no forwarded cursor, so an escape still floats via the legacy
+        // `tear_off` toggle — backward compatible (the existing r1081
+        // tests drive this path).
+        let mut ext = DockPanelExternal::new("a");
+        let _ = ext.begin_drag();
+        ext.drag_release(&dummy_payload(), None);
+        let mut received: Vec<Intent> = Vec::new();
+        ext.drain_intents(&mut |i| received.push(i));
+        assert_eq!(received.len(), 1);
+        assert_eq!(
+            received[0].tag.as_ref(),
+            TEAR_OFF_EVENT,
+            "cursor-less escape keeps the toggle",
+        );
+    }
+
+    #[test]
+    fn r1094_detached_then_snap_back_restores_via_redock() {
+        // A drag that tore the panel off (escaped) then returned and
+        // released over its own panel / a dead zone restores by removing
+        // the floating window this gesture created.
+        let mut ext = DockPanelExternal::new("a");
+        let _ = ext.begin_drag();
+        ext.drag_to_at(&dummy_payload(), None, (640.0, 300.0)); // detach
+        ext.drag_release_at(
+            &dummy_payload(),
+            Some(drop_point("a", 0.5, 0.5)),
+            (120.0, 40.0),
+        );
+        assert!(!ext.detached(), "restore clears the latch");
+        assert!(
+            !ext.tear_off_fired(),
+            "a restored snap-back is not a tear-off"
+        );
+        let mut received: Vec<Intent> = Vec::new();
+        ext.drain_intents(&mut |i| received.push(i));
+        assert_eq!(
+            received.len(),
+            2,
+            "the escaped move's follow, then the redock"
+        );
+        assert_eq!(received[0].tag.as_ref(), TEAR_OFF_FOLLOW_EVENT);
+        assert_eq!(received[1].tag.as_ref(), TEAR_OFF_REDOCK_EVENT);
+        assert_eq!(received[1].payload.as_str(), Some("a"));
+    }
+
+    #[test]
+    fn r1094_detached_then_cancel_restores_via_redock() {
+        // An OS-cancelled drag that had detached restores (removes the
+        // floating window).
+        let mut ext = DockPanelExternal::new("a");
+        let _ = ext.begin_drag();
+        ext.drag_to_at(&dummy_payload(), None, (640.0, 300.0)); // detach
+        ext.drag_cancel(&dummy_payload());
+        assert!(!ext.detached());
+        let mut received: Vec<Intent> = Vec::new();
+        ext.drain_intents(&mut |i| received.push(i));
+        assert_eq!(received.len(), 2);
+        assert_eq!(received[0].tag.as_ref(), TEAR_OFF_FOLLOW_EVENT);
+        assert_eq!(received[1].tag.as_ref(), TEAR_OFF_REDOCK_EVENT);
+    }
+
+    #[test]
+    fn r1094_never_detached_snap_back_does_not_redock() {
+        // A plain snap-back (the drag never escaped) commits nothing — no
+        // spurious redock that would remove an unrelated floating window.
+        let mut ext = DockPanelExternal::new("a");
+        let _ = ext.begin_drag();
+        ext.drag_to_at(
+            &dummy_payload(),
+            Some(drop_point("a", 0.5, 0.5)),
+            (100.0, 100.0),
+        );
+        ext.drag_release_at(
+            &dummy_payload(),
+            Some(drop_point("a", 0.5, 0.5)),
+            (100.0, 100.0),
+        );
+        let mut received: Vec<Intent> = Vec::new();
+        ext.drain_intents(&mut |i| received.push(i));
+        assert!(received.is_empty(), "never-escaped snap-back is a no-op");
+    }
+
+    #[test]
+    fn r1094_detached_redock_over_zone_removes_floating_then_docks() {
+        // With a coordinator: a drag that detached then dropped on a dock
+        // zone removes the floating window (redock) AND applies the dock.
+        let topology = Rc::new(Signal::new(Some(ab_topology())));
+        let reorganizer = Rc::new(DockReorganizer::new(Rc::clone(&topology)));
+        let mut ext = DockPanelExternal::new("a").with_reorganizer(Rc::clone(&reorganizer));
+        let _ = ext.begin_drag();
+        ext.drag_to_at(&dummy_payload(), None, (640.0, 300.0)); // detach
+        // Drop on the centre of "b" → swap; the redock removes the floater
+        // first so the reorganizer re-places a single panel.
+        ext.drag_release_at(
+            &dummy_payload(),
+            Some(drop_point("b", 0.5, 0.5)),
+            (300.0, 300.0),
+        );
+        assert!(!ext.detached());
+        let mut received: Vec<Intent> = Vec::new();
+        ext.drain_intents(&mut |i| received.push(i));
+        assert_eq!(received.len(), 2, "follow (escape) then redock");
+        assert_eq!(received[0].tag.as_ref(), TEAR_OFF_FOLLOW_EVENT);
+        assert_eq!(received[1].tag.as_ref(), TEAR_OFF_REDOCK_EVENT);
+        assert_eq!(
+            reorganizer.last_outcome().as_deref(),
+            Some("a -> b"),
+            "the dock still applied after the redock",
+        );
+    }
+
+    #[test]
+    fn r1094_detached_query_is_read_only_and_resets_per_gesture() {
+        let mut ext = DockPanelExternal::new("a");
+        assert_eq!(
+            ext.query("detached"),
+            Some(IntrospectValue::Bool(false)),
+            "detached is false before any drag",
+        );
+        let _ = ext.begin_drag();
+        ext.drag_to_at(&dummy_payload(), None, (640.0, 300.0));
+        assert_eq!(
+            ext.query("detached"),
+            Some(IntrospectValue::Bool(true)),
+            "detached is true after an escaped move",
+        );
+        // Framework-owned, not AI-writable.
+        assert_eq!(
+            ext.intervene("detached", IntrospectValue::Bool(false)),
+            Err(InterveneError::ReadOnly),
+        );
+        // A fresh gesture resets it.
+        let _ = ext.begin_drag();
+        assert_eq!(
+            ext.query("detached"),
+            Some(IntrospectValue::Bool(false)),
+            "begin_drag resets detached",
         );
     }
 
