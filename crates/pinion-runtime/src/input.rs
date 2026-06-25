@@ -1952,6 +1952,69 @@ fn tag_matches(node_tag: Option<&str>, target: &str) -> bool {
 /// primitive named by `target_tag`. `None` when no node carries the tag
 /// or it is scrolled fully out of view.
 ///
+/// R1098 §5.51 PR-33 — a drop resolved **across windows**: which window owns
+/// the drop target the absolute desktop cursor landed on, plus the
+/// [`DropPoint`] in that window's own local logical frame.
+///
+/// The per-window [`InputRouter::resolve_drop_point`] sees only its own
+/// `last_paint_scene`, so a drag captured by one window (a settled floating
+/// panel) can never resolve a dock zone in another window (the main dock) —
+/// the gap PR-33 closes. This is the cross-window peer: the shell, which holds
+/// every window's scene + outer position, resolves the abs cursor against all
+/// of them and carries the winning window id so the redock intent targets the
+/// right surface.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CrossWindowDrop {
+    /// Spec id of the window whose drop target the abs cursor landed on.
+    pub window: String,
+    /// The drop point in THAT window's local logical frame (the same
+    /// rect-normalised shape the source coordinator already classifies).
+    pub point: DropPoint,
+}
+
+/// R1098 §5.51 PR-33 — resolve an absolute desktop cursor against MULTIPLE
+/// windows' painted scenes, returning the window that owns the drop target +
+/// the [`DropPoint`] in that window's local frame. The cross-window peer of
+/// [`InputRouter::resolve_drop_point`].
+///
+/// Each `windows` item is `(spec_id, scene, outer_position)` in **logical**
+/// pixels (the same coordinate space the router resolves in). The abs cursor
+/// is transformed into each window's local frame (`abs - outer`) and the SAME
+/// opted-in drop-target hit-test ([`resolve_drop_target_tag`]) runs against
+/// that window's scene. Windows are tried in iteration order; the FIRST that
+/// resolves a drop target wins — the shell orders them so the **non-source**
+/// (and, where it matters, topmost) window is preferred, since a cross-window
+/// redock targets a *different* window than the dragged one.
+///
+/// Unlike [`InputRouter::resolve_drop_point`], this takes NO hover-tag
+/// fallback: a cross-window drop must land on a real opted-in drop region (a
+/// dock zone), never an arbitrary tagged node in another window. `None` when
+/// the cursor maps into no window's drop target (the drop floats).
+#[must_use]
+pub fn resolve_cross_window_drop<'a, I>(
+    windows: I,
+    abs_cursor: (f64, f64),
+) -> Option<CrossWindowDrop>
+where
+    I: IntoIterator<Item = (&'a str, &'a Scene, (f64, f64))>,
+{
+    for (spec_id, scene, (ox, oy)) in windows {
+        let (lx, ly) = (abs_cursor.0 - ox, abs_cursor.1 - oy);
+        let Some(tag) = resolve_drop_target_tag(scene, lx, ly) else {
+            continue;
+        };
+        let Some(rect) = rect_for_tag(scene, &tag) else {
+            continue;
+        };
+        let (x_rel, y_rel) = normalize_cursor(rect, lx, ly);
+        return Some(CrossWindowDrop {
+            window: spec_id.to_string(),
+            point: DropPoint { tag, x_rel, y_rel },
+        });
+    }
+    None
+}
+
 /// R51.62 §5.40 — `pub` so `pinion-shell` can resolve post-layout widget
 /// bounds when lowering [`pinion_a11y::AccessNode`] into
 /// `accesskit::TreeUpdate`; also used by the router's pointer-capture
@@ -3127,6 +3190,118 @@ mod tests {
             .with_style(BoxStyle::filled(Color::default())),
         );
         (root, (ea, ma), (eb, mb))
+    }
+
+    // ── R1098 §5.51 PR-33 — cross-window drop resolution ─────────────
+
+    /// A one-window paint scene: a single opted-in drop-target panel tagged
+    /// `tag` filling `rect` (window-local logical px), inside a root filling
+    /// the window.
+    fn window_with_drop_panel(tag: &str, rect: Rect) -> Scene {
+        use pinion_core::style::LayoutStyle;
+        let mut panel = Scene::Container(
+            ContainerNode::new(vec![])
+                .with_tag(tag.to_string())
+                .with_layout(LayoutStyle::new().with_drop_target(true))
+                .with_style(BoxStyle::filled(Color::default())),
+        );
+        if let Scene::Container(c) = &mut panel {
+            c.rect = rect;
+        }
+        let mut root = Scene::Container(ContainerNode::new(vec![panel]));
+        if let Scene::Container(c) = &mut root {
+            c.rect = Rect::new(0, 0, 1000, 800);
+        }
+        root
+    }
+
+    #[test]
+    fn r1098_resolves_a_drop_in_the_other_window() {
+        // main at the desktop origin holds a dock panel; a floating window at
+        // (800, 100) holds its own. An abs cursor over the MAIN panel resolves
+        // to main even though the floating window is listed first (a settled
+        // floating panel dragged back over main's dock — the PR-33 gap).
+        let main = window_with_drop_panel("main_dock", Rect::new(500, 400, 100, 100));
+        let floating = window_with_drop_panel("torn", Rect::new(10, 10, 80, 80));
+        let windows = [
+            ("torn", &floating, (800.0, 100.0)),
+            ("main", &main, (0.0, 0.0)),
+        ];
+        let drop = resolve_cross_window_drop(windows, (550.0, 450.0)).expect("resolves main dock");
+        assert_eq!(
+            drop.window, "main",
+            "the abs cursor maps into the main window"
+        );
+        assert_eq!(drop.point.tag, "main_dock");
+    }
+
+    #[test]
+    fn r1098_transforms_abs_cursor_into_each_window_local_frame() {
+        // The floating window sits at (800, 100); its panel is at LOCAL
+        // (10, 10, 80, 80). An abs cursor at (840, 140) is floating-local
+        // (40, 40) — inside the panel, 0.375 across each axis.
+        let floating = window_with_drop_panel("torn", Rect::new(10, 10, 80, 80));
+        let windows = [("torn", &floating, (800.0, 100.0))];
+        let drop =
+            resolve_cross_window_drop(windows, (840.0, 140.0)).expect("resolves the floater");
+        assert_eq!(drop.window, "torn");
+        assert!(
+            (drop.point.x_rel - 0.375).abs() < 1e-4,
+            "x_rel {}",
+            drop.point.x_rel
+        );
+        assert!(
+            (drop.point.y_rel - 0.375).abs() < 1e-4,
+            "y_rel {}",
+            drop.point.y_rel
+        );
+    }
+
+    #[test]
+    fn r1098_first_matching_window_wins_so_the_caller_orders_preference() {
+        // Two windows whose drop targets both cover the abs cursor: the FIRST
+        // in iteration order wins, so the shell controls preference (it lists
+        // the non-source window first for a cross-window redock).
+        let a = window_with_drop_panel("a_dock", Rect::new(0, 0, 100, 100));
+        let b = window_with_drop_panel("b_dock", Rect::new(0, 0, 100, 100));
+        let ab = [("a", &a, (0.0, 0.0)), ("b", &b, (0.0, 0.0))];
+        assert_eq!(
+            resolve_cross_window_drop(ab, (50.0, 50.0)).unwrap().window,
+            "a"
+        );
+        let ba = [("b", &b, (0.0, 0.0)), ("a", &a, (0.0, 0.0))];
+        assert_eq!(
+            resolve_cross_window_drop(ba, (50.0, 50.0)).unwrap().window,
+            "b"
+        );
+    }
+
+    #[test]
+    fn r1098_cursor_over_no_window_drop_target_is_none() {
+        // The abs cursor maps into no window's drop target (a gap) → None: a
+        // cross-window drop there floats, it does not redock.
+        let main = window_with_drop_panel("main_dock", Rect::new(0, 0, 100, 100));
+        let windows = [("main", &main, (0.0, 0.0))];
+        assert!(resolve_cross_window_drop(windows, (500.0, 500.0)).is_none());
+    }
+
+    #[test]
+    fn r1098_ignores_non_drop_target_tags_no_hover_fallback() {
+        // A window whose node under the cursor is TAGGED but not an opted-in
+        // drop target resolves to None — unlike the per-window resolver, the
+        // cross-window path takes no hover-tag fallback (a redock must land on
+        // a real dock zone, not an arbitrary tagged node in another window).
+        let mut node =
+            Scene::Container(ContainerNode::new(vec![]).with_tag("not_a_drop_target".to_string()));
+        if let Scene::Container(c) = &mut node {
+            c.rect = Rect::new(0, 0, 100, 100);
+        }
+        let mut root = Scene::Container(ContainerNode::new(vec![node]));
+        if let Scene::Container(c) = &mut root {
+            c.rect = Rect::new(0, 0, 200, 200);
+        }
+        let windows = [("main", &root, (0.0, 0.0))];
+        assert!(resolve_cross_window_drop(windows, (50.0, 50.0)).is_none());
     }
 
     #[test]
