@@ -17074,6 +17074,58 @@
         "MAIN_WINDOW_ID test-module literals kept as independent oracles (not production SSOT)"
       ]
     },
+    "R1105": {
+      "decision_summary": "R1105 PR-31: hello-dock-panels-editor becomes the 2nd float-to-window dock consumer (AI-driven tear-off into a floating WindowSpec + placeholder dock leaf, home-slot redock); the SEED's dock.rs trio-lift is re-scoped as architecturally infeasible (pinion-widget-paint has no pinion-shell dep) and deferred (2 mechanical copies, editor diverges at R1106).",
+      "changes_bullets": [
+        "examples/hello-dock-panels-editor: + windows_signal (use_editor_windows: single main -> torn-{panel} floaters) + view_for_window (main dock vs view_floating_panel) + access_node_for_window gating dock tablist a11y to main; WidgetCore::view delegates to an extracted view_main_dock.",
+        "Reducer tear-off family via event-suffix dispatch over the `{panel}.{event}` namespaced intents: tear_off toggle / tear_off_follow (ensure+position) / tear_off_redock / tear_off_redock_at (MAIN_WINDOW_ID gate -> HOME-slot redock; zone-honoring relocation deferred to R1106 slice-4(a)).",
+        "A floating panel's dock leaf paints view_floating_placeholder (fulfils dock.rs:3324's anticipatory '2nd consumer' doc); the panel is in exactly one place (the floater) = SSOT, no dual representation.",
+        "examples/hello-dock-panels-editor/Cargo.toml: serde_json promoted dev->regular dep (the reducer reads the tear_off_follow/redock_at JSON payloads).",
+        "16 new unit tests + tools/demos/r1105_editor_tear_off.py (~48 assertions across sections A-F)."
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 = 7704 passed / 0 failed (baseline 7688 + 16 new editor tests); clippy --workspace --all-targets (vello, -D pedantic) + cargo fmt --all --check clean.",
+        "mnemosyne validate-workspace T1 orphan=0 (new +0); validate-code-refs exit 0 (missing=0 section_missing=0; citation_unbound are info-severity Path-B provenance per the R716 carry).",
+        "r1105_editor_tear_off.py PASS (PINION_HIDDEN_WINDOW=1): boot 1 window -> tear off 2 (3 windows + placeholders) -> mixed redock (non-main rejected via firing-witness+survival, main executed 3->2) -> content restored -> read-only intervene rejected -> accept-after-reject (->1 window).",
+        "self-grep mandate 3b: is_panel_floating / follow_desktop_position / toggle_panel_floating / redock_panel_floating / follow_panel_floating each = 2 defs (flat + editor) = mechanical rule-of-three NOT met -> lift deferred."
+      ],
+      "impact_refs": [
+        "5.51",
+        "5.16",
+        "5.41"
+      ],
+      "carry_forward_bullets": [
+        "R1106 = editor zone-honoring redock (slice-4(a)): tear_off_redock_at into main RELOCATES the panel in the DockTopology (classify zone -> intent_for_zone -> reorganizer.apply_intent, reusing the same-window reorganize machinery) instead of the home slot = the editor's distinguishing value over the flat consumer.",
+        "Trio-lift re-scoped + DEFERRED: the SEED's 'flat follow/redock/desktop trio -> dock-substrate lift' is INFEASIBLE in dock.rs (pinion-widget-paint has no pinion-shell dep; it mirrors WindowSpec's serde to avoid the edge). Correct target = pinion-shell generic window helpers. 2 mechanical copies (flat+editor; sprag=3rd in a separate repo) = rule-of-three not met AND the editor diverges at R1106 (zone-relocate) -> lift after the divergence settles what is truly shared, not before.",
+        "R1095.1 source-window-id fix still carried: follow_desktop_position hard-codes 'main' (correct for the editor -- panels tear off from main only; the floating-header re-drag path is the parked live-grab-move scope).",
+        "Live floater->main pointer drag stays AI-invoke-only (R1095 moving-source coord double-count carry); live OS grab-move HW-gated."
+      ],
+      "publishable_decision_summary": "R1105 PR-31: hello-dock-panels-editor becomes the 2nd float-to-window dock consumer (AI-driven tear-off into a floating WindowSpec + placeholder dock leaf, home-slot redock); the SEED's dock.rs trio-lift is re-scoped as architecturally infeasible (pinion-widget-paint has no pinion-shell dep) and deferred (2 mechanical copies, editor diverges at R1106).",
+      "publishable_changes_bullets": [
+        "examples/hello-dock-panels-editor: + windows_signal (use_editor_windows: single main -> torn-{panel} floaters) + view_for_window (main dock vs view_floating_panel) + access_node_for_window gating dock tablist a11y to main; WidgetCore::view delegates to an extracted view_main_dock.",
+        "Reducer tear-off family via event-suffix dispatch over the `{panel}.{event}` namespaced intents: tear_off toggle / tear_off_follow (ensure+position) / tear_off_redock / tear_off_redock_at (MAIN_WINDOW_ID gate -> HOME-slot redock; zone-honoring relocation deferred to R1106 slice-4(a)).",
+        "A floating panel's dock leaf paints view_floating_placeholder (fulfils dock.rs:3324's anticipatory '2nd consumer' doc); the panel is in exactly one place (the floater) = SSOT, no dual representation.",
+        "examples/hello-dock-panels-editor/Cargo.toml: serde_json promoted dev->regular dep (the reducer reads the tear_off_follow/redock_at JSON payloads).",
+        "16 new unit tests + tools/demos/r1105_editor_tear_off.py (~48 assertions across sections A-F)."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 = 7704 passed / 0 failed (baseline 7688 + 16 new editor tests); clippy --workspace --all-targets (vello, -D pedantic) + cargo fmt --all --check clean.",
+        "mnemosyne validate-workspace T1 orphan=0 (new +0); validate-code-refs exit 0 (missing=0 section_missing=0; citation_unbound are info-severity Path-B provenance per the R716 carry).",
+        "r1105_editor_tear_off.py PASS (PINION_HIDDEN_WINDOW=1): boot 1 window -> tear off 2 (3 windows + placeholders) -> mixed redock (non-main rejected via firing-witness+survival, main executed 3->2) -> content restored -> read-only intervene rejected -> accept-after-reject (->1 window).",
+        "self-grep mandate 3b: is_panel_floating / follow_desktop_position / toggle_panel_floating / redock_panel_floating / follow_panel_floating each = 2 defs (flat + editor) = mechanical rule-of-three NOT met -> lift deferred."
+      ],
+      "publishable_impact_refs": [
+        "5.51",
+        "5.16",
+        "5.41"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R1106 = editor zone-honoring redock (slice-4(a)): tear_off_redock_at into main RELOCATES the panel in the DockTopology (classify zone -> intent_for_zone -> reorganizer.apply_intent, reusing the same-window reorganize machinery) instead of the home slot = the editor's distinguishing value over the flat consumer.",
+        "Trio-lift re-scoped + DEFERRED: the SEED's 'flat follow/redock/desktop trio -> dock-substrate lift' is INFEASIBLE in dock.rs (pinion-widget-paint has no pinion-shell dep; it mirrors WindowSpec's serde to avoid the edge). Correct target = pinion-shell generic window helpers. 2 mechanical copies (flat+editor; sprag=3rd in a separate repo) = rule-of-three not met AND the editor diverges at R1106 (zone-relocate) -> lift after the divergence settles what is truly shared, not before.",
+        "R1095.1 source-window-id fix still carried: follow_desktop_position hard-codes 'main' (correct for the editor -- panels tear off from main only; the floating-header re-drag path is the parked live-grab-move scope).",
+        "Live floater->main pointer drag stays AI-invoke-only (R1095 moving-source coord double-count carry); live OS grab-move HW-gated."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
