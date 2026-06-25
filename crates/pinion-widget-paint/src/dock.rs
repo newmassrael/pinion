@@ -2313,6 +2313,56 @@ impl DockReorganizer {
         Ok(self.commit(next, summary))
     }
 
+    /// (R1106 §5.51 §5.16 §5.41 PR-31) Zone-honoring cross-window redock —
+    /// relocate the `source` panel next to `target` at the dock zone the
+    /// normalised drop (`x_rel`, `y_rel`) classifies. This is the TOPOLOGY
+    /// half of a floating panel's return into a slot-bearing window: the
+    /// binding removes the floating `WindowSpec`, this re-places the panel's
+    /// leaf at the dropped zone (vs the R1103/R1105 home-slot return that
+    /// only dropped the window). Classifies through the same
+    /// [`dock_drop_zone_normalized`] + [`intent_for_zone`] SSOT the
+    /// same-window pointer drop uses ([`DockPanelExternal::drag_release`]),
+    /// then [`apply_intent`](Self::apply_intent) — so a cross-window redock
+    /// and an in-window drag land at the identical zone semantics (Center =
+    /// tabify, an edge = split-insert). The single forcing consumer is the
+    /// editor reducer's `tear_off_redock_at` arm; the flat `hello-dock-panels`
+    /// has no topology + no reorganizer, so it keeps its home-slot return.
+    ///
+    /// A drop on the panel's OWN slot (`source == target`, e.g. onto its own
+    /// placeholder) is a home return — no relocation. An out-of-panel
+    /// (`DockDropZone::None`) classification is a no-op; both record an
+    /// outcome for `query("last_outcome")` so an AI observes the decision.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the [`TopologyError`] from [`apply_intent`](Self::apply_intent)
+    /// when the relocation cannot apply (stale id, collision) — the live
+    /// topology is left unchanged and the binding's window-drop still returns
+    /// the panel home.
+    pub fn apply_zone_redock(
+        &self,
+        source: &str,
+        target: &str,
+        x_rel: f64,
+        y_rel: f64,
+    ) -> Result<String, TopologyError> {
+        if source == target {
+            // A drop on the panel's own slot is a home return, not a move.
+            let outcome = format!("{source}: home redock (own slot) — no move");
+            self.note_outcome(&outcome);
+            return Ok(outcome);
+        }
+        if let Some(intent) =
+            intent_for_zone(source, target, dock_drop_zone_normalized(x_rel, y_rel))
+        {
+            self.apply_intent(&intent)
+        } else {
+            let outcome = format!("{source} -> {target}: no actionable zone — no move");
+            self.note_outcome(&outcome);
+            Ok(outcome)
+        }
+    }
+
     /// (R1085 §5.51) Make tab `index` the visible tab of the
     /// [`DockNode::Tabs`] well `well_id` — the tab-well **navigation**
     /// gesture, shared by the `activate_tab` invoke (AI / RPC primary)
@@ -6765,6 +6815,96 @@ mod reorganize_tests {
             "apply_intent records the rejection itself: {outcome}",
         );
         assert!(outcome.contains(&err.to_string()));
+    }
+
+    /// (R1106) Do panels `x` and `y` form a 2-leaf split (direct siblings
+    /// under one divider) anywhere in the tree?
+    fn siblings_in_2leaf_split(node: &DockNode, x: &str, y: &str) -> bool {
+        if let DockNode::Split { first, second, .. } = node {
+            if let (DockNode::Leaf { panel_id: p }, DockNode::Leaf { panel_id: q }) =
+                (first.as_ref(), second.as_ref())
+            {
+                let (p, q) = (p.as_ref(), q.as_ref());
+                if (p == x && q == y) || (p == y && q == x) {
+                    return true;
+                }
+            }
+            return siblings_in_2leaf_split(first, x, y) || siblings_in_2leaf_split(second, x, y);
+        }
+        false
+    }
+
+    #[test]
+    fn r1106_apply_zone_redock_edge_relocates_source_beside_target() {
+        // The zone-honoring cross-window redock (the editor's PR-31 slice-4(a)):
+        // a panel returning into the dock lands AT the dropped edge, not home.
+        let topology = Rc::new(Signal::new(Some(abc_topology())));
+        let reorganizer = DockReorganizer::new(Rc::clone(&topology));
+        let before = topology.get().unwrap();
+        assert!(
+            siblings_in_2leaf_split(before.root(), "b", "c"),
+            "before: b|c siblings"
+        );
+        assert!(
+            !siblings_in_2leaf_split(before.root(), "a", "c"),
+            "before: a not beside c"
+        );
+        // Drop "a" on "c"'s LEFT edge (x_rel < DOCK_EDGE_ZONE_FRAC).
+        let outcome = reorganizer.apply_zone_redock("a", "c", 0.15, 0.5).unwrap();
+        assert_eq!(outcome, "a -> c", "the relocate fired through apply_intent");
+        let after = topology.get().unwrap();
+        assert!(
+            siblings_in_2leaf_split(after.root(), "a", "c"),
+            "a relocated beside c at the dropped edge",
+        );
+        assert!(
+            !siblings_in_2leaf_split(after.root(), "b", "c"),
+            "c's old b-sibling split changed (b's sibling is now the a|c split)",
+        );
+        assert_eq!(after.panel_ids().len(), 3, "no panel lost");
+    }
+
+    #[test]
+    fn r1106_apply_zone_redock_center_tabifies_source_onto_target() {
+        let topology = Rc::new(Signal::new(Some(abc_topology())));
+        let reorganizer = DockReorganizer::new(Rc::clone(&topology));
+        assert_eq!(topology.get().unwrap().tabs_well_count(), 0);
+        // Centre drop (x_rel == y_rel == 0.5, both >= DOCK_EDGE_ZONE_FRAC).
+        let outcome = reorganizer.apply_zone_redock("a", "c", 0.5, 0.5).unwrap();
+        assert_eq!(outcome, "a -> c");
+        let after = topology.get().unwrap();
+        assert_eq!(after.tabs_well_count(), 1, "a tab well formed from a + c");
+        assert_eq!(after.panel_ids().len(), 3, "tabify keeps all panels");
+    }
+
+    #[test]
+    fn r1106_apply_zone_redock_on_own_slot_is_home_noop() {
+        // A drop on the panel's own slot (source == target) is a home return,
+        // not a relocation — the topology is untouched.
+        let topology = Rc::new(Signal::new(Some(abc_topology())));
+        let reorganizer = DockReorganizer::new(Rc::clone(&topology));
+        let before = topology.get().unwrap();
+        let outcome = reorganizer.apply_zone_redock("a", "a", 0.15, 0.5).unwrap();
+        assert!(
+            outcome.contains("home redock"),
+            "self-drop is a home return: {outcome}"
+        );
+        assert_eq!(topology.get().unwrap(), before, "topology unchanged");
+    }
+
+    #[test]
+    fn r1106_apply_zone_redock_out_of_panel_is_noop() {
+        // An out-of-panel classification (x_rel >= 1.0 → DockDropZone::None)
+        // is a no-op — the binding's window-drop still returns the panel home.
+        let topology = Rc::new(Signal::new(Some(abc_topology())));
+        let reorganizer = DockReorganizer::new(Rc::clone(&topology));
+        let before = topology.get().unwrap();
+        let outcome = reorganizer.apply_zone_redock("a", "c", 1.5, 0.5).unwrap();
+        assert!(
+            outcome.contains("no actionable zone"),
+            "dead zone is a no-op: {outcome}"
+        );
+        assert_eq!(topology.get().unwrap(), before, "topology unchanged");
     }
 
     /// Side-by-side layout for the three panels (each 200×400).

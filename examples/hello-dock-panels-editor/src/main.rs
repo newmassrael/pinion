@@ -965,19 +965,21 @@ impl WidgetCore for DockPanelsEditorView {
                     }
                     return Vec::new();
                 }
-                // (R1105) Cross-window dock-at into the slot-bearing main
-                // window: a floating panel dropped onto main's dock (the live
-                // shell-composed `over_window`, or the AI-primary
-                // `tear_off_redock_at` invoke). Remove the floating window so
-                // the panel re-installs in its HOME slot — its topology leaf,
-                // still present as a placeholder. Only `MAIN_WINDOW_ID` hosts a
+                // (R1105/R1106) Cross-window dock-at into the slot-bearing
+                // main window: a floating panel dropped onto main's dock (the
+                // live shell-composed `over_window`, or the AI-primary
+                // `tear_off_redock_at` invoke). Only `MAIN_WINDOW_ID` hosts a
                 // panel (a floater has no slot); a non-main target fires the
                 // intent (the panel's `redock_at` diagnostic records it) but
-                // executes no move. ★ZONE-HONORING relocation (use the
-                // `target`/`x_rel`/`y_rel` to re-place the panel via the
-                // `DockTopology` + reorganizer rather than its home slot) is
-                // the editor's distinguishing value — R1106's slice-4(a),
-                // built on this foundation.
+                // executes no move. ★R1106 ZONE-HONORING relocation (the
+                // editor's distinguishing value over the flat consumer): the
+                // panel sits in the topology as a placeholder leaf, so
+                // `reorganizer.apply_zone_redock(panel, target, x_rel, y_rel)`
+                // re-places it AT the dropped zone (the same
+                // `intent_for_zone` SSOT the in-window drag uses) — then the
+                // floating window drops so the relocated leaf paints content.
+                // A rejected / dead-zone relocate leaves the topology
+                // unchanged, so the window-drop returns the panel home.
                 TEAR_OFF_REDOCK_AT_EVENT => {
                     if let IntrospectValue::Json(v) = &intent.payload
                         && let (Some(panel), Some(window)) = (
@@ -986,6 +988,14 @@ impl WidgetCore for DockPanelsEditorView {
                         )
                         && window == MAIN_WINDOW_ID
                     {
+                        if let Some(target) = v.get("target").and_then(serde_json::Value::as_str) {
+                            let x_rel = v.get("x_rel").and_then(serde_json::Value::as_f64);
+                            let y_rel = v.get("y_rel").and_then(serde_json::Value::as_f64);
+                            if let (Some(x_rel), Some(y_rel)) = (x_rel, y_rel) {
+                                let _ = use_editor_reorganizer()
+                                    .apply_zone_redock(panel, target, x_rel, y_rel);
+                            }
+                        }
                         redock_panel_floating(panel);
                     }
                     return Vec::new();
@@ -1921,6 +1931,105 @@ mod tests {
             assert!(
                 Rc::ptr_eq(&from_trait, &use_editor_windows()),
                 "same cached signal"
+            );
+        });
+    }
+
+    // ─── R1106 §5.51 §5.16 §5.41 PR-31 zone-honoring redock (slice-4(a)) ───
+
+    /// (R1106) Recursive 2-leaf-sibling check (mirrors the dock crate's
+    /// `reorganize_tests` helper) — proves a zone-honoring relocate landed.
+    fn siblings_in_split(node: &DockNode, x: &str, y: &str) -> bool {
+        if let DockNode::Split { first, second, .. } = node {
+            if let (DockNode::Leaf { panel_id: p }, DockNode::Leaf { panel_id: q }) =
+                (first.as_ref(), second.as_ref())
+            {
+                let (p, q) = (p.as_ref(), q.as_ref());
+                if (p == x && q == y) || (p == y && q == x) {
+                    return true;
+                }
+            }
+            return siblings_in_split(first, x, y) || siblings_in_split(second, x, y);
+        }
+        false
+    }
+
+    #[test]
+    fn r1106_redock_at_zone_relocates_panel_in_topology() {
+        run_in_owner(|| {
+            let windows = use_editor_windows();
+            let topo = use_editor_topology();
+            // Boot: viewport sits beside properties (the inner_h split).
+            assert!(
+                siblings_in_split(
+                    topo.get().unwrap().root(),
+                    VIEWPORT_PANEL_TAG,
+                    PROPERTIES_PANEL_TAG
+                ),
+                "boot: viewport|properties are siblings",
+            );
+            // Tear off viewport, then redock onto console's LEFT edge.
+            toggle_panel_floating(VIEWPORT_PANEL_TAG);
+            assert!(is_panel_floating(&windows.get(), VIEWPORT_PANEL_TAG));
+            let intent = Intent {
+                tag: tear_off_tag(VIEWPORT_PANEL_TAG, TEAR_OFF_REDOCK_AT_EVENT),
+                payload: IntrospectValue::Json(serde_json::json!({
+                    "panel": VIEWPORT_PANEL_TAG,
+                    "window": MAIN_WINDOW_ID,
+                    "target": CONSOLE_PANEL_TAG,
+                    "x_rel": 0.15,
+                    "y_rel": 0.5,
+                })),
+            };
+            let _ = <DockPanelsEditorView as WidgetCore>::update(ButtonState::Idle, &intent);
+            // The floating window is gone (re-docked) AND the panel RELOCATED.
+            assert!(
+                !is_panel_floating(&windows.get(), VIEWPORT_PANEL_TAG),
+                "the floating window is removed (re-docked)",
+            );
+            let after = topo.get().unwrap();
+            assert!(
+                siblings_in_split(after.root(), VIEWPORT_PANEL_TAG, CONSOLE_PANEL_TAG),
+                "viewport relocated beside console at the dropped edge (NOT its home slot)",
+            );
+            assert!(
+                !siblings_in_split(after.root(), VIEWPORT_PANEL_TAG, PROPERTIES_PANEL_TAG),
+                "viewport left its home inner_h slot",
+            );
+            assert_eq!(
+                use_editor_reorganizer().last_outcome().as_deref(),
+                Some("viewport -> console"),
+                "the relocate fired through the shared reorganizer",
+            );
+        });
+    }
+
+    #[test]
+    fn r1106_redock_at_non_main_target_does_not_relocate() {
+        run_in_owner(|| {
+            let topo = use_editor_topology();
+            let before = topo.get().unwrap();
+            toggle_panel_floating(VIEWPORT_PANEL_TAG);
+            // Target a non-main window (another floater) → no relocate, no redock.
+            let intent = Intent {
+                tag: tear_off_tag(VIEWPORT_PANEL_TAG, TEAR_OFF_REDOCK_AT_EVENT),
+                payload: IntrospectValue::Json(serde_json::json!({
+                    "panel": VIEWPORT_PANEL_TAG,
+                    "window": "torn-outliner",
+                    "target": OUTLINER_PANEL_TAG,
+                    "x_rel": 0.15,
+                    "y_rel": 0.5,
+                })),
+            };
+            let _ = <DockPanelsEditorView as WidgetCore>::update(ButtonState::Idle, &intent);
+            assert!(
+                is_panel_floating(&use_editor_windows().get(), VIEWPORT_PANEL_TAG),
+                "still floating (non-main target hosts nothing)",
+            );
+            assert_eq!(
+                topo.get().unwrap(),
+                before,
+                "topology untouched for a non-main target",
             );
         });
     }
