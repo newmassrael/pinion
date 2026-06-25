@@ -17230,6 +17230,60 @@
         "R1108 = audit-first: the remaining PR-31 debt is ② (HW-gated only) — likely PIVOT to a high-value buildable Phase-B campaign gap (DCC widget depth / Model-View at scale / text-editor depth, CLAUDE.md Phase B value order). Also carried: per-move declared_window_specs() rebuild perf; drop_panel_scene≈window_with_drop_panel 3rd-consumer test-fixtures lift."
       ]
     },
+    "R1107.1": {
+      "decision_summary": "R1107.1 review-clearance: 3 read-only adversarial reviewers on the R1105-R1107 PR-31 editor-docking line judged the core textbook but surfaced 4 real defects, cleared inline — M1 source-window dropped on the release arm (MUST), S1 follow_desktop_position+window_exists lifted to pinion-shell (byte-identical 2 consumers + sprag drift), S2 ensure_window made structural via router_for (closes the touch gap), S3 the apply_zone_redock reject-redocks-home contract test.",
+      "changes_bullets": [
+        "M1 (MUST-FIX, dock.rs): the cursor-less `drag_release` escape-arm now reads `last_source_window` (recorded each `drag_to_at`/`drag_release_at`) instead of hard-coding None — the FINAL release-follow carries the gesture's source window (R1107 fixed only the per-move arm; a floater re-drag's RELEASE re-positioned at main's origin = the R1095.1 defect on the release path). + a dock test that fails without the fix.",
+        "S2 (pinion-runtime): `ensure_window` made STRUCTURAL via a `router_for(routers, window_id)` helper used at all ~11 router-access sites — R1107 stamped at only 2 dispatch chokes and silently missed `touch_event_for_window`, so a touch-driven tear-off got source=None→main. Now every per-window dispatch (incl. touch + pointer_down) stamps the window id.",
+        "S1 (SSOT, pinion-shell): lifted `desktop_position_from` (config-free, byte-identical across flat+editor, sprag's 3rd copy already drifted) + `window_exists` to pinion-shell (WindowSpec's crate = the only viable home; widget-paint has no shell dep). Both dock consumers now delegate; None falls back to `pinion_runtime::DEFAULT_WINDOW` (dedups the \"main\" literal). Config-bearing helpers (follow/toggle/redock_panel_floating) correctly stay binding-local. + pinion-shell unit tests.",
+        "S3 (test): editor `apply_zone_redock` `# Errors` contract test — a `tear_off_redock_at` whose target names no panel rejects the relocate (topology UNCHANGED) yet still removes the window (panel home, not lost/floating).",
+        "N1/N3 (NIT): DragUpdate::source_window doc names the population asymmetry (over_window=transient session vs source_window=router identity); the r1105 redock test targets its OWN slot (home no-op) so it no longer silently triggers an unasserted tabify."
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 = 7718 passed / 0 failed (R1107 baseline 7714 + 4 clearance tests: release-follow source / pinion-shell desktop_position_from + window_exists / reject-redocks-home); 21 doc-test sections (full workspace completion).",
+        "clippy --workspace --all-targets (vello, -D pedantic) + cargo fmt --all --check clean (fixed a doc_lazy_continuation from a mis-placed free fn that stole the struct doc, + a tautological None.unwrap_or).",
+        "mnemosyne validate-workspace T1 orphan=0 (new +0); validate-code-refs exit 0 (missing=0).",
+        "demos r1105 / r1106 / r1107 + flat r1094 all PASS (PINION_HIDDEN_WINDOW=1) — no behavioral regression from the desktop_position_from/window_exists lift (output-identical delegation).",
+        "3 read-only adversarial reviewers (craft/SSOT + architecture/north-star + test-honesty) + author re-verify: core judged TEXTBOOK (A(ii) gate placement, intent_for_zone SSOT reuse, placeholder-leaf=SSOT not dual-rep, source_window single-thread, layering clean, north-star real); the 4 cleared defects were genuine (M1 release-path drop = MUST; S1 lift / S2 structural / S3 test = SHOULD)."
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.41",
+        "5.51"
+      ],
+      "carry_forward_bullets": [
+        "sprag's desktop-conversion copy (cursor_to_desktop) has DRIFTED off the pre-R1107 signature — it migrates to pinion_shell::desktop_position_from in a sprag-native session (the 3rd consumer the S1 lift now serves; pinion never edits sprag).",
+        "The config-bearing window helpers (follow_panel_floating / toggle_panel_floating / redock_panel_floating) stay binding-local by design — they reference per-binding FLOATING_W/H + the position cascade, so they legitimately resist a config-free lift (the reviewers agreed).",
+        "Pre-existing standing smell (NOT this PR-31 line, R683.B/R685): 2 broken intra-doc links `[`WindowSpec`](pinion_shell::WindowSpec)` in pinion-widget-paint/dock.rs — widget-paint has no pinion-shell dep, so cargo doc emits unresolved-link warnings (slips the clippy-only commit gate). Deferred to a dedicated doc-hygiene pass.",
+        "R1108 = audit-first PIVOT to a high-value buildable Phase-B gap (PR-31 editor docking + this review-clearance now complete; the remaining dock-DnD axis ② live-grab-move is HW-gated only). DCC widget depth / Model-View at scale / text-editor (CLAUDE.md Phase B value order)."
+      ],
+      "publishable_decision_summary": "R1107.1 review-clearance: 3 read-only adversarial reviewers on the R1105-R1107 PR-31 editor-docking line judged the core textbook but surfaced 4 real defects, cleared inline — M1 source-window dropped on the release arm (MUST), S1 follow_desktop_position+window_exists lifted to pinion-shell (byte-identical 2 consumers + sprag drift), S2 ensure_window made structural via router_for (closes the touch gap), S3 the apply_zone_redock reject-redocks-home contract test.",
+      "publishable_changes_bullets": [
+        "M1 (MUST-FIX, dock.rs): the cursor-less `drag_release` escape-arm now reads `last_source_window` (recorded each `drag_to_at`/`drag_release_at`) instead of hard-coding None — the FINAL release-follow carries the gesture's source window (R1107 fixed only the per-move arm; a floater re-drag's RELEASE re-positioned at main's origin = the R1095.1 defect on the release path). + a dock test that fails without the fix.",
+        "S2 (pinion-runtime): `ensure_window` made STRUCTURAL via a `router_for(routers, window_id)` helper used at all ~11 router-access sites — R1107 stamped at only 2 dispatch chokes and silently missed `touch_event_for_window`, so a touch-driven tear-off got source=None→main. Now every per-window dispatch (incl. touch + pointer_down) stamps the window id.",
+        "S1 (SSOT, pinion-shell): lifted `desktop_position_from` (config-free, byte-identical across flat+editor, sprag's 3rd copy already drifted) + `window_exists` to pinion-shell (WindowSpec's crate = the only viable home; widget-paint has no shell dep). Both dock consumers now delegate; None falls back to `pinion_runtime::DEFAULT_WINDOW` (dedups the \"main\" literal). Config-bearing helpers (follow/toggle/redock_panel_floating) correctly stay binding-local. + pinion-shell unit tests.",
+        "S3 (test): editor `apply_zone_redock` `# Errors` contract test — a `tear_off_redock_at` whose target names no panel rejects the relocate (topology UNCHANGED) yet still removes the window (panel home, not lost/floating).",
+        "N1/N3 (NIT): DragUpdate::source_window doc names the population asymmetry (over_window=transient session vs source_window=router identity); the r1105 redock test targets its OWN slot (home no-op) so it no longer silently triggers an unasserted tabify."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 = 7718 passed / 0 failed (R1107 baseline 7714 + 4 clearance tests: release-follow source / pinion-shell desktop_position_from + window_exists / reject-redocks-home); 21 doc-test sections (full workspace completion).",
+        "clippy --workspace --all-targets (vello, -D pedantic) + cargo fmt --all --check clean (fixed a doc_lazy_continuation from a mis-placed free fn that stole the struct doc, + a tautological None.unwrap_or).",
+        "mnemosyne validate-workspace T1 orphan=0 (new +0); validate-code-refs exit 0 (missing=0).",
+        "demos r1105 / r1106 / r1107 + flat r1094 all PASS (PINION_HIDDEN_WINDOW=1) — no behavioral regression from the desktop_position_from/window_exists lift (output-identical delegation).",
+        "3 read-only adversarial reviewers (craft/SSOT + architecture/north-star + test-honesty) + author re-verify: core judged TEXTBOOK (A(ii) gate placement, intent_for_zone SSOT reuse, placeholder-leaf=SSOT not dual-rep, source_window single-thread, layering clean, north-star real); the 4 cleared defects were genuine (M1 release-path drop = MUST; S1 lift / S2 structural / S3 test = SHOULD)."
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.41",
+        "5.51"
+      ],
+      "publishable_carry_forward_bullets": [
+        "sprag's desktop-conversion copy (cursor_to_desktop) has DRIFTED off the pre-R1107 signature — it migrates to pinion_shell::desktop_position_from in a sprag-native session (the 3rd consumer the S1 lift now serves; pinion never edits sprag).",
+        "The config-bearing window helpers (follow_panel_floating / toggle_panel_floating / redock_panel_floating) stay binding-local by design — they reference per-binding FLOATING_W/H + the position cascade, so they legitimately resist a config-free lift (the reviewers agreed).",
+        "Pre-existing standing smell (NOT this PR-31 line, R683.B/R685): 2 broken intra-doc links `[`WindowSpec`](pinion_shell::WindowSpec)` in pinion-widget-paint/dock.rs — widget-paint has no pinion-shell dep, so cargo doc emits unresolved-link warnings (slips the clippy-only commit gate). Deferred to a dedicated doc-hygiene pass.",
+        "R1108 = audit-first PIVOT to a high-value buildable Phase-B gap (PR-31 editor docking + this review-clearance now complete; the remaining dock-DnD axis ② live-grab-move is HW-gated only). DCC widget depth / Model-View at scale / text-editor (CLAUDE.md Phase B value order)."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
