@@ -16610,6 +16610,56 @@
         "broader demo-sweep health audit still owed (other constraint-change carries may persist)"
       ]
     },
+    "R1098": {
+      "decision_summary": "R1098 §5.51 PR-33 cross-window drop-resolution substrate: resolve_cross_window_drop maps an abs desktop cursor across windows to a target window + DropPoint (the redock gap a per-window router cannot close); 5 headless tests",
+      "changes_bullets": [
+        "resolve_cross_window_drop + CrossWindowDrop in pinion-runtime: abs cursor -> (window, DropPoint)",
+        "transforms abs -> each window's local frame, reuses the per-scene resolve_drop_target_tag hit-test",
+        "drop-targets only (no hover fallback): a redock lands on a real dock zone, not an arbitrary tag",
+        "first-matching-window wins -> the caller (shell) orders the non-source window first",
+        "the cross-window peer of per-window InputRouter::resolve_drop_point (which sees one scene)",
+        "consumer-forced seam from sprag PINION-PR33 handoff (pinion-side substrate only, no sprag edits)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace 7668 pass / 0 fail (5 new r1098 substrate tests)",
+        "clippy -p pinion-runtime --features vello (-D pedantic) clean; cargo fmt clean",
+        "covers: resolve other window / abs->local transform / first-wins order / no-target none / no-hover"
+      ],
+      "impact_refs": [
+        "5.51",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "PR-33 next slice (R1099): scene/cross_window_drop RPC introspect + drag->redock wiring + target window",
+        "that wiring threads per-window scenes through the per-window-scoped DispatchContext (deeper plumbing)",
+        "r683_dock_tear_off.py section E (cross-window dock-back) fix rides on the R1099 wiring (still RED)",
+        "live winit cross-window grab HW-gated (WM-dependent abs-coord forwarding under grab); RPC path bypasses"
+      ],
+      "publishable_decision_summary": "R1098 §5.51 PR-33 cross-window drop-resolution substrate: resolve_cross_window_drop maps an abs desktop cursor across windows to a target window + DropPoint (the redock gap a per-window router cannot close); 5 headless tests",
+      "publishable_changes_bullets": [
+        "resolve_cross_window_drop + CrossWindowDrop in pinion-runtime: abs cursor -> (window, DropPoint)",
+        "transforms abs -> each window's local frame, reuses the per-scene resolve_drop_target_tag hit-test",
+        "drop-targets only (no hover fallback): a redock lands on a real dock zone, not an arbitrary tag",
+        "first-matching-window wins -> the caller (shell) orders the non-source window first",
+        "the cross-window peer of per-window InputRouter::resolve_drop_point (which sees one scene)",
+        "consumer-forced seam from sprag PINION-PR33 handoff (pinion-side substrate only, no sprag edits)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace 7668 pass / 0 fail (5 new r1098 substrate tests)",
+        "clippy -p pinion-runtime --features vello (-D pedantic) clean; cargo fmt clean",
+        "covers: resolve other window / abs->local transform / first-wins order / no-target none / no-hover"
+      ],
+      "publishable_impact_refs": [
+        "5.51",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "PR-33 next slice (R1099): scene/cross_window_drop RPC introspect + drag->redock wiring + target window",
+        "that wiring threads per-window scenes through the per-window-scoped DispatchContext (deeper plumbing)",
+        "r683_dock_tear_off.py section E (cross-window dock-back) fix rides on the R1099 wiring (still RED)",
+        "live winit cross-window grab HW-gated (WM-dependent abs-coord forwarding under grab); RPC path bypasses"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
