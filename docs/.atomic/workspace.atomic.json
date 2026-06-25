@@ -17126,6 +17126,58 @@
         "Live floater->main pointer drag stays AI-invoke-only (R1095 moving-source coord double-count carry); live OS grab-move HW-gated."
       ]
     },
+    "R1106": {
+      "decision_summary": "R1106 PR-31: editor zone-honoring cross-window redock — a floating panel returning into main RELOCATES at the dropped zone via DockReorganizer::apply_zone_redock (reusing the same-window intent_for_zone SSOT), the editor's distinguishing value over the flat consumer; re-scoped from design B (host-window threading) to A(ii) (binding gate + one reorganizer method).",
+      "changes_bullets": [
+        "crates/pinion-widget-paint/src/dock.rs: + DockReorganizer::apply_zone_redock(source, target, x_rel, y_rel) — classifies via dock_drop_zone_normalized + the intent_for_zone SSOT (kept private) → apply_intent; source==target / out-of-panel = recorded home/no-op. The TOPOLOGY half of a cross-window redock (binding removes the WindowSpec).",
+        "examples/hello-dock-panels-editor: the tear_off_redock_at arm (window==MAIN) now reads target/x_rel/y_rel + calls apply_zone_redock to RELOCATE the placeholder leaf AT the dropped zone (Center=tabify / edge=split-insert), then removes the floating window — vs R1105's home-slot return. A rejected/dead-zone relocate degrades to home.",
+        "★Design re-scope (SEED said 'verify B'): B (reorganizer-gated inside settle_cross_window_redock) needs threading a host_window id into DockPanelExternal to tell a redock-onto-main from a redock-onto-another-floater = duplicates the binding's MAIN gate. A(ii) keeps the single gate in the binding (already there R1105) + one clean reorganizer method (intent_for_zone stays private). A(ii) chosen.",
+        "6 unit tests (4 dock apply_zone_redock: edge-relocate / center-tabify / own-slot-home / dead-zone + 2 editor reducer) + tools/demos/r1106_editor_zone_redock.py (~33 assert, A-E; topology-JSON structural proof + last_outcome)."
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 = 7710 passed / 0 failed (R1105 baseline 7704 + 6: 4 dock apply_zone_redock + 2 editor reducer); clippy --workspace --all-targets (vello, -D pedantic) + cargo fmt --all --check clean (fixed a single_match_else → if-let-else).",
+        "mnemosyne validate-workspace T1 orphan=0 (new +0); validate-code-refs exit 0 (missing=0 section_missing=0).",
+        "r1106_editor_zone_redock.py PASS (PINION_HIDDEN_WINDOW=1): edge redock (viewport->console LEFT) relocates viewport BESIDE console NOT properties + last_outcome 'viewport -> console'; center redock (outliner->properties) tabifies; all 5 panels survive every relocate; last_outcome read-only intervene rejected. Proof via live topology JSON structure + last_outcome (AI-observable scene-as-data).",
+        "self-grep: apply_zone_redock = 1 def (new reorganizer method, single editor consumer); no duplication introduced."
+      ],
+      "impact_refs": [
+        "5.51",
+        "5.16",
+        "5.41"
+      ],
+      "carry_forward_bullets": [
+        "Editor float-to-window axis (PR-31 ①) core value DELIVERED: float (R1105) + zone-honoring redock (R1106) both done. The editor consumer's redock DIVERGED from the flat (zone-relocate vs home-slot) exactly as R1105 predicted — confirming the trio-lift deferral was right (the interesting logic diverged; only the trivial window add/remove is shared).",
+        "trio-lift still DEFERRED: pinion-shell generic window helper, at the sprag 3rd consumer (2 mechanical copies in pinion: flat + editor).",
+        "R1095.1 source-window-id fix still carried (follow_desktop_position hard-codes 'main'; correct for the editor — main-only tear-off; floating-header re-drag = parked live-grab-move).",
+        "② delta-based live-grab-move (live floater->main pointer drag, r683 RED since R1094) = bigger substrate, HW-gated; AI-invoke path is the §2#2-primary driver meanwhile.",
+        "R1107 = audit-first next: either the remaining PR-31 debts (live-grab-move ② is HW-gated/big) OR pivot to a high-value buildable Phase-B campaign gap (DCC depth / Model-View / text-editor — CLAUDE.md Phase B value order). Also carried: per-move declared_window_specs() rebuild perf; drop_panel_scene≈window_with_drop_panel 3rd-consumer test-fixtures lift."
+      ],
+      "publishable_decision_summary": "R1106 PR-31: editor zone-honoring cross-window redock — a floating panel returning into main RELOCATES at the dropped zone via DockReorganizer::apply_zone_redock (reusing the same-window intent_for_zone SSOT), the editor's distinguishing value over the flat consumer; re-scoped from design B (host-window threading) to A(ii) (binding gate + one reorganizer method).",
+      "publishable_changes_bullets": [
+        "crates/pinion-widget-paint/src/dock.rs: + DockReorganizer::apply_zone_redock(source, target, x_rel, y_rel) — classifies via dock_drop_zone_normalized + the intent_for_zone SSOT (kept private) → apply_intent; source==target / out-of-panel = recorded home/no-op. The TOPOLOGY half of a cross-window redock (binding removes the WindowSpec).",
+        "examples/hello-dock-panels-editor: the tear_off_redock_at arm (window==MAIN) now reads target/x_rel/y_rel + calls apply_zone_redock to RELOCATE the placeholder leaf AT the dropped zone (Center=tabify / edge=split-insert), then removes the floating window — vs R1105's home-slot return. A rejected/dead-zone relocate degrades to home.",
+        "★Design re-scope (SEED said 'verify B'): B (reorganizer-gated inside settle_cross_window_redock) needs threading a host_window id into DockPanelExternal to tell a redock-onto-main from a redock-onto-another-floater = duplicates the binding's MAIN gate. A(ii) keeps the single gate in the binding (already there R1105) + one clean reorganizer method (intent_for_zone stays private). A(ii) chosen.",
+        "6 unit tests (4 dock apply_zone_redock: edge-relocate / center-tabify / own-slot-home / dead-zone + 2 editor reducer) + tools/demos/r1106_editor_zone_redock.py (~33 assert, A-E; topology-JSON structural proof + last_outcome)."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 = 7710 passed / 0 failed (R1105 baseline 7704 + 6: 4 dock apply_zone_redock + 2 editor reducer); clippy --workspace --all-targets (vello, -D pedantic) + cargo fmt --all --check clean (fixed a single_match_else → if-let-else).",
+        "mnemosyne validate-workspace T1 orphan=0 (new +0); validate-code-refs exit 0 (missing=0 section_missing=0).",
+        "r1106_editor_zone_redock.py PASS (PINION_HIDDEN_WINDOW=1): edge redock (viewport->console LEFT) relocates viewport BESIDE console NOT properties + last_outcome 'viewport -> console'; center redock (outliner->properties) tabifies; all 5 panels survive every relocate; last_outcome read-only intervene rejected. Proof via live topology JSON structure + last_outcome (AI-observable scene-as-data).",
+        "self-grep: apply_zone_redock = 1 def (new reorganizer method, single editor consumer); no duplication introduced."
+      ],
+      "publishable_impact_refs": [
+        "5.51",
+        "5.16",
+        "5.41"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Editor float-to-window axis (PR-31 ①) core value DELIVERED: float (R1105) + zone-honoring redock (R1106) both done. The editor consumer's redock DIVERGED from the flat (zone-relocate vs home-slot) exactly as R1105 predicted — confirming the trio-lift deferral was right (the interesting logic diverged; only the trivial window add/remove is shared).",
+        "trio-lift still DEFERRED: pinion-shell generic window helper, at the sprag 3rd consumer (2 mechanical copies in pinion: flat + editor).",
+        "R1095.1 source-window-id fix still carried (follow_desktop_position hard-codes 'main'; correct for the editor — main-only tear-off; floating-header re-drag = parked live-grab-move).",
+        "② delta-based live-grab-move (live floater->main pointer drag, r683 RED since R1094) = bigger substrate, HW-gated; AI-invoke path is the §2#2-primary driver meanwhile.",
+        "R1107 = audit-first next: either the remaining PR-31 debts (live-grab-move ② is HW-gated/big) OR pivot to a high-value buildable Phase-B campaign gap (DCC depth / Model-View / text-editor — CLAUDE.md Phase B value order). Also carried: per-move declared_window_specs() rebuild perf; drop_panel_scene≈window_with_drop_panel 3rd-consumer test-fixtures lift."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
