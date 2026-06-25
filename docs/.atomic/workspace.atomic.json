@@ -16660,6 +16660,62 @@
         "live winit cross-window grab HW-gated (WM-dependent abs-coord forwarding under grab); RPC path bypasses"
       ]
     },
+    "R1099": {
+      "decision_summary": "R1099 §5.51 §2 #7 PR-33 cross-window drop RPC introspection: scene/cross_window_drop resolves an abs desktop cursor across windows to {window,tag,x_rel,y_rel}; shell pre-resolves (Scene not Clone); +negative-coord guard fix",
+      "changes_bullets": [
+        "scene/cross_window_drop RPC: abs cursor -> {window, tag, x_rel, y_rel} or null (AI-first, §2 #7)",
+        "shell pre-resolves &self before the borrow split (Scene not Clone) -> owned result threaded to ctx",
+        "DispatchContext.cross_window_drop + builder; cross_window_drop.rs handler + RPC_METHODS catalog entry",
+        "FIX: resolve_cross_window_drop rejects negative local coords (clamp-to-0 spuriously hit out-of-window)",
+        "pinion-runtime re-exports CrossWindowDrop + resolve_cross_window_drop at root",
+        "exposes the R1098 substrate; the drag->redock MUTATION + r683 are R1100"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace 7672 pass / 0 fail (+1 negative-coord guard, +3 handler, catalog-sync green)",
+        "clippy --workspace --all-targets --features vello (-D pedantic) clean; cargo fmt clean",
+        "r1099_cross_window_drop.py 30 assert PASS: main->main / floater->floater (the gap) / empty null / no-cursor err",
+        "proves an abs cursor mapping OUTSIDE the source window resolves the OTHER window (per-window router cannot)"
+      ],
+      "impact_refs": [
+        "5.51",
+        "5.16",
+        "5.7"
+      ],
+      "carry_forward_bullets": [
+        "drag->redock MUTATION (floating drag -> cross-window resolve -> tear_off_redock + target-window-id) = R1100",
+        "that mutation needs the External/intent surface to carry the target window id (deeper than this READ)",
+        "r683_dock_tear_off.py section E (cross-window dock-back) RED since R1094 -> fixed in R1100 with the mutation",
+        "live winit cross-window grab HW-gated (WM abs-coord forwarding under grab); this RPC path drives it headlessly",
+        "broader demo-sweep health audit still owed (other constraint-change carries may persist)"
+      ],
+      "publishable_decision_summary": "R1099 §5.51 §2 #7 PR-33 cross-window drop RPC introspection: scene/cross_window_drop resolves an abs desktop cursor across windows to {window,tag,x_rel,y_rel}; shell pre-resolves (Scene not Clone); +negative-coord guard fix",
+      "publishable_changes_bullets": [
+        "scene/cross_window_drop RPC: abs cursor -> {window, tag, x_rel, y_rel} or null (AI-first, §2 #7)",
+        "shell pre-resolves &self before the borrow split (Scene not Clone) -> owned result threaded to ctx",
+        "DispatchContext.cross_window_drop + builder; cross_window_drop.rs handler + RPC_METHODS catalog entry",
+        "FIX: resolve_cross_window_drop rejects negative local coords (clamp-to-0 spuriously hit out-of-window)",
+        "pinion-runtime re-exports CrossWindowDrop + resolve_cross_window_drop at root",
+        "exposes the R1098 substrate; the drag->redock MUTATION + r683 are R1100"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace 7672 pass / 0 fail (+1 negative-coord guard, +3 handler, catalog-sync green)",
+        "clippy --workspace --all-targets --features vello (-D pedantic) clean; cargo fmt clean",
+        "r1099_cross_window_drop.py 30 assert PASS: main->main / floater->floater (the gap) / empty null / no-cursor err",
+        "proves an abs cursor mapping OUTSIDE the source window resolves the OTHER window (per-window router cannot)"
+      ],
+      "publishable_impact_refs": [
+        "5.51",
+        "5.16",
+        "5.7"
+      ],
+      "publishable_carry_forward_bullets": [
+        "drag->redock MUTATION (floating drag -> cross-window resolve -> tear_off_redock + target-window-id) = R1100",
+        "that mutation needs the External/intent surface to carry the target window id (deeper than this READ)",
+        "r683_dock_tear_off.py section E (cross-window dock-back) RED since R1094 -> fixed in R1100 with the mutation",
+        "live winit cross-window grab HW-gated (WM abs-coord forwarding under grab); this RPC path drives it headlessly",
+        "broader demo-sweep health audit still owed (other constraint-change carries may persist)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
