@@ -1342,8 +1342,20 @@ impl InputRouter {
             let own_over = cursor.and_then(|(x, y)| self.resolve_drop_point(x, y));
             // R1100/R1102 §5.51 PR-33 — the same own-window-first rule as the
             // move: an own-window drop is a same-window commit (`over_window`
-            // None); otherwise the shell's last-resolved cross-window drop (the
-            // session carries it from the final move) redocks into that window.
+            // None); otherwise the shell's last-resolved cross-window drop redocks
+            // into that window. NOTE the `own_over` half is re-resolved HERE at the
+            // release cursor, but the cross-window half (`session.cross_window`) is
+            // NOT — it is whatever the final `cursor_moved` stashed (only
+            // `cursor_moved_for_window` calls `set_drag_cross_window`, never the
+            // release path). The drag harness emits a move at the release point
+            // immediately before `pointer_up`, and a native release is normally
+            // preceded by a `CursorMoved` at the same point, so the stash matches
+            // the release cursor. A native release whose cursor differs from the
+            // last move (event coalescing) would commit a STALE `over_window` —
+            // own-window-first bounds the blast radius (it only applies when
+            // `own_over` is None), but a future tightening could re-resolve cross-
+            // window here too (it needs the shell, which the per-window router
+            // lacks — a slice-3 wiring once the redock executes).
             let (over, over_window) = resolve_drag_targets(own_over, session.cross_window);
             let (primary, _) = split_subindex(&session.source_tag);
             if let Some(external) = find_external_by_tag(state_scene, primary) {

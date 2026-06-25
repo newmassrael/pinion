@@ -1,5 +1,16 @@
 #!/usr/bin/env python3
-"""R1102 §5.51 §2 #7 PR-33 — cross-window redock fires LIVE (mutation slice 2).
+"""R1102 §5.51 §2 #7 PR-33 — the cross-window redock CONTRACT fires + is
+observable (mutation slice 2 — wiring, NOT topology execution).
+
+SCOPE — read this before the assertions. R1102 makes the dragged panel FIRE a
+cross-window redock intent carrying the correct target window, and makes that
+firing AI-observable. It does NOT move the panel between windows: the
+`tear_off_redock_at` intent has no reducer consumer yet (it drains to a no-op),
+and the executable case (a floating panel returning into the topology-bearing
+window) lands in slice 3 (R1103). So every assertion below proves the WIRING
+(shell composes `over_window` → router fills it → panel records it), never an
+actual topology change. Section G asserts that no execution happened, so the
+slice boundary is explicit rather than implied.
 
 R1098 built the cross-window drop geometry, R1099 made it AI-observable as a
 read (`scene/cross_window_drop`), R1100 gave `DockPanelExternal` a `over_window`
@@ -16,27 +27,37 @@ panel then emits the cross-window dock-at, recorded on the persistent
 `query("redock_at")` diagnostic (the transient intent is drained into the
 reducer; the diagnostic persists for an AI to observe).
 
-The headline path: tear a panel into a real second window, then drag ANOTHER
-panel out of main onto that floating window's region. The per-window router for
-`main` resolves `None` there (the cursor is outside main); the shell maps it into
-the floater and the panel redocks into THAT window — driven + observed headlessly
-through `scene/drag` + `scene/query`, no cross-window pointer grab (HW-gated).
+The driven path: tear a panel into a real second window, then drag ANOTHER panel
+out of main onto that floating window's region. The per-window router for `main`
+resolves `None` there (the cursor is outside main); the shell maps the abs cursor
+into the floater and the panel records that window as its redock target — driven
++ observed headlessly through `scene/drag` + `scene/query`, no cross-window
+pointer grab (HW-gated). The recorded `redock_at` is a faithful GEOMETRIC record
+of where the cursor resolved; whether that target can host the panel (a floater
+cannot) is slice 3's concern, not this contract's.
 
-Section roadmap (>=30 assertions across A-F):
+Section roadmap (>=30 assertions across A-G):
 
   (A) Boot — single WM-placed "main", three panels docked, every panel's
       redock_at null (no cross-window drag yet).
   (B) Tear-off — drag the inspector out; a second declared window appears at the
       escape position.
-  (C) Cross-window redock (the headline) — drag the PROPERTY panel out of main
-      onto the floating window's region; property's redock_at names the FLOATING
-      window + the zone the cursor landed on (the live firing of the contract).
-  (D) Same-window control — a drag that stays over main's own dock is a
-      same-window reorganize: the dragged panel's redock_at stays null.
+  (C) Cross-window contract fires — drag the PROPERTY panel out of main onto the
+      floating window's region; property's redock_at records the FLOATING window
+      + the zone the cursor resolved on (the shell-composed `over_window`). This
+      proves the WIRING fired; it does not move the panel (see G).
+  (D) Same-window control — a drag that stays over main's own dock fills no
+      `over_window`, so the dragged panel's redock_at stays null. (The
+      own-window-first DISCRIMINATION itself is pinned by the runtime unit test
+      `r1102_own_window_hit_suppresses_a_stale_cross_window`; D is the end-to-end
+      sanity that a within-dock drag records nothing.)
   (E) Read-only — `scene/intervene` on redock_at is rejected (router-driven).
-  (F) The read peer still agrees — `scene/cross_window_drop` resolves the same
-      floating window for the same abs cursor (the R1099 read + the R1102 write
-      share one resolver).
+  (F) The read peer agrees — `scene/cross_window_drop` resolves the same floating
+      window for the same abs cursor (the R1099 read + the R1102 write share one
+      resolver).
+  (G) Fire-only boundary — the floater is STILL declared and property is STILL
+      its own panel: the contract fired but executed no topology change (slice 3
+      owed). Makes the slice boundary an explicit assertion, not a silent gap.
 """
 
 from __future__ import annotations
@@ -105,6 +126,18 @@ def _center(rect: dict[str, float]) -> tuple[float, float]:
     return rect["x"] + rect["w"] * 0.5, rect["y"] + rect["h"] * 0.5
 
 
+def _scene_contains_tag(scene: Any, target: str) -> bool:
+    if not isinstance(scene, dict):
+        return False
+    if scene.get("tag") == target:
+        return True
+    for child in scene.get("children") or []:
+        if _scene_contains_tag(child, target):
+            return True
+    content = scene.get("content")
+    return isinstance(content, dict) and _scene_contains_tag(content, target)
+
+
 def _redock_at(tf: RpcSubprocess, panel: str) -> Any:
     return tf.query(f"/{panel}/external/redock_at")
 
@@ -169,8 +202,8 @@ def body() -> None:
         # it floated — it did NOT cross-window redock.
         assert _redock_at(tf, _INSPECTOR) is None, "B.6 a tear-off-to-float is not a cross-window redock"
 
-        # ── (C) cross-window redock — the headline ───────────────────
-        _section("C: drag PROPERTY out of main onto the floating window → live redock")
+        # ── (C) cross-window contract fires (NOT executes — see G) ────
+        _section("C: drag PROPERTY onto the floater → the cross-window contract fires")
         # Prime the floater's paint scene (R684 first-paint finalize) so its drop
         # targets resolve under the cross-window hit-test.
         size = entry.get("declared_size")
@@ -192,20 +225,21 @@ def body() -> None:
         _drag(tf, "main", _PROPERTY_HEADER, target)
         observed = wait_until(
             lambda: _redock_at(tf, _PROPERTY),
-            desc="C.3 property records a cross-window redock",
+            desc="C.3 property records the cross-window redock contract firing",
         )
         assert isinstance(observed, dict), f"C.4 redock_at is the dock-at payload ({observed})"
         assert observed["window"] == torn, (
-            f"C.5 property redocked into the FLOATING window, not main ({observed})"
+            f"C.5 the fired contract names the FLOATING window (the shell-composed "
+            f"over_window), not main ({observed})"
         )
-        assert observed["panel"] == _PROPERTY, f"C.6 the redock names the property panel ({observed})"
+        assert observed["panel"] == _PROPERTY, f"C.6 the contract names the property panel ({observed})"
         assert observed["target"] == _INSPECTOR, (
-            f"C.7 the drop landed on the floater's inspector zone ({observed})"
+            f"C.7 the cursor resolved on the floater's inspector drop zone ({observed})"
         )
         assert 0.0 <= observed["x_rel"] <= 1.0 and 0.0 <= observed["y_rel"] <= 1.0, (
             f"C.8 the drop point is normalised over the zone ({observed})"
         )
-        # The viewport, never dragged, recorded no cross-window redock.
+        # The viewport, never dragged, fired no cross-window contract.
         assert _redock_at(tf, _VIEWPORT) is None, "C.9 the un-dragged viewport has no redock_at"
 
         # ── (D) same-window control — a within-main drag never redocks ─
@@ -239,7 +273,26 @@ def body() -> None:
         )
         assert again["tag"] == _INSPECTOR, f"F.2 the read peer's tag matches the redock target ({again})"
 
-        print("[demo] r1102_cross_window_redock: all sections PASS")
+        # ── (G) fire-only boundary — the contract did NOT execute ────
+        _section("G: the contract fired but executed no topology change (slice 3 owed)")
+        # The cross-window redock intent has no reducer consumer yet, so firing it
+        # (C) moved no panel between windows. Prove it: the floater the contract
+        # named still hosts ONLY the inspector — property did NOT relocate into it,
+        # even though property's redock_at named it as the target. C = the contract
+        # fired + is observable; G = nothing executed. This makes the slice-2
+        # boundary an explicit assertion, not a silent gap (execution is R1103).
+        floater_scene = tf.snapshot(source="paint", viewport=(fw, fh), window=torn)
+        assert floater_scene is not None, "G.1 the floater paint scene is observable"
+        assert _scene_contains_tag(floater_scene, _INSPECTOR), (
+            "G.2 the floater still hosts the inspector panel"
+        )
+        assert not _scene_contains_tag(floater_scene, _PROPERTY), (
+            "G.3 property did NOT relocate into the floater — the contract fired but "
+            "executed no topology merge (slice 3 owed)"
+        )
+        # An AI can observe the intent fired (C) but no completed redock (G). Slice 2.
+
+        print("[demo] r1102_cross_window_redock: all sections PASS (fire + observe; execution = slice 3)")
 
 
 if __name__ == "__main__":
