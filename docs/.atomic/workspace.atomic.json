@@ -16822,6 +16822,60 @@
         "live winit cross-window grab HW-gated; broader demo-sweep health audit still owed"
       ]
     },
+    "R1102": {
+      "decision_summary": "R1102 §5.51 PR-33 slice 2: shell resolves a live drag cross-window drop (source excluded) onto the session; router fills over_window; the R1100 redock contract fires live + is observable",
+      "changes_bullets": [
+        "shell resolve_cross_window_live: abs cursor vs OTHER windows, source excluded (F5 caller-owned)",
+        "result stashed on DragSession.cross_window (set_drag_cross_window); gated on an active drag",
+        "resolve_drag_targets: own-window drop first; cross-window applies only when own resolve is empty",
+        "router update_drag + pointer_up fill DragUpdate.over_window from the session (move + release)",
+        "DockPanelExternal redock_at: persistent last cross-window dock-at payload (AI-observable)",
+        "cross_window_drop_at shared by the scene/cross_window_drop READ and the live resolve"
+      ],
+      "verification_bullets": [
+        "demo r1102_cross_window_redock 31 assert: tear-off floater, drag property onto it -> redock_at",
+        "4 unit: own-first rule / over_window threading / stale-suppression / redock_at lifecycle",
+        "cargo test --workspace 7680 / 0 fail; clippy -D pedantic clean; cargo fmt clean",
+        "live hello-dock-panels via scene/drag + scene/query; read peer scene/cross_window_drop agrees"
+      ],
+      "impact_refs": [
+        "5.51",
+        "5.15",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "tear-off follower exclusion owed (slice 3): async creation avoids intra-gesture pollution today",
+        "slice 3 (R1103): DockReorganizer redock primitive (commit() SSOT) consumes intent + preview overlay",
+        "slice 4 (R1104): flat reducer dock-at-zone + r683 real cross-window drag-back (RED since R1094)",
+        "per-move declared_window_specs() rebuild during multi-window drags - cache if perf shows"
+      ],
+      "publishable_decision_summary": "R1102 §5.51 PR-33 slice 2: shell resolves a live drag cross-window drop (source excluded) onto the session; router fills over_window; the R1100 redock contract fires live + is observable",
+      "publishable_changes_bullets": [
+        "shell resolve_cross_window_live: abs cursor vs OTHER windows, source excluded (F5 caller-owned)",
+        "result stashed on DragSession.cross_window (set_drag_cross_window); gated on an active drag",
+        "resolve_drag_targets: own-window drop first; cross-window applies only when own resolve is empty",
+        "router update_drag + pointer_up fill DragUpdate.over_window from the session (move + release)",
+        "DockPanelExternal redock_at: persistent last cross-window dock-at payload (AI-observable)",
+        "cross_window_drop_at shared by the scene/cross_window_drop READ and the live resolve"
+      ],
+      "publishable_verification_bullets": [
+        "demo r1102_cross_window_redock 31 assert: tear-off floater, drag property onto it -> redock_at",
+        "4 unit: own-first rule / over_window threading / stale-suppression / redock_at lifecycle",
+        "cargo test --workspace 7680 / 0 fail; clippy -D pedantic clean; cargo fmt clean",
+        "live hello-dock-panels via scene/drag + scene/query; read peer scene/cross_window_drop agrees"
+      ],
+      "publishable_impact_refs": [
+        "5.51",
+        "5.15",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "tear-off follower exclusion owed (slice 3): async creation avoids intra-gesture pollution today",
+        "slice 3 (R1103): DockReorganizer redock primitive (commit() SSOT) consumes intent + preview overlay",
+        "slice 4 (R1104): flat reducer dock-at-zone + r683 real cross-window drag-back (RED since R1094)",
+        "per-move declared_window_specs() rebuild during multi-window drags - cache if perf shows"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
