@@ -16768,6 +16768,60 @@
         "live winit cross-window grab HW-gated; RPC scene/drag drives it headlessly once slice 2 lands"
       ]
     },
+    "R1101": {
+      "decision_summary": "R1101 §5.51 audit-clearance (F1+F3+F5/F8): drag _at args collapse into a DragUpdate struct; DockPanelExternal detaches from the router became_drag verdict, not a private DragLatch",
+      "changes_bullets": [
+        "DragUpdate{over,cursor,over_window,became_drag} struct replaces the drag _at positional ladder",
+        "drag_to_at/drag_release_at take &DragUpdate; a new dimension is a field, not a positional arg",
+        "DockPanelExternal detach reads update.became_drag (router SSOT); detach_latch + DragLatch gone (F1)",
+        "router threads press_became_drag verdict into DragUpdate at update_drag and pointer_up",
+        "F5/F8: resolve_cross_window_drop + pointer_up docs weakened (ordering=caller, mechanism TBD)",
+        "DragUpdate not #[non_exhaustive] (cross-crate literal, DropPoint precedent; SEED deviation)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace 7676 / 0 fail (+1 r1101 detach-keys-off-verdict-not-distance forcing test)",
+        "clippy --workspace --all-targets --features vello (-D pedantic) clean",
+        "live scene/drag traced: pointer_down to press_gestures to became_drag, panel detach preserved",
+        "audit-clearance: no wire/RPC change; detach now keyed to real press point = strictly more correct"
+      ],
+      "impact_refs": [
+        "5.51",
+        "5.15",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "slice 2 (R1102): shell composes cross-window over_window live; router pure; RPC scene/drag demo",
+        "slice 3 (R1103): DockReorganizer redock primitive (commit() SSOT) + cross-window preview overlay",
+        "slice 4 (R1104): flat reducer dock-at-zone + r683 real cross-window drag-back (RED since R1094)",
+        "live winit cross-window grab HW-gated; broader demo-sweep health audit still owed"
+      ],
+      "publishable_decision_summary": "R1101 §5.51 audit-clearance (F1+F3+F5/F8): drag _at args collapse into a DragUpdate struct; DockPanelExternal detaches from the router became_drag verdict, not a private DragLatch",
+      "publishable_changes_bullets": [
+        "DragUpdate{over,cursor,over_window,became_drag} struct replaces the drag _at positional ladder",
+        "drag_to_at/drag_release_at take &DragUpdate; a new dimension is a field, not a positional arg",
+        "DockPanelExternal detach reads update.became_drag (router SSOT); detach_latch + DragLatch gone (F1)",
+        "router threads press_became_drag verdict into DragUpdate at update_drag and pointer_up",
+        "F5/F8: resolve_cross_window_drop + pointer_up docs weakened (ordering=caller, mechanism TBD)",
+        "DragUpdate not #[non_exhaustive] (cross-crate literal, DropPoint precedent; SEED deviation)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace 7676 / 0 fail (+1 r1101 detach-keys-off-verdict-not-distance forcing test)",
+        "clippy --workspace --all-targets --features vello (-D pedantic) clean",
+        "live scene/drag traced: pointer_down to press_gestures to became_drag, panel detach preserved",
+        "audit-clearance: no wire/RPC change; detach now keyed to real press point = strictly more correct"
+      ],
+      "publishable_impact_refs": [
+        "5.51",
+        "5.15",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "slice 2 (R1102): shell composes cross-window over_window live; router pure; RPC scene/drag demo",
+        "slice 3 (R1103): DockReorganizer redock primitive (commit() SSOT) + cross-window preview overlay",
+        "slice 4 (R1104): flat reducer dock-at-zone + r683 real cross-window drag-back (RED since R1094)",
+        "live winit cross-window grab HW-gated; broader demo-sweep health audit still owed"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
