@@ -16984,6 +16984,50 @@
         "shell resolve_cross_window_live source-exclusion still CI-demo-only (R1102.1 owed)"
       ]
     },
+    "R1104": {
+      "decision_summary": "R1104 §5.51 §2 #7 PR-33 slice 4 audit + debt-clearance: the planned slice-4 work grounds out — (a) flat dock-at-zone needs a DockTopology the flat demo lacks (re-scoped to the editor float-to-window axis), (b) live cross-window drag-back needs delta-based live-grab-move for a moving floating source (re-scoped). Cleared carry (d) instead: fast-suite coverage for the shell's cross-window source-exclusion (the R1102.1 review SHOULD-FIX, previously CI-demo-only).",
+      "changes_bullets": [
+        "audit: slice-4(a) flat dock-at-zone needs a topology; re-scoped off the flat demo",
+        "audit: slice-4(b) live drag-back needs delta-based live-grab-move (moving source)",
+        "new fast fixture CrossWindowFixture: 2 positioned windows + injected drop scenes",
+        "4 tests pin cross_window_drop_at exclusion + resolve_cross_window_live both ways"
+      ],
+      "verification_bullets": [
+        "4 unit (pinion-shell): source excluded / escaped-into-other / live both directions",
+        "cargo test --workspace green; clippy(vello,-D pedantic) clean; fmt clean",
+        "audit + debt-clearance round: feature demo is r1102/r1103 (no new demo)"
+      ],
+      "impact_refs": [
+        "5.51",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "slice-4(a) zone-honoring redock -> editor float-to-window 2nd consumer (topology+tear-off)",
+        "slice-4(b) live cross-window drag-back -> delta-based live-grab-move for a moving floater",
+        "r683 live drag-back stays RED until (b); follow model drifts for a moving source"
+      ],
+      "publishable_decision_summary": "R1104 §5.51 §2 #7 PR-33 slice 4 audit + debt-clearance: the planned slice-4 work grounds out — (a) flat dock-at-zone needs a DockTopology the flat demo lacks (re-scoped to the editor float-to-window axis), (b) live cross-window drag-back needs delta-based live-grab-move for a moving floating source (re-scoped). Cleared carry (d) instead: fast-suite coverage for the shell's cross-window source-exclusion (the R1102.1 review SHOULD-FIX, previously CI-demo-only).",
+      "publishable_changes_bullets": [
+        "audit: slice-4(a) flat dock-at-zone needs a topology; re-scoped off the flat demo",
+        "audit: slice-4(b) live drag-back needs delta-based live-grab-move (moving source)",
+        "new fast fixture CrossWindowFixture: 2 positioned windows + injected drop scenes",
+        "4 tests pin cross_window_drop_at exclusion + resolve_cross_window_live both ways"
+      ],
+      "publishable_verification_bullets": [
+        "4 unit (pinion-shell): source excluded / escaped-into-other / live both directions",
+        "cargo test --workspace green; clippy(vello,-D pedantic) clean; fmt clean",
+        "audit + debt-clearance round: feature demo is r1102/r1103 (no new demo)"
+      ],
+      "publishable_impact_refs": [
+        "5.51",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "slice-4(a) zone-honoring redock -> editor float-to-window 2nd consumer (topology+tear-off)",
+        "slice-4(b) live cross-window drag-back -> delta-based live-grab-move for a moving floater",
+        "r683 live drag-back stays RED until (b); follow model drifts for a moving source"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
