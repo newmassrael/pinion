@@ -16340,6 +16340,68 @@
         "The mid-drag (per-move) drag_to_at forwarding is unit-verified (atomic scene/drag cannot observe between move and release); the demo verifies the release-point cursor end-to-end."
       ]
     },
+    "R1094": {
+      "decision_summary": "Live cursor-following tear-off: an escaped drag move tears the panel into a floating follower whose declared position tracks the cursor (gap(b) window-logical to desktop). Non-toggling follow/redock seam keeps the AI toggle intact; per-move tracking + restore unit-tested, declared follow is the headless SSOT, live OS grab-move is the R1092.1 path.",
+      "changes_bullets": [
+        "DockPanelExternal.drag_to_at emits non-toggling tear_off_follow on escape",
+        "detached latch + scene-as-data query(\"detached\"), read-only intervene",
+        "drag_release/drag_cancel emit tear_off_redock to restore an early-detach",
+        "escape-release forwards a cursor -> follow (not toggle); cursor-less keeps toggle",
+        "binding follow_panel_floating ensures+positions the floating WindowSpec",
+        "gap(b) follow_desktop_position: main outer origin + window-logical cursor",
+        "AI toggle invoke(\"tear_off\") + fixed cascade unchanged (no double-toggle)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace 7646 pass / 0 fail (+14 over R1093 7632)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello clean",
+        "cargo fmt --all --check clean",
+        "r1094_live_tear_off_follow.py PASS headless (>=30 assertions, A-F)",
+        "10 widget tests: follow emission/per-move/restore/redock/read-only",
+        "4 binding tests: gap(b) origin+cursor, ensure/reposition/remove",
+        "no regression: r1081 toggle + r683_c binding suites green"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.41",
+        "5.51"
+      ],
+      "carry_forward_bullets": [
+        "per-move follow tracking + restore-by-drag-back unit-tested only: atomic scene/drag observes no waypoints nor escape-then-return in one gesture",
+        "live OS grab-move = R1092.1-verified set_outer_position-under-grab (HW); declared follow is the headless SSOT",
+        "follow/redock + gap(b) binding-local (1 consumer); lift deferred to a 2nd float-to-window consumer",
+        "editor variant does not float panels to windows; an escape there is a harmless unhandled-intent no-op"
+      ],
+      "publishable_decision_summary": "Live cursor-following tear-off: an escaped drag move tears the panel into a floating follower whose declared position tracks the cursor (gap(b) window-logical to desktop). Non-toggling follow/redock seam keeps the AI toggle intact; per-move tracking + restore unit-tested, declared follow is the headless SSOT, live OS grab-move is the R1092.1 path.",
+      "publishable_changes_bullets": [
+        "DockPanelExternal.drag_to_at emits non-toggling tear_off_follow on escape",
+        "detached latch + scene-as-data query(\"detached\"), read-only intervene",
+        "drag_release/drag_cancel emit tear_off_redock to restore an early-detach",
+        "escape-release forwards a cursor -> follow (not toggle); cursor-less keeps toggle",
+        "binding follow_panel_floating ensures+positions the floating WindowSpec",
+        "gap(b) follow_desktop_position: main outer origin + window-logical cursor",
+        "AI toggle invoke(\"tear_off\") + fixed cascade unchanged (no double-toggle)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace 7646 pass / 0 fail (+14 over R1093 7632)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello clean",
+        "cargo fmt --all --check clean",
+        "r1094_live_tear_off_follow.py PASS headless (>=30 assertions, A-F)",
+        "10 widget tests: follow emission/per-move/restore/redock/read-only",
+        "4 binding tests: gap(b) origin+cursor, ensure/reposition/remove",
+        "no regression: r1081 toggle + r683_c binding suites green"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.41",
+        "5.51"
+      ],
+      "publishable_carry_forward_bullets": [
+        "per-move follow tracking + restore-by-drag-back unit-tested only: atomic scene/drag observes no waypoints nor escape-then-return in one gesture",
+        "live OS grab-move = R1092.1-verified set_outer_position-under-grab (HW); declared follow is the headless SSOT",
+        "follow/redock + gap(b) binding-local (1 consumer); lift deferred to a 2nd float-to-window consumer",
+        "editor variant does not float panels to windows; an escape there is a harmless unhandled-intent no-op"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
