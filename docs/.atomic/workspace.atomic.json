@@ -16500,6 +16500,64 @@
         "the flat example follow/redock/desktop-conversion trio lift into a dock substrate is owed at the editor float-to-window 2nd consumer — now documented at the editor's dock-only note"
       ]
     },
+    "R1096": {
+      "decision_summary": "R1096 §5.51 dock tab pointer click-to-switch: TabWellExternal routes {well_id}#i clicks to activate_tab; fixed r686 Center->Tabify demo regression (red since R1083)",
+      "changes_bullets": [
+        "TabWellExternal: pointer click-to-switch adapter at the dynamic {well_id} tag (R51.42 #-split route)",
+        "send PointerUp -> DockReorganizer::activate_tab (shared sole-writer commit funnel; no dup SSOT)",
+        "active read from topology only; already-active click guarded at gesture layer -> no undo churn",
+        "DockNode/DockTopology for_each_tabs_well + tabs_well_count + tab_well_active enumeration/read peers",
+        "DockReorganizer::tab_well_active: read-only projection of the shared topology signal",
+        "editor create_extra_externals registers one TabWellExternal per well (R688 reconcile, dynamic id)",
+        "fixed r686 demo: Center=swap -> Center=Tabify (regression red in CI demo-sweep since R1083)",
+        "r686 _panel_ids walker now handles Tabs wells; added _tabs_wells / _tabs_seq helpers",
+        "doc: 3 stale R1086 forward-refs -> R1096 (the actual delivering round; R1086 was PR-30 min_size)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace 7662 pass / 0 fail (+12 R1096 unit: enumeration + send wire + active guard)",
+        "clippy --workspace --all-targets --features vello (-D pedantic) clean; cargo fmt clean",
+        "r1096_dock_tab_click.py 32 assertions PASS: real scene/click flips topology + a11y + external active",
+        "r686 (fixed) + r685 + r1095 editor demos PASS (lavapipe, hidden window, no flicker)",
+        "headline: scene/click on {well_id}#i drives full router chain -> activate_tab -> topology Signal"
+      ],
+      "impact_refs": [
+        "5.51",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "live native-pointer (libXtst) tab-click acceptance HW-gated (real-GPU host); CI stays headless scene",
+        "CI demo-sweep was red since R1083 (r686 sole Center casualty); broader sweep casualties unaudited",
+        "(d) tab reorder + (e) untab-drag-out remain additive slices, deferred to a forcing consumer"
+      ],
+      "publishable_decision_summary": "R1096 §5.51 dock tab pointer click-to-switch: TabWellExternal routes {well_id}#i clicks to activate_tab; fixed r686 Center->Tabify demo regression (red since R1083)",
+      "publishable_changes_bullets": [
+        "TabWellExternal: pointer click-to-switch adapter at the dynamic {well_id} tag (R51.42 #-split route)",
+        "send PointerUp -> DockReorganizer::activate_tab (shared sole-writer commit funnel; no dup SSOT)",
+        "active read from topology only; already-active click guarded at gesture layer -> no undo churn",
+        "DockNode/DockTopology for_each_tabs_well + tabs_well_count + tab_well_active enumeration/read peers",
+        "DockReorganizer::tab_well_active: read-only projection of the shared topology signal",
+        "editor create_extra_externals registers one TabWellExternal per well (R688 reconcile, dynamic id)",
+        "fixed r686 demo: Center=swap -> Center=Tabify (regression red in CI demo-sweep since R1083)",
+        "r686 _panel_ids walker now handles Tabs wells; added _tabs_wells / _tabs_seq helpers",
+        "doc: 3 stale R1086 forward-refs -> R1096 (the actual delivering round; R1086 was PR-30 min_size)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace 7662 pass / 0 fail (+12 R1096 unit: enumeration + send wire + active guard)",
+        "clippy --workspace --all-targets --features vello (-D pedantic) clean; cargo fmt clean",
+        "r1096_dock_tab_click.py 32 assertions PASS: real scene/click flips topology + a11y + external active",
+        "r686 (fixed) + r685 + r1095 editor demos PASS (lavapipe, hidden window, no flicker)",
+        "headline: scene/click on {well_id}#i drives full router chain -> activate_tab -> topology Signal"
+      ],
+      "publishable_impact_refs": [
+        "5.51",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "live native-pointer (libXtst) tab-click acceptance HW-gated (real-GPU host); CI stays headless scene",
+        "CI demo-sweep was red since R1083 (r686 sole Center casualty); broader sweep casualties unaudited",
+        "(d) tab reorder + (e) untab-drag-out remain additive slices, deferred to a forcing consumer"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
