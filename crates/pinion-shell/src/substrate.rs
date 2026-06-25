@@ -1905,6 +1905,18 @@ impl<V: WidgetView> ShellCore<V> {
     /// window's [`pinion_runtime::InputRouter`] handles the
     /// cursor + `refresh_hover` walk independently of other windows.
     pub fn cursor_moved_for_window(&mut self, window_id: &str, pid: PointerId, x: f64, y: f64) {
+        // R1102 §5.51 PR-33 — when a drag this window owns is in flight, the
+        // shell (the sole holder of every window's geometry) resolves the
+        // cross-window drop for the NEW cursor and stashes it on the session, so
+        // the per-window (cross-window-blind) router can fill
+        // `DragUpdate.over_window` for a redock into another window. Resolved
+        // BEFORE the move dispatches the drag update below. Gated on an active
+        // drag, so idle hovers and single-window apps pay nothing.
+        if self.core.drag_session_active_for_window(window_id, pid) {
+            let cross = self.resolve_cross_window_live(window_id, (x, y));
+            self.core
+                .set_drag_cross_window_for_window(window_id, pid, cross);
+        }
         // R881 §5.35 §5.49 — thread the out-of-band modifier cache so a
         // live middle pan's wheel-vocabulary dispatch sees held chords
         // (`Ctrl`+middle-drag zooms a canvas exactly as `Ctrl`+wheel
@@ -4779,9 +4791,27 @@ impl<V: WidgetView> ShellCore<V> {
         params: Option<&serde_json::Value>,
     ) -> Option<pinion_runtime::CrossWindowDrop> {
         let cursor = pinion_rpc::cross_window_drop::parse_params(params)?;
+        // The RPC query is source-less — it asks "which window does this abs
+        // cursor map onto", excluding nothing.
+        self.cross_window_drop_at((cursor.x, cursor.y), None)
+    }
+
+    /// R1102 §5.51 PR-33 — resolve a desktop-absolute logical cursor against
+    /// every declared window that has a stored paint scene, optionally excluding
+    /// `exclude`. The shared body of the `scene/cross_window_drop` READ
+    /// (`exclude: None`) and the live-drag composition (`exclude: Some(source)` —
+    /// the F5 caller-owned source exclusion the R1101 doc promised). A `None`
+    /// declared position means WM-placed at the desktop origin (the `(0, 0)`
+    /// convention `scene/windows` reports).
+    fn cross_window_drop_at(
+        &self,
+        abs: (f64, f64),
+        exclude: Option<&str>,
+    ) -> Option<pinion_runtime::CrossWindowDrop> {
         let specs = self.declared_window_specs();
         let windows: Vec<(&str, &Scene, (f64, f64))> = specs
             .iter()
+            .filter(|w| exclude != Some(w.id.as_str()))
             .filter_map(|w| {
                 let scene = self.core.last_paint_scene_for_window(&w.id)?;
                 let pos = w
@@ -4792,8 +4822,34 @@ impl<V: WidgetView> ShellCore<V> {
             .collect();
         pinion_runtime::resolve_cross_window_drop(
             windows.iter().map(|&(id, scene, pos)| (id, scene, pos)),
-            (cursor.x, cursor.y),
+            abs,
         )
+    }
+
+    /// R1102 §5.51 PR-33 — resolve the LIVE drag's cross-window drop: map the
+    /// source window's local cursor to a desktop-absolute point (source outer
+    /// position + local), then resolve it against the OTHER windows (source
+    /// excluded). `None` when there is no other window, when the source window is
+    /// not declared, or when the abs cursor maps onto no other window's drop
+    /// target. Called per cursor move while a drag this window owns is in
+    /// flight, so the per-window (cross-window-blind) router can fill
+    /// [`pinion_core::external::DragUpdate::over_window`].
+    fn resolve_cross_window_live(
+        &self,
+        source_window: &str,
+        local: (f64, f64),
+    ) -> Option<pinion_runtime::CrossWindowDrop> {
+        let specs = self.declared_window_specs();
+        if specs.len() < 2 {
+            return None;
+        }
+        let source_pos = specs
+            .iter()
+            .find(|w| w.id == source_window)?
+            .position
+            .map_or((0.0, 0.0), |(x, y)| (f64::from(x), f64::from(y)));
+        let abs = (source_pos.0 + local.0, source_pos.1 + local.1);
+        self.cross_window_drop_at(abs, Some(source_window))
     }
 
     /// (R1020 §5.39) Re-derive the keyboard focus enumeration from a fresh,

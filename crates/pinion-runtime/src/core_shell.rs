@@ -1962,6 +1962,36 @@ impl<V: WidgetCore> CoreShell<V> {
         (self.tail(), pan_dispatched)
     }
 
+    /// R1102 §5.51 PR-33 — whether the addressed window's router owns an
+    /// in-flight drag for `pid`. The shell reads this to gate its per-move
+    /// cross-window resolution (only an active drag needs one). `.get`, not
+    /// `.entry().or_default()`, so a query for a window that never saw input
+    /// allocates no phantom router (R882.1 hygiene).
+    #[must_use]
+    pub fn drag_session_active_for_window(&self, window_id: &str, pid: PointerId) -> bool {
+        self.routers
+            .get(window_id)
+            .is_some_and(|router| router.drag_session_active(pid))
+    }
+
+    /// R1102 §5.51 PR-33 — stash the shell's cross-window drop resolution on the
+    /// addressed window's in-flight drag (or clear it with `None`). The shell —
+    /// the sole holder of every window's geometry — resolves the abs cursor
+    /// against the OTHER windows each move and pushes the result here, so the
+    /// cross-window-blind per-window router can fill [`DragUpdate::over_window`]
+    /// ([`InputRouter::set_drag_cross_window`]). No-op when the window has no
+    /// router / no active drag.
+    pub fn set_drag_cross_window_for_window(
+        &mut self,
+        window_id: &str,
+        pid: PointerId,
+        drop: Option<crate::input::CrossWindowDrop>,
+    ) {
+        if let Some(router) = self.routers.get_mut(window_id) {
+            router.set_drag_cross_window(pid, drop);
+        }
+    }
+
     /// R881.1 §5.35 — single-window wrapper around
     /// [`Self::middle_down_for_window`] (the plain + `_for_window`
     /// pair every other `CoreShell` input method exposes).

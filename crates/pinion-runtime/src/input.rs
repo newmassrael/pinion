@@ -498,6 +498,17 @@ struct DragSession {
     /// cross-widget target can match on it without the router re-deriving
     /// it.
     payload: DragPayload,
+    /// R1102 §5.51 PR-33 — the shell's cross-window drop resolution for the
+    /// CURRENT cursor (another window's dock zone the abs cursor maps onto,
+    /// in THAT window's local frame), or `None` when the cursor is over no
+    /// other window's drop target. The per-window router is cross-window-blind
+    /// (it sees only its own scene), so the shell — the sole holder of every
+    /// window's geometry — resolves this each move via
+    /// [`set_drag_cross_window`](InputRouter::set_drag_cross_window) and the
+    /// drag dispatch reads it to fill [`DragUpdate::over_window`] when the
+    /// cursor escaped this window's own drop targets (own-window resolve
+    /// first). Lifecycle-scoped to the session, so it clears with the drag.
+    cross_window: Option<CrossWindowDrop>,
 }
 
 impl InputRouter {
@@ -526,6 +537,31 @@ impl InputRouter {
     #[must_use]
     pub fn cursor_position(&self, id: PointerId) -> Option<(f64, f64)> {
         self.cursors.get(&id).copied()
+    }
+
+    /// R1102 §5.51 PR-33 — whether a drag session this router owns is in flight
+    /// for `id`. The shell reads this to gate the (otherwise per-move) cross-
+    /// window resolution: only an active drag needs a cross-window drop
+    /// computed, so an idle hover pays nothing.
+    #[must_use]
+    pub fn drag_session_active(&self, id: PointerId) -> bool {
+        self.drag_sessions.contains_key(&id)
+    }
+
+    /// R1102 §5.51 PR-33 — stash the shell's cross-window drop resolution for
+    /// the in-flight drag on `id` (the window whose dock zone the abs cursor
+    /// currently maps onto, plus the drop point in THAT window's local frame),
+    /// or clear it (`None`) when the cursor maps onto no other window's drop
+    /// target. No-op when no session owns `id`. The drag dispatch
+    /// ([`update_drag`](Self::update_drag) / [`pointer_up`](Self::pointer_up))
+    /// reads it to fill [`DragUpdate::over_window`] once this window's own drop
+    /// resolution comes up empty (own-window first). The router itself stays
+    /// cross-window-blind — it only *consumes* what the shell, holding every
+    /// window's geometry, resolved.
+    pub fn set_drag_cross_window(&mut self, id: PointerId, drop: Option<CrossWindowDrop>) {
+        if let Some(session) = self.drag_sessions.get_mut(&id) {
+            session.cross_window = drop;
+        }
     }
 
     /// R51.34 §5.35 — current capture-lock target tag for `id`, when
@@ -1180,6 +1216,9 @@ impl InputRouter {
                     DragSession {
                         source_tag: tag.clone(),
                         payload,
+                        // R1102 — no cross-window resolution yet; the shell
+                        // fills it on the first move that escapes this window.
+                        cross_window: None,
                     },
                 );
             }
@@ -1300,7 +1339,12 @@ impl InputRouter {
         if let Some(session) = self.drag_sessions.remove(&id) {
             self.captured_targets.remove(&id);
             let cursor = self.cursors.get(&id).copied();
-            let over = cursor.and_then(|(x, y)| self.resolve_drop_point(x, y));
+            let own_over = cursor.and_then(|(x, y)| self.resolve_drop_point(x, y));
+            // R1100/R1102 §5.51 PR-33 — the same own-window-first rule as the
+            // move: an own-window drop is a same-window commit (`over_window`
+            // None); otherwise the shell's last-resolved cross-window drop (the
+            // session carries it from the final move) redocks into that window.
+            let (over, over_window) = resolve_drag_targets(own_over, session.cross_window);
             let (primary, _) = split_subindex(&session.source_tag);
             if let Some(external) = find_external_by_tag(state_scene, primary) {
                 // R1093 §5.15 — forward the release cursor via the `_at`
@@ -1308,21 +1352,16 @@ impl InputRouter {
                 // path where no cursor was ever recorded for this pointer,
                 // fall back to the cursor-less hook.
                 match cursor {
-                    // R1100 §5.51 PR-33 — `over_window: None` here = the drop
-                    // resolved in THIS window (or escaped every window). Filling
-                    // it for a cross-window release is the shell's job (slice 2):
-                    // the per-window router is cross-window-blind, so it always
-                    // passes `None` and the shell composes the resolving window
-                    // by what mechanism slice 2 settles (it is NOT a router
-                    // re-dispatch — this press's session is owned here).
                     // `became_drag` is the router's click-vs-drag verdict the
-                    // source consumes (R1101).
+                    // source consumes (R1101); `over_window` is the shell's
+                    // cross-window resolution (R1102) when the release escaped
+                    // this window into another's dock zone.
                     Some(c) => external.handle.drag_release_at(
                         &session.payload,
                         &DragUpdate {
                             over,
                             cursor: c,
-                            over_window: None,
+                            over_window: over_window.as_deref(),
                             became_drag,
                         },
                     ),
@@ -1722,12 +1761,20 @@ impl InputRouter {
         };
         let source = session.source_tag.clone();
         let payload = session.payload.clone();
+        // R1102 §5.51 PR-33 — clone the shell's cross-window resolution so the
+        // `session` borrow drops before the `state_scene` borrow below.
+        let cross_window = session.cross_window.clone();
         // R1101 §5.51 — the router's click-vs-drag verdict (read here, while
         // `&self` is free, before the `state_scene` borrow). The source
         // consumes this instead of re-deriving it from its own distance
         // tracking (the F1 clearance — see [`DragUpdate::became_drag`]).
         let became_drag = self.press_became_drag(id);
-        let over = self.resolve_drop_point(x, y);
+        // R1100/R1102 §5.51 PR-33 — own-window drop resolution FIRST: a hit on
+        // this window's own drop target is a same-window reorganize
+        // (`over_window: None`). Only when the cursor has escaped every own-window
+        // target does the shell's cross-window resolution apply — it names ANOTHER
+        // window's zone, in that window's local frame, so `over_window: Some`.
+        let (over, over_window) = resolve_drag_targets(self.resolve_drop_point(x, y), cross_window);
         let (primary, _) = split_subindex(&source);
         if let Some(external) = find_external_by_tag(state_scene, primary) {
             // R1093 §5.15 — forward the full [`DragUpdate`] context (the `_at`
@@ -1735,15 +1782,12 @@ impl InputRouter {
             // sources are unaffected). A follow-the-cursor coordinator reads the
             // cursor; the rect-relative `over` is `None` once the cursor escapes
             // every tag, so the cursor is the only live pointer signal then.
-            // R1100 §5.51 PR-33 — `over_window: None` = own-window resolve; the
-            // shell's cross-window composition (slice 2) supplies the resolving
-            // window when the cursor escapes into another window.
             external.handle.drag_to_at(
                 &payload,
                 &DragUpdate {
                     over,
                     cursor: (x, y),
-                    over_window: None,
+                    over_window: over_window.as_deref(),
                     became_drag,
                 },
             );
@@ -2062,6 +2106,28 @@ where
         });
     }
     None
+}
+
+/// R1102 §5.51 PR-33 — the own-window-first precedence mapping a per-window own
+/// drop resolution + the shell's [`CrossWindowDrop`] into the `(over, over_window)`
+/// a [`DragUpdate`] carries. A hit on THIS window's own drop target wins (a
+/// same-window reorganize, `over_window` stays `None`); only when the own
+/// resolution is empty — the cursor escaped every own-window target — does the
+/// cross-window drop apply (another window's zone, in that window's local frame,
+/// `over_window: Some`). The single home for this rule so the move
+/// ([`InputRouter::update_drag`]) and the release (the `pointer_up` drag branch)
+/// cannot diverge on which target a cross-window drag lands on.
+fn resolve_drag_targets(
+    own_over: Option<DropPoint>,
+    cross_window: Option<CrossWindowDrop>,
+) -> (Option<DropPoint>, Option<String>) {
+    match own_over {
+        Some(point) => (Some(point), None),
+        None => match cross_window {
+            Some(cw) => (Some(cw.point), Some(cw.window)),
+            None => (None, None),
+        },
+    }
 }
 
 /// R51.62 §5.40 — `pub` so `pinion-shell` can resolve post-layout widget
@@ -5870,17 +5936,25 @@ mod tests {
         fn drag_to_at(&mut self, payload: &DragPayload, update: &DragUpdate) {
             // Format the f64 directly (whole values print without a decimal);
             // no truncating `as i64` cast, so this stays clippy-pedantic clean.
+            // R1102 — append the cross-window `over_window` id when Some (empty
+            // when None, so the pre-R1102 `at:x:y` assertions still hold).
+            let win = update
+                .over_window
+                .map_or(String::new(), |w| format!(":{w}"));
             self.log
                 .lock()
                 .expect("poisoned")
-                .push(format!("at:{}:{}", update.cursor.0, update.cursor.1));
+                .push(format!("at:{}:{}{win}", update.cursor.0, update.cursor.1));
             self.drag_to(payload, update.over.clone());
         }
         fn drag_release_at(&mut self, payload: &DragPayload, update: &DragUpdate) {
-            self.log
-                .lock()
-                .expect("poisoned")
-                .push(format!("drop_at:{}:{}", update.cursor.0, update.cursor.1));
+            let win = update
+                .over_window
+                .map_or(String::new(), |w| format!(":{w}"));
+            self.log.lock().expect("poisoned").push(format!(
+                "drop_at:{}:{}{win}",
+                update.cursor.0, update.cursor.1
+            ));
             self.drag_release(payload, update.over.clone());
         }
         fn drag_cancel(&mut self, payload: &DragPayload) {
@@ -6039,6 +6113,123 @@ mod tests {
         assert!(
             log.iter().any(|s| s == "drop_at:400:400"),
             "release cursor forwarded: {log:?}"
+        );
+    }
+
+    #[test]
+    fn r1102_resolve_drag_targets_is_own_window_first() {
+        // R1102 §5.51 PR-33 — the pure precedence rule: an own-window hit wins
+        // (over_window None); a cross-window drop applies only when the own
+        // resolution is empty; both empty → both None.
+        let own = DropPoint {
+            tag: "local".to_string(),
+            x_rel: 0.5,
+            y_rel: 0.5,
+        };
+        let cross = CrossWindowDrop {
+            window: "main".to_string(),
+            point: DropPoint {
+                tag: "main_dock".to_string(),
+                x_rel: 0.25,
+                y_rel: 0.75,
+            },
+        };
+        // Own hit wins even when a cross-window drop is present (same-window
+        // reorganize — the cursor is over THIS window's own target).
+        let (over, win) = resolve_drag_targets(Some(own.clone()), Some(cross.clone()));
+        assert_eq!(over.as_ref().map(|p| p.tag.as_str()), Some("local"));
+        assert_eq!(win, None, "an own-window hit suppresses over_window");
+        // No own hit → the cross-window drop applies (target window + its zone).
+        let (over, win) = resolve_drag_targets(None, Some(cross));
+        assert_eq!(over.as_ref().map(|p| p.tag.as_str()), Some("main_dock"));
+        assert_eq!(win.as_deref(), Some("main"));
+        // Neither → both None (the escape-to-empty-space tear-off case).
+        let (over, win) = resolve_drag_targets(None, None);
+        assert!(over.is_none() && win.is_none());
+    }
+
+    #[test]
+    fn r1102_cross_window_over_window_threaded_on_move_and_release() {
+        // R1102 §5.51 PR-33 — the shell stashes a cross-window drop on the
+        // session via `set_drag_cross_window`; the drag dispatch then fills
+        // `DragUpdate.over_window` on every move AND the release while the cursor
+        // is off every OWN-window target (the source's log carries the `:main`
+        // window suffix). This is the live wiring the per-window router could
+        // never resolve — the shell composes it, the router consumes it.
+        let mut router = InputRouter::new();
+        let (mut state, log) = state_with_dnd();
+        router.update_paint_scene(paint_with_two_rows(), &mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 20.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state); // arms the drag
+        assert!(
+            router.drag_session_active(PointerId::MOUSE),
+            "a reorder source opens a session begin_drag can stash a cross-window on"
+        );
+        // The shell resolved the abs cursor onto ANOTHER window's dock zone and
+        // pushed it down (source window excluded — done in the shell).
+        router.set_drag_cross_window(
+            PointerId::MOUSE,
+            Some(CrossWindowDrop {
+                window: "main".to_string(),
+                point: DropPoint {
+                    tag: "main_dock".to_string(),
+                    x_rel: 0.5,
+                    y_rel: 0.5,
+                },
+            }),
+        );
+        // Move + release OFF every own tag (own resolve = None) → the cross-
+        // window drop applies on both the move and the commit.
+        router.cursor_moved(PointerId::MOUSE, 400.0, 400.0, &mut state);
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        let log = read(&log);
+        assert!(
+            log.iter().any(|s| s == "at:400:400:main"),
+            "move off own targets carries the cross-window id: {log:?}"
+        );
+        assert!(
+            log.iter().any(|s| s == "drop_at:400:400:main"),
+            "release off own targets redocks into the cross-window: {log:?}"
+        );
+    }
+
+    #[test]
+    fn r1102_own_window_hit_suppresses_a_stale_cross_window() {
+        // R1102 §5.51 PR-33 — own-window-first is robust to a stale cross-window
+        // resolution: even with one stashed, a move that lands on THIS window's
+        // own drop target is a same-window reorganize (no `:main` suffix). So a
+        // cursor returning over its own window never spuriously redocks.
+        let mut router = InputRouter::new();
+        let (mut state, log) = state_with_dnd();
+        router.update_paint_scene(paint_with_two_rows(), &mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 20.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.set_drag_cross_window(
+            PointerId::MOUSE,
+            Some(CrossWindowDrop {
+                window: "main".to_string(),
+                point: DropPoint {
+                    tag: "main_dock".to_string(),
+                    x_rel: 0.5,
+                    y_rel: 0.5,
+                },
+            }),
+        );
+        // Move onto row 1 — an OWN-window drop target.
+        router.cursor_moved(PointerId::MOUSE, 100.0, 60.0, &mut state);
+        let log = read(&log);
+        assert!(
+            log.iter().any(|s| s == "at:100:60"),
+            "own-window hit keeps over_window None: {log:?}"
+        );
+        assert!(
+            !log.iter().any(|s| s == "at:100:60:main"),
+            "an own-window hit must NOT carry the stale cross-window id: {log:?}"
+        );
+        // …and the rect-relative own drop still reached the source.
+        assert!(
+            log.iter().any(|s| s == "to:0:dnd#1"),
+            "own-window drop forwarded rect-relative: {log:?}"
         );
     }
 

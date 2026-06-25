@@ -3876,6 +3876,15 @@ pub struct DockPanelExternal {
     /// panel still tears off once the press becomes a drag, even while over a
     /// dock zone — browser-tab / Blender immediacy), only its source of truth.
     detached: Cell<bool>,
+    /// (R1102 §5.51 §2 #7 PR-33) The last cross-window dock-at this panel
+    /// resolved — the `{panel, window, target, x_rel, y_rel}` payload of the
+    /// most recent [`TEAR_OFF_REDOCK_AT_EVENT`], or `None` before any. The
+    /// emitted intent is transient (drained into the reducer); this persists so
+    /// an AI agent (and the live-drag demo) can observe via `query("redock_at")`
+    /// that a cross-window redock fired — the §2 #7 introspection of the R1100
+    /// contract now that R1102 wires the shell's `over_window` resolution live.
+    /// Reset on [`begin_drag`](External::begin_drag) for the fresh gesture.
+    last_redock_at: RefCell<Option<serde_json::Value>>,
     /// (R1081 §5.51) The shared reorganize coordinator. `Some` puts the
     /// panel in dock-or-float mode (drops onto other panels reorganize
     /// the shared topology); `None` is tear-off-only. Cloned from the
@@ -3898,6 +3907,7 @@ impl core::fmt::Debug for DockPanelExternal {
             .field("tear_off_fired", &self.tear_off_fired.get())
             .field("drag_cursor", &self.drag_cursor.get())
             .field("detached", &self.detached.get())
+            .field("last_redock_at", &self.last_redock_at.borrow())
             .finish_non_exhaustive()
     }
 }
@@ -3924,6 +3934,7 @@ impl DockPanelExternal {
             tear_off_fired: Cell::new(false),
             drag_cursor: Cell::new(None),
             detached: Cell::new(false),
+            last_redock_at: RefCell::new(None),
             reorganizer: None,
             drop_preview: None,
         }
@@ -4054,15 +4065,19 @@ impl DockPanelExternal {
     /// floating window. Distinct from [`Self::enqueue_tear_off_redock`]
     /// (remove-only restore) — see [`TEAR_OFF_REDOCK_AT_EVENT`].
     fn enqueue_tear_off_redock_at(&self, target_window: &str, point: &DropPoint) {
+        let payload = serde_json::json!({
+            "panel": self.panel_id.as_ref(),
+            "window": target_window,
+            "target": point.tag,
+            "x_rel": point.x_rel,
+            "y_rel": point.y_rel,
+        });
+        // R1102 §2 #7 — persist the cross-window redock for `query("redock_at")`;
+        // the emitted intent itself is transient (drained into the reducer).
+        *self.last_redock_at.borrow_mut() = Some(payload.clone());
         self.pending_intents.borrow_mut().push_back(Intent {
             tag: Cow::Borrowed(TEAR_OFF_REDOCK_AT_EVENT),
-            payload: IntrospectValue::Json(serde_json::json!({
-                "panel": self.panel_id.as_ref(),
-                "window": target_window,
-                "target": point.tag,
-                "x_rel": point.x_rel,
-                "y_rel": point.y_rel,
-            })),
+            payload: IntrospectValue::Json(payload),
         });
     }
 }
@@ -4101,6 +4116,8 @@ impl External for DockPanelExternal {
         // escaped a drop target). R1101 — detach is now driven by the router's
         // per-move `became_drag` verdict, so there is no private latch to reset.
         self.detached.set(false);
+        // R1102 — and the last cross-window redock diagnostic.
+        *self.last_redock_at.borrow_mut() = None;
         Some(DragPayload {
             kind: Cow::Borrowed(DOCK_PANEL_DRAG_KIND),
             value: IntrospectValue::Text(self.panel_id.to_string()),
@@ -4317,6 +4334,11 @@ impl ExternalIntrospect for DockPanelExternal {
             // target). Paired with `scene/windows` (the floating window's
             // live declared position), an AI observes a tear-off + follow.
             ("detached", "bool"),
+            // R1102 §5.51 §2 #7 PR-33 — the last cross-window dock-at
+            // (`{panel, window, target, x_rel, y_rel}` or null), so an AI
+            // observes that a drag redocked into ANOTHER window's zone — the
+            // live firing of the R1100 contract the R1102 shell wiring enables.
+            ("redock_at", "json"),
             ("send", "string"),
             // R683.C §5.16 §5.49 — direct tear-off invoke channel.
             // See `invoke` rustdoc.
@@ -4337,6 +4359,14 @@ impl ExternalIntrospect for DockPanelExternal {
             "drag_cursor" => Some(drag_cursor_introspect(self.drag_cursor.get())),
             // R1094 §5.16 §5.41 §5.51 — the live-follower latch.
             "detached" => Some(IntrospectValue::Bool(self.detached())),
+            // R1102 §5.51 §2 #7 PR-33 — the last cross-window dock-at payload
+            // (null before any cross-window redock this gesture).
+            "redock_at" => Some(
+                self.last_redock_at
+                    .borrow()
+                    .clone()
+                    .map_or(IntrospectValue::Null, IntrospectValue::Json),
+            ),
             _ => None,
         }
     }
@@ -4349,7 +4379,7 @@ impl ExternalIntrospect for DockPanelExternal {
             // dragging / tear_off_fired / drop_preview / drag_cursor /
             // detached directly.
             "panel_id" | "dragging" | "tear_off_fired" | "drop_preview" | "drag_cursor"
-            | "detached" => Err(InterveneError::ReadOnly),
+            | "detached" | "redock_at" => Err(InterveneError::ReadOnly),
             _ => Err(InterveneError::UnknownPath),
         }
     }
@@ -4960,6 +4990,55 @@ mod tests {
         assert!(
             !ext.detached(),
             "the dock-at consumed the floating follower"
+        );
+        // R1102 §2 #7 — the transient intent is also recorded on the persistent
+        // `redock_at` slot so an AI (and the live demo) can observe the
+        // cross-window redock after the intent has been drained.
+        let Some(IntrospectValue::Json(observed)) = ext.query("redock_at") else {
+            panic!("redock_at must surface the cross-window dock-at as JSON");
+        };
+        assert_eq!(observed["window"], "main");
+        assert_eq!(observed["target"], "viewport");
+        assert_eq!(
+            ext.intervene("redock_at", IntrospectValue::Null),
+            Err(InterveneError::ReadOnly),
+            "redock_at is a read-only diagnostic",
+        );
+    }
+
+    #[test]
+    fn r1102_redock_at_is_null_before_and_resets_per_gesture() {
+        // R1102 §2 #7 — the redock_at diagnostic is null before any cross-window
+        // dock-at, carries the last one, and a fresh begin_drag clears it.
+        let mut ext = DockPanelExternal::new("inspector");
+        assert_eq!(
+            ext.query("redock_at"),
+            Some(IntrospectValue::Null),
+            "redock_at is null before any cross-window redock"
+        );
+        let _ = ext.begin_drag();
+        cross_detach(&mut ext, None, (640.0, 300.0));
+        let mut drained: Vec<Intent> = Vec::new();
+        ext.drain_intents(&mut |i| drained.push(i));
+        ext.drag_release_at(
+            &dummy_payload(),
+            &upd(
+                Some(drop_point("viewport", 0.5, 0.5)),
+                (200.0, 100.0),
+                Some("main"),
+                false,
+            ),
+        );
+        assert!(
+            matches!(ext.query("redock_at"), Some(IntrospectValue::Json(_))),
+            "redock_at carries the cross-window dock-at after the release"
+        );
+        // A fresh gesture clears the stale diagnostic.
+        let _ = ext.begin_drag();
+        assert_eq!(
+            ext.query("redock_at"),
+            Some(IntrospectValue::Null),
+            "begin_drag resets redock_at for the new gesture"
         );
     }
 
