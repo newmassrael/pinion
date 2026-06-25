@@ -16716,6 +16716,58 @@
         "broader demo-sweep health audit still owed (other constraint-change carries may persist)"
       ]
     },
+    "R1100": {
+      "decision_summary": "R1100 §5.51 PR-33 cross-window redock CONTRACT (mutation slice 1/4): _at drag methods carry over_window; DockPanelExternal emits TEAR_OFF_REDOCK_AT dock-at intent on a cross-window drop, distinct from same-window reorganize/restore",
+      "changes_bullets": [
+        "drag_to_at/drag_release_at gain over_window: Option<&str> (resolving window; None=own window)",
+        "additive on the _at path only (audit: 1 real overrider + mock); base drag_to/release (8 consumers) untouched",
+        "DockPanelExternal: cross-window release (over_window=Some + zone) emits TEAR_OFF_REDOCK_AT (dock-at)",
+        "TEAR_OFF_REDOCK_AT distinct from TEAR_OFF_REDOCK (restore) — distinct semantics, no payload polymorphism",
+        "cross-window over not painted into the source window's preview (target window overlay = later slice)",
+        "router passes over_window=None for now; shell cross-window composition = slice 2; mutation slice 1 of 4"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace 7675 / 0 fail (+3 r1100: dock-at carries target+zone / same-window never / no-zone float)",
+        "clippy --workspace --all-targets --features vello (-D pedantic) clean; cargo fmt clean",
+        "trait sig change broke only _at overriders+callers (dock+mock+core default-test) = contained, compiler-checked"
+      ],
+      "impact_refs": [
+        "5.51",
+        "5.16",
+        "5.15"
+      ],
+      "carry_forward_bullets": [
+        "slice 2 (R1101): router stays pure, shell composes cross-window over + feeds the External live (cursor_moved fallback)",
+        "slice 3 (R1102): DockReorganizer redock primitive (commit() SSOT) + cross-window preview overlay",
+        "slice 4 (R1103): flat reducer docks-at-zone + r683 real cross-window drag-back (RED since R1094) + RPC demo",
+        "live winit cross-window grab HW-gated; RPC scene/drag drives it headlessly once slice 2 lands"
+      ],
+      "publishable_decision_summary": "R1100 §5.51 PR-33 cross-window redock CONTRACT (mutation slice 1/4): _at drag methods carry over_window; DockPanelExternal emits TEAR_OFF_REDOCK_AT dock-at intent on a cross-window drop, distinct from same-window reorganize/restore",
+      "publishable_changes_bullets": [
+        "drag_to_at/drag_release_at gain over_window: Option<&str> (resolving window; None=own window)",
+        "additive on the _at path only (audit: 1 real overrider + mock); base drag_to/release (8 consumers) untouched",
+        "DockPanelExternal: cross-window release (over_window=Some + zone) emits TEAR_OFF_REDOCK_AT (dock-at)",
+        "TEAR_OFF_REDOCK_AT distinct from TEAR_OFF_REDOCK (restore) — distinct semantics, no payload polymorphism",
+        "cross-window over not painted into the source window's preview (target window overlay = later slice)",
+        "router passes over_window=None for now; shell cross-window composition = slice 2; mutation slice 1 of 4"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace 7675 / 0 fail (+3 r1100: dock-at carries target+zone / same-window never / no-zone float)",
+        "clippy --workspace --all-targets --features vello (-D pedantic) clean; cargo fmt clean",
+        "trait sig change broke only _at overriders+callers (dock+mock+core default-test) = contained, compiler-checked"
+      ],
+      "publishable_impact_refs": [
+        "5.51",
+        "5.16",
+        "5.15"
+      ],
+      "publishable_carry_forward_bullets": [
+        "slice 2 (R1101): router stays pure, shell composes cross-window over + feeds the External live (cursor_moved fallback)",
+        "slice 3 (R1102): DockReorganizer redock primitive (commit() SSOT) + cross-window preview overlay",
+        "slice 4 (R1103): flat reducer docks-at-zone + r683 real cross-window drag-back (RED since R1094) + RPC demo",
+        "live winit cross-window grab HW-gated; RPC scene/drag drives it headlessly once slice 2 lands"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
