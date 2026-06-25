@@ -17178,6 +17178,58 @@
         "R1107 = audit-first next: either the remaining PR-31 debts (live-grab-move ② is HW-gated/big) OR pivot to a high-value buildable Phase-B campaign gap (DCC depth / Model-View / text-editor — CLAUDE.md Phase B value order). Also carried: per-move declared_window_specs() rebuild perf; drop_panel_scene≈window_with_drop_panel 3rd-consumer test-fixtures lift."
       ]
     },
+    "R1107": {
+      "decision_summary": "R1107 PR-31: clear the R1095.1 latent defect — thread the SOURCE window (the one driving the drag) through DragUpdate::source_window → the tear_off_follow payload → the binding, so a tear-off follow converts the cursor to a desktop position via the RIGHT window's origin (re-dragging a floating header used its own frame, not the hard-coded 'main'); software-tested at every logic layer, the live OS floater re-drag is the parked HW path.",
+      "changes_bullets": [
+        "crates/pinion-core: DragUpdate gains source_window: Option<&str> — the window the drag is IN (where the cursor is measured), the symmetric peer of over_window (the TARGET window).",
+        "crates/pinion-runtime: InputRouter gains window_id + ensure_window(); the shell stamps it at the cursor_moved / pointer_up per-window dispatch choke (it holds the window_id map key); both production DragUpdate literals fill source_window: self.window_id.as_deref().",
+        "crates/pinion-widget-paint/dock.rs: tear_off_follow_payload + enqueue_tear_off_follow carry source_window; drag_to_at threads update.source_window; NEW query(\"source_window\") diagnostic (§2 #7, read-only, reset per begin_drag).",
+        "examples/hello-dock-panels + hello-dock-panels-editor: follow_desktop_position(panels, source_window, cursor) adds the SOURCE window's origin — clearing the R1095.1 hard-coded \"main\" in BOTH consumers (self-grep-all-sites); the reducer threads source_window from the payload.",
+        "4 unit (2 dock: payload+diagnostic / read-only+reset; 2 editor: floater-origin math / reducer reposition) + tools/demos/r1107_source_window.py (~33 assert, A-E driven through the REAL shell+router)."
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 = 7714 passed / 0 failed (R1106 baseline 7710 + 4); clippy --workspace --all-targets (vello, -D pedantic) + cargo fmt --all --check clean (fixed a single_match_else earlier; no new lints).",
+        "mnemosyne validate-workspace T1 orphan=0 (new +0); validate-code-refs exit 0 (missing=0 section_missing=0).",
+        "r1107_source_window.py PASS (PINION_HIDDEN_WINDOW=1): a docked escape-drag makes the LIVE router stamp source_window=main (observable via query(\"source_window\")) + the follower opens at the SOURCE origin + cursor (gap(b) desktop conversion keyed on the threaded source); per-panel independence; read-only intervene rejected.",
+        "★Addresses the user challenge \"abstract the mouse, SW-test it\": the seam IS software-tested at every logic layer (pure follow_desktop_position math / DragUpdate threading / reducer reposition / scene-drag through the real router). The floater-SOURCE case (the defect's target = re-dragging a floater's own header) is unit-tested (follow_desktop_position(source=torn-X) adds the FLOATER origin); only the live OS floater re-drag pixel (r683 floater-addressability) is HW-gated = the parked live-grab-move."
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.41",
+        "5.51"
+      ],
+      "carry_forward_bullets": [
+        "R1095.1 latent defect CLEARED: follow_desktop_position is now source-window-correct in both dock consumers (no more hard-coded \"main\"). The editor floater path's full LIVE smoothness still needs ② (the async winit moving-origin double-count under a real grab) — but the correct-origin SELECTION the fix provides is the seam ② consumes.",
+        "② delta-based live-grab-move (live floater->main pointer drag, r683 RED since R1094) = still HW-gated; the source-window seam is now in place for it. The AI-invoke path remains the §2#2-primary driver.",
+        "trio-lift still DEFERRED (pinion-shell generic window helper, sprag 3rd consumer; 2 pinion copies, editor diverged at R1106).",
+        "R1108 = audit-first: the remaining PR-31 debt is ② (HW-gated only) — likely PIVOT to a high-value buildable Phase-B campaign gap (DCC widget depth / Model-View at scale / text-editor depth, CLAUDE.md Phase B value order). Also carried: per-move declared_window_specs() rebuild perf; drop_panel_scene≈window_with_drop_panel 3rd-consumer test-fixtures lift."
+      ],
+      "publishable_decision_summary": "R1107 PR-31: clear the R1095.1 latent defect — thread the SOURCE window (the one driving the drag) through DragUpdate::source_window → the tear_off_follow payload → the binding, so a tear-off follow converts the cursor to a desktop position via the RIGHT window's origin (re-dragging a floating header used its own frame, not the hard-coded 'main'); software-tested at every logic layer, the live OS floater re-drag is the parked HW path.",
+      "publishable_changes_bullets": [
+        "crates/pinion-core: DragUpdate gains source_window: Option<&str> — the window the drag is IN (where the cursor is measured), the symmetric peer of over_window (the TARGET window).",
+        "crates/pinion-runtime: InputRouter gains window_id + ensure_window(); the shell stamps it at the cursor_moved / pointer_up per-window dispatch choke (it holds the window_id map key); both production DragUpdate literals fill source_window: self.window_id.as_deref().",
+        "crates/pinion-widget-paint/dock.rs: tear_off_follow_payload + enqueue_tear_off_follow carry source_window; drag_to_at threads update.source_window; NEW query(\"source_window\") diagnostic (§2 #7, read-only, reset per begin_drag).",
+        "examples/hello-dock-panels + hello-dock-panels-editor: follow_desktop_position(panels, source_window, cursor) adds the SOURCE window's origin — clearing the R1095.1 hard-coded \"main\" in BOTH consumers (self-grep-all-sites); the reducer threads source_window from the payload.",
+        "4 unit (2 dock: payload+diagnostic / read-only+reset; 2 editor: floater-origin math / reducer reposition) + tools/demos/r1107_source_window.py (~33 assert, A-E driven through the REAL shell+router)."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 = 7714 passed / 0 failed (R1106 baseline 7710 + 4); clippy --workspace --all-targets (vello, -D pedantic) + cargo fmt --all --check clean (fixed a single_match_else earlier; no new lints).",
+        "mnemosyne validate-workspace T1 orphan=0 (new +0); validate-code-refs exit 0 (missing=0 section_missing=0).",
+        "r1107_source_window.py PASS (PINION_HIDDEN_WINDOW=1): a docked escape-drag makes the LIVE router stamp source_window=main (observable via query(\"source_window\")) + the follower opens at the SOURCE origin + cursor (gap(b) desktop conversion keyed on the threaded source); per-panel independence; read-only intervene rejected.",
+        "★Addresses the user challenge \"abstract the mouse, SW-test it\": the seam IS software-tested at every logic layer (pure follow_desktop_position math / DragUpdate threading / reducer reposition / scene-drag through the real router). The floater-SOURCE case (the defect's target = re-dragging a floater's own header) is unit-tested (follow_desktop_position(source=torn-X) adds the FLOATER origin); only the live OS floater re-drag pixel (r683 floater-addressability) is HW-gated = the parked live-grab-move."
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.41",
+        "5.51"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R1095.1 latent defect CLEARED: follow_desktop_position is now source-window-correct in both dock consumers (no more hard-coded \"main\"). The editor floater path's full LIVE smoothness still needs ② (the async winit moving-origin double-count under a real grab) — but the correct-origin SELECTION the fix provides is the seam ② consumes.",
+        "② delta-based live-grab-move (live floater->main pointer drag, r683 RED since R1094) = still HW-gated; the source-window seam is now in place for it. The AI-invoke path remains the §2#2-primary driver.",
+        "trio-lift still DEFERRED (pinion-shell generic window helper, sprag 3rd consumer; 2 pinion copies, editor diverged at R1106).",
+        "R1108 = audit-first: the remaining PR-31 debt is ② (HW-gated only) — likely PIVOT to a high-value buildable Phase-B campaign gap (DCC widget depth / Model-View at scale / text-editor depth, CLAUDE.md Phase B value order). Also carried: per-move declared_window_specs() rebuild perf; drop_panel_scene≈window_with_drop_panel 3rd-consumer test-fixtures lift."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
