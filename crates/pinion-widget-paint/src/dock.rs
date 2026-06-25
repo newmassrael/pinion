@@ -81,7 +81,8 @@ use pinion_core::reactive::Signal;
 use pinion_core::undo::{SignalEdit, UndoStack};
 
 use crate::splitter::{SplitterOrientation, SplitterStyle, view_splitter};
-use crate::tabs::{TabsStyle, view_tabs};
+use crate::tabs::{TabsStyle, composite_tab_tag, view_tabs};
+use pinion_a11y::{AccessNode, TabCell, tablist_tab_nodes};
 
 // ─────────────────────────────────────────────────────────────────────
 // R685 §5.16 §5.49 — DockSurface topology composition substrate.
@@ -3331,6 +3332,81 @@ where
     }
 }
 
+/// R1095 §5.51 §5.27 §5.40 — the accessible name of every dock tab well's
+/// `tablist` (WAI-ARIA requires a tab list to be nameable; the per-tab and
+/// per-panel names come from the panel ids via scene name-from-contents
+/// enrichment).
+const DOCK_TABLIST_NAME: &str = "Panel tabs";
+
+/// R1095 §5.51 §5.27 §5.40 — WAI-ARIA `tablist` / `tab` / `tabpanel`
+/// [`AccessNode`]s for every [`DockNode::Tabs`] well in `topology`: the AT
+/// surface of R1083 tabbed docking + R1085 `activate_tab`, so a screen
+/// reader announces the well's tabs and which one is selected.
+///
+/// Tags MIRROR the painted scene so the shell's post-layout bounds fill +
+/// name-from-contents enrichment land on the right nodes: the `tablist` is
+/// the well's stable id (the [`view_tabs`] strip tag), each `tab` is
+/// [`composite_tab_tag`]`(id, i)` (the painted per-tab tag the router splits
+/// at `#`), and the `tabpanel` is the active panel's id (the
+/// header-suppressed active content [`view_dock_surface`] renders). Each
+/// tab's `selected` lowers to `aria-selected`; `aria-posinset` /
+/// `aria-setsize` come from the slice. `label: None` defers each tab's name
+/// to enrichment of its painted panel-id label (the [[two-text-layouts-paint-vs-geometry]]
+/// name-from-contents path, like `hello-tabs`). `focused` (the focus
+/// manager's tag at emit time) drives the roving active descendant: when a
+/// well's strip owns focus, its active tab is the active descendant.
+///
+/// Built on the lifted [`pinion_a11y::tablist_tab_nodes`] (the dock is its
+/// 3rd consumer after `hello-tabs` / `hello-tab-reorder`). Wells nested in
+/// `Split`s are walked recursively; `Leaf`s contribute nothing (a docked
+/// panel is not a tab).
+#[must_use]
+pub fn dock_tablist_access_nodes(
+    topology: &DockTopology,
+    focused: Option<&str>,
+) -> Vec<AccessNode> {
+    let mut out = Vec::new();
+    collect_dock_tablist_nodes(topology.root(), focused, &mut out);
+    out
+}
+
+/// Recursive walk for [`dock_tablist_access_nodes`].
+fn collect_dock_tablist_nodes(node: &DockNode, focused: Option<&str>, out: &mut Vec<AccessNode>) {
+    match node {
+        DockNode::Tabs { id, panels, active } => {
+            // The strip owning focus makes its active tab the active
+            // descendant (the WAI-ARIA roving-tabindex pattern).
+            let group_focused = focused == Some(id.as_ref());
+            let tab_tags: Vec<String> = (0..panels.len())
+                .map(|i| composite_tab_tag(id, i))
+                .collect();
+            let cells: Vec<TabCell<'_>> = tab_tags
+                .iter()
+                .enumerate()
+                .map(|(i, tag)| TabCell {
+                    tag: tag.as_str(),
+                    label: None,
+                    selected: i == *active,
+                    focused: group_focused && i == *active,
+                })
+                .collect();
+            let active_panel = panels[*active].as_ref();
+            out.extend(tablist_tab_nodes(
+                id.as_ref(),
+                DOCK_TABLIST_NAME,
+                &cells,
+                active_panel,
+                active_panel,
+            ));
+        }
+        DockNode::Split { first, second, .. } => {
+            collect_dock_tablist_nodes(first, focused, out);
+            collect_dock_tablist_nodes(second, focused, out);
+        }
+        DockNode::Leaf { .. } => {}
+    }
+}
+
 /// (R1081 §5.51) The dragged-panel + drop-zone the R742 pointer
 /// coordinator resolves under the cursor, shared across every panel
 /// external through one injected `Rc<Signal<Option<DockDropPreview>>>`
@@ -4037,8 +4113,11 @@ mod tests {
     use super::{
         CONTENT_TAG_SUFFIX, DockDropZone, DockNode, DockPanelExternal, DockPanelStyle,
         DockReorganizer, DockTopology, HEADER_TAG_SUFFIX, TEAR_OFF_EVENT, TEAR_OFF_FOLLOW_EVENT,
-        TEAR_OFF_REDOCK_EVENT, composite_tag, dock_drop_zone_highlight, view_dock_panel,
+        TEAR_OFF_REDOCK_EVENT, composite_tag, dock_drop_zone_highlight, dock_tablist_access_nodes,
+        view_dock_panel,
     };
+    use crate::tabs::composite_tab_tag;
+    use pinion_a11y::AccessNode;
     use pinion_core::external::{
         DragPayload, DropPoint, External, ExternalIntrospect, InterveneError, IntrospectValue,
     };
@@ -4686,6 +4765,125 @@ mod tests {
             Some(IntrospectValue::Bool(false)),
             "begin_drag resets detached",
         );
+    }
+
+    #[test]
+    fn r1095_no_tab_well_emits_no_tablist() {
+        // R1095 §5.51 §5.27 — a Leaf/Split-only topology has no tab wells,
+        // so it contributes no tablist a11y (a docked panel is not a tab).
+        let nodes = dock_tablist_access_nodes(&ab_topology(), None);
+        assert!(nodes.is_empty(), "no Tabs well → no tablist a11y nodes");
+    }
+
+    #[test]
+    fn r1095_tab_well_emits_tablist_tabs_and_tabpanel() {
+        let topo = DockTopology::new(DockNode::tabs(
+            "well-1",
+            vec!["a".into(), "b".into(), "c".into()],
+            1,
+        ));
+        let nodes = dock_tablist_access_nodes(&topo, None);
+        // The tablist names the well and owns the per-tab tags in order.
+        let tablist = nodes
+            .iter()
+            .find(|n| n.role.aria_name() == "tablist")
+            .expect("a tablist node");
+        assert_eq!(tablist.tag, "well-1", "tablist tag is the well id");
+        assert_eq!(
+            tablist.children,
+            vec![
+                composite_tab_tag("well-1", 0),
+                composite_tab_tag("well-1", 1),
+                composite_tab_tag("well-1", 2),
+            ],
+            "tablist owns the per-tab composite tags in order",
+        );
+        // One tab node per panel; the active one is aria-selected.
+        let tabs: Vec<&AccessNode> = nodes
+            .iter()
+            .filter(|n| n.role.aria_name() == "tab")
+            .collect();
+        assert_eq!(tabs.len(), 3, "one tab node per panel");
+        assert_eq!(tabs[1].selected, Some(true), "the active tab is selected");
+        assert_eq!(
+            tabs[0].selected,
+            Some(false),
+            "an inactive tab is not selected"
+        );
+        assert_eq!(tabs[2].selected, Some(false));
+        assert_eq!(
+            tabs[0].size_of_set,
+            Some(3),
+            "aria-setsize is the tab count"
+        );
+        assert_eq!(tabs[0].position_in_set, Some(1), "aria-posinset is 1-based");
+        assert_eq!(tabs[2].position_in_set, Some(3));
+        assert_eq!(
+            tabs[1].tag,
+            composite_tab_tag("well-1", 1),
+            "tab tag mirrors the painted composite tag",
+        );
+        // The tabpanel is the active panel (the header-suppressed content).
+        let panel = nodes
+            .iter()
+            .find(|n| n.role.aria_name() == "tabpanel")
+            .expect("a tabpanel node");
+        assert_eq!(panel.tag, "b", "tabpanel tag is the active panel id");
+    }
+
+    #[test]
+    fn r1095_tab_well_nested_in_split_is_walked() {
+        let topo = DockTopology::new(DockNode::split_horizontal(
+            "root",
+            0.5,
+            DockNode::leaf("side"),
+            DockNode::tabs("well-x", vec!["a".into(), "b".into()], 0),
+        ));
+        let nodes = dock_tablist_access_nodes(&topo, None);
+        assert!(
+            nodes
+                .iter()
+                .any(|n| n.role.aria_name() == "tablist" && n.tag == "well-x"),
+            "a tab well nested in a Split still emits a tablist",
+        );
+        assert_eq!(
+            nodes
+                .iter()
+                .filter(|n| n.role.aria_name() == "tablist")
+                .count(),
+            1,
+            "the Leaf sibling contributes no tablist",
+        );
+    }
+
+    #[test]
+    fn r1095_focused_strip_marks_active_tab_as_roving_descendant() {
+        let topo = DockTopology::new(DockNode::tabs("well-1", vec!["a".into(), "b".into()], 1));
+        // The strip owning focus makes its active tab the roving descendant.
+        let focused = dock_tablist_access_nodes(&topo, Some("well-1"));
+        let active = focused
+            .iter()
+            .find(|n| n.tag == composite_tab_tag("well-1", 1))
+            .expect("active tab");
+        assert!(
+            active.state.focused,
+            "the active tab is focused when the strip owns focus"
+        );
+        let inactive = focused
+            .iter()
+            .find(|n| n.tag == composite_tab_tag("well-1", 0))
+            .expect("inactive tab");
+        assert!(
+            !inactive.state.focused,
+            "an inactive tab is not the roving descendant"
+        );
+        // No strip focus → no tab is the roving descendant.
+        let unfocused = dock_tablist_access_nodes(&topo, None);
+        let a = unfocused
+            .iter()
+            .find(|n| n.tag == composite_tab_tag("well-1", 1))
+            .expect("active tab");
+        assert!(!a.state.focused, "no strip focus → no roving descendant");
     }
 
     #[test]

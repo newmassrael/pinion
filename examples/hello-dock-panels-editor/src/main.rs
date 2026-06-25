@@ -42,7 +42,7 @@
 //! * `floating_window_id(prefix, panel_id)` + `DEFAULT_FLOATING_WINDOW_PREFIX` —
 //!   `"torn-{panel_id}"` convention.
 
-use pinion_a11y::WidgetA11y;
+use pinion_a11y::{AccessNode, WidgetA11y};
 use pinion_core::command::Command;
 use pinion_core::external::IntrospectValue;
 use pinion_core::intent::Intent;
@@ -58,7 +58,7 @@ use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
 use pinion_widget_paint::button::{ButtonColors, ButtonStyle, view_button};
 use pinion_widget_paint::dock::{
     DockDropPreview, DockNode, DockPanelExternal, DockReorganizeExternal, DockReorganizer,
-    DockSplitState, DockTopology, view_dock_surface,
+    DockSplitState, DockTopology, dock_tablist_access_nodes, view_dock_surface,
 };
 use pinion_widget_paint::splitter::SplitterExternal;
 use std::rc::Rc;
@@ -683,7 +683,24 @@ impl WidgetCore for DockPanelsEditorView {
     }
 }
 
-impl WidgetA11y for DockPanelsEditorView {}
+impl WidgetA11y for DockPanelsEditorView {
+    /// R1095 §5.51 §5.27 §5.40 — the editor's AT contribution: the WAI-ARIA
+    /// `tablist` / `tab` / `tabpanel` nodes for every `DockNode::Tabs` well
+    /// in the live topology, so a screen reader announces the dock's tab
+    /// wells + which tab is selected (R1083 tabbed docking + R1085
+    /// `activate_tab` were create+AI-activate only — this makes them
+    /// AT-navigable). Reads the same `use_editor_topology` signal the view
+    /// walker renders from (one SSOT; `access_node` runs inside the shell's
+    /// `root_owner` scope, so the `Owner::cache` hook resolves). Empty
+    /// surface (`None`) / a Leaf/Split-only topology → no nodes.
+    fn access_node(_state: &Self::State, focused: Option<&str>) -> Vec<AccessNode> {
+        use_editor_topology()
+            .get()
+            .as_ref()
+            .map(|topology| dock_tablist_access_nodes(topology, focused))
+            .unwrap_or_default()
+    }
+}
 
 impl WidgetView for DockPanelsEditorView {
     type Renderer = HelloDockPanelsEditorRenderer;
