@@ -16402,6 +16402,60 @@
         "editor variant does not float panels to windows; an escape there is a harmless unhandled-intent no-op"
       ]
     },
+    "R1095": {
+      "decision_summary": "Dock tab-well accessibility: the dock crate emits WAI-ARIA tablist/tab/tabpanel AccessNodes for every DockNode::Tabs well (dock_tablist_access_nodes, the 3rd tablist_tab_nodes consumer), and hello-dock-panels-editor contributes them from access_node. Makes R1083 tabbed docking + R1085 activate_tab AT-navigable; tags mirror the painted scene; observable over scene/access. Pointer click-to-switch (b) remains the next slice.",
+      "changes_bullets": [
+        "dock_tablist_access_nodes walks topology, emits tablist/tab/tabpanel per Tabs well",
+        "tags mirror paint: well-id strip / {well_id}#i tabs / active-panel tabpanel",
+        "3rd tablist_tab_nodes consumer; aria selected/posinset/setsize + roving focus",
+        "editor WidgetA11y::access_node reads use_editor_topology + calls the helper",
+        "R1083 tabbed docking + R1085 activate_tab are now AT-navigable over scene/access"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace 7650 pass / 0 fail (+4 over R1094 7646)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello clean",
+        "cargo fmt --all --check clean",
+        "r1095_dock_tab_a11y.py PASS headless (>=30 assertions, A-F)",
+        "4 dock unit tests: no-well / tablist+tabs+tabpanel / nested-in-split / roving-focus",
+        "demo: tabify->tablist, activate_tab moves aria-selected, paint<->a11y tag parity"
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.40",
+        "5.51"
+      ],
+      "carry_forward_bullets": [
+        "(b) pointer click-to-switch tab still owed: routing a click on the dynamic {well_id}#i tab tag (well ids are minted reorg-tabs-{seq}) to activate_tab; AI/RPC activate_tab + this a11y now cover AI+AT, human-pointer parity is the next slice",
+        "dock a11y is tab-wells-only; panel-region roles not yet emitted (additive when a consumer needs them)",
+        "libXtst live native-pointer dock acceptance still HW-gated (real-GPU host)"
+      ],
+      "publishable_decision_summary": "Dock tab-well accessibility: the dock crate emits WAI-ARIA tablist/tab/tabpanel AccessNodes for every DockNode::Tabs well (dock_tablist_access_nodes, the 3rd tablist_tab_nodes consumer), and hello-dock-panels-editor contributes them from access_node. Makes R1083 tabbed docking + R1085 activate_tab AT-navigable; tags mirror the painted scene; observable over scene/access. Pointer click-to-switch (b) remains the next slice.",
+      "publishable_changes_bullets": [
+        "dock_tablist_access_nodes walks topology, emits tablist/tab/tabpanel per Tabs well",
+        "tags mirror paint: well-id strip / {well_id}#i tabs / active-panel tabpanel",
+        "3rd tablist_tab_nodes consumer; aria selected/posinset/setsize + roving focus",
+        "editor WidgetA11y::access_node reads use_editor_topology + calls the helper",
+        "R1083 tabbed docking + R1085 activate_tab are now AT-navigable over scene/access"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace 7650 pass / 0 fail (+4 over R1094 7646)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello clean",
+        "cargo fmt --all --check clean",
+        "r1095_dock_tab_a11y.py PASS headless (>=30 assertions, A-F)",
+        "4 dock unit tests: no-well / tablist+tabs+tabpanel / nested-in-split / roving-focus",
+        "demo: tabify->tablist, activate_tab moves aria-selected, paint<->a11y tag parity"
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.40",
+        "5.51"
+      ],
+      "publishable_carry_forward_bullets": [
+        "(b) pointer click-to-switch tab still owed: routing a click on the dynamic {well_id}#i tab tag (well ids are minted reorg-tabs-{seq}) to activate_tab; AI/RPC activate_tab + this a11y now cover AI+AT, human-pointer parity is the next slice",
+        "dock a11y is tab-wells-only; panel-region roles not yet emitted (additive when a consumer needs them)",
+        "libXtst live native-pointer dock acceptance still HW-gated (real-GPU host)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
