@@ -1306,7 +1306,14 @@ impl InputRouter {
                 // path where no cursor was ever recorded for this pointer,
                 // fall back to the cursor-less hook.
                 match cursor {
-                    Some(c) => external.handle.drag_release_at(&session.payload, over, c),
+                    // R1100 §5.51 PR-33 — `over_window: None` here = the drop
+                    // resolved in THIS window (or escaped every window). The
+                    // shell composes the cross-window fallback (slice 2) and
+                    // re-dispatches with the resolving window when the cursor
+                    // escaped this window into another's dock zone.
+                    Some(c) => external
+                        .handle
+                        .drag_release_at(&session.payload, over, c, None),
                     None => external.handle.drag_release(&session.payload, over),
                 }
             }
@@ -1711,7 +1718,10 @@ impl InputRouter {
             // are unaffected). A follow-the-cursor coordinator reads it; the
             // rect-relative `over` is `None` once the cursor escapes every
             // tag, so the cursor is the only live pointer signal then.
-            external.handle.drag_to_at(&payload, over, (x, y));
+            // R1100 §5.51 PR-33 — `over_window: None` = own-window resolve;
+            // the shell's cross-window composition (slice 2) supplies the
+            // resolving window when the cursor escapes into another window.
+            external.handle.drag_to_at(&payload, over, (x, y), None);
         }
     }
 
@@ -5833,6 +5843,7 @@ mod tests {
             payload: &DragPayload,
             over: Option<DropPoint>,
             cursor: (f64, f64),
+            _over_window: Option<&str>,
         ) {
             // Format the f64 directly (whole values print without a decimal);
             // no truncating `as i64` cast, so this stays clippy-pedantic clean.
@@ -5847,6 +5858,7 @@ mod tests {
             payload: &DragPayload,
             over: Option<DropPoint>,
             cursor: (f64, f64),
+            _over_window: Option<&str>,
         ) {
             self.log
                 .lock()

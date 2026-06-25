@@ -2910,6 +2910,23 @@ pub const TEAR_OFF_FOLLOW_EVENT: &str = "tear_off_follow";
 /// no-op otherwise. Payload is the panel id ([`IntrospectValue::Text`]).
 pub const TEAR_OFF_REDOCK_EVENT: &str = "tear_off_redock";
 
+/// R1100 §5.51 §5.16 §2 #7 PR-33 — symbolic event the [`DockPanelExternal`]
+/// emits when a drag tears a panel out of its floating window and releases it
+/// over **another window's** dock zone (the cross-window drag-back redock the
+/// per-window router cannot resolve, composed by the shell —
+/// [`pinion_runtime::resolve_cross_window_drop`]). Distinct from
+/// [`TEAR_OFF_REDOCK_EVENT`]: that is **remove-only** "restore to where it
+/// came from"; this is **dock-at** "re-insert into window `window` at the drop
+/// zone under the cursor". The two semantics are two intents — never a
+/// polymorphic payload — so a restore (Text payload) and a dock-at (JSON
+/// payload) can never be confused by a reducer. Payload
+/// ([`IntrospectValue::Json`]): `{panel, window, target, x_rel, y_rel}` — the
+/// floated panel, the target window's spec id, the target dock zone's paint
+/// tag, and the cursor normalised over that zone's rect (the binding /
+/// coordinator classifies the edge-vs-centre zone from `x_rel`/`y_rel`, the
+/// single zone-geometry SSOT, exactly as the same-window drop path does).
+pub const TEAR_OFF_REDOCK_AT_EVENT: &str = "tear_off_redock_at";
+
 /// R683.B §5.16 — sidecar carrying [`view_dock_panel`]'s
 /// binding-local visual + behavioural constants. `#[non_exhaustive]`
 /// so future axes (resize handles, close button, collapse arrow)
@@ -4036,6 +4053,26 @@ impl DockPanelExternal {
             payload: IntrospectValue::Text(self.panel_id.to_string()),
         });
     }
+
+    /// (R1100 §5.51 §5.16 §2 #7 PR-33) Enqueue the cross-window dock-at redock:
+    /// the floated panel was released over `target_window`'s dock zone `point`.
+    /// The binding reducer re-inserts the panel into that window's dock at the
+    /// zone (classifying edge-vs-centre from `point`'s normalised cursor, the
+    /// same zone-geometry SSOT the same-window drop uses) and drops the panel's
+    /// floating window. Distinct from [`Self::enqueue_tear_off_redock`]
+    /// (remove-only restore) — see [`TEAR_OFF_REDOCK_AT_EVENT`].
+    fn enqueue_tear_off_redock_at(&self, target_window: &str, point: &DropPoint) {
+        self.pending_intents.borrow_mut().push_back(Intent {
+            tag: Cow::Borrowed(TEAR_OFF_REDOCK_AT_EVENT),
+            payload: IntrospectValue::Json(serde_json::json!({
+                "panel": self.panel_id.as_ref(),
+                "window": target_window,
+                "target": point.tag,
+                "x_rel": point.x_rel,
+                "y_rel": point.y_rel,
+            })),
+        });
+    }
 }
 
 impl External for DockPanelExternal {
@@ -4166,7 +4203,13 @@ impl External for DockPanelExternal {
     /// [`drag_to`](Self::drag_to) so the existing preview/dock logic is
     /// unchanged. The recorded cursor is exposed as scene-as-data via
     /// `query("drag_cursor")`.
-    fn drag_to_at(&mut self, payload: &DragPayload, over: Option<DropPoint>, cursor: (f64, f64)) {
+    fn drag_to_at(
+        &mut self,
+        payload: &DragPayload,
+        over: Option<DropPoint>,
+        cursor: (f64, f64),
+        over_window: Option<&str>,
+    ) {
         self.drag_cursor.set(Some(cursor));
         // R1097 PR-32 — THRESHOLD-based detach (supersedes R1094 escape-based).
         // Open the latch at the grab cursor (this gesture's first sample, as
@@ -4196,20 +4239,46 @@ impl External for DockPanelExternal {
         if self.detached.get() {
             self.enqueue_tear_off_follow(cursor);
         }
-        self.drag_to(payload, over);
+        // R1100 PR-33 — a cross-window `over` (`over_window: Some`) names ANOTHER
+        // window's dock zone; do NOT paint it into THIS window's drop preview
+        // (the cross-window redock affordance is the target window's overlay, a
+        // later slice). A same-window `over` keeps the existing preview path.
+        let same_window_over = if over_window.is_some() { None } else { over };
+        self.drag_to(payload, same_window_over);
     }
 
-    /// (R1093 §5.15 §5.51 §2 #7) Record the release cursor, then delegate to
-    /// the cursor-less [`drag_release`](Self::drag_release). The cursor
-    /// persists after the gesture so an AI can read where the drop landed
-    /// (reset on the next [`begin_drag`](Self::begin_drag)).
+    /// (R1093 §5.15 §5.51 §2 #7) Record the release cursor, then commit the
+    /// drop. R1100 PR-33: a cross-window release (`over_window: Some` — the
+    /// cursor escaped this floating window into ANOTHER window's dock zone)
+    /// redocks the panel INTO that window at the zone via
+    /// [`TEAR_OFF_REDOCK_AT_EVENT`], distinct from a same-window drop (which
+    /// delegates to the cursor-less [`drag_release`](Self::drag_release): own
+    /// reorganize / escape-float / snap-back). The cursor persists after the
+    /// gesture so an AI can read where the drop landed.
     fn drag_release_at(
         &mut self,
         payload: &DragPayload,
         over: Option<DropPoint>,
         cursor: (f64, f64),
+        over_window: Option<&str>,
     ) {
         self.drag_cursor.set(Some(cursor));
+        // R1100 PR-33 — cross-window dock-at: the drop resolved in a DIFFERENT
+        // window's dock zone. Re-insert the panel there + drop its floating
+        // window. This is NOT a same-window reorganize (the panel is not in
+        // this window's topology) — it is the dock-at redock the per-window
+        // router could never resolve.
+        if let (Some(target_window), Some(point)) = (over_window, over.as_ref()) {
+            self.enqueue_tear_off_redock_at(target_window, point);
+            self.dragging.set(false);
+            self.set_drop_preview(None);
+            self.is_drag_armed.set(true);
+            // The gesture committed a redock — the floating follower this drag
+            // tracked is consumed by the dock-at, so clear the latch.
+            self.detached.set(false);
+            self.tear_off_fired.set(false);
+            return;
+        }
         self.drag_release(payload, over);
     }
 
@@ -4420,8 +4489,8 @@ mod tests {
     use super::{
         CONTENT_TAG_SUFFIX, DockDropZone, DockNode, DockPanelExternal, DockPanelStyle,
         DockReorganizer, DockTopology, HEADER_TAG_SUFFIX, TEAR_OFF_EVENT, TEAR_OFF_FOLLOW_EVENT,
-        TEAR_OFF_REDOCK_EVENT, composite_tag, dock_drop_zone_highlight, dock_tablist_access_nodes,
-        view_dock_panel,
+        TEAR_OFF_REDOCK_AT_EVENT, TEAR_OFF_REDOCK_EVENT, composite_tag, dock_drop_zone_highlight,
+        dock_tablist_access_nodes, view_dock_panel,
     };
     use crate::tabs::composite_tab_tag;
     use pinion_a11y::AccessNode;
@@ -4789,14 +4858,14 @@ mod tests {
         );
         let _ = ext.begin_drag();
         // A move forwards the cursor even when over is None (escaped tags).
-        ext.drag_to_at(&dummy_payload(), None, (123.0, 45.0));
+        ext.drag_to_at(&dummy_payload(), None, (123.0, 45.0), None);
         assert_eq!(
             ext.query("drag_cursor"),
             Some(IntrospectValue::Json(serde_json::json!([123.0, 45.0]))),
             "drag_cursor mirrors the forwarded move cursor"
         );
         // The release cursor overwrites it and persists post-gesture.
-        ext.drag_release_at(&dummy_payload(), None, (200.0, 88.0));
+        ext.drag_release_at(&dummy_payload(), None, (200.0, 88.0), None);
         assert_eq!(
             ext.query("drag_cursor"),
             Some(IntrospectValue::Json(serde_json::json!([200.0, 88.0]))),
@@ -4848,8 +4917,88 @@ mod tests {
     /// detach from escape. The caller has already `begin_drag`'d.
     fn cross_detach(ext: &mut DockPanelExternal, over_panel: Option<&str>, far: (f64, f64)) {
         let over = || over_panel.map(|p| drop_point(p, 0.5, 0.5));
-        ext.drag_to_at(&dummy_payload(), over(), (10.0, 10.0));
-        ext.drag_to_at(&dummy_payload(), over(), far);
+        ext.drag_to_at(&dummy_payload(), over(), (10.0, 10.0), None);
+        ext.drag_to_at(&dummy_payload(), over(), far, None);
+    }
+
+    // ── R1100 §5.51 PR-33 — cross-window dock-at redock (slice 1) ─────
+
+    #[test]
+    fn r1100_cross_window_release_redocks_at_target_window() {
+        // Releasing a floating panel's drag over ANOTHER window's dock zone
+        // (over_window=Some) emits the dock-at redock intent carrying the
+        // target window + zone — NOT a same-window reorganize / escape-float.
+        let mut ext = DockPanelExternal::new("inspector");
+        let _ = ext.begin_drag();
+        cross_detach(&mut ext, None, (640.0, 300.0)); // tear into a follower
+        let mut drained: Vec<Intent> = Vec::new();
+        ext.drain_intents(&mut |i| drained.push(i)); // consume the follow(s)
+        ext.drag_release_at(
+            &dummy_payload(),
+            Some(drop_point("viewport", 0.25, 0.5)),
+            (200.0, 100.0),
+            Some("main"),
+        );
+        let mut after: Vec<Intent> = Vec::new();
+        ext.drain_intents(&mut |i| after.push(i));
+        assert_eq!(after.len(), 1, "exactly one dock-at redock intent");
+        assert_eq!(after[0].tag.as_ref(), TEAR_OFF_REDOCK_AT_EVENT);
+        let IntrospectValue::Json(p) = &after[0].payload else {
+            panic!("the dock-at payload is JSON");
+        };
+        assert_eq!(p["panel"], "inspector");
+        assert_eq!(p["window"], "main", "carries the TARGET window");
+        assert_eq!(p["target"], "viewport", "carries the target dock zone tag");
+        assert!(
+            (p["x_rel"].as_f64().expect("x_rel") - 0.25).abs() < 1e-6,
+            "carries the cursor normalised over the zone (for edge-vs-centre)",
+        );
+        assert!(
+            !ext.detached(),
+            "the dock-at consumed the floating follower"
+        );
+    }
+
+    #[test]
+    fn r1100_same_window_release_never_docks_at() {
+        // over_window=None → the existing same-window path (escape-float here);
+        // a same-window drop is NEVER a cross-window dock-at.
+        let mut ext = DockPanelExternal::new("inspector");
+        let _ = ext.begin_drag();
+        cross_detach(&mut ext, None, (640.0, 300.0));
+        let mut drained: Vec<Intent> = Vec::new();
+        ext.drain_intents(&mut |i| drained.push(i));
+        ext.drag_release_at(&dummy_payload(), None, (700.0, 320.0), None);
+        let mut after: Vec<Intent> = Vec::new();
+        ext.drain_intents(&mut |i| after.push(i));
+        assert!(
+            after
+                .iter()
+                .all(|i| i.tag.as_ref() != TEAR_OFF_REDOCK_AT_EVENT),
+            "a same-window release never docks-at (got {after:?})",
+        );
+    }
+
+    #[test]
+    fn r1100_cross_window_with_no_zone_falls_through_to_float() {
+        // over_window=Some but over=None (the cursor mapped into another window
+        // but onto no drop zone) is NOT a dock-at — it falls through to the
+        // same-window release path (escape-float), so a drop in another
+        // window's dead space floats, it does not redock.
+        let mut ext = DockPanelExternal::new("inspector");
+        let _ = ext.begin_drag();
+        cross_detach(&mut ext, None, (640.0, 300.0));
+        let mut drained: Vec<Intent> = Vec::new();
+        ext.drain_intents(&mut |i| drained.push(i));
+        ext.drag_release_at(&dummy_payload(), None, (900.0, 50.0), Some("main"));
+        let mut after: Vec<Intent> = Vec::new();
+        ext.drain_intents(&mut |i| after.push(i));
+        assert!(
+            after
+                .iter()
+                .all(|i| i.tag.as_ref() != TEAR_OFF_REDOCK_AT_EVENT),
+            "no zone under the cursor → no dock-at (got {after:?})",
+        );
     }
 
     #[test]
@@ -4862,9 +5011,9 @@ mod tests {
         let mut ext = DockPanelExternal::new("a");
         let _ = ext.begin_drag();
         assert!(!ext.detached(), "fresh gesture has not detached");
-        ext.drag_to_at(&dummy_payload(), None, (100.0, 100.0)); // grab
+        ext.drag_to_at(&dummy_payload(), None, (100.0, 100.0), None); // grab
         assert!(!ext.detached(), "the grab sample alone does not detach");
-        ext.drag_to_at(&dummy_payload(), None, (640.0, 300.0)); // > threshold
+        ext.drag_to_at(&dummy_payload(), None, (640.0, 300.0), None); // > threshold
         assert!(ext.detached(), "crossing the drag threshold detaches");
         let mut received: Vec<Intent> = Vec::new();
         ext.drain_intents(&mut |i| received.push(i));
@@ -4907,8 +5056,8 @@ mod tests {
         // router's own click-vs-drag SSOT shares).
         let mut ext = DockPanelExternal::new("a");
         let _ = ext.begin_drag();
-        ext.drag_to_at(&dummy_payload(), None, (100.0, 100.0)); // grab
-        ext.drag_to_at(&dummy_payload(), None, (102.0, 101.0)); // < threshold
+        ext.drag_to_at(&dummy_payload(), None, (100.0, 100.0), None); // grab
+        ext.drag_to_at(&dummy_payload(), None, (102.0, 101.0), None); // < threshold
         assert!(!ext.detached(), "a sub-threshold wobble stays a click");
         let mut received: Vec<Intent> = Vec::new();
         ext.drain_intents(&mut |i| received.push(i));
@@ -4923,9 +5072,9 @@ mod tests {
         // sub-threshold, emits no follow.
         let mut ext = DockPanelExternal::new("a");
         let _ = ext.begin_drag();
-        ext.drag_to_at(&dummy_payload(), None, (10.0, 20.0)); // grab
-        ext.drag_to_at(&dummy_payload(), None, (30.0, 40.0)); // detach + follow
-        ext.drag_to_at(&dummy_payload(), None, (50.0, 60.0)); // follow
+        ext.drag_to_at(&dummy_payload(), None, (10.0, 20.0), None); // grab
+        ext.drag_to_at(&dummy_payload(), None, (30.0, 40.0), None); // detach + follow
+        ext.drag_to_at(&dummy_payload(), None, (50.0, 60.0), None); // follow
         let mut received: Vec<Intent> = Vec::new();
         ext.drain_intents(&mut |i| received.push(i));
         assert_eq!(received.len(), 2, "one follow per move after the grab");
@@ -4950,7 +5099,7 @@ mod tests {
         let mut ext = DockPanelExternal::new("a");
         let _ = ext.begin_drag();
         cross_detach(&mut ext, None, (640.0, 300.0));
-        ext.drag_release_at(&dummy_payload(), None, (700.0, 320.0));
+        ext.drag_release_at(&dummy_payload(), None, (700.0, 320.0), None);
         assert!(ext.tear_off_fired(), "escape-drop floats");
         assert!(ext.detached());
         let mut received: Vec<Intent> = Vec::new();
@@ -4999,6 +5148,7 @@ mod tests {
             &dummy_payload(),
             Some(drop_point("a", 0.5, 0.5)),
             (120.0, 40.0),
+            None,
         );
         assert!(!ext.detached(), "restore clears the latch");
         assert!(
@@ -5043,11 +5193,13 @@ mod tests {
             &dummy_payload(),
             Some(drop_point("a", 0.5, 0.5)),
             (100.0, 100.0),
+            None,
         );
         ext.drag_release_at(
             &dummy_payload(),
             Some(drop_point("a", 0.5, 0.5)),
             (100.0, 100.0),
+            None,
         );
         let mut received: Vec<Intent> = Vec::new();
         ext.drain_intents(&mut |i| received.push(i));
@@ -5069,6 +5221,7 @@ mod tests {
             &dummy_payload(),
             Some(drop_point("b", 0.5, 0.5)),
             (300.0, 300.0),
+            None,
         );
         assert!(!ext.detached());
         let mut received: Vec<Intent> = Vec::new();

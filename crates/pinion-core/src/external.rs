@@ -692,7 +692,26 @@ pub trait External: core::fmt::Debug {
     /// [`drag_to`](Self::drag_to) (dropping the cursor), so every pre-R1093
     /// drag source is bit-identical and no widget receives both calls.
     /// Override this **instead of** `drag_to` to receive the cursor.
-    fn drag_to_at(&mut self, payload: &DragPayload, over: Option<DropPoint>, _cursor: (f64, f64)) {
+    /// R1100 §5.51 PR-33 — `over_window` is the spec id of the window whose
+    /// drop target `over` was resolved in, when the cursor escaped THIS
+    /// (the drag source's) window and the shell resolved the drop in ANOTHER
+    /// window ([`pinion_runtime::resolve_cross_window_drop`]). `None` means the
+    /// own / source window (the pre-R1100 case — every same-window drag). A
+    /// cross-window-aware coordinator (a dock panel that can redock into a
+    /// different window) reads it to distinguish a same-window *reorganize*
+    /// from a cross-window *redock*; single-window widgets ignore it (the
+    /// default drops it). The per-window `InputRouter` stays cross-window-blind
+    /// — the shell composes the cross-window resolution and passes it here, so
+    /// the window dimension rides the abs-cursor (`_at`) path only, never the
+    /// rect-relative [`drag_to`](Self::drag_to) base every single-window drag
+    /// uses.
+    fn drag_to_at(
+        &mut self,
+        payload: &DragPayload,
+        over: Option<DropPoint>,
+        _cursor: (f64, f64),
+        _over_window: Option<&str>,
+    ) {
         self.drag_to(payload, over);
     }
 
@@ -709,6 +728,7 @@ pub trait External: core::fmt::Debug {
         payload: &DragPayload,
         over: Option<DropPoint>,
         _cursor: (f64, f64),
+        _over_window: Option<&str>,
     ) {
         self.drag_release(payload, over);
     }
@@ -1162,8 +1182,8 @@ mod tests {
             kind: Cow::Borrowed("dock-panel"),
             value: IntrospectValue::Text("inspector".to_owned()),
         };
-        src.drag_to_at(&payload, None, (12.0, 34.0));
-        src.drag_release_at(&payload, None, (56.0, 78.0));
+        src.drag_to_at(&payload, None, (12.0, 34.0), None);
+        src.drag_release_at(&payload, None, (56.0, 78.0), None);
         assert_eq!(
             src.to_calls.get(),
             1,
