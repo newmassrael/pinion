@@ -16558,6 +16558,58 @@
         "(d) tab reorder + (e) untab-drag-out remain additive slices, deferred to a forcing consumer"
       ]
     },
+    "R1097": {
+      "decision_summary": "R1097 §5.51 PR-32 threshold tear-off detach: DockPanelExternal tears into a follower past DRAG_CLICK_THRESHOLD_PX even over a zone (was escape-based); 4th R880 DragLatch consumer",
+      "changes_bullets": [
+        "DockPanelExternal threshold detach: detach_latch (4th R880 DragLatch consumer) in drag_to_at",
+        "tears into a follower past DRAG_CLICK_THRESHOLD_PX even over a dock zone (supersedes R1094 escape)",
+        "grab = first drag_to_at sample (begin_drag is cursor-less); reset per gesture in begin_drag",
+        "detached -> follow on every move; the drop-zone preview coexists -> follow+redock in one gesture",
+        "drag_release / redock / tear_off intent contract unchanged -> consumer (sprag) wiring 0 change",
+        "consumer-forced seam from sprag PINION-PR32 handoff (pinion-side only, no sprag edits)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace 7663 pass / 0 fail (4 new r1097 unit + updated r1094 detach setups)",
+        "clippy --workspace --all-targets --features vello (-D pedantic) clean; cargo fmt clean",
+        "r1097_dock_pointer_reorganize.py 31 assertions PASS (pointer drag -> reorganize / tabify + a11y)",
+        "r1094 / r1093 / r685 / r686 tear-off + reorganize demos PASS (PR-32 regression guard, lavapipe)"
+      ],
+      "impact_refs": [
+        "5.51",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "r683_dock_tear_off.py pre-existing RED since R1094 (drags to centre, no escape); fix in R1098 PR-33",
+        "threshold-detach timing is during-drag (atomic scene/drag resets detached on release) -> unit-tested",
+        "live native-pointer tear-off acceptance (libXtst) HW-gated; CI stays headless scene-assertion",
+        "broader demo-sweep health audit still owed (other constraint-change carries may persist)"
+      ],
+      "publishable_decision_summary": "R1097 §5.51 PR-32 threshold tear-off detach: DockPanelExternal tears into a follower past DRAG_CLICK_THRESHOLD_PX even over a zone (was escape-based); 4th R880 DragLatch consumer",
+      "publishable_changes_bullets": [
+        "DockPanelExternal threshold detach: detach_latch (4th R880 DragLatch consumer) in drag_to_at",
+        "tears into a follower past DRAG_CLICK_THRESHOLD_PX even over a dock zone (supersedes R1094 escape)",
+        "grab = first drag_to_at sample (begin_drag is cursor-less); reset per gesture in begin_drag",
+        "detached -> follow on every move; the drop-zone preview coexists -> follow+redock in one gesture",
+        "drag_release / redock / tear_off intent contract unchanged -> consumer (sprag) wiring 0 change",
+        "consumer-forced seam from sprag PINION-PR32 handoff (pinion-side only, no sprag edits)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace 7663 pass / 0 fail (4 new r1097 unit + updated r1094 detach setups)",
+        "clippy --workspace --all-targets --features vello (-D pedantic) clean; cargo fmt clean",
+        "r1097_dock_pointer_reorganize.py 31 assertions PASS (pointer drag -> reorganize / tabify + a11y)",
+        "r1094 / r1093 / r685 / r686 tear-off + reorganize demos PASS (PR-32 regression guard, lavapipe)"
+      ],
+      "publishable_impact_refs": [
+        "5.51",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "r683_dock_tear_off.py pre-existing RED since R1094 (drags to centre, no escape); fix in R1098 PR-33",
+        "threshold-detach timing is during-drag (atomic scene/drag resets detached on release) -> unit-tested",
+        "live native-pointer tear-off acceptance (libXtst) HW-gated; CI stays headless scene-assertion",
+        "broader demo-sweep health audit still owed (other constraint-change carries may persist)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
