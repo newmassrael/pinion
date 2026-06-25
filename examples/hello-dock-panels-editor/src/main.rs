@@ -54,7 +54,9 @@ use pinion_core::undo::{UndoStack, UndoStackExternal, use_undo_stack};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
 use pinion_core::{Frame, Owner, Scene, Signal, WidgetCore};
-use pinion_shell::{SizeStrategy, WidgetView, WindowSpec, vello_renderer_impl};
+use pinion_shell::{
+    SizeStrategy, WidgetView, WindowSpec, desktop_position_from, vello_renderer_impl, window_exists,
+};
 use pinion_widget_paint::button::{ButtonColors, ButtonStyle, view_button};
 use pinion_widget_paint::dock::{
     DEFAULT_FLOATING_WINDOW_PREFIX, DockDropPreview, DockNode, DockPanelExternal, DockPanelStyle,
@@ -338,10 +340,11 @@ fn floating_window_position(panel_id: &str) -> (i32, i32) {
     (160 + step * 44, 120 + step * 44)
 }
 
-/// `true` iff a floating window for `panel_id` currently exists in `panels`.
+/// `true` iff a floating window for `panel_id` currently exists in `panels` —
+/// a thin binding wrapper over the lifted [`window_exists`] predicate
+/// (R1107.1) keyed on the panel's `torn-<panel>` floating-window id.
 fn is_panel_floating(panels: &[WindowSpec], panel_id: &str) -> bool {
-    let target = floating_window_id(panel_id);
-    panels.iter().any(|w| w.id == target)
+    window_exists(panels, &floating_window_id(panel_id))
 }
 
 /// Reducer mutation for a `tear_off` intent — the canonical toggle:
@@ -387,49 +390,21 @@ fn redock_panel_floating(panel_id: &str) {
     }
 }
 
-/// (R1105/R1107 §5.16 §5.41 PR-31) Convert a SOURCE-window-logical cursor into
-/// a desktop outer position for the live tear-off follow — the floating window
-/// opens at the desktop point under the cursor = the SOURCE window's declared
-/// outer origin + the cursor (the `DockPanelExternal` reports cursors in the
-/// driving window's frame; the widget crate must not know about windows).
-///
-/// (R1107) `source_window` names which window the cursor is measured in
-/// (`DragUpdate::source_window`, threaded through the `tear_off_follow`
-/// payload). This CLEARS the R1095.1 latent defect: re-dragging an
-/// already-floating panel's own header reports a cursor in that
-/// `torn-<panel>` window's frame, so its origin — not main's — is the right
-/// one to add. `None` (the cursor-less degenerate fallback) → the main
-/// window. A source window absent from `panels` (never positioned) falls back
-/// to the desktop origin, so the follower still tracks the cursor.
-#[allow(
-    clippy::cast_possible_truncation,
-    reason = "logical-pixel cursor → i32 outer position; sub-pixel is irrelevant to window placement"
-)]
-fn follow_desktop_position(
-    panels: &[WindowSpec],
-    source_window: Option<&str>,
-    cursor: (f64, f64),
-) -> (i32, i32) {
-    let source = source_window.unwrap_or(MAIN_WINDOW_ID);
-    let (ox, oy) = panels
-        .iter()
-        .find(|w| w.id.as_ref() == source)
-        .and_then(|w| w.position)
-        .unwrap_or((0, 0));
-    (ox + cursor.0.round() as i32, oy + cursor.1.round() as i32)
-}
-
 /// (R1105/R1107 §5.16 §5.41 PR-31) Ensure `panel_id` has a floating window and
 /// write its outer position from the desktop-converted cursor (the live
 /// follow). Idempotent: creates on the first escaped move, repositions on
 /// every subsequent move. `Signal::set`'s equality-skip collapses a
 /// stationary cursor. Non-toggling — the AI dock-back stays on
-/// [`toggle_panel_floating`]. `source_window` (R1107) is the window the
-/// cursor is measured in, so the desktop conversion uses the right origin.
+/// [`toggle_panel_floating`]. The desktop conversion runs through the lifted
+/// [`desktop_position_from`] (R1107.1): `source_window` (R1107) names the
+/// window the cursor is measured in, so the follower lands at the RIGHT
+/// origin (re-dragging an already-floating header uses that floater's frame,
+/// not main's — the R1095.1 fix, now a `pinion-shell` SSOT shared with the
+/// flat consumer).
 fn follow_panel_floating(panel_id: &str, source_window: Option<&str>, cursor: (f64, f64)) {
     let signal = use_editor_windows();
     let mut current = signal.get();
-    let pos = follow_desktop_position(&current, source_window, cursor);
+    let pos = desktop_position_from(&current, source_window, cursor);
     let target = floating_window_id(panel_id);
     if let Some(spec) = current.iter_mut().find(|w| w.id == target) {
         spec.position = Some(pos);
@@ -1802,14 +1777,20 @@ mod tests {
     fn r1105_redock_at_main_removes_floating_window() {
         run_in_owner(|| {
             let windows = use_editor_windows();
+            let topo = use_editor_topology();
+            let before = topo.get().unwrap();
             toggle_panel_floating(VIEWPORT_PANEL_TAG);
             assert!(is_panel_floating(&windows.get(), VIEWPORT_PANEL_TAG));
+            // (R1107.1) Target the panel's OWN slot → `apply_zone_redock`'s
+            // source==target home no-op, so this test isolates the
+            // window-removal (home redock) WITHOUT triggering a relocate/tabify
+            // it doesn't assert. Zone-relocate is covered by the r1106 tests.
             let intent = Intent {
                 tag: tear_off_tag(VIEWPORT_PANEL_TAG, TEAR_OFF_REDOCK_AT_EVENT),
                 payload: IntrospectValue::Json(serde_json::json!({
                     "panel": VIEWPORT_PANEL_TAG,
                     "window": MAIN_WINDOW_ID,
-                    "target": OUTLINER_PANEL_TAG,
+                    "target": VIEWPORT_PANEL_TAG,
                     "x_rel": 0.5,
                     "y_rel": 0.5,
                 })),
@@ -1818,6 +1799,11 @@ mod tests {
             assert!(
                 !is_panel_floating(&windows.get(), VIEWPORT_PANEL_TAG),
                 "redock-at into main removes the floating window (panel returns to its slot)",
+            );
+            assert_eq!(
+                topo.get().unwrap(),
+                before,
+                "a home redock (own-slot target) leaves the topology unchanged",
             );
         });
     }
@@ -1864,7 +1850,7 @@ mod tests {
     #[test]
     fn r1105_follow_desktop_position_adds_main_origin() {
         // No known main origin → relative to desktop (0,0).
-        assert_eq!(follow_desktop_position(&[], None, (10.0, 20.0)), (10, 20));
+        assert_eq!(desktop_position_from(&[], None, (10.0, 20.0)), (10, 20));
         // With a positioned main window, the cursor is offset by its origin.
         let main_at = vec![
             WindowSpec::new(
@@ -1878,7 +1864,7 @@ mod tests {
             .with_position(200, 150),
         ];
         assert_eq!(
-            follow_desktop_position(&main_at, None, (10.0, 20.0)),
+            desktop_position_from(&main_at, None, (10.0, 20.0)),
             (210, 170)
         );
     }
@@ -2044,18 +2030,18 @@ mod tests {
         let panels = vec![main, floater];
         // Source = the floater → add the floater's origin (600,400).
         assert_eq!(
-            follow_desktop_position(&panels, Some("torn-viewport"), (10.0, 20.0)),
+            desktop_position_from(&panels, Some("torn-viewport"), (10.0, 20.0)),
             (610, 420),
             "a floater-source follow adds the FLOATER's origin (not main's)",
         );
         // Source = main (a docked tear-off) → add main's origin (100,50).
         assert_eq!(
-            follow_desktop_position(&panels, Some(MAIN_WINDOW_ID), (10.0, 20.0)),
+            desktop_position_from(&panels, Some(MAIN_WINDOW_ID), (10.0, 20.0)),
             (110, 70),
         );
         // None (degenerate fallback) → main.
         assert_eq!(
-            follow_desktop_position(&panels, None, (10.0, 20.0)),
+            desktop_position_from(&panels, None, (10.0, 20.0)),
             (110, 70)
         );
     }
@@ -2125,6 +2111,43 @@ mod tests {
                 topo.get().unwrap(),
                 before,
                 "topology untouched for a non-main target",
+            );
+        });
+    }
+
+    #[test]
+    fn r1107_1_redock_at_with_rejected_relocate_still_redocks_home() {
+        // R1107.1 review-clearance: the `# Errors` contract of apply_zone_redock
+        // — an AI-driven `tear_off_redock_at` whose target names NO panel
+        // rejects the relocate (topology unchanged), yet the floating window is
+        // still removed so the panel returns HOME (its original placeholder
+        // leaf). Reachable via `invoke("tear_off_redock_at",{target:"<stale>"})`.
+        run_in_owner(|| {
+            let windows = use_editor_windows();
+            let topo = use_editor_topology();
+            let before = topo.get().unwrap();
+            toggle_panel_floating(VIEWPORT_PANEL_TAG);
+            assert!(is_panel_floating(&windows.get(), VIEWPORT_PANEL_TAG));
+            let intent = Intent {
+                tag: tear_off_tag(VIEWPORT_PANEL_TAG, TEAR_OFF_REDOCK_AT_EVENT),
+                payload: IntrospectValue::Json(serde_json::json!({
+                    "panel": VIEWPORT_PANEL_TAG,
+                    "window": MAIN_WINDOW_ID,
+                    "target": "nonexistent_panel",
+                    "x_rel": 0.15,
+                    "y_rel": 0.5,
+                })),
+            };
+            let _ = <DockPanelsEditorView as WidgetCore>::update(ButtonState::Idle, &intent);
+            assert!(
+                !is_panel_floating(&windows.get(), VIEWPORT_PANEL_TAG),
+                "the floating window is removed (redocked) even when the relocate rejects",
+            );
+            assert_eq!(
+                topo.get().unwrap(),
+                before,
+                "a rejected relocate leaves the topology UNCHANGED — the panel is \
+                 home in its original slot, not lost, not floating",
             );
         });
     }

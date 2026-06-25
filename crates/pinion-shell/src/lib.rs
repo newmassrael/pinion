@@ -664,6 +664,52 @@ impl WindowSpec {
     }
 }
 
+/// (R1107.1 §5.16 §5.41 §5.51) Is a window with `window_id` currently declared
+/// in `windows`? The config-free existence check a multi-window binding runs to
+/// decide whether a panel is floating (its `torn-<panel>` window exists). Lifted
+/// from the two dock consumers (`hello-dock-panels` + `hello-dock-panels-editor`)
+/// where it was byte-identical — the rule-of-three 3rd consumer (sprag) had
+/// already drifted, so the shared, config-free predicate belongs here.
+#[must_use]
+pub fn window_exists(windows: &[WindowSpec], window_id: &str) -> bool {
+    windows.iter().any(|w| w.id == window_id)
+}
+
+/// (R1107.1 §5.16 §5.41 §5.51) Convert a window-logical `cursor` (measured in
+/// `source_window`'s frame) to a DESKTOP outer position by adding that window's
+/// declared outer origin. The gap(b) desktop conversion a live tear-off follow
+/// needs: the floating follower opens at the desktop point under the cursor.
+///
+/// `source_window` names which window the cursor is in (`DragUpdate::source_window`);
+/// `None` (a cursor-less degenerate gesture) falls back to the canonical
+/// [`pinion_runtime::DEFAULT_WINDOW`]. A source window absent from `windows`, or
+/// present but un-positioned (WM-placed), falls back to the desktop origin so the
+/// follower still TRACKS the cursor (offset relative to (0, 0)).
+///
+/// Lifted from the two dock consumers where it was byte-identical and
+/// correctness-critical (the R1095.1 source-window fix); a 3rd consumer (sprag)
+/// had drifted off the pre-fix signature — exactly the cost of NOT lifting a
+/// config-free pure helper. `WindowSpec` lives here, so this is the textbook home
+/// (`pinion-widget-paint::dock` cannot host it — it has no pinion-shell dep).
+#[must_use]
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "logical-pixel cursor → i32 outer position; sub-pixel is irrelevant to window placement"
+)]
+pub fn desktop_position_from(
+    windows: &[WindowSpec],
+    source_window: Option<&str>,
+    cursor: (f64, f64),
+) -> (i32, i32) {
+    let source = source_window.unwrap_or(pinion_runtime::DEFAULT_WINDOW);
+    let (ox, oy) = windows
+        .iter()
+        .find(|w| w.id.as_ref() == source)
+        .and_then(|w| w.position)
+        .unwrap_or((0, 0));
+    (ox + cursor.0.round() as i32, oy + cursor.1.round() as i32)
+}
+
 /// R51.121 §5.41 — Vello-specific application-supplied widget binding.
 ///
 /// Each visual binary implements this once on a unit type;
@@ -1230,6 +1276,76 @@ mod tests {
                 height: 200
             }
         ));
+    }
+
+    #[test]
+    fn r1107_1_desktop_position_from_uses_source_window_origin() {
+        // The lifted gap(b) conversion (R1107.1, ex hello-dock-panels[-editor]):
+        // the follower opens at the SOURCE window's outer origin + the cursor.
+        let main = WindowSpec::main(
+            "main",
+            SizeStrategy::Fixed {
+                width: 800,
+                height: 600,
+            },
+        )
+        .with_position(100, 50);
+        let floater = WindowSpec::new(
+            "torn-viewport",
+            "torn",
+            SizeStrategy::Fixed {
+                width: 360,
+                height: 360,
+            },
+        )
+        .with_position(600, 400);
+        let windows = vec![main, floater];
+        // Source = the floater → add ITS origin (the R1095.1 fix).
+        assert_eq!(
+            desktop_position_from(&windows, Some("torn-viewport"), (10.0, 20.0)),
+            (610, 420),
+        );
+        // Source = main → main's origin.
+        assert_eq!(
+            desktop_position_from(&windows, Some("main"), (10.0, 20.0)),
+            (110, 70),
+        );
+        // None → the canonical DEFAULT_WINDOW ("main"), so it lands at main's
+        // origin (not a re-declared "main" literal).
+        assert_eq!(pinion_runtime::DEFAULT_WINDOW, "main");
+        assert_eq!(
+            desktop_position_from(&windows, None, (10.0, 20.0)),
+            (110, 70)
+        );
+        // An un-positioned / absent source → desktop origin (still tracks cursor).
+        assert_eq!(
+            desktop_position_from(&windows, Some("ghost"), (10.0, 20.0)),
+            (10, 20),
+        );
+    }
+
+    #[test]
+    fn r1107_1_window_exists_predicate() {
+        let windows = vec![
+            WindowSpec::main(
+                "m",
+                SizeStrategy::Fixed {
+                    width: 1,
+                    height: 1,
+                },
+            ),
+            WindowSpec::new(
+                "torn-viewport",
+                "t",
+                SizeStrategy::Fixed {
+                    width: 1,
+                    height: 1,
+                },
+            ),
+        ];
+        assert!(window_exists(&windows, "torn-viewport"));
+        assert!(window_exists(&windows, "main"));
+        assert!(!window_exists(&windows, "torn-absent"));
     }
 
     #[test]

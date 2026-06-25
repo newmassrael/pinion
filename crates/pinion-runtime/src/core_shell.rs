@@ -361,6 +361,23 @@ pub struct CoreShell<V: WidgetCore> {
     window_owners: HashMap<String, Owner>,
 }
 
+/// (R1107.1 §5.51) Get-or-create the per-window [`InputRouter`] AND stamp its
+/// own window id in one step — the SINGLE seam every per-window dispatch goes
+/// through. Folding `ensure_window` into the get-or-create makes
+/// `DragUpdate::source_window` structurally correct on EVERY path (R1107
+/// stamped at only two chokes and silently missed the touch dispatch — the
+/// R1107.1 review-clearance fix). The window id IS the map key, so creation
+/// and identity are established together; the stamp is idempotent (a router's
+/// window never changes).
+fn router_for<'a>(
+    routers: &'a mut HashMap<String, InputRouter>,
+    window_id: &str,
+) -> &'a mut InputRouter {
+    let router = routers.entry(window_id.to_owned()).or_default();
+    router.ensure_window(window_id);
+    router
+}
+
 /// R51.122 §5.41 — post-dispatch bookkeeping artifact returned by
 /// every [`CoreShell`] dispatch method.
 ///
@@ -1463,7 +1480,7 @@ impl<V: WidgetCore> CoreShell<V> {
     /// flip-flop.
     pub fn update_paint_scene_for_window(&mut self, window_id: &str, paint_scene: Scene) {
         let Self { scene, routers, .. } = self;
-        let router = routers.entry(window_id.to_owned()).or_default();
+        let router = router_for(routers, window_id);
         router.update_paint_scene(paint_scene, scene);
     }
 
@@ -1483,7 +1500,7 @@ impl<V: WidgetCore> CoreShell<V> {
     /// proper substrate split so every-RPC refresh is safe.
     pub fn set_paint_scene_for_window(&mut self, window_id: &str, paint_scene: Scene) {
         let Self { routers, .. } = self;
-        let router = routers.entry(window_id.to_owned()).or_default();
+        let router = router_for(routers, window_id);
         router.set_paint_scene(paint_scene);
     }
 
@@ -1957,10 +1974,7 @@ impl<V: WidgetCore> CoreShell<V> {
         modifiers: pinion_core::Modifiers,
     ) -> (DispatchTail<V::State>, bool) {
         let Self { scene, routers, .. } = self;
-        let router = routers.entry(window_id.to_owned()).or_default();
-        // R1107 §5.51 — stamp the router's own window id so a tear-off follow's
-        // `DragUpdate::source_window` names the window the cursor is measured in.
-        router.ensure_window(window_id);
+        let router = router_for(routers, window_id);
         let pan_dispatched = router.cursor_moved_with_modifiers(pid, x, y, modifiers, scene);
         (self.tail(), pan_dispatched)
     }
@@ -2099,7 +2113,7 @@ impl<V: WidgetCore> CoreShell<V> {
         window_id: &str,
         pid: PointerId,
     ) -> Option<DispatchTail<V::State>> {
-        let router = self.routers.entry(window_id.to_owned()).or_default();
+        let router = router_for(&mut self.routers, window_id);
         if self.held_keys.space() {
             router.left_pan_down(pid);
             return None;
@@ -2179,7 +2193,7 @@ impl<V: WidgetCore> CoreShell<V> {
         pid: PointerId,
     ) -> DispatchTail<V::State> {
         let Self { scene, routers, .. } = self;
-        let router = routers.entry(window_id.to_owned()).or_default();
+        let router = router_for(routers, window_id);
         router.cursor_left(pid, scene);
         self.tail()
     }
@@ -2202,7 +2216,7 @@ impl<V: WidgetCore> CoreShell<V> {
         pid: PointerId,
     ) -> DispatchTail<V::State> {
         let Self { scene, routers, .. } = self;
-        let router = routers.entry(window_id.to_owned()).or_default();
+        let router = router_for(routers, window_id);
         router.pointer_down(pid, scene);
         self.tail()
     }
@@ -2238,10 +2252,7 @@ impl<V: WidgetCore> CoreShell<V> {
         modifiers: pinion_core::Modifiers,
     ) -> DispatchTail<V::State> {
         let Self { scene, routers, .. } = self;
-        let router = routers.entry(window_id.to_owned()).or_default();
-        // R1107 §5.51 — stamp the window id for a drag-release `DragUpdate`
-        // (the tear-off redock / final follow reads `source_window`).
-        router.ensure_window(window_id);
+        let router = router_for(routers, window_id);
         router.pointer_up_with_modifiers(pid, scene, modifiers);
         self.tail()
     }
@@ -2265,7 +2276,7 @@ impl<V: WidgetCore> CoreShell<V> {
         pid: PointerId,
     ) -> DispatchTail<V::State> {
         let Self { scene, routers, .. } = self;
-        let router = routers.entry(window_id.to_owned()).or_default();
+        let router = router_for(routers, window_id);
         router.pointer_cancel(pid, scene);
         self.tail()
     }
@@ -2312,7 +2323,7 @@ impl<V: WidgetCore> CoreShell<V> {
     ) -> DispatchTail<V::State> {
         let pid = PointerId::touch(touch.id);
         let Self { scene, routers, .. } = self;
-        let router = routers.entry(window_id.to_owned()).or_default();
+        let router = router_for(routers, window_id);
         match touch.phase {
             TouchPhase::Started => {
                 router.cursor_moved(pid, touch.x, touch.y, scene);
@@ -2424,7 +2435,7 @@ impl<V: WidgetCore> CoreShell<V> {
             return (self.tail(), true);
         }
         let Self { scene, routers, .. } = self;
-        let router = routers.entry(window_id.to_owned()).or_default();
+        let router = router_for(routers, window_id);
         let dispatched = router.wheel_with_modifiers(pid, delta, modifiers, scene);
         (self.tail(), dispatched)
     }
@@ -2459,7 +2470,7 @@ impl<V: WidgetCore> CoreShell<V> {
         pid: PointerId,
         key: &str,
     ) -> (DispatchTail<V::State>, bool) {
-        let router = self.routers.entry(window_id.to_owned()).or_default();
+        let router = router_for(&mut self.routers, window_id);
         let dispatched = router.scroll_key(pid, key);
         (self.tail(), dispatched)
     }

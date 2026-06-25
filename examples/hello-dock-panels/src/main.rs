@@ -99,7 +99,9 @@ use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
 use pinion_core::widgets::tree_nav::{TreeKey, effective_cursor, flat_visible, resolve_tree_key};
 use pinion_core::{Color, Frame, Owner, Scene, Signal, WidgetCore};
 use pinion_shell::typeahead::tree_typeahead_jump;
-use pinion_shell::{SizeStrategy, WidgetView, WindowSpec, vello_renderer_impl};
+use pinion_shell::{
+    SizeStrategy, WidgetView, WindowSpec, desktop_position_from, vello_renderer_impl, window_exists,
+};
 use pinion_widget_paint::devtools::{
     ClickRouter, find_node_at_path, rebuild_with_highlight_at_path, scene_root_path_segment,
     scene_to_tree_item, scene_type_name,
@@ -527,46 +529,10 @@ fn floating_window_position(panel_id: &str) -> (i32, i32) {
 }
 
 /// `true` iff a floating window for `panel_id` currently exists in
-/// `panels` (the `Signal<Vec<WindowSpec>>` snapshot).
+/// `panels` — a thin binding wrapper over the lifted [`window_exists`]
+/// predicate (R1107.1) keyed on the `torn-<panel>` floating-window id.
 fn is_panel_floating(panels: &[WindowSpec], panel_id: &str) -> bool {
-    let target = floating_window_id(panel_id);
-    panels.iter().any(|w| w.id == target)
-}
-
-/// R1094/R1107 §5.16 §5.41 PR-31 — the gap(b) conversion the live tear-off
-/// follow needs: turn a SOURCE-window-logical cursor into a desktop
-/// outer position for the floating window. The `DockPanelExternal`
-/// reports a cursor in the driving window's frame (the widget crate must
-/// not know about windows), so the floating window opens at the desktop
-/// point under the cursor = the SOURCE window's declared outer origin + the
-/// cursor. The origin is read from the topology signal (the R1088
-/// `WindowEvent::Moved` write-back keeps it current); a WM-placed window
-/// whose position pinion never learned falls back to the desktop
-/// origin, so the window still *tracks* the cursor (the offset is then
-/// relative to (0, 0) instead of the real frame).
-///
-/// (R1107) `source_window` names which window's frame the cursor is in
-/// (`DragUpdate::source_window`, threaded through the `tear_off_follow`
-/// payload). This CLEARS the R1095.1 latent defect: re-dragging an
-/// ALREADY-FLOATING panel's own header reports a cursor in that
-/// `torn-<panel>` window's frame, so adding ITS origin — not main's — is
-/// correct. `None` (the cursor-less degenerate fallback) → the main window.
-#[allow(
-    clippy::cast_possible_truncation,
-    reason = "logical-pixel cursor → i32 outer position; sub-pixel is irrelevant to window placement"
-)]
-fn follow_desktop_position(
-    panels: &[WindowSpec],
-    source_window: Option<&str>,
-    cursor: (f64, f64),
-) -> (i32, i32) {
-    let source = source_window.unwrap_or(MAIN_WINDOW_ID);
-    let (ox, oy) = panels
-        .iter()
-        .find(|w| w.id.as_ref() == source)
-        .and_then(|w| w.position)
-        .unwrap_or((0, 0));
-    (ox + cursor.0.round() as i32, oy + cursor.1.round() as i32)
+    window_exists(panels, &floating_window_id(panel_id))
 }
 
 /// R1094/R1107 §5.16 §5.41 PR-31 — ensure `panel_id` has a floating window and
@@ -574,12 +540,14 @@ fn follow_desktop_position(
 /// creates the window on the first escaped move, then repositions it on
 /// every subsequent move (the live follow). `Signal::set`'s equality-skip
 /// collapses a stationary cursor to no repaint. Non-toggling — the AI
-/// dock-back stays on [`toggle_panel_floating`]. `source_window` (R1107) is
-/// the window the cursor is measured in, for the right desktop origin.
+/// dock-back stays on [`toggle_panel_floating`]. The desktop conversion runs
+/// through the lifted [`desktop_position_from`] (R1107.1): `source_window`
+/// (R1107) is the window the cursor is measured in, for the right origin (the
+/// R1095.1 fix, now a `pinion-shell` SSOT shared with the editor consumer).
 fn follow_panel_floating(panel_id: &str, source_window: Option<&str>, cursor: (f64, f64)) {
     let signal = use_windows_topology();
     let mut current = signal.get();
-    let pos = follow_desktop_position(&current, source_window, cursor);
+    let pos = desktop_position_from(&current, source_window, cursor);
     let target = floating_window_id(panel_id);
     if let Some(spec) = current.iter_mut().find(|w| w.id == target) {
         spec.position = Some(pos);
@@ -1530,7 +1498,7 @@ mod tests {
         // gap(b): the floating desktop position is the main window's outer
         // origin + the window-logical cursor. No main spec / unknown
         // position falls back to the desktop origin (still tracks).
-        assert_eq!(follow_desktop_position(&[], None, (10.0, 20.0)), (10, 20));
+        assert_eq!(desktop_position_from(&[], None, (10.0, 20.0)), (10, 20));
         let main_at = vec![
             WindowSpec::new(
                 Cow::Borrowed("main"),
@@ -1543,7 +1511,7 @@ mod tests {
             .with_position(200, 150),
         ];
         assert_eq!(
-            follow_desktop_position(&main_at, None, (10.0, 20.0)),
+            desktop_position_from(&main_at, None, (10.0, 20.0)),
             (210, 170)
         );
     }

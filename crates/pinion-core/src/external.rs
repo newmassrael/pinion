@@ -478,8 +478,13 @@ pub struct DragUpdate<'a> {
     /// (R1107 §5.16 §5.41 §5.51) The spec id of the window the drag is happening
     /// IN — the window whose router is driving this gesture, so `cursor` is in
     /// THIS window's logical frame. The symmetric peer of `over_window` (the
-    /// TARGET window): `over_window` names where the drop lands, `source_window`
-    /// names where the cursor is measured. A tear-off follow needs it to convert
+    /// TARGET window) at the DATA layer: `over_window` names where the drop
+    /// lands, `source_window` names where the cursor is measured. (Their
+    /// POPULATION is asymmetric: `over_window` is per-gesture transient session
+    /// state the shell composes and pushes onto the router; `source_window` is
+    /// the router's OWN permanent window identity, stamped once at the
+    /// per-window dispatch seam — the router stays cross-window-blind for
+    /// resolution but knows which window it IS.) A tear-off follow needs it to convert
     /// the window-logical cursor to a DESKTOP position via the SOURCE window's
     /// outer origin — re-dragging an already-floating panel's header reports a
     /// cursor in that floating window's frame, not the main window's, so a

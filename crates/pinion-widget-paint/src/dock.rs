@@ -4301,11 +4301,18 @@ impl External for DockPanelExternal {
         // always has a forwarded cursor and takes the follow arm above.
         if over.is_none() {
             if let Some(cursor) = self.drag_cursor.get() {
-                // R1107 — the cursor-less degenerate fallback (`drag_release`
-                // carries no `DragUpdate`) has no source window; `None` →
-                // the binding's primary window. The live follow arm in
-                // `drag_to_at` carries the real `source_window`.
-                self.enqueue_tear_off_follow(cursor, None);
+                // R1107.1 — the final release-follow carries the SAME source
+                // window the gesture's moves recorded (`drag_to_at` /
+                // `drag_release_at` stamp `last_source_window`). `drag_release`
+                // is cursor-less so it cannot read the live `DragUpdate`, but
+                // the recorded source IS the right one (a drag is captured by
+                // one window's router for its whole life). A truly-degenerate
+                // gesture with zero recorded moves leaves it `None` → the
+                // binding's primary window. (R1107 originally hard-coded
+                // `None` here, dropping the source on the release arm — the
+                // R1107.1 review-clearance fix.)
+                let source = self.last_source_window.borrow().clone();
+                self.enqueue_tear_off_follow(cursor, source.as_deref());
             } else {
                 self.enqueue_tear_off();
             }
@@ -4384,6 +4391,10 @@ impl External for DockPanelExternal {
     /// gesture so an AI can read where the drop landed.
     fn drag_release_at(&mut self, payload: &DragPayload, update: &DragUpdate) {
         self.drag_cursor.set(Some(update.cursor));
+        // R1107.1 — stamp the release's source window so the cursor-less
+        // `drag_release` escape-follow below reads it (a degenerate release
+        // with no preceding move still names the window it released in).
+        *self.last_source_window.borrow_mut() = update.source_window.map(str::to_owned);
         // R1100 PR-33 — cross-window dock-at: the drop resolved in a DIFFERENT
         // window's dock zone. Re-insert the panel there + drop its floating
         // window. This is NOT a same-window reorganize (the panel is not in
@@ -5188,6 +5199,54 @@ mod tests {
         // A fresh gesture clears it.
         let _ = ext.begin_drag();
         assert_eq!(ext.query("source_window"), Some(IntrospectValue::Null));
+    }
+
+    #[test]
+    fn r1107_1_release_follow_carries_source_window_not_none() {
+        // R1107.1 review-clearance: the FINAL release-follow (the escape-drop
+        // arm of `drag_release`) must carry the gesture's SOURCE window, not a
+        // hard-coded None → main. Without the fix a floater re-drag's release
+        // re-positioned at main's origin (the R1095.1 defect on the release arm).
+        let mut ext = DockPanelExternal::new("viewport");
+        let _ = ext.begin_drag();
+        // A move in the floating window records its source.
+        ext.drag_to_at(
+            &dummy_payload(),
+            &DragUpdate {
+                over: Some(drop_point("viewport", 0.5, 0.5)),
+                cursor: (10.0, 10.0),
+                over_window: None,
+                source_window: Some("torn-viewport"),
+                became_drag: true,
+            },
+        );
+        let mut drained: Vec<Intent> = Vec::new();
+        ext.drain_intents(&mut |i| drained.push(i)); // clear the move's intents
+        // An escape RELEASE (over None, same window) emits the final follow.
+        ext.drag_release_at(
+            &dummy_payload(),
+            &DragUpdate {
+                over: None,
+                cursor: (40.0, 25.0),
+                over_window: None,
+                source_window: Some("torn-viewport"),
+                became_drag: true,
+            },
+        );
+        let mut received: Vec<Intent> = Vec::new();
+        ext.drain_intents(&mut |i| received.push(i));
+        let follow = received
+            .iter()
+            .find(|i| i.tag.as_ref() == TEAR_OFF_FOLLOW_EVENT)
+            .expect("the escape release emits a final follow");
+        let IntrospectValue::Json(v) = &follow.payload else {
+            panic!("follow payload is Json");
+        };
+        assert_eq!(
+            v.get("source_window").and_then(serde_json::Value::as_str),
+            Some("torn-viewport"),
+            "the release-follow carries the gesture's source window, not None→main",
+        );
     }
 
     // ── R1100 §5.51 PR-33 — cross-window dock-at redock (slice 1) ─────
