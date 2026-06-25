@@ -494,6 +494,57 @@ impl DockNode {
             second.for_each_split(f);
         }
     }
+
+    /// (R1096 §5.51) Depth-first pre-order walk over the sub-tree's
+    /// [`DockNode::Tabs`] wells; invokes `f(well_id, active, panel_count)`
+    /// once per well. The substrate home for the tab-well enumeration a
+    /// binding needs to register one [`TabWellExternal`] per well (the
+    /// click-to-switch pointer surface) — the tab-well peer of
+    /// [`Self::for_each_split`]. A `Tabs` well has no [`DockNode`] children
+    /// (its panels are leaves stacked in the well), so the walk descends
+    /// only through [`DockNode::Split`].
+    pub fn for_each_tabs_well<F>(&self, f: &mut F)
+    where
+        F: FnMut(&str, usize, usize),
+    {
+        match self {
+            Self::Leaf { .. } => {}
+            Self::Tabs { id, panels, active } => f(id.as_ref(), *active, panels.len()),
+            Self::Split { first, second, .. } => {
+                first.for_each_tabs_well(f);
+                second.for_each_tabs_well(f);
+            }
+        }
+    }
+
+    /// (R1096 §5.51) Count of [`DockNode::Tabs`] wells in the sub-tree —
+    /// the number of [`TabWellExternal`]s a binding registers. The tab-well
+    /// peer of [`Self::split_count`].
+    #[must_use]
+    pub fn tabs_well_count(&self) -> usize {
+        match self {
+            Self::Leaf { .. } => 0,
+            Self::Tabs { .. } => 1,
+            Self::Split { first, second, .. } => first.tabs_well_count() + second.tabs_well_count(),
+        }
+    }
+
+    /// (R1096 §5.51) The visible-tab index of the [`DockNode::Tabs`] well
+    /// whose `id == well_id` in the sub-tree, or `None` when no such well
+    /// exists (the id is absent, or names a [`DockNode::Leaf`] /
+    /// [`DockNode::Split`]). The read peer of [`set_active_in_well_rec`]
+    /// (the [`DockTopology::set_active_tab`] writer) — used to skip an
+    /// already-active click without minting an undo edit.
+    #[must_use]
+    pub fn tab_well_active(&self, well_id: &str) -> Option<usize> {
+        match self {
+            Self::Leaf { .. } => None,
+            Self::Tabs { id, active, .. } => (id.as_ref() == well_id).then_some(*active),
+            Self::Split { first, second, .. } => first
+                .tab_well_active(well_id)
+                .or_else(|| second.tab_well_active(well_id)),
+        }
+    }
 }
 
 /// (R685 §5.16 §5.49) Root descriptor of a dock topology —
@@ -786,6 +837,35 @@ impl DockTopology {
         F: FnMut(&str, SplitterOrientation, f32),
     {
         self.root.for_each_split(&mut f);
+    }
+
+    /// (R1096 §5.51) Depth-first pre-order walk over the topology's
+    /// [`DockNode::Tabs`] wells; invokes `f(well_id, active, panel_count)`
+    /// once per well. The canonical enumeration for a binding registering
+    /// one [`TabWellExternal`] per well (so a tab click switches the active
+    /// tab) — the tab-well peer of [`Self::for_each_split`], shared so the
+    /// binding never re-walks the tree itself.
+    pub fn for_each_tabs_well<F>(&self, mut f: F)
+    where
+        F: FnMut(&str, usize, usize),
+    {
+        self.root.for_each_tabs_well(&mut f);
+    }
+
+    /// (R1096 §5.51) Count of [`DockNode::Tabs`] wells — the number of
+    /// [`TabWellExternal`]s the binding registers. The tab-well peer of
+    /// [`Self::split_count`].
+    #[must_use]
+    pub fn tabs_well_count(&self) -> usize {
+        self.root.tabs_well_count()
+    }
+
+    /// (R1096 §5.51) The visible-tab index of the [`DockNode::Tabs`] well
+    /// `well_id`, or `None` when no such well exists. The read peer of
+    /// [`Self::set_active_tab`].
+    #[must_use]
+    pub fn tab_well_active(&self, well_id: &str) -> Option<usize> {
+        self.root.tab_well_active(well_id)
     }
 
     /// (R685 §5.16) Count of leaf panes (each [`DockNode::Leaf`] **and**
@@ -2235,7 +2315,7 @@ impl DockReorganizer {
     /// (R1085 §5.51) Make tab `index` the visible tab of the
     /// [`DockNode::Tabs`] well `well_id` — the tab-well **navigation**
     /// gesture, shared by the `activate_tab` invoke (AI / RPC primary)
-    /// and (R1086) the pointer tab-strip click. Distinct from
+    /// and (R1096) the pointer tab-strip click. Distinct from
     /// [`Self::apply_intent`]: that funnels the drag-produced
     /// [`DockReorganizeIntent`]s (moves that mint ids); this only changes
     /// which tab is visible, so it touches no `split_seq` / `tabs_seq`. It
@@ -2248,7 +2328,7 @@ impl DockReorganizer {
     ///
     /// `index == active` is an accepted no-op that still commits (records +
     /// republishes), matching [`Self::apply_intent`]'s idempotent-gesture
-    /// behaviour; the pointer drive (R1086) guards the already-active click
+    /// behaviour; the pointer drive (R1096) guards the already-active click
     /// at the gesture layer so re-clicking a live tab does not churn undo.
     ///
     /// # Errors
@@ -2269,7 +2349,7 @@ impl DockReorganizer {
             Ok(next) => next,
             Err(e) => {
                 // Record the rejection here so every drive (the AI invoke
-                // path + the R1086 pointer click) surfaces `"rejected: …"`
+                // path + the R1096 pointer click) surfaces `"rejected: …"`
                 // through `query("last_outcome")` — one outcome SSOT.
                 *self.last_outcome.borrow_mut() = Some(format!("rejected: {e}"));
                 return Err(e);
@@ -2277,6 +2357,17 @@ impl DockReorganizer {
         };
         let summary = format!("activate {well_id}#{index}");
         Ok(self.commit(next, summary))
+    }
+
+    /// (R1096 §5.51) The live visible-tab index of the [`DockNode::Tabs`]
+    /// well `well_id`, read from the shared topology Signal — `None` when
+    /// the surface is empty (`None`) or no well carries that id. A read-only
+    /// projection of the topology (no commit, no signal write); the
+    /// [`TabWellExternal`] consults it to skip an already-active click
+    /// (avoiding an undo edit) and to back its `query("active")`.
+    #[must_use]
+    pub fn tab_well_active(&self, well_id: &str) -> Option<usize> {
+        self.topology.get().and_then(|t| t.tab_well_active(well_id))
     }
 
     /// (R1085 §5.51) The single topology-commit funnel — the **sole
@@ -2613,6 +2704,178 @@ impl ExternalIntrospect for DockReorganizeExternal {
                 }
             }
             _ => Err(InvokeError::UnknownPath),
+        }
+    }
+}
+
+/// R1096 §5.51 — the pointer **click-to-switch** adapter for ONE
+/// [`DockNode::Tabs`] well.
+///
+/// The dock walker paints each tab well's strip via [`view_tabs`]`(well_id,
+/// …)` ([`view_dock_surface`]), tagging each tab `{well_id}#{i}`
+/// ([`composite_tab_tag`]). The `InputRouter`'s R51.42 `#`-split protocol
+/// resolves a pointer hit on `{well_id}#{i}` to the [`External`] registered
+/// at the *primary* tag `{well_id}` and dispatches
+/// `invoke("send", "{i}:<PointerEvent>")`. This external lives at that
+/// well-id tag — the binding registers one per well via
+/// [`DockTopology::for_each_tabs_well`], re-run on every topology change so a
+/// freshly-tabified `reorg-tabs-{seq}` well wires automatically (the same
+/// R688 reconcile path the per-split + per-panel externals ride) — and
+/// translates the click-release edge into
+/// [`DockReorganizer::activate_tab`]`(well_id, i)`: the SAME sole-writer
+/// commit funnel the R1085 AI-first `activate_tab` invoke and the R742
+/// pointer reorganize drags pass through.
+///
+/// ## One home for the active tab
+///
+/// Unlike a free-standing tab strip's `RadioGroupExternal` (which *owns* its
+/// selection state), the dock's active tab lives **only** in the topology
+/// ([`DockNode::Tabs::active`]). This external holds no selection — it reads
+/// the live active index from the shared coordinator (to skip an
+/// already-active click, the gesture-layer guard
+/// [`DockReorganizer::activate_tab`]'s rustdoc defers here, avoiding undo
+/// churn) and writes through `activate_tab`. The active tab has one SSOT.
+#[derive(Debug)]
+pub struct TabWellExternal {
+    /// The stable [`DockNode::Tabs`] well id this external routes for — the
+    /// [`view_tabs`] strip tag, the registration tag, and the R51.42 primary
+    /// half of every `{well_id}#{i}` tab tag the walker paints.
+    well_id: Cow<'static, str>,
+    /// The shared reorganize coordinator — the sole writer of the topology
+    /// (one `split_seq` / `tabs_seq` / undo stack across every dock
+    /// gesture). `activate_tab` navigates through its commit funnel.
+    reorganizer: Rc<DockReorganizer>,
+}
+
+impl TabWellExternal {
+    /// Construct a click-to-switch adapter for the tab well `well_id`,
+    /// driving the shared `reorganizer`. The binding registers it at the
+    /// `well_id` tag (= the painted [`view_tabs`] strip tag).
+    #[must_use]
+    pub fn new(well_id: impl Into<Cow<'static, str>>, reorganizer: Rc<DockReorganizer>) -> Self {
+        Self {
+            well_id: well_id.into(),
+            reorganizer,
+        }
+    }
+}
+
+impl External for TabWellExternal {
+    fn backends(&self) -> BackendSupport {
+        BackendSupport::new(&[Backend::Gui, Backend::Rpc], BackendFallback::Skip)
+    }
+
+    fn repaint_ownership(&self) -> RepaintOwner {
+        RepaintOwner::Framework
+    }
+
+    fn thread_ownership(&self) -> ThreadOwnership {
+        ThreadOwnership::UiThreadSync
+    }
+
+    fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
+        Some(self)
+    }
+
+    fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
+        Some(self)
+    }
+}
+
+impl ExternalIntrospect for TabWellExternal {
+    fn schema(&self) -> IntrospectSchema {
+        IntrospectSchema::new(&[
+            ("well_id", "string"),
+            // The live visible-tab index of this well, read from the shared
+            // topology (never stored here — the topology owns it). Null when
+            // the well is gone (a reorganize collapsed it) / the surface is
+            // empty.
+            ("active", "int"),
+            ("send", "string"),
+        ])
+    }
+
+    fn query(&self, path: &str) -> Option<IntrospectValue> {
+        match path {
+            "well_id" => Some(IntrospectValue::Text(self.well_id.to_string())),
+            "active" => Some(
+                self.reorganizer
+                    .tab_well_active(&self.well_id)
+                    .and_then(|a| i64::try_from(a).ok())
+                    .map_or(IntrospectValue::Null, IntrospectValue::Int),
+            ),
+            _ => None,
+        }
+    }
+
+    fn intervene(&mut self, path: &str, _value: IntrospectValue) -> Result<(), InterveneError> {
+        match path {
+            // The active tab is topology-owned: AI clients switch tabs via
+            // this `send` click wire or the canonical reorganize external's
+            // `activate_tab` invoke — not by intervening on a derived read.
+            "well_id" | "active" => Err(InterveneError::ReadOnly),
+            _ => Err(InterveneError::UnknownPath),
+        }
+    }
+
+    /// R51.42 §5.51 — the framework synthetic event channel. The router
+    /// dispatches `"{i}:<PointerEvent>"` for a hit on the painted
+    /// `{well_id}#{i}` tab tag (the `#` sub-index is the tab index). The
+    /// click-release edge (`PointerUp`) activates that tab through the
+    /// shared coordinator.
+    ///
+    /// Wire shape:
+    /// * `"{i}:PointerUp"` — activate tab `i` (the click edge, matching the
+    ///   WAI-ARIA / `RadioGroup` automatic-activation-on-release model and
+    ///   the R794.1 click-vs-drag SSOT: a free press-release in place
+    ///   replays as a trailing `PointerUp`, while a real drag commits via
+    ///   the source coordinator and suppresses this). A click on the
+    ///   *already-active* tab is an accepted no-op (no `activate_tab`, no
+    ///   undo churn).
+    /// * `"{i}:PointerDown" / "...Enter" / "...Leave" / "...Cancel"` —
+    ///   no-op `Ok(Null)` (hover / press transitions don't switch tabs).
+    /// * A bare event with no `#` sub-index (a press on the strip background
+    ///   between tabs, tagged `{well_id}` not `{well_id}#i`) — no-op
+    ///   `Ok(Null)`.
+    fn invoke(
+        &mut self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        if path != "send" {
+            return Err(InvokeError::UnknownPath);
+        }
+        let raw = args.as_str().ok_or(InvokeError::TypeMismatch)?;
+        // Split `"sub_index:Event[:mods]"` via the `:` grammar SSOT (a
+        // held-modifier click still carries the trailing token).
+        let (sub_index, event_name) = match pinion_core::composite_tag::split_send_payload(raw) {
+            Some((sub, ev, _mods)) => (Some(sub), ev),
+            None => (None, raw),
+        };
+        // Only the release edge activates a tab; every other pointer
+        // transition (hover / press / cancel) is an accepted no-op.
+        if !matches!(
+            PointerWireEvent::from_wire_name(event_name),
+            Some(PointerWireEvent::Up)
+        ) {
+            return Ok(IntrospectValue::Null);
+        }
+        // A bare `PointerUp` (no `#` sub-index — the strip background) or a
+        // non-numeric sub-index (no painted tab carries it) switches nothing.
+        let Some(index) = sub_index.and_then(|s| s.parse::<usize>().ok()) else {
+            return Ok(IntrospectValue::Null);
+        };
+        // Skip the already-active tab — a click on the visible tab is a no-op
+        // gesture, not a committing re-activation (avoids undo churn, the
+        // guard `DockReorganizer::activate_tab`'s rustdoc defers to here).
+        if self.reorganizer.tab_well_active(&self.well_id) == Some(index) {
+            return Ok(IntrospectValue::Null);
+        }
+        // `activate_tab` records its own `"rejected: …"` outcome (the one
+        // SSOT), so the caller only maps the error.
+        match self.reorganizer.activate_tab(&self.well_id, index) {
+            Ok(summary) => Ok(IntrospectValue::Text(summary)),
+            Err(_) => Err(InvokeError::Rejected),
         }
     }
 }
@@ -5923,7 +6186,7 @@ mod reorganize_tests {
 
     use super::{
         DockDropPreview, DockDropZone, DockNode, DockReorganizeExternal, DockReorganizeIntent,
-        DockReorganizer, DockSplitPosition, DockTopology, resolve_dock_drop,
+        DockReorganizer, DockSplitPosition, DockTopology, TabWellExternal, resolve_dock_drop,
     };
     use crate::splitter::SplitterOrientation as Orient;
     use pinion_core::external::{ExternalIntrospect, InterveneError, IntrospectValue, InvokeError};
@@ -6626,6 +6889,172 @@ mod reorganize_tests {
             "activate_tab is discoverable in the schema (AI-first primary)",
         );
     }
+
+    // ── R1096 §5.51 — pointer click-to-switch (`TabWellExternal`) ──────
+
+    /// Build a shared coordinator over `well_topology()` (well `w0`
+    /// `[x, y, z]@0`) plus the `TabWellExternal` registered at `w0`.
+    fn tab_well_fixture() -> (
+        Rc<Signal<Option<DockTopology>>>,
+        Rc<DockReorganizer>,
+        TabWellExternal,
+    ) {
+        let signal = Rc::new(Signal::new(Some(well_topology())));
+        let reorganizer = Rc::new(DockReorganizer::new(Rc::clone(&signal)));
+        let ext = TabWellExternal::new("w0", Rc::clone(&reorganizer));
+        (signal, reorganizer, ext)
+    }
+
+    #[test]
+    fn r1096_tab_well_click_pointerup_activates_tab() {
+        let (signal, _reorg, mut ext) = tab_well_fixture();
+        // The router dispatches a click on the painted `w0#2` tab tag as
+        // `"2:PointerUp"` (R51.42 `#`-split). The release edge activates it.
+        let out = ext
+            .invoke("send", IntrospectValue::Text("2:PointerUp".into()))
+            .expect("click activates");
+        assert_eq!(out, IntrospectValue::Text("activate w0#2".to_string()));
+        // The shared topology Signal — the one SSOT — flipped.
+        assert_eq!(first_well_active(signal.get().unwrap().root()), Some(2));
+    }
+
+    #[test]
+    fn r1096_tab_well_non_release_edges_are_noop() {
+        let (signal, _reorg, mut ext) = tab_well_fixture();
+        // Press / hover transitions on a tab must not switch it — only the
+        // release edge activates.
+        for ev in [
+            "2:PointerDown",
+            "2:PointerEnter",
+            "2:PointerLeave",
+            "2:PointerCancel",
+        ] {
+            assert_eq!(
+                ext.invoke("send", IntrospectValue::Text(ev.into())),
+                Ok(IntrospectValue::Null),
+                "{ev} is a no-op",
+            );
+        }
+        assert_eq!(
+            first_well_active(signal.get().unwrap().root()),
+            Some(0),
+            "no non-release edge changed the active tab",
+        );
+    }
+
+    #[test]
+    fn r1096_tab_well_already_active_click_does_not_churn_undo() {
+        use pinion_core::undo::UndoStack;
+        let signal = Rc::new(Signal::new(Some(well_topology())));
+        let stack = Rc::new(UndoStack::new());
+        let reorganizer =
+            Rc::new(DockReorganizer::new(Rc::clone(&signal)).with_undo(Rc::clone(&stack)));
+        let mut ext = TabWellExternal::new("w0", Rc::clone(&reorganizer));
+        // Clicking the already-visible tab (`active == 0`) is a no-op — the
+        // gesture-layer guard skips `activate_tab` so it mints no undo edit
+        // (a direct `DockReorganizer::activate_tab(w0, 0)` WOULD commit, per
+        // its idempotent-gesture contract — this guard is exactly why the
+        // pointer drive lives here, not in the coordinator).
+        assert_eq!(
+            ext.invoke("send", IntrospectValue::Text("0:PointerUp".into())),
+            Ok(IntrospectValue::Null),
+        );
+        assert_eq!(stack.len(), 0, "already-active click recorded no undo edit");
+        assert_eq!(first_well_active(signal.get().unwrap().root()), Some(0));
+        // A click on a *different* tab does commit (one reversible edit).
+        ext.invoke("send", IntrospectValue::Text("1:PointerUp".into()))
+            .expect("switch commits");
+        assert_eq!(stack.len(), 1, "the real switch recorded one edit");
+        assert_eq!(first_well_active(signal.get().unwrap().root()), Some(1));
+    }
+
+    #[test]
+    fn r1096_tab_well_bare_pointerup_on_strip_background_is_noop() {
+        let (signal, _reorg, mut ext) = tab_well_fixture();
+        // A press on the strip background (tagged `w0`, not `w0#i`) arrives
+        // as a bare `"PointerUp"` with no sub-index — it switches nothing.
+        assert_eq!(
+            ext.invoke("send", IntrospectValue::Text("PointerUp".into())),
+            Ok(IntrospectValue::Null),
+        );
+        assert_eq!(first_well_active(signal.get().unwrap().root()), Some(0));
+    }
+
+    #[test]
+    fn r1096_tab_well_out_of_range_or_unknown_well_click_rejected() {
+        let (signal, reorg, mut ext) = tab_well_fixture();
+        // An index past the well's end is a well-formed but rejected gesture.
+        assert_eq!(
+            ext.invoke("send", IntrospectValue::Text("9:PointerUp".into())),
+            Err(InvokeError::Rejected),
+        );
+        assert_eq!(
+            first_well_active(signal.get().unwrap().root()),
+            Some(0),
+            "a rejected click leaves the active tab untouched",
+        );
+        // An external bound to a non-existent well rejects every click.
+        let mut ghost = TabWellExternal::new("ghost", Rc::clone(&reorg));
+        assert_eq!(
+            ghost.invoke("send", IntrospectValue::Text("0:PointerUp".into())),
+            Err(InvokeError::Rejected),
+        );
+    }
+
+    #[test]
+    fn r1096_tab_well_query_and_intervene() {
+        let (_signal, _reorg, mut ext) = tab_well_fixture();
+        assert_eq!(
+            ext.query("well_id"),
+            Some(IntrospectValue::Text("w0".into()))
+        );
+        // `active` is a live read of the topology — not stored on the external.
+        assert_eq!(ext.query("active"), Some(IntrospectValue::Int(0)));
+        ext.invoke("send", IntrospectValue::Text("2:PointerUp".into()))
+            .expect("activate");
+        assert_eq!(ext.query("active"), Some(IntrospectValue::Int(2)));
+        assert_eq!(ext.query("nope"), None);
+        // The derived reads are not interveneable; tabs switch via the wire.
+        assert_eq!(
+            ext.intervene("active", IntrospectValue::Int(1)),
+            Err(InterveneError::ReadOnly),
+        );
+        assert_eq!(
+            ext.intervene("well_id", IntrospectValue::Text("x".into())),
+            Err(InterveneError::ReadOnly),
+        );
+        assert_eq!(
+            ext.intervene("zzz", IntrospectValue::Null),
+            Err(InterveneError::UnknownPath),
+        );
+        // Only `send` is invokable; a non-string payload is malformed.
+        assert_eq!(
+            ext.invoke("bogus", IntrospectValue::Null),
+            Err(InvokeError::UnknownPath)
+        );
+        assert_eq!(
+            ext.invoke("send", IntrospectValue::Int(1)),
+            Err(InvokeError::TypeMismatch),
+        );
+    }
+
+    #[test]
+    fn r1096_tab_well_query_active_null_for_missing_well() {
+        let (_signal, reorg, _ext) = tab_well_fixture();
+        // An external bound to a well that does not exist reads `active` as
+        // null (the topology owns the value; there is none to project).
+        let ghost = TabWellExternal::new("ghost", reorg);
+        assert_eq!(ghost.query("active"), Some(IntrospectValue::Null));
+    }
+
+    #[test]
+    fn r1096_tab_well_schema_advertises_send_and_active() {
+        let (_signal, _reorg, ext) = tab_well_fixture();
+        let keys: Vec<&str> = ext.schema().fields.iter().map(|(k, _)| *k).collect();
+        for expected in ["well_id", "active", "send"] {
+            assert!(keys.contains(&expected), "schema advertises {expected}");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -7204,6 +7633,75 @@ mod tabify_tests {
         // ...and the sibling leaf `a` + the split id are untouched.
         assert_eq!(next.panel_ids(), vec!["a", "x", "y", "z"]);
         assert_eq!(next.split_ids(), vec!["root_h"]);
+    }
+
+    // ── R1096 §5.51 — tab-well enumeration + active read ─────────────
+
+    /// `(w0[p,q]@1) | w1[x,y,z]@0` — two wells under one split, so the
+    /// enumeration order + per-well projections are observable.
+    fn two_wells() -> DockTopology {
+        DockTopology::new(DockNode::split_horizontal(
+            "root_h",
+            0.5,
+            DockNode::tabs("w0", ["p", "q"].map(Cow::from), 1),
+            DockNode::tabs("w1", ["x", "y", "z"].map(Cow::from), 0),
+        ))
+    }
+
+    #[test]
+    fn r1096_for_each_tabs_well_enumerates_wells_in_preorder() {
+        let mut seen: Vec<(String, usize, usize)> = Vec::new();
+        two_wells().for_each_tabs_well(|id, active, panels| {
+            seen.push((id.to_string(), active, panels));
+        });
+        assert_eq!(
+            seen,
+            vec![("w0".to_string(), 1, 2), ("w1".to_string(), 0, 3),],
+            "(well_id, active, panel_count) in depth-first pre-order",
+        );
+    }
+
+    #[test]
+    fn r1096_for_each_tabs_well_skips_a_well_less_topology() {
+        // `a | (b | c)` — no wells; the walk visits nothing.
+        let mut count = 0usize;
+        abc_split().for_each_tabs_well(|_, _, _| count += 1);
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn r1096_tabs_well_count() {
+        assert_eq!(two_wells().tabs_well_count(), 2);
+        assert_eq!(leaf_beside_well().tabs_well_count(), 1);
+        assert_eq!(abc_split().tabs_well_count(), 0);
+    }
+
+    #[test]
+    fn r1096_tab_well_active_reads_well_and_misses_non_wells() {
+        let t = two_wells();
+        assert_eq!(t.tab_well_active("w0"), Some(1));
+        assert_eq!(t.tab_well_active("w1"), Some(0));
+        // An unknown id, a split id, and a stacked-panel id are all misses
+        // (only a well's own id resolves).
+        assert_eq!(t.tab_well_active("nope"), None);
+        assert_eq!(
+            t.tab_well_active("root_h"),
+            None,
+            "a split id is not a well"
+        );
+        assert_eq!(t.tab_well_active("p"), None, "a panel id is not a well id");
+        // A leaf id in a well-less tree is also a miss.
+        assert_eq!(abc_split().tab_well_active("a"), None);
+    }
+
+    /// `a | (b | c)` — a well-less 3-leaf tree (for the negative cases).
+    fn abc_split() -> DockTopology {
+        DockTopology::new(DockNode::split_horizontal(
+            "root_h",
+            0.5,
+            DockNode::leaf("a"),
+            DockNode::split_horizontal("inner", 0.5, DockNode::leaf("b"), DockNode::leaf("c")),
+        ))
     }
 }
 

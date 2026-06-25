@@ -58,7 +58,7 @@ use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
 use pinion_widget_paint::button::{ButtonColors, ButtonStyle, view_button};
 use pinion_widget_paint::dock::{
     DockDropPreview, DockNode, DockPanelExternal, DockReorganizeExternal, DockReorganizer,
-    DockSplitState, DockTopology, dock_tablist_access_nodes, view_dock_surface,
+    DockSplitState, DockTopology, TabWellExternal, dock_tablist_access_nodes, view_dock_surface,
 };
 use pinion_widget_paint::splitter::SplitterExternal;
 use std::rc::Rc;
@@ -566,7 +566,9 @@ impl WidgetCore for DockPanelsEditorView {
             // (R1083) One external per Split + one per panel (`panel_count`
             // counts tab-well panels individually, unlike `leaf_count`) + the
             // two unconditional reorganize + undo anchors pushed below.
-            externals.reserve(topology.split_count() + topology.panel_count() + 2);
+            externals.reserve(
+                topology.split_count() + topology.panel_count() + topology.tabs_well_count() + 2,
+            );
             topology.for_each_split(|id, orientation, ratio| {
                 let signal = use_split_ratio(id.to_string(), ratio);
                 let external = SplitterExternal::new(orientation).attach_ratio(signal);
@@ -591,6 +593,18 @@ impl WidgetCore for DockPanelsEditorView {
                     .with_drop_preview(Rc::clone(&preview));
                 externals.push(ExtraExternal::new(panel_id.to_string(), Box::new(panel)));
             }
+            // (R1096 §5.51) One TabWellExternal per Tabs well, registered at
+            // the well's stable id (= the view_tabs strip tag = the R51.42
+            // primary half of every `{well_id}#{i}` tab tag the walker
+            // paints). A click on a tab routes through the `#`-split protocol
+            // to this external, which switches the visible tab via the SAME
+            // shared coordinator the pointer drags + AI invokes use. A
+            // freshly-tabified `reorg-tabs-{seq}` well wires automatically:
+            // this factory re-runs on every topology change (R688).
+            topology.for_each_tabs_well(|well_id, _active, _panels| {
+                let well = TabWellExternal::new(well_id.to_string(), Rc::clone(&reorganizer));
+                externals.push(ExtraExternal::new(well_id.to_string(), Box::new(well)));
+            });
         }
         // (R686/R1081/R1082.1 §5.45 §5.51) The invoke (RPC) drive of dock
         // reorganize shares the SAME coordinator AND the SAME live preview as

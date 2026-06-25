@@ -27,8 +27,9 @@ Section roadmap (>=40 assertions across A-H):
       degenerate in `scene/layout`.
   (C) Substrate no-op drops — dropping onto the source itself or into
       dead space resolves to no target (Null), topology unchanged.
-  (D) Centre drop = swap — `drop` with a cursor at a panel's centre;
-      the substrate classifies Center + swaps; split_seq stays 0.
+  (D) Centre drop = tabify (R1083) — `drop` with a cursor at a panel's
+      centre; the substrate classifies Center + tabifies the source onto
+      the target into a `Tabs` well; split_seq stays 0, tabs_seq bumps to 1.
   (E) Edge drop = split-insert — `drop` with a cursor near a panel's
       left edge; the substrate classifies Left + docks the dragged
       panel beside it; a `reorg-split-N` divider appears, leaf count
@@ -40,8 +41,8 @@ Section roadmap (>=40 assertions across A-H):
   (F) Layout reflow — re-query `scene/layout`; the relocated panel now
       sits left of its new neighbour (docked-left geometry).
   (G) Symbolic path + rejected gestures — the `reorganize` symbolic
-      form swaps by id; a stale source + unknown zone + malformed
-      payload all reject; the live topology is unchanged.
+      form tabifies by id (Center → Tabify, R1083); a stale source +
+      unknown zone + malformed payload all reject; topology unchanged.
   (H) Determinism — two back-to-back topology queries are identical.
 """
 
@@ -76,15 +77,41 @@ _REORG_SPLIT_PREFIX = "reorg-split-"
 
 
 def _panel_ids(topo: Any) -> list[str]:
-    """Depth-first leaf panel ids from a topology JSON ({"root": ...})."""
+    """Depth-first panel ids from a topology JSON ({"root": ...}).
+
+    Mirrors the Rust `collect_panel_ids`: a `Leaf` contributes its id, a
+    (R1083) `Tabs` well contributes its stacked panels in tab order, a
+    `Split` recurses first-then-second.
+    """
     out: list[str] = []
 
     def walk(node: Any) -> None:
         if not isinstance(node, dict):
             return
-        if node.get("type") == "Leaf":
+        kind = node.get("type")
+        if kind == "Leaf":
             out.append(node["panel_id"])
-        elif node.get("type") == "Split":
+        elif kind == "Tabs":
+            out.extend(node["panels"])
+        elif kind == "Split":
+            walk(node["first"])
+            walk(node["second"])
+
+    walk(topo.get("root"))
+    return out
+
+
+def _tabs_wells(topo: Any) -> list[dict[str, Any]]:
+    """(R1083) Every `DockNode::Tabs` well node in depth-first pre-order."""
+    out: list[dict[str, Any]] = []
+
+    def walk(node: Any) -> None:
+        if not isinstance(node, dict):
+            return
+        kind = node.get("type")
+        if kind == "Tabs":
+            out.append(node)
+        elif kind == "Split":
             walk(node["first"])
             walk(node["second"])
 
@@ -114,6 +141,10 @@ def _topology(tf: RpcSubprocess) -> Any:
 
 def _split_seq(tf: RpcSubprocess) -> int:
     return int(tf.query(f"/{_REORG_TAG}/external/split_seq"))
+
+
+def _tabs_seq(tf: RpcSubprocess) -> int:
+    return int(tf.query(f"/{_REORG_TAG}/external/tabs_seq"))
 
 
 def _reorganize(tf: RpcSubprocess, source: str, target: str, zone: str) -> Any:
@@ -278,25 +309,31 @@ def body() -> None:
         assert _topology(tf) == before_c, "C.4 empty-space drop unchanged"
         assert _split_seq(tf) == 0, "C.5 no-op drops mint no split"
 
-        # ─── (D) centre drop = swap (substrate classifies) ───────────
-        _section("D: centre drop swaps panels")
-        # Hand the substrate the observed rects + a cursor at the centre
-        # of "properties"; it classifies Center → swaps outliner onto it.
+        # ─── (D) centre drop = tabify (substrate classifies, R1083) ──
+        _section("D: centre drop tabifies panels into a well")
+        # Hand the substrate the observed rects + a cursor at the centre of
+        # "properties"; it classifies Center → Tabify (R1083 changed centre
+        # from swap to tabify) → merges outliner onto properties into a
+        # `Tabs` well. A move: no panel is created/destroyed, but the source
+        # leaf is removed (collapsing its parent split) and stacked into the
+        # well, which the walker renders as a tab strip.
         outcome = _drop(tf, _OUTLINER, _center(rects[_PROPERTIES]), panels)
         assert isinstance(outcome, str), f"D.1 drop returns an outcome ({outcome!r})"
         assert "outliner" in outcome, f"D.2 outcome names the source ({outcome})"
         topo = _topology(tf)
-        after = _panel_ids(topo)
-        assert after == [_TOOLBAR, _PROPERTIES, _VIEWPORT, _OUTLINER, _CONSOLE], (
-            f"D.3 outliner<->properties swapped, got {after}"
+        wells = _tabs_wells(topo)
+        assert len(wells) == 1, f"D.3 centre drop minted exactly one tab well, got {len(wells)}"
+        well = wells[0]
+        assert well["id"] == "reorg-tabs-0", f"D.4 first well id is reorg-tabs-0, got {well['id']!r}"
+        assert well["panels"] == [_PROPERTIES, _OUTLINER], (
+            f"D.5 the well stacks [target, source], got {well['panels']}"
         )
-        assert _split_ids(topo) == [
-            "editor_split_outer",
-            "editor_split_inner_v",
-            "editor_split_middle_h",
-            "editor_split_inner_h",
-        ], "D.4 swap leaves the split tree shape intact"
-        assert _split_seq(tf) == 0, "D.5 a centre drop is a swap — no divider minted"
+        assert well["active"] == 1, "D.6 the dropped source (outliner) is brought forward / active"
+        assert sorted(_panel_ids(topo)) == sorted(_CANONICAL_PANELS), (
+            f"D.7 tabify is a move — no panel created or destroyed, got {_panel_ids(topo)}"
+        )
+        assert _split_seq(tf) == 0, "D.8 a tabify mints no split divider"
+        assert _tabs_seq(tf) == 1, "D.9 tabs_seq bumped to 1"
 
         # ─── (E) edge drop = split-insert (substrate classifies) ─────
         _section("E: edge drop docks a panel beside another")
@@ -384,15 +421,20 @@ def body() -> None:
 
         # ─── (G) symbolic path + rejected gestures ───────────────────
         _section("G: symbolic reorganize + rejected gestures")
-        # Symbolic path (AI-agent style, no pixels): swap two panels by
-        # id + zone name. Proves the second wire form is live.
-        sym_before = _panel_ids(_topology(tf))
-        outcome = _reorganize(tf, _PROPERTIES, _OUTLINER, "Center")
+        # Symbolic path (AI-agent style, no pixels): tabify two separate
+        # top-level panels by id + zone name. Proves the second wire form is
+        # live and that Center → Tabify holds on the symbolic path too
+        # (R1083), exactly as it does on the geometry path in section D.
+        wells_before = len(_tabs_wells(_topology(tf)))
+        outcome = _reorganize(tf, _TOOLBAR, _CONSOLE, "Center")
         assert isinstance(outcome, str), f"G.1 symbolic reorganize returns outcome ({outcome!r})"
-        sym_after = _panel_ids(_topology(tf))
-        assert sym_after != sym_before, "G.2 symbolic swap changed the topology"
-        assert sym_after.index(_PROPERTIES) == sym_before.index(_OUTLINER), (
-            "G.3 properties took outliner's slot"
+        topo = _topology(tf)
+        assert len(_tabs_wells(topo)) == wells_before + 1, (
+            f"G.2 symbolic Center tabified a second well, got {len(_tabs_wells(topo))}"
+        )
+        new_well = next((w for w in _tabs_wells(topo) if w["id"] == "reorg-tabs-1"), None)
+        assert new_well is not None and new_well["panels"] == [_CONSOLE, _TOOLBAR], (
+            f"G.3 the symbolic tabify stacked [console, toolbar], got {new_well}"
         )
         before = _topology(tf)
         # Stale source via the geometry path: cursor over a real panel but
@@ -433,8 +475,10 @@ def body() -> None:
         _section("I: reorganize undo/redo")
         undo = "/dock_undo_stack/external"
         before_i = _panel_ids(_topology(tf))
-        # A symbolic swap is recorded onto the shared history.
-        _reorganize(tf, _OUTLINER, _CONSOLE, "Center")
+        # A symbolic tabify (viewport joins the existing reorg-tabs-0 well,
+        # whose member `properties` is the target) is recorded onto the
+        # shared history — a move that restructures the tree.
+        _reorganize(tf, _VIEWPORT, _PROPERTIES, "Center")
         after_i = _panel_ids(_topology(tf))
         assert after_i != before_i, "I.1 reorganize changed the layout"
         assert int(tf.query(f"{undo}/count")) >= 1, "I.2 reorganize recorded onto the undo stack"
