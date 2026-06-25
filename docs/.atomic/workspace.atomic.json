@@ -16876,6 +16876,54 @@
         "per-move declared_window_specs() rebuild during multi-window drags - cache if perf shows"
       ]
     },
+    "R1102.1": {
+      "decision_summary": "R1102.1 review clearance: the r1102 demo oversold a fire-only contract as a working redock; reframe to fire+observe + section G proves no execution; doc the release-edge stale over_window assumption",
+      "changes_bullets": [
+        "demo docstring/labels reframed: the contract FIRES + is observable, NOT a topology redock",
+        "C assertions say \"contract fired / records target\", not \"redocked into\" (honest no-op)",
+        "section G added: snapshot floater, prove property did NOT relocate into it (fire-only explicit)",
+        "pointer_up doc: release reads session.cross_window from the last move, not re-resolved (caveat)",
+        "verdict: R1101 clean; R1102 core sound (layering/SSOT/AI-first); demo-honesty = the one smell"
+      ],
+      "verification_bullets": [
+        "3 read-only adversarial reviewers (SSOT / test-honesty / architecture) + author-trace; convergent",
+        "demo 34 assert PASS (+section G); clippy -D pedantic clean; cargo fmt clean",
+        "reframe is .py + doc-comment only — no production logic changed; runtime behavior identical"
+      ],
+      "impact_refs": [
+        "5.51",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "shell F5 source-exclusion (resolve_cross_window_live) lacks a fast-suite test; CI demo only",
+        "DragSession.cross_window stored-vs-param: reviewers split; judged right home, edge documented",
+        "follower exclusion (slice 3) + per-move declared_window_specs() cost (editor-scale) tracked",
+        "next still R1103 (cross-window redock EXECUTION) per the grounded SEED plan"
+      ],
+      "publishable_decision_summary": "R1102.1 review clearance: the r1102 demo oversold a fire-only contract as a working redock; reframe to fire+observe + section G proves no execution; doc the release-edge stale over_window assumption",
+      "publishable_changes_bullets": [
+        "demo docstring/labels reframed: the contract FIRES + is observable, NOT a topology redock",
+        "C assertions say \"contract fired / records target\", not \"redocked into\" (honest no-op)",
+        "section G added: snapshot floater, prove property did NOT relocate into it (fire-only explicit)",
+        "pointer_up doc: release reads session.cross_window from the last move, not re-resolved (caveat)",
+        "verdict: R1101 clean; R1102 core sound (layering/SSOT/AI-first); demo-honesty = the one smell"
+      ],
+      "publishable_verification_bullets": [
+        "3 read-only adversarial reviewers (SSOT / test-honesty / architecture) + author-trace; convergent",
+        "demo 34 assert PASS (+section G); clippy -D pedantic clean; cargo fmt clean",
+        "reframe is .py + doc-comment only — no production logic changed; runtime behavior identical"
+      ],
+      "publishable_impact_refs": [
+        "5.51",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "shell F5 source-exclusion (resolve_cross_window_live) lacks a fast-suite test; CI demo only",
+        "DragSession.cross_window stored-vs-param: reviewers split; judged right home, edge documented",
+        "follower exclusion (slice 3) + per-move declared_window_specs() cost (editor-scale) tracked",
+        "next still R1103 (cross-window redock EXECUTION) per the grounded SEED plan"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
