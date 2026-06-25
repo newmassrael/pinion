@@ -4,10 +4,13 @@ observable (mutation slice 2 — wiring, NOT topology execution).
 
 SCOPE — read this before the assertions. R1102 makes the dragged panel FIRE a
 cross-window redock intent carrying the correct target window, and makes that
-firing AI-observable. It does NOT move the panel between windows: the
-`tear_off_redock_at` intent has no reducer consumer yet (it drains to a no-op),
-and the executable case (a floating panel returning into the topology-bearing
-window) lands in slice 3 (R1103). So every assertion below proves the WIRING
+firing AI-observable. It does NOT move the panel between windows: at R1102 the
+`tear_off_redock_at` intent had no reducer consumer (it drained to a no-op), and
+the executable case (a floating panel returning into the slot-bearing window)
+lands in slice 3 (R1103). R1103 since added the consumer, but it executes a move
+ONLY when the target is the slot-bearing window — the C-section drop here targets
+a FLOATER (no slot to host the panel), so the consumer rejects it and section G
+still holds (see G's note). So every assertion below proves the WIRING
 (shell composes `over_window` → router fills it → panel records it), never an
 actual topology change. Section G asserts that no execution happened, so the
 slice boundary is explicit rather than implied.
@@ -275,12 +278,15 @@ def body() -> None:
 
         # ── (G) fire-only boundary — the contract did NOT execute ────
         _section("G: the contract fired but executed no topology change (slice 3 owed)")
-        # The cross-window redock intent has no reducer consumer yet, so firing it
-        # (C) moved no panel between windows. Prove it: the floater the contract
-        # named still hosts ONLY the inspector — property did NOT relocate into it,
-        # even though property's redock_at named it as the target. C = the contract
-        # fired + is observable; G = nothing executed. This makes the slice-2
-        # boundary an explicit assertion, not a silent gap (execution is R1103).
+        # The C drop targeted a FLOATER (torn-inspector), which has no dock slot
+        # to host another panel, so firing the contract (C) moved no panel —
+        # before R1103 because the intent had no consumer, and after R1103 because
+        # the consumer executes only for the slot-bearing main window and rejects a
+        # non-main target. Prove it either way: the floater the contract named
+        # still hosts ONLY the inspector — property did NOT relocate into it, even
+        # though property's redock_at named it as the target. C = the contract
+        # fired + is observable; G = nothing executed. (The EXECUTABLE direction,
+        # floater→main, is r1103_cross_window_redock_execute.)
         floater_scene = tf.snapshot(source="paint", viewport=(fw, fh), window=torn)
         assert floater_scene is not None, "G.1 the floater paint scene is observable"
         assert _scene_contains_tag(floater_scene, _INSPECTOR), (

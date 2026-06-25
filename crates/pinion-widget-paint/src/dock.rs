@@ -3758,6 +3758,21 @@ fn tear_off_follow_payload(panel_id: &str, cursor: (f64, f64)) -> IntrospectValu
     }))
 }
 
+/// R1103 §5.51 §2 #7 — read a normalised drop-zone cursor fraction from a
+/// JSON redock-at payload, defaulting to the zone centre (`0.5`) when the
+/// caller omits it. The `f64 → f32` narrowing is the documented `DropPoint`
+/// representation choice: a `[0, 1]` cursor fraction loses no meaningful
+/// precision in `f32`, so the truncation is intentional, not a bug.
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "normalised [0,1] drop-zone cursor fraction; f64→f32 precision loss is irrelevant to zone classification"
+)]
+fn json_rel(obj: &serde_json::Value, key: &str) -> f32 {
+    obj.get(key)
+        .and_then(serde_json::Value::as_f64)
+        .unwrap_or(0.5) as f32
+}
+
 /// (R1081 §5.51) The `DragPayload::kind` discriminator a dock-panel drag
 /// carries, so a future cross-widget drop target can match dock panels
 /// before reading the payload value (the panel id).
@@ -4080,6 +4095,24 @@ impl DockPanelExternal {
             payload: IntrospectValue::Json(payload),
         });
     }
+
+    /// R1103 §5.51 §2 #7 PR-33 — commit a cross-window dock-at + settle the
+    /// gesture latches. The single source of truth shared by the live
+    /// [`drag_release_at`](External::drag_release_at) cross-window arm and the
+    /// AI-primary [`TEAR_OFF_REDOCK_AT_EVENT`] invoke channel: both enqueue the
+    /// dock-at into `window`'s zone `point`, then clear the in-flight drag —
+    /// the floating follower this drag tracked is consumed by the dock-at, so
+    /// `detached` / `tear_off_fired` reset and the panel re-arms for the next
+    /// press. Returns nothing; the two callers differ only in their own
+    /// return type.
+    fn settle_cross_window_redock(&self, window: &str, point: &DropPoint) {
+        self.enqueue_tear_off_redock_at(window, point);
+        self.dragging.set(false);
+        self.set_drop_preview(None);
+        self.is_drag_armed.set(true);
+        self.detached.set(false);
+        self.tear_off_fired.set(false);
+    }
 }
 
 impl External for DockPanelExternal {
@@ -4264,14 +4297,7 @@ impl External for DockPanelExternal {
         // this window's topology) — it is the dock-at redock the per-window
         // router could never resolve.
         if let (Some(target_window), Some(point)) = (update.over_window, update.over.as_ref()) {
-            self.enqueue_tear_off_redock_at(target_window, point);
-            self.dragging.set(false);
-            self.set_drop_preview(None);
-            self.is_drag_armed.set(true);
-            // The gesture committed a redock — the floating follower this drag
-            // tracked is consumed by the dock-at, so clear the latch.
-            self.detached.set(false);
-            self.tear_off_fired.set(false);
+            self.settle_cross_window_redock(target_window, point);
             return;
         }
         self.drag_release(payload, update.over.clone());
@@ -4343,6 +4369,10 @@ impl ExternalIntrospect for DockPanelExternal {
             // R683.C §5.16 §5.49 — direct tear-off invoke channel.
             // See `invoke` rustdoc.
             (TEAR_OFF_EVENT, "string"),
+            // R1103 §5.51 §2 #7 PR-33 — direct cross-window redock invoke
+            // (the AI-primary driver for the executable floater→slot-window
+            // case). JSON payload `{window, target, x_rel, y_rel}`.
+            (TEAR_OFF_REDOCK_AT_EVENT, "json"),
         ])
     }
 
@@ -4432,6 +4462,41 @@ impl ExternalIntrospect for DockPanelExternal {
             self.is_drag_armed.set(true);
             return Ok(IntrospectValue::Null);
         }
+        // R1103 §5.51 §2 #7 PR-33 — direct cross-window redock invoke
+        // (mutation slice 3), the AI-primary driver for the executable
+        // case (a FLOATING panel returning into a slot-bearing window).
+        // The live-pointer floater→main drag is blocked: the source
+        // floater follows the cursor (R1094 `tear_off_follow`), which the
+        // R1095 moving-source desktop-conversion carry has not yet cleared,
+        // so the abs cursor double-counts the moving origin. This channel
+        // bypasses the live pointer the same way the `tear_off` arm above
+        // does — same intent + payload as the R742 `drag_release_at`
+        // cross-window arm, no winit paint-timing dependency. Payload:
+        // `{window, target, x_rel, y_rel}` — the target (slot-bearing)
+        // window + the dock zone the redock lands on. `target`/`x_rel`/
+        // `y_rel` default to the zone centre when omitted.
+        if path == TEAR_OFF_REDOCK_AT_EVENT {
+            let IntrospectValue::Json(obj) = args else {
+                return Err(InvokeError::TypeMismatch);
+            };
+            let window = obj
+                .get("window")
+                .and_then(serde_json::Value::as_str)
+                .ok_or(InvokeError::TypeMismatch)?;
+            let point = DropPoint {
+                tag: obj
+                    .get("target")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                x_rel: json_rel(&obj, "x_rel"),
+                y_rel: json_rel(&obj, "y_rel"),
+            };
+            // Same dock-at + latch settle the live `drag_release_at`
+            // cross-window arm runs — one SSOT, no pointer dependency.
+            self.settle_cross_window_redock(window, &point);
+            return Ok(IntrospectValue::Null);
+        }
         if path != "send" {
             return Err(InvokeError::UnknownPath);
         }
@@ -4504,7 +4569,7 @@ mod tests {
     use pinion_a11y::AccessNode;
     use pinion_core::external::{
         DragPayload, DragUpdate, DropPoint, External, ExternalIntrospect, InterveneError,
-        IntrospectValue,
+        IntrospectValue, InvokeError,
     };
     use pinion_core::intent::Intent;
     use pinion_core::reactive::{Owner, Signal};
@@ -5060,6 +5125,96 @@ mod tests {
                 .all(|i| i.tag.as_ref() != TEAR_OFF_REDOCK_AT_EVENT),
             "a same-window release never docks-at (got {after:?})",
         );
+    }
+
+    // ── R1103 §5.51 PR-33 — AI-primary cross-window redock invoke (slice 3) ──
+
+    #[test]
+    fn r1103_invoke_tear_off_redock_at_enqueues_the_dock_at_without_a_pointer_drag() {
+        // The AI-primary driver: an `invoke("tear_off_redock_at", {window,
+        // target, x_rel, y_rel})` emits the SAME dock-at intent + records the
+        // SAME `redock_at` diagnostic the live `drag_release_at` cross-window
+        // arm does — no pointer drag (the live floater→main path is blocked by
+        // the R1095 moving-source follow-coordinate carry).
+        let mut ext = DockPanelExternal::new("inspector");
+        ext.invoke(
+            TEAR_OFF_REDOCK_AT_EVENT,
+            IntrospectValue::Json(serde_json::json!({
+                "window": "main",
+                "target": "property",
+                "x_rel": 0.25,
+                "y_rel": 0.75,
+            })),
+        )
+        .expect("direct tear_off_redock_at invoke");
+        let mut received: Vec<Intent> = Vec::new();
+        ext.drain_intents(&mut |i| received.push(i));
+        assert_eq!(received.len(), 1, "exactly one dock-at redock intent");
+        assert_eq!(received[0].tag.as_ref(), TEAR_OFF_REDOCK_AT_EVENT);
+        let IntrospectValue::Json(p) = &received[0].payload else {
+            panic!("the dock-at payload is JSON");
+        };
+        assert_eq!(
+            p["panel"], "inspector",
+            "the panel id is the External's own"
+        );
+        assert_eq!(
+            p["window"], "main",
+            "carries the TARGET window from the args"
+        );
+        assert_eq!(p["target"], "property", "carries the target dock zone tag");
+        assert!(
+            (p["x_rel"].as_f64().expect("x_rel") - 0.25).abs() < 1e-6,
+            "carries the supplied normalised cursor",
+        );
+        // The persistent diagnostic mirrors the fired intent.
+        let Some(IntrospectValue::Json(observed)) = ext.query("redock_at") else {
+            panic!("redock_at must surface the invoke-driven dock-at as JSON");
+        };
+        assert_eq!(observed["window"], "main");
+        assert!(
+            !ext.is_dragging(),
+            "the invoke is a complete gesture, not in-flight"
+        );
+    }
+
+    #[test]
+    fn r1103_invoke_tear_off_redock_at_defaults_omitted_zone_to_centre() {
+        // `target`/`x_rel`/`y_rel` are optional — a caller that only names the
+        // window gets the zone centre (0.5, 0.5) + an empty target tag, so a
+        // minimal AI redock still produces a well-formed payload.
+        let mut ext = DockPanelExternal::new("inspector");
+        ext.invoke(
+            TEAR_OFF_REDOCK_AT_EVENT,
+            IntrospectValue::Json(serde_json::json!({ "window": "main" })),
+        )
+        .expect("window-only redock invoke");
+        let Some(IntrospectValue::Json(observed)) = ext.query("redock_at") else {
+            panic!("redock_at recorded");
+        };
+        assert_eq!(observed["target"], "");
+        assert!((observed["x_rel"].as_f64().expect("x_rel") - 0.5).abs() < 1e-6);
+        assert!((observed["y_rel"].as_f64().expect("y_rel") - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn r1103_invoke_tear_off_redock_at_rejects_a_non_json_or_window_less_payload() {
+        let mut ext = DockPanelExternal::new("inspector");
+        assert_eq!(
+            ext.invoke(TEAR_OFF_REDOCK_AT_EVENT, IntrospectValue::Null),
+            Err(InvokeError::TypeMismatch),
+            "a non-JSON payload is a type mismatch",
+        );
+        assert_eq!(
+            ext.invoke(
+                TEAR_OFF_REDOCK_AT_EVENT,
+                IntrospectValue::Json(serde_json::json!({ "target": "property" })),
+            ),
+            Err(InvokeError::TypeMismatch),
+            "a payload missing the required `window` is a type mismatch",
+        );
+        // A rejected invoke records nothing.
+        assert_eq!(ext.query("redock_at"), Some(IntrospectValue::Null));
     }
 
     #[test]

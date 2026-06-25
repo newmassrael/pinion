@@ -235,6 +235,30 @@ const PROPERTY_TEAR_OFF_REDOCK_INTENT_TAG: &str = intent_tag!("property", "tear_
 /// Viewport panel's redock / restore intent (same convention).
 const VIEWPORT_TEAR_OFF_REDOCK_INTENT_TAG: &str = intent_tag!("viewport", "tear_off_redock");
 
+/// R1103 §5.51 §2 #7 PR-33 — the cross-window dock-at intents, one per panel
+/// ([`pinion_widget_paint::dock::TEAR_OFF_REDOCK_AT_EVENT`]). Distinct from
+/// the [`TEAR_OFF_REDOCK_EVENT`](INSPECTOR_TEAR_OFF_REDOCK_INTENT_TAG) restore
+/// above: this fires when a FLOATING panel is dropped onto another window's
+/// dock zone (carrying a `{panel, window, target, x_rel, y_rel}` JSON payload),
+/// and the reducer EXECUTES the redock — removing the panel's floating window
+/// so it re-installs into the named window — but only when that window is the
+/// slot-bearing [`MAIN_WINDOW_ID`]. A non-main target (another floater, which
+/// has no dock slot to host the panel) fires + is observable but executes no
+/// move (slice-3 boundary; zone-specific placement is slice 4).
+const INSPECTOR_TEAR_OFF_REDOCK_AT_INTENT_TAG: &str =
+    intent_tag!("inspector", "tear_off_redock_at");
+/// Property panel's cross-window dock-at intent (same convention).
+const PROPERTY_TEAR_OFF_REDOCK_AT_INTENT_TAG: &str = intent_tag!("property", "tear_off_redock_at");
+/// Viewport panel's cross-window dock-at intent (same convention).
+const VIEWPORT_TEAR_OFF_REDOCK_AT_INTENT_TAG: &str = intent_tag!("viewport", "tear_off_redock_at");
+
+/// R1103 §5.51 §2 #7 PR-33 — the slot-bearing window id. Only this window
+/// hosts the three panel dock slots, so only a cross-window redock targeting
+/// it can EXECUTE (a floater is a single-panel `WindowSpec` with no slot to
+/// receive another panel). The boot topology + the desktop-conversion origin
+/// lookup share this same id.
+const MAIN_WINDOW_ID: &str = "main";
+
 /// Inspector tree-row click intent (same as hello-multi-window's R675
 /// arc). The `TreeRowClickExternal` registered at `inspector_tree`
 /// emits a bare `click` event the runtime prefixes to
@@ -330,7 +354,7 @@ fn use_windows_topology() -> Rc<Signal<Vec<WindowSpec>>> {
         .expect("hello-dock-panels: windows_signal runs inside the substrate root owner scope")
         .cache("hello_dock_windows", || {
             Signal::new(vec![WindowSpec::new(
-                Cow::Borrowed("main"),
+                Cow::Borrowed(MAIN_WINDOW_ID),
                 "hello-dock-panels — Main (R683.C)",
                 SizeStrategy::Fixed {
                     width: MAIN_W,
@@ -536,7 +560,7 @@ fn is_panel_floating(panels: &[WindowSpec], panel_id: &str) -> bool {
 fn follow_desktop_position(panels: &[WindowSpec], cursor: (f64, f64)) -> (i32, i32) {
     let (ox, oy) = panels
         .iter()
-        .find(|w| w.id.as_ref() == "main")
+        .find(|w| w.id.as_ref() == MAIN_WINDOW_ID)
         .and_then(|w| w.position)
         .unwrap_or((0, 0));
     (ox + cursor.0.round() as i32, oy + cursor.1.round() as i32)
@@ -1090,6 +1114,34 @@ impl WidgetCore for DockPanelsView {
             {
                 if let IntrospectValue::Text(panel_id) = &intent.payload {
                     redock_panel_floating(panel_id);
+                }
+            }
+            // R1103 §5.51 §2 #7 PR-33 — cross-window dock-at EXECUTION
+            // (mutation slice 3). A floating panel was dropped onto another
+            // window's dock zone (the live shell-composed `over_window`, or
+            // the AI-primary `tear_off_redock_at` invoke). The payload names
+            // the dragged panel + the TARGET window. Only the slot-bearing
+            // `MAIN_WINDOW_ID` can host a panel (a floater is a single-panel
+            // WindowSpec with no slot to receive another), so a redock INTO
+            // main executes — `redock_panel_floating` removes the panel's
+            // floating window, which re-installs it in its main dock slot —
+            // while a non-main target (another floater) is observed (the
+            // panel's `redock_at` diagnostic still recorded it firing) but
+            // executes no move. Zone-specific placement (honouring
+            // target/x_rel/y_rel rather than the panel's home slot) is the
+            // flat-reducer dock-at-zone of slice 4.
+            tag if tag == INSPECTOR_TEAR_OFF_REDOCK_AT_INTENT_TAG
+                || tag == PROPERTY_TEAR_OFF_REDOCK_AT_INTENT_TAG
+                || tag == VIEWPORT_TEAR_OFF_REDOCK_AT_INTENT_TAG =>
+            {
+                if let IntrospectValue::Json(v) = &intent.payload
+                    && let (Some(panel), Some(window)) = (
+                        v.get("panel").and_then(serde_json::Value::as_str),
+                        v.get("window").and_then(serde_json::Value::as_str),
+                    )
+                    && window == MAIN_WINDOW_ID
+                {
+                    redock_panel_floating(panel);
                 }
             }
             // Cross-panel select — inspector tree row click writes
@@ -1767,6 +1819,58 @@ mod tests {
             let cmds = <DockPanelsView as WidgetCore>::update(ButtonState::Idle, &intent);
             assert!(cmds.is_empty(), "reducer is side-effect-only");
             assert_eq!(signal.get().len(), 2, "inspector tear-off appended");
+        });
+    }
+
+    #[test]
+    fn r1103_reducer_redock_at_main_executes_but_a_non_main_target_is_a_noop() {
+        Owner::new().run(|| {
+            let signal = use_windows_topology();
+            // Float the inspector so there is a window to redock back.
+            toggle_panel_floating(INSPECTOR_PANEL_TAG);
+            assert_eq!(signal.get().len(), 2, "inspector floats");
+
+            // A cross-window dock-at targeting a NON-main window (another
+            // floater has no dock slot to host the panel) fires but executes
+            // no move — the slice-3 boundary.
+            let onto_floater = Intent::new_static(
+                INSPECTOR_TEAR_OFF_REDOCK_AT_INTENT_TAG,
+                IntrospectValue::Json(serde_json::json!({
+                    "panel": INSPECTOR_PANEL_TAG,
+                    "window": "torn-property",
+                    "target": INSPECTOR_PANEL_TAG,
+                    "x_rel": 0.5,
+                    "y_rel": 0.5,
+                })),
+            );
+            let cmds = <DockPanelsView as WidgetCore>::update(ButtonState::Idle, &onto_floater);
+            assert!(cmds.is_empty(), "reducer is side-effect-only");
+            assert_eq!(
+                signal.get().len(),
+                2,
+                "a non-main target fires but executes no redock",
+            );
+
+            // The same dock-at targeting MAIN (the slot-bearing window)
+            // executes: the floating window is removed so the panel
+            // re-installs into its main dock slot.
+            let onto_main = Intent::new_static(
+                INSPECTOR_TEAR_OFF_REDOCK_AT_INTENT_TAG,
+                IntrospectValue::Json(serde_json::json!({
+                    "panel": INSPECTOR_PANEL_TAG,
+                    "window": MAIN_WINDOW_ID,
+                    "target": PROPERTY_PANEL_TAG,
+                    "x_rel": 0.5,
+                    "y_rel": 0.2,
+                })),
+            );
+            let _ = <DockPanelsView as WidgetCore>::update(ButtonState::Idle, &onto_main);
+            let after = signal.get();
+            assert_eq!(after.len(), 1, "the redock into main removed the floater");
+            assert!(
+                after.iter().all(|w| w.id != "torn-inspector"),
+                "the inspector floater is gone (re-docked into main)",
+            );
         });
     }
 
