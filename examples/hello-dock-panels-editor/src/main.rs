@@ -54,13 +54,18 @@ use pinion_core::undo::{UndoStack, UndoStackExternal, use_undo_stack};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
 use pinion_core::{Frame, Owner, Scene, Signal, WidgetCore};
-use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
+use pinion_shell::{SizeStrategy, WidgetView, WindowSpec, vello_renderer_impl};
 use pinion_widget_paint::button::{ButtonColors, ButtonStyle, view_button};
 use pinion_widget_paint::dock::{
-    DockDropPreview, DockNode, DockPanelExternal, DockReorganizeExternal, DockReorganizer,
-    DockSplitState, DockTopology, TabWellExternal, dock_tablist_access_nodes, view_dock_surface,
+    DEFAULT_FLOATING_WINDOW_PREFIX, DockDropPreview, DockNode, DockPanelExternal, DockPanelStyle,
+    DockReorganizeExternal, DockReorganizer, DockSplitState, DockTopology,
+    FloatingPlaceholderStyle, TEAR_OFF_EVENT, TEAR_OFF_FOLLOW_EVENT, TEAR_OFF_REDOCK_AT_EVENT,
+    TEAR_OFF_REDOCK_EVENT, TabWellExternal, dock_tablist_access_nodes,
+    floating_window_id as dock_floating_window_id, view_dock_panel, view_dock_surface,
+    view_floating_placeholder,
 };
 use pinion_widget_paint::splitter::SplitterExternal;
+use std::borrow::Cow;
 use std::rc::Rc;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -74,6 +79,20 @@ vello_renderer_impl!(
 
 const MAIN_W: u32 = 1200;
 const MAIN_H: u32 = 800;
+
+/// (R1105 §5.51 §5.16 PR-31) The slot-bearing main window id — the only
+/// window whose dock topology can host a panel (a torn-off floater is a
+/// single-panel `WindowSpec` with no slot to receive another). The shell's
+/// single-window convention is `"main"`; the editor declares it explicitly
+/// once it opts into the reactive `windows_signal`.
+const MAIN_WINDOW_ID: &str = "main";
+
+/// (R1105 §5.51 §5.16 PR-31) A torn-off panel's floating window size. Larger
+/// than the flat `hello-dock-panels` floaters (360²) — an editor panel
+/// (outliner tree / properties grid / viewport) wants more room than the
+/// flat demo's inspector slice.
+const FLOATING_W: u32 = 460;
+const FLOATING_H: u32 = 380;
 
 // ─── theme + paint-side tags ──────────────────────────────────────────
 
@@ -247,6 +266,181 @@ fn use_viewport_click_counter() -> Rc<Signal<u32>> {
     Owner::current()
         .expect("hello-dock-panels-editor: view fn runs inside owner scope")
         .cache("editor_viewport_click_counter", || Signal::new(0_u32))
+}
+
+// ─── float-to-window substrate (R1105 §5.51 §5.16 §5.41 PR-31) ─────────
+//
+// The editor is the **2nd dock consumer** of multi-window tear-off (the
+// flat `hello-dock-panels` is the 1st). A panel's `DockPanelExternal`
+// already emits the `tear_off` / `tear_off_follow` / `tear_off_redock` /
+// `tear_off_redock_at` intents (R1094/R1100); before R1105 the editor wired
+// no reducer arm + no `windows_signal`, so they were a no-op (the
+// create_extra_externals R1095.1 comment). R1105 wires them: a torn-off
+// panel moves to its own floating `WindowSpec` (observable over
+// `scene/windows`) while its dock leaf paints a `view_floating_placeholder`.
+//
+// These helpers mutate the binding-local `Signal<Vec<WindowSpec>>`. They
+// CANNOT live in `pinion_widget_paint::dock` — `WindowSpec` is a
+// `pinion-shell` type and pinion-widget-paint deliberately does NOT depend
+// on pinion-shell (it even mirrors `WindowSpec`'s serde to avoid the edge),
+// so the SEED's "dock-substrate lift" of the flat trio is architecturally
+// infeasible as a widget-paint lift. The only viable lift target is a
+// pinion-shell generic window helper, deferred: the editor consumer
+// DIVERGES from the flat at R1106 (zone-honoring redock relocates the panel
+// in the `DockTopology` the flat lacks), so the truly-shared surface is not
+// yet settled — lift after the divergence materialises, not before
+// ([[abstraction-needs-second-consumer]]).
+
+/// (R1105 §5.51 §5.16 §5.41 PR-31) The editor's runtime window topology.
+/// The shell's `reconcile_windows` Effect subscribes this Signal at boot;
+/// each `Signal::set` diffs add/drop against winit windows. Initial
+/// topology = the canonical single main window; tear-off intents append
+/// `torn-{panel_id}` floating-window specs, dock-back intents remove them.
+fn use_editor_windows() -> Rc<Signal<Vec<WindowSpec>>> {
+    Owner::current()
+        .expect("hello-dock-panels-editor: windows_signal runs inside owner scope")
+        .cache("editor_windows", || {
+            Signal::new(vec![WindowSpec::new(
+                Cow::Borrowed(MAIN_WINDOW_ID),
+                "hello-dock-panels-editor — R685 5-pane editor",
+                SizeStrategy::Fixed {
+                    width: MAIN_W,
+                    height: MAIN_H,
+                },
+            )])
+        })
+}
+
+/// Canonical floating-window id for `panel_id` — `"torn-{panel_id}"`. A thin
+/// wrapper over the lifted [`dock_floating_window_id`] +
+/// [`DEFAULT_FLOATING_WINDOW_PREFIX`] SSOT (no duplicate prefix literal).
+fn floating_window_id(panel_id: &str) -> String {
+    dock_floating_window_id(DEFAULT_FLOATING_WINDOW_PREFIX, panel_id)
+}
+
+/// Human-readable title for a floating window hosting `panel_id`.
+fn floating_window_title(panel_id: &str) -> String {
+    format!("hello-dock-panels-editor — {panel_id} (floating)")
+}
+
+/// Declared logical-pixel position a torn-off panel's floating window opens
+/// at — a per-panel cascade offset so multiple tear-offs do not stack
+/// exactly (the [`WindowSpec::with_position`] consumer the flat demo
+/// pioneered at R1087).
+fn floating_window_position(panel_id: &str) -> (i32, i32) {
+    let step = match panel_id {
+        TOOLBAR_PANEL_TAG => 0,
+        OUTLINER_PANEL_TAG => 1,
+        VIEWPORT_PANEL_TAG => 2,
+        PROPERTIES_PANEL_TAG => 3,
+        _ => 4,
+    };
+    (160 + step * 44, 120 + step * 44)
+}
+
+/// `true` iff a floating window for `panel_id` currently exists in `panels`.
+fn is_panel_floating(panels: &[WindowSpec], panel_id: &str) -> bool {
+    let target = floating_window_id(panel_id);
+    panels.iter().any(|w| w.id == target)
+}
+
+/// Reducer mutation for a `tear_off` intent — the canonical toggle:
+///
+/// * Panel docked (no matching floating window) → push a floating
+///   `WindowSpec`. The dock leaf stays in the topology and repaints a
+///   [`view_floating_placeholder`] (slot preserved for a trivial dock-back).
+/// * Panel floating → remove the `WindowSpec` (dock-back); the placeholder
+///   reverts to the live panel content.
+fn toggle_panel_floating(panel_id: &str) {
+    let signal = use_editor_windows();
+    let mut current = signal.get();
+    let target = floating_window_id(panel_id);
+    if let Some(idx) = current.iter().position(|w| w.id == target) {
+        current.remove(idx);
+    } else {
+        let (x, y) = floating_window_position(panel_id);
+        current.push(
+            WindowSpec::new(
+                Cow::Owned(target),
+                floating_window_title(panel_id),
+                SizeStrategy::Fixed {
+                    width: FLOATING_W,
+                    height: FLOATING_H,
+                },
+            )
+            .with_position(x, y),
+        );
+    }
+    signal.set(current);
+}
+
+/// Remove `panel_id`'s floating window (redock / restore). Idempotent no-op
+/// when the panel is already docked, so a redock intent that arrives without
+/// a window (a cancelled / never-floated gesture) is harmless.
+fn redock_panel_floating(panel_id: &str) {
+    let signal = use_editor_windows();
+    let mut current = signal.get();
+    let target = floating_window_id(panel_id);
+    if let Some(idx) = current.iter().position(|w| w.id == target) {
+        current.remove(idx);
+        signal.set(current);
+    }
+}
+
+/// (R1105 §5.16 §5.41 PR-31) Convert a SOURCE-window-logical cursor into a
+/// desktop outer position for the live tear-off follow — the floating window
+/// opens at the desktop point under the cursor = the main window's declared
+/// outer origin + the cursor (the `DockPanelExternal` reports cursors in the
+/// main window's frame; the widget crate must not know about windows).
+///
+/// PRECONDITION (same as the flat demo): the drag SOURCE is the main window
+/// — true for the only headlessly-reachable path (a docked panel torn out).
+/// Re-dragging an ALREADY-FLOATING panel's own header reports a cursor in
+/// that `torn-<panel>` window's frame, for which adding the `"main"` origin
+/// is wrong; that path is the parked live-grab-move scope and needs the
+/// `tear_off_follow` payload to carry the source window id (the R1095.1
+/// carry, unchanged — the editor tears off only from main, so hard-coding
+/// `"main"` stays correct in practice here too).
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "logical-pixel cursor → i32 outer position; sub-pixel is irrelevant to window placement"
+)]
+fn follow_desktop_position(panels: &[WindowSpec], cursor: (f64, f64)) -> (i32, i32) {
+    let (ox, oy) = panels
+        .iter()
+        .find(|w| w.id.as_ref() == MAIN_WINDOW_ID)
+        .and_then(|w| w.position)
+        .unwrap_or((0, 0));
+    (ox + cursor.0.round() as i32, oy + cursor.1.round() as i32)
+}
+
+/// (R1105 §5.16 §5.41 PR-31) Ensure `panel_id` has a floating window and
+/// write its outer position from the desktop-converted cursor (the live
+/// follow). Idempotent: creates on the first escaped move, repositions on
+/// every subsequent move. `Signal::set`'s equality-skip collapses a
+/// stationary cursor. Non-toggling — the AI dock-back stays on
+/// [`toggle_panel_floating`].
+fn follow_panel_floating(panel_id: &str, cursor: (f64, f64)) {
+    let signal = use_editor_windows();
+    let mut current = signal.get();
+    let pos = follow_desktop_position(&current, cursor);
+    let target = floating_window_id(panel_id);
+    if let Some(spec) = current.iter_mut().find(|w| w.id == target) {
+        spec.position = Some(pos);
+    } else {
+        current.push(
+            WindowSpec::new(
+                Cow::Owned(target),
+                floating_window_title(panel_id),
+                SizeStrategy::Fixed {
+                    width: FLOATING_W,
+                    height: FLOATING_H,
+                },
+            )
+            .with_position(pos.0, pos.1),
+        );
+    }
+    signal.set(current);
 }
 
 // ─── topology constructor ─────────────────────────────────────────────
@@ -512,6 +706,76 @@ fn panel_content_for(panel_id: &str, state: ButtonState, theme: &Theme) -> Scene
 // (DRY — pre-R685.C the binding copied the substrate's
 // view_dock_surface_node traversal).
 
+// ─── per-window paint (R1105 §5.51 §5.16 §5.45 PR-31) ─────────────────
+
+/// (R1105 §5.51 §5.16 §5.45 PR-31) The main window's dock surface. Extracted
+/// from `WidgetCore::view` so [`view_for_window`](DockPanelsEditorView)
+/// dispatches the main dock vs a torn-off panel's floating window. A panel
+/// whose floating window currently exists paints a [`view_floating_placeholder`]
+/// in its dock leaf — the slot is preserved (a [`DockNode::Leaf`] still),
+/// so the panel is in exactly one place (the floating window), never
+/// duplicated (SSOT), and dock-back reverts the placeholder to live content.
+fn view_main_dock(state: ButtonState) -> Scene {
+    let theme = use_theme(THEME_TAG).theme_animated();
+    // (R686 §5.45) Read the live topology from its reactive Signal
+    // (subscribes the view; a reorganize gesture's `Signal::set` re-renders).
+    let topology = use_editor_topology().get();
+    // (R1082 §5.51) The shared drop-preview (subscribes the view, so a drag's
+    // `drag_to` re-renders the target panel's zone overlay).
+    let preview = use_drop_preview().get();
+    // (R1105 §5.51) The live floating-window set; a panel listed here paints
+    // a placeholder in its dock leaf instead of its content.
+    let windows = use_editor_windows().get();
+    // (R1084 §5.51) The dock surface is total over the empty (`None`) state.
+    // The editor seeds `Some` and never empties, but the view honours the
+    // universal Option (the R685.B SSOT walker auto-builds DockPanelStyle /
+    // SplitterStyle from the topology + threads its declared initial_ratio).
+    match topology {
+        Some(topology) => view_dock_surface(
+            &topology,
+            |panel_id| {
+                if is_panel_floating(&windows, panel_id) {
+                    view_floating_placeholder(
+                        panel_id,
+                        &theme,
+                        &FloatingPlaceholderStyle::m3_default()
+                            .with_label_font_size_px(PANEL_BODY_FONT_PX),
+                    )
+                } else {
+                    panel_content_for(panel_id, state, &theme)
+                }
+            },
+            |split_id, initial_ratio| DockSplitState {
+                ratio_signal: use_split_ratio(split_id.to_string(), initial_ratio),
+                dragging: false,
+            },
+            |panel_id| {
+                preview
+                    .as_ref()
+                    .filter(|p| p.target == panel_id)
+                    .map(|p| p.zone)
+            },
+            &theme,
+        ),
+        None => Scene::Container(ContainerNode::new(vec![])),
+    }
+}
+
+/// (R1105 §5.51 §5.16 §5.45 PR-31) A torn-off panel's floating-window paint.
+/// Wraps the panel's content in a [`view_dock_panel`] so the floating window
+/// carries a draggable header. The same [`DockPanelExternal`] registered at
+/// `panel_id` services both the docked placeholder header AND the floating
+/// header (1 External per panel, shared across windows; each per-window
+/// `InputRouter` resolves the composite tag against its own paint scene), so
+/// a second tear-off on the floating header dock-backs it (toggle). The
+/// panel id is the header title — the same SSOT the dock walker uses.
+fn view_floating_panel(panel_id: &str, state: ButtonState) -> Scene {
+    let theme = use_theme(THEME_TAG).theme_animated();
+    let content = panel_content_for(panel_id, state, &theme);
+    let style = DockPanelStyle::m3_default(panel_id.to_string());
+    view_dock_panel(panel_id, content, &theme, &style, None)
+}
+
 // ─── trait wiring ─────────────────────────────────────────────────────
 
 /// R685 §5.16 §5.41 §5.49 — editor binding carrier. No fields — every
@@ -646,50 +910,11 @@ impl WidgetCore for DockPanelsEditorView {
     }
 
     fn view(state: Self::State, _frame: &Frame) -> Scene {
-        let theme = use_theme(THEME_TAG).theme_animated();
-        // (R686 §5.45) Read the live topology from its reactive Signal
-        // (subscribes the view; a reorganize gesture's `Signal::set`
-        // re-renders the new layout). The boot value is
-        // `build_editor_topology()` (seeded by `use_editor_topology`).
-        let topology = use_editor_topology().get();
-        // (R685.B atomic 1 SSOT walker) — the walker auto-builds
-        // DockPanelStyle / SplitterStyle from the topology's
-        // panel_id / split_id / orientation, and threads the
-        // topology's declared initial_ratio through to the binding's
-        // Signal constructor. Binding callbacks supply only:
-        //   - panel content `Scene` per panel_id
-        //   - reactive `DockSplitState` per split_id (memoised Signal
-        //     + dragging flag); the initial_ratio arg comes from the
-        //     topology, so no caller-side ratio default duplication.
-        // (R686) The split_state callback keys `use_split_ratio` on the
-        // raw split id (Cow) so a reorganize-minted runtime split id
-        // resolves an Owner::cache slot without a `&'static str` bridge.
-        // (R1082 §5.51) Read the shared drop-preview (subscribes the view,
-        // so a drag's `drag_to` re-renders the overlay). The closure maps a
-        // panel id to the live zone iff that panel is the current drop
-        // target — the panel under the cursor paints its zone affordance.
-        let preview = use_drop_preview().get();
-        // (R1084 §5.51) The dock surface is total over the empty (`None`)
-        // state — an empty dock paints a bare container. The editor seeds
-        // `Some` and never empties, but the view honours the universal Option.
-        match topology {
-            Some(topology) => view_dock_surface(
-                &topology,
-                |panel_id| panel_content_for(panel_id, state, &theme),
-                |split_id, initial_ratio| DockSplitState {
-                    ratio_signal: use_split_ratio(split_id.to_string(), initial_ratio),
-                    dragging: false,
-                },
-                |panel_id| {
-                    preview
-                        .as_ref()
-                        .filter(|p| p.target == panel_id)
-                        .map(|p| p.zone)
-                },
-                &theme,
-            ),
-            None => Scene::Container(ContainerNode::new(vec![])),
-        }
+        // (R1105 §5.51) Single-window fallback — the default `view_for_window`
+        // forwards here for `"main"`. The live render loop always calls
+        // `view_for_window` (R670.B per-window dispatch); an RPC
+        // `scene/snapshot` without `{window}` resolves through this path.
+        view_main_dock(state)
     }
 
     fn event_name(event: Self::Event) -> &'static str {
@@ -697,7 +922,78 @@ impl WidgetCore for DockPanelsEditorView {
     }
 
     fn update(_state: Self::State, intent: &Intent) -> Vec<Command> {
-        if intent.tag_str() == VIEWPORT_BTN_CLICK_INTENT_TAG {
+        let tag = intent.tag_str();
+        // (R1105 §5.51 §5.16 §5.41 PR-31) Tear-off family. A panel's
+        // `DockPanelExternal` emits a BARE dock event (`tear_off`, …); the
+        // intent-queue drain prefixes it with the panel's registration tag →
+        // `{panel}.{event}` (the `intent_tag!` dotted wire form). Dispatch on
+        // the event suffix; the payload carries the panel id (the SSOT for
+        // which panel — the tag's prefix agrees). The editor wires all five
+        // panels uniformly rather than per-panel constants (the flat demo's
+        // 3-panel idiom would be 5×4 = 20 constants here).
+        if let Some((_, event)) = tag.rsplit_once('.') {
+            match event {
+                // Toggle: float the panel into its own window, or dock it back.
+                TEAR_OFF_EVENT => {
+                    if let IntrospectValue::Text(panel) = &intent.payload {
+                        toggle_panel_floating(panel);
+                    }
+                    return Vec::new();
+                }
+                // Live follow: a drag escaped every dock zone — ensure the
+                // panel's floating window exists + write its position from the
+                // forwarded (window-logical) cursor, desktop-converted.
+                // Non-toggling (every per-move re-emit only repositions).
+                TEAR_OFF_FOLLOW_EVENT => {
+                    if let IntrospectValue::Json(v) = &intent.payload
+                        && let (Some(panel), Some(x), Some(y)) = (
+                            v.get("panel").and_then(serde_json::Value::as_str),
+                            v.get("x").and_then(serde_json::Value::as_f64),
+                            v.get("y").and_then(serde_json::Value::as_f64),
+                        )
+                    {
+                        follow_panel_floating(panel, (x, y));
+                    }
+                    return Vec::new();
+                }
+                // Redock / restore: a drag that had torn the panel off ended
+                // back in the dock or snapped back / cancelled — remove the
+                // floating window this gesture created (idempotent).
+                TEAR_OFF_REDOCK_EVENT => {
+                    if let IntrospectValue::Text(panel) = &intent.payload {
+                        redock_panel_floating(panel);
+                    }
+                    return Vec::new();
+                }
+                // (R1105) Cross-window dock-at into the slot-bearing main
+                // window: a floating panel dropped onto main's dock (the live
+                // shell-composed `over_window`, or the AI-primary
+                // `tear_off_redock_at` invoke). Remove the floating window so
+                // the panel re-installs in its HOME slot — its topology leaf,
+                // still present as a placeholder. Only `MAIN_WINDOW_ID` hosts a
+                // panel (a floater has no slot); a non-main target fires the
+                // intent (the panel's `redock_at` diagnostic records it) but
+                // executes no move. ★ZONE-HONORING relocation (use the
+                // `target`/`x_rel`/`y_rel` to re-place the panel via the
+                // `DockTopology` + reorganizer rather than its home slot) is
+                // the editor's distinguishing value — R1106's slice-4(a),
+                // built on this foundation.
+                TEAR_OFF_REDOCK_AT_EVENT => {
+                    if let IntrospectValue::Json(v) = &intent.payload
+                        && let (Some(panel), Some(window)) = (
+                            v.get("panel").and_then(serde_json::Value::as_str),
+                            v.get("window").and_then(serde_json::Value::as_str),
+                        )
+                        && window == MAIN_WINDOW_ID
+                    {
+                        redock_panel_floating(panel);
+                    }
+                    return Vec::new();
+                }
+                _ => {}
+            }
+        }
+        if tag == VIEWPORT_BTN_CLICK_INTENT_TAG {
             let counter = use_viewport_click_counter();
             counter.set(counter.get().wrapping_add(1));
         }
@@ -731,6 +1027,48 @@ impl WidgetView for DockPanelsEditorView {
         SizeStrategy::Fixed {
             width: MAIN_W,
             height: MAIN_H,
+        }
+    }
+
+    /// (R1105 §5.51 §5.16 §5.41 PR-31) Opt into the reactive multi-window
+    /// topology. The shell's `reconcile_windows` Effect subscribes this at
+    /// boot + drives winit window add/drop on each `Signal::set`. Initial =
+    /// the single main window; tear-off intents append `torn-{panel}`
+    /// floating windows, dock-back intents remove them.
+    fn windows_signal() -> Option<Rc<Signal<Vec<WindowSpec>>>> {
+        Some(use_editor_windows())
+    }
+
+    /// (R1105 §5.51 §5.16 PR-31) Per-window paint dispatch. The main window
+    /// paints the dock layout; a floating window (id prefix `torn-`) paints
+    /// its hosted panel via [`view_floating_panel`]. An unrecognised id falls
+    /// back to the main dock (defensive — never blank-screen).
+    fn view_for_window(window_id: &str, state: Self::State, _frame: &Frame) -> Scene {
+        match window_id {
+            id if id == MAIN_WINDOW_ID => view_main_dock(state),
+            other => match other.strip_prefix(DEFAULT_FLOATING_WINDOW_PREFIX) {
+                Some(panel_id) => view_floating_panel(panel_id, state),
+                None => view_main_dock(state),
+            },
+        }
+    }
+
+    /// (R1105 §5.51 §5.40 §5.27 PR-31) Per-window AT contribution. The dock
+    /// tab-well `tablist` nodes (R1095) belong to the main window where the
+    /// dock paints; a torn-off floating window hosts a single non-tabbed
+    /// panel, so it contributes none. Without this gate the default
+    /// `access_node_for_window` forwards [`WidgetA11y::access_node`] to EVERY
+    /// window, ghosting the main dock's tablist nodes into each floater (no
+    /// bounds / name there). Only the main window forwards.
+    fn access_node_for_window(
+        window_id: &str,
+        state: &Self::State,
+        focused: Option<&str>,
+    ) -> Vec<AccessNode> {
+        if window_id == MAIN_WINDOW_ID {
+            <Self as WidgetA11y>::access_node(state, focused)
+        } else {
+            Vec::new()
         }
     }
 }
@@ -1243,6 +1581,346 @@ mod tests {
             assert!(
                 Rc::ptr_eq(&a, &b),
                 "use_split_ratio is Owner::cache-memoised by id",
+            );
+        });
+    }
+
+    // ─── R1105 §5.51 §5.16 §5.41 PR-31 float-to-window (2nd consumer) ───
+
+    /// Build the `{panel}.{event}` namespaced intent tag the intent-queue
+    /// drain produces for a `DockPanelExternal` registered at `panel`.
+    fn tear_off_tag(panel: &str, event: &str) -> Cow<'static, str> {
+        Cow::Owned(format!("{panel}.{event}"))
+    }
+
+    #[test]
+    fn r1105_editor_windows_seeded_single_main_and_memoised() {
+        run_in_owner(|| {
+            let a = use_editor_windows();
+            let b = use_editor_windows();
+            assert!(
+                Rc::ptr_eq(&a, &b),
+                "Owner::cache memoises the windows signal"
+            );
+            let specs = a.get();
+            assert_eq!(specs.len(), 1, "boot = single main window");
+            assert_eq!(specs[0].id.as_ref(), MAIN_WINDOW_ID);
+            assert!(
+                specs[0].position.is_none(),
+                "main is WM-placed (null position)"
+            );
+        });
+    }
+
+    #[test]
+    fn r1105_floating_window_id_uses_torn_prefix() {
+        assert_eq!(floating_window_id(VIEWPORT_PANEL_TAG), "torn-viewport");
+        assert_eq!(floating_window_id(OUTLINER_PANEL_TAG), "torn-outliner");
+        assert!(
+            floating_window_id(PROPERTIES_PANEL_TAG).starts_with(DEFAULT_FLOATING_WINDOW_PREFIX)
+        );
+    }
+
+    #[test]
+    fn r1105_floating_window_positions_cascade_distinctly() {
+        // Each tearable panel opens at a distinct cascade offset so multiple
+        // tear-offs do not stack exactly.
+        let positions: Vec<(i32, i32)> = [
+            TOOLBAR_PANEL_TAG,
+            OUTLINER_PANEL_TAG,
+            VIEWPORT_PANEL_TAG,
+            PROPERTIES_PANEL_TAG,
+            CONSOLE_PANEL_TAG,
+        ]
+        .iter()
+        .map(|p| floating_window_position(p))
+        .collect();
+        let unique: std::collections::BTreeSet<_> = positions.iter().collect();
+        assert_eq!(
+            unique.len(),
+            positions.len(),
+            "no two panels share a cascade spot"
+        );
+    }
+
+    #[test]
+    fn r1105_toggle_panel_floating_adds_then_removes_torn_window() {
+        run_in_owner(|| {
+            let windows = use_editor_windows();
+            assert!(!is_panel_floating(&windows.get(), VIEWPORT_PANEL_TAG));
+            toggle_panel_floating(VIEWPORT_PANEL_TAG);
+            let after = windows.get();
+            assert_eq!(after.len(), 2, "main + torn-viewport");
+            assert!(is_panel_floating(&after, VIEWPORT_PANEL_TAG));
+            let torn = after
+                .iter()
+                .find(|w| w.id.as_ref() == "torn-viewport")
+                .expect("torn-viewport spec present");
+            assert!(
+                torn.position.is_some(),
+                "floating window opens at a declared position"
+            );
+            // Toggle again → dock back.
+            toggle_panel_floating(VIEWPORT_PANEL_TAG);
+            assert_eq!(
+                windows.get().len(),
+                1,
+                "dock-back removes the floating window"
+            );
+        });
+    }
+
+    #[test]
+    fn r1105_redock_panel_floating_idempotent_when_docked() {
+        run_in_owner(|| {
+            let windows = use_editor_windows();
+            // No floating window for outliner → redock is a no-op.
+            redock_panel_floating(OUTLINER_PANEL_TAG);
+            assert_eq!(windows.get().len(), 1);
+            // Float then redock removes it.
+            toggle_panel_floating(OUTLINER_PANEL_TAG);
+            assert_eq!(windows.get().len(), 2);
+            redock_panel_floating(OUTLINER_PANEL_TAG);
+            assert_eq!(windows.get().len(), 1);
+        });
+    }
+
+    #[test]
+    fn r1105_main_dock_paints_placeholder_for_floating_panel() {
+        run_in_owner(|| {
+            toggle_panel_floating(VIEWPORT_PANEL_TAG);
+            let scene = view_main_dock(ButtonState::Idle);
+            let serialized = format!("{scene:?}");
+            assert!(
+                serialized.contains("viewport_placeholder"),
+                "floating viewport's dock leaf paints the placeholder",
+            );
+            assert!(
+                !serialized.contains(VIEWPORT_BTN_TAG),
+                "the viewport content (its button) moved to the floating window — \
+                 not duplicated in the main dock",
+            );
+            // The other panels still paint their real content.
+            assert!(serialized.contains("outliner_content_body"));
+        });
+    }
+
+    #[test]
+    fn r1105_floating_window_paints_panel_content_with_header() {
+        run_in_owner(|| {
+            let scene = view_floating_panel(VIEWPORT_PANEL_TAG, ButtonState::Idle);
+            let serialized = format!("{scene:?}");
+            assert!(
+                serialized.contains(VIEWPORT_BTN_TAG),
+                "floating window hosts the live content"
+            );
+            assert!(
+                serialized.contains("viewport#header"),
+                "floating window carries a draggable header"
+            );
+        });
+    }
+
+    #[test]
+    fn r1105_view_for_window_dispatches_main_vs_torn() {
+        run_in_owner(|| {
+            let frame = Frame::default();
+            let main = <DockPanelsEditorView as WidgetView>::view_for_window(
+                MAIN_WINDOW_ID,
+                ButtonState::Idle,
+                &frame,
+            );
+            assert!(
+                format!("{main:?}").contains(SPLIT_OUTER_TAG),
+                "main paints the dock surface"
+            );
+
+            let torn = <DockPanelsEditorView as WidgetView>::view_for_window(
+                "torn-viewport",
+                ButtonState::Idle,
+                &frame,
+            );
+            let torn_s = format!("{torn:?}");
+            assert!(
+                torn_s.contains(VIEWPORT_BTN_TAG),
+                "torn window paints the viewport panel"
+            );
+            assert!(
+                !torn_s.contains(SPLIT_OUTER_TAG),
+                "torn window is NOT the whole dock"
+            );
+
+            // Defensive: an unrecognised, non-`torn-` id falls back to main.
+            let other = <DockPanelsEditorView as WidgetView>::view_for_window(
+                "mystery",
+                ButtonState::Idle,
+                &frame,
+            );
+            assert!(format!("{other:?}").contains(SPLIT_OUTER_TAG));
+        });
+    }
+
+    #[test]
+    fn r1105_tear_off_intent_toggles_floating_window() {
+        run_in_owner(|| {
+            let windows = use_editor_windows();
+            let intent = Intent {
+                tag: tear_off_tag(VIEWPORT_PANEL_TAG, TEAR_OFF_EVENT),
+                payload: IntrospectValue::Text(VIEWPORT_PANEL_TAG.to_string()),
+            };
+            let commands = <DockPanelsEditorView as WidgetCore>::update(ButtonState::Idle, &intent);
+            assert!(commands.is_empty());
+            assert!(is_panel_floating(&windows.get(), VIEWPORT_PANEL_TAG));
+            // Re-emit toggles back.
+            let _ = <DockPanelsEditorView as WidgetCore>::update(ButtonState::Idle, &intent);
+            assert!(!is_panel_floating(&windows.get(), VIEWPORT_PANEL_TAG));
+        });
+    }
+
+    #[test]
+    fn r1105_redock_at_main_removes_floating_window() {
+        run_in_owner(|| {
+            let windows = use_editor_windows();
+            toggle_panel_floating(VIEWPORT_PANEL_TAG);
+            assert!(is_panel_floating(&windows.get(), VIEWPORT_PANEL_TAG));
+            let intent = Intent {
+                tag: tear_off_tag(VIEWPORT_PANEL_TAG, TEAR_OFF_REDOCK_AT_EVENT),
+                payload: IntrospectValue::Json(serde_json::json!({
+                    "panel": VIEWPORT_PANEL_TAG,
+                    "window": MAIN_WINDOW_ID,
+                    "target": OUTLINER_PANEL_TAG,
+                    "x_rel": 0.5,
+                    "y_rel": 0.5,
+                })),
+            };
+            let _ = <DockPanelsEditorView as WidgetCore>::update(ButtonState::Idle, &intent);
+            assert!(
+                !is_panel_floating(&windows.get(), VIEWPORT_PANEL_TAG),
+                "redock-at into main removes the floating window (panel returns to its slot)",
+            );
+        });
+    }
+
+    #[test]
+    fn r1105_redock_at_non_main_target_is_a_noop() {
+        run_in_owner(|| {
+            let windows = use_editor_windows();
+            toggle_panel_floating(VIEWPORT_PANEL_TAG);
+            // Drop onto ANOTHER floater (no slot to host a panel) → observed, not moved.
+            let intent = Intent {
+                tag: tear_off_tag(VIEWPORT_PANEL_TAG, TEAR_OFF_REDOCK_AT_EVENT),
+                payload: IntrospectValue::Json(serde_json::json!({
+                    "panel": VIEWPORT_PANEL_TAG,
+                    "window": "torn-properties",
+                    "target": PROPERTIES_PANEL_TAG,
+                    "x_rel": 0.5,
+                    "y_rel": 0.5,
+                })),
+            };
+            let _ = <DockPanelsEditorView as WidgetCore>::update(ButtonState::Idle, &intent);
+            assert!(
+                is_panel_floating(&windows.get(), VIEWPORT_PANEL_TAG),
+                "a non-main target executes no move — the panel stays floating",
+            );
+        });
+    }
+
+    #[test]
+    fn r1105_tear_off_redock_intent_removes_floating_window() {
+        run_in_owner(|| {
+            let windows = use_editor_windows();
+            toggle_panel_floating(PROPERTIES_PANEL_TAG);
+            assert!(is_panel_floating(&windows.get(), PROPERTIES_PANEL_TAG));
+            let intent = Intent {
+                tag: tear_off_tag(PROPERTIES_PANEL_TAG, TEAR_OFF_REDOCK_EVENT),
+                payload: IntrospectValue::Text(PROPERTIES_PANEL_TAG.to_string()),
+            };
+            let _ = <DockPanelsEditorView as WidgetCore>::update(ButtonState::Idle, &intent);
+            assert!(!is_panel_floating(&windows.get(), PROPERTIES_PANEL_TAG));
+        });
+    }
+
+    #[test]
+    fn r1105_follow_desktop_position_adds_main_origin() {
+        // No known main origin → relative to desktop (0,0).
+        assert_eq!(follow_desktop_position(&[], (10.0, 20.0)), (10, 20));
+        // With a positioned main window, the cursor is offset by its origin.
+        let main_at = vec![
+            WindowSpec::new(
+                Cow::Borrowed(MAIN_WINDOW_ID),
+                "main",
+                SizeStrategy::Fixed {
+                    width: MAIN_W,
+                    height: MAIN_H,
+                },
+            )
+            .with_position(200, 150),
+        ];
+        assert_eq!(follow_desktop_position(&main_at, (10.0, 20.0)), (210, 170));
+    }
+
+    #[test]
+    fn r1105_follow_panel_floating_creates_then_repositions() {
+        run_in_owner(|| {
+            let windows = use_editor_windows();
+            follow_panel_floating(OUTLINER_PANEL_TAG, (50.0, 60.0));
+            let spec = windows
+                .get()
+                .into_iter()
+                .find(|w| w.id.as_ref() == "torn-outliner")
+                .expect("first escaped move creates the floating window");
+            assert_eq!(spec.position, Some((50, 60)));
+            // A later move repositions the SAME window (non-toggling, no second window).
+            follow_panel_floating(OUTLINER_PANEL_TAG, (90.0, 100.0));
+            let after = windows.get();
+            assert_eq!(after.len(), 2, "still one floating window");
+            let spec = after
+                .iter()
+                .find(|w| w.id.as_ref() == "torn-outliner")
+                .unwrap();
+            assert_eq!(spec.position, Some((90, 100)));
+        });
+    }
+
+    #[test]
+    fn r1105_access_node_for_window_gates_tab_a11y_to_main() {
+        run_in_owner(|| {
+            // Create a tab well so the dock contributes `tablist` AT nodes.
+            use_editor_reorganizer()
+                .apply_intent(&DockReorganizeIntent::Tabify {
+                    source: VIEWPORT_PANEL_TAG.to_string(),
+                    target: PROPERTIES_PANEL_TAG.to_string(),
+                })
+                .expect("tabify viewport onto properties");
+            let main = <DockPanelsEditorView as WidgetView>::access_node_for_window(
+                MAIN_WINDOW_ID,
+                &ButtonState::Idle,
+                None,
+            );
+            assert!(
+                !main.is_empty(),
+                "main window carries the dock tablist AT nodes"
+            );
+            let torn = <DockPanelsEditorView as WidgetView>::access_node_for_window(
+                "torn-viewport",
+                &ButtonState::Idle,
+                None,
+            );
+            assert!(
+                torn.is_empty(),
+                "a floating window contributes no dock tablist ghosts"
+            );
+        });
+    }
+
+    #[test]
+    fn r1105_windows_signal_opt_in_returns_editor_windows() {
+        run_in_owner(|| {
+            let from_trait = <DockPanelsEditorView as WidgetView>::windows_signal()
+                .expect("editor opts into the reactive windows topology");
+            assert!(
+                Rc::ptr_eq(&from_trait, &use_editor_windows()),
+                "same cached signal"
             );
         });
     }
