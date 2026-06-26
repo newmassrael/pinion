@@ -17464,6 +17464,50 @@
         "next R1112: Phase-B pivot candidate; PR-31/34/35/36/37 dock-DnD handoff line complete"
       ]
     },
+    "R1112": {
+      "decision_summary": "R1112 §5.51 PR-37 SSOT cleanup: tabbing moved per-panel DockPanelExternal -> surface DockReorganizer; pointer + drop-RPC + cross-window redock honor ONE policy = split-only uniform across all classifier paths (review smell #1)",
+      "changes_bullets": [
+        "tabbing field per-panel DockPanelExternal -> surface DockReorganizer (with_tabbing + accessor)",
+        "drop RPC + apply_zone_redock thread surface tabbing via *_tabbing wrapper fns (no caller ripple)",
+        "resolve_preview reads effective_tabbing (coordinator policy); tabbing observable on both externals"
+      ],
+      "verification_bullets": [
+        "cargo test 7725/0; clippy clean; 6 dock demos green (default tabbing unchanged)",
+        "r1112 units: surface tabbing-off -> pointer centre->edge AND RPC drop centre->split (uniform)",
+        "tabbing query on DockPanelExternal(derived) + DockReorganizeExternal(owner), read-only sec2#7",
+        "DOCK_SPLIT_RESULT_PCT invariant documented (mirrors default ratio; thread if ratio gets a setter)"
+      ],
+      "impact_refs": [
+        "5.51",
+        "5.15"
+      ],
+      "carry_forward_bullets": [
+        "review smell #1 (tabbing layer/RPC uniformity) CLEARED; #3 documented; #4 commit convention fixed",
+        "review smell #2 (flex-main lift) correctly DEFERRED: 2 consumers, 3rd-consumer rule; watch-item",
+        "next R1113: Phase-B pivot (DCC ~73-83% / Model-View ~68% / text-editor ~58-76%) audit-first"
+      ],
+      "publishable_decision_summary": "R1112 §5.51 PR-37 SSOT cleanup: tabbing moved per-panel DockPanelExternal -> surface DockReorganizer; pointer + drop-RPC + cross-window redock honor ONE policy = split-only uniform across all classifier paths (review smell #1)",
+      "publishable_changes_bullets": [
+        "tabbing field per-panel DockPanelExternal -> surface DockReorganizer (with_tabbing + accessor)",
+        "drop RPC + apply_zone_redock thread surface tabbing via *_tabbing wrapper fns (no caller ripple)",
+        "resolve_preview reads effective_tabbing (coordinator policy); tabbing observable on both externals"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test 7725/0; clippy clean; 6 dock demos green (default tabbing unchanged)",
+        "r1112 units: surface tabbing-off -> pointer centre->edge AND RPC drop centre->split (uniform)",
+        "tabbing query on DockPanelExternal(derived) + DockReorganizeExternal(owner), read-only sec2#7",
+        "DOCK_SPLIT_RESULT_PCT invariant documented (mirrors default ratio; thread if ratio gets a setter)"
+      ],
+      "publishable_impact_refs": [
+        "5.51",
+        "5.15"
+      ],
+      "publishable_carry_forward_bullets": [
+        "review smell #1 (tabbing layer/RPC uniformity) CLEARED; #3 documented; #4 commit convention fixed",
+        "review smell #2 (flex-main lift) correctly DEFERRED: 2 consumers, 3rd-consumer rule; watch-item",
+        "next R1113: Phase-B pivot (DCC ~73-83% / Model-View ~68% / text-editor ~58-76%) audit-first"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
