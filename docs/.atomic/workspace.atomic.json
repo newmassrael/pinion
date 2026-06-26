@@ -17508,6 +17508,60 @@
         "next R1113: Phase-B pivot (DCC ~73-83% / Model-View ~68% / text-editor ~58-76%) audit-first"
       ]
     },
+    "R1113": {
+      "decision_summary": "R1113: PR-38 dock drag UX = drag-image follower at the SHELL overlay layer (focus_ring sibling), not the dock binding; automatic for every consumer (editor + sprag get it free via the Text drag payload), no new signal",
+      "changes_bullets": [
+        "pinion-overlay inject_drag_image + DragImageStyle: translucent follower chip (focus_ring sibling)",
+        "InputRouter::active_drag_label + CoreShell accessor: project the drag session label + cursor",
+        "WidgetView::drag_image_style hook (default Some) + ShellCore::apply_window_overlays = ring+image",
+        "automatic: dock panels' Text payload = editor AND sprag get the follower, zero binding change",
+        "earlier dock-binding R1113 reverted: wrong layer (per-consumer wiring, mis-anchored, extra signal)"
+      ],
+      "verification_bullets": [
+        "8 overlay tests: trails cursor, on-screen clamp, pointer-transparent, translucent, label, idempotent",
+        "2 router tests via the REAL input path: Some(label,cursor) mid-drag, None on click/release/non-text",
+        "shell wiring composes the two proven pieces, mirroring apply_focus_ring (same verify boundary)",
+        "no new reactive signal: a pure projection of the router drag session (focus-ring parity)",
+        "cargo test --workspace green; clippy --all-targets -D pedantic clean; rustfmt clean"
+      ],
+      "impact_refs": [
+        "5.51",
+        "5.33"
+      ],
+      "carry_forward_bullets": [
+        "live mid-drag pixel verification (real GPU + pointer) = CI/HW obligation, like every visual round",
+        "RPC produce path injects too (producer parity) but scene/drag is atomic = no mid-drag RPC snapshot",
+        "binding theming via the drag_image_style override (theme colours); default is neutral",
+        "remaining PR-38: live floater re-drag (HW-gated) + OS-titlebar with_decorations(false) unify",
+        "no per-consumer wiring owed: sprag + editor get the follower automatically from the shell"
+      ],
+      "publishable_decision_summary": "R1113: PR-38 dock drag UX = drag-image follower at the SHELL overlay layer (focus_ring sibling), not the dock binding; automatic for every consumer (editor + sprag get it free via the Text drag payload), no new signal",
+      "publishable_changes_bullets": [
+        "pinion-overlay inject_drag_image + DragImageStyle: translucent follower chip (focus_ring sibling)",
+        "InputRouter::active_drag_label + CoreShell accessor: project the drag session label + cursor",
+        "WidgetView::drag_image_style hook (default Some) + ShellCore::apply_window_overlays = ring+image",
+        "automatic: dock panels' Text payload = editor AND sprag get the follower, zero binding change",
+        "earlier dock-binding R1113 reverted: wrong layer (per-consumer wiring, mis-anchored, extra signal)"
+      ],
+      "publishable_verification_bullets": [
+        "8 overlay tests: trails cursor, on-screen clamp, pointer-transparent, translucent, label, idempotent",
+        "2 router tests via the REAL input path: Some(label,cursor) mid-drag, None on click/release/non-text",
+        "shell wiring composes the two proven pieces, mirroring apply_focus_ring (same verify boundary)",
+        "no new reactive signal: a pure projection of the router drag session (focus-ring parity)",
+        "cargo test --workspace green; clippy --all-targets -D pedantic clean; rustfmt clean"
+      ],
+      "publishable_impact_refs": [
+        "5.51",
+        "5.33"
+      ],
+      "publishable_carry_forward_bullets": [
+        "live mid-drag pixel verification (real GPU + pointer) = CI/HW obligation, like every visual round",
+        "RPC produce path injects too (producer parity) but scene/drag is atomic = no mid-drag RPC snapshot",
+        "binding theming via the drag_image_style override (theme colours); default is neutral",
+        "remaining PR-38: live floater re-drag (HW-gated) + OS-titlebar with_decorations(false) unify",
+        "no per-consumer wiring owed: sprag + editor get the follower automatically from the shell"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
