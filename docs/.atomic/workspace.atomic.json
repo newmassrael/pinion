@@ -17284,6 +17284,52 @@
         "R1108 = audit-first PIVOT to a high-value buildable Phase-B gap (PR-31 editor docking + this review-clearance now complete; the remaining dock-DnD axis ② live-grab-move is HW-gated only). DCC widget depth / Model-View at scale / text-editor (CLAUDE.md Phase B value order)."
       ]
     },
+    "R1108": {
+      "decision_summary": "PR-34 redock-totality DECLINED and the spike (4740ea62+58933736) reverted to e340d97b on framework-first grounds. Making SplitInsert and tabify total over source-presence overloads a move primitive to fabricate a panel, violating pinion's own AI-first name-reference invariant (a move verb referencing a panel by name must reject a bad or stale name, not materialise a ghost) and SRP; the unguarded drop verb proved the regression empirically. The consumer-forced premise was also stale: sprag adopted the R72 placeholder model (the leaf survives a float; sprag's own code states the placeholder model moots PINION-PR34), so no live consumer is leaf-removing and the materialise half served nobody. Strict restored -- both drop and reorganize reject an absent source uniformly, no per-verb guard, no new public surface. A future genuine leaf-removing consumer gets materialisation via a distinct explicitly-named redock primitive, never a move-verb overload.",
+      "changes_bullets": [
+        "Reverted the R1108 PR-34 spike (4740ea62 code + 58933736 meta) via reset --hard to e340d97b; no net code change from R1107.1",
+        "Dropped: SplitInsert/tabify total-over-absent-source, the reorganize source-presence guard, DockTopology::contains_leaf, the two r1108 materialise unit tests, demo r1108_redock_total.py",
+        "Restored strict move verbs: drop and reorganize both reject an absent source uniformly (remove_leaf(source)? -> PanelNotFound -> Rejected), no per-verb guard, no new public surface"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 exit 0 / 0 failures on the restored tree (byte-identical to e340d97b, recorded 7718/0)",
+        "grep: contains_leaf and materialise absent from dock.rs; the SplitInsert arm is remove_leaf(source)?.split_leaf_into (strict)",
+        "sprag dock.rs:213 'the placeholder model moots PINION-PR34' + main.rs:591 'the leaf survived -- R72 placeholder model' (read-only cross-repo verify of the stale premise)",
+        "clippy(vello,-D pedantic) + fmt --all + validate-workspace(T1=0) + validate-code-refs(missing=0) green (e340d97b is the pushed R1107.1 clearance tip)"
+      ],
+      "impact_refs": [
+        "5.51"
+      ],
+      "carry_forward_bullets": [
+        "LESSON a consumer-forced seam is a SIGNAL only; the framework decides the FIX on its own principles, never by importing the consumer's shape (R1108 imported sprag's leaf-removing model into the core move verbs)",
+        "LESSON verify the consumer's CURRENT code, not the handoff snapshot -- the PR-34 handoff was pinned at sprag R71; sprag had since moved to the R72 placeholder model, mooting it",
+        "LESSON a move primitive must not be overloaded to fabricate (violates SRP and the AI-first name-reference invariant); materialisation belongs to a distinct explicitly-named redock primitive when a real consumer forces it",
+        "PR-34 CLOSED as declined; do not re-attempt without a genuine leaf-removing consumer plus the distinct-primitive design",
+        "next = R1109 audit-first PIVOT to a high-leverage buildable Phase-B gap (DCC widget depth / Model-View at scale / text-editor depth)"
+      ],
+      "publishable_decision_summary": "PR-34 redock-totality DECLINED and the spike (4740ea62+58933736) reverted to e340d97b on framework-first grounds. Making SplitInsert and tabify total over source-presence overloads a move primitive to fabricate a panel, violating pinion's own AI-first name-reference invariant (a move verb referencing a panel by name must reject a bad or stale name, not materialise a ghost) and SRP; the unguarded drop verb proved the regression empirically. The consumer-forced premise was also stale: sprag adopted the R72 placeholder model (the leaf survives a float; sprag's own code states the placeholder model moots PINION-PR34), so no live consumer is leaf-removing and the materialise half served nobody. Strict restored -- both drop and reorganize reject an absent source uniformly, no per-verb guard, no new public surface. A future genuine leaf-removing consumer gets materialisation via a distinct explicitly-named redock primitive, never a move-verb overload.",
+      "publishable_changes_bullets": [
+        "Reverted the R1108 PR-34 spike (4740ea62 code + 58933736 meta) via reset --hard to e340d97b; no net code change from R1107.1",
+        "Dropped: SplitInsert/tabify total-over-absent-source, the reorganize source-presence guard, DockTopology::contains_leaf, the two r1108 materialise unit tests, demo r1108_redock_total.py",
+        "Restored strict move verbs: drop and reorganize both reject an absent source uniformly (remove_leaf(source)? -> PanelNotFound -> Rejected), no per-verb guard, no new public surface"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 exit 0 / 0 failures on the restored tree (byte-identical to e340d97b, recorded 7718/0)",
+        "grep: contains_leaf and materialise absent from dock.rs; the SplitInsert arm is remove_leaf(source)?.split_leaf_into (strict)",
+        "sprag dock.rs:213 'the placeholder model moots PINION-PR34' + main.rs:591 'the leaf survived -- R72 placeholder model' (read-only cross-repo verify of the stale premise)",
+        "clippy(vello,-D pedantic) + fmt --all + validate-workspace(T1=0) + validate-code-refs(missing=0) green (e340d97b is the pushed R1107.1 clearance tip)"
+      ],
+      "publishable_impact_refs": [
+        "5.51"
+      ],
+      "publishable_carry_forward_bullets": [
+        "LESSON a consumer-forced seam is a SIGNAL only; the framework decides the FIX on its own principles, never by importing the consumer's shape (R1108 imported sprag's leaf-removing model into the core move verbs)",
+        "LESSON verify the consumer's CURRENT code, not the handoff snapshot -- the PR-34 handoff was pinned at sprag R71; sprag had since moved to the R72 placeholder model, mooting it",
+        "LESSON a move primitive must not be overloaded to fabricate (violates SRP and the AI-first name-reference invariant); materialisation belongs to a distinct explicitly-named redock primitive when a real consumer forces it",
+        "PR-34 CLOSED as declined; do not re-attempt without a genuine leaf-removing consumer plus the distinct-primitive design",
+        "next = R1109 audit-first PIVOT to a high-leverage buildable Phase-B gap (DCC widget depth / Model-View at scale / text-editor depth)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
