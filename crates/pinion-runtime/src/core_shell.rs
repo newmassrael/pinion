@@ -1991,6 +1991,24 @@ impl<V: WidgetCore> CoreShell<V> {
             .is_some_and(|router| router.drag_session_active(pid))
     }
 
+    /// (R1113 §5.51 §5.33 §2 #7) The addressed window's in-flight drag label +
+    /// window-logical cursor — the projection the shell injects as a drag-image
+    /// overlay ([`pinion_overlay::inject_drag_image`]), the way the focus state
+    /// drives the focus ring. `None` when the window has no router, no real
+    /// drag is in flight, or the drag carries no text label
+    /// ([`InputRouter::active_drag_label`]). `.get` (not `or_default`) so a
+    /// query for an input-less window allocates no phantom router.
+    #[must_use]
+    pub fn active_drag_label_for_window(
+        &self,
+        window_id: &str,
+        pid: PointerId,
+    ) -> Option<(String, (f64, f64))> {
+        self.routers
+            .get(window_id)
+            .and_then(|router| router.active_drag_label(pid))
+    }
+
     /// R1102 §5.51 PR-33 — stash the shell's cross-window drop resolution on the
     /// addressed window's in-flight drag (or clear it with `None`). The shell —
     /// the sole holder of every window's geometry — resolves the abs cursor

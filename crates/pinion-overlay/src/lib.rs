@@ -42,11 +42,13 @@
 
 #![forbid(unsafe_code)]
 
+pub mod drag_image;
 pub(crate) mod edge;
 pub mod event;
 pub mod focus_ring;
 pub mod highlight;
 
+pub use drag_image::{DRAG_IMAGE_TAG, DragImageStyle, inject_drag_image};
 pub use event::OverlayEvent;
 pub use focus_ring::{FOCUS_RING_TAG, FocusRingStyle, inject_focus_ring};
 pub use highlight::{HIGHLIGHT_TAG_PREFIX, HighlightStyle, clear_highlights, inject_highlight};

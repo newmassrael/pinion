@@ -3359,7 +3359,7 @@ impl<V: WidgetView> ShellCore<V> {
         // `Signal::set` re-flags it — the `handle_tail` `is_dirty()` bridge
         // then knows a real change occurred and a benign no-op did not.
         self.core.root_owner().clear_dirty();
-        self.apply_focus_ring(paint_scene, w, h)
+        self.apply_window_overlays(paint_scene, w, h, window_id)
     }
 
     /// R705 §5.39 §2 #1/#7 — inject the keyboard focus ring as an
@@ -3389,6 +3389,57 @@ impl<V: WidgetView> ShellCore<V> {
         // R1022 §5.39 — `(w, h)` = the layout viewport the scene was laid out to,
         // so the ring's far edges clamp on-screen for a window-flush widget.
         inject_styled_focus_ring::<V>(scene, Some(&ring_tag), Some((w, h)))
+    }
+
+    /// R1113 §5.51 §5.33 §2 #7 — inject the drag-image follower (the
+    /// translucent chip floated under the cursor during a drag) as an
+    /// introspectable, pointer-transparent overlay [`Scene::Container`]. The
+    /// sibling of [`Self::apply_focus_ring`]: it reads `window_id`'s live drag
+    /// session from the [`pinion_runtime::InputRouter`]
+    /// ([`active_drag_label_for_window`](pinion_runtime::CoreShell::active_drag_label_for_window)
+    /// — the payload's text label + the window-logical cursor the router
+    /// measured) and floats the chip at the cursor, exactly the way
+    /// `apply_focus_ring` reads focus state. Because the follower is anchored
+    /// at the cursor (window-level), it is correct no matter where the dragged
+    /// widget sits in the window — there is no per-widget composition to
+    /// mis-anchor, and every consumer gets it automatically (no wiring).
+    ///
+    /// No-op when no REAL drag is in flight (a pending click shows none), the
+    /// drag carries no text label (a capture-drag like a splitter resize, or a
+    /// non-text payload), or the binding's
+    /// [`WidgetView::drag_image_style`](crate::WidgetView::drag_image_style)
+    /// hook returns `None`. The chip is `pointer_transparent` so it never
+    /// shadows the drag it represents.
+    fn apply_drag_image(&self, scene: Scene, w: u32, h: u32, window_id: &str) -> Scene {
+        let Some((label, cursor)) = self
+            .core
+            .active_drag_label_for_window(window_id, PointerId::MOUSE)
+        else {
+            return scene;
+        };
+        let Some(style) = V::drag_image_style(&label) else {
+            return scene;
+        };
+        pinion_overlay::inject_drag_image(scene, &label, cursor, style, Some((w, h)))
+    }
+
+    /// R1113 §5.51 §5.33 — the window-level paint overlays, in z-order: the
+    /// keyboard focus ring then the drag-image follower. Both are injected by
+    /// the shell from its own state (focus / the router's live drag session),
+    /// as the final step of every paint-scene producer. `window_id` is the
+    /// producer's `Option<&str>` (the `None` single-window primary resolves to
+    /// the [`pinion_runtime::DEFAULT_WINDOW`] router key). Lifted from the two
+    /// internal producers so each tail stays one line.
+    fn apply_window_overlays(
+        &self,
+        scene: Scene,
+        w: u32,
+        h: u32,
+        window_id: Option<&str>,
+    ) -> Scene {
+        let key = window_id.unwrap_or(pinion_runtime::DEFAULT_WINDOW);
+        let ringed = self.apply_focus_ring(scene, w, h);
+        self.apply_drag_image(ringed, w, h, key)
     }
 
     /// R670.B §5.16 — per-window paint scene producer. Same pipeline
@@ -3511,7 +3562,7 @@ impl<V: WidgetView> ShellCore<V> {
         // (re-store / headless) render also consumed the current reactive
         // state, so reset the dirty flag in lockstep.
         self.core.root_owner().clear_dirty();
-        self.apply_focus_ring(paint_scene, w, h)
+        self.apply_window_overlays(paint_scene, w, h, window_id)
     }
 
     /// R51.80 §5.40 — build the inputs to
@@ -4022,6 +4073,14 @@ impl<V: WidgetView> ShellCore<V> {
             // that drifted from the on-screen pixels
             // ([[introspection-from-paint-not-screen]]).
             let paint_window_key = window_id.unwrap_or(pinion_runtime::DEFAULT_WINDOW);
+            // R1113 §5.51 §5.33 §2 #7 — sample the addressed window's live drag
+            // (label + cursor) BEFORE the `scene_mut` reborrow, the same way
+            // `ring_tag_for_paint` is sampled before it, so the produce closure
+            // injects the drag-image follower for producer parity with the winit
+            // path ([[r670b-paint-scene-producer-parity]]). `None` mid-drag-less.
+            let drag_image_for_paint: Option<(String, (f64, f64))> = self
+                .core
+                .active_drag_label_for_window(paint_window_key, PointerId::MOUSE);
             let (scene_ptr, last_paint_scene_ref) = self
                 .core
                 .scene_mut_and_last_paint_for_window(paint_window_key);
@@ -4089,7 +4148,26 @@ impl<V: WidgetView> ShellCore<V> {
                 // paint path (None = no ring), through the shared SSOT.
                 // R1022 §5.39 — same layout viewport `(w, h)` the produce closure
                 // laid out to, so the introspected ring rect matches the winit path.
-                inject_styled_focus_ring::<V>(paint, ring_tag_for_paint.as_deref(), Some((w, h)))
+                let ringed = inject_styled_focus_ring::<V>(
+                    paint,
+                    ring_tag_for_paint.as_deref(),
+                    Some((w, h)),
+                );
+                // R1113 §5.51 §5.33 — drag-image follower after the ring (the
+                // RPC produce mirror of `apply_drag_image`; the sampled label +
+                // cursor + the binding's style hook). No-op mid-drag-less.
+                match drag_image_for_paint.as_ref().and_then(|(label, cursor)| {
+                    V::drag_image_style(label).map(|style| (label.as_str(), *cursor, style))
+                }) {
+                    Some((label, cursor, style)) => pinion_overlay::inject_drag_image(
+                        ringed,
+                        label,
+                        cursor,
+                        style,
+                        Some((w, h)),
+                    ),
+                    None => ringed,
+                }
             };
             // R979 §5.40 §2 #7 — `scene/access` producer (the `build_access_tree`
             // SSOT the live AccessKit emit also runs; entry-focus `focus_before`).

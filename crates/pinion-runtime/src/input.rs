@@ -572,6 +572,32 @@ impl InputRouter {
         self.drag_sessions.contains_key(&id)
     }
 
+    /// (R1113 §5.51 §5.33 §2 #7) The in-flight drag's display label + the
+    /// window-logical cursor it is at — the projection the shell injects as a
+    /// drag-image overlay ([`pinion_overlay::inject_drag_image`]), the way it
+    /// reads focus state to inject the focus ring. `Some` only once the press
+    /// became a REAL drag (the [`press_became_drag`](Self::press_became_drag)
+    /// click-vs-drag SSOT, so a pending click shows no follower) AND the
+    /// payload carries a non-empty text label AND a cursor is known. A
+    /// capture-drag (a splitter resize — no [`begin_drag`] session) has no
+    /// session, so it never shows a follower. No new state: a pure projection
+    /// of the session the router already owns.
+    #[must_use]
+    pub fn active_drag_label(&self, id: PointerId) -> Option<(String, (f64, f64))> {
+        if !self.press_became_drag(id) {
+            return None;
+        }
+        let session = self.drag_sessions.get(&id)?;
+        let IntrospectValue::Text(label) = &session.payload.value else {
+            return None;
+        };
+        if label.is_empty() {
+            return None;
+        }
+        let cursor = self.cursor_position(id)?;
+        Some((label.clone(), cursor))
+    }
+
     /// R1102 §5.51 PR-33 — stash the shell's cross-window drop resolution for
     /// the in-flight drag on `id` (the window whose dock zone the abs cursor
     /// currently maps onto, plus the drop point in THAT window's local frame),
@@ -5899,6 +5925,11 @@ mod tests {
         /// and a drag source, used to prove a drag release clears any
         /// vestigial capture lock.
         capture: bool,
+        /// (R1113) When `Some`, [`begin_drag`] emits a TEXT payload carrying
+        /// this label (the dock-panel shape) instead of the default `Int` row
+        /// index — so `active_drag_label` (the drag-image projection) has a
+        /// label to surface. `None` keeps the legacy `Int` payload.
+        label: Option<&'static str>,
     }
 
     impl DragExternal {
@@ -5913,9 +5944,19 @@ mod tests {
                     pressed: std::cell::Cell::new(None),
                     log: Arc::clone(&log),
                     capture,
+                    label: None,
                 },
                 log,
             )
+        }
+
+        /// (R1113) A text-payload drag source (the dock-panel shape): its
+        /// [`begin_drag`] payload value is `Text(label)`, so `active_drag_label`
+        /// surfaces it as the drag-image follower's label.
+        fn with_label(label: &'static str) -> (Self, Arc<Mutex<Vec<String>>>) {
+            let (mut s, log) = Self::with_capture(false);
+            s.label = Some(label);
+            (s, log)
         }
     }
 
@@ -5949,7 +5990,12 @@ mod tests {
                     .push(format!("begin:{i}"));
                 DragPayload {
                     kind: std::borrow::Cow::Borrowed("dnd-row"),
-                    value: IntrospectValue::Int(i64::try_from(i).unwrap_or(0)),
+                    // R1113 — a labelled source emits a Text payload (dock-panel
+                    // shape); the default reorder source keeps its Int row index.
+                    value: match self.label {
+                        Some(l) => IntrospectValue::Text(l.to_string()),
+                        None => IntrospectValue::Int(i64::try_from(i).unwrap_or(0)),
+                    },
                 }
             })
         }
@@ -6151,6 +6197,73 @@ mod tests {
         assert!(
             log.iter().any(|s| s == "drop_at:400:400"),
             "release cursor forwarded: {log:?}"
+        );
+    }
+
+    #[test]
+    fn r1113_active_drag_label_tracks_a_text_payload_drag() {
+        // R1113 §5.51 §5.33 — the projection the shell injects as the drag-image
+        // follower (the way it reads focus state for the focus ring). Driven
+        // through the REAL router input path (press → move → release), not a
+        // mock: `Some(label, cursor)` only once a press becomes a real drag with
+        // a non-empty text payload; `None` for an idle pointer, a pending click,
+        // and after release.
+        let mut router = InputRouter::new();
+        let (drag, _log) = DragExternal::with_label("outliner");
+        let mut state = Scene::External(ExternalNode::new(Box::new(drag)).with_tag("dnd"));
+        router.update_paint_scene(paint_with_two_rows(), &mut state);
+        // Idle (no press) → no follower.
+        assert_eq!(
+            router.active_drag_label(PointerId::MOUSE),
+            None,
+            "idle pointer: no follower",
+        );
+        // Press inside row 0 — the session opens (begin_drag emits the Text
+        // payload), but it is still a CLICK until the cursor moves past the
+        // click→drag threshold, so no follower yet.
+        router.cursor_moved(PointerId::MOUSE, 100.0, 20.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        assert_eq!(
+            router.active_drag_label(PointerId::MOUSE),
+            None,
+            "a pending click (pressed, not yet dragged) shows no follower",
+        );
+        // Move well past the threshold → the follower appears AT the cursor.
+        router.cursor_moved(PointerId::MOUSE, 140.0, 120.0, &mut state);
+        assert_eq!(
+            router.active_drag_label(PointerId::MOUSE),
+            Some(("outliner".to_string(), (140.0, 120.0))),
+            "a real drag with a text payload floats the follower at the cursor",
+        );
+        // Release ends the session → no follower.
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        assert_eq!(
+            router.active_drag_label(PointerId::MOUSE),
+            None,
+            "after release: no follower",
+        );
+    }
+
+    #[test]
+    fn r1113_non_text_payload_drag_has_no_follower_label() {
+        // A drag whose payload is not text (the default Int reorder rows)
+        // carries no label, so the shell shows NO drag-image — only a labelled
+        // drag gets a follower (the gate that keeps an opaque-payload drag from
+        // flashing a meaningless chip).
+        let mut router = InputRouter::new();
+        let (mut state, _log) = state_with_dnd();
+        router.update_paint_scene(paint_with_two_rows(), &mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 20.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 140.0, 120.0, &mut state);
+        assert!(
+            router.press_became_drag(PointerId::MOUSE),
+            "a real drag IS in flight (control: the gate is the payload, not the verdict)",
+        );
+        assert_eq!(
+            router.active_drag_label(PointerId::MOUSE),
+            None,
+            "a non-text payload yields no follower label",
         );
     }
 

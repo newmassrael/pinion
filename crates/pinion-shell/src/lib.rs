@@ -818,6 +818,28 @@ pub trait WidgetView: pinion_a11y::WidgetA11y {
         Some(pinion_overlay::FocusRingStyle::default())
     }
 
+    /// (R1113 §5.51 §5.33) Drag-image (the translucent follower the shell
+    /// floats under the cursor while a drag is in flight) style for a drag
+    /// whose payload carries `label`. Mirrors
+    /// [`focus_ring_style`](Self::focus_ring_style): the shell injects the
+    /// follower automatically from the [`InputRouter`](pinion_runtime::InputRouter)'s
+    /// live drag session (no per-binding wiring, like the focus ring); this
+    /// hook lets a binding theme it or opt out.
+    ///
+    /// - `Some(style)` (the default) — draw the follower with `style`. The
+    ///   default is the neutral [`DragImageStyle::default`](pinion_overlay::DragImageStyle::default);
+    ///   a themed binding can return its surface/on-surface colours.
+    /// - `None` — draw **no** follower for this drag (a binding whose drags are
+    ///   self-evident, or that paints its own drag affordance).
+    ///
+    /// Only drags that opened a [`begin_drag`](pinion_core::external::External::begin_drag)
+    /// session with a non-empty text payload reach this hook — a capture-drag
+    /// (a splitter resize) never does, so it shows no follower regardless.
+    #[must_use]
+    fn drag_image_style(_label: &str) -> Option<pinion_overlay::DragImageStyle> {
+        Some(pinion_overlay::DragImageStyle::default())
+    }
+
     /// R762 §5.36 §5.38 / R763 §5.22 — pointer-driven caret + selection
     /// press hook. The shell calls this on a press (native winit
     /// `MouseInput` and the `scene/click` / `scene/drag` deferred-input
