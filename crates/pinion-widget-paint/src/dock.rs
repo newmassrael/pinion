@@ -1760,6 +1760,19 @@ pub fn dock_drop_zone_for(panel_rect: Rect, cursor_x: f64, cursor_y: f64) -> Doc
 /// without a one-pixel double-claim seam.
 #[must_use]
 pub fn dock_drop_zone_normalized(x_rel: f64, y_rel: f64) -> DockDropZone {
+    dock_drop_zone_normalized_tabbing(x_rel, y_rel, true)
+}
+
+/// (R1111 §5.51 PR-37) [`dock_drop_zone_normalized`] with the tab-docking
+/// policy explicit. `tabbing == true` (the default classification) keeps the
+/// centre square as [`DockDropZone::Center`] (→ [`DockReorganizeIntent::Tabify`]);
+/// `tabbing == false` (a split-only consumer, e.g. a terminal multiplexer)
+/// suppresses it — the centre falls through to the nearest split edge, so the
+/// whole panel resolves to an edge and a centre drop can never tabify (no dead
+/// centre). [`DockPanelExternal::with_tabbing`] wires the consumer's choice
+/// into the pointer path; the bare [`dock_drop_zone_normalized`] keeps the
+/// tabbing default for every existing caller.
+fn dock_drop_zone_normalized_tabbing(x_rel: f64, y_rel: f64, tabbing: bool) -> DockDropZone {
     // Half-open [0.0, 1.0): outside the panel on either axis → no zone.
     if !(0.0..1.0).contains(&x_rel) || !(0.0..1.0).contains(&y_rel) {
         return DockDropZone::None;
@@ -1768,9 +1781,10 @@ pub fn dock_drop_zone_normalized(x_rel: f64, y_rel: f64) -> DockDropZone {
     let from_right = 1.0 - from_left;
     let from_top = y_rel;
     let from_bottom = 1.0 - from_top;
-    // Centre rectangle: at least one band-width clear of every edge.
+    // Centre rectangle: at least one band-width clear of every edge. Only a
+    // tab-docking panel claims it; a split-only panel lets the nearest edge win.
     let nearest = from_left.min(from_right).min(from_top).min(from_bottom);
-    if nearest >= DOCK_EDGE_ZONE_FRAC {
+    if tabbing && nearest >= DOCK_EDGE_ZONE_FRAC {
         return DockDropZone::Center;
     }
     // Edge band: the nearest edge wins; exact ties resolve in
@@ -3209,29 +3223,33 @@ fn composite_tag(panel_tag: &str, suffix: &'static str) -> String {
     format!("{panel_tag}#{suffix}")
 }
 
-/// (R1081 §5.51) Edge-band percentage for the drop-zone highlight
-/// overlay — the integer-percent (`SizeValue::Percent`) mirror of
-/// [`DOCK_EDGE_ZONE_FRAC`] (`0.25`) the strip sizing needs. Kept in sync
-/// with the float fraction by `dock_edge_zone_pct_matches_frac`.
-const DOCK_EDGE_ZONE_PCT: u8 = 25;
+/// (R1111 §5.51 PR-37) The percent of the target a drop's RESULT occupies —
+/// what the drop preview highlights. An edge split-insert takes the
+/// [`DEFAULT_REORGANIZE_RATIO`] half (`50`), NOT the `0.25` classification
+/// band: pre-R1111 the overlay mirrored the (narrower) trigger band, so the
+/// painted affordance under-showed where the panel would land. Centre tabify
+/// takes the whole target (100% — the tab well covers the pane), handled
+/// directly in [`dock_drop_zone_highlight`]. Kept in sync with the split
+/// ratio by `dock_split_result_pct_matches_ratio`.
+const DOCK_SPLIT_RESULT_PCT: u8 = 50;
 
 /// (R1081 §5.51) Alpha the drop-zone highlight tint is drawn at (~40% of
 /// the [`ColorRole::Accent`] colour) so the docked-into band reads as a
 /// translucent overlay, not an opaque fill that hides the panel content.
 const DOCK_DROP_HIGHLIGHT_ALPHA: u8 = 0x66;
 
-/// (R1081 §5.51) Build the drop-zone highlight overlay a dock panel
-/// paints while it is the live drop target of an in-flight R742 drag — an
-/// absolutely-positioned, pointer-transparent layer covering the whole
-/// panel, tinting the band the drop would dock into:
-/// `Left`/`Right`/`Top`/`Bottom` = a [`DOCK_EDGE_ZONE_FRAC`]-wide edge
-/// strip, `Center` = the centre square. The band *fraction* is the
-/// [`DOCK_EDGE_ZONE_FRAC`] the classifier uses, and the band painted is
-/// always the one for the cursor's currently-classified zone — so the
-/// highlighted band tracks the zone the drop would perform. (The strips
-/// are rectangular bands, the conventional dock-overlay affordance; the
-/// classifier's nearest-edge corner wedges are not drawn — only the
-/// winning zone's full band is.)
+/// (R1081 §5.51; R1111 PR-37 result-region) Build the drop-zone highlight
+/// overlay a dock panel paints while it is the live drop target of an
+/// in-flight R742 drag — an absolutely-positioned, pointer-transparent layer
+/// covering the whole panel, tinting the region the drop would OCCUPY:
+/// `Left`/`Right`/`Top`/`Bottom` = the [`DOCK_SPLIT_RESULT_PCT`] split half on
+/// that side (the region the source lands in, ratio [`DEFAULT_REORGANIZE_RATIO`]),
+/// `Center` = the whole target (a tabify stacks the source into a tab well that
+/// covers the pane). R1111 widened the strip from the narrow 25% classification
+/// band to the result region so the affordance shows WHERE the panel will land,
+/// not merely which edge the cursor is near (the desktop-dock convention —
+/// VS Code / `IntelliJ` shade the result area). The painted region is always the
+/// one for the cursor's currently-classified zone.
 ///
 /// `pointer_transparent` so the overlay never intercepts the drag, and
 /// `absolute_position(0, 0)` + 100%×100% so it sits on top without
@@ -3251,8 +3269,11 @@ pub fn dock_drop_zone_highlight(zone: DockDropZone, theme: &Theme) -> Scene {
     };
     // (direction, justify, align, strip width%, strip height%) per zone —
     // justify pins the strip to the near edge, the percents size the band.
-    let edge = DOCK_EDGE_ZONE_PCT;
-    let center = 100 - 2 * DOCK_EDGE_ZONE_PCT;
+    // R1111 PR-37 — the strip is the RESULT region (the split half the drop
+    // will occupy), NOT the narrower 25% classification band, so the affordance
+    // shows WHERE the panel lands. An edge takes `half`; a centre tabify takes
+    // the whole target (the tab well covers the pane).
+    let half = DOCK_SPLIT_RESULT_PCT;
     let (dir, justify, align, w, h) = match zone {
         DockDropZone::None => {
             return Scene::Container(ContainerNode::new(vec![]).with_layout(overlay_layout()));
@@ -3261,14 +3282,14 @@ pub fn dock_drop_zone_highlight(zone: DockDropZone, theme: &Theme) -> Scene {
             FlexDirection::Row,
             JustifyContent::Start,
             AlignItems::Stretch,
-            edge,
+            half,
             100,
         ),
         DockDropZone::Right => (
             FlexDirection::Row,
             JustifyContent::End,
             AlignItems::Stretch,
-            edge,
+            half,
             100,
         ),
         DockDropZone::Top => (
@@ -3276,21 +3297,21 @@ pub fn dock_drop_zone_highlight(zone: DockDropZone, theme: &Theme) -> Scene {
             JustifyContent::Start,
             AlignItems::Stretch,
             100,
-            edge,
+            half,
         ),
         DockDropZone::Bottom => (
             FlexDirection::Column,
             JustifyContent::End,
             AlignItems::Stretch,
             100,
-            edge,
+            half,
         ),
         DockDropZone::Center => (
             FlexDirection::Row,
             JustifyContent::Center,
             AlignItems::Center,
-            center,
-            center,
+            100,
+            100,
         ),
     };
     let tint = theme
@@ -4005,6 +4026,17 @@ pub struct DockPanelExternal {
     /// paint the zone affordance. `None` = no overlay binding (the
     /// gesture still docks / tears off, just without the preview paint).
     drop_preview: Option<Rc<Signal<Option<DockDropPreview>>>>,
+    /// (R1111 §5.51 PR-37) Whether a centre drop tabifies. `true` (default)
+    /// keeps the 5-zone classification — the centre square stacks the source
+    /// onto the target as a tab well ([`DockDropZone::Center`] →
+    /// [`DockReorganizeIntent::Tabify`]), the IDE / editor affordance. `false`
+    /// (a split-only consumer — a terminal multiplexer, where a tab inside a
+    /// pane is meaningless) suppresses the centre zone: a drop anywhere on the
+    /// target resolves to the nearest split edge, never a tabify. Only the
+    /// pointer path ([`resolve_preview`](Self::resolve_preview)) reads this;
+    /// the explicit symbolic `reorganize` invoke still honours an
+    /// AI-requested `Center`.
+    tabbing: bool,
 }
 
 impl core::fmt::Debug for DockPanelExternal {
@@ -4047,6 +4079,7 @@ impl DockPanelExternal {
             last_source_window: RefCell::new(None),
             reorganizer: None,
             drop_preview: None,
+            tabbing: true,
         }
     }
 
@@ -4067,6 +4100,19 @@ impl DockPanelExternal {
     #[must_use]
     pub fn with_drop_preview(mut self, preview: Rc<Signal<Option<DockDropPreview>>>) -> Self {
         self.drop_preview = Some(preview);
+        self
+    }
+
+    /// (R1111 §5.51 PR-37) Opt out of tab docking (default on). A
+    /// split-only consumer — a terminal multiplexer, where stacking two
+    /// terminals as tabs inside one pane is meaningless — passes `false` so a
+    /// centre drop resolves to the nearest split edge instead of a tabify.
+    /// Affects the pointer path only ([`resolve_preview`](Self::resolve_preview));
+    /// the editor (IDE-style tabs) keeps the default. See
+    /// [`dock_drop_zone_normalized`] for the classification.
+    #[must_use]
+    pub fn with_tabbing(mut self, tabbing: bool) -> Self {
+        self.tabbing = tabbing;
         self
     }
 
@@ -4114,7 +4160,13 @@ impl DockPanelExternal {
         if target == self.panel_id.as_ref() {
             return None;
         }
-        let zone = dock_drop_zone_normalized(f64::from(over.x_rel), f64::from(over.y_rel));
+        // R1111 PR-37 — a split-only panel (`with_tabbing(false)`) never
+        // classifies the centre as a tabify; the nearest edge wins instead.
+        let zone = dock_drop_zone_normalized_tabbing(
+            f64::from(over.x_rel),
+            f64::from(over.y_rel),
+            self.tabbing,
+        );
         if zone == DockDropZone::None {
             return None;
         }
@@ -4477,6 +4529,9 @@ impl ExternalIntrospect for DockPanelExternal {
     fn schema(&self) -> IntrospectSchema {
         IntrospectSchema::new(&[
             ("panel_id", "string"),
+            // R1111 §5.51 §2 #7 PR-37 — whether a centre drop tabifies. A
+            // split-only consumer sets it false; an AI discovers the policy.
+            ("tabbing", "bool"),
             ("dragging", "bool"),
             ("tear_off_fired", "bool"),
             // R1081 §5.51 — the live drop the in-flight drag is over
@@ -4516,6 +4571,8 @@ impl ExternalIntrospect for DockPanelExternal {
     fn query(&self, path: &str) -> Option<IntrospectValue> {
         match path {
             "panel_id" => Some(IntrospectValue::Text(self.panel_id.to_string())),
+            // R1111 §5.51 §2 #7 PR-37 — the tab-docking policy (static config).
+            "tabbing" => Some(IntrospectValue::Bool(self.tabbing)),
             "dragging" => Some(IntrospectValue::Bool(self.is_dragging())),
             "tear_off_fired" => Some(IntrospectValue::Bool(self.tear_off_fired())),
             // R1081 §5.51 — the shared live preview (any panel's external
@@ -4552,8 +4609,10 @@ impl ExternalIntrospect for DockPanelExternal {
             // channels + the shared coordinator — not by intervening on
             // dragging / tear_off_fired / drop_preview / drag_cursor /
             // detached directly.
-            "panel_id" | "dragging" | "tear_off_fired" | "drop_preview" | "drag_cursor"
-            | "detached" | "redock_at" | "source_window" => Err(InterveneError::ReadOnly),
+            "panel_id" | "tabbing" | "dragging" | "tear_off_fired" | "drop_preview"
+            | "drag_cursor" | "detached" | "redock_at" | "source_window" => {
+                Err(InterveneError::ReadOnly)
+            }
             _ => Err(InterveneError::UnknownPath),
         }
     }
@@ -4924,6 +4983,41 @@ mod tests {
         // Cursor back over self → preview clears (a self-drop is a no-op).
         ext.drag_to(&dummy_payload(), Some(drop_point("a", 0.5, 0.5)));
         assert!(preview.get().is_none(), "self-hover clears the preview");
+    }
+
+    #[test]
+    fn r1111_with_tabbing_false_resolves_center_to_edge_not_tabify() {
+        // R1111 PR-37 — a split-only panel (with_tabbing(false)) never previews
+        // a centre tabify: a centre drop over a sibling resolves to the nearest
+        // split edge instead. Default (tabbing on) keeps Center.
+        let on_prev = Rc::new(Signal::new(None));
+        let mut on = DockPanelExternal::new("a").with_drop_preview(Rc::clone(&on_prev));
+        let _ = on.begin_drag();
+        on.drag_to(&dummy_payload(), Some(drop_point("b", 0.5, 0.5)));
+        assert_eq!(
+            on_prev.get().expect("preview written").zone,
+            DockDropZone::Center,
+            "tabbing on: centre over a sibling previews Tabify",
+        );
+
+        let off_prev = Rc::new(Signal::new(None));
+        let mut off = DockPanelExternal::new("a")
+            .with_tabbing(false)
+            .with_drop_preview(Rc::clone(&off_prev));
+        let _ = off.begin_drag();
+        off.drag_to(&dummy_payload(), Some(drop_point("b", 0.5, 0.5)));
+        assert_eq!(
+            off_prev.get().expect("preview written").zone,
+            DockDropZone::Left,
+            "tabbing off: centre resolves to nearest edge (dead-centre ties Left), never Center",
+        );
+        // The policy is observable (§2 #7) + read-only.
+        assert_eq!(off.query("tabbing"), Some(IntrospectValue::Bool(false)));
+        assert_eq!(on.query("tabbing"), Some(IntrospectValue::Bool(true)));
+        assert!(matches!(
+            off.intervene("tabbing", IntrospectValue::Bool(true)),
+            Err(InterveneError::ReadOnly),
+        ));
     }
 
     #[test]
@@ -6077,10 +6171,12 @@ mod tests {
     }
 
     #[test]
-    fn r1081_dock_drop_zone_highlight_paints_the_classified_band() {
+    fn r1111_dock_drop_zone_highlight_shows_result_region() {
+        use pinion_core::style::SizeValue;
         run_in_owner(|| {
             let theme = theme_light();
-            // An edge zone → one tinted strip child sized to the band.
+            // R1111 PR-37 — an edge zone highlights the RESULT half (the split
+            // region the panel lands in), not the 25% classification band.
             let Scene::Container(left) = dock_drop_zone_highlight(DockDropZone::Left, &theme)
             else {
                 panic!()
@@ -6088,6 +6184,37 @@ mod tests {
             assert!(left.layout.pointer_transparent, "overlay never grabs input");
             assert_eq!(left.layout.absolute_position, Some((0, 0)));
             assert_eq!(left.children.len(), 1, "edge zone paints one strip");
+            let Scene::Container(strip) = &left.children[0] else {
+                panic!()
+            };
+            assert_eq!(
+                strip.layout.size.width,
+                SizeValue::Percent(super::DOCK_SPLIT_RESULT_PCT),
+                "edge strip width is the split result half (50%), not the 25% band",
+            );
+            assert_eq!(
+                strip.layout.size.height,
+                SizeValue::Percent(100),
+                "edge strip fills the cross axis",
+            );
+            // Centre tabify highlights the WHOLE target (the tab well covers it).
+            let Scene::Container(center) = dock_drop_zone_highlight(DockDropZone::Center, &theme)
+            else {
+                panic!()
+            };
+            let Scene::Container(cstrip) = &center.children[0] else {
+                panic!()
+            };
+            assert_eq!(
+                cstrip.layout.size.width,
+                SizeValue::Percent(100),
+                "centre = whole target"
+            );
+            assert_eq!(
+                cstrip.layout.size.height,
+                SizeValue::Percent(100),
+                "centre = whole target"
+            );
             // None → an empty overlay (no band).
             let Scene::Container(none) = dock_drop_zone_highlight(DockDropZone::None, &theme)
             else {
@@ -6121,13 +6248,14 @@ mod tests {
     }
 
     #[test]
-    fn dock_edge_zone_pct_matches_frac() {
-        // The integer-percent overlay band must mirror the float zone
-        // classifier fraction so the painted affordance and the
-        // classified drop region cannot drift.
+    fn dock_split_result_pct_matches_ratio() {
+        // R1111 PR-37 — the overlay's result-region percent must mirror the
+        // split ratio the apply uses, so the previewed area and the actual
+        // post-split occupancy cannot drift.
         assert!(
-            (f64::from(super::DOCK_EDGE_ZONE_PCT) / 100.0 - super::DOCK_EDGE_ZONE_FRAC).abs()
-                < f64::EPSILON,
+            (f32::from(super::DOCK_SPLIT_RESULT_PCT) / 100.0 - super::DEFAULT_REORGANIZE_RATIO)
+                .abs()
+                < f32::EPSILON,
         );
     }
 
@@ -6983,6 +7111,47 @@ mod drop_zone_tests {
         assert_eq!(
             dock_drop_zone_for(Rect::new(0, 0, 100, 0), 50.0, 0.0),
             DockDropZone::None
+        );
+    }
+
+    #[test]
+    fn r1111_tabbing_off_suppresses_center_to_nearest_edge() {
+        use super::dock_drop_zone_normalized_tabbing;
+        // R1111 PR-37 — with tabbing on, the centre square is Center (tabify).
+        assert_eq!(dock_drop_zone_normalized(0.5, 0.5), DockDropZone::Center);
+        assert_eq!(
+            dock_drop_zone_normalized_tabbing(0.5, 0.5, true),
+            DockDropZone::Center,
+        );
+        // With tabbing OFF, the centre falls through to the nearest edge — a
+        // split-only consumer never tabifies; dead-centre ties to Left.
+        assert_eq!(
+            dock_drop_zone_normalized_tabbing(0.5, 0.5, false),
+            DockDropZone::Left,
+        );
+        // Off-centre under tabbing-off picks the nearest edge (no dead zone).
+        assert_eq!(
+            dock_drop_zone_normalized_tabbing(0.6, 0.5, false),
+            DockDropZone::Right,
+        );
+        assert_eq!(
+            dock_drop_zone_normalized_tabbing(0.5, 0.4, false),
+            DockDropZone::Top,
+        );
+        // A clear edge hit classifies identically with tabbing on or off —
+        // only the centre policy differs.
+        assert_eq!(
+            dock_drop_zone_normalized_tabbing(0.1, 0.5, false),
+            DockDropZone::Left,
+        );
+        assert_eq!(
+            dock_drop_zone_normalized_tabbing(0.1, 0.5, true),
+            DockDropZone::Left,
+        );
+        // Out of bounds stays None regardless of tabbing.
+        assert_eq!(
+            dock_drop_zone_normalized_tabbing(1.0, 0.5, false),
+            DockDropZone::None,
         );
     }
 

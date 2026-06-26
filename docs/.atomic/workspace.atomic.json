@@ -17420,6 +17420,50 @@
         "PR-36 timing is per-move = unit-tested; end-states regression-guarded by r1094/r1097"
       ]
     },
+    "R1111": {
+      "decision_summary": "R1111 §5.51 PR-37: dock drop-zone affordance — DockPanelExternal::with_tabbing(false) opt-out (split-only centre→nearest edge, never tabify) + drop preview shows result region (split half / tabify whole), not the 25% band",
+      "changes_bullets": [
+        "with_tabbing(false) opt-out: split-only panel's centre falls to nearest edge, never Tabify",
+        "dock_drop_zone_normalized_tabbing core; bare fn = tabbing-true wrapper (no caller ripple)",
+        "highlight shows result region: edge=split half (DEFAULT_REORGANIZE_RATIO), centre=whole target"
+      ],
+      "verification_bullets": [
+        "cargo test 7724/0; clippy clean; tabbing slot in schema+query, intervene read-only (sec2#7)",
+        "r1111 units: tabbing-off classifier / resolve_preview centre to edge / highlight 50% + 100%",
+        "8 dock demos (r686/r1097/r1094/r1102/3/r1105/6/r685) green = default tabbing + highlight unbroken",
+        "DOCK_SPLIT_RESULT_PCT mirrors DEFAULT_REORGANIZE_RATIO (sync test); replaced DOCK_EDGE_ZONE_PCT"
+      ],
+      "impact_refs": [
+        "5.51",
+        "5.15"
+      ],
+      "carry_forward_bullets": [
+        "tabbing-off + result-highlight = widget-layer (unit-tested); sprag wires with_tabbing(false)",
+        "drop RPC (DockReorganizeExternal) + apply_zone_redock keep tabbing default (per-panel flag only)",
+        "next R1112: Phase-B pivot candidate; PR-31/34/35/36/37 dock-DnD handoff line complete"
+      ],
+      "publishable_decision_summary": "R1111 §5.51 PR-37: dock drop-zone affordance — DockPanelExternal::with_tabbing(false) opt-out (split-only centre→nearest edge, never tabify) + drop preview shows result region (split half / tabify whole), not the 25% band",
+      "publishable_changes_bullets": [
+        "with_tabbing(false) opt-out: split-only panel's centre falls to nearest edge, never Tabify",
+        "dock_drop_zone_normalized_tabbing core; bare fn = tabbing-true wrapper (no caller ripple)",
+        "highlight shows result region: edge=split half (DEFAULT_REORGANIZE_RATIO), centre=whole target"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test 7724/0; clippy clean; tabbing slot in schema+query, intervene read-only (sec2#7)",
+        "r1111 units: tabbing-off classifier / resolve_preview centre to edge / highlight 50% + 100%",
+        "8 dock demos (r686/r1097/r1094/r1102/3/r1105/6/r685) green = default tabbing + highlight unbroken",
+        "DOCK_SPLIT_RESULT_PCT mirrors DEFAULT_REORGANIZE_RATIO (sync test); replaced DOCK_EDGE_ZONE_PCT"
+      ],
+      "publishable_impact_refs": [
+        "5.51",
+        "5.15"
+      ],
+      "publishable_carry_forward_bullets": [
+        "tabbing-off + result-highlight = widget-layer (unit-tested); sprag wires with_tabbing(false)",
+        "drop RPC (DockReorganizeExternal) + apply_zone_redock keep tabbing default (per-panel flag only)",
+        "next R1112: Phase-B pivot candidate; PR-31/34/35/36/37 dock-DnD handoff line complete"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
