@@ -17330,6 +17330,52 @@
         "next = R1109 audit-first PIVOT to a high-leverage buildable Phase-B gap (DCC widget depth / Model-View at scale / text-editor depth)"
       ]
     },
+    "R1109": {
+      "decision_summary": "R1109 §5.21 PR-35: dock content wrapper shrinks to its pane via R1086 flex-main idiom (flex_basis:0+flex_grow:1+min-height:0), not overflow",
+      "changes_bullets": [
+        "dock.rs content_wrapper: full flex-main idiom flex_basis:0+flex_grow:1+min-height:0 (was grow only)",
+        "editor demo console = 28-line scrollback: forcing consumer whose content exceeds its pane height",
+        "r1109 RPC demo asserts console wrapper fits within pane (<= panel.h), not overflowing scrollback"
+      ],
+      "verification_bullets": [
+        "cargo test 7720/0; clippy clean; r1109_dock_content_shrink.py ~35 assert, 10/10 stable",
+        "forcing-consumer unit test: 800px content shrinks to 272px pane through compute_layout",
+        "r1109_center_drop_with_absent_source_rejects: substrate guard (resolve+apply+tabify reject ghost)",
+        "r686 G.4 flake non-reproducible in ~187 runs (incl 32-core load); env-transient, substrate proven"
+      ],
+      "impact_refs": [
+        "5.21",
+        "5.16",
+        "5.51"
+      ],
+      "carry_forward_bullets": [
+        "PR-36 threshold-detach escape-to-float pending A/B/C design pick (user input)",
+        "r686 G.4 env-transient flake: invariant now guarded by deterministic substrate unit test",
+        "sprag PINION-PR35 #[ignore] guard un-blockable via pin bump in sprag session"
+      ],
+      "publishable_decision_summary": "R1109 §5.21 PR-35: dock content wrapper shrinks to its pane via R1086 flex-main idiom (flex_basis:0+flex_grow:1+min-height:0), not overflow",
+      "publishable_changes_bullets": [
+        "dock.rs content_wrapper: full flex-main idiom flex_basis:0+flex_grow:1+min-height:0 (was grow only)",
+        "editor demo console = 28-line scrollback: forcing consumer whose content exceeds its pane height",
+        "r1109 RPC demo asserts console wrapper fits within pane (<= panel.h), not overflowing scrollback"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test 7720/0; clippy clean; r1109_dock_content_shrink.py ~35 assert, 10/10 stable",
+        "forcing-consumer unit test: 800px content shrinks to 272px pane through compute_layout",
+        "r1109_center_drop_with_absent_source_rejects: substrate guard (resolve+apply+tabify reject ghost)",
+        "r686 G.4 flake non-reproducible in ~187 runs (incl 32-core load); env-transient, substrate proven"
+      ],
+      "publishable_impact_refs": [
+        "5.21",
+        "5.16",
+        "5.51"
+      ],
+      "publishable_carry_forward_bullets": [
+        "PR-36 threshold-detach escape-to-float pending A/B/C design pick (user input)",
+        "r686 G.4 env-transient flake: invariant now guarded by deterministic substrate unit test",
+        "sprag PINION-PR35 #[ignore] guard un-blockable via pin bump in sprag session"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

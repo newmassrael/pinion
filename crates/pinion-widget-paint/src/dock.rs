@@ -3149,10 +3149,28 @@ pub fn view_dock_panel(
                     .with_padding(Rect::new(8, 0, 8, 0)),
             ),
     );
+    // (R1109 PR-35 §5.21) The content wrapper is the Column flex parent's
+    // sole grow child, claiming all leftover Y space after the fixed-height
+    // header. Pre-R1109 it carried `with_flex_grow(1.0)` alone — the
+    // incomplete half of the idiom: taffy's CSS automatic flex minimum then
+    // pins the wrapper to its content's intrinsic min-content height, so
+    // content taller than the panel (a reflow terminal grid, an image, a
+    // nested grid) clamps to content and overflows instead of shrinking to
+    // the panel. Applying the full R1086 flex-main idiom —
+    // `flex_basis: 0 + flex_grow: 1 + min-height: 0` — lets the wrapper
+    // shrink below its content on the main (Y) axis. The cross axis stays
+    // `Size::auto()` so the outer `AlignItems::Stretch` still fills the
+    // width. Same idiom `view_splitter`'s `apply_flex_main` applies to its
+    // ratio children; see [[layoutstyle-min-size-flex-shrink]].
     let content_wrapper = Scene::Container(
         ContainerNode::new(vec![content])
             .with_tag(content_tag)
-            .with_layout(LayoutStyle::new().with_flex_grow(1.0)),
+            .with_layout(
+                LayoutStyle::new()
+                    .with_flex_basis(SizeValue::Px(0))
+                    .with_flex_grow(1.0)
+                    .with_min_size(Size::auto().with_height(SizeValue::Px(0))),
+            ),
     );
     // The header (when shown) + content lay out in the Column flex flow;
     // the optional drop-zone overlay is an absolutely-positioned
@@ -6085,6 +6103,55 @@ mod tests {
             assert_eq!(header.rect.h, style.header_height_px);
         });
     }
+
+    #[test]
+    fn r1109_dock_panel_content_shrinks_below_intrinsic_height() {
+        // R1109 PR-35 forcing consumer — the first large-intrinsic dock
+        // content (a reflow terminal grid is the real one). A box of definite
+        // height 800 sits inside a 300px panel whose 28px header leaves 272px.
+        // Pre-R1109 the content wrapper carried `with_flex_grow(1.0)` alone:
+        // taffy's CSS automatic flex minimum pinned it to the 800px content,
+        // overflowing the panel. The full `flex_basis:0 + flex_grow:1 +
+        // min-height:0` idiom lets it shrink to the panel's leftover 272px,
+        // while the cross axis still stretches to the full panel width.
+        use pinion_core::scene::{BoxNode, Rect};
+        use pinion_core::style::{Color, LayoutStyle, Size};
+        use pinion_runtime::layout::compute_layout;
+        use pinion_text::LayoutCache;
+
+        run_in_owner(|| {
+            let tall = Scene::Box(
+                BoxNode::filled(Rect::default(), Color::default())
+                    .with_layout(LayoutStyle::new().with_size(Size::px(100, 800))),
+            );
+            let style = DockPanelStyle::m3_default(PANEL_TAG);
+            let panel = view_dock_panel("Terminal", tall, &theme_light(), &style, None);
+            let mut cache = LayoutCache::new();
+            let mut scene = panel;
+            let panel_w: u32 = 400;
+            let panel_h: u32 = 300;
+            compute_layout(&mut scene, &mut cache, panel_w, panel_h);
+            let Scene::Container(outer) = &scene else {
+                panic!("outer Container")
+            };
+            let Scene::Container(content_wrapper) = &outer.children[1] else {
+                panic!("content wrapper")
+            };
+            let expected_h = panel_h - style.header_height_px;
+            assert_eq!(
+                content_wrapper.rect.h, expected_h,
+                "R1109 PR-35: content wrapper must shrink to the panel's \
+                leftover height ({expected_h}px = {panel_h} - {} header), not \
+                clamp to its 800px content (was {} = overflow)",
+                style.header_height_px, content_wrapper.rect.h,
+            );
+            // Cross axis still fills the panel width (AlignItems::Stretch).
+            assert_eq!(
+                content_wrapper.rect.w, panel_w,
+                "content wrapper still stretches to full panel width",
+            );
+        });
+    }
 }
 
 #[cfg(test)]
@@ -6992,6 +7059,31 @@ mod reorganize_tests {
             "apply_intent records the rejection itself: {outcome}",
         );
         assert!(outcome.contains(&err.to_string()));
+    }
+
+    #[test]
+    fn r1109_center_drop_with_absent_source_rejects() {
+        // R1109 regression — a Center drop whose `source` names no leaf must
+        // reject, NOT silently succeed. resolve_dock_drop classifies the
+        // cursor over `b`'s centre into Tabify{ghost, b}; apply must then
+        // reject the absent source uniformly with the SplitInsert/Swap arms
+        // (both validate via remove_leaf/swap_leaves). This mirrors the
+        // r686_dock_reorganize G.4 "stale source must reject" path that the
+        // pre-R1109 Tabify arm let through. The r686 demo exercises the wire;
+        // this pins the substrate invariant directly.
+        let intent = resolve_dock_drop(&abc_rects(), "ghost", 300.0, 200.0)
+            .expect("cursor over b's centre resolves to a gesture");
+        assert!(
+            matches!(intent, DockReorganizeIntent::Tabify { .. }),
+            "a centre drop classifies as Tabify, got {intent:?}",
+        );
+        let topology = Rc::new(Signal::new(Some(abc_topology())));
+        let reorganizer = DockReorganizer::new(topology);
+        let result = reorganizer.apply_intent(&intent);
+        assert!(
+            result.is_err(),
+            "Tabify with an absent source must reject (got {result:?})",
+        );
     }
 
     /// (R1106) Do panels `x` and `y` form a 2-leaf split (direct siblings

@@ -170,10 +170,40 @@ const PROPERTIES_ROWS: &[(&str, &str)] = &[
     ("Visible", "true"),
 ];
 
+// (R1109 PR-35) A realistic console scrollback — many more lines than the
+// console pane is tall. Pre-R1109 the dock panel's content wrapper clamped to
+// this intrinsic height and overflowed the pane; the R1086 flex-main idiom
+// (`crates/pinion-widget-paint/src/dock.rs`) now lets it shrink to the pane.
+// This is the forcing consumer the R1109 verify demo asserts against. The
+// [info]/[warn] levels are kept for the editor's content-sanity tests.
 const CONSOLE_ROWS: &[&str] = &[
     "[info] scene loaded (5 panels)",
     "[info] viewport camera initialised",
     "[warn] no light selected",
+    "[info] mesh 'ground_plane' imported (12 tris)",
+    "[info] mesh 'character_base' imported (48210 tris)",
+    "[info] material 'skin_sss' compiled",
+    "[info] material 'cloth_weave' compiled",
+    "[warn] texture 'normal_hi' missing mips, generating",
+    "[info] texture atlas packed (4096x4096)",
+    "[info] skeleton 'rig_main' bound (214 joints)",
+    "[info] animation 'idle' baked (120 frames)",
+    "[info] animation 'walk' baked (32 frames)",
+    "[warn] animation 'run' has unbound root motion",
+    "[info] navmesh generated (1820 polys)",
+    "[info] lightmap bake queued",
+    "[info] lightmap bake 25%",
+    "[info] lightmap bake 50%",
+    "[info] lightmap bake 75%",
+    "[info] lightmap bake complete (3.2s)",
+    "[error] shader 'water_caustics' link failed, using fallback",
+    "[info] reflection probes captured (6)",
+    "[info] audio bank 'ambient' loaded",
+    "[info] audio bank 'sfx' loaded",
+    "[warn] gamepad 0 not detected, keyboard fallback active",
+    "[info] physics world stepped (dt=16.6ms)",
+    "[info] scene serialized to disk (482 KiB)",
+    "[info] autosave written",
     "[info] ready",
 ];
 
