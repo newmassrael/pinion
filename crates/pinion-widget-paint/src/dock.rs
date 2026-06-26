@@ -1728,6 +1728,22 @@ pub enum DockDropZone {
 /// `h == 0`) or a cursor outside the rect.
 #[must_use]
 pub fn dock_drop_zone_for(panel_rect: Rect, cursor_x: f64, cursor_y: f64) -> DockDropZone {
+    dock_drop_zone_for_tabbing(panel_rect, cursor_x, cursor_y, true)
+}
+
+/// (R1112 §5.51 PR-37) [`dock_drop_zone_for`] with the surface's tab-docking
+/// policy explicit — `tabbing == false` (a split-only dock) suppresses the
+/// centre zone so an absolute cursor over a pane's centre classifies to the
+/// nearest split edge, never [`DockDropZone::Center`]. The bare
+/// [`dock_drop_zone_for`] keeps the tabbing default for every existing caller;
+/// the `drop` RPC threads the [`DockReorganizer::tabbing`] flag here.
+#[must_use]
+pub fn dock_drop_zone_for_tabbing(
+    panel_rect: Rect,
+    cursor_x: f64,
+    cursor_y: f64,
+    tabbing: bool,
+) -> DockDropZone {
     // Degenerate rect carries no pixels → never a drop target.
     if panel_rect.w == 0 || panel_rect.h == 0 {
         return DockDropZone::None;
@@ -1737,11 +1753,11 @@ pub fn dock_drop_zone_for(panel_rect: Rect, cursor_x: f64, cursor_y: f64) -> Doc
     let w = f64::from(panel_rect.w);
     let h = f64::from(panel_rect.h);
     // Normalise the absolute cursor into the panel rect, then classify with
-    // the shared SSOT [`dock_drop_zone_normalized`]. A cursor outside the
-    // rect normalises to a coordinate outside `[0.0, 1.0)`, which that
+    // the shared SSOT [`dock_drop_zone_normalized_tabbing`]. A cursor outside
+    // the rect normalises to a coordinate outside `[0.0, 1.0)`, which that
     // classifier rejects with [`DockDropZone::None`] — exactly the half-open
     // `rect_contains` containment this function applied inline pre-R1080.
-    dock_drop_zone_normalized((cursor_x - x0) / w, (cursor_y - y0) / h)
+    dock_drop_zone_normalized_tabbing((cursor_x - x0) / w, (cursor_y - y0) / h, tabbing)
 }
 
 /// (R1080 §5.51) Classify a cursor already normalised over a panel rect
@@ -2074,6 +2090,23 @@ pub fn resolve_dock_drop(
     cursor_x: f64,
     cursor_y: f64,
 ) -> Option<DockReorganizeIntent> {
+    resolve_dock_drop_tabbing(panel_rects, source_panel_id, cursor_x, cursor_y, true)
+}
+
+/// (R1112 §5.51 PR-37) [`resolve_dock_drop`] with the dock surface's
+/// tab-docking policy explicit. `tabbing == false` (a split-only surface)
+/// suppresses the centre `Tabify` on the `drop` RPC path too — a centre cursor
+/// resolves to the nearest split edge — so the RPC drive and the pointer drive
+/// honour ONE surface policy ([`DockReorganizer::tabbing`]). The bare
+/// [`resolve_dock_drop`] keeps the tabbing default for existing callers.
+#[must_use]
+pub fn resolve_dock_drop_tabbing(
+    panel_rects: &[(&str, Rect)],
+    source_panel_id: &str,
+    cursor_x: f64,
+    cursor_y: f64,
+    tabbing: bool,
+) -> Option<DockReorganizeIntent> {
     for (panel_id, rect) in panel_rects {
         if *panel_id == source_panel_id {
             continue;
@@ -2083,7 +2116,7 @@ pub fn resolve_dock_drop(
         // symbolic `reorganize` invoke + the R742 pointer coordinator).
         // `DockDropZone::None` yields `None` → keep scanning the next
         // panel, exactly as the pre-R1081 per-arm `match` did.
-        let zone = dock_drop_zone_for(*rect, cursor_x, cursor_y);
+        let zone = dock_drop_zone_for_tabbing(*rect, cursor_x, cursor_y, tabbing);
         if let Some(intent) = intent_for_zone(source_panel_id, panel_id, zone) {
             return Some(intent);
         }
@@ -2148,6 +2181,21 @@ pub struct DockReorganizer {
     tabs_seq: Cell<u64>,
     /// Initial ratio each generated split seeds (even split by default).
     reorganize_ratio: f32,
+    /// (R1112 §5.51 §2 #7 PR-37) Whether a centre drop tabifies on THIS dock
+    /// surface (default `true` = the IDE / editor affordance; `false` = a
+    /// split-only surface such as a terminal multiplexer, where stacking two
+    /// panes as tabs is meaningless). Owned by the coordinator — NOT per-panel
+    /// — because the policy is only meaningful when a reorganize can happen (a
+    /// reorganizer exists) and must apply UNIFORMLY to every classifier
+    /// consumer of this surface: the pointer path
+    /// ([`DockPanelExternal::resolve_preview`]), the `drop` RPC
+    /// ([`resolve_dock_drop`]), and cross-window redock
+    /// ([`Self::apply_zone_redock`]). A split-only surface never offers
+    /// `Center` from any path — a centre cursor resolves to the nearest split
+    /// edge. The explicit symbolic `reorganize` invoke (an AI naming a zone,
+    /// no classification) is NOT gated — tabbing governs the zone CLASSIFIER,
+    /// not direct topology edits.
+    tabbing: bool,
     /// Last gesture outcome, surfaced via `query("last_outcome")` for
     /// AI clients to confirm an apply succeeded / why it was rejected.
     last_outcome: RefCell<Option<String>>,
@@ -2198,6 +2246,7 @@ impl core::fmt::Debug for DockReorganizer {
         f.debug_struct("DockReorganizer")
             .field("split_seq", &self.split_seq.get())
             .field("reorganize_ratio", &self.reorganize_ratio)
+            .field("tabbing", &self.tabbing)
             .field("last_outcome", &self.last_outcome.borrow())
             .finish_non_exhaustive()
     }
@@ -2216,6 +2265,7 @@ impl DockReorganizer {
             split_seq: Cell::new(0),
             tabs_seq: Cell::new(0),
             reorganize_ratio: DEFAULT_REORGANIZE_RATIO,
+            tabbing: true,
             last_outcome: RefCell::new(None),
             undo: None,
         }
@@ -2230,6 +2280,25 @@ impl DockReorganizer {
     pub fn with_undo(mut self, stack: Rc<UndoStack>) -> Self {
         self.undo = Some(stack);
         self
+    }
+
+    /// (R1112 §5.51 PR-37) Opt out of tab docking for this dock surface
+    /// (default on). A split-only consumer — a terminal multiplexer — passes
+    /// `false`, so a centre drop resolves to the nearest split edge instead of
+    /// a tabify, on EVERY path (pointer + `drop` RPC + cross-window redock).
+    /// See [`tabbing`](Self::tabbing) for the layering rationale.
+    #[must_use]
+    pub fn with_tabbing(mut self, tabbing: bool) -> Self {
+        self.tabbing = tabbing;
+        self
+    }
+
+    /// (R1112 §5.51 §2 #7 PR-37) Whether a centre drop tabifies — the dock
+    /// surface policy every zone-classifier consumer reads (pointer preview,
+    /// `drop` RPC, cross-window redock), so a split-only surface is uniform.
+    #[must_use]
+    pub fn tabbing(&self) -> bool {
+        self.tabbing
     }
 
     /// Diagnostic: how many splits this coordinator has minted so far.
@@ -2366,9 +2435,13 @@ impl DockReorganizer {
             self.note_outcome(&outcome);
             return Ok(outcome);
         }
-        if let Some(intent) =
-            intent_for_zone(source, target, dock_drop_zone_normalized(x_rel, y_rel))
-        {
+        // R1112 PR-37 — cross-window redock honours this surface's tabbing
+        // policy too (a split-only surface never tabifies on redock either).
+        if let Some(intent) = intent_for_zone(
+            source,
+            target,
+            dock_drop_zone_normalized_tabbing(x_rel, y_rel, self.tabbing),
+        ) {
             self.apply_intent(&intent)
         } else {
             let outcome = format!("{source} -> {target}: no actionable zone — no move");
@@ -2571,6 +2644,11 @@ impl ExternalIntrospect for DockReorganizeExternal {
             // AI auto-discovering capabilities sees tab-well-mint progress as a
             // first-class observable, not only split-mint progress.
             ("tabs_seq", "int"),
+            // (R1112 §5.51 §2 #7 PR-37) This dock surface's tab-docking policy
+            // (`false` = split-only), so an AI discovers whether a centre drop
+            // tabifies before classifying one — the single policy the pointer
+            // preview + `drop` RPC + cross-window redock all honour.
+            ("tabbing", "bool"),
             ("last_outcome", "string"),
             // R1082.1 §5.51 — the in-flight pointer drag observed on the
             // canonical reorganize surface (`{source, target, zone}` or
@@ -2611,6 +2689,8 @@ impl ExternalIntrospect for DockReorganizeExternal {
             "tabs_seq" => Some(IntrospectValue::Int(
                 i64::try_from(self.reorganizer.tabs_seq()).unwrap_or(i64::MAX),
             )),
+            // R1112 §5.51 §2 #7 PR-37 — the surface tab-docking policy.
+            "tabbing" => Some(IntrospectValue::Bool(self.reorganizer.tabbing())),
             "last_outcome" => Some(match self.reorganizer.last_outcome() {
                 Some(s) => IntrospectValue::Text(s),
                 None => IntrospectValue::Null,
@@ -2711,8 +2791,16 @@ impl ExternalIntrospect for DockReorganizeExternal {
                     panels.iter().map(|(t, r)| (t.as_str(), *r)).collect();
                 // Substrate classifies + resolves — the single source of
                 // truth for drop-zone geometry. No client re-implements it.
-                let Some(intent) = resolve_dock_drop(&panel_refs, source, cursor_x, cursor_y)
-                else {
+                // R1112 PR-37 — the `drop` RPC honours THIS surface's tabbing
+                // policy, so a split-only dock never tabifies on the RPC path
+                // either (uniform with the pointer path).
+                let Some(intent) = resolve_dock_drop_tabbing(
+                    &panel_refs,
+                    source,
+                    cursor_x,
+                    cursor_y,
+                    self.reorganizer.tabbing(),
+                ) else {
                     // Dropped over no valid target (empty space or the
                     // source itself) — a cancel, not a failure.
                     self.reorganizer.note_outcome("no drop target");
@@ -3231,6 +3319,15 @@ fn composite_tag(panel_tag: &str, suffix: &'static str) -> String {
 /// takes the whole target (100% — the tab well covers the pane), handled
 /// directly in [`dock_drop_zone_highlight`]. Kept in sync with the split
 /// ratio by `dock_split_result_pct_matches_ratio`.
+///
+/// **Invariant (R1112):** this mirrors the *default* [`DEFAULT_REORGANIZE_RATIO`],
+/// which is what [`DockReorganizer`] always splits at today (`reorganize_ratio`
+/// is seeded from the default and has no setter). The highlight fn takes only
+/// `(zone, theme)`, so it cannot see a per-coordinator ratio — IF
+/// `reorganize_ratio` ever becomes settable to a non-default value, the preview
+/// would drift from the actual split and the ratio must be threaded into
+/// [`dock_drop_zone_highlight`]. The `dock_split_result_pct_matches_ratio` test
+/// guards the default-ratio assumption.
 const DOCK_SPLIT_RESULT_PCT: u8 = 50;
 
 /// (R1081 §5.51) Alpha the drop-zone highlight tint is drawn at (~40% of
@@ -4026,17 +4123,6 @@ pub struct DockPanelExternal {
     /// paint the zone affordance. `None` = no overlay binding (the
     /// gesture still docks / tears off, just without the preview paint).
     drop_preview: Option<Rc<Signal<Option<DockDropPreview>>>>,
-    /// (R1111 §5.51 PR-37) Whether a centre drop tabifies. `true` (default)
-    /// keeps the 5-zone classification — the centre square stacks the source
-    /// onto the target as a tab well ([`DockDropZone::Center`] →
-    /// [`DockReorganizeIntent::Tabify`]), the IDE / editor affordance. `false`
-    /// (a split-only consumer — a terminal multiplexer, where a tab inside a
-    /// pane is meaningless) suppresses the centre zone: a drop anywhere on the
-    /// target resolves to the nearest split edge, never a tabify. Only the
-    /// pointer path ([`resolve_preview`](Self::resolve_preview)) reads this;
-    /// the explicit symbolic `reorganize` invoke still honours an
-    /// AI-requested `Center`.
-    tabbing: bool,
 }
 
 impl core::fmt::Debug for DockPanelExternal {
@@ -4079,7 +4165,6 @@ impl DockPanelExternal {
             last_source_window: RefCell::new(None),
             reorganizer: None,
             drop_preview: None,
-            tabbing: true,
         }
     }
 
@@ -4100,19 +4185,6 @@ impl DockPanelExternal {
     #[must_use]
     pub fn with_drop_preview(mut self, preview: Rc<Signal<Option<DockDropPreview>>>) -> Self {
         self.drop_preview = Some(preview);
-        self
-    }
-
-    /// (R1111 §5.51 PR-37) Opt out of tab docking (default on). A
-    /// split-only consumer — a terminal multiplexer, where stacking two
-    /// terminals as tabs inside one pane is meaningless — passes `false` so a
-    /// centre drop resolves to the nearest split edge instead of a tabify.
-    /// Affects the pointer path only ([`resolve_preview`](Self::resolve_preview));
-    /// the editor (IDE-style tabs) keeps the default. See
-    /// [`dock_drop_zone_normalized`] for the classification.
-    #[must_use]
-    pub fn with_tabbing(mut self, tabbing: bool) -> Self {
-        self.tabbing = tabbing;
         self
     }
 
@@ -4151,6 +4223,14 @@ impl DockPanelExternal {
     /// zone. The single classifier `drag_to` (preview) and `drag_release`
     /// (commit) share so the painted affordance and the applied edit
     /// cannot disagree.
+    /// (R1112 §5.51 PR-37) This panel's effective tab-docking policy — the
+    /// shared [`DockReorganizer`]'s [`tabbing`](DockReorganizer::tabbing) when
+    /// one is wired, else `true` (a tear-off-only panel never reorganizes, so
+    /// the policy is moot and the default is harmless).
+    fn effective_tabbing(&self) -> bool {
+        self.reorganizer.as_ref().is_none_or(|r| r.tabbing())
+    }
+
     fn resolve_preview(&self, over: Option<&DropPoint>) -> Option<DockDropPreview> {
         let over = over?;
         // The drop target is the panel ROOT (R1080 marks only the root
@@ -4160,12 +4240,17 @@ impl DockPanelExternal {
         if target == self.panel_id.as_ref() {
             return None;
         }
-        // R1111 PR-37 — a split-only panel (`with_tabbing(false)`) never
-        // classifies the centre as a tabify; the nearest edge wins instead.
+        // R1112 PR-37 — the tab-docking policy is the dock SURFACE's
+        // ([`DockReorganizer::tabbing`]), read through this panel's shared
+        // coordinator so the pointer preview, the `drop` RPC, and cross-window
+        // redock all honour ONE policy. A split-only surface never classifies
+        // the centre as a tabify — the nearest edge wins. A tear-off-only
+        // panel (no coordinator) cannot reorganize at all, so the default
+        // (tabbing) is moot.
         let zone = dock_drop_zone_normalized_tabbing(
             f64::from(over.x_rel),
             f64::from(over.y_rel),
-            self.tabbing,
+            self.effective_tabbing(),
         );
         if zone == DockDropZone::None {
             return None;
@@ -4571,8 +4656,9 @@ impl ExternalIntrospect for DockPanelExternal {
     fn query(&self, path: &str) -> Option<IntrospectValue> {
         match path {
             "panel_id" => Some(IntrospectValue::Text(self.panel_id.to_string())),
-            // R1111 §5.51 §2 #7 PR-37 — the tab-docking policy (static config).
-            "tabbing" => Some(IntrospectValue::Bool(self.tabbing)),
+            // R1112 §5.51 §2 #7 PR-37 — the effective tab-docking policy this
+            // panel follows (its shared coordinator's surface policy).
+            "tabbing" => Some(IntrospectValue::Bool(self.effective_tabbing())),
             "dragging" => Some(IntrospectValue::Bool(self.is_dragging())),
             "tear_off_fired" => Some(IntrospectValue::Bool(self.tear_off_fired())),
             // R1081 §5.51 — the shared live preview (any panel's external
@@ -4986,34 +5072,50 @@ mod tests {
     }
 
     #[test]
-    fn r1111_with_tabbing_false_resolves_center_to_edge_not_tabify() {
-        // R1111 PR-37 — a split-only panel (with_tabbing(false)) never previews
-        // a centre tabify: a centre drop over a sibling resolves to the nearest
-        // split edge instead. Default (tabbing on) keeps Center.
+    fn r1112_with_tabbing_false_surface_resolves_center_to_edge_not_tabify() {
+        // R1112 PR-37 — the tab-docking policy is the dock SURFACE's
+        // (DockReorganizer::with_tabbing), read through the panel's shared
+        // coordinator. A panel on a split-only surface never previews a centre
+        // tabify: a centre drop over a sibling resolves to the nearest split
+        // edge. A panel on a tab-docking surface (or none) keeps Center.
         let on_prev = Rc::new(Signal::new(None));
-        let mut on = DockPanelExternal::new("a").with_drop_preview(Rc::clone(&on_prev));
+        let reorg_on = Rc::new(DockReorganizer::new(Rc::new(Signal::new(Some(
+            ab_topology(),
+        )))));
+        let mut on = DockPanelExternal::new("a")
+            .with_reorganizer(reorg_on)
+            .with_drop_preview(Rc::clone(&on_prev));
         let _ = on.begin_drag();
         on.drag_to(&dummy_payload(), Some(drop_point("b", 0.5, 0.5)));
         assert_eq!(
             on_prev.get().expect("preview written").zone,
             DockDropZone::Center,
-            "tabbing on: centre over a sibling previews Tabify",
+            "tab-docking surface: centre over a sibling previews Tabify",
         );
 
         let off_prev = Rc::new(Signal::new(None));
+        let reorg_off = Rc::new(
+            DockReorganizer::new(Rc::new(Signal::new(Some(ab_topology())))).with_tabbing(false),
+        );
         let mut off = DockPanelExternal::new("a")
-            .with_tabbing(false)
+            .with_reorganizer(reorg_off)
             .with_drop_preview(Rc::clone(&off_prev));
         let _ = off.begin_drag();
         off.drag_to(&dummy_payload(), Some(drop_point("b", 0.5, 0.5)));
         assert_eq!(
             off_prev.get().expect("preview written").zone,
             DockDropZone::Left,
-            "tabbing off: centre resolves to nearest edge (dead-centre ties Left), never Center",
+            "split-only surface: centre resolves to nearest edge (ties Left), never Center",
         );
-        // The policy is observable (§2 #7) + read-only.
+        // The effective policy is observable (§2 #7) + read-only on the panel.
         assert_eq!(off.query("tabbing"), Some(IntrospectValue::Bool(false)));
         assert_eq!(on.query("tabbing"), Some(IntrospectValue::Bool(true)));
+        // A tear-off-only panel (no coordinator) reports the default — moot,
+        // since it can never reorganize.
+        assert_eq!(
+            DockPanelExternal::new("a").query("tabbing"),
+            Some(IntrospectValue::Bool(true)),
+        );
         assert!(matches!(
             off.intervene("tabbing", IntrospectValue::Bool(true)),
             Err(InterveneError::ReadOnly),
@@ -7699,6 +7801,43 @@ mod reorganize_tests {
         assert_eq!(signal.get().unwrap().panel_ids(), vec!["b", "a", "c"]);
         // Centre = swap → no split minted.
         assert_eq!(ext.split_seq(), 0);
+    }
+
+    #[test]
+    fn r1112_external_drop_center_on_split_only_surface_splits_not_tabify() {
+        // R1112 PR-37 — the `drop` RPC honours the dock surface's tabbing
+        // policy. On a split-only surface (with_tabbing(false)) a CENTRE drop
+        // that would tabify on a tab-docking surface instead resolves to the
+        // nearest split edge — the RPC drive is uniform with the pointer drive
+        // (it was NOT before R1112: the RPC path always classified Center).
+        let signal = Rc::new(Signal::new(Some(abc_topology())));
+        let reorganizer = Rc::new(DockReorganizer::new(Rc::clone(&signal)).with_tabbing(false));
+        let mut ext = DockReorganizeExternal::from_reorganizer(reorganizer);
+        // The surface policy is discoverable before classifying a drop (§2 #7).
+        assert_eq!(ext.query("tabbing"), Some(IntrospectValue::Bool(false)));
+        // Drop "a" onto the CENTRE of "b" (300, 200) — dead-centre of b.
+        let payload = IntrospectValue::Json(serde_json::json!({
+            "source": "a",
+            "cursor": {"x": 300.0, "y": 200.0},
+            "panels": abc_panels_json(),
+        }));
+        let result = ext.invoke("drop", payload).unwrap();
+        assert!(
+            matches!(result, IntrospectValue::Text(_)),
+            "a split-insert applied"
+        );
+        // A split was minted, NOT a tabify: only SplitInsert bumps split_seq
+        // (a tabify would leave it 0), and the move preserves all 3 panels.
+        assert_eq!(
+            ext.split_seq(),
+            1,
+            "centre on a split-only surface mints a split, not a tab well"
+        );
+        assert_eq!(
+            signal.get().unwrap().panel_ids().len(),
+            3,
+            "a move preserves the panel count"
+        );
     }
 
     #[test]
