@@ -5772,6 +5772,144 @@ mod r26_undock_focus_follow_tests {
 }
 
 #[cfg(test)]
+mod r1113_drag_image_producer_tests {
+    //! R1113 §5.51 §5.33 §2 #7 — END-TO-END proof that the shell PRODUCER
+    //! injects the drag-image follower during a real drag. Drives the SAME
+    //! shell methods `scene/drag` drains into (`cursor_moved` → `mouse_pressed`
+    //! → `cursor_moved` → `mouse_released`), but produces the paint scene
+    //! BETWEEN the press-move and the release — the held mid-drag state the
+    //! atomic `scene/drag` arc can never snapshot (there is no press-and-hold
+    //! RPC peer), so this is the definitive headless verification of the live
+    //! path.
+    use super::ShellCore;
+    use crate::test_fixtures::TestRenderer;
+    use crate::{SizeStrategy, WidgetView};
+    use pinion_a11y::WidgetA11y;
+    use pinion_core::external::{
+        Backend, BackendFallback, BackendSupport, DragPayload, External, IntrospectValue,
+        RepaintOwner, ThreadOwnership,
+    };
+    use pinion_core::scene::{ContainerNode, Rect, Scene};
+    use pinion_core::style::LayoutStyle;
+    use pinion_core::widgets::button::{ButtonEvent, ButtonState};
+    use pinion_core::{Frame, WidgetCore};
+    use pinion_runtime::PointerId;
+
+    const SRC_TAG: &str = "drag_src";
+    const LABEL: &str = "panel-A";
+
+    /// A minimal R742 drag source whose `begin_drag` always emits a TEXT
+    /// payload (the dock-panel shape), so a press over it opens a labelled drag
+    /// session the shell projects into the drag-image follower.
+    #[derive(Debug)]
+    struct TextDragSource;
+    impl External for TextDragSource {
+        fn backends(&self) -> BackendSupport {
+            BackendSupport::new(&[Backend::Gui], BackendFallback::Skip)
+        }
+        fn repaint_ownership(&self) -> RepaintOwner {
+            RepaintOwner::Framework
+        }
+        fn thread_ownership(&self) -> ThreadOwnership {
+            ThreadOwnership::UiThreadSync
+        }
+        fn begin_drag(&self) -> Option<DragPayload> {
+            Some(DragPayload {
+                kind: std::borrow::Cow::Borrowed("test-drag"),
+                value: IntrospectValue::Text(LABEL.to_string()),
+            })
+        }
+    }
+
+    /// A binding whose primary widget is the text drag source, painted as a
+    /// window-filling tagged rect so a press anywhere hit-tests to it.
+    struct DragImageFixture;
+    impl WidgetCore for DragImageFixture {
+        type State = ButtonState;
+        type Event = ButtonEvent;
+        fn create_external() -> Box<dyn External> {
+            Box::new(TextDragSource)
+        }
+        fn tag() -> &'static str {
+            SRC_TAG
+        }
+        fn read_state(_scene: &Scene) -> Self::State {
+            ButtonState::Idle
+        }
+        fn view(_state: Self::State, _frame: &Frame) -> Scene {
+            let mut c = ContainerNode::new(Vec::new());
+            c.rect = Rect::new(0, 0, 200, 200);
+            c.tag = Some(std::borrow::Cow::Borrowed(SRC_TAG));
+            c.layout = LayoutStyle::new();
+            Scene::Container(c)
+        }
+        fn event_name(_event: Self::Event) -> &'static str {
+            "__internal__"
+        }
+        fn title() -> &'static str {
+            "DragImage"
+        }
+    }
+    impl WidgetA11y for DragImageFixture {}
+    impl WidgetView for DragImageFixture {
+        type Renderer = TestRenderer;
+        fn initial_size_strategy() -> SizeStrategy {
+            SizeStrategy::Fixed {
+                width: 200,
+                height: 200,
+            }
+        }
+    }
+
+    fn has_tag(scene: &Scene, tag: &str) -> bool {
+        if scene.tag() == Some(tag) {
+            return true;
+        }
+        match scene {
+            Scene::Container(c) => c.children.iter().any(|ch| has_tag(ch, tag)),
+            Scene::Scroll(s) => has_tag(&s.content, tag),
+            _ => false,
+        }
+    }
+
+    #[test]
+    fn producer_injects_drag_image_during_a_drag_and_clears_on_release() {
+        let mut sc = ShellCore::<DragImageFixture>::new();
+        // Produce + publish so the router has a paint scene to hit-test.
+        let boot = sc.compute_paint_scene(200, 200);
+        sc.finalize_frame(boot);
+        // Idle: no follower.
+        assert!(
+            !has_tag(
+                &sc.compute_paint_scene(200, 200),
+                pinion_overlay::DRAG_IMAGE_TAG
+            ),
+            "no drag in flight = no follower in the produced scene",
+        );
+        // Press over the source, then drag well past the click→drag threshold.
+        sc.cursor_moved(PointerId::MOUSE, 10.0, 10.0);
+        sc.mouse_pressed(PointerId::MOUSE);
+        sc.cursor_moved(PointerId::MOUSE, 120.0, 90.0);
+        // Mid-drag: the PRODUCER injects the follower (this is what the user
+        // sees follow the cursor — proven headless, not asked).
+        let mid = sc.compute_paint_scene(200, 200);
+        assert!(
+            has_tag(&mid, pinion_overlay::DRAG_IMAGE_TAG),
+            "the shell producer injects the drag-image follower during a live drag",
+        );
+        // Release: the session ends → the follower clears.
+        sc.mouse_released(PointerId::MOUSE);
+        assert!(
+            !has_tag(
+                &sc.compute_paint_scene(200, 200),
+                pinion_overlay::DRAG_IMAGE_TAG
+            ),
+            "after release the follower is gone",
+        );
+    }
+}
+
+#[cfg(test)]
 mod r1104_cross_window_exclusion_tests {
     //! R1104 §5.51 §2 #7 PR-33 — fast-suite coverage for the shell's
     //! cross-window drop SOURCE-EXCLUSION (the R1102.1 review SHOULD-FIX:

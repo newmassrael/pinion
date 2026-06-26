@@ -27,7 +27,7 @@
 //! (c) pointer-transparent (§5.39) so it never shadows input under it.
 
 use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
-use pinion_core::style::{BoxStyle, Color, TextStyle};
+use pinion_core::style::{Border, BoxStyle, Color, TextStyle};
 
 use crate::highlight::{push_top_level, strip_tag, wrap_into_container};
 
@@ -59,6 +59,15 @@ pub struct DragImageStyle {
     /// Pixels the chip's top-left trails the cursor (so the follower sits
     /// beside the pointer, not under it).
     pub cursor_offset: u32,
+    /// Chip border colour (ARGB). A visible border is what makes the follower
+    /// read on ANY backdrop — critical because a primary live consumer is a
+    /// dark terminal where a dark fill alone would vanish (mirrors
+    /// [`crate::FocusRingStyle`]'s `stroke` rather than relying on fill
+    /// contrast). Stored as `Color` + width (not a `Border`) so the default
+    /// stays a `const fn`, like the ring.
+    pub border: Color,
+    /// Chip border width (logical px).
+    pub border_width: u32,
 }
 
 impl DragImageStyle {
@@ -73,6 +82,11 @@ impl DragImageStyle {
             font_px: 14,
             padding: 6,
             cursor_offset: 12,
+            // Material focus-blue accent, 2px — the same visible-on-any-backdrop
+            // outline the focus ring uses, so the follower never vanishes on a
+            // dark terminal.
+            border: Color::rgb(26, 115, 232),
+            border_width: 2,
         }
     }
 
@@ -94,6 +108,14 @@ impl DragImageStyle {
     #[must_use]
     pub const fn with_font_px(mut self, font_px: u32) -> Self {
         self.font_px = font_px;
+        self
+    }
+
+    /// Builder: override the chip border colour + width.
+    #[must_use]
+    pub const fn with_border(mut self, color: Color, width: u32) -> Self {
+        self.border = color;
+        self.border_width = width;
         self
     }
 }
@@ -188,7 +210,8 @@ pub fn inject_drag_image(
     ));
     let mut chip = ContainerNode::new(vec![label_node]);
     chip.rect = chip_rect;
-    chip.style = BoxStyle::filled(style.fill);
+    chip.style =
+        BoxStyle::filled(style.fill).with_border(Border::new(style.border, style.border_width));
     chip.tag = Some(DRAG_IMAGE_TAG.into());
     chip.layout = chip.layout.with_pointer_transparent(true);
 
@@ -270,6 +293,15 @@ mod tests {
         assert!(
             chip.style.fill.a > 0 && chip.style.fill.a < 255,
             "translucent fill"
+        );
+        // The accent border keeps the follower visible on ANY backdrop (a dark
+        // terminal would swallow the dark fill alone).
+        let border = chip.style.border.expect("chip carries a visible border");
+        assert!(border.width >= 1, "border is drawn");
+        assert_eq!(
+            border.color,
+            Color::rgb(26, 115, 232),
+            "default accent border"
         );
     }
 
