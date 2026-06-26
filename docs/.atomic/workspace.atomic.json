@@ -17562,6 +17562,48 @@
         "no per-consumer wiring owed: sprag + editor get the follower automatically from the shell"
       ]
     },
+    "R1114": {
+      "decision_summary": "R1114: PR-38 drag-image verification + visibility -- a headless shell-produce test proves the follower is injected MID-drag (the atomic scene/drag can't snapshot a held drag = a §2#2 gap); default chip gains an accent border so it shows on dark terminals",
+      "changes_bullets": [
+        "shell-produce test: drive press+move, produce MID-drag, assert chip present; release clears it",
+        "DragImageStyle gains accent border (Material-blue 2px default) so the chip shows on dark terminals",
+        "honest: scene/drag is atomic (no press-and-hold RPC peer) = a real §2#2 mid-drag observ. gap"
+      ],
+      "verification_bullets": [
+        "producer_injects_drag_image_during_a_drag_and_clears_on_release: end-to-end via real shell methods",
+        "overlay border assertion added; 9 overlay + 2 router + 1 shell-produce tests; workspace test green",
+        "clippy --all-targets -D pedantic clean; rustfmt clean"
+      ],
+      "impact_refs": [
+        "5.51",
+        "5.33"
+      ],
+      "carry_forward_bullets": [
+        "live pixel (held mid-drag) still HW-gated; user re-test confirms the chip is now visible on terminal",
+        "if still invisible after the border = a rasterization bug to chase with a real-GPU pixel test",
+        "§2#2 gap: a press-and-hold RPC peer (begin-drag + hold) would let an AI snapshot a held mid-drag"
+      ],
+      "publishable_decision_summary": "R1114: PR-38 drag-image verification + visibility -- a headless shell-produce test proves the follower is injected MID-drag (the atomic scene/drag can't snapshot a held drag = a §2#2 gap); default chip gains an accent border so it shows on dark terminals",
+      "publishable_changes_bullets": [
+        "shell-produce test: drive press+move, produce MID-drag, assert chip present; release clears it",
+        "DragImageStyle gains accent border (Material-blue 2px default) so the chip shows on dark terminals",
+        "honest: scene/drag is atomic (no press-and-hold RPC peer) = a real §2#2 mid-drag observ. gap"
+      ],
+      "publishable_verification_bullets": [
+        "producer_injects_drag_image_during_a_drag_and_clears_on_release: end-to-end via real shell methods",
+        "overlay border assertion added; 9 overlay + 2 router + 1 shell-produce tests; workspace test green",
+        "clippy --all-targets -D pedantic clean; rustfmt clean"
+      ],
+      "publishable_impact_refs": [
+        "5.51",
+        "5.33"
+      ],
+      "publishable_carry_forward_bullets": [
+        "live pixel (held mid-drag) still HW-gated; user re-test confirms the chip is now visible on terminal",
+        "if still invisible after the border = a rasterization bug to chase with a real-GPU pixel test",
+        "§2#2 gap: a press-and-hold RPC peer (begin-drag + hold) would let an AI snapshot a held mid-drag"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
