@@ -3967,9 +3967,14 @@ pub struct DockPanelExternal {
     /// `DragLatch`. The R1097 `detach_latch` re-derived that verdict from the
     /// first post-move sample (it could not see the real press point), drifting
     /// from the router's SSOT; the panel now consumes the verdict the router
-    /// already owns. Threshold-based tear-off is unchanged in behaviour (the
-    /// panel still tears off once the press becomes a drag, even while over a
-    /// dock zone — browser-tab / Blender immediacy), only its source of truth.
+    /// already owns.
+    ///
+    /// R1110 §5.51 PR-36 — the float is gated on ESCAPE, not the bare drag
+    /// verdict: the panel tears off only once the drag verdict lands AND the
+    /// cursor is over no same-window dock zone. While still over a zone the
+    /// gesture stays docked and shows the reorganize/split preview (the textbook
+    /// desktop-dock model: reorder within the surface, float only when dragged
+    /// out). Once escaped it latches floating for the rest of the gesture.
     detached: Cell<bool>,
     /// (R1102 §5.51 §2 #7 PR-33) The last cross-window dock-at this panel
     /// resolved — the `{panel, window, target, x_rel, y_rel}` payload of the
@@ -4361,41 +4366,48 @@ impl External for DockPanelExternal {
         // AI observes it via `query("source_window")` and the binding converts
         // the cursor to a desktop position via the right origin.
         *self.last_source_window.borrow_mut() = update.source_window.map(str::to_owned);
-        // R1101 §5.51 — THRESHOLD-based detach, sourced from the router's
-        // click-vs-drag verdict ([`DragUpdate::became_drag`]) instead of the
-        // R1097 private `detach_latch`. Once the router declares this press a
-        // drag, the panel tears into a live floating follower — even while the
-        // cursor is still over a dock zone (browser-tab / Blender immediacy).
-        // The follower (visual) and the drop decision are decoupled: the
-        // gesture stays captured by the SOURCE window's router, so `over` keeps
-        // resolving the source window's dock zones for the redock/split preview
-        // below. Consuming the router's verdict (rather than re-deriving it from
-        // the first post-move sample) is single-SSOT AND more correct: the
-        // router measures from the real press point, which `begin_drag` — being
-        // cursor-less — never sees.
-        if update.became_drag {
+        // R1100 PR-33 — a cross-window `over` (`over_window: Some`) names ANOTHER
+        // window's dock zone; do NOT paint it into THIS window's drop preview
+        // (the cross-window redock affordance is the target window's overlay, a
+        // later slice). A same-window `over` keeps the existing preview path.
+        // R1110 reads this BEFORE the detach decision below, so it is computed
+        // first now.
+        let same_window_over = if update.over_window.is_some() {
+            None
+        } else {
+            update.over.clone()
+        };
+        // R1110 §5.51 PR-36 — detach-on-ESCAPE, not detach-on-threshold. R1097/
+        // R1101 detached the instant the router called the press a drag, EVEN
+        // while the cursor was still over a same-window dock zone, so an in-dock
+        // reorder / split drag floated a follower and flickered and the drop
+        // preview oscillated. The textbook desktop-dock model (VS Code / Blender
+        // / a real browser tab: reorder WITHIN the tab bar, detach only when
+        // dragged OUT) floats only once the cursor leaves every same-window dock
+        // zone. So detach when the drag verdict lands AND the cursor is over no
+        // same-window drop target (`same_window_over` None = escaped this
+        // window's dock surface; a cross-window `over` counts as escaped too).
+        // While still over a zone the move stays docked and the `drag_to` below
+        // shows the reorganize / split preview, which the release then applies.
+        // `detached` is a one-way latch per gesture: once escaped it stays
+        // floating, so coming back over a zone shows the PR-33 redock preview
+        // (follow + preview coexist) rather than re-docking mid-drag. Consuming
+        // the router's verdict (rather than re-deriving distance) stays
+        // single-SSOT: the router measures from the real press point.
+        if update.became_drag && same_window_over.is_none() {
             self.detached.set(true);
         }
         // While detached, the follower tracks the cursor on EVERY move (the
-        // ensure+position follow), whether or not it is over a zone — and the
-        // preview below still highlights a dock zone underneath it, so follow +
-        // redock preview coexist in one gesture (PR-32 §2). A press still in the
-        // click dead-zone (`became_drag` false) does neither.
+        // ensure+position follow), whether or not it is back over a zone — and
+        // the preview below still highlights a dock zone underneath it, so
+        // follow + redock preview coexist (PR-33 §2). A press still docked over
+        // a zone (or in the `became_drag` false click dead-zone) does neither.
         if self.detached.get() {
             // R1107 §5.51 — carry the SOURCE window (the one the router that
             // drove this update belongs to) so the binding converts the
             // window-logical cursor to a desktop position via the right origin.
             self.enqueue_tear_off_follow(update.cursor, update.source_window);
         }
-        // R1100 PR-33 — a cross-window `over` (`over_window: Some`) names ANOTHER
-        // window's dock zone; do NOT paint it into THIS window's drop preview
-        // (the cross-window redock affordance is the target window's overlay, a
-        // later slice). A same-window `over` keeps the existing preview path.
-        let same_window_over = if update.over_window.is_some() {
-            None
-        } else {
-            update.over.clone()
-        };
         self.drag_to(payload, same_window_over);
     }
 
@@ -5138,14 +5150,14 @@ mod tests {
         )
     }
 
-    /// (R1097 PR-32 / R1101) Drive a gesture into a detach: the first sample is
-    /// the grab (the router has not yet called it a drag — `became_drag` false,
-    /// no follow), the second carries the router's drag verdict (`became_drag`
-    /// true) so the panel tears into a follower (one follow). `over_panel` rides
-    /// both samples — a detaching move can be over a panel OR escaped (`None`),
-    /// since PR-32 decoupled detach from escape. The caller has already
-    /// `begin_drag`'d. (R1101: detach now keys off the verdict, not distance, so
-    /// `far` need only differ from the grab to read as a moved drag.)
+    /// (R1097 PR-32 / R1101 / R1110 PR-36) Drive a gesture into a detach: the
+    /// first sample is the grab (`became_drag` false, no follow), the second
+    /// carries the router's drag verdict (`became_drag` true). Under R1110 the
+    /// verdict alone no longer detaches — the cursor must ALSO be over no
+    /// same-window dock zone, so `over_panel` must be `None` (escaped) for the
+    /// second sample to tear into a follower. Passing `Some(panel)` keeps the
+    /// gesture docked (in-dock reorganize preview, no float) — every detach
+    /// caller therefore passes `None`. The caller has already `begin_drag`'d.
     fn cross_detach(ext: &mut DockPanelExternal, over_panel: Option<&str>, far: (f64, f64)) {
         let over = || over_panel.map(|p| drop_point(p, 0.5, 0.5));
         ext.drag_to_at(&dummy_payload(), &upd(over(), (10.0, 10.0), None, false));
@@ -5494,13 +5506,15 @@ mod tests {
 
     #[test]
     fn r1097_threshold_move_detaches_into_a_follower() {
-        // R1097 §5.51 PR-32 / R1101 — once the router declares the press a drag
-        // (`became_drag`), the panel tears into a live floating follower: latch
-        // `detached` + emit one ensure+position follow carrying the panel id and
-        // cursor. The grab sample (router still calls it a click) does not
-        // detach; the move carrying the drag verdict does (supersedes R1094
-        // escape-based; R1101 sources the verdict from the router, not a private
-        // latch).
+        // R1097 §5.51 PR-32 / R1101 / R1110 — once the router declares the press
+        // a drag (`became_drag`) AND the cursor is over no same-window dock zone
+        // (here `over` is `None` = escaped, the R1110 gate), the panel tears into
+        // a live floating follower: latch `detached` + emit one ensure+position
+        // follow carrying the panel id and cursor. The grab sample (router still
+        // calls it a click) does not detach. R1101 sources the verdict from the
+        // router (not a private distance latch); R1110 re-gates the float on
+        // escape (a verdict move still over a zone stays docked — see
+        // `r1110_threshold_move_over_a_panel_shows_preview_not_detach`).
         let mut ext = DockPanelExternal::new("a");
         let _ = ext.begin_drag();
         assert!(!ext.detached(), "fresh gesture has not detached");
@@ -5557,26 +5571,88 @@ mod tests {
     }
 
     #[test]
-    fn r1097_threshold_move_over_a_panel_also_detaches() {
-        // PR-32 decoupled detach from escape: a threshold-crossing move
-        // detaches even while still over a dock panel (was R1094: a move over
-        // a panel never detached). The follower floats AND the dock-zone
-        // preview is set, so a drop on the zone redocks and a drop in empty
-        // space floats — both reachable from one gesture (PR-32 §2).
-        let mut ext = DockPanelExternal::new("a");
+    fn r1110_threshold_move_over_a_panel_shows_preview_not_detach() {
+        // R1110 PR-36 — detach-on-escape. A drag-verdict move whose cursor is
+        // STILL over a same-window dock panel stays docked: no float, no follow,
+        // and the reorganize/split preview is set (the release then applies the
+        // in-dock SplitInsert/Tabify). This INVERTS the PR-32 behaviour (which
+        // floated even over a zone — the in-dock reorder/split flicker R1110
+        // fixes).
+        let preview = Rc::new(Signal::new(None));
+        let mut ext = DockPanelExternal::new("a").with_drop_preview(Rc::clone(&preview));
         let _ = ext.begin_drag();
-        cross_detach(&mut ext, Some("b"), (160.0, 100.0));
+        // Grab, then a drag-verdict move whose cursor is over panel "b"'s centre.
+        ext.drag_to_at(
+            &dummy_payload(),
+            &upd(Some(drop_point("b", 0.5, 0.5)), (10.0, 10.0), None, false),
+        );
+        ext.drag_to_at(
+            &dummy_payload(),
+            &upd(Some(drop_point("b", 0.5, 0.5)), (160.0, 100.0), None, true),
+        );
         assert!(
-            ext.detached(),
-            "a threshold move over a panel detaches (PR-32)"
+            !ext.detached(),
+            "a drag verdict over a same-window zone does NOT float (R1110)",
         );
         let mut received: Vec<Intent> = Vec::new();
         ext.drain_intents(&mut |i| received.push(i));
-        assert_eq!(
-            received.len(),
-            1,
-            "the detaching move follows even over a panel"
+        assert!(
+            received.is_empty(),
+            "no tear-off follow while docked over a zone, got {received:?}",
         );
+        assert!(
+            preview.get().is_some(),
+            "the in-dock reorganize preview is shown over the zone",
+        );
+    }
+
+    #[test]
+    fn r1110_escape_after_over_a_panel_detaches() {
+        // R1110 PR-36 — the float fires only once the cursor LEAVES every
+        // same-window dock zone. A drag held over a panel (no float) that then
+        // escapes to empty space (`over` None) tears into a follower at the
+        // escape move, not before.
+        let mut ext = DockPanelExternal::new("a");
+        let _ = ext.begin_drag();
+        ext.drag_to_at(
+            &dummy_payload(),
+            &upd(Some(drop_point("b", 0.5, 0.5)), (10.0, 10.0), None, true),
+        );
+        assert!(!ext.detached(), "over a zone: still docked");
+        ext.drag_to_at(&dummy_payload(), &upd(None, (900.0, 900.0), None, true));
+        assert!(ext.detached(), "escaping every zone floats the panel");
+        let mut received: Vec<Intent> = Vec::new();
+        ext.drain_intents(&mut |i| received.push(i));
+        assert_eq!(received.len(), 1, "one follow on the escape move");
+        assert_eq!(received[0].tag.as_ref(), TEAR_OFF_FOLLOW_EVENT);
+    }
+
+    #[test]
+    fn r1110_cross_window_over_counts_as_escape_and_detaches() {
+        // R1110 PR-36 — a cursor over ANOTHER window's dock zone
+        // (`over_window: Some`) has left THIS window's dock surface, so it is an
+        // escape and the panel floats (the PR-33 cross-window redock then
+        // resolves at the target window). `same_window_over` is None for a
+        // cross-window over, so the detach gate fires.
+        let mut ext = DockPanelExternal::new("a");
+        let _ = ext.begin_drag();
+        ext.drag_to_at(&dummy_payload(), &upd(None, (10.0, 10.0), None, false)); // grab
+        ext.drag_to_at(
+            &dummy_payload(),
+            &upd(
+                Some(drop_point("b", 0.5, 0.5)),
+                (700.0, 300.0),
+                Some("other"),
+                true,
+            ),
+        );
+        assert!(
+            ext.detached(),
+            "a drag verdict over another window's zone floats (escape)",
+        );
+        let mut received: Vec<Intent> = Vec::new();
+        ext.drain_intents(&mut |i| received.push(i));
+        assert_eq!(received.len(), 1, "one follow on the cross-window escape");
         assert_eq!(received[0].tag.as_ref(), TEAR_OFF_FOLLOW_EVENT);
     }
 

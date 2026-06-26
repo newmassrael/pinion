@@ -17376,6 +17376,50 @@
         "sprag PINION-PR35 #[ignore] guard un-blockable via pin bump in sprag session"
       ]
     },
+    "R1110": {
+      "decision_summary": "R1110 §5.51 PR-36: dock detach-on-escape — float only when drag verdict lands AND cursor left every same-window dock zone; in-zone stays docked (reorganize preview, no flicker)",
+      "changes_bullets": [
+        "drag_to_at: detach gated on `became_drag && same_window_over.is_none()` (was verdict alone)",
+        "in-zone drag stays docked = reorganize/split preview, no float follower (flicker fixed)",
+        "escape (over None / cross-window over) floats; detached one-way latch per gesture (PR-33)"
+      ],
+      "verification_bullets": [
+        "cargo test 7722/0; clippy clean (replaced detach-over-zone test with 3 R1110 escape-gated)",
+        "r1110 units: over-zone no-detach+preview / escape detaches / cross-window over = escape",
+        "r1094 escape-float + r1097 in-dock split + r1102/3 cross-redock + r1105/6 editor all green",
+        "per-move timing = widget-layer (unit-tested); scene/drag atomic cannot observe mid-gesture"
+      ],
+      "impact_refs": [
+        "5.51",
+        "5.15"
+      ],
+      "carry_forward_bullets": [
+        "PR-37 R1111 next: with_tabbing(false) opt-out + result-region drop preview",
+        "PR-36 'split broken' was sprag wiring gap (no with_reorganizer); editor splits fine",
+        "PR-36 timing is per-move = unit-tested; end-states regression-guarded by r1094/r1097"
+      ],
+      "publishable_decision_summary": "R1110 §5.51 PR-36: dock detach-on-escape — float only when drag verdict lands AND cursor left every same-window dock zone; in-zone stays docked (reorganize preview, no flicker)",
+      "publishable_changes_bullets": [
+        "drag_to_at: detach gated on `became_drag && same_window_over.is_none()` (was verdict alone)",
+        "in-zone drag stays docked = reorganize/split preview, no float follower (flicker fixed)",
+        "escape (over None / cross-window over) floats; detached one-way latch per gesture (PR-33)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test 7722/0; clippy clean (replaced detach-over-zone test with 3 R1110 escape-gated)",
+        "r1110 units: over-zone no-detach+preview / escape detaches / cross-window over = escape",
+        "r1094 escape-float + r1097 in-dock split + r1102/3 cross-redock + r1105/6 editor all green",
+        "per-move timing = widget-layer (unit-tested); scene/drag atomic cannot observe mid-gesture"
+      ],
+      "publishable_impact_refs": [
+        "5.51",
+        "5.15"
+      ],
+      "publishable_carry_forward_bullets": [
+        "PR-37 R1111 next: with_tabbing(false) opt-out + result-region drop preview",
+        "PR-36 'split broken' was sprag wiring gap (no with_reorganizer); editor splits fine",
+        "PR-36 timing is per-move = unit-tested; end-states regression-guarded by r1094/r1097"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
