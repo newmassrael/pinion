@@ -2041,7 +2041,7 @@ impl<V: WidgetView> AppShell<V> {
             window.request_redraw();
         }
         if let Some(m) = maximized {
-            self.core.set_window_maximized(&spec_id, m);
+            self.core.set_maximized_for_window(&spec_id, m);
         }
     }
 

@@ -133,17 +133,12 @@ pub fn inject_highlight(scene: Scene, path_suffix: &str, style: HighlightStyle) 
 /// the same scene the second time.
 #[must_use]
 pub fn clear_highlights(scene: Scene) -> Scene {
+    // R1123.1 — one retain-by-prefix SSOT: delegate to the shared
+    // [`strip_children_with_prefix`] (the R1122 resize-border idempotency also
+    // uses it) rather than re-implementing the `starts_with` retain here.
     let mut s = scene;
-    if let Scene::Container(ref mut c) = s {
-        c.children.retain(|child| !is_highlight_child(child));
-    }
+    strip_children_with_prefix(&mut s, HIGHLIGHT_TAG_PREFIX);
     s
-}
-
-fn is_highlight_child(child: &Scene) -> bool {
-    child
-        .tag()
-        .is_some_and(|t| t.starts_with(HIGHLIGHT_TAG_PREFIX))
 }
 
 fn build_highlight_box(bbox: Rect, tag: &str, style: HighlightStyle) -> BoxNode {
@@ -231,7 +226,10 @@ mod tests {
         let Scene::Container(c) = scene else { return 0 };
         c.children
             .iter()
-            .filter(|ch| is_highlight_child(ch))
+            .filter(|ch| {
+                ch.tag()
+                    .is_some_and(|t| t.starts_with(HIGHLIGHT_TAG_PREFIX))
+            })
             .count()
     }
 

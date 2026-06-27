@@ -1386,6 +1386,13 @@ impl<V: WidgetView> ShellCore<V> {
                 .is_some()
             | self.frame_timings_per_window.remove(window_id).is_some()
             | self.render_fidelity_per_window.remove(window_id).is_some()
+            // R1123.1 — drop the maximized cache too, else a closed window's
+            // entry leaks and a reused id (torn-off panels mint runtime ids)
+            // would inherit stale maximized state (wrong chrome glyph). The
+            // immediate-subtree pacing flag had the same pre-existing omission
+            // (R681) — cleared here as the matching removal edge for both.
+            | self.maximized_per_window.remove(window_id).is_some()
+            | self.immediate_subtree_per_window.remove(window_id).is_some()
             | self.focusable_tags_per_window.remove(window_id).is_some();
         // R25.1 §5.39 — re-fold the focus enumeration without the closed
         // window's tags. Idempotent when the window held no focusables (the
@@ -3221,7 +3228,7 @@ impl<V: WidgetView> ShellCore<V> {
         // would double-lay-out the first pass.
         // R1121 §5.16 §5.21 — borderless windows inset content below their
         // chrome strip (`Some(height)`); decorated windows are `None` (no-op).
-        let chrome_h = self.window_chrome_for(window_id).map(|(_, s)| s.height_px);
+        let chrome_h = self.chrome_inset_height(window_id);
         let mut paint_scene = {
             let core = &self.core;
             let run_view = || {
@@ -3608,12 +3615,12 @@ impl<V: WidgetView> ShellCore<V> {
     /// mirror (both route through [`Self::apply_window_overlays`]).
     fn apply_window_chrome(&self, scene: Scene, w: u32, h: u32, window_id: Option<&str>) -> Scene {
         match self.window_chrome_for(window_id) {
-            Some((title, style)) => {
+            Some((spec_id, title, style)) => {
                 // R1123 — the maximize button draws the "restore" glyph when the
-                // window is maximized. Read from the per-window cache (winit's
-                // reported state) so the live paint and the pure mirror agree.
-                let maximized =
-                    self.window_maximized(window_id.unwrap_or(pinion_runtime::DEFAULT_WINDOW));
+                // window is maximized. R1123.1 — key by the resolved `spec_id`
+                // (not `window_id.unwrap_or(DEFAULT_WINDOW)`) so the live paint
+                // and the pure mirror pick the same window's state (§2 #7).
+                let maximized = self.maximized_for_window(&spec_id);
                 pinion_overlay::inject_window_chrome(scene, &title, maximized, Some((w, h)), style)
             }
             None => scene,
@@ -3641,39 +3648,55 @@ impl<V: WidgetView> ShellCore<V> {
     /// fight the WM), matching how OS-decorated windows hide their resize border
     /// when maximized.
     fn apply_resize_border(&self, scene: Scene, w: u32, h: u32, window_id: Option<&str>) -> Scene {
-        let key = window_id.unwrap_or(pinion_runtime::DEFAULT_WINDOW);
-        if self.window_chrome_for(window_id).is_some() && !self.window_maximized(key) {
-            pinion_overlay::inject_resize_border(scene, Some((w, h)))
-        } else {
-            scene
+        // R1123.1 — gate AND maximized-check both key off the resolved spec_id
+        // from the single `window_chrome_for` resolution (no `DEFAULT_WINDOW`
+        // fallback that could diverge from it).
+        match self.window_chrome_for(window_id) {
+            Some((spec_id, _, _)) if !self.maximized_for_window(&spec_id) => {
+                pinion_overlay::inject_resize_border(scene, Some((w, h)))
+            }
+            _ => scene,
         }
     }
 
-    /// (R1123 §5.16 §5.39) Whether `spec_id`'s window is currently maximized, per
-    /// the cache `AppShell::note_window_resized` syncs from winit. `false` for an
-    /// unknown / never-resized window (the create-time default). Read by the
-    /// client-side chrome (maximize-vs-restore glyph) and the resize border
+    /// (R1123 §5.16 §5.39) Whether `window_id`'s window is currently maximized,
+    /// per the cache `AppShell::note_window_resized` syncs from winit. `false`
+    /// for an unknown / never-resized window (the create-time default). Read by
+    /// the client-side chrome (maximize-vs-restore glyph) and the resize border
     /// (suppressed when maximized) on BOTH the live paint and the pure mirror.
+    /// Named `..._for_window` to match the per-window accessor family
+    /// ([`Self::target_fps_for_window`] / [`Self::immediate_subtree_for_window`]).
     #[must_use]
-    pub fn window_maximized(&self, spec_id: &str) -> bool {
+    pub fn maximized_for_window(&self, window_id: &str) -> bool {
         self.maximized_per_window
-            .get(spec_id)
+            .get(window_id)
             .copied()
             .unwrap_or(false)
     }
 
-    /// (R1123 §5.16 §5.39) Record `spec_id`'s maximized state. Called by
+    /// (R1123 §5.16 §5.39) Record `window_id`'s maximized state. Called by
     /// `AppShell::note_window_resized` with winit's `Window::is_maximized()` so
     /// the cache tracks the OS truth (a borderless window's chrome maximize
     /// button is the usual trigger, but a tiling WM can maximize it too). The
-    /// scene producer reads it back via [`Self::window_maximized`].
-    pub fn set_window_maximized(&mut self, spec_id: &str, maximized: bool) {
+    /// scene producer reads it back via [`Self::maximized_for_window`].
+    pub fn set_maximized_for_window(&mut self, window_id: &str, maximized: bool) {
         self.maximized_per_window
-            .insert(spec_id.to_owned(), maximized);
+            .insert(window_id.to_owned(), maximized);
+    }
+
+    /// (R1121 §5.16 §5.21) Logical-pixel height the window content is inset by
+    /// to clear the client-side chrome strip, or `None` when the window has no
+    /// chrome (OS-decorated, or naked borderless). The single resolution shared
+    /// by the live ([`Self::compute_paint_scene_internal`]) and pure-mirror
+    /// ([`Self::compute_paint_scene_pure_internal`]) inset sites (R1123.1 — was
+    /// duplicated at both).
+    fn chrome_inset_height(&self, window_id: Option<&str>) -> Option<u32> {
+        self.window_chrome_for(window_id)
+            .map(|(_, _, style)| style.height_px)
     }
 
     /// (R1121.1 §5.16 §2 #7) Resolve client-side chrome for the window being
-    /// painted: `Some((title, style))` when the binding's
+    /// painted: `Some((spec_id, title, style))` when the binding's
     /// [`WidgetView::window_chrome`](crate::WidgetView::window_chrome) hook
     /// returns a style for this window, else `None`. `window_id == None` is the
     /// primary window (the first declared spec); `Some(id)` matches by canonical
@@ -3682,10 +3705,19 @@ impl<V: WidgetView> ShellCore<V> {
     /// `decorations:false` window can be naked, not forced to carry chrome).
     /// Reads the same `windows_signal` / `windows` SSOT as
     /// [`Self::declared_window_specs`].
+    ///
+    /// R1123.1 — returns the resolved canonical `spec_id` as the FIRST element so
+    /// every per-window lookup keyed off "the window being painted" (the
+    /// [`Self::maximized_for_window`] glyph + resize gate) uses THIS single
+    /// resolution. A `window_id == None` paint (the primary, via
+    /// [`Self::compute_paint_scene`] / the pure mirror) resolves to the first
+    /// spec — keying the maximized cache by `DEFAULT_WINDOW` instead would
+    /// diverge from this resolution for a binding whose first window is not named
+    /// `"main"`, silently breaking the live-vs-mirror glyph parity (§2 #7).
     fn window_chrome_for(
         &self,
         window_id: Option<&str>,
-    ) -> Option<(String, pinion_overlay::WindowChromeStyle)> {
+    ) -> Option<(String, String, pinion_overlay::WindowChromeStyle)> {
         let core = &self.core;
         let specs = core.root_owner().run(|| match V::windows_signal() {
             Some(sig) => sig.get(),
@@ -3696,7 +3728,7 @@ impl<V: WidgetView> ShellCore<V> {
             Some(id) => specs.into_iter().find(|s| s.id.as_ref() == id)?,
         };
         let style = V::window_chrome(spec.id.as_ref())?;
-        Some((spec.title.to_string(), style))
+        Some((spec.id.to_string(), spec.title.to_string(), style))
     }
 
     /// R670.B §5.16 — per-window paint scene producer. Same pipeline
@@ -3799,7 +3831,7 @@ impl<V: WidgetView> ShellCore<V> {
     ) -> Scene {
         let cached_state = *self.core.cached_state();
         let frame = Frame::new();
-        let chrome_h = self.window_chrome_for(window_id).map(|(_, s)| s.height_px);
+        let chrome_h = self.chrome_inset_height(window_id);
         let mut paint_scene = self.core.root_owner().run(|| match window_id {
             Some(id) => V::view_for_window(id, cached_state, &frame),
             None => V::view(cached_state, &frame),
@@ -6650,8 +6682,11 @@ mod r1121_window_chrome_tests {
 
     // R1121.1 — `$decorations` (OS frame) and `$chrome` (pinion chrome hook)
     // are ORTHOGONAL params: the fixtures cover all three live combinations.
+    // R1123.1 — `$id` is the canonical window id (usually "main"); a non-"main"
+    // id exercises the window-identity resolution (the maximized cache must be
+    // keyed by the resolved spec id, not by `DEFAULT_WINDOW`).
     macro_rules! chrome_fixture {
-        ($name:ident, $decorations:literal, $chrome:expr, $title:literal) => {
+        ($name:ident, $id:literal, $decorations:literal, $chrome:expr, $title:literal) => {
             struct $name;
             impl WidgetCore for $name {
                 type State = ButtonState;
@@ -6687,7 +6722,7 @@ mod r1121_window_chrome_tests {
                 fn windows() -> Vec<WindowSpec> {
                     vec![
                         WindowSpec::new(
-                            "main",
+                            $id,
                             $title,
                             SizeStrategy::Fixed {
                                 width: 400,
@@ -6706,16 +6741,26 @@ mod r1121_window_chrome_tests {
     // CSD: no OS frame + pinion chrome.
     chrome_fixture!(
         Borderless,
+        "main",
         false,
         Some(WindowChromeStyle::default()),
         "My Terminal"
     );
     // OS-decorated: OS frame, no pinion chrome.
-    chrome_fixture!(Decorated, true, None, "Decorated");
+    chrome_fixture!(Decorated, "main", true, None, "Decorated");
     // Naked borderless (the Phase-C/D fullscreen-game surface): no OS frame AND
     // no pinion chrome — the combination R1121's decorations-coupling could not
     // express, the reason R1121.1 decoupled them.
-    chrome_fixture!(NakedBorderless, false, None, "Naked");
+    chrome_fixture!(NakedBorderless, "main", false, None, "Naked");
+    // R1123.1 — a chromed window whose canonical id is NOT "main", to prove the
+    // maximized lookup keys by the resolved spec id (not `DEFAULT_WINDOW`).
+    chrome_fixture!(
+        BorderlessPanel,
+        "panel",
+        false,
+        Some(WindowChromeStyle::default()),
+        "Panel"
+    );
 
     fn rect_of(scene: &Scene, tag: &str) -> Option<Rect> {
         scene.rect_for_tag_absolute(tag)
@@ -6991,13 +7036,13 @@ mod r1121_window_chrome_tests {
     fn window_maximized_defaults_false_and_roundtrips() {
         let mut sc = ShellCore::<Borderless>::new();
         assert!(
-            !sc.window_maximized(pinion_runtime::DEFAULT_WINDOW),
+            !sc.maximized_for_window(pinion_runtime::DEFAULT_WINDOW),
             "an unknown / never-resized window is not maximized",
         );
-        sc.set_window_maximized(pinion_runtime::DEFAULT_WINDOW, true);
-        assert!(sc.window_maximized(pinion_runtime::DEFAULT_WINDOW));
-        sc.set_window_maximized(pinion_runtime::DEFAULT_WINDOW, false);
-        assert!(!sc.window_maximized(pinion_runtime::DEFAULT_WINDOW));
+        sc.set_maximized_for_window(pinion_runtime::DEFAULT_WINDOW, true);
+        assert!(sc.maximized_for_window(pinion_runtime::DEFAULT_WINDOW));
+        sc.set_maximized_for_window(pinion_runtime::DEFAULT_WINDOW, false);
+        assert!(!sc.maximized_for_window(pinion_runtime::DEFAULT_WINDOW));
     }
 
     #[test]
@@ -7005,7 +7050,7 @@ mod r1121_window_chrome_tests {
         // §2 #7: the maximized state drops the resize border identically on the
         // live paint and the pure introspection mirror (both read the cache).
         let mut sc = ShellCore::<Borderless>::new();
-        sc.set_window_maximized(pinion_runtime::DEFAULT_WINDOW, true);
+        sc.set_maximized_for_window(pinion_runtime::DEFAULT_WINDOW, true);
         let live = sc.compute_paint_scene(400, 300);
         let mirror = sc.compute_paint_scene_pure(400, 300);
         for tag in ALL_RESIZE_TAGS {
@@ -7025,7 +7070,7 @@ mod r1121_window_chrome_tests {
         );
 
         // Restoring brings the resize border back.
-        sc.set_window_maximized(pinion_runtime::DEFAULT_WINDOW, false);
+        sc.set_maximized_for_window(pinion_runtime::DEFAULT_WINDOW, false);
         let restored = sc.compute_paint_scene(400, 300);
         for tag in ALL_RESIZE_TAGS {
             assert!(
@@ -7051,12 +7096,66 @@ mod r1121_window_chrome_tests {
             "default chrome draws the maximize glyph",
         );
 
-        sc.set_window_maximized(pinion_runtime::DEFAULT_WINDOW, true);
+        sc.set_maximized_for_window(pinion_runtime::DEFAULT_WINDOW, true);
         let maxed = sc.compute_paint_scene(400, 300);
         assert_eq!(
             path_command_count_at(&maxed, max_rect),
             Some(10),
             "maximized chrome draws the restore glyph",
+        );
+    }
+
+    #[test]
+    fn maximized_glyph_parity_when_primary_window_is_not_named_main() {
+        // R1123.1 §2 #7 — the primary paint (window_id == None, used by
+        // `compute_paint_scene` + the pure mirror) must resolve the SAME window
+        // the per-window paint (Some(id)) does, so the maximized glyph agrees.
+        // The only window here is "panel" (not "main"); keying the maximized
+        // cache by `DEFAULT_WINDOW` instead of the resolved spec id would make
+        // the None paint miss the cache and draw the wrong glyph — the latent
+        // live-vs-mirror divergence this round closed.
+        let mut sc = ShellCore::<BorderlessPanel>::new();
+        sc.set_maximized_for_window("panel", true);
+
+        let none_paint = sc.compute_paint_scene(400, 300);
+        let some_paint = sc.compute_paint_scene_for_window("panel", 400, 300);
+        let max_rect = rect_of(&none_paint, pinion_overlay::WINDOW_CHROME_MAXIMIZE_TAG)
+            .expect("maximize button laid out");
+
+        assert_eq!(
+            path_command_count_at(&none_paint, max_rect),
+            Some(10),
+            "the None (primary / mirror) paint resolves 'panel' and draws restore",
+        );
+        assert_eq!(
+            path_command_count_at(&some_paint, max_rect),
+            path_command_count_at(&none_paint, max_rect),
+            "the Some(id) live paint and the None primary paint agree (§2 #7)",
+        );
+        for tag in ALL_RESIZE_TAGS {
+            assert!(
+                !has_tag(&none_paint, tag),
+                "None paint drops resize {tag} when maximized"
+            );
+            assert!(
+                !has_tag(&some_paint, tag),
+                "Some paint drops resize {tag} when maximized"
+            );
+        }
+    }
+
+    #[test]
+    fn closing_a_window_clears_its_maximized_cache() {
+        // R1123.1 — remove_window must drop the maximized entry, else it leaks
+        // and a reused window id inherits stale maximized state. (remove_window
+        // refuses DEFAULT_WINDOW, so this uses a secondary id.)
+        let mut sc = ShellCore::<BorderlessPanel>::new();
+        sc.set_maximized_for_window("torn-1", true);
+        assert!(sc.maximized_for_window("torn-1"));
+        sc.remove_window("torn-1");
+        assert!(
+            !sc.maximized_for_window("torn-1"),
+            "the maximized entry is cleared when the window closes",
         );
     }
 
