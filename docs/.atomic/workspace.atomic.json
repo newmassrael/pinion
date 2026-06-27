@@ -56280,6 +56280,58 @@
         "macOS drag_resize_window = NotSupported (Mac CI runner needed); Linux / Wayland / Windows supported"
       ]
     },
+    "Round 1123.1": {
+      "decision_summary": "Round 1123.1: session self-audit clearance (user textbook/SSOT review) — single window-identity resolution restores §2 #7 live-vs-mirror parity, one retain-by-prefix SSOT, per-window-accessor naming, per-window-cache leak fix, inset-height DRY; no architectural must-fix",
+      "changes_bullets": [
+        "A (§2 #7 latent fix): window_chrome_for now returns the resolved canonical spec_id; apply_window_chrome + apply_resize_border key the maximized lookup by THAT spec_id, not by window_id.unwrap_or(DEFAULT_WINDOW) — so the None primary/mirror paint and the Some(id) live paint resolve the SAME window and the maximize/restore glyph + resize-suppression agree (was divergent for any binding whose first window is not named \"main\", silently breaking the live-vs-mirror parity R1123 claimed)",
+        "B (SSOT): clear_highlights now delegates to the shared strip_children_with_prefix; deleted the duplicate is_highlight_child retain-by-prefix (one retain-by-prefix SSOT, two consumers: highlights + R1122 resize border)",
+        "C (convention): renamed window_maximized / set_window_maximized to maximized_for_window / set_maximized_for_window to match the per-window accessor family (target_fps_for_window / immediate_subtree_for_window / ...)",
+        "D (leak/staleness fix): remove_window now drops maximized_per_window (mine) AND immediate_subtree_per_window (pre-existing R681 omission, same class) — a closed window's entry no longer leaks, and a reused window id (torn-off panels mint runtime ids) no longer inherits stale maximized state / pacing flag",
+        "E (DRY): extracted chrome_inset_height(window_id) — the window_chrome_for(window_id).map(|(_, _, style)| style.height_px) inset-height expression was duplicated at both the live + pure-mirror inset sites; one helper now serves both (also keeps compute_paint_scene_internal under the 100-line clippy ceiling)"
+      ],
+      "verification_bullets": [
+        "new test maximized_glyph_parity_when_primary_window_is_not_named_main: a chromed window id \"panel\" (not \"main\"), maximized — the None primary/mirror paint AND the Some(\"panel\") live paint both draw the restore glyph (Path 10 commands) and suppress the resize border; fails pre-fix (None paint keyed \"main\" -> miss -> maximize glyph) = proves the §2 #7 fix",
+        "new test closing_a_window_clears_its_maximized_cache: set maximized on a secondary id, remove_window, assert the entry is gone = proves the leak/staleness fix",
+        "chrome fixture macro gained an $id param; added BorderlessPanel(\"panel\") fixture; 3 existing fixtures pass \"main\"",
+        "pinion-overlay 23 tests (highlight delegation intact) + pinion-shell 18 chrome tests green",
+        "workspace cargo test green; clippy --all-targets -D pedantic + rustfmt clean"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.39"
+      ],
+      "carry_forward_bullets": [
+        "window_chrome_for is called twice per paint (apply_window_chrome + apply_resize_border each resolve it) = a redundant windows-signal read; kept deliberately for overlay separation-of-concerns + measure-first (no SSOT divergence — both read the same signal); fold into one resolution only if a profile shows it",
+        "STRUCTURAL OBSERVATION (not fixed, pre-existing pattern): per-window state is 10 parallel HashMap<String, T> on ShellCore (structure-of-arrays); cohesive but invites the remove_window omission this round caught — a HashMap<String, WindowState> array-of-structures would make cleanup total by construction. A standalone consolidation round, not R1123.1 scope",
+        "per-window close (chrome close = event_loop.exit) + resize-cursor-on-hover remain DEFERRED-pending-consumer (unchanged from R1123) — no SECONDARY-window-with-window_chrome-hook consumer yet",
+        "session self-audit found NO architectural must-fix; cleared 4 items introduced/surfaced this session — a latent §2 #7 parity bug, an SSOT duplicate, a naming drift, and a per-window-cache leak"
+      ],
+      "publishable_decision_summary": "Round 1123.1: session self-audit clearance (user textbook/SSOT review) — single window-identity resolution restores §2 #7 live-vs-mirror parity, one retain-by-prefix SSOT, per-window-accessor naming, per-window-cache leak fix, inset-height DRY; no architectural must-fix",
+      "publishable_changes_bullets": [
+        "A (§2 #7 latent fix): window_chrome_for now returns the resolved canonical spec_id; apply_window_chrome + apply_resize_border key the maximized lookup by THAT spec_id, not by window_id.unwrap_or(DEFAULT_WINDOW) — so the None primary/mirror paint and the Some(id) live paint resolve the SAME window and the maximize/restore glyph + resize-suppression agree (was divergent for any binding whose first window is not named \"main\", silently breaking the live-vs-mirror parity R1123 claimed)",
+        "B (SSOT): clear_highlights now delegates to the shared strip_children_with_prefix; deleted the duplicate is_highlight_child retain-by-prefix (one retain-by-prefix SSOT, two consumers: highlights + R1122 resize border)",
+        "C (convention): renamed window_maximized / set_window_maximized to maximized_for_window / set_maximized_for_window to match the per-window accessor family (target_fps_for_window / immediate_subtree_for_window / ...)",
+        "D (leak/staleness fix): remove_window now drops maximized_per_window (mine) AND immediate_subtree_per_window (pre-existing R681 omission, same class) — a closed window's entry no longer leaks, and a reused window id (torn-off panels mint runtime ids) no longer inherits stale maximized state / pacing flag",
+        "E (DRY): extracted chrome_inset_height(window_id) — the window_chrome_for(window_id).map(|(_, _, style)| style.height_px) inset-height expression was duplicated at both the live + pure-mirror inset sites; one helper now serves both (also keeps compute_paint_scene_internal under the 100-line clippy ceiling)"
+      ],
+      "publishable_verification_bullets": [
+        "new test maximized_glyph_parity_when_primary_window_is_not_named_main: a chromed window id \"panel\" (not \"main\"), maximized — the None primary/mirror paint AND the Some(\"panel\") live paint both draw the restore glyph (Path 10 commands) and suppress the resize border; fails pre-fix (None paint keyed \"main\" -> miss -> maximize glyph) = proves the §2 #7 fix",
+        "new test closing_a_window_clears_its_maximized_cache: set maximized on a secondary id, remove_window, assert the entry is gone = proves the leak/staleness fix",
+        "chrome fixture macro gained an $id param; added BorderlessPanel(\"panel\") fixture; 3 existing fixtures pass \"main\"",
+        "pinion-overlay 23 tests (highlight delegation intact) + pinion-shell 18 chrome tests green",
+        "workspace cargo test green; clippy --all-targets -D pedantic + rustfmt clean"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.39"
+      ],
+      "publishable_carry_forward_bullets": [
+        "window_chrome_for is called twice per paint (apply_window_chrome + apply_resize_border each resolve it) = a redundant windows-signal read; kept deliberately for overlay separation-of-concerns + measure-first (no SSOT divergence — both read the same signal); fold into one resolution only if a profile shows it",
+        "STRUCTURAL OBSERVATION (not fixed, pre-existing pattern): per-window state is 10 parallel HashMap<String, T> on ShellCore (structure-of-arrays); cohesive but invites the remove_window omission this round caught — a HashMap<String, WindowState> array-of-structures would make cleanup total by construction. A standalone consolidation round, not R1123.1 scope",
+        "per-window close (chrome close = event_loop.exit) + resize-cursor-on-hover remain DEFERRED-pending-consumer (unchanged from R1123) — no SECONDARY-window-with-window_chrome-hook consumer yet",
+        "session self-audit found NO architectural must-fix; cleared 4 items introduced/surfaced this session — a latent §2 #7 parity bug, an SSOT duplicate, a naming drift, and a per-window-cache leak"
+      ]
+    },
     "Round 12": {
       "decision_summary": "Round 12 — first implementation atomic: pinion-core Button widget SCXML state machine integration (SCE consumer pattern R15 동형)",
       "changes_bullets": [
