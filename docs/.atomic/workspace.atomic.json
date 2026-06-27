@@ -55968,6 +55968,54 @@
         "R1114 drag-image live pixel still pending the sprag rev bump (external dependency)"
       ]
     },
+    "Round 1119": {
+      "decision_summary": "Round 1119: §5.51 PR-39 diagnose live floater title-bar move JITTER (marginally-stable feedback: cursor_local in the moving frame + WM apply-lag) + closed-loop regression HARNESS proving naive oscillates and the desktop-frame fix formula is smooth; live wiring R1120",
+      "changes_bullets": [
+        "root cause: window-move delta cursor_local-press is in the MOVING frame + WM apply-lag = oscillation",
+        "char eqn e_{n+1}=e_n-e_{n-1}, roots magnitude 1 = sustained jitter (the sprag R82 live defect)",
+        "headless missed it: fixed-frame / stepwise drives run at apply-lag 0 where the loop converges",
+        "regression HARNESS simulate_window_move: closed loop with JITTERING apply-lag + a jerk metric",
+        "fix formula validated test-scoped (desktop frame = actual_origin + cursor); live wiring = R1120"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace green; clippy -D pedantic; rustfmt; widget-paint 608 (+2 r1119 harness)",
+        "r1119_naive_local_frame jitters: window-path jerk LARGE for a STEADY cursor (the bug)",
+        "r1119_desktop_frame is smooth: jerk ~0 at jittering + fixed lags 1-4",
+        "no prod behavior change this round (diagnosis + harness); live floater move still buggy until R1120"
+      ],
+      "impact_refs": [
+        "5.51",
+        "5.15"
+      ],
+      "carry_forward_bullets": [
+        "LIVE FIX R1120: thread window actual outer_position (shell) to DragUpdate, widget desktop-frame",
+        "fast-drag move trail (inherent WM latency) is separate from this oscillation (PR-39)",
+        "R1114 drag-image live pixel still pending the sprag rev bump (external dependency)"
+      ],
+      "publishable_decision_summary": "Round 1119: §5.51 PR-39 diagnose live floater title-bar move JITTER (marginally-stable feedback: cursor_local in the moving frame + WM apply-lag) + closed-loop regression HARNESS proving naive oscillates and the desktop-frame fix formula is smooth; live wiring R1120",
+      "publishable_changes_bullets": [
+        "root cause: window-move delta cursor_local-press is in the MOVING frame + WM apply-lag = oscillation",
+        "char eqn e_{n+1}=e_n-e_{n-1}, roots magnitude 1 = sustained jitter (the sprag R82 live defect)",
+        "headless missed it: fixed-frame / stepwise drives run at apply-lag 0 where the loop converges",
+        "regression HARNESS simulate_window_move: closed loop with JITTERING apply-lag + a jerk metric",
+        "fix formula validated test-scoped (desktop frame = actual_origin + cursor); live wiring = R1120"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace green; clippy -D pedantic; rustfmt; widget-paint 608 (+2 r1119 harness)",
+        "r1119_naive_local_frame jitters: window-path jerk LARGE for a STEADY cursor (the bug)",
+        "r1119_desktop_frame is smooth: jerk ~0 at jittering + fixed lags 1-4",
+        "no prod behavior change this round (diagnosis + harness); live floater move still buggy until R1120"
+      ],
+      "publishable_impact_refs": [
+        "5.51",
+        "5.15"
+      ],
+      "publishable_carry_forward_bullets": [
+        "LIVE FIX R1120: thread window actual outer_position (shell) to DragUpdate, widget desktop-frame",
+        "fast-drag move trail (inherent WM latency) is separate from this oscillation (PR-39)",
+        "R1114 drag-image live pixel still pending the sprag rev bump (external dependency)"
+      ]
+    },
     "Round 12": {
       "decision_summary": "Round 12 — first implementation atomic: pinion-core Button widget SCXML state machine integration (SCE consumer pattern R15 동형)",
       "changes_bullets": [
