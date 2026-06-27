@@ -55750,6 +55750,62 @@
         "Round 10 §5.16 caveats 1-2-5 superseded by Round 11; retained as audit trail"
       ]
     },
+    "Round 1115": {
+      "decision_summary": "Round 1115: §5.16 §5.51 PR-38 prime — WindowSpec.decorations (default true, byte-identical) surfaced over scene/windows; editor tear-off panels float borderless, main stays decorated",
+      "changes_bullets": [
+        "§5.16 WindowSpec.decorations:bool + with_decorations() builder; serde default true (byte-identical)",
+        "app.rs honours it at create via WindowAttributes::with_decorations; create-time intent like strategy",
+        "§5.51 DeclaredWindow.decorations + declared_window_specs map; scene/windows reports it (§2 #7)",
+        "editor floating_window_spec (2 sites to 1) declares with_decorations(false): borderless tear-off",
+        "flat hello-dock-panels stays decorated (default) = contrast; decorations never null (always a bool)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace green; clippy -D pedantic clean; rustfmt clean",
+        "r1115_window_spec_decorations: default-true both ctors, builder flips, serde omitted-field to true",
+        "dispatch_tests r1087/r1092 scene/windows updated with decorations key; exact-JSON match green",
+        "r1115_window_decorations.py demo: 30+ assertions A-F; main decorated, three torn-off borderless",
+        "OS title-bar pixel HW-gated (real-GPU host); declared chrome observable headless via scene/windows"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.41",
+        "5.51"
+      ],
+      "carry_forward_bullets": [
+        "decorations is create-time only (no runtime set_decorations); add reconcile if a consumer toggles",
+        "live re-drag of a borderless floater via its own header = HW-gated (no OS title bar to grab)",
+        "R1114 drag-image live-pixel still HW-gated; sprag bump 63789fe4 to c4481da4 in sprag-native session",
+        "PR-38 2-prime done; remaining live floater re-drag (HW); next = Phase-B DCC / Model-View",
+        "§2 #2 RPC press-hold gap: no peer to snapshot a held mid-drag; build when a real consumer needs it"
+      ],
+      "publishable_decision_summary": "Round 1115: §5.16 §5.51 PR-38 prime — WindowSpec.decorations (default true, byte-identical) surfaced over scene/windows; editor tear-off panels float borderless, main stays decorated",
+      "publishable_changes_bullets": [
+        "§5.16 WindowSpec.decorations:bool + with_decorations() builder; serde default true (byte-identical)",
+        "app.rs honours it at create via WindowAttributes::with_decorations; create-time intent like strategy",
+        "§5.51 DeclaredWindow.decorations + declared_window_specs map; scene/windows reports it (§2 #7)",
+        "editor floating_window_spec (2 sites to 1) declares with_decorations(false): borderless tear-off",
+        "flat hello-dock-panels stays decorated (default) = contrast; decorations never null (always a bool)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace green; clippy -D pedantic clean; rustfmt clean",
+        "r1115_window_spec_decorations: default-true both ctors, builder flips, serde omitted-field to true",
+        "dispatch_tests r1087/r1092 scene/windows updated with decorations key; exact-JSON match green",
+        "r1115_window_decorations.py demo: 30+ assertions A-F; main decorated, three torn-off borderless",
+        "OS title-bar pixel HW-gated (real-GPU host); declared chrome observable headless via scene/windows"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.41",
+        "5.51"
+      ],
+      "publishable_carry_forward_bullets": [
+        "decorations is create-time only (no runtime set_decorations); add reconcile if a consumer toggles",
+        "live re-drag of a borderless floater via its own header = HW-gated (no OS title bar to grab)",
+        "R1114 drag-image live-pixel still HW-gated; sprag bump 63789fe4 to c4481da4 in sprag-native session",
+        "PR-38 2-prime done; remaining live floater re-drag (HW); next = Phase-B DCC / Model-View",
+        "§2 #2 RPC press-hold gap: no peer to snapshot a held mid-drag; build when a real consumer needs it"
+      ]
+    },
     "Round 12": {
       "decision_summary": "Round 12 — first implementation atomic: pinion-core Button widget SCXML state machine integration (SCE consumer pattern R15 동형)",
       "changes_bullets": [
