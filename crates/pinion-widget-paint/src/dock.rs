@@ -6497,6 +6497,152 @@ mod tests {
         );
     }
 
+    /// R1119 §5.51 PR-39 — the PROPOSED fix formula (test-scoped until the live
+    /// wiring round threads the actual origin): the WINDOW MOVE delta computed in
+    /// the window-INDEPENDENT DESKTOP frame, which breaks the feedback loop that
+    /// made the live drag oscillate.
+    ///
+    /// The naive delta `cursor_local − press_cursor` (R1118) is measured relative
+    /// to the MOVING window: as the move repositions the window, winit reports the
+    /// next `cursor_local` against the new origin, so the delta depends on its own
+    /// output. With the WM applying `set_outer_position` a frame late, the closed
+    /// loop is marginally stable (error recurrence `e_{n+1} = e_n − e_{n-1}`,
+    /// roots `(1 ± i√3)/2` of magnitude exactly 1) → sustained oscillation + jump
+    /// artifacts (the PR-39 live jitter). It does not show in the headless demo
+    /// because the fixed-frame drive runs at effective apply-lag 0.
+    ///
+    /// Fix: `actual_origin` (the window's `Window::outer_position()` — NOT the
+    /// declared position, which lags) makes `actual_origin + cursor_local` the
+    /// true desktop pointer position regardless of how far the window has moved;
+    /// the FRAME INCREMENT `desktop_now − desktop_prev` accumulated by the binding
+    /// (`pos += delta`) gives `pos = pos_0 + (cursor_desktop − cursor_desktop_0)`
+    /// with NO feedback term — stable at any apply-lag (proved by
+    /// `simulate_window_move`). `None` actual falls back to the window-local
+    /// cursor (correct at apply-lag 0 — the headless case).
+    fn window_move_delta(
+        actual_origin: Option<(f64, f64)>,
+        cursor_local: (f64, f64),
+        prev_desktop: Option<(f64, f64)>,
+    ) -> ((f64, f64), (f64, f64)) {
+        let (ax, ay) = actual_origin.unwrap_or((0.0, 0.0));
+        let desktop = (ax + cursor_local.0, ay + cursor_local.1);
+        let delta = match prev_desktop {
+            Some((px, py)) => (desktop.0 - px, desktop.1 - py),
+            None => (0.0, 0.0),
+        };
+        (delta, desktop)
+    }
+
+    /// R1119 PR-39 — closed-loop simulator for the borderless-floater title-bar
+    /// window move. Models what the headless fixed-frame / stepwise-settle drives
+    /// CANNOT: winit reports the cursor relative to the MOVING window, and the WM
+    /// applies `set_outer_position` a few frames late — with the lag JITTERING
+    /// frame-to-frame (a real compositor). Drives a desktop cursor trajectory
+    /// through the loop and returns the per-frame WINDOW POSITION trace.
+    ///
+    /// `controller(actual_origin, cursor_local, declared) -> new_declared` is the
+    /// position-update rule under test (it may capture per-gesture state).
+    fn simulate_window_move<F: FnMut(Option<(f64, f64)>, (f64, f64), (f64, f64)) -> (f64, f64)>(
+        cursor_path: &[(f64, f64)],
+        o0: (f64, f64),
+        lag_pattern: &[usize], // per-frame WM apply lag, cycled (real apply jitters)
+        mut controller: F,
+    ) -> Vec<(f64, f64)> {
+        // declared[k] = the position commanded at frame k; actual_n = the position
+        // commanded `lag` frames ago. The jitter is the perturbation that drives
+        // the naive controller's marginal mode into a non-smooth (jittery) path.
+        let mut declared_hist: Vec<(f64, f64)> = Vec::with_capacity(cursor_path.len());
+        let mut declared = o0;
+        for (n, &c) in cursor_path.iter().enumerate() {
+            let lag = lag_pattern[n % lag_pattern.len()].max(1);
+            let actual = if n >= lag { declared_hist[n - lag] } else { o0 };
+            // winit reports the cursor RELATIVE to the actual on-screen window.
+            let cursor_local = (c.0 - actual.0, c.1 - actual.1);
+            declared = controller(Some(actual), cursor_local, declared);
+            declared_hist.push(declared);
+        }
+        declared_hist
+    }
+
+    /// Max path "jerk" (|2nd difference| of the window position) over the moving
+    /// frames `0..motion_end`. A SMOOTH move (constant cursor velocity) has jerk
+    /// ~0; an oscillating/jittery move has large jerk. This is the jitter signal
+    /// the handoff observed (per-frame deltas swinging ±, with big jumps).
+    fn max_jerk(positions: &[(f64, f64)], motion_end: usize) -> f64 {
+        (2..motion_end)
+            .map(|n| {
+                let jx = positions[n].0 - 2.0 * positions[n - 1].0 + positions[n - 2].0;
+                let jy = positions[n].1 - 2.0 * positions[n - 1].1 + positions[n - 2].1;
+                (jx * jx + jy * jy).sqrt()
+            })
+            .fold(0.0_f64, f64::max)
+    }
+
+    /// A realistic non-uniform WM apply-lag pattern (frames late, cycled). The
+    /// jitter is what excites the naive controller's marginal oscillation.
+    const APPLY_LAG_JITTER: &[usize] = &[1, 3, 1, 2, 4, 1, 3, 2];
+
+    /// A constant-velocity desktop cursor path (the human's hand moving steadily
+    /// — the SMOOTHEST possible input). 30 moving frames. Any jitter in the window
+    /// path is therefore the controller's fault, not the input's.
+    fn steady_drift(start: (f64, f64)) -> Vec<(f64, f64)> {
+        (0..30)
+            .map(|i| (start.0 + 15.0 * f64::from(i), start.1 + 10.0 * f64::from(i)))
+            .collect()
+    }
+
+    #[test]
+    fn r1119_naive_local_frame_window_move_jitters_under_apply_lag() {
+        // The OLD (R1118) formula: new_declared = declared + (cursor_local −
+        // press), measured in the MOVING frame → feedback → marginally-stable, so
+        // the jittering apply-lag is never damped: even a perfectly STEADY cursor
+        // produces a JITTERY window path (the PR-39 live defect). The fixed-frame
+        // demo could not see it — it ran at effective apply-lag 0. This test
+        // PROVES the harness catches the regression class.
+        let grab = (40.0, 8.0);
+        let press = grab;
+        let path = steady_drift((100.0, 50.0));
+        let o0 = (path[0].0 - grab.0, path[0].1 - grab.1); // grab under cursor at press
+        let positions =
+            simulate_window_move(&path, o0, APPLY_LAG_JITTER, |_actual, local, declared| {
+                (
+                    declared.0 + (local.0 - press.0),
+                    declared.1 + (local.1 - press.1),
+                )
+            });
+        let jerk = max_jerk(&positions, path.len());
+        assert!(
+            jerk > 10.0,
+            "naive local-frame move JITTERS under apply-lag: window-path jerk {jerk} is large for a \
+             perfectly steady cursor (a smooth move has jerk ~0)",
+        );
+    }
+
+    #[test]
+    fn r1119_desktop_frame_window_move_is_smooth_at_every_lag() {
+        // The FIXED formula (`window_move_delta` desktop frame increment + the
+        // binding's `pos += delta`). The desktop cursor (actual_origin +
+        // cursor_local) is window-INDEPENDENT, so there is NO feedback — a steady
+        // cursor yields a smooth window path (jerk ~0) at ANY apply-lag, including
+        // the same jitter that breaks the naive controller.
+        let grab = (40.0, 8.0);
+        let path = steady_drift((100.0, 50.0));
+        let o0 = (path[0].0 - grab.0, path[0].1 - grab.1);
+        for pattern in [APPLY_LAG_JITTER, &[1], &[2], &[3], &[4]] {
+            let mut prev: Option<(f64, f64)> = None;
+            let positions = simulate_window_move(&path, o0, pattern, |actual, local, declared| {
+                let (delta, new_prev) = window_move_delta(actual, local, prev);
+                prev = Some(new_prev);
+                (declared.0 + delta.0, declared.1 + delta.1)
+            });
+            let jerk = max_jerk(&positions, path.len());
+            assert!(
+                jerk < 0.001,
+                "desktop-frame move must be SMOOTH for lag {pattern:?}: jerk {jerk} (expected ~0)",
+            );
+        }
+    }
+
     #[test]
     fn r1082_view_dock_panel_with_active_zone_appends_overlay_child() {
         run_in_owner(|| {
