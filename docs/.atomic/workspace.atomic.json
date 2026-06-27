@@ -55914,6 +55914,60 @@
         "R1114 drag-image live pixel still pending the sprag rev bump (external dependency)"
       ]
     },
+    "Round 1118": {
+      "decision_summary": "Round 1118: §5.15 §5.16 §5.51 PR-38 adversarial review-clearance (3 reviewers + user audit) — window-move split to a dedicated WINDOW_MOVE intent off tear_off_follow (honest delta wire); drop_target docs corrected + cross-window reject test; stale comment + press_cursor dup-doc + decorations loud-signal + flat dedup",
+      "changes_bullets": [
+        "window-move to a dedicated WINDOW_MOVE intent (delta + move_floating_window) off tear_off_follow",
+        "honest wire: tear-off carries a cursor, a window move a displacement — pinned apart not folded",
+        "drop_target docs (3 sites) fixed: load-bearing = cross-window-drop reject, not the dead escape",
+        "r1118 test+control: drop_target=false floater rejects cross-window dock; =true resolves",
+        "deleted stale R1095.1 editor comment; press_cursor dup-doc; decorations loud-signal; flat dedup"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace green; clippy -D pedantic; rustfmt; core 2505 / runtime 382 / dock 606",
+        "r1116 unit: window move emits WINDOW_MOVE (delta), not tear_off_follow; large first move exact",
+        "r1118_drop_target_false_floater_rejects_cross_window_dock + control (drop_target=true resolves)",
+        "r1116_window_move.py 30+ assert green (binding now reduces window_move; behavior unchanged)",
+        "3 independent adversarial reviewers (SSOT/smell/arch) + user audit; no architectural must-fix"
+      ],
+      "impact_refs": [
+        "5.15",
+        "5.16",
+        "5.51"
+      ],
+      "carry_forward_bullets": [
+        "fast-drag move trail = inherent app-driven WM-apply latency (OS move breaks redock); HW carry",
+        "headless scene/drag can't reproduce live grab-offset (fixed vs live frame); §2#7 gap",
+        "borderless floater custom resize/close affordance unbuilt (Phase-B self-hosted editor need)",
+        "R1114 drag-image live pixel still pending the sprag rev bump (external dependency)"
+      ],
+      "publishable_decision_summary": "Round 1118: §5.15 §5.16 §5.51 PR-38 adversarial review-clearance (3 reviewers + user audit) — window-move split to a dedicated WINDOW_MOVE intent off tear_off_follow (honest delta wire); drop_target docs corrected + cross-window reject test; stale comment + press_cursor dup-doc + decorations loud-signal + flat dedup",
+      "publishable_changes_bullets": [
+        "window-move to a dedicated WINDOW_MOVE intent (delta + move_floating_window) off tear_off_follow",
+        "honest wire: tear-off carries a cursor, a window move a displacement — pinned apart not folded",
+        "drop_target docs (3 sites) fixed: load-bearing = cross-window-drop reject, not the dead escape",
+        "r1118 test+control: drop_target=false floater rejects cross-window dock; =true resolves",
+        "deleted stale R1095.1 editor comment; press_cursor dup-doc; decorations loud-signal; flat dedup"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace green; clippy -D pedantic; rustfmt; core 2505 / runtime 382 / dock 606",
+        "r1116 unit: window move emits WINDOW_MOVE (delta), not tear_off_follow; large first move exact",
+        "r1118_drop_target_false_floater_rejects_cross_window_dock + control (drop_target=true resolves)",
+        "r1116_window_move.py 30+ assert green (binding now reduces window_move; behavior unchanged)",
+        "3 independent adversarial reviewers (SSOT/smell/arch) + user audit; no architectural must-fix"
+      ],
+      "publishable_impact_refs": [
+        "5.15",
+        "5.16",
+        "5.51"
+      ],
+      "publishable_carry_forward_bullets": [
+        "fast-drag move trail = inherent app-driven WM-apply latency (OS move breaks redock); HW carry",
+        "headless scene/drag can't reproduce live grab-offset (fixed vs live frame); §2#7 gap",
+        "borderless floater custom resize/close affordance unbuilt (Phase-B self-hosted editor need)",
+        "R1114 drag-image live pixel still pending the sprag rev bump (external dependency)"
+      ]
+    },
     "Round 12": {
       "decision_summary": "Round 12 — first implementation atomic: pinion-core Button widget SCXML state machine integration (SCE consumer pattern R15 동형)",
       "changes_bullets": [
