@@ -56016,6 +56016,56 @@
         "R1114 drag-image live pixel still pending the sprag rev bump (external dependency)"
       ]
     },
+    "Round 1120": {
+      "decision_summary": "Round 1120: §5.51 §5.15 PR-39 live-wire desktop-frame window-move: shell stamps actual outer_position, widget emits frame-increment delta (no apply-lag feedback); oscillation eliminated",
+      "changes_bullets": [
+        "DragUpdate.source_window_origin: shell stamps Window::outer_position each move; router forwards it",
+        "InputRouter.set_drag_source_origin + DragSession.source_origin (mirrors cross_window); 3 fill sites",
+        "CoreShell+ShellCore set_drag_source_origin_for_window wrappers; app stamps in handle_cursor_moved",
+        "dock window_move_delta = desktop-frame increment; prev_desktop Cell anchor, reset on begin_drag",
+        "binding pos += delta has no feedback term -> stable at any WM apply-lag (proved by R1119 harness)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace green; clippy -D pedantic; rustfmt; validate-workspace T1=0",
+        "live :0 XTEST: grab-under-cursor converges err~0, bounded jerk, no +-395 swings (oscillation gone)",
+        "r1116 updated for desktop-frame deltas; r1118 cross-window-reject control still green",
+        "residual live jerk = synthetic-drag/xwininfo sampling + 1-frame trail, NOT the marginal oscillation"
+      ],
+      "impact_refs": [
+        "5.51",
+        "5.15"
+      ],
+      "carry_forward_bullets": [
+        "fast-drag move trail (inherent WM/pipeline latency) is bounded + separate from the PR-39 oscillation",
+        "live held-mid-drag pixel smoothness is HW-real-GPU gated; R1119 harness is the deterministic guard",
+        "R1114 drag-image live pixel still pending the sprag rev bump (external dependency)",
+        "next: PR-39 decorated-floater OS-driven move path, or resume Phase-B advanced-DCC widgets"
+      ],
+      "publishable_decision_summary": "Round 1120: §5.51 §5.15 PR-39 live-wire desktop-frame window-move: shell stamps actual outer_position, widget emits frame-increment delta (no apply-lag feedback); oscillation eliminated",
+      "publishable_changes_bullets": [
+        "DragUpdate.source_window_origin: shell stamps Window::outer_position each move; router forwards it",
+        "InputRouter.set_drag_source_origin + DragSession.source_origin (mirrors cross_window); 3 fill sites",
+        "CoreShell+ShellCore set_drag_source_origin_for_window wrappers; app stamps in handle_cursor_moved",
+        "dock window_move_delta = desktop-frame increment; prev_desktop Cell anchor, reset on begin_drag",
+        "binding pos += delta has no feedback term -> stable at any WM apply-lag (proved by R1119 harness)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace green; clippy -D pedantic; rustfmt; validate-workspace T1=0",
+        "live :0 XTEST: grab-under-cursor converges err~0, bounded jerk, no +-395 swings (oscillation gone)",
+        "r1116 updated for desktop-frame deltas; r1118 cross-window-reject control still green",
+        "residual live jerk = synthetic-drag/xwininfo sampling + 1-frame trail, NOT the marginal oscillation"
+      ],
+      "publishable_impact_refs": [
+        "5.51",
+        "5.15"
+      ],
+      "publishable_carry_forward_bullets": [
+        "fast-drag move trail (inherent WM/pipeline latency) is bounded + separate from the PR-39 oscillation",
+        "live held-mid-drag pixel smoothness is HW-real-GPU gated; R1119 harness is the deterministic guard",
+        "R1114 drag-image live pixel still pending the sprag rev bump (external dependency)",
+        "next: PR-39 decorated-floater OS-driven move path, or resume Phase-B advanced-DCC widgets"
+      ]
+    },
     "Round 12": {
       "decision_summary": "Round 12 — first implementation atomic: pinion-core Button widget SCXML state machine integration (SCE consumer pattern R15 동형)",
       "changes_bullets": [
