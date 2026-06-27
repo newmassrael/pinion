@@ -787,7 +787,14 @@ fn view_main_dock(state: ButtonState) -> Scene {
 fn view_floating_panel(panel_id: &str, state: ButtonState) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
     let content = panel_content_for(panel_id, state, &theme);
-    let style = DockPanelStyle::m3_default(panel_id.to_string());
+    // (R1116 §5.51 PR-38) The floater is the SOLE content of its own window, so
+    // its panel is NOT a self-redock target (`drop_target=false`): with no
+    // same-window dock zone under the cursor, a header drag escapes into a
+    // WINDOW MOVE (drag the borderless floater by its own header — the OS
+    // title bar `decorations:false` removed), grab-offset-preserving via the
+    // `DockPanelExternal` follow. A drop onto the MAIN dock still redocks
+    // cross-window (`over_window`, unaffected by this window's drop target).
+    let style = DockPanelStyle::m3_default(panel_id.to_string()).with_drop_target(false);
     view_dock_panel(panel_id, content, &theme, &style, None)
 }
 
@@ -869,7 +876,12 @@ impl WidgetCore for DockPanelsEditorView {
             for panel_id in topology.panel_ids() {
                 let panel = DockPanelExternal::new(panel_id.to_string())
                     .with_reorganizer(Rc::clone(&reorganizer))
-                    .with_drop_preview(Rc::clone(&preview));
+                    .with_drop_preview(Rc::clone(&preview))
+                    // (R1116 §5.51 PR-38) Declare this panel's own floating window
+                    // so a header drag IN it is a borderless title-bar WINDOW MOVE
+                    // (grab-offset), not a dock tear-off. The id is the same
+                    // `floating_window_id` SSOT the tear-off reducer + view use.
+                    .with_floating_window(floating_window_id(panel_id));
                 externals.push(ExtraExternal::new(panel_id.to_string(), Box::new(panel)));
             }
             // (R1096 §5.51) One TabWellExternal per Tabs well, registered at

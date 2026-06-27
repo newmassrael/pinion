@@ -3114,6 +3114,20 @@ pub struct DockPanelStyle {
     /// `{tag}#header` composite hit-region simply isn't emitted when
     /// suppressed; the panel root `drop_target` + content are unchanged.
     pub show_header: bool,
+    /// (R1116 §5.51 PR-38) Whether the panel root opts in as a
+    /// [`LayoutStyle::drop_target`](pinion_core::style::LayoutStyle::drop_target).
+    /// Default `true` — a docked panel is a drop target so the R742 router
+    /// climbs a cursor over the panel's deeper content tag to the root and
+    /// hands the coordinator the panel id + a normalised cursor (reorder /
+    /// split / tab / tear-off). A panel that is the **sole content of its own
+    /// floating window** sets this `false`: it is not a self-redock target
+    /// (you cannot dock a panel into its own floating window), and — the
+    /// load-bearing effect — with no same-window drop zone under the cursor a
+    /// header drag immediately escapes, so [`DockPanelExternal::drag_to_at`]
+    /// treats it as a WINDOW MOVE (drag the borderless floater by its own
+    /// header, the OS-title-bar replacement) rather than a dock reorganize the
+    /// single panel could never satisfy.
+    pub drop_target: bool,
 }
 
 impl DockPanelStyle {
@@ -3126,6 +3140,7 @@ impl DockPanelStyle {
             tag: tag.into(),
             header_font_size_px: 12,
             show_header: true,
+            drop_target: true,
         }
     }
 
@@ -3134,6 +3149,16 @@ impl DockPanelStyle {
     #[must_use]
     pub const fn with_header_height_px(mut self, height: u32) -> Self {
         self.header_height_px = height;
+        self
+    }
+
+    /// (R1116 §5.51 PR-38) Override whether the panel root opts in as a drop
+    /// target (default `true`). A panel floated as the sole content of its own
+    /// window sets this `false` so its header drag is a window move, not a
+    /// self-redock the single panel could never satisfy (see the field doc).
+    #[must_use]
+    pub const fn with_drop_target(mut self, drop_target: bool) -> Self {
+        self.drop_target = drop_target;
         self
     }
 
@@ -3297,12 +3322,14 @@ pub fn view_dock_panel(
                 LayoutStyle::new()
                     .flex(FlexDirection::Column)
                     .with_align_items(AlignItems::Stretch)
-                    // (R1080/R1081 §5.51) Every dock panel opts in as a drop
+                    // (R1080/R1081 §5.51) A docked panel opts in as a drop
                     // target so the R742 router climbs a cursor over the
                     // panel's deeper content tag to THIS root, handing the
                     // pointer coordinator the panel id + a cursor normalised
                     // over the whole panel rect (the zone classifier's input).
-                    .with_drop_target(true),
+                    // (R1116 §5.51 PR-38) A sole-floater panel sets it `false`
+                    // so its header drag escapes into a window move.
+                    .with_drop_target(style.drop_target),
             ),
     )
 }
@@ -4112,6 +4139,18 @@ pub struct DockPanelExternal {
     /// reports that `torn-<panel>` window). `None` before any move / a
     /// cursor-less gesture.
     last_source_window: RefCell<Option<String>>,
+    /// (R1116 §5.51 PR-38) The grab anchor for a WINDOW MOVE — the first drag
+    /// cursor (in the floating window's own frame) of a gesture whose
+    /// [`DragUpdate::source_window`] matches this panel's
+    /// [`floating_window`](Self::floating_window) (the title-bar drag of the
+    /// panel's own floating window). `Some` ⇒ this gesture is a window move, so
+    /// the follow preserves the grab offset (`cursor - anchor`, dragging the
+    /// borderless floater by its title bar keeps the grabbed point under the
+    /// cursor); `None` ⇒ a docked tear-off, which jumps the panel to the cursor
+    /// (the established R1094 behaviour). Latched once on the first
+    /// [`drag_to_at`](External::drag_to_at) sample, reset on
+    /// [`begin_drag`](External::begin_drag).
+    window_move_anchor: Cell<Option<(f64, f64)>>,
     /// (R1081 §5.51) The shared reorganize coordinator. `Some` puts the
     /// panel in dock-or-float mode (drops onto other panels reorganize
     /// the shared topology); `None` is tear-off-only. Cloned from the
@@ -4123,6 +4162,17 @@ pub struct DockPanelExternal {
     /// paint the zone affordance. `None` = no overlay binding (the
     /// gesture still docks / tears off, just without the preview paint).
     drop_preview: Option<Rc<Signal<Option<DockDropPreview>>>>,
+    /// (R1116 §5.51 PR-38) The id of THIS panel's own floating window, if the
+    /// binding floats it (e.g. `"torn-viewport"`). When a drag's
+    /// [`DragUpdate::source_window`] equals this, the drag is happening in the
+    /// panel's own floating window, so its header (title bar) drag is a WINDOW
+    /// MOVE (drag the borderless floater by its title bar — the OS-title-bar
+    /// replacement `decorations:false` removed), NOT a dock tear-off. `None`
+    /// (the default) = the panel is never floated by this binding, so every
+    /// drag stays on the docked tear-off / reorganize path (bit-identical to
+    /// pre-R1116). The binding passes its own window-naming SSOT, so the widget
+    /// hardcodes no convention.
+    floating_window: Option<String>,
 }
 
 impl core::fmt::Debug for DockPanelExternal {
@@ -4163,9 +4213,24 @@ impl DockPanelExternal {
             detached: Cell::new(false),
             last_redock_at: RefCell::new(None),
             last_source_window: RefCell::new(None),
+            window_move_anchor: Cell::new(None),
             reorganizer: None,
             drop_preview: None,
+            floating_window: None,
         }
+    }
+
+    /// (R1116 §5.51 PR-38) Declare the id of this panel's own floating window so
+    /// a header drag IN that window is a WINDOW MOVE (drag the borderless floater
+    /// by its title bar), not a dock tear-off. The binding passes its own
+    /// window-naming SSOT (e.g. `dock::floating_window_id(prefix, panel)`); the
+    /// widget compares [`DragUpdate::source_window`] to it and hardcodes no
+    /// naming convention. Omit (the default `None`) for a panel the binding never
+    /// floats — every drag then stays on the docked tear-off path.
+    #[must_use]
+    pub fn with_floating_window(mut self, window_id: impl Into<String>) -> Self {
+        self.floating_window = Some(window_id.into());
+        self
     }
 
     /// (R1081 §5.51) Share the editor's reorganize coordinator so a drop
@@ -4297,6 +4362,20 @@ impl DockPanelExternal {
         });
     }
 
+    /// (R1116 §5.51 PR-38) Map a raw drag cursor to the follow coordinate the
+    /// binding adds to the source window's origin (`desktop_position_from`).
+    /// A sole-floater WINDOW MOVE (anchor `Some`) returns the cursor RELATIVE to
+    /// the grab anchor, so `origin + (cursor - anchor)` keeps the grabbed header
+    /// point under the cursor (drag the borderless floater by its header). A
+    /// docked TEAR-OFF (anchor `None`) returns the raw cursor, so `origin +
+    /// cursor` jumps the panel to the cursor (the established R1094 lift-off).
+    fn follow_coord(&self, cursor: (f64, f64)) -> (f64, f64) {
+        match self.window_move_anchor.get() {
+            Some((ax, ay)) => (cursor.0 - ax, cursor.1 - ay),
+            None => cursor,
+        }
+    }
+
     /// (R1094 §5.16 §5.41 §5.51) Enqueue the remove-only redock / restore
     /// intent. The binding reducer removes the panel's floating window if
     /// present (idempotent no-op otherwise).
@@ -4393,6 +4472,9 @@ impl External for DockPanelExternal {
         *self.last_redock_at.borrow_mut() = None;
         // R1107 — and the last follow-drag source window.
         *self.last_source_window.borrow_mut() = None;
+        // R1116 — and the sole-floater window-move grab anchor (decided afresh
+        // on this gesture's first move).
+        self.window_move_anchor.set(None);
         Some(DragPayload {
             kind: Cow::Borrowed(DOCK_PANEL_DRAG_KIND),
             value: IntrospectValue::Text(self.panel_id.to_string()),
@@ -4472,7 +4554,9 @@ impl External for DockPanelExternal {
                 // `None` here, dropping the source on the release arm — the
                 // R1107.1 review-clearance fix.)
                 let source = self.last_source_window.borrow().clone();
-                self.enqueue_tear_off_follow(cursor, source.as_deref());
+                // R1116 — the final release-follow preserves the same window-move
+                // grab offset (or jump-to-cursor) the gesture's moves used.
+                self.enqueue_tear_off_follow(self.follow_coord(cursor), source.as_deref());
             } else {
                 self.enqueue_tear_off();
             }
@@ -4498,11 +4582,39 @@ impl External for DockPanelExternal {
     /// unchanged. The recorded cursor is exposed as scene-as-data via
     /// `query("drag_cursor")`.
     fn drag_to_at(&mut self, payload: &DragPayload, update: &DragUpdate) {
+        // R1116 — `drag_cursor` is `None` only on the gesture's FIRST sample
+        // (begin_drag reset it), so this captures the grab moment before the set
+        // below overwrites it.
+        let first_sample = self.drag_cursor.get().is_none();
         self.drag_cursor.set(Some(update.cursor));
         // R1107 §5.51 §2 #7 — record the window this move was measured in so an
         // AI observes it via `query("source_window")` and the binding converts
         // the cursor to a desktop position via the right origin.
         *self.last_source_window.borrow_mut() = update.source_window.map(str::to_owned);
+        // R1116 §5.51 PR-38 — WINDOW MOVE. A drag IN this panel's OWN floating
+        // window (`source_window` == the binding-declared `floating_window`) is
+        // the borderless floater's title-bar drag: it MOVES the window, distinct
+        // from a dock tear-off. A floating window has nothing to "escape" — the
+        // cursor stays on its own title bar, so the router's hover-fallback
+        // `over` is never `None` and the R1110 escape can never fire (that is why
+        // a tear-off-style path could not move it). The grab anchor is latched on
+        // the first sample so the follow's `origin + (cursor - anchor)` keeps the
+        // grabbed title-bar point under the cursor (grab-offset preserved); every
+        // move repositions; no detach / escape / drop-preview. The docked
+        // tear-off path below is untouched (its `source_window` is the dock
+        // window, not this floater).
+        if let Some(fw) = self.floating_window.as_deref() {
+            if update.source_window == Some(fw) {
+                if first_sample {
+                    self.window_move_anchor.set(Some(update.cursor));
+                }
+                self.enqueue_tear_off_follow(
+                    self.follow_coord(update.cursor),
+                    update.source_window,
+                );
+                return;
+            }
+        }
         // R1100 PR-33 — a cross-window `over` (`over_window: Some`) names ANOTHER
         // window's dock zone; do NOT paint it into THIS window's drop preview
         // (the cross-window redock affordance is the target window's overlay, a
@@ -4543,7 +4655,9 @@ impl External for DockPanelExternal {
             // R1107 §5.51 — carry the SOURCE window (the one the router that
             // drove this update belongs to) so the binding converts the
             // window-logical cursor to a desktop position via the right origin.
-            self.enqueue_tear_off_follow(update.cursor, update.source_window);
+            // R1116 — `follow_coord` makes a window move grab-offset-preserving;
+            // a tear-off stays jump-to-cursor.
+            self.enqueue_tear_off_follow(self.follow_coord(update.cursor), update.source_window);
         }
         self.drag_to(payload, same_window_over);
     }
@@ -6229,6 +6343,91 @@ mod tests {
                 "every dock panel opts in as a drop target for the R742 router climb",
             );
         });
+    }
+
+    #[test]
+    fn r1116_drop_target_style_default_true_override_false() {
+        // R1116 §5.51 PR-38 — the drop_target lift (carry-② anticipated). Default
+        // true (a docked panel); a sole-floater panel sets it false so its header
+        // drag escapes into a window move instead of a self-redock.
+        assert!(
+            DockPanelStyle::m3_default(PANEL_TAG).drop_target,
+            "default is a drop target"
+        );
+        let floater = DockPanelStyle::m3_default(PANEL_TAG).with_drop_target(false);
+        assert!(!floater.drop_target, "with_drop_target(false) opts out");
+        run_in_owner(|| {
+            let Scene::Container(outer) =
+                view_dock_panel("T", empty_content(), &theme_light(), &floater, None)
+            else {
+                panic!()
+            };
+            assert!(
+                !outer.layout.drop_target,
+                "a drop_target=false panel root is NOT a router drop target",
+            );
+        });
+    }
+
+    #[test]
+    fn r1116_sole_floater_header_drag_is_grab_offset_window_move() {
+        // R1116 §5.51 PR-38 — a drag whose source_window is the panel's OWN
+        // floating window (the title-bar drag of the borderless floater) is a
+        // WINDOW MOVE: the follow preserves the grab offset, so `origin + follow`
+        // keeps the grabbed title-bar point under the cursor. The grab sample
+        // emits (0,0) (no jump), each later move emits (cursor - grab). No
+        // tear-off escape is needed (a floating window cannot escape itself).
+        let mut floater = DockPanelExternal::new("viewport").with_floating_window("torn-viewport");
+        let _ = floater.begin_drag();
+        let mv = |cursor: (f64, f64)| DragUpdate {
+            over: None,
+            cursor,
+            over_window: None,
+            source_window: Some("torn-viewport"),
+            became_drag: true,
+        };
+        floater.drag_to_at(&dummy_payload(), &mv((40.0, 8.0))); // grab
+        floater.drag_to_at(&dummy_payload(), &mv((140.0, 88.0))); // move +100,+80
+        let mut got: Vec<Intent> = Vec::new();
+        floater.drain_intents(&mut |i| got.push(i));
+        assert_eq!(got.len(), 2, "grab + one move = two follows");
+        assert_eq!(
+            follow_fields(&got[0].payload),
+            ("viewport".into(), 0.0, 0.0),
+            "no jump on grab"
+        );
+        assert_eq!(
+            follow_fields(&got[1].payload),
+            ("viewport".into(), 100.0, 80.0),
+            "the move follow is the cursor RELATIVE to the grab (grab-offset preserved)",
+        );
+
+        // Contrast: a docked tear-off (grab OVER its zone) stays jump-to-cursor —
+        // the follow carries the RAW cursor, not a grab-relative delta.
+        let mut docked = DockPanelExternal::new("viewport");
+        let _ = docked.begin_drag();
+        docked.drag_to_at(
+            &dummy_payload(),
+            &DragUpdate {
+                over: Some(drop_point("viewport", 0.5, 0.5)),
+                cursor: (40.0, 8.0),
+                over_window: None,
+                source_window: Some("main"),
+                became_drag: false,
+            },
+        ); // grab over the panel's own zone — NOT a window move
+        docked.drag_to_at(&dummy_payload(), &mv((140.0, 88.0))); // escape + follow
+        let mut got2: Vec<Intent> = Vec::new();
+        docked.drain_intents(&mut |i| got2.push(i));
+        let follow = got2
+            .iter()
+            .find(|i| i.tag.as_ref() == TEAR_OFF_FOLLOW_EVENT)
+            .expect("escape emits a follow");
+        assert_eq!(
+            follow_fields(&follow.payload),
+            ("viewport".into(), 140.0, 88.0),
+            "a docked tear-off jumps to the raw cursor (no grab-offset)",
+        );
     }
 
     #[test]
