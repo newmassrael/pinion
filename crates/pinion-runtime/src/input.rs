@@ -520,6 +520,12 @@ struct DragSession {
     /// cursor escaped this window's own drop targets (own-window resolve
     /// first). Lifecycle-scoped to the session, so it clears with the drag.
     cross_window: Option<CrossWindowDrop>,
+    /// (R1117 §5.15 §5.51) The window-logical cursor when this session opened
+    /// (the PRESS point). Captured once at `begin_drag` from the router's held
+    /// cursor and forwarded verbatim as [`DragUpdate::press_cursor`] on every
+    /// update, so a grab-offset drag (window move by a title bar) anchors at the
+    /// exact press, not the first move sample.
+    press_cursor: (f64, f64),
 }
 
 impl InputRouter {
@@ -1269,6 +1275,11 @@ impl InputRouter {
                         // R1102 — no cross-window resolution yet; the shell
                         // fills it on the first move that escapes this window.
                         cross_window: None,
+                        // R1117 §5.15 §5.51 — the PRESS point: the cursor the
+                        // router holds at PointerDown (a CursorMoved preceded
+                        // it). A grab-offset window move anchors here, not on the
+                        // first move sample. Degenerate (no held cursor) → origin.
+                        press_cursor: self.cursors.get(&id).copied().unwrap_or_default(),
                     },
                 );
             }
@@ -1426,6 +1437,9 @@ impl InputRouter {
                             over_window: over_window.as_deref(),
                             source_window: self.window_id.as_deref(),
                             became_drag,
+                            // R1117 — the gesture's press point (Copy; unaffected
+                            // by the `cross_window` partial move above).
+                            press_cursor: session.press_cursor,
                         },
                     ),
                     None => external.handle.drag_release(&session.payload, over),
@@ -1827,6 +1841,9 @@ impl InputRouter {
         // R1102 §5.51 PR-33 — clone the shell's cross-window resolution so the
         // `session` borrow drops before the `state_scene` borrow below.
         let cross_window = session.cross_window.clone();
+        // R1117 §5.15 §5.51 — the gesture's press point (Copy), forwarded so a
+        // grab-offset window move anchors at the press, not this move sample.
+        let press_cursor = session.press_cursor;
         // R1101 §5.51 — the router's click-vs-drag verdict (read here, while
         // `&self` is free, before the `state_scene` borrow). The source
         // consumes this instead of re-deriving it from its own distance
@@ -1853,6 +1870,7 @@ impl InputRouter {
                     over_window: over_window.as_deref(),
                     source_window: self.window_id.as_deref(),
                     became_drag,
+                    press_cursor,
                 },
             );
         }

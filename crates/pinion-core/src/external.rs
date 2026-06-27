@@ -499,6 +499,17 @@ pub struct DragUpdate<'a> {
     /// it to decide "is this a drag yet" (a dock panel tearing off) instead of
     /// opening its own latch, which would drift.
     pub became_drag: bool,
+    /// (R1117 §5.15 §5.51) The window-logical cursor at the PRESS that opened
+    /// this drag session — constant for the gesture. `cursor` is the LIVE
+    /// position; `press_cursor` is where the grab started. A grab-offset drag
+    /// (relocate a borderless floater by its title bar, keeping the grabbed
+    /// point under the cursor) computes `cursor - press_cursor` — the
+    /// displacement since the grab. Without it a source could only anchor on the
+    /// first MOVE sample, which already lags the press by the first motion delta
+    /// (a constant mis-grab, ~1px for a real mouse but systematically wrong). The
+    /// router fills it from the cursor it held when `begin_drag` opened the
+    /// session, so it is exact regardless of how far the first move strays.
+    pub press_cursor: (f64, f64),
 }
 
 /// The 8-point integration contract (§5.15). Items 1-3 are required;
@@ -1238,6 +1249,7 @@ mod tests {
             over_window: None,
             source_window: None,
             became_drag: false,
+            press_cursor: (12.0, 34.0),
         };
         let release_update = DragUpdate {
             over: None,
@@ -1245,6 +1257,7 @@ mod tests {
             over_window: None,
             source_window: None,
             became_drag: false,
+            press_cursor: (56.0, 78.0),
         };
         src.drag_to_at(&payload, &to_update);
         src.drag_release_at(&payload, &release_update);

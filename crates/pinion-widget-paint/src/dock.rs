@@ -4139,18 +4139,6 @@ pub struct DockPanelExternal {
     /// reports that `torn-<panel>` window). `None` before any move / a
     /// cursor-less gesture.
     last_source_window: RefCell<Option<String>>,
-    /// (R1116 §5.51 PR-38) The grab anchor for a WINDOW MOVE — the first drag
-    /// cursor (in the floating window's own frame) of a gesture whose
-    /// [`DragUpdate::source_window`] matches this panel's
-    /// [`floating_window`](Self::floating_window) (the title-bar drag of the
-    /// panel's own floating window). `Some` ⇒ this gesture is a window move, so
-    /// the follow preserves the grab offset (`cursor - anchor`, dragging the
-    /// borderless floater by its title bar keeps the grabbed point under the
-    /// cursor); `None` ⇒ a docked tear-off, which jumps the panel to the cursor
-    /// (the established R1094 behaviour). Latched once on the first
-    /// [`drag_to_at`](External::drag_to_at) sample, reset on
-    /// [`begin_drag`](External::begin_drag).
-    window_move_anchor: Cell<Option<(f64, f64)>>,
     /// (R1081 §5.51) The shared reorganize coordinator. `Some` puts the
     /// panel in dock-or-float mode (drops onto other panels reorganize
     /// the shared topology); `None` is tear-off-only. Cloned from the
@@ -4213,7 +4201,6 @@ impl DockPanelExternal {
             detached: Cell::new(false),
             last_redock_at: RefCell::new(None),
             last_source_window: RefCell::new(None),
-            window_move_anchor: Cell::new(None),
             reorganizer: None,
             drop_preview: None,
             floating_window: None,
@@ -4362,20 +4349,6 @@ impl DockPanelExternal {
         });
     }
 
-    /// (R1116 §5.51 PR-38) Map a raw drag cursor to the follow coordinate the
-    /// binding adds to the source window's origin (`desktop_position_from`).
-    /// A sole-floater WINDOW MOVE (anchor `Some`) returns the cursor RELATIVE to
-    /// the grab anchor, so `origin + (cursor - anchor)` keeps the grabbed header
-    /// point under the cursor (drag the borderless floater by its header). A
-    /// docked TEAR-OFF (anchor `None`) returns the raw cursor, so `origin +
-    /// cursor` jumps the panel to the cursor (the established R1094 lift-off).
-    fn follow_coord(&self, cursor: (f64, f64)) -> (f64, f64) {
-        match self.window_move_anchor.get() {
-            Some((ax, ay)) => (cursor.0 - ax, cursor.1 - ay),
-            None => cursor,
-        }
-    }
-
     /// (R1094 §5.16 §5.41 §5.51) Enqueue the remove-only redock / restore
     /// intent. The binding reducer removes the panel's floating window if
     /// present (idempotent no-op otherwise).
@@ -4472,9 +4445,6 @@ impl External for DockPanelExternal {
         *self.last_redock_at.borrow_mut() = None;
         // R1107 — and the last follow-drag source window.
         *self.last_source_window.borrow_mut() = None;
-        // R1116 — and the sole-floater window-move grab anchor (decided afresh
-        // on this gesture's first move).
-        self.window_move_anchor.set(None);
         Some(DragPayload {
             kind: Cow::Borrowed(DOCK_PANEL_DRAG_KIND),
             value: IntrospectValue::Text(self.panel_id.to_string()),
@@ -4554,9 +4524,7 @@ impl External for DockPanelExternal {
                 // `None` here, dropping the source on the release arm — the
                 // R1107.1 review-clearance fix.)
                 let source = self.last_source_window.borrow().clone();
-                // R1116 — the final release-follow preserves the same window-move
-                // grab offset (or jump-to-cursor) the gesture's moves used.
-                self.enqueue_tear_off_follow(self.follow_coord(cursor), source.as_deref());
+                self.enqueue_tear_off_follow(cursor, source.as_deref());
             } else {
                 self.enqueue_tear_off();
             }
@@ -4582,10 +4550,6 @@ impl External for DockPanelExternal {
     /// unchanged. The recorded cursor is exposed as scene-as-data via
     /// `query("drag_cursor")`.
     fn drag_to_at(&mut self, payload: &DragPayload, update: &DragUpdate) {
-        // R1116 — `drag_cursor` is `None` only on the gesture's FIRST sample
-        // (begin_drag reset it), so this captures the grab moment before the set
-        // below overwrites it.
-        let first_sample = self.drag_cursor.get().is_none();
         self.drag_cursor.set(Some(update.cursor));
         // R1107 §5.51 §2 #7 — record the window this move was measured in so an
         // AI observes it via `query("source_window")` and the binding converts
@@ -4597,21 +4561,20 @@ impl External for DockPanelExternal {
         // from a dock tear-off. A floating window has nothing to "escape" — the
         // cursor stays on its own title bar, so the router's hover-fallback
         // `over` is never `None` and the R1110 escape can never fire (that is why
-        // a tear-off-style path could not move it). The grab anchor is latched on
-        // the first sample so the follow's `origin + (cursor - anchor)` keeps the
-        // grabbed title-bar point under the cursor (grab-offset preserved); every
-        // move repositions; no detach / escape / drop-preview. The docked
-        // tear-off path below is untouched (its `source_window` is the dock
-        // window, not this floater).
+        // a tear-off-style path could not move it). The follow is grab-offset
+        // preserving: `cursor - press_cursor` (R1117) is the displacement since
+        // the PRESS, so `origin + that` keeps the grabbed title-bar point under
+        // the cursor — exact regardless of how far the first move strays (the
+        // press is the SSOT anchor, not the first sample). Every move
+        // repositions; no detach / escape / drop-preview. The docked tear-off
+        // path below is untouched (its `source_window` is the dock window).
         if let Some(fw) = self.floating_window.as_deref() {
             if update.source_window == Some(fw) {
-                if first_sample {
-                    self.window_move_anchor.set(Some(update.cursor));
-                }
-                self.enqueue_tear_off_follow(
-                    self.follow_coord(update.cursor),
-                    update.source_window,
+                let follow = (
+                    update.cursor.0 - update.press_cursor.0,
+                    update.cursor.1 - update.press_cursor.1,
                 );
+                self.enqueue_tear_off_follow(follow, update.source_window);
                 return;
             }
         }
@@ -4655,9 +4618,9 @@ impl External for DockPanelExternal {
             // R1107 §5.51 — carry the SOURCE window (the one the router that
             // drove this update belongs to) so the binding converts the
             // window-logical cursor to a desktop position via the right origin.
-            // R1116 — `follow_coord` makes a window move grab-offset-preserving;
-            // a tear-off stays jump-to-cursor.
-            self.enqueue_tear_off_follow(self.follow_coord(update.cursor), update.source_window);
+            // A tear-off jumps the panel to the cursor (the window-move
+            // grab-offset path returned early above).
+            self.enqueue_tear_off_follow(update.cursor, update.source_window);
         }
         self.drag_to(payload, same_window_over);
     }
@@ -5147,6 +5110,10 @@ mod tests {
             // R1107 follow tests build `DragUpdate` directly with a value.
             source_window: None,
             became_drag,
+            // R1117 — these tests do not exercise the window-move grab-offset;
+            // the press point defaults to the cursor (a degenerate in-place grab,
+            // so `cursor - press_cursor` is 0 — irrelevant to the tear-off path).
+            press_cursor: cursor,
         }
     }
 
@@ -5489,6 +5456,7 @@ mod tests {
             over_window: None,
             source_window: Some("torn-viewport"),
             became_drag: true,
+            press_cursor: (40.0, 25.0),
         };
         ext.drag_to_at(&dummy_payload(), &update);
         // The emitted tear_off_follow carries the source window.
@@ -5525,6 +5493,7 @@ mod tests {
                 over_window: None,
                 source_window: Some("torn-viewport"),
                 became_drag: true,
+                press_cursor: (1.0, 1.0),
             },
         );
         assert_eq!(
@@ -5558,6 +5527,7 @@ mod tests {
                 over_window: None,
                 source_window: Some("torn-viewport"),
                 became_drag: true,
+                press_cursor: (10.0, 10.0),
             },
         );
         let mut drained: Vec<Intent> = Vec::new();
@@ -5571,6 +5541,7 @@ mod tests {
                 over_window: None,
                 source_window: Some("torn-viewport"),
                 became_drag: true,
+                press_cursor: (40.0, 25.0),
             },
         );
         let mut received: Vec<Intent> = Vec::new();
@@ -6371,39 +6342,45 @@ mod tests {
 
     #[test]
     fn r1116_sole_floater_header_drag_is_grab_offset_window_move() {
-        // R1116 §5.51 PR-38 — a drag whose source_window is the panel's OWN
-        // floating window (the title-bar drag of the borderless floater) is a
-        // WINDOW MOVE: the follow preserves the grab offset, so `origin + follow`
-        // keeps the grabbed title-bar point under the cursor. The grab sample
-        // emits (0,0) (no jump), each later move emits (cursor - grab). No
-        // tear-off escape is needed (a floating window cannot escape itself).
+        // R1116/R1117 §5.51 §5.15 PR-38 — a drag whose source_window is the
+        // panel's OWN floating window (the title-bar drag of the borderless
+        // floater) is a WINDOW MOVE: the follow is the displacement since the
+        // PRESS (`cursor - press_cursor`, R1117), so `origin + follow` keeps the
+        // grabbed title-bar point under the cursor. Anchoring on the PRESS (not
+        // the first move sample) makes the grab exact even when the first sample
+        // already strays far — the R1117 fix. No tear-off escape is needed.
         let mut floater = DockPanelExternal::new("viewport").with_floating_window("torn-viewport");
         let _ = floater.begin_drag();
+        let press = (40.0, 8.0);
         let mv = |cursor: (f64, f64)| DragUpdate {
             over: None,
             cursor,
             over_window: None,
             source_window: Some("torn-viewport"),
             became_drag: true,
+            press_cursor: press,
         };
-        floater.drag_to_at(&dummy_payload(), &mv((40.0, 8.0))); // grab
-        floater.drag_to_at(&dummy_payload(), &mv((140.0, 88.0))); // move +100,+80
+        // The FIRST sample already strays +60,+40 from the press — the follow must
+        // still measure from the PRESS (60,40), NOT treat this sample as the
+        // anchor (which would mis-grab by 60,40 — the bug R1117 fixes).
+        floater.drag_to_at(&dummy_payload(), &mv((100.0, 48.0)));
+        floater.drag_to_at(&dummy_payload(), &mv((140.0, 88.0)));
         let mut got: Vec<Intent> = Vec::new();
         floater.drain_intents(&mut |i| got.push(i));
-        assert_eq!(got.len(), 2, "grab + one move = two follows");
+        assert_eq!(got.len(), 2, "two moves = two follows");
         assert_eq!(
             follow_fields(&got[0].payload),
-            ("viewport".into(), 0.0, 0.0),
-            "no jump on grab"
+            ("viewport".into(), 60.0, 40.0),
+            "first follow = cursor - PRESS (grab-offset from the press, not this sample)",
         );
         assert_eq!(
             follow_fields(&got[1].payload),
             ("viewport".into(), 100.0, 80.0),
-            "the move follow is the cursor RELATIVE to the grab (grab-offset preserved)",
+            "later follow = cursor - press; origin + this keeps the grab point under the cursor",
         );
 
-        // Contrast: a docked tear-off (grab OVER its zone) stays jump-to-cursor —
-        // the follow carries the RAW cursor, not a grab-relative delta.
+        // Contrast: a docked tear-off (no floating_window declared) jumps to the
+        // RAW cursor — no grab-offset.
         let mut docked = DockPanelExternal::new("viewport");
         let _ = docked.begin_drag();
         docked.drag_to_at(
@@ -6414,9 +6391,20 @@ mod tests {
                 over_window: None,
                 source_window: Some("main"),
                 became_drag: false,
+                press_cursor: (40.0, 8.0),
             },
-        ); // grab over the panel's own zone — NOT a window move
-        docked.drag_to_at(&dummy_payload(), &mv((140.0, 88.0))); // escape + follow
+        ); // grab over the panel's own zone — NOT a window move (no floating_window)
+        docked.drag_to_at(
+            &dummy_payload(),
+            &DragUpdate {
+                over: None,
+                cursor: (140.0, 88.0),
+                over_window: None,
+                source_window: Some("main"),
+                became_drag: true,
+                press_cursor: (40.0, 8.0),
+            },
+        ); // escape + follow
         let mut got2: Vec<Intent> = Vec::new();
         docked.drain_intents(&mut |i| got2.push(i));
         let follow = got2
@@ -6426,7 +6414,7 @@ mod tests {
         assert_eq!(
             follow_fields(&follow.payload),
             ("viewport".into(), 140.0, 88.0),
-            "a docked tear-off jumps to the raw cursor (no grab-offset)",
+            "a docked tear-off jumps to the RAW cursor (no grab-offset)",
         );
     }
 
