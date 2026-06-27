@@ -10,7 +10,9 @@
 //!
 //! Run it (visible window): `cargo run -p hello-window-chrome`. Drag the dark
 //! bar to move the window; the buttons at the top-right minimize / maximize /
-//! close it.
+//! close it. R1122: drag the window's side / bottom edges or bottom corners to
+//! resize it (the chrome restores the drag-resize the OS frame would provide;
+//! the top edge is owned by the title bar).
 
 use pinion_a11y::WidgetA11y;
 use pinion_core::external::{External, StubExternal};

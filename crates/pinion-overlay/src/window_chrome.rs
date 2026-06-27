@@ -48,7 +48,9 @@ use pinion_core::scene::{
 };
 use pinion_core::style::{BoxStyle, Color, LayoutStyle, PathStyle, Stroke, TextStyle};
 
-use crate::highlight::{push_top_level, strip_tag, wrap_into_container};
+use crate::highlight::{
+    push_top_level, strip_children_with_prefix, strip_tag, wrap_into_container,
+};
 
 /// Tag carried by the injected chrome strip container. Shares the
 /// `ai-overlay/` family prefix ([`crate::HIGHLIGHT_TAG_PREFIX`]) so the
@@ -73,6 +75,30 @@ pub const WINDOW_CHROME_MAXIMIZE_TAG: &str = "ai-overlay/window-chrome#maximize"
 /// Composite tag of the draggable title-bar region. A press here begins a
 /// window move (the R1116 borderless-floater title-bar move).
 pub const WINDOW_CHROME_GRIP_TAG: &str = "ai-overlay/window-chrome#grip";
+
+/// (R1122) Shared tag prefix of the eight window-resize hit regions. All
+/// edge / corner tags start with this, so the idempotent strip-before-inject
+/// removes the whole resize border by prefix (the regions are flat siblings,
+/// not one container — see [`inject_resize_border`]).
+pub const WINDOW_RESIZE_TAG_PREFIX: &str = "ai-overlay/window-resize";
+
+/// Composite tag of the north (top) resize edge. The shell maps it to
+/// `winit::window::ResizeDirection::North` and drives `drag_resize_window`.
+pub const WINDOW_RESIZE_NORTH_TAG: &str = "ai-overlay/window-resize#north";
+/// Composite tag of the south (bottom) resize edge.
+pub const WINDOW_RESIZE_SOUTH_TAG: &str = "ai-overlay/window-resize#south";
+/// Composite tag of the west (left) resize edge.
+pub const WINDOW_RESIZE_WEST_TAG: &str = "ai-overlay/window-resize#west";
+/// Composite tag of the east (right) resize edge.
+pub const WINDOW_RESIZE_EAST_TAG: &str = "ai-overlay/window-resize#east";
+/// Composite tag of the north-west (top-left) resize corner.
+pub const WINDOW_RESIZE_NORTH_WEST_TAG: &str = "ai-overlay/window-resize#north-west";
+/// Composite tag of the north-east (top-right) resize corner.
+pub const WINDOW_RESIZE_NORTH_EAST_TAG: &str = "ai-overlay/window-resize#north-east";
+/// Composite tag of the south-west (bottom-left) resize corner.
+pub const WINDOW_RESIZE_SOUTH_WEST_TAG: &str = "ai-overlay/window-resize#south-west";
+/// Composite tag of the south-east (bottom-right) resize corner.
+pub const WINDOW_RESIZE_SOUTH_EAST_TAG: &str = "ai-overlay/window-resize#south-east";
 
 /// Visual style of the window chrome strip. All sizes are logical pixels.
 /// The colours default to a neutral dark title bar so a borderless window
@@ -170,6 +196,84 @@ pub fn inject_window_chrome(
     let mut wrapped = wrap_into_container(scene);
     strip_tag(&mut wrapped, WINDOW_CHROME_TAG);
     push_top_level(&mut wrapped, strip);
+    wrapped
+}
+
+/// Border thickness of a resize edge in logical pixels.
+const RESIZE_EDGE_PX: u32 = 6;
+/// Side length of a resize corner hit region in logical pixels. Larger than
+/// the edge so the diagonal (two-axis) corner resize has a forgiving target.
+const RESIZE_CORNER_PX: u32 = 12;
+
+/// Inject the eight client-side window-resize hit regions around the border
+/// of `scene` (R1122).
+///
+/// A borderless window (`decorations: false`) has no OS frame, so the
+/// edge / corner drag-resize the window manager normally provides is gone.
+/// This restores it as introspectable [`Scene`] nodes: four edges (N / S /
+/// W / E) and four corners (NW / NE / SW / SE), each a transparent, tagged
+/// [`Scene::Box`] the shell maps to a `winit::window::ResizeDirection` and
+/// drives via `Window::drag_resize_window`. The regions are visible in
+/// `scene/snapshot` so an AI agent can observe them (§2 #7) — the same
+/// reason custom chrome beats OS chrome.
+///
+/// Returns the scene **unchanged** when `viewport` is `None` (a headless RPC
+/// drive that never sized a window) or degenerate, mirroring
+/// [`inject_window_chrome`].
+///
+/// ## Why flat siblings, not one container
+///
+/// The regions are pushed as FLAT top-level children, not wrapped in a
+/// bounding sub-container. A resize border bounds the whole window, and
+/// [`Scene::hit_test`] resolves a container that contains the point but
+/// whose children do not as the container ITSELF — so a full-window resize
+/// container would absorb every click in the window center. Flat thin
+/// regions let a center click fall through to the content sibling, while a
+/// border click still resolves to its region. Corners are pushed AFTER the
+/// edges so they win in the overlap (last child = topmost in `hit_test`).
+///
+/// ## Layering with the chrome strip
+///
+/// The caller injects the resize border BEFORE [`inject_window_chrome`], so
+/// the chrome strip's controls and drag grip sit on top of the north edge /
+/// top corners and keep receiving clicks. The window therefore resizes from
+/// its sides, bottom, and bottom corners; the top edge is owned by the title
+/// bar (the conventional CSD trade-off, e.g. GTK / Win11 caption windows).
+///
+/// Idempotent: any pre-existing resize region (tag prefixed
+/// [`WINDOW_RESIZE_TAG_PREFIX`]) is stripped before the fresh set is appended.
+#[must_use]
+pub fn inject_resize_border(scene: Scene, viewport: Option<(u32, u32)>) -> Scene {
+    let Some((w, h)) = viewport else {
+        return scene;
+    };
+    if w < RESIZE_CORNER_PX || h < RESIZE_CORNER_PX {
+        return scene;
+    }
+    let e = RESIZE_EDGE_PX;
+    let c = RESIZE_CORNER_PX;
+
+    // Edges first (each spans the full side); corners after so they win in
+    // the overlap. Region order within the vec mirrors that priority.
+    let regions = [
+        (Rect::new(0, 0, w, e), WINDOW_RESIZE_NORTH_TAG),
+        (Rect::new(0, h - e, w, e), WINDOW_RESIZE_SOUTH_TAG),
+        (Rect::new(0, 0, e, h), WINDOW_RESIZE_WEST_TAG),
+        (Rect::new(w - e, 0, e, h), WINDOW_RESIZE_EAST_TAG),
+        (Rect::new(0, 0, c, c), WINDOW_RESIZE_NORTH_WEST_TAG),
+        (Rect::new(w - c, 0, c, c), WINDOW_RESIZE_NORTH_EAST_TAG),
+        (Rect::new(0, h - c, c, c), WINDOW_RESIZE_SOUTH_WEST_TAG),
+        (Rect::new(w - c, h - c, c, c), WINDOW_RESIZE_SOUTH_EAST_TAG),
+    ];
+
+    let mut wrapped = wrap_into_container(scene);
+    strip_children_with_prefix(&mut wrapped, WINDOW_RESIZE_TAG_PREFIX);
+    for (rect, tag) in regions {
+        push_top_level(
+            &mut wrapped,
+            Scene::Box(BoxNode::new(rect, BoxStyle::filled(Color::TRANSPARENT)).with_tag(tag)),
+        );
+    }
     wrapped
 }
 
@@ -464,5 +568,164 @@ mod tests {
             _ => 0,
         };
         here + nested
+    }
+
+    // ---- R1122 resize border ----
+
+    const ALL_RESIZE_TAGS: [&str; 8] = [
+        WINDOW_RESIZE_NORTH_TAG,
+        WINDOW_RESIZE_SOUTH_TAG,
+        WINDOW_RESIZE_WEST_TAG,
+        WINDOW_RESIZE_EAST_TAG,
+        WINDOW_RESIZE_NORTH_WEST_TAG,
+        WINDOW_RESIZE_NORTH_EAST_TAG,
+        WINDOW_RESIZE_SOUTH_WEST_TAG,
+        WINDOW_RESIZE_SOUTH_EAST_TAG,
+    ];
+
+    #[test]
+    fn resize_unknown_or_degenerate_viewport_returns_scene_unchanged() {
+        let none = inject_resize_border(empty(), None);
+        let tiny = inject_resize_border(empty(), Some((4, 4)));
+        for tag in ALL_RESIZE_TAGS {
+            assert!(find_tag(&none, tag).is_none(), "no {tag} for None viewport");
+            assert!(find_tag(&tiny, tag).is_none(), "no {tag} for tiny viewport");
+        }
+    }
+
+    #[test]
+    fn injects_all_eight_resize_regions() {
+        let out = inject_resize_border(empty(), Some((800, 600)));
+        for tag in ALL_RESIZE_TAGS {
+            assert!(find_tag(&out, tag).is_some(), "resize region {tag} present");
+            // Every resize region shares the strip-by-prefix family tag.
+            assert!(
+                tag.starts_with(WINDOW_RESIZE_TAG_PREFIX),
+                "{tag} carries the resize family prefix",
+            );
+        }
+    }
+
+    #[test]
+    fn resize_region_geometry_spans_edges_and_corners() {
+        let out = inject_resize_border(empty(), Some((800, 600)));
+        let e = RESIZE_EDGE_PX;
+        let c = RESIZE_CORNER_PX;
+        // Edges: each spans its full side, EDGE px thick.
+        assert_eq!(
+            rect_of(find_tag(&out, WINDOW_RESIZE_NORTH_TAG).unwrap()),
+            Rect::new(0, 0, 800, e)
+        );
+        assert_eq!(
+            rect_of(find_tag(&out, WINDOW_RESIZE_SOUTH_TAG).unwrap()),
+            Rect::new(0, 600 - e, 800, e),
+        );
+        assert_eq!(
+            rect_of(find_tag(&out, WINDOW_RESIZE_WEST_TAG).unwrap()),
+            Rect::new(0, 0, e, 600)
+        );
+        assert_eq!(
+            rect_of(find_tag(&out, WINDOW_RESIZE_EAST_TAG).unwrap()),
+            Rect::new(800 - e, 0, e, 600),
+        );
+        // Corners: CORNER px square anchored at each window corner.
+        assert_eq!(
+            rect_of(find_tag(&out, WINDOW_RESIZE_NORTH_WEST_TAG).unwrap()),
+            Rect::new(0, 0, c, c)
+        );
+        assert_eq!(
+            rect_of(find_tag(&out, WINDOW_RESIZE_NORTH_EAST_TAG).unwrap()),
+            Rect::new(800 - c, 0, c, c),
+        );
+        assert_eq!(
+            rect_of(find_tag(&out, WINDOW_RESIZE_SOUTH_WEST_TAG).unwrap()),
+            Rect::new(0, 600 - c, c, c),
+        );
+        assert_eq!(
+            rect_of(find_tag(&out, WINDOW_RESIZE_SOUTH_EAST_TAG).unwrap()),
+            Rect::new(800 - c, 600 - c, c, c),
+        );
+    }
+
+    #[test]
+    fn resize_regions_are_flat_siblings_not_a_bounding_container() {
+        // The regions must NOT be wrapped in one full-window container, which
+        // `Scene::hit_test` would resolve as the hit for any center click
+        // (no-child-hit ⇒ the container itself). Flat siblings let the center
+        // fall through to content. Assert there is no container tagged with the
+        // resize family prefix, only leaf Boxes.
+        let out = inject_resize_border(empty(), Some((800, 600)));
+        if let Scene::Container(c) = &out {
+            for child in &c.children {
+                if let Some(t) = child.tag() {
+                    if t.starts_with(WINDOW_RESIZE_TAG_PREFIX) {
+                        assert!(
+                            matches!(child, Scene::Box(_)),
+                            "resize region {t} is a flat Box sibling, not a container",
+                        );
+                    }
+                }
+            }
+        } else {
+            panic!("wrapped scene is a container");
+        }
+    }
+
+    /// A full-window container (real shell scenes span the window, so the
+    /// wrap container's rect contains the perimeter regions and `hit_test`
+    /// can descend into them; a default `empty()` container has a `(0,0,0,0)`
+    /// rect and would gate descent off).
+    fn full_window(w: u32, h: u32) -> Scene {
+        let mut c = ContainerNode::new(vec![]);
+        c.rect = Rect::new(0, 0, w, h);
+        Scene::Container(c)
+    }
+
+    #[test]
+    fn corner_wins_over_edge_in_the_overlap() {
+        // Corners are pushed after edges, so `Scene::hit_test` (topmost = last
+        // child) resolves the top-right corner over the north / east edges.
+        let out = inject_resize_border(full_window(800, 600), Some((800, 600)));
+        // A point inside the NE corner square (and also inside the N + E edges).
+        let hit = out.hit_test(795, 3).expect("hit inside NE corner");
+        assert_eq!(
+            hit.segments.last().map(String::as_str),
+            Some(WINDOW_RESIZE_NORTH_EAST_TAG),
+            "the corner wins where it overlaps the edges",
+        );
+    }
+
+    #[test]
+    fn center_click_falls_through_resize_border_to_content() {
+        // A tagged content box under a full-window resize border: a center
+        // click must reach the content, not snag on the (flat, thin) regions.
+        let mut content = ContainerNode::new(vec![Scene::Box(
+            BoxNode::new(
+                Rect::new(0, 0, 800, 600),
+                BoxStyle::filled(Color::rgb(0, 0, 0)),
+            )
+            .with_tag("content"),
+        )]);
+        content.rect = Rect::new(0, 0, 800, 600);
+        let out = inject_resize_border(Scene::Container(content), Some((800, 600)));
+        let hit = out.hit_test(400, 300).expect("center hits something");
+        assert_eq!(
+            hit.segments.last().map(String::as_str),
+            Some("content"),
+            "center click falls through the resize border to content",
+        );
+    }
+
+    #[test]
+    fn resize_idempotent_reinjection_replaces() {
+        let once = inject_resize_border(empty(), Some((640, 480)));
+        let twice = inject_resize_border(once, Some((640, 480)));
+        for tag in ALL_RESIZE_TAGS {
+            assert_eq!(
+                count_tag(&twice, tag),
+                1,
+                "exactly one {tag} after re-inject"
+            );
+        }
     }
 }

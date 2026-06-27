@@ -55,5 +55,9 @@ pub use focus_ring::{FOCUS_RING_TAG, FocusRingStyle, inject_focus_ring};
 pub use highlight::{HIGHLIGHT_TAG_PREFIX, HighlightStyle, clear_highlights, inject_highlight};
 pub use window_chrome::{
     WINDOW_CHROME_CLOSE_TAG, WINDOW_CHROME_GRIP_TAG, WINDOW_CHROME_MAXIMIZE_TAG,
-    WINDOW_CHROME_MINIMIZE_TAG, WINDOW_CHROME_TAG, WindowChromeStyle, inject_window_chrome,
+    WINDOW_CHROME_MINIMIZE_TAG, WINDOW_CHROME_TAG, WINDOW_RESIZE_EAST_TAG,
+    WINDOW_RESIZE_NORTH_EAST_TAG, WINDOW_RESIZE_NORTH_TAG, WINDOW_RESIZE_NORTH_WEST_TAG,
+    WINDOW_RESIZE_SOUTH_EAST_TAG, WINDOW_RESIZE_SOUTH_TAG, WINDOW_RESIZE_SOUTH_WEST_TAG,
+    WINDOW_RESIZE_TAG_PREFIX, WINDOW_RESIZE_WEST_TAG, WindowChromeStyle, inject_resize_border,
+    inject_window_chrome,
 };

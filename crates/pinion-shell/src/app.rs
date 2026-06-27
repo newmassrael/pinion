@@ -43,7 +43,7 @@ use winit::dpi::{LogicalPosition, LogicalSize, PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::{Key, NamedKey};
-use winit::window::{Window, WindowId};
+use winit::window::{ResizeDirection, Window, WindowId};
 
 use crate::executor::build_executor_and_sink;
 use crate::substrate::ShellCore;
@@ -86,17 +86,43 @@ enum ChromeAction {
     Maximize,
     /// `Window::drag_window()` — OS-driven interactive move from the grip.
     Move,
+    /// `Window::drag_resize_window(dir)` — OS-driven interactive resize from a
+    /// client-side resize edge / corner (R1122). A borderless window has no OS
+    /// frame, so the chrome supplies the resize border.
+    Resize(ResizeDirection),
 }
 
 /// (R1121 §5.16 §5.39) Map a hit-test tag to the window-chrome control it
-/// names, or `None` when the tag is not a chrome control. Pure (no winit /
-/// `self`) so the tag→action contract is unit-tested without a live window.
+/// names, or `None` when the tag is not a chrome control. Pure (uses only the
+/// `ResizeDirection` enum value, no live winit `Window` / `self`) so the
+/// tag→action contract is unit-tested without a live window.
 fn chrome_action_for_tag(tag: &str) -> Option<ChromeAction> {
     match tag {
         pinion_overlay::WINDOW_CHROME_CLOSE_TAG => Some(ChromeAction::Close),
         pinion_overlay::WINDOW_CHROME_MINIMIZE_TAG => Some(ChromeAction::Minimize),
         pinion_overlay::WINDOW_CHROME_MAXIMIZE_TAG => Some(ChromeAction::Maximize),
         pinion_overlay::WINDOW_CHROME_GRIP_TAG => Some(ChromeAction::Move),
+        // R1122 — the eight resize edges / corners.
+        pinion_overlay::WINDOW_RESIZE_NORTH_TAG => {
+            Some(ChromeAction::Resize(ResizeDirection::North))
+        }
+        pinion_overlay::WINDOW_RESIZE_SOUTH_TAG => {
+            Some(ChromeAction::Resize(ResizeDirection::South))
+        }
+        pinion_overlay::WINDOW_RESIZE_WEST_TAG => Some(ChromeAction::Resize(ResizeDirection::West)),
+        pinion_overlay::WINDOW_RESIZE_EAST_TAG => Some(ChromeAction::Resize(ResizeDirection::East)),
+        pinion_overlay::WINDOW_RESIZE_NORTH_WEST_TAG => {
+            Some(ChromeAction::Resize(ResizeDirection::NorthWest))
+        }
+        pinion_overlay::WINDOW_RESIZE_NORTH_EAST_TAG => {
+            Some(ChromeAction::Resize(ResizeDirection::NorthEast))
+        }
+        pinion_overlay::WINDOW_RESIZE_SOUTH_WEST_TAG => {
+            Some(ChromeAction::Resize(ResizeDirection::SouthWest))
+        }
+        pinion_overlay::WINDOW_RESIZE_SOUTH_EAST_TAG => {
+            Some(ChromeAction::Resize(ResizeDirection::SouthEast))
+        }
         _ => None,
     }
 }
@@ -1490,6 +1516,11 @@ impl<V: WidgetView> AppShell<V> {
                     // OS-driven interactive move; a borderless window has no OS
                     // title bar, so the chrome grip is the move handle.
                     let _ = window.drag_window();
+                }
+                ChromeAction::Resize(direction) => {
+                    // OS-driven interactive resize; a borderless window has no OS
+                    // frame, so a chrome resize edge / corner is the grab handle.
+                    let _ = window.drag_resize_window(direction);
                 }
                 ChromeAction::Close => {}
             }
@@ -3987,6 +4018,7 @@ mod r1121_chrome_action_tests {
     //! `try_chrome_press` routes to winit. Pure, so the full vocabulary is
     //! covered without a live window.
     use super::{ChromeAction, chrome_action_for_tag};
+    use winit::window::ResizeDirection;
 
     #[test]
     fn maps_every_chrome_control_tag() {
@@ -4009,10 +4041,59 @@ mod r1121_chrome_action_tests {
     }
 
     #[test]
+    fn maps_every_resize_region_tag_to_its_direction() {
+        // R1122 — the eight resize edges / corners map to the matching winit
+        // `ResizeDirection` that `try_chrome_press` feeds `drag_resize_window`.
+        let cases = [
+            (
+                pinion_overlay::WINDOW_RESIZE_NORTH_TAG,
+                ResizeDirection::North,
+            ),
+            (
+                pinion_overlay::WINDOW_RESIZE_SOUTH_TAG,
+                ResizeDirection::South,
+            ),
+            (
+                pinion_overlay::WINDOW_RESIZE_WEST_TAG,
+                ResizeDirection::West,
+            ),
+            (
+                pinion_overlay::WINDOW_RESIZE_EAST_TAG,
+                ResizeDirection::East,
+            ),
+            (
+                pinion_overlay::WINDOW_RESIZE_NORTH_WEST_TAG,
+                ResizeDirection::NorthWest,
+            ),
+            (
+                pinion_overlay::WINDOW_RESIZE_NORTH_EAST_TAG,
+                ResizeDirection::NorthEast,
+            ),
+            (
+                pinion_overlay::WINDOW_RESIZE_SOUTH_WEST_TAG,
+                ResizeDirection::SouthWest,
+            ),
+            (
+                pinion_overlay::WINDOW_RESIZE_SOUTH_EAST_TAG,
+                ResizeDirection::SouthEast,
+            ),
+        ];
+        for (tag, dir) in cases {
+            assert!(
+                matches!(chrome_action_for_tag(tag), Some(ChromeAction::Resize(d)) if d == dir),
+                "{tag} maps to ResizeDirection::{dir:?}",
+            );
+        }
+    }
+
+    #[test]
     fn non_chrome_tags_are_not_controls() {
         assert!(chrome_action_for_tag("some-widget").is_none());
         assert!(chrome_action_for_tag("ai-overlay/focus-ring").is_none());
         // The strip CONTAINER tag is not itself a control (its children are).
         assert!(chrome_action_for_tag(pinion_overlay::WINDOW_CHROME_TAG).is_none());
+        // The resize family PREFIX is not itself a control (the suffixed
+        // edge / corner tags are).
+        assert!(chrome_action_for_tag(pinion_overlay::WINDOW_RESIZE_TAG_PREFIX).is_none());
     }
 }

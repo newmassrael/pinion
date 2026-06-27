@@ -189,6 +189,20 @@ pub(crate) fn strip_tag(scene: &mut Scene, tag: &str) {
     }
 }
 
+/// Strip every top-level child whose tag starts with `prefix`. The
+/// [`crate::window_chrome`] resize border (R1122) injects its eight edge /
+/// corner hit regions as FLAT siblings of the content rather than in one
+/// bounding sub-container (a full-window container would absorb every
+/// center click via [`Scene::hit_test`]'s "no child hit ⇒ the container is
+/// the hit" rule). Flat siblings have no single container tag to strip, so
+/// idempotent re-injection strips them by their shared tag prefix instead.
+pub(crate) fn strip_children_with_prefix(scene: &mut Scene, prefix: &str) {
+    if let Scene::Container(c) = scene {
+        c.children
+            .retain(|child| !child.tag().is_some_and(|t| t.starts_with(prefix)));
+    }
+}
+
 /// Re-export of the hit-path shape so callers can build their own
 /// path strings without pulling pinion-core directly.
 pub use pinion_core::scene::HitPath as HighlightHitPath;

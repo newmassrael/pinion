@@ -3564,12 +3564,18 @@ impl<V: WidgetView> ShellCore<V> {
         window_id: Option<&str>,
     ) -> Scene {
         let key = window_id.unwrap_or(pinion_runtime::DEFAULT_WINDOW);
-        // R1121 §5.16 §5.39 PR-38 — client-side window chrome FIRST (under the
+        // R1122 §5.16 §5.39 — resize border UNDER the chrome strip: a chromed
+        // borderless window has no OS frame, so client-side edge / corner
+        // regions restore drag-resize. Injected first so the chrome strip
+        // (next) layers on top of the north edge / top corners and keeps its
+        // controls clickable. No-op for a window without client-side chrome.
+        let resizable = self.apply_resize_border(scene, w, h, window_id);
+        // R1121 §5.16 §5.39 PR-38 — client-side window chrome (under the
         // transient ring / drag-image), so a chromed window's title bar +
         // controls paint on the strip the content was inset below. A window
         // whose `window_chrome` hook returns `None` is a no-op (byte-identical
         // to pre-R1121).
-        let chromed = self.apply_window_chrome(scene, w, h, window_id);
+        let chromed = self.apply_window_chrome(resizable, w, h, window_id);
         let ringed = self.apply_focus_ring(chromed, w, h);
         self.apply_drag_image(ringed, w, h, key)
     }
@@ -3593,6 +3599,29 @@ impl<V: WidgetView> ShellCore<V> {
                 pinion_overlay::inject_window_chrome(scene, &title, false, Some((w, h)), style)
             }
             None => scene,
+        }
+    }
+
+    /// (R1122 §5.16 §5.39 §2 #7) Inject the eight client-side window-resize
+    /// edge / corner hit regions when the window has client-side chrome (the
+    /// same [`WidgetView::window_chrome`](crate::WidgetView::window_chrome)
+    /// gate as [`Self::apply_window_chrome`]): a borderless window that draws
+    /// its own title bar also needs its own resize border, since the OS frame
+    /// that normally provides edge-drag-resize is gone. The regions are
+    /// introspectable [`Scene`] nodes (`scene/snapshot`) the shell maps to a
+    /// `winit::window::ResizeDirection` in `AppShell::try_chrome_press`. A
+    /// window with no client-side chrome is unchanged (OS frame resizes it).
+    ///
+    /// Resize travels WITH chrome rather than on its own hook: every current
+    /// consumer that draws chrome also wants resize, and a naked borderless
+    /// window (no chrome) is the fullscreen-game surface that wants neither. A
+    /// future fixed-size chromed dialog would add a `resizable` toggle to
+    /// `WindowChromeStyle` then (no speculative API now — R1121.1 YAGNI).
+    fn apply_resize_border(&self, scene: Scene, w: u32, h: u32, window_id: Option<&str>) -> Scene {
+        if self.window_chrome_for(window_id).is_some() {
+            pinion_overlay::inject_resize_border(scene, Some((w, h)))
+        } else {
+            scene
         }
     }
 
@@ -6762,5 +6791,150 @@ mod r1121_window_chrome_tests {
             Some(pinion_overlay::WINDOW_CHROME_GRIP_TAG),
             "cursor over the strip background resolves to the move grip",
         );
+    }
+
+    // ---- R1122 §5.16 §5.39 client-side resize border ----
+    //
+    // A chromed borderless window also gets eight resize edge / corner regions
+    // (it has no OS frame to drag-resize). They are injected UNDER the chrome
+    // strip so the title bar's controls keep winning at the top.
+
+    const ALL_RESIZE_TAGS: [&str; 8] = [
+        pinion_overlay::WINDOW_RESIZE_NORTH_TAG,
+        pinion_overlay::WINDOW_RESIZE_SOUTH_TAG,
+        pinion_overlay::WINDOW_RESIZE_WEST_TAG,
+        pinion_overlay::WINDOW_RESIZE_EAST_TAG,
+        pinion_overlay::WINDOW_RESIZE_NORTH_WEST_TAG,
+        pinion_overlay::WINDOW_RESIZE_NORTH_EAST_TAG,
+        pinion_overlay::WINDOW_RESIZE_SOUTH_WEST_TAG,
+        pinion_overlay::WINDOW_RESIZE_SOUTH_EAST_TAG,
+    ];
+
+    #[test]
+    fn borderless_window_injects_all_resize_regions() {
+        let mut sc = ShellCore::<Borderless>::new();
+        let scene = sc.compute_paint_scene(400, 300);
+        for tag in ALL_RESIZE_TAGS {
+            assert!(
+                has_tag(&scene, tag),
+                "chromed window paints resize region {tag}"
+            );
+        }
+    }
+
+    #[test]
+    fn decorated_window_has_no_resize_border() {
+        let mut sc = ShellCore::<Decorated>::new();
+        let scene = sc.compute_paint_scene(400, 300);
+        for tag in ALL_RESIZE_TAGS {
+            assert!(
+                !has_tag(&scene, tag),
+                "a decorated window relies on the OS frame — no resize region {tag}",
+            );
+        }
+    }
+
+    #[test]
+    fn naked_borderless_window_has_no_resize_border() {
+        // Resize travels with chrome: a naked borderless window (no chrome
+        // hook) is the fullscreen-game surface and wants no resize border.
+        let mut sc = ShellCore::<NakedBorderless>::new();
+        let scene = sc.compute_paint_scene(400, 300);
+        for tag in ALL_RESIZE_TAGS {
+            assert!(
+                !has_tag(&scene, tag),
+                "a naked borderless window gets no resize region {tag}"
+            );
+        }
+    }
+
+    #[test]
+    fn resize_border_is_introspectable_in_the_pure_mirror() {
+        // §2 #7: the resize regions an AI drives must appear in scene/snapshot.
+        let mut sc = ShellCore::<Borderless>::new();
+        let mirror = sc.compute_paint_scene_pure(400, 300);
+        for tag in ALL_RESIZE_TAGS {
+            assert!(
+                has_tag(&mirror, tag),
+                "resize region {tag} is introspectable in the mirror"
+            );
+        }
+    }
+
+    #[test]
+    fn cursor_over_resize_regions_resolves_their_tags() {
+        // The same router hit-test `try_chrome_press` reads. Window 400x300,
+        // chrome strip = top 32px, resize edge = 6px, corner = 12px.
+        use pinion_runtime::PointerId;
+        let mut sc = ShellCore::<Borderless>::new();
+        let boot = sc.compute_paint_scene(400, 300);
+        sc.finalize_frame(boot);
+
+        // Each probe: (x, y, expected resize tag). The south / left / right
+        // (below the strip) edges and the bottom corners are reachable; the
+        // north edge + top corners are owned by the chrome strip (next test).
+        let probes = [
+            (200.0, 297.0, pinion_overlay::WINDOW_RESIZE_SOUTH_TAG),
+            (3.0, 150.0, pinion_overlay::WINDOW_RESIZE_WEST_TAG),
+            (397.0, 150.0, pinion_overlay::WINDOW_RESIZE_EAST_TAG),
+            (3.0, 295.0, pinion_overlay::WINDOW_RESIZE_SOUTH_WEST_TAG),
+            (395.0, 295.0, pinion_overlay::WINDOW_RESIZE_SOUTH_EAST_TAG),
+        ];
+        for (x, y, tag) in probes {
+            sc.cursor_moved(PointerId::MOUSE, x, y);
+            assert_eq!(
+                sc.hover_target(PointerId::MOUSE),
+                Some(tag),
+                "cursor at ({x},{y}) resolves to resize region {tag}",
+            );
+        }
+    }
+
+    #[test]
+    fn chrome_strip_wins_over_resize_border_at_the_top() {
+        // The layering invariant: resize is injected UNDER the chrome strip, so
+        // the top edge / top corners do NOT shadow the title bar. The close
+        // button (top-right) and the grip (top) must still resolve to chrome.
+        use pinion_runtime::PointerId;
+        let mut sc = ShellCore::<Borderless>::new();
+        let boot = sc.compute_paint_scene(400, 300);
+        sc.finalize_frame(boot);
+
+        // (394, 3) is inside BOTH the close button (x>=354) and the north-east
+        // resize corner (x>=388, y<12) — the genuine overlap. Chrome wins.
+        sc.cursor_moved(PointerId::MOUSE, 394.0, 3.0);
+        assert_eq!(
+            sc.hover_target(PointerId::MOUSE),
+            Some(pinion_overlay::WINDOW_CHROME_CLOSE_TAG),
+            "the close button is not shadowed by the north-east resize corner",
+        );
+        // Top edge over the strip background resolves to the move grip, not
+        // the north resize edge.
+        sc.cursor_moved(PointerId::MOUSE, 150.0, 3.0);
+        assert_eq!(
+            sc.hover_target(PointerId::MOUSE),
+            Some(pinion_overlay::WINDOW_CHROME_GRIP_TAG),
+            "the title-bar grip is not shadowed by the north resize edge",
+        );
+    }
+
+    #[test]
+    fn content_center_is_not_shadowed_by_the_resize_border() {
+        // The flat-sibling design: a click in the window center falls through
+        // the full-window resize border to the content (a full-window resize
+        // container would absorb it).
+        use pinion_runtime::PointerId;
+        let mut sc = ShellCore::<Borderless>::new();
+        let boot = sc.compute_paint_scene(400, 300);
+        sc.finalize_frame(boot);
+        sc.cursor_moved(PointerId::MOUSE, 200.0, 150.0);
+        let hover = sc.hover_target(PointerId::MOUSE);
+        for tag in ALL_RESIZE_TAGS {
+            assert_ne!(
+                hover,
+                Some(tag),
+                "center is not snagged by resize region {tag}"
+            );
+        }
     }
 }
