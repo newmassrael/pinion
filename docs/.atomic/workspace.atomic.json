@@ -55862,6 +55862,58 @@
         "R1114 drag-image live pixel still pending the sprag rev bump (external dependency)"
       ]
     },
+    "Round 1117": {
+      "decision_summary": "Round 1117: §5.15 §5.51 PR-38 press-precise window-move grab — DragUpdate.press_cursor enrichment; the borderless title-bar move anchors at the PRESS (cursor - press_cursor), exact regardless of first-move stray",
+      "changes_bullets": [
+        "DragUpdate.press_cursor: window-logical cursor at the press opening the drag session (§5.15 enrich)",
+        "router fills it at begin_drag from the held cursor; DragSession.press_cursor forwarded each update",
+        "widget window-move follow = cursor - press_cursor (grab-offset from the PRESS not the first sample)",
+        "removed the R1116 first-sample anchor + follow_coord: press_cursor is the single grab-origin SSOT",
+        "measure-first: ~30px was NOT HW latency but a grab-anchor precision bug; live slow-drag exact (0,0)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace green; clippy -D pedantic; core 2505 + runtime 381 + widget-paint 606",
+        "r1116 unit reworked: a large FIRST move (+60,+40) still yields cursor-press follow (press-anchored)",
+        "all DragUpdate sites + upd() carry press_cursor (additive; tear-off raw-cursor path unchanged)",
+        "live :0/mutter XTEST: slow title-bar drag grab err=(0,0); fast residual = velocity*WM-latency trail",
+        "r1116_window_move.py 30+ assert still green (move path now press_cursor-driven)"
+      ],
+      "impact_refs": [
+        "5.15",
+        "5.51"
+      ],
+      "carry_forward_bullets": [
+        "fast-drag motion-trail (async set_outer_position apply) = inherent app-driven move latency, HW ⑥",
+        "OS interactive move (winit drag_window) is smoother but breaks redock-on-drag; app-driven is correct",
+        "scene/drag fixed-frame accumulates vs live frame; precision verified by unit + live, not the demo",
+        "R1114 drag-image live pixel still pending the sprag rev bump (external dependency)"
+      ],
+      "publishable_decision_summary": "Round 1117: §5.15 §5.51 PR-38 press-precise window-move grab — DragUpdate.press_cursor enrichment; the borderless title-bar move anchors at the PRESS (cursor - press_cursor), exact regardless of first-move stray",
+      "publishable_changes_bullets": [
+        "DragUpdate.press_cursor: window-logical cursor at the press opening the drag session (§5.15 enrich)",
+        "router fills it at begin_drag from the held cursor; DragSession.press_cursor forwarded each update",
+        "widget window-move follow = cursor - press_cursor (grab-offset from the PRESS not the first sample)",
+        "removed the R1116 first-sample anchor + follow_coord: press_cursor is the single grab-origin SSOT",
+        "measure-first: ~30px was NOT HW latency but a grab-anchor precision bug; live slow-drag exact (0,0)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace green; clippy -D pedantic; core 2505 + runtime 381 + widget-paint 606",
+        "r1116 unit reworked: a large FIRST move (+60,+40) still yields cursor-press follow (press-anchored)",
+        "all DragUpdate sites + upd() carry press_cursor (additive; tear-off raw-cursor path unchanged)",
+        "live :0/mutter XTEST: slow title-bar drag grab err=(0,0); fast residual = velocity*WM-latency trail",
+        "r1116_window_move.py 30+ assert still green (move path now press_cursor-driven)"
+      ],
+      "publishable_impact_refs": [
+        "5.15",
+        "5.51"
+      ],
+      "publishable_carry_forward_bullets": [
+        "fast-drag motion-trail (async set_outer_position apply) = inherent app-driven move latency, HW ⑥",
+        "OS interactive move (winit drag_window) is smoother but breaks redock-on-drag; app-driven is correct",
+        "scene/drag fixed-frame accumulates vs live frame; precision verified by unit + live, not the demo",
+        "R1114 drag-image live pixel still pending the sprag rev bump (external dependency)"
+      ]
+    },
     "Round 12": {
       "decision_summary": "Round 12 — first implementation atomic: pinion-core Button widget SCXML state machine integration (SCE consumer pattern R15 동형)",
       "changes_bullets": [
