@@ -73,6 +73,34 @@ use crate::{
 /// holds exactly one entry for single-window bindings and the
 /// per-window dispatch code paths are no-op-per-spec for the missing
 /// secondaries.
+/// (R1121 §5.16 §5.39) A client-side window-chrome control a left-press
+/// resolved to (a borderless window's title-bar buttons / drag grip). Mapped
+/// from the [`pinion_overlay`] chrome control tag in [`AppShell::try_chrome_press`].
+#[derive(Clone, Copy)]
+enum ChromeAction {
+    /// Close the window (routes to `event_loop.exit()`, the `CloseRequested` path).
+    Close,
+    /// `Window::set_minimized(true)`.
+    Minimize,
+    /// `Window::set_maximized(toggle)`.
+    Maximize,
+    /// `Window::drag_window()` — OS-driven interactive move from the grip.
+    Move,
+}
+
+/// (R1121 §5.16 §5.39) Map a hit-test tag to the window-chrome control it
+/// names, or `None` when the tag is not a chrome control. Pure (no winit /
+/// `self`) so the tag→action contract is unit-tested without a live window.
+fn chrome_action_for_tag(tag: &str) -> Option<ChromeAction> {
+    match tag {
+        pinion_overlay::WINDOW_CHROME_CLOSE_TAG => Some(ChromeAction::Close),
+        pinion_overlay::WINDOW_CHROME_MINIMIZE_TAG => Some(ChromeAction::Minimize),
+        pinion_overlay::WINDOW_CHROME_MAXIMIZE_TAG => Some(ChromeAction::Maximize),
+        pinion_overlay::WINDOW_CHROME_GRIP_TAG => Some(ChromeAction::Move),
+        _ => None,
+    }
+}
+
 struct WindowSlot<R: VelloRenderer> {
     /// R46.5 §5.16 suspend / resume lifecycle (R46.3.4 pattern).
     /// Lifted from the single-window `AppShell` field of the same name.
@@ -1379,9 +1407,21 @@ impl<V: WidgetView> AppShell<V> {
     /// Wayland `wl_pointer` button / macOS `NSEvent` / Windows
     /// `WM_*BUTTONDOWN`) under one enum, so these five arms cover every
     /// backend. Other button / state combinations are ignored.
-    fn handle_mouse_button(&mut self, spec_id: &str, button: MouseButton, state: ElementState) {
+    fn handle_mouse_button(
+        &mut self,
+        spec_id: &str,
+        button: MouseButton,
+        state: ElementState,
+        event_loop: &ActiveEventLoop,
+    ) {
         match (button, state) {
             (MouseButton::Left, ElementState::Pressed) => {
+                // R1121 §5.16 §5.39 — a press on a client-side window-chrome
+                // control (borderless title bar) is consumed by the shell, not
+                // forwarded to widget routing.
+                if self.try_chrome_press(spec_id, event_loop) {
+                    return;
+                }
                 self.core
                     .mouse_pressed_for_window(spec_id, PointerId::MOUSE);
             }
@@ -1403,6 +1443,58 @@ impl<V: WidgetView> AppShell<V> {
             }
             _ => {}
         }
+    }
+
+    /// (R1121 §5.16 §5.39) Resolve `spec_id`'s live winit `Window` handle, or
+    /// `None` when the window has no active render slot.
+    fn window_arc_for_spec(&self, spec_id: &str) -> Option<&Arc<Window>> {
+        let window_id = self.spec_id_to_window_id.get(spec_id).copied()?;
+        Self::slot_window(self.windows.get(&window_id)?)
+    }
+
+    /// (R1121 §5.16 §5.39 §2 #2) Intercept a left-press that landed on a
+    /// client-side window-chrome control (a borderless window's title bar).
+    /// Returns `true` when the press hit a control and was consumed (the
+    /// normal widget routing is then skipped).
+    ///
+    /// The control is read from the live hover target the `CursorMoved` arm
+    /// already recorded, so the SAME hit-test the router uses drives it — an AI
+    /// `scene/click` on the introspectable control tag reaches this identical
+    /// path (§2 #2). `minimize` / `maximize` / move map straight to the winit
+    /// `Window` (pinion owns the handle); `close` routes to `event_loop.exit()`,
+    /// the same path `WindowEvent::CloseRequested` (the OS X on a decorated
+    /// window) takes. Per-window close (close a secondary, keep the app) needs a
+    /// binding close seam and is a follow-up — this matches the current close
+    /// model exactly.
+    fn try_chrome_press(&mut self, spec_id: &str, event_loop: &ActiveEventLoop) -> bool {
+        let Some(action) = self
+            .core
+            .hover_target_for_window(spec_id, PointerId::MOUSE)
+            .and_then(chrome_action_for_tag)
+        else {
+            return false;
+        };
+        if matches!(action, ChromeAction::Close) {
+            eprintln!(
+                "shell: final state = {}",
+                V::fmt_state_log(self.core.cached_state()),
+            );
+            event_loop.exit();
+            return true;
+        }
+        if let Some(window) = self.window_arc_for_spec(spec_id) {
+            match action {
+                ChromeAction::Minimize => window.set_minimized(true),
+                ChromeAction::Maximize => window.set_maximized(!window.is_maximized()),
+                ChromeAction::Move => {
+                    // OS-driven interactive move; a borderless window has no OS
+                    // title bar, so the chrome grip is the move handle.
+                    let _ = window.drag_window();
+                }
+                ChromeAction::Close => {}
+            }
+        }
+        true
     }
 
     /// R51.62 §5.40 — dispatch one AT-side event reported by
@@ -2164,7 +2256,7 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
             // arc above does the same `to_owned()`).
             WindowEvent::MouseInput { state, button, .. } => {
                 let sid = spec_id.to_owned();
-                self.handle_mouse_button(&sid, button, state);
+                self.handle_mouse_button(&sid, button, state, event_loop);
             }
             // (R51.186 §5.45 R55.C.2) winit `MouseWheel` events do
             // not carry a position field — winit follows the same
@@ -3886,5 +3978,41 @@ mod tests {
         assert!(scale_is_non_identity(1.5));
         // A downscaled (< 1.0) display is also non-identity.
         assert!(scale_is_non_identity(0.75));
+    }
+}
+
+#[cfg(test)]
+mod r1121_chrome_action_tests {
+    //! R1121 §5.16 §5.39 — the window-chrome tag -> control mapping that
+    //! `try_chrome_press` routes to winit. Pure, so the full vocabulary is
+    //! covered without a live window.
+    use super::{ChromeAction, chrome_action_for_tag};
+
+    #[test]
+    fn maps_every_chrome_control_tag() {
+        assert!(matches!(
+            chrome_action_for_tag(pinion_overlay::WINDOW_CHROME_CLOSE_TAG),
+            Some(ChromeAction::Close)
+        ));
+        assert!(matches!(
+            chrome_action_for_tag(pinion_overlay::WINDOW_CHROME_MINIMIZE_TAG),
+            Some(ChromeAction::Minimize)
+        ));
+        assert!(matches!(
+            chrome_action_for_tag(pinion_overlay::WINDOW_CHROME_MAXIMIZE_TAG),
+            Some(ChromeAction::Maximize)
+        ));
+        assert!(matches!(
+            chrome_action_for_tag(pinion_overlay::WINDOW_CHROME_GRIP_TAG),
+            Some(ChromeAction::Move)
+        ));
+    }
+
+    #[test]
+    fn non_chrome_tags_are_not_controls() {
+        assert!(chrome_action_for_tag("some-widget").is_none());
+        assert!(chrome_action_for_tag("ai-overlay/focus-ring").is_none());
+        // The strip CONTAINER tag is not itself a control (its children are).
+        assert!(chrome_action_for_tag(pinion_overlay::WINDOW_CHROME_TAG).is_none());
     }
 }

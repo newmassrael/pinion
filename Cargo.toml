@@ -23,6 +23,7 @@ members = [
     "crates/pinion-platform-file-dialog",
     "crates/pinion-platform-fonts",
     "examples/hello-button",
+    "examples/hello-window-chrome",
     "examples/hello-button-tui",
     "examples/hello-dnd",
     "examples/hello-filedrop",

@@ -834,6 +834,104 @@ fn inject_styled_focus_ring<V: WidgetView>(
     }
 }
 
+/// (R1121 §5.16 §5.21) Inset the window content below a client-side chrome
+/// strip of `chrome_h` logical pixels. A borderless window (`decorations:
+/// false`) draws its own chrome (title bar + controls) via
+/// [`pinion_overlay::inject_window_chrome`]; that strip occupies the top
+/// `chrome_h` px, so the content must be laid out below it.
+///
+/// Wraps `content` in a `Column` flex container `[spacer(chrome_h),
+/// content(flex-fill)]`: the spacer reserves the strip's height and the
+/// content flex-fills the remainder, so the layout engine places the
+/// content in `(0, chrome_h, w, h - chrome_h)`. The shell then injects the
+/// chrome overlay onto the reserved strip post-layout. Applied identically
+/// on the live paint path and the side-effect-free introspection mirror so
+/// `scene/snapshot` matches the painted geometry (§2 #7).
+///
+/// The content's own root layout gets the `view_splitter` flex-main idiom
+/// (`flex-basis: 0; flex-grow: 1; min-<main>: 0`, R1086) so a large content
+/// child shrinks into the inset region instead of overflowing. This inlines
+/// the splitter's private `apply_flex_main` (the shell is its 2nd consumer;
+/// a 3rd lifts it to a shared home).
+fn chrome_inset_wrap(content: Scene, chrome_h: u32) -> Scene {
+    use pinion_core::scene::{BoxNode, ContainerNode, Rect};
+    use pinion_core::style::{AlignItems, BoxStyle, Color, FlexDirection, LayoutStyle, SizeValue};
+    let spacer = Scene::Box(
+        BoxNode::new(Rect::new(0, 0, 0, 0), BoxStyle::filled(Color::TRANSPARENT)).with_layout(
+            LayoutStyle::new()
+                .with_flex_basis(SizeValue::Px(chrome_h))
+                .with_flex_grow(0.0),
+        ),
+    );
+    let filled = set_scene_flex_fill_vertical(content);
+    Scene::Container(
+        ContainerNode::new(vec![spacer, filled]).with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Column)
+                .with_align_items(AlignItems::Stretch),
+        ),
+    )
+}
+
+/// (R1121) Inset `scene` below a chrome strip iff `chrome_h` is `Some` (a
+/// borderless window). The one-line guard shared by every layout pass so
+/// the hot paint fn stays under the line cap.
+fn apply_chrome_inset(scene: Scene, chrome_h: Option<u32>) -> Scene {
+    match chrome_h {
+        Some(h) => chrome_inset_wrap(scene, h),
+        None => scene,
+    }
+}
+
+/// (R1121 §5.21) Apply the vertical flex-main idiom (`flex-basis: 0;
+/// flex-grow: 1; min-height: 0`) to a `Scene`'s own root layout so it fills
+/// — and can shrink within — a `Column` flex parent's main axis. Mirrors
+/// `view_splitter::apply_flex_main` for the [`chrome_inset_wrap`] consumer:
+/// every variant carrying a `layout` field is mutated in place; `Scroll` /
+/// `Effect` (no `layout` field) auto-wrap in a thin flex Container.
+fn set_scene_flex_fill_vertical(scene: Scene) -> Scene {
+    use pinion_core::scene::ContainerNode;
+    use pinion_core::style::{LayoutStyle, Size, SizeValue};
+    fn fill(layout: LayoutStyle) -> LayoutStyle {
+        layout
+            .with_flex_basis(SizeValue::Px(0))
+            .with_flex_grow(1.0)
+            .with_min_size(Size::auto().with_height(SizeValue::Px(0)))
+    }
+    match scene {
+        Scene::Container(mut c) => {
+            c.layout = fill(c.layout);
+            Scene::Container(c)
+        }
+        Scene::Box(mut b) => {
+            b.layout = fill(b.layout);
+            Scene::Box(b)
+        }
+        Scene::Text(mut t) => {
+            t.layout = fill(t.layout);
+            Scene::Text(t)
+        }
+        Scene::Image(mut i) => {
+            i.layout = fill(i.layout);
+            Scene::Image(i)
+        }
+        Scene::External(mut e) => {
+            e.layout = fill(e.layout);
+            Scene::External(e)
+        }
+        Scene::ImmediateModeNode(mut im) => {
+            im.layout = fill(im.layout);
+            Scene::ImmediateModeNode(im)
+        }
+        // `Scroll` / `Effect` (and any future `#[non_exhaustive]` variant
+        // without a `layout` field) wrap in a thin flex Container carrying
+        // the same props; no `BoxStyle` so the visual shape is unchanged.
+        other => {
+            Scene::Container(ContainerNode::new(vec![other]).with_layout(fill(LayoutStyle::new())))
+        }
+    }
+}
+
 impl<V: WidgetView> ShellCore<V> {
     /// R51.76 §5.40 — borrow the cached state projection. Tests
     /// observe widget state transitions through this accessor.
@@ -3108,13 +3206,17 @@ impl<V: WidgetView> ShellCore<V> {
         // engine override); the first pass reads its scroll-dirty bool return,
         // the re-passes discard it. Folding the layout into the dispatch closure
         // would double-lay-out the first pass.
+        // R1121 §5.16 §5.21 — borderless windows inset content below their
+        // chrome strip (`Some(height)`); decorated windows are `None` (no-op).
+        let chrome_h = self.window_chrome_for(window_id).map(|(_, s)| s.height_px);
         let mut paint_scene = {
             let core = &self.core;
             let run_view = || {
-                core.root_owner().run(|| match window_id {
+                let view = core.root_owner().run(|| match window_id {
                     Some(id) => V::view_for_window(id, cached_state, &frame),
                     None => V::view(cached_state, &frame),
-                })
+                });
+                apply_chrome_inset(view, chrome_h)
             };
             // R1072 §5.37 — the opt-in self-hosted measure override (None unless
             // `PINION_TEXT_ENGINE` is enabled). Borrows `self.text_engine` as a
@@ -3462,8 +3564,63 @@ impl<V: WidgetView> ShellCore<V> {
         window_id: Option<&str>,
     ) -> Scene {
         let key = window_id.unwrap_or(pinion_runtime::DEFAULT_WINDOW);
-        let ringed = self.apply_focus_ring(scene, w, h);
+        // R1121 §5.16 §5.39 PR-38 — client-side window chrome FIRST (under the
+        // transient ring / drag-image), so a borderless window's title bar +
+        // controls paint on the strip the content was inset below. A
+        // decorated window resolves `None` and this is a no-op (byte-identical
+        // to pre-R1121).
+        let chromed = self.apply_window_chrome(scene, w, h, window_id);
+        let ringed = self.apply_focus_ring(chromed, w, h);
         self.apply_drag_image(ringed, w, h, key)
+    }
+
+    /// (R1121 §5.16 §5.39 §2 #7) Inject the client-side window-chrome strip
+    /// (title bar + close / minimize / maximize controls) when the window
+    /// `window_id` declared `decorations: false`. The buttons are real,
+    /// introspectable [`Scene`] nodes an AI agent observes and drives via
+    /// `scene/snapshot` + a click on the composite control tag — the reason
+    /// custom chrome beats OS chrome, whose controls live outside the scene
+    /// tree. A decorated window resolves `None` and the scene is unchanged.
+    ///
+    /// `is_maximized` is `false` for R1121 (the maximize button toggles; the
+    /// per-window maximized state lives in `AppShell`/winit and is threaded
+    /// in a follow-up). Shared by the live paint path and the introspection
+    /// mirror (both route through [`Self::apply_window_overlays`]).
+    fn apply_window_chrome(&self, scene: Scene, w: u32, h: u32, window_id: Option<&str>) -> Scene {
+        match self.window_chrome_for(window_id) {
+            Some((title, style)) => {
+                pinion_overlay::inject_window_chrome(scene, &title, false, Some((w, h)), style)
+            }
+            None => scene,
+        }
+    }
+
+    /// (R1121 §5.16 §2 #7) Resolve client-side chrome for the window being
+    /// painted: `Some((title, style))` when its [`crate::WindowSpec`] declared
+    /// `decorations: false` (borderless → pinion owns the chrome), else `None`
+    /// (OS-decorated). `window_id == None` is the primary window (the first
+    /// declared spec); `Some(id)` matches by canonical id. The title is the
+    /// window's own declared title. Reads the same `windows_signal` / `windows`
+    /// SSOT as [`Self::declared_window_specs`].
+    fn window_chrome_for(
+        &self,
+        window_id: Option<&str>,
+    ) -> Option<(String, pinion_overlay::WindowChromeStyle)> {
+        let core = &self.core;
+        let specs = core.root_owner().run(|| match V::windows_signal() {
+            Some(sig) => sig.get(),
+            None => V::windows(),
+        });
+        let spec = match window_id {
+            None => specs.into_iter().next()?,
+            Some(id) => specs.into_iter().find(|s| s.id.as_ref() == id)?,
+        };
+        (!spec.decorations).then(|| {
+            (
+                spec.title.to_string(),
+                pinion_overlay::WindowChromeStyle::default(),
+            )
+        })
     }
 
     /// R670.B §5.16 — per-window paint scene producer. Same pipeline
@@ -3566,10 +3723,14 @@ impl<V: WidgetView> ShellCore<V> {
     ) -> Scene {
         let cached_state = *self.core.cached_state();
         let frame = Frame::new();
+        let chrome_h = self.window_chrome_for(window_id).map(|(_, s)| s.height_px);
         let mut paint_scene = self.core.root_owner().run(|| match window_id {
             Some(id) => V::view_for_window(id, cached_state, &frame),
             None => V::view(cached_state, &frame),
         });
+        // R1121 §5.16 §5.21 — mirror the live path's borderless content inset so
+        // the introspection snapshot matches the painted geometry (§2 #7).
+        paint_scene = apply_chrome_inset(paint_scene, chrome_h);
         // R1072 §5.37 — measure the introspection mirror with the same opt-in
         // engine the production paint path uses, so `scene/layout` reports the
         // boxes that were (or would be) painted via §5.37 (Scene-as-data coherence,
@@ -6377,6 +6538,195 @@ mod r863_bounds_union_tests {
             nodes[0].bounds,
             Some(scrolled_rect),
             "single-fragment node = its own tag"
+        );
+    }
+}
+
+#[cfg(test)]
+mod r1121_window_chrome_tests {
+    //! R1121 §5.16 §5.39 §2 #7 PR-38 — a borderless window (`decorations:
+    //! false`) gets a client-side chrome strip (title + close/min/max + grip)
+    //! injected into its paint scene with the content inset below it; a
+    //! decorated window (the default) is byte-identical (no chrome, no inset).
+    use crate::test_fixtures::TestRenderer;
+    use crate::{ShellCore, SizeStrategy, WidgetView, WindowSpec};
+    use pinion_a11y::WidgetA11y;
+    use pinion_core::external::{External, StubExternal};
+    use pinion_core::scene::{ContainerNode, Rect, Scene};
+    use pinion_core::style::{LayoutStyle, Size, SizeValue};
+    use pinion_core::widgets::button::{ButtonEvent, ButtonState};
+    use pinion_core::{Frame, WidgetCore};
+
+    const CONTENT_TAG: &str = "r1121-content";
+    const CHROME_H: u32 = 32; // WindowChromeStyle::default().height_px
+
+    fn content_view() -> Scene {
+        let mut c = ContainerNode::new(Vec::new());
+        c.tag = Some(std::borrow::Cow::Borrowed(CONTENT_TAG));
+        c.layout = LayoutStyle::new().with_size(
+            Size::auto()
+                .with_width(SizeValue::Percent(100))
+                .with_height(SizeValue::Percent(100)),
+        );
+        Scene::Container(c)
+    }
+
+    macro_rules! chrome_fixture {
+        ($name:ident, $decorations:literal, $title:literal) => {
+            struct $name;
+            impl WidgetCore for $name {
+                type State = ButtonState;
+                type Event = ButtonEvent;
+                fn create_external() -> Box<dyn External> {
+                    Box::new(StubExternal)
+                }
+                fn tag() -> &'static str {
+                    CONTENT_TAG
+                }
+                fn read_state(_: &Scene) -> Self::State {
+                    ButtonState::Idle
+                }
+                fn view(_: Self::State, _: &Frame) -> Scene {
+                    content_view()
+                }
+                fn event_name(_: Self::Event) -> &'static str {
+                    "__internal__"
+                }
+                fn title() -> &'static str {
+                    $title
+                }
+            }
+            impl WidgetA11y for $name {}
+            impl WidgetView for $name {
+                type Renderer = TestRenderer;
+                fn initial_size_strategy() -> SizeStrategy {
+                    SizeStrategy::Fixed {
+                        width: 400,
+                        height: 300,
+                    }
+                }
+                fn windows() -> Vec<WindowSpec> {
+                    vec![
+                        WindowSpec::new(
+                            "main",
+                            $title,
+                            SizeStrategy::Fixed {
+                                width: 400,
+                                height: 300,
+                            },
+                        )
+                        .with_decorations($decorations),
+                    ]
+                }
+            }
+        };
+    }
+    chrome_fixture!(Borderless, false, "My Terminal");
+    chrome_fixture!(Decorated, true, "Decorated");
+
+    fn rect_of(scene: &Scene, tag: &str) -> Option<Rect> {
+        scene.rect_for_tag_absolute(tag)
+    }
+
+    fn has_tag(scene: &Scene, tag: &str) -> bool {
+        if scene.tag() == Some(tag) {
+            return true;
+        }
+        match scene {
+            Scene::Container(c) => c.children.iter().any(|ch| has_tag(ch, tag)),
+            Scene::Scroll(s) => has_tag(&s.content, tag),
+            _ => false,
+        }
+    }
+
+    #[test]
+    fn borderless_window_injects_chrome_strip_and_controls() {
+        let mut sc = ShellCore::<Borderless>::new();
+        let scene = sc.compute_paint_scene(400, 300);
+        assert!(
+            has_tag(&scene, pinion_overlay::WINDOW_CHROME_TAG),
+            "borderless window paints a chrome strip",
+        );
+        for tag in [
+            pinion_overlay::WINDOW_CHROME_CLOSE_TAG,
+            pinion_overlay::WINDOW_CHROME_MINIMIZE_TAG,
+            pinion_overlay::WINDOW_CHROME_MAXIMIZE_TAG,
+            pinion_overlay::WINDOW_CHROME_GRIP_TAG,
+        ] {
+            assert!(has_tag(&scene, tag), "chrome control {tag} is present");
+        }
+    }
+
+    #[test]
+    fn borderless_window_insets_content_below_the_strip() {
+        let mut sc = ShellCore::<Borderless>::new();
+        let scene = sc.compute_paint_scene(400, 300);
+        let content = rect_of(&scene, CONTENT_TAG).expect("content laid out");
+        assert_eq!(content.y, CHROME_H, "content insets below the chrome strip");
+        assert_eq!(
+            content.h,
+            300 - CHROME_H,
+            "content fills the remaining height under the strip",
+        );
+        assert_eq!(content.w, 400, "content spans the full width");
+    }
+
+    #[test]
+    fn decorated_window_has_no_chrome_and_no_inset() {
+        let mut sc = ShellCore::<Decorated>::new();
+        let scene = sc.compute_paint_scene(400, 300);
+        assert!(
+            !has_tag(&scene, pinion_overlay::WINDOW_CHROME_TAG),
+            "a decorated window relies on OS chrome — pinion injects none",
+        );
+        let content = rect_of(&scene, CONTENT_TAG).expect("content laid out");
+        assert_eq!(
+            content.y, 0,
+            "decorated content is not inset (byte-identical)"
+        );
+        assert_eq!(content.h, 300, "decorated content fills the full height");
+    }
+
+    #[test]
+    fn introspection_mirror_matches_the_live_paint_inset() {
+        // §2 #7: scene/snapshot (the pure mirror) must agree with the painted
+        // geometry — both inset the content below the chrome.
+        let mut sc = ShellCore::<Borderless>::new();
+        let live = sc.compute_paint_scene(400, 300);
+        let mirror = sc.compute_paint_scene_pure(400, 300);
+        assert_eq!(
+            rect_of(&live, CONTENT_TAG),
+            rect_of(&mirror, CONTENT_TAG),
+            "the introspection mirror insets content identically to the live paint",
+        );
+        assert!(
+            has_tag(&mirror, pinion_overlay::WINDOW_CHROME_TAG),
+            "the chrome strip is introspectable in the pure mirror too",
+        );
+    }
+
+    #[test]
+    fn cursor_over_a_chrome_control_resolves_its_tag() {
+        // The routing contract `AppShell::try_chrome_press` relies on: a cursor
+        // over a chrome button resolves (via the SAME router hit-test the live
+        // pointer uses) to that control's tag. Close button = rightmost 46px of
+        // the 32px strip; centre ~ (400-23, 16).
+        use pinion_runtime::PointerId;
+        let mut sc = ShellCore::<Borderless>::new();
+        let boot = sc.compute_paint_scene(400, 300);
+        sc.finalize_frame(boot);
+        sc.cursor_moved(PointerId::MOUSE, 377.0, 16.0);
+        assert_eq!(
+            sc.hover_target(PointerId::MOUSE),
+            Some(pinion_overlay::WINDOW_CHROME_CLOSE_TAG),
+            "cursor over the close button resolves to the close control tag",
+        );
+        // Grip (strip background, away from any button) resolves to the move handle.
+        sc.cursor_moved(PointerId::MOUSE, 12.0, 16.0);
+        assert_eq!(
+            sc.hover_target(PointerId::MOUSE),
+            Some(pinion_overlay::WINDOW_CHROME_GRIP_TAG),
+            "cursor over the strip background resolves to the move grip",
         );
     }
 }
