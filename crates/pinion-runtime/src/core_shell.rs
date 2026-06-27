@@ -2027,6 +2027,24 @@ impl<V: WidgetCore> CoreShell<V> {
         }
     }
 
+    /// (R1120 §5.15 §5.51 PR-39) Stash the source window's ACTUAL outer origin
+    /// (logical px) on its in-flight drag, so a borderless-floater title-bar
+    /// WINDOW MOVE converts the window-relative cursor to a stable DESKTOP frame
+    /// (no apply-lag feedback / jitter). The shell holds the winit handle and
+    /// calls this with `Window::outer_position()` each move; the router only
+    /// forwards it as [`DragUpdate::source_window_origin`]. No-op when the window
+    /// has no router / no active drag.
+    pub fn set_drag_source_origin_for_window(
+        &mut self,
+        window_id: &str,
+        pid: PointerId,
+        origin: Option<(i32, i32)>,
+    ) {
+        if let Some(router) = self.routers.get_mut(window_id) {
+            router.set_drag_source_origin(pid, origin);
+        }
+    }
+
     /// R881.1 §5.35 — single-window wrapper around
     /// [`Self::middle_down_for_window`] (the plain + `_for_window`
     /// pair every other `CoreShell` input method exposes).

@@ -1899,6 +1899,30 @@ impl<V: WidgetView> ShellCore<V> {
         self.cursor_moved_for_window(pinion_runtime::DEFAULT_WINDOW, pid, x, y);
     }
 
+    /// (R1120 §5.51 PR-39) Whether a drag this window owns is in flight — the
+    /// gate `AppShell` uses before stashing the actual outer origin (so idle
+    /// hovers skip the winit `outer_position()` query). Delegates to the runtime
+    /// core; the shell layer holds the winit handle, the core holds the session.
+    #[must_use]
+    pub fn drag_session_active_for_window(&self, window_id: &str, pid: PointerId) -> bool {
+        self.core.drag_session_active_for_window(window_id, pid)
+    }
+
+    /// (R1120 §5.51 PR-39) Stash the source window's ACTUAL outer origin (logical
+    /// px) on its in-flight drag, so a borderless-floater title-bar window move
+    /// converts the window-relative cursor to a stable DESKTOP frame (no apply-lag
+    /// jitter). `AppShell` supplies it from the winit handle — which only the
+    /// shell layer holds — each move; delegates to the runtime core.
+    pub fn set_drag_source_origin_for_window(
+        &mut self,
+        window_id: &str,
+        pid: PointerId,
+        origin: Option<(i32, i32)>,
+    ) {
+        self.core
+            .set_drag_source_origin_for_window(window_id, pid, origin);
+    }
+
     /// R672 §5.35 §5.41 — per-window variant of [`Self::cursor_moved`].
     /// `AppShell::window_event` dispatches winit `CursorMoved` here
     /// with the resolved [`crate::WindowSpec::id`] so the addressed

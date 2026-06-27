@@ -4022,6 +4022,41 @@ fn window_move_payload(panel_id: &str, delta: (f64, f64)) -> IntrospectValue {
     }))
 }
 
+/// R1120 §5.51 §5.15 PR-39 — the WINDOW MOVE delta in the window-INDEPENDENT
+/// DESKTOP frame, which breaks the feedback loop that made the live drag jitter.
+///
+/// The R1118 delta `cursor_local − press_cursor` is measured relative to the
+/// MOVING window (winit reports the cursor against the window's current origin),
+/// so with the binding's `pos += delta` and the WM's `set_outer_position`
+/// apply-lag the closed loop is marginally stable (error recurrence
+/// `e_{n+1} = e_n − e_{n-1}`, roots of magnitude 1) → sustained oscillation. It is
+/// invisible to fixed-frame / stepwise-settle tests (effective apply-lag 0).
+///
+/// Fix: `actual_origin` (the source window's `Window::outer_position()`, NOT the
+/// declared position which lags) makes `actual_origin + cursor_local` the true
+/// desktop pointer position regardless of how far the window has moved; emitting
+/// the FRAME INCREMENT `desktop_now − desktop_prev`, accumulated by the binding's
+/// `pos += delta`, gives `pos = pos_0 + (cursor_desktop − cursor_desktop_0)` with
+/// NO feedback term — stable at any apply-lag (proved by the `simulate_window_move`
+/// closed-loop harness). The first sample (`prev_desktop` None) anchors `prev` at
+/// the grab's desktop (`actual_origin + press_cursor`), so the first delta is the
+/// grab-relative move (≈0 while the cursor is still on the grab point). `None`
+/// `actual_origin` (headless RPC drive / single-window) falls back to the
+/// window-local cursor as the desktop estimate — correct at apply-lag 0. Returns
+/// `(delta, new_prev_desktop)`.
+#[must_use]
+fn window_move_delta(
+    actual_origin: Option<(f64, f64)>,
+    cursor_local: (f64, f64),
+    press_cursor: (f64, f64),
+    prev_desktop: Option<(f64, f64)>,
+) -> ((f64, f64), (f64, f64)) {
+    let (ax, ay) = actual_origin.unwrap_or((0.0, 0.0));
+    let desktop = (ax + cursor_local.0, ay + cursor_local.1);
+    let prev = prev_desktop.unwrap_or((ax + press_cursor.0, ay + press_cursor.1));
+    ((desktop.0 - prev.0, desktop.1 - prev.1), desktop)
+}
+
 /// R1103 §5.51 §2 #7 — read a normalised drop-zone cursor fraction from a
 /// JSON redock-at payload, defaulting to the zone centre (`0.5`) when the
 /// caller omits it. The `f64 → f32` narrowing is the documented `DropPoint`
@@ -4178,6 +4213,13 @@ pub struct DockPanelExternal {
     /// reports that `torn-<panel>` window). `None` before any move / a
     /// cursor-less gesture.
     last_source_window: RefCell<Option<String>>,
+    /// (R1120 §5.51 PR-39) The previous DESKTOP cursor of an in-flight title-bar
+    /// WINDOW MOVE — the running anchor for the frame-increment delta
+    /// (`desktop_now − prev_desktop`, [`window_move_delta`]). Reset on
+    /// [`begin_drag`](External::begin_drag); seeded from the grab's desktop on the
+    /// first move. Carrying the desktop frame (window-INDEPENDENT) is what makes
+    /// the move stable under the WM's apply-lag (no feedback / jitter).
+    prev_desktop: Cell<Option<(f64, f64)>>,
     /// (R1081 §5.51) The shared reorganize coordinator. `Some` puts the
     /// panel in dock-or-float mode (drops onto other panels reorganize
     /// the shared topology); `None` is tear-off-only. Cloned from the
@@ -4240,6 +4282,7 @@ impl DockPanelExternal {
             detached: Cell::new(false),
             last_redock_at: RefCell::new(None),
             last_source_window: RefCell::new(None),
+            prev_desktop: Cell::new(None),
             reorganizer: None,
             drop_preview: None,
             floating_window: None,
@@ -4495,6 +4538,8 @@ impl External for DockPanelExternal {
         *self.last_redock_at.borrow_mut() = None;
         // R1107 — and the last follow-drag source window.
         *self.last_source_window.borrow_mut() = None;
+        // R1120 — and the window-move desktop anchor (re-seeded on the first move).
+        self.prev_desktop.set(None);
         Some(DragPayload {
             kind: Cow::Borrowed(DOCK_PANEL_DRAG_KIND),
             value: IntrospectValue::Text(self.panel_id.to_string()),
@@ -4611,23 +4656,26 @@ impl External for DockPanelExternal {
         // from a dock tear-off. A floating window has nothing to "escape" — the
         // cursor stays on its own title bar, so the router's hover-fallback
         // `over` is never `None` and the R1110 escape can never fire (that is why
-        // a tear-off-style path could not move it). The follow is grab-offset
-        // preserving: `cursor - press_cursor` (R1117) is the displacement since
-        // the PRESS, so `origin + that` keeps the grabbed title-bar point under
-        // the cursor — exact regardless of how far the first move strays (the
-        // press is the SSOT anchor, not the first sample). Every move
-        // repositions; no detach / escape / drop-preview. The docked tear-off
-        // path below is untouched (its `source_window` is the dock window).
+        // a tear-off-style path could not move it). Every move repositions; no
+        // detach / escape / drop-preview. The docked tear-off path below is
+        // untouched (its `source_window` is the dock window).
         if let Some(fw) = self.floating_window.as_deref() {
             if update.source_window == Some(fw) {
-                // R1118 — emit a dedicated WINDOW_MOVE carrying the grab-relative
-                // DISPLACEMENT (cursor − press), NOT a tear_off_follow carrying a
-                // cursor. The binding moves the window BY this delta; the wire
-                // form stays honest (a window move is not a tear-off).
-                let delta = (
-                    update.cursor.0 - update.press_cursor.0,
-                    update.cursor.1 - update.press_cursor.1,
+                // R1120 PR-39 — compute the move in the window-INDEPENDENT DESKTOP
+                // frame via the source window's ACTUAL origin, then emit the FRAME
+                // INCREMENT. Measuring in the moving-window frame (R1118) closed a
+                // feedback loop with the WM apply-lag that JITTERED the live drag;
+                // the desktop frame has no feedback (see `window_move_delta`).
+                let actual = update
+                    .source_window_origin
+                    .map(|(x, y)| (f64::from(x), f64::from(y)));
+                let (delta, new_prev) = window_move_delta(
+                    actual,
+                    update.cursor,
+                    update.press_cursor,
+                    self.prev_desktop.get(),
                 );
+                self.prev_desktop.set(Some(new_prev));
                 self.enqueue_window_move(delta);
                 return;
             }
@@ -4983,7 +5031,7 @@ mod tests {
         CONTENT_TAG_SUFFIX, DockDropZone, DockNode, DockPanelExternal, DockPanelStyle,
         DockReorganizer, DockTopology, HEADER_TAG_SUFFIX, TEAR_OFF_EVENT, TEAR_OFF_FOLLOW_EVENT,
         TEAR_OFF_REDOCK_AT_EVENT, TEAR_OFF_REDOCK_EVENT, WINDOW_MOVE_EVENT, composite_tag,
-        dock_drop_zone_highlight, dock_tablist_access_nodes, view_dock_panel,
+        dock_drop_zone_highlight, dock_tablist_access_nodes, view_dock_panel, window_move_delta,
     };
     use crate::tabs::composite_tab_tag;
     use pinion_a11y::AccessNode;
@@ -5168,6 +5216,9 @@ mod tests {
             // the press point defaults to the cursor (a degenerate in-place grab,
             // so `cursor - press_cursor` is 0 — irrelevant to the tear-off path).
             press_cursor: cursor,
+            // R1120 — no real window in these unit drives; the window-move path
+            // is exercised by the `simulate_window_move` harness, not `upd`.
+            source_window_origin: None,
         }
     }
 
@@ -5511,6 +5562,7 @@ mod tests {
             source_window: Some("torn-viewport"),
             became_drag: true,
             press_cursor: (40.0, 25.0),
+            source_window_origin: None,
         };
         ext.drag_to_at(&dummy_payload(), &update);
         // The emitted tear_off_follow carries the source window.
@@ -5548,6 +5600,7 @@ mod tests {
                 source_window: Some("torn-viewport"),
                 became_drag: true,
                 press_cursor: (1.0, 1.0),
+                source_window_origin: None,
             },
         );
         assert_eq!(
@@ -5582,6 +5635,7 @@ mod tests {
                 source_window: Some("torn-viewport"),
                 became_drag: true,
                 press_cursor: (10.0, 10.0),
+                source_window_origin: None,
             },
         );
         let mut drained: Vec<Intent> = Vec::new();
@@ -5596,6 +5650,7 @@ mod tests {
                 source_window: Some("torn-viewport"),
                 became_drag: true,
                 press_cursor: (40.0, 25.0),
+                source_window_origin: None,
             },
         );
         let mut received: Vec<Intent> = Vec::new();
@@ -6396,16 +6451,18 @@ mod tests {
 
     #[test]
     fn r1116_sole_floater_header_drag_is_grab_offset_window_move() {
-        // R1116/R1117 §5.51 §5.15 PR-38 — a drag whose source_window is the
+        // R1116→R1120 §5.51 §5.15 PR-38/39 — a drag whose source_window is the
         // panel's OWN floating window (the title-bar drag of the borderless
-        // floater) is a WINDOW MOVE: the follow is the displacement since the
-        // PRESS (`cursor - press_cursor`, R1117), so `origin + follow` keeps the
-        // grabbed title-bar point under the cursor. Anchoring on the PRESS (not
-        // the first move sample) makes the grab exact even when the first sample
-        // already strays far — the R1117 fix. No tear-off escape is needed.
+        // floater) is a WINDOW MOVE: the widget emits a dedicated WINDOW_MOVE
+        // carrying the DESKTOP-frame increment (`window_move_delta`), so the
+        // binding's `pos += delta` keeps the grabbed point under the cursor
+        // WITHOUT the moving-frame feedback that jittered the live drag (R1120).
+        // The ACTUAL window origin cancels in the increment, so the deltas are the
+        // same whatever the floater's position — window-INDEPENDENT.
         let mut floater = DockPanelExternal::new("viewport").with_floating_window("torn-viewport");
         let _ = floater.begin_drag();
         let press = (40.0, 8.0);
+        // source_window_origin = the floater's ACTUAL outer origin (shell-stashed).
         let mv = |cursor: (f64, f64)| DragUpdate {
             over: None,
             cursor,
@@ -6413,10 +6470,8 @@ mod tests {
             source_window: Some("torn-viewport"),
             became_drag: true,
             press_cursor: press,
+            source_window_origin: Some((10, 10)),
         };
-        // The FIRST sample already strays +60,+40 from the press — the follow must
-        // still measure from the PRESS (60,40), NOT treat this sample as the
-        // anchor (which would mis-grab by 60,40 — the bug R1117 fixes).
         floater.drag_to_at(&dummy_payload(), &mv((100.0, 48.0)));
         floater.drag_to_at(&dummy_payload(), &mv((140.0, 88.0)));
         let mut got: Vec<Intent> = Vec::new();
@@ -6431,9 +6486,7 @@ mod tests {
                 "the floater header drag is a window move, not a tear_off_follow",
             );
         }
-        // The payload carries the grab-relative DISPLACEMENT (dx, dy), measured
-        // from the PRESS (R1117), not the first sample — even though the first
-        // sample already strayed +60,+40.
+        // The payload carries the DESKTOP-frame increment (dx, dy).
         let wm = |p: &IntrospectValue| -> (String, f64, f64) {
             let IntrospectValue::Json(v) = p else {
                 panic!("window_move payload is Json");
@@ -6447,15 +6500,18 @@ mod tests {
                 v.get("dy").and_then(serde_json::Value::as_f64).expect("dy"),
             )
         };
+        // First move: desktop cursor (10+100, 10+48)=(110,58) minus the grab's
+        // desktop (10+40, 10+8)=(50,18) = (60,40). Second: increment from the
+        // previous desktop (110,58) to (10+140, 10+88)=(150,98) = (40,40).
         assert_eq!(
             wm(&got[0].payload),
             ("viewport".into(), 60.0, 40.0),
-            "first delta = cursor - PRESS (60,40), not the first-sample anchor",
+            "first delta = desktop cursor - grab desktop (window-independent)",
         );
         assert_eq!(
             wm(&got[1].payload),
-            ("viewport".into(), 100.0, 80.0),
-            "later delta = cursor - press; the binding adds it to the current window pos",
+            ("viewport".into(), 40.0, 40.0),
+            "later delta = desktop frame increment; the binding adds it to the window pos",
         );
 
         // Contrast: a docked tear-off (no floating_window declared) jumps to the
@@ -6471,6 +6527,7 @@ mod tests {
                 source_window: Some("main"),
                 became_drag: false,
                 press_cursor: (40.0, 8.0),
+                source_window_origin: None,
             },
         ); // grab over the panel's own zone — NOT a window move (no floating_window)
         docked.drag_to_at(
@@ -6482,6 +6539,7 @@ mod tests {
                 source_window: Some("main"),
                 became_drag: true,
                 press_cursor: (40.0, 8.0),
+                source_window_origin: None,
             },
         ); // escape + follow
         let mut got2: Vec<Intent> = Vec::new();
@@ -6495,42 +6553,6 @@ mod tests {
             ("viewport".into(), 140.0, 88.0),
             "a docked tear-off jumps to the RAW cursor (no grab-offset)",
         );
-    }
-
-    /// R1119 §5.51 PR-39 — the PROPOSED fix formula (test-scoped until the live
-    /// wiring round threads the actual origin): the WINDOW MOVE delta computed in
-    /// the window-INDEPENDENT DESKTOP frame, which breaks the feedback loop that
-    /// made the live drag oscillate.
-    ///
-    /// The naive delta `cursor_local − press_cursor` (R1118) is measured relative
-    /// to the MOVING window: as the move repositions the window, winit reports the
-    /// next `cursor_local` against the new origin, so the delta depends on its own
-    /// output. With the WM applying `set_outer_position` a frame late, the closed
-    /// loop is marginally stable (error recurrence `e_{n+1} = e_n − e_{n-1}`,
-    /// roots `(1 ± i√3)/2` of magnitude exactly 1) → sustained oscillation + jump
-    /// artifacts (the PR-39 live jitter). It does not show in the headless demo
-    /// because the fixed-frame drive runs at effective apply-lag 0.
-    ///
-    /// Fix: `actual_origin` (the window's `Window::outer_position()` — NOT the
-    /// declared position, which lags) makes `actual_origin + cursor_local` the
-    /// true desktop pointer position regardless of how far the window has moved;
-    /// the FRAME INCREMENT `desktop_now − desktop_prev` accumulated by the binding
-    /// (`pos += delta`) gives `pos = pos_0 + (cursor_desktop − cursor_desktop_0)`
-    /// with NO feedback term — stable at any apply-lag (proved by
-    /// `simulate_window_move`). `None` actual falls back to the window-local
-    /// cursor (correct at apply-lag 0 — the headless case).
-    fn window_move_delta(
-        actual_origin: Option<(f64, f64)>,
-        cursor_local: (f64, f64),
-        prev_desktop: Option<(f64, f64)>,
-    ) -> ((f64, f64), (f64, f64)) {
-        let (ax, ay) = actual_origin.unwrap_or((0.0, 0.0));
-        let desktop = (ax + cursor_local.0, ay + cursor_local.1);
-        let delta = match prev_desktop {
-            Some((px, py)) => (desktop.0 - px, desktop.1 - py),
-            None => (0.0, 0.0),
-        };
-        (delta, desktop)
     }
 
     /// R1119 PR-39 — closed-loop simulator for the borderless-floater title-bar
@@ -6631,7 +6653,7 @@ mod tests {
         for pattern in [APPLY_LAG_JITTER, &[1], &[2], &[3], &[4]] {
             let mut prev: Option<(f64, f64)> = None;
             let positions = simulate_window_move(&path, o0, pattern, |actual, local, declared| {
-                let (delta, new_prev) = window_move_delta(actual, local, prev);
+                let (delta, new_prev) = window_move_delta(actual, local, grab, prev);
                 prev = Some(new_prev);
                 (declared.0 + delta.0, declared.1 + delta.1)
             });
