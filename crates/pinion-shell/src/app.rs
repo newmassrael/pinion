@@ -1644,6 +1644,15 @@ impl<V: WidgetView> AppShell<V> {
             if let Some((x, y)) = spec.position {
                 attrs = attrs.with_position(LogicalPosition::new(f64::from(x), f64::from(y)));
             }
+            // R1115 §5.16 §5.51 PR-38 — honour the declared OS chrome. A
+            // torn-off dock panel declares `decorations: false` so the OS
+            // draws no title bar/border and pinion owns the panel's chrome
+            // (its own header + drag-grip). winit's default is `true`, so
+            // setting it to the spec value (`true` for every pre-R1115
+            // binding) is byte-identical. Create-time only — like
+            // `strategy`, not re-applied on a same-id spec change (a
+            // dock-back destroys the floating window, never re-decorates).
+            attrs = attrs.with_decorations(spec.decorations);
             // R835 §5.16 — windowless test mode. `PINION_HIDDEN_WINDOW`
             // creates the shell window UNMAPPED (`visible = false`): Vello
             // still renders to the GPU surface and `scene/snapshot` /

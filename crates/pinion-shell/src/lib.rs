@@ -604,6 +604,40 @@ pub struct WindowSpec {
     /// `skip_serializing_if`; the explicit null is intentional.
     #[serde(default)]
     pub position: Option<(i32, i32)>,
+    /// R1115 §5.16 §5.51 PR-38 — does the OS draw this window's chrome
+    /// (title bar + border + resize frame)? `true` (the default — winit's
+    /// own [`winit::window::WindowAttributes`] default) is every pre-R1115
+    /// window, byte-identical. `false` opts the window OUT of OS chrome so
+    /// the binding owns it: a torn-off dock panel declares
+    /// `decorations: false` and pinion paints the panel's own header
+    /// (drag-grip + close) instead of stacking a redundant OS title bar
+    /// over it — the custom-chrome floating panel the self-hosted-editor
+    /// northern star needs (Blender/Unreal tear-offs show no OS title bar).
+    ///
+    /// **Create-time intent, like [`strategy`](Self::strategy) — NOT
+    /// reconciled at runtime.** Honoured once by [`crate::AppShell`] at
+    /// window create ([`winit::window::WindowAttributes::with_decorations`]);
+    /// the shell does not call `Window::set_decorations` on a same-id spec
+    /// change (no consumer toggles chrome on a live window — a dock-back
+    /// destroys the floating window rather than re-decorating it). Only
+    /// [`position`](Self::position) closes the OS-feedback loop.
+    ///
+    /// `#[serde(default = "windowspec_decorations_default")]` so a wire form
+    /// omitting the field (every pre-R1115 serialized spec) deserializes to
+    /// `true` — `bool`'s own `Default` is `false`, so the explicit default
+    /// is what keeps the omitted-field behaviour byte-identical (a decorated
+    /// window, never a surprise borderless one).
+    #[serde(default = "windowspec_decorations_default")]
+    pub decorations: bool,
+}
+
+/// Serde default for [`WindowSpec::decorations`] — `true` (OS-decorated),
+/// matching winit's [`winit::window::WindowAttributes`] default. A wire form
+/// omitting the field deserializes to a decorated window; `bool`'s own
+/// `Default` is `false`, so this explicit default is required for
+/// byte-identical omitted-field behaviour (R1115 §5.16 §5.51 PR-38).
+const fn windowspec_decorations_default() -> bool {
+    true
 }
 
 impl WindowSpec {
@@ -620,6 +654,7 @@ impl WindowSpec {
             title: title.into(),
             strategy,
             position: None,
+            decorations: windowspec_decorations_default(),
         }
     }
 
@@ -642,6 +677,7 @@ impl WindowSpec {
             title: title.into(),
             strategy,
             position: None,
+            decorations: windowspec_decorations_default(),
         }
     }
 
@@ -660,6 +696,19 @@ impl WindowSpec {
     #[must_use]
     pub fn with_position(mut self, x: i32, y: i32) -> Self {
         self.position = Some((x, y));
+        self
+    }
+
+    /// R1115 §5.16 §5.51 PR-38 — declare whether the OS draws this window's
+    /// chrome. Builder form (the `#[non_exhaustive]` struct is constructed
+    /// only via `main` / `new`); chains after either, alongside
+    /// [`with_position`](Self::with_position). A binding floating a torn-off
+    /// dock panel into a borderless window chains
+    /// `WindowSpec::new(id, title, strategy).with_position(x, y).with_decorations(false)`.
+    /// Create-time intent — see the [`decorations`](Self::decorations) field.
+    #[must_use]
+    pub fn with_decorations(mut self, decorations: bool) -> Self {
+        self.decorations = decorations;
         self
     }
 }
@@ -1298,6 +1347,75 @@ mod tests {
                 height: 200
             }
         ));
+    }
+
+    #[test]
+    fn r1115_window_spec_decorations_default_builder_and_serde() {
+        // R1115 §5.16 §5.51 PR-38 — `decorations` defaults to `true`
+        // (OS-decorated, winit's own default) for BOTH constructors, so every
+        // pre-R1115 binding keeps a decorated window byte-identical.
+        let main = WindowSpec::main(
+            "m",
+            SizeStrategy::Fixed {
+                width: 320,
+                height: 200,
+            },
+        );
+        assert!(main.decorations, "main defaults to a decorated window");
+        let secondary = WindowSpec::new(
+            "inspector",
+            "I",
+            SizeStrategy::Fixed {
+                width: 280,
+                height: 360,
+            },
+        );
+        assert!(secondary.decorations, "new() defaults to decorated");
+
+        // The builder opts a torn-off panel OUT of OS chrome.
+        let borderless = secondary.clone().with_decorations(false);
+        assert!(
+            !borderless.decorations,
+            "with_decorations(false) is borderless"
+        );
+        // Builder only flips chrome — id / title / strategy untouched, and it
+        // composes with `with_position` (the tear-off chains both).
+        let placed = WindowSpec::new(
+            "torn-viewport",
+            "V",
+            SizeStrategy::Fixed {
+                width: 360,
+                height: 360,
+            },
+        )
+        .with_position(600, 400)
+        .with_decorations(false);
+        assert_eq!(placed.position, Some((600, 400)));
+        assert!(!placed.decorations);
+
+        // serde round-trips the field.
+        let json = serde_json::to_value(&borderless).expect("serialize");
+        assert_eq!(json["decorations"], serde_json::json!(false));
+        let back: WindowSpec = serde_json::from_value(json).expect("round-trip");
+        assert_eq!(back, borderless);
+
+        // THE byte-identical guarantee: a wire form omitting `decorations`
+        // (every pre-R1115 serialized spec) deserializes to a DECORATED window,
+        // not `bool`'s own `false` default. The serde default is what enforces
+        // this — without it the omitted field would silently flip to borderless.
+        // Built by dropping the key from a real serialization (robust to the
+        // `SizeStrategy` wire shape) rather than hand-writing the whole object.
+        let mut legacy = serde_json::to_value(&main).expect("serialize");
+        legacy
+            .as_object_mut()
+            .expect("object")
+            .remove("decorations");
+        assert!(legacy.get("decorations").is_none(), "the key is dropped");
+        let revived: WindowSpec = serde_json::from_value(legacy).expect("legacy deserialize");
+        assert!(
+            revived.decorations,
+            "an omitted decorations field defaults to true"
+        );
     }
 
     #[test]

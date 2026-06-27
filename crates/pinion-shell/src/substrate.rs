@@ -4848,6 +4848,10 @@ impl<V: WidgetView> ShellCore<V> {
                 // content-intrinsic window, mirroring `position`'s
                 // `None`-means-system-determined honesty).
                 declared_size: spec.strategy.declared_size(),
+                // R1115 §5.51 PR-38 — declared OS chrome (the
+                // `WindowSpec::decorations` SSOT; `true` for every
+                // pre-R1115 binding). Always known, never `null`.
+                decorations: spec.decorations,
             })
             .collect()
     }

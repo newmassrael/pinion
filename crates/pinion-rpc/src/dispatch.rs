@@ -997,6 +997,17 @@ pub struct DeclaredWindow {
     /// uses for a WM-placed window. The SSOT is
     /// `pinion_shell::SizeStrategy::declared_size`.
     pub declared_size: Option<(u32, u32)>,
+    /// R1115 §5.16 §5.51 §2 #7 PR-38 — does the OS draw this window's chrome
+    /// (title bar + border)? `true` is an OS-decorated window (the default);
+    /// `false` is a binding-chromed window — a torn-off dock panel floated
+    /// into a borderless window that paints its own header. Unlike
+    /// [`position`](Self::position) / [`declared_size`](Self::declared_size),
+    /// this is never `null`: every window has a known declared chrome state
+    /// (the binding's `WindowSpec::decorations`, defaulting `true`). Scene-as-data
+    /// observability so an AI can read whether a floating panel is borderless,
+    /// not merely where it sits. Declared intent (read at create), not a live
+    /// OS read-back. The SSOT is `pinion_shell::WindowSpec::decorations`.
+    pub decorations: bool,
 }
 
 impl<'a> DispatchContext<'a> {
