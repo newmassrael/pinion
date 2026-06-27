@@ -2011,6 +2011,40 @@ impl<V: WidgetView> AppShell<V> {
         );
     }
 
+    /// R670.B / R1023 / R1123 §5.16 §5.39 — per-window resize. Forwards the
+    /// surface resize to the live GPU renderer, repaints THIS window (winit
+    /// does not guarantee a `RedrawRequested` after a `Resized`, so without
+    /// this the reconfigured swapchain presents a stale backbuffer until some
+    /// unrelated redraw arrives — the live drag-resize ghosting on full-bleed
+    /// content), and syncs the per-window maximized cache from winit's actual
+    /// `Window::is_maximized()`. The cache feeds the client-side chrome glyph
+    /// (maximize vs restore) and the resize-border suppression on both the live
+    /// paint and the pure mirror, so `scene/snapshot` matches the painted glyph
+    /// (§2 #7). Reading winit's report (not just the chrome-button intent)
+    /// keeps the cache correct when a tiling WM maximizes the window.
+    fn note_window_resized(&mut self, window_id: WindowId, size: PhysicalSize<u32>) {
+        let spec_id = self
+            .windows
+            .get(&window_id)
+            .map_or(pinion_runtime::DEFAULT_WINDOW, |s| &*s.spec_id)
+            .to_owned();
+        let mut maximized = None;
+        if let Some(slot) = self.windows.get_mut(&window_id)
+            && let RenderState::Active {
+                renderer, window, ..
+            } = &mut slot.render
+        {
+            renderer.resize(size.width.max(1), size.height.max(1));
+            maximized = Some(window.is_maximized());
+            // winit coalesces repeated `request_redraw` before the next
+            // `RedrawRequested`, so a fast drag costs at most one paint/frame.
+            window.request_redraw();
+        }
+        if let Some(m) = maximized {
+            self.core.set_window_maximized(&spec_id, m);
+        }
+    }
+
     /// R1027 §5.16 — the window moved to a display with a different DPI,
     /// or the OS scale changed. Refresh the cached factor so the next paint
     /// lays out logical -> rasters at the new device resolution and pointer
@@ -2381,32 +2415,11 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
                     }
                 }
             }
-            WindowEvent::Resized(size) => {
-                // R670.B §5.16 — per-window resize. The matching slot
-                // holds the live GPU renderer the wgpu surface
-                // resize-event must reach.
-                if let Some(slot) = self.windows.get_mut(&window_id)
-                    && let RenderState::Active {
-                        renderer, window, ..
-                    } = &mut slot.render
-                {
-                    renderer.resize(size.width.max(1), size.height.max(1));
-                    // R1023 §5.16 — pair the surface resize with an explicit
-                    // redraw of THIS window. winit does not guarantee a
-                    // `RedrawRequested` after a `Resized`, so without this the
-                    // reconfigured swapchain presents a stale/undefined
-                    // backbuffer until some unrelated redraw arrives — the live
-                    // drag-resize ghosting on full-bleed content. The
-                    // `request_inner_size` sites already pair resize +
-                    // `request_redraw` (their "the explicit `request_redraw`
-                    // shortens the gap" note); the user-driven winit `Resized`
-                    // arm was the missing sibling. Per-window (R670.B): only the
-                    // resized window repaints. winit coalesces repeated
-                    // `request_redraw` before the next `RedrawRequested`, so a
-                    // fast drag costs at most one paint per frame.
-                    window.request_redraw();
-                }
-            }
+            // R670.B / R1023 / R1123 §5.16 — per-window resize. Extracted to
+            // `note_window_resized` to keep `window_event` under the 100-line
+            // ceiling (the app.rs split convention) and to let the helper own
+            // the slot borrow the maximized-cache sync needs.
+            WindowEvent::Resized(size) => self.note_window_resized(window_id, size),
             // R1088 §5.16 §5.41 §2 #7 PR-31 — OS window move. Feed the new
             // outer position back into `windows_signal` so the DECLARED
             // position converges on the actual one (a user title-bar drag

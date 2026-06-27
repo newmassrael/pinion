@@ -728,4 +728,19 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn maximize_glyph_switches_to_restore_when_maximized() {
+        // R1123 — the maximize button draws a single square outline (5 path
+        // commands: MoveTo + 4 LineTo/Close) when restorable-to-maximized, and
+        // two offset square outlines (10 commands = the "restore" affordance)
+        // when already maximized. This is the glyph the threaded `is_maximized`
+        // flag selects.
+        let rect = Rect::new(0, 0, 46, 32);
+        let c = Color::rgb(0xE0, 0xE0, 0xE0);
+        let maximize = glyph_path(rect, ButtonKind::Maximize, false, c);
+        let restore = glyph_path(rect, ButtonKind::Maximize, true, c);
+        assert_eq!(maximize.commands.len(), 5, "maximize = one square outline");
+        assert_eq!(restore.commands.len(), 10, "restore = two offset squares");
+    }
 }

@@ -428,6 +428,18 @@ pub struct ShellCore<V: WidgetView> {
     /// the divergence this record exposes).
     render_fidelity_per_window: HashMap<String, pinion_runtime::RenderFidelity>,
 
+    /// R1123 §5.16 §5.39 — per-window maximized flag for the client-side
+    /// window chrome. `AppShell::note_window_resized` writes winit's actual
+    /// `Window::is_maximized()` here on every resize (a borderless window's
+    /// only maximize trigger is the chrome button, but a tiling WM can also
+    /// maximize it, so winit's report is the truth). Both the live paint
+    /// ([`Self::apply_window_chrome`] picks the maximize-vs-restore glyph,
+    /// [`Self::apply_resize_border`] drops the resize border when maximized)
+    /// AND the pure introspection mirror read THIS cache rather than the live
+    /// winit `Window`, so `scene/snapshot` matches the painted glyph (§2 #7).
+    /// Absent entry = not maximized (the create-time default).
+    maximized_per_window: HashMap<String, bool>,
+
     /// R25.1 §5.39 §5.16 — per-window keyboard-focus enumeration. Each painted
     /// window stores the focusable tags IT draws (its
     /// [`Scene::collect_focusable_tags`] walk); the binding-wide
@@ -660,6 +672,7 @@ impl<V: WidgetView> ShellCore<V> {
             fragment_cache_stats_per_window: HashMap::new(),
             frame_timings_per_window: HashMap::new(),
             render_fidelity_per_window: HashMap::new(),
+            maximized_per_window: HashMap::new(),
             focusable_tags_per_window: HashMap::new(),
             text_select_drag: None,
             os_focused_window: None,
@@ -3596,7 +3609,12 @@ impl<V: WidgetView> ShellCore<V> {
     fn apply_window_chrome(&self, scene: Scene, w: u32, h: u32, window_id: Option<&str>) -> Scene {
         match self.window_chrome_for(window_id) {
             Some((title, style)) => {
-                pinion_overlay::inject_window_chrome(scene, &title, false, Some((w, h)), style)
+                // R1123 — the maximize button draws the "restore" glyph when the
+                // window is maximized. Read from the per-window cache (winit's
+                // reported state) so the live paint and the pure mirror agree.
+                let maximized =
+                    self.window_maximized(window_id.unwrap_or(pinion_runtime::DEFAULT_WINDOW));
+                pinion_overlay::inject_window_chrome(scene, &title, maximized, Some((w, h)), style)
             }
             None => scene,
         }
@@ -3617,12 +3635,41 @@ impl<V: WidgetView> ShellCore<V> {
     /// window (no chrome) is the fullscreen-game surface that wants neither. A
     /// future fixed-size chromed dialog would add a `resizable` toggle to
     /// `WindowChromeStyle` then (no speculative API now — R1121.1 YAGNI).
+    ///
+    /// R1123 — the border is dropped while the window is maximized: a maximized
+    /// window fills the work area and edge-resize is meaningless (and would
+    /// fight the WM), matching how OS-decorated windows hide their resize border
+    /// when maximized.
     fn apply_resize_border(&self, scene: Scene, w: u32, h: u32, window_id: Option<&str>) -> Scene {
-        if self.window_chrome_for(window_id).is_some() {
+        let key = window_id.unwrap_or(pinion_runtime::DEFAULT_WINDOW);
+        if self.window_chrome_for(window_id).is_some() && !self.window_maximized(key) {
             pinion_overlay::inject_resize_border(scene, Some((w, h)))
         } else {
             scene
         }
+    }
+
+    /// (R1123 §5.16 §5.39) Whether `spec_id`'s window is currently maximized, per
+    /// the cache `AppShell::note_window_resized` syncs from winit. `false` for an
+    /// unknown / never-resized window (the create-time default). Read by the
+    /// client-side chrome (maximize-vs-restore glyph) and the resize border
+    /// (suppressed when maximized) on BOTH the live paint and the pure mirror.
+    #[must_use]
+    pub fn window_maximized(&self, spec_id: &str) -> bool {
+        self.maximized_per_window
+            .get(spec_id)
+            .copied()
+            .unwrap_or(false)
+    }
+
+    /// (R1123 §5.16 §5.39) Record `spec_id`'s maximized state. Called by
+    /// `AppShell::note_window_resized` with winit's `Window::is_maximized()` so
+    /// the cache tracks the OS truth (a borderless window's chrome maximize
+    /// button is the usual trigger, but a tiling WM can maximize it too). The
+    /// scene producer reads it back via [`Self::window_maximized`].
+    pub fn set_window_maximized(&mut self, spec_id: &str, maximized: bool) {
+        self.maximized_per_window
+            .insert(spec_id.to_owned(), maximized);
     }
 
     /// (R1121.1 §5.16 §2 #7) Resolve client-side chrome for the window being
@@ -6935,6 +6982,95 @@ mod r1121_window_chrome_tests {
                 Some(tag),
                 "center is not snagged by resize region {tag}"
             );
+        }
+    }
+
+    // ---- R1123 §5.16 §5.39 maximized-state threading ----
+
+    #[test]
+    fn window_maximized_defaults_false_and_roundtrips() {
+        let mut sc = ShellCore::<Borderless>::new();
+        assert!(
+            !sc.window_maximized(pinion_runtime::DEFAULT_WINDOW),
+            "an unknown / never-resized window is not maximized",
+        );
+        sc.set_window_maximized(pinion_runtime::DEFAULT_WINDOW, true);
+        assert!(sc.window_maximized(pinion_runtime::DEFAULT_WINDOW));
+        sc.set_window_maximized(pinion_runtime::DEFAULT_WINDOW, false);
+        assert!(!sc.window_maximized(pinion_runtime::DEFAULT_WINDOW));
+    }
+
+    #[test]
+    fn maximized_suppresses_resize_border_in_live_and_mirror() {
+        // §2 #7: the maximized state drops the resize border identically on the
+        // live paint and the pure introspection mirror (both read the cache).
+        let mut sc = ShellCore::<Borderless>::new();
+        sc.set_window_maximized(pinion_runtime::DEFAULT_WINDOW, true);
+        let live = sc.compute_paint_scene(400, 300);
+        let mirror = sc.compute_paint_scene_pure(400, 300);
+        for tag in ALL_RESIZE_TAGS {
+            assert!(
+                !has_tag(&live, tag),
+                "maximized live paint drops resize {tag}"
+            );
+            assert!(
+                !has_tag(&mirror, tag),
+                "maximized mirror drops resize {tag}"
+            );
+        }
+        // The chrome strip itself stays (a maximized window still has controls).
+        assert!(
+            has_tag(&live, pinion_overlay::WINDOW_CHROME_TAG),
+            "chrome stays when maximized"
+        );
+
+        // Restoring brings the resize border back.
+        sc.set_window_maximized(pinion_runtime::DEFAULT_WINDOW, false);
+        let restored = sc.compute_paint_scene(400, 300);
+        for tag in ALL_RESIZE_TAGS {
+            assert!(
+                has_tag(&restored, tag),
+                "restored window regains resize {tag}"
+            );
+        }
+    }
+
+    #[test]
+    fn maximized_chrome_draws_the_restore_glyph() {
+        // The threading proof: the maximize button's glyph Path in the PAINTED
+        // scene switches from the maximize square (5 commands) to the restore
+        // two-square (10) when the cache is maximized — i.e. the cached flag
+        // reaches `inject_window_chrome`.
+        let mut sc = ShellCore::<Borderless>::new();
+        let normal = sc.compute_paint_scene(400, 300);
+        let max_rect = rect_of(&normal, pinion_overlay::WINDOW_CHROME_MAXIMIZE_TAG)
+            .expect("maximize button laid out");
+        assert_eq!(
+            path_command_count_at(&normal, max_rect),
+            Some(5),
+            "default chrome draws the maximize glyph",
+        );
+
+        sc.set_window_maximized(pinion_runtime::DEFAULT_WINDOW, true);
+        let maxed = sc.compute_paint_scene(400, 300);
+        assert_eq!(
+            path_command_count_at(&maxed, max_rect),
+            Some(10),
+            "maximized chrome draws the restore glyph",
+        );
+    }
+
+    /// Command count of the first `Scene::Path` whose rect equals `rect` (the
+    /// glyph Path that `push_control` lays under a chrome button's hit Box).
+    fn path_command_count_at(scene: &Scene, rect: Rect) -> Option<usize> {
+        match scene {
+            Scene::Path(p) if p.rect == rect => Some(p.commands.len()),
+            Scene::Container(c) => c
+                .children
+                .iter()
+                .find_map(|ch| path_command_count_at(ch, rect)),
+            Scene::Scroll(s) => path_command_count_at(&s.content, rect),
+            _ => None,
         }
     }
 }
