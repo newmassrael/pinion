@@ -56122,6 +56122,58 @@
         "floater dock-header doubling: sprag sets show_header:false (sprag-session, cross-repo)"
       ]
     },
+    "Round 1121.1": {
+      "decision_summary": "Round 1121.1: decouple window chrome from decorations via WidgetView::window_chrome hook + drop speculative WindowChromeStyle builders (R1121 self-audit clearance)",
+      "changes_bullets": [
+        "WidgetView::window_chrome hook (default None) decouples chrome from decorations (OS-frame flag)",
+        "naked borderless now expressible (decorations:false + chrome None) = Phase-C/D fullscreen game surface",
+        "drop 7 speculative WindowChromeStyle with_* builders (YAGNI: only ::default() consumed)",
+        "re-export WindowChromeStyle from pinion_shell (mirror FocusRingStyle)",
+        "demo + fixtures via hook; NakedBorderless fixture proves decoupling"
+      ],
+      "verification_bullets": [
+        "overlay 52 / shell r1121 8 (incl naked_borderless test) / full workspace 198 ok-blocks 0 fail",
+        "demo screenshot byte-identical (41877B): hook-driven chrome = same scene (behavior-preserving)",
+        "fmt + workspace clippy (-D pedantic) clean",
+        "decoupling proof: NakedBorderless (decorations:false, hook None) = no chrome + no inset"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.39"
+      ],
+      "carry_forward_bullets": [
+        "R1122: resize handles (drag_resize_window); R1123: main window borderless = uniform CSD",
+        "close=exit (per-window close needs a binding close seam); maximize glyph is_maximized=false",
+        "RPC verify >=30-assertion demo + chrome a11y mirror deferred",
+        "WindowChromeStyle builders re-added per-field when a customizing consumer lands",
+        "floater dock-header doubling: sprag show_header:false (sprag-session, cross-repo)"
+      ],
+      "publishable_decision_summary": "Round 1121.1: decouple window chrome from decorations via WidgetView::window_chrome hook + drop speculative WindowChromeStyle builders (R1121 self-audit clearance)",
+      "publishable_changes_bullets": [
+        "WidgetView::window_chrome hook (default None) decouples chrome from decorations (OS-frame flag)",
+        "naked borderless now expressible (decorations:false + chrome None) = Phase-C/D fullscreen game surface",
+        "drop 7 speculative WindowChromeStyle with_* builders (YAGNI: only ::default() consumed)",
+        "re-export WindowChromeStyle from pinion_shell (mirror FocusRingStyle)",
+        "demo + fixtures via hook; NakedBorderless fixture proves decoupling"
+      ],
+      "publishable_verification_bullets": [
+        "overlay 52 / shell r1121 8 (incl naked_borderless test) / full workspace 198 ok-blocks 0 fail",
+        "demo screenshot byte-identical (41877B): hook-driven chrome = same scene (behavior-preserving)",
+        "fmt + workspace clippy (-D pedantic) clean",
+        "decoupling proof: NakedBorderless (decorations:false, hook None) = no chrome + no inset"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.39"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R1122: resize handles (drag_resize_window); R1123: main window borderless = uniform CSD",
+        "close=exit (per-window close needs a binding close seam); maximize glyph is_maximized=false",
+        "RPC verify >=30-assertion demo + chrome a11y mirror deferred",
+        "WindowChromeStyle builders re-added per-field when a customizing consumer lands",
+        "floater dock-header doubling: sprag show_header:false (sprag-session, cross-repo)"
+      ]
+    },
     "Round 12": {
       "decision_summary": "Round 12 — first implementation atomic: pinion-core Button widget SCXML state machine integration (SCE consumer pattern R15 동형)",
       "changes_bullets": [
