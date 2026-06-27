@@ -56174,6 +56174,60 @@
         "floater dock-header doubling: sprag show_header:false (sprag-session, cross-repo)"
       ]
     },
+    "Round 1122": {
+      "decision_summary": "Round 1122: §5.16 §5.39 client-side window resize border — eight introspectable edge/corner regions on a chromed borderless window route to winit drag_resize_window",
+      "changes_bullets": [
+        "pinion-overlay window_chrome::inject_resize_border injects eight resize hit regions (4 edges N/S/W/E + 4 corners) as FLAT sibling Boxes, tag prefix ai-overlay/window-resize",
+        "flat siblings not one bounding container: Scene::hit_test resolves a full-window container with no child hit as the container ITSELF, which would absorb every center click; thin flat regions let the center fall through to content",
+        "pinion-shell apply_resize_border gated on the same WidgetView::window_chrome hook as chrome, injected UNDER the chrome strip so the title bar controls win at the top (close button not shadowed)",
+        "app.rs ChromeAction::Resize(ResizeDirection) + chrome_action_for_tag maps the 8 tags; try_chrome_press routes a press to Window::drag_resize_window",
+        "resize travels WITH chrome (no separate hook): every chrome consumer also wants resize, a naked borderless window wants neither (R1121.1 YAGNI); a future fixed-size dialog adds a WindowChromeStyle.resizable toggle then",
+        "highlight::strip_children_with_prefix lifted for the flat-sibling idempotency (chrome strip is one container, resize is eight siblings)"
+      ],
+      "verification_bullets": [
+        "pinion-overlay window_chrome: 11 unit tests (4 chrome + 7 resize: all-8-regions present, edge/corner geometry, flat-sibling not container, corner-wins-over-edge in overlap, center-click-falls-through-to-content, idempotent re-inject, degenerate viewport no-op)",
+        "pinion-shell substrate r1121_window_chrome_tests: 13 (6 chrome + 7 resize: injected for chromed window, absent for decorated + naked-borderless, introspectable in pure mirror, cursor resolves the 5 reachable regions S/W/E/SW/SE, chrome strip wins at top so close button + grip not shadowed, content center not snagged)",
+        "pinion-shell app r1121_chrome_action_tests: 3 (8 resize tags map to the matching winit ResizeDirection; resize family prefix is not itself a control)",
+        "workspace cargo test green; clippy --all-targets -D pedantic + rustfmt clean",
+        "live OS drag-resize is HW-gated (real GPU + pointer + WM): verified headlessly via region introspection + hover resolution; the actual winit drag_resize_window drag is user-confirmed on :0"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.39"
+      ],
+      "carry_forward_bullets": [
+        "live OS drag-resize pixel verification HW-gated (real GPU + pointer + window manager); macOS drag_resize_window returns NotSupported (needs a Mac CI runner) — Linux/Wayland/Windows supported",
+        "resize-cursor-on-hover DEFERRED: a resize border with no cursor hint is less discoverable, but cursor feedback wants a unified hover->CursorIcon authority (text I-beam, splitter resize are future consumers), not a resize-only special case set on every CursorMoved; pinion sets no cursor today, so build the authority when a 2nd consumer forces it (abstraction-needs-second-consumer)",
+        "top edge owned by the title bar (resize injected under chrome): conventional CSD trade-off; window resizes from sides + bottom + bottom corners. A north-edge resize zone above the title bar is possible later if a consumer needs it",
+        "R1123 next: flip the MAIN window to decorations:false = full uniform CSD; resize now in place so the borderless main does not lose edge-resize"
+      ],
+      "publishable_decision_summary": "Round 1122: §5.16 §5.39 client-side window resize border — eight introspectable edge/corner regions on a chromed borderless window route to winit drag_resize_window",
+      "publishable_changes_bullets": [
+        "pinion-overlay window_chrome::inject_resize_border injects eight resize hit regions (4 edges N/S/W/E + 4 corners) as FLAT sibling Boxes, tag prefix ai-overlay/window-resize",
+        "flat siblings not one bounding container: Scene::hit_test resolves a full-window container with no child hit as the container ITSELF, which would absorb every center click; thin flat regions let the center fall through to content",
+        "pinion-shell apply_resize_border gated on the same WidgetView::window_chrome hook as chrome, injected UNDER the chrome strip so the title bar controls win at the top (close button not shadowed)",
+        "app.rs ChromeAction::Resize(ResizeDirection) + chrome_action_for_tag maps the 8 tags; try_chrome_press routes a press to Window::drag_resize_window",
+        "resize travels WITH chrome (no separate hook): every chrome consumer also wants resize, a naked borderless window wants neither (R1121.1 YAGNI); a future fixed-size dialog adds a WindowChromeStyle.resizable toggle then",
+        "highlight::strip_children_with_prefix lifted for the flat-sibling idempotency (chrome strip is one container, resize is eight siblings)"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-overlay window_chrome: 11 unit tests (4 chrome + 7 resize: all-8-regions present, edge/corner geometry, flat-sibling not container, corner-wins-over-edge in overlap, center-click-falls-through-to-content, idempotent re-inject, degenerate viewport no-op)",
+        "pinion-shell substrate r1121_window_chrome_tests: 13 (6 chrome + 7 resize: injected for chromed window, absent for decorated + naked-borderless, introspectable in pure mirror, cursor resolves the 5 reachable regions S/W/E/SW/SE, chrome strip wins at top so close button + grip not shadowed, content center not snagged)",
+        "pinion-shell app r1121_chrome_action_tests: 3 (8 resize tags map to the matching winit ResizeDirection; resize family prefix is not itself a control)",
+        "workspace cargo test green; clippy --all-targets -D pedantic + rustfmt clean",
+        "live OS drag-resize is HW-gated (real GPU + pointer + WM): verified headlessly via region introspection + hover resolution; the actual winit drag_resize_window drag is user-confirmed on :0"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.39"
+      ],
+      "publishable_carry_forward_bullets": [
+        "live OS drag-resize pixel verification HW-gated (real GPU + pointer + window manager); macOS drag_resize_window returns NotSupported (needs a Mac CI runner) — Linux/Wayland/Windows supported",
+        "resize-cursor-on-hover DEFERRED: a resize border with no cursor hint is less discoverable, but cursor feedback wants a unified hover->CursorIcon authority (text I-beam, splitter resize are future consumers), not a resize-only special case set on every CursorMoved; pinion sets no cursor today, so build the authority when a 2nd consumer forces it (abstraction-needs-second-consumer)",
+        "top edge owned by the title bar (resize injected under chrome): conventional CSD trade-off; window resizes from sides + bottom + bottom corners. A north-edge resize zone above the title bar is possible later if a consumer needs it",
+        "R1123 next: flip the MAIN window to decorations:false = full uniform CSD; resize now in place so the borderless main does not lose edge-resize"
+      ]
+    },
     "Round 12": {
       "decision_summary": "Round 12 — first implementation atomic: pinion-core Button widget SCXML state machine integration (SCE consumer pattern R15 동형)",
       "changes_bullets": [
