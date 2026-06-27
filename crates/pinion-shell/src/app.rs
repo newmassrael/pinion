@@ -1579,6 +1579,23 @@ impl<V: WidgetView> AppShell<V> {
                 }
             }
         }
+        // R1118 §5.16 PR-38 — `decorations` is create-time-only (like
+        // `strategy`): a same-id runtime flip is NOT applied (no
+        // `Window::set_decorations` call exists). Make that trap LOUD rather than
+        // a silent no-op, so a future consumer that toggles a live window's
+        // chrome gets a signal instead of nothing (fail clearly). Only POSITION
+        // closes the OS-feedback loop; chrome + size are read once at create.
+        for spec in &new_specs {
+            if let Some(old) = old_specs.iter().find(|o| o.id == spec.id) {
+                if old.decorations != spec.decorations {
+                    eprintln!(
+                        "shell: window {} decorations change ({} -> {}) ignored — \
+                         decorations is create-time-only; recreate the window to change chrome",
+                        spec.id, old.decorations, spec.decorations,
+                    );
+                }
+            }
+        }
         // Update the cache so the next `reconcile_windows` call
         // diffs against the snapshot the shell just acted on.
         *self.last_known_specs.borrow_mut() = new_specs;

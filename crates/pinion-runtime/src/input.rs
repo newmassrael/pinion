@@ -525,6 +525,14 @@ struct DragSession {
     /// cursor and forwarded verbatim as [`DragUpdate::press_cursor`] on every
     /// update, so a grab-offset drag (window move by a title bar) anchors at the
     /// exact press, not the first move sample.
+    ///
+    /// **Deliberately duplicates `press_gestures[id]`'s `DragLatch` origin** (the
+    /// click-vs-drag axis holds the same press point). It is a separate field, not
+    /// a read of that latch, because `press_gestures` is removed in `pointer_up`
+    /// BEFORE this session's release `DragUpdate` is built — so the session keeps
+    /// its own copy to survive into the release-path forward. The two are seeded
+    /// from the same `self.cursors[id]` at the same pointer-down, so they cannot
+    /// diverge.
     press_cursor: (f64, f64),
 }
 
@@ -3430,6 +3438,44 @@ mod tests {
             "the abs cursor maps into the main window"
         );
         assert_eq!(drop.point.tag, "main_dock");
+    }
+
+    #[test]
+    fn r1118_drop_target_false_floater_rejects_cross_window_dock() {
+        // R1118 — the LOAD-BEARING effect of a sole-floater's `drop_target=false`
+        // (`DockPanelStyle::with_drop_target(false)`): the floating window exposes
+        // NO drop target, so a panel dragged over it resolves nothing — a panel
+        // cannot dock INTO a single-panel floater. (The window MOVE is a separate
+        // `drag_to_at` branch, not this flag.)
+        use pinion_core::style::LayoutStyle;
+        let mut panel = Scene::Container(
+            ContainerNode::new(vec![])
+                .with_tag("torn-viewport".to_string())
+                .with_layout(LayoutStyle::new().with_drop_target(false))
+                .with_style(BoxStyle::filled(Color::default())),
+        );
+        if let Scene::Container(c) = &mut panel {
+            c.rect = Rect::new(10, 10, 80, 80);
+        }
+        let mut floater = Scene::Container(ContainerNode::new(vec![panel]));
+        if let Scene::Container(c) = &mut floater {
+            c.rect = Rect::new(0, 0, 1000, 800);
+        }
+        // Abs cursor (840,140) = floater-local (40,40), squarely inside the panel
+        // rect — yet nothing resolves because the panel is not a drop target.
+        let windows = [("torn-viewport", &floater, (800.0, 100.0))];
+        assert!(
+            resolve_cross_window_drop(windows, (840.0, 140.0)).is_none(),
+            "a drop_target=false floater rejects a cross-window dock onto it",
+        );
+        // Control: the SAME geometry with drop_target=true DOES resolve, proving
+        // the rejection is the flag's doing, not a geometry miss.
+        let decorated = window_with_drop_panel("torn-viewport", Rect::new(10, 10, 80, 80));
+        let control = [("torn-viewport", &decorated, (800.0, 100.0))];
+        assert!(
+            resolve_cross_window_drop(control, (840.0, 140.0)).is_some(),
+            "a drop_target=true panel at the same rect DOES resolve (control)",
+        );
     }
 
     #[test]

@@ -544,6 +544,26 @@ fn is_panel_floating(panels: &[WindowSpec], panel_id: &str) -> bool {
 /// through the lifted [`desktop_position_from`] (R1107.1): `source_window`
 /// (R1107) is the window the cursor is measured in, for the right origin (the
 /// R1095.1 fix, now a `pinion-shell` SSOT shared with the editor consumer).
+///
+/// (R1118 §5.51 §5.16 §5.41) The floating `WindowSpec` a torn-off `panel_id`
+/// opens into, at outer position `pos` — the single construction site for the
+/// two float paths (the `tear_off` toggle + the live follow) so they cannot
+/// drift. The flat demo deliberately stays the SIMPLER decorated consumer: it
+/// keeps the OS title bar (no `with_decorations(false)`) and wires no title-bar
+/// window move — `hello-dock-panels-editor` is the borderless / custom-chrome
+/// consumer (R1115-R1117).
+fn floating_window_spec(panel_id: &str, pos: (i32, i32)) -> WindowSpec {
+    WindowSpec::new(
+        Cow::Owned(floating_window_id(panel_id)),
+        floating_window_title(panel_id),
+        SizeStrategy::Fixed {
+            width: FLOATING_W,
+            height: FLOATING_H,
+        },
+    )
+    .with_position(pos.0, pos.1)
+}
+
 fn follow_panel_floating(panel_id: &str, source_window: Option<&str>, cursor: (f64, f64)) {
     let signal = use_windows_topology();
     let mut current = signal.get();
@@ -552,17 +572,7 @@ fn follow_panel_floating(panel_id: &str, source_window: Option<&str>, cursor: (f
     if let Some(spec) = current.iter_mut().find(|w| w.id == target) {
         spec.position = Some(pos);
     } else {
-        current.push(
-            WindowSpec::new(
-                Cow::Owned(target),
-                floating_window_title(panel_id),
-                SizeStrategy::Fixed {
-                    width: FLOATING_W,
-                    height: FLOATING_H,
-                },
-            )
-            .with_position(pos.0, pos.1),
-        );
+        current.push(floating_window_spec(panel_id, pos));
     }
     signal.set(current);
 }
@@ -601,20 +611,13 @@ fn toggle_panel_floating(panel_id: &str) {
     if let Some(idx) = current.iter().position(|w| w.id == target) {
         current.remove(idx);
     } else {
-        let (x, y) = floating_window_position(panel_id);
-        current.push(
-            WindowSpec::new(
-                Cow::Owned(target),
-                floating_window_title(panel_id),
-                SizeStrategy::Fixed {
-                    width: FLOATING_W,
-                    height: FLOATING_H,
-                },
-            )
-            // R1087 §5.16 §5.41 PR-31 — open the floating window at a
-            // declared position (the first `with_position` consumer).
-            .with_position(x, y),
-        );
+        // R1087 §5.16 §5.41 PR-31 — open the floating window at a declared
+        // position (the first `with_position` consumer), via the shared
+        // `floating_window_spec` so the toggle + follow paths cannot drift.
+        current.push(floating_window_spec(
+            panel_id,
+            floating_window_position(panel_id),
+        ));
     }
     signal.set(current);
 }

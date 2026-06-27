@@ -62,7 +62,7 @@ use pinion_widget_paint::dock::{
     DEFAULT_FLOATING_WINDOW_PREFIX, DockDropPreview, DockNode, DockPanelExternal, DockPanelStyle,
     DockReorganizeExternal, DockReorganizer, DockSplitState, DockTopology,
     FloatingPlaceholderStyle, TEAR_OFF_EVENT, TEAR_OFF_FOLLOW_EVENT, TEAR_OFF_REDOCK_AT_EVENT,
-    TEAR_OFF_REDOCK_EVENT, TabWellExternal, dock_tablist_access_nodes,
+    TEAR_OFF_REDOCK_EVENT, TabWellExternal, WINDOW_MOVE_EVENT, dock_tablist_access_nodes,
     floating_window_id as dock_floating_window_id, view_dock_panel, view_dock_surface,
     view_floating_placeholder,
 };
@@ -458,6 +458,28 @@ fn follow_panel_floating(panel_id: &str, source_window: Option<&str>, cursor: (f
     signal.set(current);
 }
 
+/// (R1118 §5.51 §5.16 §5.41 PR-38) Move `panel_id`'s floating window BY the
+/// grab-relative displacement `delta` (the [`WINDOW_MOVE_EVENT`] reducer): the
+/// window's title bar was dragged, so `new_pos = current_pos + delta` keeps the
+/// grabbed point under the cursor. Distinct from [`follow_panel_floating`],
+/// which PLACES a torn-off panel AT a cursor (`origin + cursor`); this relocates
+/// an already-floating window by a delta. Idempotent no-op if the panel is not
+/// currently floating (a stray move with no window).
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "logical-pixel displacement f64 -> i32 outer position; sub-pixel is irrelevant to window placement"
+)]
+fn move_floating_window(panel_id: &str, delta: (f64, f64)) {
+    let signal = use_editor_windows();
+    let mut current = signal.get();
+    let target = floating_window_id(panel_id);
+    if let Some(spec) = current.iter_mut().find(|w| w.id == target) {
+        let (x, y) = spec.position.unwrap_or((0, 0));
+        spec.position = Some((x + delta.0.round() as i32, y + delta.1.round() as i32));
+        signal.set(current);
+    }
+}
+
 // ─── topology constructor ─────────────────────────────────────────────
 
 /// R685 §5.16 §5.49 — declarative editor topology. Built once per
@@ -787,13 +809,14 @@ fn view_main_dock(state: ButtonState) -> Scene {
 fn view_floating_panel(panel_id: &str, state: ButtonState) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
     let content = panel_content_for(panel_id, state, &theme);
-    // (R1116 §5.51 PR-38) The floater is the SOLE content of its own window, so
-    // its panel is NOT a self-redock target (`drop_target=false`): with no
-    // same-window dock zone under the cursor, a header drag escapes into a
-    // WINDOW MOVE (drag the borderless floater by its own header — the OS
-    // title bar `decorations:false` removed), grab-offset-preserving via the
-    // `DockPanelExternal` follow. A drop onto the MAIN dock still redocks
-    // cross-window (`over_window`, unaffected by this window's drop target).
+    // (R1116/R1118 §5.51 PR-38) The floater is the SOLE content of its own
+    // window, so `drop_target=false`: the floater exposes no drop target, so
+    // another panel cannot be docked INTO it (cross-window-drop rejection — the
+    // flag's load-bearing effect). Dragging the borderless floater by its own
+    // header (the OS title bar `decorations:false` removed) is a WINDOW MOVE,
+    // driven by the dedicated `drag_to_at` branch (`source_window ==
+    // floating_window`) → `WINDOW_MOVE_EVENT`, NOT by this flag. A drop onto the
+    // MAIN dock still redocks cross-window (`over_window`, independent of this).
     let style = DockPanelStyle::m3_default(panel_id.to_string()).with_drop_target(false);
     view_dock_panel(panel_id, content, &theme, &style, None)
 }
@@ -866,13 +889,13 @@ impl WidgetCore for DockPanelsEditorView {
             // split_seq) and the ONE preview (the dragged panel's drag_to writes
             // the affordance the target panel paints).
             //
-            // R1095.1 — this editor is DOCK-ONLY: it consumes the reorganizer
-            // (dock / split / tabify) but has no `windows_signal` and wires NO
-            // tear-off reducer arm, so an escape-drop's `tear_off`/`tear_off_follow`/
-            // `tear_off_redock` intents (and the panel's `detached` latch) are an
-            // intentional no-op here. Float-to-window is the deferred PR-31
-            // 2nd consumer (it would also unlock lifting the flat example's
-            // follow/redock/desktop-conversion trio into a dock substrate).
+            // R1105+ — this editor is the dock+float 2nd consumer: it consumes
+            // the reorganizer (dock / split / tabify) AND has a `windows_signal`
+            // (`use_editor_windows`) + wires the `tear_off`/`tear_off_follow`/
+            // `tear_off_redock(_at)`/`window_move` reducer arms (below), so a
+            // panel tears off into its own floating window and (R1116/R1117) is
+            // dragged by its title bar. (Superseded the pre-R1105 "DOCK-ONLY,
+            // float-to-window deferred" note that used to sit here.)
             for panel_id in topology.panel_ids() {
                 let panel = DockPanelExternal::new(panel_id.to_string())
                     .with_reorganizer(Rc::clone(&reorganizer))
@@ -985,6 +1008,24 @@ impl WidgetCore for DockPanelsEditorView {
                         let source_window =
                             v.get("source_window").and_then(serde_json::Value::as_str);
                         follow_panel_floating(panel, source_window, (x, y));
+                    }
+                    return Vec::new();
+                }
+                // (R1118) Window move: the panel's OWN floating window was
+                // dragged by its title bar. Move it BY the grab-relative
+                // displacement (dx, dy) — a delta added to the current position,
+                // NOT a cursor placed via an origin. Distinct event from the
+                // tear-off follow so the wire form is honest (a window move
+                // carries a displacement, a tear-off carries a cursor).
+                WINDOW_MOVE_EVENT => {
+                    if let IntrospectValue::Json(v) = &intent.payload
+                        && let (Some(panel), Some(dx), Some(dy)) = (
+                            v.get("panel").and_then(serde_json::Value::as_str),
+                            v.get("dx").and_then(serde_json::Value::as_f64),
+                            v.get("dy").and_then(serde_json::Value::as_f64),
+                        )
+                    {
+                        move_floating_window(panel, (dx, dy));
                     }
                     return Vec::new();
                 }

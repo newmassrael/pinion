@@ -3055,6 +3055,21 @@ pub const TEAR_OFF_EVENT: &str = "tear_off";
 /// cursor) — the panel id locates the window, the cursor positions it.
 pub const TEAR_OFF_FOLLOW_EVENT: &str = "tear_off_follow";
 
+/// R1118 §5.16 §5.41 §5.51 PR-38 — symbolic event the [`DockPanelExternal`]
+/// emits when the panel's OWN floating window is dragged by its title bar (a
+/// drag whose [`DragUpdate::source_window`] is the panel's declared
+/// [`floating_window`](DockPanelExternal::with_floating_window)). This is a
+/// WINDOW MOVE, distinct from [`TEAR_OFF_FOLLOW_EVENT`] (a docked panel escaping
+/// its dock to float AT the cursor). The payload is a grab-relative DISPLACEMENT
+/// `{panel, dx, dy}` — how far the cursor has strayed from the grab point, in
+/// the floating window's own frame — and the binding reducer moves the window BY
+/// that delta (`new_pos = current_pos + (dx, dy)`), keeping the grabbed
+/// title-bar point under the cursor. Kept a SEPARATE event (not folded into
+/// `tear_off_follow`) so the wire form is honest: a tear-off carries a cursor, a
+/// window move carries a displacement — two distinct vocabularies pinned apart
+/// (R1118 review-clearance; the project's wire-vocab-pin-not-fold discipline).
+pub const WINDOW_MOVE_EVENT: &str = "window_move";
+
 /// R1094 §5.16 §5.41 §5.51 — symbolic event the [`DockPanelExternal`]
 /// emits when a drag that had torn the panel into a live floating
 /// follower ends back in the dock: released over a dock zone (redock) or
@@ -3120,13 +3135,21 @@ pub struct DockPanelStyle {
     /// climbs a cursor over the panel's deeper content tag to the root and
     /// hands the coordinator the panel id + a normalised cursor (reorder /
     /// split / tab / tear-off). A panel that is the **sole content of its own
-    /// floating window** sets this `false`: it is not a self-redock target
-    /// (you cannot dock a panel into its own floating window), and — the
-    /// load-bearing effect — with no same-window drop zone under the cursor a
-    /// header drag immediately escapes, so [`DockPanelExternal::drag_to_at`]
-    /// treats it as a WINDOW MOVE (drag the borderless floater by its own
-    /// header, the OS-title-bar replacement) rather than a dock reorganize the
-    /// single panel could never satisfy.
+    /// floating window** sets this `false`.
+    ///
+    /// **Load-bearing effect (R1118-corrected): cross-window-drop REJECTION.**
+    /// The floating window's only drop-target candidate is this panel root; with
+    /// `false` the floater exposes NO drop target, so
+    /// [`pinion_runtime::resolve_cross_window_drop`] resolves nothing there and
+    /// another panel cannot be docked INTO the single-panel floater (a panel
+    /// cannot dock into its own / a sole floater). The window MOVE itself is
+    /// **NOT** driven by this flag — that is the dedicated
+    /// [`DockPanelExternal::drag_to_at`] window-move branch gated on
+    /// `source_window == floating_window` (R1116/R1117), which returns before any
+    /// escape/`over` logic. (Pre-R1118 this doc claimed the move came from a
+    /// "header drag escapes" mechanism; that was superseded and is dead for the
+    /// floater — `resolve_drop_point` hover-fallback means a floater never
+    /// reports `over==None`, so no escape ever fires.)
     pub drop_target: bool,
 }
 
@@ -3327,8 +3350,10 @@ pub fn view_dock_panel(
                     // panel's deeper content tag to THIS root, handing the
                     // pointer coordinator the panel id + a cursor normalised
                     // over the whole panel rect (the zone classifier's input).
-                    // (R1116 §5.51 PR-38) A sole-floater panel sets it `false`
-                    // so its header drag escapes into a window move.
+                    // (R1116 §5.51 PR-38) A sole-floater panel sets it `false` so
+                    // the floater exposes no drop target (cross-window-drop
+                    // rejection — see the field doc); the window move is a
+                    // separate `drag_to_at` branch, not this flag.
                     .with_drop_target(style.drop_target),
             ),
     )
@@ -3983,6 +4008,20 @@ fn tear_off_follow_payload(
     }))
 }
 
+/// R1118 §5.51 PR-38 — build the [`WINDOW_MOVE_EVENT`] payload: the panel id plus
+/// the grab-relative DISPLACEMENT `(dx, dy)` (cursor − `press_cursor`, in the
+/// floating window's own frame). Distinct from [`tear_off_follow_payload`]: the
+/// fields are `dx`/`dy` (a delta), never a cursor, so the wire form does not
+/// lie about which quantity it carries — the binding reducer adds it to the
+/// window's current position.
+fn window_move_payload(panel_id: &str, delta: (f64, f64)) -> IntrospectValue {
+    IntrospectValue::Json(serde_json::json!({
+        "panel": panel_id,
+        "dx": delta.0,
+        "dy": delta.1,
+    }))
+}
+
 /// R1103 §5.51 §2 #7 — read a normalised drop-zone cursor fraction from a
 /// JSON redock-at payload, defaulting to the zone centre (`0.5`) when the
 /// caller omits it. The `f64 → f32` narrowing is the documented `DropPoint`
@@ -4349,6 +4388,17 @@ impl DockPanelExternal {
         });
     }
 
+    /// (R1118 §5.51 PR-38) Enqueue a [`WINDOW_MOVE_EVENT`] — the grab-relative
+    /// displacement for dragging this panel's OWN floating window by its title
+    /// bar. Distinct from the tear-off follow: the binding moves the window BY
+    /// this delta, it does not place it at a cursor.
+    fn enqueue_window_move(&self, delta: (f64, f64)) {
+        self.pending_intents.borrow_mut().push_back(Intent {
+            tag: Cow::Borrowed(WINDOW_MOVE_EVENT),
+            payload: window_move_payload(&self.panel_id, delta),
+        });
+    }
+
     /// (R1094 §5.16 §5.41 §5.51) Enqueue the remove-only redock / restore
     /// intent. The binding reducer removes the panel's floating window if
     /// present (idempotent no-op otherwise).
@@ -4570,11 +4620,15 @@ impl External for DockPanelExternal {
         // path below is untouched (its `source_window` is the dock window).
         if let Some(fw) = self.floating_window.as_deref() {
             if update.source_window == Some(fw) {
-                let follow = (
+                // R1118 — emit a dedicated WINDOW_MOVE carrying the grab-relative
+                // DISPLACEMENT (cursor − press), NOT a tear_off_follow carrying a
+                // cursor. The binding moves the window BY this delta; the wire
+                // form stays honest (a window move is not a tear-off).
+                let delta = (
                     update.cursor.0 - update.press_cursor.0,
                     update.cursor.1 - update.press_cursor.1,
                 );
-                self.enqueue_tear_off_follow(follow, update.source_window);
+                self.enqueue_window_move(delta);
                 return;
             }
         }
@@ -4928,8 +4982,8 @@ mod tests {
     use super::{
         CONTENT_TAG_SUFFIX, DockDropZone, DockNode, DockPanelExternal, DockPanelStyle,
         DockReorganizer, DockTopology, HEADER_TAG_SUFFIX, TEAR_OFF_EVENT, TEAR_OFF_FOLLOW_EVENT,
-        TEAR_OFF_REDOCK_AT_EVENT, TEAR_OFF_REDOCK_EVENT, composite_tag, dock_drop_zone_highlight,
-        dock_tablist_access_nodes, view_dock_panel,
+        TEAR_OFF_REDOCK_AT_EVENT, TEAR_OFF_REDOCK_EVENT, WINDOW_MOVE_EVENT, composite_tag,
+        dock_drop_zone_highlight, dock_tablist_access_nodes, view_dock_panel,
     };
     use crate::tabs::composite_tab_tag;
     use pinion_a11y::AccessNode;
@@ -6367,20 +6421,45 @@ mod tests {
         floater.drag_to_at(&dummy_payload(), &mv((140.0, 88.0)));
         let mut got: Vec<Intent> = Vec::new();
         floater.drain_intents(&mut |i| got.push(i));
-        assert_eq!(got.len(), 2, "two moves = two follows");
+        assert_eq!(got.len(), 2, "two moves = two window-move intents");
+        // R1118 — a window move emits the dedicated WINDOW_MOVE event (a
+        // displacement), NOT tear_off_follow (a cursor). The wire form is honest.
+        for i in &got {
+            assert_eq!(
+                i.tag.as_ref(),
+                WINDOW_MOVE_EVENT,
+                "the floater header drag is a window move, not a tear_off_follow",
+            );
+        }
+        // The payload carries the grab-relative DISPLACEMENT (dx, dy), measured
+        // from the PRESS (R1117), not the first sample — even though the first
+        // sample already strayed +60,+40.
+        let wm = |p: &IntrospectValue| -> (String, f64, f64) {
+            let IntrospectValue::Json(v) = p else {
+                panic!("window_move payload is Json");
+            };
+            (
+                v.get("panel")
+                    .and_then(serde_json::Value::as_str)
+                    .expect("panel")
+                    .to_string(),
+                v.get("dx").and_then(serde_json::Value::as_f64).expect("dx"),
+                v.get("dy").and_then(serde_json::Value::as_f64).expect("dy"),
+            )
+        };
         assert_eq!(
-            follow_fields(&got[0].payload),
+            wm(&got[0].payload),
             ("viewport".into(), 60.0, 40.0),
-            "first follow = cursor - PRESS (grab-offset from the press, not this sample)",
+            "first delta = cursor - PRESS (60,40), not the first-sample anchor",
         );
         assert_eq!(
-            follow_fields(&got[1].payload),
+            wm(&got[1].payload),
             ("viewport".into(), 100.0, 80.0),
-            "later follow = cursor - press; origin + this keeps the grab point under the cursor",
+            "later delta = cursor - press; the binding adds it to the current window pos",
         );
 
         // Contrast: a docked tear-off (no floating_window declared) jumps to the
-        // RAW cursor — no grab-offset.
+        // RAW cursor — no grab-offset, and on the tear_off_follow wire.
         let mut docked = DockPanelExternal::new("viewport");
         let _ = docked.begin_drag();
         docked.drag_to_at(
