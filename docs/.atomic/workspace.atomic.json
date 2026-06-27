@@ -56066,6 +56066,62 @@
         "next: PR-39 decorated-floater OS-driven move path, or resume Phase-B advanced-DCC widgets"
       ]
     },
+    "Round 1121": {
+      "decision_summary": "Round 1121: client-side window chrome — a borderless window gets an introspectable title bar (close/minimize/maximize + drag grip) (§5.16 §5.39 PR-38)",
+      "changes_bullets": [
+        "pinion-overlay window_chrome: inject_window_chrome strip (title + close/min/max + grip) as scene nodes",
+        "First INTERACTIVE overlay: buttons hit-testable (not pointer-transparent); title/glyph transparent",
+        "CoreShell: decorations:false window insets content below strip + injects chrome (live + pure mirror)",
+        "AppShell try_chrome_press routes click: min/max=Window set_*, grip=drag_window, close=exit",
+        "Demo examples/hello-window-chrome (borderless); control surface = decorations:false (no new API)"
+      ],
+      "verification_bullets": [
+        "pinion-overlay 53 tests; pinion-shell 115 (108 baseline + 7 R1121); workspace clippy + rustfmt clean",
+        "Hover-resolution probe: cursor over close->close tag, over strip bg->grip tag (hit_test descent fix)",
+        "Content inset proven: borderless content y=32 h=268; decorated byte-identical y=0 h=300",
+        "Pure introspection mirror insets content identically to live paint (scene-as-data coherence)",
+        "Live-verified on :0: chrome renders + buttons act (min/max/close/move) via real pointer"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.39"
+      ],
+      "carry_forward_bullets": [
+        "R1122: resize handles (drag_resize_window) on chrome for borderless windows",
+        "R1123: flip main window to decorations:false = uniform CSD (closes the OS-vs-pinion asymmetry)",
+        "close=exit (current CloseRequested model); per-window close (secondary) needs a binding close seam",
+        "maximize glyph fixed is_maximized=false; thread per-window maximized state in",
+        "RPC verify >=30-assertion demo + a11y mirror for chrome controls deferred",
+        "floater dock-header doubling: sprag sets show_header:false (sprag-session, cross-repo)"
+      ],
+      "publishable_decision_summary": "Round 1121: client-side window chrome — a borderless window gets an introspectable title bar (close/minimize/maximize + drag grip) (§5.16 §5.39 PR-38)",
+      "publishable_changes_bullets": [
+        "pinion-overlay window_chrome: inject_window_chrome strip (title + close/min/max + grip) as scene nodes",
+        "First INTERACTIVE overlay: buttons hit-testable (not pointer-transparent); title/glyph transparent",
+        "CoreShell: decorations:false window insets content below strip + injects chrome (live + pure mirror)",
+        "AppShell try_chrome_press routes click: min/max=Window set_*, grip=drag_window, close=exit",
+        "Demo examples/hello-window-chrome (borderless); control surface = decorations:false (no new API)"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-overlay 53 tests; pinion-shell 115 (108 baseline + 7 R1121); workspace clippy + rustfmt clean",
+        "Hover-resolution probe: cursor over close->close tag, over strip bg->grip tag (hit_test descent fix)",
+        "Content inset proven: borderless content y=32 h=268; decorated byte-identical y=0 h=300",
+        "Pure introspection mirror insets content identically to live paint (scene-as-data coherence)",
+        "Live-verified on :0: chrome renders + buttons act (min/max/close/move) via real pointer"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.39"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R1122: resize handles (drag_resize_window) on chrome for borderless windows",
+        "R1123: flip main window to decorations:false = uniform CSD (closes the OS-vs-pinion asymmetry)",
+        "close=exit (current CloseRequested model); per-window close (secondary) needs a binding close seam",
+        "maximize glyph fixed is_maximized=false; thread per-window maximized state in",
+        "RPC verify >=30-assertion demo + a11y mirror for chrome controls deferred",
+        "floater dock-header doubling: sprag sets show_header:false (sprag-session, cross-repo)"
+      ]
+    },
     "Round 12": {
       "decision_summary": "Round 12 — first implementation atomic: pinion-core Button widget SCXML state machine integration (SCE consumer pattern R15 동형)",
       "changes_bullets": [
