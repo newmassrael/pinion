@@ -207,6 +207,9 @@ pub use pinion_runtime::rect_for_tag;
 // [`WidgetView::focus_ring_style`] impl can return a custom ring (or import the
 // type to read its builder) without a direct `pinion-overlay` dep.
 pub use pinion_overlay::FocusRingStyle;
+// R1121.1 §5.16 §5.39 — same rationale for the `WidgetView::window_chrome`
+// hook: a binding returns a `WindowChromeStyle` without a direct overlay dep.
+pub use pinion_overlay::WindowChromeStyle;
 
 // R791.1 §5.13 §5.38 — the per-binding `WidgetView::ime_caret_rect` body
 // (focus-guard + `rect_for_tag` walk + `tf_paint::ime_caret_rect_for`) is
@@ -865,6 +868,35 @@ pub trait WidgetView: pinion_a11y::WidgetA11y {
     #[must_use]
     fn focus_ring_style(_focused_tag: &str) -> Option<pinion_overlay::FocusRingStyle> {
         Some(pinion_overlay::FocusRingStyle::default())
+    }
+
+    /// R1121.1 §5.16 §5.39 — binding-controlled client-side window chrome.
+    /// When a window draws its OWN chrome (title bar + minimize / maximize /
+    /// close + drag grip) instead of the OS frame, the binding returns
+    /// `Some(style)` for that window's id; the shell injects the chrome strip
+    /// and insets the window content below it. `None` (the default) draws no
+    /// chrome.
+    ///
+    /// This is ORTHOGONAL to [`WindowSpec::decorations`] — the two were coupled
+    /// at R1121 (`decorations:false ⇒ chrome`) and decoupled here because that
+    /// coupling could not express a **naked borderless** window (`decorations:
+    /// false` + no chrome) — the fullscreen-game surface the Phase-C/D northern
+    /// star needs. The honest matrix:
+    ///
+    /// - `decorations:true`  + `None`        — OS-drawn title bar (the default).
+    /// - `decorations:false` + `Some(style)` — pinion-drawn chrome (CSD: an
+    ///   editor panel / torn-off dock window — Blender / Unreal / VS Code).
+    /// - `decorations:false` + `None`        — naked borderless (a splash or a
+    ///   fullscreen game viewport — no chrome at all).
+    /// - `decorations:true`  + `Some(style)` — possible but redundant (two bars);
+    ///   a binding that wants CSD also sets `decorations:false`.
+    ///
+    /// `window_id` is the canonical [`WindowSpec::id`] so a multi-window binding
+    /// chromes its floating panels while leaving its main canvas OS-decorated
+    /// (or naked). Mirrors the [`Self::focus_ring_style`] hook shape.
+    #[must_use]
+    fn window_chrome(_window_id: &str) -> Option<pinion_overlay::WindowChromeStyle> {
+        None
     }
 
     /// (R1113 §5.51 §5.33) Drag-image (the translucent follower the shell

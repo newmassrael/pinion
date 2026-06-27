@@ -3565,9 +3565,9 @@ impl<V: WidgetView> ShellCore<V> {
     ) -> Scene {
         let key = window_id.unwrap_or(pinion_runtime::DEFAULT_WINDOW);
         // R1121 §5.16 §5.39 PR-38 — client-side window chrome FIRST (under the
-        // transient ring / drag-image), so a borderless window's title bar +
-        // controls paint on the strip the content was inset below. A
-        // decorated window resolves `None` and this is a no-op (byte-identical
+        // transient ring / drag-image), so a chromed window's title bar +
+        // controls paint on the strip the content was inset below. A window
+        // whose `window_chrome` hook returns `None` is a no-op (byte-identical
         // to pre-R1121).
         let chromed = self.apply_window_chrome(scene, w, h, window_id);
         let ringed = self.apply_focus_ring(chromed, w, h);
@@ -3575,12 +3575,13 @@ impl<V: WidgetView> ShellCore<V> {
     }
 
     /// (R1121 §5.16 §5.39 §2 #7) Inject the client-side window-chrome strip
-    /// (title bar + close / minimize / maximize controls) when the window
-    /// `window_id` declared `decorations: false`. The buttons are real,
-    /// introspectable [`Scene`] nodes an AI agent observes and drives via
-    /// `scene/snapshot` + a click on the composite control tag — the reason
-    /// custom chrome beats OS chrome, whose controls live outside the scene
-    /// tree. A decorated window resolves `None` and the scene is unchanged.
+    /// (title bar + close / minimize / maximize controls) when the binding's
+    /// [`WidgetView::window_chrome`](crate::WidgetView::window_chrome) hook
+    /// returns a style for `window_id`. The buttons are real, introspectable
+    /// [`Scene`] nodes an AI agent observes and drives via `scene/snapshot` +
+    /// a click on the composite control tag — the reason custom chrome beats
+    /// OS chrome, whose controls live outside the scene tree. A window whose
+    /// hook returns `None` is unchanged.
     ///
     /// `is_maximized` is `false` for R1121 (the maximize button toggles; the
     /// per-window maximized state lives in `AppShell`/winit and is threaded
@@ -3595,13 +3596,16 @@ impl<V: WidgetView> ShellCore<V> {
         }
     }
 
-    /// (R1121 §5.16 §2 #7) Resolve client-side chrome for the window being
-    /// painted: `Some((title, style))` when its [`crate::WindowSpec`] declared
-    /// `decorations: false` (borderless → pinion owns the chrome), else `None`
-    /// (OS-decorated). `window_id == None` is the primary window (the first
-    /// declared spec); `Some(id)` matches by canonical id. The title is the
-    /// window's own declared title. Reads the same `windows_signal` / `windows`
-    /// SSOT as [`Self::declared_window_specs`].
+    /// (R1121.1 §5.16 §2 #7) Resolve client-side chrome for the window being
+    /// painted: `Some((title, style))` when the binding's
+    /// [`WidgetView::window_chrome`](crate::WidgetView::window_chrome) hook
+    /// returns a style for this window, else `None`. `window_id == None` is the
+    /// primary window (the first declared spec); `Some(id)` matches by canonical
+    /// id. The title is the window's declared title; the chrome decision is the
+    /// hook's — ORTHOGONAL to `decorations` (R1121.1 decoupled the two so a
+    /// `decorations:false` window can be naked, not forced to carry chrome).
+    /// Reads the same `windows_signal` / `windows` SSOT as
+    /// [`Self::declared_window_specs`].
     fn window_chrome_for(
         &self,
         window_id: Option<&str>,
@@ -3615,12 +3619,8 @@ impl<V: WidgetView> ShellCore<V> {
             None => specs.into_iter().next()?,
             Some(id) => specs.into_iter().find(|s| s.id.as_ref() == id)?,
         };
-        (!spec.decorations).then(|| {
-            (
-                spec.title.to_string(),
-                pinion_overlay::WindowChromeStyle::default(),
-            )
-        })
+        let style = V::window_chrome(spec.id.as_ref())?;
+        Some((spec.title.to_string(), style))
     }
 
     /// R670.B §5.16 — per-window paint scene producer. Same pipeline
@@ -6556,6 +6556,7 @@ mod r1121_window_chrome_tests {
     use pinion_core::style::{LayoutStyle, Size, SizeValue};
     use pinion_core::widgets::button::{ButtonEvent, ButtonState};
     use pinion_core::{Frame, WidgetCore};
+    use pinion_overlay::WindowChromeStyle;
 
     const CONTENT_TAG: &str = "r1121-content";
     const CHROME_H: u32 = 32; // WindowChromeStyle::default().height_px
@@ -6571,8 +6572,10 @@ mod r1121_window_chrome_tests {
         Scene::Container(c)
     }
 
+    // R1121.1 — `$decorations` (OS frame) and `$chrome` (pinion chrome hook)
+    // are ORTHOGONAL params: the fixtures cover all three live combinations.
     macro_rules! chrome_fixture {
-        ($name:ident, $decorations:literal, $title:literal) => {
+        ($name:ident, $decorations:literal, $chrome:expr, $title:literal) => {
             struct $name;
             impl WidgetCore for $name {
                 type State = ButtonState;
@@ -6618,11 +6621,25 @@ mod r1121_window_chrome_tests {
                         .with_decorations($decorations),
                     ]
                 }
+                fn window_chrome(_window_id: &str) -> Option<WindowChromeStyle> {
+                    $chrome
+                }
             }
         };
     }
-    chrome_fixture!(Borderless, false, "My Terminal");
-    chrome_fixture!(Decorated, true, "Decorated");
+    // CSD: no OS frame + pinion chrome.
+    chrome_fixture!(
+        Borderless,
+        false,
+        Some(WindowChromeStyle::default()),
+        "My Terminal"
+    );
+    // OS-decorated: OS frame, no pinion chrome.
+    chrome_fixture!(Decorated, true, None, "Decorated");
+    // Naked borderless (the Phase-C/D fullscreen-game surface): no OS frame AND
+    // no pinion chrome — the combination R1121's decorations-coupling could not
+    // express, the reason R1121.1 decoupled them.
+    chrome_fixture!(NakedBorderless, false, None, "Naked");
 
     fn rect_of(scene: &Scene, tag: &str) -> Option<Rect> {
         scene.rect_for_tag_absolute(tag)
@@ -6685,6 +6702,23 @@ mod r1121_window_chrome_tests {
             "decorated content is not inset (byte-identical)"
         );
         assert_eq!(content.h, 300, "decorated content fills the full height");
+    }
+
+    #[test]
+    fn naked_borderless_window_has_no_chrome_and_no_inset() {
+        // R1121.1 decoupling proof: `decorations:false` (no OS frame) WITHOUT a
+        // `window_chrome` style = naked borderless (the fullscreen-game surface).
+        // R1121's `decorations:false ⇒ chrome` coupling could not express this;
+        // the hook can, so chrome is absent and content fills the full window.
+        let mut sc = ShellCore::<NakedBorderless>::new();
+        let scene = sc.compute_paint_scene(400, 300);
+        assert!(
+            !has_tag(&scene, pinion_overlay::WINDOW_CHROME_TAG),
+            "a borderless window with no window_chrome hook gets no chrome",
+        );
+        let content = rect_of(&scene, CONTENT_TAG).expect("content laid out");
+        assert_eq!(content.y, 0, "naked borderless content is not inset");
+        assert_eq!(content.h, 300, "naked content fills the full window height");
     }
 
     #[test]

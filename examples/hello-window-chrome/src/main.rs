@@ -20,7 +20,7 @@ use pinion_core::style::{
 };
 use pinion_core::widgets::button::{ButtonEvent, ButtonState};
 use pinion_core::{Frame, WidgetCore};
-use pinion_shell::{SizeStrategy, WidgetView, WindowSpec, vello_renderer_impl};
+use pinion_shell::{SizeStrategy, WidgetView, WindowChromeStyle, WindowSpec, vello_renderer_impl};
 
 // pinion-forge codegen output: `pub struct WindowChromeRenderer` + error +
 // async `new` + sync `render` / `resize`.
@@ -108,6 +108,10 @@ impl WidgetView for ChromeDemo {
         }
     }
     fn windows() -> Vec<WindowSpec> {
+        // R1121.1 — two ORTHOGONAL declarations: `decorations(false)` turns off
+        // the OS frame, and `window_chrome` (below) turns ON pinion's own
+        // chrome. A naked borderless window would set the first and omit the
+        // second.
         vec![
             WindowSpec::new(
                 "main",
@@ -119,6 +123,9 @@ impl WidgetView for ChromeDemo {
             )
             .with_decorations(false),
         ]
+    }
+    fn window_chrome(_window_id: &str) -> Option<WindowChromeStyle> {
+        Some(WindowChromeStyle::default())
     }
 }
 

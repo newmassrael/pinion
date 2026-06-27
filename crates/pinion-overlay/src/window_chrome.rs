@@ -118,56 +118,11 @@ impl WindowChromeStyle {
             show_close: true,
         }
     }
-
-    /// Builder: override the strip height.
-    #[must_use]
-    pub const fn with_height_px(mut self, height_px: u32) -> Self {
-        self.height_px = height_px;
-        self
-    }
-
-    /// Builder: override the strip background colour.
-    #[must_use]
-    pub const fn with_bg(mut self, bg: Color) -> Self {
-        self.bg = bg;
-        self
-    }
-
-    /// Builder: override the title text colour.
-    #[must_use]
-    pub const fn with_title_color(mut self, title_color: Color) -> Self {
-        self.title_color = title_color;
-        self
-    }
-
-    /// Builder: override the button glyph stroke colour.
-    #[must_use]
-    pub const fn with_glyph(mut self, glyph: Color) -> Self {
-        self.glyph = glyph;
-        self
-    }
-
-    /// Builder: hide the minimize button (a tool window that should not
-    /// minimize independently sets this `false`).
-    #[must_use]
-    pub const fn with_minimize(mut self, show: bool) -> Self {
-        self.show_minimize = show;
-        self
-    }
-
-    /// Builder: hide the maximize / restore button.
-    #[must_use]
-    pub const fn with_maximize(mut self, show: bool) -> Self {
-        self.show_maximize = show;
-        self
-    }
-
-    /// Builder: hide the close button.
-    #[must_use]
-    pub const fn with_close(mut self, show: bool) -> Self {
-        self.show_close = show;
-        self
-    }
+    // R1121.1 — the fluent `with_*` builders were removed as speculative API
+    // (YAGNI): the only consumer is `WindowChromeStyle::default()`. The struct
+    // stays `#[non_exhaustive]` so a builder is re-added (one method, the
+    // specific field) the round a binding actually customizes that token —
+    // e.g. a tool window that hides minimize, or a themed title-bar colour.
 }
 
 impl Default for WindowChromeStyle {
@@ -472,18 +427,6 @@ mod tests {
         assert_eq!(rect_of(min).x, 800 - 3 * bw);
         // All span the full strip height.
         assert_eq!(rect_of(close).h, style.height_px);
-    }
-
-    #[test]
-    fn hidden_buttons_are_absent_and_close_shifts_right() {
-        let style = WindowChromeStyle::default()
-            .with_minimize(false)
-            .with_maximize(false);
-        let out = inject_window_chrome(empty(), "t", false, Some((400, 300)), style);
-        assert!(find_tag(&out, WINDOW_CHROME_MINIMIZE_TAG).is_none());
-        assert!(find_tag(&out, WINDOW_CHROME_MAXIMIZE_TAG).is_none());
-        let close = find_tag(&out, WINDOW_CHROME_CLOSE_TAG).unwrap();
-        assert_eq!(rect_of(close).x, 400 - style.button_width_px);
     }
 
     #[test]
