@@ -55806,6 +55806,62 @@
         "§2 #2 RPC press-hold gap: no peer to snapshot a held mid-drag; build when a real consumer needs it"
       ]
     },
+    "Round 1116": {
+      "decision_summary": "Round 1116: §5.51 PR-38 borderless floater title-bar window-move (with_floating_window): a drag in the panel's own floating window moves it grab-offset, not a tear-off; both chrome modes supported",
+      "changes_bullets": [
+        "with_floating_window(id): a drag whose source_window==it is a window MOVE, not a tear-off",
+        "follow_coord grab-offset (cursor - anchor) keeps the grabbed title-bar point under the cursor",
+        "DockPanelStyle.drop_target field (carry-2 lift); a floater sets false (not a self-redock target)",
+        "root cause: resolve_drop_point hover-fallback so a floater never escapes; move = dedicated path",
+        "both modes: decorated=OS move (R1088) / borderless=custom title-bar move (R1116); editor borderless"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace green; clippy -D pedantic; rustfmt clean; 606 dock tests + 2 new R1116 unit",
+        "r1116 unit: own-window drag = grab-offset (grab 0,0 then cursor-anchor); docked = jump unchanged",
+        "r1116_window_move.py >=30 assert A-F: floater moves by header, stays floating, both modes coexist",
+        "live :0 XTEST: borderless floater moves by title bar (248,208 to 398,317), declared==OS, floating",
+        "live ~30px trailing lag = winit moving-origin latency; the move logic is exact per the unit test"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.41",
+        "5.51"
+      ],
+      "carry_forward_bullets": [
+        "live grab-move smoothness: ~30px trailing lag (winit move latency); HW-gated polish",
+        "scene/drag move accumulates (fixed RPC frame != live frame); headless asserts moved not exact pos",
+        "decorated-floater OS-move not headlessly driveable (winit Moved); covered by R1088",
+        "drag a floater onto the main dock = cross-window redock (over_window, R1100 path) unaffected",
+        "R1114 drag-image live pixel still pending the sprag rev bump (external dependency)"
+      ],
+      "publishable_decision_summary": "Round 1116: §5.51 PR-38 borderless floater title-bar window-move (with_floating_window): a drag in the panel's own floating window moves it grab-offset, not a tear-off; both chrome modes supported",
+      "publishable_changes_bullets": [
+        "with_floating_window(id): a drag whose source_window==it is a window MOVE, not a tear-off",
+        "follow_coord grab-offset (cursor - anchor) keeps the grabbed title-bar point under the cursor",
+        "DockPanelStyle.drop_target field (carry-2 lift); a floater sets false (not a self-redock target)",
+        "root cause: resolve_drop_point hover-fallback so a floater never escapes; move = dedicated path",
+        "both modes: decorated=OS move (R1088) / borderless=custom title-bar move (R1116); editor borderless"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace green; clippy -D pedantic; rustfmt clean; 606 dock tests + 2 new R1116 unit",
+        "r1116 unit: own-window drag = grab-offset (grab 0,0 then cursor-anchor); docked = jump unchanged",
+        "r1116_window_move.py >=30 assert A-F: floater moves by header, stays floating, both modes coexist",
+        "live :0 XTEST: borderless floater moves by title bar (248,208 to 398,317), declared==OS, floating",
+        "live ~30px trailing lag = winit moving-origin latency; the move logic is exact per the unit test"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.41",
+        "5.51"
+      ],
+      "publishable_carry_forward_bullets": [
+        "live grab-move smoothness: ~30px trailing lag (winit move latency); HW-gated polish",
+        "scene/drag move accumulates (fixed RPC frame != live frame); headless asserts moved not exact pos",
+        "decorated-floater OS-move not headlessly driveable (winit Moved); covered by R1088",
+        "drag a floater onto the main dock = cross-window redock (over_window, R1100 path) unaffected",
+        "R1114 drag-image live pixel still pending the sprag rev bump (external dependency)"
+      ]
+    },
     "Round 12": {
       "decision_summary": "Round 12 — first implementation atomic: pinion-core Button widget SCXML state machine integration (SCE consumer pattern R15 동형)",
       "changes_bullets": [
