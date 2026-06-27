@@ -56228,6 +56228,58 @@
         "R1123 next: flip the MAIN window to decorations:false = full uniform CSD; resize now in place so the borderless main does not lose edge-resize"
       ]
     },
+    "Round 1123": {
+      "decision_summary": "Round 1123: §5.16 §5.39 client-side chrome maximize/restore glyph + resize-when-maximized — a per-window maximized cache (winit truth) feeds the chrome glyph and drops the resize border, mirror-parity (§2 #7); clears the R1121 is_maximized hardcode carry and completes the window-chrome CSD campaign",
+      "changes_bullets": [
+        "ShellCore maximized_per_window cache + window_maximized / set_window_maximized accessors; init in new()",
+        "AppShell note_window_resized (extracted Resized arm) syncs the cache from winit Window::is_maximized() on every resize — sourced from winit's truth so a tiling WM maximize is tracked, not just the chrome-button intent",
+        "apply_window_chrome threads the cached flag into inject_window_chrome: the maximize button now draws the restore (two-square) glyph when maximized vs the square glyph otherwise (was hardcoded is_maximized=false = the R1121 carry)",
+        "apply_resize_border drops the resize border when maximized — a maximized window fills the work area so edge-resize is meaningless and would fight the WM",
+        "both the live paint and the pure introspection mirror read the cache (not the live winit Window) so scene/snapshot matches the painted glyph + resize state (§2 #7)"
+      ],
+      "verification_bullets": [
+        "pinion-overlay window_chrome: 12 unit tests (added glyph_path maximize=5 commands vs restore=10 commands — the glyph the threaded flag selects)",
+        "pinion-shell substrate r1121_window_chrome_tests: 16 (added 3 R1123: window_maximized default-false roundtrip; maximized suppresses the resize border in BOTH live paint + pure mirror while the chrome strip stays, and restore brings it back; maximized chrome draws the restore glyph = Path command count 5->10 in the PAINTED scene = the cache reaches inject_window_chrome)",
+        "workspace cargo test green; clippy --all-targets -D pedantic + rustfmt clean",
+        "live maximize/restore + maximized-resize-off is HW-gated (real GPU + WM); verified headlessly via the cache->glyph + cache->resize-suppression introspection and the §2#7 mirror parity"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.39"
+      ],
+      "carry_forward_bullets": [
+        "window-chrome CSD campaign framework-complete: a borderless window now has title + minimize + maximize (correct maximize/restore glyph) + close + title-bar move + edge/corner resize, all introspectable, and ANY binding can opt its window (including the main window) into CSD via the window_chrome hook — hello-window-chrome already proves a fully-CSD main window, so the OS-vs-pinion asymmetry is framework-resolved",
+        "per-window close DEFERRED: chrome close routes to event_loop.exit (whole-app quit), correct for a main window but wrong for a secondary; no consumer gives a SECONDARY window the window_chrome hook yet (editor floaters use a custom dock header, not the hook), so a per-window close seam waits for that forcing consumer (abstraction-needs-second-consumer)",
+        "resize-cursor-on-hover still DEFERRED: wants a unified hover->CursorIcon authority (text I-beam / splitter as 2nd consumer), not a resize-only set_cursor",
+        "flipping the editor / sprag MAIN window to CSD is a binding choice (sprag = cross-repo handoff), not framework work — the framework supports it now",
+        "macOS drag_resize_window = NotSupported (Mac CI runner needed); Linux / Wayland / Windows supported"
+      ],
+      "publishable_decision_summary": "Round 1123: §5.16 §5.39 client-side chrome maximize/restore glyph + resize-when-maximized — a per-window maximized cache (winit truth) feeds the chrome glyph and drops the resize border, mirror-parity (§2 #7); clears the R1121 is_maximized hardcode carry and completes the window-chrome CSD campaign",
+      "publishable_changes_bullets": [
+        "ShellCore maximized_per_window cache + window_maximized / set_window_maximized accessors; init in new()",
+        "AppShell note_window_resized (extracted Resized arm) syncs the cache from winit Window::is_maximized() on every resize — sourced from winit's truth so a tiling WM maximize is tracked, not just the chrome-button intent",
+        "apply_window_chrome threads the cached flag into inject_window_chrome: the maximize button now draws the restore (two-square) glyph when maximized vs the square glyph otherwise (was hardcoded is_maximized=false = the R1121 carry)",
+        "apply_resize_border drops the resize border when maximized — a maximized window fills the work area so edge-resize is meaningless and would fight the WM",
+        "both the live paint and the pure introspection mirror read the cache (not the live winit Window) so scene/snapshot matches the painted glyph + resize state (§2 #7)"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-overlay window_chrome: 12 unit tests (added glyph_path maximize=5 commands vs restore=10 commands — the glyph the threaded flag selects)",
+        "pinion-shell substrate r1121_window_chrome_tests: 16 (added 3 R1123: window_maximized default-false roundtrip; maximized suppresses the resize border in BOTH live paint + pure mirror while the chrome strip stays, and restore brings it back; maximized chrome draws the restore glyph = Path command count 5->10 in the PAINTED scene = the cache reaches inject_window_chrome)",
+        "workspace cargo test green; clippy --all-targets -D pedantic + rustfmt clean",
+        "live maximize/restore + maximized-resize-off is HW-gated (real GPU + WM); verified headlessly via the cache->glyph + cache->resize-suppression introspection and the §2#7 mirror parity"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.39"
+      ],
+      "publishable_carry_forward_bullets": [
+        "window-chrome CSD campaign framework-complete: a borderless window now has title + minimize + maximize (correct maximize/restore glyph) + close + title-bar move + edge/corner resize, all introspectable, and ANY binding can opt its window (including the main window) into CSD via the window_chrome hook — hello-window-chrome already proves a fully-CSD main window, so the OS-vs-pinion asymmetry is framework-resolved",
+        "per-window close DEFERRED: chrome close routes to event_loop.exit (whole-app quit), correct for a main window but wrong for a secondary; no consumer gives a SECONDARY window the window_chrome hook yet (editor floaters use a custom dock header, not the hook), so a per-window close seam waits for that forcing consumer (abstraction-needs-second-consumer)",
+        "resize-cursor-on-hover still DEFERRED: wants a unified hover->CursorIcon authority (text I-beam / splitter as 2nd consumer), not a resize-only set_cursor",
+        "flipping the editor / sprag MAIN window to CSD is a binding choice (sprag = cross-repo handoff), not framework work — the framework supports it now",
+        "macOS drag_resize_window = NotSupported (Mac CI runner needed); Linux / Wayland / Windows supported"
+      ]
+    },
     "Round 12": {
       "decision_summary": "Round 12 — first implementation atomic: pinion-core Button widget SCXML state machine integration (SCE consumer pattern R15 동형)",
       "changes_bullets": [
