@@ -17748,6 +17748,46 @@
         "Cross-window drop preview (R1125) occlusion by the opaque floater: revisit inside the chart's floating state (translucent/ghost floater)."
       ]
     },
+    "R1128": {
+      "decision_summary": "R1128: redock SSOT — retire apply_zone_redock; dock_panel_at_zone the single primitive; forcing-consumer tests for the §5.51.1 data primitives (self-review cleanup of the R1126 unused/untested + dual-primitive smells)",
+      "changes_bullets": [
+        "Removed DockReorganizer::apply_zone_redock (the placeholder-only move). dock_panel_at_zone (total: move-if-present / insert-if-absent) is now the SINGLE redock SSOT — editor reducer + r1106 demo + 2 editor doc comments + 2 dock.rs doc links migrated; dock_panel_at_zone's centre outcome aligned to apply_intent's '{src} -> {tgt}' (dropped the '(tab)' suffix) so the convention is uniform.",
+        "7 forcing-consumer tests (the previously UNUSED + UNTESTED R1126 primitives now have consumers): dock_panel_at_zone present-MOVE + absent-INSERT (edge & centre) + own-slot / dead-zone no-ops; tabify_fresh (fresh stack + duplicate-panel / absent-target guards); float_out_panel (collapse + idempotent). The 4 r1106 apply_zone_redock tests folded into these."
+      ],
+      "verification_bullets": [
+        "7 R1128 tests pass; pinion-widget-paint 609→612 lib tests; cargo clippy --workspace --all-targets --features pinion-runtime/vello clean; cargo fmt clean.",
+        "Behaviour PRESERVED (editor now on dock_panel_at_zone in placeholder mode): r1106 (zone-redock) + r1124 (floater drag-back) + r1105 (tear-off) demos all PASS.",
+        "mnemosyne validate-workspace clean (changelog R1127→R1128)."
+      ],
+      "impact_refs": [
+        "5.51.1",
+        "5.51"
+      ],
+      "carry_forward_bullets": [
+        "Self-review residuals still open: (a) R1125 cross-window preview occlusion by the opaque floater — revisit inside the chart's floating state; (b) chart crate-location decision (pinion-core codegen vs a pinion-widget-paint build.rs for chart+binding cohesion) — currently core by codegen-convenience, needs a principled call.",
+        "Stage 2 (the actual chart consumer): refactor DockPanelExternal → Widget<DockPanelPolicy>; the data primitives are now all tested + dock_panel_at_zone is consumed, so stage 2 wires the chart to send escaped/dropped/dock_back + act on float/redock/restore.",
+        "R1126 bundled three concerns (redock fix + preview + spec) in one round; can't surgically un-bundle post-commit — noted as an audit-trail lesson (focused rounds)."
+      ],
+      "publishable_decision_summary": "R1128: redock SSOT — retire apply_zone_redock; dock_panel_at_zone the single primitive; forcing-consumer tests for the §5.51.1 data primitives (self-review cleanup of the R1126 unused/untested + dual-primitive smells)",
+      "publishable_changes_bullets": [
+        "Removed DockReorganizer::apply_zone_redock (the placeholder-only move). dock_panel_at_zone (total: move-if-present / insert-if-absent) is now the SINGLE redock SSOT — editor reducer + r1106 demo + 2 editor doc comments + 2 dock.rs doc links migrated; dock_panel_at_zone's centre outcome aligned to apply_intent's '{src} -> {tgt}' (dropped the '(tab)' suffix) so the convention is uniform.",
+        "7 forcing-consumer tests (the previously UNUSED + UNTESTED R1126 primitives now have consumers): dock_panel_at_zone present-MOVE + absent-INSERT (edge & centre) + own-slot / dead-zone no-ops; tabify_fresh (fresh stack + duplicate-panel / absent-target guards); float_out_panel (collapse + idempotent). The 4 r1106 apply_zone_redock tests folded into these."
+      ],
+      "publishable_verification_bullets": [
+        "7 R1128 tests pass; pinion-widget-paint 609→612 lib tests; cargo clippy --workspace --all-targets --features pinion-runtime/vello clean; cargo fmt clean.",
+        "Behaviour PRESERVED (editor now on dock_panel_at_zone in placeholder mode): r1106 (zone-redock) + r1124 (floater drag-back) + r1105 (tear-off) demos all PASS.",
+        "mnemosyne validate-workspace clean (changelog R1127→R1128)."
+      ],
+      "publishable_impact_refs": [
+        "5.51.1",
+        "5.51"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Self-review residuals still open: (a) R1125 cross-window preview occlusion by the opaque floater — revisit inside the chart's floating state; (b) chart crate-location decision (pinion-core codegen vs a pinion-widget-paint build.rs for chart+binding cohesion) — currently core by codegen-convenience, needs a principled call.",
+        "Stage 2 (the actual chart consumer): refactor DockPanelExternal → Widget<DockPanelPolicy>; the data primitives are now all tested + dock_panel_at_zone is consumed, so stage 2 wires the chart to send escaped/dropped/dock_back + act on float/redock/restore.",
+        "R1126 bundled three concerns (redock fix + preview + spec) in one round; can't surgically un-bundle post-commit — noted as an audit-trail lesson (focused rounds)."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
