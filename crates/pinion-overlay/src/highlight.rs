@@ -127,6 +127,26 @@ pub fn inject_highlight(scene: Scene, path_suffix: &str, style: HighlightStyle) 
     wrapped
 }
 
+/// (R1125 §5.51 §2 #7 PR-33) Inject a CALLER-built overlay node as a top-level,
+/// on-top sibling, replacing any prior overlay carrying `tag` (idempotent — a
+/// repeat call updates rather than duplicates). `node` is `None` to just clear a
+/// previously-injected overlay (the drop preview vanishes when the drag leaves
+/// the window). Domain-agnostic on purpose: the caller (the shell) builds the
+/// node from a higher layer it can see but this crate cannot — e.g.
+/// `pinion_widget_paint::dock_drop_preview_overlay` for the cross-window dock
+/// drop-zone preview — and shares the same wrap / strip / push discipline as
+/// [`inject_highlight`] and [`crate::focus_ring`]. The caller is responsible for
+/// the node's own absolute positioning + `pointer_transparent`.
+#[must_use]
+pub fn inject_overlay_node(scene: Scene, tag: &str, node: Option<Scene>) -> Scene {
+    let mut wrapped = wrap_into_container(scene);
+    strip_tag(&mut wrapped, tag);
+    if let Some(node) = node {
+        push_top_level(&mut wrapped, node);
+    }
+    wrapped
+}
+
 /// Strip every overlay-injected node (tag starts with
 /// [`HIGHLIGHT_TAG_PREFIX`]) from `scene`. The original author-owned
 /// nodes are preserved verbatim. Idempotent: clearing twice yields

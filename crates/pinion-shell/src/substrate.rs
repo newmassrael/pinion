@@ -58,6 +58,13 @@ use pinion_text::LayoutCache;
 
 use super::WidgetView;
 
+/// (R1125 §5.51 §2 #7 PR-33) Shell-owned tag for the cross-window dock drop-zone
+/// preview slot. The shell wraps the binding-supplied overlay
+/// ([`WidgetView::dock_drop_preview`]) in a container carrying this tag so the
+/// strip is stripped + re-pushed by ONE known tag each paint (idempotent),
+/// keeping the shell widget-library-agnostic (it never names a dock type).
+const CROSS_WINDOW_DROP_PREVIEW_TAG: &str = "__xwin_drop_preview";
+
 /// R889 §5.49 — every window-scoped read `dispatch_rpc_inner`
 /// pre-resolves before its split-borrow block (the substrate borrows
 /// preclude resolving these once `scene_mut` is taken). Bundled in a
@@ -298,6 +305,16 @@ pub struct ShellCore<V: WidgetView> {
     /// per-window state stores share the same `&str → owned key`
     /// convention.
     redraw_requested_per_window: HashMap<String, bool>,
+
+    /// (R1125 §5.51 §2 #7 PR-33) The window a live cross-window drag currently
+    /// targets (its incoming dock drop-zone preview is painted). Tracked so a move
+    /// that changes the target (the cursor crosses from one window onto another, or
+    /// leaves every window) can repaint the PREVIOUS target to clear its strip —
+    /// the source window's drag moves do not otherwise dirty the target. `None`
+    /// when no drag maps onto another window. Set in
+    /// [`Self::cursor_moved_for_window`]; the strip itself is injected by
+    /// [`Self::apply_cross_window_drop_preview`] from the same resolution.
+    cross_preview_target: Option<String>,
 
     /// R51.143 §5.28 §5.16 §5.41 — per-window paint-clock store.
     ///
@@ -664,6 +681,7 @@ impl<V: WidgetView> ShellCore<V> {
             last_access_focus: None,
             redraw_requested: false,
             redraw_requested_per_window: HashMap::new(),
+            cross_preview_target: None,
             last_paint_instants: HashMap::new(),
             target_fps_per_window: HashMap::new(),
             immediate_subtree_per_window: HashMap::new(),
@@ -2056,8 +2074,24 @@ impl<V: WidgetView> ShellCore<V> {
         // drag, so idle hovers and single-window apps pay nothing.
         if self.core.drag_session_active_for_window(window_id, pid) {
             let cross = self.resolve_cross_window_live(window_id, (x, y));
+            let new_target = cross.as_ref().map(|c| c.window.clone());
             self.core
                 .set_drag_cross_window_for_window(window_id, pid, cross);
+            // R1125 §5.51 PR-33 — keep the incoming drop-zone PREVIEW live. The
+            // source window's drag moves do not dirty the TARGET window, so the
+            // shell repaints it here: the current target every move (its strip
+            // follows the cursor / zone), and the PREVIOUS target on a change (so
+            // its strip clears when the cursor crosses to another window or leaves
+            // every window). No-op for a single-window drag (target stays `None`).
+            if let Some(target) = &new_target {
+                self.request_redraw_for_window(target);
+            }
+            if self.cross_preview_target.as_deref() != new_target.as_deref() {
+                if let Some(prev) = self.cross_preview_target.take() {
+                    self.request_redraw_for_window(&prev);
+                }
+                self.cross_preview_target = new_target;
+            }
         }
         // R881 §5.35 §5.49 — thread the out-of-band modifier cache so a
         // live middle pan's wheel-vocabulary dispatch sees held chords
@@ -2316,6 +2350,14 @@ impl<V: WidgetView> ShellCore<V> {
 
     /// R672 §5.35 §5.41 — per-window variant of [`Self::mouse_released`].
     pub fn mouse_released_for_window(&mut self, window_id: &str, pid: PointerId) {
+        // R1125 §5.51 PR-33 — the release ends the drag, so clear the incoming
+        // cross-window drop-PREVIEW target and repaint it: a redock repaints it via
+        // the topology change anyway, but a non-redock release (the floater stays
+        // floating) must also drop the strip. No-op when no drag targeted another
+        // window (the common click / same-window case).
+        if let Some(target) = self.cross_preview_target.take() {
+            self.request_redraw_for_window(&target);
+        }
         // R882 / R882.1 §5.35 §5.39 — the release routes through the
         // substrate's LEFT front door
         // ([`CoreShell::left_release_for_window`]): a left-opened pan
@@ -3569,6 +3611,44 @@ impl<V: WidgetView> ShellCore<V> {
         pinion_overlay::inject_drag_image(scene, &label, cursor, style, Some((w, h)))
     }
 
+    /// (R1125 §5.51 §2 #7 PR-33) Inject the cross-window dock drop-zone PREVIEW
+    /// into `window_id` when a floating panel dragged in ANOTHER window currently
+    /// maps onto it. The sibling of [`Self::apply_drag_image`]: the shell — the
+    /// sole holder of every window's geometry — resolves the incoming drop via
+    /// [`pinion_runtime::CoreShell::cross_window_drop_into`] and highlights the
+    /// RESULT region of the target panel (the split half the redock would occupy,
+    /// or the whole pane for a centre tabify), so the user SEES where the floater
+    /// will land before releasing — exactly the same affordance the same-window
+    /// drag shows, now across windows. Driven from shell-owned drag state +
+    /// injected as a top-level overlay, so every consumer gets it with ZERO
+    /// per-binding wiring. No-op when no drag targets this window, the binding
+    /// opts out ([`WidgetView::dock_drop_preview`] `None`), or the resolved
+    /// panel has no rect in this scene. Each paint re-derives it (the prior
+    /// strip is stripped by tag), so it follows the cursor live.
+    fn apply_cross_window_drop_preview(&self, scene: Scene, window_id: Option<&str>) -> Scene {
+        let key = window_id.unwrap_or(pinion_runtime::DEFAULT_WINDOW);
+        let inner = self.core.cross_window_drop_into(key).and_then(|drop| {
+            // GENERIC half: the target panel's window-absolute rect. The
+            // dock-specific zone classification + strip rendering is the binding's
+            // (`V::dock_drop_preview`), so the shell stays widget-agnostic.
+            let rect = scene.rect_for_tag_absolute(&drop.point.tag)?;
+            V::dock_drop_preview(&drop.point.tag, rect, drop.point.x_rel, drop.point.y_rel)
+        });
+        // Wrap the binding's overlay in a shell-owned, pointer-transparent slot so
+        // the strip is stripped + replaced by ONE known tag each paint (idempotent,
+        // like every other overlay), independent of the binding node's own tag.
+        let slot = inner.map(|node| {
+            Scene::Container(
+                pinion_core::scene::ContainerNode::new(vec![node])
+                    .with_tag(CROSS_WINDOW_DROP_PREVIEW_TAG.to_string())
+                    .with_layout(
+                        pinion_core::style::LayoutStyle::new().with_pointer_transparent(true),
+                    ),
+            )
+        });
+        pinion_overlay::inject_overlay_node(scene, CROSS_WINDOW_DROP_PREVIEW_TAG, slot)
+    }
+
     /// R1113 §5.51 §5.33 — the window-level paint overlays, in z-order: the
     /// keyboard focus ring then the drag-image follower. Both are injected by
     /// the shell from its own state (focus / the router's live drag session),
@@ -3597,7 +3677,12 @@ impl<V: WidgetView> ShellCore<V> {
         // to pre-R1121).
         let chromed = self.apply_window_chrome(resizable, w, h, window_id);
         let ringed = self.apply_focus_ring(chromed, w, h);
-        self.apply_drag_image(ringed, w, h, key)
+        // R1125 §5.51 PR-33 — the incoming cross-window dock drop-zone preview,
+        // UNDER the source window's drag-image follower (the follower lives in the
+        // dragged window, the preview in the target window, so they never overlap
+        // — ordered here for one canonical z-stack).
+        let previewed = self.apply_cross_window_drop_preview(ringed, window_id);
+        self.apply_drag_image(previewed, w, h, key)
     }
 
     /// (R1121 §5.16 §5.39 §2 #7) Inject the client-side window-chrome strip

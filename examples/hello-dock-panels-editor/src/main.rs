@@ -62,7 +62,8 @@ use pinion_widget_paint::dock::{
     DEFAULT_FLOATING_WINDOW_PREFIX, DockDropPreview, DockNode, DockPanelExternal, DockPanelStyle,
     DockReorganizeExternal, DockReorganizer, DockSplitState, DockTopology,
     FloatingPlaceholderStyle, TEAR_OFF_EVENT, TEAR_OFF_FOLLOW_EVENT, TEAR_OFF_REDOCK_AT_EVENT,
-    TEAR_OFF_REDOCK_EVENT, TabWellExternal, WINDOW_MOVE_EVENT, dock_tablist_access_nodes,
+    TEAR_OFF_REDOCK_EVENT, TabWellExternal, WINDOW_MOVE_EVENT, dock_drop_highlight_tint,
+    dock_drop_preview_overlay, dock_drop_zone_normalized, dock_tablist_access_nodes,
     floating_window_id as dock_floating_window_id, view_dock_panel, view_dock_surface,
     view_floating_placeholder,
 };
@@ -1120,6 +1121,24 @@ impl WidgetView for DockPanelsEditorView {
     /// floating windows, dock-back intents remove them.
     fn windows_signal() -> Option<Rc<Signal<Vec<WindowSpec>>>> {
         Some(use_editor_windows())
+    }
+
+    /// (R1125 §5.51 §2 #7 PR-33) Render the cross-window dock drop-zone PREVIEW.
+    /// The shell does the widget-agnostic half (resolves the incoming floater's
+    /// drop onto this window, looks up the target panel's `panel_rect`); this
+    /// supplies the dock-domain strip — the RESULT region of the zone under the
+    /// cursor, in the dock Accent tint — through the SAME `dock_drop_zone_normalized`
+    /// SSOT the in-window drag preview uses, so a floater dragged back over main
+    /// shows exactly where it will land (a one-line opt-in for a dock binding).
+    fn dock_drop_preview(
+        _target_tag: &str,
+        panel_rect: Rect,
+        x_rel: f32,
+        y_rel: f32,
+    ) -> Option<Scene> {
+        let zone = dock_drop_zone_normalized(f64::from(x_rel), f64::from(y_rel));
+        let tint = dock_drop_highlight_tint(&Theme::default());
+        dock_drop_preview_overlay(panel_rect, zone, tint)
     }
 
     /// (R1105 §5.51 §5.16 PR-31) Per-window paint dispatch. The main window

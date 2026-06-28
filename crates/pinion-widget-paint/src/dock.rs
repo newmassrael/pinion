@@ -71,9 +71,10 @@ use pinion_core::external::{
 };
 use pinion_core::input::PointerWireEvent;
 use pinion_core::intent::Intent;
-use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
+use pinion_core::scene::{BoxNode, ContainerNode, Rect, Scene, TextNode};
 use pinion_core::style::{
-    AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, SizeValue, TextStyle,
+    AlignItems, BoxStyle, Color, FlexDirection, JustifyContent, LayoutStyle, Size, SizeValue,
+    TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme};
 use std::rc::Rc;
@@ -1097,6 +1098,45 @@ impl DockTopology {
         let mut source_id = Some(Cow::Owned(source.to_string()));
         let mut new_tabs_id = Some(new_tabs_id.into());
         let new_root = tabify_into_rec(&removed, target, &mut source_id, &mut new_tabs_id);
+        Self::try_new(new_root)
+    }
+
+    /// (R1126 §5.51 §2 #7 PR-33) Stack a FRESH `new_panel` leaf onto `target` as a
+    /// tab well — the INSERT counterpart of [`Self::tabify`] (which MOVES an
+    /// existing panel by removing it first). The explicit fresh verb so a
+    /// COLLAPSE-policy redock (the returning floater's leaf was removed on
+    /// tear-off, so it is absent) can tabify without a source-removal — mirroring
+    /// [`Self::split_leaf_into`] for edge zones. The [`DockReorganizer::dock_panel_at_zone`]
+    /// coordinator normalises to absence (remove-if-present) THEN calls this, so a
+    /// present panel re-tabs via remove+insert and an absent one inserts directly:
+    /// ONE zone-honoring redock total over both torn-slot policies.
+    ///
+    /// # Errors
+    ///
+    /// * [`TopologyError::PanelNotFound`] if `target` names no panel.
+    /// * [`TopologyError::DuplicatePanelId`] if `new_panel` already exists (a fresh
+    ///   insert must not duplicate a live panel — the caller removes it first).
+    /// * [`TopologyError::DuplicateTabsId`] / [`TopologyError::IdCollision`] if
+    ///   `new_tabs_id` collides (surfaced by the [`Self::try_new`] gate).
+    pub fn tabify_fresh(
+        &self,
+        new_panel: impl Into<Cow<'static, str>>,
+        target: &str,
+        new_tabs_id: impl Into<Cow<'static, str>>,
+    ) -> Result<DockTopology, TopologyError> {
+        let new_panel = new_panel.into();
+        let ids = self.root.panel_ids();
+        if !ids.contains(&target) {
+            return Err(TopologyError::PanelNotFound(target.to_string()));
+        }
+        if ids.contains(&new_panel.as_ref()) {
+            return Err(TopologyError::DuplicatePanelId(new_panel.to_string()));
+        }
+        // Stack the fresh leaf onto `target` WITHOUT a prior removal (the panel is
+        // genuinely new to this tree), minting a well if `target` is a bare leaf.
+        let mut source_id = Some(new_panel);
+        let mut new_tabs_id = Some(new_tabs_id.into());
+        let new_root = tabify_into_rec(&self.root, target, &mut source_id, &mut new_tabs_id);
         Self::try_new(new_root)
     }
 
@@ -2450,6 +2490,112 @@ impl DockReorganizer {
         }
     }
 
+    /// (R1126 §5.51 §2 #7 PR-33) Return a floating `panel` into the dock at the
+    /// dropped zone — TOTAL over the panel's presence, so ONE redock path serves
+    /// BOTH torn-slot policies:
+    ///
+    /// * **Placeholder policy** — the panel is still a leaf (its slot was kept as
+    ///   a placeholder on tear-off): this MOVES it to the zone (remove-then-insert).
+    /// * **Collapse policy** — the leaf was removed on tear-off ([`Self::float_out_panel`]),
+    ///   so the panel is absent: this INSERTS a fresh leaf at the zone.
+    ///
+    /// The consumer picks the policy (by whether it floated the leaf out); this
+    /// stays uniform. Normalises to absence (remove-if-present) then inserts fresh
+    /// via [`DockTopology::split_leaf_into`] (edge) / [`DockTopology::tabify_fresh`]
+    /// (centre), classified by the same [`dock_drop_zone_normalized`] SSOT the
+    /// same-window drag uses. `panel == target` (a drop on the panel's own slot) is
+    /// a home no-op — a panel cannot split against itself. A dead zone / empty
+    /// surface is a no-op. Supersedes the placeholder-only
+    /// [`Self::apply_zone_redock`] (which rejected an absent source).
+    ///
+    /// # Errors
+    ///
+    /// Propagates the [`TopologyError`] from the underlying remove / insert when it
+    /// cannot apply (id collision, stale target); the live topology is unchanged.
+    ///
+    /// # Panics
+    ///
+    /// Never in practice: the edge branch is reached only for a non-`None`,
+    /// non-`Center` zone, and every such zone has [`zone_split_geometry`]; the
+    /// `expect` documents that invariant (mirrors [`Self::tabify`]'s panic note).
+    pub fn dock_panel_at_zone(
+        &self,
+        panel: &str,
+        target: &str,
+        x_rel: f64,
+        y_rel: f64,
+    ) -> Result<String, TopologyError> {
+        let Some(current) = self.topology.get() else {
+            let outcome = "empty surface — no-op".to_string();
+            self.note_outcome(&outcome);
+            return Ok(outcome);
+        };
+        if panel == target {
+            let outcome = format!("{panel}: home redock (own slot) — no move");
+            self.note_outcome(&outcome);
+            return Ok(outcome);
+        }
+        let zone = dock_drop_zone_normalized_tabbing(x_rel, y_rel, self.tabbing);
+        if zone == DockDropZone::None {
+            let outcome = format!("{panel} -> {target}: no actionable zone — no move");
+            self.note_outcome(&outcome);
+            return Ok(outcome);
+        }
+        // Normalise to absence: a present panel (placeholder policy) is removed so
+        // the insert below is uniform; an absent panel (collapse policy) inserts
+        // directly. `remove_leaf` cannot fail here — `panel` is present + `target`
+        // (!= panel) survives, so the tree never empties.
+        let base = if current.panel_ids().contains(&panel) {
+            current.remove_leaf(panel)?
+        } else {
+            current
+        };
+        let (next, summary) = if zone == DockDropZone::Center {
+            let id = format!("{REORG_TABS_ID_PREFIX}{}", self.tabs_seq.get());
+            let next = base.tabify_fresh(panel.to_string(), target, id)?;
+            self.tabs_seq.set(self.tabs_seq.get() + 1);
+            (next, format!("{panel} -> {target} (tab)"))
+        } else {
+            let (orientation, position) =
+                zone_split_geometry(zone).expect("a non-None, non-Centre zone has split geometry");
+            let id = format!("{REORG_SPLIT_ID_PREFIX}{}", self.split_seq.get());
+            let next = base.split_leaf_into(
+                target,
+                panel.to_string(),
+                id,
+                orientation,
+                self.reorganize_ratio,
+                position,
+            )?;
+            self.split_seq.set(self.split_seq.get() + 1);
+            (next, format!("{panel} -> {target}"))
+        };
+        Ok(self.commit(next, summary))
+    }
+
+    /// (R1126 §5.51 §2 #7 PR-33) Float `panel` OUT of the dock — the COLLAPSE
+    /// torn-slot policy: remove its leaf so the sibling reclaims the space (vs the
+    /// placeholder policy, which keeps the leaf and paints a placeholder). The
+    /// return into the dock is [`Self::dock_panel_at_zone`], total over the
+    /// resulting absence. Idempotent: a re-fired tear-off (panel already floated)
+    /// or an empty surface is a no-op, so the live-drag's repeated emits are safe.
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`TopologyError::RootRemoval`] if `panel` is the dock's SOLE
+    /// panel (an empty dock has no valid layout — float the last panel keeps it
+    /// docked); the topology is left unchanged.
+    pub fn float_out_panel(&self, panel: &str) -> Result<String, TopologyError> {
+        let Some(current) = self.topology.get() else {
+            return Ok("empty surface — no-op".to_string());
+        };
+        if !current.panel_ids().contains(&panel) {
+            return Ok(format!("{panel}: already floated — no-op"));
+        }
+        let next = current.remove_leaf(panel)?;
+        Ok(self.commit(next, format!("{panel}: floated out (collapse)")))
+    }
+
     /// (R1085 §5.51) Make tab `index` the visible tab of the
     /// [`DockNode::Tabs`] well `well_id` — the tab-well **navigation**
     /// gesture, shared by the `activate_tab` invoke (AI / RPC primary)
@@ -3387,6 +3533,66 @@ const DOCK_SPLIT_RESULT_PCT: u8 = 50;
 /// translucent overlay, not an opaque fill that hides the panel content.
 const DOCK_DROP_HIGHLIGHT_ALPHA: u8 = 0x66;
 
+/// (R1125 §5.51) The canonical drop-zone highlight tint — the theme Accent at the
+/// shared overlay alpha. Exposed so the shell can supply it as the cross-window
+/// preview `tint` without re-deriving the alpha (the binding's
+/// preview tint), and reused by [`dock_drop_zone_highlight`].
+#[must_use]
+pub fn dock_drop_highlight_tint(theme: &Theme) -> Color {
+    theme
+        .resolve(ColorRole::Accent)
+        .with_alpha(DOCK_DROP_HIGHLIGHT_ALPHA)
+}
+
+/// (R1125 §5.51 §2 #7 PR-33) Tag for the cross-window drop-zone PREVIEW overlay
+/// the shell injects into the TARGET window while a floater is dragged over it —
+/// so the strip is strippable / idempotent like every other shell overlay.
+pub const DOCK_DROP_PREVIEW_TAG: &str = "__dock_drop_preview";
+
+/// (R1125 §5.51 §2 #7 PR-33) Build the cross-window drop-zone PREVIEW as a single
+/// pointer-transparent [`Scene::Box`] whose rect is the RESULT region (the split
+/// half the redock will occupy, or the whole pane for a centre tabify) computed
+/// in ABSOLUTE pixels from `panel_rect` — the target panel's window-absolute rect.
+///
+/// Unlike [`dock_drop_zone_highlight`] (a `Percent`-sized child of the panel's
+/// view, resolved by the layout pass), this is injected by the shell AFTER layout
+/// as a top-level overlay, so it carries explicit pixel rects (no `Percent` to
+/// resolve). `tint` is the already-resolved highlight colour (the binding supplies
+/// it via the binding's `dock_drop_preview` hook). `None` for [`DockDropZone::None`]
+/// (a dead zone paints nothing).
+#[must_use]
+pub fn dock_drop_preview_overlay(
+    panel_rect: Rect,
+    zone: DockDropZone,
+    tint: Color,
+) -> Option<Scene> {
+    let half_w = panel_rect.w * u32::from(DOCK_SPLIT_RESULT_PCT) / 100;
+    let half_h = panel_rect.h * u32::from(DOCK_SPLIT_RESULT_PCT) / 100;
+    let (x, y, w, h) = match zone {
+        DockDropZone::None => return None,
+        DockDropZone::Left => (panel_rect.x, panel_rect.y, half_w, panel_rect.h),
+        DockDropZone::Right => (
+            panel_rect.x + panel_rect.w - half_w,
+            panel_rect.y,
+            half_w,
+            panel_rect.h,
+        ),
+        DockDropZone::Top => (panel_rect.x, panel_rect.y, panel_rect.w, half_h),
+        DockDropZone::Bottom => (
+            panel_rect.x,
+            panel_rect.y + panel_rect.h - half_h,
+            panel_rect.w,
+            half_h,
+        ),
+        DockDropZone::Center => (panel_rect.x, panel_rect.y, panel_rect.w, panel_rect.h),
+    };
+    let mut node = BoxNode::new(Rect::new(x, y, w, h), BoxStyle::filled(tint));
+    node.tag = Some(DOCK_DROP_PREVIEW_TAG.into());
+    // Decorative overlay: never shadow the live drag it represents.
+    node.layout = node.layout.with_pointer_transparent(true);
+    Some(Scene::Box(node))
+}
+
 /// (R1081 §5.51; R1111 PR-37 result-region) Build the drop-zone highlight
 /// overlay a dock panel paints while it is the live drop target of an
 /// in-flight R742 drag — an absolutely-positioned, pointer-transparent layer
@@ -3463,9 +3669,7 @@ pub fn dock_drop_zone_highlight(zone: DockDropZone, theme: &Theme) -> Scene {
             100,
         ),
     };
-    let tint = theme
-        .resolve(ColorRole::Accent)
-        .with_alpha(DOCK_DROP_HIGHLIGHT_ALPHA);
+    let tint = dock_drop_highlight_tint(theme);
     let strip = Scene::Container(
         ContainerNode::new(vec![])
             .with_style(BoxStyle::filled(tint))
@@ -5028,10 +5232,11 @@ mod tests {
     //! 10. **Composite tag format**: `{tag}#header` / `{tag}#content`.
 
     use super::{
-        CONTENT_TAG_SUFFIX, DockDropZone, DockNode, DockPanelExternal, DockPanelStyle,
-        DockReorganizer, DockTopology, HEADER_TAG_SUFFIX, TEAR_OFF_EVENT, TEAR_OFF_FOLLOW_EVENT,
-        TEAR_OFF_REDOCK_AT_EVENT, TEAR_OFF_REDOCK_EVENT, WINDOW_MOVE_EVENT, composite_tag,
-        dock_drop_zone_highlight, dock_tablist_access_nodes, view_dock_panel, window_move_delta,
+        CONTENT_TAG_SUFFIX, DOCK_DROP_PREVIEW_TAG, DockDropZone, DockNode, DockPanelExternal,
+        DockPanelStyle, DockReorganizer, DockTopology, HEADER_TAG_SUFFIX, TEAR_OFF_EVENT,
+        TEAR_OFF_FOLLOW_EVENT, TEAR_OFF_REDOCK_AT_EVENT, TEAR_OFF_REDOCK_EVENT, WINDOW_MOVE_EVENT,
+        composite_tag, dock_drop_preview_overlay, dock_drop_zone_highlight,
+        dock_tablist_access_nodes, view_dock_panel, window_move_delta,
     };
     use crate::tabs::composite_tab_tag;
     use pinion_a11y::AccessNode;
@@ -5041,7 +5246,7 @@ mod tests {
     };
     use pinion_core::intent::Intent;
     use pinion_core::reactive::{Owner, Signal};
-    use pinion_core::scene::{ContainerNode, Scene};
+    use pinion_core::scene::{ContainerNode, Rect, Scene};
     use pinion_core::theme::Theme;
     use std::rc::Rc;
 
@@ -6758,6 +6963,58 @@ mod tests {
             };
             assert!(none.children.is_empty(), "None paints no band");
         });
+    }
+
+    #[test]
+    fn r1125_dock_drop_preview_overlay_result_region_in_absolute_px() {
+        use pinion_core::style::Color;
+        // R1125 §5.51 PR-33 — the shell-injected cross-window preview is a single
+        // Box whose rect is the RESULT region in ABSOLUTE pixels (no Percent — it is
+        // injected AFTER layout), positioned at the target panel's window-absolute
+        // rect. A panel at (100, 40) sized 200x100: an edge takes the matching 50%
+        // half, a centre the whole pane, a dead zone nothing.
+        let panel = Rect::new(100, 40, 200, 100);
+        let tint = Color::rgba(0x33, 0x66, 0xff, 0x66);
+        let rect_of = |zone| match dock_drop_preview_overlay(panel, zone, tint) {
+            Some(Scene::Box(b)) => {
+                assert!(b.layout.pointer_transparent, "preview never grabs input");
+                assert_eq!(
+                    b.tag.as_deref(),
+                    Some(DOCK_DROP_PREVIEW_TAG),
+                    "carries the slot tag"
+                );
+                Some(b.rect)
+            }
+            Some(_) => panic!("preview is a Box"),
+            None => None,
+        };
+        // half = 200*50/100 = 100 wide; 100*50/100 = 50 tall.
+        assert_eq!(
+            rect_of(DockDropZone::Left),
+            Some(Rect::new(100, 40, 100, 100))
+        );
+        assert_eq!(
+            rect_of(DockDropZone::Right),
+            Some(Rect::new(200, 40, 100, 100))
+        );
+        assert_eq!(
+            rect_of(DockDropZone::Top),
+            Some(Rect::new(100, 40, 200, 50))
+        );
+        assert_eq!(
+            rect_of(DockDropZone::Bottom),
+            Some(Rect::new(100, 90, 200, 50))
+        );
+        assert_eq!(
+            rect_of(DockDropZone::Center),
+            Some(panel),
+            "centre tabify covers the whole pane",
+        );
+        assert_eq!(
+            rect_of(DockDropZone::None),
+            None,
+            "a dead zone paints nothing"
+        );
     }
 
     #[test]

@@ -52,7 +52,9 @@ pub mod window_chrome;
 pub use drag_image::{DRAG_IMAGE_TAG, DragImageStyle, inject_drag_image};
 pub use event::OverlayEvent;
 pub use focus_ring::{FOCUS_RING_TAG, FocusRingStyle, inject_focus_ring};
-pub use highlight::{HIGHLIGHT_TAG_PREFIX, HighlightStyle, clear_highlights, inject_highlight};
+pub use highlight::{
+    HIGHLIGHT_TAG_PREFIX, HighlightStyle, clear_highlights, inject_highlight, inject_overlay_node,
+};
 pub use window_chrome::{
     WINDOW_CHROME_CLOSE_TAG, WINDOW_CHROME_GRIP_TAG, WINDOW_CHROME_MAXIMIZE_TAG,
     WINDOW_CHROME_MINIMIZE_TAG, WINDOW_CHROME_TAG, WINDOW_RESIZE_EAST_TAG,

@@ -636,6 +636,18 @@ impl InputRouter {
         }
     }
 
+    /// (R1125 §5.51 PR-33) The cross-window drop the shell last stashed for the
+    /// in-flight drag on `id`, if any — the symmetric READ of
+    /// [`set_drag_cross_window`](Self::set_drag_cross_window). The shell scans every
+    /// window's router with this to find a drag whose drop targets a GIVEN window
+    /// ([`CoreShell::cross_window_drop_into`](crate::CoreShell::cross_window_drop_into)),
+    /// so it can paint that window's incoming drop-zone preview. `None` when no
+    /// session owns `id` or the cursor is over no other window.
+    #[must_use]
+    pub fn drag_cross_window(&self, id: PointerId) -> Option<&CrossWindowDrop> {
+        self.drag_sessions.get(&id)?.cross_window.as_ref()
+    }
+
     /// (R1120 §5.15 §5.51 PR-39) Stash the source window's ACTUAL outer origin
     /// (logical px) for the in-flight drag on `id`, forwarded as
     /// [`DragUpdate::source_window_origin`]. The shell — the sole holder of the
@@ -1433,6 +1445,13 @@ impl InputRouter {
             self.captured_targets.remove(&id);
             let cursor = self.cursors.get(&id).copied();
             let own_over = cursor.and_then(|(x, y)| self.resolve_drop_point(x, y));
+            // R1124 §5.51 PR-33 — a SELF-DROP (the own hit is the dragged panel's
+            // own header / content) must not mask the cross-window redock below: a
+            // floater being dragged onto another window has the cursor over its OWN
+            // window, and the dragged panel cannot reorganize into itself.
+            let own_is_self_drop = own_over
+                .as_ref()
+                .is_some_and(|p| self.own_drop_is_self(p, &session.source_tag));
             // R1100/R1102 §5.51 PR-33 — the same own-window-first rule as the
             // move: an own-window drop is a same-window commit (`over_window`
             // None); otherwise the shell's last-resolved cross-window drop redocks
@@ -1449,7 +1468,8 @@ impl InputRouter {
             // `own_over` is None), but a future tightening could re-resolve cross-
             // window here too (it needs the shell, which the per-window router
             // lacks — a slice-3 wiring once the redock executes).
-            let (over, over_window) = resolve_drag_targets(own_over, session.cross_window);
+            let (over, over_window) =
+                resolve_drag_targets(own_over, own_is_self_drop, session.cross_window);
             let (primary, _) = split_subindex(&session.source_tag);
             if let Some(external) = find_external_by_tag(state_scene, primary) {
                 // R1093 §5.15 — forward the release cursor via the `_at`
@@ -1891,7 +1911,15 @@ impl InputRouter {
         // (`over_window: None`). Only when the cursor has escaped every own-window
         // target does the shell's cross-window resolution apply — it names ANOTHER
         // window's zone, in that window's local frame, so `over_window: Some`.
-        let (over, over_window) = resolve_drag_targets(self.resolve_drop_point(x, y), cross_window);
+        // R1124 §5.51 PR-33 — a self-drop (own hit on the dragged panel's own
+        // node / subtree) yields to the cross-window redock here too, so a floater
+        // dragged over another window resolves that window mid-drag, not its own
+        // content. Same-window reorganize + plain own hits are unaffected.
+        let own_over = self.resolve_drop_point(x, y);
+        let own_is_self_drop = own_over
+            .as_ref()
+            .is_some_and(|p| self.own_drop_is_self(p, &source));
+        let (over, over_window) = resolve_drag_targets(own_over, own_is_self_drop, cross_window);
         let (primary, _) = split_subindex(&source);
         if let Some(external) = find_external_by_tag(state_scene, primary) {
             // R1093 §5.15 — forward the full [`DragUpdate`] context (the `_at`
@@ -1937,6 +1965,24 @@ impl InputRouter {
         let rect = rect_for_tag(paint, &tag)?;
         let (x_rel, y_rel) = normalize_cursor(rect, x, y);
         Some(DropPoint { tag, x_rel, y_rel })
+    }
+
+    /// (R1124 §5.51 PR-33) Whether the own-window drop `own` is a SELF-DROP for a
+    /// drag started on `source_tag` — a hit on the drag source's own node or
+    /// subtree. The dragged panel cannot reorganize into itself, so a self-hit is
+    /// not a same-window reorganize target; [`resolve_drag_targets`] lets such a
+    /// hit yield to a cross-window redock (but only when one is available, so a
+    /// plain same-window self-release still snaps back). This lifts
+    /// `resolve_preview`'s `target == panel_id` self-drop rejection to the whole
+    /// source subtree, so a floating single-panel window's own header / content
+    /// drop targets (a property-grid row's intra-panel drag) do not block dragging
+    /// the floater onto another window's dock zone. A genuine same-window
+    /// reorganize (a hit on a sibling target — the reorder-row `dnd#0` → `dnd#1`
+    /// case) is NOT in the source subtree, so it is unaffected.
+    fn own_drop_is_self(&self, own: &DropPoint, source_tag: &str) -> bool {
+        self.last_paint_scene
+            .as_ref()
+            .is_some_and(|paint| own_over_is_self_drop(paint, source_tag, &own.tag))
     }
 
     /// Recompute `hover_targets[id]` from `id`'s current cursor and
@@ -2239,14 +2285,55 @@ where
 /// cannot diverge on which target a cross-window drag lands on.
 fn resolve_drag_targets(
     own_over: Option<DropPoint>,
+    own_is_self_drop: bool,
     cross_window: Option<CrossWindowDrop>,
 ) -> (Option<DropPoint>, Option<String>) {
     match own_over {
+        // R1124 §5.51 PR-33 — a SELF-DROP (the own hit is the dragged source's own
+        // node / subtree) is not a same-window reorganize target, so it yields to a
+        // cross-window redock WHEN one is resolved. Without a cross-window (a plain
+        // same-window self-release) it keeps own-window-first, so a click /
+        // snap-back on the source is unchanged.
+        Some(_) if own_is_self_drop && cross_window.is_some() => {
+            let cw = cross_window.expect("guarded by is_some");
+            (Some(cw.point), Some(cw.window))
+        }
         Some(point) => (Some(point), None),
         None => match cross_window {
             Some(cw) => (Some(cw.point), Some(cw.window)),
             None => (None, None),
         },
+    }
+}
+
+/// (R1124 §5.51 PR-33) True when own-window drop target `own_tag` is a SELF-DROP
+/// for a drag whose source is the FULL paint tag `source_tag` — i.e. `own_tag` is
+/// that source node itself or lives inside its subtree. Used by
+/// [`InputRouter::resolve_own_drop_excluding_source`] so a floating panel's own
+/// header / content drop targets do not mask a cross-window redock.
+///
+/// The discriminator is the FULL `source_tag` (e.g. `properties#header`), NOT its
+/// primary: a sibling reorder target shares the primary but is a DIFFERENT node
+/// (dragging row `dnd#0` onto sibling `dnd#1` is a genuine same-window reorganize,
+/// not a self-drop), so rooting at the full tag keeps the reorder own-window-first
+/// rule intact while a floater's own header (the press tag the drag started on)
+/// resolves as a self-drop.
+fn own_over_is_self_drop(paint: &Scene, source_tag: &str, own_tag: &str) -> bool {
+    own_tag == source_tag
+        || find_node_with_tag(paint, source_tag).is_some_and(|node| node.contains_tag(own_tag))
+}
+
+/// Depth-first search for the node carrying `tag`, returning its subtree root.
+/// Walks the same branches as [`Scene::contains_tag`] (Container children, then
+/// Scroll content); other variants are tag-bearing leaves with no descendants.
+fn find_node_with_tag<'a>(scene: &'a Scene, tag: &str) -> Option<&'a Scene> {
+    if scene.tag() == Some(tag) {
+        return Some(scene);
+    }
+    match scene {
+        Scene::Container(n) => n.children.iter().find_map(|c| find_node_with_tag(c, tag)),
+        Scene::Scroll(n) => find_node_with_tag(&n.content, tag),
+        _ => None,
     }
 }
 
@@ -6379,18 +6466,130 @@ mod tests {
                 y_rel: 0.75,
             },
         };
-        // Own hit wins even when a cross-window drop is present (same-window
-        // reorganize — the cursor is over THIS window's own target).
-        let (over, win) = resolve_drag_targets(Some(own.clone()), Some(cross.clone()));
+        // A NON-self own hit wins even when a cross-window drop is present
+        // (same-window reorganize — the cursor is over a DIFFERENT own target).
+        let (over, win) = resolve_drag_targets(Some(own.clone()), false, Some(cross.clone()));
         assert_eq!(over.as_ref().map(|p| p.tag.as_str()), Some("local"));
-        assert_eq!(win, None, "an own-window hit suppresses over_window");
+        assert_eq!(
+            win, None,
+            "a non-self own-window hit suppresses over_window"
+        );
         // No own hit → the cross-window drop applies (target window + its zone).
-        let (over, win) = resolve_drag_targets(None, Some(cross));
+        let (over, win) = resolve_drag_targets(None, false, Some(cross.clone()));
         assert_eq!(over.as_ref().map(|p| p.tag.as_str()), Some("main_dock"));
         assert_eq!(win.as_deref(), Some("main"));
         // Neither → both None (the escape-to-empty-space tear-off case).
-        let (over, win) = resolve_drag_targets(None, None);
+        let (over, win) = resolve_drag_targets(None, false, None);
         assert!(over.is_none() && win.is_none());
+        // R1124 — a SELF-DROP own hit (the dragged source's own subtree) YIELDS to
+        // a cross-window redock: dragging a floater back over another window has
+        // the cursor over the floater's own content, which must not mask it.
+        let (over, win) = resolve_drag_targets(Some(own.clone()), true, Some(cross));
+        assert_eq!(
+            over.as_ref().map(|p| p.tag.as_str()),
+            Some("main_dock"),
+            "a self-drop yields to the cross-window redock target",
+        );
+        assert_eq!(
+            win.as_deref(),
+            Some("main"),
+            "the redock names the target window"
+        );
+        // R1124 — but a self-drop with NO cross-window keeps own-window-first, so a
+        // plain same-window self-release still snaps back (no spurious float).
+        let (over, win) = resolve_drag_targets(Some(own.clone()), true, None);
+        assert_eq!(over.as_ref().map(|p| p.tag.as_str()), Some("local"));
+        assert_eq!(
+            win, None,
+            "a self-drop without a cross-window stays same-window"
+        );
+    }
+
+    #[test]
+    fn r1124_own_over_is_self_drop_discriminates_subtree_from_sibling() {
+        // R1124 §5.51 PR-33 — the self-drop discriminator that lets a floater's own
+        // header / content yield to a cross-window redock WITHOUT misclassifying a
+        // same-window reorder. Scene: a "panel" with a "panel#header" child and a
+        // "panel_row" grandchild (the floater's intra-panel drop targets), plus a
+        // SIBLING "other" panel (a genuine reorganize target).
+        let content = Scene::Container(
+            ContainerNode::new(vec![Scene::Container(
+                ContainerNode::new(vec![]).with_tag("panel_row".to_string()),
+            )])
+            .with_tag("panel#content".to_string()),
+        );
+        let panel = Scene::Container(
+            ContainerNode::new(vec![
+                Scene::Container(ContainerNode::new(vec![]).with_tag("panel#header".to_string())),
+                content,
+            ])
+            .with_tag("panel".to_string()),
+        );
+        let other = Scene::Container(ContainerNode::new(vec![]).with_tag("other".to_string()));
+        let paint = Scene::Container(ContainerNode::new(vec![panel, other]));
+
+        // A drag started on the panel header. Its own header (the press tag), the
+        // panel root, and a content row are ALL inside the source subtree → self.
+        assert!(own_over_is_self_drop(
+            &paint,
+            "panel#header",
+            "panel#header"
+        ));
+        assert!(own_over_is_self_drop(&paint, "panel", "panel#header"));
+        assert!(own_over_is_self_drop(&paint, "panel", "panel_row"));
+        // A genuine same-window reorganize target (a sibling panel) is NOT a self-
+        // drop — the own-window-first reorder behaviour is preserved.
+        assert!(!own_over_is_self_drop(&paint, "panel", "other"));
+        // The reorder-row case: dragging one row onto a SIBLING row shares no
+        // ancestry (siblings, not subtree), so it stays a same-window reorganize.
+        let rows = Scene::Container(ContainerNode::new(vec![
+            Scene::Container(ContainerNode::new(vec![]).with_tag("dnd#0".to_string())),
+            Scene::Container(ContainerNode::new(vec![]).with_tag("dnd#1".to_string())),
+        ]));
+        assert!(!own_over_is_self_drop(&rows, "dnd#0", "dnd#1"));
+        assert!(own_over_is_self_drop(&rows, "dnd#0", "dnd#0"));
+    }
+
+    #[test]
+    fn r1125_drag_cross_window_getter_round_trips() {
+        // R1125 §5.51 PR-33 — the READ peer of `set_drag_cross_window` the shell
+        // scans (via `CoreShell::cross_window_drop_into`) to paint a TARGET window's
+        // incoming drop-zone preview. None before any stash / for no session; the
+        // stashed drop after; None again once cleared (the cursor left the window).
+        let mut router = InputRouter::new();
+        let (mut state, _log) = state_with_dnd();
+        router.update_paint_scene(paint_with_two_rows(), &mut state);
+        assert!(
+            router.drag_cross_window(PointerId::MOUSE).is_none(),
+            "no session → no cross-window"
+        );
+        router.cursor_moved(PointerId::MOUSE, 100.0, 20.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state); // arms a drag session
+        assert!(
+            router.drag_cross_window(PointerId::MOUSE).is_none(),
+            "session armed but nothing stashed yet"
+        );
+        let drop = CrossWindowDrop {
+            window: "main".to_string(),
+            point: DropPoint {
+                tag: "main_dock".to_string(),
+                x_rel: 0.5,
+                y_rel: 0.5,
+            },
+        };
+        router.set_drag_cross_window(PointerId::MOUSE, Some(drop));
+        assert_eq!(
+            router
+                .drag_cross_window(PointerId::MOUSE)
+                .map(|d| (d.window.as_str(), d.point.tag.as_str())),
+            Some(("main", "main_dock")),
+            "the stashed cross-window drop reads back",
+        );
+        router.set_drag_cross_window(PointerId::MOUSE, None);
+        assert!(
+            router.drag_cross_window(PointerId::MOUSE).is_none(),
+            "cleared when the cursor leaves every other window"
+        );
     }
 
     #[test]

@@ -2027,6 +2027,29 @@ impl<V: WidgetCore> CoreShell<V> {
         }
     }
 
+    /// (R1125 §5.51 §2 #7 PR-33) The cross-window drop, if any, of a drag in some
+    /// OTHER window that currently targets `target_window` — found by scanning
+    /// every window's router for an in-flight drag whose shell-stashed
+    /// [`CrossWindowDrop`](crate::input::CrossWindowDrop) names `target_window`.
+    /// The shell paints `target_window`'s incoming drop-zone preview from this
+    /// (the symmetric peer of [`Self::set_drag_cross_window_for_window`]): a
+    /// floater dragged over main resolves main's dock zone, and main highlights
+    /// where the panel would land. `None` when no drag currently maps onto
+    /// `target_window`. The source window itself is never a match — the shell
+    /// excludes it when resolving, so a drag never targets its own window.
+    #[must_use]
+    pub fn cross_window_drop_into(
+        &self,
+        target_window: &str,
+    ) -> Option<crate::input::CrossWindowDrop> {
+        self.routers.values().find_map(|router| {
+            router
+                .drag_cross_window(PointerId::MOUSE)
+                .filter(|drop| drop.window == target_window)
+                .cloned()
+        })
+    }
+
     /// (R1120 §5.15 §5.51 PR-39) Stash the source window's ACTUAL outer origin
     /// (logical px) on its in-flight drag, so a borderless-floater title-bar
     /// WINDOW MOVE converts the window-relative cursor to a stable DESKTOP frame

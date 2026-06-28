@@ -921,6 +921,34 @@ pub trait WidgetView: pinion_a11y::WidgetA11y {
         Some(pinion_overlay::DragImageStyle::default())
     }
 
+    /// (R1125 §5.51 §2 #7 PR-33) Build the cross-window dock drop-zone PREVIEW —
+    /// the affordance painted on a TARGET window while a floating panel is dragged
+    /// OVER it, showing where the redock would land. The shell stays
+    /// widget-library-agnostic, so it does the GENERIC half (resolve the incoming
+    /// drop via its own cross-window geometry
+    /// [`CoreShell::cross_window_drop_into`](pinion_runtime::CoreShell::cross_window_drop_into),
+    /// then look up the target panel's window-absolute `panel_rect`) and hands the
+    /// dock-specific RENDERING to the binding here: `target_tag` is the resolved
+    /// dock panel, `x_rel`/`y_rel` the normalised cursor over it (the zone the
+    /// binding classifies). The binding returns the overlay [`Scene`] (e.g.
+    /// `pinion_widget_paint::dock::dock_drop_preview_overlay`), which the shell
+    /// injects as a top-level, pointer-transparent overlay on that window and
+    /// re-derives every paint (so it follows the cursor). The sibling of
+    /// [`drag_image_style`](Self::drag_image_style), but dock-specific, so it is
+    /// opt-in: a dock binding adds one line, a non-dock app draws nothing.
+    ///
+    /// - `Some(scene)` — inject `scene` as the preview overlay.
+    /// - `None` (the default) — no cross-window preview.
+    #[must_use]
+    fn dock_drop_preview(
+        _target_tag: &str,
+        _panel_rect: pinion_core::scene::Rect,
+        _x_rel: f32,
+        _y_rel: f32,
+    ) -> Option<Scene> {
+        None
+    }
+
     /// R762 §5.36 §5.38 / R763 §5.22 — pointer-driven caret + selection
     /// press hook. The shell calls this on a press (native winit
     /// `MouseInput` and the `scene/click` / `scene/drag` deferred-input
