@@ -5168,18 +5168,33 @@ impl ExternalIntrospect for DockPanelExternal {
         // addressed window; on a freshly-spawned floating window under
         // headless RPC the router has no paint scene until winit's next
         // paint cycle. This channel bypasses the pointer drag so AI
-        // clients drive the dock-back without depending on winit's paint
-        // timing. Mirror of the R742 escape-drop tear-off — same intent,
-        // same payload.
+        // clients drive the dock toggle without depending on winit's paint
+        // timing.
+        //
+        // R1130 §5.51.1 — the toggle is now CHART-DIRECTED: the lifecycle chart
+        // owns the direction (`docked` → float / `floating` → dock-back) and the
+        // External emits the matching DIRECTED intent, so the chart and the
+        // binding's window list cannot diverge. R1129 mapped this channel only to
+        // `Escaped`, so a 2nd `tear_off` invoke drove the chart `Escaped`→inert
+        // (stayed floating) while the binding reducer's `tear_off` toggle docked
+        // the window — the chart said floating, the window said docked. Now a
+        // floating panel's `tear_off` dock-backs through the chart + the
+        // `tear_off_redock` intent (the same restore the R742 snap-back drives),
+        // and a docked panel floats through `Escaped` + the `tear_off` intent.
         if path == TEAR_OFF_EVENT {
-            self.enqueue_tear_off();
-            // R1129 §5.51.1 — the AI-primary tear-off floats the panel: drive the
-            // lifecycle `escaped` (docked → floating), the same transition the
-            // R742 escape-drop drives, so the chart state is consistent across the
-            // pointer + invoke channels (idempotent if already floating).
-            self.send_lifecycle(DockPanelEvent::Escaped);
+            if self.is_floating() {
+                // floating → dock-back (restore home): the directed restore intent.
+                self.send_lifecycle(DockPanelEvent::DockBack);
+                self.enqueue_tear_off_redock();
+                self.tear_off_fired.set(false);
+            } else {
+                // docked → float (tear-off): the same transition the R742
+                // escape-drop drives.
+                self.send_lifecycle(DockPanelEvent::Escaped);
+                self.enqueue_tear_off();
+                self.tear_off_fired.set(true);
+            }
             self.dragging.set(false);
-            self.tear_off_fired.set(true);
             self.is_drag_armed.set(true);
             return Ok(IntrospectValue::Null);
         }
@@ -6238,6 +6253,54 @@ mod tests {
             Some(IntrospectValue::Text("Floating".to_string())),
             "the chart persists the float across gestures (not gesture-scoped)",
         );
+    }
+
+    #[test]
+    fn r1130_invoke_tear_off_is_a_chart_directed_toggle() {
+        // R1130 §5.51.1 — the AI-primary `tear_off` invoke is chart-directed: a
+        // docked panel floats (Escaped + tear_off intent); a floating panel
+        // dock-backs (DockBack + the directed tear_off_redock intent). This keeps
+        // the chart consistent with the binding's window list across repeated
+        // toggles — closing the R1129 defect where a 2nd tear_off drove the chart
+        // Escaped->inert while the reducer's tear_off toggle docked the window.
+        let mut ext = DockPanelExternal::new("a");
+        // 1st invoke: docked -> float.
+        ext.invoke(TEAR_OFF_EVENT, IntrospectValue::Null)
+            .expect("tear_off invoke (float)");
+        assert_eq!(
+            ext.query("lifecycle"),
+            Some(IntrospectValue::Text("Floating".to_string())),
+            "a docked panel's tear_off floats it",
+        );
+        let mut first: Vec<Intent> = Vec::new();
+        ext.drain_intents(&mut |i| first.push(i));
+        assert_eq!(first.len(), 1);
+        assert_eq!(
+            first[0].tag.as_ref(),
+            TEAR_OFF_EVENT,
+            "the float direction emits the tear_off intent",
+        );
+        assert!(
+            ext.tear_off_fired(),
+            "the float direction sets tear_off_fired"
+        );
+        // 2nd invoke: floating -> dock-back (the directed restore).
+        ext.invoke(TEAR_OFF_EVENT, IntrospectValue::Null)
+            .expect("tear_off invoke (dock-back)");
+        assert_eq!(
+            ext.query("lifecycle"),
+            Some(IntrospectValue::Text("Docked".to_string())),
+            "a floating panel's tear_off dock-backs it (chart not desynced)",
+        );
+        let mut second: Vec<Intent> = Vec::new();
+        ext.drain_intents(&mut |i| second.push(i));
+        assert_eq!(second.len(), 1);
+        assert_eq!(
+            second[0].tag.as_ref(),
+            TEAR_OFF_REDOCK_EVENT,
+            "the dock-back direction emits the directed tear_off_redock intent",
+        );
+        assert!(!ext.tear_off_fired(), "a dock-back is not a tear-off");
     }
 
     // ── R1103 §5.51 PR-33 — AI-primary cross-window redock invoke (slice 3) ──

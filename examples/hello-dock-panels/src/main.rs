@@ -1745,6 +1745,74 @@ mod tests {
     }
 
     #[test]
+    fn r1130_panel_external_tear_off_toggle_is_chart_directed() {
+        // R1130 §5.51.1 §2 #7 — the demo's registered panel external drives a
+        // CHART-DIRECTED dock toggle: `tear_off` floats a docked panel (emits the
+        // `tear_off` intent the reducer's float arm consumes) and dock-backs a
+        // floating one (emits the directed `tear_off_redock` intent the reducer's
+        // restore arm consumes), so the chart never desyncs from the binding's
+        // window list across repeated AI toggles (the R1129 defect closed).
+        use pinion_core::intent::Intent;
+        use pinion_widget_paint::dock::{TEAR_OFF_EVENT, TEAR_OFF_REDOCK_EVENT};
+        Owner::new().run(|| {
+            let mut extras = <DockPanelsView as WidgetCore>::create_extra_externals();
+            let inspector = extras
+                .iter_mut()
+                .find(|e| e.tag.as_ref() == INSPECTOR_PANEL_TAG)
+                .expect("the inspector panel external is registered");
+            // 1st toggle: docked -> float, emits the `tear_off` intent.
+            inspector
+                .handle
+                .introspect_mut()
+                .expect("introspect_mut")
+                .invoke(TEAR_OFF_EVENT, IntrospectValue::Null)
+                .expect("tear_off invoke (float)");
+            assert_eq!(
+                inspector
+                    .handle
+                    .introspect()
+                    .and_then(|i| i.query("lifecycle")),
+                Some(IntrospectValue::Text("Floating".to_string())),
+            );
+            let mut first: Vec<Intent> = Vec::new();
+            inspector.handle.drain_intents(&mut |i| first.push(i));
+            assert_eq!(
+                first
+                    .iter()
+                    .filter(|i| i.tag.as_ref() == TEAR_OFF_EVENT)
+                    .count(),
+                1,
+                "the float direction emits the tear_off intent",
+            );
+            // 2nd toggle: floating -> dock-back, emits the directed redock intent.
+            inspector
+                .handle
+                .introspect_mut()
+                .expect("introspect_mut")
+                .invoke(TEAR_OFF_EVENT, IntrospectValue::Null)
+                .expect("tear_off invoke (dock-back)");
+            assert_eq!(
+                inspector
+                    .handle
+                    .introspect()
+                    .and_then(|i| i.query("lifecycle")),
+                Some(IntrospectValue::Text("Docked".to_string())),
+                "the chart dock-backs in step with the window list",
+            );
+            let mut second: Vec<Intent> = Vec::new();
+            inspector.handle.drain_intents(&mut |i| second.push(i));
+            assert_eq!(
+                second
+                    .iter()
+                    .filter(|i| i.tag.as_ref() == TEAR_OFF_REDOCK_EVENT)
+                    .count(),
+                1,
+                "the dock-back direction emits the directed tear_off_redock intent",
+            );
+        });
+    }
+
+    #[test]
     fn r683_c_view_main_dock_contains_all_three_panel_tags_when_none_floating() {
         Owner::new().run(|| {
             let scene = view_main_dock(ButtonState::Idle);
