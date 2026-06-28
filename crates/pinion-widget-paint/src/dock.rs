@@ -2230,7 +2230,7 @@ pub struct DockReorganizer {
     /// consumer of this surface: the pointer path
     /// ([`DockPanelExternal::resolve_preview`]), the `drop` RPC
     /// ([`resolve_dock_drop`]), and cross-window redock
-    /// ([`Self::apply_zone_redock`]). A split-only surface never offers
+    /// ([`DockReorganizer::dock_panel_at_zone`]). A split-only surface never offers
     /// `Center` from any path — a centre cursor resolves to the nearest split
     /// edge. The explicit symbolic `reorganize` invoke (an AI naming a zone,
     /// no classification) is NOT gated — tabbing governs the zone CLASSIFIER,
@@ -2436,61 +2436,7 @@ impl DockReorganizer {
         Ok(self.commit(next, summary))
     }
 
-    /// (R1106 §5.51 §5.16 §5.41 PR-31) Zone-honoring cross-window redock —
-    /// relocate the `source` panel next to `target` at the dock zone the
-    /// normalised drop (`x_rel`, `y_rel`) classifies. This is the TOPOLOGY
-    /// half of a floating panel's return into a slot-bearing window: the
-    /// binding removes the floating `WindowSpec`, this re-places the panel's
-    /// leaf at the dropped zone (vs the R1103/R1105 home-slot return that
-    /// only dropped the window). Classifies through the same
-    /// [`dock_drop_zone_normalized`] + [`intent_for_zone`] SSOT the
-    /// same-window pointer drop uses ([`DockPanelExternal::drag_release`]),
-    /// then [`apply_intent`](Self::apply_intent) — so a cross-window redock
-    /// and an in-window drag land at the identical zone semantics (Center =
-    /// tabify, an edge = split-insert). The single forcing consumer is the
-    /// editor reducer's `tear_off_redock_at` arm; the flat `hello-dock-panels`
-    /// has no topology + no reorganizer, so it keeps its home-slot return.
-    ///
-    /// A drop on the panel's OWN slot (`source == target`, e.g. onto its own
-    /// placeholder) is a home return — no relocation. An out-of-panel
-    /// (`DockDropZone::None`) classification is a no-op; both record an
-    /// outcome for `query("last_outcome")` so an AI observes the decision.
-    ///
-    /// # Errors
-    ///
-    /// Propagates the [`TopologyError`] from [`apply_intent`](Self::apply_intent)
-    /// when the relocation cannot apply (stale id, collision) — the live
-    /// topology is left unchanged and the binding's window-drop still returns
-    /// the panel home.
-    pub fn apply_zone_redock(
-        &self,
-        source: &str,
-        target: &str,
-        x_rel: f64,
-        y_rel: f64,
-    ) -> Result<String, TopologyError> {
-        if source == target {
-            // A drop on the panel's own slot is a home return, not a move.
-            let outcome = format!("{source}: home redock (own slot) — no move");
-            self.note_outcome(&outcome);
-            return Ok(outcome);
-        }
-        // R1112 PR-37 — cross-window redock honours this surface's tabbing
-        // policy too (a split-only surface never tabifies on redock either).
-        if let Some(intent) = intent_for_zone(
-            source,
-            target,
-            dock_drop_zone_normalized_tabbing(x_rel, y_rel, self.tabbing),
-        ) {
-            self.apply_intent(&intent)
-        } else {
-            let outcome = format!("{source} -> {target}: no actionable zone — no move");
-            self.note_outcome(&outcome);
-            Ok(outcome)
-        }
-    }
-
-    /// (R1126 §5.51 §2 #7 PR-33) Return a floating `panel` into the dock at the
+    /// (R1126/R1128 §5.51 §2 #7 PR-33) Return a floating `panel` into the dock at the
     /// dropped zone — TOTAL over the panel's presence, so ONE redock path serves
     /// BOTH torn-slot policies:
     ///
@@ -2505,8 +2451,8 @@ impl DockReorganizer {
     /// (centre), classified by the same [`dock_drop_zone_normalized`] SSOT the
     /// same-window drag uses. `panel == target` (a drop on the panel's own slot) is
     /// a home no-op — a panel cannot split against itself. A dead zone / empty
-    /// surface is a no-op. Supersedes the placeholder-only
-    /// [`Self::apply_zone_redock`] (which rejected an absent source).
+    /// surface is a no-op. The SINGLE redock SSOT (R1128 retired the
+    /// placeholder-only `apply_zone_redock`, which rejected an absent source).
     ///
     /// # Errors
     ///
@@ -2554,7 +2500,7 @@ impl DockReorganizer {
             let id = format!("{REORG_TABS_ID_PREFIX}{}", self.tabs_seq.get());
             let next = base.tabify_fresh(panel.to_string(), target, id)?;
             self.tabs_seq.set(self.tabs_seq.get() + 1);
-            (next, format!("{panel} -> {target} (tab)"))
+            (next, format!("{panel} -> {target}"))
         } else {
             let (orientation, position) =
                 zone_split_geometry(zone).expect("a non-None, non-Centre zone has split geometry");
@@ -8026,7 +7972,8 @@ mod reorganize_tests {
 
     use super::{
         DockDropPreview, DockDropZone, DockNode, DockReorganizeExternal, DockReorganizeIntent,
-        DockReorganizer, DockSplitPosition, DockTopology, TabWellExternal, resolve_dock_drop,
+        DockReorganizer, DockSplitPosition, DockTopology, TabWellExternal, TopologyError,
+        resolve_dock_drop,
     };
     use crate::splitter::SplitterOrientation as Orient;
     use pinion_core::external::{ExternalIntrospect, InterveneError, IntrospectValue, InvokeError};
@@ -8141,57 +8088,92 @@ mod reorganize_tests {
         false
     }
 
+    // (R1128 §5.51.1) `dock_panel_at_zone` is the SINGLE redock SSOT (retired
+    // `apply_zone_redock`). These migrate the r1106 present-source (move) cases +
+    // ADD the absent-source (insert) path the total primitive enables, and the
+    // forcing consumers for `tabify_fresh` / `float_out_panel`.
+
     #[test]
-    fn r1106_apply_zone_redock_edge_relocates_source_beside_target() {
-        // The zone-honoring cross-window redock (the editor's PR-31 slice-4(a)):
-        // a panel returning into the dock lands AT the dropped edge, not home.
+    fn r1128_dock_panel_at_zone_edge_moves_present_source_beside_target() {
+        // Placeholder policy: a PRESENT panel is MOVED to the dropped edge
+        // (remove + re-split) — the r1106 zone-honoring behaviour, now via the SSOT.
         let topology = Rc::new(Signal::new(Some(abc_topology())));
         let reorganizer = DockReorganizer::new(Rc::clone(&topology));
         let before = topology.get().unwrap();
         assert!(
             siblings_in_2leaf_split(before.root(), "b", "c"),
-            "before: b|c siblings"
+            "before: b|c"
         );
         assert!(
             !siblings_in_2leaf_split(before.root(), "a", "c"),
             "before: a not beside c"
         );
-        // Drop "a" on "c"'s LEFT edge (x_rel < DOCK_EDGE_ZONE_FRAC).
-        let outcome = reorganizer.apply_zone_redock("a", "c", 0.15, 0.5).unwrap();
-        assert_eq!(outcome, "a -> c", "the relocate fired through apply_intent");
+        let outcome = reorganizer.dock_panel_at_zone("a", "c", 0.15, 0.5).unwrap();
+        assert_eq!(outcome, "a -> c");
         let after = topology.get().unwrap();
         assert!(
             siblings_in_2leaf_split(after.root(), "a", "c"),
-            "a relocated beside c at the dropped edge",
+            "a moved beside c"
         );
         assert!(
             !siblings_in_2leaf_split(after.root(), "b", "c"),
-            "c's old b-sibling split changed (b's sibling is now the a|c split)",
+            "c's old b-sibling changed"
         );
-        assert_eq!(after.panel_ids().len(), 3, "no panel lost");
+        assert_eq!(after.panel_ids().len(), 3, "a MOVE keeps the panel count");
     }
 
     #[test]
-    fn r1106_apply_zone_redock_center_tabifies_source_onto_target() {
+    fn r1128_dock_panel_at_zone_inserts_absent_source_at_edge() {
+        // Collapse policy: a panel ABSENT from the topology (its leaf was floated
+        // out) is INSERTED fresh at the dropped edge — no PanelNotFound (the
+        // retired apply_zone_redock rejected an absent source). The total path.
         let topology = Rc::new(Signal::new(Some(abc_topology())));
         let reorganizer = DockReorganizer::new(Rc::clone(&topology));
-        assert_eq!(topology.get().unwrap().tabs_well_count(), 0);
-        // Centre drop (x_rel == y_rel == 0.5, both >= DOCK_EDGE_ZONE_FRAC).
-        let outcome = reorganizer.apply_zone_redock("a", "c", 0.5, 0.5).unwrap();
-        assert_eq!(outcome, "a -> c");
+        let outcome = reorganizer.dock_panel_at_zone("d", "c", 0.15, 0.5).unwrap();
+        assert_eq!(outcome, "d -> c");
         let after = topology.get().unwrap();
-        assert_eq!(after.tabs_well_count(), 1, "a tab well formed from a + c");
-        assert_eq!(after.panel_ids().len(), 3, "tabify keeps all panels");
+        assert!(
+            siblings_in_2leaf_split(after.root(), "d", "c"),
+            "fresh d inserted beside c"
+        );
+        assert_eq!(
+            after.panel_ids().len(),
+            4,
+            "an INSERT grows the panel count"
+        );
     }
 
     #[test]
-    fn r1106_apply_zone_redock_on_own_slot_is_home_noop() {
-        // A drop on the panel's own slot (source == target) is a home return,
-        // not a relocation — the topology is untouched.
+    fn r1128_dock_panel_at_zone_center_tabifies_present_or_absent_source() {
+        // Centre = tabify, TOTAL over presence: present "a" re-tabs (move), absent
+        // "d" tab-inserts fresh (tabify_fresh). One path, both policies.
+        for (source, expect_count) in [("a", 3usize), ("d", 4usize)] {
+            let topology = Rc::new(Signal::new(Some(abc_topology())));
+            let reorganizer = DockReorganizer::new(Rc::clone(&topology));
+            let outcome = reorganizer
+                .dock_panel_at_zone(source, "c", 0.5, 0.5)
+                .unwrap();
+            assert_eq!(outcome, format!("{source} -> c"));
+            let after = topology.get().unwrap();
+            assert_eq!(
+                after.tabs_well_count(),
+                1,
+                "a tab well formed (source={source})"
+            );
+            assert_eq!(
+                after.panel_ids().len(),
+                expect_count,
+                "count (source={source})"
+            );
+        }
+    }
+
+    #[test]
+    fn r1128_dock_panel_at_zone_own_slot_is_home_noop() {
         let topology = Rc::new(Signal::new(Some(abc_topology())));
         let reorganizer = DockReorganizer::new(Rc::clone(&topology));
         let before = topology.get().unwrap();
-        let outcome = reorganizer.apply_zone_redock("a", "a", 0.15, 0.5).unwrap();
+        let outcome = reorganizer.dock_panel_at_zone("a", "a", 0.15, 0.5).unwrap();
         assert!(
             outcome.contains("home redock"),
             "self-drop is a home return: {outcome}"
@@ -8200,18 +8182,56 @@ mod reorganize_tests {
     }
 
     #[test]
-    fn r1106_apply_zone_redock_out_of_panel_is_noop() {
-        // An out-of-panel classification (x_rel >= 1.0 → DockDropZone::None)
-        // is a no-op — the binding's window-drop still returns the panel home.
+    fn r1128_dock_panel_at_zone_dead_zone_is_noop() {
         let topology = Rc::new(Signal::new(Some(abc_topology())));
         let reorganizer = DockReorganizer::new(Rc::clone(&topology));
         let before = topology.get().unwrap();
-        let outcome = reorganizer.apply_zone_redock("a", "c", 1.5, 0.5).unwrap();
+        let outcome = reorganizer.dock_panel_at_zone("a", "c", 1.5, 0.5).unwrap();
         assert!(
             outcome.contains("no actionable zone"),
             "dead zone is a no-op: {outcome}"
         );
         assert_eq!(topology.get().unwrap(), before, "topology unchanged");
+    }
+
+    #[test]
+    fn r1128_tabify_fresh_stacks_a_new_panel_and_guards_ids() {
+        // The fresh-tab INSERT primitive (the centre-zone collapse path).
+        let topo = abc_topology();
+        let after = topo.tabify_fresh("d", "c", "well-0").unwrap();
+        assert_eq!(after.tabs_well_count(), 1, "a well minted from c + fresh d");
+        assert_eq!(after.panel_ids().len(), 4, "d added");
+        // A fresh insert must not duplicate a live panel, nor target an absent one.
+        assert!(
+            matches!(
+                topo.tabify_fresh("a", "c", "well-1"),
+                Err(TopologyError::DuplicatePanelId(_))
+            ),
+            "duplicate panel rejected",
+        );
+        assert!(
+            matches!(
+                topo.tabify_fresh("d", "z", "well-1"),
+                Err(TopologyError::PanelNotFound(_))
+            ),
+            "absent target rejected",
+        );
+    }
+
+    #[test]
+    fn r1128_float_out_panel_collapses_the_leaf_idempotently() {
+        // The COLLAPSE tear-off primitive: remove the leaf so siblings reclaim.
+        let topology = Rc::new(Signal::new(Some(abc_topology())));
+        let reorganizer = DockReorganizer::new(Rc::clone(&topology));
+        let outcome = reorganizer.float_out_panel("a").unwrap();
+        assert!(outcome.contains("floated out"), "outcome: {outcome}");
+        let after = topology.get().unwrap();
+        assert_eq!(after.panel_ids().len(), 2, "a removed; b + c reclaim");
+        assert!(!after.panel_ids().contains(&"a"), "a is gone from the dock");
+        // Idempotent: re-firing on the already-floated panel is a no-op.
+        let again = reorganizer.float_out_panel("a").unwrap();
+        assert!(again.contains("already floated"), "idempotent: {again}");
+        assert_eq!(topology.get().unwrap().panel_ids().len(), 2, "still 2");
     }
 
     /// Side-by-side layout for the three panels (each 200×400).

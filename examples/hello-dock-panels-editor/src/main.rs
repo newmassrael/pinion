@@ -1039,21 +1039,20 @@ impl WidgetCore for DockPanelsEditorView {
                     }
                     return Vec::new();
                 }
-                // (R1105/R1106) Cross-window dock-at into the slot-bearing
+                // (R1105/R1106/R1128) Cross-window dock-at into the slot-bearing
                 // main window: a floating panel dropped onto main's dock (the
                 // live shell-composed `over_window`, or the AI-primary
                 // `tear_off_redock_at` invoke). Only `MAIN_WINDOW_ID` hosts a
                 // panel (a floater has no slot); a non-main target fires the
                 // intent (the panel's `redock_at` diagnostic records it) but
-                // executes no move. ★R1106 ZONE-HONORING relocation (the
-                // editor's distinguishing value over the flat consumer): the
-                // panel sits in the topology as a placeholder leaf, so
-                // `reorganizer.apply_zone_redock(panel, target, x_rel, y_rel)`
+                // executes no move. ★ZONE-HONORING relocation: the panel sits in
+                // the topology as a placeholder leaf, so the §5.51.1 total
+                // `reorganizer.dock_panel_at_zone(panel, target, x_rel, y_rel)`
                 // re-places it AT the dropped zone (the same
-                // `intent_for_zone` SSOT the in-window drag uses) — then the
-                // floating window drops so the relocated leaf paints content.
-                // A rejected / dead-zone relocate leaves the topology
-                // unchanged, so the window-drop returns the panel home.
+                // `dock_drop_zone_normalized` SSOT the in-window drag uses) — then
+                // the floating window drops so the relocated leaf paints content.
+                // A dead-zone / own-slot drop leaves the topology unchanged, so
+                // the window-drop returns the panel home.
                 TEAR_OFF_REDOCK_AT_EVENT => {
                     if let IntrospectValue::Json(v) = &intent.payload
                         && let (Some(panel), Some(window)) = (
@@ -1067,7 +1066,7 @@ impl WidgetCore for DockPanelsEditorView {
                             let y_rel = v.get("y_rel").and_then(serde_json::Value::as_f64);
                             if let (Some(x_rel), Some(y_rel)) = (x_rel, y_rel) {
                                 let _ = use_editor_reorganizer()
-                                    .apply_zone_redock(panel, target, x_rel, y_rel);
+                                    .dock_panel_at_zone(panel, target, x_rel, y_rel);
                             }
                         }
                         redock_panel_floating(panel);
@@ -1887,7 +1886,7 @@ mod tests {
             let before = topo.get().unwrap();
             toggle_panel_floating(VIEWPORT_PANEL_TAG);
             assert!(is_panel_floating(&windows.get(), VIEWPORT_PANEL_TAG));
-            // (R1107.1) Target the panel's OWN slot → `apply_zone_redock`'s
+            // (R1107.1) Target the panel's OWN slot → `dock_panel_at_zone`'s
             // source==target home no-op, so this test isolates the
             // window-removal (home redock) WITHOUT triggering a relocate/tabify
             // it doesn't assert. Zone-relocate is covered by the r1106 tests.
@@ -2223,7 +2222,7 @@ mod tests {
 
     #[test]
     fn r1107_1_redock_at_with_rejected_relocate_still_redocks_home() {
-        // R1107.1 review-clearance: the `# Errors` contract of apply_zone_redock
+        // R1107.1 review-clearance: the `# Errors` contract of dock_panel_at_zone
         // — an AI-driven `tear_off_redock_at` whose target names NO panel
         // rejects the relocate (topology unchanged), yet the floating window is
         // still removed so the panel returns HOME (its original placeholder

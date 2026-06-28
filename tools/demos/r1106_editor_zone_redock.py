@@ -7,7 +7,7 @@ the panel to its HOME slot (the `target`/`x_rel`/`y_rel` zone was recorded yet
 ignored — exactly the flat `hello-dock-panels` limit, since the flat splitter has
 fixed slots). R1106 honours the zone: because the editor has a `DockTopology` and
 the torn panel stays in it as a placeholder LEAF, a redock into main RELOCATES the
-panel AT the dropped zone via `DockReorganizer::apply_zone_redock` — the same
+panel AT the dropped zone via `DockReorganizer::dock_panel_at_zone` — the same
 `dock_drop_zone_normalized` + `intent_for_zone` SSOT the in-window drag uses
 (Centre = tabify, an edge = split-insert). This is the editor's distinguishing
 value over the flat consumer (the flat demo CAN'T do it — no topology).
