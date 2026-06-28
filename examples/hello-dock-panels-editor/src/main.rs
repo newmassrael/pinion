@@ -400,6 +400,24 @@ fn is_panel_floating(panels: &[WindowSpec], panel_id: &str) -> bool {
     window_exists(panels, &floating_window_id(panel_id))
 }
 
+/// (R1134 §5.51.1) The panel ids that currently have a floating window — every
+/// `torn-<panel>` window id stripped of the [`DEFAULT_FLOATING_WINDOW_PREFIX`].
+/// Under `FloatPolicy::Collapse` a floated panel's leaf LEAVES the topology
+/// (the slot reflows), so the external factory unions these with
+/// [`DockTopology::panel_ids`] (step ②) to keep the floated panel's
+/// [`DockPanelExternal`] registered — its window header still drags + docks back.
+/// Under the placeholder default the leaf stays, so a floating panel is already in
+/// `panel_ids()` and the union is a no-op (the main window is never `torn-`).
+fn floating_panel_ids(panels: &[WindowSpec]) -> Vec<String> {
+    panels
+        .iter()
+        .filter_map(|w| {
+            w.id.strip_prefix(DEFAULT_FLOATING_WINDOW_PREFIX)
+                .map(str::to_string)
+        })
+        .collect()
+}
+
 /// Reducer mutation for a `tear_off` intent — the canonical toggle:
 ///
 /// * Panel docked (no matching floating window) → push a floating
@@ -905,8 +923,28 @@ impl WidgetCore for DockPanelsEditorView {
             // panel tears off into its own floating window and (R1116/R1117) is
             // dragged by its title bar. (Superseded the pre-R1105 "DOCK-ONLY,
             // float-to-window deferred" note that used to sit here.)
-            for panel_id in topology.panel_ids() {
-                let panel = DockPanelExternal::new(panel_id.to_string())
+            // (R1134 §5.51.1 step②) The panel-external set is the UNION of docked
+            // panels (`panel_ids()`) + floating panels (the `torn-` windows). Under
+            // FloatPolicy::Collapse a float REMOVES the leaf, so a floated panel
+            // leaves `panel_ids()` — register its external from the windows truth
+            // too, else the floating window's header loses its drag / dock-back.
+            // Under the placeholder default the leaf stays, so the floating id is
+            // already in `panel_ids()` and this union is a no-op (identical tag
+            // set). `reconcile_externals`' preserve-by-tag then keeps the floated
+            // panel's live instance (+ its lifecycle chart) across the collapse
+            // topology change — the chart is never reconstructed for a surviving tag.
+            let mut panel_ids: Vec<String> = topology
+                .panel_ids()
+                .iter()
+                .map(|p| (*p).to_string())
+                .collect();
+            for fid in floating_panel_ids(&windows) {
+                if !panel_ids.iter().any(|p| p == &fid) {
+                    panel_ids.push(fid);
+                }
+            }
+            for panel_id in &panel_ids {
+                let panel = DockPanelExternal::new(panel_id.clone())
                     .with_reorganizer(Rc::clone(&reorganizer))
                     .with_drop_preview(Rc::clone(&preview))
                     // (R1116 §5.51 PR-38) Declare this panel's own floating window
@@ -918,7 +956,7 @@ impl WidgetCore for DockPanelsEditorView {
                     // float truth so a reconstruct (any topology change) does not
                     // reset a floating panel's chart to Docked.
                     .with_initial_floating(is_panel_floating(&windows, panel_id));
-                externals.push(ExtraExternal::new(panel_id.to_string(), Box::new(panel)));
+                externals.push(ExtraExternal::new(panel_id.clone(), Box::new(panel)));
             }
             // (R1096 §5.51) One TabWellExternal per Tabs well, registered at
             // the well's stable id (= the view_tabs strip tag = the R51.42
@@ -1210,7 +1248,7 @@ mod tests {
 
     use super::*;
     use pinion_core::reactive::Owner;
-    use pinion_widget_paint::dock::{DockReorganizeIntent, DockSplitPosition};
+    use pinion_widget_paint::dock::{DockReorganizeIntent, DockSplitPosition, FloatPolicy};
     use pinion_widget_paint::splitter::SplitterOrientation;
     use std::borrow::Cow;
 
@@ -1479,6 +1517,72 @@ mod tests {
                 Some(IntrospectValue::Text("Docked".to_string())),
                 "a docked panel's reconstructed chart stays Docked",
             );
+        });
+    }
+
+    #[test]
+    fn r1134_external_union_registers_a_collapsed_floated_panel() {
+        // R1134 §5.51.1 step② — under Collapse a float REMOVES viewport's leaf, so
+        // it leaves panel_ids(). The factory's (topology ∪ floating) union must
+        // still register viewport's DockPanelExternal from the windows truth (else
+        // its floating header loses its drag / dock-back), re-hydrated to Floating.
+        run_in_owner(|| {
+            let reorg = use_editor_reorganizer();
+            reorg.set_float_policy(FloatPolicy::Collapse);
+            // The two sides of a release-as-floated under Collapse: collapse the
+            // leaf (topology) + push the floating window (windows).
+            reorg.float_out_panel(VIEWPORT_PANEL_TAG).unwrap();
+            toggle_panel_floating(VIEWPORT_PANEL_TAG);
+            assert!(
+                !use_editor_topology()
+                    .get()
+                    .unwrap()
+                    .panel_ids()
+                    .contains(&VIEWPORT_PANEL_TAG),
+                "viewport collapsed out of the topology (its slot reflowed)",
+            );
+            let externals = <DockPanelsEditorView as WidgetCore>::create_extra_externals();
+            let viewport = externals
+                .iter()
+                .find(|e| e.tag.as_ref() == VIEWPORT_PANEL_TAG);
+            assert!(
+                viewport.is_some(),
+                "step② union registers the collapsed (floated) panel's external",
+            );
+            assert_eq!(
+                viewport
+                    .and_then(|e| e.handle.introspect())
+                    .and_then(|i| i.query("lifecycle")),
+                Some(IntrospectValue::Text("Floating".to_string())),
+                "the union'd external re-hydrates its chart to Floating",
+            );
+        });
+    }
+
+    #[test]
+    fn r1134_editor_collapse_reflows_topology_then_restores_home() {
+        // R1134 §5.51.1 — collapse viewport in the editor's real 5-pane topology:
+        // the slot reflows (4 panels), and a dock-back restores it home (5 panels).
+        run_in_owner(|| {
+            let reorg = use_editor_reorganizer();
+            reorg.set_float_policy(FloatPolicy::Collapse);
+            assert_eq!(use_editor_topology().get().unwrap().panel_ids().len(), 5);
+            reorg.float_out_panel(VIEWPORT_PANEL_TAG).unwrap();
+            let collapsed = use_editor_topology().get().unwrap();
+            assert_eq!(
+                collapsed.panel_ids().len(),
+                4,
+                "viewport's slot collapsed (reflow)"
+            );
+            assert!(!collapsed.panel_ids().contains(&VIEWPORT_PANEL_TAG));
+            reorg.restore_panel_home(VIEWPORT_PANEL_TAG).unwrap();
+            let restored = use_editor_topology().get().unwrap();
+            assert_eq!(
+                restored.panel_ids().len(),
+                5,
+                "viewport restored to its home anchor"
+            );
+            assert!(restored.panel_ids().contains(&VIEWPORT_PANEL_TAG));
         });
     }
 

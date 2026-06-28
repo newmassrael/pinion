@@ -62,7 +62,7 @@
 
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, DragPayload, DragUpdate, DropPoint, External,
@@ -2325,6 +2325,64 @@ pub fn resolve_dock_drop_tabbing(
 /// `invoke` path can reach an empty-surface reorganize, and it gets the no-op.
 /// [`DockTopology`]'s `leaf >= 1` invariant is therefore untouched —
 /// absence is modelled by the `Option`, not by a degenerate topology.
+/// (R1134 §5.51.1) Per-surface torn-slot policy — what happens to a panel's dock
+/// LEAF when it floats out, the user-selectable "collapse vs placeholder" the live
+/// dock review asked for.
+///
+/// * [`Placeholder`](Self::Placeholder) (default, bit-identical to pre-R1134) —
+///   the leaf STAYS in the topology when the panel floats; the binding paints a
+///   placeholder in the preserved slot, so the neighbours do NOT reflow and a
+///   dock-back is a trivial slot-fill.
+/// * [`Collapse`](Self::Collapse) — the leaf is REMOVED on float
+///   ([`DockReorganizer::float_out_panel`]) so the siblings reclaim the space (the
+///   VS Code / Blender model: the slot vanishes, neighbours grow). The home anchor
+///   is captured first so a dock-back ([`DockReorganizer::restore_panel_home`])
+///   restores the leaf next to its original sibling.
+///
+/// Owned by the coordinator — like [`tabbing`](DockReorganizer::tabbing) — so the
+/// policy applies UNIFORMLY to every float path that drives through the shared
+/// [`DockReorganizer`]: the pointer `drag_release` escape, the AI
+/// `invoke("tear_off")`, and a `drag_cancel`. The timing is **release-as-floated**:
+/// a collapse fires only when the gesture SETTLES as floated (release / invoke),
+/// never mid-drag — removing the leaf mid-gesture would re-run the external factory
+/// and disturb the live drag, so the slot stays put during the drag and collapses
+/// once on release.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FloatPolicy {
+    /// Keep the leaf on float (slot preserved, no reflow) — the default.
+    #[default]
+    Placeholder,
+    /// Remove the leaf on float (neighbours reclaim the space), restoring it to
+    /// the captured home anchor on dock-back.
+    Collapse,
+}
+
+impl FloatPolicy {
+    /// The scene-as-data name (`"placeholder"` / `"collapse"`) — the value
+    /// `query("float_policy")` returns and `invoke("set_float_policy", …)` accepts,
+    /// so an AI client discovers + drives the policy over the §2 #7 wire.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FloatPolicy::Placeholder => "placeholder",
+            FloatPolicy::Collapse => "collapse",
+        }
+    }
+
+    /// Parse a wire name back to a policy — the inverse of [`Self::as_str`]. An
+    /// unknown name is `None` (the `set_float_policy` invoke arm rejects it). Named
+    /// `from_wire` (not `from_str`) so it does not shadow the `FromStr` trait — the
+    /// `Option` return is the discriminated-set semantics, not a `Result` parse.
+    #[must_use]
+    pub fn from_wire(name: &str) -> Option<Self> {
+        match name {
+            "placeholder" => Some(FloatPolicy::Placeholder),
+            "collapse" => Some(FloatPolicy::Collapse),
+            _ => None,
+        }
+    }
+}
+
 pub struct DockReorganizer {
     /// Live dock surface the editor view fn reads — `None` = empty dock.
     /// Mutated via `Signal::set(Some(..))` on a successful reorganize →
@@ -2356,6 +2414,24 @@ pub struct DockReorganizer {
     /// no classification) is NOT gated — tabbing governs the zone CLASSIFIER,
     /// not direct topology edits.
     tabbing: bool,
+    /// (R1134 §5.51.1) The torn-slot policy ([`FloatPolicy`]) for THIS dock
+    /// surface — `Placeholder` (default) keeps a floated panel's leaf, `Collapse`
+    /// removes it (neighbours reflow) and remembers the home anchor. Owned by the
+    /// coordinator like [`tabbing`] so a collapse is uniform across the pointer +
+    /// invoke float paths. Interior-mutable ([`Cell`]) so it is runtime-settable
+    /// ([`Self::set_float_policy`] / the `set_float_policy` invoke) — a dock review
+    /// can toggle collapse vs placeholder live.
+    ///
+    /// [`tabbing`]: Self::tabbing
+    float_policy: Cell<FloatPolicy>,
+    /// (R1134 §5.51.1) Captured home anchors for collapsed panels, keyed by panel
+    /// id — the collapse-policy "where home is" SSOT. [`Self::float_out_panel`]
+    /// stashes a leaf's [`DockLeafAnchor`] before removing it;
+    /// [`Self::restore_panel_home`] pops + re-inserts at it; a zone redock
+    /// ([`Self::dock_panel_at_zone`]) clears it (the panel landed somewhere new).
+    /// A root / `Tabs`-member panel has no parent-Split anchor, so its entry is
+    /// absent and dock-back falls back to a zone redock.
+    home_anchors: RefCell<HashMap<String, DockLeafAnchor>>,
     /// Last gesture outcome, surfaced via `query("last_outcome")` for
     /// AI clients to confirm an apply succeeded / why it was rejected.
     last_outcome: RefCell<Option<String>>,
@@ -2407,6 +2483,7 @@ impl core::fmt::Debug for DockReorganizer {
             .field("split_seq", &self.split_seq.get())
             .field("reorganize_ratio", &self.reorganize_ratio)
             .field("tabbing", &self.tabbing)
+            .field("float_policy", &self.float_policy.get())
             .field("last_outcome", &self.last_outcome.borrow())
             .finish_non_exhaustive()
     }
@@ -2426,6 +2503,8 @@ impl DockReorganizer {
             tabs_seq: Cell::new(0),
             reorganize_ratio: DEFAULT_REORGANIZE_RATIO,
             tabbing: true,
+            float_policy: Cell::new(FloatPolicy::default()),
+            home_anchors: RefCell::new(HashMap::new()),
             last_outcome: RefCell::new(None),
             undo: None,
         }
@@ -2459,6 +2538,33 @@ impl DockReorganizer {
     #[must_use]
     pub fn tabbing(&self) -> bool {
         self.tabbing
+    }
+
+    /// (R1134 §5.51.1) Set this dock surface's torn-slot [`FloatPolicy`] at
+    /// construction — `Collapse` makes a float remove the leaf (neighbours reflow),
+    /// `Placeholder` (the default) keeps it. Like [`with_tabbing`](Self::with_tabbing)
+    /// it is a per-surface policy the consumer picks; runtime toggling goes through
+    /// [`set_float_policy`](Self::set_float_policy).
+    #[must_use]
+    pub fn with_float_policy(self, policy: FloatPolicy) -> Self {
+        self.float_policy.set(policy);
+        self
+    }
+
+    /// (R1134 §5.51.1) Switch the torn-slot policy at runtime — the `set_float_policy`
+    /// invoke + a "collapse vs placeholder" UI toggle drive this, so a dock review
+    /// flips the behaviour live without rebuilding the coordinator. Takes effect on
+    /// the NEXT float (an already-floated panel is unaffected until it docks back).
+    pub fn set_float_policy(&self, policy: FloatPolicy) {
+        self.float_policy.set(policy);
+    }
+
+    /// (R1134 §5.51.1 §2 #7) This surface's live torn-slot policy — the value
+    /// `query("float_policy")` projects + the float paths read to decide collapse
+    /// vs placeholder.
+    #[must_use]
+    pub fn float_policy(&self) -> FloatPolicy {
+        self.float_policy.get()
     }
 
     /// Diagnostic: how many splits this coordinator has minted so far.
@@ -2636,6 +2742,10 @@ impl DockReorganizer {
             self.split_seq.set(self.split_seq.get() + 1);
             (next, format!("{panel} -> {target}"))
         };
+        // (R1134 §5.51.1) The panel landed at a zone, not its home — drop any stale
+        // collapse home anchor so a later home-restore does not resurrect the old
+        // slot. A no-op under placeholder (nothing was stashed).
+        self.home_anchors.borrow_mut().remove(panel);
         Ok(self.commit(next, summary))
     }
 
@@ -2658,8 +2768,57 @@ impl DockReorganizer {
         if !current.panel_ids().contains(&panel) {
             return Ok(format!("{panel}: already floated — no-op"));
         }
+        // (R1134 §5.51.1) Capture the home anchor BEFORE removing the leaf so a
+        // later dock-back ([`Self::restore_panel_home`]) restores it next to its
+        // original sibling. A root / `Tabs`-member panel has no parent-Split anchor
+        // (`None`): it still collapses (the reflow), and dock-back falls back to a
+        // zone redock since there is no home to stash.
+        if let Some(anchor) = current.leaf_anchor(panel) {
+            self.home_anchors
+                .borrow_mut()
+                .insert(panel.to_string(), anchor);
+        }
         let next = current.remove_leaf(panel)?;
         Ok(self.commit(next, format!("{panel}: floated out (collapse)")))
+    }
+
+    /// (R1134 §5.51.1) Dock-back a collapsed `panel` to its captured home anchor —
+    /// the HOME inverse of [`Self::float_out_panel`] (vs [`Self::dock_panel_at_zone`],
+    /// the ZONE inverse). Pops the [`DockLeafAnchor`] this panel's float stashed and
+    /// re-inserts the leaf next to its original sibling via
+    /// [`DockTopology::insert_leaf_at_anchor`] (the original split id / orientation /
+    /// ratio / side — so the binding's per-split state re-binds). The home-restore
+    /// the `invoke("tear_off")` dock-back + a cancelled float drive under
+    /// [`FloatPolicy::Collapse`].
+    ///
+    /// Idempotent / total: no stashed anchor (placeholder mode never collapsed it,
+    /// it already restored, or it was a root / `Tabs`-member with no anchor), an
+    /// empty surface, or a panel somehow already docked → a recorded no-op, never an
+    /// error or panic.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the [`DockTopology::insert_leaf_at_anchor`] error when the stashed
+    /// anchor's `sibling` no longer exists (it was itself removed since capture);
+    /// the caller falls back to a default dock.
+    pub fn restore_panel_home(&self, panel: &str) -> Result<String, TopologyError> {
+        let Some(anchor) = self.home_anchors.borrow_mut().remove(panel) else {
+            let outcome = format!("{panel}: no home anchor — no-op");
+            self.note_outcome(&outcome);
+            return Ok(outcome);
+        };
+        let Some(current) = self.topology.get() else {
+            let outcome = format!("{panel}: empty surface — no-op");
+            self.note_outcome(&outcome);
+            return Ok(outcome);
+        };
+        if current.panel_ids().contains(&panel) {
+            let outcome = format!("{panel}: already docked — no-op");
+            self.note_outcome(&outcome);
+            return Ok(outcome);
+        }
+        let next = current.insert_leaf_at_anchor(panel.to_string(), &anchor)?;
+        Ok(self.commit(next, format!("{panel}: docked home")))
     }
 
     /// (R1085 §5.51) Make tab `index` the visible tab of the
@@ -2861,6 +3020,11 @@ impl ExternalIntrospect for DockReorganizeExternal {
             // tabifies before classifying one — the single policy the pointer
             // preview + `drop` RPC + cross-window redock all honour.
             ("tabbing", "bool"),
+            // R1134 §5.51.1 §2 #7 — this surface's torn-slot policy
+            // (`"placeholder"` / `"collapse"`), read here + driven by the
+            // `set_float_policy` invoke so an AI toggles collapse vs placeholder.
+            ("float_policy", "string"),
+            ("set_float_policy", "string"),
             ("last_outcome", "string"),
             // R1082.1 §5.51 — the in-flight pointer drag observed on the
             // canonical reorganize surface (`{source, target, zone}` or
@@ -2903,6 +3067,10 @@ impl ExternalIntrospect for DockReorganizeExternal {
             )),
             // R1112 §5.51 §2 #7 PR-37 — the surface tab-docking policy.
             "tabbing" => Some(IntrospectValue::Bool(self.reorganizer.tabbing())),
+            // R1134 §5.51.1 §2 #7 — the surface torn-slot (collapse) policy.
+            "float_policy" => Some(IntrospectValue::Text(
+                self.reorganizer.float_policy().as_str().to_string(),
+            )),
             "last_outcome" => Some(match self.reorganizer.last_outcome() {
                 Some(s) => IntrospectValue::Text(s),
                 None => IntrospectValue::Null,
@@ -2917,7 +3085,9 @@ impl ExternalIntrospect for DockReorganizeExternal {
             // `invoke("reorganize", …)`, not direct slot writes — every
             // edit must pass the mutation primitives' validation gate.
             // `drop_preview` is a read-only observation slot (R1082.1).
-            "topology" | "split_seq" | "last_outcome" | "drop_preview" => {
+            // R1134 — `float_policy` is set via the `set_float_policy` invoke, not
+            // a direct slot write.
+            "topology" | "split_seq" | "last_outcome" | "drop_preview" | "float_policy" => {
                 Err(InterveneError::ReadOnly)
             }
             _ => Err(InterveneError::UnknownPath),
@@ -3067,6 +3237,17 @@ impl ExternalIntrospect for DockReorganizeExternal {
                     Ok(summary) => Ok(IntrospectValue::Text(summary)),
                     Err(_) => Err(InvokeError::Rejected),
                 }
+            }
+            // R1134 §5.51.1 §2 #2 — toggle this surface's torn-slot policy live.
+            // Arg is the wire name (`"collapse"` / `"placeholder"`); an unknown
+            // name is a rejected gesture. The next float honours the new policy.
+            "set_float_policy" => {
+                let IntrospectValue::Text(name) = args else {
+                    return Err(InvokeError::TypeMismatch);
+                };
+                let policy = FloatPolicy::from_wire(&name).ok_or(InvokeError::Rejected)?;
+                self.reorganizer.set_float_policy(policy);
+                Ok(IntrospectValue::Text(policy.as_str().to_string()))
             }
             _ => Err(InvokeError::UnknownPath),
         }
@@ -4701,6 +4882,39 @@ impl DockPanelExternal {
         self.lifecycle.borrow_mut().send(event);
     }
 
+    /// (R1134 §5.51.1) Under [`FloatPolicy::Collapse`], remove this panel's leaf so
+    /// the neighbours reflow — the topology mirror of the window-side float (the
+    /// `tear_off` / `tear_off_follow` intent), capturing the home anchor for a
+    /// later dock-back. A no-op under `Placeholder` (the leaf stays = the slot is
+    /// preserved) or a tear-off-only external (no coordinator). Called at the float
+    /// SETTLE points — `drag_release` escape + the `invoke("tear_off")` float — and
+    /// **never** mid-drag ([`drag_to_at`](External::drag_to_at)): removing the leaf
+    /// mid-gesture would re-run the external factory and disturb the live drag, so
+    /// the slot stays put during the drag and collapses once on release
+    /// (release-as-floated).
+    fn collapse_leaf_if_policy(&self) {
+        if let Some(reorg) = self.reorganizer.as_ref()
+            && reorg.float_policy() == FloatPolicy::Collapse
+        {
+            let _ = reorg.float_out_panel(&self.panel_id);
+        }
+    }
+
+    /// (R1134 §5.51.1) Under [`FloatPolicy::Collapse`], restore this panel's leaf to
+    /// its captured home anchor — the topology mirror of the window-side restore
+    /// (the `tear_off_redock` intent), driven at every dock-back point that removes
+    /// the float window (snap-back, cancel, `invoke("tear_off")` dock-back). A
+    /// no-op under `Placeholder` or when nothing was stashed (the panel never
+    /// collapsed), so it is safe to mirror unconditionally wherever the window is
+    /// restored.
+    fn restore_leaf_home_if_policy(&self) {
+        if let Some(reorg) = self.reorganizer.as_ref()
+            && reorg.float_policy() == FloatPolicy::Collapse
+        {
+            let _ = reorg.restore_panel_home(&self.panel_id);
+        }
+    }
+
     /// (R1081 §5.51) Classify a resolved [`DropPoint`] into the dock
     /// preview it implies: `None` when the cursor is over no panel, over
     /// this same panel (a self-drop is a no-op), or in a dead zone
@@ -4714,6 +4928,16 @@ impl DockPanelExternal {
     /// the policy is moot and the default is harmless).
     fn effective_tabbing(&self) -> bool {
         self.reorganizer.as_ref().is_none_or(|r| r.tabbing())
+    }
+
+    /// (R1134 §5.51.1) The torn-slot [`FloatPolicy`] this panel follows — its
+    /// shared coordinator's surface policy, or [`FloatPolicy::Placeholder`] for a
+    /// tear-off-only external (no coordinator). The value `query("float_policy")`
+    /// projects.
+    fn effective_float_policy(&self) -> FloatPolicy {
+        self.reorganizer
+            .as_ref()
+            .map_or(FloatPolicy::Placeholder, |r| r.float_policy())
     }
 
     fn resolve_preview(&self, over: Option<&DropPoint>) -> Option<DockDropPreview> {
@@ -4988,6 +5212,10 @@ impl External for DockPanelExternal {
             // `drag_to_at` escape — `Escaped` has no transition out of `floating`,
             // so a gesture that already floated mid-drag is a no-op here.
             self.send_lifecycle(DockPanelEvent::Escaped);
+            // R1134 §5.51.1 — the gesture SETTLED as floated: under Collapse remove
+            // the leaf now (release-as-floated), so the slot reflows on release, not
+            // mid-drag. No-op under Placeholder (the slot stays).
+            self.collapse_leaf_if_policy();
             self.detached.set(true);
             self.tear_off_fired.set(true);
             return;
@@ -5002,6 +5230,11 @@ impl External for DockPanelExternal {
         self.send_lifecycle(DockPanelEvent::DockBack);
         if was_floating {
             self.enqueue_tear_off_redock();
+            // R1134 §5.51.1 — mirror the window restore on the topology: under
+            // Collapse re-insert the leaf at its home anchor. A no-op when nothing
+            // was stashed (a snap-back's float was the mid-drag follow, which never
+            // removed the leaf under release-as-floated).
+            self.restore_leaf_home_if_policy();
         }
         self.detached.set(false);
         self.tear_off_fired.set(false);
@@ -5087,6 +5320,11 @@ impl External for DockPanelExternal {
                 self.send_lifecycle(DockPanelEvent::Escaped);
             }
             self.detached.set(true);
+            // R1134 §5.51.1 — deliberately NO collapse here. Under Collapse the
+            // topology leaf is removed at the SETTLE (`drag_release` escape), never
+            // mid-drag: removing it now would re-run the external factory and
+            // disturb this live drag session, so the slot stays put (placeholder-
+            // style) during the drag and reflows once on release (release-as-floated).
         }
         // While detached, the follower tracks the cursor on EVERY move (the
         // ensure+position follow), whether or not it is back over a zone — and
@@ -5146,6 +5384,9 @@ impl External for DockPanelExternal {
         self.send_lifecycle(DockPanelEvent::DockBack);
         if was_floating {
             self.enqueue_tear_off_redock();
+            // R1134 §5.51.1 — mirror the window restore: under Collapse re-insert the
+            // leaf at its home anchor (a no-op when nothing was stashed).
+            self.restore_leaf_home_if_policy();
         }
         self.detached.set(false);
     }
@@ -5177,6 +5418,9 @@ impl ExternalIntrospect for DockPanelExternal {
             // R1111 §5.51 §2 #7 PR-37 — whether a centre drop tabifies. A
             // split-only consumer sets it false; an AI discovers the policy.
             ("tabbing", "bool"),
+            // R1134 §5.51.1 §2 #7 — the torn-slot policy (`"placeholder"` /
+            // `"collapse"`) this panel's float follows.
+            ("float_policy", "string"),
             ("dragging", "bool"),
             ("tear_off_fired", "bool"),
             // R1081 §5.51 — the live drop the in-flight drag is over
@@ -5219,6 +5463,11 @@ impl ExternalIntrospect for DockPanelExternal {
             // R1112 §5.51 §2 #7 PR-37 — the effective tab-docking policy this
             // panel follows (its shared coordinator's surface policy).
             "tabbing" => Some(IntrospectValue::Bool(self.effective_tabbing())),
+            // R1134 §5.51.1 §2 #7 — the effective torn-slot policy this panel
+            // follows (its coordinator's surface policy).
+            "float_policy" => Some(IntrospectValue::Text(
+                self.effective_float_policy().as_str().to_string(),
+            )),
             "dragging" => Some(IntrospectValue::Bool(self.is_dragging())),
             "tear_off_fired" => Some(IntrospectValue::Bool(self.tear_off_fired())),
             // R1081 §5.51 — the shared live preview (any panel's external
@@ -5260,10 +5509,9 @@ impl ExternalIntrospect for DockPanelExternal {
             // channels + the shared coordinator — not by intervening on
             // dragging / tear_off_fired / drop_preview / drag_cursor /
             // detached directly.
-            "panel_id" | "tabbing" | "dragging" | "tear_off_fired" | "drop_preview"
-            | "drag_cursor" | "detached" | "redock_at" | "source_window" | "lifecycle" => {
-                Err(InterveneError::ReadOnly)
-            }
+            "panel_id" | "tabbing" | "float_policy" | "dragging" | "tear_off_fired"
+            | "drop_preview" | "drag_cursor" | "detached" | "redock_at" | "source_window"
+            | "lifecycle" => Err(InterveneError::ReadOnly),
             _ => Err(InterveneError::UnknownPath),
         }
     }
@@ -5324,12 +5572,18 @@ impl ExternalIntrospect for DockPanelExternal {
                 // floating → dock-back (restore home): the directed restore intent.
                 self.send_lifecycle(DockPanelEvent::DockBack);
                 self.enqueue_tear_off_redock();
+                // R1134 §5.51.1 — under Collapse re-insert the leaf at its home
+                // anchor (the topology mirror of the window restore).
+                self.restore_leaf_home_if_policy();
                 self.tear_off_fired.set(false);
             } else {
                 // docked → float (tear-off): the same transition the R742
                 // escape-drop drives.
                 self.send_lifecycle(DockPanelEvent::Escaped);
                 self.enqueue_tear_off();
+                // R1134 §5.51.1 — a discrete float settle (not mid-drag): under
+                // Collapse remove the leaf now so the slot reflows.
+                self.collapse_leaf_if_policy();
                 self.tear_off_fired.set(true);
             }
             self.dragging.set(false);
@@ -5435,9 +5689,9 @@ mod tests {
 
     use super::{
         CONTENT_TAG_SUFFIX, DOCK_DROP_PREVIEW_TAG, DockDropZone, DockNode, DockPanelExternal,
-        DockPanelStyle, DockReorganizer, DockTopology, HEADER_TAG_SUFFIX, TEAR_OFF_EVENT,
-        TEAR_OFF_FOLLOW_EVENT, TEAR_OFF_REDOCK_AT_EVENT, TEAR_OFF_REDOCK_EVENT, WINDOW_MOVE_EVENT,
-        composite_tag, dock_drop_preview_overlay, dock_drop_zone_highlight,
+        DockPanelStyle, DockReorganizer, DockTopology, FloatPolicy, HEADER_TAG_SUFFIX,
+        TEAR_OFF_EVENT, TEAR_OFF_FOLLOW_EVENT, TEAR_OFF_REDOCK_AT_EVENT, TEAR_OFF_REDOCK_EVENT,
+        WINDOW_MOVE_EVENT, composite_tag, dock_drop_preview_overlay, dock_drop_zone_highlight,
         dock_tablist_access_nodes, view_dock_panel, window_move_delta,
     };
     use crate::tabs::composite_tab_tag;
@@ -6464,6 +6718,143 @@ mod tests {
             DockPanelExternal::new("a").query("lifecycle"),
             Some(IntrospectValue::Text("Docked".to_string())),
             "plain new is Docked (the SCXML initial)",
+        );
+    }
+
+    // ── R1134 §5.51.1 — FloatPolicy collapse timing through the external ──
+
+    /// 3-panel fixture `a | (b | c)` behind a shared signal — `b` / `c` have a
+    /// leaf-sibling home anchor so the collapse round-trip is exact.
+    fn abc_signal() -> Rc<Signal<Option<DockTopology>>> {
+        Rc::new(Signal::new(Some(DockTopology::new(
+            DockNode::split_horizontal(
+                "root_h",
+                0.5,
+                DockNode::leaf("a"),
+                DockNode::split_horizontal(
+                    "inner_h",
+                    0.5,
+                    DockNode::leaf("b"),
+                    DockNode::leaf("c"),
+                ),
+            ),
+        ))))
+    }
+
+    fn collapse_reorg(topo: &Rc<Signal<Option<DockTopology>>>) -> Rc<DockReorganizer> {
+        Rc::new(DockReorganizer::new(Rc::clone(topo)).with_float_policy(FloatPolicy::Collapse))
+    }
+
+    #[test]
+    fn r1134_invoke_tear_off_collapses_then_restores_home() {
+        // Under Collapse the discrete tear_off invoke removes b's leaf (neighbours
+        // reflow) and the chart floats; the dock-back invoke restores b at its home
+        // anchor and the chart docks. The external surfaces the policy.
+        let topo = abc_signal();
+        let reorg = collapse_reorg(&topo);
+        let mut ext = DockPanelExternal::new("b").with_reorganizer(Rc::clone(&reorg));
+        assert_eq!(
+            ext.query("float_policy"),
+            Some(IntrospectValue::Text("collapse".to_string())),
+            "the panel reports its coordinator's policy",
+        );
+        // Float (collapse out).
+        ext.invoke(TEAR_OFF_EVENT, IntrospectValue::Null).unwrap();
+        assert!(
+            !topo.get().unwrap().panel_ids().contains(&"b"),
+            "b collapsed out of the topology",
+        );
+        assert_eq!(
+            ext.query("lifecycle"),
+            Some(IntrospectValue::Text("Floating".to_string())),
+            "the chart floated",
+        );
+        // Dock back (restore home).
+        ext.invoke(TEAR_OFF_EVENT, IntrospectValue::Null).unwrap();
+        let after = topo.get().unwrap();
+        assert!(after.panel_ids().contains(&"b"), "b restored to the dock");
+        assert_eq!(after.panel_ids().len(), 3, "all three panels present");
+        assert_eq!(
+            ext.query("lifecycle"),
+            Some(IntrospectValue::Text("Docked".to_string())),
+            "the chart docked back",
+        );
+    }
+
+    #[test]
+    fn r1134_placeholder_default_keeps_the_leaf_on_float() {
+        // The default Placeholder policy leaves the leaf in the topology on a float
+        // (bit-identical to pre-R1134) — the slot is preserved, no reflow.
+        let topo = abc_signal();
+        let reorg = Rc::new(DockReorganizer::new(Rc::clone(&topo))); // default Placeholder
+        let mut ext = DockPanelExternal::new("b").with_reorganizer(reorg);
+        assert_eq!(
+            ext.query("float_policy"),
+            Some(IntrospectValue::Text("placeholder".to_string())),
+        );
+        ext.invoke(TEAR_OFF_EVENT, IntrospectValue::Null).unwrap();
+        assert!(
+            topo.get().unwrap().panel_ids().contains(&"b"),
+            "Placeholder keeps b's leaf (slot preserved)",
+        );
+        assert_eq!(topo.get().unwrap().panel_ids().len(), 3, "no reflow");
+        assert_eq!(
+            ext.query("lifecycle"),
+            Some(IntrospectValue::Text("Floating".to_string())),
+            "the chart still floats (the window side); only the leaf stays",
+        );
+    }
+
+    #[test]
+    fn r1134_live_drag_collapses_only_on_release_not_mid_drag() {
+        // ★The release-as-floated timing: a mid-drag escape (drag_to_at) must NOT
+        // remove the leaf — the slot stays put DURING the drag (so the live factory
+        // is not disturbed) and collapses once on the release escape.
+        let topo = abc_signal();
+        let reorg = collapse_reorg(&topo);
+        let mut ext = DockPanelExternal::new("b").with_reorganizer(reorg);
+        let _ = ext.begin_drag();
+        // Mid-drag escape: cursor left every same-window zone, the drag verdict landed.
+        ext.drag_to_at(&dummy_payload(), &upd(None, (10.0, 10.0), None, true));
+        assert!(
+            topo.get().unwrap().panel_ids().contains(&"b"),
+            "MID-DRAG: b's leaf is STILL docked (placeholder-style during the drag)",
+        );
+        assert_eq!(
+            ext.query("lifecycle"),
+            Some(IntrospectValue::Text("Floating".to_string())),
+            "the chart floated mid-drag (the live follow), but the slot stayed",
+        );
+        // Release while escaped → settle as floated → collapse now.
+        ext.drag_release(&dummy_payload(), None);
+        assert!(
+            !topo.get().unwrap().panel_ids().contains(&"b"),
+            "ON RELEASE: b collapsed (release-as-floated)",
+        );
+    }
+
+    #[test]
+    fn r1134_two_layer_consistency_under_collapse() {
+        // The R1131 2-layer invariant holds under collapse: the chart's Floating
+        // state and the topology's absence of the leaf agree through a float / dock-
+        // back cycle (chart Floating ⟺ leaf collapsed out).
+        let topo = abc_signal();
+        let reorg = collapse_reorg(&topo);
+        let mut ext = DockPanelExternal::new("c").with_reorganizer(reorg);
+        let docked = |ext: &DockPanelExternal| matches!(ext.query("lifecycle"), Some(IntrospectValue::Text(ref s)) if s == "Docked");
+        assert!(
+            docked(&ext) && topo.get().unwrap().panel_ids().contains(&"c"),
+            "start: docked"
+        );
+        ext.invoke(TEAR_OFF_EVENT, IntrospectValue::Null).unwrap();
+        assert!(
+            !docked(&ext) && !topo.get().unwrap().panel_ids().contains(&"c"),
+            "floated: chart Floating ⟺ leaf collapsed out",
+        );
+        ext.invoke(TEAR_OFF_EVENT, IntrospectValue::Null).unwrap();
+        assert!(
+            docked(&ext) && topo.get().unwrap().panel_ids().contains(&"c"),
+            "docked back: chart Docked ⟺ leaf present",
         );
     }
 
@@ -8626,8 +9017,8 @@ mod reorganize_tests {
 
     use super::{
         DockDropPreview, DockDropZone, DockNode, DockReorganizeExternal, DockReorganizeIntent,
-        DockReorganizer, DockSplitPosition, DockTopology, TabWellExternal, TopologyError,
-        resolve_dock_drop,
+        DockReorganizer, DockSplitPosition, DockTopology, FloatPolicy, TabWellExternal,
+        TopologyError, resolve_dock_drop,
     };
     use crate::splitter::SplitterOrientation as Orient;
     use pinion_core::external::{ExternalIntrospect, InterveneError, IntrospectValue, InvokeError};
@@ -8886,6 +9277,189 @@ mod reorganize_tests {
         let again = reorganizer.float_out_panel("a").unwrap();
         assert!(again.contains("already floated"), "idempotent: {again}");
         assert_eq!(topology.get().unwrap().panel_ids().len(), 2, "still 2");
+    }
+
+    // ── R1134 §5.51.1 — FloatPolicy + collapse home-anchor round-trip ──
+
+    #[test]
+    fn r1134_float_policy_default_placeholder_and_runtime_settable() {
+        let topology = Rc::new(Signal::new(Some(abc_topology())));
+        let reorganizer = DockReorganizer::new(Rc::clone(&topology));
+        assert_eq!(
+            reorganizer.float_policy(),
+            FloatPolicy::Placeholder,
+            "default is Placeholder (bit-identical to pre-R1134)",
+        );
+        reorganizer.set_float_policy(FloatPolicy::Collapse);
+        assert_eq!(
+            reorganizer.float_policy(),
+            FloatPolicy::Collapse,
+            "runtime set"
+        );
+        // The construction-time builder picks it up too.
+        let built =
+            DockReorganizer::new(Rc::clone(&topology)).with_float_policy(FloatPolicy::Collapse);
+        assert_eq!(
+            built.float_policy(),
+            FloatPolicy::Collapse,
+            "with_float_policy"
+        );
+        // Wire name round-trip (the query / invoke value).
+        assert_eq!(FloatPolicy::Collapse.as_str(), "collapse");
+        assert_eq!(FloatPolicy::Placeholder.as_str(), "placeholder");
+        assert_eq!(
+            FloatPolicy::from_wire("collapse"),
+            Some(FloatPolicy::Collapse)
+        );
+        assert_eq!(
+            FloatPolicy::from_wire("placeholder"),
+            Some(FloatPolicy::Placeholder)
+        );
+        assert_eq!(
+            FloatPolicy::from_wire("bogus"),
+            None,
+            "unknown name rejected"
+        );
+    }
+
+    #[test]
+    fn r1134_float_out_panel_captures_home_anchor_and_restore_round_trips() {
+        // The collapse home inverse: float b out (collapse), then dock it back HOME
+        // restores b beside c under the SAME inner_h split — exact leaf-sibling
+        // round-trip (the R1132 anchor, now driven by collapse policy).
+        let topology = Rc::new(Signal::new(Some(abc_topology())));
+        let reorganizer = DockReorganizer::new(Rc::clone(&topology));
+        assert!(
+            siblings_in_2leaf_split(topology.get().unwrap().root(), "b", "c"),
+            "before: b|c siblings",
+        );
+        let out = reorganizer.float_out_panel("b").unwrap();
+        assert!(out.contains("floated out"), "collapse outcome: {out}");
+        assert!(
+            !topology.get().unwrap().panel_ids().contains(&"b"),
+            "b collapsed out"
+        );
+        assert_eq!(
+            topology.get().unwrap().panel_ids().len(),
+            2,
+            "c reclaimed the space"
+        );
+        // Dock back home — restore at the captured anchor.
+        let back = reorganizer.restore_panel_home("b").unwrap();
+        assert_eq!(back, "b: docked home", "home restore outcome");
+        let after = topology.get().unwrap();
+        assert_eq!(after.panel_ids().len(), 3, "b is back");
+        assert!(
+            siblings_in_2leaf_split(after.root(), "b", "c"),
+            "b restored beside c (home anchor)",
+        );
+        // The anchor is consumed by the restore — a second dock-back finds none.
+        let again = reorganizer.restore_panel_home("b").unwrap();
+        assert!(again.contains("no home anchor"), "anchor consumed: {again}");
+    }
+
+    #[test]
+    fn r1134_restore_panel_home_without_anchor_is_noop() {
+        // A panel that never collapsed has no stashed anchor → idempotent no-op
+        // (placeholder mode + a stray dock-back are both harmless).
+        let topology = Rc::new(Signal::new(Some(abc_topology())));
+        let reorganizer = DockReorganizer::new(Rc::clone(&topology));
+        let outcome = reorganizer.restore_panel_home("b").unwrap();
+        assert!(
+            outcome.contains("no home anchor"),
+            "no-anchor no-op: {outcome}"
+        );
+        assert_eq!(
+            topology.get().unwrap().panel_ids().len(),
+            3,
+            "topology unchanged"
+        );
+    }
+
+    #[test]
+    fn r1134_zone_redock_clears_stale_home_anchor() {
+        // A zone redock lands the panel somewhere NEW, so its home anchor must be
+        // dropped — a later home-restore then finds nothing (it is at the zone, not
+        // home).
+        let topology = Rc::new(Signal::new(Some(abc_topology())));
+        let reorganizer = DockReorganizer::new(Rc::clone(&topology));
+        reorganizer.float_out_panel("b").unwrap(); // stashes b's home anchor
+        reorganizer.dock_panel_at_zone("b", "a", 0.15, 0.5).unwrap(); // lands beside a
+        assert!(
+            siblings_in_2leaf_split(topology.get().unwrap().root(), "b", "a"),
+            "b docked beside a (the zone), not home",
+        );
+        let restore = reorganizer.restore_panel_home("b").unwrap();
+        assert!(
+            restore.contains("no home anchor"),
+            "stash cleared by zone redock: {restore}"
+        );
+        assert_eq!(
+            topology.get().unwrap().panel_ids().len(),
+            3,
+            "no resurrection"
+        );
+    }
+
+    #[test]
+    fn r1134_reorganize_external_set_float_policy_invoke_and_query() {
+        // The §2 #2 AI-primary drive: the canonical reorganize surface exposes the
+        // torn-slot policy as scene-as-data (`query`) + a `set_float_policy` invoke
+        // toggle, so an AI flips collapse vs placeholder live + reads it back.
+        let topology = Rc::new(Signal::new(Some(abc_topology())));
+        let reorganizer = Rc::new(DockReorganizer::new(Rc::clone(&topology)));
+        let mut ext = DockReorganizeExternal::from_reorganizer(Rc::clone(&reorganizer));
+        assert_eq!(
+            ext.query("float_policy"),
+            Some(IntrospectValue::Text("placeholder".to_string())),
+            "default is placeholder",
+        );
+        // Toggle to collapse — the invoke echoes the applied policy name.
+        assert_eq!(
+            ext.invoke(
+                "set_float_policy",
+                IntrospectValue::Text("collapse".to_string())
+            )
+            .unwrap(),
+            IntrospectValue::Text("collapse".to_string()),
+        );
+        assert_eq!(
+            reorganizer.float_policy(),
+            FloatPolicy::Collapse,
+            "coordinator updated"
+        );
+        assert_eq!(
+            ext.query("float_policy"),
+            Some(IntrospectValue::Text("collapse".to_string())),
+            "query reflects it",
+        );
+        // Back to placeholder.
+        ext.invoke(
+            "set_float_policy",
+            IntrospectValue::Text("placeholder".to_string()),
+        )
+        .unwrap();
+        assert_eq!(reorganizer.float_policy(), FloatPolicy::Placeholder);
+        // Unknown name = rejected; non-text arg = type mismatch.
+        assert!(matches!(
+            ext.invoke(
+                "set_float_policy",
+                IntrospectValue::Text("bogus".to_string())
+            ),
+            Err(InvokeError::Rejected),
+        ));
+        assert!(matches!(
+            ext.invoke("set_float_policy", IntrospectValue::Null),
+            Err(InvokeError::TypeMismatch),
+        ));
+        // Read-only to a direct intervene (the invoke is the write path).
+        assert!(matches!(
+            ext.intervene(
+                "float_policy",
+                IntrospectValue::Text("collapse".to_string())
+            ),
+            Err(InterveneError::ReadOnly),
+        ));
     }
 
     /// Side-by-side layout for the three panels (each 200×400).
