@@ -18286,6 +18286,50 @@
         "Remaining pro-tool slices carry from the campaign: visible dock-zone guides on main / self-home=full / tabbing runtime toggle."
       ]
     },
+    "R1140": {
+      "decision_summary": "R1140 self-home redock preview — a floater dragged back over its OWN torn slot now shows a FULL dock-back preview + docks home: the torn-slot placeholder becomes a drop target that fills its leaf, and a placeholder target previews Center (fill) not an edge split. Closes the self-home gap a live user test surfaced.",
+      "changes_bullets": [
+        "view_floating_placeholder: the torn slot is now a DROP TARGET that FILLS its leaf (100%x100% + with_drop_target). Before, a floater dragged back over its OWN emptied home slot showed NO preview at all — the slot was invisible to the cross-window resolver (not a drop target) AND shrank to its ~19px label (a sliver hit target even once targetable). This was the deferred self-home gap.",
+        "editor dock_drop_preview: a placeholder-tagged target (a torn slot) previews FULL (Center), not the cursor-zone edge split — you FILL an emptied slot, you do not split it, so the preview matches the dock-back-home result. A live-panel target keeps the edge-split classification.",
+        "The redock-home on release already worked (the own-slot redock via redock_panel_floating removes the floating window); R1140 makes the PREVIEW finally appear + match it, so the gesture reads end to end."
+      ],
+      "verification_bullets": [
+        "dock r1140_view_floating_placeholder_is_a_drop_target: the torn slot opts in as a drop target.",
+        "editor r1140_dock_drop_preview_full_for_torn_slot_split_for_live_panel: a placeholder tag previews the WHOLE slot (Center) even at an edge x_rel; a live panel splits (half width).",
+        "RPC end-to-end (lavapipe, scene/window_move + held scene/drag with the cursor ON the floater header over the home slot): hint=True + lifecycle=RedockArmed mid-hold, then release -> windows=['main'] (the floater redocked HOME) + redock_at records {panel:properties,target:properties_placeholder,window:main}. The placeholder rect grew 19px -> 552px (full slot) after the fill fix.",
+        "Gate: workspace clippy --all-targets --features pinion-runtime/vello -D pedantic clean; rustfmt clean; pinion-widget-paint 643 + hello-dock-panels-editor 59 green, 0 fail; r1105 own-slot redock + placeholder tests unaffected."
+      ],
+      "impact_refs": [
+        "2",
+        "5.51"
+      ],
+      "carry_forward_bullets": [
+        "Self-home (floater over its own torn slot) now previews FULL + docks back, end-to-end verified. The redock-hint line (R1137 inject -> R1138 held-drag snapshot -> R1139 bold+measured -> R1140 self-home) is complete for the editor.",
+        "Remaining pro-tool slices carry from the campaign: visible dock-zone GUIDES on main (highlight target zones BEFORE the cursor is over them, so the user sees where to aim) / tabbing runtime toggle. A live fast-drag trail is WM apply-lag (HW-inherent, dissolves at human rate).",
+        "LESSON: a \"no preview\" symptom can be TWO independent gaps — a missing drop_target (the resolver finds nothing) AND a content-sized (not slot-filling) placeholder (a sliver hit target); fix both. Always confirm the on-screen instance is the FRESH build, not a stale one left running [[rpc-demo-runs-release-binary]]."
+      ],
+      "publishable_decision_summary": "R1140 self-home redock preview — a floater dragged back over its OWN torn slot now shows a FULL dock-back preview + docks home: the torn-slot placeholder becomes a drop target that fills its leaf, and a placeholder target previews Center (fill) not an edge split. Closes the self-home gap a live user test surfaced.",
+      "publishable_changes_bullets": [
+        "view_floating_placeholder: the torn slot is now a DROP TARGET that FILLS its leaf (100%x100% + with_drop_target). Before, a floater dragged back over its OWN emptied home slot showed NO preview at all — the slot was invisible to the cross-window resolver (not a drop target) AND shrank to its ~19px label (a sliver hit target even once targetable). This was the deferred self-home gap.",
+        "editor dock_drop_preview: a placeholder-tagged target (a torn slot) previews FULL (Center), not the cursor-zone edge split — you FILL an emptied slot, you do not split it, so the preview matches the dock-back-home result. A live-panel target keeps the edge-split classification.",
+        "The redock-home on release already worked (the own-slot redock via redock_panel_floating removes the floating window); R1140 makes the PREVIEW finally appear + match it, so the gesture reads end to end."
+      ],
+      "publishable_verification_bullets": [
+        "dock r1140_view_floating_placeholder_is_a_drop_target: the torn slot opts in as a drop target.",
+        "editor r1140_dock_drop_preview_full_for_torn_slot_split_for_live_panel: a placeholder tag previews the WHOLE slot (Center) even at an edge x_rel; a live panel splits (half width).",
+        "RPC end-to-end (lavapipe, scene/window_move + held scene/drag with the cursor ON the floater header over the home slot): hint=True + lifecycle=RedockArmed mid-hold, then release -> windows=['main'] (the floater redocked HOME) + redock_at records {panel:properties,target:properties_placeholder,window:main}. The placeholder rect grew 19px -> 552px (full slot) after the fill fix.",
+        "Gate: workspace clippy --all-targets --features pinion-runtime/vello -D pedantic clean; rustfmt clean; pinion-widget-paint 643 + hello-dock-panels-editor 59 green, 0 fail; r1105 own-slot redock + placeholder tests unaffected."
+      ],
+      "publishable_impact_refs": [
+        "2",
+        "5.51"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Self-home (floater over its own torn slot) now previews FULL + docks back, end-to-end verified. The redock-hint line (R1137 inject -> R1138 held-drag snapshot -> R1139 bold+measured -> R1140 self-home) is complete for the editor.",
+        "Remaining pro-tool slices carry from the campaign: visible dock-zone GUIDES on main (highlight target zones BEFORE the cursor is over them, so the user sees where to aim) / tabbing runtime toggle. A live fast-drag trail is WM apply-lag (HW-inherent, dissolves at human rate).",
+        "LESSON: a \"no preview\" symptom can be TWO independent gaps — a missing drop_target (the resolver finds nothing) AND a content-sized (not slot-filling) placeholder (a sliver hit target); fix both. Always confirm the on-screen instance is the FRESH build, not a stale one left running [[rpc-demo-runs-release-binary]]."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
