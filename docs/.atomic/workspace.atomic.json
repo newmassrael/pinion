@@ -18476,6 +18476,44 @@
         "Self-inflicted regression: R1141 introduced the broad guide gate; the freeze surfaced once a live tear-OUT-by-drag ran (the user hit it). The size gate (smaller-into-larger) is the floater<->host direction; two similar-sized floaters would show no guides between them (edge case, acceptable — dock setups have one large host). LESSON: an overlay gated on \"any other window dragging\" must exclude the brand-new follower a tear-out is creating (its surface churns); a direction/size gate does this AND is semantically correct."
       ]
     },
+    "R1145": {
+      "decision_summary": "R1145 add undock for tabbed panels — pull a panel out of its tab well back into a SPLIT sibling (the reverse of a centre tabify). A live user merged viewport+properties into tabs with no way to separate them (tabs were click-to-switch only). AI invoke('undock_tab', panel) + a human 'Undock tab' toolbar button; a docked result, no floating window.",
+      "changes_bullets": [
+        "DockReorganizer::undock_tab(panel) — pull a tabbed panel OUT of its well and re-dock it as a SPLIT sibling (the reverse of a centre-zone tabify): find a well-sibling (DockTopology::tab_well_sibling) then dock_panel_at_zone(panel, sibling, right edge), which removes the panel from the well (a 2-tab well collapses back to the sibling leaf) and splits it in. A deliberately DOCKED result — no floating window — so it sidesteps the fragile live window-move entirely. undock_active_tab() targets the first well's active panel (the human button); has_tab_wells() gates the affordance.",
+        "DockTopology queries: tab_well_sibling (the undock split anchor) + first_tab_well_active_panel.",
+        "AI path: invoke(\"undock_tab\", \"<panel>\") on the reorganize external + a schema entry (discoverable). Human path: a \"Undock tab\" toolbar button (tag undock_tab_btn) that PAINTS only while something is tabbed (reactive has_tab_wells gate) and undocks the active tab. Both funnel through the shared reorganizer's one commit."
+      ],
+      "verification_bullets": [
+        "dock r1145_tab_well_sibling_and_active_panel_queries: a tabbed panel's sibling + the first well's active panel; a non-tabbed panel has neither.",
+        "demo r1145_undock_tab (hello-dock-panels-editor, lavapipe PASS, sections A-E): boot 0 wells + Undock button HIDDEN → tabify viewport+properties = 1 well + button APPEARS → undock via the AI invoke = 0 wells (a Split again, both panels survive) + button vanishes → undock via the HUMAN button click = split again → edge: undocking a non-tabbed panel is a no-op, surface unchanged.",
+        "editor r686 external-set test updated (13 externals incl. the undock button).",
+        "Gate: workspace clippy --all-targets --features pinion-runtime/vello -D pedantic clean; rustfmt clean; pinion-widget-paint 645 + hello-dock-panels-editor 60 tests green, 0 fail."
+      ],
+      "impact_refs": [
+        "5.51"
+      ],
+      "carry_forward_bullets": [
+        "Undock re-docks as a SPLIT, NOT a float — deliberate: it needs no floating window, so it avoids the fragile live window-move (the R1144 freeze / the hang area). A user who wants to FLOAT an undocked tab uses the (fragile) tear-off-out path instead. The toolbar button undocks the ACTIVE tab of the FIRST well; per-tab undock (a button on each tab) is a later refinement if a multi-well consumer wants it."
+      ],
+      "publishable_decision_summary": "R1145 add undock for tabbed panels — pull a panel out of its tab well back into a SPLIT sibling (the reverse of a centre tabify). A live user merged viewport+properties into tabs with no way to separate them (tabs were click-to-switch only). AI invoke('undock_tab', panel) + a human 'Undock tab' toolbar button; a docked result, no floating window.",
+      "publishable_changes_bullets": [
+        "DockReorganizer::undock_tab(panel) — pull a tabbed panel OUT of its well and re-dock it as a SPLIT sibling (the reverse of a centre-zone tabify): find a well-sibling (DockTopology::tab_well_sibling) then dock_panel_at_zone(panel, sibling, right edge), which removes the panel from the well (a 2-tab well collapses back to the sibling leaf) and splits it in. A deliberately DOCKED result — no floating window — so it sidesteps the fragile live window-move entirely. undock_active_tab() targets the first well's active panel (the human button); has_tab_wells() gates the affordance.",
+        "DockTopology queries: tab_well_sibling (the undock split anchor) + first_tab_well_active_panel.",
+        "AI path: invoke(\"undock_tab\", \"<panel>\") on the reorganize external + a schema entry (discoverable). Human path: a \"Undock tab\" toolbar button (tag undock_tab_btn) that PAINTS only while something is tabbed (reactive has_tab_wells gate) and undocks the active tab. Both funnel through the shared reorganizer's one commit."
+      ],
+      "publishable_verification_bullets": [
+        "dock r1145_tab_well_sibling_and_active_panel_queries: a tabbed panel's sibling + the first well's active panel; a non-tabbed panel has neither.",
+        "demo r1145_undock_tab (hello-dock-panels-editor, lavapipe PASS, sections A-E): boot 0 wells + Undock button HIDDEN → tabify viewport+properties = 1 well + button APPEARS → undock via the AI invoke = 0 wells (a Split again, both panels survive) + button vanishes → undock via the HUMAN button click = split again → edge: undocking a non-tabbed panel is a no-op, surface unchanged.",
+        "editor r686 external-set test updated (13 externals incl. the undock button).",
+        "Gate: workspace clippy --all-targets --features pinion-runtime/vello -D pedantic clean; rustfmt clean; pinion-widget-paint 645 + hello-dock-panels-editor 60 tests green, 0 fail."
+      ],
+      "publishable_impact_refs": [
+        "5.51"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Undock re-docks as a SPLIT, NOT a float — deliberate: it needs no floating window, so it avoids the fragile live window-move (the R1144 freeze / the hang area). A user who wants to FLOAT an undocked tab uses the (fragile) tear-off-out path instead. The toolbar button undocks the ACTIVE tab of the FIRST well; per-tab undock (a button on each tab) is a later refinement if a multi-well consumer wants it."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
