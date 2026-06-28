@@ -17844,6 +17844,56 @@
         "R1125 cross-window drop preview occluded by opaque floater: revisit as translucent floater"
       ]
     },
+    "R1130": {
+      "decision_summary": "R1130 dock-chart STAGE 2 debt repaid: invoke(tear_off) is now chart-directed (float when docked, dock-back when floating) emitting the directed tear_off / tear_off_redock intent, so the R1129 chart desync on repeated toggles is closed and the lifecycle chart owns the AI dock-toggle direction",
+      "changes_bullets": [
+        "invoke(tear_off) now CHART-DIRECTED: floating=DockBack+tear_off_redock, docked=Escaped+tear_off",
+        "closes R1129 defect: 2nd tear_off drove chart Escaped=inert while reducer toggle docked window",
+        "tear_off_fired set only for the float direction (a dock-back is not a tear-off)",
+        "no demo change: existing tear_off + tear_off_redock arms consume the directed intents"
+      ],
+      "verification_bullets": [
+        "new dock test r1130: docked=float emits tear_off, floating=dock-back emits tear_off_redock",
+        "new demo test: registered external chart-directed toggle end-to-end (directed intent)",
+        "dock lib 227 passed; r1081 invoke-tear-off (docked) still green (float direction unchanged)",
+        "workspace test exit 0; clippy -D pedantic + rustfmt clean"
+      ],
+      "impact_refs": [
+        "5.51.1",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "chart campaign substantively COMPLETE for current consumers; STAGE 3 rest = YAGNI",
+        "collapse|placeholder policy = YAGNI (only placeholder has a consumer; don't pre-build collapse)",
+        "topology-reconstruct persistence = collapse-only, hypothetical (placeholder keeps slot, no reset)",
+        "demo toggle_panel_floating dock branch now only reachable docked = vestigial demo-side cleanup",
+        "next: pivot to a Phase-B gap unless a collapse-policy consumer emerges (crate-home undecided)"
+      ],
+      "publishable_decision_summary": "R1130 dock-chart STAGE 2 debt repaid: invoke(tear_off) is now chart-directed (float when docked, dock-back when floating) emitting the directed tear_off / tear_off_redock intent, so the R1129 chart desync on repeated toggles is closed and the lifecycle chart owns the AI dock-toggle direction",
+      "publishable_changes_bullets": [
+        "invoke(tear_off) now CHART-DIRECTED: floating=DockBack+tear_off_redock, docked=Escaped+tear_off",
+        "closes R1129 defect: 2nd tear_off drove chart Escaped=inert while reducer toggle docked window",
+        "tear_off_fired set only for the float direction (a dock-back is not a tear-off)",
+        "no demo change: existing tear_off + tear_off_redock arms consume the directed intents"
+      ],
+      "publishable_verification_bullets": [
+        "new dock test r1130: docked=float emits tear_off, floating=dock-back emits tear_off_redock",
+        "new demo test: registered external chart-directed toggle end-to-end (directed intent)",
+        "dock lib 227 passed; r1081 invoke-tear-off (docked) still green (float direction unchanged)",
+        "workspace test exit 0; clippy -D pedantic + rustfmt clean"
+      ],
+      "publishable_impact_refs": [
+        "5.51.1",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "chart campaign substantively COMPLETE for current consumers; STAGE 3 rest = YAGNI",
+        "collapse|placeholder policy = YAGNI (only placeholder has a consumer; don't pre-build collapse)",
+        "topology-reconstruct persistence = collapse-only, hypothetical (placeholder keeps slot, no reset)",
+        "demo toggle_panel_floating dock branch now only reachable docked = vestigial demo-side cleanup",
+        "next: pivot to a Phase-B gap unless a collapse-policy consumer emerges (crate-home undecided)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
