@@ -1423,6 +1423,90 @@ fn r881_drag_button_wire_pair_round_trips() {
     assert_eq!(DragButton::default(), DragButton::Left);
 }
 
+// ---- R1138 §5.49 §2 #2 — scene/drag phase param (DragPhase, held drag) ----
+
+#[test]
+fn r1138_scene_drag_defaults_to_full_phase() {
+    // An omitted `phase` is the legacy atomic gesture, byte-for-byte.
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut inbox: Vec<DeferredInput> = Vec::new();
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/drag","params":{"from":{"x":10.0,"y":10.0},"to":{"x":50.0,"y":50.0}},"id":1}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(resp.error.is_none(), "{:?}", resp.error);
+    let DeferredInput::Drag { phase, .. } = inbox[0] else {
+        panic!("expected Drag variant, got {:?}", inbox[0]);
+    };
+    assert_eq!(phase, DragPhase::Full, "omitted phase defaults to full");
+}
+
+#[test]
+fn r1138_scene_drag_phase_begin_and_end_enqueue_held_slices() {
+    // `begin` opens the held drag, `end` releases it — the press-and-hold
+    // peer of a human holding a drag and letting go.
+    for (wire, want) in [("begin", DragPhase::Begin), ("end", DragPhase::End)] {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let mut inbox: Vec<DeferredInput> = Vec::new();
+        let mut ctx =
+            DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
+        let req = format!(
+            r#"{{"jsonrpc":"2.0","method":"scene/drag","params":{{"from":{{"x":10.0,"y":10.0}},"to":{{"x":50.0,"y":50.0}},"phase":"{wire}"}},"id":2}}"#,
+        );
+        let resp = parse_response(&dispatch(&mut ctx, &req).unwrap());
+        assert!(resp.error.is_none(), "{:?}", resp.error);
+        let DeferredInput::Drag { phase, .. } = inbox[0] else {
+            panic!("expected Drag variant, got {:?}", inbox[0]);
+        };
+        assert_eq!(phase, want, "phase {wire} decodes to {want:?}");
+    }
+}
+
+#[test]
+fn r1138_scene_drag_unknown_phase_is_invalid_params() {
+    // Out-of-vocabulary names reject loudly (no silent full-arc drag) —
+    // the DragPhase decode is the single gate, mirroring the button gate.
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut inbox: Vec<DeferredInput> = Vec::new();
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/drag","params":{"from":{"x":10.0,"y":10.0},"to":{"x":50.0,"y":50.0},"phase":"hover"},"id":3}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    let err = resp.error.expect("unknown phase must error");
+    assert_eq!(err.code, -32602);
+    assert!(inbox.is_empty(), "rejected request enqueues nothing");
+}
+
+#[test]
+fn r1138_drag_phase_wire_pair_round_trips_and_gates() {
+    // decode == inverse(encode) for the whole vocabulary; unknown names
+    // decode to None (the R773 wire-vocabulary SSOT guard). The press /
+    // release gates are the embedder-drain contract: only full/begin press,
+    // only full/end release, so a `move` is a pure march.
+    for p in [
+        DragPhase::Full,
+        DragPhase::Begin,
+        DragPhase::Move,
+        DragPhase::End,
+    ] {
+        assert_eq!(DragPhase::from_wire_name(p.as_wire_name()), Some(p));
+    }
+    assert_eq!(DragPhase::from_wire_name("hover"), None);
+    assert_eq!(DragPhase::from_wire_name(""), None);
+    assert_eq!(DragPhase::default(), DragPhase::Full);
+    // Press / release gating table.
+    assert!(DragPhase::Full.presses() && DragPhase::Full.releases());
+    assert!(DragPhase::Begin.presses() && !DragPhase::Begin.releases());
+    assert!(!DragPhase::Move.presses() && !DragPhase::Move.releases());
+    assert!(!DragPhase::End.presses() && DragPhase::End.releases());
+}
+
 // ---- R724 §5.28 — scene/tick (DeferredInput::Tick) ----
 
 #[test]

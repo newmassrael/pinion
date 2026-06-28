@@ -762,6 +762,7 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         to_path: Optional[str] = None,
         steps: int = 8,
         button: str = "left",
+        phase: str = "full",
     ) -> None:
         """`scene/drag` typed wrapper (R660 §5.49).
 
@@ -788,6 +789,13 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         "left" (default — the capture-lock / DnD / text-select arc) or
         "middle" (drag-to-pan; an in-place press/release is the
         middle-click paste).
+
+        `phase` (R1138 §5.49 §2 #2) runs only a slice of the press /
+        march / release arc so an AI can HOLD a drag mid-gesture: "full"
+        (default — the whole self-contained arc), "begin" (press + march,
+        then HOLD — a follow-up `snapshot(source="paint")` then sees the
+        held mid-drag), "move" (re-aim the held drag, no press / release),
+        "end" (march + release, settling it).
         """
         if (from_at is None) == (from_path is None):
             raise ValueError("exactly one of `from_at` or `from_path` must be supplied")
@@ -798,6 +806,8 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         params: dict[str, Any] = {"steps": int(steps)}
         if button != "left":
             params["button"] = button
+        if phase != "full":
+            params["phase"] = phase
         if from_at is not None:
             params["from"] = {"x": float(from_at[0]), "y": float(from_at[1])}
         else:

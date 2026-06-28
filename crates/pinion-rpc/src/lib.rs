@@ -64,9 +64,9 @@ pub use cross_window_drop::{
     cross_window_drop,
 };
 pub use dispatch::{
-    ClickButton, DeclaredWindow, DeferredInput, DispatchContext, DragButton, KeyWireState,
-    PacingState, Request, RequestId, Response, RpcError, dispatch, dispatch_parsed, parse_request,
-    unknown_window_verdict,
+    ClickButton, DeclaredWindow, DeferredInput, DispatchContext, DragButton, DragPhase,
+    KeyWireState, PacingState, Request, RequestId, Response, RpcError, dispatch, dispatch_parsed,
+    parse_request, unknown_window_verdict,
 };
 pub use dry_run::{DryRunError, dry_run};
 pub use focus::{

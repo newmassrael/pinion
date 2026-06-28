@@ -44,8 +44,8 @@ use pinion_a11y::{
 use pinion_core::event::WheelDelta;
 use pinion_core::{Frame, Intent, Scene, SceneRevision};
 use pinion_rpc::{
-    DeferredInput, DispatchContext, DragButton, KeyWireState, LayoutNode, PreviewLedger, Request,
-    dispatch_parsed, parse_request,
+    DeferredInput, DispatchContext, DragButton, DragPhase, KeyWireState, LayoutNode, PreviewLedger,
+    Request, dispatch_parsed, parse_request,
 };
 use pinion_runtime::text_engine::SelfHostedTextEngine;
 use pinion_runtime::{
@@ -2085,6 +2085,14 @@ impl<V: WidgetView> ShellCore<V> {
             let new_target = cross.as_ref().map(|c| c.window.clone());
             self.core
                 .set_drag_cross_window_for_window(window_id, pid, cross);
+            // R1137 §5.51 PR-33 — repaint the SOURCE window every move while its
+            // drag is in flight, so the R1137 on-floater redock HINT
+            // (`apply_redock_drag_hint`, fed by `cross_window_drop_from`) renders +
+            // clears LIVE. A borderless floater's title-bar WINDOW MOVE only changes
+            // its POSITION (set_outer_position), never its content, so without this
+            // the floater never repaints during the drag and the hint never shows —
+            // the symmetric source-side peer of the target redraw below.
+            self.request_redraw_for_window(window_id);
             // R1125 §5.51 PR-33 — keep the incoming drop-zone PREVIEW live. The
             // source window's drag moves do not dirty the TARGET window, so the
             // shell repaints it here: the current target every move (its strip
@@ -2650,6 +2658,7 @@ impl<V: WidgetView> ShellCore<V> {
                     to_y,
                     steps,
                     button,
+                    phase,
                 } => {
                     self.drain_drag_for_window(
                         window_id,
@@ -2657,6 +2666,7 @@ impl<V: WidgetView> ShellCore<V> {
                         (to_x, to_y),
                         steps,
                         button,
+                        phase,
                     );
                 }
                 // R770 §5.49 §5.15 — OS file drag-drop mirrors. Each runs
@@ -2774,6 +2784,18 @@ impl<V: WidgetView> ShellCore<V> {
     /// release-in-place) — the same shell methods the native winit
     /// `MouseInput { Middle }` arms call, per
     /// [[r47-class-incident-prevention]].
+    ///
+    /// R1138 §5.49 §2 #2 — `phase` gates which ends of the arc run: the
+    /// leading press fires only when [`DragPhase::presses`]
+    /// ([`DragPhase::Full`] / [`DragPhase::Begin`]) and the trailing release
+    /// only when [`DragPhase::releases`] ([`DragPhase::Full`] /
+    /// [`DragPhase::End`]); the cursor march always runs. A
+    /// [`DragPhase::Begin`] therefore leaves the router's drag session OPEN
+    /// across RPC calls so a follow-up paint snapshots the held mid-drag
+    /// (the press-and-hold peer of a human holding a drag); a later
+    /// [`DragPhase::Move`] re-aims it and [`DragPhase::End`] settles it. The
+    /// session lives in the router, so the held state persists with zero
+    /// extra shell bookkeeping.
     fn drain_drag_for_window(
         &mut self,
         window_id: &str,
@@ -2781,11 +2803,14 @@ impl<V: WidgetView> ShellCore<V> {
         to: (f64, f64),
         steps: u32,
         button: DragButton,
+        phase: DragPhase,
     ) {
         self.cursor_moved_for_window(window_id, PointerId::MOUSE, from.0, from.1);
-        match button {
-            DragButton::Left => self.mouse_pressed_for_window(window_id, PointerId::MOUSE),
-            DragButton::Middle => self.middle_pressed_for_window(window_id, PointerId::MOUSE),
+        if phase.presses() {
+            match button {
+                DragButton::Left => self.mouse_pressed_for_window(window_id, PointerId::MOUSE),
+                DragButton::Middle => self.middle_pressed_for_window(window_id, PointerId::MOUSE),
+            }
         }
         if steps > 0 {
             for step in 1..=steps {
@@ -2795,9 +2820,11 @@ impl<V: WidgetView> ShellCore<V> {
                 self.cursor_moved_for_window(window_id, PointerId::MOUSE, x, y);
             }
         }
-        match button {
-            DragButton::Left => self.mouse_released_for_window(window_id, PointerId::MOUSE),
-            DragButton::Middle => self.middle_released_for_window(window_id, PointerId::MOUSE),
+        if phase.releases() {
+            match button {
+                DragButton::Left => self.mouse_released_for_window(window_id, PointerId::MOUSE),
+                DragButton::Middle => self.middle_released_for_window(window_id, PointerId::MOUSE),
+            }
         }
     }
 
@@ -6335,6 +6362,90 @@ mod r1113_drag_image_producer_tests {
             "after release the follower is gone",
         );
     }
+
+    /// R1138 §5.49 §2 #2 — the phased `scene/drag` peer: a `begin` slice
+    /// drained through the same path the RPC feeds (`DeferredInput::Drag`)
+    /// presses + marches but HOLDS, so the drag-image follower stays in the
+    /// produced scene ACROSS the drain boundary — the held mid-drag an AI can
+    /// `scene/snapshot`. A following `end` slice (no press) releases, clearing
+    /// it. This is the headless proof that the held-drag primitive keeps the
+    /// router session open between RPC calls (the press-and-hold gap R1114
+    /// flagged), without the shell holding any extra state.
+    #[test]
+    fn r1138_begin_phase_holds_the_follower_until_an_end_phase_releases() {
+        use pinion_rpc::{DeferredInput, DragButton, DragPhase};
+        use pinion_runtime::DEFAULT_WINDOW;
+
+        let mut sc = ShellCore::<DragImageFixture>::new();
+        let boot = sc.compute_paint_scene(200, 200);
+        sc.finalize_frame(boot);
+
+        // A `begin` drag: press over the source at (10, 10), march well past
+        // the click→drag threshold to (120, 90), then HOLD (no release).
+        sc.drain_deferred_inputs_for_window(
+            DEFAULT_WINDOW,
+            &[DeferredInput::Drag {
+                from_x: 10.0,
+                from_y: 10.0,
+                to_x: 120.0,
+                to_y: 90.0,
+                steps: 4,
+                button: DragButton::Left,
+                phase: DragPhase::Begin,
+            }],
+        );
+        // The session is HELD across the drain: a fresh paint still carries
+        // the follower (the mid-drag state an `scene/snapshot` would observe).
+        assert!(
+            has_tag(
+                &sc.compute_paint_scene(200, 200),
+                pinion_overlay::DRAG_IMAGE_TAG
+            ),
+            "a begin phase holds the drag open — the follower persists past the drain",
+        );
+
+        // A `move` slice re-aims the held drag without releasing it.
+        sc.drain_deferred_inputs_for_window(
+            DEFAULT_WINDOW,
+            &[DeferredInput::Drag {
+                from_x: 120.0,
+                from_y: 90.0,
+                to_x: 60.0,
+                to_y: 150.0,
+                steps: 2,
+                button: DragButton::Left,
+                phase: DragPhase::Move,
+            }],
+        );
+        assert!(
+            has_tag(
+                &sc.compute_paint_scene(200, 200),
+                pinion_overlay::DRAG_IMAGE_TAG
+            ),
+            "a move phase keeps the held drag open",
+        );
+
+        // An `end` slice (no press) releases → the session ends, follower gone.
+        sc.drain_deferred_inputs_for_window(
+            DEFAULT_WINDOW,
+            &[DeferredInput::Drag {
+                from_x: 60.0,
+                from_y: 150.0,
+                to_x: 60.0,
+                to_y: 150.0,
+                steps: 0,
+                button: DragButton::Left,
+                phase: DragPhase::End,
+            }],
+        );
+        assert!(
+            !has_tag(
+                &sc.compute_paint_scene(200, 200),
+                pinion_overlay::DRAG_IMAGE_TAG
+            ),
+            "an end phase releases the held drag — the follower clears",
+        );
+    }
 }
 
 #[cfg(test)]
@@ -6532,6 +6643,243 @@ mod r1104_cross_window_exclusion_tests {
             sc.resolve_cross_window_live("main", (550.0, 450.0))
                 .is_none(),
             "a drag that stays over the source's own dock is not cross-window",
+        );
+    }
+}
+
+#[cfg(test)]
+mod r1138_redock_hint_injection_tests {
+    //! R1138 §5.51 §2 #2 §2 #7 PR-33 — the END-TO-END headless proof the live
+    //! user test could not give: a floater whose held drag is over MAIN's dock
+    //! injects the R1137 redock HINT (`REDOCK_DRAG_HINT_TAG`) INTO the floater's
+    //! own produced scene, so an AI `scene/snapshot` of the held floater (the
+    //! R1138 phased-drag peer) SEES where the panel will land. Closes the
+    //! verification gap the opaque-floater occlusion + window-move-no-repaint
+    //! made un-observable live. The drag SESSION is opened by a real press over
+    //! the floater's drag source (a `begin_drag` External), then a cursor march
+    //! maps the floater-local cursor to an absolute point over main's dock — the
+    //! exact floater→main redock direction — so the shell stashes the cross-
+    //! window drop and `apply_redock_drag_hint` paints it on the floater.
+    use super::ShellCore;
+    use crate::test_fixtures::TestRenderer;
+    use crate::{SizeStrategy, WidgetView, WindowSpec};
+    use pinion_a11y::WidgetA11y;
+    use pinion_core::external::{
+        Backend, BackendFallback, BackendSupport, DragPayload, External, IntrospectValue,
+        RepaintOwner, ThreadOwnership,
+    };
+    use pinion_core::scene::{ContainerNode, Rect, Scene};
+    use pinion_core::style::LayoutStyle;
+    use pinion_core::widgets::button::{ButtonEvent, ButtonState};
+    use pinion_core::{Frame, Owner, Signal, WidgetCore};
+    use pinion_runtime::PointerId;
+    use std::rc::Rc;
+
+    const FLOAT_WINDOW: &str = "float.right";
+    const FLOAT_X: i32 = 800;
+    const FLOAT_Y: i32 = 100;
+    const SRC_TAG: &str = "torn";
+    const PREVIEW_TAG: &str = "redock_zone_preview";
+
+    /// A drag source whose `begin_drag` emits the dock-panel TEXT payload, so a
+    /// press over it opens a labelled drag session (the floater's torn panel).
+    #[derive(Debug)]
+    struct TornPanelSource;
+    impl External for TornPanelSource {
+        fn backends(&self) -> BackendSupport {
+            BackendSupport::new(&[Backend::Gui], BackendFallback::Skip)
+        }
+        fn repaint_ownership(&self) -> RepaintOwner {
+            RepaintOwner::Framework
+        }
+        fn thread_ownership(&self) -> ThreadOwnership {
+            ThreadOwnership::UiThreadSync
+        }
+        fn begin_drag(&self) -> Option<DragPayload> {
+            Some(DragPayload {
+                kind: std::borrow::Cow::Borrowed("dock-panel"),
+                value: IntrospectValue::Text(SRC_TAG.to_string()),
+            })
+        }
+    }
+
+    /// A window-local drop-target panel scene (main's dock target), injected
+    /// directly as main's published paint scene (the resolution reads it).
+    fn drop_panel_scene(tag: &str, rect: Rect) -> Scene {
+        let mut panel = Scene::Container(
+            ContainerNode::new(vec![])
+                .with_tag(tag.to_string())
+                .with_layout(LayoutStyle::new().with_drop_target(true)),
+        );
+        if let Scene::Container(c) = &mut panel {
+            c.rect = rect;
+        }
+        let mut root = Scene::Container(ContainerNode::new(vec![panel]));
+        if let Scene::Container(c) = &mut root {
+            c.rect = Rect::new(0, 0, 1000, 800);
+        }
+        root
+    }
+
+    /// The floater's primary widget IS the torn-panel drag source, painted as a
+    /// window-filling tagged rect so a press anywhere in the floater hit-tests
+    /// to it and opens the drag session.
+    struct RedockHintFixture;
+    impl WidgetCore for RedockHintFixture {
+        type State = ButtonState;
+        type Event = ButtonEvent;
+        fn create_external() -> Box<dyn External> {
+            Box::new(TornPanelSource)
+        }
+        fn tag() -> &'static str {
+            SRC_TAG
+        }
+        fn read_state(_scene: &Scene) -> Self::State {
+            ButtonState::Idle
+        }
+        fn view(_state: Self::State, _frame: &Frame) -> Scene {
+            let mut c = ContainerNode::new(Vec::new());
+            c.rect = Rect::new(0, 0, 200, 200);
+            c.tag = Some(std::borrow::Cow::Borrowed(SRC_TAG));
+            c.layout = LayoutStyle::new();
+            Scene::Container(c)
+        }
+        fn event_name(_event: Self::Event) -> &'static str {
+            "__internal__"
+        }
+        fn title() -> &'static str {
+            "RedockHint"
+        }
+    }
+    impl WidgetA11y for RedockHintFixture {}
+    impl WidgetView for RedockHintFixture {
+        type Renderer = TestRenderer;
+        fn initial_size_strategy() -> SizeStrategy {
+            SizeStrategy::Fixed {
+                width: 200,
+                height: 200,
+            }
+        }
+        fn windows_signal() -> Option<Rc<Signal<Vec<WindowSpec>>>> {
+            Owner::current().map(|owner| {
+                owner.cache::<Signal<Vec<WindowSpec>>, _>("redock_hint_windows", || {
+                    Signal::new(vec![
+                        WindowSpec::main(
+                            "RedockHint",
+                            SizeStrategy::Fixed {
+                                width: 1000,
+                                height: 800,
+                            },
+                        ),
+                        WindowSpec::new(
+                            FLOAT_WINDOW,
+                            "Float",
+                            SizeStrategy::Fixed {
+                                width: 200,
+                                height: 200,
+                            },
+                        )
+                        .with_position(FLOAT_X, FLOAT_Y),
+                    ])
+                })
+            })
+        }
+        fn view_for_window(_window_id: &str, state: Self::State, frame: &Frame) -> Scene {
+            Self::view(state, frame)
+        }
+        // The dock binding's rendering half: a redock over any zone paints a
+        // tagged preview node. The shell injects it on the floater itself.
+        fn dock_drop_preview(
+            _target_tag: &str,
+            panel_rect: Rect,
+            _x_rel: f32,
+            _y_rel: f32,
+        ) -> Option<Scene> {
+            let mut c = ContainerNode::new(Vec::new())
+                .with_tag(PREVIEW_TAG.to_string())
+                .with_layout(LayoutStyle::new().with_pointer_transparent(true));
+            c.rect = panel_rect;
+            Some(Scene::Container(c))
+        }
+    }
+
+    fn has_tag(scene: &Scene, tag: &str) -> bool {
+        if scene.tag() == Some(tag) {
+            return true;
+        }
+        match scene {
+            Scene::Container(c) => c.children.iter().any(|ch| has_tag(ch, tag)),
+            Scene::Scroll(s) => has_tag(&s.content, tag),
+            _ => false,
+        }
+    }
+
+    #[test]
+    fn held_floater_drag_over_main_injects_the_redock_hint_into_the_floater() {
+        let mut sc = ShellCore::<RedockHintFixture>::new();
+        // Main's dock target lives at main-local (500, 400, 100, 100); inject it
+        // directly as main's published paint scene (the resolution reads it).
+        sc.core.set_paint_scene_for_window(
+            "main",
+            drop_panel_scene("main_dock", Rect::new(500, 400, 100, 100)),
+        );
+        // Produce + publish the floater's own scene so its router can hit-test a
+        // press to the drag source.
+        let f = sc.compute_paint_scene_for_window(FLOAT_WINDOW, 200, 200);
+        sc.finalize_frame_for_window(FLOAT_WINDOW, f);
+
+        // Idle: no hint on the floater.
+        assert!(
+            !has_tag(
+                &sc.compute_paint_scene_for_window(FLOAT_WINDOW, 200, 200),
+                super::REDOCK_DRAG_HINT_TAG
+            ),
+            "no drag in flight = no redock hint on the floater",
+        );
+
+        // Press over the floater's torn panel → opens the drag session.
+        sc.cursor_moved_for_window(FLOAT_WINDOW, PointerId::MOUSE, 40.0, 40.0);
+        sc.mouse_pressed_for_window(FLOAT_WINDOW, PointerId::MOUSE);
+        assert!(
+            sc.drag_session_active_for_window(FLOAT_WINDOW, PointerId::MOUSE),
+            "a press over the begin_drag source opens the floater's drag session",
+        );
+
+        // March the held drag to floater-local (-250, 350) = abs (550, 450),
+        // over MAIN's dock target — the floater→main redock direction. The shell
+        // resolves the cross-window drop and stashes it on the floater's session.
+        sc.cursor_moved_for_window(FLOAT_WINDOW, PointerId::MOUSE, -250.0, 350.0);
+
+        // R1137 source-repaint: a borderless floater's title-bar WINDOW MOVE only
+        // changes its position (set_outer_position), never its content, so the
+        // shell must repaint the SOURCE window every move while its drag is in
+        // flight — else the injected hint never re-renders LIVE. Assert the move
+        // armed the floater's (source) redraw, not only the target's.
+        assert!(
+            sc.redraw_requested_for_window(FLOAT_WINDOW),
+            "a move during the floater's own drag repaints the SOURCE so its hint renders live",
+        );
+
+        // The floater's produced scene now carries the redock hint — what an AI
+        // `scene/snapshot` of the held floater would SEE (and the user sees live).
+        let hinted = sc.compute_paint_scene_for_window(FLOAT_WINDOW, 200, 200);
+        assert!(
+            has_tag(&hinted, super::REDOCK_DRAG_HINT_TAG),
+            "a held floater drag over main injects the redock hint onto the floater",
+        );
+        assert!(
+            has_tag(&hinted, PREVIEW_TAG),
+            "the hint wraps the binding's dock_drop_preview rendering",
+        );
+
+        // Release ends the session → the hint clears.
+        sc.mouse_released_for_window(FLOAT_WINDOW, PointerId::MOUSE);
+        assert!(
+            !has_tag(
+                &sc.compute_paint_scene_for_window(FLOAT_WINDOW, 200, 200),
+                super::REDOCK_DRAG_HINT_TAG
+            ),
+            "after release the redock hint clears",
         );
     }
 }

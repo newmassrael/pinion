@@ -651,6 +651,7 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
                     to_y,
                     steps,
                     button,
+                    phase,
                 } => {
                     // R660 §5.49 — linear cursor march under the
                     // R51.34 InputRouter capture lock. `steps == 0`
@@ -662,12 +663,18 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
                     // R881 §5.35 §5.49 — `button: "middle"` runs the
                     // same march between the middle-gesture pair
                     // (drag-to-pan), mirroring the Vello sibling.
+                    // R1138 §5.49 §2 #2 — `phase` gates the press / release
+                    // ends so a `begin` holds the drag session open across
+                    // RPC calls (the press-and-hold peer), mirroring the
+                    // Vello sibling's `DragPhase` gating.
                     state_changed |= self.cursor_moved(from_x, from_y);
-                    match button {
-                        pinion_rpc::DragButton::Left => {
-                            state_changed |= self.pointer_down();
+                    if phase.presses() {
+                        match button {
+                            pinion_rpc::DragButton::Left => {
+                                state_changed |= self.pointer_down();
+                            }
+                            pinion_rpc::DragButton::Middle => self.middle_pressed(),
                         }
-                        pinion_rpc::DragButton::Middle => self.middle_pressed(),
                     }
                     if steps > 0 {
                         for step in 1..=steps {
@@ -677,12 +684,14 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
                             state_changed |= self.cursor_moved(x, y);
                         }
                     }
-                    match button {
-                        pinion_rpc::DragButton::Left => {
-                            state_changed |= self.pointer_up();
-                        }
-                        pinion_rpc::DragButton::Middle => {
-                            state_changed |= self.middle_released();
+                    if phase.releases() {
+                        match button {
+                            pinion_rpc::DragButton::Left => {
+                                state_changed |= self.pointer_up();
+                            }
+                            pinion_rpc::DragButton::Middle => {
+                                state_changed |= self.middle_released();
+                            }
                         }
                     }
                 }
@@ -2143,6 +2152,7 @@ mod tests {
             to_y: 200.0,
             steps: 4,
             button: pinion_rpc::DragButton::Left,
+            phase: pinion_rpc::DragPhase::Full,
         }];
         let _ = core.drain_deferred_inputs(&inputs);
         // The drag ends with pointer_up at the final position. The
@@ -2168,6 +2178,7 @@ mod tests {
             to_y: 200.0,
             steps: 0,
             button: pinion_rpc::DragButton::Left,
+            phase: pinion_rpc::DragPhase::Full,
         }];
         assert!(core.drain_deferred_inputs(&inputs));
         assert_eq!(*core.cached_state(), ButtonState::Hover);

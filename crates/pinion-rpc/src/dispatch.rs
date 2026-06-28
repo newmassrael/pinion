@@ -554,6 +554,89 @@ impl DragButton {
     }
 }
 
+/// R1138 §5.49 §2 #2 — which slice of the press / march / release arc a
+/// `scene/drag` injection runs, so an AI can hold a drag mid-gesture and
+/// snapshot the held state the atomic [`DragPhase::Full`] arc can never
+/// expose (the press-and-hold RPC peer the R1114 drag-image + R1137 redock
+/// hint need to be observable — every input a human makes must have an RPC
+/// peer, including a held one).
+///
+///   * `full` (the default — every pre-R1138 `scene/drag`) presses at
+///     `from`, marches to `to`, then releases: one self-contained gesture.
+///   * `begin` presses at `from` and marches to `to` but does NOT release —
+///     the drag session stays open in the router across RPC calls, so a
+///     follow-up `scene/snapshot from: paint` sees the held mid-drag scene
+///     (the drag-image follower, the redock hint over the hovered zone).
+///   * `move` neither presses nor releases — it only marches the held
+///     cursor from `from` to `to`, re-aiming the in-flight drag at a new
+///     zone between snapshots.
+///   * `end` marches from `from` to `to`, then releases — settling the held
+///     drag (the redock / drop fires on this release).
+///
+/// `begin` → (`move` → snapshot)\* → `end` is the AI peer of a human press,
+/// hold-and-look, then let-go. Encode / decode are an adjacent inverse pair,
+/// the R773 wire-vocabulary SSOT class (`decode == inverse(encode)`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DragPhase {
+    /// The whole arc in one call — press, march, release (the pre-R1138
+    /// `scene/drag` behaviour, so an omitted `phase` is byte-for-byte the
+    /// legacy gesture).
+    #[default]
+    Full,
+    /// Press at `from` + march to `to`, then HOLD (no release): opens a drag
+    /// session that persists across RPC calls for mid-drag snapshotting.
+    Begin,
+    /// March the held cursor `from` → `to` only (no press, no release):
+    /// re-aims an in-flight `Begin` drag without ending it.
+    Move,
+    /// March `from` → `to` then release: settles a held drag (the drop /
+    /// redock fires here).
+    End,
+}
+
+impl DragPhase {
+    /// Canonical wire name — the single source the docs / errors quote.
+    /// Inverse of [`from_wire_name`](Self::from_wire_name).
+    #[must_use]
+    pub fn as_wire_name(self) -> &'static str {
+        match self {
+            DragPhase::Full => "full",
+            DragPhase::Begin => "begin",
+            DragPhase::Move => "move",
+            DragPhase::End => "end",
+        }
+    }
+
+    /// Decode a wire phase name; `None` for anything outside the vocabulary
+    /// (the dispatcher rejects with `invalid_params` so a typo surfaces at
+    /// the call site, not as a silent full-arc drag).
+    /// Inverse of [`as_wire_name`](Self::as_wire_name).
+    #[must_use]
+    pub fn from_wire_name(name: &str) -> Option<Self> {
+        match name {
+            "full" => Some(DragPhase::Full),
+            "begin" => Some(DragPhase::Begin),
+            "move" => Some(DragPhase::Move),
+            "end" => Some(DragPhase::End),
+            _ => None,
+        }
+    }
+
+    /// Whether this phase opens the gesture with a button press at `from`
+    /// (`full` / `begin`). The embedder drain gates `mouse_pressed` on this.
+    #[must_use]
+    pub fn presses(self) -> bool {
+        matches!(self, DragPhase::Full | DragPhase::Begin)
+    }
+
+    /// Whether this phase closes the gesture with a button release
+    /// (`full` / `end`). The embedder drain gates `mouse_released` on this.
+    #[must_use]
+    pub fn releases(self) -> bool {
+        matches!(self, DragPhase::Full | DragPhase::End)
+    }
+}
+
 /// R887 §5.49 §5.53 — which mouse button a `scene/click` press-release
 /// cycle uses (`params.button`, default [`ClickButton::Left`]).
 ///
@@ -806,9 +889,10 @@ pub enum DeferredInput {
     /// distinguishes single-click activation from double-click drill-in.
     DoubleClick { x: f64, y: f64 },
     /// R660 §5.49 — `scene/drag` injection. The embedder applies
-    /// `cursor_moved(MOUSE, from_x, from_y)`, then `mouse_pressed(MOUSE)`,
-    /// then `steps` interpolated `cursor_moved` frames marching linearly
-    /// toward `(to_x, to_y)`, then `mouse_released(MOUSE)`. Mirrors the
+    /// `cursor_moved(MOUSE, from_x, from_y)`, then `mouse_pressed(MOUSE)`
+    /// (gated on [`DragPhase::presses`]), then `steps` interpolated
+    /// `cursor_moved` frames marching linearly toward `(to_x, to_y)`, then
+    /// `mouse_released(MOUSE)` (gated on [`DragPhase::releases`]). Mirrors the
     /// real-mouse drag arc winit emits for a `MouseInput::Pressed`
     /// followed by a sequence of `CursorMoved` and the matching
     /// `Released`, exercising the `InputRouter`'s R51.34 capture lock
@@ -823,6 +907,14 @@ pub enum DeferredInput {
     /// client drives drag-to-pan over a scrollable / canvas through the
     /// exact arc a physical middle-button drag takes (§2 invariant #2 —
     /// every input a human makes must have an RPC peer).
+    ///
+    /// R1138 §5.49 §2 #2 — `phase` selects which slice of the press / march
+    /// / release arc this injection runs ([`DragPhase`], default
+    /// [`DragPhase::Full`] = the legacy whole-gesture arc). A
+    /// [`DragPhase::Begin`] presses + marches but HOLDS, leaving the drag
+    /// session open so a follow-up `scene/snapshot` sees the held mid-drag;
+    /// [`DragPhase::Move`] re-aims it; [`DragPhase::End`] releases. This is
+    /// the press-and-hold RPC peer a human's held drag needs (R1114).
     Drag {
         from_x: f64,
         from_y: f64,
@@ -830,6 +922,7 @@ pub enum DeferredInput {
         to_y: f64,
         steps: u32,
         button: DragButton,
+        phase: DragPhase,
     },
     /// R770 §5.49 §5.15 — `scene/hover_file` injection: the winit
     /// `WindowEvent::HoveredFile(PathBuf)` RPC peer. A file is being
@@ -2531,12 +2624,18 @@ where
 ///
 /// ```json
 /// {
-///   "from": {"x": <f64>, "y": <f64>},   // or "from_path": "<tag>"
-///   "to":   {"x": <f64>, "y": <f64>},   // or "to_path":   "<tag>"
-///   "steps": <u32>,                      // optional, default 8
-///   "button": "left" | "middle"          // optional, default "left" (R881)
+///   "from": {"x": <f64>, "y": <f64>},        // or "from_path": "<tag>"
+///   "to":   {"x": <f64>, "y": <f64>},        // or "to_path":   "<tag>"
+///   "steps": <u32>,                           // optional, default 8
+///   "button": "left" | "middle",              // optional, default "left" (R881)
+///   "phase": "full"|"begin"|"move"|"end"      // optional, default "full" (R1138)
 /// }
 /// ```
+///
+/// R1138 §2 #2 — `phase` runs only a slice of the press / march / release
+/// arc ([`DragPhase`]): `begin` HOLDS the drag open (no release) so a
+/// follow-up `scene/snapshot` sees the held mid-drag, `move` re-aims it,
+/// `end` releases. The default `full` is the legacy self-contained gesture.
 ///
 /// `from` / `from_path` are mutually exclusive (mirror of
 /// `scene/click`'s `at` / `path` selector); same for `to` / `to_path`.
@@ -2614,6 +2713,24 @@ where
             })?
         }
     };
+    // R1138 §5.49 §2 #2 — optional gesture-slice selector. Decode through
+    // the DragPhase wire pair so an out-of-vocabulary name rejects loudly
+    // instead of silently degrading to a full atomic drag.
+    let phase = match params.get("phase") {
+        None => DragPhase::default(),
+        Some(v) => {
+            let name = v.as_str().ok_or_else(|| {
+                RpcError::invalid_params(
+                    "params.phase must be \"full\", \"begin\", \"move\", or \"end\"",
+                )
+            })?;
+            DragPhase::from_wire_name(name).ok_or_else(|| {
+                RpcError::invalid_params(
+                    "params.phase must be \"full\", \"begin\", \"move\", or \"end\"",
+                )
+            })?
+        }
+    };
     inbox.push(DeferredInput::Drag {
         from_x: from.0,
         from_y: from.1,
@@ -2621,6 +2738,7 @@ where
         to_y: to.1,
         steps,
         button,
+        phase,
     });
     Ok(Value::Null)
 }
