@@ -4864,14 +4864,29 @@ impl DockPanelExternal {
         self.lifecycle.borrow().state().as_name()
     }
 
-    /// (R1129 §5.51.1) Whether the lifecycle chart is currently `floating` — the
+    /// (R1129 §5.51.1) Whether the lifecycle chart is currently floating — the
     /// gate the redock / restore IO replaces the per-gesture [`detached`] bool
     /// with. `Dropped` / `DockBack` only redock a panel the chart records as
     /// having floated; the chart enforces that a never-floated panel stays put.
     ///
+    /// R1137 — `RedockArmed` (the floater is over a dock zone) is a floating
+    /// SUB-mode, so a panel is "floating" in BOTH `Floating` and `RedockArmed`
+    /// (it is a floating window in both; only the over-a-zone hint differs).
+    ///
     /// [`detached`]: Self::detached
     fn is_floating(&self) -> bool {
-        matches!(self.lifecycle.borrow().state(), DockPanelState::Floating)
+        matches!(
+            self.lifecycle.borrow().state(),
+            DockPanelState::Floating | DockPanelState::RedockArmed
+        )
+    }
+
+    /// (R1137 §5.51.1) Whether the floater is ARMED to re-dock — i.e. its live
+    /// move is currently over another window's dock zone (the binding paints the
+    /// drop preview while armed). A release while armed re-docks; a release while
+    /// merely `Floating` (free) keeps the floater where it is.
+    fn is_redock_armed(&self) -> bool {
+        matches!(self.lifecycle.borrow().state(), DockPanelState::RedockArmed)
     }
 
     /// (R1129 §5.51.1 §5.38) Drive the lifecycle statechart. `&self` (interior
@@ -4914,6 +4929,33 @@ impl DockPanelExternal {
             && reorg.float_policy() == FloatPolicy::Collapse
         {
             let _ = reorg.restore_panel_home(&self.panel_id);
+        }
+    }
+
+    /// (R1136 §5.51 PR-39) Whether `source_window` is THIS panel's own floating
+    /// window — i.e. the in-flight drag is a borderless-floater title-bar WINDOW
+    /// MOVE (R1116), not a docked tear-off. The same discriminator the
+    /// [`drag_to_at`](External::drag_to_at) window-move branch uses, lifted so the
+    /// release / cancel paths agree (a floater move never snaps back home).
+    fn is_floater_window_move(&self, source_window: Option<&str>) -> bool {
+        self.floating_window.as_deref().is_some()
+            && self.floating_window.as_deref() == source_window
+    }
+
+    /// (R1136 §5.51 PR-39) End a floater WINDOW MOVE that released without landing
+    /// on another window's dock: the floater stays FLOATING at its new position (no
+    /// snap-back home). Clears the per-gesture drag diagnostics + re-arms + resets
+    /// the desktop-frame anchor, leaving the lifecycle chart untouched (`Floating`).
+    fn end_window_move(&self) {
+        self.dragging.set(false);
+        self.is_drag_armed.set(true);
+        self.set_drop_preview(None);
+        self.prev_desktop.set(None);
+        // R1137 — a stay-floating release left the chart in `redock_armed` if the
+        // last move was over a zone; disarm it back to plain `floating` so the
+        // lifecycle is consistent (the floater is free again, not armed).
+        if self.is_redock_armed() {
+            self.send_lifecycle(DockPanelEvent::LeaveZone);
         }
     }
 
@@ -5281,6 +5323,19 @@ impl External for DockPanelExternal {
                 );
                 self.prev_desktop.set(Some(new_prev));
                 self.enqueue_window_move(delta);
+                // R1137 §5.51.1 — drive the redock-armed lifecycle from the
+                // shell-resolved cross-window over: a floater whose move is over
+                // ANOTHER window's dock zone is ARMED to redock (the binding paints
+                // the drop preview while armed); leaving every zone disarms it (a
+                // plain window move). Edge-triggered (like the R1129 escape) so the
+                // chart transitions once per enter / leave, not every move. A
+                // release while armed redocks; while free, it stays floating.
+                let over_zone = update.over_window.is_some();
+                if over_zone && !self.is_redock_armed() {
+                    self.send_lifecycle(DockPanelEvent::OverZone);
+                } else if !over_zone && self.is_redock_armed() {
+                    self.send_lifecycle(DockPanelEvent::LeaveZone);
+                }
                 return;
             }
         }
@@ -5367,6 +5422,18 @@ impl External for DockPanelExternal {
             self.settle_cross_window_redock(target_window, point);
             return;
         }
+        // R1136 §5.51 PR-39 — a borderless FLOATER's title-bar drag is a WINDOW
+        // MOVE (R1116). A release that did NOT land on another window's dock (the
+        // redock above) leaves the floater FLOATING at its moved position — just
+        // end the gesture. It must NOT snap back home the way a DOCKED panel's
+        // tear-off does (the `drag_release` arm below): repositioning a floating
+        // window is not a redock, and the cursor sits over the floater's OWN
+        // header (a self-drop) the whole move, which would otherwise fall to the
+        // snap-back-home arm. The lifecycle chart stays `Floating`.
+        if self.is_floater_window_move(update.source_window) {
+            self.end_window_move();
+            return;
+        }
         self.drag_release(payload, update.over.clone());
     }
 
@@ -5378,6 +5445,17 @@ impl External for DockPanelExternal {
         self.tear_off_fired.set(false);
         self.set_drop_preview(None);
         self.is_drag_armed.set(true);
+        // R1136 §5.51 PR-39 — a cancelled FLOATER WINDOW MOVE stays floating (no
+        // snap-back home), like a released one: repositioning a floating window is
+        // not a redock. `drag_cancel` carries no `DragUpdate`, so the floater is
+        // recognised from the last recorded move source (`last_source_window`,
+        // stamped each `drag_to_at`). The chart stays `Floating`.
+        let last_source = self.last_source_window.borrow().clone();
+        if self.is_floater_window_move(last_source.as_deref()) {
+            self.prev_desktop.set(None);
+            self.detached.set(false);
+            return;
+        }
         // R1094/R1129 §5.51.1 — a cancelled drag that floated restores home
         // (`dock_back`): drive the chart + remove the follow window it created. A
         // drag that never escaped is `docked`, so `dock_back` is inert and no
@@ -6857,6 +6935,150 @@ mod tests {
         assert!(
             docked(&ext) && topo.get().unwrap().panel_ids().contains(&"c"),
             "docked back: chart Docked ⟺ leaf present",
+        );
+    }
+
+    // ── R1136 §5.51 PR-39 — a floater WINDOW MOVE stays floating on release ──
+
+    fn window_move_update(
+        cursor: (f64, f64),
+        over_window: Option<&'static str>,
+    ) -> DragUpdate<'static> {
+        DragUpdate {
+            over: Some(drop_point("a", 0.5, 0.05)),
+            cursor,
+            over_window,
+            source_window: Some("torn-a"),
+            became_drag: true,
+            press_cursor: (100.0, 10.0),
+            source_window_origin: None,
+        }
+    }
+
+    #[test]
+    fn r1136_floater_window_move_release_stays_floating() {
+        // ★A borderless floater's title-bar drag is a WINDOW MOVE; releasing it NOT
+        // over another window's dock must leave it FLOATING (no snap-back home). The
+        // R1116 move was wrongly docking the panel back on release (the cursor sits
+        // over the floater's OWN header = a self-drop = the snap-back-home arm).
+        let mut ext = DockPanelExternal::new("a")
+            .with_floating_window("torn-a")
+            .with_initial_floating(true);
+        assert_eq!(
+            ext.query("lifecycle"),
+            Some(IntrospectValue::Text("Floating".to_string())),
+            "the panel starts floating (it IS a floater)",
+        );
+        let _ = ext.begin_drag();
+        ext.drag_to_at(&dummy_payload(), &window_move_update((90.0, 10.0), None));
+        let mut moves: Vec<Intent> = Vec::new();
+        ext.drain_intents(&mut |i| moves.push(i));
+        assert!(
+            moves.iter().any(|i| i.tag.as_ref() == WINDOW_MOVE_EVENT),
+            "the move emits a window_move (not a tear-off): {moves:?}",
+        );
+        // Release NOT over another window (over_window None) — over the own header.
+        ext.drag_release_at(&dummy_payload(), &window_move_update((80.0, 10.0), None));
+        let mut after: Vec<Intent> = Vec::new();
+        ext.drain_intents(&mut |i| after.push(i));
+        assert!(
+            !after
+                .iter()
+                .any(|i| i.tag.as_ref() == TEAR_OFF_REDOCK_EVENT),
+            "★a floater window-move release must NOT snap back home: {after:?}",
+        );
+        assert_eq!(
+            ext.query("lifecycle"),
+            Some(IntrospectValue::Text("Floating".to_string())),
+            "the chart stays Floating — the floater is still floating",
+        );
+        assert!(!ext.is_dragging(), "the gesture ended cleanly");
+    }
+
+    #[test]
+    fn r1136_floater_release_over_another_window_still_redocks() {
+        // The complement: a floater release that DID land on ANOTHER window's dock
+        // (over_window Some) redocks via the cross-window dock-at — the move stays-
+        // floating no-op applies ONLY when no redock target was hit.
+        let mut ext = DockPanelExternal::new("a")
+            .with_floating_window("torn-a")
+            .with_initial_floating(true);
+        let _ = ext.begin_drag();
+        ext.drag_release_at(
+            &dummy_payload(),
+            &DragUpdate {
+                over: Some(drop_point("viewport", 0.15, 0.5)),
+                cursor: (50.0, 50.0),
+                over_window: Some("main"),
+                source_window: Some("torn-a"),
+                became_drag: false,
+                press_cursor: (50.0, 50.0),
+                source_window_origin: None,
+            },
+        );
+        assert!(
+            matches!(ext.query("redock_at"), Some(IntrospectValue::Json(_))),
+            "a release over another window's dock redocks (redock_at recorded)",
+        );
+    }
+
+    #[test]
+    fn r1136_docked_panel_snap_back_unaffected() {
+        // The fix is floater-only: a DOCKED panel (no floating_window match — the
+        // drag's source is the dock window) that floated mid-drag and snapped back
+        // still restores home (the existing tear-off behaviour is untouched).
+        let mut ext = DockPanelExternal::new("a").with_initial_floating(true);
+        let _ = ext.begin_drag();
+        // Release over the own panel (snap-back), source_window = the dock window
+        // ("main"), NOT a floating window → the floater guard does NOT apply.
+        ext.drag_release_at(
+            &dummy_payload(),
+            &DragUpdate {
+                over: Some(drop_point("a", 0.5, 0.5)),
+                cursor: (10.0, 10.0),
+                over_window: None,
+                source_window: Some("main"),
+                became_drag: false,
+                press_cursor: (10.0, 10.0),
+                source_window_origin: None,
+            },
+        );
+        let mut after: Vec<Intent> = Vec::new();
+        ext.drain_intents(&mut |i| after.push(i));
+        assert!(
+            after
+                .iter()
+                .any(|i| i.tag.as_ref() == TEAR_OFF_REDOCK_EVENT),
+            "a docked panel's floated snap-back still restores home: {after:?}",
+        );
+    }
+
+    #[test]
+    fn r1137_floater_move_over_zone_arms_then_disarms_the_chart() {
+        // R1137 §5.51.1 — the holistic redesign: a floater's live move over another
+        // window's dock zone ARMS the chart (`RedockArmed`, the binding paints the
+        // preview); leaving every zone disarms it back to plain `Floating`. Driven
+        // from the shell-resolved `over_window` during the window-move.
+        let mut ext = DockPanelExternal::new("a")
+            .with_floating_window("torn-a")
+            .with_initial_floating(true);
+        let _ = ext.begin_drag();
+        // Move over another window's dock zone (over_window Some) → armed.
+        ext.drag_to_at(
+            &dummy_payload(),
+            &window_move_update((90.0, 10.0), Some("main")),
+        );
+        assert_eq!(
+            ext.query("lifecycle"),
+            Some(IntrospectValue::Text("RedockArmed".to_string())),
+            "a floater move over a dock zone ARMS the redock (preview shows)",
+        );
+        // is_floating stays true while armed (it is still a floating window).
+        ext.drag_to_at(&dummy_payload(), &window_move_update((80.0, 10.0), None));
+        assert_eq!(
+            ext.query("lifecycle"),
+            Some(IntrospectValue::Text("Floating".to_string())),
+            "leaving every zone DISARMS back to plain floating",
         );
     }
 

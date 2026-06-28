@@ -19,9 +19,15 @@
      Events in (the binding sends drag-substrate §5.51 outcomes; the
      transient grab/move/follow of the drag itself is the R742 router's
      concern, not this lifecycle chart):
-       escaped   - a docked-panel drag left every dock zone (tear-off)
-       dropped   - a floating panel released over another panel's zone
-       dock_back - an explicit dock-back (keyboard toggle / cancel-home)
+       escaped    - a docked-panel drag left every dock zone (tear-off)
+       over_zone  - (R1137) a FLOATER's live move entered another window's
+                    dock zone — it is ARMED to re-dock there (the binding
+                    shows the drop preview while armed)
+       leave_zone - (R1137) the floater's move left every dock zone — it is
+                    free again (a plain window move; a release here keeps it
+                    floating, no snap-back)
+       dropped    - a floating panel released over a dock zone — it re-docks
+       dock_back  - an explicit dock-back (keyboard toggle / cancel-home)
 
      Events out (raised; the binding performs the topology IO via the
      §5.51.1 data-layer primitives):
@@ -30,10 +36,16 @@
        dock_panel.redock   - dock_panel_at_zone(target, zone) + drop window
        dock_panel.restore  - dock at the remembered home anchor + drop window
 
-     A floater drag cancelled in empty space raises nothing and stays
-     `floating` (no transition) — only an explicit `dock_back` returns it.
+     R1137 — the holistic floater-redock redesign: a floater MOVES freely and
+     re-docks ONLY from `redock_armed` (= over a dock zone). A release while
+     `floating` (free) keeps it floating. The chart makes "over a zone = will
+     redock / elsewhere = stay" an EXPLICIT, introspectable state (query
+     `lifecycle`), replacing the ad-hoc release heuristics. `dropped` still
+     fires from `floating` too — the AI invoke / cursor-less redock path that
+     never observed an intermediate `over_zone`. `redock_armed` is a floating
+     SUB-mode: `is_floating()` is true in both.
 
-     States: docked / floating.
+     States: docked / floating / redock_armed.
 -->
 <scxml xmlns="http://www.w3.org/2005/07/scxml"
        version="1.0"
@@ -48,12 +60,30 @@
   </state>
 
   <state id="floating">
-    <!-- The floater was released over a dock zone: it re-docks there. -->
+    <!-- R1137 — the floater's live move entered a dock zone: ARM the redock
+         (the binding paints the drop preview while armed). -->
+    <transition event="over_zone" target="redock_armed"/>
+    <!-- Released over a dock zone (the AI invoke / cursor-less path that did
+         not observe an over_zone first): it re-docks there. -->
     <transition event="dropped" target="docked">
       <raise event="dock_panel.redock"/>
     </transition>
-    <!-- Explicit dock-back (keyboard toggle / cancel-to-home): it
-         returns to its remembered home anchor. -->
+    <!-- Explicit dock-back (keyboard toggle / cancel-to-home): it returns to
+         its remembered home anchor. -->
+    <transition event="dock_back" target="docked">
+      <raise event="dock_panel.restore"/>
+    </transition>
+  </state>
+
+  <state id="redock_armed">
+    <!-- The floater's move left every dock zone: it is free again (a plain
+         window move; a release here keeps it floating). -->
+    <transition event="leave_zone" target="floating"/>
+    <!-- Released while armed (over a zone): it re-docks there. -->
+    <transition event="dropped" target="docked">
+      <raise event="dock_panel.redock"/>
+    </transition>
+    <!-- Explicit dock-back while armed (cancel): returns home. -->
     <transition event="dock_back" target="docked">
       <raise event="dock_panel.restore"/>
     </transition>

@@ -2050,6 +2050,26 @@ impl<V: WidgetCore> CoreShell<V> {
         })
     }
 
+    /// (R1137 §5.51 §2 #7 PR-33) The cross-window drop a drag in `source_window`
+    /// currently resolves onto ANOTHER window — the SOURCE-side peer of
+    /// [`Self::cross_window_drop_into`]. Reads the shell-stashed
+    /// [`CrossWindowDrop`](crate::input::CrossWindowDrop) on `source_window`'s OWN
+    /// router (the outgoing drop the live floater→main redock resolves each move,
+    /// i.e. the floater is `RedockArmed`). The shell paints a "will dock here" hint
+    /// INTO the dragged floater (topmost, so always visible) from this — the
+    /// visibility companion to the target-side preview the opaque floater occludes.
+    /// `None` when that window has no in-flight drag over another window.
+    #[must_use]
+    pub fn cross_window_drop_from(
+        &self,
+        source_window: &str,
+    ) -> Option<crate::input::CrossWindowDrop> {
+        self.routers
+            .get(source_window)
+            .and_then(|router| router.drag_cross_window(PointerId::MOUSE))
+            .cloned()
+    }
+
     /// (R1120 §5.15 §5.51 PR-39) Stash the source window's ACTUAL outer origin
     /// (logical px) on its in-flight drag, so a borderless-floater title-bar
     /// WINDOW MOVE converts the window-relative cursor to a stable DESKTOP frame

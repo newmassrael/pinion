@@ -65,6 +65,14 @@ use super::WidgetView;
 /// keeping the shell widget-library-agnostic (it never names a dock type).
 const CROSS_WINDOW_DROP_PREVIEW_TAG: &str = "__xwin_drop_preview";
 
+/// (R1137 §5.51 §2 #7 PR-33) Shell-owned tag for the redock drag HINT slot — the
+/// "where I will dock" affordance painted INTO the dragged floater (the source
+/// window). The visibility companion to [`CROSS_WINDOW_DROP_PREVIEW_TAG`]: the
+/// opaque floater occludes the target-window preview, so this paints the resolved
+/// zone ON the floater (topmost, always visible) while the floater is over a dock
+/// zone (the R1137 `RedockArmed` lifecycle).
+const REDOCK_DRAG_HINT_TAG: &str = "__xwin_redock_hint";
+
 /// R889 §5.49 — every window-scoped read `dispatch_rpc_inner`
 /// pre-resolves before its split-borrow block (the substrate borrows
 /// preclude resolving these once `scene_mut` is taken). Bundled in a
@@ -3649,6 +3657,40 @@ impl<V: WidgetView> ShellCore<V> {
         pinion_overlay::inject_overlay_node(scene, CROSS_WINDOW_DROP_PREVIEW_TAG, slot)
     }
 
+    /// (R1137 §5.51 §2 #7 PR-33) The redock drag HINT painted INTO the dragged
+    /// floater (the SOURCE window) — the VISIBILITY companion to
+    /// [`Self::apply_cross_window_drop_preview`]. The target-window preview is
+    /// computed correctly, but the opaque floater follows the cursor and OCCLUDES
+    /// it, so the user cannot see where the panel will land. This paints the
+    /// resolved dock zone ON the floater itself (topmost, hence always visible)
+    /// while it is over a zone (the `RedockArmed` lifecycle), reusing the SAME
+    /// [`WidgetView::dock_drop_preview`] hook sized to the floater's own window
+    /// rect (a left-zone redock tints the floater's left half, a centre tabify the
+    /// whole pane). No-op when this window's drag targets no other window.
+    fn apply_redock_drag_hint(
+        &self,
+        scene: Scene,
+        w: u32,
+        h: u32,
+        window_id: Option<&str>,
+    ) -> Scene {
+        let key = window_id.unwrap_or(pinion_runtime::DEFAULT_WINDOW);
+        let inner = self.core.cross_window_drop_from(key).and_then(|drop| {
+            let rect = pinion_core::scene::Rect::new(0, 0, w, h);
+            V::dock_drop_preview(&drop.point.tag, rect, drop.point.x_rel, drop.point.y_rel)
+        });
+        let slot = inner.map(|node| {
+            Scene::Container(
+                pinion_core::scene::ContainerNode::new(vec![node])
+                    .with_tag(REDOCK_DRAG_HINT_TAG.to_string())
+                    .with_layout(
+                        pinion_core::style::LayoutStyle::new().with_pointer_transparent(true),
+                    ),
+            )
+        });
+        pinion_overlay::inject_overlay_node(scene, REDOCK_DRAG_HINT_TAG, slot)
+    }
+
     /// R1113 §5.51 §5.33 — the window-level paint overlays, in z-order: the
     /// keyboard focus ring then the drag-image follower. Both are injected by
     /// the shell from its own state (focus / the router's live drag session),
@@ -3682,7 +3724,11 @@ impl<V: WidgetView> ShellCore<V> {
         // dragged window, the preview in the target window, so they never overlap
         // — ordered here for one canonical z-stack).
         let previewed = self.apply_cross_window_drop_preview(ringed, window_id);
-        self.apply_drag_image(previewed, w, h, key)
+        // R1137 §5.51 PR-33 — the redock drag HINT on the dragged floater (source
+        // window), so the "where I will dock" zone is visible even though the
+        // opaque floater occludes the target-window preview above.
+        let hinted = self.apply_redock_drag_hint(previewed, w, h, window_id);
+        self.apply_drag_image(hinted, w, h, key)
     }
 
     /// (R1121 §5.16 §5.39 §2 #7) Inject the client-side window-chrome strip
