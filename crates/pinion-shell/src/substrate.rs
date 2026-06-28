@@ -2382,6 +2382,27 @@ impl<V: WidgetView> ShellCore<V> {
         if let Some(target) = self.cross_preview_target.take() {
             self.request_redraw_for_window(&target);
         }
+        // R1142 §5.51 PR-39 — a drag also lit DOCK-ZONE GUIDES on EVERY other
+        // window (their `any_other_window_dragging` gate), independent of where
+        // the cursor was. The `cross_preview_target` repaint above only covers
+        // the cursor's LAST preview target — so a release while the cursor sits on
+        // the dragged floater (the common case: you let go holding the floater,
+        // not over main) would leave main's guides on a stale frame, never
+        // repainted. So when THIS release ends a drag (the session is still open
+        // until `left_release` below), repaint every OTHER declared window to
+        // strip its guides. Gated on an active drag, so a plain click pays
+        // nothing.
+        if self.core.drag_session_active_for_window(window_id, pid) {
+            let others: Vec<String> = self
+                .declared_window_specs()
+                .into_iter()
+                .map(|spec| spec.id)
+                .filter(|id| id != window_id)
+                .collect();
+            for id in others {
+                self.request_redraw_for_window(&id);
+            }
+        }
         // R882 / R882.1 §5.35 §5.39 — the release routes through the
         // substrate's LEFT front door
         // ([`CoreShell::left_release_for_window`]): a left-opened pan
@@ -6939,6 +6960,37 @@ mod r1138_redock_hint_injection_tests {
                 super::REDOCK_DRAG_HINT_TAG
             ),
             "after release the redock hint clears",
+        );
+    }
+
+    /// R1142 §5.51 PR-39 — the dock-zone GUIDES bug fix: a drag that lit guides
+    /// on main (a guide host, `any_other_window_dragging`) must repaint main on
+    /// drag-END so its guides STRIP, even though the release happens in the
+    /// FLOATER (the cursor sits on the dragged floater, not over main). Without
+    /// this the guides stay on main's stale frame ("윤곽선이 계속 떠있어").
+    #[test]
+    fn r1142_drag_release_repaints_the_guide_host_to_strip_its_guides() {
+        use pinion_runtime::PointerId;
+        let mut sc = ShellCore::<RedockHintFixture>::new();
+        sc.core.set_paint_scene_for_window(
+            "main",
+            drop_panel_scene("main_dock", Rect::new(500, 400, 100, 100)),
+        );
+        let f = sc.compute_paint_scene_for_window(FLOAT_WINDOW, 200, 200);
+        sc.finalize_frame_for_window(FLOAT_WINDOW, f);
+        // Open the floater's drag session (a real press over its source).
+        sc.cursor_moved_for_window(FLOAT_WINDOW, PointerId::MOUSE, 40.0, 40.0);
+        sc.mouse_pressed_for_window(FLOAT_WINDOW, PointerId::MOUSE);
+        sc.cursor_moved_for_window(FLOAT_WINDOW, PointerId::MOUSE, -250.0, 350.0);
+        assert!(sc.drag_session_active_for_window(FLOAT_WINDOW, PointerId::MOUSE));
+        // Drain main's redraw flag so the assertion is about the RELEASE.
+        let _ = sc.take_redraw_request_for_window("main");
+        // Release IN THE FLOATER — the cursor was never over main, so only the
+        // R1142 drag-end repaint covers main (the guide host).
+        sc.mouse_released_for_window(FLOAT_WINDOW, PointerId::MOUSE);
+        assert!(
+            sc.redraw_requested_for_window("main"),
+            "the guide host (main) repaints on drag-end so its guides strip",
         );
     }
 }
