@@ -18084,6 +18084,52 @@
         "Not pushed (await explicit user consent); origin/main still 83c9d95b (R1132), local HEAD is R1133 5c7ddf1c + this R1134."
       ]
     },
+    "R1135": {
+      "decision_summary": "R1135 editor GUI float-policy toggle — the HUMAN path for the R1134 collapse|placeholder selection (R1134 added only the AI/RPC set_float_policy invoke). A toolbar toggle button (float_policy_btn, a 2nd ButtonExternal) flips the shared DockReorganizer's FloatPolicy on click (the policy_btn.click reducer arm); the reactive label repaints to the current mode. The reorganizer's float_policy is upgraded from Cell to a reactive Signal<FloatPolicy> so a view fn reading float_policy() auto-subscribes and repaints when the policy flips — from the GUI toggle OR the set_float_policy invoke, one SSOT both paths consistent. Closes the collapse campaign for both consumers (AI + human).",
+      "changes_bullets": [
+        "DockReorganizer float_policy changed from Cell<FloatPolicy> to a reactive Signal<FloatPolicy> (FloatPolicy gains serde derive) — so a binding view fn reading float_policy() auto-subscribes and REPAINTS when the policy flips, from the GUI toggle OR the set_float_policy invoke (one reactive SSOT, both paths consistent). set/get/with_float_policy unchanged at the call sites.",
+        "Editor (hello-dock-panels-editor): a toolbar float-policy TOGGLE BUTTON — POLICY_BTN_TAG float_policy_btn, a second ButtonExternal registered as an extra external; clicking it flips the shared DockReorganizer's FloatPolicy (the policy_btn.click reducer arm reads + sets the toggled value). view_toolbar_content paints the button with the reactive label policy_toggle_label(policy) (\"torn slot: placeholder\" / \"torn slot: collapse\"); toggled_float_policy is the SSOT for the flip. This is the HUMAN GUI path for the R1134 collapse|placeholder selection (R1134 added only the AI/RPC set_float_policy invoke).",
+        "Demo tools/demos/r1135_policy_toggle.py drives the button via real pointer clicks (scene/click path-form) and observes the policy flip + label repaint + collapse-vs-placeholder behaviour."
+      ],
+      "verification_bullets": [
+        "pinion-widget-paint: the 9 r1134 unit tests stay green under the Cell->Signal change (float_policy() reads the Signal, no behaviour change for the externals/tests).",
+        "hello-dock-panels-editor: new r1135_policy_toggle_button_flips_float_policy_and_label test green (default placeholder + label \"torn slot: placeholder\"; policy_btn.click flips to Collapse + label repaints \"torn slot: collapse\"; second click flips back) + the r686 external-count test updated 11->12 with the POLICY_BTN_TAG assertion; full editor suite 58 green / 0 fail.",
+        "RPC demo r1135_policy_toggle.py: all 5 sections PASS (~30 assertions) against the real release editor — A boot toggle button painted + placeholder label; B real pointer click flips policy to collapse + label repaints (reactive Signal); C tear off viewport under the GUI-set collapse reflows the slot away (no placeholder), dock-back restores; D click flips back to placeholder + label repaints, tear off KEEPS the slot + paints placeholder; E integrity.",
+        "Local gate: cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) clean; cargo fmt --all clean; cargo test --workspace green."
+      ],
+      "impact_refs": [
+        "5.51.1"
+      ],
+      "carry_forward_bullets": [
+        "Collapse campaign now CLOSED for both consumers: AI/RPC (R1134 set_float_policy) + human GUI (R1135 toolbar toggle). The user's live-test request (collapse selectable, both modes) is fully met on both paths.",
+        "The policy toggle button renders discrete (ButtonState::Idle, no hover spring) — the view fn only carries the primary viewport button's state, so the second button has no live hover state threaded; the label flip is the affordance. A unified per-control focus/hover posture for the editor's secondary buttons is the deferred follow-up (same debt as the R694 viewport-button focus note).",
+        "Cell->Signal for float_policy is the textbook reactive-SSOT upgrade the GUI consumer forced; the R1134 Cell was sufficient for RPC-only. No churn beyond the field type.",
+        "Next (R1136): PIVOT to a Phase-B gap (the dock collapse campaign is structurally complete; per CLAUDE.md Phase-B value order + R1131 honest call, the next high-value work is buildable DCC depth / Model-View async / text-editor / pro-tool perf, audit-first). Or a small editor-polish round (secondary-button hover posture) if a consumer surfaces.",
+        "R1135 NOT pushed until explicit user consent (origin/main=641a90bb after R1134 push)."
+      ],
+      "publishable_decision_summary": "R1135 editor GUI float-policy toggle — the HUMAN path for the R1134 collapse|placeholder selection (R1134 added only the AI/RPC set_float_policy invoke). A toolbar toggle button (float_policy_btn, a 2nd ButtonExternal) flips the shared DockReorganizer's FloatPolicy on click (the policy_btn.click reducer arm); the reactive label repaints to the current mode. The reorganizer's float_policy is upgraded from Cell to a reactive Signal<FloatPolicy> so a view fn reading float_policy() auto-subscribes and repaints when the policy flips — from the GUI toggle OR the set_float_policy invoke, one SSOT both paths consistent. Closes the collapse campaign for both consumers (AI + human).",
+      "publishable_changes_bullets": [
+        "DockReorganizer float_policy changed from Cell<FloatPolicy> to a reactive Signal<FloatPolicy> (FloatPolicy gains serde derive) — so a binding view fn reading float_policy() auto-subscribes and REPAINTS when the policy flips, from the GUI toggle OR the set_float_policy invoke (one reactive SSOT, both paths consistent). set/get/with_float_policy unchanged at the call sites.",
+        "Editor (hello-dock-panels-editor): a toolbar float-policy TOGGLE BUTTON — POLICY_BTN_TAG float_policy_btn, a second ButtonExternal registered as an extra external; clicking it flips the shared DockReorganizer's FloatPolicy (the policy_btn.click reducer arm reads + sets the toggled value). view_toolbar_content paints the button with the reactive label policy_toggle_label(policy) (\"torn slot: placeholder\" / \"torn slot: collapse\"); toggled_float_policy is the SSOT for the flip. This is the HUMAN GUI path for the R1134 collapse|placeholder selection (R1134 added only the AI/RPC set_float_policy invoke).",
+        "Demo tools/demos/r1135_policy_toggle.py drives the button via real pointer clicks (scene/click path-form) and observes the policy flip + label repaint + collapse-vs-placeholder behaviour."
+      ],
+      "publishable_verification_bullets": [
+        "pinion-widget-paint: the 9 r1134 unit tests stay green under the Cell->Signal change (float_policy() reads the Signal, no behaviour change for the externals/tests).",
+        "hello-dock-panels-editor: new r1135_policy_toggle_button_flips_float_policy_and_label test green (default placeholder + label \"torn slot: placeholder\"; policy_btn.click flips to Collapse + label repaints \"torn slot: collapse\"; second click flips back) + the r686 external-count test updated 11->12 with the POLICY_BTN_TAG assertion; full editor suite 58 green / 0 fail.",
+        "RPC demo r1135_policy_toggle.py: all 5 sections PASS (~30 assertions) against the real release editor — A boot toggle button painted + placeholder label; B real pointer click flips policy to collapse + label repaints (reactive Signal); C tear off viewport under the GUI-set collapse reflows the slot away (no placeholder), dock-back restores; D click flips back to placeholder + label repaints, tear off KEEPS the slot + paints placeholder; E integrity.",
+        "Local gate: cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) clean; cargo fmt --all clean; cargo test --workspace green."
+      ],
+      "publishable_impact_refs": [
+        "5.51.1"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Collapse campaign now CLOSED for both consumers: AI/RPC (R1134 set_float_policy) + human GUI (R1135 toolbar toggle). The user's live-test request (collapse selectable, both modes) is fully met on both paths.",
+        "The policy toggle button renders discrete (ButtonState::Idle, no hover spring) — the view fn only carries the primary viewport button's state, so the second button has no live hover state threaded; the label flip is the affordance. A unified per-control focus/hover posture for the editor's secondary buttons is the deferred follow-up (same debt as the R694 viewport-button focus note).",
+        "Cell->Signal for float_policy is the textbook reactive-SSOT upgrade the GUI consumer forced; the R1134 Cell was sufficient for RPC-only. No churn beyond the field type.",
+        "Next (R1136): PIVOT to a Phase-B gap (the dock collapse campaign is structurally complete; per CLAUDE.md Phase-B value order + R1131 honest call, the next high-value work is buildable DCC depth / Model-View async / text-editor / pro-tool perf, audit-first). Or a small editor-polish round (secondary-button hover posture) if a consumer surfaces.",
+        "R1135 NOT pushed until explicit user consent (origin/main=641a90bb after R1134 push)."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
