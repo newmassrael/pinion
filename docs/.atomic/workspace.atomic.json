@@ -17702,6 +17702,52 @@
         "apply_zone_redock (placeholder-only move) is now superseded by dock_panel_at_zone (total); migrate the editor reducer when the chart lands."
       ]
     },
+    "R1127": {
+      "decision_summary": "R1127: dock_panel.scxml lifecycle chart (docked↔floating) + DockPanelPolicy codegen — §5.51.1 stage 1, the last interactive widget onto the §5.38 per-widget-SCXML canon",
+      "changes_bullets": [
+        "crates/pinion-core/widgets/dock_panel.scxml: docked↔floating statechart (datamodel=null). Events in: escaped (tear-off) / dropped (redock-at-zone) / dock_back (restore-home); <raise>: dock_panel.float / .redock / .restore.",
+        "build.rs scxml_inputs += widgets/dock_panel.scxml → sce_build codegen emits DockPanelPolicy / DockPanelState{Docked,Floating} / DockPanelEvent.",
+        "crates/pinion-core/src/widgets/dock_panel.rs: mod sm include + widget_state_name!/widget_event_name! mappings (external = events the binding SENDS, internal = the <raise>d outputs + Null). Chart VOCABULARY only — the typed data (home/zone/topology) is the binding's, per the slider 'null datamodel + typed Rust' canon (§5.51.1 review)."
+      ],
+      "verification_bullets": [
+        "2 chart tests pass: r1127_dock_panel_lifecycle_transitions (docked→floating→docked via escaped/dropped/dock_back) + r1127_redock_events_are_inert_while_docked (chart enforces valid lifecycle).",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean; pinion-core 2507 lib tests pass; cargo fmt clean.",
+        "mnemosyne validate-workspace: clean (changelog R1126→R1127)."
+      ],
+      "impact_refs": [
+        "5.51.1",
+        "5.38",
+        "5.4"
+      ],
+      "carry_forward_bullets": [
+        "Stage 2: refactor pinion-widget-paint DockPanelExternal into a Widget<DockPanelPolicy> consumer — feed the R742 drag handlers' outcomes as escaped/dropped/dock_back; act on the lifecycle (float/redock/restore) via dock_panel_at_zone/float_out_panel + a typed home-anchor captured on float (NO hardcoded default).",
+        "Stage 3: collapse|placeholder = the float action branch (one chart, both policies); editor + flat hello-dock-panels consume; update r1105/r1106 demos + editor tests.",
+        "Distinguishing the two floating→docked transitions (dropped vs dock_back) in the binding: send the specific event + act on the data (zone vs home); the <raise>d events are the AI-introspectable semantic output.",
+        "Cross-window drop preview (R1125) occlusion by the opaque floater: revisit inside the chart's floating state (translucent/ghost floater)."
+      ],
+      "publishable_decision_summary": "R1127: dock_panel.scxml lifecycle chart (docked↔floating) + DockPanelPolicy codegen — §5.51.1 stage 1, the last interactive widget onto the §5.38 per-widget-SCXML canon",
+      "publishable_changes_bullets": [
+        "crates/pinion-core/widgets/dock_panel.scxml: docked↔floating statechart (datamodel=null). Events in: escaped (tear-off) / dropped (redock-at-zone) / dock_back (restore-home); <raise>: dock_panel.float / .redock / .restore.",
+        "build.rs scxml_inputs += widgets/dock_panel.scxml → sce_build codegen emits DockPanelPolicy / DockPanelState{Docked,Floating} / DockPanelEvent.",
+        "crates/pinion-core/src/widgets/dock_panel.rs: mod sm include + widget_state_name!/widget_event_name! mappings (external = events the binding SENDS, internal = the <raise>d outputs + Null). Chart VOCABULARY only — the typed data (home/zone/topology) is the binding's, per the slider 'null datamodel + typed Rust' canon (§5.51.1 review)."
+      ],
+      "publishable_verification_bullets": [
+        "2 chart tests pass: r1127_dock_panel_lifecycle_transitions (docked→floating→docked via escaped/dropped/dock_back) + r1127_redock_events_are_inert_while_docked (chart enforces valid lifecycle).",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean; pinion-core 2507 lib tests pass; cargo fmt clean.",
+        "mnemosyne validate-workspace: clean (changelog R1126→R1127)."
+      ],
+      "publishable_impact_refs": [
+        "5.51.1",
+        "5.38",
+        "5.4"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Stage 2: refactor pinion-widget-paint DockPanelExternal into a Widget<DockPanelPolicy> consumer — feed the R742 drag handlers' outcomes as escaped/dropped/dock_back; act on the lifecycle (float/redock/restore) via dock_panel_at_zone/float_out_panel + a typed home-anchor captured on float (NO hardcoded default).",
+        "Stage 3: collapse|placeholder = the float action branch (one chart, both policies); editor + flat hello-dock-panels consume; update r1105/r1106 demos + editor tests.",
+        "Distinguishing the two floating→docked transitions (dropped vs dock_back) in the binding: send the specific event + act on the data (zone vs home); the <raise>d events are the AI-introspectable semantic output.",
+        "Cross-window drop preview (R1125) occlusion by the opaque floater: revisit inside the chart's floating state (translucent/ghost floater)."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
