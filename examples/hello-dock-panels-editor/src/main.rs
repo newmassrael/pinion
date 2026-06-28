@@ -119,6 +119,12 @@ const VIEWPORT_BTN_TAG: &str = "viewport_btn";
 /// its click toggles the shared [`DockReorganizer`]'s [`FloatPolicy`].
 const POLICY_BTN_TAG: &str = "float_policy_btn";
 
+/// (R1145 §5.51) The "Undock tab" toolbar button's paint tag — shown only while
+/// some panels are tabbed; its click undocks the active tab back into a split
+/// (the human path for `DockReorganizer::undock_active_tab`; the AI path is the
+/// `undock_tab` invoke). A third [`ButtonExternal`] registered as an extra.
+const UNDOCK_BTN_TAG: &str = "undock_tab_btn";
+
 /// Splitter paint-side tags. Four splits in depth-first pre-order
 /// per R685 [`view_dock_surface`]'s threading scheme:
 /// idx 0 → outer V (toolbar | rest), idx 1 → inner V (middle | console),
@@ -146,6 +152,8 @@ const DOCK_UNDO_KEY: &str = "editor_dock_undo";
 const VIEWPORT_BTN_CLICK_INTENT_TAG: &str = intent_tag!("viewport_btn", "click");
 /// (R1135) The float-policy toggle button's click intent (`float_policy_btn.click`).
 const POLICY_BTN_CLICK_INTENT_TAG: &str = intent_tag!("float_policy_btn", "click");
+/// (R1145) The undock-tab button's click intent (`undock_tab_btn.click`).
+const UNDOCK_BTN_CLICK_INTENT_TAG: &str = intent_tag!("undock_tab_btn", "click");
 
 // ─── default split ratios ─────────────────────────────────────────────
 
@@ -576,8 +584,26 @@ fn view_toolbar_content(theme: &Theme) -> Scene {
             .with_padding(Rect::new(12, 4, 12, 4))
             .with_label_font_size_px(PANEL_BODY_FONT_PX),
     );
+    let mut children = vec![label, policy_btn];
+    // (R1145 §5.51) Show "Undock tab" ONLY while some panels are tabbed (the
+    // reorganizer's reactive `tabs_well_count` subscribes the toolbar, so the
+    // button appears the instant a tabify lands and vanishes when the last well
+    // splits back out). Clicking it undocks the active tab into a split sibling.
+    if use_editor_reorganizer().has_tab_wells() {
+        children.push(view_button(
+            "Undock tab",
+            ButtonState::Idle,
+            0.0,
+            false,
+            &ButtonColors::accent(theme),
+            &ButtonStyle::m3_default(UNDOCK_BTN_TAG)
+                .with_size(Size::px(110, 28))
+                .with_padding(Rect::new(12, 4, 12, 4))
+                .with_label_font_size_px(PANEL_BODY_FONT_PX),
+        ));
+    }
     Scene::Container(
-        ContainerNode::new(vec![label, policy_btn])
+        ContainerNode::new(children)
             .with_tag("toolbar_content_body")
             .with_layout(
                 LayoutStyle::new()
@@ -1043,6 +1069,15 @@ impl WidgetCore for DockPanelsEditorView {
             POLICY_BTN_TAG,
             Box::new(ButtonExternal::new()),
         ));
+        // (R1145 §5.51) The "Undock tab" button — a third ButtonExternal whose
+        // click undocks the active tab back into a split (the human path for the
+        // AI `undock_tab` invoke). Registered unconditionally so the External is
+        // present whenever the button paints; the button only PAINTS while tabbed
+        // (the view gate), and a click while nothing is tabbed is a no-op.
+        externals.push(ExtraExternal::new(
+            UNDOCK_BTN_TAG,
+            Box::new(ButtonExternal::new()),
+        ));
         externals
     }
 
@@ -1194,6 +1229,13 @@ impl WidgetCore for DockPanelsEditorView {
         if tag == POLICY_BTN_CLICK_INTENT_TAG {
             let reorganizer = use_editor_reorganizer();
             reorganizer.set_float_policy(toggled_float_policy(reorganizer.float_policy()));
+        }
+        // (R1145 §5.51) The "Undock tab" button pulls the active tab out of its
+        // well into a split sibling — the human path for the AI `undock_tab`
+        // invoke (both funnel through the shared reorganizer's one commit). A
+        // no-op when nothing is tabbed (the button is hidden then anyway).
+        if tag == UNDOCK_BTN_CLICK_INTENT_TAG {
+            let _ = use_editor_reorganizer().undock_active_tab();
         }
         Vec::new()
     }
@@ -1592,8 +1634,8 @@ mod tests {
             // 4 SplitterExternals + 5 R742 DockPanelExternals (one per leaf,
             // R1082) + 1 DockReorganizeExternal (R686) + 1 UndoStackExternal
             // (R749 §5.52 reorganize history) + 1 float-policy toggle button
-            // (R1135 §5.51.1).
-            assert_eq!(externals.len(), 12);
+            // (R1135 §5.51.1) + 1 undock-tab button (R1145 §5.51).
+            assert_eq!(externals.len(), 13);
             let tags: Vec<&str> = externals.iter().map(|e| e.tag.as_ref()).collect();
             for split in [
                 SPLIT_OUTER_TAG,
@@ -1620,6 +1662,10 @@ mod tests {
             assert!(
                 tags.contains(&POLICY_BTN_TAG),
                 "R1135 policy toggle registered"
+            );
+            assert!(
+                tags.contains(&UNDOCK_BTN_TAG),
+                "R1145 undock-tab button registered"
             );
         });
     }

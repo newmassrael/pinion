@@ -873,6 +873,53 @@ impl DockTopology {
         self.root.tab_well_active(well_id)
     }
 
+    /// (R1145 §5.51) When `panel` is stacked in a [`DockNode::Tabs`] well, ANOTHER
+    /// panel sharing that well (the first non-`panel` member), else `None` (a
+    /// docked-not-tabbed panel, or an unknown one). The undock anchor:
+    /// [`DockReorganizer::undock_tab`] splits `panel` out next to this sibling, so
+    /// the two end up side by side again. A well always has >= 2 panels (the
+    /// canonical invariant), so a tabbed `panel` always has a sibling.
+    #[must_use]
+    pub fn tab_well_sibling(&self, panel: &str) -> Option<String> {
+        fn find(node: &DockNode, panel: &str) -> Option<String> {
+            match node {
+                DockNode::Tabs { panels, .. } => panels
+                    .iter()
+                    .any(|p| p.as_ref() == panel)
+                    .then(|| {
+                        panels
+                            .iter()
+                            .find(|p| p.as_ref() != panel)
+                            .map(ToString::to_string)
+                    })
+                    .flatten(),
+                DockNode::Split { first, second, .. } => {
+                    find(first, panel).or_else(|| find(second, panel))
+                }
+                DockNode::Leaf { .. } => None,
+            }
+        }
+        find(&self.root, panel)
+    }
+
+    /// (R1145 §5.51) The ACTIVE panel of the FIRST [`DockNode::Tabs`] well in the
+    /// tree (depth-first), or `None` when nothing is tabbed. The editor's
+    /// human-facing "undock tab" button targets this — undocking the tab the user
+    /// is looking at without naming a panel (the AI invoke names one explicitly).
+    #[must_use]
+    pub fn first_tab_well_active_panel(&self) -> Option<String> {
+        fn find(node: &DockNode) -> Option<String> {
+            match node {
+                DockNode::Tabs { panels, active, .. } => {
+                    panels.get(*active).map(ToString::to_string)
+                }
+                DockNode::Split { first, second, .. } => find(first).or_else(|| find(second)),
+                DockNode::Leaf { .. } => None,
+            }
+        }
+        find(&self.root)
+    }
+
     /// (R685 §5.16) Count of leaf panes (each [`DockNode::Leaf`] **and**
     /// each [`DockNode::Tabs`] well counts as one). For the total panel
     /// count (tab-well panels counted individually) use [`Self::panel_count`].
@@ -2751,6 +2798,57 @@ impl DockReorganizer {
         Ok(self.commit(next, summary))
     }
 
+    /// (R1145 §5.51) UNDOCK a tabbed `panel` — pull it OUT of its tab well and
+    /// re-dock it as a SPLIT sibling beside the well, so two panels merged into
+    /// tabs become side by side again. The reverse of a centre-zone tabify. A
+    /// deliberately DOCKED result (a right-edge [`Self::dock_panel_at_zone`], which
+    /// removes `panel` from the well — collapsing a 2-tab well back to the sibling
+    /// leaf — then splits it in), NOT a float-out: it needs no floating window, so
+    /// it sidesteps the live window-move entirely. No-op when `panel` is not in a
+    /// tab well (a plain docked panel has nothing to undock).
+    ///
+    /// # Errors
+    ///
+    /// Propagates a [`TopologyError`] from the underlying re-dock (none expected:
+    /// the sibling is a present, distinct panel).
+    pub fn undock_tab(&self, panel: &str) -> Result<String, TopologyError> {
+        let Some(sibling) = self.topology.get().and_then(|t| t.tab_well_sibling(panel)) else {
+            let outcome = format!("{panel}: not in a tab well — nothing to undock");
+            self.note_outcome(&outcome);
+            return Ok(outcome);
+        };
+        // Right edge → split `panel` out next to its (now-collapsed) well sibling.
+        self.dock_panel_at_zone(panel, &sibling, 0.9, 0.5)
+    }
+
+    /// (R1145 §5.51) Undock the ACTIVE tab of the first tab well — the human
+    /// toolbar-button path ([`Self::undock_tab`] is the AI path that names a
+    /// panel). No-op when nothing is tabbed.
+    ///
+    /// # Errors
+    ///
+    /// Propagates a [`TopologyError`] from the underlying [`Self::undock_tab`].
+    pub fn undock_active_tab(&self) -> Result<String, TopologyError> {
+        let Some(panel) = self
+            .topology
+            .get()
+            .and_then(|t| t.first_tab_well_active_panel())
+        else {
+            let outcome = "no tab well — nothing to undock".to_string();
+            self.note_outcome(&outcome);
+            return Ok(outcome);
+        };
+        self.undock_tab(&panel)
+    }
+
+    /// (R1145 §5.51) Whether any panels are currently TABBED (the surface has at
+    /// least one [`DockNode::Tabs`] well). The editor reads this reactively to
+    /// show its "Undock tab" affordance only while there is something to undock.
+    #[must_use]
+    pub fn has_tab_wells(&self) -> bool {
+        self.topology.get().is_some_and(|t| t.tabs_well_count() > 0)
+    }
+
     /// (R1126 §5.51 §2 #7 PR-33) Float `panel` OUT of the dock — the COLLAPSE
     /// torn-slot policy: remove its leaf so the sibling reclaims the space (vs the
     /// placeholder policy, which keeps the leaf and paints a placeholder). The
@@ -3041,6 +3139,10 @@ impl ExternalIntrospect for DockReorganizeExternal {
             // agent reasoning over a `Tabs` well can switch tabs symbolically
             // (no pixels), the §2 #2 RPC-as-primary-path contract.
             ("activate_tab", "json"),
+            // (R1145 §5.51) Undock a tabbed panel back into a split sibling
+            // (`"<panel_id>"`) — the reverse of a centre-zone tabify, the AI-first
+            // primary for separating merged tabs (no pixels, no floating window).
+            ("undock_tab", "string"),
         ])
     }
 
@@ -3251,7 +3353,27 @@ impl ExternalIntrospect for DockReorganizeExternal {
                 self.reorganizer.set_float_policy(policy);
                 Ok(IntrospectValue::Text(policy.as_str().to_string()))
             }
+            // R1145 §5.51 — UNDOCK a tabbed panel: pull it out of its tab well and
+            // re-dock it as a split sibling (the two merged panels become side by
+            // side again). Arg is the panel id; a panel not in a tab well is a
+            // no-op (Ok), not a rejection. Extracted to keep `invoke` under the
+            // workspace line cap.
+            "undock_tab" => self.invoke_undock_tab(args),
             _ => Err(InvokeError::UnknownPath),
+        }
+    }
+}
+
+impl DockReorganizeExternal {
+    /// (R1145 §5.51) The `undock_tab` invoke arm body. `args` is the panel id
+    /// ([`IntrospectValue::Text`]); a panel not in a tab well is a no-op (`Ok`).
+    fn invoke_undock_tab(&mut self, args: IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+        let IntrospectValue::Text(panel) = args else {
+            return Err(InvokeError::TypeMismatch);
+        };
+        match self.reorganizer.undock_tab(&panel) {
+            Ok(summary) => Ok(IntrospectValue::Text(summary)),
+            Err(_) => Err(InvokeError::Rejected),
         }
     }
 }
@@ -7647,6 +7769,41 @@ mod tests {
         // so it contributes no tablist a11y (a docked panel is not a tab).
         let nodes = dock_tablist_access_nodes(&ab_topology(), None);
         assert!(nodes.is_empty(), "no Tabs well → no tablist a11y nodes");
+    }
+
+    #[test]
+    fn r1145_tab_well_sibling_and_active_panel_queries() {
+        // R1145 §5.51 — the undock queries: a tabbed panel's well sibling (the
+        // split anchor `undock_tab` re-docks beside) + the active panel of the
+        // first well (the toolbar "Undock tab" button's target). A non-tabbed
+        // panel has neither.
+        let topo = DockTopology::new(DockNode::tabs(
+            "well-1",
+            vec!["viewport".into(), "properties".into()],
+            1,
+        ));
+        assert_eq!(
+            topo.tab_well_sibling("viewport").as_deref(),
+            Some("properties"),
+        );
+        assert_eq!(
+            topo.tab_well_sibling("properties").as_deref(),
+            Some("viewport"),
+        );
+        assert_eq!(
+            topo.tab_well_sibling("outliner"),
+            None,
+            "a panel not in the well has no sibling",
+        );
+        assert_eq!(
+            topo.first_tab_well_active_panel().as_deref(),
+            Some("properties"),
+            "active idx 1 = properties",
+        );
+        // A topology with NO tab well has no active tab panel / no sibling.
+        let solo = DockTopology::new(DockNode::leaf("solo"));
+        assert_eq!(solo.first_tab_well_active_panel(), None);
+        assert_eq!(solo.tab_well_sibling("solo"), None);
     }
 
     #[test]
