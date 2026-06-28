@@ -18240,6 +18240,52 @@
         "§2 #2 follow-up: the held primitive is a button-drag peer; tying it end-to-end to the floater WINDOW-MOVE redock hint snapshot through the editor (multi-window held drag) is the next RPC-verification slice."
       ]
     },
+    "R1139": {
+      "decision_summary": "R1139 de-gate the redock-hint visibility — measure it headlessly, do not punt to 'HW-gated': lavapipe renders pixels here, so a GPU pixel test PROVES the cross-window redock preview is unmistakable over opaque floater content (bolder Accent fill @ 0xCC + an opaque accent border on the result region), distinct from the subtler in-window highlight.",
+      "changes_bullets": [
+        "dock_redock_preview_tint (Accent @ 0xCC) — a BOLDER cross-window redock FILL than the in-window dock_drop_highlight_tint (0x66): the redock preview sits over OPAQUE content (the dragged floater occludes what is behind it; the target panel is fully painted), where a 40% wash reads as invisible (the live-test \"안 보임\").",
+        "dock_drop_preview_overlay now outlines the result region with an OPAQUE accent border (derived from the fill tint, 3px) — a hard edge that reads regardless of the content hue. Both the on-floater hint and the target-window preview get it (both go through the binding dock_drop_preview hook); the in-window dock_drop_zone_highlight (a separate fn) stays subtle at 0x66 — an in-window split sits over the same panel and needs no shout.",
+        "editor dock_drop_preview uses the bolder redock tint; sprag gets the framework border automatically (it calls dock_drop_preview_overlay) and keeps its own tint until its session updates.",
+        "DE-GATE: the visibility question was wrongly deferred as \"HW-gated\" — lavapipe (software Vulkan, lvp_icd) renders headlessly on this host, so the contrast is MEASURED, not eyeballed."
+      ],
+      "verification_bullets": [
+        "GPU pixel test r1139_redock_preview_is_boldly_visible_over_opaque_content (#[ignore], run --ignored under VK_ICD_FILENAMES=lvp_icd): renders the floater + redock overlay through the live to_vello_cached path, reads the pixels back, and asserts the fill differs from the bare floater by Σ|Δ|>=90 AND the border reads as the opaque accent (Σ|Δ|<=120) and far more so than the bare surface. PASS on lavapipe in ~1s.",
+        "Fast structural guards (no GPU): r1139 overlay carries an opaque accent border (color = tint@0xFF, width 3, fill keeps the bold alpha); the redock tint alpha > the in-window highlight alpha.",
+        "Gate: workspace clippy --all-targets --features pinion-runtime/vello -D pedantic clean; rustfmt clean; pinion-widget-paint 642 + pinion-shell 148 + sibling crates green, 0 fail; existing r1125 overlay-rect test unaffected.",
+        "Eyeball PNG (scratchpad, not committed): the Left-zone hint renders as a bold blue half + opaque outline over the white floater — unmistakable vs the prior 40% wash."
+      ],
+      "impact_refs": [
+        "2",
+        "5.51"
+      ],
+      "carry_forward_bullets": [
+        "The redock hint is now both INJECTED (R1138) and measurably VISIBLE (R1139), headlessly. The only remaining live item is the end-to-end UX feel of the floater WINDOW-MOVE redock on a real desktop (drag latency/feel) — a genuine OS-interaction check, NOT the static visibility, which is no longer a gate.",
+        "LESSON: challenge \"HW-gated\" — lavapipe renders pixels headlessly (lvp_icd present + DISPLAY=:0 here); only genuine OS interaction (live drag latency/feel, Mac/Win native surfaces) and wgpu/Vello upstream bugs (VELLO carries) are real gates. A static rendered appearance is always measurable; the #[ignore] on the screenshot tests is for wgpu cold-boot SPEED, not capability.",
+        "Remaining pro-tool slices carry from the campaign: visible dock-zone guides on main / self-home=full / tabbing runtime toggle."
+      ],
+      "publishable_decision_summary": "R1139 de-gate the redock-hint visibility — measure it headlessly, do not punt to 'HW-gated': lavapipe renders pixels here, so a GPU pixel test PROVES the cross-window redock preview is unmistakable over opaque floater content (bolder Accent fill @ 0xCC + an opaque accent border on the result region), distinct from the subtler in-window highlight.",
+      "publishable_changes_bullets": [
+        "dock_redock_preview_tint (Accent @ 0xCC) — a BOLDER cross-window redock FILL than the in-window dock_drop_highlight_tint (0x66): the redock preview sits over OPAQUE content (the dragged floater occludes what is behind it; the target panel is fully painted), where a 40% wash reads as invisible (the live-test \"안 보임\").",
+        "dock_drop_preview_overlay now outlines the result region with an OPAQUE accent border (derived from the fill tint, 3px) — a hard edge that reads regardless of the content hue. Both the on-floater hint and the target-window preview get it (both go through the binding dock_drop_preview hook); the in-window dock_drop_zone_highlight (a separate fn) stays subtle at 0x66 — an in-window split sits over the same panel and needs no shout.",
+        "editor dock_drop_preview uses the bolder redock tint; sprag gets the framework border automatically (it calls dock_drop_preview_overlay) and keeps its own tint until its session updates.",
+        "DE-GATE: the visibility question was wrongly deferred as \"HW-gated\" — lavapipe (software Vulkan, lvp_icd) renders headlessly on this host, so the contrast is MEASURED, not eyeballed."
+      ],
+      "publishable_verification_bullets": [
+        "GPU pixel test r1139_redock_preview_is_boldly_visible_over_opaque_content (#[ignore], run --ignored under VK_ICD_FILENAMES=lvp_icd): renders the floater + redock overlay through the live to_vello_cached path, reads the pixels back, and asserts the fill differs from the bare floater by Σ|Δ|>=90 AND the border reads as the opaque accent (Σ|Δ|<=120) and far more so than the bare surface. PASS on lavapipe in ~1s.",
+        "Fast structural guards (no GPU): r1139 overlay carries an opaque accent border (color = tint@0xFF, width 3, fill keeps the bold alpha); the redock tint alpha > the in-window highlight alpha.",
+        "Gate: workspace clippy --all-targets --features pinion-runtime/vello -D pedantic clean; rustfmt clean; pinion-widget-paint 642 + pinion-shell 148 + sibling crates green, 0 fail; existing r1125 overlay-rect test unaffected.",
+        "Eyeball PNG (scratchpad, not committed): the Left-zone hint renders as a bold blue half + opaque outline over the white floater — unmistakable vs the prior 40% wash."
+      ],
+      "publishable_impact_refs": [
+        "2",
+        "5.51"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The redock hint is now both INJECTED (R1138) and measurably VISIBLE (R1139), headlessly. The only remaining live item is the end-to-end UX feel of the floater WINDOW-MOVE redock on a real desktop (drag latency/feel) — a genuine OS-interaction check, NOT the static visibility, which is no longer a gate.",
+        "LESSON: challenge \"HW-gated\" — lavapipe renders pixels headlessly (lvp_icd present + DISPLAY=:0 here); only genuine OS interaction (live drag latency/feel, Mac/Win native surfaces) and wgpu/Vello upstream bugs (VELLO carries) are real gates. A static rendered appearance is always measurable; the #[ignore] on the screenshot tests is for wgpu cold-boot SPEED, not capability.",
+        "Remaining pro-tool slices carry from the campaign: visible dock-zone guides on main / self-home=full / tabbing runtime toggle."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
