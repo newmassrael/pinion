@@ -1991,6 +1991,19 @@ impl<V: WidgetCore> CoreShell<V> {
             .is_some_and(|router| router.drag_session_active(pid))
     }
 
+    /// (R1141 §5.51 PR-39) Whether some window OTHER than `window_id` owns an
+    /// in-flight drag for `pid` — the gate the shell uses to paint a window's
+    /// dock-zone GUIDES. A floater dragged toward main is an active drag in the
+    /// floater's router, so main (the candidate dock host) lights up its zones
+    /// while the source floater itself does not (its own drag is excluded). Read
+    /// every paint while any drag is live; cheap (a `HashMap` scan, no allocation).
+    #[must_use]
+    pub fn any_other_window_dragging(&self, window_id: &str, pid: PointerId) -> bool {
+        self.routers
+            .iter()
+            .any(|(id, router)| id != window_id && router.drag_session_active(pid))
+    }
+
     /// (R1113 §5.51 §5.33 §2 #7) The addressed window's in-flight drag label +
     /// window-logical cursor — the projection the shell injects as a drag-image
     /// overlay ([`pinion_overlay::inject_drag_image`]), the way the focus state

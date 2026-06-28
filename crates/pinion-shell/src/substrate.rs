@@ -73,6 +73,14 @@ const CROSS_WINDOW_DROP_PREVIEW_TAG: &str = "__xwin_drop_preview";
 /// zone (the R1137 `RedockArmed` lifecycle).
 const REDOCK_DRAG_HINT_TAG: &str = "__xwin_redock_hint";
 
+/// (R1141 §5.51 §2 #7 PR-39) Shell-owned tag for the dock-zone GUIDES slot — the
+/// subtle outlines around EVERY dockable zone of a window while a floater drag is
+/// in flight over it (so the user sees where to aim before the cursor reaches a
+/// zone). Wraps the per-zone binding overlays ([`WidgetView::dock_zone_guide`]) in
+/// one container with this tag so the whole set is stripped + re-pushed each paint
+/// (idempotent), clearing the instant the drag ends.
+const DOCK_ZONE_GUIDES_TAG: &str = "__xwin_dock_zone_guides";
+
 /// R889 §5.49 — every window-scoped read `dispatch_rpc_inner`
 /// pre-resolves before its split-borrow block (the substrate borrows
 /// preclude resolving these once `scene_mut` is taken). Bundled in a
@@ -3718,6 +3726,51 @@ impl<V: WidgetView> ShellCore<V> {
         pinion_overlay::inject_overlay_node(scene, REDOCK_DRAG_HINT_TAG, slot)
     }
 
+    /// (R1141 §5.51 §2 #7 PR-39) Paint the dock-zone GUIDES on `window_id`: while a
+    /// floater drag is in flight in SOME OTHER window, outline every dockable zone
+    /// of this window so the user sees where they can dock before the cursor
+    /// reaches any one (the discoverability fix for the cursor-based preview — pro
+    /// dockers light up the targets during a drag). The shell stays
+    /// widget-agnostic: it gates on a cross-window drag
+    /// ([`pinion_runtime::CoreShell::any_other_window_dragging`]), enumerates this
+    /// window's drop targets generically
+    /// ([`Scene::collect_drop_target_tags`](pinion_core::scene::Scene::collect_drop_target_tags)),
+    /// resolves each window-absolute rect, and hands the dock-domain RENDERING to
+    /// the binding ([`WidgetView::dock_zone_guide`]). Re-derived every paint (the
+    /// prior set is stripped by tag), so the guides clear the instant the drag
+    /// ends. Purely visual — it does NOT touch the cursor-based redock resolution,
+    /// so a release off every zone still leaves the floater FLOATING (R1136).
+    /// No-op when no other window is dragging or the binding opts out (`None`).
+    fn apply_dock_zone_guides(&self, scene: Scene, window_id: Option<&str>) -> Scene {
+        let key = window_id.unwrap_or(pinion_runtime::DEFAULT_WINDOW);
+        // Gate: only while a drag this window does NOT own is in flight elsewhere
+        // (a floater being dragged toward this dock host). Idle / same-window
+        // drags pay nothing.
+        if !self.core.any_other_window_dragging(key, PointerId::MOUSE) {
+            return pinion_overlay::inject_overlay_node(scene, DOCK_ZONE_GUIDES_TAG, None);
+        }
+        let guides: Vec<Scene> = scene
+            .collect_drop_target_tags()
+            .into_iter()
+            .filter_map(|tag| {
+                let rect = scene.rect_for_tag_absolute(&tag)?;
+                V::dock_zone_guide(&tag, rect)
+            })
+            .collect();
+        let slot = if guides.is_empty() {
+            None
+        } else {
+            Some(Scene::Container(
+                pinion_core::scene::ContainerNode::new(guides)
+                    .with_tag(DOCK_ZONE_GUIDES_TAG.to_string())
+                    .with_layout(
+                        pinion_core::style::LayoutStyle::new().with_pointer_transparent(true),
+                    ),
+            ))
+        };
+        pinion_overlay::inject_overlay_node(scene, DOCK_ZONE_GUIDES_TAG, slot)
+    }
+
     /// R1113 §5.51 §5.33 — the window-level paint overlays, in z-order: the
     /// keyboard focus ring then the drag-image follower. Both are injected by
     /// the shell from its own state (focus / the router's live drag session),
@@ -3746,11 +3799,17 @@ impl<V: WidgetView> ShellCore<V> {
         // to pre-R1121).
         let chromed = self.apply_window_chrome(resizable, w, h, window_id);
         let ringed = self.apply_focus_ring(chromed, w, h);
+        // R1141 §5.51 PR-39 — the dock-zone GUIDES: while a floater drag is in
+        // flight over this window, outline EVERY dockable zone so the user sees
+        // where to aim. UNDER the bold cursor-zone preview below (guides = all
+        // zones subtle, preview = the one under the cursor bold). Purely visual;
+        // the redock still resolves by the cursor (stay-floating preserved).
+        let guided = self.apply_dock_zone_guides(ringed, window_id);
         // R1125 §5.51 PR-33 — the incoming cross-window dock drop-zone preview,
         // UNDER the source window's drag-image follower (the follower lives in the
         // dragged window, the preview in the target window, so they never overlap
         // — ordered here for one canonical z-stack).
-        let previewed = self.apply_cross_window_drop_preview(ringed, window_id);
+        let previewed = self.apply_cross_window_drop_preview(guided, window_id);
         // R1137 §5.51 PR-33 — the redock drag HINT on the dragged floater (source
         // window), so the "where I will dock" zone is visible even though the
         // opaque floater occludes the target-window preview above.

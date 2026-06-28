@@ -949,6 +949,31 @@ pub trait WidgetView: pinion_a11y::WidgetA11y {
         None
     }
 
+    /// (R1141 §5.51 §2 #7 PR-39) Build a dock-zone GUIDE — the subtle outline
+    /// painted around EACH dockable zone of a window while a floater drag is in
+    /// flight over it, so the user sees WHERE they can dock before the cursor
+    /// reaches any one zone (the discoverability companion to the cursor-driven
+    /// [`dock_drop_preview`](Self::dock_drop_preview), which then fills the one
+    /// under the pointer in bold). The shell does the widget-agnostic half —
+    /// detect a cross-window drag, enumerate this window's drop targets
+    /// ([`pinion_core::scene::Scene::collect_drop_target_tags`]) + resolve each
+    /// abs `rect` — and hands the dock-domain RENDERING here: `target_tag` is the
+    /// dockable zone, `rect` its window-absolute rect. The shell injects the
+    /// returned [`Scene`] as a top-level, pointer-transparent overlay and
+    /// re-derives it every paint (so guides clear the instant the drag ends).
+    /// Purely visual: it does NOT change the cursor-based redock resolution, so a
+    /// release off every zone still leaves the floater FLOATING (R1136). Opt-in
+    /// like [`dock_drop_preview`](Self::dock_drop_preview): a dock binding adds
+    /// one line (e.g. `pinion_widget_paint::dock::dock_zone_guide_overlay`), a
+    /// non-dock app draws nothing.
+    ///
+    /// - `Some(scene)` — inject `scene` as a guide for this zone.
+    /// - `None` (the default) — no guide.
+    #[must_use]
+    fn dock_zone_guide(_target_tag: &str, _rect: pinion_core::scene::Rect) -> Option<Scene> {
+        None
+    }
+
     /// R762 §5.36 §5.38 / R763 §5.22 — pointer-driven caret + selection
     /// press hook. The shell calls this on a press (native winit
     /// `MouseInput` and the `scene/click` / `scene/drag` deferred-input

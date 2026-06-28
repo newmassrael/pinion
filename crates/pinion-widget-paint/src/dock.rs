@@ -3821,6 +3821,38 @@ pub fn dock_redock_preview_tint(theme: &Theme) -> Color {
         .with_alpha(DOCK_REDOCK_PREVIEW_ALPHA)
 }
 
+/// (R1141 §5.51) Alpha of the dock-zone GUIDE outline — a faint accent edge that
+/// marks a dockable zone during a floater drag WITHOUT obscuring its content (the
+/// bold cursor-zone preview at [`DOCK_REDOCK_PREVIEW_ALPHA`] stands out against
+/// these). A guide says "you could dock here"; the preview says "you WILL dock
+/// here", so the guide is fainter + outline-only.
+const DOCK_ZONE_GUIDE_ALPHA: u8 = 0x99;
+
+/// (R1141 §5.51) Border width (logical px) of a dock-zone guide outline.
+const DOCK_ZONE_GUIDE_BORDER_PX: u32 = 2;
+
+/// (R1141 §5.51 §2 #7 PR-39) Build a dock-zone GUIDE — a subtle accent OUTLINE
+/// around a dockable zone. The shell paints one on EVERY zone of a window while a
+/// floater drag is in flight over it (via [`WidgetView::dock_zone_guide`]), so the
+/// user sees the available targets before the cursor reaches any one; the bold
+/// cursor-zone [`dock_drop_preview_overlay`] then fills the one under the pointer.
+/// Outline-only (no fill) so it marks the zone without hiding its content, and
+/// pointer-transparent so it never intercepts the drag. `rect` is the zone's
+/// window-absolute rect (the shell resolved it).
+#[must_use]
+pub fn dock_zone_guide_overlay(rect: Rect, theme: &Theme) -> Scene {
+    let edge = theme
+        .resolve(ColorRole::Accent)
+        .with_alpha(DOCK_ZONE_GUIDE_ALPHA);
+    let mut node = BoxNode::new(
+        rect,
+        BoxStyle::filled(Color::TRANSPARENT)
+            .with_border(Border::new(edge, DOCK_ZONE_GUIDE_BORDER_PX)),
+    );
+    node.layout = node.layout.with_pointer_transparent(true);
+    Scene::Box(node)
+}
+
 /// (R1125 §5.51 §2 #7 PR-33) Tag for the cross-window drop-zone PREVIEW overlay
 /// the shell injects into the TARGET window while a floater is dragged over it —
 /// so the strip is strippable / idempotent like every other shell overlay.
@@ -8205,6 +8237,28 @@ mod tests {
             super::dock_redock_preview_tint(&theme).a > super::dock_drop_highlight_tint(&theme).a,
             "redock preview fill is more opaque than the in-window highlight",
         );
+    }
+
+    #[test]
+    fn r1141_dock_zone_guide_overlay_is_outline_only_and_pointer_transparent() {
+        use pinion_core::style::Color;
+        // R1141 §5.51 — a dock-zone GUIDE marks a zone with a translucent accent
+        // OUTLINE (no fill, so it never obscures the zone's content the way the
+        // bold preview does) and is pointer-transparent (never grabs the drag).
+        let theme = Theme::light();
+        let rect = Rect::new(10, 20, 200, 100);
+        let Scene::Box(b) = super::dock_zone_guide_overlay(rect, &theme) else {
+            panic!("a guide is a Box");
+        };
+        assert_eq!(b.rect, rect, "the guide outlines the whole zone rect");
+        assert_eq!(b.style.fill, Color::TRANSPARENT, "outline only — no fill");
+        let border = b.style.border.expect("a guide has an outline border");
+        assert!(
+            border.color.a > 0 && border.color.a < 0xFF,
+            "the edge is a translucent accent (a={})",
+            border.color.a,
+        );
+        assert!(b.layout.pointer_transparent, "a guide never grabs the drag");
     }
 
     #[test]

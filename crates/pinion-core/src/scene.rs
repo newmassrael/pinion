@@ -305,6 +305,45 @@ impl Scene {
         }
     }
 
+    /// (R1141 §5.51 PR-39) Tags of every node opted in as a drop target
+    /// ([`crate::style::LayoutStyle::drop_target`]), in depth-first order. The
+    /// shell reads this to paint the dock-zone GUIDES — when a floater drag is in
+    /// flight over another window, every dockable zone in that window lights up
+    /// so the user sees where they can aim (the cursor-based preview then fills
+    /// the one under the pointer). Mirrors [`Self::collect_focusable_tags`]; a
+    /// node with no tag is skipped (the shell resolves each abs rect by tag via
+    /// [`Self::rect_for_tag_absolute`]).
+    #[must_use]
+    pub fn collect_drop_target_tags(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        self.collect_drop_target_tags_into(&mut out);
+        out
+    }
+
+    fn collect_drop_target_tags_into(&self, out: &mut Vec<String>) {
+        if self.is_drop_target() {
+            if let Some(tag) = self.tag() {
+                out.push(tag.to_owned());
+            }
+        }
+        match self {
+            Scene::Container(n) => {
+                for child in &n.children {
+                    child.collect_drop_target_tags_into(out);
+                }
+            }
+            Scene::Scroll(n) => n.content.collect_drop_target_tags_into(out),
+            Scene::Box(_)
+            | Scene::Text(_)
+            | Scene::Path(_)
+            | Scene::Image(_)
+            | Scene::External(_)
+            | Scene::Effect(_)
+            | Scene::ImmediateModeNode(_)
+            | Scene::TextGrid(_) => {}
+        }
+    }
+
     /// (R55.D.5 §5.45) Depth-first walk for the first [`ExternalNode`]
     /// whose tag equals `target`. Mirrors the
     /// `find_external_by_tag` private helper inside
@@ -3349,6 +3388,32 @@ mod tests {
         let _ = Scene::Container(ContainerNode::new(vec![]));
         let _ = Scene::Effect(EffectNode::new());
         let _ = Scene::External(ExternalNode::new(stub_handle()));
+    }
+
+    #[test]
+    fn r1141_collect_drop_target_tags_finds_opted_in_tagged_nodes() {
+        use crate::style::LayoutStyle;
+        let target = |tag: &str| {
+            Scene::Container(
+                ContainerNode::new(vec![])
+                    .with_tag(tag.to_string())
+                    .with_layout(LayoutStyle::new().with_drop_target(true)),
+            )
+        };
+        let plain = Scene::Container(ContainerNode::new(vec![]).with_tag("plain".to_string()));
+        let untagged_target = Scene::Box(
+            BoxNode::filled(Rect::default(), Color::default())
+                .map_layout(|l| l.with_drop_target(true)),
+        );
+        let root = Scene::Container(ContainerNode::new(vec![
+            target("zone_a"),
+            plain,
+            target("zone_b"),
+            untagged_target,
+        ]));
+        // Depth-first, opted-in, TAGGED only (an untagged target is skipped — the
+        // shell resolves each guide's rect by tag).
+        assert_eq!(root.collect_drop_target_tags(), vec!["zone_a", "zone_b"]);
     }
 
     #[test]
