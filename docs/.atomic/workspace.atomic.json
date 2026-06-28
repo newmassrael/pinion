@@ -18330,6 +18330,52 @@
         "LESSON: a \"no preview\" symptom can be TWO independent gaps — a missing drop_target (the resolver finds nothing) AND a content-sized (not slot-filling) placeholder (a sliver hit target); fix both. Always confirm the on-screen instance is the FRESH build, not a stale one left running [[rpc-demo-runs-release-binary]]."
       ]
     },
+    "R1141": {
+      "decision_summary": "R1141 dock-zone guides — while a floater drag is in flight over a window, outline every dockable zone so the user sees where to aim before the cursor reaches one (the discoverability fix the user asked for as 'show the preview on slight overlap'). Purely visual: cursor-based redock + stay-floating unchanged; pure bounds-overlap rejected.",
+      "changes_bullets": [
+        "New shell overlay apply_dock_zone_guides: while a floater drag is in flight in ANOTHER window (CoreShell::any_other_window_dragging, self-excluding), outline EVERY dockable zone of this window so the user sees the targets BEFORE aiming. Gated on a cross-window drag (idle / same-window pays nothing); enumerates this window's drop targets generically (Scene::collect_drop_target_tags) + resolves each window-abs rect + hands the dock-domain rendering to V::dock_zone_guide; injected pointer-transparent UNDER the bold cursor-zone preview, re-derived every paint so it clears the instant the drag ends.",
+        "New primitives: Scene::collect_drop_target_tags (core), CoreShell::any_other_window_dragging (runtime), WidgetView::dock_zone_guide hook (shell, default None), dock_zone_guide_overlay (dock — outline-only translucent accent, pointer-transparent). editor opts in (one line) so main lights up its zones during a floater drag.",
+        "PURELY VISUAL — it does NOT change the cursor-based redock resolution, so a release off every zone still leaves the floater FLOATING (R1136 preserved). This is the chosen answer to \"show the preview on slight overlap\": guides appear on overlap (discoverable) WITHOUT the constant-false-dock a pure window-bounds trigger would cause (which would also break float-over-main + stay-floating)."
+      ],
+      "verification_bullets": [
+        "core r1141_collect_drop_target_tags_finds_opted_in_tagged_nodes: depth-first, opted-in + tagged only.",
+        "dock r1141_dock_zone_guide_overlay_is_outline_only_and_pointer_transparent: transparent fill + translucent accent border + pointer-transparent.",
+        "editor r1141_dock_zone_guide_outlines_the_zone_pointer_transparent: outlines the zone rect, never grabs the drag.",
+        "Live RPC (lavapipe, hello-dock-panels-editor): at REST main has NO guides; during a held floater drag main's paint carries the guides container with 6 zone outlines (5 panels + the torn slot); the SOURCE floater shows NONE (self-excluded); cleared on release.",
+        "Gate: workspace clippy --all-targets --features pinion-runtime/vello -D pedantic clean; rustfmt clean; pinion-core + pinion-runtime 148 + pinion-shell 644 + pinion-widget-paint + editor green, 0 fail."
+      ],
+      "impact_refs": [
+        "2",
+        "5.51"
+      ],
+      "carry_forward_bullets": [
+        "Chosen UX (user-selected): dock-zone GUIDES — cursor-aim preview + visible targets during the drag. Pure window-bounds-overlap was rejected: it would preview constantly whenever the floater overlaps main and redock on any release there, breaking float-over-main + the R1136 stay-floating behaviour.",
+        "The redock-hint line is now complete for the editor: R1137 inject -> R1138 held-drag snapshot -> R1139 bold+measured -> R1140 self-home -> R1141 zone guides.",
+        "Remaining campaign slice: tabbing runtime toggle. The live fast-drag trail is WM apply-lag (HW-inherent, dissolves at human rate). A committed shell integration test for apply_dock_zone_guides is deferred (the orchestration is live-verified + its pieces unit-tested); add one with a 2-window dock fixture when convenient."
+      ],
+      "publishable_decision_summary": "R1141 dock-zone guides — while a floater drag is in flight over a window, outline every dockable zone so the user sees where to aim before the cursor reaches one (the discoverability fix the user asked for as 'show the preview on slight overlap'). Purely visual: cursor-based redock + stay-floating unchanged; pure bounds-overlap rejected.",
+      "publishable_changes_bullets": [
+        "New shell overlay apply_dock_zone_guides: while a floater drag is in flight in ANOTHER window (CoreShell::any_other_window_dragging, self-excluding), outline EVERY dockable zone of this window so the user sees the targets BEFORE aiming. Gated on a cross-window drag (idle / same-window pays nothing); enumerates this window's drop targets generically (Scene::collect_drop_target_tags) + resolves each window-abs rect + hands the dock-domain rendering to V::dock_zone_guide; injected pointer-transparent UNDER the bold cursor-zone preview, re-derived every paint so it clears the instant the drag ends.",
+        "New primitives: Scene::collect_drop_target_tags (core), CoreShell::any_other_window_dragging (runtime), WidgetView::dock_zone_guide hook (shell, default None), dock_zone_guide_overlay (dock — outline-only translucent accent, pointer-transparent). editor opts in (one line) so main lights up its zones during a floater drag.",
+        "PURELY VISUAL — it does NOT change the cursor-based redock resolution, so a release off every zone still leaves the floater FLOATING (R1136 preserved). This is the chosen answer to \"show the preview on slight overlap\": guides appear on overlap (discoverable) WITHOUT the constant-false-dock a pure window-bounds trigger would cause (which would also break float-over-main + stay-floating)."
+      ],
+      "publishable_verification_bullets": [
+        "core r1141_collect_drop_target_tags_finds_opted_in_tagged_nodes: depth-first, opted-in + tagged only.",
+        "dock r1141_dock_zone_guide_overlay_is_outline_only_and_pointer_transparent: transparent fill + translucent accent border + pointer-transparent.",
+        "editor r1141_dock_zone_guide_outlines_the_zone_pointer_transparent: outlines the zone rect, never grabs the drag.",
+        "Live RPC (lavapipe, hello-dock-panels-editor): at REST main has NO guides; during a held floater drag main's paint carries the guides container with 6 zone outlines (5 panels + the torn slot); the SOURCE floater shows NONE (self-excluded); cleared on release.",
+        "Gate: workspace clippy --all-targets --features pinion-runtime/vello -D pedantic clean; rustfmt clean; pinion-core + pinion-runtime 148 + pinion-shell 644 + pinion-widget-paint + editor green, 0 fail."
+      ],
+      "publishable_impact_refs": [
+        "2",
+        "5.51"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Chosen UX (user-selected): dock-zone GUIDES — cursor-aim preview + visible targets during the drag. Pure window-bounds-overlap was rejected: it would preview constantly whenever the floater overlaps main and redock on any release there, breaking float-over-main + the R1136 stay-floating behaviour.",
+        "The redock-hint line is now complete for the editor: R1137 inject -> R1138 held-drag snapshot -> R1139 bold+measured -> R1140 self-home -> R1141 zone guides.",
+        "Remaining campaign slice: tabbing runtime toggle. The live fast-drag trail is WM apply-lag (HW-inherent, dissolves at human rate). A committed shell integration test for apply_dock_zone_guides is deferred (the orchestration is live-verified + its pieces unit-tested); add one with a 2-window dock fixture when convenient."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
