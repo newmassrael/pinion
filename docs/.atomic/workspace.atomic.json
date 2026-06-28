@@ -17788,6 +17788,62 @@
         "R1126 bundled three concerns (redock fix + preview + spec) in one round; can't surgically un-bundle post-commit — noted as an audit-trail lesson (focused rounds)."
       ]
     },
+    "R1129": {
+      "decision_summary": "R1129 dock-chart STAGE 2: DockPanelExternal backed by Widget<DockPanelPolicy> — the R1127 dock_panel.scxml chart becomes the persistent docked/floating lifecycle SSOT (gates the redock/restore IO + AI-introspectable), retiring the imperative detached-bool lifecycle reasoning (the SS2 #5 drift)",
+      "changes_bullets": [
+        "DockPanelExternal gains lifecycle Widget<DockPanelPolicy>: R1127 chart=docked/floating SSOT",
+        "driven on existing outcomes: escape/invoke=Escaped, drop=Dropped, snap/cancel=DockBack",
+        "redock/restore IO gated on chart transition (was_floating), not the detached bool",
+        "chart enforces \"never floated cannot redock\" (Dropped/DockBack inert while docked)",
+        "detached kept strictly as the per-gesture follow latch (distinct from lifecycle)",
+        "query(\"lifecycle\")=Docked/Floating via WidgetStateName SSOT; intervene read-only; in Debug"
+      ],
+      "verification_bullets": [
+        "8 new dock unit tests: starts-docked, tear-off then redock-at-zone, snap-back gated by chart",
+        "plus cancel restore, invoke tear_off floats, cross-window docks, read-only, persists per gesture",
+        "1 new demo test: external lifecycle Docked then tear_off then Floating + read-only",
+        "cargo test -p pinion-widget-paint --lib dock: 226 passed / 0 failed",
+        "workspace test exit 0; clippy --features pinion-runtime/vello -D pedantic + rustfmt clean"
+      ],
+      "impact_refs": [
+        "5.51.1",
+        "5.38",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "STAGE 3 pending: collapse|placeholder float policy (one chart), editor/flat wiring, demo updates",
+        "cross-gesture persistence: factory re-run on topology change resets chart (STAGE 3)",
+        "chart crate-home (pinion-core codegen vs widget-paint build.rs cohesion) undecided (R1126 carry)",
+        "R1125 cross-window drop preview occluded by opaque floater: revisit as translucent floater"
+      ],
+      "publishable_decision_summary": "R1129 dock-chart STAGE 2: DockPanelExternal backed by Widget<DockPanelPolicy> — the R1127 dock_panel.scxml chart becomes the persistent docked/floating lifecycle SSOT (gates the redock/restore IO + AI-introspectable), retiring the imperative detached-bool lifecycle reasoning (the SS2 #5 drift)",
+      "publishable_changes_bullets": [
+        "DockPanelExternal gains lifecycle Widget<DockPanelPolicy>: R1127 chart=docked/floating SSOT",
+        "driven on existing outcomes: escape/invoke=Escaped, drop=Dropped, snap/cancel=DockBack",
+        "redock/restore IO gated on chart transition (was_floating), not the detached bool",
+        "chart enforces \"never floated cannot redock\" (Dropped/DockBack inert while docked)",
+        "detached kept strictly as the per-gesture follow latch (distinct from lifecycle)",
+        "query(\"lifecycle\")=Docked/Floating via WidgetStateName SSOT; intervene read-only; in Debug"
+      ],
+      "publishable_verification_bullets": [
+        "8 new dock unit tests: starts-docked, tear-off then redock-at-zone, snap-back gated by chart",
+        "plus cancel restore, invoke tear_off floats, cross-window docks, read-only, persists per gesture",
+        "1 new demo test: external lifecycle Docked then tear_off then Floating + read-only",
+        "cargo test -p pinion-widget-paint --lib dock: 226 passed / 0 failed",
+        "workspace test exit 0; clippy --features pinion-runtime/vello -D pedantic + rustfmt clean"
+      ],
+      "publishable_impact_refs": [
+        "5.51.1",
+        "5.38",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "STAGE 3 pending: collapse|placeholder float policy (one chart), editor/flat wiring, demo updates",
+        "cross-gesture persistence: factory re-run on topology change resets chart (STAGE 3)",
+        "chart crate-home (pinion-core codegen vs widget-paint build.rs cohesion) undecided (R1126 carry)",
+        "R1125 cross-window drop preview occluded by opaque floater: revisit as translucent floater"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
