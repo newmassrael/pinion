@@ -7762,6 +7762,52 @@
         }
       ]
     },
+    "5.51.1": {
+      "title": "Dock-panel lifecycle as a per-widget SCXML statechart (float/redock)",
+      "parent_doc": "docs/GENERATED.md",
+      "parent_section": "5.51",
+      "decision_status": "active",
+      "intent": "Model the dock panel docked↔floating↔redock lifecycle as a per-widget SCXML chart (Widget<DockPanelPolicy>), retiring the imperative DockPanelExternal+reducer per the §5.38 per-widget-SCXML canon.",
+      "rationale_bullets": [
+        "Every Tier-1 interactive widget is per-widget SCXML (§5.38); dock panel was the imperative exception",
+        "§2 #5 drift: imperative reducer + hardcoded redock defaults are the smell the chart removes",
+        "SCXML-feature review: NO advanced features — all 10 widget charts datamodel=null (slider canon)",
+        "Null datamodel + typed Rust: home-anchor/target/zone/topology in the binding, not the chart",
+        "Chart = discrete states + transitions + <raise> only (docked/floating + substates)",
+        "Policy collapse|placeholder = tear_off action branch; one chart serves both modes",
+        "Data primitives: dock_panel_at_zone total (move-if-present/insert-if-absent) + tabify_fresh"
+      ],
+      "caveats_bullets": [
+        "Spec round: ratified design, NOT yet implemented — chart + Widget<DockPanelPolicy> refactor pending",
+        "Data primitives done (dock_panel_at_zone/tabify_fresh/float_out_panel); chart-backed binding pending"
+      ],
+      "alternatives_rejected": [
+        {
+          "alternative": "Imperative reducer (status quo)",
+          "reason": "§2 #5 drift; forces hardcoded redock defaults"
+        },
+        {
+          "alternative": "Chart datamodel for home/zone",
+          "reason": "violates the null-datamodel + typed-Rust widget canon"
+        },
+        {
+          "alternative": "Lenient move-verb over absent source (PR-34)",
+          "reason": "ghost-fabrication; use explicit insert verbs"
+        }
+      ],
+      "impact_scope": [
+        "5.38",
+        "5.4",
+        "5.13"
+      ],
+      "bindings": [
+        {
+          "file": "crates/pinion-widget-paint/src/dock.rs",
+          "symbol": "DockReorganizer::dock_panel_at_zone",
+          "kind": "references"
+        }
+      ]
+    },
     "5.52": {
       "title": "Undo/redo command stack (R748)",
       "parent_doc": "docs/GENERATED.md",
@@ -17602,6 +17648,58 @@
         "live pixel (held mid-drag) still HW-gated; user re-test confirms the chip is now visible on terminal",
         "if still invisible after the border = a rasterization bug to chase with a real-GPU pixel test",
         "§2#2 gap: a press-and-hold RPC peer (begin-drag + hold) would let an AI snapshot a held mid-drag"
+      ]
+    },
+    "R1126": {
+      "decision_summary": "R1126: dock-panel float/redock lifecycle ratified as a per-widget SCXML chart (new §5.51.1); SCXML-feature review = no advanced features needed (null-datamodel + typed-Rust canon); imperative DockPanelExternal→chart refactor pending",
+      "changes_bullets": [
+        "Mnemosyne §5.51.1 added: dock lifecycle = Widget<DockPanelPolicy> SCXML chart (docked↔floating + substates; <raise> tear_off/redock_at/restore_home). Chart = discrete state ONLY; home-anchor/target/zone/topology = typed Rust binding data (slider-style Snapshot=(DockState,DockData)).",
+        "SCXML-feature REVIEW (the question asked): all 10 pinion widget charts are datamodel=null; slider doc states the 'null datamodel + typed Rust' canon. → the dock chart needs NO advanced features: no <data>/<assign>/cond/<parallel>/<history>/<invoke>/<send>/event-data. Only compound states + transitions + <raise>.",
+        "Data-layer topology primitives LANDED in pinion-widget-paint/src/dock.rs: dock_panel_at_zone (TOTAL — move-if-present / insert-if-absent, so one redock path serves BOTH collapse + placeholder policies), tabify_fresh (explicit fresh-tab insert), float_out_panel (collapse remove_leaf).",
+        "Reverted the imperative editor collapse hardcoding (first-remaining-pane default, 0.5 magic, reducer-scattered lifecycle) per §2 #5 — the exact smell that motivated charting the lifecycle; editor back to its placeholder baseline."
+      ],
+      "verification_bullets": [
+        "mnemosyne validate-workspace: T1 reject=0, sections 72→73 (no new orphan), T3=0 / T4 info=11 (unchanged baseline).",
+        "Grounding by grep: crates/pinion-core/widgets/{button,checkbox,slider,text_field,toggle,radio,scroll_bar,disclosure,color_area,listbox_item}.scxml all carry datamodel=null (10/10).",
+        "pinion-widget-paint builds with the 3 new primitives; hello-dock-panels-editor reverted to placeholder builds clean (cargo build -p hello-dock-panels-editor: Finished)."
+      ],
+      "impact_refs": [
+        "5.51",
+        "5.38",
+        "5.4",
+        "5.13"
+      ],
+      "carry_forward_bullets": [
+        "Implement stage 1: author crates/pinion-core/widgets/dock_panel.scxml + sce-build codegen → DockPanelPolicy / DockPanelState.",
+        "Stage 2: refactor DockPanelExternal to Widget<DockPanelPolicy>-backed — feed router drag events (begin_drag/drag_to_at/release) as chart events; listen for <raise>d events → topology IO via the landed primitives.",
+        "Stage 3: policy collapse|placeholder = tear_off action branch; home-anchor captured in the binding (typed Rust), NOT a hardcoded default.",
+        "R1124 redock self-drop fix (input.rs resolve_drag_targets) + R1125 cross-window drop preview (shell overlay) are landed-but-uncommitted; the preview is wired yet floater-occluded — revisit occlusion inside the chart's floating state.",
+        "apply_zone_redock (placeholder-only move) is now superseded by dock_panel_at_zone (total); migrate the editor reducer when the chart lands."
+      ],
+      "publishable_decision_summary": "R1126: dock-panel float/redock lifecycle ratified as a per-widget SCXML chart (new §5.51.1); SCXML-feature review = no advanced features needed (null-datamodel + typed-Rust canon); imperative DockPanelExternal→chart refactor pending",
+      "publishable_changes_bullets": [
+        "Mnemosyne §5.51.1 added: dock lifecycle = Widget<DockPanelPolicy> SCXML chart (docked↔floating + substates; <raise> tear_off/redock_at/restore_home). Chart = discrete state ONLY; home-anchor/target/zone/topology = typed Rust binding data (slider-style Snapshot=(DockState,DockData)).",
+        "SCXML-feature REVIEW (the question asked): all 10 pinion widget charts are datamodel=null; slider doc states the 'null datamodel + typed Rust' canon. → the dock chart needs NO advanced features: no <data>/<assign>/cond/<parallel>/<history>/<invoke>/<send>/event-data. Only compound states + transitions + <raise>.",
+        "Data-layer topology primitives LANDED in pinion-widget-paint/src/dock.rs: dock_panel_at_zone (TOTAL — move-if-present / insert-if-absent, so one redock path serves BOTH collapse + placeholder policies), tabify_fresh (explicit fresh-tab insert), float_out_panel (collapse remove_leaf).",
+        "Reverted the imperative editor collapse hardcoding (first-remaining-pane default, 0.5 magic, reducer-scattered lifecycle) per §2 #5 — the exact smell that motivated charting the lifecycle; editor back to its placeholder baseline."
+      ],
+      "publishable_verification_bullets": [
+        "mnemosyne validate-workspace: T1 reject=0, sections 72→73 (no new orphan), T3=0 / T4 info=11 (unchanged baseline).",
+        "Grounding by grep: crates/pinion-core/widgets/{button,checkbox,slider,text_field,toggle,radio,scroll_bar,disclosure,color_area,listbox_item}.scxml all carry datamodel=null (10/10).",
+        "pinion-widget-paint builds with the 3 new primitives; hello-dock-panels-editor reverted to placeholder builds clean (cargo build -p hello-dock-panels-editor: Finished)."
+      ],
+      "publishable_impact_refs": [
+        "5.51",
+        "5.38",
+        "5.4",
+        "5.13"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Implement stage 1: author crates/pinion-core/widgets/dock_panel.scxml + sce-build codegen → DockPanelPolicy / DockPanelState.",
+        "Stage 2: refactor DockPanelExternal to Widget<DockPanelPolicy>-backed — feed router drag events (begin_drag/drag_to_at/release) as chart events; listen for <raise>d events → topology IO via the landed primitives.",
+        "Stage 3: policy collapse|placeholder = tear_off action branch; home-anchor captured in the binding (typed Rust), NOT a hardcoded default.",
+        "R1124 redock self-drop fix (input.rs resolve_drag_targets) + R1125 cross-window drop preview (shell overlay) are landed-but-uncommitted; the preview is wired yet floater-occluded — revisit occlusion inside the chart's floating state.",
+        "apply_zone_redock (placeholder-only move) is now superseded by dock_panel_at_zone (total); migrate the editor reducer when the chart lands."
       ]
     },
     "R232": {
