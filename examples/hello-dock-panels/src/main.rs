@@ -1692,6 +1692,59 @@ mod tests {
     }
 
     #[test]
+    fn r1129_panel_external_exposes_dock_lifecycle_introspection() {
+        // R1129 §5.51.1 §5.38 §2 #7 — the demo's registered DockPanelExternals
+        // now expose their persistent dock lifecycle as scene-as-data (the new
+        // `dock_panel.scxml` chart, STAGE 2 of the SCXML-chart campaign). A docked
+        // panel reports "Docked"; the AI-primary `tear_off` invoke floats it →
+        // "Floating". This is the seam an AI client reads via `scene/snapshot` /
+        // `scene/query` on the live `hello-dock-panels` demo.
+        use pinion_core::external::InterveneError;
+        use pinion_widget_paint::dock::TEAR_OFF_EVENT;
+        Owner::new().run(|| {
+            let mut extras = <DockPanelsView as WidgetCore>::create_extra_externals();
+            let inspector = extras
+                .iter_mut()
+                .find(|e| e.tag.as_ref() == INSPECTOR_PANEL_TAG)
+                .expect("the inspector panel external is registered");
+            // Docked at boot (the chart's SCXML `initial`).
+            assert_eq!(
+                inspector
+                    .handle
+                    .introspect()
+                    .and_then(|i| i.query("lifecycle")),
+                Some(IntrospectValue::Text("Docked".to_string())),
+                "a freshly registered panel is docked",
+            );
+            // The AI-primary tear-off (the `ExternalIntrospect::invoke` channel)
+            // drives the chart `escaped → floating`.
+            inspector
+                .handle
+                .introspect_mut()
+                .expect("introspect_mut")
+                .invoke(TEAR_OFF_EVENT, IntrospectValue::Null)
+                .expect("tear_off invoke");
+            assert_eq!(
+                inspector
+                    .handle
+                    .introspect()
+                    .and_then(|i| i.query("lifecycle")),
+                Some(IntrospectValue::Text("Floating".to_string())),
+                "the tear_off invoke floats the panel's lifecycle",
+            );
+            // §2 #7 — the lifecycle is a chart-owned read-only diagnostic.
+            assert!(matches!(
+                inspector
+                    .handle
+                    .introspect_mut()
+                    .expect("introspect_mut")
+                    .intervene("lifecycle", IntrospectValue::Text("Docked".to_string())),
+                Err(InterveneError::ReadOnly),
+            ));
+        });
+    }
+
+    #[test]
     fn r683_c_view_main_dock_contains_all_three_panel_tags_when_none_floating() {
         Owner::new().run(|| {
             let scene = view_main_dock(ButtonState::Idle);

@@ -77,6 +77,9 @@ use pinion_core::style::{
     TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme};
+use pinion_core::widget_core::WidgetStateName;
+use pinion_core::widgets::Widget;
+use pinion_core::widgets::dock_panel::{DockPanelEvent, DockPanelPolicy, DockPanelState};
 use std::rc::Rc;
 
 use pinion_core::reactive::Signal;
@@ -4381,6 +4384,32 @@ pub struct DockPanelExternal {
     /// paint the zone affordance. `None` = no overlay binding (the
     /// gesture still docks / tears off, just without the preview paint).
     drop_preview: Option<Rc<Signal<Option<DockDropPreview>>>>,
+    /// (R1129 §5.51.1 §5.38 §2 #5) The panel's persistent dock LIFECYCLE — the
+    /// `docked ↔ floating` statechart ([`DockPanelPolicy`], `dock_panel.scxml`),
+    /// the §5.38 per-widget-SCXML home for the float/redock/restore decision the
+    /// imperative `detached` bool + hardcoded redock defaults used to make ad hoc
+    /// (the §2 #5 drift this campaign retires). The chart is the AUTHORITY for the
+    /// lifecycle IO gate: a `dropped`/`dock_back` is inert while `docked`, so the
+    /// chart — not a bare bool — enforces "a panel that never floated cannot
+    /// redock". Driven on the same gesture outcomes the router resolves
+    /// ([`drag_to_at`](External::drag_to_at) escape → `Escaped`; the
+    /// [`drag_release`](External::drag_release) reorganize / cross-window arms →
+    /// `Dropped`; snap-back / cancel → `DockBack`) and surfaced as scene-as-data
+    /// via `query("lifecycle")` (§2 #7). Per the Slider "SCXML owns the
+    /// interaction state; the binding owns the typed value" split, the home
+    /// anchor / target / zone / topology stay typed Rust in this binding, NOT the
+    /// chart datamodel. `RefCell` because the lifecycle-driving methods span
+    /// `&self` ([`begin_drag`](External::begin_drag) /
+    /// [`settle_cross_window_redock`](Self::settle_cross_window_redock)) and
+    /// `&mut self` (the drag arms), like the other interior-mutable diagnostics.
+    ///
+    /// Distinct from [`detached`](Self::detached), which is a per-GESTURE follow
+    /// latch (reset on `begin_drag`): the chart is the PERSISTENT lifecycle. In
+    /// every current consumer flow the two agree at the IO gates; the chart adds
+    /// the explicit state + transition enforcement + introspection. The
+    /// collapse|placeholder policy + the topology-reconstruct cross-gesture
+    /// persistence are the campaign's STAGE 3 (carried).
+    lifecycle: RefCell<Widget<DockPanelPolicy>>,
     /// (R1116 §5.51 PR-38) The id of THIS panel's own floating window, if the
     /// binding floats it (e.g. `"torn-viewport"`). When a drag's
     /// [`DragUpdate::source_window`] equals this, the drag is happening in the
@@ -4403,6 +4432,7 @@ impl core::fmt::Debug for DockPanelExternal {
             .field("tear_off_fired", &self.tear_off_fired.get())
             .field("drag_cursor", &self.drag_cursor.get())
             .field("detached", &self.detached.get())
+            .field("lifecycle", &self.lifecycle_name())
             .field("last_redock_at", &self.last_redock_at.borrow())
             .finish_non_exhaustive()
     }
@@ -4433,6 +4463,9 @@ impl DockPanelExternal {
             last_redock_at: RefCell::new(None),
             last_source_window: RefCell::new(None),
             prev_desktop: Cell::new(None),
+            // R1129 §5.51.1 — the lifecycle chart starts `docked` (its SCXML
+            // `initial`), matching a freshly-registered panel that has not floated.
+            lifecycle: RefCell::new(Widget::new()),
             reorganizer: None,
             drop_preview: None,
             floating_window: None,
@@ -4498,6 +4531,36 @@ impl DockPanelExternal {
     #[must_use]
     pub fn detached(&self) -> bool {
         self.detached.get()
+    }
+
+    /// (R1129 §5.51.1 §5.38 §2 #7) The panel's persistent dock-lifecycle state
+    /// name — `"Docked"` / `"Floating"`, the [`DockPanelState`] mapped through the
+    /// §5.16 [`WidgetStateName`] SSOT (so the introspect name and a binding's
+    /// `from_name_or_default` read share one variant list). Surfaced as
+    /// scene-as-data via `query("lifecycle")`.
+    #[must_use]
+    pub fn lifecycle_name(&self) -> &'static str {
+        self.lifecycle.borrow().state().as_name()
+    }
+
+    /// (R1129 §5.51.1) Whether the lifecycle chart is currently `floating` — the
+    /// gate the redock / restore IO replaces the per-gesture [`detached`] bool
+    /// with. `Dropped` / `DockBack` only redock a panel the chart records as
+    /// having floated; the chart enforces that a never-floated panel stays put.
+    ///
+    /// [`detached`]: Self::detached
+    fn is_floating(&self) -> bool {
+        matches!(self.lifecycle.borrow().state(), DockPanelState::Floating)
+    }
+
+    /// (R1129 §5.51.1 §5.38) Drive the lifecycle statechart. `&self` (interior
+    /// mutable) so the `&self` [`begin_drag`](External::begin_drag) /
+    /// [`settle_cross_window_redock`](Self::settle_cross_window_redock) and the
+    /// `&mut self` drag arms all transition it. An event invalid for the current
+    /// state (e.g. `Dropped` while `docked`) is the chart's own no-op — the
+    /// caller does not pre-check.
+    fn send_lifecycle(&self, event: DockPanelEvent) {
+        self.lifecycle.borrow_mut().send(event);
     }
 
     /// (R1081 §5.51) Classify a resolved [`DropPoint`] into the dock
@@ -4642,6 +4705,11 @@ impl DockPanelExternal {
     /// return type.
     fn settle_cross_window_redock(&self, window: &str, point: &DropPoint) {
         self.enqueue_tear_off_redock_at(window, point);
+        // R1129 §5.51.1 — the floating panel re-docked into another window's
+        // zone: drive the lifecycle `dropped` (floating → docked). The dock-at IO
+        // itself is unconditional (the panel WAS floating to reach this arm), so
+        // the chart just records the transition + exposes it via introspection.
+        self.send_lifecycle(DockPanelEvent::Dropped);
         self.dragging.set(false);
         self.set_drop_preview(None);
         self.is_drag_armed.set(true);
@@ -4721,12 +4789,16 @@ impl External for DockPanelExternal {
             self.resolve_preview(over.as_ref()),
         ) {
             self.tear_off_fired.set(false);
-            // R1094 — if the drag had torn the panel into a live floating
-            // follower before landing back on a dock zone, remove that
-            // window first so the reorganizer re-places a single panel
-            // (redock). A drag that never escaped leaves `detached` false
-            // and skips the redock.
-            if self.detached.get() {
+            // R1094/R1129 §5.51.1 — the floater landed back on a dock zone:
+            // drive the lifecycle `dropped` (floating → docked). If the drag had
+            // torn the panel into a live floating follower, remove that window
+            // first so the reorganizer re-places a single panel (redock). The
+            // chart — not the per-gesture `detached` bool — is the IO gate: a drag
+            // that never escaped is still `docked`, so `dropped` is inert and no
+            // redock window-removal fires.
+            let was_floating = self.is_floating();
+            self.send_lifecycle(DockPanelEvent::Dropped);
+            if was_floating {
                 self.enqueue_tear_off_redock();
             }
             // `resolve_preview` already rejected the dead zone, so
@@ -4773,15 +4845,24 @@ impl External for DockPanelExternal {
             } else {
                 self.enqueue_tear_off();
             }
+            // R1129 §5.51.1 — the drag escaped every drop target: drive the
+            // lifecycle `escaped` (docked → floating). Idempotent with the
+            // `drag_to_at` escape — `Escaped` has no transition out of `floating`,
+            // so a gesture that already floated mid-drag is a no-op here.
+            self.send_lifecycle(DockPanelEvent::Escaped);
             self.detached.set(true);
             self.tear_off_fired.set(true);
             return;
         }
         // 3. Snapped back over a panel / dead zone / no coordinator. A drag
-        // that had detached returns home → restore by removing the floating
-        // window this gesture created; a drag that never escaped is the
-        // plain snap-back (no commit, today's behaviour).
-        if self.detached.get() {
+        // that had floated returns home → `dock_back` (restore): remove the
+        // floating window this gesture created; a drag that never escaped is the
+        // plain snap-back (no commit, today's behaviour). R1129 §5.51.1 — the
+        // chart drives the restore: `dock_back` is inert while `docked`, so the
+        // never-floated snap-back transitions nothing and removes no window.
+        let was_floating = self.is_floating();
+        self.send_lifecycle(DockPanelEvent::DockBack);
+        if was_floating {
             self.enqueue_tear_off_redock();
         }
         self.detached.set(false);
@@ -4859,6 +4940,14 @@ impl External for DockPanelExternal {
         // the router's verdict (rather than re-deriving distance) stays
         // single-SSOT: the router measures from the real press point.
         if update.became_drag && same_window_over.is_none() {
+            // R1129 §5.51.1 — drive the lifecycle `escaped` (docked → floating)
+            // on the RISING edge of the detach latch, so the chart transitions
+            // exactly once per tear-off rather than on every escaped move
+            // (`Escaped` is inert once `floating`, but the edge keeps it crisp +
+            // avoids per-move chart churn).
+            if !self.detached.get() {
+                self.send_lifecycle(DockPanelEvent::Escaped);
+            }
             self.detached.set(true);
         }
         // While detached, the follower tracks the cursor on EVERY move (the
@@ -4911,9 +5000,13 @@ impl External for DockPanelExternal {
         self.tear_off_fired.set(false);
         self.set_drop_preview(None);
         self.is_drag_armed.set(true);
-        // R1094 — a cancelled drag that had torn the panel into a live
-        // floating follower restores by removing that window.
-        if self.detached.get() {
+        // R1094/R1129 §5.51.1 — a cancelled drag that floated restores home
+        // (`dock_back`): drive the chart + remove the follow window it created. A
+        // drag that never escaped is `docked`, so `dock_back` is inert and no
+        // window is removed.
+        let was_floating = self.is_floating();
+        self.send_lifecycle(DockPanelEvent::DockBack);
+        if was_floating {
             self.enqueue_tear_off_redock();
         }
         self.detached.set(false);
@@ -4998,6 +5091,11 @@ impl ExternalIntrospect for DockPanelExternal {
             "drag_cursor" => Some(drag_cursor_introspect(self.drag_cursor.get())),
             // R1094 §5.16 §5.41 §5.51 — the live-follower latch.
             "detached" => Some(IntrospectValue::Bool(self.detached())),
+            // R1129 §5.51.1 §5.38 §2 #7 — the persistent dock-lifecycle state
+            // (`"Docked"` / `"Floating"`, the `WidgetStateName` SSOT), the SCXML
+            // chart the float/redock/restore decision now lives in (was implicit
+            // in the binding's window signal + the per-gesture `detached` bool).
+            "lifecycle" => Some(IntrospectValue::Text(self.lifecycle_name().to_string())),
             // R1102 §5.51 §2 #7 PR-33 — the last cross-window dock-at payload
             // (null before any cross-window redock this gesture).
             "redock_at" => Some(
@@ -5025,7 +5123,7 @@ impl ExternalIntrospect for DockPanelExternal {
             // dragging / tear_off_fired / drop_preview / drag_cursor /
             // detached directly.
             "panel_id" | "tabbing" | "dragging" | "tear_off_fired" | "drop_preview"
-            | "drag_cursor" | "detached" | "redock_at" | "source_window" => {
+            | "drag_cursor" | "detached" | "redock_at" | "source_window" | "lifecycle" => {
                 Err(InterveneError::ReadOnly)
             }
             _ => Err(InterveneError::UnknownPath),
@@ -5075,6 +5173,11 @@ impl ExternalIntrospect for DockPanelExternal {
         // same payload.
         if path == TEAR_OFF_EVENT {
             self.enqueue_tear_off();
+            // R1129 §5.51.1 — the AI-primary tear-off floats the panel: drive the
+            // lifecycle `escaped` (docked → floating), the same transition the
+            // R742 escape-drop drives, so the chart state is consistent across the
+            // pointer + invoke channels (idempotent if already floating).
+            self.send_lifecycle(DockPanelEvent::Escaped);
             self.dragging.set(false);
             self.tear_off_fired.set(true);
             self.is_drag_armed.set(true);
@@ -5927,6 +6030,213 @@ mod tests {
                 .iter()
                 .all(|i| i.tag.as_ref() != TEAR_OFF_REDOCK_AT_EVENT),
             "a same-window release never docks-at (got {after:?})",
+        );
+    }
+
+    // ── R1129 §5.51.1 §5.38 §2 #5 — the DockPanelPolicy lifecycle chart ──
+    //
+    // STAGE 2 of the dock-panel SCXML-chart campaign: the External's persistent
+    // `docked ↔ floating` lifecycle now lives in the R1127 `dock_panel.scxml`
+    // chart (`Widget<DockPanelPolicy>`), not the imperative per-gesture
+    // `detached` bool + hardcoded redock defaults (the §2 #5 drift). The chart is
+    // the IO gate — a `dropped` / `dock_back` is inert while `docked`, so the
+    // chart (not a bare bool) enforces "a panel that never floated cannot redock"
+    // — and is AI-introspectable via `query("lifecycle")` (§2 #7).
+
+    #[test]
+    fn r1129_lifecycle_starts_docked() {
+        let ext = DockPanelExternal::new("a");
+        assert_eq!(
+            ext.query("lifecycle"),
+            Some(IntrospectValue::Text("Docked".to_string())),
+            "a freshly registered panel is docked (the chart's SCXML initial)",
+        );
+    }
+
+    #[test]
+    fn r1129_tear_off_floats_then_redock_at_zone_docks() {
+        // The full float → redock arc: escape every drop target (tear-off) →
+        // `floating`; release back over another panel's zone → `docked`.
+        let reorganizer = Rc::new(DockReorganizer::new(Rc::new(Signal::new(Some(
+            ab_topology(),
+        )))));
+        let mut ext = DockPanelExternal::new("a").with_reorganizer(Rc::clone(&reorganizer));
+        let _ = ext.begin_drag();
+        cross_detach(&mut ext, None, (640.0, 300.0)); // escape → float
+        assert_eq!(
+            ext.query("lifecycle"),
+            Some(IntrospectValue::Text("Floating".to_string())),
+            "escaping every drop target floats the panel (escaped → floating)",
+        );
+        let mut drained: Vec<Intent> = Vec::new();
+        ext.drain_intents(&mut |i| drained.push(i)); // consume the follow(s)
+        // Release over sibling "b": redock-at-zone (dropped → docked).
+        ext.drag_release(&dummy_payload(), Some(drop_point("b", 0.5, 0.5)));
+        assert_eq!(
+            ext.query("lifecycle"),
+            Some(IntrospectValue::Text("Docked".to_string())),
+            "redocking over a zone docks the panel (dropped → docked)",
+        );
+        let mut after: Vec<Intent> = Vec::new();
+        ext.drain_intents(&mut |i| after.push(i));
+        assert!(
+            after
+                .iter()
+                .any(|i| i.tag.as_ref() == TEAR_OFF_REDOCK_EVENT),
+            "a floated → docked redock removes the follow window (got {after:?})",
+        );
+    }
+
+    #[test]
+    fn r1129_snap_back_restores_and_redock_is_gated_by_the_chart() {
+        // The KEY STAGE-2 property: the chart gates the restore IO. A tear-off
+        // that returns home restores (dock_back → docked + removes the follow
+        // window); a drag that NEVER floated is `docked`, so `dock_back` is inert
+        // and NO restore fires — the chart, not a bare bool, owns the gate.
+        // (a) floated then snapped home → restore IO fires.
+        let mut floated = DockPanelExternal::new("a");
+        let _ = floated.begin_drag();
+        cross_detach(&mut floated, None, (640.0, 300.0)); // escape → float
+        let mut drained: Vec<Intent> = Vec::new();
+        floated.drain_intents(&mut |i| drained.push(i)); // consume the follow(s)
+        floated.drag_release(&dummy_payload(), Some(drop_point("a", 0.5, 0.5))); // home
+        assert_eq!(
+            floated.query("lifecycle"),
+            Some(IntrospectValue::Text("Docked".to_string())),
+        );
+        let mut after: Vec<Intent> = Vec::new();
+        floated.drain_intents(&mut |i| after.push(i));
+        assert!(
+            after
+                .iter()
+                .any(|i| i.tag.as_ref() == TEAR_OFF_REDOCK_EVENT),
+            "a floated panel snapping home restores (removes its follow window)",
+        );
+        // (b) never-floated drag back home → docked, NO spurious restore IO.
+        let mut never = DockPanelExternal::new("a");
+        let _ = never.begin_drag();
+        never.drag_release(&dummy_payload(), Some(drop_point("a", 0.5, 0.5)));
+        assert_eq!(
+            never.query("lifecycle"),
+            Some(IntrospectValue::Text("Docked".to_string())),
+            "a never-floated drag stays docked",
+        );
+        let mut none: Vec<Intent> = Vec::new();
+        never.drain_intents(&mut |i| none.push(i));
+        assert!(
+            none.iter().all(|i| i.tag.as_ref() != TEAR_OFF_REDOCK_EVENT),
+            "dock_back is inert while docked — no spurious restore (got {none:?})",
+        );
+    }
+
+    #[test]
+    fn r1129_cancel_restores_floated_lifecycle() {
+        // An OS-revoked drag that had floated restores home (dock_back → docked).
+        let mut ext = DockPanelExternal::new("a");
+        let _ = ext.begin_drag();
+        cross_detach(&mut ext, None, (640.0, 300.0)); // escape → float
+        assert_eq!(
+            ext.query("lifecycle"),
+            Some(IntrospectValue::Text("Floating".to_string())),
+        );
+        let mut drained: Vec<Intent> = Vec::new();
+        ext.drain_intents(&mut |i| drained.push(i));
+        ext.drag_cancel(&dummy_payload());
+        assert_eq!(
+            ext.query("lifecycle"),
+            Some(IntrospectValue::Text("Docked".to_string())),
+            "a cancelled float restores to docked",
+        );
+        let mut after: Vec<Intent> = Vec::new();
+        ext.drain_intents(&mut |i| after.push(i));
+        assert!(
+            after
+                .iter()
+                .any(|i| i.tag.as_ref() == TEAR_OFF_REDOCK_EVENT),
+            "the cancelled float removes its follow window",
+        );
+    }
+
+    #[test]
+    fn r1129_invoke_tear_off_floats_the_lifecycle() {
+        // The AI-primary tear-off channel drives the same `escaped → floating`
+        // transition as the pointer escape-drop, so the chart is consistent
+        // across the pointer + invoke paths.
+        let mut ext = DockPanelExternal::new("a");
+        ext.invoke(TEAR_OFF_EVENT, IntrospectValue::Null)
+            .expect("direct tear_off invoke");
+        assert_eq!(
+            ext.query("lifecycle"),
+            Some(IntrospectValue::Text("Floating".to_string())),
+        );
+    }
+
+    #[test]
+    fn r1129_cross_window_redock_docks_the_lifecycle() {
+        // A floating panel dropped into ANOTHER window's dock zone re-docks
+        // (dropped → docked) via the settle path shared by the live
+        // drag_release_at + the AI invoke.
+        let mut ext = DockPanelExternal::new("inspector");
+        let _ = ext.begin_drag();
+        cross_detach(&mut ext, None, (640.0, 300.0)); // escape → float
+        assert_eq!(
+            ext.query("lifecycle"),
+            Some(IntrospectValue::Text("Floating".to_string())),
+        );
+        let mut drained: Vec<Intent> = Vec::new();
+        ext.drain_intents(&mut |i| drained.push(i));
+        ext.drag_release_at(
+            &dummy_payload(),
+            &upd(
+                Some(drop_point("viewport", 0.5, 0.5)),
+                (200.0, 100.0),
+                Some("main"),
+                false,
+            ),
+        );
+        assert_eq!(
+            ext.query("lifecycle"),
+            Some(IntrospectValue::Text("Docked".to_string())),
+            "a cross-window dock-at docks the lifecycle",
+        );
+    }
+
+    #[test]
+    fn r1129_lifecycle_is_read_only() {
+        // §2 #7 — the lifecycle is a chart-owned diagnostic; an AI drives it
+        // through the gesture / invoke channels, not by poking the slot.
+        let mut ext = DockPanelExternal::new("a");
+        assert!(
+            ext.query("lifecycle").is_some(),
+            "lifecycle is introspectable"
+        );
+        assert!(matches!(
+            ext.intervene("lifecycle", IntrospectValue::Text("Floating".to_string())),
+            Err(InterveneError::ReadOnly),
+        ));
+    }
+
+    #[test]
+    fn r1129_lifecycle_persists_across_a_new_gesture() {
+        // The chart is the PERSISTENT lifecycle (unlike `detached`, reset on
+        // begin_drag): a panel that floated stays `floating` into the next
+        // gesture, so a re-drag of an already-floating panel is not mistaken for
+        // a fresh docked panel.
+        let mut ext = DockPanelExternal::new("a");
+        let _ = ext.begin_drag();
+        cross_detach(&mut ext, None, (640.0, 300.0)); // escape → float
+        assert_eq!(
+            ext.query("lifecycle"),
+            Some(IntrospectValue::Text("Floating".to_string())),
+        );
+        // A fresh gesture clears the per-gesture `detached` latch …
+        let _ = ext.begin_drag();
+        assert!(!ext.detached(), "begin_drag resets the per-gesture latch");
+        // … but the persistent lifecycle is still floating.
+        assert_eq!(
+            ext.query("lifecycle"),
+            Some(IntrospectValue::Text("Floating".to_string())),
+            "the chart persists the float across gestures (not gesture-scoped)",
         );
     }
 
