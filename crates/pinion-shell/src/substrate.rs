@@ -2382,25 +2382,36 @@ impl<V: WidgetView> ShellCore<V> {
         if let Some(target) = self.cross_preview_target.take() {
             self.request_redraw_for_window(&target);
         }
-        // R1142 §5.51 PR-39 — a drag also lit DOCK-ZONE GUIDES on EVERY other
-        // window (their `any_other_window_dragging` gate), independent of where
-        // the cursor was. The `cross_preview_target` repaint above only covers
-        // the cursor's LAST preview target — so a release while the cursor sits on
-        // the dragged floater (the common case: you let go holding the floater,
-        // not over main) would leave main's guides on a stale frame, never
-        // repainted. So when THIS release ends a drag (the session is still open
-        // until `left_release` below), repaint every OTHER declared window to
-        // strip its guides. Gated on an active drag, so a plain click pays
-        // nothing.
+        // R1142 §5.51 PR-39 — a drag also lit DOCK-ZONE GUIDES on the dock-host
+        // windows (`smaller_window_dragging`), independent of where the cursor
+        // was. The `cross_preview_target` repaint above only covers the cursor's
+        // LAST preview target — so a release while the cursor sits on the dragged
+        // floater (the common case: you let go holding the floater, not over main)
+        // would leave main's guides on a stale frame, never repainted. So when
+        // THIS release ends a drag (the session is still open until `left_release`
+        // below), repaint the host windows that showed guides for it. R1144 — only
+        // windows LARGER than the dragged one (the same direction gate the guides
+        // use), so a tear-OUT (the large source) never repaints the brand-new,
+        // surface-churning floater (the freeze). Gated on an active drag, so a
+        // plain click pays nothing.
         if self.core.drag_session_active_for_window(window_id, pid) {
-            let others: Vec<String> = self
-                .declared_window_specs()
-                .into_iter()
-                .map(|spec| spec.id)
-                .filter(|id| id != window_id)
-                .collect();
-            for id in others {
-                self.request_redraw_for_window(&id);
+            let specs = self.declared_window_specs();
+            if let Some(src_area) = specs
+                .iter()
+                .find(|w| w.id == window_id)
+                .and_then(Self::window_area)
+            {
+                let hosts: Vec<String> = specs
+                    .iter()
+                    .filter(|w| {
+                        w.id != window_id
+                            && Self::window_area(w).is_some_and(|area| area > src_area)
+                    })
+                    .map(|w| w.id.clone())
+                    .collect();
+                for id in hosts {
+                    self.request_redraw_for_window(&id);
+                }
             }
         }
         // R882 / R882.1 §5.35 §5.39 — the release routes through the
@@ -3752,9 +3763,9 @@ impl<V: WidgetView> ShellCore<V> {
     /// of this window so the user sees where they can dock before the cursor
     /// reaches any one (the discoverability fix for the cursor-based preview — pro
     /// dockers light up the targets during a drag). The shell stays
-    /// widget-agnostic: it gates on a cross-window drag
-    /// ([`pinion_runtime::CoreShell::any_other_window_dragging`]), enumerates this
-    /// window's drop targets generically
+    /// widget-agnostic: it gates on a SMALLER window dragging toward this host
+    /// ([`Self::smaller_window_dragging`] — a floater into a larger dock host),
+    /// enumerates this window's drop targets generically
     /// ([`Scene::collect_drop_target_tags`](pinion_core::scene::Scene::collect_drop_target_tags)),
     /// resolves each window-absolute rect, and hands the dock-domain RENDERING to
     /// the binding ([`WidgetView::dock_zone_guide`]). Re-derived every paint (the
@@ -3764,10 +3775,15 @@ impl<V: WidgetView> ShellCore<V> {
     /// No-op when no other window is dragging or the binding opts out (`None`).
     fn apply_dock_zone_guides(&self, scene: Scene, window_id: Option<&str>) -> Scene {
         let key = window_id.unwrap_or(pinion_runtime::DEFAULT_WINDOW);
-        // Gate: only while a drag this window does NOT own is in flight elsewhere
-        // (a floater being dragged toward this dock host). Idle / same-window
-        // drags pay nothing.
-        if !self.core.any_other_window_dragging(key, PointerId::MOUSE) {
+        // Gate: only while a SMALLER window (a floater) is dragged toward this
+        // larger dock host. R1144 — gating on "any other window dragging" was too
+        // broad: tearing a panel OUT of main makes MAIN the dragger, which lit
+        // guides on the brand-new floater being created and painted them on its
+        // CHURNING surface (a moving / just-created window) → a wgpu validation
+        // cascade that froze the window. A floater docks into a larger host, never
+        // the reverse, so the size gate is also the correct direction. Idle /
+        // same-window / tear-out drags pay nothing.
+        if !self.smaller_window_dragging(key, PointerId::MOUSE) {
             return pinion_overlay::inject_overlay_node(scene, DOCK_ZONE_GUIDES_TAG, None);
         }
         let guides: Vec<Scene> = scene
@@ -3790,6 +3806,40 @@ impl<V: WidgetView> ShellCore<V> {
             ))
         };
         pinion_overlay::inject_overlay_node(scene, DOCK_ZONE_GUIDES_TAG, slot)
+    }
+
+    /// (R1144 §5.51 PR-39) Whether some OTHER declared window SMALLER (by area)
+    /// than `host` currently owns a drag for `pid` — the gate for `host`'s
+    /// dock-zone guides + their drag-end repaint. A torn-off floater is smaller
+    /// than the dock host it docks into, so "smaller window dragging toward this
+    /// larger host" is both the correct DIRECTION (a floater docks into main, not
+    /// the reverse) and the fix for the R1144 freeze: tearing a panel OUT of main
+    /// makes MAIN the dragger, and a larger dragger must NOT light guides on (and
+    /// repaint) the brand-new floater whose surface is still churning. A window
+    /// with no declared size is skipped (no basis to compare).
+    fn smaller_window_dragging(&self, host: &str, pid: PointerId) -> bool {
+        let specs = self.declared_window_specs();
+        let Some(host_area) = specs
+            .iter()
+            .find(|w| w.id == host)
+            .and_then(Self::window_area)
+        else {
+            return false;
+        };
+        specs.iter().any(|w| {
+            w.id != host
+                && Self::window_area(w).is_some_and(|area| area < host_area)
+                && self.core.drag_session_active_for_window(&w.id, pid)
+        })
+    }
+
+    /// (R1144 §5.51) A declared window's area (logical px²) from its declared
+    /// size, or `None` when the size is unknown (a WM-sized window) — the basis
+    /// for the [`Self::smaller_window_dragging`] floater-into-host direction gate.
+    fn window_area(window: &pinion_rpc::DeclaredWindow) -> Option<f64> {
+        window
+            .declared_size
+            .map(|(w, h)| f64::from(w) * f64::from(h))
     }
 
     /// R1113 §5.51 §5.33 — the window-level paint overlays, in z-order: the
@@ -7043,6 +7093,33 @@ mod r1138_redock_hint_injection_tests {
         assert!(
             sc.redraw_requested_for_window("main"),
             "the guide host (main) repaints on drag-end so its guides strip",
+        );
+    }
+
+    /// R1144 §5.51 PR-39 — the FREEZE guard: a tear-OUT (the LARGER window drags
+    /// a panel out, creating a small floater) must NOT light guides on, or
+    /// repaint, the brand-new floater — its surface is still churning, and a
+    /// repaint there triggered a wgpu validation cascade that froze the window.
+    /// A larger source repaints only LARGER hosts (none), so the small floater is
+    /// untouched. The direction gate is also semantically right: a floater docks
+    /// into a larger host, never the reverse.
+    #[test]
+    fn r1144_a_larger_source_does_not_repaint_a_smaller_window_on_release() {
+        use pinion_runtime::PointerId;
+        let mut sc = ShellCore::<RedockHintFixture>::new();
+        // Main (1000x800) is LARGER than the floater (200x200). Open a drag in
+        // MAIN (a tear-out) and release it there.
+        let m = sc.compute_paint_scene_for_window("main", 1000, 800);
+        sc.finalize_frame_for_window("main", m);
+        sc.cursor_moved_for_window("main", PointerId::MOUSE, 40.0, 40.0);
+        sc.mouse_pressed_for_window("main", PointerId::MOUSE);
+        sc.cursor_moved_for_window("main", PointerId::MOUSE, 80.0, 80.0);
+        assert!(sc.drag_session_active_for_window("main", PointerId::MOUSE));
+        let _ = sc.take_redraw_request_for_window(FLOAT_WINDOW);
+        sc.mouse_released_for_window("main", PointerId::MOUSE);
+        assert!(
+            !sc.redraw_requested_for_window(FLOAT_WINDOW),
+            "a tear-out (larger source) must NOT repaint the small floater (R1144 freeze guard)",
         );
     }
 }
