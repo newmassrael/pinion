@@ -4072,10 +4072,24 @@ pub fn view_floating_placeholder(
             theme.resolve(ColorRole::SurfaceContainerLow),
         ))
         .with_layout(
+            // (R1140 §5.51 PR-39) The torn slot is a DROP TARGET that FILLS its
+            // leaf: a floater dragged back over its OWN emptied home slot (or any
+            // panel dropped onto a torn slot) must resolve here so the shell
+            // paints the redock hint + the release docks. Without `drop_target`
+            // the home slot was invisible to the cross-window resolver (no preview
+            // at all — the self-home gap); without the 100%×100% size the
+            // placeholder shrank to its label (~19px), leaving a sliver-thin hit
+            // target instead of the whole slot.
             LayoutStyle::new()
                 .flex(FlexDirection::Column)
                 .with_justify(JustifyContent::Center)
-                .with_align_items(AlignItems::Center),
+                .with_align_items(AlignItems::Center)
+                .with_drop_target(true)
+                .with_size(
+                    Size::auto()
+                        .with_width(SizeValue::Percent(100))
+                        .with_height(SizeValue::Percent(100)),
+                ),
         ),
     )
 }
@@ -11270,6 +11284,27 @@ mod placeholder_tests {
         assert_eq!(
             outer.tag.as_deref(),
             Some(format!("inspector{PLACEHOLDER_TAG_SUFFIX}").as_str()),
+        );
+    }
+
+    #[test]
+    fn r1140_view_floating_placeholder_is_a_drop_target() {
+        // R1140 §5.51 PR-39 — a torn slot must accept drops so a floater dragged
+        // back over its OWN emptied home slot resolves here (the cross-window
+        // resolver only finds opted-in drop targets) and the shell paints the
+        // redock hint. Without this the self-home gesture showed no preview.
+        let theme = Theme::light();
+        let scene = view_floating_placeholder(
+            "properties",
+            &theme,
+            &FloatingPlaceholderStyle::m3_default(),
+        );
+        let Scene::Container(outer) = &scene else {
+            panic!()
+        };
+        assert!(
+            outer.layout.drop_target,
+            "the torn slot opts in as a drop target (self-home redock)",
         );
     }
 

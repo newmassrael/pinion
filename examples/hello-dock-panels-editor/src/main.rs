@@ -59,11 +59,12 @@ use pinion_shell::{
 };
 use pinion_widget_paint::button::{ButtonColors, ButtonStyle, view_button};
 use pinion_widget_paint::dock::{
-    DEFAULT_FLOATING_WINDOW_PREFIX, DockDropPreview, DockNode, DockPanelExternal, DockPanelStyle,
-    DockReorganizeExternal, DockReorganizer, DockSplitState, DockTopology, FloatPolicy,
-    FloatingPlaceholderStyle, TEAR_OFF_EVENT, TEAR_OFF_FOLLOW_EVENT, TEAR_OFF_REDOCK_AT_EVENT,
-    TEAR_OFF_REDOCK_EVENT, TabWellExternal, WINDOW_MOVE_EVENT, dock_drop_preview_overlay,
-    dock_drop_zone_normalized, dock_redock_preview_tint, dock_tablist_access_nodes,
+    DEFAULT_FLOATING_WINDOW_PREFIX, DockDropPreview, DockDropZone, DockNode, DockPanelExternal,
+    DockPanelStyle, DockReorganizeExternal, DockReorganizer, DockSplitState, DockTopology,
+    FloatPolicy, FloatingPlaceholderStyle, PLACEHOLDER_TAG_SUFFIX, TEAR_OFF_EVENT,
+    TEAR_OFF_FOLLOW_EVENT, TEAR_OFF_REDOCK_AT_EVENT, TEAR_OFF_REDOCK_EVENT, TabWellExternal,
+    WINDOW_MOVE_EVENT, dock_drop_preview_overlay, dock_drop_zone_normalized,
+    dock_redock_preview_tint, dock_tablist_access_nodes,
     floating_window_id as dock_floating_window_id, view_dock_panel, view_dock_surface,
     view_floating_placeholder,
 };
@@ -1244,12 +1245,20 @@ impl WidgetView for DockPanelsEditorView {
     /// SSOT the in-window drag preview uses, so a floater dragged back over main
     /// shows exactly where it will land (a one-line opt-in for a dock binding).
     fn dock_drop_preview(
-        _target_tag: &str,
+        target_tag: &str,
         panel_rect: Rect,
         x_rel: f32,
         y_rel: f32,
     ) -> Option<Scene> {
-        let zone = dock_drop_zone_normalized(f64::from(x_rel), f64::from(y_rel));
+        // R1140 — a TORN SLOT (placeholder) fills FULL on any drop: you fill the
+        // emptied slot, you do not split it, so a floater dragged back over its
+        // OWN home slot previews the WHOLE slot (Center), matching the dock-back
+        // result. A live panel target keeps the cursor-zone split classification.
+        let zone = if target_tag.ends_with(PLACEHOLDER_TAG_SUFFIX) {
+            DockDropZone::Center
+        } else {
+            dock_drop_zone_normalized(f64::from(x_rel), f64::from(y_rel))
+        };
         // R1139 — the bolder cross-window redock tint (over opaque content), not
         // the subtler in-window highlight; the overlay adds an opaque accent
         // border so the result region reads regardless of the content behind it.
@@ -1317,6 +1326,36 @@ mod tests {
     use pinion_core::reactive::Owner;
     use pinion_widget_paint::dock::{DockReorganizeIntent, DockSplitPosition, FloatPolicy};
     use pinion_widget_paint::splitter::SplitterOrientation;
+
+    #[test]
+    fn r1140_dock_drop_preview_full_for_torn_slot_split_for_live_panel() {
+        // R1140 §5.51 PR-39 — a floater dragged back over its OWN torn slot
+        // (placeholder tag) previews the WHOLE slot (Center / dock-back full),
+        // not a cursor-zone edge split: you fill an emptied slot, you do not
+        // split it. A live-panel target keeps the edge-split classification.
+        let panel = Rect::new(0, 0, 200, 100);
+        let placeholder = format!("properties{PLACEHOLDER_TAG_SUFFIX}");
+        let Some(Scene::Box(full)) =
+            <DockPanelsEditorView as WidgetView>::dock_drop_preview(&placeholder, panel, 0.1, 0.5)
+        else {
+            panic!("a torn slot paints a preview Box");
+        };
+        assert_eq!(
+            full.rect, panel,
+            "a torn slot previews the WHOLE slot (Center), even with an edge x_rel",
+        );
+        let Some(Scene::Box(half)) =
+            <DockPanelsEditorView as WidgetView>::dock_drop_preview("viewport", panel, 0.1, 0.5)
+        else {
+            panic!("a live panel paints a preview Box");
+        };
+        assert!(
+            half.rect.w < panel.w,
+            "a live panel target splits at the cursor edge (w={} < {}), not full",
+            half.rect.w,
+            panel.w,
+        );
+    }
     use std::borrow::Cow;
 
     fn run_in_owner<R>(f: impl FnOnce() -> R) -> R {
