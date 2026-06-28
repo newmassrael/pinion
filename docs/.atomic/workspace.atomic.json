@@ -18130,6 +18130,66 @@
         "R1135 NOT pushed until explicit user consent (origin/main=641a90bb after R1134 push)."
       ]
     },
+    "R1137": {
+      "decision_summary": "R1137 floater redock UX v1 (foundation of the pro-tool redesign): (R1136) snap-back fix — a borderless floater's title-bar drag is a WINDOW MOVE, so a release NOT over another window's dock now leaves it FLOATING at its moved position (is_floater_window_move + end_window_move) instead of snapping the panel home; only a DOCKED panel's tear-off snaps back. (R1137) SCXML redock_armed — dock_panel.scxml gains a redock_armed state (floating SUB-mode = over a dock zone) + over_zone/leave_zone events, driven from the shell-resolved cross-window over during the window-move, so the chart makes over-a-zone=redock / elsewhere=stay EXPLICIT + introspectable (query lifecycle). (R1137) visible preview — CoreShell::cross_window_drop_from + shell apply_redock_drag_hint paint the resolved dock zone INTO the dragged floater (topmost, always visible) since the opaque floater occludes the target-window preview.",
+      "changes_bullets": [
+        "Floater redock UX v1 — the gesture fix + SCXML reflection + a visible preview, the foundation of the pro-tool redesign the user requested.",
+        "R1136 — snap-back fix: a borderless floater's title-bar drag is a WINDOW MOVE (R1116); a release NOT over another window's dock now leaves it FLOATING at its moved position (is_floater_window_move + end_window_move) instead of snapping the panel back home. Only a DOCKED panel's tear-off still snaps back. drag_cancel of a floater move also stays floating.",
+        "R1137 — SCXML redock_armed: dock_panel.scxml gains a `redock_armed` state (a floating SUB-mode = the floater is over a dock zone) + over_zone/leave_zone events. The widget drives it from the shell-resolved cross-window over during the window-move (edge-triggered arm/disarm); is_floating() covers Floating|RedockArmed; settle_cross_window_redock drives `dropped`. The chart now makes \"over a zone = will redock / elsewhere = stay\" explicit + AI-introspectable (query lifecycle = RedockArmed/Floating). dropped still fires from floating too (the AI invoke / cursor-less path).",
+        "R1137 — visible preview: CoreShell::cross_window_drop_from (source-side peer of cross_window_drop_into) + shell apply_redock_drag_hint injects the resolved dock zone INTO the dragged floater (topmost, always visible) via the existing dock_drop_preview hook, since the opaque floater occludes the target-window preview."
+      ],
+      "verification_bullets": [
+        "pinion-core: dock_panel chart tests green (r1127 x2 + r1137 x2 — over_zone arms RedockArmed, leave_zone disarms, dropped-while-armed redocks, dock_back-while-armed restores, arm-events inert while docked).",
+        "pinion-widget-paint: dock lib 639 green incl. r1136 x3 (floater window-move release stays floating / release over another window still redocks / docked-panel snap-back unaffected) + r1137 (a window-move over a zone arms the chart, leaving disarms); r1129-r1135 unregressed.",
+        "hello-dock-panels-editor: 58 green.",
+        "RPC demo r1124_floater_drag_back_redock: PASS against the current source (the live floater->main redock still executes; no regression from the chart/release changes).",
+        "Local gate: cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) clean; cargo fmt --all clean; cargo test --workspace green.",
+        "Build currency verified: the release editor binary contains RedockArmed (chart) + __xwin_redock_hint (preview) strings — confirmed NOT stale (the prior debug-vs-release / interrupted-build staleness was the cause of earlier false test failures; see rpc-demo-runs-release-binary memory).",
+        "Live preview render is mid-drag (scene/drag atomic = no mid-drag snapshot, the §2#2 gap) so it is HW/live-gated; the chart driving + release behavior are headlessly proven."
+      ],
+      "impact_refs": [
+        "5.51.1"
+      ],
+      "carry_forward_bullets": [
+        "This is FOUNDATION v1 of a multi-round pro-tool floater-redock campaign the user asked for; the design is now well-grounded by a survey of how pro tools work (Visual Studio/Qt Advanced Docking/Unreal Slate = guide-diamond, cursor-based, translucent drag; VS Code/Photoshop/IntelliJ = highlighted-region, cursor-based). REMAINING SLICES (all DESIGN-SETTLED, verified-slice them next, build verified-release each time):",
+        "1. VISIBLE DOCK-ZONE GUIDES on main (the pro pattern) — when a floater is over main, highlight main's panels' edge/center dock zones so the user SEES where to aim (the cursor-based trigger feels broken only because the zones are invisible today). The current on-floater hint is the interim; the guides are the real fix.",
+        "2. OCCLUSION — pro tools make the dragged window translucent/outline so the target preview shows. pinion has no window-alpha (codegen Vello surface alpha = VELLO-carry-territory, HW/compositor-dependent). Interim = the on-floater hint (this round). Proper = window transparency OR keep the on-floater guide.",
+        "3. SELF-HOME = FULL: a floater over its OWN home slot must preview + result FULL (home restore), not an edge-split half. Needs the cross-window resolution to compare the target panel to the SOURCE panel (the DragPayload carries the dock-panel id) and mark self-home -> Center/full. NOT a quick fix (cross-window plumbing).",
+        "4. TABBING RUNTIME TOGGLE + adaptive 4/5-way guides: with_tabbing(false) ALREADY gives 4-way (edge-only, no center tabify) per-surface; make it runtime-settable (Cell<bool> + set_tabbing invoke + toolbar toggle, the R1135 FloatPolicy precedent) so the guide shows 5-way (tabbing) or 4-way (split-only).",
+        "TRIGGER QUESTION the user raised: the preview is CURSOR-point based (resolve_cross_window_live uses the header grab point), not floater-bounds-overlap; pro tools are also cursor-based but make it work via visible guides (slice 1). So the fix is slice 1 (visible guides), NOT switching to bounds-overlap.",
+        "PROCESS LESSON (critical, repeated): RpcSubprocess runs the RELEASE binary; an INTERRUPTED `cargo build --release` leaves a STALE binary -> the user tested old behavior repeatedly and lost trust. ALWAYS rebuild --release to completion + verify currency via `strings <bin> | grep <new-marker>` BEFORE asking the user to live-test. [[rpc-demo-runs-release-binary]].",
+        "Not pushed; await explicit user consent (origin/main=6ef04f71 after R1135)."
+      ],
+      "publishable_decision_summary": "R1137 floater redock UX v1 (foundation of the pro-tool redesign): (R1136) snap-back fix — a borderless floater's title-bar drag is a WINDOW MOVE, so a release NOT over another window's dock now leaves it FLOATING at its moved position (is_floater_window_move + end_window_move) instead of snapping the panel home; only a DOCKED panel's tear-off snaps back. (R1137) SCXML redock_armed — dock_panel.scxml gains a redock_armed state (floating SUB-mode = over a dock zone) + over_zone/leave_zone events, driven from the shell-resolved cross-window over during the window-move, so the chart makes over-a-zone=redock / elsewhere=stay EXPLICIT + introspectable (query lifecycle). (R1137) visible preview — CoreShell::cross_window_drop_from + shell apply_redock_drag_hint paint the resolved dock zone INTO the dragged floater (topmost, always visible) since the opaque floater occludes the target-window preview.",
+      "publishable_changes_bullets": [
+        "Floater redock UX v1 — the gesture fix + SCXML reflection + a visible preview, the foundation of the pro-tool redesign the user requested.",
+        "R1136 — snap-back fix: a borderless floater's title-bar drag is a WINDOW MOVE (R1116); a release NOT over another window's dock now leaves it FLOATING at its moved position (is_floater_window_move + end_window_move) instead of snapping the panel back home. Only a DOCKED panel's tear-off still snaps back. drag_cancel of a floater move also stays floating.",
+        "R1137 — SCXML redock_armed: dock_panel.scxml gains a `redock_armed` state (a floating SUB-mode = the floater is over a dock zone) + over_zone/leave_zone events. The widget drives it from the shell-resolved cross-window over during the window-move (edge-triggered arm/disarm); is_floating() covers Floating|RedockArmed; settle_cross_window_redock drives `dropped`. The chart now makes \"over a zone = will redock / elsewhere = stay\" explicit + AI-introspectable (query lifecycle = RedockArmed/Floating). dropped still fires from floating too (the AI invoke / cursor-less path).",
+        "R1137 — visible preview: CoreShell::cross_window_drop_from (source-side peer of cross_window_drop_into) + shell apply_redock_drag_hint injects the resolved dock zone INTO the dragged floater (topmost, always visible) via the existing dock_drop_preview hook, since the opaque floater occludes the target-window preview."
+      ],
+      "publishable_verification_bullets": [
+        "pinion-core: dock_panel chart tests green (r1127 x2 + r1137 x2 — over_zone arms RedockArmed, leave_zone disarms, dropped-while-armed redocks, dock_back-while-armed restores, arm-events inert while docked).",
+        "pinion-widget-paint: dock lib 639 green incl. r1136 x3 (floater window-move release stays floating / release over another window still redocks / docked-panel snap-back unaffected) + r1137 (a window-move over a zone arms the chart, leaving disarms); r1129-r1135 unregressed.",
+        "hello-dock-panels-editor: 58 green.",
+        "RPC demo r1124_floater_drag_back_redock: PASS against the current source (the live floater->main redock still executes; no regression from the chart/release changes).",
+        "Local gate: cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) clean; cargo fmt --all clean; cargo test --workspace green.",
+        "Build currency verified: the release editor binary contains RedockArmed (chart) + __xwin_redock_hint (preview) strings — confirmed NOT stale (the prior debug-vs-release / interrupted-build staleness was the cause of earlier false test failures; see rpc-demo-runs-release-binary memory).",
+        "Live preview render is mid-drag (scene/drag atomic = no mid-drag snapshot, the §2#2 gap) so it is HW/live-gated; the chart driving + release behavior are headlessly proven."
+      ],
+      "publishable_impact_refs": [
+        "5.51.1"
+      ],
+      "publishable_carry_forward_bullets": [
+        "This is FOUNDATION v1 of a multi-round pro-tool floater-redock campaign the user asked for; the design is now well-grounded by a survey of how pro tools work (Visual Studio/Qt Advanced Docking/Unreal Slate = guide-diamond, cursor-based, translucent drag; VS Code/Photoshop/IntelliJ = highlighted-region, cursor-based). REMAINING SLICES (all DESIGN-SETTLED, verified-slice them next, build verified-release each time):",
+        "1. VISIBLE DOCK-ZONE GUIDES on main (the pro pattern) — when a floater is over main, highlight main's panels' edge/center dock zones so the user SEES where to aim (the cursor-based trigger feels broken only because the zones are invisible today). The current on-floater hint is the interim; the guides are the real fix.",
+        "2. OCCLUSION — pro tools make the dragged window translucent/outline so the target preview shows. pinion has no window-alpha (codegen Vello surface alpha = VELLO-carry-territory, HW/compositor-dependent). Interim = the on-floater hint (this round). Proper = window transparency OR keep the on-floater guide.",
+        "3. SELF-HOME = FULL: a floater over its OWN home slot must preview + result FULL (home restore), not an edge-split half. Needs the cross-window resolution to compare the target panel to the SOURCE panel (the DragPayload carries the dock-panel id) and mark self-home -> Center/full. NOT a quick fix (cross-window plumbing).",
+        "4. TABBING RUNTIME TOGGLE + adaptive 4/5-way guides: with_tabbing(false) ALREADY gives 4-way (edge-only, no center tabify) per-surface; make it runtime-settable (Cell<bool> + set_tabbing invoke + toolbar toggle, the R1135 FloatPolicy precedent) so the guide shows 5-way (tabbing) or 4-way (split-only).",
+        "TRIGGER QUESTION the user raised: the preview is CURSOR-point based (resolve_cross_window_live uses the header grab point), not floater-bounds-overlap; pro tools are also cursor-based but make it work via visible guides (slice 1). So the fix is slice 1 (visible guides), NOT switching to bounds-overlap.",
+        "PROCESS LESSON (critical, repeated): RpcSubprocess runs the RELEASE binary; an INTERRUPTED `cargo build --release` leaves a STALE binary -> the user tested old behavior repeatedly and lost trust. ALWAYS rebuild --release to completion + verify currency via `strings <bin> | grep <new-marker>` BEFORE asking the user to live-test. [[rpc-demo-runs-release-binary]].",
+        "Not pushed; await explicit user consent (origin/main=6ef04f71 after R1135)."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
