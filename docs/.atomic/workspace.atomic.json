@@ -18442,6 +18442,40 @@
         "Covers cursor + body-centre. TRUE \"slight corner overlap\" (조금이라도 = even a tiny touch) would need size-gated bounds-overlap (sample the whole floater footprint, resolve only into LARGER host windows to keep direction unambiguous). That has a real trade-off — a floater overlapping main would then redock on release, breaking R1136 stay-floating-over-main — so it is a deliberate user decision, not built blind. The centre fallback is the safe middle ground that needs no resolution-model change."
       ]
     },
+    "R1144": {
+      "decision_summary": "R1144 fix the wgpu validation FREEZE on tear-off — the R1141 dock-zone guide gate ('any other window dragging') lit guides on the brand-new floater a tear-OUT creates and painted them on its churning surface, cascading validation errors that froze the window. Gate guides + their repaint on a SMALLER window dragging toward a LARGER host (a floater into main).",
+      "changes_bullets": [
+        "apply_dock_zone_guides + the R1142 drag-end repaint now gate on a SMALLER window dragging toward a LARGER host (smaller_window_dragging — a window smaller by declared area has an active drag), not \"any other window dragging\". A tear-OUT makes MAIN (the largest window) the dragger, so no smaller window is dragging → no guides are lit on, and the floater is not repainted on release. The R1141 broad gate lit guides on the brand-new floater being torn off and painted them on its still-churning surface (a just-created / moving window) → a wgpu \"surface acquisition failed: validation\" / \"Texture with '' label is invalid\" cascade that FROZE the window. A dock-back (floater small -> main large) still lights main's guides — the correct direction (a floater docks into a larger host, never the reverse).",
+        "Removed the now-superseded CoreShell::any_other_window_dragging (the broad gate that was the footgun)."
+      ],
+      "verification_bullets": [
+        "Live RPC tear-off (lavapipe, visible_window): drag the outliner header out past the right edge → the editor stderr has 0 wgpu surface/validation error lines (was 91 in the frozen R1143 run).",
+        "shell r1144_a_larger_source_does_not_repaint_a_smaller_window_on_release (freeze guard): a drag opened + released in MAIN (the larger window) does NOT request a redraw of the smaller floater; r1142_drag_release_repaints_the_guide_host_to_strip_its_guides still passes (a floater drag still repaints the larger host main).",
+        "Gate: workspace clippy --all-targets --features pinion-runtime/vello -D pedantic clean; rustfmt clean; pinion-shell 134 + pinion-runtime 384 lib tests green, 0 fail."
+      ],
+      "impact_refs": [
+        "5.51"
+      ],
+      "carry_forward_bullets": [
+        "Self-inflicted regression: R1141 introduced the broad guide gate; the freeze surfaced once a live tear-OUT-by-drag ran (the user hit it). The size gate (smaller-into-larger) is the floater<->host direction; two similar-sized floaters would show no guides between them (edge case, acceptable — dock setups have one large host). LESSON: an overlay gated on \"any other window dragging\" must exclude the brand-new follower a tear-out is creating (its surface churns); a direction/size gate does this AND is semantically correct."
+      ],
+      "publishable_decision_summary": "R1144 fix the wgpu validation FREEZE on tear-off — the R1141 dock-zone guide gate ('any other window dragging') lit guides on the brand-new floater a tear-OUT creates and painted them on its churning surface, cascading validation errors that froze the window. Gate guides + their repaint on a SMALLER window dragging toward a LARGER host (a floater into main).",
+      "publishable_changes_bullets": [
+        "apply_dock_zone_guides + the R1142 drag-end repaint now gate on a SMALLER window dragging toward a LARGER host (smaller_window_dragging — a window smaller by declared area has an active drag), not \"any other window dragging\". A tear-OUT makes MAIN (the largest window) the dragger, so no smaller window is dragging → no guides are lit on, and the floater is not repainted on release. The R1141 broad gate lit guides on the brand-new floater being torn off and painted them on its still-churning surface (a just-created / moving window) → a wgpu \"surface acquisition failed: validation\" / \"Texture with '' label is invalid\" cascade that FROZE the window. A dock-back (floater small -> main large) still lights main's guides — the correct direction (a floater docks into a larger host, never the reverse).",
+        "Removed the now-superseded CoreShell::any_other_window_dragging (the broad gate that was the footgun)."
+      ],
+      "publishable_verification_bullets": [
+        "Live RPC tear-off (lavapipe, visible_window): drag the outliner header out past the right edge → the editor stderr has 0 wgpu surface/validation error lines (was 91 in the frozen R1143 run).",
+        "shell r1144_a_larger_source_does_not_repaint_a_smaller_window_on_release (freeze guard): a drag opened + released in MAIN (the larger window) does NOT request a redraw of the smaller floater; r1142_drag_release_repaints_the_guide_host_to_strip_its_guides still passes (a floater drag still repaints the larger host main).",
+        "Gate: workspace clippy --all-targets --features pinion-runtime/vello -D pedantic clean; rustfmt clean; pinion-shell 134 + pinion-runtime 384 lib tests green, 0 fail."
+      ],
+      "publishable_impact_refs": [
+        "5.51"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Self-inflicted regression: R1141 introduced the broad guide gate; the freeze surfaced once a live tear-OUT-by-drag ran (the user hit it). The size gate (smaller-into-larger) is the floater<->host direction; two similar-sized floaters would show no guides between them (edge case, acceptable — dock setups have one large host). LESSON: an overlay gated on \"any other window dragging\" must exclude the brand-new follower a tear-out is creating (its surface churns); a direction/size gate does this AND is semantically correct."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
