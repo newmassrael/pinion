@@ -17982,6 +17982,52 @@
         "foundation only: visible collapse comes after steps 1+2 + the per-surface policy wire"
       ]
     },
+    "R1133": {
+      "decision_summary": "R1133 collapse-policy step 1 (lifecycle re-hydration): DockPanelExternal::with_initial_floating re-hydrates the chart from the binding windows_signal at construction, wired in the editor factory — fixing a latent bug where any topology-change factory re-run reset a floating panel's chart to Docked (a R1131 2-layer desync), and laying the reconstruct-survival the collapse policy needs",
+      "changes_bullets": [
+        "with_initial_floating(bool): re-hydrates the chart to Floating (via Escaped) at construct",
+        "editor create_extra_externals snapshots windows_signal + seeds each panel by is_panel_floating",
+        "fixes a LATENT bug: factory re-run (any topology change) reset a floating panel's chart to Docked",
+        "windows_signal = persistent float SSOT; the per-External chart is its re-hydratable projection"
+      ],
+      "verification_bullets": [
+        "dock unit r1133: with_initial_floating(true)=Floating / (false)=Docked / plain new=Docked",
+        "editor r1133: float viewport, re-run factory -> rebuilt external=Floating, outliner=Docked",
+        "guard is real: without the fix the reconstructed floater would be Docked (R1131 2-layer break)",
+        "workspace test exit 0; clippy -D pedantic + rustfmt clean"
+      ],
+      "impact_refs": [
+        "5.51.1",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "step 2 (external union: register floating-not-in-topology panels) = needed only under collapse",
+        "R1134 = step2 union + collapse|placeholder per-surface toggle + release-as-floated wire + demo",
+        "collapse can't remove_leaf mid-drag (reconstruct breaks drag) -> collapse on release-as-floated"
+      ],
+      "publishable_decision_summary": "R1133 collapse-policy step 1 (lifecycle re-hydration): DockPanelExternal::with_initial_floating re-hydrates the chart from the binding windows_signal at construction, wired in the editor factory — fixing a latent bug where any topology-change factory re-run reset a floating panel's chart to Docked (a R1131 2-layer desync), and laying the reconstruct-survival the collapse policy needs",
+      "publishable_changes_bullets": [
+        "with_initial_floating(bool): re-hydrates the chart to Floating (via Escaped) at construct",
+        "editor create_extra_externals snapshots windows_signal + seeds each panel by is_panel_floating",
+        "fixes a LATENT bug: factory re-run (any topology change) reset a floating panel's chart to Docked",
+        "windows_signal = persistent float SSOT; the per-External chart is its re-hydratable projection"
+      ],
+      "publishable_verification_bullets": [
+        "dock unit r1133: with_initial_floating(true)=Floating / (false)=Docked / plain new=Docked",
+        "editor r1133: float viewport, re-run factory -> rebuilt external=Floating, outliner=Docked",
+        "guard is real: without the fix the reconstructed floater would be Docked (R1131 2-layer break)",
+        "workspace test exit 0; clippy -D pedantic + rustfmt clean"
+      ],
+      "publishable_impact_refs": [
+        "5.51.1",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "step 2 (external union: register floating-not-in-topology panels) = needed only under collapse",
+        "R1134 = step2 union + collapse|placeholder per-surface toggle + release-as-floated wire + demo",
+        "collapse can't remove_leaf mid-drag (reconstruct breaks drag) -> collapse on release-as-floated"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
