@@ -1025,6 +1025,59 @@ impl DockTopology {
         }
     }
 
+    /// (R1132 §5.51.1) Capture the **home anchor** of the bare leaf at
+    /// `panel_id` — the parent-Split context needed to restore it after a
+    /// [`Self::remove_leaf`]. The `(leaf_anchor, insert_leaf_at_anchor)` pair is
+    /// the substrate a COLLAPSE-policy float needs: tear-off removes the leaf so
+    /// the layout reflows, and dock-back restores it next to its original
+    /// sibling — the typed home-anchor the §5.51.1 chart spec mandates *instead
+    /// of* a hardcoded default redock slot (the §2 #5 drift this campaign
+    /// retires). Read-only; the binding captures the anchor at float time and
+    /// holds it (typed Rust sidecar) until dock-back.
+    ///
+    /// Returns `None` when the leaf has no parent Split to anchor against — the
+    /// topology root (a sole pane, nothing to reflow) or a panel inside a
+    /// [`DockNode::Tabs`] well (a well member restores by re-tabbing, a distinct
+    /// anchor this round does not model; the binding falls back). The captured
+    /// [`DockLeafAnchor::sibling`] is a representative panel of the OTHER child
+    /// subtree; [`Self::insert_leaf_at_anchor`] re-splits it. For a **leaf**
+    /// sibling the `remove_leaf` → `insert_leaf_at_anchor` round-trip is EXACT;
+    /// for a **subtree** sibling the leaf returns adjacent to the sibling's
+    /// representative (sensible, no panel lost — a fully subtree-faithful wrap is
+    /// a deferred follow-up gated on a consumer that needs pixel-exact nesting).
+    #[must_use]
+    pub fn leaf_anchor(&self, panel_id: &str) -> Option<DockLeafAnchor> {
+        leaf_anchor_rec(&self.root, panel_id)
+    }
+
+    /// (R1132 §5.51.1) Restore a leaf to the position [`Self::leaf_anchor`]
+    /// captured — the dock-back inverse of [`Self::remove_leaf`] for a
+    /// collapse-policy float. Re-splits the anchor's sibling, placing `panel_id`
+    /// back on its original side with the original orientation / ratio / split id
+    /// (reusing the id so the binding's per-split state re-binds). Pure
+    /// composition over [`Self::split_leaf_into`].
+    ///
+    /// # Errors
+    ///
+    /// * [`TopologyError::PanelNotFound`] if the anchor's `sibling` no longer
+    ///   exists (it was itself removed since capture) — the caller falls back to
+    ///   a default dock.
+    /// * the [`Self::split_leaf_into`] id-collision / non-finite-ratio errors.
+    pub fn insert_leaf_at_anchor(
+        &self,
+        panel_id: impl Into<Cow<'static, str>>,
+        anchor: &DockLeafAnchor,
+    ) -> Result<DockTopology, TopologyError> {
+        self.split_leaf_into(
+            &anchor.sibling,
+            panel_id,
+            anchor.split_id.clone(),
+            anchor.orientation,
+            anchor.ratio,
+            anchor.position,
+        )
+    }
+
     /// (R1083 §5.51) Merge the dragged `source` panel into `target`'s pane
     /// as a tab well — the [`DockDropZone::Center`] gesture's substrate
     /// side (replacing the tab-less v1 swap). `source` is removed from its
@@ -1203,6 +1256,70 @@ pub enum DockSplitPosition {
     /// Inserted leaf takes the Split's `second` slot (right / bottom);
     /// the pre-existing leaf stays as `first`.
     Second,
+}
+
+/// (R1132 §5.51.1) The home anchor of a docked leaf — the parent-Split context
+/// captured by [`DockTopology::leaf_anchor`] so a collapse-policy float can
+/// [`remove_leaf`](DockTopology::remove_leaf) (reflow the layout) and a dock-back
+/// [`insert_leaf_at_anchor`](DockTopology::insert_leaf_at_anchor) restore the
+/// leaf next to its original sibling. This is the typed home-anchor the §5.51.1
+/// dock-lifecycle chart spec mandates — the binding owns it as a typed Rust
+/// sidecar — *instead of* a hardcoded default redock slot (the §2 #5 drift).
+#[derive(Debug, Clone, PartialEq)]
+pub struct DockLeafAnchor {
+    /// A representative panel id of the sibling subtree the removed leaf was
+    /// paired with under its parent Split. [`DockTopology::insert_leaf_at_anchor`]
+    /// re-splits this panel — exact restore when the sibling was a bare leaf.
+    pub sibling: String,
+    /// The parent Split's stable id, reused on restore so the binding's per-split
+    /// (ratio handle / [`SplitterExternal`](crate::splitter::SplitterExternal))
+    /// state re-binds to the same id.
+    pub split_id: String,
+    /// The parent Split's layout axis.
+    pub orientation: SplitterOrientation,
+    /// The parent Split's position ratio.
+    pub ratio: f32,
+    /// Which side the removed leaf occupied (`First` = left / top).
+    pub position: DockSplitPosition,
+}
+
+/// (R1132 §5.51.1) Recursive capture of a bare leaf's parent-Split anchor —
+/// the read side of [`DockTopology::leaf_anchor`]. Returns the anchor for the
+/// first Split whose `first` / `second` child is the bare [`DockNode::Leaf`]
+/// `target`; `None` when `target` is the root leaf or lives inside a
+/// [`DockNode::Tabs`] well (no parent Split to anchor against).
+fn leaf_anchor_rec(node: &DockNode, target: &str) -> Option<DockLeafAnchor> {
+    let DockNode::Split {
+        id,
+        orientation,
+        ratio,
+        first,
+        second,
+    } = node
+    else {
+        return None;
+    };
+    let is_target =
+        |n: &DockNode| matches!(n, DockNode::Leaf { panel_id } if panel_id.as_ref() == target);
+    if is_target(first) {
+        return Some(DockLeafAnchor {
+            sibling: second.panel_ids().first().copied()?.to_string(),
+            split_id: id.to_string(),
+            orientation: *orientation,
+            ratio: *ratio,
+            position: DockSplitPosition::First,
+        });
+    }
+    if is_target(second) {
+        return Some(DockLeafAnchor {
+            sibling: first.panel_ids().first().copied()?.to_string(),
+            split_id: id.to_string(),
+            orientation: *orientation,
+            ratio: *ratio,
+            position: DockSplitPosition::Second,
+        });
+    }
+    leaf_anchor_rec(first, target).or_else(|| leaf_anchor_rec(second, target))
 }
 
 /// (R686 §5.16 §5.45) In-place swap of two panel ids throughout a
@@ -8036,6 +8153,123 @@ mod topology_tests {
             panic!("expected InvalidRatio, got {err:?}");
         };
         assert_eq!(split_id, "s");
+    }
+
+    // ── R1132 §5.51.1 — home-anchor capture/restore (collapse-policy substrate) ──
+
+    #[test]
+    fn r1132_leaf_anchor_round_trips_a_leaf_sibling_exactly() {
+        // Split{root_h, H, 0.5, Leaf a, Leaf b}: capture a's anchor, collapse
+        // (remove a → layout reflows to just b), restore at the anchor == the
+        // original topology. remove_leaf + insert_leaf_at_anchor is the exact
+        // inverse for a leaf sibling — the collapse/dock-back round-trip.
+        let topo = DockTopology::new(DockNode::split_horizontal(
+            "root_h",
+            0.5,
+            DockNode::leaf("a"),
+            DockNode::leaf("b"),
+        ));
+        let anchor = topo.leaf_anchor("a").expect("a has a parent-split anchor");
+        assert_eq!(anchor.sibling, "b");
+        assert_eq!(anchor.split_id, "root_h");
+        assert_eq!(anchor.position, DockSplitPosition::First);
+        let collapsed = topo.remove_leaf("a").expect("collapse a");
+        assert_eq!(
+            collapsed.panel_ids(),
+            vec!["b"],
+            "collapse reflows to just b"
+        );
+        let restored = collapsed
+            .insert_leaf_at_anchor("a", &anchor)
+            .expect("restore a at its anchor");
+        assert_eq!(
+            restored, topo,
+            "remove_leaf + insert_leaf_at_anchor is identity for a leaf sibling",
+        );
+    }
+
+    #[test]
+    fn r1132_leaf_anchor_second_side_round_trips() {
+        // The Second-side path (removed leaf was the split's `second` child).
+        let topo = DockTopology::new(DockNode::split_horizontal(
+            "root_h",
+            0.3,
+            DockNode::leaf("a"),
+            DockNode::leaf("b"),
+        ));
+        let anchor = topo.leaf_anchor("b").expect("b anchor");
+        assert_eq!(anchor.sibling, "a");
+        assert_eq!(anchor.position, DockSplitPosition::Second);
+        let restored = topo
+            .remove_leaf("b")
+            .unwrap()
+            .insert_leaf_at_anchor("b", &anchor)
+            .unwrap();
+        assert_eq!(restored, topo, "Second-side round-trip is exact too");
+    }
+
+    #[test]
+    fn r1132_leaf_anchor_none_for_root_pane() {
+        // The sole-pane root has no parent Split to anchor against → None (the
+        // binding cannot collapse the last pane; nothing to reflow).
+        let single = DockTopology::new(DockNode::leaf("only"));
+        assert!(
+            single.leaf_anchor("only").is_none(),
+            "the root leaf has no home anchor",
+        );
+        // An absent panel also has no anchor.
+        assert!(single.leaf_anchor("ghost").is_none());
+    }
+
+    #[test]
+    fn r1132_leaf_anchor_subtree_sibling_keeps_every_panel() {
+        // Split{root, H, 0.5, Leaf a, Split{inner, V, 0.5, Leaf b, Leaf c}}:
+        // a's sibling is the {b,c} SUBTREE (representative = b). Restore is not
+        // pixel-exact for a subtree sibling (a returns adjacent to b, the
+        // representative), but no panel is lost and a returns next to its
+        // original neighbour — killing the hardcoded-default redock smell.
+        let topo = DockTopology::new(DockNode::split_horizontal(
+            "root",
+            0.5,
+            DockNode::leaf("a"),
+            DockNode::split_vertical("inner", 0.5, DockNode::leaf("b"), DockNode::leaf("c")),
+        ));
+        let anchor = topo.leaf_anchor("a").expect("a anchor");
+        assert_eq!(
+            anchor.sibling, "b",
+            "representative of the {{b,c}} sibling subtree",
+        );
+        let restored = topo
+            .remove_leaf("a")
+            .unwrap()
+            .insert_leaf_at_anchor("a", &anchor)
+            .unwrap();
+        let mut ids = restored.panel_ids();
+        ids.sort_unstable();
+        assert_eq!(
+            ids,
+            vec!["a", "b", "c"],
+            "no panel lost; a restored beside b"
+        );
+    }
+
+    #[test]
+    fn r1132_insert_at_anchor_errors_when_sibling_gone() {
+        // If the captured sibling was itself removed before dock-back, restore
+        // surfaces PanelNotFound so the binding can fall back to a default dock.
+        let topo = DockTopology::new(DockNode::split_horizontal(
+            "root_h",
+            0.5,
+            DockNode::leaf("a"),
+            DockNode::leaf("b"),
+        ));
+        let anchor = topo.leaf_anchor("a").expect("a anchor"); // sibling = "b"
+        // A topology where "b" no longer exists.
+        let other = DockTopology::new(DockNode::leaf("z"));
+        assert!(
+            other.insert_leaf_at_anchor("a", &anchor).is_err(),
+            "restore against a vanished sibling errors (caller falls back)",
+        );
     }
 
     #[test]
