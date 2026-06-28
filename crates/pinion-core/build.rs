@@ -15,6 +15,7 @@ fn main() {
         "widgets/color_area.scxml",
         "widgets/scroll_bar.scxml",
         "widgets/text_field.scxml",
+        "widgets/dock_panel.scxml",
         "app.scxml",
         "fixtures/multi_window.scxml",
     ];

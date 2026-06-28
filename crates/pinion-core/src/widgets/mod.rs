@@ -9,6 +9,7 @@ pub mod context_menu;
 pub mod datepicker;
 pub mod disclosure;
 pub mod disclosure_group;
+pub mod dock_panel;
 pub mod file_browser;
 pub mod grid_sort;
 pub mod group_order;

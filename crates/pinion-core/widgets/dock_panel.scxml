@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- pinion §5.51.1 R1127 — Dock-panel float/redock lifecycle statechart.
+
+     The last un-charted interactive widget brought onto the §5.38
+     per-widget-SCXML canon (R12 Button precedent), replacing the
+     imperative DockPanelExternal + binding-reducer lifecycle that
+     drifted from §2 #5 (and forced hardcoded redock defaults).
+
+     Discrete lifecycle ONLY (datamodel="null"). Mirroring the Slider
+     "SCXML owns the interaction state; the binding owns the typed
+     value" split: the home-anchor, target panel, drop zone, the dock
+     topology, and the floating WindowSpec all live in the Rust binding
+     (DockPanelExternal) as typed data — NOT in this chart. No advanced
+     SCXML features are needed (the §5.51.1 review): no <data>/<assign>/
+     cond/<parallel>/<history>/<invoke>/<send>/event-data — only the
+     compound states + transitions + <raise> every other widget chart
+     uses.
+
+     Events in (the binding sends drag-substrate §5.51 outcomes; the
+     transient grab/move/follow of the drag itself is the R742 router's
+     concern, not this lifecycle chart):
+       escaped   - a docked-panel drag left every dock zone (tear-off)
+       dropped   - a floating panel released over another panel's zone
+       dock_back - an explicit dock-back (keyboard toggle / cancel-home)
+
+     Events out (raised; the binding performs the topology IO via the
+     §5.51.1 data-layer primitives):
+       dock_panel.float    - push the floating window; (collapse policy)
+                             float_out_panel; (placeholder policy) keep leaf
+       dock_panel.redock   - dock_panel_at_zone(target, zone) + drop window
+       dock_panel.restore  - dock at the remembered home anchor + drop window
+
+     A floater drag cancelled in empty space raises nothing and stays
+     `floating` (no transition) — only an explicit `dock_back` returns it.
+
+     States: docked / floating.
+-->
+<scxml xmlns="http://www.w3.org/2005/07/scxml"
+       version="1.0"
+       datamodel="null"
+       initial="docked">
+
+  <state id="docked">
+    <!-- A docked-panel drag escaped the dock surface: it floats. -->
+    <transition event="escaped" target="floating">
+      <raise event="dock_panel.float"/>
+    </transition>
+  </state>
+
+  <state id="floating">
+    <!-- The floater was released over a dock zone: it re-docks there. -->
+    <transition event="dropped" target="docked">
+      <raise event="dock_panel.redock"/>
+    </transition>
+    <!-- Explicit dock-back (keyboard toggle / cancel-to-home): it
+         returns to its remembered home anchor. -->
+    <transition event="dock_back" target="docked">
+      <raise event="dock_panel.restore"/>
+    </transition>
+  </state>
+
+</scxml>
