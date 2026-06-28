@@ -865,6 +865,14 @@ impl WidgetCore for DockPanelsEditorView {
         // dynamic external set re-runs on each topology change).
         let reorganizer = use_editor_reorganizer();
         let preview = use_drop_preview();
+        // (R1133 §5.51.1 §2 #5) Snapshot the live float truth so each
+        // reconstructed panel External re-hydrates its lifecycle chart from it.
+        // This factory re-runs on every topology change (R688 reconcile); without
+        // re-hydration a panel that is floating when an UNRELATED reorganize
+        // rebuilds the external set would have its chart reset to Docked
+        // (desyncing the R1131 2-layer invariant). `windows_signal` is the
+        // persistent SSOT; the chart is its re-hydratable projection.
+        let windows = use_editor_windows().get();
         let mut externals = Vec::new();
         // (R1084 §5.51) The dock surface may be empty (`None`, a first-class
         // state); only a `Some(topology)` contributes splitter + panel
@@ -905,7 +913,11 @@ impl WidgetCore for DockPanelsEditorView {
                     // so a header drag IN it is a borderless title-bar WINDOW MOVE
                     // (grab-offset), not a dock tear-off. The id is the same
                     // `floating_window_id` SSOT the tear-off reducer + view use.
-                    .with_floating_window(floating_window_id(panel_id));
+                    .with_floating_window(floating_window_id(panel_id))
+                    // (R1133 §5.51.1) Re-hydrate the lifecycle chart from the live
+                    // float truth so a reconstruct (any topology change) does not
+                    // reset a floating panel's chart to Docked.
+                    .with_initial_floating(is_panel_floating(&windows, panel_id));
                 externals.push(ExtraExternal::new(panel_id.to_string(), Box::new(panel)));
             }
             // (R1096 §5.51) One TabWellExternal per Tabs well, registered at
@@ -1435,6 +1447,38 @@ mod tests {
             }
             assert!(tags.contains(&DOCK_REORGANIZE_TAG));
             assert!(tags.contains(&DOCK_UNDO_TAG));
+        });
+    }
+
+    #[test]
+    fn r1133_reconstructed_external_rehydrates_floating_lifecycle() {
+        // R1133 §5.51.1 §2 #5 — the external factory re-runs on EVERY topology
+        // change (R688 reconcile), rebuilding every DockPanelExternal. A panel
+        // that is floating at that moment must NOT have its lifecycle chart reset
+        // to Docked (the latent reconstruct-while-floating desync). This drives
+        // the reconstruct: float viewport, then re-run create_extra_externals
+        // (what a reorganize triggers) and assert the rebuilt viewport external
+        // re-hydrates to Floating while a docked panel stays Docked.
+        run_in_owner(|| {
+            toggle_panel_floating(VIEWPORT_PANEL_TAG); // viewport now floating
+            let externals = <DockPanelsEditorView as WidgetCore>::create_extra_externals();
+            let lifecycle = |tag: &str| {
+                externals
+                    .iter()
+                    .find(|e| e.tag.as_ref() == tag)
+                    .and_then(|e| e.handle.introspect())
+                    .and_then(|i| i.query("lifecycle"))
+            };
+            assert_eq!(
+                lifecycle(VIEWPORT_PANEL_TAG),
+                Some(IntrospectValue::Text("Floating".to_string())),
+                "a reconstructed floating panel re-hydrates its chart from windows_signal",
+            );
+            assert_eq!(
+                lifecycle(OUTLINER_PANEL_TAG),
+                Some(IntrospectValue::Text("Docked".to_string())),
+                "a docked panel's reconstructed chart stays Docked",
+            );
         });
     }
 

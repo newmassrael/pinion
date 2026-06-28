@@ -4602,6 +4602,27 @@ impl DockPanelExternal {
         self
     }
 
+    /// (R1133 §5.51.1 §2 #5) Re-hydrate the lifecycle chart from the binding's
+    /// float truth at construction. A `DockPanelExternal` is rebuilt every time
+    /// the binding's external factory re-runs (the R688 reconcile on any topology
+    /// change), and a fresh chart starts `Docked` (the SCXML initial). For a
+    /// panel that IS currently floating that would RESET the chart to `Docked`
+    /// while its window exists — desyncing the chart from the binding's
+    /// `windows_signal` (the persistent float truth). The binding passes
+    /// `floating = is_panel_floating(panel)` here so the reconstructed chart is
+    /// re-driven to `Floating` via the chart's own `escaped` transition (a replay
+    /// of the float, not a back-door state poke), keeping the R1131 2-layer
+    /// invariant under reconstruction. `false` (the default `new`) leaves the
+    /// chart `Docked`. This makes `windows_signal` the single persistent SSOT and
+    /// the chart its re-hydratable projection.
+    #[must_use]
+    pub fn with_initial_floating(self, floating: bool) -> Self {
+        if floating {
+            self.send_lifecycle(DockPanelEvent::Escaped);
+        }
+        self
+    }
+
     /// (R1081 §5.51) Share the editor's reorganize coordinator so a drop
     /// onto another panel docks (split / swap) through the same
     /// `split_seq` + undo history the AI `invoke` path uses. Without it
@@ -6418,6 +6439,32 @@ mod tests {
             "the dock-back direction emits the directed tear_off_redock intent",
         );
         assert!(!ext.tear_off_fired(), "a dock-back is not a tear-off");
+    }
+
+    #[test]
+    fn r1133_with_initial_floating_rehydrates_the_chart() {
+        // R1133 §5.51.1 — a reconstructed External re-hydrates its lifecycle from
+        // the binding's float truth: with_initial_floating(true) drives the chart
+        // to Floating (via the chart's own escaped transition), so a panel rebuilt
+        // by the factory while its window exists is not reset to Docked. The
+        // default (false / plain new) stays Docked.
+        let floating = DockPanelExternal::new("a").with_initial_floating(true);
+        assert_eq!(
+            floating.query("lifecycle"),
+            Some(IntrospectValue::Text("Floating".to_string())),
+            "with_initial_floating(true) re-hydrates the chart to Floating",
+        );
+        let docked = DockPanelExternal::new("a").with_initial_floating(false);
+        assert_eq!(
+            docked.query("lifecycle"),
+            Some(IntrospectValue::Text("Docked".to_string())),
+            "with_initial_floating(false) leaves the chart Docked",
+        );
+        assert_eq!(
+            DockPanelExternal::new("a").query("lifecycle"),
+            Some(IntrospectValue::Text("Docked".to_string())),
+            "plain new is Docked (the SCXML initial)",
+        );
     }
 
     // ── R1103 §5.51 PR-33 — AI-primary cross-window redock invoke (slice 3) ──
