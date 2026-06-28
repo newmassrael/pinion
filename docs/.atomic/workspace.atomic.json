@@ -18190,6 +18190,56 @@
         "Not pushed; await explicit user consent (origin/main=6ef04f71 after R1135)."
       ]
     },
+    "R1138": {
+      "decision_summary": "R1138 phased/held scene/drag — closes the §2 #2 mid-drag-snapshot gap (R1114): scene/drag gains a phase selector (full|begin|move|end) so an AI can HOLD a drag mid-gesture and scene/snapshot the held state an atomic drag hides; the R1137 floater redock hint is thereby RPC-verifiable + injection proven headless.",
+      "changes_bullets": [
+        "DragPhase{Full,Begin,Move,End} wire vocab (as_wire_name/from_wire_name inverse pair + presses()/releases() gates) added to DeferredInput::Drag; scene/drag parses optional `phase` (default Full; unknown rejects loudly, mirroring the `button` gate).",
+        "drain_drag_for_window (Vello shell + TUI shell, §2 #6 dual) gates the leading press on phase.presses() and the trailing release on phase.releases(); the cursor march always runs — a Begin leaves the router drag session OPEN across RPC calls so a follow-up scene/snapshot sees the held mid-drag, Move re-aims, End settles. The session lives in the router = zero extra shell state.",
+        "R1137 source-repaint committed: cursor_moved_for_window repaints the SOURCE window every move while its drag is in flight — a borderless floater title-bar WINDOW MOVE changes only position (set_outer_position), never content, so the on-floater redock hint never re-rendered live without it (symmetric source-side peer of the R1125 target redraw).",
+        "rpc_verify.drag gains phase=; demo r1138_held_drag_snapshot (hello-dnd) drives begin->move->end and proves /external/preview is non-null with order UNCHANGED mid-hold (the held mid-drag now RPC-observable), where an atomic drag leaves it null at every observable moment."
+      ],
+      "verification_bullets": [
+        "pinion-rpc dispatch tests (4): phase defaults Full / begin+end decode to held slices / unknown phase = invalid_params (nothing enqueued) / DragPhase wire-pair round-trip + presses/releases gating table.",
+        "pinion-shell r1138_begin_phase_holds_the_follower_until_an_end_phase_releases: a Begin drained through DeferredInput::Drag holds the drag-image follower past the drain boundary, a Move keeps it, an End releases it (the held primitive, headless).",
+        "pinion-shell held_floater_drag_over_main_injects_the_redock_hint_into_the_floater: a real press opens the floater's drag session, a march maps floater-local to abs over main's dock, the shell stashes the cross-window drop AND arms the SOURCE redraw, and the floater's own produced scene carries REDOCK_DRAG_HINT_TAG wrapping the binding preview; release clears it (the headless proof the occluded live test could not give).",
+        "demo r1138_held_drag_snapshot PASS on the release binary (held preview observable + order unchanged; atomic contrast leaves preview null; unknown-phase reject).",
+        "Gate: workspace clippy --all-targets --features pinion-runtime/vello -D pedantic clean; rustfmt clean; pinion-rpc 879 / pinion-shell 148 / pinion-tui 6 tests green, 0 fail; validate-workspace T1=0."
+      ],
+      "impact_refs": [
+        "2",
+        "5.49",
+        "5.51"
+      ],
+      "carry_forward_bullets": [
+        "TINT visibility (live-gated, NOT speculative): the redock-hint INJECTION is now proven headless, so the user's \"can't see it\" is isolated to visibility — the committed source-repaint is the proven-necessary live piece; whether the tint (Accent @ alpha 0x66 over the opaque floater) is bold ENOUGH is the one remaining live-verify item, now RPC-verifiable via the held drag (begin a floater drag over main, snapshot the floater). Bolden only with live/RPC evidence.",
+        "Remaining pro-tool slices carry from the campaign: visible dock-zone guides on main / self-home=full / tabbing runtime toggle / occlusion proper (window transparency = VELLO-carry).",
+        "§2 #2 follow-up: the held primitive is a button-drag peer; tying it end-to-end to the floater WINDOW-MOVE redock hint snapshot through the editor (multi-window held drag) is the next RPC-verification slice."
+      ],
+      "publishable_decision_summary": "R1138 phased/held scene/drag — closes the §2 #2 mid-drag-snapshot gap (R1114): scene/drag gains a phase selector (full|begin|move|end) so an AI can HOLD a drag mid-gesture and scene/snapshot the held state an atomic drag hides; the R1137 floater redock hint is thereby RPC-verifiable + injection proven headless.",
+      "publishable_changes_bullets": [
+        "DragPhase{Full,Begin,Move,End} wire vocab (as_wire_name/from_wire_name inverse pair + presses()/releases() gates) added to DeferredInput::Drag; scene/drag parses optional `phase` (default Full; unknown rejects loudly, mirroring the `button` gate).",
+        "drain_drag_for_window (Vello shell + TUI shell, §2 #6 dual) gates the leading press on phase.presses() and the trailing release on phase.releases(); the cursor march always runs — a Begin leaves the router drag session OPEN across RPC calls so a follow-up scene/snapshot sees the held mid-drag, Move re-aims, End settles. The session lives in the router = zero extra shell state.",
+        "R1137 source-repaint committed: cursor_moved_for_window repaints the SOURCE window every move while its drag is in flight — a borderless floater title-bar WINDOW MOVE changes only position (set_outer_position), never content, so the on-floater redock hint never re-rendered live without it (symmetric source-side peer of the R1125 target redraw).",
+        "rpc_verify.drag gains phase=; demo r1138_held_drag_snapshot (hello-dnd) drives begin->move->end and proves /external/preview is non-null with order UNCHANGED mid-hold (the held mid-drag now RPC-observable), where an atomic drag leaves it null at every observable moment."
+      ],
+      "publishable_verification_bullets": [
+        "pinion-rpc dispatch tests (4): phase defaults Full / begin+end decode to held slices / unknown phase = invalid_params (nothing enqueued) / DragPhase wire-pair round-trip + presses/releases gating table.",
+        "pinion-shell r1138_begin_phase_holds_the_follower_until_an_end_phase_releases: a Begin drained through DeferredInput::Drag holds the drag-image follower past the drain boundary, a Move keeps it, an End releases it (the held primitive, headless).",
+        "pinion-shell held_floater_drag_over_main_injects_the_redock_hint_into_the_floater: a real press opens the floater's drag session, a march maps floater-local to abs over main's dock, the shell stashes the cross-window drop AND arms the SOURCE redraw, and the floater's own produced scene carries REDOCK_DRAG_HINT_TAG wrapping the binding preview; release clears it (the headless proof the occluded live test could not give).",
+        "demo r1138_held_drag_snapshot PASS on the release binary (held preview observable + order unchanged; atomic contrast leaves preview null; unknown-phase reject).",
+        "Gate: workspace clippy --all-targets --features pinion-runtime/vello -D pedantic clean; rustfmt clean; pinion-rpc 879 / pinion-shell 148 / pinion-tui 6 tests green, 0 fail; validate-workspace T1=0."
+      ],
+      "publishable_impact_refs": [
+        "2",
+        "5.49",
+        "5.51"
+      ],
+      "publishable_carry_forward_bullets": [
+        "TINT visibility (live-gated, NOT speculative): the redock-hint INJECTION is now proven headless, so the user's \"can't see it\" is isolated to visibility — the committed source-repaint is the proven-necessary live piece; whether the tint (Accent @ alpha 0x66 over the opaque floater) is bold ENOUGH is the one remaining live-verify item, now RPC-verifiable via the held drag (begin a floater drag over main, snapshot the floater). Bolden only with live/RPC evidence.",
+        "Remaining pro-tool slices carry from the campaign: visible dock-zone guides on main / self-home=full / tabbing runtime toggle / occlusion proper (window transparency = VELLO-carry).",
+        "§2 #2 follow-up: the held primitive is a button-drag peer; tying it end-to-end to the floater WINDOW-MOVE redock hint snapshot through the editor (multi-window held drag) is the next RPC-verification slice."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
