@@ -62,8 +62,8 @@ use pinion_widget_paint::dock::{
     DEFAULT_FLOATING_WINDOW_PREFIX, DockDropPreview, DockNode, DockPanelExternal, DockPanelStyle,
     DockReorganizeExternal, DockReorganizer, DockSplitState, DockTopology, FloatPolicy,
     FloatingPlaceholderStyle, TEAR_OFF_EVENT, TEAR_OFF_FOLLOW_EVENT, TEAR_OFF_REDOCK_AT_EVENT,
-    TEAR_OFF_REDOCK_EVENT, TabWellExternal, WINDOW_MOVE_EVENT, dock_drop_highlight_tint,
-    dock_drop_preview_overlay, dock_drop_zone_normalized, dock_tablist_access_nodes,
+    TEAR_OFF_REDOCK_EVENT, TabWellExternal, WINDOW_MOVE_EVENT, dock_drop_preview_overlay,
+    dock_drop_zone_normalized, dock_redock_preview_tint, dock_tablist_access_nodes,
     floating_window_id as dock_floating_window_id, view_dock_panel, view_dock_surface,
     view_floating_placeholder,
 };
@@ -1250,7 +1250,10 @@ impl WidgetView for DockPanelsEditorView {
         y_rel: f32,
     ) -> Option<Scene> {
         let zone = dock_drop_zone_normalized(f64::from(x_rel), f64::from(y_rel));
-        let tint = dock_drop_highlight_tint(&Theme::default());
+        // R1139 — the bolder cross-window redock tint (over opaque content), not
+        // the subtler in-window highlight; the overlay adds an opaque accent
+        // border so the result region reads regardless of the content behind it.
+        let tint = dock_redock_preview_tint(&Theme::default());
         dock_drop_preview_overlay(panel_rect, zone, tint)
     }
 

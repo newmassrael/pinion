@@ -73,8 +73,8 @@ use pinion_core::input::PointerWireEvent;
 use pinion_core::intent::Intent;
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, Scene, TextNode};
 use pinion_core::style::{
-    AlignItems, BoxStyle, Color, FlexDirection, JustifyContent, LayoutStyle, Size, SizeValue,
-    TextStyle,
+    AlignItems, Border, BoxStyle, Color, FlexDirection, JustifyContent, LayoutStyle, Size,
+    SizeValue, TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme};
 use pinion_core::widget_core::WidgetStateName;
@@ -3793,6 +3793,34 @@ pub fn dock_drop_highlight_tint(theme: &Theme) -> Color {
         .with_alpha(DOCK_DROP_HIGHLIGHT_ALPHA)
 }
 
+/// (R1139 §5.51) Alpha for the CROSS-WINDOW redock preview FILL — deliberately
+/// bolder than the in-window [`DOCK_DROP_HIGHLIGHT_ALPHA`] (0x66 ≈ 40%). The
+/// redock preview is drawn OVER opaque panel content (the dragged floater
+/// occludes whatever sits behind it, and the target panel is fully painted), so
+/// a 40% wash reads as near-invisible — the live-test "안 보임" failure. A redock
+/// is also a rarer, higher-stakes action (a whole panel relocates), which
+/// warrants an unmistakable cue.
+const DOCK_REDOCK_PREVIEW_ALPHA: u8 = 0xCC;
+
+/// (R1139 §5.51) Border width (logical px) of the cross-window redock preview
+/// outline — an OPAQUE accent edge that reads regardless of how close the
+/// content behind it is to the fill tint.
+const DOCK_REDOCK_PREVIEW_BORDER_PX: u32 = 3;
+
+/// (R1139 §5.51) The cross-window redock preview FILL tint — theme Accent at the
+/// bolder [`DOCK_REDOCK_PREVIEW_ALPHA`]. A dock binding's
+/// [`dock_drop_preview`](crate) hook supplies this to
+/// [`dock_drop_preview_overlay`] so the on-floater redock hint AND the
+/// target-window preview read clearly over opaque content, distinct from the
+/// subtler in-window [`dock_drop_highlight_tint`] (which stays 0x66 — an
+/// in-window split affordance sits over the SAME panel and needs no shout).
+#[must_use]
+pub fn dock_redock_preview_tint(theme: &Theme) -> Color {
+    theme
+        .resolve(ColorRole::Accent)
+        .with_alpha(DOCK_REDOCK_PREVIEW_ALPHA)
+}
+
 /// (R1125 §5.51 §2 #7 PR-33) Tag for the cross-window drop-zone PREVIEW overlay
 /// the shell injects into the TARGET window while a floater is dragged over it —
 /// so the strip is strippable / idempotent like every other shell overlay.
@@ -3835,7 +3863,17 @@ pub fn dock_drop_preview_overlay(
         ),
         DockDropZone::Center => (panel_rect.x, panel_rect.y, panel_rect.w, panel_rect.h),
     };
-    let mut node = BoxNode::new(Rect::new(x, y, w, h), BoxStyle::filled(tint));
+    // (R1139 §5.51) An OPAQUE accent border around the result region — a hard
+    // edge that reads even when the floater's content is close to the fill hue
+    // (a translucent wash alone can vanish over similar-hued content, the
+    // live-test failure). Derived from `tint` so the binding's colour choice
+    // stays the single source; the fill alpha is the binding's
+    // (`dock_redock_preview_tint` for the bolder cross-window cue).
+    let border = Border::new(tint.with_alpha(0xFF), DOCK_REDOCK_PREVIEW_BORDER_PX);
+    let mut node = BoxNode::new(
+        Rect::new(x, y, w, h),
+        BoxStyle::filled(tint).with_border(border),
+    );
     node.tag = Some(DOCK_DROP_PREVIEW_TAG.into());
     // Decorative overlay: never shadow the live drag it represents.
     node.layout = node.layout.with_pointer_transparent(true);
@@ -8112,6 +8150,46 @@ mod tests {
             rect_of(DockDropZone::None),
             None,
             "a dead zone paints nothing"
+        );
+    }
+
+    #[test]
+    fn r1139_redock_preview_overlay_carries_an_opaque_accent_border() {
+        use pinion_core::style::Color;
+        // R1139 §5.51 — the cross-window redock preview now outlines the result
+        // region with an OPAQUE border derived from the fill tint, so it reads
+        // over opaque floater content (the live-test "안 보임" failure) regardless
+        // of the content hue. Structural guard; the rendered-pixel proof is the
+        // GPU test r1139_redock_preview_is_boldly_visible_over_opaque_content.
+        let tint = Color::rgba(0x1a, 0x73, 0xe8, super::DOCK_REDOCK_PREVIEW_ALPHA);
+        let Some(Scene::Box(b)) =
+            dock_drop_preview_overlay(Rect::new(0, 0, 200, 200), DockDropZone::Left, tint)
+        else {
+            panic!("left zone paints a Box");
+        };
+        let border = b.style.border.expect("redock preview carries a border");
+        assert_eq!(
+            border.color,
+            tint.with_alpha(0xff),
+            "border is the opaque tint hue",
+        );
+        assert_eq!(border.color.a, 0xff, "border is fully opaque (a hard edge)");
+        assert_eq!(border.width, super::DOCK_REDOCK_PREVIEW_BORDER_PX);
+        assert_eq!(
+            b.style.fill, tint,
+            "fill keeps the binding's (bold) tint alpha"
+        );
+    }
+
+    #[test]
+    fn r1139_redock_preview_tint_is_bolder_than_the_in_window_highlight() {
+        // R1139 — the cross-window redock cue (drawn over opaque content) is more
+        // opaque than the in-window split highlight (drawn over the SAME panel,
+        // needs no shout). The two affordances are deliberately distinct.
+        let theme = Theme::light();
+        assert!(
+            super::dock_redock_preview_tint(&theme).a > super::dock_drop_highlight_tint(&theme).a,
+            "redock preview fill is more opaque than the in-window highlight",
         );
     }
 

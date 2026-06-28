@@ -674,6 +674,124 @@ mod tests {
         );
     }
 
+    /// R1139 §5.51 §2 #7 — the rendered-pixel proof that DE-GATES the redock-hint
+    /// visibility question (the live-test "안 보임"). Earlier this was waved off as
+    /// "HW-gated", but lavapipe renders headlessly here: a redock preview drawn
+    /// over an OPAQUE floater background is unmistakable — the result-region fill
+    /// changes the pixels far from the bare background, AND an opaque accent
+    /// border outlines it (a hard edge that reads regardless of content hue).
+    /// Rasterises through the SAME `to_vello_cached` the live shell uses and reads
+    /// the pixels back, so "bold enough" is decided by MEASUREMENT, not by a human
+    /// eyeballing a live window. The R1138 sibling proves the hint INJECTS into the
+    /// floater's scene; this proves the injected pixels are VISIBLE.
+    ///
+    /// `#[ignore]` for the same wgpu cold-boot reason as the sibling headless
+    /// tests; run with `--ignored` (force lavapipe via `VK_ICD_FILENAMES` for a
+    /// deterministic software raster).
+    #[test]
+    #[ignore = "wgpu adapter cold-boot too slow for default test suite; run with --ignored"]
+    fn r1139_redock_preview_is_boldly_visible_over_opaque_content() {
+        use pinion_core::scene::{ContainerNode, Rect, Scene};
+        use pinion_core::style::BoxStyle;
+        use pinion_core::theme::{ColorRole, Theme};
+        use pinion_runtime::paint_adapter::{FragmentCache, to_vello_cached};
+        use pinion_text::LayoutCache;
+        use pinion_widget_paint::dock::{
+            DockDropZone, dock_drop_preview_overlay, dock_redock_preview_tint,
+        };
+
+        const W: u32 = 200;
+        const H: u32 = 200;
+        const HALF: u32 = 100; // DOCK_SPLIT_RESULT_PCT = 50 → 200 * 50% = 100
+
+        let theme = Theme::light();
+        let surface = theme.resolve(ColorRole::Surface);
+        let accent = theme.resolve(ColorRole::Accent);
+
+        // The floater's opaque content (a Surface-filled panel) + the redock
+        // preview for a LEFT-zone redock (fills the left half, outlined). Rects
+        // are ABSOLUTE — the paint adapter paints each node at its own `.rect`
+        // (no offset accumulation), and the overlay already carries explicit
+        // pixel rects (it is injected after layout), so no layout pass is needed.
+        let overlay = dock_drop_preview_overlay(
+            Rect::new(0, 0, W, H),
+            DockDropZone::Left,
+            dock_redock_preview_tint(&theme),
+        )
+        .expect("left zone paints an overlay");
+        let mut root = ContainerNode::new(vec![overlay]).with_style(BoxStyle::filled(surface));
+        root.rect = Rect::new(0, 0, W, H);
+        let scene = Scene::Container(root);
+
+        let mut text_cache = LayoutCache::new();
+        let mut image_cache = pinion_runtime::image_cache::ImageCache::new();
+        let mut cache = FragmentCache::new();
+        let mut vello = VelloScene::new();
+        to_vello_cached(
+            &scene,
+            &|_| None,
+            &mut text_cache,
+            &mut image_cache,
+            &mut cache,
+            &mut vello,
+        );
+
+        let mut shot = HeadlessScreenshot::new().expect("headless screenshot bootstrap");
+        let rgba8 = shot
+            .render_to_rgba8(
+                &vello,
+                W,
+                H,
+                PenikoColor::from_rgba8(surface.r, surface.g, surface.b, 0xFF),
+            )
+            .expect("render");
+
+        let px = |x: u32, y: u32| -> (i64, i64, i64) {
+            let i = ((y * W + x) * 4) as usize;
+            (
+                i64::from(rgba8[i]),
+                i64::from(rgba8[i + 1]),
+                i64::from(rgba8[i + 2]),
+            )
+        };
+        let sum_delta = |a: (i64, i64, i64), b: (i64, i64, i64)| {
+            (a.0 - b.0).abs() + (a.1 - b.1).abs() + (a.2 - b.2).abs()
+        };
+
+        let bare = px(W - 20, H / 2); // right half: bare floater surface
+        let fill = px(20, H / 2); // left half interior: tint over surface
+        let border = px(HALF / 2, 1); // top edge of the left-half result rect
+        let accent_rgb = (
+            i64::from(accent.r),
+            i64::from(accent.g),
+            i64::from(accent.b),
+        );
+
+        // (1) The fill is unmistakably different from the bare background — the
+        //     "tint too subtle" failure is measured away, not eyeballed.
+        let fill_delta = sum_delta(fill, bare);
+        assert!(
+            fill_delta >= 90,
+            "redock fill must visibly differ from the bare floater \
+             (Σ|Δ|={fill_delta}, bare={bare:?}, fill={fill:?})",
+        );
+        // (2) The border reads as the opaque accent — a hard outline that does
+        //     not depend on the content behind it — and far more so than the bare
+        //     surface does (the outline is the robustness guarantee).
+        let border_to_accent = sum_delta(border, accent_rgb);
+        let bare_to_accent = sum_delta(bare, accent_rgb);
+        assert!(
+            border_to_accent <= 120,
+            "redock border must read as the opaque accent \
+             (Σ|Δ|={border_to_accent}, border={border:?}, accent={accent_rgb:?})",
+        );
+        assert!(
+            border_to_accent < bare_to_accent,
+            "the border reads as accent ({border_to_accent}); the bare floater \
+             does not ({bare_to_accent})",
+        );
+    }
+
     /// R991 §5.41 §2 #6 — deterministic glyph-paint guard for the
     /// cell-native [`Scene::TextGrid`]. Builds a 3x3 retained grid that
     /// exercises every R991 paint path — palette-resolved fg/bg (`Rgb` /
