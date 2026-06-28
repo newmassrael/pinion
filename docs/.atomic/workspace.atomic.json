@@ -18408,6 +18408,40 @@
         "SEPARATE open item — the user also wants the bold preview to trigger on WINDOW-OVERLAP (\"floater enters the dock area even a little\"), not just the cursor point. That is architecturally loaded: window-overlap is ambiguous (a large main ALWAYS geometrically contains a small floater, which must not read as \"main docks into the floater\"), and it conflicts with R1136 stay-floating-over-main. Options: cursor-only (pro-tool default, current), source-CENTRE fallback (body-over-slot, safe, half-in), or size-gated bounds-overlap (slight overlap, breaks float-over-main). To decide WITH the user, not build blind."
       ]
     },
+    "R1143": {
+      "decision_summary": "R1143 make the redock preview more forgiving — fall back to the dragged floater's BODY CENTRE when the cursor (the header grab point) is off a zone, so dragging the floater body over a slot previews it even when the header is still outside. A single interior point, not full window-overlap, so the cursor-based model + stay-floating semantics hold.",
+      "changes_bullets": [
+        "resolve_cross_window_live: after the cursor-precise pass finds no zone, fall back to cross_window_drop_at at the dragged window's BODY CENTRE. The grab point rides the header (top / side), so the floater's right edge can enter a slot while a left-side grab is still outside it — the centre catches \"the floater body is over the slot\" so the preview shows without precise cursor aim.",
+        "A single interior point (the centre), NOT full window-overlap: window-overlap is ambiguous (a large host always geometrically contains a small floater, so plain overlap cannot tell \"the floater docks into main\" from \"main contains the floater\"), but the floater's centre is a specific point and main's centre is not over the floater, so the existing cursor-based resolution + the \"source over its own dock = None\" semantics hold. Reuses the same hit-test (no new geometry / no resolution-model change)."
+      ],
+      "verification_bullets": [
+        "shell r1143_floater_body_centre_over_a_zone_resolves_even_when_the_cursor_is_off_it: a header-edge cursor over no zone (asserted precondition) + the floater centre inside main's dock → resolve_cross_window_live returns main/main_dock (returns None without the fallback — non-tautological).",
+        "Existing resolve_cross_window_live tests unchanged: the cursor-precise pass still wins when it hits, and \"main over its own dock = None\" still holds (main's centre is not over the floater).",
+        "Gate: pinion-shell clippy --all-targets --features pinion-runtime/vello -D pedantic clean; rustfmt clean; pinion-shell 133 lib tests green, 0 fail."
+      ],
+      "impact_refs": [
+        "5.51"
+      ],
+      "carry_forward_bullets": [
+        "Covers cursor + body-centre. TRUE \"slight corner overlap\" (조금이라도 = even a tiny touch) would need size-gated bounds-overlap (sample the whole floater footprint, resolve only into LARGER host windows to keep direction unambiguous). That has a real trade-off — a floater overlapping main would then redock on release, breaking R1136 stay-floating-over-main — so it is a deliberate user decision, not built blind. The centre fallback is the safe middle ground that needs no resolution-model change."
+      ],
+      "publishable_decision_summary": "R1143 make the redock preview more forgiving — fall back to the dragged floater's BODY CENTRE when the cursor (the header grab point) is off a zone, so dragging the floater body over a slot previews it even when the header is still outside. A single interior point, not full window-overlap, so the cursor-based model + stay-floating semantics hold.",
+      "publishable_changes_bullets": [
+        "resolve_cross_window_live: after the cursor-precise pass finds no zone, fall back to cross_window_drop_at at the dragged window's BODY CENTRE. The grab point rides the header (top / side), so the floater's right edge can enter a slot while a left-side grab is still outside it — the centre catches \"the floater body is over the slot\" so the preview shows without precise cursor aim.",
+        "A single interior point (the centre), NOT full window-overlap: window-overlap is ambiguous (a large host always geometrically contains a small floater, so plain overlap cannot tell \"the floater docks into main\" from \"main contains the floater\"), but the floater's centre is a specific point and main's centre is not over the floater, so the existing cursor-based resolution + the \"source over its own dock = None\" semantics hold. Reuses the same hit-test (no new geometry / no resolution-model change)."
+      ],
+      "publishable_verification_bullets": [
+        "shell r1143_floater_body_centre_over_a_zone_resolves_even_when_the_cursor_is_off_it: a header-edge cursor over no zone (asserted precondition) + the floater centre inside main's dock → resolve_cross_window_live returns main/main_dock (returns None without the fallback — non-tautological).",
+        "Existing resolve_cross_window_live tests unchanged: the cursor-precise pass still wins when it hits, and \"main over its own dock = None\" still holds (main's centre is not over the floater).",
+        "Gate: pinion-shell clippy --all-targets --features pinion-runtime/vello -D pedantic clean; rustfmt clean; pinion-shell 133 lib tests green, 0 fail."
+      ],
+      "publishable_impact_refs": [
+        "5.51"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Covers cursor + body-centre. TRUE \"slight corner overlap\" (조금이라도 = even a tiny touch) would need size-gated bounds-overlap (sample the whole floater footprint, resolve only into LARGER host windows to keep direction unambiguous). That has a real trade-off — a floater overlapping main would then redock on release, breaking R1136 stay-floating-over-main — so it is a deliberate user decision, not built blind. The centre fallback is the safe middle ground that needs no resolution-model change."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
