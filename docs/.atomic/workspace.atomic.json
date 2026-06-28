@@ -18376,6 +18376,38 @@
         "Remaining campaign slice: tabbing runtime toggle. The live fast-drag trail is WM apply-lag (HW-inherent, dissolves at human rate). A committed shell integration test for apply_dock_zone_guides is deferred (the orchestration is live-verified + its pieces unit-tested); add one with a 2-window dock fixture when convenient."
       ]
     },
+    "R1142": {
+      "decision_summary": "R1142 fix dock-zone guides staying on screen after a drag ends — repaint every guide-host window on drag-END so its guides strip. The R1141 guides show whenever ANOTHER window drags (independent of the cursor), but only the cursor's last preview target was repainted, so releasing while holding the floater left main's guides on a stale frame.",
+      "changes_bullets": [
+        "mouse_released_for_window: when the release ends a drag (the session is still open at entry), repaint EVERY other declared window. The R1141 dock-zone guides show on a window whenever ANOTHER window drags (any_other_window_dragging), independent of the cursor; the existing cross_preview_target repaint only covers the cursor's LAST preview target, so releasing while the cursor sits on the dragged floater (the common case — you let go holding the floater, not over main) left main's guides on a STALE frame, never repainted. That is the \"윤곽선이 계속 떠있어\" bug."
+      ],
+      "verification_bullets": [
+        "shell r1142_drag_release_repaints_the_guide_host_to_strip_its_guides: open a floater drag session, drain main's redraw flag, release IN THE FLOATER (the cursor was never over main) → redraw_requested_for_window(\"main\") is true (the guide host repaints on drag-end). Headlessly observable via the redraw flag (the [[shell-handler-mutates-visible-state-needs-explicit-redraw]] class — scene data already clears; the bug was the stale visible frame).",
+        "Gate: pinion-shell clippy --all-targets --features pinion-runtime/vello -D pedantic clean; rustfmt clean; pinion-shell 132 lib tests green, 0 fail."
+      ],
+      "impact_refs": [
+        "5.51"
+      ],
+      "carry_forward_bullets": [
+        "R1141 introduced this: the guides' visibility condition (any_other_window_dragging) changes independently of a window's normal repaint triggers (cursor-over / preview-target-change), so a drag-START and drag-END both need an explicit repaint of the guide-host windows. Drag-end is fixed here; drag-START show currently relies on the cursor crossing into the host during the drag (works for the toward-host gesture). If guides fail to APPEAR when the cursor never enters the host, add the symmetric repaint on session-open.",
+        "SEPARATE open item — the user also wants the bold preview to trigger on WINDOW-OVERLAP (\"floater enters the dock area even a little\"), not just the cursor point. That is architecturally loaded: window-overlap is ambiguous (a large main ALWAYS geometrically contains a small floater, which must not read as \"main docks into the floater\"), and it conflicts with R1136 stay-floating-over-main. Options: cursor-only (pro-tool default, current), source-CENTRE fallback (body-over-slot, safe, half-in), or size-gated bounds-overlap (slight overlap, breaks float-over-main). To decide WITH the user, not build blind."
+      ],
+      "publishable_decision_summary": "R1142 fix dock-zone guides staying on screen after a drag ends — repaint every guide-host window on drag-END so its guides strip. The R1141 guides show whenever ANOTHER window drags (independent of the cursor), but only the cursor's last preview target was repainted, so releasing while holding the floater left main's guides on a stale frame.",
+      "publishable_changes_bullets": [
+        "mouse_released_for_window: when the release ends a drag (the session is still open at entry), repaint EVERY other declared window. The R1141 dock-zone guides show on a window whenever ANOTHER window drags (any_other_window_dragging), independent of the cursor; the existing cross_preview_target repaint only covers the cursor's LAST preview target, so releasing while the cursor sits on the dragged floater (the common case — you let go holding the floater, not over main) left main's guides on a STALE frame, never repainted. That is the \"윤곽선이 계속 떠있어\" bug."
+      ],
+      "publishable_verification_bullets": [
+        "shell r1142_drag_release_repaints_the_guide_host_to_strip_its_guides: open a floater drag session, drain main's redraw flag, release IN THE FLOATER (the cursor was never over main) → redraw_requested_for_window(\"main\") is true (the guide host repaints on drag-end). Headlessly observable via the redraw flag (the [[shell-handler-mutates-visible-state-needs-explicit-redraw]] class — scene data already clears; the bug was the stale visible frame).",
+        "Gate: pinion-shell clippy --all-targets --features pinion-runtime/vello -D pedantic clean; rustfmt clean; pinion-shell 132 lib tests green, 0 fail."
+      ],
+      "publishable_impact_refs": [
+        "5.51"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R1141 introduced this: the guides' visibility condition (any_other_window_dragging) changes independently of a window's normal repaint triggers (cursor-over / preview-target-change), so a drag-START and drag-END both need an explicit repaint of the guide-host windows. Drag-end is fixed here; drag-START show currently relies on the cursor crossing into the host during the drag (works for the toward-host gesture). If guides fail to APPEAR when the cursor never enters the host, add the symmetric repaint on session-open.",
+        "SEPARATE open item — the user also wants the bold preview to trigger on WINDOW-OVERLAP (\"floater enters the dock area even a little\"), not just the cursor point. That is architecturally loaded: window-overlap is ambiguous (a large main ALWAYS geometrically contains a small floater, which must not read as \"main docks into the floater\"), and it conflicts with R1136 stay-floating-over-main. Options: cursor-only (pro-tool default, current), source-CENTRE fallback (body-over-slot, safe, half-in), or size-gated bounds-overlap (slight overlap, breaks float-over-main). To decide WITH the user, not build blind."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
