@@ -5456,13 +5456,33 @@ impl<V: WidgetView> ShellCore<V> {
         if specs.len() < 2 {
             return None;
         }
-        let source_pos = specs
-            .iter()
-            .find(|w| w.id == source_window)?
+        let source = specs.iter().find(|w| w.id == source_window)?;
+        let source_pos = source
             .position
             .map_or((0.0, 0.0), |(x, y)| (f64::from(x), f64::from(y)));
         let abs = (source_pos.0 + local.0, source_pos.1 + local.1);
-        self.cross_window_drop_at(abs, Some(source_window))
+        // 1) Cursor-precise — the grab point the dragged window follows. Wins
+        //    when it lands on a zone (the pro-tool default).
+        if let Some(drop) = self.cross_window_drop_at(abs, Some(source_window)) {
+            return Some(drop);
+        }
+        // 2) R1143 §5.51 PR-39 — fall back to the dragged window's BODY CENTRE.
+        //    The grab point rides the header (top / side), so dragging the body
+        //    over a dock zone can leave the cursor OFF it (the right edge of the
+        //    floater enters the slot while a left-side grab is still outside).
+        //    Resolving at the floater's centre previews "the floater is over the
+        //    slot" without the ambiguity of full window-overlap — a large host
+        //    always geometrically contains a small floater, so plain overlap
+        //    could not tell "the floater docks into main" from "main contains the
+        //    floater"; a single interior point (the centre) cannot, and main's
+        //    centre is not over the floater, so the existing resolution holds.
+        let centre = source.declared_size.map(|(w, h)| {
+            (
+                source_pos.0 + f64::from(w) / 2.0,
+                source_pos.1 + f64::from(h) / 2.0,
+            )
+        })?;
+        self.cross_window_drop_at(centre, Some(source_window))
     }
 
     /// (R1020 §5.39) Re-derive the keyboard focus enumeration from a fresh,
@@ -6724,6 +6744,38 @@ mod r1104_cross_window_exclusion_tests {
                 .is_none(),
             "a drag that stays over the source's own dock is not cross-window",
         );
+    }
+
+    #[test]
+    fn r1143_floater_body_centre_over_a_zone_resolves_even_when_the_cursor_is_off_it() {
+        // R1143 §5.51 PR-39 — the grab point rides the floater's header, so the
+        // cursor can be OFF a zone while the floater BODY is over it. The centre
+        // fallback resolves "the floater is over the slot". Floater at (800,100)
+        // sized 200x200 → centre (900,200); main's dock spans abs (850,150)–
+        // (1050,350), so the centre is inside it but a header-edge cursor is not.
+        let mut sc = ShellCore::<CrossWindowFixture>::new();
+        sc.core.set_paint_scene_for_window(
+            "main",
+            drop_panel_scene("main_dock", Rect::new(850, 150, 200, 200)),
+        );
+        sc.core.set_paint_scene_for_window(
+            FLOAT_WINDOW,
+            drop_panel_scene("torn", Rect::new(10, 10, 80, 80)),
+        );
+        // Cursor at floater-local (100, 5) → abs (900, 105): above main's dock
+        // (y < 150) and over no zone → the precise-cursor pass finds nothing.
+        assert!(
+            sc.cross_window_drop_at((900.0, 105.0), Some(FLOAT_WINDOW))
+                .is_none(),
+            "precondition: the header-edge cursor is over no zone",
+        );
+        // But the floater's centre (900, 200) sits inside main's dock → the
+        // fallback resolves it (this returns None without the R1143 fallback).
+        let drop = sc
+            .resolve_cross_window_live(FLOAT_WINDOW, (100.0, 5.0))
+            .expect("the floater body centre is over main's dock");
+        assert_eq!(drop.window, "main");
+        assert_eq!(drop.point.tag, "main_dock");
     }
 }
 
