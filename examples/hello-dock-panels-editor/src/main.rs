@@ -60,7 +60,7 @@ use pinion_shell::{
 use pinion_widget_paint::button::{ButtonColors, ButtonStyle, view_button};
 use pinion_widget_paint::dock::{
     DEFAULT_FLOATING_WINDOW_PREFIX, DockDropPreview, DockNode, DockPanelExternal, DockPanelStyle,
-    DockReorganizeExternal, DockReorganizer, DockSplitState, DockTopology,
+    DockReorganizeExternal, DockReorganizer, DockSplitState, DockTopology, FloatPolicy,
     FloatingPlaceholderStyle, TEAR_OFF_EVENT, TEAR_OFF_FOLLOW_EVENT, TEAR_OFF_REDOCK_AT_EVENT,
     TEAR_OFF_REDOCK_EVENT, TabWellExternal, WINDOW_MOVE_EVENT, dock_drop_highlight_tint,
     dock_drop_preview_overlay, dock_drop_zone_normalized, dock_tablist_access_nodes,
@@ -107,10 +107,16 @@ const VIEWPORT_PANEL_TAG: &str = "viewport";
 const PROPERTIES_PANEL_TAG: &str = "properties";
 const CONSOLE_PANEL_TAG: &str = "console";
 
-/// Viewport Button paint-side tag — the only interactive widget in
-/// the v1 editor binding. Routes pointer events to the primary
-/// [`ButtonExternal`].
+/// Viewport Button paint-side tag — the primary [`ButtonExternal`] of
+/// the editor binding. Routes pointer events to the primary external.
 const VIEWPORT_BTN_TAG: &str = "viewport_btn";
+
+/// (R1135 §5.51.1) Toolbar float-policy toggle button tag — the HUMAN GUI
+/// path for the R1134 collapse|placeholder selection (R1134 added the
+/// AI/RPC `set_float_policy` invoke; this lets a person flip it by
+/// clicking). A second [`ButtonExternal`] registered as an extra external;
+/// its click toggles the shared [`DockReorganizer`]'s [`FloatPolicy`].
+const POLICY_BTN_TAG: &str = "float_policy_btn";
 
 /// Splitter paint-side tags. Four splits in depth-first pre-order
 /// per R685 [`view_dock_surface`]'s threading scheme:
@@ -137,6 +143,8 @@ const DOCK_UNDO_KEY: &str = "editor_dock_undo";
 // ─── intent tag constants ─────────────────────────────────────────────
 
 const VIEWPORT_BTN_CLICK_INTENT_TAG: &str = intent_tag!("viewport_btn", "click");
+/// (R1135) The float-policy toggle button's click intent (`float_policy_btn.click`).
+const POLICY_BTN_CLICK_INTENT_TAG: &str = intent_tag!("float_policy_btn", "click");
 
 // ─── default split ratios ─────────────────────────────────────────────
 
@@ -541,23 +549,62 @@ fn build_editor_topology() -> DockTopology {
 // ─── panel content view fns ───────────────────────────────────────────
 
 fn view_toolbar_content(theme: &Theme) -> Scene {
+    // (R1135 §5.51.1) Read the live torn-slot policy from the shared coordinator.
+    // `float_policy()` reads a reactive `Signal`, so THIS subscribe repaints the
+    // toolbar (the toggle label) whenever the policy flips — from this button OR
+    // the AI `set_float_policy` invoke (one SSOT, both paths consistent).
+    let policy = use_editor_reorganizer().float_policy();
+    let label = Scene::Text(TextNode::styled(
+        TOOLBAR_LABEL.to_string(),
+        Rect::default(),
+        TextStyle::new()
+            .with_size_px(PANEL_BODY_FONT_PX)
+            .with_fg(theme.resolve(ColorRole::OnSurface)),
+    ));
+    // The toggle button shows the CURRENT mode; clicking flips it (the
+    // `policy_btn.click` reducer arm). Rendered discrete (Idle, no hover spring) —
+    // the label change is the affordance; a person no longer needs the RPC path.
+    let policy_btn = view_button(
+        policy_toggle_label(policy),
+        ButtonState::Idle,
+        0.0,
+        false,
+        &ButtonColors::accent(theme),
+        &ButtonStyle::m3_default(POLICY_BTN_TAG)
+            .with_size(Size::px(210, 28))
+            .with_padding(Rect::new(12, 4, 12, 4))
+            .with_label_font_size_px(PANEL_BODY_FONT_PX),
+    );
     Scene::Container(
-        ContainerNode::new(vec![Scene::Text(TextNode::styled(
-            TOOLBAR_LABEL.to_string(),
-            Rect::default(),
-            TextStyle::new()
-                .with_size_px(PANEL_BODY_FONT_PX)
-                .with_fg(theme.resolve(ColorRole::OnSurface)),
-        ))])
-        .with_tag("toolbar_content_body")
-        .with_layout(
-            LayoutStyle::new()
-                .flex(FlexDirection::Row)
-                .with_align_items(AlignItems::Center)
-                .with_justify(JustifyContent::Start)
-                .with_padding(Rect::new(12, 0, 12, 0)),
-        ),
+        ContainerNode::new(vec![label, policy_btn])
+            .with_tag("toolbar_content_body")
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Row)
+                    .with_align_items(AlignItems::Center)
+                    .with_justify(JustifyContent::Start)
+                    .with_padding(Rect::new(12, 0, 12, 0)),
+            ),
     )
+}
+
+/// (R1135 §5.51.1) The float-policy toggle button label for the current mode —
+/// the SSOT for the human-readable policy text the toolbar paints (and the demo
+/// asserts on). Shows the CURRENT torn-slot policy.
+fn policy_toggle_label(policy: FloatPolicy) -> &'static str {
+    match policy {
+        FloatPolicy::Collapse => "torn slot: collapse",
+        FloatPolicy::Placeholder => "torn slot: placeholder",
+    }
+}
+
+/// (R1135 §5.51.1) The opposite policy — the toggle the `policy_btn.click` reducer
+/// arm applies (`Placeholder` <-> `Collapse`).
+fn toggled_float_policy(policy: FloatPolicy) -> FloatPolicy {
+    match policy {
+        FloatPolicy::Placeholder => FloatPolicy::Collapse,
+        FloatPolicy::Collapse => FloatPolicy::Placeholder,
+    }
 }
 
 fn view_outliner_content(theme: &Theme) -> Scene {
@@ -987,6 +1034,14 @@ impl WidgetCore for DockPanelsEditorView {
             DOCK_UNDO_TAG,
             Box::new(UndoStackExternal::new(use_dock_undo())),
         ));
+        // (R1135 §5.51.1) The toolbar float-policy toggle button — a second
+        // ButtonExternal whose click flips collapse|placeholder (the human GUI
+        // path for the R1134 policy the AI drives via `set_float_policy`). Click
+        // routed to the `policy_btn.click` reducer arm.
+        externals.push(ExtraExternal::new(
+            POLICY_BTN_TAG,
+            Box::new(ButtonExternal::new()),
+        ));
         externals
     }
 
@@ -1129,6 +1184,15 @@ impl WidgetCore for DockPanelsEditorView {
         if tag == VIEWPORT_BTN_CLICK_INTENT_TAG {
             let counter = use_viewport_click_counter();
             counter.set(counter.get().wrapping_add(1));
+        }
+        // (R1135 §5.51.1) The toolbar toggle flips the shared coordinator's
+        // FloatPolicy. `set_float_policy` writes the reactive `Signal`, so the
+        // dock externals honour the new mode on the next float AND the toolbar
+        // repaints with the flipped label — the SAME SSOT the AI `set_float_policy`
+        // invoke drives, so the GUI + RPC paths stay consistent.
+        if tag == POLICY_BTN_CLICK_INTENT_TAG {
+            let reorganizer = use_editor_reorganizer();
+            reorganizer.set_float_policy(toggled_float_policy(reorganizer.float_policy()));
         }
         Vec::new()
     }
@@ -1460,8 +1524,9 @@ mod tests {
             let externals = <DockPanelsEditorView as WidgetCore>::create_extra_externals();
             // 4 SplitterExternals + 5 R742 DockPanelExternals (one per leaf,
             // R1082) + 1 DockReorganizeExternal (R686) + 1 UndoStackExternal
-            // (R749 §5.52 reorganize history).
-            assert_eq!(externals.len(), 11);
+            // (R749 §5.52 reorganize history) + 1 float-policy toggle button
+            // (R1135 §5.51.1).
+            assert_eq!(externals.len(), 12);
             let tags: Vec<&str> = externals.iter().map(|e| e.tag.as_ref()).collect();
             for split in [
                 SPLIT_OUTER_TAG,
@@ -1485,6 +1550,54 @@ mod tests {
             }
             assert!(tags.contains(&DOCK_REORGANIZE_TAG));
             assert!(tags.contains(&DOCK_UNDO_TAG));
+            assert!(
+                tags.contains(&POLICY_BTN_TAG),
+                "R1135 policy toggle registered"
+            );
+        });
+    }
+
+    #[test]
+    fn r1135_policy_toggle_button_flips_float_policy_and_label() {
+        // R1135 §5.51.1 — the toolbar toggle is the HUMAN GUI path for the R1134
+        // collapse|placeholder policy: clicking flips the shared coordinator's
+        // FloatPolicy, and the reactive label repaints to the new mode.
+        run_in_owner(|| {
+            let reorg = use_editor_reorganizer();
+            assert_eq!(
+                reorg.float_policy(),
+                FloatPolicy::Placeholder,
+                "default placeholder"
+            );
+            let scene0 =
+                <DockPanelsEditorView as WidgetCore>::view(ButtonState::Idle, &Frame::default());
+            assert!(
+                format!("{scene0:?}").contains("torn slot: placeholder"),
+                "toolbar paints the current placeholder mode",
+            );
+            let click = Intent {
+                tag: Cow::Borrowed(POLICY_BTN_CLICK_INTENT_TAG),
+                payload: IntrospectValue::Null,
+            };
+            let cmds = <DockPanelsEditorView as WidgetCore>::update(ButtonState::Idle, &click);
+            assert!(cmds.is_empty(), "no Commands for the toggle");
+            assert_eq!(
+                reorg.float_policy(),
+                FloatPolicy::Collapse,
+                "click flipped to collapse"
+            );
+            let scene1 =
+                <DockPanelsEditorView as WidgetCore>::view(ButtonState::Idle, &Frame::default());
+            assert!(
+                format!("{scene1:?}").contains("torn slot: collapse"),
+                "label repaints to collapse (reactive Signal)",
+            );
+            let _ = <DockPanelsEditorView as WidgetCore>::update(ButtonState::Idle, &click);
+            assert_eq!(
+                reorg.float_policy(),
+                FloatPolicy::Placeholder,
+                "second click flips back"
+            );
         });
     }
 

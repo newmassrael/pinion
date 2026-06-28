@@ -2347,7 +2347,7 @@ pub fn resolve_dock_drop_tabbing(
 /// never mid-drag — removing the leaf mid-gesture would re-run the external factory
 /// and disturb the live drag, so the slot stays put during the drag and collapses
 /// once on release.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum FloatPolicy {
     /// Keep the leaf on float (slot preserved, no reflow) — the default.
     #[default]
@@ -2418,12 +2418,14 @@ pub struct DockReorganizer {
     /// surface — `Placeholder` (default) keeps a floated panel's leaf, `Collapse`
     /// removes it (neighbours reflow) and remembers the home anchor. Owned by the
     /// coordinator like [`tabbing`] so a collapse is uniform across the pointer +
-    /// invoke float paths. Interior-mutable ([`Cell`]) so it is runtime-settable
-    /// ([`Self::set_float_policy`] / the `set_float_policy` invoke) — a dock review
-    /// can toggle collapse vs placeholder live.
+    /// invoke float paths. A [`Signal`] (R1135) — not a bare `Cell` — so a binding's
+    /// view fn that reads [`Self::float_policy`] (e.g. a "collapse vs placeholder"
+    /// toolbar toggle's label) auto-subscribes and REPAINTS when the policy flips,
+    /// whether the flip came from the GUI toggle or the `set_float_policy` invoke
+    /// (one reactive SSOT, both paths consistent).
     ///
     /// [`tabbing`]: Self::tabbing
-    float_policy: Cell<FloatPolicy>,
+    float_policy: Signal<FloatPolicy>,
     /// (R1134 §5.51.1) Captured home anchors for collapsed panels, keyed by panel
     /// id — the collapse-policy "where home is" SSOT. [`Self::float_out_panel`]
     /// stashes a leaf's [`DockLeafAnchor`] before removing it;
@@ -2503,7 +2505,7 @@ impl DockReorganizer {
             tabs_seq: Cell::new(0),
             reorganize_ratio: DEFAULT_REORGANIZE_RATIO,
             tabbing: true,
-            float_policy: Cell::new(FloatPolicy::default()),
+            float_policy: Signal::new(FloatPolicy::default()),
             home_anchors: RefCell::new(HashMap::new()),
             last_outcome: RefCell::new(None),
             undo: None,
