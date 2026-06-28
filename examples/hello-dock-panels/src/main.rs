@@ -1813,6 +1813,88 @@ mod tests {
     }
 
     #[test]
+    fn r1131_chart_lifecycle_and_window_realization_stay_consistent() {
+        // R1131 §5.51.1 §2 #5 — the 2-LAYER INVARIANT, test-enforced. The panel
+        // External's chart lifecycle (widget layer) and the binding's
+        // `windows_signal` realization (binding layer, with the position/size the
+        // chart cannot hold) must never drift. They are kept consistent by the
+        // directed-intent contract (R1130): the External emits a DIRECTED intent
+        // matching its chart transition, and the reducer realizes it into the
+        // window list. This drives the FULL loop (invoke -> External chart +
+        // drained intent -> reducer -> windows_signal) and asserts chart <=>
+        // window at every step, hardening the discipline the 2-layer design
+        // depends on into an enforced invariant (the review action item).
+        use pinion_core::intent::Intent;
+        use pinion_widget_paint::dock::{TEAR_OFF_EVENT, TEAR_OFF_REDOCK_EVENT};
+        Owner::new().run(|| {
+            let windows = use_windows_topology();
+            let mut extras = <DockPanelsView as WidgetCore>::create_extra_externals();
+            let inspector = extras
+                .iter_mut()
+                .find(|e| e.tag.as_ref() == INSPECTOR_PANEL_TAG)
+                .expect("the inspector panel external is registered");
+
+            // The chart lifecycle (widget layer): true = floating.
+            let chart_floating = |ext: &ExtraExternal| {
+                ext.handle.introspect().and_then(|i| i.query("lifecycle"))
+                    == Some(IntrospectValue::Text("Floating".to_string()))
+            };
+
+            // One AI dock toggle, realized END-TO-END: drive the External (chart +
+            // directed intent), then run the REAL reducer on the drained intent
+            // re-tagged to its dotted wire form (the framework's panel prefix), so
+            // the reducer mutates the live windows_signal exactly as in production.
+            let toggle = |ext: &mut ExtraExternal| {
+                ext.handle
+                    .introspect_mut()
+                    .expect("introspect_mut")
+                    .invoke(TEAR_OFF_EVENT, IntrospectValue::Null)
+                    .expect("tear_off invoke");
+                let mut drained: Vec<Intent> = Vec::new();
+                ext.handle.drain_intents(&mut |i| drained.push(i));
+                for i in drained {
+                    let dotted = match i.tag.as_ref() {
+                        TEAR_OFF_EVENT => INSPECTOR_TEAR_OFF_INTENT_TAG,
+                        TEAR_OFF_REDOCK_EVENT => INSPECTOR_TEAR_OFF_REDOCK_INTENT_TAG,
+                        other => {
+                            panic!("a directed toggle emits only tear_off/redock, got {other}")
+                        }
+                    };
+                    let _ = <DockPanelsView as WidgetCore>::update(
+                        ButtonState::Idle,
+                        &Intent::new_static(dotted, i.payload),
+                    );
+                }
+            };
+
+            // 0. boot: docked in BOTH layers.
+            assert!(!chart_floating(inspector), "boot: chart docked");
+            assert!(
+                !is_panel_floating(&windows.get(), INSPECTOR_PANEL_TAG),
+                "boot: window docked",
+            );
+
+            // 1. float: chart AND window go floating together (consistent).
+            toggle(inspector);
+            assert_eq!(
+                chart_floating(inspector),
+                is_panel_floating(&windows.get(), INSPECTOR_PANEL_TAG),
+                "after float: the two layers agree",
+            );
+            assert!(chart_floating(inspector), "after float: both floating");
+
+            // 2. dock-back (directed): chart AND window return docked together.
+            toggle(inspector);
+            assert_eq!(
+                chart_floating(inspector),
+                is_panel_floating(&windows.get(), INSPECTOR_PANEL_TAG),
+                "after dock-back: the two layers agree",
+            );
+            assert!(!chart_floating(inspector), "after dock-back: both docked");
+        });
+    }
+
+    #[test]
     fn r683_c_view_main_dock_contains_all_three_panel_tags_when_none_floating() {
         Owner::new().run(|| {
             let scene = view_main_dock(ButtonState::Idle);
