@@ -4696,41 +4696,6 @@ fn window_move_payload(panel_id: &str, delta: (f64, f64)) -> IntrospectValue {
     }))
 }
 
-/// R1120 §5.51 §5.15 PR-39 — the WINDOW MOVE delta in the window-INDEPENDENT
-/// DESKTOP frame, which breaks the feedback loop that made the live drag jitter.
-///
-/// The R1118 delta `cursor_local − press_cursor` is measured relative to the
-/// MOVING window (winit reports the cursor against the window's current origin),
-/// so with the binding's `pos += delta` and the WM's `set_outer_position`
-/// apply-lag the closed loop is marginally stable (error recurrence
-/// `e_{n+1} = e_n − e_{n-1}`, roots of magnitude 1) → sustained oscillation. It is
-/// invisible to fixed-frame / stepwise-settle tests (effective apply-lag 0).
-///
-/// Fix: `actual_origin` (the source window's `Window::outer_position()`, NOT the
-/// declared position which lags) makes `actual_origin + cursor_local` the true
-/// desktop pointer position regardless of how far the window has moved; emitting
-/// the FRAME INCREMENT `desktop_now − desktop_prev`, accumulated by the binding's
-/// `pos += delta`, gives `pos = pos_0 + (cursor_desktop − cursor_desktop_0)` with
-/// NO feedback term — stable at any apply-lag (proved by the `simulate_window_move`
-/// closed-loop harness). The first sample (`prev_desktop` None) anchors `prev` at
-/// the grab's desktop (`actual_origin + press_cursor`), so the first delta is the
-/// grab-relative move (≈0 while the cursor is still on the grab point). `None`
-/// `actual_origin` (headless RPC drive / single-window) falls back to the
-/// window-local cursor as the desktop estimate — correct at apply-lag 0. Returns
-/// `(delta, new_prev_desktop)`.
-#[must_use]
-fn window_move_delta(
-    actual_origin: Option<(f64, f64)>,
-    cursor_local: (f64, f64),
-    press_cursor: (f64, f64),
-    prev_desktop: Option<(f64, f64)>,
-) -> ((f64, f64), (f64, f64)) {
-    let (ax, ay) = actual_origin.unwrap_or((0.0, 0.0));
-    let desktop = (ax + cursor_local.0, ay + cursor_local.1);
-    let prev = prev_desktop.unwrap_or((ax + press_cursor.0, ay + press_cursor.1));
-    ((desktop.0 - prev.0, desktop.1 - prev.1), desktop)
-}
-
 /// R1103 §5.51 §2 #7 — read a normalised drop-zone cursor fraction from a
 /// JSON redock-at payload, defaulting to the zone centre (`0.5`) when the
 /// caller omits it. The `f64 → f32` narrowing is the documented `DropPoint`
@@ -5659,13 +5624,16 @@ impl External for DockPanelExternal {
         if self.is_floater_window_move(update.source_window) {
             // R1146 §5.51 — VS Code model: the floater stayed put during the drag
             // (preview only); reposition it ONCE now by the total grab-relative
-            // displacement. The window never moved mid-drag, so `window_move_delta`
-            // with no prior desktop anchor reduces to `cursor − press_cursor` (the
-            // origin term cancels) — the full move applied in a single
-            // `set_outer_position`, with none of the per-frame flood that hung the
-            // WM. A degenerate move (release on the grab point) emits a zero delta,
-            // an idempotent reposition. See `docs/dock-window-move-redesign.md`.
-            let (delta, _) = window_move_delta(None, update.cursor, update.press_cursor, None);
+            // displacement `cursor − press_cursor` — the full move applied in a
+            // single `set_outer_position`, with none of the per-frame flood that
+            // hung the WM. The window never moved mid-drag, so the desktop frame
+            // collapses to the window-local one. A degenerate move (release on the
+            // grab point) emits a zero delta, an idempotent reposition. See
+            // `docs/dock-window-move-redesign.md`.
+            let delta = (
+                update.cursor.0 - update.press_cursor.0,
+                update.cursor.1 - update.press_cursor.1,
+            );
             self.enqueue_window_move(delta);
             self.end_window_move();
             return;
@@ -6021,7 +5989,7 @@ mod tests {
         DockPanelStyle, DockReorganizer, DockTopology, FloatPolicy, HEADER_TAG_SUFFIX,
         TEAR_OFF_EVENT, TEAR_OFF_FOLLOW_EVENT, TEAR_OFF_REDOCK_AT_EVENT, TEAR_OFF_REDOCK_EVENT,
         WINDOW_MOVE_EVENT, composite_tag, dock_drop_preview_overlay, dock_drop_zone_highlight,
-        dock_tablist_access_nodes, view_dock_panel, window_move_delta,
+        dock_tablist_access_nodes, view_dock_panel,
     };
     use crate::tabs::composite_tab_tag;
     use pinion_a11y::AccessNode;
@@ -6206,9 +6174,6 @@ mod tests {
             // the press point defaults to the cursor (a degenerate in-place grab,
             // so `cursor - press_cursor` is 0 — irrelevant to the tear-off path).
             press_cursor: cursor,
-            // R1120 — no real window in these unit drives; the window-move path
-            // is exercised by the `simulate_window_move` harness, not `upd`.
-            source_window_origin: None,
         }
     }
 
@@ -6552,7 +6517,6 @@ mod tests {
             source_window: Some("torn-viewport"),
             became_drag: true,
             press_cursor: (40.0, 25.0),
-            source_window_origin: None,
         };
         ext.drag_to_at(&dummy_payload(), &update);
         // R1146 — the follow is emitted ONCE on release (not per move). Release off
@@ -6592,7 +6556,6 @@ mod tests {
                 source_window: Some("torn-viewport"),
                 became_drag: true,
                 press_cursor: (1.0, 1.0),
-                source_window_origin: None,
             },
         );
         assert_eq!(
@@ -6627,7 +6590,6 @@ mod tests {
                 source_window: Some("torn-viewport"),
                 became_drag: true,
                 press_cursor: (10.0, 10.0),
-                source_window_origin: None,
             },
         );
         let mut drained: Vec<Intent> = Vec::new();
@@ -6642,7 +6604,6 @@ mod tests {
                 source_window: Some("torn-viewport"),
                 became_drag: true,
                 press_cursor: (40.0, 25.0),
-                source_window_origin: None,
             },
         );
         let mut received: Vec<Intent> = Vec::new();
@@ -7202,7 +7163,6 @@ mod tests {
             source_window: Some("torn-a"),
             became_drag: true,
             press_cursor: (100.0, 10.0),
-            source_window_origin: None,
         }
     }
 
@@ -7271,7 +7231,6 @@ mod tests {
                 source_window: Some("torn-a"),
                 became_drag: false,
                 press_cursor: (50.0, 50.0),
-                source_window_origin: None,
             },
         );
         assert!(
@@ -7298,7 +7257,6 @@ mod tests {
                 source_window: Some("main"),
                 became_drag: false,
                 press_cursor: (10.0, 10.0),
-                source_window_origin: None,
             },
         );
         let mut after: Vec<Intent> = Vec::new();
@@ -8083,7 +8041,6 @@ mod tests {
             source_window: Some("torn-viewport"),
             became_drag: true,
             press_cursor: press,
-            source_window_origin: Some((10, 10)),
         };
         // Two mid-drag moves: the chart drives the preview, but NOTHING relocates
         // the OS window (no WINDOW_MOVE, no tear_off_follow).
@@ -8141,7 +8098,6 @@ mod tests {
             source_window: Some("main"),
             became_drag: true,
             press_cursor: (40.0, 8.0),
-            source_window_origin: None,
         };
         docked.drag_to_at(&dummy_payload(), &escaped); // escaped every zone
         let mut dmid: Vec<Intent> = Vec::new();
@@ -8162,116 +8118,6 @@ mod tests {
             ("viewport".into(), 140.0, 88.0),
             "a docked tear-off jumps to the RAW cursor on release (no grab-offset)",
         );
-    }
-
-    /// R1119 PR-39 — closed-loop simulator for the borderless-floater title-bar
-    /// window move. Models what the headless fixed-frame / stepwise-settle drives
-    /// CANNOT: winit reports the cursor relative to the MOVING window, and the WM
-    /// applies `set_outer_position` a few frames late — with the lag JITTERING
-    /// frame-to-frame (a real compositor). Drives a desktop cursor trajectory
-    /// through the loop and returns the per-frame WINDOW POSITION trace.
-    ///
-    /// `controller(actual_origin, cursor_local, declared) -> new_declared` is the
-    /// position-update rule under test (it may capture per-gesture state).
-    fn simulate_window_move<F: FnMut(Option<(f64, f64)>, (f64, f64), (f64, f64)) -> (f64, f64)>(
-        cursor_path: &[(f64, f64)],
-        o0: (f64, f64),
-        lag_pattern: &[usize], // per-frame WM apply lag, cycled (real apply jitters)
-        mut controller: F,
-    ) -> Vec<(f64, f64)> {
-        // declared[k] = the position commanded at frame k; actual_n = the position
-        // commanded `lag` frames ago. The jitter is the perturbation that drives
-        // the naive controller's marginal mode into a non-smooth (jittery) path.
-        let mut declared_hist: Vec<(f64, f64)> = Vec::with_capacity(cursor_path.len());
-        let mut declared = o0;
-        for (n, &c) in cursor_path.iter().enumerate() {
-            let lag = lag_pattern[n % lag_pattern.len()].max(1);
-            let actual = if n >= lag { declared_hist[n - lag] } else { o0 };
-            // winit reports the cursor RELATIVE to the actual on-screen window.
-            let cursor_local = (c.0 - actual.0, c.1 - actual.1);
-            declared = controller(Some(actual), cursor_local, declared);
-            declared_hist.push(declared);
-        }
-        declared_hist
-    }
-
-    /// Max path "jerk" (|2nd difference| of the window position) over the moving
-    /// frames `0..motion_end`. A SMOOTH move (constant cursor velocity) has jerk
-    /// ~0; an oscillating/jittery move has large jerk. This is the jitter signal
-    /// the handoff observed (per-frame deltas swinging ±, with big jumps).
-    fn max_jerk(positions: &[(f64, f64)], motion_end: usize) -> f64 {
-        (2..motion_end)
-            .map(|n| {
-                let jx = positions[n].0 - 2.0 * positions[n - 1].0 + positions[n - 2].0;
-                let jy = positions[n].1 - 2.0 * positions[n - 1].1 + positions[n - 2].1;
-                (jx * jx + jy * jy).sqrt()
-            })
-            .fold(0.0_f64, f64::max)
-    }
-
-    /// A realistic non-uniform WM apply-lag pattern (frames late, cycled). The
-    /// jitter is what excites the naive controller's marginal oscillation.
-    const APPLY_LAG_JITTER: &[usize] = &[1, 3, 1, 2, 4, 1, 3, 2];
-
-    /// A constant-velocity desktop cursor path (the human's hand moving steadily
-    /// — the SMOOTHEST possible input). 30 moving frames. Any jitter in the window
-    /// path is therefore the controller's fault, not the input's.
-    fn steady_drift(start: (f64, f64)) -> Vec<(f64, f64)> {
-        (0..30)
-            .map(|i| (start.0 + 15.0 * f64::from(i), start.1 + 10.0 * f64::from(i)))
-            .collect()
-    }
-
-    #[test]
-    fn r1119_naive_local_frame_window_move_jitters_under_apply_lag() {
-        // The OLD (R1118) formula: new_declared = declared + (cursor_local −
-        // press), measured in the MOVING frame → feedback → marginally-stable, so
-        // the jittering apply-lag is never damped: even a perfectly STEADY cursor
-        // produces a JITTERY window path (the PR-39 live defect). The fixed-frame
-        // demo could not see it — it ran at effective apply-lag 0. This test
-        // PROVES the harness catches the regression class.
-        let grab = (40.0, 8.0);
-        let press = grab;
-        let path = steady_drift((100.0, 50.0));
-        let o0 = (path[0].0 - grab.0, path[0].1 - grab.1); // grab under cursor at press
-        let positions =
-            simulate_window_move(&path, o0, APPLY_LAG_JITTER, |_actual, local, declared| {
-                (
-                    declared.0 + (local.0 - press.0),
-                    declared.1 + (local.1 - press.1),
-                )
-            });
-        let jerk = max_jerk(&positions, path.len());
-        assert!(
-            jerk > 10.0,
-            "naive local-frame move JITTERS under apply-lag: window-path jerk {jerk} is large for a \
-             perfectly steady cursor (a smooth move has jerk ~0)",
-        );
-    }
-
-    #[test]
-    fn r1119_desktop_frame_window_move_is_smooth_at_every_lag() {
-        // The FIXED formula (`window_move_delta` desktop frame increment + the
-        // binding's `pos += delta`). The desktop cursor (actual_origin +
-        // cursor_local) is window-INDEPENDENT, so there is NO feedback — a steady
-        // cursor yields a smooth window path (jerk ~0) at ANY apply-lag, including
-        // the same jitter that breaks the naive controller.
-        let grab = (40.0, 8.0);
-        let path = steady_drift((100.0, 50.0));
-        let o0 = (path[0].0 - grab.0, path[0].1 - grab.1);
-        for pattern in [APPLY_LAG_JITTER, &[1], &[2], &[3], &[4]] {
-            let mut prev: Option<(f64, f64)> = None;
-            let positions = simulate_window_move(&path, o0, pattern, |actual, local, declared| {
-                let (delta, new_prev) = window_move_delta(actual, local, grab, prev);
-                prev = Some(new_prev);
-                (declared.0 + delta.0, declared.1 + delta.1)
-            });
-            let jerk = max_jerk(&positions, path.len());
-            assert!(
-                jerk < 0.001,
-                "desktop-frame move must be SMOOTH for lag {pattern:?}: jerk {jerk} (expected ~0)",
-            );
-        }
     }
 
     #[test]

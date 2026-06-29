@@ -534,14 +534,6 @@ struct DragSession {
     /// from the same `self.cursors[id]` at the same pointer-down, so they cannot
     /// diverge.
     press_cursor: (f64, f64),
-    /// (R1120 §5.15 §5.51 PR-39) The source window's ACTUAL outer origin (logical
-    /// px), stashed by the shell each move via [`InputRouter::set_drag_source_origin`]
-    /// (the shell holds the winit handle; the router does not) and forwarded as
-    /// [`DragUpdate::source_window_origin`]. Lets a window move convert the
-    /// window-relative cursor to a stable DESKTOP frame. `None` when the shell did
-    /// not stash one (headless RPC drive / single-window). Lifecycle-scoped to the
-    /// session; mirrors `cross_window`.
-    source_origin: Option<(i32, i32)>,
 }
 
 impl InputRouter {
@@ -646,19 +638,6 @@ impl InputRouter {
     #[must_use]
     pub fn drag_cross_window(&self, id: PointerId) -> Option<&CrossWindowDrop> {
         self.drag_sessions.get(&id)?.cross_window.as_ref()
-    }
-
-    /// (R1120 §5.15 §5.51 PR-39) Stash the source window's ACTUAL outer origin
-    /// (logical px) for the in-flight drag on `id`, forwarded as
-    /// [`DragUpdate::source_window_origin`]. The shell — the sole holder of the
-    /// winit handle — calls this each move with `Window::outer_position()`; the
-    /// router (no winit) only forwards it so a title-bar window move converts the
-    /// window-relative cursor to a stable DESKTOP frame. No-op when no session
-    /// owns `id`. Mirrors [`set_drag_cross_window`](Self::set_drag_cross_window).
-    pub fn set_drag_source_origin(&mut self, id: PointerId, origin: Option<(i32, i32)>) {
-        if let Some(session) = self.drag_sessions.get_mut(&id) {
-            session.source_origin = origin;
-        }
     }
 
     /// R51.34 §5.35 — current capture-lock target tag for `id`, when
@@ -1321,9 +1300,6 @@ impl InputRouter {
                         // it). A grab-offset window move anchors here, not on the
                         // first move sample. Degenerate (no held cursor) → origin.
                         press_cursor: self.cursors.get(&id).copied().unwrap_or_default(),
-                        // R1120 — the shell stamps the actual outer origin each
-                        // move (it holds the winit handle); unset at session open.
-                        source_origin: None,
                     },
                 );
             }
@@ -1492,8 +1468,6 @@ impl InputRouter {
                             // R1117 — the gesture's press point (Copy; unaffected
                             // by the `cross_window` partial move above).
                             press_cursor: session.press_cursor,
-                            // R1120 — the shell-stashed actual outer origin (Copy).
-                            source_window_origin: session.source_origin,
                         },
                     ),
                     None => external.handle.drag_release(&session.payload, over),
@@ -1898,9 +1872,6 @@ impl InputRouter {
         // R1117 §5.15 §5.51 — the gesture's press point (Copy), forwarded so a
         // grab-offset window move anchors at the press, not this move sample.
         let press_cursor = session.press_cursor;
-        // R1120 §5.15 §5.51 — the shell-stashed actual outer origin (Copy), for
-        // the desktop-frame window move (stable under apply-lag).
-        let source_origin = session.source_origin;
         // R1101 §5.51 — the router's click-vs-drag verdict (read here, while
         // `&self` is free, before the `state_scene` borrow). The source
         // consumes this instead of re-deriving it from its own distance
@@ -1936,7 +1907,6 @@ impl InputRouter {
                     source_window: self.window_id.as_deref(),
                     became_drag,
                     press_cursor,
-                    source_window_origin: source_origin,
                 },
             );
         }

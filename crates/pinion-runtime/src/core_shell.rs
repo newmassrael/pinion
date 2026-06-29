@@ -2097,24 +2097,6 @@ impl<V: WidgetCore> CoreShell<V> {
             .cloned()
     }
 
-    /// (R1120 §5.15 §5.51 PR-39) Stash the source window's ACTUAL outer origin
-    /// (logical px) on its in-flight drag, so a borderless-floater title-bar
-    /// WINDOW MOVE converts the window-relative cursor to a stable DESKTOP frame
-    /// (no apply-lag feedback / jitter). The shell holds the winit handle and
-    /// calls this with `Window::outer_position()` each move; the router only
-    /// forwards it as [`DragUpdate::source_window_origin`]. No-op when the window
-    /// has no router / no active drag.
-    pub fn set_drag_source_origin_for_window(
-        &mut self,
-        window_id: &str,
-        pid: PointerId,
-        origin: Option<(i32, i32)>,
-    ) {
-        if let Some(router) = self.routers.get_mut(window_id) {
-            router.set_drag_source_origin(pid, origin);
-        }
-    }
-
     /// R1147 §5.51 §5.16 — flag the cross-desktop drag PREVIEW window as
     /// currently showing (or not) the active drag. When set, `apply_drag_image`
     /// suppresses the R1113 in-window overlay so exactly one chip shows. The

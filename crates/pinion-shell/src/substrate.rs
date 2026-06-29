@@ -2070,21 +2070,6 @@ impl<V: WidgetView> ShellCore<V> {
         self.core.active_drag_label_for_window(window_id, pid)
     }
 
-    /// (R1120 §5.51 PR-39) Stash the source window's ACTUAL outer origin (logical
-    /// px) on its in-flight drag, so a borderless-floater title-bar window move
-    /// converts the window-relative cursor to a stable DESKTOP frame (no apply-lag
-    /// jitter). `AppShell` supplies it from the winit handle — which only the
-    /// shell layer holds — each move; delegates to the runtime core.
-    pub fn set_drag_source_origin_for_window(
-        &mut self,
-        window_id: &str,
-        pid: PointerId,
-        origin: Option<(i32, i32)>,
-    ) {
-        self.core
-            .set_drag_source_origin_for_window(window_id, pid, origin);
-    }
-
     /// R1147 §5.51 §5.16 — flag whether the shell's cross-desktop drag PREVIEW
     /// window is currently showing the active drag, so `apply_drag_image`
     /// suppresses the in-window overlay (one chip, not two). `AppShell` drives

@@ -514,12 +514,12 @@ impl<V: WidgetView> AppShell<V> {
         }
     }
 
-    /// (R1120 §5.51 PR-39) The window's ACTUAL outer origin in LOGICAL pixels
-    /// (`Window::outer_position()` reports physical), or `None` if the window has
-    /// no live handle or the WM does not report a position. Stashed onto an active
-    /// drag so a borderless-floater title-bar window move uses a stable DESKTOP
-    /// frame (`actual_origin + cursor`) — the ACTUAL position, not the declared
-    /// one (which lags the WM and re-introduces the apply-lag feedback / jitter).
+    /// (R1120 §5.51 PR-39 → R1147 §5.16) The window's ACTUAL outer origin in
+    /// LOGICAL pixels (`Window::outer_position()` reports physical), or `None` if
+    /// the window has no live handle or the WM does not report a position. Used to
+    /// place the cross-desktop drag PREVIEW chip at `actual_origin + cursor` — the
+    /// ACTUAL position, not the declared one (which lags the WM), so the chip
+    /// tracks the real desktop pointer.
     #[allow(
         clippy::cast_possible_truncation,
         reason = "logical-pixel window origin -> i32; sub-pixel is irrelevant to placement"
@@ -531,30 +531,6 @@ impl<V: WidgetView> AppShell<V> {
         let logical =
             PhysicalPosition::new(f64::from(phys.x), f64::from(phys.y)).to_logical::<f64>(scale);
         Some((logical.x.round() as i32, logical.y.round() as i32))
-    }
-
-    /// (R1120 §5.51 PR-39) While a drag this window owns is in flight, stash the
-    /// window's ACTUAL outer origin (see [`Self::window_outer_origin_logical`])
-    /// so a borderless-floater title-bar window move converts the
-    /// moving-window-relative cursor into a stable DESKTOP frame
-    /// (`actual_origin + cursor`) — no `set_outer_position` apply-lag feedback /
-    /// jitter. Idle hovers + single-window apps skip the `outer_position()`
-    /// query (the `drag_session_active_for_window` guard is a cheap bool).
-    /// Extracted from the `CursorMoved` arm to keep `window_event` under the
-    /// line cap; re-resolves `spec_id` from the Copy `window_id` so no id clone
-    /// lands on the hot pointer-move path.
-    fn stamp_drag_source_origin(&mut self, window_id: WindowId, scale: f64) {
-        let Some(spec_id) = self.windows.get(&window_id).map(|s| &*s.spec_id) else {
-            return;
-        };
-        if self
-            .core
-            .drag_session_active_for_window(spec_id, PointerId::MOUSE)
-        {
-            let origin = self.window_outer_origin_logical(spec_id, scale);
-            self.core
-                .set_drag_source_origin_for_window(spec_id, PointerId::MOUSE, origin);
-        }
     }
 
     /// R1148 §5.51 §5.16 — stamp every live window's ACTUAL outer origin (logical
@@ -875,7 +851,6 @@ impl<V: WidgetView> AppShell<V> {
         event_loop: &ActiveEventLoop,
     ) {
         let (lx, ly) = winit_pointer_to_logical(position, scale);
-        self.stamp_drag_source_origin(window_id, scale);
         // R1148 §5.51 — stamp every live window's ACTUAL outer origin BEFORE the
         // resolution below, so a floater→main redock hit-tests against real
         // desktop positions (a WM-placed `"main"` has no declared position).

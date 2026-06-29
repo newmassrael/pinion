@@ -510,17 +510,6 @@ pub struct DragUpdate<'a> {
     /// router fills it from the cursor it held when `begin_drag` opened the
     /// session, so it is exact regardless of how far the first move strays.
     pub press_cursor: (f64, f64),
-    /// (R1120 §5.15 §5.51 PR-39) The source window's ACTUAL outer origin in
-    /// logical pixels (`Window::outer_position()`), or `None` when unknown (a
-    /// headless RPC drive with no real window, or a single-window shell). The
-    /// shell — the sole holder of winit handles — stamps it each move; the router
-    /// (no winit) forwards it. A borderless-floater title-bar WINDOW MOVE converts
-    /// the window-relative `cursor` to a window-INDEPENDENT DESKTOP position via
-    /// `source_window_origin + cursor`, so the move has no feedback term and does
-    /// not oscillate under the WM's `set_outer_position` apply-lag (the PR-39
-    /// jitter fix). It MUST be the ACTUAL position, not the declared one (which
-    /// lags the WM) — declared would re-introduce the feedback.
-    pub source_window_origin: Option<(i32, i32)>,
 }
 
 /// The 8-point integration contract (§5.15). Items 1-3 are required;
@@ -1261,7 +1250,6 @@ mod tests {
             source_window: None,
             became_drag: false,
             press_cursor: (12.0, 34.0),
-            source_window_origin: None,
         };
         let release_update = DragUpdate {
             over: None,
@@ -1270,7 +1258,6 @@ mod tests {
             source_window: None,
             became_drag: false,
             press_cursor: (56.0, 78.0),
-            source_window_origin: None,
         };
         src.drag_to_at(&payload, &to_update);
         src.drag_release_at(&payload, &release_update);
