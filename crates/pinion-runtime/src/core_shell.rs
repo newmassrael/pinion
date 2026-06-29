@@ -373,9 +373,9 @@ pub struct CoreShell<V: WidgetCore> {
     /// matching [`Self::next_frame_count`].
     desktop_drag_preview_active: Cell<bool>,
 
-    /// R1148 §5.51 §5.16 — every live window's ACTUAL OS outer origin (logical
-    /// px), stamped by the shell each cursor move during a drag (only the shell
-    /// holds the winit handles). The LIVE cross-window drop resolution reads
+    /// R1148 §5.51 §5.16 → R1151 — every live window's ACTUAL client origin
+    /// (logical px), stamped by the shell each cursor move during a drag (only the
+    /// shell holds the winit handles). The LIVE cross-window drop resolution reads
     /// these instead of the DECLARED `WindowSpec::position`, because a WM-placed
     /// window (the typical `"main"`, declared position `None`) has NO declared
     /// origin yet sits at a real desktop offset — resolving its `(0, 0)` declared
@@ -2115,8 +2115,8 @@ impl<V: WidgetCore> CoreShell<V> {
         self.desktop_drag_preview_active.get()
     }
 
-    /// R1148 §5.51 §5.16 — stamp every live window's ACTUAL outer origin (logical
-    /// px) for the LIVE cross-window drop resolution (replaces the prior set).
+    /// R1148 §5.51 §5.16 → R1151 — stamp every live window's ACTUAL client origin
+    /// (logical px) for the LIVE cross-window drop resolution (replaces the prior set).
     /// The shell calls this each cursor move during a drag (it alone holds the
     /// winit handles); the cross-window-blind resolution then maps the desktop
     /// cursor against real positions, not the DECLARED ones (a WM-placed `"main"`
@@ -2127,9 +2127,9 @@ impl<V: WidgetCore> CoreShell<V> {
         map.extend(origins);
     }
 
-    /// R1148 §5.51 §5.16 — the stamped ACTUAL outer origin of `window_id`
+    /// R1148 §5.51 §5.16 → R1151 — the stamped ACTUAL client origin of `window_id`
     /// (logical px), or `None` when unstamped (the RPC path, or a window whose
-    /// `outer_position()` the WM did not report). The LIVE cross-window drop
+    /// `inner_position()` the WM did not report). The LIVE cross-window drop
     /// resolution prefers this over the DECLARED `WindowSpec::position`.
     #[must_use]
     pub fn live_window_origin(&self, window_id: &str) -> Option<(f64, f64)> {

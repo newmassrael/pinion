@@ -514,32 +514,13 @@ impl<V: WidgetView> AppShell<V> {
         }
     }
 
-    /// (R1120 §5.51 PR-39 → R1147 §5.16) The window's ACTUAL outer origin in
-    /// LOGICAL pixels (`Window::outer_position()` reports physical), or `None` if
-    /// the window has no live handle or the WM does not report a position. Used to
-    /// place the cross-desktop drag PREVIEW chip at `actual_origin + cursor` — the
-    /// ACTUAL position, not the declared one (which lags the WM), so the chip
-    /// tracks the real desktop pointer.
-    #[allow(
-        clippy::cast_possible_truncation,
-        reason = "logical-pixel window origin -> i32; sub-pixel is irrelevant to placement"
-    )]
-    fn window_outer_origin_logical(&self, spec_id: &str, scale: f64) -> Option<(i32, i32)> {
-        let window_id = self.spec_id_to_window_id.get(spec_id).copied()?;
-        let window = Self::slot_window(self.windows.get(&window_id)?)?;
-        let phys = window.outer_position().ok()?;
-        let logical =
-            PhysicalPosition::new(f64::from(phys.x), f64::from(phys.y)).to_logical::<f64>(scale);
-        Some((logical.x.round() as i32, logical.y.round() as i32))
-    }
-
-    /// R1148 §5.51 §5.16 — stamp every live window's ACTUAL outer origin (logical
-    /// px) into the core so the LIVE cross-window redock resolution maps the
-    /// desktop cursor against real desktop positions, not the DECLARED ones — a
+    /// R1148 §5.51 §5.16 → R1151 — stamp every live window's ACTUAL client origin
+    /// (logical px) into the core so the LIVE cross-window redock resolution maps
+    /// the desktop cursor against real desktop positions, not the DECLARED ones — a
     /// WM-placed `"main"` declares position `None` → `(0,0)` but sits at a real WM
     /// offset, which put every floater→main redock off by that offset (the
     /// user-found "좌표 안 맞아" bug). Gated on an active drag this window owns, so
-    /// idle hovers + single-window apps skip the `outer_position()` queries. Runs
+    /// idle hovers + single-window apps skip the `inner_position()` queries. Runs
     /// each `CursorMoved` BEFORE `cursor_moved_for_window` resolves the drop.
     fn stamp_live_window_origins(&self, window_id: WindowId) {
         let Some(spec_id) = self.windows.get(&window_id).map(|s| &*s.spec_id) else {
@@ -605,12 +586,11 @@ impl<V: WidgetView> AppShell<V> {
     /// without this a small hit target (splitter handle, slider thumb) is
     /// unreachable on `HiDPI`.
     ///
-    /// The source-origin stash (R1120) runs BEFORE the cursor is forwarded so an
-    /// in-flight title-bar window move sees the ACTUAL outer origin when the
-    /// router computes the drag delta. `spec_id` is re-resolved after the stash
-    /// because the stash takes `&mut self`; the `DEFAULT_WINDOW` fallback mirrors
-    /// the other pointer arms (an untracked window — a `Resumed` event landing
-    /// before the slot is inserted).
+    /// [`Self::stamp_live_window_origins`] (R1148) runs BEFORE the cursor is
+    /// forwarded so an in-flight cross-window redock hit-tests against every live
+    /// window's ACTUAL client origin, not the declared one. The `DEFAULT_WINDOW`
+    /// fallback mirrors the other pointer arms (an untracked window — a `Resumed`
+    /// event landing before the slot is inserted).
     /// R1147 §5.16 — initialise a Vello renderer against `window`'s surface at
     /// its current physical inner size. Shared by [`Self::resume_spec`] (declared
     /// windows) and the R1147 drag-preview window so both cross the §6.3
@@ -734,7 +714,7 @@ impl<V: WidgetView> AppShell<V> {
     /// move. On a preview-eligible drag (the binding opted the dragged label in
     /// via [`WidgetView::drag_image_style`]) this ensures the window, repaints the
     /// chip iff the label changed (render-once), positions it at the DESKTOP
-    /// cursor (the SOURCE window's ACTUAL outer origin + the window-local cursor —
+    /// cursor (the SOURCE window's ACTUAL client origin + the window-local cursor —
     /// the live origin, not the lagging declared one; the source window is the
     /// dragger, not the moved one, so there is no R1119 feedback loop), shows it,
     /// and toggles the in-window-overlay suppression. Skipped under
@@ -748,7 +728,6 @@ impl<V: WidgetView> AppShell<V> {
     fn update_drag_preview(
         &mut self,
         window_id: WindowId,
-        scale: f64,
         cursor: (f64, f64),
         event_loop: &ActiveEventLoop,
     ) {
@@ -772,16 +751,22 @@ impl<V: WidgetView> AppShell<V> {
             // The binding wants no follower for this label.
             return;
         };
-        // Desktop pointer = the SOURCE window's ACTUAL outer origin + the
-        // window-local cursor, trailed by the style offset so the chip sits
-        // beside the pointer (matching the in-window R1113 follower).
-        let Some((ox, oy)) = self.window_outer_origin_logical(&spec_id, scale) else {
+        // Desktop pointer = the SOURCE window's ACTUAL CLIENT origin + the
+        // window-local (client-relative) cursor, trailed by the style offset so the
+        // chip sits beside the pointer (matching the in-window R1113 follower).
+        // Reads the SAME live-window-origin SSOT the cross-window redock stamps each
+        // move (R1148/R1151): `stamp_live_window_origins` runs just above in
+        // `handle_cursor_moved`, so the source's origin is fresh. CLIENT (not outer)
+        // is the correct base — winit reports the cursor client-relative, so
+        // `client_origin + client_cursor` is the true desktop pointer even on a
+        // decorated source (a borderless floater has client == outer).
+        let Some((ox, oy)) = self.core.live_window_origin(&spec_id) else {
             return;
         };
         let off = i32::try_from(style.cursor_offset).unwrap_or(i32::MAX);
         let pos = (
-            ox + cursor.0.round() as i32 + off,
-            oy + cursor.1.round() as i32 + off,
+            (ox + cursor.0).round() as i32 + off,
+            (oy + cursor.1).round() as i32 + off,
         );
         self.ensure_drag_preview_window(event_loop, &label, style);
         let repaint = {
@@ -851,9 +836,9 @@ impl<V: WidgetView> AppShell<V> {
         event_loop: &ActiveEventLoop,
     ) {
         let (lx, ly) = winit_pointer_to_logical(position, scale);
-        // R1148 §5.51 — stamp every live window's ACTUAL outer origin BEFORE the
-        // resolution below, so a floater→main redock hit-tests against real
-        // desktop positions (a WM-placed `"main"` has no declared position).
+        // R1148/R1151 §5.51 — stamp every live window's ACTUAL client origin
+        // BEFORE the resolution below, so a floater→main redock hit-tests against
+        // real desktop positions (a WM-placed `"main"` has no declared position).
         self.stamp_live_window_origins(window_id);
         let spec_id: &str = self
             .windows
@@ -863,7 +848,7 @@ impl<V: WidgetView> AppShell<V> {
             .cursor_moved_for_window(spec_id, PointerId::MOUSE, lx, ly);
         // R1147 §5.51 — drive the cross-desktop drag preview window (a no-op
         // unless a preview-eligible drag is in flight in live mode).
-        self.update_drag_preview(window_id, scale, (lx, ly), event_loop);
+        self.update_drag_preview(window_id, (lx, ly), event_loop);
     }
 
     /// R51.76 §5.40 — drain the [`ShellCore::redraw_requested`] flag
@@ -2629,11 +2614,10 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
             // methods. The handler arms only translate winit events
             // into the substrate's pinion-native shape.
             WindowEvent::CursorMoved { position, .. } => {
-                // R1120 §5.51 — body lives in `handle_cursor_moved` (stamp the
-                // drag source origin + forward the logical cursor + R1147 drive
-                // the cross-desktop drag preview). Delegating keeps `window_event`
-                // under the line cap and lets the helper own the `&mut self`
-                // borrow the source-origin stash + preview ensure/move need.
+                // R1148/R1147 §5.51 — body lives in `handle_cursor_moved` (stamp
+                // live window origins for cross-window redock + forward the
+                // logical cursor + drive the cross-desktop drag preview).
+                // Delegating keeps `window_event` under the line cap.
                 self.handle_cursor_moved(window_id, position, scale, event_loop);
             }
             WindowEvent::CursorLeft { .. } => {

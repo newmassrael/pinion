@@ -2049,8 +2049,8 @@ impl<V: WidgetView> ShellCore<V> {
     }
 
     /// (R1120 §5.51 PR-39) Whether a drag this window owns is in flight — the
-    /// gate `AppShell` uses before stashing the actual outer origin (so idle
-    /// hovers skip the winit `outer_position()` query). Delegates to the runtime
+    /// gate `AppShell` uses before stamping the live window origins (so idle
+    /// hovers skip the winit `inner_position()` query). Delegates to the runtime
     /// core; the shell layer holds the winit handle, the core holds the session.
     #[must_use]
     pub fn drag_session_active_for_window(&self, window_id: &str, pid: PointerId) -> bool {
@@ -2078,14 +2078,24 @@ impl<V: WidgetView> ShellCore<V> {
         self.core.set_desktop_drag_preview_active(active);
     }
 
-    /// R1148 §5.51 §5.16 — stamp every live window's ACTUAL outer origin (logical
-    /// px) so the LIVE cross-window redock resolution maps the desktop cursor
-    /// against real positions, not the DECLARED ones (a WM-placed `"main"` has
+    /// R1148 §5.51 §5.16 → R1151 — stamp every live window's ACTUAL client origin
+    /// (logical px) so the LIVE cross-window redock resolution maps the desktop
+    /// cursor against real positions, not the DECLARED ones (a WM-placed `"main"` has
     /// declared position `None` → `(0,0)`, which put redock off by the WM offset).
     /// `AppShell` calls this each cursor move during a drag (it holds the winit
     /// handles); delegates to the runtime core.
     pub fn set_live_window_origins(&self, origins: Vec<(String, (f64, f64))>) {
         self.core.set_live_window_origins(origins);
+    }
+
+    /// R1148 §5.51 §5.16 → R1151 — the stamped ACTUAL client origin of `window_id`
+    /// (logical px), or `None` when unstamped. Delegates to the runtime core. The
+    /// R1147 drag-preview window reads it to place the chip at the true desktop
+    /// pointer (`client_origin + client_cursor`) — the SAME live-origin SSOT the
+    /// cross-window redock resolves against, so the two never drift.
+    #[must_use]
+    pub fn live_window_origin(&self, window_id: &str) -> Option<(f64, f64)> {
+        self.core.live_window_origin(window_id)
     }
 
     /// R672 §5.35 §5.41 — per-window variant of [`Self::cursor_moved`].
@@ -5483,8 +5493,8 @@ impl<V: WidgetView> ShellCore<V> {
             return None;
         }
         let source = specs.iter().find(|w| w.id == source_window)?;
-        // R1148 §5.51 — use the source window's ACTUAL outer origin (shell-stamped
-        // each move), not the DECLARED `position`. The declared fallback is `(0,0)`
+        // R1148 §5.51 → R1151 — use the source window's ACTUAL client origin
+        // (shell-stamped each move), not the DECLARED `position`. The declared fallback is `(0,0)`
         // for a WM-placed window, and even a positioned floater's declared origin
         // can lag the WM; the actual origin makes `abs = source_origin + local` the
         // true desktop pointer. (The R1120 lesson: resolve geometry against actual,
