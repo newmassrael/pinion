@@ -1043,6 +1043,53 @@ impl DockTopology {
         Self::try_new(new_root)
     }
 
+    /// (R1156 §5.51) OUTER full-span dock: wrap the ENTIRE topology in a new
+    /// Split, placing a fresh leaf for `new_leaf_panel_id` on the `position` side
+    /// spanning the WHOLE dock area. Unlike [`Self::split_leaf_into`] (which
+    /// splits ONE leaf, so the new panel only spans that leaf's slot), this splits
+    /// the ROOT — the new panel runs the full width (a `Vertical` top/bottom row)
+    /// or full height (a `Horizontal` left/right column) across every existing
+    /// pane. This is the container-edge / "outer dock guide" gesture pro dockers
+    /// expose at the dock area's perimeter (VS Code edge zones, Qt ADS outer dock
+    /// areas, Visual Studio's outer guide arrows), and the path that restores a
+    /// full-width toolbar after its own slot collapsed: a per-leaf split could
+    /// only re-dock it inside ONE column, never as the full-width top row.
+    ///
+    /// `position == First` puts the new panel at the top (`Vertical`) / left
+    /// (`Horizontal`); `Second` at the bottom / right. `ratio` is the new split's
+    /// fraction (e.g. a thin `0.06` toolbar row).
+    ///
+    /// # Errors
+    ///
+    /// [`TopologyError`] from [`Self::try_new`] when `new_split_id` duplicates an
+    /// existing id, or `new_leaf_panel_id` already docks (a panel cannot dock
+    /// twice — a floating source the binding redocks here was removed from the
+    /// tree at float time, so it is absent).
+    pub fn split_root(
+        &self,
+        new_leaf_panel_id: impl Into<Cow<'static, str>>,
+        new_split_id: impl Into<Cow<'static, str>>,
+        orientation: SplitterOrientation,
+        ratio: f32,
+        position: DockSplitPosition,
+    ) -> Result<DockTopology, TopologyError> {
+        let new_leaf = DockNode::leaf(new_leaf_panel_id);
+        let root = self.root.clone();
+        let (first, second) = match position {
+            DockSplitPosition::First => (new_leaf, root),
+            DockSplitPosition::Second => (root, new_leaf),
+        };
+        let new_root = match orientation {
+            SplitterOrientation::Horizontal => {
+                DockNode::split_horizontal(new_split_id, ratio, first, second)
+            }
+            SplitterOrientation::Vertical => {
+                DockNode::split_vertical(new_split_id, ratio, first, second)
+            }
+        };
+        Self::try_new(new_root)
+    }
+
     /// (R686 §5.16 §5.45) Remove the leaf at `panel_id` and promote its
     /// sibling sub-tree into the parent Split's place. The parent Split
     /// (and its id + ratio) disappears; the surviving sibling slides up
@@ -2065,6 +2112,26 @@ fn zone_split_geometry(zone: DockDropZone) -> Option<(SplitterOrientation, DockS
     }
 }
 
+/// (R1156 §5.51) Classify a cursor normalised over the WHOLE dock area (`x_rel` /
+/// `y_rel`, as an `OUTER_DOCK_ZONE_TAG` `DropPoint` carries) into the nearest
+/// OUTER edge zone — the full-span dock side. Nearest of top (`y_rel`→0) / bottom
+/// (→1) / left (`x_rel`→0) / right (→1); ties resolve Top > Bottom > Left > Right.
+/// Never `Center` (the area's centre is not an outer dock). Pairs with
+/// [`DockReorganizer::dock_panel_outer`].
+#[must_use]
+pub fn outer_zone_for(x_rel: f64, y_rel: f64) -> DockDropZone {
+    let candidates = [
+        (y_rel.abs(), DockDropZone::Top),
+        ((1.0 - y_rel).abs(), DockDropZone::Bottom),
+        (x_rel.abs(), DockDropZone::Left),
+        ((1.0 - x_rel).abs(), DockDropZone::Right),
+    ];
+    candidates
+        .into_iter()
+        .reduce(|best, c| if c.0 < best.0 { c } else { best })
+        .map_or(DockDropZone::Top, |(_, z)| z)
+}
+
 /// (R1081 §5.51) Map a classified drop — the dragged `source` panel, the
 /// `target` panel under the cursor, and the [`DockDropZone`] the cursor
 /// fell in — to the [`DockReorganizeIntent`] that performs it: a centre
@@ -2798,6 +2865,64 @@ impl DockReorganizer {
         Ok(self.commit(next, summary))
     }
 
+    /// (R1156 §5.51) OUTER full-span redock: return a floating `panel` into the
+    /// dock as a FULL-SPAN row/column spanning the WHOLE area, via
+    /// [`DockTopology::split_root`]. This is the container-edge / "outer dock
+    /// guide" gesture (drop at the dock area's PERIMETER) pro dockers expose, and
+    /// the path that restores a full-width toolbar after its slot collapsed: the
+    /// per-leaf [`Self::dock_panel_at_zone`] could only re-dock it INSIDE one pane,
+    /// never as the full-width top row above every column.
+    ///
+    /// TOTAL over the panel's presence like [`Self::dock_panel_at_zone`]: a still-
+    /// present leaf (placeholder policy) is removed first so the insert is uniform;
+    /// an absent one (collapse policy / a torn-off floater) inserts directly.
+    /// `zone` must be an EDGE ([`DockDropZone::Top`] / `Bottom` / `Left` /
+    /// `Right`) — the area's centre is not an outer dock, so `Center` / `None` are
+    /// a no-op.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the [`TopologyError`] from the underlying remove / `split_root`
+    /// (id collision); the live topology is unchanged on error.
+    pub fn dock_panel_outer(
+        &self,
+        panel: &str,
+        zone: DockDropZone,
+    ) -> Result<String, TopologyError> {
+        let Some(current) = self.topology.get() else {
+            let outcome = "empty surface — no-op".to_string();
+            self.note_outcome(&outcome);
+            return Ok(outcome);
+        };
+        let Some((orientation, position)) = zone_split_geometry(zone) else {
+            let outcome = format!("{panel}: outer dock needs an edge zone — no move");
+            self.note_outcome(&outcome);
+            return Ok(outcome);
+        };
+        // Normalise to absence (placeholder policy removes the leaf; a collapsed /
+        // floating source is already absent). `remove_leaf` cannot empty the tree
+        // here: an outer dock is only meaningful while other panels remain.
+        let base = if current.panel_ids().contains(&panel) {
+            current.remove_leaf(panel)?
+        } else {
+            current
+        };
+        let id = format!("{REORG_SPLIT_ID_PREFIX}{}", self.split_seq.get());
+        let next = base.split_root(
+            panel.to_string(),
+            id,
+            orientation,
+            self.reorganize_ratio,
+            position,
+        )?;
+        self.split_seq.set(self.split_seq.get() + 1);
+        // (R1134 §5.51.1) Landed at an outer edge, not its captured home — drop any
+        // stale collapse home anchor so a later home-restore does not resurrect the
+        // old slot.
+        self.home_anchors.borrow_mut().remove(panel);
+        Ok(self.commit(next, format!("{panel} -> outer {}", zone_wire_name(zone))))
+    }
+
     /// (R1145 §5.51) UNDOCK a tabbed `panel` — pull it OUT of its tab well and
     /// re-dock it as a SPLIT sibling beside the well, so two panels merged into
     /// tabs become side by side again. The reverse of a centre-zone tabify. A
@@ -3319,6 +3444,7 @@ impl ExternalIntrospect for DockReorganizeExternal {
                     Err(_) => Err(InvokeError::Rejected),
                 }
             }
+            "dock_outer" => self.invoke_dock_outer(args),
             "activate_tab" => {
                 let IntrospectValue::Json(obj) = args else {
                     return Err(InvokeError::TypeMismatch);
@@ -3365,6 +3491,30 @@ impl ExternalIntrospect for DockReorganizeExternal {
 }
 
 impl DockReorganizeExternal {
+    /// (R1156 §5.51) Extracted [`Self::invoke`] arm: OUTER full-span dock — drop
+    /// `source` at the dock AREA's edge (`zone` = Top/Bottom/Left/Right), spanning
+    /// every pane, via [`DockReorganizer::dock_panel_outer`]. The §2 #2 RPC peer of
+    /// the live container-edge gesture; `Center`/`None` reject (the area's centre
+    /// is not an outer dock).
+    fn invoke_dock_outer(&mut self, args: IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+        let IntrospectValue::Json(obj) = args else {
+            return Err(InvokeError::TypeMismatch);
+        };
+        let source = obj
+            .get("source")
+            .and_then(serde_json::Value::as_str)
+            .ok_or(InvokeError::TypeMismatch)?;
+        let zone_str = obj
+            .get("zone")
+            .and_then(serde_json::Value::as_str)
+            .ok_or(InvokeError::TypeMismatch)?;
+        let zone = parse_drop_zone(zone_str).ok_or(InvokeError::Rejected)?;
+        match self.reorganizer.dock_panel_outer(source, zone) {
+            Ok(summary) => Ok(IntrospectValue::Text(summary)),
+            Err(_) => Err(InvokeError::Rejected),
+        }
+    }
+
     /// (R1145 §5.51) The `undock_tab` invoke arm body. `args` is the panel id
     /// ([`IntrospectValue::Text`]); a panel not in a tab well is a no-op (`Ok`).
     fn invoke_undock_tab(&mut self, args: IntrospectValue) -> Result<IntrospectValue, InvokeError> {
@@ -9014,6 +9164,71 @@ mod topology_tests {
     }
 
     #[test]
+    fn r1156_split_root_redocks_a_panel_full_span_at_the_top() {
+        // The toolbar's slot collapsed (torn off): the remaining tree is the
+        // column group with NO top row. `split_root` re-docks it as a full-span
+        // Vertical FIRST row spanning every column — what a per-leaf split could
+        // never do (it would re-dock inside ONE column).
+        let collapsed = editor_topology().remove_leaf("toolbar").unwrap();
+        assert!(
+            !collapsed.panel_ids().contains(&"toolbar"),
+            "toolbar removed by the tear-off"
+        );
+        let restored = collapsed
+            .split_root(
+                "toolbar",
+                "root_top",
+                Orient::Vertical,
+                0.06,
+                DockSplitPosition::First,
+            )
+            .unwrap();
+        // The new root is a Vertical split with toolbar as the FIRST (top) child
+        // and the entire old tree as the second — toolbar is depth-first FIRST,
+        // spanning the full width above all columns.
+        assert_eq!(restored.panel_ids().first(), Some(&"toolbar"));
+        assert!(restored.split_ids().contains(&"root_top"));
+        for p in ["outliner", "viewport", "properties", "console"] {
+            assert!(
+                restored.panel_ids().contains(&p),
+                "{p} survives under the new root"
+            );
+        }
+    }
+
+    #[test]
+    fn r1156_split_root_second_is_full_span_bottom() {
+        // Second → bottom: the new panel spans the full width BELOW everything.
+        let t = editor_topology()
+            .split_root(
+                "status",
+                "root_bottom",
+                Orient::Vertical,
+                0.95,
+                DockSplitPosition::Second,
+            )
+            .unwrap();
+        assert_eq!(t.panel_ids().last(), Some(&"status"));
+        assert!(t.split_ids().contains(&"root_bottom"));
+    }
+
+    #[test]
+    fn r1156_split_root_rejects_a_panel_already_docked() {
+        // The full-span leaf cannot name a panel already in the tree (a panel
+        // docks exactly once); the try_new gate rejects it, tree unchanged.
+        let err = editor_topology()
+            .split_root(
+                "viewport",
+                "root_top",
+                Orient::Vertical,
+                0.1,
+                DockSplitPosition::First,
+            )
+            .unwrap_err();
+        assert_eq!(err, TopologyError::DuplicatePanelId("viewport".to_string()));
+    }
+
+    #[test]
     fn r686_split_leaf_into_invalid_ratio_rejected() {
         let err = editor_topology()
             .split_leaf_into(
@@ -9456,7 +9671,7 @@ mod reorganize_tests {
     use super::{
         DockDropPreview, DockDropZone, DockNode, DockReorganizeExternal, DockReorganizeIntent,
         DockReorganizer, DockSplitPosition, DockTopology, FloatPolicy, TabWellExternal,
-        TopologyError, resolve_dock_drop,
+        TopologyError, outer_zone_for, resolve_dock_drop,
     };
     use crate::splitter::SplitterOrientation as Orient;
     use pinion_core::external::{ExternalIntrospect, InterveneError, IntrospectValue, InvokeError};
@@ -9624,6 +9839,82 @@ mod reorganize_tests {
             4,
             "an INSERT grows the panel count"
         );
+    }
+
+    #[test]
+    fn r1156_dock_panel_outer_redocks_absent_source_full_span_top() {
+        // Collapse policy: a floated-out panel ("d", absent) OUTER-docks as a
+        // FULL-SPAN top row via split_root — the new root is a Vertical split with
+        // "d" first (top), the whole abc tree second. A per-leaf dock_panel_at_zone
+        // could only land "d" inside ONE pane; this spans them all.
+        let topology = Rc::new(Signal::new(Some(abc_topology())));
+        let reorganizer = DockReorganizer::new(Rc::clone(&topology));
+        let outcome = reorganizer
+            .dock_panel_outer("d", DockDropZone::Top)
+            .unwrap();
+        assert_eq!(outcome, "d -> outer Top");
+        let after = topology.get().unwrap();
+        assert_eq!(
+            after.panel_ids().first(),
+            Some(&"d"),
+            "d is the full-span top row above every original pane"
+        );
+        for p in ["a", "b", "c"] {
+            assert!(
+                after.panel_ids().contains(&p),
+                "{p} survives under the new root"
+            );
+        }
+        assert_eq!(after.panel_ids().len(), 4, "an insert grows the count");
+    }
+
+    #[test]
+    fn r1156_dock_panel_outer_present_source_moves_full_span_bottom() {
+        // Placeholder policy: a still-present panel ("a") is removed then re-docked
+        // full-span at the BOTTOM (Second) — count stays 3 (a move, not an insert).
+        let topology = Rc::new(Signal::new(Some(abc_topology())));
+        let reorganizer = DockReorganizer::new(Rc::clone(&topology));
+        let outcome = reorganizer
+            .dock_panel_outer("a", DockDropZone::Bottom)
+            .unwrap();
+        assert_eq!(outcome, "a -> outer Bottom");
+        let after = topology.get().unwrap();
+        assert_eq!(
+            after.panel_ids().last(),
+            Some(&"a"),
+            "a is the full-span bottom row"
+        );
+        assert_eq!(after.panel_ids().len(), 3, "a MOVE keeps the count");
+    }
+
+    #[test]
+    fn r1156_dock_panel_outer_center_zone_is_a_noop() {
+        // The area's CENTRE is not an outer dock (no edge) — a no-op, tree intact.
+        let topology = Rc::new(Signal::new(Some(abc_topology())));
+        let reorganizer = DockReorganizer::new(Rc::clone(&topology));
+        let outcome = reorganizer
+            .dock_panel_outer("d", DockDropZone::Center)
+            .unwrap();
+        assert!(outcome.contains("needs an edge zone"), "{outcome}");
+        assert_eq!(
+            topology.get().unwrap().panel_ids().len(),
+            3,
+            "tree unchanged"
+        );
+    }
+
+    #[test]
+    fn r1156_outer_zone_for_picks_the_nearest_edge() {
+        // The OUTER_DOCK_ZONE_TAG cursor (normalised over the whole area) maps to
+        // the nearest perimeter edge — the full-span dock side.
+        assert_eq!(outer_zone_for(0.5, 0.02), DockDropZone::Top);
+        assert_eq!(outer_zone_for(0.5, 0.98), DockDropZone::Bottom);
+        assert_eq!(outer_zone_for(0.02, 0.5), DockDropZone::Left);
+        assert_eq!(outer_zone_for(0.98, 0.5), DockDropZone::Right);
+        // Corner: the nearer edge wins (top is closer than left here).
+        assert_eq!(outer_zone_for(0.05, 0.03), DockDropZone::Top);
+        // A negative/over-1 normalised coord (cursor just outside) still classifies.
+        assert_eq!(outer_zone_for(0.4, -0.01), DockDropZone::Top);
     }
 
     #[test]

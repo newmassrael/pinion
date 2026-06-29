@@ -3723,7 +3723,14 @@ impl<V: WidgetView> ShellCore<V> {
             // GENERIC half: the target panel's window-absolute rect. The
             // dock-specific zone classification + strip rendering is the binding's
             // (`V::dock_drop_preview`), so the shell stays widget-agnostic.
-            let rect = scene.rect_for_tag_absolute(&drop.point.tag)?;
+            // (R1156) OUTER full-span dock: the perimeter zone has no panel rect —
+            // hand the binding the WHOLE window content rect so it renders a
+            // full-span strip (a row/column across every pane).
+            let rect = if drop.point.tag == pinion_core::external::OUTER_DOCK_ZONE_TAG {
+                scene.rect()
+            } else {
+                scene.rect_for_tag_absolute(&drop.point.tag)?
+            };
             V::dock_drop_preview(&drop.point.tag, rect, drop.point.x_rel, drop.point.y_rel)
         });
         // Wrap the binding's overlay in a shell-owned, pointer-transparent slot so

@@ -83,7 +83,8 @@ use std::time::Instant;
 use pinion_core::composite_tag::{compose_send_payload, split_subindex};
 use pinion_core::event::WheelDelta;
 use pinion_core::external::{
-    CaptureNormalize, DragPayload, DragUpdate, DropPoint, IntrospectValue,
+    CaptureNormalize, DragPayload, DragUpdate, DropPoint, IntrospectValue, OUTER_DOCK_MARGIN,
+    OUTER_DOCK_ZONE_TAG,
 };
 use pinion_core::input::PointerWireEvent;
 use pinion_core::scene::{ExternalNode, Rect, Scene};
@@ -2223,11 +2224,13 @@ pub struct CrossWindowDrop {
 /// fallback: a cross-window drop must land on a real opted-in drop region (a
 /// dock zone), never an arbitrary tagged node in another window.
 ///
-/// R1155 — resolution is two-pass: EXACT containment first (a cursor inside a
-/// host's drop target), then a nearest-within-[`EDGE_SNAP_MARGIN`] EDGE SNAP so
-/// an edge-flush slot (a thin top toolbar) catches a near-miss just outside the
-/// window border. `None` only when every drop target is farther than the margin
-/// (the drop floats).
+/// R1156 — resolution is two-pass: an OUTER-perimeter pass first
+/// ([`resolve_outer_dock_zone`] — a cursor in the outermost [`OUTER_DOCK_MARGIN`]
+/// band of a host window is a FULL-SPAN outer dock, tagged [`OUTER_DOCK_ZONE_TAG`]),
+/// then EXACT containment (a cursor inside an inner drop target). `None` when the
+/// cursor is neither at a perimeter nor inside a panel (the drop floats). (R1155's
+/// near-miss edge-snap was superseded by the outer pass: the window perimeter is
+/// the catchable full-span affordance an edge-flush slot actually wanted.)
 #[must_use]
 pub fn resolve_cross_window_drop<'a, I>(
     windows: I,
@@ -2239,6 +2242,15 @@ where
     // Collected so the EXACT pass and the R1155 edge-snap fallback can both walk
     // the host set (the snap must first confirm NO window contained the cursor).
     let windows: Vec<(&str, &Scene, (f64, f64))> = windows.into_iter().collect();
+    // Pass 0 (R1156) — OUTER perimeter: a cursor in the outermost OUTER_DOCK_MARGIN
+    // band of a host window's content edge is a FULL-SPAN outer dock (a row/column
+    // across EVERY pane), not an inner panel split. Checked FIRST so the perimeter
+    // band wins over the inner panel at the very edge — the Qt ADS / VS outer-guide
+    // model. Interior panel boundaries are untouched (they are not near the window
+    // perimeter, so they keep their per-panel inner zones).
+    if let Some(outer) = resolve_outer_dock_zone(&windows, abs_cursor) {
+        return Some(outer);
+    }
     // Pass 1 — exact containment: the cursor is INSIDE a host's drop target.
     for &(spec_id, scene, (ox, oy)) in &windows {
         let (lx, ly) = (abs_cursor.0 - ox, abs_cursor.1 - oy);
@@ -2265,54 +2277,63 @@ where
             point: DropPoint { tag, x_rel, y_rel },
         });
     }
-    // Pass 2 — no host contained the cursor; snap to the nearest drop target
-    // within the margin (R1155). Purely additive: only a would-be `None` reaches
-    // here, so no exact resolution can change.
-    resolve_cross_window_edge_snap(&windows, abs_cursor)
+    // No host contained the cursor and it is in no perimeter band → the drop
+    // floats. (R1156 superseded R1155's near-miss edge-snap: the window PERIMETER
+    // is now a full-span outer dock — the catchable affordance an edge-flush slot
+    // actually wanted, handled by pass 0 above — and the interior is exact, pass 1.)
+    None
 }
 
-/// R1155 §5.51 — how far OUTSIDE a host drop target's rect a cross-window-redock
-/// cursor may sit and still snap onto it (logical px). An edge-flush slot — a
-/// toolbar pinned to the window's top border — is otherwise nearly uncatchable:
-/// its in-window band is thin AND a near-miss past the window edge resolves to
-/// `None`, so the floater stays floating instead of docking. This is the "go in
-/// just a little and it docks" forgiveness a cursor-precise docker needs. Kept
-/// deliberately small so an intentional float well clear of every window still
-/// floats; the live FEEL is the user's to confirm on a real desktop.
-const EDGE_SNAP_MARGIN: f64 = 24.0;
-
-/// R1155 §5.51 — the [`resolve_cross_window_drop`] edge-snap fallback: across all
-/// host windows, find the drop target whose rect the cursor (in that window's
-/// local frame) is NEAREST to, and — when that nearest distance is within
-/// [`EDGE_SNAP_MARGIN`] — resolve at the cursor clamped onto the rect. Lets an
-/// edge-flush slot (a thin top toolbar) catch a near-miss just outside the window
-/// border, where strict containment returns `None`. Distance ties resolve to the
-/// first window in iteration order (the caller's preference, as in the exact
-/// pass). `None` when every drop target is farther than the margin.
-fn resolve_cross_window_edge_snap(
+/// R1156 §5.51 — the [`resolve_cross_window_drop`] OUTER-perimeter pass: when the
+/// cursor sits in the outermost [`OUTER_DOCK_MARGIN`] band of a host window's
+/// content rect (its [`Scene::rect`]), it is a FULL-SPAN outer dock at the nearest
+/// edge — a row/column spanning every pane — not an inner panel split. Returns a
+/// [`CrossWindowDrop`] tagged [`OUTER_DOCK_ZONE_TAG`] with the cursor normalised
+/// over the WHOLE window (the dock consumer derives the edge from `x_rel`/`y_rel`).
+/// `None` when the cursor is in no host's perimeter band (the interior, where the
+/// inner passes apply, or far outside any window).
+fn resolve_outer_dock_zone(
     windows: &[(&str, &Scene, (f64, f64))],
     abs_cursor: (f64, f64),
 ) -> Option<CrossWindowDrop> {
-    let mut best: Option<(f64, String, DropPoint)> = None;
+    let mut best: Option<(f64, String, (f64, f64), Rect)> = None; // (edge dist, window, local, root)
     for &(spec_id, scene, (ox, oy)) in windows {
         let (lx, ly) = (abs_cursor.0 - ox, abs_cursor.1 - oy);
-        for tag in scene.collect_drop_target_tags() {
-            let Some(rect) = rect_for_tag(scene, &tag) else {
-                continue;
-            };
-            let cx = lx.clamp(f64::from(rect.x), f64::from(rect.x) + f64::from(rect.w));
-            let cy = ly.clamp(f64::from(rect.y), f64::from(rect.y) + f64::from(rect.h));
-            let dist = (cx - lx).hypot(cy - ly);
-            if dist > EDGE_SNAP_MARGIN {
-                continue;
-            }
-            if best.as_ref().is_none_or(|(d, ..)| dist < *d) {
-                let (x_rel, y_rel) = normalize_cursor(rect, cx, cy);
-                best = Some((dist, spec_id.to_string(), DropPoint { tag, x_rel, y_rel }));
-            }
+        let root = scene.rect();
+        let (rx, ry) = (f64::from(root.x), f64::from(root.y));
+        let (rw, rh) = (f64::from(root.w), f64::from(root.h));
+        if rw <= 0.0 || rh <= 0.0 {
+            continue;
+        }
+        // The cursor must be AT this window — inside, or within the margin just
+        // outside it — not far off to the side.
+        if lx < rx - OUTER_DOCK_MARGIN
+            || lx > rx + rw + OUTER_DOCK_MARGIN
+            || ly < ry - OUTER_DOCK_MARGIN
+            || ly > ry + rh + OUTER_DOCK_MARGIN
+        {
+            continue;
+        }
+        // Perpendicular distance to the nearest of the four edges.
+        let dist = (ly - ry)
+            .abs()
+            .min((ly - (ry + rh)).abs())
+            .min((lx - rx).abs())
+            .min((lx - (rx + rw)).abs());
+        if dist <= OUTER_DOCK_MARGIN && best.as_ref().is_none_or(|(d, ..)| dist < *d) {
+            best = Some((dist, spec_id.to_string(), (lx, ly), root));
         }
     }
-    best.map(|(_, window, point)| CrossWindowDrop { window, point })
+    let (_, window, (lx, ly), root) = best?;
+    let (x_rel, y_rel) = normalize_cursor(root, lx, ly);
+    Some(CrossWindowDrop {
+        window,
+        point: DropPoint {
+            tag: OUTER_DOCK_ZONE_TAG.to_string(),
+            x_rel,
+            y_rel,
+        },
+    })
 }
 
 /// R1102 §5.51 PR-33 — the own-window-first precedence mapping a per-window own
@@ -3723,68 +3744,69 @@ mod tests {
     }
 
     #[test]
-    fn r1155_edge_snap_catches_a_near_miss_above_a_thin_top_slot() {
-        // The toolbar problem: a thin top slot (here 48px, the editor's ratio
-        // 0.06 strip) flush against the window's top border is nearly
-        // uncatchable — its band is thin AND a cursor a few px ABOVE the border
-        // is out-of-window, which strict containment resolves to None (the
-        // floater stays floating). The R1155 edge snap catches it.
-        let host = window_with_drop_panel("toolbar", Rect::new(0, 0, 1000, 48));
+    fn r1156_outer_dock_zone_at_every_window_perimeter() {
+        // A cursor in the outermost OUTER_DOCK_MARGIN band of the window content is
+        // a FULL-SPAN outer dock (the container-edge gesture), NOT an inner panel
+        // split — even though a panel fills the area under it. Pass 0 wins the
+        // perimeter over the inner exact pass.
+        let host = window_with_drop_panel("body", Rect::new(0, 0, 1000, 800));
         let windows = [("main", &host, (0.0, 0.0))];
-        // abs (100, -10) = 10px above the toolbar's top edge: the exact pass
-        // rejects it (ly < 0); the snap (10px <= 24px margin) lands it.
-        let drop = resolve_cross_window_drop(windows, (100.0, -10.0)).expect("edge snaps");
-        assert_eq!(drop.window, "main");
-        assert_eq!(drop.point.tag, "toolbar");
-        // The snap clamps the cursor onto the rect, so it normalises to the
-        // slot's TOP edge (y_rel 0), x untouched (100/1000).
+        for (x, y, lbl) in [
+            (100.0, 10.0, "top"),
+            (10.0, 400.0, "left"),
+            (990.0, 400.0, "right"),
+            (500.0, 790.0, "bottom"),
+        ] {
+            let drop = resolve_cross_window_drop(windows, (x, y)).expect(lbl);
+            assert_eq!(drop.window, "main");
+            assert_eq!(
+                drop.point.tag, OUTER_DOCK_ZONE_TAG,
+                "{lbl} perimeter is outer"
+            );
+        }
+    }
+
+    #[test]
+    fn r1156_interior_is_an_inner_panel_not_outer() {
+        // Away from the perimeter the cursor resolves the inner panel (exact pass),
+        // not an outer full-span dock — interior boundaries keep per-panel zones.
+        let host = window_with_drop_panel("body", Rect::new(0, 0, 1000, 800));
+        let windows = [("main", &host, (0.0, 0.0))];
+        let drop = resolve_cross_window_drop(windows, (500.0, 400.0)).expect("center resolves");
+        assert_eq!(
+            drop.point.tag, "body",
+            "the interior resolves the inner panel"
+        );
+    }
+
+    #[test]
+    fn r1156_beyond_the_perimeter_band_floats() {
+        // Far outside every window → no dock (float), not an outer snap.
+        let host = window_with_drop_panel("body", Rect::new(0, 0, 1000, 800));
+        let windows = [("main", &host, (0.0, 0.0))];
+        // 200px above the top edge, far beyond the 32px perimeter band.
+        assert!(resolve_cross_window_drop(windows, (100.0, -200.0)).is_none());
+    }
+
+    #[test]
+    fn r1156_outer_drop_point_normalised_over_the_whole_window() {
+        // The outer DropPoint carries the cursor normalised over the WHOLE window
+        // (not a panel) so the dock consumer (`outer_zone_for`) derives the nearest
+        // edge: a top-perimeter cursor has a small y_rel and an x_rel = x / width.
+        let host = window_with_drop_panel("body", Rect::new(0, 0, 1000, 800));
+        let windows = [("main", &host, (0.0, 0.0))];
+        let drop = resolve_cross_window_drop(windows, (300.0, 8.0)).expect("top perimeter");
+        assert_eq!(drop.point.tag, OUTER_DOCK_ZONE_TAG);
         assert!(
-            (drop.point.x_rel - 0.1).abs() < 1e-4,
+            drop.point.y_rel < 0.05,
+            "near the top → small y_rel ({})",
+            drop.point.y_rel
+        );
+        assert!(
+            (drop.point.x_rel - 0.3).abs() < 1e-4,
             "x_rel {}",
             drop.point.x_rel
         );
-        assert!(drop.point.y_rel.abs() < 1e-4, "y_rel {}", drop.point.y_rel);
-    }
-
-    #[test]
-    fn r1155_edge_snap_respects_the_margin() {
-        // Beyond the margin the cursor still floats — an intentional drop in open
-        // space clear of every window must NOT be dragged into a dock.
-        let host = window_with_drop_panel("toolbar", Rect::new(0, 0, 1000, 48));
-        let windows = [("main", &host, (0.0, 0.0))];
-        // 40px above the top edge > 24px margin.
-        assert!(resolve_cross_window_drop(windows, (100.0, -40.0)).is_none());
-    }
-
-    #[test]
-    fn r1155_exact_containment_is_not_overridden_by_the_snap() {
-        // A cursor INSIDE a drop target resolves via the exact pass with its true
-        // in-rect position (NOT clamped to an edge) — the additive snap never
-        // changes a resolution the exact pass already makes.
-        let host = window_with_drop_panel("toolbar", Rect::new(0, 0, 1000, 48));
-        let windows = [("main", &host, (0.0, 0.0))];
-        let drop = resolve_cross_window_drop(windows, (100.0, 20.0)).expect("inside resolves");
-        assert_eq!(drop.point.tag, "toolbar");
-        // 20/48 = 0.4167 — the exact interior position, not a snapped 0.
-        assert!(
-            (drop.point.y_rel - 20.0 / 48.0).abs() < 1e-4,
-            "y_rel {}",
-            drop.point.y_rel
-        );
-    }
-
-    #[test]
-    fn r1155_edge_snap_picks_the_nearest_of_two_windows() {
-        // Two host windows; the cursor is a near-miss off ONE of them. The snap
-        // resolves to the nearer window's drop target, not the far one.
-        let a = window_with_drop_panel("a_dock", Rect::new(0, 0, 100, 100));
-        let b = window_with_drop_panel("b_dock", Rect::new(0, 0, 100, 100));
-        // a at the origin (desktop x 0..100), b at (500,0) (desktop x 500..600).
-        let windows = [("a", &a, (0.0, 0.0)), ("b", &b, (500.0, 0.0))];
-        // abs (110, 50): 10px right of a (snaps), 390px left of b (far) → a.
-        let drop = resolve_cross_window_drop(windows, (110.0, 50.0)).expect("snaps to nearer");
-        assert_eq!(drop.window, "a");
-        assert_eq!(drop.point.tag, "a_dock");
     }
 
     #[test]

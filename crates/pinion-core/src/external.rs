@@ -313,6 +313,23 @@ pub struct DropPoint {
     pub y_rel: f32,
 }
 
+/// (R1156 §5.51) Reserved [`DropPoint::tag`] the cross-window drop resolution
+/// returns when the cursor lands in the OUTER PERIMETER band of the drop surface
+/// (within [`OUTER_DOCK_MARGIN`] of the window content's edge) instead of over an
+/// inner panel. A dock consumer reads it as a FULL-SPAN outer dock at the edge
+/// the `x_rel` / `y_rel` (normalised over the WHOLE surface here, not a panel) is
+/// nearest — the container-edge / "outer dock guide" gesture (VS Code edge zones,
+/// Qt ADS outer dock areas). The leading `NUL` makes it a sentinel no real paint
+/// tag can collide with.
+pub const OUTER_DOCK_ZONE_TAG: &str = "\u{0}outer-dock-zone";
+
+/// (R1156 §5.51) How far INSIDE / outside the drop surface's perimeter the cursor
+/// may sit and still classify as an OUTER full-span dock (logical px). The
+/// outermost band of this width maps to the container edge; the interior past it
+/// maps to per-panel inner zones — so a drop at the very top of the dock area is a
+/// full-width row, while a drop between two panels splits just those panels.
+pub const OUTER_DOCK_MARGIN: f64 = 32.0;
+
 /// Failure modes for [`ExternalIntrospect::intervene`].
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -44,7 +44,7 @@
 
 use pinion_a11y::{AccessNode, WidgetA11y};
 use pinion_core::command::Command;
-use pinion_core::external::IntrospectValue;
+use pinion_core::external::{IntrospectValue, OUTER_DOCK_ZONE_TAG};
 use pinion_core::intent::Intent;
 use pinion_core::intent_tag;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
@@ -65,8 +65,8 @@ use pinion_widget_paint::dock::{
     TEAR_OFF_FOLLOW_EVENT, TEAR_OFF_REDOCK_AT_EVENT, TEAR_OFF_REDOCK_EVENT, TabWellExternal,
     WINDOW_MOVE_EVENT, dock_drop_preview_overlay, dock_drop_zone_normalized,
     dock_redock_preview_tint, dock_tablist_access_nodes, dock_zone_guide_overlay,
-    floating_window_id as dock_floating_window_id, view_dock_panel, view_dock_surface,
-    view_floating_placeholder,
+    floating_window_id as dock_floating_window_id, outer_zone_for, view_dock_panel,
+    view_dock_surface, view_floating_placeholder,
 };
 use pinion_widget_paint::splitter::SplitterExternal;
 use std::borrow::Cow;
@@ -1206,8 +1206,17 @@ impl WidgetCore for DockPanelsEditorView {
                             let x_rel = v.get("x_rel").and_then(serde_json::Value::as_f64);
                             let y_rel = v.get("y_rel").and_then(serde_json::Value::as_f64);
                             if let (Some(x_rel), Some(y_rel)) = (x_rel, y_rel) {
-                                let _ = use_editor_reorganizer()
-                                    .dock_panel_at_zone(panel, target, x_rel, y_rel);
+                                if target == OUTER_DOCK_ZONE_TAG {
+                                    // (R1156 §5.51) The drop landed in the dock
+                                    // area's OUTER perimeter band → a FULL-SPAN
+                                    // dock (a row/column across every pane), at the
+                                    // edge the area-normalised cursor is nearest.
+                                    let zone = outer_zone_for(x_rel, y_rel);
+                                    let _ = use_editor_reorganizer().dock_panel_outer(panel, zone);
+                                } else {
+                                    let _ = use_editor_reorganizer()
+                                        .dock_panel_at_zone(panel, target, x_rel, y_rel);
+                                }
                             }
                         }
                         redock_panel_floating(panel);
@@ -1296,7 +1305,12 @@ impl WidgetView for DockPanelsEditorView {
         // emptied slot, you do not split it, so a floater dragged back over its
         // OWN home slot previews the WHOLE slot (Center), matching the dock-back
         // result. A live panel target keeps the cursor-zone split classification.
-        let zone = if target_tag.ends_with(PLACEHOLDER_TAG_SUFFIX) {
+        let zone = if target_tag == OUTER_DOCK_ZONE_TAG {
+            // (R1156) OUTER full-span dock: classify the nearest perimeter edge.
+            // The shell passed the WHOLE window rect, so the overlay fills that
+            // edge's full-span strip (a full-width row / full-height column).
+            outer_zone_for(f64::from(x_rel), f64::from(y_rel))
+        } else if target_tag.ends_with(PLACEHOLDER_TAG_SUFFIX) {
             DockDropZone::Center
         } else {
             dock_drop_zone_normalized(f64::from(x_rel), f64::from(y_rel))
