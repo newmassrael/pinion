@@ -18990,6 +18990,50 @@
         "push pending user consent (now 18 commits ahead of origin/main)"
       ]
     },
+    "R1155": {
+      "decision_summary": "R1155 cross-window redock edge snap: resolve_cross_window_drop gains a 2nd pass (nearest drop target within 24px) so a thin edge-flush slot catches a near-miss just outside the window border; additive",
+      "changes_bullets": [
+        "resolve_cross_window_drop: pass 1 exact containment (unchanged), then pass 2 nearest-within-margin snap",
+        "new resolve_cross_window_edge_snap helper + EDGE_SNAP_MARGIN=24px (a live-feel tunable const)",
+        "addresses carry (1): a thin top toolbar slot flush to the window border was uncatchable by hand",
+        "purely additive — only a would-be None reaches the snap, so no exact resolution changes"
+      ],
+      "verification_bullets": [
+        "4 unit tests: near-miss above thin slot snaps, margin respected, exact unchanged, nearest-of-two",
+        "cargo test --workspace 0 fail; clippy -D pedantic + rustfmt clean",
+        "demo r1155_edge_snap_redock 42 assertions PASS via scene/cross_window_drop (boundary exact at -24px)",
+        "regression: r1124/r1149/r1102/r1106 cross-window redock demos PASS (additive, unchanged)"
+      ],
+      "impact_refs": [
+        "5.51"
+      ],
+      "carry_forward_bullets": [
+        "the thin-band MIDDLE (between two adjacent slots) + the live FEEL/margin value are HW-gated (user :0)",
+        "carry (2) target-under-static-floater self-drop mask + R1145 undock-button still open",
+        "push pending user consent (now 20 commits ahead of origin/main)"
+      ],
+      "publishable_decision_summary": "R1155 cross-window redock edge snap: resolve_cross_window_drop gains a 2nd pass (nearest drop target within 24px) so a thin edge-flush slot catches a near-miss just outside the window border; additive",
+      "publishable_changes_bullets": [
+        "resolve_cross_window_drop: pass 1 exact containment (unchanged), then pass 2 nearest-within-margin snap",
+        "new resolve_cross_window_edge_snap helper + EDGE_SNAP_MARGIN=24px (a live-feel tunable const)",
+        "addresses carry (1): a thin top toolbar slot flush to the window border was uncatchable by hand",
+        "purely additive — only a would-be None reaches the snap, so no exact resolution changes"
+      ],
+      "publishable_verification_bullets": [
+        "4 unit tests: near-miss above thin slot snaps, margin respected, exact unchanged, nearest-of-two",
+        "cargo test --workspace 0 fail; clippy -D pedantic + rustfmt clean",
+        "demo r1155_edge_snap_redock 42 assertions PASS via scene/cross_window_drop (boundary exact at -24px)",
+        "regression: r1124/r1149/r1102/r1106 cross-window redock demos PASS (additive, unchanged)"
+      ],
+      "publishable_impact_refs": [
+        "5.51"
+      ],
+      "publishable_carry_forward_bullets": [
+        "the thin-band MIDDLE (between two adjacent slots) + the live FEEL/margin value are HW-gated (user :0)",
+        "carry (2) target-under-static-floater self-drop mask + R1145 undock-button still open",
+        "push pending user consent (now 20 commits ahead of origin/main)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
