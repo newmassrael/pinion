@@ -2096,6 +2096,16 @@ impl<V: WidgetView> ShellCore<V> {
         self.core.set_desktop_drag_preview_active(active);
     }
 
+    /// R1148 §5.51 §5.16 — stamp every live window's ACTUAL outer origin (logical
+    /// px) so the LIVE cross-window redock resolution maps the desktop cursor
+    /// against real positions, not the DECLARED ones (a WM-placed `"main"` has
+    /// declared position `None` → `(0,0)`, which put redock off by the WM offset).
+    /// `AppShell` calls this each cursor move during a drag (it holds the winit
+    /// handles); delegates to the runtime core.
+    pub fn set_live_window_origins(&self, origins: Vec<(String, (f64, f64))>) {
+        self.core.set_live_window_origins(origins);
+    }
+
     /// R672 §5.35 §5.41 — per-window variant of [`Self::cursor_moved`].
     /// `AppShell::window_event` dispatches winit `CursorMoved` here
     /// with the resolved [`crate::WindowSpec::id`] so the addressed
@@ -5454,8 +5464,10 @@ impl<V: WidgetView> ShellCore<V> {
     ) -> Option<pinion_runtime::CrossWindowDrop> {
         let cursor = pinion_rpc::cross_window_drop::parse_params(params)?;
         // The RPC query is source-less — it asks "which window does this abs
-        // cursor map onto", excluding nothing.
-        self.cross_window_drop_at((cursor.x, cursor.y), None)
+        // cursor map onto", excluding nothing. R1148 — `use_actual=false`: the
+        // headless RPC path has no live winit handles, so it resolves against the
+        // DECLARED positions `scene/windows` reports (the AI-introspectable model).
+        self.cross_window_drop_at((cursor.x, cursor.y), None, false)
     }
 
     /// R1102 §5.51 PR-33 — resolve a desktop-absolute logical cursor against
@@ -5469,6 +5481,7 @@ impl<V: WidgetView> ShellCore<V> {
         &self,
         abs: (f64, f64),
         exclude: Option<&str>,
+        use_actual: bool,
     ) -> Option<pinion_runtime::CrossWindowDrop> {
         let specs = self.declared_window_specs();
         let windows: Vec<(&str, &Scene, (f64, f64))> = specs
@@ -5476,9 +5489,15 @@ impl<V: WidgetView> ShellCore<V> {
             .filter(|w| exclude != Some(w.id.as_str()))
             .filter_map(|w| {
                 let scene = self.core.last_paint_scene_for_window(&w.id)?;
-                let pos = w
-                    .position
-                    .map_or((0.0, 0.0), |(x, y)| (f64::from(x), f64::from(y)));
+                // R1148 §5.51 — the LIVE path uses the shell-stamped ACTUAL outer
+                // origin (a WM-placed window has declared position `None`, so the
+                // DECLARED fallback `(0,0)` would offset the hit-test by the real
+                // WM origin); the RPC path keeps declared positions.
+                let pos = use_actual
+                    .then(|| self.core.live_window_origin(&w.id))
+                    .flatten()
+                    .or_else(|| w.position.map(|(x, y)| (f64::from(x), f64::from(y))))
+                    .unwrap_or((0.0, 0.0));
                 Some((w.id.as_str(), scene, pos))
             })
             .collect();
@@ -5506,19 +5525,26 @@ impl<V: WidgetView> ShellCore<V> {
             return None;
         }
         let source = specs.iter().find(|w| w.id == source_window)?;
-        let source_pos = source
-            .position
-            .map_or((0.0, 0.0), |(x, y)| (f64::from(x), f64::from(y)));
+        // R1148 §5.51 — use the source window's ACTUAL outer origin (shell-stamped
+        // each move), not the DECLARED `position`. The declared fallback is `(0,0)`
+        // for a WM-placed window, and even a positioned floater's declared origin
+        // can lag the WM; the actual origin makes `abs = source_origin + local` the
+        // true desktop pointer. (The R1120 lesson: resolve geometry against actual,
+        // not lagging declared, positions.)
+        let source_pos = self
+            .core
+            .live_window_origin(source_window)
+            .or_else(|| source.position.map(|(x, y)| (f64::from(x), f64::from(y))))
+            .unwrap_or((0.0, 0.0));
         let abs = (source_pos.0 + local.0, source_pos.1 + local.1);
         // R1146 §5.51 — cursor-precise, single point (the pro-tool / VS Code
         // model). The floater stays put during the drag (the window is repositioned
         // only on release), so `source_pos` is stable and `abs = source_pos + local`
         // is the true desktop pointer — the cursor resolves cleanly over the target
-        // zone. The R1143 body-centre fallback (resolving at the dragged window's
-        // centre too) was a band-aid for the moving floater occluding its own header
-        // grab; with a stationary floater it would point at the wrong place, so it
-        // is removed. See `docs/dock-window-move-redesign.md`.
-        self.cross_window_drop_at(abs, Some(source_window))
+        // zone. The R1143 body-centre fallback was removed (band-aid for the moving
+        // floater); see `docs/dock-window-move-redesign.md`. R1148 — actual origins
+        // for the targets too, so a WM-placed `"main"` hit-tests at its real offset.
+        self.cross_window_drop_at(abs, Some(source_window), true)
     }
 
     /// (R1020 §5.39) Re-derive the keyboard focus enumeration from a fresh,
@@ -6768,14 +6794,14 @@ mod r1104_cross_window_exclusion_tests {
         let sc = shell_with_two_dock_windows();
         // (550, 450) is over main's dock panel (main is at the desktop origin).
         let own = sc
-            .cross_window_drop_at((550.0, 450.0), None)
+            .cross_window_drop_at((550.0, 450.0), None, false)
             .expect("the abs cursor resolves main's dock when nothing is excluded");
         assert_eq!(own.window, "main");
         assert_eq!(own.point.tag, "main_dock");
         // Excluding the source while the cursor is over ONLY the source resolves
         // nothing — a same-window drop must not surface as a cross-window drop.
         assert!(
-            sc.cross_window_drop_at((550.0, 450.0), Some("main"))
+            sc.cross_window_drop_at((550.0, 450.0), Some("main"), false)
                 .is_none(),
             "the source window is excluded and the cursor is over no OTHER window",
         );
@@ -6787,7 +6813,7 @@ mod r1104_cross_window_exclusion_tests {
         // (840, 140) is floater-local (40, 40) — over the floater's `torn` panel,
         // and over no main panel. Excluding the source (main) resolves the floater.
         let into = sc
-            .cross_window_drop_at((840.0, 140.0), Some("main"))
+            .cross_window_drop_at((840.0, 140.0), Some("main"), false)
             .expect("the escaped cursor resolves the floater");
         assert_eq!(into.window, FLOAT_WINDOW);
         assert_eq!(into.point.tag, "torn");
@@ -6821,6 +6847,36 @@ mod r1104_cross_window_exclusion_tests {
             sc.resolve_cross_window_live("main", (550.0, 450.0))
                 .is_none(),
             "a drag that stays over the source's own dock is not cross-window",
+        );
+    }
+
+    #[test]
+    fn live_cross_window_drop_uses_stamped_actual_origin_not_declared() {
+        // R1148 §5.51 — the user-found "좌표 안 맞아" bug: a WM-placed `"main"` has
+        // declared position `None` → `(0,0)`, but the WM placed it at a real
+        // offset. The LIVE path must hit-test against the shell-stamped ACTUAL
+        // origin, NOT the declared `(0,0)`.
+        let sc = shell_with_two_dock_windows(); // main panel local (500,400,100,100)
+        // The WM actually put main at desktop (200,100) (its declared pos is the
+        // `(0,0)` the fixture reports — the very gap this fixes).
+        sc.set_live_window_origins(vec![
+            ("main".to_string(), (200.0, 100.0)),
+            (FLOAT_WINDOW.to_string(), (800.0, 100.0)),
+        ]);
+        // Desktop cursor (750,550) → main-local via the ACTUAL origin = (550,450),
+        // inside main's panel → HIT.
+        let hit = sc
+            .cross_window_drop_at((750.0, 550.0), None, true)
+            .expect("the live path resolves main via its stamped actual origin");
+        assert_eq!(hit.window, "main");
+        assert_eq!(hit.point.tag, "main_dock");
+        // The SAME cursor against the DECLARED `(0,0)` misses main entirely — the
+        // pre-R1148 behaviour this fixes (non-tautological: the test fails if the
+        // live path used declared positions).
+        assert!(
+            sc.cross_window_drop_at((750.0, 550.0), None, false)
+                .is_none(),
+            "the declared-origin path misses main — the bug R1148 fixes",
         );
     }
 

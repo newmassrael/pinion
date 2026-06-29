@@ -66,7 +66,7 @@
 //! hit-test snapshot refreshes. The view fn stays a pure
 //! `Fn(state, &Frame) -> Scene` per §6.3 R51.27 `dry_run` invariant.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -372,6 +372,18 @@ pub struct CoreShell<V: WidgetCore> {
     /// (`apply_drag_image`, `&self`) and the shell write stay `&self`-friendly,
     /// matching [`Self::next_frame_count`].
     desktop_drag_preview_active: Cell<bool>,
+
+    /// R1148 §5.51 §5.16 — every live window's ACTUAL OS outer origin (logical
+    /// px), stamped by the shell each cursor move during a drag (only the shell
+    /// holds the winit handles). The LIVE cross-window drop resolution reads
+    /// these instead of the DECLARED `WindowSpec::position`, because a WM-placed
+    /// window (the typical `"main"`, declared position `None`) has NO declared
+    /// origin yet sits at a real desktop offset — resolving its `(0, 0)` declared
+    /// origin put every cross-window redock off by that offset (the user-found
+    /// "좌표 안 맞아" bug). Empty for the RPC path (no live handles), which keeps
+    /// using declared positions. The R1120/R1102 shell-stamp pattern (the shell
+    /// owns geometry, the cross-window-blind core reads it).
+    live_window_origins: RefCell<HashMap<String, (f64, f64)>>,
 }
 
 /// (R1107.1 §5.51) Get-or-create the per-window [`InputRouter`] AND stamp its
@@ -636,6 +648,7 @@ impl<V: WidgetCore> CoreShell<V> {
             executor: None,
             window_owners,
             desktop_drag_preview_active: Cell::new(false),
+            live_window_origins: RefCell::new(HashMap::new()),
         }
     }
 
@@ -2118,6 +2131,27 @@ impl<V: WidgetCore> CoreShell<V> {
     #[must_use]
     pub fn desktop_drag_preview_active(&self) -> bool {
         self.desktop_drag_preview_active.get()
+    }
+
+    /// R1148 §5.51 §5.16 — stamp every live window's ACTUAL outer origin (logical
+    /// px) for the LIVE cross-window drop resolution (replaces the prior set).
+    /// The shell calls this each cursor move during a drag (it alone holds the
+    /// winit handles); the cross-window-blind resolution then maps the desktop
+    /// cursor against real positions, not the DECLARED ones (a WM-placed `"main"`
+    /// has declared position `None`). See [`Self::live_window_origin`].
+    pub fn set_live_window_origins(&self, origins: Vec<(String, (f64, f64))>) {
+        let mut map = self.live_window_origins.borrow_mut();
+        map.clear();
+        map.extend(origins);
+    }
+
+    /// R1148 §5.51 §5.16 — the stamped ACTUAL outer origin of `window_id`
+    /// (logical px), or `None` when unstamped (the RPC path, or a window whose
+    /// `outer_position()` the WM did not report). The LIVE cross-window drop
+    /// resolution prefers this over the DECLARED `WindowSpec::position`.
+    #[must_use]
+    pub fn live_window_origin(&self, window_id: &str) -> Option<(f64, f64)> {
+        self.live_window_origins.borrow().get(window_id).copied()
     }
 
     /// R881.1 §5.35 — single-window wrapper around

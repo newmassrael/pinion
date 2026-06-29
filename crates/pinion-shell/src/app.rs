@@ -557,6 +557,38 @@ impl<V: WidgetView> AppShell<V> {
         }
     }
 
+    /// R1148 §5.51 §5.16 — stamp every live window's ACTUAL outer origin (logical
+    /// px) into the core so the LIVE cross-window redock resolution maps the
+    /// desktop cursor against real desktop positions, not the DECLARED ones — a
+    /// WM-placed `"main"` declares position `None` → `(0,0)` but sits at a real WM
+    /// offset, which put every floater→main redock off by that offset (the
+    /// user-found "좌표 안 맞아" bug). Gated on an active drag this window owns, so
+    /// idle hovers + single-window apps skip the `outer_position()` queries. Runs
+    /// each `CursorMoved` BEFORE `cursor_moved_for_window` resolves the drop.
+    fn stamp_live_window_origins(&self, window_id: WindowId) {
+        let Some(spec_id) = self.windows.get(&window_id).map(|s| &*s.spec_id) else {
+            return;
+        };
+        if !self
+            .core
+            .drag_session_active_for_window(spec_id, PointerId::MOUSE)
+        {
+            return;
+        }
+        let origins: Vec<(String, (f64, f64))> = self
+            .windows
+            .values()
+            .filter_map(|slot| {
+                let window = Self::slot_window(slot)?;
+                let phys = window.outer_position().ok()?;
+                let logical = PhysicalPosition::new(f64::from(phys.x), f64::from(phys.y))
+                    .to_logical::<f64>(slot.scale_factor);
+                Some((slot.spec_id.to_string(), (logical.x, logical.y)))
+            })
+            .collect();
+        self.core.set_live_window_origins(origins);
+    }
+
     /// R51.38 / R1027 / R1120 §5.35 §5.16 §5.51 — the `CursorMoved` body.
     ///
     /// winit mouse events are single-source on every desktop platform pinion
@@ -813,6 +845,10 @@ impl<V: WidgetView> AppShell<V> {
     ) {
         let (lx, ly) = winit_pointer_to_logical(position, scale);
         self.stamp_drag_source_origin(window_id, scale);
+        // R1148 §5.51 — stamp every live window's ACTUAL outer origin BEFORE the
+        // resolution below, so a floater→main redock hit-tests against real
+        // desktop positions (a WM-placed `"main"` has no declared position).
+        self.stamp_live_window_origins(window_id);
         let spec_id: &str = self
             .windows
             .get(&window_id)
