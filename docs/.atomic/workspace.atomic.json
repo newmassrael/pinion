@@ -18764,6 +18764,48 @@
         "hiding the floater to un-occlude is REJECTED: unmapping releases the X11 pointer grab the drag needs"
       ]
     },
+    "R1151": {
+      "decision_summary": "R1151 fix dropped-on-preview-no-dock: the cross-window hit-test uses inner_position (CLIENT origin), not outer_position (frame) — a decorated host's 37px title bar offset resolved the wrong panel, so the redock fired but did not relocate",
+      "changes_bullets": [
+        "collect_window_origins uses Window::inner_position (CLIENT origin), not outer_position (frame)",
+        "Cross-window redock hit-test now matches the client-relative dock scene on a decorated host"
+      ],
+      "verification_bullets": [
+        "probe: main _NET_FRAME_EXTENTS top=37 (gnome title bar); client (221,214) vs frame (221,177)",
+        "visible RPC: redock_pending y_rel 0.064 (outer) -> 0.0 (inner) = corrected by the title bar",
+        "cross-window 5 + editor 60 tests pass; clippy -D pedantic + rustfmt clean",
+        "LIVE: user re-tests that dropping on the preview now docks at the aimed panel"
+      ],
+      "impact_refs": [
+        "5.51",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "root via editor2.log + probe: redock fired but resolved toolbar/own-slot (37px decoration offset)",
+        "own-slot drop -> dock_panel_at_zone no-op + home restore (R1140 self-home, correct)",
+        "toolbar target -> non-reorganizable no-op; inner_position keeps the hit-test off it"
+      ],
+      "publishable_decision_summary": "R1151 fix dropped-on-preview-no-dock: the cross-window hit-test uses inner_position (CLIENT origin), not outer_position (frame) — a decorated host's 37px title bar offset resolved the wrong panel, so the redock fired but did not relocate",
+      "publishable_changes_bullets": [
+        "collect_window_origins uses Window::inner_position (CLIENT origin), not outer_position (frame)",
+        "Cross-window redock hit-test now matches the client-relative dock scene on a decorated host"
+      ],
+      "publishable_verification_bullets": [
+        "probe: main _NET_FRAME_EXTENTS top=37 (gnome title bar); client (221,214) vs frame (221,177)",
+        "visible RPC: redock_pending y_rel 0.064 (outer) -> 0.0 (inner) = corrected by the title bar",
+        "cross-window 5 + editor 60 tests pass; clippy -D pedantic + rustfmt clean",
+        "LIVE: user re-tests that dropping on the preview now docks at the aimed panel"
+      ],
+      "publishable_impact_refs": [
+        "5.51",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "root via editor2.log + probe: redock fired but resolved toolbar/own-slot (37px decoration offset)",
+        "own-slot drop -> dock_panel_at_zone no-op + home restore (R1140 self-home, correct)",
+        "toolbar target -> non-reorganizable no-op; inner_position keeps the hit-test off it"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
