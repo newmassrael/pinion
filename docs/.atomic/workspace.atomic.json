@@ -18892,6 +18892,58 @@
         "thin perimeter where the leaf wrapper drop_target still shows is negligible (placeholder fills the body)"
       ]
     },
+    "R1154": {
+      "decision_summary": "R1154 sweep the vestigial window-move source-origin stamp chain (set but never read since R1146 release-only) + window_move_delta feedback generality + r1119 jitter harness; behavior unchanged",
+      "changes_bullets": [
+        "Remove DragUpdate::source_window_origin field + DragSession::source_origin (set but never read)",
+        "Remove the app->core->router stamp chain: stamp_drag_source_origin + set_drag_source_origin*",
+        "Inline the one window_move_delta(None,..,None) prod call to cursor - press; delete the function",
+        "Delete the simulate_window_move/max_jerk harness + both r1119 jitter tests (dead feedback loop)",
+        "Keep window_outer_origin_logical (R1147 drag-preview consumer); refresh its now-stale doc"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace: 0 failures; clippy -D pedantic + rustfmt clean; cargo check all examples",
+        "grep: zero source_window_origin/window_move_delta/set_drag_source_origin refs left (kept test NAME)",
+        "r1146/r1116/r1088 window-move demos PASS on the release binary (path behavior unchanged)",
+        "r1146 unit test green: inlined cursor - press yields the identical (100,80) release delta"
+      ],
+      "impact_refs": [
+        "5.51",
+        "5.15",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "carry (3) R1146/R1147 dead-machinery sweep CLEARED this round",
+        "remaining (1) toolbar thin-slot redock targeting + (2) target-under-static-floater self-drop mask",
+        "both remaining are live-feel HW-gated; need the user's :0 re-test of R1147-R1153 first",
+        "R1145 undock-button deletion still pending drag-to-undock live-verify; 15 commits unpushed (consent)"
+      ],
+      "publishable_decision_summary": "R1154 sweep the vestigial window-move source-origin stamp chain (set but never read since R1146 release-only) + window_move_delta feedback generality + r1119 jitter harness; behavior unchanged",
+      "publishable_changes_bullets": [
+        "Remove DragUpdate::source_window_origin field + DragSession::source_origin (set but never read)",
+        "Remove the app->core->router stamp chain: stamp_drag_source_origin + set_drag_source_origin*",
+        "Inline the one window_move_delta(None,..,None) prod call to cursor - press; delete the function",
+        "Delete the simulate_window_move/max_jerk harness + both r1119 jitter tests (dead feedback loop)",
+        "Keep window_outer_origin_logical (R1147 drag-preview consumer); refresh its now-stale doc"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace: 0 failures; clippy -D pedantic + rustfmt clean; cargo check all examples",
+        "grep: zero source_window_origin/window_move_delta/set_drag_source_origin refs left (kept test NAME)",
+        "r1146/r1116/r1088 window-move demos PASS on the release binary (path behavior unchanged)",
+        "r1146 unit test green: inlined cursor - press yields the identical (100,80) release delta"
+      ],
+      "publishable_impact_refs": [
+        "5.51",
+        "5.15",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "carry (3) R1146/R1147 dead-machinery sweep CLEARED this round",
+        "remaining (1) toolbar thin-slot redock targeting + (2) target-under-static-floater self-drop mask",
+        "both remaining are live-feel HW-gated; need the user's :0 re-test of R1147-R1153 first",
+        "R1145 undock-button deletion still pending drag-to-undock live-verify; 15 commits unpushed (consent)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
