@@ -126,18 +126,34 @@ impl Default for DragImageStyle {
     }
 }
 
+/// (R1147 §5.51) The chip's `(width, height)` for `label` at `style`: padding on
+/// every side + one em per character (CJK-safe over-estimate so the label never
+/// clips) by one line. Shared by [`drag_image_rect`] (the in-window R1113
+/// follower) and [`drag_chip_scene`] (the R1147 preview-window content) so the
+/// desktop chip and the in-window chip size identically. Floors at `2 * padding`
+/// (an empty label yields a padding-only box).
+#[must_use]
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "a label is never billions of chars; sub-pixel sizing is irrelevant to a transient chip"
+)]
+pub fn chip_size(label: &str, style: DragImageStyle) -> (u32, u32) {
+    let pad = style.padding;
+    let w = pad.saturating_mul(2) + (label.chars().count() as u32).saturating_mul(style.font_px);
+    let h = pad.saturating_mul(2) + style.font_px;
+    (w, h)
+}
+
 /// (R1113 §5.51 §5.33) The chip's outer rect for a `label` dragged to
-/// `cursor`, clamped whole into `viewport`. Width estimates one em per
-/// character (CJK-safe — it never under-sizes, so the label never clips; a
-/// slightly wide chip for Latin is harmless for a transient follower); height
-/// is one line. The chip trails the cursor by `cursor_offset`, then shifts
-/// left/up so the WHOLE chip stays on-screen (a tooltip-style flip, not the
-/// ring's shrink-to-fit), and the top is nudged off the vello `y = 0` flood
+/// `cursor`, clamped whole into `viewport`. Size is [`chip_size`] (one em per
+/// character, one line). The chip trails the cursor by `cursor_offset`, then
+/// shifts left/up so the WHOLE chip stays on-screen (a tooltip-style flip, not
+/// the ring's shrink-to-fit), and the top is nudged off the vello `y = 0` flood
 /// row (VELLO-001).
 #[allow(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
-    reason = "window-logical cursor is non-negative; sub-pixel rounding is irrelevant to a drag-image anchor; a label is never billions of chars"
+    reason = "window-logical cursor is non-negative; sub-pixel rounding is irrelevant to a drag-image anchor"
 )]
 fn drag_image_rect(
     label: &str,
@@ -145,9 +161,7 @@ fn drag_image_rect(
     style: DragImageStyle,
     viewport: Option<(u32, u32)>,
 ) -> Rect {
-    let pad = style.padding;
-    let w = pad.saturating_mul(2) + (label.chars().count() as u32).saturating_mul(style.font_px);
-    let h = pad.saturating_mul(2) + style.font_px;
+    let (w, h) = chip_size(label, style);
     let cx = cursor.0.max(0.0).round() as u32;
     let cy = cursor.1.max(0.0).round() as u32;
     let mut x = cx.saturating_add(style.cursor_offset);
@@ -219,6 +233,48 @@ pub fn inject_drag_image(
     strip_tag(&mut wrapped, DRAG_IMAGE_TAG);
     push_top_level(&mut wrapped, Scene::Container(chip));
     wrapped
+}
+
+/// (R1147 §5.51 §5.16) Build a standalone, **opaque** drag chip whose box fills
+/// the returned `(width, height)` — the entire content of the cross-desktop drag
+/// preview window (the window *is* the chip, so the fill is forced opaque
+/// regardless of `style`'s translucency; the preview needs no compositor
+/// transparency, sidestepping the transparent-overlay hack).
+///
+/// Returns the chip [`Scene`] (its box at origin `(0, 0)`) plus its `(w, h)` so
+/// the shell sizes the preview window to fit. It uses the same `style` +
+/// [`chip_size`] the R1113 in-window [`inject_drag_image`] follower uses, so the
+/// desktop chip matches the in-window one a headless `scene/snapshot` records
+/// (§2 #7 parity). The chip carries [`DRAG_IMAGE_TAG`] for consistency, though
+/// the preview window's scene is not introspected (the window is shell-private,
+/// absent from `scene/windows`). An empty `label` still yields a padding-only
+/// box; the shell gates on a non-empty label before showing the window.
+#[must_use]
+pub fn drag_chip_scene(label: &str, style: DragImageStyle) -> (Scene, (u32, u32)) {
+    let (w, h) = chip_size(label, style);
+    let pad = style.padding;
+    let inner = Rect::new(
+        pad,
+        pad,
+        w.saturating_sub(pad.saturating_mul(2)),
+        h.saturating_sub(pad.saturating_mul(2)),
+    );
+    let label_node = Scene::Text(TextNode::styled(
+        label.to_string(),
+        inner,
+        TextStyle::new()
+            .with_size_px(style.font_px)
+            .with_fg(style.text),
+    ));
+    let mut chip = ContainerNode::new(vec![label_node]);
+    chip.rect = Rect::new(0, 0, w, h);
+    // The window IS the chip: force an opaque fill (the in-window follower is
+    // translucent so the content under it reads; a free-floating window has no
+    // content under it and must not depend on compositor transparency).
+    chip.style = BoxStyle::filled(style.fill.with_alpha(255))
+        .with_border(Border::new(style.border, style.border_width));
+    chip.tag = Some(DRAG_IMAGE_TAG.into());
+    (Scene::Container(chip), (w, h))
 }
 
 #[cfg(test)]
@@ -408,5 +464,44 @@ mod tests {
             long > short,
             "a longer label produces a wider chip ({long} > {short})"
         );
+    }
+
+    #[test]
+    fn chip_size_matches_the_injected_in_window_chip() {
+        // (R1147) The preview-window chip and the in-window R1113 follower must
+        // size identically — same `chip_size` source — so the desktop chip
+        // matches the in-window one a snapshot records.
+        let style = DragImageStyle::default();
+        let (w, h) = chip_size("outliner", style);
+        let scene = container(vec![]);
+        let injected_scene = inject_drag_image(scene, "outliner", (0.0, 0.0), style, None);
+        let injected = chip_child(&injected_scene);
+        assert_eq!((injected.rect.w, injected.rect.h), (w, h));
+    }
+
+    #[test]
+    fn drag_chip_scene_is_opaque_box_at_origin_with_label() {
+        // (R1147) The standalone preview chip: opaque fill (the window is the
+        // chip — no compositor transparency), box at origin sized to chip_size,
+        // label carried as Text.
+        let style = DragImageStyle::default();
+        let (scene, (w, h)) = drag_chip_scene("viewport", style);
+        assert_eq!((w, h), chip_size("viewport", style));
+        let Scene::Container(chip) = &scene else {
+            panic!("preview chip is a Container")
+        };
+        assert_eq!(
+            chip.rect,
+            Rect::new(0, 0, w, h),
+            "chip box fills the window"
+        );
+        assert_eq!(
+            chip.style.fill.a, 255,
+            "preview fill is opaque (the in-window follower's translucency is forced off)"
+        );
+        let Scene::Text(t) = &chip.children[0] else {
+            panic!("preview chip carries its label as Text")
+        };
+        assert_eq!(t.content, "viewport");
     }
 }

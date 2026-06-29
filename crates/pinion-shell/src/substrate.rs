@@ -2060,6 +2060,19 @@ impl<V: WidgetView> ShellCore<V> {
         self.core.drag_session_active_for_window(window_id, pid)
     }
 
+    /// (R1147 §5.51 §5.16) The dragged payload's label + window-local cursor for
+    /// the drag a window owns, or `None` when none is in flight. `AppShell` reads
+    /// it to drive the cross-desktop drag preview window (the same source the
+    /// in-window `apply_drag_image` overlay reads). Delegates to the runtime core.
+    #[must_use]
+    pub fn active_drag_label_for_window(
+        &self,
+        window_id: &str,
+        pid: PointerId,
+    ) -> Option<(String, (f64, f64))> {
+        self.core.active_drag_label_for_window(window_id, pid)
+    }
+
     /// (R1120 §5.51 PR-39) Stash the source window's ACTUAL outer origin (logical
     /// px) on its in-flight drag, so a borderless-floater title-bar window move
     /// converts the window-relative cursor to a stable DESKTOP frame (no apply-lag
@@ -2073,6 +2086,14 @@ impl<V: WidgetView> ShellCore<V> {
     ) {
         self.core
             .set_drag_source_origin_for_window(window_id, pid, origin);
+    }
+
+    /// R1147 §5.51 §5.16 — flag whether the shell's cross-desktop drag PREVIEW
+    /// window is currently showing the active drag, so `apply_drag_image`
+    /// suppresses the in-window overlay (one chip, not two). `AppShell` drives
+    /// the lifecycle; delegates to the runtime core.
+    pub fn set_desktop_drag_preview_active(&self, active: bool) {
+        self.core.set_desktop_drag_preview_active(active);
     }
 
     /// R672 §5.35 §5.41 — per-window variant of [`Self::cursor_moved`].
@@ -3663,6 +3684,14 @@ impl<V: WidgetView> ShellCore<V> {
     /// hook returns `None`. The chip is `pointer_transparent` so it never
     /// shadows the drag it represents.
     fn apply_drag_image(&self, scene: Scene, w: u32, h: u32, window_id: &str) -> Scene {
+        // R1147 §5.51 — while the shell's cross-desktop drag PREVIEW window is
+        // showing this drag, suppress the in-window overlay so exactly one chip
+        // shows (the desktop preview, which roams the whole desktop). Default
+        // false keeps this the headless / introspection chip (the preview is
+        // never shown under `PINION_HIDDEN_WINDOW`).
+        if self.core.desktop_drag_preview_active() {
+            return scene;
+        }
         let Some((label, cursor)) = self
             .core
             .active_drag_label_for_window(window_id, PointerId::MOUSE)
@@ -6467,6 +6496,48 @@ mod r1113_drag_image_producer_tests {
                 pinion_overlay::DRAG_IMAGE_TAG
             ),
             "after release the follower is gone",
+        );
+    }
+
+    /// R1147 §5.51 §5.16 — when the shell's cross-desktop drag PREVIEW window is
+    /// showing the drag (`set_desktop_drag_preview_active(true)`), the in-window
+    /// follower is SUPPRESSED so exactly one chip shows (the desktop preview,
+    /// which roams the whole desktop) — never two. Toggling the flag back off
+    /// restores the in-window follower (the headless / introspection chip).
+    #[test]
+    fn desktop_preview_active_suppresses_the_in_window_follower() {
+        let mut sc = ShellCore::<DragImageFixture>::new();
+        let boot = sc.compute_paint_scene(200, 200);
+        sc.finalize_frame(boot);
+        // Open a real drag.
+        sc.cursor_moved(PointerId::MOUSE, 10.0, 10.0);
+        sc.mouse_pressed(PointerId::MOUSE);
+        sc.cursor_moved(PointerId::MOUSE, 120.0, 90.0);
+        // Default (flag false): the in-window follower shows.
+        assert!(
+            has_tag(
+                &sc.compute_paint_scene(200, 200),
+                pinion_overlay::DRAG_IMAGE_TAG
+            ),
+            "default keeps the in-window follower (headless / introspection chip)",
+        );
+        // Desktop preview takes over: the in-window follower is suppressed.
+        sc.set_desktop_drag_preview_active(true);
+        assert!(
+            !has_tag(
+                &sc.compute_paint_scene(200, 200),
+                pinion_overlay::DRAG_IMAGE_TAG
+            ),
+            "the desktop preview owns the chip, so the in-window one is suppressed",
+        );
+        // Releasing the takeover restores the in-window follower.
+        sc.set_desktop_drag_preview_active(false);
+        assert!(
+            has_tag(
+                &sc.compute_paint_scene(200, 200),
+                pinion_overlay::DRAG_IMAGE_TAG
+            ),
+            "clearing the flag restores the in-window follower",
         );
     }
 

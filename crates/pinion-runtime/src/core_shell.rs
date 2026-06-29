@@ -359,6 +359,19 @@ pub struct CoreShell<V: WidgetCore> {
     /// lift planned for R683 (atomic 1: `Signal<Vec<WindowSpec>>`)
     /// will need owned ids, so `String` ahead.
     window_owners: HashMap<String, Owner>,
+
+    /// R1147 §5.51 §5.16 — true while the shell's cross-desktop drag PREVIEW
+    /// window is showing the active drag. The R1113 in-window drag-image overlay
+    /// (`apply_drag_image`, fed by [`Self::active_drag_label_for_window`]) is
+    /// suppressed while this is set, so exactly one chip shows (the desktop
+    /// preview), never two — the in-window ghost would otherwise peek out at the
+    /// source window's edge as the preview roams free. Set by the shell
+    /// (`AppShell`) when it shows / hides the preview; default `false` keeps the
+    /// in-window overlay as the headless / introspection chip (the preview is
+    /// never shown under `PINION_HIDDEN_WINDOW`). A `Cell` so the read side
+    /// (`apply_drag_image`, `&self`) and the shell write stay `&self`-friendly,
+    /// matching [`Self::next_frame_count`].
+    desktop_drag_preview_active: Cell<bool>,
 }
 
 /// (R1107.1 §5.51) Get-or-create the per-window [`InputRouter`] AND stamp its
@@ -622,6 +635,7 @@ impl<V: WidgetCore> CoreShell<V> {
             _animation_driver: animation_driver,
             executor: None,
             window_owners,
+            desktop_drag_preview_active: Cell::new(false),
         }
     }
 
@@ -2086,6 +2100,24 @@ impl<V: WidgetCore> CoreShell<V> {
         if let Some(router) = self.routers.get_mut(window_id) {
             router.set_drag_source_origin(pid, origin);
         }
+    }
+
+    /// R1147 §5.51 §5.16 — flag the cross-desktop drag PREVIEW window as
+    /// currently showing (or not) the active drag. When set, `apply_drag_image`
+    /// suppresses the R1113 in-window overlay so exactly one chip shows. The
+    /// shell (`AppShell`) owns the lifecycle: set `true` on a preview-eligible
+    /// drag move, `false` on release / when the preview is not shown.
+    pub fn set_desktop_drag_preview_active(&self, active: bool) {
+        self.desktop_drag_preview_active.set(active);
+    }
+
+    /// R1147 §5.51 §5.16 — whether the cross-desktop drag preview window is
+    /// currently showing the active drag (see
+    /// [`Self::set_desktop_drag_preview_active`]). Read by `apply_drag_image` to
+    /// suppress the in-window overlay while the desktop preview owns the chip.
+    #[must_use]
+    pub fn desktop_drag_preview_active(&self) -> bool {
+        self.desktop_drag_preview_active.get()
     }
 
     /// R881.1 §5.35 — single-window wrapper around

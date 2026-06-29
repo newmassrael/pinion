@@ -43,7 +43,7 @@ use winit::dpi::{LogicalPosition, LogicalSize, PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::{Key, NamedKey};
-use winit::window::{ResizeDirection, Window, WindowId};
+use winit::window::{ResizeDirection, Window, WindowId, WindowLevel};
 
 use crate::executor::build_executor_and_sink;
 use crate::substrate::ShellCore;
@@ -295,6 +295,50 @@ impl<R: VelloRenderer> WindowSlot<R> {
     }
 }
 
+/// (R1147 §5.51 §5.16) The shell-private cross-desktop drag preview window — the
+/// Qt-ADS `CFloatingDragPreview` model. A small, opaque, borderless,
+/// always-on-top window that *is* the drag chip; it follows the desktop cursor
+/// during a dock drag so the chip can escape the source window (the R1113
+/// in-window overlay is clipped to its surface, the gap the user found after
+/// R1146).
+///
+/// Created **once and reused** (hidden via `set_visible(false)` between drags —
+/// no per-gesture window creation, so no R1144-class surface-churn freeze),
+/// **moved by a direct `set_outer_position`** from the DESKTOP cursor (never the
+/// reactive `Signal → reconcile_windows` path, and the cursor — not the window's
+/// own moved position — is read, so the R1119 feedback oscillation is
+/// structurally impossible), and **repainted only when the dragged label
+/// changes** (render-once, move-many: zero per-move GPU work).
+///
+/// Deliberately ABSENT from [`AppShell::windows`] / `spec_id_to_window_id` / the
+/// substrate window registry / `windows_signal`, so it never appears in
+/// `scene/windows`: a transient shell affordance like the R1113 overlay + focus
+/// ring, NOT declared scene-as-data (§2 #7). The during-drag chip stays
+/// AI-introspectable through the R1113 in-window overlay in `scene/snapshot`,
+/// which this window mirrors visually for the human.
+struct DragPreviewWindow<R: VelloRenderer> {
+    /// The OS window — the chip itself (opaque, borderless, always-on-top).
+    window: Arc<Window>,
+    /// Cached winit id so the `RedrawRequested` / `Resized` arms route a preview
+    /// frame here without a `windows` lookup (the preview is not in that map).
+    window_id: WindowId,
+    /// Per-preview Vello renderer (its own GPU surface). Tiny fixed scene, so no
+    /// fragment / image cache, no AccessKit, no IME — unlike a [`WindowSlot`].
+    renderer: Box<R>,
+    /// Reusable encode buffer (reset per repaint, like `WindowSlot::vello_scene`).
+    vello_scene: VelloScene,
+    /// OS DPI scale for the preview's monitor (seeded at create; the chip is
+    /// laid out logical and rastered at device resolution like every window).
+    scale_factor: f64,
+    /// Whether the window is currently mapped (`set_visible(true)`). Shown on a
+    /// preview-eligible drag, hidden on release.
+    visible: bool,
+    /// The label the chip is currently painted with (`None` until first paint).
+    /// The shell repaints + resizes-to-fit only when the active drag's label
+    /// differs, so a steady cursor move is a pure `set_outer_position`.
+    painted_label: Option<String>,
+}
+
 /// The framework-side shell. Generic over a widget binding
 /// [`WidgetView`]; concrete examples instantiate via `run::<V>()`.
 ///
@@ -409,6 +453,12 @@ pub struct AppShell<V: WidgetView> {
     /// (a degenerate corner case) the diff fires "no adds, no drops"
     /// against the empty baseline.
     last_known_specs: Rc<RefCell<Vec<WindowSpec>>>,
+    /// R1147 §5.51 §5.16 — the shell-private cross-desktop drag preview window
+    /// ([`DragPreviewWindow`]). `None` until the first preview-eligible drag
+    /// lazily creates it; then persisted (hidden between drags). Kept OUTSIDE
+    /// `windows` / `spec_id_to_window_id` so it is invisible to `scene/windows`
+    /// (§2 #7) and untouched by the reconcile / dispatch paths.
+    drag_preview: Option<DragPreviewWindow<V::Renderer>>,
 }
 
 impl<V: WidgetView> AppShell<V> {
@@ -440,6 +490,7 @@ impl<V: WidgetView> AppShell<V> {
             windows_signal: None,
             reconcile_effect: None,
             last_known_specs: Rc::new(RefCell::new(Vec::new())),
+            drag_preview: None,
         }
     }
 
@@ -521,11 +572,244 @@ impl<V: WidgetView> AppShell<V> {
     /// because the stash takes `&mut self`; the `DEFAULT_WINDOW` fallback mirrors
     /// the other pointer arms (an untracked window — a `Resumed` event landing
     /// before the slot is inserted).
+    /// R1147 §5.16 — initialise a Vello renderer against `window`'s surface at
+    /// its current physical inner size. Shared by [`Self::resume_spec`] (declared
+    /// windows) and the R1147 drag-preview window so both cross the §6.3
+    /// `pollster::block_on` boundary identically. Returns the boxed renderer or
+    /// the backend init error (surface / adapter / device).
+    fn build_renderer(
+        window: &Arc<Window>,
+    ) -> Result<Box<V::Renderer>, <V::Renderer as WidgetRenderer>::Error> {
+        let size = window.inner_size();
+        pollster::block_on(<V::Renderer as VelloRenderer>::new(
+            Arc::clone(window),
+            size.width.max(1),
+            size.height.max(1),
+        ))
+        .map(Box::new)
+    }
+
+    /// R1147 §5.51 §5.16 — lazily create the shell-private cross-desktop drag
+    /// preview window ([`DragPreviewWindow`]), sized to the chip for `label` at
+    /// `style`. Borderless + always-on-top + opaque (the window IS the chip),
+    /// created HIDDEN so the caller maps it explicitly. Idempotent — a no-op once
+    /// built (the window is reused across drags; a later label's resize-to-fit is
+    /// [`Self::update_drag_preview`]'s job). Created OUTSIDE `windows` /
+    /// `spec_id_to_window_id` / the substrate window registry, so it never
+    /// reaches `scene/windows` (§2 #7). The first-ever eligible drag is the only
+    /// window creation; subsequent drags reuse it.
+    fn ensure_drag_preview_window(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        label: &str,
+        style: pinion_overlay::DragImageStyle,
+    ) {
+        if self.drag_preview.is_some() {
+            return;
+        }
+        let (w, h) = pinion_overlay::chip_size(label, style);
+        let attrs = Window::default_attributes()
+            .with_title("pinion-drag-preview")
+            .with_decorations(false)
+            .with_window_level(WindowLevel::AlwaysOnTop)
+            .with_visible(false)
+            .with_inner_size(LogicalSize::new(f64::from(w.max(1)), f64::from(h.max(1))));
+        let window = match event_loop.create_window(attrs) {
+            Ok(w) => Arc::new(w),
+            Err(e) => {
+                eprintln!("shell: drag-preview window create failed: {e}");
+                return;
+            }
+        };
+        let scale_factor = window.scale_factor();
+        let renderer = match Self::build_renderer(&window) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("shell: drag-preview renderer init failed: {e}");
+                return;
+            }
+        };
+        let window_id = window.id();
+        self.drag_preview = Some(DragPreviewWindow {
+            window,
+            window_id,
+            renderer,
+            vello_scene: VelloScene::new(),
+            scale_factor,
+            visible: false,
+            painted_label: None,
+        });
+    }
+
+    /// R1147 §5.51 §5.16 — paint the drag-preview chip for its current
+    /// `painted_label`. The chip scene carries explicit rects (no layout pass),
+    /// so it submits straight through [`paint_adapter::to_vello`]. A no-op until a
+    /// label is set. Routed from the `RedrawRequested` arm for the preview's
+    /// window id; also called directly on a label change / first show so the chip
+    /// appears without waiting on a redraw round-trip.
+    fn render_drag_preview(&mut self) {
+        let Some(preview) = self.drag_preview.as_mut() else {
+            return;
+        };
+        let Some(label) = preview.painted_label.clone() else {
+            return;
+        };
+        let style = V::drag_image_style(&label).unwrap_or_default();
+        let (scene, _size) = pinion_overlay::drag_chip_scene(&label, style);
+        let base = paint_adapter::root_background(&scene);
+        preview.vello_scene.reset();
+        // Render-once-per-drag, so a fresh `LayoutCache` per repaint is fine (this
+        // is not a per-frame hot path); the chip is single-line single-style text.
+        let mut text_cache = pinion_text::LayoutCache::new();
+        paint_adapter::to_vello(
+            &scene,
+            &|_b: &BoxNode| None,
+            &mut text_cache,
+            &mut preview.vello_scene,
+        );
+        // R1027 §5.16 — chip is logical; raster at device resolution like every
+        // window. The preview repaints rarely, so a local scaled buffer is cheap.
+        let scale = preview.scale_factor;
+        let _ = if scale_is_non_identity(scale) {
+            let mut scaled = VelloScene::new();
+            scaled.append(&preview.vello_scene, Some(Affine::scale(scale)));
+            submit_frame(&mut *preview.renderer, &scaled, base, false)
+        } else {
+            submit_frame(&mut *preview.renderer, &preview.vello_scene, base, false)
+        };
+    }
+
+    /// R1147 §5.51 §5.16 — resize the preview window's GPU surface after a winit
+    /// `Resized` (the OS applying the `request_inner_size` a label change issued).
+    /// Routed from the `Resized` arm for the preview's window id.
+    fn note_preview_resized(&mut self, size: PhysicalSize<u32>) {
+        if let Some(preview) = self.drag_preview.as_mut() {
+            preview
+                .renderer
+                .resize(size.width.max(1), size.height.max(1));
+            preview.window.request_redraw();
+        }
+    }
+
+    /// R1147 §5.51 §5.16 — drive the cross-desktop drag preview from a cursor
+    /// move. On a preview-eligible drag (the binding opted the dragged label in
+    /// via [`WidgetView::drag_image_style`]) this ensures the window, repaints the
+    /// chip iff the label changed (render-once), positions it at the DESKTOP
+    /// cursor (the SOURCE window's ACTUAL outer origin + the window-local cursor —
+    /// the live origin, not the lagging declared one; the source window is the
+    /// dragger, not the moved one, so there is no R1119 feedback loop), shows it,
+    /// and toggles the in-window-overlay suppression. Skipped under
+    /// `PINION_HIDDEN_WINDOW` (headless RPC runs keep the R1113 in-window overlay
+    /// as the introspection chip rather than flashing a real window).
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "logical-pixel desktop coords + chip dims -> integer window geometry; sub-pixel rounding + sign are irrelevant (origin/cursor desktop coords, chip dims clamped >= 1)"
+    )]
+    fn update_drag_preview(
+        &mut self,
+        window_id: WindowId,
+        scale: f64,
+        cursor: (f64, f64),
+        event_loop: &ActiveEventLoop,
+    ) {
+        if hidden_window_requested() {
+            return;
+        }
+        let Some(spec_id) = self.windows.get(&window_id).map(|s| s.spec_id.clone()) else {
+            return;
+        };
+        let Some((label, _)) = self
+            .core
+            .active_drag_label_for_window(&spec_id, PointerId::MOUSE)
+        else {
+            // No active drag for this window: the release path hides any preview.
+            return;
+        };
+        if label.is_empty() {
+            return;
+        }
+        let Some(style) = V::drag_image_style(&label) else {
+            // The binding wants no follower for this label.
+            return;
+        };
+        // Desktop pointer = the SOURCE window's ACTUAL outer origin + the
+        // window-local cursor, trailed by the style offset so the chip sits
+        // beside the pointer (matching the in-window R1113 follower).
+        let Some((ox, oy)) = self.window_outer_origin_logical(&spec_id, scale) else {
+            return;
+        };
+        let off = i32::try_from(style.cursor_offset).unwrap_or(i32::MAX);
+        let pos = (
+            ox + cursor.0.round() as i32 + off,
+            oy + cursor.1.round() as i32 + off,
+        );
+        self.ensure_drag_preview_window(event_loop, &label, style);
+        let repaint = {
+            let Some(preview) = self.drag_preview.as_mut() else {
+                return;
+            };
+            let label_changed = preview.painted_label.as_deref() != Some(label.as_str());
+            if label_changed {
+                let (w, h) = pinion_overlay::chip_size(&label, style);
+                let _ = preview
+                    .window
+                    .request_inner_size(LogicalSize::new(f64::from(w.max(1)), f64::from(h.max(1))));
+                // Resize the surface NOW so this frame rasters at the new size;
+                // the matching `Resized` event re-applies idempotently.
+                let s = preview.scale_factor;
+                let pw = (f64::from(w.max(1)) * s).round() as u32;
+                let ph = (f64::from(h.max(1)) * s).round() as u32;
+                preview.renderer.resize(pw.max(1), ph.max(1));
+                preview.painted_label = Some(label.clone());
+            }
+            preview
+                .window
+                .set_outer_position(LogicalPosition::new(f64::from(pos.0), f64::from(pos.1)));
+            let became_visible = !preview.visible;
+            if became_visible {
+                preview.window.set_visible(true);
+                preview.visible = true;
+            }
+            label_changed || became_visible
+        };
+        // Suppress the in-window overlay (one chip, not two) + repaint the source
+        // window once so the in-window ghost is stripped now.
+        self.core.set_desktop_drag_preview_active(true);
+        if repaint {
+            self.render_drag_preview();
+            self.core.request_redraw();
+        }
+    }
+
+    /// R1147 §5.51 §5.16 — hide the drag preview on drag end (release / cancel).
+    /// `set_visible(false)` keeps the window for reuse; clears the suppression
+    /// flag so the in-window overlay resumes (e.g. for headless introspection).
+    fn hide_drag_preview(&mut self) {
+        if let Some(preview) = self.drag_preview.as_mut()
+            && preview.visible
+        {
+            preview.window.set_visible(false);
+            preview.visible = false;
+        }
+        self.core.set_desktop_drag_preview_active(false);
+    }
+
+    /// R1147 §5.51 §5.16 — whether `window_id` is the shell-private drag-preview
+    /// window (so `window_event` routes its `RedrawRequested` / `Resized` to the
+    /// preview's own render path instead of the declared-window `windows` map).
+    fn is_drag_preview_window(&self, window_id: WindowId) -> bool {
+        self.drag_preview
+            .as_ref()
+            .is_some_and(|p| p.window_id == window_id)
+    }
+
     fn handle_cursor_moved(
         &mut self,
         window_id: WindowId,
         position: PhysicalPosition<f64>,
         scale: f64,
+        event_loop: &ActiveEventLoop,
     ) {
         let (lx, ly) = winit_pointer_to_logical(position, scale);
         self.stamp_drag_source_origin(window_id, scale);
@@ -535,6 +819,9 @@ impl<V: WidgetView> AppShell<V> {
             .map_or(pinion_runtime::DEFAULT_WINDOW, |s| &*s.spec_id);
         self.core
             .cursor_moved_for_window(spec_id, PointerId::MOUSE, lx, ly);
+        // R1147 §5.51 — drive the cross-desktop drag preview window (a no-op
+        // unless a preview-eligible drag is in flight in live mode).
+        self.update_drag_preview(window_id, scale, (lx, ly), event_loop);
     }
 
     /// R51.76 §5.40 — drain the [`ShellCore::redraw_requested`] flag
@@ -1454,6 +1741,9 @@ impl<V: WidgetView> AppShell<V> {
             (MouseButton::Left, ElementState::Released) => {
                 self.core
                     .mouse_released_for_window(spec_id, PointerId::MOUSE);
+                // R1147 §5.51 — a left release ends the drag session, so hide the
+                // cross-desktop drag preview (kept for reuse) + clear suppression.
+                self.hide_drag_preview();
             }
             (MouseButton::Middle, ElementState::Pressed) => {
                 self.core
@@ -1934,19 +2224,16 @@ impl<V: WidgetView> AppShell<V> {
         if let Some(theme) = window.theme() {
             pinion_core::set_system_color_scheme(winit_theme_to_pinion_scheme(theme));
         }
-        let size = window.inner_size();
         // R1027 §5.16 — seed the per-slot scale factor from the OS so the
         // first paint already lays out logical and rasters at the device
         // resolution (refreshed later by `WindowEvent::ScaleFactorChanged`).
         // The renderer surface is sized in physical pixels (unchanged).
         let scale_factor = window.scale_factor();
-        let renderer = pollster::block_on(<V::Renderer as VelloRenderer>::new(
-            Arc::clone(&window),
-            size.width.max(1),
-            size.height.max(1),
-        ));
-        let renderer = match renderer {
-            Ok(r) => r,
+        // R1147 §5.16 — renderer init via the shared `build_renderer` helper
+        // (also used by the drag-preview window), so both window paths cross the
+        // §6.3 `pollster::block_on` boundary the same way.
+        let renderer = match Self::build_renderer(&window) {
+            Ok(r) => *r,
             Err(e) => {
                 eprintln!("shell: renderer init ({}) failed: {e}", &spec.id);
                 // Cache the window for a subsequent retry; renderer
@@ -2292,10 +2579,11 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
             // into the substrate's pinion-native shape.
             WindowEvent::CursorMoved { position, .. } => {
                 // R1120 §5.51 — body lives in `handle_cursor_moved` (stamp the
-                // drag source origin + forward the logical cursor). Delegating
-                // keeps `window_event` under the line cap and lets the helper
-                // own the `&mut self` borrow the source-origin stash needs.
-                self.handle_cursor_moved(window_id, position, scale);
+                // drag source origin + forward the logical cursor + R1147 drive
+                // the cross-desktop drag preview). Delegating keeps `window_event`
+                // under the line cap and lets the helper own the `&mut self`
+                // borrow the source-origin stash + preview ensure/move need.
+                self.handle_cursor_moved(window_id, position, scale, event_loop);
             }
             WindowEvent::CursorLeft { .. } => {
                 self.core.cursor_left_for_window(spec_id, PointerId::MOUSE);
@@ -2419,6 +2707,12 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
             // `note_window_resized` to keep `window_event` under the 100-line
             // ceiling (the app.rs split convention) and to let the helper own
             // the slot borrow the maximized-cache sync needs.
+            // R1147 §5.51 — the shell-private drag-preview window is not in
+            // `windows`, so route its resize to its own surface; otherwise the
+            // declared-window resize path.
+            WindowEvent::Resized(size) if self.is_drag_preview_window(window_id) => {
+                self.note_preview_resized(size);
+            }
             WindowEvent::Resized(size) => self.note_window_resized(window_id, size),
             // R1088 §5.16 §5.41 §2 #7 PR-31 — OS window move. Feed the new
             // outer position back into `windows_signal` so the DECLARED
@@ -2447,6 +2741,12 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
             // its palette in the next frame.
             WindowEvent::ThemeChanged(theme) => {
                 pinion_core::set_system_color_scheme(winit_theme_to_pinion_scheme(theme));
+            }
+            // R1147 §5.51 — the shell-private drag-preview window paints a fixed
+            // chip via its own render path (it is not in `windows`, so
+            // `render_window` would early-return for it).
+            WindowEvent::RedrawRequested if self.is_drag_preview_window(window_id) => {
+                self.render_drag_preview();
             }
             WindowEvent::RedrawRequested => self.render_window(window_id),
             _ => {}

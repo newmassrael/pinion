@@ -49,7 +49,9 @@ pub mod focus_ring;
 pub mod highlight;
 pub mod window_chrome;
 
-pub use drag_image::{DRAG_IMAGE_TAG, DragImageStyle, inject_drag_image};
+pub use drag_image::{
+    DRAG_IMAGE_TAG, DragImageStyle, chip_size, drag_chip_scene, inject_drag_image,
+};
 pub use event::OverlayEvent;
 pub use focus_ring::{FOCUS_RING_TAG, FocusRingStyle, inject_focus_ring};
 pub use highlight::{
