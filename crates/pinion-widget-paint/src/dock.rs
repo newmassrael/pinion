@@ -4430,9 +4430,24 @@ where
     match node {
         DockNode::Leaf { panel_id } => {
             let content = panel_content(panel_id.as_ref());
+            // R1153 §5.51 — a TORN-SLOT placeholder fills the WHOLE leaf (NO
+            // header). The empty slot needs no title bar, and a header strip would
+            // leave a region at the top where the leaf WRAPPER's `drop_target`
+            // sits ABOVE the placeholder — so a drop there resolved the wrapper
+            // (the standard edge-split zones via `dock_drop_zone_normalized`)
+            // instead of the placeholder (the self-home FULL rule keyed on the
+            // `_placeholder` tag), making the self-home preview inconsistently
+            // split top/bottom near the slot's top. Auto-detected by the
+            // placeholder tag suffix so it stays a generic walker rule (the
+            // binding only chooses to render a placeholder via `panel_content`);
+            // a normal panel keeps its header (`show_header` default true).
+            let is_placeholder = content
+                .tag()
+                .is_some_and(|t| t.ends_with(PLACEHOLDER_TAG_SUFFIX));
             // Walker builds the panel style from the topology's
             // panel_id — no caller drift possible (SSOT).
-            let style = DockPanelStyle::m3_default(panel_id.clone());
+            let style =
+                DockPanelStyle::m3_default(panel_id.clone()).with_show_header(!is_placeholder);
             view_dock_panel(
                 panel_id.as_ref(),
                 content,
@@ -11709,6 +11724,51 @@ mod surface_tests {
                 outer.children.len(),
                 3,
                 "the targeted panel gains the drop-zone overlay",
+            );
+        });
+    }
+
+    #[test]
+    fn r1153_placeholder_leaf_suppresses_header_so_it_fills_the_slot() {
+        use super::{FloatingPlaceholderStyle, view_floating_placeholder};
+        run_in_owner(|| {
+            let topology = DockTopology::single("viewport");
+            // A normal (docked) leaf KEEPS its header.
+            let docked = view_dock_surface(
+                &topology,
+                |_| panel_content_for("viewport"),
+                |_, _| panic!("single leaf"),
+                |_| None,
+                &theme_light(),
+            );
+            assert!(
+                docked.contains_tag("viewport#header"),
+                "a docked panel keeps its header",
+            );
+            // A torn-slot PLACEHOLDER leaf SUPPRESSES its header (R1153), so the
+            // placeholder fills the WHOLE slot — a drop anywhere over it resolves
+            // the placeholder (self-home FULL), never the leaf wrapper above it
+            // (which would edge-split the preview top/bottom near the slot's top).
+            let placeholder = view_dock_surface(
+                &topology,
+                |id| {
+                    view_floating_placeholder(
+                        id,
+                        &theme_light(),
+                        &FloatingPlaceholderStyle::m3_default(),
+                    )
+                },
+                |_, _| panic!("single leaf"),
+                |_| None,
+                &theme_light(),
+            );
+            assert!(
+                !placeholder.contains_tag("viewport#header"),
+                "a torn-slot placeholder leaf has NO header (R1153)",
+            );
+            assert!(
+                placeholder.contains_tag("viewport_placeholder"),
+                "the placeholder fills the leaf",
             );
         });
     }
