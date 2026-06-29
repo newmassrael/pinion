@@ -4863,6 +4863,18 @@ pub struct DockPanelExternal {
     /// contract now that R1102 wires the shell's `over_window` resolution live.
     /// Reset on [`begin_drag`](External::begin_drag) for the fresh gesture.
     last_redock_at: RefCell<Option<serde_json::Value>>,
+    /// (R1149 §5.51 §2 #7) The IN-FLIGHT would-dock: where a release RIGHT NOW
+    /// would redock this panel — `{window, target, x_rel, y_rel}` — or `None`
+    /// when a release now would NOT redock (it would float / reposition). Set on
+    /// every [`drag_to_at`](External::drag_to_at) from the SAME `(over_window,
+    /// over)` the release ([`drag_release_at`](External::drag_to_at)) decides on,
+    /// so `query("redock_pending")` answers "if I let go here, where does it land"
+    /// — the §2 #7 read that makes a preview-vs-drop divergence RPC-diagnosable
+    /// from a held mid-drag snapshot (vs eyeballing the live window). Distinct
+    /// from [`last_redock_at`](Self::last_redock_at) (the COMPLETED redock): a
+    /// diagnostic compares the two across a release — they must agree, else the
+    /// release ignored the resolved drop. Reset on `begin_drag`.
+    redock_pending: RefCell<Option<serde_json::Value>>,
     /// (R1107 §5.51 §2 #7) The window the most recent live tear-off move was
     /// measured in (`DragUpdate::source_window`) — the source window the
     /// binding adds the outer origin of to place the follower. Recorded each
@@ -4960,6 +4972,7 @@ impl DockPanelExternal {
             drag_cursor: Cell::new(None),
             detached: Cell::new(false),
             last_redock_at: RefCell::new(None),
+            redock_pending: RefCell::new(None),
             last_source_window: RefCell::new(None),
             // R1129 §5.51.1 — the lifecycle chart starts `docked` (its SCXML
             // `initial`), matching a freshly-registered panel that has not floated.
@@ -5357,6 +5370,8 @@ impl External for DockPanelExternal {
         self.detached.set(false);
         // R1102 — and the last cross-window redock diagnostic.
         *self.last_redock_at.borrow_mut() = None;
+        // R1149 — and the in-flight would-dock (fresh gesture, nothing pending).
+        *self.redock_pending.borrow_mut() = None;
         // R1107 — and the last follow-drag source window.
         *self.last_source_window.borrow_mut() = None;
         Some(DragPayload {
@@ -5491,6 +5506,21 @@ impl External for DockPanelExternal {
         // AI observes it via `query("source_window")` and the binding converts
         // the cursor to a desktop position via the right origin.
         *self.last_source_window.borrow_mut() = update.source_window.map(str::to_owned);
+        // R1149 §5.51 §2 #7 — record the IN-FLIGHT would-dock so an AI observes
+        // via `query("redock_pending")` where a release NOW lands (or `null` = it
+        // would float). Mirrors the `drag_release_at` cross-window decision
+        // EXACTLY (a redock fires only when BOTH `over_window` AND the resolved
+        // drop `over` are present), so a held-drag snapshot makes a
+        // preview-vs-drop divergence RPC-diagnosable instead of eyeball-only.
+        *self.redock_pending.borrow_mut() = match (update.over_window, update.over.as_ref()) {
+            (Some(window), Some(point)) => Some(serde_json::json!({
+                "window": window,
+                "target": point.tag,
+                "x_rel": point.x_rel,
+                "y_rel": point.y_rel,
+            })),
+            _ => None,
+        };
         // R1116 §5.51 PR-38 — WINDOW MOVE. A drag IN this panel's OWN floating
         // window (`source_window` == the binding-declared `floating_window`) is
         // the borderless floater's title-bar drag: it MOVES the window, distinct
@@ -5713,6 +5743,10 @@ impl ExternalIntrospect for DockPanelExternal {
             // observes that a drag redocked into ANOTHER window's zone — the
             // live firing of the R1100 contract the R1102 shell wiring enables.
             ("redock_at", "json"),
+            // R1149 §5.51 §2 #7 — the IN-FLIGHT would-dock: where a release NOW
+            // redocks (`{window, target, x_rel, y_rel}` or null = would float),
+            // so a held-drag snapshot diagnoses a preview-vs-drop divergence.
+            ("redock_pending", "json"),
             // R1107 §5.51 §2 #7 — the window the last follow-drag move was
             // measured in (`"main"` / a `torn-<panel>` id / null).
             ("source_window", "string"),
@@ -5757,6 +5791,16 @@ impl ExternalIntrospect for DockPanelExternal {
             // (null before any cross-window redock this gesture).
             "redock_at" => Some(
                 self.last_redock_at
+                    .borrow()
+                    .clone()
+                    .map_or(IntrospectValue::Null, IntrospectValue::Json),
+            ),
+            // R1149 §5.51 §2 #7 — the in-flight would-dock (where a release NOW
+            // redocks; null = it would float). Compared to `redock_at` across a
+            // release, the two must agree, else the release ignored the resolved
+            // drop — the divergence this read makes RPC-diagnosable.
+            "redock_pending" => Some(
+                self.redock_pending
                     .borrow()
                     .clone()
                     .map_or(IntrospectValue::Null, IntrospectValue::Json),

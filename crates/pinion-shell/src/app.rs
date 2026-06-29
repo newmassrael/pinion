@@ -575,8 +575,31 @@ impl<V: WidgetView> AppShell<V> {
         {
             return;
         }
-        let origins: Vec<(String, (f64, f64))> = self
-            .windows
+        self.core
+            .set_live_window_origins(self.collect_window_origins());
+    }
+
+    /// R1149 §5.51 §2 #7 §2 #2 — stamp every live window's ACTUAL outer origin
+    /// UNCONDITIONALLY (no drag gate), for the RPC dispatch path. The winit cursor
+    /// path stamps in [`Self::stamp_live_window_origins`] (gated on an active
+    /// drag), but an RPC `scene/drag` opens the drag DURING its own drain, so the
+    /// gate would skip the stamp and the cross-window resolution would fall back to
+    /// DECLARED origins (a WM-placed `"main"` at `(0,0)`) — diverging from the live
+    /// winit path and making an AI's RPC drive unable to reproduce / diagnose the
+    /// live coordinate behavior. Origins are static during a dispatch, so one
+    /// unconditional stamp at dispatch entry covers the whole RPC drag drain.
+    fn stamp_all_window_origins(&self) {
+        self.core
+            .set_live_window_origins(self.collect_window_origins());
+    }
+
+    /// R1149 §5.51 — collect every live window's ACTUAL outer origin in logical
+    /// pixels (`Window::outer_position()` → logical). Shared by the winit-path
+    /// [`Self::stamp_live_window_origins`] and the RPC-path
+    /// [`Self::stamp_all_window_origins`] so both resolve cross-window drops
+    /// against the same real desktop positions.
+    fn collect_window_origins(&self) -> Vec<(String, (f64, f64))> {
+        self.windows
             .values()
             .filter_map(|slot| {
                 let window = Self::slot_window(slot)?;
@@ -585,8 +608,7 @@ impl<V: WidgetView> AppShell<V> {
                     .to_logical::<f64>(slot.scale_factor);
                 Some((slot.spec_id.to_string(), (logical.x, logical.y)))
             })
-            .collect();
-        self.core.set_live_window_origins(origins);
+            .collect()
     }
 
     /// R51.38 / R1027 / R1120 §5.35 §5.16 §5.51 — the `CursorMoved` body.
@@ -960,6 +982,15 @@ impl<V: WidgetView> AppShell<V> {
                 return;
             }
         };
+        // R1149 §5.51 §2 #7 §2 #2 — stamp every window's ACTUAL outer origin so a
+        // cross-window resolution during this RPC (a `scene/drag` redock) uses the
+        // SAME actual origins the live winit path does. Without it the RPC drain
+        // fell back to DECLARED origins (WM-placed `"main"` at `(0,0)`), so an AI's
+        // RPC drive could NOT reproduce — let alone diagnose — a live coordinate
+        // divergence. Multi-window only (single-window never resolves cross-window).
+        if self.windows.len() > 1 {
+            self.stamp_all_window_origins();
+        }
         // R890.1 §5.16 §5.49 — no window extraction here at all: the
         // substrate's windowed entry derives the dispatch scope from
         // the request's own `{window: "<id>"}` param through the ONE
