@@ -86,15 +86,22 @@ def body() -> None:
             "steps": 16,
             "phase": "begin",
         })
-        # Re-prime both scenes so the resolution + preview are current.
-        tf.snapshot(source="paint", viewport=(_MAIN_W, _MAIN_H), window=_MAIN)
+        # Re-prime both scenes so the resolution + preview are current. R1150:
+        # the on-TARGET preview (`__xwin_drop_preview`) shows in main at the dock
+        # zone (correct place); the R1137 on-FLOATER hint (`__xwin_redock_hint`)
+        # was REMOVED (it sat at the static floater's spot — "preview here, docks
+        # there").
+        main_scene = tf.snapshot(source="paint", viewport=(_MAIN_W, _MAIN_H), window=_MAIN)
         floater_scene = tf.snapshot(source="paint", viewport=(fw, fh), window=_TORN)
-        preview_shown = _scene_has_tag(floater_scene, "__xwin_redock_hint")
+        floater_hint_shown = _scene_has_tag(floater_scene, "__xwin_redock_hint")
+        main_preview_shown = _scene_has_tag(main_scene, "__xwin_drop_preview")
+        print(f"[demo] HELD: on-MAIN preview (at target) shown={main_preview_shown} "
+              f"on-FLOATER hint shown={floater_hint_shown}")
         pending = tf.query(f"/{_PANEL}/external/redock_pending")
         detached = tf.query(f"/{_PANEL}/external/detached")
         drag_cursor = tf.query(f"/{_PANEL}/external/drag_cursor")
         wins_held = [w.get("id") for w in _windows(tf)]
-        print(f"[demo] HELD: preview_hint_shown={preview_shown} redock_pending={pending!r}")
+        print(f"[demo] HELD: redock_pending={pending!r}")
         print(f"[demo] HELD: detached={detached!r} drag_cursor={drag_cursor!r} "
               f"windows={wins_held!r}")
 
@@ -111,7 +118,10 @@ def body() -> None:
         print(f"[demo] AFTER RELEASE: redock_at={redock_at!r} windows={wins_after!r}")
 
         # The diagnosis (now RPC-observable): mid-hold the AI READS the would-dock.
-        assert preview_shown, "B.1 the redock preview hint is painted while held"
+        # R1150: the preview shows on the TARGET (main, at the dock zone), NOT on
+        # the floater (the misplaced on-floater hint was removed).
+        assert main_preview_shown, "B.1a the on-target preview is shown in main (at the dock zone)"
+        assert not floater_hint_shown, "B.1b no on-floater redock hint (R1150 removed it)"
         assert isinstance(pending, dict), f"B.2 redock_pending is readable mid-hold ({pending!r})"
         assert pending.get("window") == _MAIN, f"B.3 the would-dock names main ({pending!r})"
         assert isinstance(redock_at, dict), f"C.1 a redock fired on release ({redock_at!r})"

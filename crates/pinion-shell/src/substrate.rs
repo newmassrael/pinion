@@ -65,13 +65,10 @@ use super::WidgetView;
 /// keeping the shell widget-library-agnostic (it never names a dock type).
 const CROSS_WINDOW_DROP_PREVIEW_TAG: &str = "__xwin_drop_preview";
 
-/// (R1137 §5.51 §2 #7 PR-33) Shell-owned tag for the redock drag HINT slot — the
-/// "where I will dock" affordance painted INTO the dragged floater (the source
-/// window). The visibility companion to [`CROSS_WINDOW_DROP_PREVIEW_TAG`]: the
-/// opaque floater occludes the target-window preview, so this paints the resolved
-/// zone ON the floater (topmost, always visible) while the floater is over a dock
-/// zone (the R1137 `RedockArmed` lifecycle).
-const REDOCK_DRAG_HINT_TAG: &str = "__xwin_redock_hint";
+// R1150 §5.51 — the R1137 `REDOCK_DRAG_HINT_TAG` (the on-floater redock
+// schematic) was removed: it placed the preview on the dragged floater's own
+// rect, which under the R1146 release-only (static) floater sat at the wrong
+// place. The on-target `CROSS_WINDOW_DROP_PREVIEW_TAG` preview is the affordance.
 
 /// (R1141 §5.51 §2 #7 PR-39) Shell-owned tag for the dock-zone GUIDES slot — the
 /// subtle outlines around EVERY dockable zone of a window while a floater drag is
@@ -2124,14 +2121,11 @@ impl<V: WidgetView> ShellCore<V> {
             let new_target = cross.as_ref().map(|c| c.window.clone());
             self.core
                 .set_drag_cross_window_for_window(window_id, pid, cross);
-            // R1137 §5.51 PR-33 — repaint the SOURCE window every move while its
-            // drag is in flight, so the R1137 on-floater redock HINT
-            // (`apply_redock_drag_hint`, fed by `cross_window_drop_from`) renders +
-            // clears LIVE. A borderless floater's title-bar WINDOW MOVE only changes
-            // its POSITION (set_outer_position), never its content, so without this
-            // the floater never repaints during the drag and the hint never shows —
-            // the symmetric source-side peer of the target redraw below.
-            self.request_redraw_for_window(window_id);
+            // R1150 §5.51 — the R1137 SOURCE-window (floater) per-move repaint was
+            // REMOVED with the on-floater redock hint it served: the floater's
+            // content is static during its release-only drag, so repainting it each
+            // move was dead work once the hint is gone. The TARGET-window repaint
+            // below stays — it drives the on-target preview live.
             // R1125 §5.51 PR-33 — keep the incoming drop-zone PREVIEW live. The
             // source window's drag moves do not dirty the TARGET window, so the
             // shell repaints it here: the current target every move (its strip
@@ -3752,39 +3746,15 @@ impl<V: WidgetView> ShellCore<V> {
         pinion_overlay::inject_overlay_node(scene, CROSS_WINDOW_DROP_PREVIEW_TAG, slot)
     }
 
-    /// (R1137 §5.51 §2 #7 PR-33) The redock drag HINT painted INTO the dragged
-    /// floater (the SOURCE window) — the VISIBILITY companion to
-    /// [`Self::apply_cross_window_drop_preview`]. The target-window preview is
-    /// computed correctly, but the opaque floater follows the cursor and OCCLUDES
-    /// it, so the user cannot see where the panel will land. This paints the
-    /// resolved dock zone ON the floater itself (topmost, hence always visible)
-    /// while it is over a zone (the `RedockArmed` lifecycle), reusing the SAME
-    /// [`WidgetView::dock_drop_preview`] hook sized to the floater's own window
-    /// rect (a left-zone redock tints the floater's left half, a centre tabify the
-    /// whole pane). No-op when this window's drag targets no other window.
-    fn apply_redock_drag_hint(
-        &self,
-        scene: Scene,
-        w: u32,
-        h: u32,
-        window_id: Option<&str>,
-    ) -> Scene {
-        let key = window_id.unwrap_or(pinion_runtime::DEFAULT_WINDOW);
-        let inner = self.core.cross_window_drop_from(key).and_then(|drop| {
-            let rect = pinion_core::scene::Rect::new(0, 0, w, h);
-            V::dock_drop_preview(&drop.point.tag, rect, drop.point.x_rel, drop.point.y_rel)
-        });
-        let slot = inner.map(|node| {
-            Scene::Container(
-                pinion_core::scene::ContainerNode::new(vec![node])
-                    .with_tag(REDOCK_DRAG_HINT_TAG.to_string())
-                    .with_layout(
-                        pinion_core::style::LayoutStyle::new().with_pointer_transparent(true),
-                    ),
-            )
-        });
-        pinion_overlay::inject_overlay_node(scene, REDOCK_DRAG_HINT_TAG, slot)
-    }
+    // R1150 §5.51 — the R1137 `apply_redock_drag_hint` (the on-FLOATER redock
+    // schematic) was REMOVED. It drew the resolved zone on the dragged floater's
+    // OWN rect, a workaround for the R1116 *following* floater occluding the
+    // target preview. R1146 made the floater stay PUT during the drag, so the
+    // hint sat at the floater's static spot while the panel docked at the cursor's
+    // target elsewhere — the user's "preview here, docks there". The on-TARGET
+    // `apply_cross_window_drop_preview` is correctly placed and remains; the R1147
+    // desktop chip is the cursor affordance. (Hiding the floater to un-occlude was
+    // rejected: unmapping releases the X11 pointer grab the live drag relies on.)
 
     /// (R1141 §5.51 §2 #7 PR-39 → R1146) Paint the dock-zone GUIDES on this window:
     /// while a panel drag is in flight in ANY window, outline every dockable zone of
@@ -3886,15 +3856,18 @@ impl<V: WidgetView> ShellCore<V> {
         // the redock still resolves by the cursor (stay-floating preserved).
         let guided = self.apply_dock_zone_guides(ringed, window_id);
         // R1125 §5.51 PR-33 — the incoming cross-window dock drop-zone preview,
-        // UNDER the source window's drag-image follower (the follower lives in the
-        // dragged window, the preview in the target window, so they never overlap
-        // — ordered here for one canonical z-stack).
+        // drawn at the dock zone in the TARGET (host) window where the panel will
+        // land. This is the redock affordance.
         let previewed = self.apply_cross_window_drop_preview(guided, window_id);
-        // R1137 §5.51 PR-33 — the redock drag HINT on the dragged floater (source
-        // window), so the "where I will dock" zone is visible even though the
-        // opaque floater occludes the target-window preview above.
-        let hinted = self.apply_redock_drag_hint(previewed, w, h, window_id);
-        self.apply_drag_image(hinted, w, h, key)
+        // R1150 §5.51 — the R1137 on-FLOATER hint was REMOVED here (it drew the
+        // zone schematic on the dragged floater's OWN rect; under the R1146
+        // release-only model the floater stays PUT during the drag, so the hint sat
+        // at the floater's static spot while the panel docked at the cursor's
+        // target ELSEWHERE — the user's "preview here, docks there"). The on-target
+        // preview above is correctly placed; the R1147 desktop chip is the cursor
+        // affordance. (Hiding the floater to un-occlude was rejected: unmapping it
+        // releases the X11 pointer grab the live drag relies on.)
+        self.apply_drag_image(previewed, w, h, key)
     }
 
     /// (R1121 §5.16 §5.39 §2 #7) Inject the client-side window-chrome strip
@@ -6888,17 +6861,17 @@ mod r1104_cross_window_exclusion_tests {
 
 #[cfg(test)]
 mod r1138_redock_hint_injection_tests {
-    //! R1138 §5.51 §2 #2 §2 #7 PR-33 — the END-TO-END headless proof the live
-    //! user test could not give: a floater whose held drag is over MAIN's dock
-    //! injects the R1137 redock HINT (`REDOCK_DRAG_HINT_TAG`) INTO the floater's
-    //! own produced scene, so an AI `scene/snapshot` of the held floater (the
-    //! R1138 phased-drag peer) SEES where the panel will land. Closes the
-    //! verification gap the opaque-floater occlusion + window-move-no-repaint
-    //! made un-observable live. The drag SESSION is opened by a real press over
-    //! the floater's drag source (a `begin_drag` External), then a cursor march
-    //! maps the floater-local cursor to an absolute point over main's dock — the
-    //! exact floater→main redock direction — so the shell stashes the cross-
-    //! window drop and `apply_redock_drag_hint` paints it on the floater.
+    //! R1138 §5.51 §2 #2 §2 #7 PR-33 → R1150 — the END-TO-END headless proof the
+    //! live user test could not give: a floater whose held drag is over MAIN's
+    //! dock shows the on-TARGET redock preview (`CROSS_WINDOW_DROP_PREVIEW_TAG`) in
+    //! MAIN at the dock zone, so an AI `scene/snapshot` SEES where the panel will
+    //! land — correctly placed. R1150 removed the R1137 on-FLOATER hint (it drew
+    //! the schematic on the static floater at the wrong place: "preview here, docks
+    //! there"). The drag SESSION is opened by a real press over the floater's drag
+    //! source (a `begin_drag` External), then a cursor march maps the floater-local
+    //! cursor to an absolute point over main's dock — the exact floater→main redock
+    //! direction — so the shell stashes the cross-window drop and
+    //! `apply_cross_window_drop_preview` paints it in main at the target.
     use super::ShellCore;
     use crate::test_fixtures::TestRenderer;
     use crate::{SizeStrategy, WidgetView, WindowSpec};
@@ -7027,7 +7000,8 @@ mod r1138_redock_hint_injection_tests {
             Self::view(state, frame)
         }
         // The dock binding's rendering half: a redock over any zone paints a
-        // tagged preview node. The shell injects it on the floater itself.
+        // tagged preview node. The shell injects it into the TARGET window at the
+        // dock zone (R1150 removed the on-floater variant).
         fn dock_drop_preview(
             _target_tag: &str,
             panel_rect: Rect,
@@ -7054,10 +7028,14 @@ mod r1138_redock_hint_injection_tests {
     }
 
     #[test]
-    fn held_floater_drag_over_main_injects_the_redock_hint_into_the_floater() {
+    fn held_floater_drag_over_main_shows_the_on_target_preview() {
         let mut sc = ShellCore::<RedockHintFixture>::new();
-        // Main's dock target lives at main-local (500, 400, 100, 100); inject it
-        // directly as main's published paint scene (the resolution reads it).
+        // Main's dock target at main-local (500, 400, 100, 100) with an EXPLICIT
+        // rect, stored directly so the cross-window RESOLUTION (reads the stored
+        // scene) hit-tests the abs cursor against it (a `compute` would re-run
+        // layout and move the rect). The on-target preview-INJECTION reads the
+        // COMPUTED scene, where `view_for_window("main")` also emits `main_dock` —
+        // so `rect_for_tag` finds it and the preview is injected.
         sc.core.set_paint_scene_for_window(
             "main",
             drop_panel_scene("main_dock", Rect::new(500, 400, 100, 100)),
@@ -7067,13 +7045,18 @@ mod r1138_redock_hint_injection_tests {
         let f = sc.compute_paint_scene_for_window(FLOAT_WINDOW, 200, 200);
         sc.finalize_frame_for_window(FLOAT_WINDOW, f);
 
-        // Idle: no hint on the floater.
+        // The on-target preview is injected into the scene being painted at the
+        // resolved dock zone (`apply_cross_window_drop_preview` reads the painted
+        // scene + the cross-window stash). Drive it on a fresh main_dock scene
+        // (explicit rects, no re-layout) so the assertion isolates the injection.
+        let main_dock_scene = || drop_panel_scene("main_dock", Rect::new(500, 400, 100, 100));
+        // Idle: nothing resolved → no preview injected.
         assert!(
             !has_tag(
-                &sc.compute_paint_scene_for_window(FLOAT_WINDOW, 200, 200),
-                super::REDOCK_DRAG_HINT_TAG
+                &sc.apply_cross_window_drop_preview(main_dock_scene(), Some("main")),
+                super::CROSS_WINDOW_DROP_PREVIEW_TAG
             ),
-            "no drag in flight = no redock hint on the floater",
+            "no drag in flight = no on-target redock preview",
         );
 
         // Press over the floater's torn panel → opens the drag session.
@@ -7089,36 +7072,45 @@ mod r1138_redock_hint_injection_tests {
         // resolves the cross-window drop and stashes it on the floater's session.
         sc.cursor_moved_for_window(FLOAT_WINDOW, PointerId::MOUSE, -250.0, 350.0);
 
-        // R1137 source-repaint: a borderless floater's title-bar WINDOW MOVE only
-        // changes its position (set_outer_position), never its content, so the
-        // shell must repaint the SOURCE window every move while its drag is in
-        // flight — else the injected hint never re-renders LIVE. Assert the move
-        // armed the floater's (source) redraw, not only the target's.
+        // R1125/R1150: the shell repaints the TARGET (main) every move so its
+        // on-target redock preview (where the panel WILL dock) renders live. The
+        // R1137 on-floater hint + its source-repaint were removed (R1150).
         assert!(
-            sc.redraw_requested_for_window(FLOAT_WINDOW),
-            "a move during the floater's own drag repaints the SOURCE so its hint renders live",
+            sc.redraw_requested_for_window("main"),
+            "a cross-window move repaints the TARGET (main) so its on-target preview renders live",
         );
 
-        // The floater's produced scene now carries the redock hint — what an AI
-        // `scene/snapshot` of the held floater would SEE (and the user sees live).
-        let hinted = sc.compute_paint_scene_for_window(FLOAT_WINDOW, 200, 200);
+        // MAIN now carries the on-target redock preview at the dock zone — what an
+        // AI `scene/snapshot` SEES (and the user sees), correctly placed where the
+        // panel will land (the R1150 fix for "preview here, docks there": the
+        // misplaced on-floater schematic is gone).
+        let previewed = sc.apply_cross_window_drop_preview(main_dock_scene(), Some("main"));
         assert!(
-            has_tag(&hinted, super::REDOCK_DRAG_HINT_TAG),
-            "a held floater drag over main injects the redock hint onto the floater",
+            has_tag(&previewed, super::CROSS_WINDOW_DROP_PREVIEW_TAG),
+            "a held floater drag over main shows the on-target redock preview in main",
         );
         assert!(
-            has_tag(&hinted, PREVIEW_TAG),
-            "the hint wraps the binding's dock_drop_preview rendering",
+            has_tag(&previewed, PREVIEW_TAG),
+            "the preview wraps the binding's dock_drop_preview rendering",
         );
-
-        // Release ends the session → the hint clears.
-        sc.mouse_released_for_window(FLOAT_WINDOW, PointerId::MOUSE);
+        // The dragged floater carries NO redock schematic (R1150 removed the
+        // misplaced on-floater hint — its produced scene has no preview tag).
         assert!(
             !has_tag(
                 &sc.compute_paint_scene_for_window(FLOAT_WINDOW, 200, 200),
-                super::REDOCK_DRAG_HINT_TAG
+                PREVIEW_TAG
             ),
-            "after release the redock hint clears",
+            "no redock schematic painted on the floater (R1150 removed the on-floater hint)",
+        );
+
+        // Release ends the session → the on-target preview clears.
+        sc.mouse_released_for_window(FLOAT_WINDOW, PointerId::MOUSE);
+        assert!(
+            !has_tag(
+                &sc.apply_cross_window_drop_preview(main_dock_scene(), Some("main")),
+                super::CROSS_WINDOW_DROP_PREVIEW_TAG
+            ),
+            "after release the on-target redock preview clears",
         );
     }
 
