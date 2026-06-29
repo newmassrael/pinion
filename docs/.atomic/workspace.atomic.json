@@ -18628,6 +18628,52 @@
         "R1145 undock-button deletion still pending drag-to-undock live-verify (R1146 carry, unchanged)"
       ]
     },
+    "R1148": {
+      "decision_summary": "R1148 fix floater->main redock coords: the LIVE cross-window resolution uses each window's ACTUAL outer origin (shell-stamped), not the declared position — a WM-placed main (declared None=0,0) sits at a real offset",
+      "changes_bullets": [
+        "CoreShell.live_window_origins (RefCell map): shell-stamped ACTUAL outer origins",
+        "ShellCore.set_live_window_origins passthrough; AppShell.stamp_live_window_origins each drag move",
+        "cross_window_drop_at gains use_actual: LIVE path uses actual origins, RPC path keeps declared",
+        "resolve_cross_window_live: source abs + target hit-test both via actual origins"
+      ],
+      "verification_bullets": [
+        "new test: declared-None main + stamped actual offset resolves; declared path misses (non-tautological)",
+        "cargo test --workspace green; clippy -D pedantic + rustfmt clean",
+        "RPC scene/cross_window_drop unchanged (use_actual=false keeps declared positions)",
+        "LIVE redock (preview shows + docks back) = user re-tests on :0 (HW-gated)"
+      ],
+      "impact_refs": [
+        "5.51",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "LIVE redock feel HW-gated: user re-tests floater to main redock on :0 (preview + dock)",
+        "12px chip-cursor offset is standard (chip trails cursor); dock zones large, not the bug",
+        "R1147 cross-desktop chip roam live-test still owed (HW-gated)"
+      ],
+      "publishable_decision_summary": "R1148 fix floater->main redock coords: the LIVE cross-window resolution uses each window's ACTUAL outer origin (shell-stamped), not the declared position — a WM-placed main (declared None=0,0) sits at a real offset",
+      "publishable_changes_bullets": [
+        "CoreShell.live_window_origins (RefCell map): shell-stamped ACTUAL outer origins",
+        "ShellCore.set_live_window_origins passthrough; AppShell.stamp_live_window_origins each drag move",
+        "cross_window_drop_at gains use_actual: LIVE path uses actual origins, RPC path keeps declared",
+        "resolve_cross_window_live: source abs + target hit-test both via actual origins"
+      ],
+      "publishable_verification_bullets": [
+        "new test: declared-None main + stamped actual offset resolves; declared path misses (non-tautological)",
+        "cargo test --workspace green; clippy -D pedantic + rustfmt clean",
+        "RPC scene/cross_window_drop unchanged (use_actual=false keeps declared positions)",
+        "LIVE redock (preview shows + docks back) = user re-tests on :0 (HW-gated)"
+      ],
+      "publishable_impact_refs": [
+        "5.51",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "LIVE redock feel HW-gated: user re-tests floater to main redock on :0 (preview + dock)",
+        "12px chip-cursor offset is standard (chip trails cursor); dock zones large, not the bug",
+        "R1147 cross-desktop chip roam live-test still owed (HW-gated)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
