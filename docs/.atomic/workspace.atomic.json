@@ -18718,6 +18718,52 @@
         "diagnosability now in place: AI reads redock_pending mid-hold + RPC drag uses actual origins"
       ]
     },
+    "R1150": {
+      "decision_summary": "R1150 fix preview-vs-dock: remove the R1137 on-FLOATER redock hint (it drew the schematic on the static floater at the wrong place) — the on-TARGET preview in the host window, correctly placed, is the redock affordance",
+      "changes_bullets": [
+        "Removed the R1137 on-FLOATER redock hint (apply_redock_drag_hint) from the paint pipeline",
+        "On-target preview (apply_cross_window_drop_preview) in the host window is the redock affordance",
+        "Removed the now-dead R1137 SOURCE-window per-move repaint + REDOCK_DRAG_HINT_TAG",
+        "r1138 + r1149 demos: assert the on-TARGET preview shows, no on-floater schematic"
+      ],
+      "verification_bullets": [
+        "r1149 demo (RPC): HELD drag shows on-MAIN preview at target, on-FLOATER hint gone, pending==dock",
+        "r1138 test rewritten: held floater drag -> main shows on-target preview, floater has no schematic",
+        "cargo test --workspace green; clippy -D pedantic + rustfmt clean",
+        "LIVE feel HW-gated: user re-tests that the redock preview now sits where the panel docks"
+      ],
+      "impact_refs": [
+        "5.51",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "occluded-target corner: if the target is under the static floater the on-main preview is hidden",
+        "fix needs floater transparency (VELLO surface-alpha carry) or a deeper re-architecture; deferred",
+        "hiding the floater to un-occlude is REJECTED: unmapping releases the X11 pointer grab the drag needs"
+      ],
+      "publishable_decision_summary": "R1150 fix preview-vs-dock: remove the R1137 on-FLOATER redock hint (it drew the schematic on the static floater at the wrong place) — the on-TARGET preview in the host window, correctly placed, is the redock affordance",
+      "publishable_changes_bullets": [
+        "Removed the R1137 on-FLOATER redock hint (apply_redock_drag_hint) from the paint pipeline",
+        "On-target preview (apply_cross_window_drop_preview) in the host window is the redock affordance",
+        "Removed the now-dead R1137 SOURCE-window per-move repaint + REDOCK_DRAG_HINT_TAG",
+        "r1138 + r1149 demos: assert the on-TARGET preview shows, no on-floater schematic"
+      ],
+      "publishable_verification_bullets": [
+        "r1149 demo (RPC): HELD drag shows on-MAIN preview at target, on-FLOATER hint gone, pending==dock",
+        "r1138 test rewritten: held floater drag -> main shows on-target preview, floater has no schematic",
+        "cargo test --workspace green; clippy -D pedantic + rustfmt clean",
+        "LIVE feel HW-gated: user re-tests that the redock preview now sits where the panel docks"
+      ],
+      "publishable_impact_refs": [
+        "5.51",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "occluded-target corner: if the target is under the static floater the on-main preview is hidden",
+        "fix needs floater transparency (VELLO surface-alpha carry) or a deeper re-architecture; deferred",
+        "hiding the floater to un-occlude is REJECTED: unmapping releases the X11 pointer grab the drag needs"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
