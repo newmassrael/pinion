@@ -18674,6 +18674,50 @@
         "R1147 cross-desktop chip roam live-test still owed (HW-gated)"
       ]
     },
+    "R1149": {
+      "decision_summary": "R1149 make preview-vs-dock RPC-diagnosable: add query(redock_pending) (the in-flight would-dock) + stamp actual window origins on the RPC drag path so an AI scene/drag resolves like the live winit path",
+      "changes_bullets": [
+        "DockPanelExternal.redock_pending: in-flight would-dock via query, mirrors the release decision",
+        "AppShell stamps ALL window actual origins at dispatch_rpc entry (RPC drag resolves like winit)",
+        "collect_window_origins shared by the winit-cursor + RPC dispatch stamp paths",
+        "demo r1149_redock_pending_diagnostic: held drag reads redock_pending then compares to redock_at"
+      ],
+      "verification_bullets": [
+        "r1149 demo: held floater drag reads redock_pending; equals redock_at on release (consistent)",
+        "dock 251 / shell 134 / editor 60 unit tests pass; clippy -D pedantic + rustfmt clean",
+        "RPC DIAGNOSIS: resolution is consistent (preview == would-dock == dock) — not a zone bug"
+      ],
+      "impact_refs": [
+        "5.51",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "ACTUAL bug R1150: preview-vs-dock = R1137 on-floater hint drawn at floater loc, dock lands in main",
+        "fix R1150 = hide floater during its redock drag so the on-main preview shows at the target",
+        "diagnosability now in place: AI reads redock_pending mid-hold + RPC drag uses actual origins"
+      ],
+      "publishable_decision_summary": "R1149 make preview-vs-dock RPC-diagnosable: add query(redock_pending) (the in-flight would-dock) + stamp actual window origins on the RPC drag path so an AI scene/drag resolves like the live winit path",
+      "publishable_changes_bullets": [
+        "DockPanelExternal.redock_pending: in-flight would-dock via query, mirrors the release decision",
+        "AppShell stamps ALL window actual origins at dispatch_rpc entry (RPC drag resolves like winit)",
+        "collect_window_origins shared by the winit-cursor + RPC dispatch stamp paths",
+        "demo r1149_redock_pending_diagnostic: held drag reads redock_pending then compares to redock_at"
+      ],
+      "publishable_verification_bullets": [
+        "r1149 demo: held floater drag reads redock_pending; equals redock_at on release (consistent)",
+        "dock 251 / shell 134 / editor 60 unit tests pass; clippy -D pedantic + rustfmt clean",
+        "RPC DIAGNOSIS: resolution is consistent (preview == would-dock == dock) — not a zone bug"
+      ],
+      "publishable_impact_refs": [
+        "5.51",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "ACTUAL bug R1150: preview-vs-dock = R1137 on-floater hint drawn at floater loc, dock lands in main",
+        "fix R1150 = hide floater during its redock drag so the on-main preview shows at the target",
+        "diagnosability now in place: AI reads redock_pending mid-hold + RPC drag uses actual origins"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
