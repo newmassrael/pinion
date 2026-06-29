@@ -19034,6 +19034,54 @@
         "push pending user consent (now 20 commits ahead of origin/main)"
       ]
     },
+    "R1156": {
+      "decision_summary": "R1156 OUTER full-span dock: perimeter-band resolution + split_root + dock_panel_outer/invoke + reducer/preview; a drop at the dock-area edge spans every pane. Supersedes the R1155 edge-snap",
+      "changes_bullets": [
+        "split_root wraps the WHOLE topology in a new Split (full-span row/column), vs split_leaf_into (one pane)",
+        "resolve_cross_window_drop pass 0: cursor in the outer OUTER_DOCK_MARGIN band -> OUTER_DOCK_ZONE_TAG",
+        "dock_panel_outer + dock_outer invoke + outer_zone_for; editor reducer + full-span preview wired",
+        "removed the R1155 edge-snap (superseded): the window PERIMETER is the full-span affordance it wanted"
+      ],
+      "verification_bullets": [
+        "11 unit tests (split_root/dock_panel_outer/outer_zone_for + perimeter resolution); workspace 0 fail",
+        "clippy -D pedantic + rustfmt clean; live (:0): a 215px column -> 1200px full-width top row",
+        "demo r1156_outer_dock PASS; regression r1124/r1149/r1102/r1106 cross-window redock demos PASS",
+        "user-confirmed live: drag a floater to the window edge -> full-span dock + full-span preview"
+      ],
+      "impact_refs": [
+        "5.51",
+        "5.16",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "live margin (32px) FEEL HW-gated; same-window (non-cross) outer dock not wired (cross-window path only)",
+        "NEXT (user-asked): drag-to-undock a tab (replace R1145 button) + tab-well vs single-panel UI consistency",
+        "push pending user consent"
+      ],
+      "publishable_decision_summary": "R1156 OUTER full-span dock: perimeter-band resolution + split_root + dock_panel_outer/invoke + reducer/preview; a drop at the dock-area edge spans every pane. Supersedes the R1155 edge-snap",
+      "publishable_changes_bullets": [
+        "split_root wraps the WHOLE topology in a new Split (full-span row/column), vs split_leaf_into (one pane)",
+        "resolve_cross_window_drop pass 0: cursor in the outer OUTER_DOCK_MARGIN band -> OUTER_DOCK_ZONE_TAG",
+        "dock_panel_outer + dock_outer invoke + outer_zone_for; editor reducer + full-span preview wired",
+        "removed the R1155 edge-snap (superseded): the window PERIMETER is the full-span affordance it wanted"
+      ],
+      "publishable_verification_bullets": [
+        "11 unit tests (split_root/dock_panel_outer/outer_zone_for + perimeter resolution); workspace 0 fail",
+        "clippy -D pedantic + rustfmt clean; live (:0): a 215px column -> 1200px full-width top row",
+        "demo r1156_outer_dock PASS; regression r1124/r1149/r1102/r1106 cross-window redock demos PASS",
+        "user-confirmed live: drag a floater to the window edge -> full-span dock + full-span preview"
+      ],
+      "publishable_impact_refs": [
+        "5.51",
+        "5.16",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "live margin (32px) FEEL HW-gated; same-window (non-cross) outer dock not wired (cross-window path only)",
+        "NEXT (user-asked): drag-to-undock a tab (replace R1145 button) + tab-well vs single-panel UI consistency",
+        "push pending user consent"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
