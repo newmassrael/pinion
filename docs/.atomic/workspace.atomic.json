@@ -18806,6 +18806,50 @@
         "toolbar target -> non-reorganizable no-op; inner_position keeps the hit-test off it"
       ]
     },
+    "R1152": {
+      "decision_summary": "R1152 fix dropped-on-preview-no-dock (root): resolve_drop_point returns None for an out-of-window (negative) cursor — floor_clamp_u32 clamped it to a spurious own hit that masked the resolved cross-window redock, so the floater free-moved",
+      "changes_bullets": [
+        "resolve_drop_point returns None for a negative window-local cursor (no own-window drop target)",
+        "fixes the floater cross-window drop: its grab delivers negative floater-local cursors over the host",
+        "the spurious clamped own hit no longer masks the resolved cross-window redock (over_window stays Some)"
+      ],
+      "verification_bullets": [
+        "live log: floater-local x=-91 (outside) clamped to a spurious properties#content -> self_drop=false -> over_window None",
+        "new test r1152: resolve_drop_point(negative) None (was Some(panel) via the clamp); in-bounds Some",
+        "input 112 / dock 251 / editor 60 + full workspace tests pass; clippy -D pedantic + rustfmt clean",
+        "LIVE: user re-tests a floater dropped on the host dock preview now docks (was free-move)"
+      ],
+      "impact_refs": [
+        "5.51",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "target UNDER the static floater still self-drop-masks (own_over=floater content, in-bounds) + preview occluded",
+        "that edge needs own_over_is_self_drop panel-aware via the drag payload, OR floater transparency; deferred",
+        "the user's logged case was cursor LEFT of the floater (x<0), which this fixes"
+      ],
+      "publishable_decision_summary": "R1152 fix dropped-on-preview-no-dock (root): resolve_drop_point returns None for an out-of-window (negative) cursor — floor_clamp_u32 clamped it to a spurious own hit that masked the resolved cross-window redock, so the floater free-moved",
+      "publishable_changes_bullets": [
+        "resolve_drop_point returns None for a negative window-local cursor (no own-window drop target)",
+        "fixes the floater cross-window drop: its grab delivers negative floater-local cursors over the host",
+        "the spurious clamped own hit no longer masks the resolved cross-window redock (over_window stays Some)"
+      ],
+      "publishable_verification_bullets": [
+        "live log: floater-local x=-91 (outside) clamped to a spurious properties#content -> self_drop=false -> over_window None",
+        "new test r1152: resolve_drop_point(negative) None (was Some(panel) via the clamp); in-bounds Some",
+        "input 112 / dock 251 / editor 60 + full workspace tests pass; clippy -D pedantic + rustfmt clean",
+        "LIVE: user re-tests a floater dropped on the host dock preview now docks (was free-move)"
+      ],
+      "publishable_impact_refs": [
+        "5.51",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "target UNDER the static floater still self-drop-masks (own_over=floater content, in-bounds) + preview occluded",
+        "that edge needs own_over_is_self_drop panel-aware via the drag payload, OR floater transparency; deferred",
+        "the user's logged case was cursor LEFT of the floater (x<0), which this fixes"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
