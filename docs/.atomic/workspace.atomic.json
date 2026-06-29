@@ -18850,6 +18850,48 @@
         "the user's logged case was cursor LEFT of the floater (x<0), which this fixes"
       ]
     },
+    "R1153": {
+      "decision_summary": "R1153 fix self-home preview split: a torn-slot placeholder leaf suppresses its header so the placeholder fills the whole slot — a drop anywhere on the panel's own slot resolves the placeholder (full), not the wrapper above it (edge-split)",
+      "changes_bullets": [
+        "view_dock_surface_node suppresses the header on a torn-slot PLACEHOLDER leaf",
+        "the placeholder (100%x100%) then fills the WHOLE slot, no wrapper strip above it",
+        "auto-detected by the placeholder tag suffix, so it stays a generic walker rule (non-breaking)"
+      ],
+      "verification_bullets": [
+        "new test r1153: placeholder leaf has NO {panel}#header (was present pre-R1153); docked leaf keeps it",
+        "so a drop ANYWHERE on the own slot resolves the placeholder -> self-home FULL (not the wrapper edge-split)",
+        "dock 252 + editor 60 + full workspace tests pass; clippy -D pedantic + rustfmt clean",
+        "LIVE: user re-tests dropping properties on its own empty slot now previews/docks FULL everywhere"
+      ],
+      "impact_refs": [
+        "5.51",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "the self-home full now consistent across the slot (was split near the top header strip)",
+        "thin perimeter where the leaf wrapper drop_target still shows is negligible (placeholder fills the body)"
+      ],
+      "publishable_decision_summary": "R1153 fix self-home preview split: a torn-slot placeholder leaf suppresses its header so the placeholder fills the whole slot — a drop anywhere on the panel's own slot resolves the placeholder (full), not the wrapper above it (edge-split)",
+      "publishable_changes_bullets": [
+        "view_dock_surface_node suppresses the header on a torn-slot PLACEHOLDER leaf",
+        "the placeholder (100%x100%) then fills the WHOLE slot, no wrapper strip above it",
+        "auto-detected by the placeholder tag suffix, so it stays a generic walker rule (non-breaking)"
+      ],
+      "publishable_verification_bullets": [
+        "new test r1153: placeholder leaf has NO {panel}#header (was present pre-R1153); docked leaf keeps it",
+        "so a drop ANYWHERE on the own slot resolves the placeholder -> self-home FULL (not the wrapper edge-split)",
+        "dock 252 + editor 60 + full workspace tests pass; clippy -D pedantic + rustfmt clean",
+        "LIVE: user re-tests dropping properties on its own empty slot now previews/docks FULL everywhere"
+      ],
+      "publishable_impact_refs": [
+        "5.51",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "the self-home full now consistent across the slot (was split near the top header strip)",
+        "thin perimeter where the leaf wrapper drop_target still shows is negligible (placeholder fills the body)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
