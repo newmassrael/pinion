@@ -18944,6 +18944,52 @@
         "R1145 undock-button deletion still pending drag-to-undock live-verify; 15 commits unpushed (consent)"
       ]
     },
+    "R1154.1": {
+      "decision_summary": "R1154.1 review clearance: fix the R1154 sweep's stale comments + R1148->R1151 outer/client doc drift; unify the live-origin SSOT (preview reads live_window_origin, drop window_outer_origin_logical)",
+      "changes_bullets": [
+        "fix the stale comments the R1154 sweep left (described the removed source-origin stash)",
+        "correct the R1148->R1151 outer/client doc drift across the live-origin path (impl is inner_position)",
+        "unify SSOT: the R1147 preview reads live_window_origin (client) — the same stamp the redock uses",
+        "delete window_outer_origin_logical (duplicate outer helper); preview now correct for decorated src"
+      ],
+      "verification_bullets": [
+        "cargo check/clippy/test workspace green; fmt clean; comment+doc accuracy + one SSOT read reroute",
+        "r1149/r1102/r1146/r1124 redock+window-move demos PASS on the rebuilt release binary",
+        "borderless floater: client==outer so the preview pixel pos is unchanged (no-op for the dock case)",
+        "found by the session-review audit (verify-seed-claims-audit-first); grep zero window_outer refs left"
+      ],
+      "impact_refs": [
+        "5.51",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "preview pixel position is LIVE-only (skipped under PINION_HIDDEN_WINDOW) so decorated-src fix HW-gated",
+        "remaining dock carry unchanged: toolbar thin-slot + self-drop mask (live-feel) + R1145 undock-button",
+        "push pending user consent (now 18 commits ahead of origin/main)"
+      ],
+      "publishable_decision_summary": "R1154.1 review clearance: fix the R1154 sweep's stale comments + R1148->R1151 outer/client doc drift; unify the live-origin SSOT (preview reads live_window_origin, drop window_outer_origin_logical)",
+      "publishable_changes_bullets": [
+        "fix the stale comments the R1154 sweep left (described the removed source-origin stash)",
+        "correct the R1148->R1151 outer/client doc drift across the live-origin path (impl is inner_position)",
+        "unify SSOT: the R1147 preview reads live_window_origin (client) — the same stamp the redock uses",
+        "delete window_outer_origin_logical (duplicate outer helper); preview now correct for decorated src"
+      ],
+      "publishable_verification_bullets": [
+        "cargo check/clippy/test workspace green; fmt clean; comment+doc accuracy + one SSOT read reroute",
+        "r1149/r1102/r1146/r1124 redock+window-move demos PASS on the rebuilt release binary",
+        "borderless floater: client==outer so the preview pixel pos is unchanged (no-op for the dock case)",
+        "found by the session-review audit (verify-seed-claims-audit-first); grep zero window_outer refs left"
+      ],
+      "publishable_impact_refs": [
+        "5.51",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "preview pixel position is LIVE-only (skipped under PINION_HIDDEN_WINDOW) so decorated-src fix HW-gated",
+        "remaining dock carry unchanged: toolbar thin-slot + self-drop mask (live-feel) + R1145 undock-button",
+        "push pending user consent (now 18 commits ahead of origin/main)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
