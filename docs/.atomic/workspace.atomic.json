@@ -18566,6 +18566,68 @@
         "LIVE FEEL is HW-gated (the user's real :0 desktop): the no-hang / no-freeze / smooth-ghost / redock-feel confirmation is the user's to give. The headless proof is \"no per-move window intent + window created once on release\"; the absence of the live hang is the user's confirmation. The dock-completion directive stands — keep going on the dock until the user says it is done; do not pivot."
       ]
     },
+    "R1147": {
+      "decision_summary": "R1147 cross-desktop drag preview: a shell-private opaque always-on-top window IS the drag chip, follows the desktop cursor so it escapes the source window (the R1146 gap)",
+      "changes_bullets": [
+        "pinion-overlay: chip_size + drag_chip_scene (standalone opaque chip + its size), shared R1113 sizing",
+        "AppShell.drag_preview: shell-private DragPreviewWindow (own Vello path); NOT in windows / scene/windows",
+        "build_renderer helper lifted from resume_spec; ensure / render / update / hide / note_preview_resized",
+        "borderless + WindowLevel::AlwaysOnTop + visible:false; created once on first eligible drag, then reused",
+        "moved by direct set_outer_position to desktop cursor (window_outer_origin_logical + local); no feedback",
+        "render-once per drag (repaint on label change only); RedrawRequested + Resized routed to preview path",
+        "CoreShell.desktop_drag_preview_active gate: apply_drag_image suppresses the in-window R1113 chip",
+        "skipped under PINION_HIDDEN_WINDOW so headless keeps the in-window overlay as the introspection chip"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace: 7838 passed / 0 failed; clippy -D pedantic clean; rustfmt clean",
+        "pinion-overlay unit: chip_size == injected chip dims; drag_chip_scene opaque box at origin + label",
+        "shell producer test: desktop_drag_preview_active suppresses in-window follower; default keeps it",
+        "hello-dock-panels + hello-dock-panels-editor build --release (runnable for the live test)",
+        "preview invisible to scene/windows by construction (separate field, never registered)",
+        "LIVE feel HW-gated (user verifies :0): chip roams desktop + follows cursor, no hang/freeze, hide clean"
+      ],
+      "impact_refs": [
+        "5.51",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "LIVE feel HW-gated: user live-tests on :0 — drag a dock panel; chip should roam the desktop, no hang",
+        "first-drag window creation is mid-drag (R1144 risk, far narrower); if it hiccups move create to resumed()",
+        "CORRECTION: preview reads window_outer_origin_logical DIRECTLY, not the stamped source_window_origin chain",
+        "so R1146 dead-machinery sweep STILL stands: stamp -> set -> DragUpdate.source_window_origin still vestigial",
+        "R1145 undock-button deletion still pending drag-to-undock live-verify (R1146 carry, unchanged)"
+      ],
+      "publishable_decision_summary": "R1147 cross-desktop drag preview: a shell-private opaque always-on-top window IS the drag chip, follows the desktop cursor so it escapes the source window (the R1146 gap)",
+      "publishable_changes_bullets": [
+        "pinion-overlay: chip_size + drag_chip_scene (standalone opaque chip + its size), shared R1113 sizing",
+        "AppShell.drag_preview: shell-private DragPreviewWindow (own Vello path); NOT in windows / scene/windows",
+        "build_renderer helper lifted from resume_spec; ensure / render / update / hide / note_preview_resized",
+        "borderless + WindowLevel::AlwaysOnTop + visible:false; created once on first eligible drag, then reused",
+        "moved by direct set_outer_position to desktop cursor (window_outer_origin_logical + local); no feedback",
+        "render-once per drag (repaint on label change only); RedrawRequested + Resized routed to preview path",
+        "CoreShell.desktop_drag_preview_active gate: apply_drag_image suppresses the in-window R1113 chip",
+        "skipped under PINION_HIDDEN_WINDOW so headless keeps the in-window overlay as the introspection chip"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace: 7838 passed / 0 failed; clippy -D pedantic clean; rustfmt clean",
+        "pinion-overlay unit: chip_size == injected chip dims; drag_chip_scene opaque box at origin + label",
+        "shell producer test: desktop_drag_preview_active suppresses in-window follower; default keeps it",
+        "hello-dock-panels + hello-dock-panels-editor build --release (runnable for the live test)",
+        "preview invisible to scene/windows by construction (separate field, never registered)",
+        "LIVE feel HW-gated (user verifies :0): chip roams desktop + follows cursor, no hang/freeze, hide clean"
+      ],
+      "publishable_impact_refs": [
+        "5.51",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "LIVE feel HW-gated: user live-tests on :0 — drag a dock panel; chip should roam the desktop, no hang",
+        "first-drag window creation is mid-drag (R1144 risk, far narrower); if it hiccups move create to resumed()",
+        "CORRECTION: preview reads window_outer_origin_logical DIRECTLY, not the stamped source_window_origin chain",
+        "so R1146 dead-machinery sweep STILL stands: stamp -> set -> DragUpdate.source_window_origin still vestigial",
+        "R1145 undock-button deletion still pending drag-to-undock live-verify (R1146 carry, unchanged)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
