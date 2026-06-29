@@ -1953,6 +1953,21 @@ impl InputRouter {
     /// hit-test needs no `view()` rebuild.
     fn resolve_drop_point(&self, x: f64, y: f64) -> Option<DropPoint> {
         let paint = self.last_paint_scene.as_ref()?;
+        // R1152 §5.51 — a cursor OUTSIDE this window (negative window-local coord)
+        // has NO own-window drop target. Guard before the hit-test, whose
+        // `floor_clamp_u32` would otherwise clamp a negative coord to 0 and resolve
+        // a SPURIOUS top-left hit (the R1099 clamp). This is the bug behind
+        // "dropped on the preview, didn't dock": a FLOATER's pointer grab keeps
+        // delivering cursors after they have LEFT the floater (negative
+        // floater-local) while over the dock host, and the spurious own hit made
+        // `own_over_is_self_drop` false → `resolve_drag_targets` took the
+        // own-window-first branch (`over_window: None`), MASKING the already
+        // resolved cross-window redock, so the drop free-moved instead of docking.
+        // Beyond-right/bottom self-misses the hit-test, so only the negative side
+        // needs the guard; the cross-window resolver already guards negatives.
+        if x < 0.0 || y < 0.0 {
+            return None;
+        }
         // R1080 §5.51 — prefer the nearest opted-in drop target (a dock
         // panel, a tab strip — `LayoutStyle::drop_target`) so the
         // coordinator receives the semantic drop region with the cursor
@@ -6089,6 +6104,43 @@ mod tests {
         // (300 wide at offset 50): (200 - 50) / 300 = 0.5.
         assert_eq!(dp.tag, "panel#content");
         assert!((dp.x_rel - 0.5).abs() < 1e-6);
+    }
+
+    /// R1152 §5.51 — a cursor OUTSIDE the window (negative window-local) has no
+    /// own-window drop target. Pre-R1152 `floor_clamp_u32` clamped the negative to
+    /// `(0,0)` and resolved a SPURIOUS hit on the top-left panel — which made a
+    /// FLOATER's cross-window drop free-move instead of redock (its pointer grab
+    /// delivers negative floater-local cursors while over the dock host, and the
+    /// spurious own hit masked the resolved cross-window redock). Non-tautological:
+    /// the negative case returns `Some("panel")` under the old clamp, `None` now.
+    #[test]
+    fn r1152_resolve_drop_point_rejects_out_of_window_negative_cursor() {
+        use pinion_core::scene::{BoxNode, ContainerNode};
+        use pinion_core::style::{Color, LayoutStyle};
+
+        let content = Scene::Box(
+            BoxNode::filled(Rect::new(50, 50, 300, 300), Color::default())
+                .with_tag("panel#content"),
+        );
+        let mut panel = ContainerNode::new(vec![content])
+            .with_tag("panel")
+            .with_layout(LayoutStyle::new().with_drop_target(true));
+        panel.rect = Rect::new(0, 0, 400, 400);
+        let scene = Scene::Container(panel);
+        let mut router = InputRouter::new();
+        let (mut state_scene, _) = state_with_button();
+        router.update_paint_scene(scene, &mut state_scene);
+        // In-bounds over the panel resolves it.
+        assert!(router.resolve_drop_point(200.0, 200.0).is_some());
+        // A negative (out-of-window) cursor resolves NOTHING.
+        assert!(
+            router.resolve_drop_point(-50.0, 200.0).is_none(),
+            "a cursor left of the window has no own-window drop target",
+        );
+        assert!(
+            router.resolve_drop_point(200.0, -50.0).is_none(),
+            "a cursor above the window has no own-window drop target",
+        );
     }
 
     // ----- R742 §5.51 drag-and-drop session -----
