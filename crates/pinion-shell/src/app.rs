@@ -593,17 +593,26 @@ impl<V: WidgetView> AppShell<V> {
             .set_live_window_origins(self.collect_window_origins());
     }
 
-    /// R1149 §5.51 — collect every live window's ACTUAL outer origin in logical
-    /// pixels (`Window::outer_position()` → logical). Shared by the winit-path
-    /// [`Self::stamp_live_window_origins`] and the RPC-path
+    /// R1149 §5.51 → R1151 — collect every live window's ACTUAL CLIENT-area origin
+    /// in logical pixels (`Window::inner_position()` → logical). Shared by the
+    /// winit-path [`Self::stamp_live_window_origins`] and the RPC-path
     /// [`Self::stamp_all_window_origins`] so both resolve cross-window drops
     /// against the same real desktop positions.
+    ///
+    /// R1151 — `inner_position` (CLIENT top-left), NOT `outer_position` (the
+    /// decorated FRAME top-left). The dock scene a cross-window drop hit-tests
+    /// against is CLIENT-relative, so a decorated host (e.g. gnome adds a 37px
+    /// title bar: `_NET_FRAME_EXTENTS` top=37, so `outer.y = client.y − 37`) made
+    /// the hit-test land a title-bar's-worth off — resolving the wrong panel
+    /// (a toolbar / the panel's own slot) so the redock fired but did not relocate
+    /// ("dropped on the preview, didn't dock"). A borderless floater has no frame,
+    /// so `inner == outer` there; this only corrects the decorated host.
     fn collect_window_origins(&self) -> Vec<(String, (f64, f64))> {
         self.windows
             .values()
             .filter_map(|slot| {
                 let window = Self::slot_window(slot)?;
-                let phys = window.outer_position().ok()?;
+                let phys = window.inner_position().ok()?;
                 let logical = PhysicalPosition::new(f64::from(phys.x), f64::from(phys.y))
                     .to_logical::<f64>(slot.scale_factor);
                 Some((slot.spec_id.to_string(), (logical.x, logical.y)))
