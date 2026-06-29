@@ -2382,36 +2382,25 @@ impl<V: WidgetView> ShellCore<V> {
         if let Some(target) = self.cross_preview_target.take() {
             self.request_redraw_for_window(&target);
         }
-        // R1142 §5.51 PR-39 — a drag also lit DOCK-ZONE GUIDES on the dock-host
-        // windows (`smaller_window_dragging`), independent of where the cursor
-        // was. The `cross_preview_target` repaint above only covers the cursor's
-        // LAST preview target — so a release while the cursor sits on the dragged
-        // floater (the common case: you let go holding the floater, not over main)
-        // would leave main's guides on a stale frame, never repainted. So when
-        // THIS release ends a drag (the session is still open until `left_release`
-        // below), repaint the host windows that showed guides for it. R1144 — only
-        // windows LARGER than the dragged one (the same direction gate the guides
-        // use), so a tear-OUT (the large source) never repaints the brand-new,
-        // surface-churning floater (the freeze). Gated on an active drag, so a
-        // plain click pays nothing.
+        // R1142/R1146 §5.51 — a drag also lit DOCK-ZONE GUIDES on the other
+        // windows (`any_window_dragging`), independent of where the cursor was. The
+        // `cross_preview_target` repaint above only covers the cursor's LAST
+        // preview target — so a release while the cursor sits on the dragged floater
+        // (the common case: you let go holding the floater, not over main) would
+        // leave the other windows' guides on a stale frame, never repainted. So when
+        // THIS release ends a drag, repaint every OTHER declared window so their
+        // guides clear (the session closes in `left_release` below, so by the time
+        // they paint the gate is false); `window_id` itself repaints from this
+        // release. Gated on an active drag, so a plain click pays nothing.
         if self.core.drag_session_active_for_window(window_id, pid) {
-            let specs = self.declared_window_specs();
-            if let Some(src_area) = specs
+            let others: Vec<String> = self
+                .declared_window_specs()
                 .iter()
-                .find(|w| w.id == window_id)
-                .and_then(Self::window_area)
-            {
-                let hosts: Vec<String> = specs
-                    .iter()
-                    .filter(|w| {
-                        w.id != window_id
-                            && Self::window_area(w).is_some_and(|area| area > src_area)
-                    })
-                    .map(|w| w.id.clone())
-                    .collect();
-                for id in hosts {
-                    self.request_redraw_for_window(&id);
-                }
+                .filter(|w| w.id != window_id)
+                .map(|w| w.id.clone())
+                .collect();
+            for id in others {
+                self.request_redraw_for_window(&id);
             }
         }
         // R882 / R882.1 §5.35 §5.39 — the release routes through the
@@ -3758,13 +3747,13 @@ impl<V: WidgetView> ShellCore<V> {
         pinion_overlay::inject_overlay_node(scene, REDOCK_DRAG_HINT_TAG, slot)
     }
 
-    /// (R1141 §5.51 §2 #7 PR-39) Paint the dock-zone GUIDES on `window_id`: while a
-    /// floater drag is in flight in SOME OTHER window, outline every dockable zone
-    /// of this window so the user sees where they can dock before the cursor
-    /// reaches any one (the discoverability fix for the cursor-based preview — pro
-    /// dockers light up the targets during a drag). The shell stays
-    /// widget-agnostic: it gates on a SMALLER window dragging toward this host
-    /// ([`Self::smaller_window_dragging`] — a floater into a larger dock host),
+    /// (R1141 §5.51 §2 #7 PR-39 → R1146) Paint the dock-zone GUIDES on this window:
+    /// while a panel drag is in flight in ANY window, outline every dockable zone of
+    /// this window so the user sees where they can dock before the cursor reaches
+    /// any one (the discoverability fix for the cursor-based preview — pro dockers
+    /// light up the targets during a drag). The shell stays widget-agnostic: it
+    /// gates on a drag being active anywhere ([`Self::any_window_dragging`] — a
+    /// tear-off in this dock host, or a floater dragged toward it),
     /// enumerates this window's drop targets generically
     /// ([`Scene::collect_drop_target_tags`](pinion_core::scene::Scene::collect_drop_target_tags)),
     /// resolves each window-absolute rect, and hands the dock-domain RENDERING to
@@ -3773,17 +3762,17 @@ impl<V: WidgetView> ShellCore<V> {
     /// ends. Purely visual — it does NOT touch the cursor-based redock resolution,
     /// so a release off every zone still leaves the floater FLOATING (R1136).
     /// No-op when no other window is dragging or the binding opts out (`None`).
-    fn apply_dock_zone_guides(&self, scene: Scene, window_id: Option<&str>) -> Scene {
-        let key = window_id.unwrap_or(pinion_runtime::DEFAULT_WINDOW);
-        // Gate: only while a SMALLER window (a floater) is dragged toward this
-        // larger dock host. R1144 — gating on "any other window dragging" was too
-        // broad: tearing a panel OUT of main makes MAIN the dragger, which lit
-        // guides on the brand-new floater being created and painted them on its
-        // CHURNING surface (a moving / just-created window) → a wgpu validation
-        // cascade that froze the window. A floater docks into a larger host, never
-        // the reverse, so the size gate is also the correct direction. Idle /
-        // same-window / tear-out drags pay nothing.
-        if !self.smaller_window_dragging(key, PointerId::MOUSE) {
+    fn apply_dock_zone_guides(&self, scene: Scene, _window_id: Option<&str>) -> Scene {
+        // Gate: only while a panel drag is in flight (in ANY window). R1146 — the
+        // VS Code redesign creates no floating window mid-drag, so the R1144
+        // size-gate (which existed only to keep guides off a brand-new floater on
+        // its CHURNING surface → the wgpu validation freeze) is gone. A plain
+        // "a drag is active" gate is correct AND safe: it lights this host's drop
+        // zones during a SAME-window tear-off (where MAIN is the dragger — the size
+        // gate could not) and during a floater redock, and the new floating window
+        // is created only on RELEASE, after the drag session closes, so it is never
+        // painted with guides while its surface initialises. Idle drags pay nothing.
+        if !self.any_window_dragging(PointerId::MOUSE) {
             return pinion_overlay::inject_overlay_node(scene, DOCK_ZONE_GUIDES_TAG, None);
         }
         let guides: Vec<Scene> = scene
@@ -3808,38 +3797,19 @@ impl<V: WidgetView> ShellCore<V> {
         pinion_overlay::inject_overlay_node(scene, DOCK_ZONE_GUIDES_TAG, slot)
     }
 
-    /// (R1144 §5.51 PR-39) Whether some OTHER declared window SMALLER (by area)
-    /// than `host` currently owns a drag for `pid` — the gate for `host`'s
-    /// dock-zone guides + their drag-end repaint. A torn-off floater is smaller
-    /// than the dock host it docks into, so "smaller window dragging toward this
-    /// larger host" is both the correct DIRECTION (a floater docks into main, not
-    /// the reverse) and the fix for the R1144 freeze: tearing a panel OUT of main
-    /// makes MAIN the dragger, and a larger dragger must NOT light guides on (and
-    /// repaint) the brand-new floater whose surface is still churning. A window
-    /// with no declared size is skipped (no basis to compare).
-    fn smaller_window_dragging(&self, host: &str, pid: PointerId) -> bool {
-        let specs = self.declared_window_specs();
-        let Some(host_area) = specs
+    /// (R1146 §5.51) Whether ANY declared window currently owns a drag for `pid` —
+    /// the gate for the dock-zone guides + their drag-end repaint. A panel drag
+    /// (a tear-off in a dock host, or a floater dragged toward one) lights the
+    /// host's drop zones so the user sees where to aim. Replaces the R1144 size
+    /// gate, which existed only to keep guides off a brand-new floater whose
+    /// surface was churning mid-drag (the freeze): the VS Code redesign creates no
+    /// window mid-drag, so the churn is gone and a plain "a drag is in flight" gate
+    /// is correct (it also lights a SAME-window tear-off's host, which the size gate
+    /// could not) and safe.
+    fn any_window_dragging(&self, pid: PointerId) -> bool {
+        self.declared_window_specs()
             .iter()
-            .find(|w| w.id == host)
-            .and_then(Self::window_area)
-        else {
-            return false;
-        };
-        specs.iter().any(|w| {
-            w.id != host
-                && Self::window_area(w).is_some_and(|area| area < host_area)
-                && self.core.drag_session_active_for_window(&w.id, pid)
-        })
-    }
-
-    /// (R1144 §5.51) A declared window's area (logical px²) from its declared
-    /// size, or `None` when the size is unknown (a WM-sized window) — the basis
-    /// for the [`Self::smaller_window_dragging`] floater-into-host direction gate.
-    fn window_area(window: &pinion_rpc::DeclaredWindow) -> Option<f64> {
-        window
-            .declared_size
-            .map(|(w, h)| f64::from(w) * f64::from(h))
+            .any(|w| self.core.drag_session_active_for_window(&w.id, pid))
     }
 
     /// R1113 §5.51 §5.33 — the window-level paint overlays, in z-order: the
@@ -5511,28 +5481,15 @@ impl<V: WidgetView> ShellCore<V> {
             .position
             .map_or((0.0, 0.0), |(x, y)| (f64::from(x), f64::from(y)));
         let abs = (source_pos.0 + local.0, source_pos.1 + local.1);
-        // 1) Cursor-precise — the grab point the dragged window follows. Wins
-        //    when it lands on a zone (the pro-tool default).
-        if let Some(drop) = self.cross_window_drop_at(abs, Some(source_window)) {
-            return Some(drop);
-        }
-        // 2) R1143 §5.51 PR-39 — fall back to the dragged window's BODY CENTRE.
-        //    The grab point rides the header (top / side), so dragging the body
-        //    over a dock zone can leave the cursor OFF it (the right edge of the
-        //    floater enters the slot while a left-side grab is still outside).
-        //    Resolving at the floater's centre previews "the floater is over the
-        //    slot" without the ambiguity of full window-overlap — a large host
-        //    always geometrically contains a small floater, so plain overlap
-        //    could not tell "the floater docks into main" from "main contains the
-        //    floater"; a single interior point (the centre) cannot, and main's
-        //    centre is not over the floater, so the existing resolution holds.
-        let centre = source.declared_size.map(|(w, h)| {
-            (
-                source_pos.0 + f64::from(w) / 2.0,
-                source_pos.1 + f64::from(h) / 2.0,
-            )
-        })?;
-        self.cross_window_drop_at(centre, Some(source_window))
+        // R1146 §5.51 — cursor-precise, single point (the pro-tool / VS Code
+        // model). The floater stays put during the drag (the window is repositioned
+        // only on release), so `source_pos` is stable and `abs = source_pos + local`
+        // is the true desktop pointer — the cursor resolves cleanly over the target
+        // zone. The R1143 body-centre fallback (resolving at the dragged window's
+        // centre too) was a band-aid for the moving floater occluding its own header
+        // grab; with a stationary floater it would point at the wrong place, so it
+        // is removed. See `docs/dock-window-move-redesign.md`.
+        self.cross_window_drop_at(abs, Some(source_window))
     }
 
     /// (R1020 §5.39) Re-derive the keyboard focus enumeration from a fresh,
@@ -6796,37 +6753,10 @@ mod r1104_cross_window_exclusion_tests {
         );
     }
 
-    #[test]
-    fn r1143_floater_body_centre_over_a_zone_resolves_even_when_the_cursor_is_off_it() {
-        // R1143 §5.51 PR-39 — the grab point rides the floater's header, so the
-        // cursor can be OFF a zone while the floater BODY is over it. The centre
-        // fallback resolves "the floater is over the slot". Floater at (800,100)
-        // sized 200x200 → centre (900,200); main's dock spans abs (850,150)–
-        // (1050,350), so the centre is inside it but a header-edge cursor is not.
-        let mut sc = ShellCore::<CrossWindowFixture>::new();
-        sc.core.set_paint_scene_for_window(
-            "main",
-            drop_panel_scene("main_dock", Rect::new(850, 150, 200, 200)),
-        );
-        sc.core.set_paint_scene_for_window(
-            FLOAT_WINDOW,
-            drop_panel_scene("torn", Rect::new(10, 10, 80, 80)),
-        );
-        // Cursor at floater-local (100, 5) → abs (900, 105): above main's dock
-        // (y < 150) and over no zone → the precise-cursor pass finds nothing.
-        assert!(
-            sc.cross_window_drop_at((900.0, 105.0), Some(FLOAT_WINDOW))
-                .is_none(),
-            "precondition: the header-edge cursor is over no zone",
-        );
-        // But the floater's centre (900, 200) sits inside main's dock → the
-        // fallback resolves it (this returns None without the R1143 fallback).
-        let drop = sc
-            .resolve_cross_window_live(FLOAT_WINDOW, (100.0, 5.0))
-            .expect("the floater body centre is over main's dock");
-        assert_eq!(drop.window, "main");
-        assert_eq!(drop.point.tag, "main_dock");
-    }
+    // (R1143 body-centre fallback test removed in R1146 — the VS Code redesign
+    // keeps the floater stationary mid-drag, so the cursor-precise single point
+    // resolves cleanly and the dual resolution-point band-aid is gone. See
+    // `docs/dock-window-move-redesign.md`.)
 }
 
 #[cfg(test)]
@@ -7065,11 +6995,12 @@ mod r1138_redock_hint_injection_tests {
         );
     }
 
-    /// R1142 §5.51 PR-39 — the dock-zone GUIDES bug fix: a drag that lit guides
-    /// on main (a guide host, `any_other_window_dragging`) must repaint main on
-    /// drag-END so its guides STRIP, even though the release happens in the
-    /// FLOATER (the cursor sits on the dragged floater, not over main). Without
-    /// this the guides stay on main's stale frame ("윤곽선이 계속 떠있어").
+    /// R1142 §5.51 PR-39 → R1146 — the dock-zone GUIDES bug fix: a drag that lit
+    /// guides on main (a guide host, `any_window_dragging`) must repaint main on
+    /// drag-END so its guides STRIP, even though the release happens in the FLOATER
+    /// (the cursor sits on the dragged floater, not over main). Without this the
+    /// guides stay on main's stale frame ("윤곽선이 계속 떠있어"). R1146 repaints
+    /// every OTHER window on a drag-ending release, so main is covered.
     #[test]
     fn r1142_drag_release_repaints_the_guide_host_to_strip_its_guides() {
         use pinion_runtime::PointerId;
@@ -7096,32 +7027,11 @@ mod r1138_redock_hint_injection_tests {
         );
     }
 
-    /// R1144 §5.51 PR-39 — the FREEZE guard: a tear-OUT (the LARGER window drags
-    /// a panel out, creating a small floater) must NOT light guides on, or
-    /// repaint, the brand-new floater — its surface is still churning, and a
-    /// repaint there triggered a wgpu validation cascade that froze the window.
-    /// A larger source repaints only LARGER hosts (none), so the small floater is
-    /// untouched. The direction gate is also semantically right: a floater docks
-    /// into a larger host, never the reverse.
-    #[test]
-    fn r1144_a_larger_source_does_not_repaint_a_smaller_window_on_release() {
-        use pinion_runtime::PointerId;
-        let mut sc = ShellCore::<RedockHintFixture>::new();
-        // Main (1000x800) is LARGER than the floater (200x200). Open a drag in
-        // MAIN (a tear-out) and release it there.
-        let m = sc.compute_paint_scene_for_window("main", 1000, 800);
-        sc.finalize_frame_for_window("main", m);
-        sc.cursor_moved_for_window("main", PointerId::MOUSE, 40.0, 40.0);
-        sc.mouse_pressed_for_window("main", PointerId::MOUSE);
-        sc.cursor_moved_for_window("main", PointerId::MOUSE, 80.0, 80.0);
-        assert!(sc.drag_session_active_for_window("main", PointerId::MOUSE));
-        let _ = sc.take_redraw_request_for_window(FLOAT_WINDOW);
-        sc.mouse_released_for_window("main", PointerId::MOUSE);
-        assert!(
-            !sc.redraw_requested_for_window(FLOAT_WINDOW),
-            "a tear-out (larger source) must NOT repaint the small floater (R1144 freeze guard)",
-        );
-    }
+    // (R1144 freeze-guard test removed in R1146 — the freeze was a mid-drag
+    // floater being painted on its churning surface; the VS Code redesign creates
+    // no window mid-drag, so the size-gate it guarded is gone and a drag-ending
+    // release now repaints every other window to strip guides. See
+    // `docs/dock-window-move-redesign.md`.)
 }
 
 #[cfg(test)]

@@ -4872,13 +4872,6 @@ pub struct DockPanelExternal {
     /// reports that `torn-<panel>` window). `None` before any move / a
     /// cursor-less gesture.
     last_source_window: RefCell<Option<String>>,
-    /// (R1120 §5.51 PR-39) The previous DESKTOP cursor of an in-flight title-bar
-    /// WINDOW MOVE — the running anchor for the frame-increment delta
-    /// (`desktop_now − prev_desktop`, [`window_move_delta`]). Reset on
-    /// [`begin_drag`](External::begin_drag); seeded from the grab's desktop on the
-    /// first move. Carrying the desktop frame (window-INDEPENDENT) is what makes
-    /// the move stable under the WM's apply-lag (no feedback / jitter).
-    prev_desktop: Cell<Option<(f64, f64)>>,
     /// (R1081 §5.51) The shared reorganize coordinator. `Some` puts the
     /// panel in dock-or-float mode (drops onto other panels reorganize
     /// the shared topology); `None` is tear-off-only. Cloned from the
@@ -4968,7 +4961,6 @@ impl DockPanelExternal {
             detached: Cell::new(false),
             last_redock_at: RefCell::new(None),
             last_source_window: RefCell::new(None),
-            prev_desktop: Cell::new(None),
             // R1129 §5.51.1 — the lifecycle chart starts `docked` (its SCXML
             // `initial`), matching a freshly-registered panel that has not floated.
             lifecycle: RefCell::new(Widget::new()),
@@ -5156,7 +5148,6 @@ impl DockPanelExternal {
         self.dragging.set(false);
         self.is_drag_armed.set(true);
         self.set_drop_preview(None);
-        self.prev_desktop.set(None);
         // R1137 — a stay-floating release left the chart in `redock_armed` if the
         // last move was over a zone; disarm it back to plain `floating` so the
         // lifecycle is consistent (the floater is free again, not armed).
@@ -5368,8 +5359,6 @@ impl External for DockPanelExternal {
         *self.last_redock_at.borrow_mut() = None;
         // R1107 — and the last follow-drag source window.
         *self.last_source_window.borrow_mut() = None;
-        // R1120 — and the window-move desktop anchor (re-seeded on the first move).
-        self.prev_desktop.set(None);
         Some(DragPayload {
             kind: Cow::Borrowed(DOCK_PANEL_DRAG_KIND),
             value: IntrospectValue::Text(self.panel_id.to_string()),
@@ -5513,22 +5502,11 @@ impl External for DockPanelExternal {
         // untouched (its `source_window` is the dock window).
         if let Some(fw) = self.floating_window.as_deref() {
             if update.source_window == Some(fw) {
-                // R1120 PR-39 — compute the move in the window-INDEPENDENT DESKTOP
-                // frame via the source window's ACTUAL origin, then emit the FRAME
-                // INCREMENT. Measuring in the moving-window frame (R1118) closed a
-                // feedback loop with the WM apply-lag that JITTERED the live drag;
-                // the desktop frame has no feedback (see `window_move_delta`).
-                let actual = update
-                    .source_window_origin
-                    .map(|(x, y)| (f64::from(x), f64::from(y)));
-                let (delta, new_prev) = window_move_delta(
-                    actual,
-                    update.cursor,
-                    update.press_cursor,
-                    self.prev_desktop.get(),
-                );
-                self.prev_desktop.set(Some(new_prev));
-                self.enqueue_window_move(delta);
+                // R1146 §5.51 — VS Code model: a floater's title-bar drag drives
+                // ONLY the preview during the gesture; the real OS window is
+                // repositioned ONCE on release (`drag_release_at`). Moving the
+                // window every cursor frame flooded `set_outer_position` and wedged
+                // the WM (the live hang) — see `docs/dock-window-move-redesign.md`.
                 // R1137 §5.51.1 — drive the redock-armed lifecycle from the
                 // shell-resolved cross-window over: a floater whose move is over
                 // ANOTHER window's dock zone is ARMED to redock (the binding paints
@@ -5589,19 +5567,16 @@ impl External for DockPanelExternal {
             // disturb this live drag session, so the slot stays put (placeholder-
             // style) during the drag and reflows once on release (release-as-floated).
         }
-        // While detached, the follower tracks the cursor on EVERY move (the
-        // ensure+position follow), whether or not it is back over a zone — and
-        // the preview below still highlights a dock zone underneath it, so
-        // follow + redock preview coexist (PR-33 §2). A press still docked over
-        // a zone (or in the `became_drag` false click dead-zone) does neither.
-        if self.detached.get() {
-            // R1107 §5.51 — carry the SOURCE window (the one the router that
-            // drove this update belongs to) so the binding converts the
-            // window-logical cursor to a desktop position via the right origin.
-            // A tear-off jumps the panel to the cursor (the window-move
-            // grab-offset path returned early above).
-            self.enqueue_tear_off_follow(update.cursor, update.source_window);
-        }
+        // R1146 §5.51 — VS Code model: while detached the panel shows ONLY the
+        // preview (the shell's drag-image ghost + dock-zone guides + redock
+        // preview, all driven from the router's live drag session), and the leaf
+        // stays live (the panel has not floated yet). The floating window is
+        // created ONCE on release (the `drag_release` escape arm), never per move.
+        // The pre-R1146 per-move `tear_off_follow` created + repositioned a real
+        // OS window every cursor frame — the first move's GPU-surface init froze
+        // the window and the `set_outer_position` stream hung the WM. The redock
+        // preview below still highlights a dock zone the floater is over, so the
+        // ghost-follow + redock preview coexist. See the redesign doc.
         self.drag_to(payload, same_window_over);
     }
 
@@ -5637,6 +5612,16 @@ impl External for DockPanelExternal {
         // header (a self-drop) the whole move, which would otherwise fall to the
         // snap-back-home arm. The lifecycle chart stays `Floating`.
         if self.is_floater_window_move(update.source_window) {
+            // R1146 §5.51 — VS Code model: the floater stayed put during the drag
+            // (preview only); reposition it ONCE now by the total grab-relative
+            // displacement. The window never moved mid-drag, so `window_move_delta`
+            // with no prior desktop anchor reduces to `cursor − press_cursor` (the
+            // origin term cancels) — the full move applied in a single
+            // `set_outer_position`, with none of the per-frame flood that hung the
+            // WM. A degenerate move (release on the grab point) emits a zero delta,
+            // an idempotent reposition. See `docs/dock-window-move-redesign.md`.
+            let (delta, _) = window_move_delta(None, update.cursor, update.press_cursor, None);
+            self.enqueue_window_move(delta);
             self.end_window_move();
             return;
         }
@@ -5658,7 +5643,6 @@ impl External for DockPanelExternal {
         // stamped each `drag_to_at`). The chart stays `Floating`.
         let last_source = self.last_source_window.borrow().clone();
         if self.is_floater_window_move(last_source.as_deref()) {
-            self.prev_desktop.set(None);
             self.detached.set(false);
             return;
         }
@@ -6512,13 +6496,15 @@ mod tests {
             source_window_origin: None,
         };
         ext.drag_to_at(&dummy_payload(), &update);
-        // The emitted tear_off_follow carries the source window.
+        // R1146 — the follow is emitted ONCE on release (not per move). Release off
+        // every zone so the escape arm fires it, carrying the recorded source window.
+        ext.drag_release_at(&dummy_payload(), &update);
         let mut received: Vec<Intent> = Vec::new();
         ext.drain_intents(&mut |i| received.push(i));
         let follow = received
             .iter()
             .find(|i| i.tag.as_ref() == TEAR_OFF_FOLLOW_EVENT)
-            .expect("a tear_off_follow fired");
+            .expect("a tear_off_follow fired on release");
         let IntrospectValue::Json(v) = &follow.payload else {
             panic!("follow payload is Json");
         };
@@ -7176,17 +7162,24 @@ mod tests {
             "the panel starts floating (it IS a floater)",
         );
         let _ = ext.begin_drag();
+        // R1146 — a floater move relocates NOTHING mid-drag (preview only).
         ext.drag_to_at(&dummy_payload(), &window_move_update((90.0, 10.0), None));
         let mut moves: Vec<Intent> = Vec::new();
         ext.drain_intents(&mut |i| moves.push(i));
         assert!(
-            moves.iter().any(|i| i.tag.as_ref() == WINDOW_MOVE_EVENT),
-            "the move emits a window_move (not a tear-off): {moves:?}",
+            !moves.iter().any(|i| i.tag.as_ref() == WINDOW_MOVE_EVENT),
+            "R1146: no window_move mid-drag (preview only): {moves:?}",
         );
         // Release NOT over another window (over_window None) — over the own header.
+        // The release repositions the floater ONCE (a single window_move) and the
+        // floater stays floating (no snap-back home).
         ext.drag_release_at(&dummy_payload(), &window_move_update((80.0, 10.0), None));
         let mut after: Vec<Intent> = Vec::new();
         ext.drain_intents(&mut |i| after.push(i));
+        assert!(
+            after.iter().any(|i| i.tag.as_ref() == WINDOW_MOVE_EVENT),
+            "R1146: the release emits the single window_move reposition: {after:?}",
+        );
         assert!(
             !after
                 .iter()
@@ -7407,10 +7400,11 @@ mod tests {
     fn r1097_threshold_move_detaches_into_a_follower() {
         // R1097 §5.51 PR-32 / R1101 / R1110 — once the router declares the press
         // a drag (`became_drag`) AND the cursor is over no same-window dock zone
-        // (here `over` is `None` = escaped, the R1110 gate), the panel tears into
-        // a live floating follower: latch `detached` + emit one ensure+position
-        // follow carrying the panel id and cursor. The grab sample (router still
-        // calls it a click) does not detach. R1101 sources the verdict from the
+        // (here `over` is `None` = escaped, the R1110 gate), the panel tears off:
+        // latch `detached`. R1146 — the floating window is created ONCE on RELEASE
+        // (the mid-drag affordance is the shell's ghost + zone guides), not per
+        // move. The grab sample (router still calls it a click) does not detach.
+        // R1101 sources the verdict from the
         // router (not a private distance latch); R1110 re-gates the float on
         // escape (a verdict move still over a zone stays docked — see
         // `r1110_threshold_move_over_a_panel_shows_preview_not_detach`).
@@ -7421,13 +7415,21 @@ mod tests {
         assert!(!ext.detached(), "the grab sample alone does not detach");
         ext.drag_to_at(&dummy_payload(), &upd(None, (640.0, 300.0), None, true)); // > threshold
         assert!(ext.detached(), "the router's drag verdict detaches");
+        // R1146 — detaching the latch emits NO follow (preview only).
         let mut received: Vec<Intent> = Vec::new();
         ext.drain_intents(&mut |i| received.push(i));
-        assert_eq!(received.len(), 1, "one follow on the move that detached");
-        assert_eq!(received[0].tag.as_ref(), TEAR_OFF_FOLLOW_EVENT);
+        assert!(received.is_empty(), "no follow mid-drag: {received:?}");
+        // The escape RELEASE places the floater once at the release cursor.
+        ext.drag_release_at(&dummy_payload(), &upd(None, (640.0, 300.0), None, true));
+        received.clear();
+        ext.drain_intents(&mut |i| received.push(i));
+        let follow = received
+            .iter()
+            .find(|i| i.tag.as_ref() == TEAR_OFF_FOLLOW_EVENT)
+            .expect("the release emits the follow");
         assert_eq!(
-            follow_fields(&received[0].payload),
-            ("a".to_string(), 640.0, 300.0),
+            follow_fields(&follow.payload),
+            ("a".to_string(), 640.0, 300.0)
         );
     }
 
@@ -7465,8 +7467,12 @@ mod tests {
         );
         received.clear();
         ext.drain_intents(&mut |i| received.push(i));
-        assert_eq!(received.len(), 1, "one follow once the verdict is a drag");
-        assert_eq!(received[0].tag.as_ref(), TEAR_OFF_FOLLOW_EVENT);
+        // R1146 — the latch flips, but the follow is release-only (no per-move
+        // flood); this test's point is the verdict-not-distance gate.
+        assert!(
+            received.is_empty(),
+            "no follow mid-drag (release-only): {received:?}"
+        );
     }
 
     #[test]
@@ -7520,10 +7526,13 @@ mod tests {
         assert!(!ext.detached(), "over a zone: still docked");
         ext.drag_to_at(&dummy_payload(), &upd(None, (900.0, 900.0), None, true));
         assert!(ext.detached(), "escaping every zone floats the panel");
+        // R1146 — escape flips the latch but emits no follow mid-drag (release-only).
         let mut received: Vec<Intent> = Vec::new();
         ext.drain_intents(&mut |i| received.push(i));
-        assert_eq!(received.len(), 1, "one follow on the escape move");
-        assert_eq!(received[0].tag.as_ref(), TEAR_OFF_FOLLOW_EVENT);
+        assert!(
+            received.is_empty(),
+            "no follow mid-drag (release-only): {received:?}"
+        );
     }
 
     #[test]
@@ -7551,8 +7560,11 @@ mod tests {
         );
         let mut received: Vec<Intent> = Vec::new();
         ext.drain_intents(&mut |i| received.push(i));
-        assert_eq!(received.len(), 1, "one follow on the cross-window escape");
-        assert_eq!(received[0].tag.as_ref(), TEAR_OFF_FOLLOW_EVENT);
+        // R1146 — cross-window escape flips the latch; the follow is release-only.
+        assert!(
+            received.is_empty(),
+            "no follow mid-drag (release-only): {received:?}"
+        );
     }
 
     #[test]
@@ -7571,28 +7583,35 @@ mod tests {
     }
 
     #[test]
-    fn r1097_each_move_after_detach_emits_a_follow_for_live_tracking() {
-        // Per-move follow: once detached, every move re-emits the position so
-        // the floating window tracks the cursor (the binding reducer dedups a
-        // stationary cursor at `Signal::set`, not here). The grab sample, being
-        // sub-threshold, emits no follow.
+    fn r1146_moves_after_detach_emit_no_follow_then_release_places_once() {
+        // R1146 §5.51 — VS Code model: once detached, moves emit NOTHING (the
+        // shell's drag-image ghost + zone guides are the live affordance); the
+        // floating window is created ONCE on release at the release cursor. The
+        // pre-R1146 per-move follow created + repositioned a real OS window every
+        // frame — the live hang. See `docs/dock-window-move-redesign.md`.
         let mut ext = DockPanelExternal::new("a");
         let _ = ext.begin_drag();
         ext.drag_to_at(&dummy_payload(), &upd(None, (10.0, 20.0), None, false)); // grab
-        ext.drag_to_at(&dummy_payload(), &upd(None, (30.0, 40.0), None, true)); // detach + follow
-        ext.drag_to_at(&dummy_payload(), &upd(None, (50.0, 60.0), None, true)); // follow
+        ext.drag_to_at(&dummy_payload(), &upd(None, (30.0, 40.0), None, true)); // detach
+        ext.drag_to_at(&dummy_payload(), &upd(None, (50.0, 60.0), None, true)); // move
         let mut received: Vec<Intent> = Vec::new();
         ext.drain_intents(&mut |i| received.push(i));
-        assert_eq!(received.len(), 2, "one follow per move after the grab");
         assert!(
-            received
-                .iter()
-                .all(|i| i.tag.as_ref() == TEAR_OFF_FOLLOW_EVENT)
+            received.is_empty(),
+            "no follow on any mid-drag move (preview only): {received:?}",
         );
+        // Release off every zone: ONE follow at the release cursor.
+        ext.drag_release_at(&dummy_payload(), &upd(None, (50.0, 60.0), None, true));
+        received.clear();
+        ext.drain_intents(&mut |i| received.push(i));
+        let follow = received
+            .iter()
+            .find(|i| i.tag.as_ref() == TEAR_OFF_FOLLOW_EVENT)
+            .expect("the release emits the follow");
         assert_eq!(
-            follow_fields(&received[1].payload),
+            follow_fields(&follow.payload),
             ("a".to_string(), 50.0, 60.0),
-            "the last follow carries the latest cursor",
+            "the single release follow carries the release cursor",
         );
     }
 
@@ -7610,14 +7629,11 @@ mod tests {
         assert!(ext.detached());
         let mut received: Vec<Intent> = Vec::new();
         ext.drain_intents(&mut |i| received.push(i));
-        assert_eq!(received.len(), 2, "move follow then release follow");
-        assert!(
-            received
-                .iter()
-                .all(|i| i.tag.as_ref() == TEAR_OFF_FOLLOW_EVENT)
-        );
+        // R1146 — only the RELEASE emits the follow (mid-drag is preview-only).
+        assert_eq!(received.len(), 1, "the single release follow");
+        assert_eq!(received[0].tag.as_ref(), TEAR_OFF_FOLLOW_EVENT);
         assert_eq!(
-            follow_fields(&received[1].payload),
+            follow_fields(&received[0].payload),
             ("a".to_string(), 700.0, 320.0),
             "the release follow carries the release cursor",
         );
@@ -7661,14 +7677,11 @@ mod tests {
         );
         let mut received: Vec<Intent> = Vec::new();
         ext.drain_intents(&mut |i| received.push(i));
-        assert_eq!(
-            received.len(),
-            2,
-            "the escaped move's follow, then the redock"
-        );
-        assert_eq!(received[0].tag.as_ref(), TEAR_OFF_FOLLOW_EVENT);
-        assert_eq!(received[1].tag.as_ref(), TEAR_OFF_REDOCK_EVENT);
-        assert_eq!(received[1].payload.as_str(), Some("a"));
+        // R1146 — the escaped moves emit no follow (release-only), so the snap-back
+        // release commits only the redock (remove the floater this gesture floated).
+        assert_eq!(received.len(), 1, "just the redock on snap-back");
+        assert_eq!(received[0].tag.as_ref(), TEAR_OFF_REDOCK_EVENT);
+        assert_eq!(received[0].payload.as_str(), Some("a"));
     }
 
     #[test]
@@ -7682,9 +7695,9 @@ mod tests {
         assert!(!ext.detached());
         let mut received: Vec<Intent> = Vec::new();
         ext.drain_intents(&mut |i| received.push(i));
-        assert_eq!(received.len(), 2);
-        assert_eq!(received[0].tag.as_ref(), TEAR_OFF_FOLLOW_EVENT);
-        assert_eq!(received[1].tag.as_ref(), TEAR_OFF_REDOCK_EVENT);
+        // R1146 — no mid-drag follow, so a cancelled detached drag emits only the redock.
+        assert_eq!(received.len(), 1);
+        assert_eq!(received[0].tag.as_ref(), TEAR_OFF_REDOCK_EVENT);
     }
 
     #[test]
@@ -7724,9 +7737,10 @@ mod tests {
         assert!(!ext.detached());
         let mut received: Vec<Intent> = Vec::new();
         ext.drain_intents(&mut |i| received.push(i));
-        assert_eq!(received.len(), 2, "follow (escape) then redock");
-        assert_eq!(received[0].tag.as_ref(), TEAR_OFF_FOLLOW_EVENT);
-        assert_eq!(received[1].tag.as_ref(), TEAR_OFF_REDOCK_EVENT);
+        // R1146 — no mid-drag follow; the redock-over-zone release commits just the
+        // redock (remove the floater), and the dock still applies below.
+        assert_eq!(received.len(), 1, "just the redock");
+        assert_eq!(received[0].tag.as_ref(), TEAR_OFF_REDOCK_EVENT);
         assert_eq!(
             reorganizer.last_outcome().as_deref(),
             Some("a -> b"),
@@ -7994,19 +8008,15 @@ mod tests {
     }
 
     #[test]
-    fn r1116_sole_floater_header_drag_is_grab_offset_window_move() {
-        // R1116→R1120 §5.51 §5.15 PR-38/39 — a drag whose source_window is the
-        // panel's OWN floating window (the title-bar drag of the borderless
-        // floater) is a WINDOW MOVE: the widget emits a dedicated WINDOW_MOVE
-        // carrying the DESKTOP-frame increment (`window_move_delta`), so the
-        // binding's `pos += delta` keeps the grabbed point under the cursor
-        // WITHOUT the moving-frame feedback that jittered the live drag (R1120).
-        // The ACTUAL window origin cancels in the increment, so the deltas are the
-        // same whatever the floater's position — window-INDEPENDENT.
+    fn r1146_floater_header_drag_repositions_the_window_once_on_release() {
+        // R1146 §5.51 — VS Code model: a floater title-bar drag emits NO window
+        // relocation intent mid-drag (preview only); the floater repositions ONCE
+        // on release by the total grab-relative displacement (cursor − press).
+        // Pre-R1146 every move emitted a WINDOW_MOVE and the binding flooded the WM
+        // with `set_outer_position` (the live hang). See the redesign doc.
         let mut floater = DockPanelExternal::new("viewport").with_floating_window("torn-viewport");
         let _ = floater.begin_drag();
         let press = (40.0, 8.0);
-        // source_window_origin = the floater's ACTUAL outer origin (shell-stashed).
         let mv = |cursor: (f64, f64)| DragUpdate {
             over: None,
             cursor,
@@ -8016,21 +8026,31 @@ mod tests {
             press_cursor: press,
             source_window_origin: Some((10, 10)),
         };
+        // Two mid-drag moves: the chart drives the preview, but NOTHING relocates
+        // the OS window (no WINDOW_MOVE, no tear_off_follow).
         floater.drag_to_at(&dummy_payload(), &mv((100.0, 48.0)));
         floater.drag_to_at(&dummy_payload(), &mv((140.0, 88.0)));
-        let mut got: Vec<Intent> = Vec::new();
-        floater.drain_intents(&mut |i| got.push(i));
-        assert_eq!(got.len(), 2, "two moves = two window-move intents");
-        // R1118 — a window move emits the dedicated WINDOW_MOVE event (a
-        // displacement), NOT tear_off_follow (a cursor). The wire form is honest.
-        for i in &got {
-            assert_eq!(
-                i.tag.as_ref(),
-                WINDOW_MOVE_EVENT,
-                "the floater header drag is a window move, not a tear_off_follow",
-            );
-        }
-        // The payload carries the DESKTOP-frame increment (dx, dy).
+        let mut mid: Vec<Intent> = Vec::new();
+        floater.drain_intents(&mut |i| mid.push(i));
+        assert!(
+            mid.iter().all(|i| {
+                i.tag.as_ref() != WINDOW_MOVE_EVENT && i.tag.as_ref() != TEAR_OFF_FOLLOW_EVENT
+            }),
+            "a floater drag relocates NOTHING mid-drag (preview only); got {:?}",
+            mid.iter()
+                .map(|i| i.tag.as_ref().to_string())
+                .collect::<Vec<_>>(),
+        );
+        // Release off every zone: reposition ONCE by the total displacement
+        // cursor − press = (140−40, 88−8) = (100, 80).
+        floater.drag_release_at(&dummy_payload(), &mv((140.0, 88.0)));
+        let mut rel: Vec<Intent> = Vec::new();
+        floater.drain_intents(&mut |i| rel.push(i));
+        let moves: Vec<&Intent> = rel
+            .iter()
+            .filter(|i| i.tag.as_ref() == WINDOW_MOVE_EVENT)
+            .collect();
+        assert_eq!(moves.len(), 1, "release emits exactly one window move");
         let wm = |p: &IntrospectValue| -> (String, f64, f64) {
             let IntrospectValue::Json(v) = p else {
                 panic!("window_move payload is Json");
@@ -8044,58 +8064,44 @@ mod tests {
                 v.get("dy").and_then(serde_json::Value::as_f64).expect("dy"),
             )
         };
-        // First move: desktop cursor (10+100, 10+48)=(110,58) minus the grab's
-        // desktop (10+40, 10+8)=(50,18) = (60,40). Second: increment from the
-        // previous desktop (110,58) to (10+140, 10+88)=(150,98) = (40,40).
         assert_eq!(
-            wm(&got[0].payload),
-            ("viewport".into(), 60.0, 40.0),
-            "first delta = desktop cursor - grab desktop (window-independent)",
-        );
-        assert_eq!(
-            wm(&got[1].payload),
-            ("viewport".into(), 40.0, 40.0),
-            "later delta = desktop frame increment; the binding adds it to the window pos",
+            wm(&moves[0].payload),
+            ("viewport".into(), 100.0, 80.0),
+            "the single release move is the total grab-relative displacement (cursor − press)",
         );
 
-        // Contrast: a docked tear-off (no floating_window declared) jumps to the
-        // RAW cursor — no grab-offset, and on the tear_off_follow wire.
+        // Contrast: a docked tear-off (no floating_window) also relocates NOTHING
+        // mid-drag; the escape RELEASE jumps the panel to the RAW cursor (no
+        // grab-offset) on the tear_off_follow wire, ONCE.
         let mut docked = DockPanelExternal::new("viewport");
         let _ = docked.begin_drag();
-        docked.drag_to_at(
-            &dummy_payload(),
-            &DragUpdate {
-                over: Some(drop_point("viewport", 0.5, 0.5)),
-                cursor: (40.0, 8.0),
-                over_window: None,
-                source_window: Some("main"),
-                became_drag: false,
-                press_cursor: (40.0, 8.0),
-                source_window_origin: None,
-            },
-        ); // grab over the panel's own zone — NOT a window move (no floating_window)
-        docked.drag_to_at(
-            &dummy_payload(),
-            &DragUpdate {
-                over: None,
-                cursor: (140.0, 88.0),
-                over_window: None,
-                source_window: Some("main"),
-                became_drag: true,
-                press_cursor: (40.0, 8.0),
-                source_window_origin: None,
-            },
-        ); // escape + follow
-        let mut got2: Vec<Intent> = Vec::new();
-        docked.drain_intents(&mut |i| got2.push(i));
-        let follow = got2
+        let escaped = DragUpdate {
+            over: None,
+            cursor: (140.0, 88.0),
+            over_window: None,
+            source_window: Some("main"),
+            became_drag: true,
+            press_cursor: (40.0, 8.0),
+            source_window_origin: None,
+        };
+        docked.drag_to_at(&dummy_payload(), &escaped); // escaped every zone
+        let mut dmid: Vec<Intent> = Vec::new();
+        docked.drain_intents(&mut |i| dmid.push(i));
+        assert!(
+            dmid.iter().all(|i| i.tag.as_ref() != TEAR_OFF_FOLLOW_EVENT),
+            "a docked tear-off emits no follow mid-drag (preview only)",
+        );
+        docked.drag_release_at(&dummy_payload(), &escaped);
+        let mut drel: Vec<Intent> = Vec::new();
+        docked.drain_intents(&mut |i| drel.push(i));
+        let follow = drel
             .iter()
             .find(|i| i.tag.as_ref() == TEAR_OFF_FOLLOW_EVENT)
-            .expect("escape emits a follow");
+            .expect("escape release emits a follow");
         assert_eq!(
             follow_fields(&follow.payload),
             ("viewport".into(), 140.0, 88.0),
-            "a docked tear-off jumps to the RAW cursor (no grab-offset)",
+            "a docked tear-off jumps to the RAW cursor on release (no grab-offset)",
         );
     }
 
