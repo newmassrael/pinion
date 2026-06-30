@@ -19342,6 +19342,40 @@
         "Chose A for the dead-zone question: the panel = the tab model (a dead-zone release floats)."
       ]
     },
+    "R1163": {
+      "decision_summary": "R1163 §5.51 — a tab dropped on its own well's edge undocks into a split (the VS Code / Qt / Slate gesture); zone-aware undock_tab_to_zone, self-edge preview == result.",
+      "changes_bullets": [
+        "A tab dropped on its OWN well's EDGE now undocks into a SPLIT at that edge — the standard VS Code / Qt ADS / Unreal Slate gesture (drag a tab to its own group's edge to split it out); the centre / dead-zone stays a tab. Pre-R1163 the self-drop was always a SnapBack no-op (R1162), which blocked this gesture: the user could not split a tab out by dragging it onto its own group.",
+        "Added DockReorganizer::undock_tab_to_zone(panel, zone) (zone-aware) = dock_panel_at_resolved_zone(panel, sibling, zone); refactored undock_tab (the R1145 button / AI path) to delegate (= Right). The tab's drag_release_at SnapBack arm re-derives the edge from the same banded SSOT and undocks; the drag_to_at preview shows the split direction for a self-edge, so preview == result."
+      ],
+      "verification_bullets": [
+        "2 R1163 units (own-well edge -> undock to a split; own-well centre -> stays a tab) + 661 dock units; r1145_undock_tab / r1159_dock_drop_resolution / r690_tabs demos PASS; workspace 0 fail / clippy -D pedantic / rustfmt clean.",
+        "The live edge-drag FEEL is the user's :0 verify; the earlier live trace confirmed the router delivers over=Some(self) to the tab on a drag onto its own well, which the new SnapBack arm now undocks at the aimed edge."
+      ],
+      "impact_refs": [
+        "5.51"
+      ],
+      "carry_forward_bullets": [
+        "A >2-tab well undock-to-edge uses the first sibling as the split anchor (clean for the common 2-tab well); a precise >2 undock-against-the-well-node is a refinement.",
+        "R1163b: the cross-window floater preview (editor dock_drop_preview hook) + tear_off_redock_at reducer still use the continuous classifier; audit onto resolve_drop / banded."
+      ],
+      "publishable_decision_summary": "R1163 §5.51 — a tab dropped on its own well's edge undocks into a split (the VS Code / Qt / Slate gesture); zone-aware undock_tab_to_zone, self-edge preview == result.",
+      "publishable_changes_bullets": [
+        "A tab dropped on its OWN well's EDGE now undocks into a SPLIT at that edge — the standard VS Code / Qt ADS / Unreal Slate gesture (drag a tab to its own group's edge to split it out); the centre / dead-zone stays a tab. Pre-R1163 the self-drop was always a SnapBack no-op (R1162), which blocked this gesture: the user could not split a tab out by dragging it onto its own group.",
+        "Added DockReorganizer::undock_tab_to_zone(panel, zone) (zone-aware) = dock_panel_at_resolved_zone(panel, sibling, zone); refactored undock_tab (the R1145 button / AI path) to delegate (= Right). The tab's drag_release_at SnapBack arm re-derives the edge from the same banded SSOT and undocks; the drag_to_at preview shows the split direction for a self-edge, so preview == result."
+      ],
+      "publishable_verification_bullets": [
+        "2 R1163 units (own-well edge -> undock to a split; own-well centre -> stays a tab) + 661 dock units; r1145_undock_tab / r1159_dock_drop_resolution / r690_tabs demos PASS; workspace 0 fail / clippy -D pedantic / rustfmt clean.",
+        "The live edge-drag FEEL is the user's :0 verify; the earlier live trace confirmed the router delivers over=Some(self) to the tab on a drag onto its own well, which the new SnapBack arm now undocks at the aimed edge."
+      ],
+      "publishable_impact_refs": [
+        "5.51"
+      ],
+      "publishable_carry_forward_bullets": [
+        "A >2-tab well undock-to-edge uses the first sibling as the split anchor (clean for the common 2-tab well); a precise >2 undock-against-the-well-node is a refinement.",
+        "R1163b: the cross-window floater preview (editor dock_drop_preview hook) + tear_off_redock_at reducer still use the continuous classifier; audit onto resolve_drop / banded."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
