@@ -20160,6 +20160,46 @@
         "Data contract (codepoint/width/SGR) unchanged + TUI arm passes char through to host terminal => sprag change 0; re-capture claude logo via scene/screenshot in a sprag session to confirm solid."
       ]
     },
+    "R1179": {
+      "decision_summary": "R1179 §5.41 — shade-block (A-shade) geometric synthesis + unified paint_cell_synthesis. The shade blocks U+2591/2592/2593 are a stipple, not a coverage shape: shade_block_fraction maps them to 1/4,1/2,3/4 and they render as the foreground blended over the cell background at 25/50/75% (alpha fill), the terminal-standard. paint_cell_synthesis(ink, cluster, cell_rect) is the unified dispatcher (solid block -> shade -> box-drawing slot for R1180), shared by the main grid pass (ink=fg) and the inverse block-cursor redraw (ink=bg), replacing R1178's block-only branches at both emit sites. Vello-arm-local: data contract + TUI + sec2#6 untouched, sprag change 0. (B-box) follows as R1180.",
+      "changes_bullets": [
+        "shade_block_fraction(cluster): U+2591/2592/2593 LIGHT/MEDIUM/DARK SHADE -> ink-alpha fraction (1/4, 1/2, 3/4). Shades are a stipple, not a coverage shape, so they render as fg blended over the cell bg at 25/50/75% (alpha fill), matching every terminal.",
+        "paint_cell_synthesis(out, origin, ink, cluster, cell_rect) -> bool: unified synthesis dispatcher (solid block -> shade -> [R1180 box]) shared by the main grid pass (ink=fg) and the inverse block-cursor redraw (ink=bg), replacing R1178's block-only branches at both sites. Cell geometry bundled as a KurboRect (clippy too_many_arguments).",
+        "Shade composites over pass-1's cell background; dim/reverse already fold into `ink`."
+      ],
+      "verification_bullets": [
+        "Unit r1179_shade_block_fractions: the three shades map to 1/4,1/2,3/4; solid block / box / text / empty are None.",
+        "GPU r1179_shade_blocks_render_alpha_ramp (#[ignore]d, lavapipe): white-on-black ░▒▓ render a strictly increasing grey ramp (light<medium<dark), medium near 50% (90..=170), light a faint wash (>20), dark strong but not solid (<245). Font-independent.",
+        "r1178 block tests still green after the paint_cell_synthesis refactor (4 geometry unit + r1178 lavapipe pixel guard).",
+        "cargo fmt clean; clippy pinion-runtime+pinion-shell (--all-targets --features pinion-runtime/vello, pedantic=deny) 0 warnings."
+      ],
+      "impact_refs": [
+        "5.41"
+      ],
+      "carry_forward_bullets": [
+        "(B-box) U+2500-257F box-drawing = R1180: arm model (light/heavy/double weights + dashed) as filled rects, rounded corners U+256D-2570 as quad-bezier strokes, diagonals U+2571-2573 as line strokes; paint_cell_synthesis already has the box branch slot.",
+        "sprag change 0 (data contract/TUI/sec2#6 unchanged); claude logo already solid via R1178 (A-solid)."
+      ],
+      "publishable_decision_summary": "R1179 §5.41 — shade-block (A-shade) geometric synthesis + unified paint_cell_synthesis. The shade blocks U+2591/2592/2593 are a stipple, not a coverage shape: shade_block_fraction maps them to 1/4,1/2,3/4 and they render as the foreground blended over the cell background at 25/50/75% (alpha fill), the terminal-standard. paint_cell_synthesis(ink, cluster, cell_rect) is the unified dispatcher (solid block -> shade -> box-drawing slot for R1180), shared by the main grid pass (ink=fg) and the inverse block-cursor redraw (ink=bg), replacing R1178's block-only branches at both emit sites. Vello-arm-local: data contract + TUI + sec2#6 untouched, sprag change 0. (B-box) follows as R1180.",
+      "publishable_changes_bullets": [
+        "shade_block_fraction(cluster): U+2591/2592/2593 LIGHT/MEDIUM/DARK SHADE -> ink-alpha fraction (1/4, 1/2, 3/4). Shades are a stipple, not a coverage shape, so they render as fg blended over the cell bg at 25/50/75% (alpha fill), matching every terminal.",
+        "paint_cell_synthesis(out, origin, ink, cluster, cell_rect) -> bool: unified synthesis dispatcher (solid block -> shade -> [R1180 box]) shared by the main grid pass (ink=fg) and the inverse block-cursor redraw (ink=bg), replacing R1178's block-only branches at both sites. Cell geometry bundled as a KurboRect (clippy too_many_arguments).",
+        "Shade composites over pass-1's cell background; dim/reverse already fold into `ink`."
+      ],
+      "publishable_verification_bullets": [
+        "Unit r1179_shade_block_fractions: the three shades map to 1/4,1/2,3/4; solid block / box / text / empty are None.",
+        "GPU r1179_shade_blocks_render_alpha_ramp (#[ignore]d, lavapipe): white-on-black ░▒▓ render a strictly increasing grey ramp (light<medium<dark), medium near 50% (90..=170), light a faint wash (>20), dark strong but not solid (<245). Font-independent.",
+        "r1178 block tests still green after the paint_cell_synthesis refactor (4 geometry unit + r1178 lavapipe pixel guard).",
+        "cargo fmt clean; clippy pinion-runtime+pinion-shell (--all-targets --features pinion-runtime/vello, pedantic=deny) 0 warnings."
+      ],
+      "publishable_impact_refs": [
+        "5.41"
+      ],
+      "publishable_carry_forward_bullets": [
+        "(B-box) U+2500-257F box-drawing = R1180: arm model (light/heavy/double weights + dashed) as filled rects, rounded corners U+256D-2570 as quad-bezier strokes, diagonals U+2571-2573 as line strokes; paint_cell_synthesis already has the box branch slot.",
+        "sprag change 0 (data contract/TUI/sec2#6 unchanged); claude logo already solid via R1178 (A-solid)."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

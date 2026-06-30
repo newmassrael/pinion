@@ -2285,6 +2285,75 @@ mod tests {
         );
     }
 
+    /// R1179 §5.41 — the three shade blocks (`░ ▒ ▓`) render as the foreground
+    /// blended over the cell background at 25 / 50 / 75 %, NOT as a font glyph.
+    /// White ink on a black cell yields mid-grey ramps that strictly increase
+    /// light < medium < dark, with medium near half. Font-independent: it
+    /// asserts the alpha ramp, not a shaped glyph.
+    #[test]
+    #[ignore = "wgpu adapter cold-boot too slow for default test suite; run with --ignored"]
+    fn r1179_shade_blocks_render_alpha_ramp() {
+        use pinion_core::cell_metric::CellMetric;
+        use pinion_core::scene::{Rect, Scene, TextGridNode};
+        use pinion_core::style::Color;
+        use pinion_core::term_grid::{GridBuffer, TermCell, TermColor};
+        use pinion_runtime::paint_adapter::{FragmentCache, to_vello_cached};
+        use pinion_text::LayoutCache;
+
+        const CW: u32 = 12;
+        const CH: u32 = 24;
+        let metric = CellMetric::new(CW, CH).expect("non-zero cell metric");
+        let fg = TermColor::Rgb(Color::rgb(255, 255, 255)); // white ink
+        let bg = TermColor::Rgb(Color::rgb(0, 0, 0)); // black cell
+        let shade = |s: &str| TermCell::new(s.to_owned(), fg, bg);
+        // ░ light, ▒ medium, ▓ dark.
+        let buffer = GridBuffer::new(3, 1).with_row(
+            0,
+            vec![shade("\u{2591}"), shade("\u{2592}"), shade("\u{2593}")],
+        );
+        let mut node = TextGridNode::new(metric).with_cells(buffer);
+        let w = CW * 3;
+        node.rect = Rect::new(0, 0, w, CH);
+        let scene = Scene::TextGrid(node);
+
+        let mut text_cache = LayoutCache::new();
+        let mut cache = FragmentCache::new();
+        let mut image_cache = pinion_runtime::image_cache::ImageCache::new();
+        let mut vello = VelloScene::new();
+        to_vello_cached(
+            &scene,
+            &|_| None,
+            &mut text_cache,
+            &mut image_cache,
+            &mut cache,
+            &mut vello,
+        );
+        let mut shot = HeadlessScreenshot::new().expect("headless screenshot bootstrap");
+        let rgba8 = shot
+            .render_to_rgba8(&vello, w, CH, vello::peniko::Color::BLACK)
+            .expect("render");
+
+        // Red channel at each cell centre (white ink => grey level == alpha).
+        let level = |col: u32| -> u32 {
+            let x = col * CW + CW / 2;
+            let y = CH / 2;
+            u32::from(rgba8[((y * w + x) * 4) as usize])
+        };
+        let (light, medium, dark) = (level(0), level(1), level(2));
+        assert!(
+            light < medium && medium < dark,
+            "shade ramp must increase: light={light} medium={medium} dark={dark}",
+        );
+        // Medium shade sits near 50% grey (127) over the black cell.
+        assert!(
+            (90..=170).contains(&medium),
+            "medium shade must be near half intensity: medium={medium}",
+        );
+        // Light is a faint wash (not background-black), dark is strong but not
+        // a solid full block.
+        assert!(light > 20 && dark < 245, "light={light} dark={dark}");
+    }
+
     /// Zero-dimension viewports short-circuit with a typed error
     /// rather than reaching the wgpu validation layer.
     #[test]

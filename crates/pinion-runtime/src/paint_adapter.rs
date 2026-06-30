@@ -1439,6 +1439,61 @@ fn block_element_rects(
     }
 }
 
+/// R1179 §5.41 — the Unicode **shade** blocks (`U+2591` LIGHT / `U+2592` MEDIUM
+/// / `U+2593` DARK SHADE) as the ink-alpha fraction `(num, den)`. Unlike the
+/// solid blocks these are not a coverage shape but a stipple: every serious
+/// terminal renders them as the foreground blended over the cell background at
+/// 25 / 50 / 75 %, which an alpha fill reproduces exactly (no sub-pixel pattern
+/// needed). `None` for anything else (the caller falls through to solid-block,
+/// box-drawing, then the glyph path).
+fn shade_block_fraction(cluster: &str) -> Option<(u16, u16)> {
+    let mut chars = cluster.chars();
+    let (Some(c), None) = (chars.next(), chars.next()) else {
+        return None;
+    };
+    match c {
+        '\u{2591}' => Some((1, 4)), // LIGHT SHADE  — 25%
+        '\u{2592}' => Some((1, 2)), // MEDIUM SHADE — 50%
+        '\u{2593}' => Some((3, 4)), // DARK SHADE   — 75%
+        _ => None,
+    }
+}
+
+/// R1179 §5.41 — paint a synthesised cell graphic for `cluster` in `ink`,
+/// returning `true` when `cluster` was a synthesised glyph class (so the caller
+/// skips the font-glyph path). `ink` is the cell's effective foreground for the
+/// main grid pass, or the background for the inverse block-cursor redraw — the
+/// one routine serves both, keeping the two emit sites in lock-step.
+///
+/// Dispatch order: solid Block Element (cell-exact fill) -> shade block
+/// (alpha fill) -> [R1180 box-drawing]. The cell background (pass 1) is already
+/// laid, so a shade composites over it as the conventional blend.
+fn paint_cell_synthesis(
+    out: &mut VelloScene,
+    origin: Affine,
+    ink: Color,
+    cluster: &str,
+    cell: KurboRect,
+) -> bool {
+    let (cx, cy, cell_w, cell_h) = (cell.x0, cell.y0, cell.width(), cell.height());
+    if let Some((rects, count)) = block_element_rects(cluster, cx, cy, cell_w, cell_h) {
+        let brush = to_peniko(ink);
+        for r in &rects[..count] {
+            out.fill(Fill::NonZero, origin, brush, None, r);
+        }
+        return true;
+    }
+    if let Some((num, den)) = shade_block_fraction(cluster) {
+        // Ink at `num/den` of its own alpha, filling the whole cell over the
+        // already-painted background — the terminal stipple as an alpha blend.
+        let a = u8::try_from(u16::from(ink.a) * num / den).unwrap_or(u8::MAX);
+        let brush = to_peniko(ink.with_alpha(a));
+        out.fill(Fill::NonZero, origin, brush, None, &cell);
+        return true;
+    }
+    false
+}
+
 /// R991 §5.41 §2 #6 — paint one retained [`Scene::TextGrid`] node: the
 /// cell-native terminal projection's GUI (Vello) glyph rasterisation.
 /// This is the deferred second half of the §5.41 cell-native axis —
@@ -1729,17 +1784,15 @@ fn paint_text_grid(
             // / SGR 3 italic pick the weight / slant — distinct `Layout` cache
             // entries, so the colour-independent glyph cache stays intact (the
             // brush is still applied at draw time).
-            // R1178 §5.41 — a solid Block Element synthesises as cell-exact
-            // filled rectangles in the foreground brush instead of a font
-            // glyph, so block art tiles its cells gap-free (the fitted glyph's
-            // bearing margin left the inter-cell gaps R1002 pins). Shades
-            // (U+2591–2593) and box-drawing (U+2500–257F) return `None` and
-            // fall through to the glyph path unchanged.
-            if let Some((rects, count)) = block_element_rects(&cell.cluster, cx, cy, cell_w, cell_h)
-            {
-                for r in &rects[..count] {
-                    out.fill(Fill::NonZero, origin, fg_brush, None, r);
-                }
+            // R1178/R1179 §5.41 — a synthesised cell graphic (solid block,
+            // shade, or R1180 box-drawing) paints as cell-exact geometry in the
+            // effective foreground instead of a font glyph, so block / box art
+            // tiles its cells gap-free (the fitted glyph's bearing margin left
+            // the inter-cell gaps R1002 pins). Everything else falls through to
+            // the glyph path unchanged.
+            let cell_rect = KurboRect::new(cx, cy, cx + cell_w, cy + cell_h);
+            if paint_cell_synthesis(out, origin, fg, &cell.cluster, cell_rect) {
+                // synthesised geometry — no glyph
             } else if has_glyph_cluster(cell) {
                 let glyph_transform = origin * Affine::translate((cx, cy));
                 draw_cell_glyph(out, cache, &style, cell, glyph_transform, fg_brush);
@@ -1819,19 +1872,16 @@ fn paint_grid_cursor(
             out.fill(Fill::NonZero, origin, cursor_color, None, &rect);
             if let Some(c) = cur_cell {
                 if !c.attrs.hidden {
-                    let bg_brush = to_peniko(palette.resolve(bg_term, ColorTarget::Background));
-                    // R1178 — a solid block element redraws its geometry (not a
-                    // glyph) in the cell background, so an inverse block cursor
-                    // reads through it exactly as it does a glyph.
-                    if let Some((rects, count)) =
-                        block_element_rects(&c.cluster, cx, cy, cell_w, cell_h)
-                    {
-                        for r in &rects[..count] {
-                            out.fill(Fill::NonZero, origin, bg_brush, None, r);
-                        }
+                    let bg_color = palette.resolve(bg_term, ColorTarget::Background);
+                    let cell_rect = KurboRect::new(cx, cy, cx + cell_w, cy + cell_h);
+                    // R1178/R1179 — a synthesised graphic (block / shade / box)
+                    // redraws its geometry in the cell background, so an inverse
+                    // block cursor reads through it exactly as it does a glyph.
+                    if paint_cell_synthesis(out, origin, bg_color, &c.cluster, cell_rect) {
+                        // synthesised in bg — no glyph redraw
                     } else if has_glyph_cluster(c) {
                         let glyph_transform = origin * Affine::translate((cx, cy));
-                        draw_cell_glyph(out, cache, style, c, glyph_transform, bg_brush);
+                        draw_cell_glyph(out, cache, style, c, glyph_transform, to_peniko(bg_color));
                     }
                 }
             }
@@ -4504,6 +4554,18 @@ mod tests {
                 block_element_rects(s, 0.0, 0.0, 10.0, 30.0).is_none(),
                 "{s:?} must fall through to the glyph path",
             );
+        }
+    }
+
+    /// R1179 §5.41 — the three shade blocks map to 25 / 50 / 75 % ink alpha;
+    /// everything else (solid blocks, text, box-drawing) is not a shade.
+    #[test]
+    fn r1179_shade_block_fractions() {
+        assert_eq!(shade_block_fraction("\u{2591}"), Some((1, 4)));
+        assert_eq!(shade_block_fraction("\u{2592}"), Some((1, 2)));
+        assert_eq!(shade_block_fraction("\u{2593}"), Some((3, 4)));
+        for s in ["\u{2588}", "\u{2500}", "M", "", "ab"] {
+            assert_eq!(shade_block_fraction(s), None, "{s:?} is not a shade");
         }
     }
 }
