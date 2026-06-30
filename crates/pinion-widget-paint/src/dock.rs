@@ -5191,11 +5191,52 @@ where
     S: Fn(&str, f32) -> DockSplitState,
     Z: Fn(&str) -> Option<DockDropZone>,
 {
+    // (R1173 §5.16) The default surface uses the identity panel-style customizer
+    // (every panel keeps its `m3_default` chrome) — byte-identical to pre-R1173.
+    view_dock_surface_styled(
+        topology,
+        panel_content,
+        split_state,
+        drop_zone,
+        |_, style| style,
+        theme,
+    )
+}
+
+/// (R1173 §5.16) [`view_dock_surface`] plus a per-panel STYLE customizer —
+/// `panel_style: Fn(&str, DockPanelStyle) -> DockPanelStyle` is invoked for each
+/// LIVE leaf with the walker's correctly-tagged [`DockPanelStyle::m3_default`], and
+/// returns the (flag-tweaked) style the panel paints with. This is the seam for
+/// composing per-panel chrome a pro dock needs — a LOCKED toolbar that is also
+/// HEADERLESS (`with_show_header(false)`) and NON-RECEIVING
+/// (`with_drop_target(false)`), a fixed status bar, a panel with a taller header,
+/// etc. — freely combined with the per-panel MOVE / FLOAT policy
+/// ([`DockPanelExternal::with_movable`] / [`with_floatable`](DockPanelExternal::with_floatable))
+/// and the global [`Theme`]. The walker OWNS the tag (the `panel_id` SSOT), so the
+/// customizer tweaks FLAGS, not identity (changing the tag is a binding bug, like a
+/// `panel_content` that returns the wrong content). A torn-slot placeholder is NOT
+/// customized (it is a transient hole, not the panel's chrome).
+#[must_use]
+pub fn view_dock_surface_styled<P, S, Z, F>(
+    topology: &DockTopology,
+    panel_content: P,
+    split_state: S,
+    drop_zone: Z,
+    panel_style: F,
+    theme: &Theme,
+) -> Scene
+where
+    P: Fn(&str) -> Scene,
+    S: Fn(&str, f32) -> DockSplitState,
+    Z: Fn(&str) -> Option<DockDropZone>,
+    F: Fn(&str, DockPanelStyle) -> DockPanelStyle,
+{
     view_dock_surface_node(
         topology.root(),
         &panel_content,
         &split_state,
         &drop_zone,
+        &panel_style,
         theme,
     )
 }
@@ -5209,17 +5250,19 @@ where
 /// `orientation`, and forwards the topology's declared `ratio` as
 /// the initial-value seed for the binding's reactive Signal
 /// constructor.
-fn view_dock_surface_node<P, S, Z>(
+fn view_dock_surface_node<P, S, Z, F>(
     node: &DockNode,
     panel_content: &P,
     split_state: &S,
     drop_zone: &Z,
+    panel_style: &F,
     theme: &Theme,
 ) -> Scene
 where
     P: Fn(&str) -> Scene,
     S: Fn(&str, f32) -> DockSplitState,
     Z: Fn(&str) -> Option<DockDropZone>,
+    F: Fn(&str, DockPanelStyle) -> DockPanelStyle,
 {
     match node {
         DockNode::Leaf { panel_id } => {
@@ -5238,10 +5281,23 @@ where
             let is_placeholder = content
                 .tag()
                 .is_some_and(|t| t.ends_with(PLACEHOLDER_TAG_SUFFIX));
-            // Walker builds the panel style from the topology's
-            // panel_id — no caller drift possible (SSOT).
-            let style =
+            // Walker builds the panel style from the topology's panel_id — no
+            // caller drift possible (SSOT). (R1173 §5.16) A LIVE (non-placeholder)
+            // panel then passes through the binding's `panel_style` customizer so a
+            // binding can compose per-panel chrome — a headerless / non-receiving
+            // locked toolbar (`with_show_header(false).with_drop_target(false)`),
+            // etc. The walker still owns the tag (m3_default keyed on panel_id), so
+            // the customizer tweaks FLAGS, not the SSOT identity. A torn-slot
+            // placeholder keeps the forced `show_header=false` + its redock
+            // `drop_target` (it is not customized — it is a transient hole, not the
+            // panel's chrome).
+            let base =
                 DockPanelStyle::m3_default(panel_id.clone()).with_show_header(!is_placeholder);
+            let style = if is_placeholder {
+                base
+            } else {
+                panel_style(panel_id.as_ref(), base)
+            };
             view_dock_panel(
                 panel_id.as_ref(),
                 content,
@@ -5309,10 +5365,22 @@ where
             // Walker builds the splitter style from the topology's
             // id + orientation — SSOT.
             let style = SplitterStyle::m3_default(*orientation, id.clone());
-            let first_scene =
-                view_dock_surface_node(first, panel_content, split_state, drop_zone, theme);
-            let second_scene =
-                view_dock_surface_node(second, panel_content, split_state, drop_zone, theme);
+            let first_scene = view_dock_surface_node(
+                first,
+                panel_content,
+                split_state,
+                drop_zone,
+                panel_style,
+                theme,
+            );
+            let second_scene = view_dock_surface_node(
+                second,
+                panel_content,
+                split_state,
+                drop_zone,
+                panel_style,
+                theme,
+            );
             view_splitter(
                 first_scene,
                 second_scene,
@@ -6884,10 +6952,11 @@ mod tests {
 
     use super::{
         CONTENT_TAG_SUFFIX, DOCK_DROP_PREVIEW_TAG, DockDropZone, DockNode, DockPanelExternal,
-        DockPanelStyle, DockReorganizer, DockTopology, FloatPolicy, HEADER_TAG_SUFFIX,
-        TEAR_OFF_EVENT, TEAR_OFF_FOLLOW_EVENT, TEAR_OFF_REDOCK_AT_EVENT, TEAR_OFF_REDOCK_EVENT,
-        WINDOW_MOVE_EVENT, composite_tag, dock_drop_preview_overlay, dock_drop_zone_highlight,
-        dock_tablist_access_nodes, view_dock_panel,
+        DockPanelStyle, DockReorganizer, DockSplitState, DockTopology, FloatPolicy,
+        HEADER_TAG_SUFFIX, TEAR_OFF_EVENT, TEAR_OFF_FOLLOW_EVENT, TEAR_OFF_REDOCK_AT_EVENT,
+        TEAR_OFF_REDOCK_EVENT, WINDOW_MOVE_EVENT, composite_tag, dock_drop_preview_overlay,
+        dock_drop_zone_highlight, dock_tablist_access_nodes, view_dock_panel, view_dock_surface,
+        view_dock_surface_styled,
     };
     use crate::tabs::composite_tab_tag;
     use pinion_a11y::AccessNode;
@@ -7145,6 +7214,66 @@ mod tests {
         assert!(
             floater.is_dirty(),
             "control: a floatable panel DOES enqueue a tear-off on an escaped drag",
+        );
+    }
+
+    #[test]
+    fn r1173_styled_surface_applies_the_per_panel_style_customizer() {
+        // R1173 §5.16 — `view_dock_surface_styled` runs the binding's customizer on
+        // each LIVE leaf, composing per-panel chrome: a customizer that strips panel
+        // "a"'s header (`show_header=false`) makes it HEADERLESS (no `a#header` tag),
+        // while "b" (identity) keeps its header. The default `view_dock_surface` uses
+        // the identity customizer (every panel keeps its `m3_default` header —
+        // byte-identical to pre-R1173).
+        fn has(scene: &Scene, tag: &str) -> bool {
+            scene.tag() == Some(tag)
+                || match scene {
+                    Scene::Container(c) => c.children.iter().any(|ch| has(ch, tag)),
+                    Scene::Scroll(s) => has(&s.content, tag),
+                    _ => false,
+                }
+        }
+        fn content(_: &str) -> Scene {
+            empty_content()
+        }
+        fn split(_: &str, r: f32) -> DockSplitState {
+            DockSplitState {
+                ratio_signal: Rc::new(Signal::new(r)),
+                dragging: false,
+            }
+        }
+        let topo = ab_topology();
+        let styled = view_dock_surface_styled(
+            &topo,
+            content,
+            split,
+            |_| None,
+            |id, style| {
+                if id == "a" {
+                    style.with_show_header(false)
+                } else {
+                    style
+                }
+            },
+            &theme_light(),
+        );
+        assert!(
+            !has(&styled, "a#header"),
+            "the customizer made panel a HEADERLESS"
+        );
+        assert!(
+            has(&styled, "b#header"),
+            "panel b (identity) keeps its header"
+        );
+        // The default surface keeps EVERY header (the identity customizer).
+        let default = view_dock_surface(&topo, content, split, |_| None, &theme_light());
+        assert!(
+            has(&default, "a#header"),
+            "default view_dock_surface keeps a's header"
+        );
+        assert!(
+            has(&default, "b#header"),
+            "default view_dock_surface keeps b's header"
         );
     }
 

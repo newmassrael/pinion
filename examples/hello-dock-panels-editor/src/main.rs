@@ -68,7 +68,7 @@ use pinion_widget_paint::dock::{
     dock_drop_preview_overlay, dock_outer_preview_overlay, dock_outer_zone_highlight,
     dock_redock_preview_tint, dock_tablist_access_nodes,
     floating_window_id as dock_floating_window_id, resolve_drop, view_dock_panel_with_actions,
-    view_dock_surface, view_floating_placeholder,
+    view_dock_surface_styled, view_floating_placeholder,
 };
 use pinion_widget_paint::glyph;
 use pinion_widget_paint::splitter::SplitterExternal;
@@ -921,7 +921,7 @@ fn view_main_dock(state: ButtonState) -> Scene {
     // universal Option (the R685.B SSOT walker auto-builds DockPanelStyle /
     // SplitterStyle from the topology + threads its declared initial_ratio).
     let surface = match topology {
-        Some(topology) => view_dock_surface(
+        Some(topology) => view_dock_surface_styled(
             &topology,
             |panel_id| {
                 if is_panel_floating(&windows, panel_id) {
@@ -944,6 +944,18 @@ fn view_main_dock(state: ButtonState) -> Scene {
                     .as_ref()
                     .filter(|p| p.target == panel_id)
                     .map(|p| p.zone)
+            },
+            // (R1173 §5.16) LOCK the toolbar fully — HEADERLESS (no title-bar drag
+            // handle; the "File Edit View…" menu strip IS the content) + NON-RECEIVING
+            // (`drop_target=false`: no panel can dock INTO it). Composed with the
+            // factory's `with_movable(false)` (R1172): the toolbar is a fixed,
+            // immovable, headerless strip — per-panel chrome freely combined.
+            |panel_id, style| {
+                if panel_id == TOOLBAR_PANEL_TAG {
+                    style.with_show_header(false).with_drop_target(false)
+                } else {
+                    style
+                }
             },
             &theme,
         ),

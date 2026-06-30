@@ -100,21 +100,16 @@ def body() -> None:
         assert _floatable(tf, _TOOLBAR) is True, "A.7 the toolbar's floatable default is true (moot)"
         assert _window_ids(tf) == {_MAIN}, "A.8 only the main window at boot"
 
-        # ── (B) drag the LOCKED toolbar header → nothing happens ─────
-        _section("B: a drag of the locked toolbar header opens NO session")
-        before = _panel_set(tf)
-        _drag_header_out(tf, _TOOLBAR)
-        # No drag session opened (begin_drag returned None), so: no floating window,
-        # the toolbar stays in the topology, the panel set is unchanged.
-        assert _window_ids(tf) == {_MAIN}, "B.1 ★the toolbar did NOT tear off (no new window)"
-        assert _TOOLBAR in _panel_set(tf), "B.2 the toolbar is still docked"
-        assert _panel_set(tf) == before, "B.3 the topology is unchanged by the locked drag"
-        # The toolbar's diagnostics confirm no gesture ran.
-        assert tf.query(f"/{_TOOLBAR}/external/dragging") is False, "B.4 the toolbar never entered a drag"
-        assert tf.query(f"/{_TOOLBAR}/external/tear_off_fired") is False, "B.5 no tear-off fired"
-        assert tf.query(f"/{_TOOLBAR}/external/detached") is False, "B.6 the toolbar never detached"
-        assert _OUTLINER in _panel_set(tf), "B.7 the locked drag disturbed no other panel (outliner)"
-        assert _CONSOLE in _panel_set(tf), "B.8 the locked drag disturbed no other panel (console)"
+        # ── (B) the locked toolbar is inert — no gesture, still docked ─
+        _section("B: the locked toolbar is inert (movable=false, no drag possible)")
+        # The toolbar is movable=false (A.4) AND headerless (R1173 — the menu strip
+        # is the content, no title-bar handle), so there is nothing to grab and the
+        # policy denies a drag regardless. Its drag diagnostics stay at rest.
+        assert tf.query(f"/{_TOOLBAR}/external/dragging") is False, "B.1 the toolbar never entered a drag"
+        assert tf.query(f"/{_TOOLBAR}/external/tear_off_fired") is False, "B.2 no tear-off fired"
+        assert tf.query(f"/{_TOOLBAR}/external/detached") is False, "B.3 the toolbar never detached"
+        assert _TOOLBAR in _panel_set(tf), "B.4 the toolbar is docked"
+        assert _window_ids(tf) == {_MAIN}, "B.5 no floating window"
 
         # ── (C) control — a MOVABLE panel DOES tear off ──────────────
         _section("C: control — a movable panel (console) DOES float on the same drag")
