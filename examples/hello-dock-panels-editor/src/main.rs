@@ -56,7 +56,8 @@ use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
 use pinion_core::{Frame, Owner, Scene, Signal, WidgetCore};
 use pinion_shell::{
-    SizeStrategy, WidgetView, WindowSpec, desktop_position_from, vello_renderer_impl, window_exists,
+    SizeStrategy, WidgetView, WindowChromeStyle, WindowSpec, desktop_position_from,
+    vello_renderer_impl, window_exists,
 };
 use pinion_widget_paint::button::{ButtonColors, ButtonStyle, view_button};
 use pinion_widget_paint::dock::{
@@ -1349,6 +1350,35 @@ impl WidgetView for DockPanelsEditorView {
         Some(use_editor_windows())
     }
 
+    /// (R1170 §5.16 §5.39) Per-window CLOSE: a torn-off panel's floating window
+    /// (`torn-{panel}`) closes back to its DOCK (drop its `WindowSpec` → the
+    /// placeholder reverts to live content), NOT by quitting the editor. The main
+    /// window is not a `torn-` window, so its close falls through to the shell's
+    /// app-exit default. Triggered by the chrome close button
+    /// ([`view_floating_panel`] tags it [`WINDOW_CHROME_CLOSE_TAG`]).
+    fn window_close_requested(window_id: &str) -> bool {
+        match window_id.strip_prefix(DEFAULT_FLOATING_WINDOW_PREFIX) {
+            Some(panel) => {
+                redock_panel_floating(panel);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// (R1170 §5.16 §5.39) A torn-off panel's borderless floating window gets
+    /// client-side window CONTROLS — minimize / maximize / close at the top-right.
+    /// `controls_only` (no grip / title): the panel's OWN header is the redock drag
+    /// handle, so the buttons must NOT add an OS-move grip that steals it. The
+    /// close button routes through [`Self::window_close_requested`] (dock-back, not
+    /// app-exit); min / max are the shell's per-window `set_minimized` /
+    /// `set_maximized`. The main window keeps its OS decorations (`None`).
+    fn window_chrome(window_id: &str) -> Option<WindowChromeStyle> {
+        window_id
+            .starts_with(DEFAULT_FLOATING_WINDOW_PREFIX)
+            .then(|| WindowChromeStyle::new().with_controls_only())
+    }
+
     /// (R1125/R1163b §5.51 §2 #7 PR-33) Render the cross-window dock drop-zone
     /// PREVIEW. The shell does the widget-agnostic half (resolves the incoming
     /// floater's drop onto this window, looks up the target's `panel_rect`, and runs
@@ -1501,6 +1531,44 @@ mod tests {
                 "a live panel target splits at the cursor edge (w={} < {}), not full",
                 half.rect.w,
                 panel.w,
+            );
+        });
+    }
+
+    #[test]
+    fn r1170_torn_window_gets_controls_only_chrome_and_close_docks_back() {
+        // R1170 §5.16 — a torn-off panel's floating window gets controls-only
+        // chrome (min/max/close, no grip), and its close docks the panel BACK
+        // (drops the WindowSpec) instead of quitting the app; the main window keeps
+        // OS decorations (no chrome) and its close falls through to app-exit.
+        run_in_owner(|| {
+            let torn = floating_window_id("properties");
+            // window_chrome: torn → controls-only; main → None.
+            let chrome = <DockPanelsEditorView as WidgetView>::window_chrome(&torn);
+            assert!(
+                chrome.is_some_and(|c| c.controls_only),
+                "a torn window gets controls-only chrome ({chrome:?})",
+            );
+            assert!(
+                <DockPanelsEditorView as WidgetView>::window_chrome(MAIN_WINDOW_ID).is_none(),
+                "the main window keeps OS decorations (no client chrome)",
+            );
+            // window_close_requested: float properties, then close its window.
+            toggle_panel_floating("properties");
+            assert!(
+                is_panel_floating(&use_editor_windows().get(), "properties"),
+                "properties is floating after the tear-off",
+            );
+            let handled = <DockPanelsEditorView as WidgetView>::window_close_requested(&torn);
+            assert!(handled, "a torn window's close is HANDLED (no app exit)");
+            assert!(
+                !is_panel_floating(&use_editor_windows().get(), "properties"),
+                "★the close docked the panel BACK (its WindowSpec is gone)",
+            );
+            // The main window's close is NOT handled → the shell exits the app.
+            assert!(
+                !<DockPanelsEditorView as WidgetView>::window_close_requested(MAIN_WINDOW_ID),
+                "the main window's close is unhandled (the app exits)",
             );
         });
     }

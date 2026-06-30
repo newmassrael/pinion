@@ -106,6 +106,12 @@ pub const WINDOW_RESIZE_SOUTH_EAST_TAG: &str = "ai-overlay/window-resize#south-e
 /// its theme.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "a window-chrome style config: each bool is an independent display \
+              toggle (show_minimize / show_maximize / show_close + controls_only), \
+              the canonical struct-of-flags the lint exempts for config types"
+)]
 pub struct WindowChromeStyle {
     /// Strip height along the window's top edge.
     pub height_px: u32,
@@ -125,6 +131,14 @@ pub struct WindowChromeStyle {
     pub show_maximize: bool,
     /// Whether the close button is drawn + hit-tested.
     pub show_close: bool,
+    /// (R1170) CONTROLS-ONLY mode: draw ONLY the right-anchored control buttons —
+    /// no grip background, no title, and the strip's hit rect spans ONLY the
+    /// buttons (so a press anywhere else in the top strip falls THROUGH to the
+    /// content beneath). For a window whose content supplies its OWN draggable
+    /// title bar — a torn-off dock panel whose header is the redock drag handle —
+    /// so the buttons add min / max / close WITHOUT the grip's OS-move stealing
+    /// the redock drag. The full strip (grip + title + buttons) is the default.
+    pub controls_only: bool,
 }
 
 impl WindowChromeStyle {
@@ -142,13 +156,19 @@ impl WindowChromeStyle {
             show_minimize: true,
             show_maximize: true,
             show_close: true,
+            controls_only: false,
         }
     }
-    // R1121.1 — the fluent `with_*` builders were removed as speculative API
-    // (YAGNI): the only consumer is `WindowChromeStyle::default()`. The struct
-    // stays `#[non_exhaustive]` so a builder is re-added (one method, the
-    // specific field) the round a binding actually customizes that token —
-    // e.g. a tool window that hides minimize, or a themed title-bar colour.
+
+    /// (R1170 §5.16 §5.39) The [`Self::controls_only`] variant — only the control
+    /// buttons, no grip / title, hit rect spanning just the buttons so the rest of
+    /// the top strip falls through to the content's own title bar. The first
+    /// builder re-added per the R1121.1 note (a binding now customizes a token).
+    #[must_use]
+    pub const fn with_controls_only(mut self) -> Self {
+        self.controls_only = true;
+        self
+    }
 }
 
 impl Default for WindowChromeStyle {
@@ -290,36 +310,46 @@ fn build_chrome_strip(
     let h = style.height_px;
     let mut children: Vec<Scene> = Vec::new();
 
-    // Background == the draggable grip. Hit-testable (not pointer-
-    // transparent): a press anywhere on the strip that misses a button
-    // begins a window move.
-    children.push(Scene::Box(
-        BoxNode::new(Rect::new(0, 0, width, h), BoxStyle::filled(style.bg))
-            .with_tag(WINDOW_CHROME_GRIP_TAG),
-    ));
+    // (R1170) CONTROLS-ONLY skips the grip + title: the content (a dock panel
+    // header) supplies its own draggable title bar, so the strip adds ONLY the
+    // buttons and a press that misses a button falls THROUGH to that header
+    // (the redock drag), not an OS-move grip.
+    if !style.controls_only {
+        // Background == the draggable grip. Hit-testable (not pointer-
+        // transparent): a press anywhere on the strip that misses a button
+        // begins a window move.
+        children.push(Scene::Box(
+            BoxNode::new(Rect::new(0, 0, width, h), BoxStyle::filled(style.bg))
+                .with_tag(WINDOW_CHROME_GRIP_TAG),
+        ));
 
-    // Title text, left-padded, vertically centred against the strip.
-    // Pointer-transparent: it overlaps the grip, but a press on the title bar
-    // should MOVE the window (the grip behind it owns the drag), not snag on the
-    // decorative text. [`Scene::hit_test`] skips pointer-transparent nodes.
-    let title_y = h.saturating_sub(style.title_font_size_px) / 2;
-    let mut title_style = TextStyle::new();
-    title_style.fg_color = style.title_color;
-    title_style.font_size_px = style.title_font_size_px;
-    children.push(Scene::Text(
-        TextNode::styled(
-            title.to_string(),
-            Rect::new(TITLE_PAD_X, title_y, width.saturating_sub(TITLE_PAD_X), h),
-            title_style,
-        )
-        .with_layout(LayoutStyle::new().with_pointer_transparent(true)),
-    ));
+        // Title text, left-padded, vertically centred against the strip.
+        // Pointer-transparent: it overlaps the grip, but a press on the title bar
+        // should MOVE the window (the grip behind it owns the drag), not snag on the
+        // decorative text. [`Scene::hit_test`] skips pointer-transparent nodes.
+        let title_y = h.saturating_sub(style.title_font_size_px) / 2;
+        let mut title_style = TextStyle::new();
+        title_style.fg_color = style.title_color;
+        title_style.font_size_px = style.title_font_size_px;
+        children.push(Scene::Text(
+            TextNode::styled(
+                title.to_string(),
+                Rect::new(TITLE_PAD_X, title_y, width.saturating_sub(TITLE_PAD_X), h),
+                title_style,
+            )
+            .with_layout(LayoutStyle::new().with_pointer_transparent(true)),
+        ));
+    }
 
     // Control buttons, right-to-left: close (rightmost), maximize, minimize.
+    // `leftmost` tracks the left edge of the buttons cluster for the controls-only
+    // hit rect below.
     let bw = style.button_width_px;
     let mut right = width;
+    let mut leftmost = width;
     if style.show_close {
         right = right.saturating_sub(bw);
+        leftmost = right;
         push_control(
             &mut children,
             Rect::new(right, 0, bw, h),
@@ -331,6 +361,7 @@ fn build_chrome_strip(
     }
     if style.show_maximize {
         right = right.saturating_sub(bw);
+        leftmost = right;
         push_control(
             &mut children,
             Rect::new(right, 0, bw, h),
@@ -342,6 +373,7 @@ fn build_chrome_strip(
     }
     if style.show_minimize {
         right = right.saturating_sub(bw);
+        leftmost = right;
         push_control(
             &mut children,
             Rect::new(right, 0, bw, h),
@@ -354,10 +386,19 @@ fn build_chrome_strip(
 
     // The strip Container MUST carry its own rect: [`Scene::hit_test`] gates
     // descent on the node's rect, so a `(0,0,0,0)` default would make the whole
-    // strip (grip + buttons) invisible to hit-testing. Spanning the full strip
-    // lets the cursor descend to the tagged button / grip beneath.
+    // strip (grip + buttons) invisible to hit-testing. The FULL strip spans the
+    // window so the cursor descends to the grip / buttons beneath. (R1170)
+    // CONTROLS-ONLY spans ONLY the buttons cluster (`leftmost`..`width`): the
+    // `hit_test` "container contains the point but no child does ⇒ the container
+    // itself" rule would otherwise make a full-width transparent strip absorb the
+    // header presses left of the buttons (the R1122 flat-vs-container lesson), so
+    // a press left of the buttons must fall through to the panel header.
     let mut strip = ContainerNode::new(children).with_tag(WINDOW_CHROME_TAG);
-    strip.rect = Rect::new(0, 0, width, h);
+    strip.rect = if style.controls_only {
+        Rect::new(leftmost, 0, width.saturating_sub(leftmost), h)
+    } else {
+        Rect::new(0, 0, width, h)
+    };
     Scene::Container(strip)
 }
 
@@ -515,6 +556,45 @@ mod tests {
             find_tag(&out, WINDOW_CHROME_MAXIMIZE_TAG).is_some(),
             "max present"
         );
+    }
+
+    #[test]
+    fn controls_only_omits_grip_and_title_and_hit_rect_spans_only_the_buttons() {
+        // R1170 — controls-only mode draws ONLY the buttons (no grip, no title), so
+        // a torn-off panel's own header stays the redock drag handle. The three
+        // buttons are present; the grip is NOT (no OS-move stealing the drag).
+        let style = WindowChromeStyle::new().with_controls_only();
+        let out = inject_window_chrome(empty(), "ignored-title", false, Some((800, 600)), style);
+        assert!(
+            find_tag(&out, WINDOW_CHROME_CLOSE_TAG).is_some(),
+            "close present"
+        );
+        assert!(
+            find_tag(&out, WINDOW_CHROME_MINIMIZE_TAG).is_some(),
+            "min present"
+        );
+        assert!(
+            find_tag(&out, WINDOW_CHROME_MAXIMIZE_TAG).is_some(),
+            "max present"
+        );
+        assert!(
+            find_tag(&out, WINDOW_CHROME_GRIP_TAG).is_none(),
+            "controls-only draws NO grip (the panel header owns the drag)",
+        );
+        // The strip container's hit rect spans ONLY the buttons (right-aligned), so
+        // a press LEFT of them falls through to the panel header (the R1122 lesson:
+        // a full-width transparent container would absorb those presses). 3 buttons
+        // × 46px = 138, anchored to the right edge of the 800px window → x = 662.
+        let strip = find_tag(&out, WINDOW_CHROME_TAG).expect("strip present");
+        let Scene::Container(c) = strip else {
+            panic!("the strip is a Container");
+        };
+        assert_eq!(
+            c.rect.x,
+            800 - 3 * 46,
+            "hit rect starts at the leftmost button"
+        );
+        assert_eq!(c.rect.w, 3 * 46, "hit rect spans only the 3 buttons");
     }
 
     #[test]

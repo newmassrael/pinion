@@ -899,6 +899,27 @@ pub trait WidgetView: pinion_a11y::WidgetA11y {
         None
     }
 
+    /// (R1170 §5.16 §5.39) Per-window CLOSE seam. The shell calls this when a
+    /// window close is requested — the OS close button on a decorated window
+    /// (`WindowEvent::CloseRequested`, also Alt+F4) OR a client-side chrome close
+    /// control ([`pinion_overlay::WINDOW_CHROME_CLOSE_TAG`]). Return `true` if the
+    /// BINDING handled the close (e.g. a torn-off dock panel docks BACK by dropping
+    /// its [`WindowSpec`] from [`Self::windows_signal`]); the shell then does NOT
+    /// exit — the reactive `windows_signal` → `reconcile_windows` pass removes that
+    /// window's OS handle. Return `false` (the default) to take the standalone-app
+    /// convention: the close exits the whole app (the single-window case + a
+    /// multi-window binding's PRIMARY window). The hook runs inside the shell's
+    /// reactive owner, so it may read / write `Signal`s (e.g. `windows_signal`).
+    /// `window_id` is the closing window's [`WindowSpec::id`].
+    ///
+    /// This is the "binding close seam" R1121 deferred: before it, EVERY close
+    /// (any window) exited the app, so a torn-off panel had no way to close to its
+    /// dock without killing the editor.
+    #[must_use]
+    fn window_close_requested(_window_id: &str) -> bool {
+        false
+    }
+
     /// (R1113 §5.51 §5.33) Drag-image (the translucent follower the shell
     /// floats under the cursor while a drag is in flight) style for a drag
     /// whose payload carries `label`. Mirrors

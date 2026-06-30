@@ -1815,9 +1815,9 @@ impl<V: WidgetView> AppShell<V> {
     /// path (§2 #2). `minimize` / `maximize` / move map straight to the winit
     /// `Window` (pinion owns the handle); `close` routes to `event_loop.exit()`,
     /// the same path `WindowEvent::CloseRequested` (the OS X on a decorated
-    /// window) takes. Per-window close (close a secondary, keep the app) needs a
-    /// binding close seam and is a follow-up — this matches the current close
-    /// model exactly.
+    /// window) takes. R1170 §5.16 — the close now routes through the
+    /// [`WidgetView::window_close_requested`] binding seam: a handled close (e.g. a
+    /// torn-off panel docks back) keeps the app alive; an unhandled close exits.
     fn try_chrome_press(&mut self, spec_id: &str, event_loop: &ActiveEventLoop) -> bool {
         let Some(action) = self
             .core
@@ -1827,11 +1827,19 @@ impl<V: WidgetView> AppShell<V> {
             return false;
         };
         if matches!(action, ChromeAction::Close) {
-            eprintln!(
-                "shell: final state = {}",
-                V::fmt_state_log(self.core.cached_state()),
-            );
-            event_loop.exit();
+            // R1170 §5.16 §5.39 — per-window close: offer it to the binding (a
+            // torn-off panel docks back); only an unhandled close exits the app.
+            if !self
+                .core
+                .root_owner()
+                .run(|| V::window_close_requested(spec_id))
+            {
+                eprintln!(
+                    "shell: final state = {}",
+                    V::fmt_state_log(self.core.cached_state()),
+                );
+                event_loop.exit();
+            }
             return true;
         }
         if let Some(window) = self.window_arc_for_spec(spec_id) {
@@ -2609,11 +2617,22 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
         let scale = self.windows.get(&window_id).map_or(1.0, |s| s.scale_factor);
         match event {
             WindowEvent::CloseRequested => {
-                eprintln!(
-                    "shell: final state = {}",
-                    V::fmt_state_log(self.core.cached_state()),
-                );
-                event_loop.exit();
+                // R1170 §5.16 — per-window close seam: offer the close to the
+                // binding first (a torn-off dock panel docks BACK by dropping its
+                // WindowSpec — the `windows_signal` → `reconcile_windows` pass then
+                // removes this OS window). Only an UNHANDLED close (a single-window
+                // app, or a multi-window binding's PRIMARY window) exits the app.
+                if !self
+                    .core
+                    .root_owner()
+                    .run(|| V::window_close_requested(spec_id))
+                {
+                    eprintln!(
+                        "shell: final state = {}",
+                        V::fmt_state_log(self.core.cached_state()),
+                    );
+                    event_loop.exit();
+                }
             }
             // R48 / R51.80 §5.35: all pointer routing flows through
             // the framework `InputRouter` via [`ShellCore`] wrapper
