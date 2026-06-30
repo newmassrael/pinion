@@ -1459,6 +1459,353 @@ fn shade_block_fraction(cluster: &str) -> Option<(u16, u16)> {
     }
 }
 
+/// R1180 §5.41 — a box-drawing glyph (`U+2500`–`U+257F`) decomposed for
+/// geometric synthesis. The same cell-tiling rationale as the block elements:
+/// a box-drawing line is meant to abut its neighbours into a continuous rule,
+/// which a font glyph's advance / bearing cannot guarantee.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum BoxGlyph {
+    /// Straight lines / junctions / doubles / dashes built from four arms.
+    /// Each arm weight: `0` none, `1` light, `2` heavy, `3` double. `dash` is
+    /// `0` for solid, else the dash count (`2`/`3`/`4`) of the single-axis
+    /// dashed glyphs.
+    Arms {
+        up: u8,
+        down: u8,
+        left: u8,
+        right: u8,
+        dash: u8,
+    },
+    /// A light rounded corner: a vertical arm (`down` else up) and a horizontal
+    /// arm (`right` else left) joined by a quarter curve through the centre.
+    Arc { down: bool, right: bool },
+    /// Light diagonal stroke(s): forward slash and/or back slash.
+    Diagonal { slash: bool, backslash: bool },
+}
+
+/// R1180 §5.41 — classify a char in the box-drawing block (`U+2500`–`U+257F`)
+/// into a [`BoxGlyph`], or `None` for anything outside it. The arm-weight table
+/// is the canonical Unicode decomposition (up / down / left / right ∈ none /
+/// light / heavy / double, plus dashed and the rounded / diagonal specials).
+#[allow(clippy::too_many_lines)] // a 128-codepoint Unicode lookup table
+fn box_drawing(c: char) -> Option<BoxGlyph> {
+    use BoxGlyph::{Arc, Arms, Diagonal};
+    let a = |up: u8, down: u8, left: u8, right: u8, dash: u8| Arms {
+        up,
+        down,
+        left,
+        right,
+        dash,
+    };
+    Some(match c {
+        '\u{2500}' => a(0, 0, 1, 1, 0), // ─
+        '\u{2501}' => a(0, 0, 2, 2, 0), // ━
+        '\u{2502}' => a(1, 1, 0, 0, 0), // │
+        '\u{2503}' => a(2, 2, 0, 0, 0), // ┃
+        '\u{2504}' => a(0, 0, 1, 1, 3), // ┄
+        '\u{2505}' => a(0, 0, 2, 2, 3), // ┅
+        '\u{2506}' => a(1, 1, 0, 0, 3), // ┆
+        '\u{2507}' => a(2, 2, 0, 0, 3), // ┇
+        '\u{2508}' => a(0, 0, 1, 1, 4), // ┈
+        '\u{2509}' => a(0, 0, 2, 2, 4), // ┉
+        '\u{250A}' => a(1, 1, 0, 0, 4), // ┊
+        '\u{250B}' => a(2, 2, 0, 0, 4), // ┋
+        '\u{250C}' => a(0, 1, 0, 1, 0), // ┌
+        '\u{250D}' => a(0, 1, 0, 2, 0), // ┍
+        '\u{250E}' => a(0, 2, 0, 1, 0), // ┎
+        '\u{250F}' => a(0, 2, 0, 2, 0), // ┏
+        '\u{2510}' => a(0, 1, 1, 0, 0), // ┐
+        '\u{2511}' => a(0, 1, 2, 0, 0), // ┑
+        '\u{2512}' => a(0, 2, 1, 0, 0), // ┒
+        '\u{2513}' => a(0, 2, 2, 0, 0), // ┓
+        '\u{2514}' => a(1, 0, 0, 1, 0), // └
+        '\u{2515}' => a(1, 0, 0, 2, 0), // ┕
+        '\u{2516}' => a(2, 0, 0, 1, 0), // ┖
+        '\u{2517}' => a(2, 0, 0, 2, 0), // ┗
+        '\u{2518}' => a(1, 0, 1, 0, 0), // ┘
+        '\u{2519}' => a(1, 0, 2, 0, 0), // ┙
+        '\u{251A}' => a(2, 0, 1, 0, 0), // ┚
+        '\u{251B}' => a(2, 0, 2, 0, 0), // ┛
+        '\u{251C}' => a(1, 1, 0, 1, 0), // ├
+        '\u{251D}' => a(1, 1, 0, 2, 0), // ┝
+        '\u{251E}' => a(2, 1, 0, 1, 0), // ┞
+        '\u{251F}' => a(1, 2, 0, 1, 0), // ┟
+        '\u{2520}' => a(2, 2, 0, 1, 0), // ┠
+        '\u{2521}' => a(2, 1, 0, 2, 0), // ┡
+        '\u{2522}' => a(1, 2, 0, 2, 0), // ┢
+        '\u{2523}' => a(2, 2, 0, 2, 0), // ┣
+        '\u{2524}' => a(1, 1, 1, 0, 0), // ┤
+        '\u{2525}' => a(1, 1, 2, 0, 0), // ┥
+        '\u{2526}' => a(2, 1, 1, 0, 0), // ┦
+        '\u{2527}' => a(1, 2, 1, 0, 0), // ┧
+        '\u{2528}' => a(2, 2, 1, 0, 0), // ┨
+        '\u{2529}' => a(2, 1, 2, 0, 0), // ┩
+        '\u{252A}' => a(1, 2, 2, 0, 0), // ┪
+        '\u{252B}' => a(2, 2, 2, 0, 0), // ┫
+        '\u{252C}' => a(0, 1, 1, 1, 0), // ┬
+        '\u{252D}' => a(0, 1, 2, 1, 0), // ┭
+        '\u{252E}' => a(0, 1, 1, 2, 0), // ┮
+        '\u{252F}' => a(0, 1, 2, 2, 0), // ┯
+        '\u{2530}' => a(0, 2, 1, 1, 0), // ┰
+        '\u{2531}' => a(0, 2, 2, 1, 0), // ┱
+        '\u{2532}' => a(0, 2, 1, 2, 0), // ┲
+        '\u{2533}' => a(0, 2, 2, 2, 0), // ┳
+        '\u{2534}' => a(1, 0, 1, 1, 0), // ┴
+        '\u{2535}' => a(1, 0, 2, 1, 0), // ┵
+        '\u{2536}' => a(1, 0, 1, 2, 0), // ┶
+        '\u{2537}' => a(1, 0, 2, 2, 0), // ┷
+        '\u{2538}' => a(2, 0, 1, 1, 0), // ┸
+        '\u{2539}' => a(2, 0, 2, 1, 0), // ┹
+        '\u{253A}' => a(2, 0, 1, 2, 0), // ┺
+        '\u{253B}' => a(2, 0, 2, 2, 0), // ┻
+        '\u{253C}' => a(1, 1, 1, 1, 0), // ┼
+        '\u{253D}' => a(1, 1, 2, 1, 0), // ┽
+        '\u{253E}' => a(1, 1, 1, 2, 0), // ┾
+        '\u{253F}' => a(1, 1, 2, 2, 0), // ┿
+        '\u{2540}' => a(2, 1, 1, 1, 0), // ╀
+        '\u{2541}' => a(1, 2, 1, 1, 0), // ╁
+        '\u{2542}' => a(2, 2, 1, 1, 0), // ╂
+        '\u{2543}' => a(2, 1, 2, 1, 0), // ╃
+        '\u{2544}' => a(2, 1, 1, 2, 0), // ╄
+        '\u{2545}' => a(1, 2, 2, 1, 0), // ╅
+        '\u{2546}' => a(1, 2, 1, 2, 0), // ╆
+        '\u{2547}' => a(2, 1, 2, 2, 0), // ╇
+        '\u{2548}' => a(1, 2, 2, 2, 0), // ╈
+        '\u{2549}' => a(2, 2, 2, 1, 0), // ╉
+        '\u{254A}' => a(2, 2, 1, 2, 0), // ╊
+        '\u{254B}' => a(2, 2, 2, 2, 0), // ╋
+        '\u{254C}' => a(0, 0, 1, 1, 2), // ╌
+        '\u{254D}' => a(0, 0, 2, 2, 2), // ╍
+        '\u{254E}' => a(1, 1, 0, 0, 2), // ╎
+        '\u{254F}' => a(2, 2, 0, 0, 2), // ╏
+        '\u{2550}' => a(0, 0, 3, 3, 0), // ═
+        '\u{2551}' => a(3, 3, 0, 0, 0), // ║
+        '\u{2552}' => a(0, 1, 0, 3, 0), // ╒
+        '\u{2553}' => a(0, 3, 0, 1, 0), // ╓
+        '\u{2554}' => a(0, 3, 0, 3, 0), // ╔
+        '\u{2555}' => a(0, 1, 3, 0, 0), // ╕
+        '\u{2556}' => a(0, 3, 1, 0, 0), // ╖
+        '\u{2557}' => a(0, 3, 3, 0, 0), // ╗
+        '\u{2558}' => a(1, 0, 0, 3, 0), // ╘
+        '\u{2559}' => a(3, 0, 0, 1, 0), // ╙
+        '\u{255A}' => a(3, 0, 0, 3, 0), // ╚
+        '\u{255B}' => a(1, 0, 3, 0, 0), // ╛
+        '\u{255C}' => a(3, 0, 1, 0, 0), // ╜
+        '\u{255D}' => a(3, 0, 3, 0, 0), // ╝
+        '\u{255E}' => a(1, 1, 0, 3, 0), // ╞
+        '\u{255F}' => a(3, 3, 0, 1, 0), // ╟
+        '\u{2560}' => a(3, 3, 0, 3, 0), // ╠
+        '\u{2561}' => a(1, 1, 3, 0, 0), // ╡
+        '\u{2562}' => a(3, 3, 1, 0, 0), // ╢
+        '\u{2563}' => a(3, 3, 3, 0, 0), // ╣
+        '\u{2564}' => a(0, 1, 3, 3, 0), // ╤
+        '\u{2565}' => a(0, 3, 1, 1, 0), // ╥
+        '\u{2566}' => a(0, 3, 3, 3, 0), // ╦
+        '\u{2567}' => a(1, 0, 3, 3, 0), // ╧
+        '\u{2568}' => a(3, 0, 1, 1, 0), // ╨
+        '\u{2569}' => a(3, 0, 3, 3, 0), // ╩
+        '\u{256A}' => a(1, 1, 3, 3, 0), // ╪
+        '\u{256B}' => a(3, 3, 1, 1, 0), // ╫
+        '\u{256C}' => a(3, 3, 3, 3, 0), // ╬
+        '\u{256D}' => Arc {
+            down: true,
+            right: true,
+        }, // ╭
+        '\u{256E}' => Arc {
+            down: true,
+            right: false,
+        }, // ╮
+        '\u{256F}' => Arc {
+            down: false,
+            right: false,
+        }, // ╯
+        '\u{2570}' => Arc {
+            down: false,
+            right: true,
+        }, // ╰
+        '\u{2571}' => Diagonal {
+            slash: true,
+            backslash: false,
+        }, // ╱
+        '\u{2572}' => Diagonal {
+            slash: false,
+            backslash: true,
+        }, // ╲
+        '\u{2573}' => Diagonal {
+            slash: true,
+            backslash: true,
+        }, // ╳
+        '\u{2574}' => a(0, 0, 1, 0, 0), // ╴
+        '\u{2575}' => a(1, 0, 0, 0, 0), // ╵
+        '\u{2576}' => a(0, 0, 0, 1, 0), // ╶
+        '\u{2577}' => a(0, 1, 0, 0, 0), // ╷
+        '\u{2578}' => a(0, 0, 2, 0, 0), // ╸
+        '\u{2579}' => a(2, 0, 0, 0, 0), // ╹
+        '\u{257A}' => a(0, 0, 0, 2, 0), // ╺
+        '\u{257B}' => a(0, 2, 0, 0, 0), // ╻
+        '\u{257C}' => a(0, 0, 1, 2, 0), // ╼
+        '\u{257D}' => a(1, 2, 0, 0, 0), // ╽
+        '\u{257E}' => a(0, 0, 2, 1, 0), // ╾
+        '\u{257F}' => a(2, 1, 0, 0, 0), // ╿
+        _ => return None,
+    })
+}
+
+/// R1180 §5.41 — the per-cell box-drawing line metrics: integer-snapped centre
+/// `(xm, ym)`, light / heavy line thickness `(lw, hw)`, and the double-line
+/// rail half-separation `d`. Thickness derives from the smaller cell dimension
+/// so a line reads the same weight whether horizontal or vertical.
+fn box_line_metrics(cell: KurboRect) -> (f64, f64, f64, f64, f64) {
+    let unit = cell.width().min(cell.height());
+    let lw = (unit / 8.0).round().max(1.0);
+    let hw = (lw * 2.0).max(2.0);
+    let d = lw.max(1.0);
+    let xm = cell.x0 + (cell.width() / 2.0).round();
+    let ym = cell.y0 + (cell.height() / 2.0).round();
+    (xm, ym, lw, hw, d)
+}
+
+/// R1180 §5.41 — the filled rectangles for a [`BoxGlyph::Arms`] glyph (the
+/// straight / junction / double / dashed family). Each present arm runs from
+/// its cell edge to the centre cross; when any arm is `double` every arm
+/// overshoots the centre by the rail half-separation so the central rail box
+/// stays connected, and double arms draw two parallel rails. Integer-snapped
+/// bands keep abutting cells gap-free.
+fn box_arm_rects(
+    up: u8,
+    down: u8,
+    left: u8,
+    right: u8,
+    dash: u8,
+    cell: KurboRect,
+) -> Vec<KurboRect> {
+    let (xm, ym, lw, hw, d) = box_line_metrics(cell);
+    let (x0, y0, x1, y1) = (cell.x0, cell.y0, cell.x1, cell.y1);
+    let mut rects: Vec<KurboRect> = Vec::new();
+
+    if dash != 0 {
+        // The dashed glyphs are pure single-axis: split the full extent into
+        // `dash` dashes, each covering ~70% of its slot.
+        let t = if up.max(down).max(left).max(right) == 2 {
+            hw
+        } else {
+            lw
+        };
+        let n = u32::from(dash);
+        if left > 0 || right > 0 {
+            let yt = (ym - t / 2.0).round();
+            let seg = cell.width() / f64::from(n);
+            for i in 0..n {
+                let sx = x0 + f64::from(i) * seg;
+                rects.push(KurboRect::new(sx + seg * 0.15, yt, sx + seg * 0.85, yt + t));
+            }
+        } else {
+            let xt = (xm - t / 2.0).round();
+            let seg = cell.height() / f64::from(n);
+            for i in 0..n {
+                let sy = y0 + f64::from(i) * seg;
+                rects.push(KurboRect::new(xt, sy + seg * 0.15, xt + t, sy + seg * 0.85));
+            }
+        }
+        return rects;
+    }
+
+    let any_double = up == 3 || down == 3 || left == 3 || right == 3;
+    let over = if any_double { d } else { 0.0 };
+    let push_h = |rects: &mut Vec<KurboRect>, xa: f64, xb: f64, w: u8| {
+        if w == 3 {
+            for off in [-d, d] {
+                let yt = (ym + off - lw / 2.0).round();
+                rects.push(KurboRect::new(xa, yt, xb, yt + lw));
+            }
+        } else if w > 0 {
+            let t = if w == 2 { hw } else { lw };
+            let yt = (ym - t / 2.0).round();
+            rects.push(KurboRect::new(xa, yt, xb, yt + t));
+        }
+    };
+    let push_v = |rects: &mut Vec<KurboRect>, ya: f64, yb: f64, w: u8| {
+        if w == 3 {
+            for off in [-d, d] {
+                let xt = (xm + off - lw / 2.0).round();
+                rects.push(KurboRect::new(xt, ya, xt + lw, yb));
+            }
+        } else if w > 0 {
+            let t = if w == 2 { hw } else { lw };
+            let xt = (xm - t / 2.0).round();
+            rects.push(KurboRect::new(xt, ya, xt + t, yb));
+        }
+    };
+    push_h(&mut rects, x0, xm + over, left);
+    push_h(&mut rects, xm - over, x1, right);
+    push_v(&mut rects, y0, ym + over, up);
+    push_v(&mut rects, ym - over, y1, down);
+    rects
+}
+
+/// R1180 §5.41 — paint a [`BoxGlyph`] in `brush`: straight/junction families as
+/// filled rectangles ([`box_arm_rects`]), rounded corners as a quarter
+/// quadratic curve, and diagonals as corner-to-corner strokes.
+fn paint_box_drawing(
+    out: &mut VelloScene,
+    origin: Affine,
+    brush: PenikoColor,
+    glyph: BoxGlyph,
+    cell: KurboRect,
+) {
+    let (xm, ym, lw, _hw, _d) = box_line_metrics(cell);
+    match glyph {
+        BoxGlyph::Arms {
+            up,
+            down,
+            left,
+            right,
+            dash,
+        } => {
+            for r in &box_arm_rects(up, down, left, right, dash, cell) {
+                out.fill(Fill::NonZero, origin, brush, None, r);
+            }
+        }
+        BoxGlyph::Arc { down, right } => {
+            let r = (cell.width().min(cell.height()) * 0.4).max(1.0);
+            let hx_edge = if right { cell.x1 } else { cell.x0 };
+            let hx_inner = if right { xm + r } else { xm - r };
+            let vy_edge = if down { cell.y1 } else { cell.y0 };
+            let vy_inner = if down { ym + r } else { ym - r };
+            let mut path = BezPath::new();
+            path.move_to((hx_edge, ym));
+            path.line_to((hx_inner, ym));
+            // Quadratic through the sharp corner rounds the bend.
+            path.quad_to((xm, ym), (xm, vy_inner));
+            path.line_to((xm, vy_edge));
+            out.stroke(&Stroke::new(lw), origin, brush, None, &path);
+        }
+        BoxGlyph::Diagonal { slash, backslash } => {
+            let stroke = Stroke::new(lw);
+            if slash {
+                // bottom-left to top-right
+                let line = Line::new((cell.x0, cell.y1), (cell.x1, cell.y0));
+                out.stroke(&stroke, origin, brush, None, &line);
+            }
+            if backslash {
+                let line = Line::new((cell.x0, cell.y0), (cell.x1, cell.y1));
+                out.stroke(&stroke, origin, brush, None, &line);
+            }
+        }
+    }
+}
+
+/// R1180 §5.41 — the single codepoint of a lone-char `cluster`, or `None` for
+/// an empty or multi-char cluster (only a lone codepoint can be a box-drawing
+/// glyph).
+fn lone_char(cluster: &str) -> Option<char> {
+    let mut chars = cluster.chars();
+    match (chars.next(), chars.next()) {
+        (Some(c), None) => Some(c),
+        _ => None,
+    }
+}
+
 /// R1179 §5.41 — paint a synthesised cell graphic for `cluster` in `ink`,
 /// returning `true` when `cluster` was a synthesised glyph class (so the caller
 /// skips the font-glyph path). `ink` is the cell's effective foreground for the
@@ -1489,6 +1836,10 @@ fn paint_cell_synthesis(
         let a = u8::try_from(u16::from(ink.a) * num / den).unwrap_or(u8::MAX);
         let brush = to_peniko(ink.with_alpha(a));
         out.fill(Fill::NonZero, origin, brush, None, &cell);
+        return true;
+    }
+    if let Some(glyph) = lone_char(cluster).and_then(box_drawing) {
+        paint_box_drawing(out, origin, to_peniko(ink), glyph, cell);
         return true;
     }
     false
@@ -4567,5 +4918,97 @@ mod tests {
         for s in ["\u{2588}", "\u{2500}", "M", "", "ab"] {
             assert_eq!(shade_block_fraction(s), None, "{s:?} is not a shade");
         }
+    }
+
+    /// R1180 §5.41 — the box-drawing classifier returns the canonical arm
+    /// decomposition (light / heavy / double / dashed) and the rounded / diagonal
+    /// specials; non-box codepoints (text, blocks, shades) are `None`.
+    #[test]
+    fn r1180_box_drawing_classifies_canonical_glyphs() {
+        use BoxGlyph::{Arc, Arms, Diagonal};
+        let arms = |up, down, left, right, dash| {
+            Some(Arms {
+                up,
+                down,
+                left,
+                right,
+                dash,
+            })
+        };
+        assert_eq!(box_drawing('\u{2500}'), arms(0, 0, 1, 1, 0)); // ─ light
+        assert_eq!(box_drawing('\u{253C}'), arms(1, 1, 1, 1, 0)); // ┼ cross
+        assert_eq!(box_drawing('\u{250F}'), arms(0, 2, 0, 2, 0)); // ┏ heavy
+        assert_eq!(box_drawing('\u{2550}'), arms(0, 0, 3, 3, 0)); // ═ double
+        assert_eq!(box_drawing('\u{2504}'), arms(0, 0, 1, 1, 3)); // ┄ triple dash
+        assert_eq!(
+            box_drawing('\u{256D}'),
+            Some(Arc {
+                down: true,
+                right: true
+            })
+        ); // ╭
+        assert_eq!(
+            box_drawing('\u{2573}'),
+            Some(Diagonal {
+                slash: true,
+                backslash: true
+            }) // ╳
+        );
+        for c in ['M', '\u{2588}', '\u{2591}', ' ', '\u{24FF}', '\u{2580}'] {
+            assert_eq!(box_drawing(c), None, "{c:?} is not box-drawing");
+        }
+    }
+
+    /// R1180 §5.41 — arm rectangles cover the right bands and, crucially,
+    /// adjacent arms overlap at the cell centre so corners / junctions connect.
+    #[test]
+    fn r1180_box_arm_rects_geometry_and_connectivity() {
+        let cell = KurboRect::new(0.0, 0.0, 16.0, 16.0);
+        let span_x = |rs: &[KurboRect]| {
+            let lo = rs.iter().map(|r| r.x0).fold(f64::INFINITY, f64::min);
+            let hi = rs.iter().map(|r| r.x1).fold(f64::NEG_INFINITY, f64::max);
+            (lo, hi)
+        };
+        let span_y = |rs: &[KurboRect]| {
+            let lo = rs.iter().map(|r| r.y0).fold(f64::INFINITY, f64::min);
+            let hi = rs.iter().map(|r| r.y1).fold(f64::NEG_INFINITY, f64::max);
+            (lo, hi)
+        };
+        // ─ light horizontal: left + right half-arms abutting at the centre,
+        // together spanning the full width at mid-height.
+        let h = box_arm_rects(0, 0, 1, 1, 0, cell);
+        assert_eq!(h.len(), 2);
+        assert!(
+            (h[0].x1 - h[1].x0).abs() < 1e-9,
+            "halves abut at the centre"
+        );
+        let (lo, hi) = span_x(&h);
+        assert!(
+            (lo - 0.0).abs() < 1e-9 && (hi - 16.0).abs() < 1e-9,
+            "spans full width"
+        );
+        assert!(h[0].y0 < 8.0 && h[0].y1 > 8.0, "band straddles centre y");
+        // │ light vertical: up + down half-arms spanning the full height.
+        let v = box_arm_rects(1, 1, 0, 0, 0, cell);
+        assert_eq!(v.len(), 2);
+        let (lo, hi) = span_y(&v);
+        assert!(
+            (lo - 0.0).abs() < 1e-9 && (hi - 16.0).abs() < 1e-9,
+            "spans full height"
+        );
+        // ┌ (down+right): the two arms both cover the centre — a connected corner.
+        let corner = box_arm_rects(0, 1, 0, 1, 0, cell);
+        assert_eq!(corner.len(), 2);
+        let covers =
+            |r: &KurboRect, x: f64, y: f64| r.x0 <= x && x <= r.x1 && r.y0 <= y && y <= r.y1;
+        assert_eq!(
+            corner.iter().filter(|r| covers(r, 8.0, 8.0)).count(),
+            2,
+            "both arms must meet at the cell centre",
+        );
+        // ═ double: two parallel rails per horizontal arm (left + right) => 4.
+        assert_eq!(box_arm_rects(0, 0, 3, 3, 0, cell).len(), 4);
+        // ┄ triple dash: three dash segments.
+        assert_eq!(box_arm_rects(0, 0, 1, 1, 3, cell).len(), 3);
     }
 }

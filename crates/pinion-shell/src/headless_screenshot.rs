@@ -2354,6 +2354,77 @@ mod tests {
         assert!(light > 20 && dark < 245, "light={light} dark={dark}");
     }
 
+    /// R1180 §5.41 — box-drawing glyphs synthesise as connected lines: a 3×3
+    /// box `┌─┐ / │ │ / └─┘` renders a continuous top edge across all three top
+    /// cells and a continuous left edge down all three left cells, with no gap
+    /// at the cell boundaries (the corners join the straight runs). Font-
+    /// independent: it asserts line connectivity, not a shaped glyph.
+    #[test]
+    #[ignore = "wgpu adapter cold-boot too slow for default test suite; run with --ignored"]
+    fn r1180_box_drawing_lines_connect_across_cells() {
+        use pinion_core::cell_metric::CellMetric;
+        use pinion_core::scene::{Rect, Scene, TextGridNode};
+        use pinion_core::style::Color;
+        use pinion_core::term_grid::{GridBuffer, TermCell, TermColor};
+        use pinion_runtime::paint_adapter::{FragmentCache, to_vello_cached};
+        use pinion_text::LayoutCache;
+
+        const CW: u32 = 14;
+        const CH: u32 = 14;
+        let metric = CellMetric::new(CW, CH).expect("non-zero cell metric");
+        let fg = TermColor::Rgb(Color::rgb(255, 255, 255));
+        let bg = TermColor::Rgb(Color::rgb(0, 0, 0));
+        let g = |s: &str| TermCell::new(s.to_owned(), fg, bg);
+        // ┌─┐ / │·│ / └─┘  (· = space)
+        let buffer = GridBuffer::new(3, 3)
+            .with_row(0, vec![g("\u{250C}"), g("\u{2500}"), g("\u{2510}")])
+            .with_row(1, vec![g("\u{2502}"), g(" "), g("\u{2502}")])
+            .with_row(2, vec![g("\u{2514}"), g("\u{2500}"), g("\u{2518}")]);
+        let mut node = TextGridNode::new(metric).with_cells(buffer);
+        let (w, h) = (CW * 3, CH * 3);
+        node.rect = Rect::new(0, 0, w, h);
+        let scene = Scene::TextGrid(node);
+
+        let mut text_cache = LayoutCache::new();
+        let mut cache = FragmentCache::new();
+        let mut image_cache = pinion_runtime::image_cache::ImageCache::new();
+        let mut vello = VelloScene::new();
+        to_vello_cached(
+            &scene,
+            &|_| None,
+            &mut text_cache,
+            &mut image_cache,
+            &mut cache,
+            &mut vello,
+        );
+        let mut shot = HeadlessScreenshot::new().expect("headless screenshot bootstrap");
+        let rgba8 = shot
+            .render_to_rgba8(&vello, w, h, vello::peniko::Color::BLACK)
+            .expect("render");
+        let inked = |x: u32, y: u32| -> bool { rgba8[((y * w + x) * 4) as usize] > 120 };
+
+        // Top edge: continuous ink along row 0's mid-height, from the left
+        // corner centre to the right corner centre (across both cell seams).
+        let top_y = CH / 2;
+        let top_gaps: Vec<u32> = (CW / 2 + 1..w - CW / 2 - 1)
+            .filter(|&x| !inked(x, top_y))
+            .collect();
+        assert!(
+            top_gaps.is_empty(),
+            "top box edge must be continuous across cells; gaps at x={top_gaps:?}",
+        );
+        // Left edge: continuous ink down column 0's mid-width across both row
+        // seams.
+        let left_x = CW / 2;
+        let left_gaps: Vec<u32> = (CH / 2 + 1..h - CH / 2 - 1)
+            .filter(|&y| !inked(left_x, y))
+            .collect();
+        assert!(
+            left_gaps.is_empty(),
+            "left box edge must be continuous across cells; gaps at y={left_gaps:?}",
+        );
+    }
+
     /// Zero-dimension viewports short-circuit with a typed error
     /// rather than reaching the wgpu validation layer.
     #[test]

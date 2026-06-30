@@ -20200,6 +20200,50 @@
         "sprag change 0 (data contract/TUI/sec2#6 unchanged); claude logo already solid via R1178 (A-solid)."
       ]
     },
+    "R1180": {
+      "decision_summary": "R1180 §5.41 — box-drawing (B-box) geometric synthesis, completing the block/box render family. box_drawing decomposes the full U+2500-257F block into a BoxGlyph: an arm-weight model (up/down/left/right in none/light/heavy/double + dashed) plus rounded-corner arcs and diagonals. box_arm_rects renders the arm family as integer-snapped filled rects (half-arms abut at centre; any double makes arms overshoot the centre so the rail box connects; doubles draw two rails; dashes split into 2/3/4 segments); rounded corners are a quarter quadratic-bezier stroke, diagonals corner-to-corner strokes. Wired as paint_cell_synthesis's 3rd branch (block -> shade -> box -> glyph). Honest limitation: mixed single/double junctions are approximate, pure-double boxes + straights + simple corners are clean. Vello-arm-local: data contract + TUI + sec2#6 untouched, sprag change 0. With R1178/R1179 the block/box art classes (U+2500-259F) are now fully geometric.",
+      "changes_bullets": [
+        "box_drawing(c): the full U+2500-257F block as BoxGlyph — Arms{up,down,left,right,dash} (weight 0 none/1 light/2 heavy/3 double + dash 2/3/4), Arc{down,right} rounded corners, Diagonal{slash,backslash}. Canonical Unicode arm decomposition, 128-codepoint table.",
+        "box_arm_rects: each present arm runs edge->centre; abutting half-arms + integer-snapped bands keep adjacent cells gap-free; any double arm makes all arms overshoot the centre by the rail half-separation so the central rail box connects; double arms draw two parallel rails; dashed glyphs split into 2/3/4 segments.",
+        "paint_box_drawing: Arms as filled rects, rounded corners as a quarter quadratic-bezier stroke (quad through the sharp corner), diagonals as corner-to-corner Line strokes; line thickness from the smaller cell dim so weight reads equal H/V.",
+        "paint_cell_synthesis 3rd branch: lone_char(cluster).and_then(box_drawing) -> paint_box_drawing; block -> shade -> box -> glyph dispatch order. Block/box art now fully geometric."
+      ],
+      "verification_bullets": [
+        "Unit r1180_box_drawing_classifies_canonical_glyphs: ─/┼/┏/═/┄/╭/╳ map to expected arms/specials; text/block/shade/sub-range are None.",
+        "Unit r1180_box_arm_rects_geometry_and_connectivity: ─/│ are two half-arms abutting at centre spanning full extent; ┌ corner's two arms both cover the centre (connected); ═ double = 4 rails; ┄ = 3 dashes.",
+        "GPU r1180_box_drawing_lines_connect_across_cells (#[ignore]d, lavapipe): a 3x3 ┌─┐/│ │/└─┘ box renders a continuous top edge and left edge across both cell seams (zero gap columns). Font-independent.",
+        "Full pinion-shell --lib --ignored GPU suite (18 tests, lavapipe) green incl. r1178/r1179/r1180 + r991/r992/r993/r995/r1013 (block/shade/box + glyph/cursor/cross-consistency non-regressing).",
+        "cargo fmt clean; workspace clippy (--all-targets --features pinion-runtime/vello, pedantic=deny) 0 warnings; runtime 482 + shell 133 lib green."
+      ],
+      "impact_refs": [
+        "5.41"
+      ],
+      "carry_forward_bullets": [
+        "Known limitation (honest): pure-double boxes (═║╔╗╚╝╠╣╦╩╬) + straight + simple corners connect cleanly via the overshoot rule; mixed single/double junctions (╒╓╕╖... ╪╫) are approximate (rails may slightly over/undershoot) — readable, not glyph-perfect. Refine if a consumer needs exact double junctions.",
+        "Block/box render family (A-solid R1178 / A-shade R1179 / B-box R1180) now COMPLETE for U+2500-259F. sprag change 0 (data contract/TUI/sec2#6 unchanged); re-capture sprag claude logo + any box UI via scene/screenshot to confirm."
+      ],
+      "publishable_decision_summary": "R1180 §5.41 — box-drawing (B-box) geometric synthesis, completing the block/box render family. box_drawing decomposes the full U+2500-257F block into a BoxGlyph: an arm-weight model (up/down/left/right in none/light/heavy/double + dashed) plus rounded-corner arcs and diagonals. box_arm_rects renders the arm family as integer-snapped filled rects (half-arms abut at centre; any double makes arms overshoot the centre so the rail box connects; doubles draw two rails; dashes split into 2/3/4 segments); rounded corners are a quarter quadratic-bezier stroke, diagonals corner-to-corner strokes. Wired as paint_cell_synthesis's 3rd branch (block -> shade -> box -> glyph). Honest limitation: mixed single/double junctions are approximate, pure-double boxes + straights + simple corners are clean. Vello-arm-local: data contract + TUI + sec2#6 untouched, sprag change 0. With R1178/R1179 the block/box art classes (U+2500-259F) are now fully geometric.",
+      "publishable_changes_bullets": [
+        "box_drawing(c): the full U+2500-257F block as BoxGlyph — Arms{up,down,left,right,dash} (weight 0 none/1 light/2 heavy/3 double + dash 2/3/4), Arc{down,right} rounded corners, Diagonal{slash,backslash}. Canonical Unicode arm decomposition, 128-codepoint table.",
+        "box_arm_rects: each present arm runs edge->centre; abutting half-arms + integer-snapped bands keep adjacent cells gap-free; any double arm makes all arms overshoot the centre by the rail half-separation so the central rail box connects; double arms draw two parallel rails; dashed glyphs split into 2/3/4 segments.",
+        "paint_box_drawing: Arms as filled rects, rounded corners as a quarter quadratic-bezier stroke (quad through the sharp corner), diagonals as corner-to-corner Line strokes; line thickness from the smaller cell dim so weight reads equal H/V.",
+        "paint_cell_synthesis 3rd branch: lone_char(cluster).and_then(box_drawing) -> paint_box_drawing; block -> shade -> box -> glyph dispatch order. Block/box art now fully geometric."
+      ],
+      "publishable_verification_bullets": [
+        "Unit r1180_box_drawing_classifies_canonical_glyphs: ─/┼/┏/═/┄/╭/╳ map to expected arms/specials; text/block/shade/sub-range are None.",
+        "Unit r1180_box_arm_rects_geometry_and_connectivity: ─/│ are two half-arms abutting at centre spanning full extent; ┌ corner's two arms both cover the centre (connected); ═ double = 4 rails; ┄ = 3 dashes.",
+        "GPU r1180_box_drawing_lines_connect_across_cells (#[ignore]d, lavapipe): a 3x3 ┌─┐/│ │/└─┘ box renders a continuous top edge and left edge across both cell seams (zero gap columns). Font-independent.",
+        "Full pinion-shell --lib --ignored GPU suite (18 tests, lavapipe) green incl. r1178/r1179/r1180 + r991/r992/r993/r995/r1013 (block/shade/box + glyph/cursor/cross-consistency non-regressing).",
+        "cargo fmt clean; workspace clippy (--all-targets --features pinion-runtime/vello, pedantic=deny) 0 warnings; runtime 482 + shell 133 lib green."
+      ],
+      "publishable_impact_refs": [
+        "5.41"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Known limitation (honest): pure-double boxes (═║╔╗╚╝╠╣╦╩╬) + straight + simple corners connect cleanly via the overshoot rule; mixed single/double junctions (╒╓╕╖... ╪╫) are approximate (rails may slightly over/undershoot) — readable, not glyph-perfect. Refine if a consumer needs exact double junctions.",
+        "Block/box render family (A-solid R1178 / A-shade R1179 / B-box R1180) now COMPLETE for U+2500-259F. sprag change 0 (data contract/TUI/sec2#6 unchanged); re-capture sprag claude logo + any box UI via scene/screenshot to confirm."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
