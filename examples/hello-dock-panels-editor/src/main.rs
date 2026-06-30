@@ -521,7 +521,7 @@ fn redock_cross_window(panel: &str, v: &serde_json::Value) {
             let _ = reorganizer.dock_panel_outer(panel, edge);
             redock_panel_floating(panel);
         }
-        DropResolution::SnapBack => redock_panel_floating(panel),
+        DropResolution::SnapBack { .. } => redock_panel_floating(panel),
         DropResolution::Float => {}
     }
 }
@@ -1360,7 +1360,7 @@ impl WidgetView for DockPanelsEditorView {
         ) {
             DropResolution::Dock { zone, .. } => zone,
             DropResolution::OuterDock { edge } => edge,
-            DropResolution::Float | DropResolution::SnapBack => return None,
+            DropResolution::Float | DropResolution::SnapBack { .. } => return None,
         };
         // R1139 — the bolder cross-window redock tint (over opaque content), not
         // the subtler in-window highlight; the overlay adds an opaque accent

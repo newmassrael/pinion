@@ -2314,13 +2314,19 @@ pub enum DropResolution {
     /// dead-zone ring, or over a non-panel (a splitter / container). The dragged
     /// panel floats into its own window.
     Float,
-    /// Release is over the dragged panel's OWN slot (the cursor never left it) —
-    /// a no-move no-op, NOT a dock (you cannot dock a panel onto itself) and NOT a
-    /// float (a tiny in-place drag should not tear the panel off). The gesture
-    /// snaps back; nothing changes. Distinct from [`Self::Float`] so a self-release
-    /// stays put instead of accidentally floating, and so the preview shows nothing
-    /// over the panel's own area (preview == result).
-    SnapBack,
+    /// Release is over the dragged panel's OWN slot (the cursor never left it).
+    /// `zone` is the banded classification at that self-slot, carried so the caller
+    /// does not re-run [`dock_drop_zone_banded`] (R1164 — the resolver already
+    /// classified it once): a TAB uses an edge `zone` to undock-split out of its own
+    /// well (the R1163 gesture), while the centre / dead-zone — and EVERY
+    /// panel-header drag — is a true no-move snap-back (you cannot dock a panel onto
+    /// itself, and a tiny in-place drag must not float). Distinct from
+    /// [`Self::Float`] so a self-release stays put instead of accidentally floating.
+    SnapBack {
+        /// The banded zone at the panel's own slot — an edge is a tab undock target,
+        /// [`DockDropZone::Center`] / [`DockDropZone::None`] is stay-put.
+        zone: DockDropZone,
+    },
 }
 
 /// (R1159 §5.51, R1162 `source`) THE drop-resolution SSOT: classify a release at
@@ -2369,11 +2375,14 @@ pub fn resolve_drop(
             zone: DockDropZone::Center,
         };
     }
-    // R1162 — over the dragged panel's OWN slot: a no-move snap-back, never a dock
-    // (a panel cannot dock onto itself) nor a float (a tiny in-place drag must not
-    // tear off). Keeps the preview blank over the panel's own area = the result.
+    // R1162/R1164 — over the dragged panel's OWN slot: a snap-back, never a dock (a
+    // panel cannot dock onto itself) nor a float (a tiny in-place drag must not tear
+    // off). Classify the banded zone here and CARRY it: a tab undocks-splits out of
+    // its own well at an edge zone (R1163), so the caller reads `zone` instead of
+    // re-running `dock_drop_zone_banded` (the one classify lives here, the SSOT).
     if target == source {
-        return DropResolution::SnapBack;
+        let zone = dock_drop_zone_banded(f64::from(point.x_rel), f64::from(point.y_rel), tabbing);
+        return DropResolution::SnapBack { zone };
     }
     // A non-panel target (a splitter / container the router climbed to) is not a
     // dock target → float (the R1158 splitter no-op, structurally retired).
@@ -3992,15 +4001,11 @@ impl External for TabWellExternal {
                     target,
                     zone,
                 }),
-                // (R1163) Over the tab's OWN well: an EDGE previews the undock-split
-                // direction (the release undocks it there); the centre / dead-zone
-                // shows nothing (it stays a tab). preview == result.
-                DropResolution::SnapBack => same_window_over.and_then(|p| {
-                    let zone = dock_drop_zone_banded(
-                        f64::from(p.x_rel),
-                        f64::from(p.y_rel),
-                        self.reorganizer.tabbing(),
-                    );
+                // (R1163/R1164) Over the tab's OWN well: an EDGE previews the
+                // undock-split direction (the release undocks it there); the centre /
+                // dead-zone shows nothing (it stays a tab). The `zone` is carried by
+                // `resolve_drop` (R1164 — no re-classify here). preview == result.
+                DropResolution::SnapBack { zone } => {
                     zone_split_geometry(zone)
                         .is_some()
                         .then(|| DockDropPreview {
@@ -4008,7 +4013,7 @@ impl External for TabWellExternal {
                             target: panel.to_string(),
                             zone,
                         })
-                }),
+                }
                 // OuterDock (cross-window only) / Float paint no same-window
                 // highlight.
                 DropResolution::OuterDock { .. } | DropResolution::Float => None,
@@ -4084,21 +4089,14 @@ impl External for TabWellExternal {
             DropResolution::OuterDock { edge } => {
                 let _ = self.reorganizer.dock_panel_outer(panel, edge);
             }
-            // (R1163) Over the tab's OWN well: an EDGE undocks it into a split at
-            // that edge (drag a tab to its own group's edge to split out — the VS
+            // (R1163/R1164) Over the tab's OWN well: an EDGE undocks it into a split
+            // at that edge (drag a tab to its own group's edge to split out — the VS
             // Code / Qt ADS gesture); the CENTRE / dead-zone stays a tab (no move).
-            // `resolve_drop` collapsed the self case to SnapBack before the banded
-            // classify, so re-derive the edge here from the same SSOT classifier.
-            DropResolution::SnapBack => {
-                if let Some(point) = update.over.as_ref() {
-                    let zone = dock_drop_zone_banded(
-                        f64::from(point.x_rel),
-                        f64::from(point.y_rel),
-                        self.reorganizer.tabbing(),
-                    );
-                    if zone_split_geometry(zone).is_some() {
-                        let _ = self.reorganizer.undock_tab_to_zone(panel, zone);
-                    }
+            // `resolve_drop` CARRIES the banded self-slot `zone` (R1164), so the
+            // caller no longer re-classifies — the one classify lives in the SSOT.
+            DropResolution::SnapBack { zone } => {
+                if zone_split_geometry(zone).is_some() {
+                    let _ = self.reorganizer.undock_tab_to_zone(panel, zone);
                 }
             }
             DropResolution::Float => {
@@ -6093,7 +6091,12 @@ impl External for DockPanelExternal {
                 reorg.tabbing(),
             ),
             None if over.is_none() => DropResolution::Float,
-            None => DropResolution::SnapBack,
+            // A coordinator-less (tear-off-only) panel has no topology to classify
+            // against; `over` is Some but inert, so it snaps back with no actionable
+            // zone (a panel never undocks-from-self — that is a tab-only gesture).
+            None => DropResolution::SnapBack {
+                zone: DockDropZone::None,
+            },
         };
         tracing::debug!(
             target: "pinion::dock",
@@ -6151,10 +6154,12 @@ impl External for DockPanelExternal {
                 self.detached.set(true);
                 self.tear_off_fired.set(true);
             }
-            // Over the panel's OWN slot → snap back home (no move). A drag that had
-            // floated restores (remove its window + re-insert the collapsed leaf);
-            // a never-floated drag is the plain inert snap-back.
-            DropResolution::SnapBack => {
+            // Over the panel's OWN slot → snap back home (no move). A panel-header
+            // drag never undocks-from-self (a tab-only gesture), so the carried `zone`
+            // is ignored here. A drag that had floated restores (remove its window +
+            // re-insert the collapsed leaf); a never-floated drag is the plain inert
+            // snap-back.
+            DropResolution::SnapBack { .. } => {
                 let was_floating = self.is_floating();
                 self.send_lifecycle(DockPanelEvent::DockBack);
                 if was_floating {
@@ -10728,10 +10733,22 @@ mod reorganize_tests {
             resolve_drop(Some(&pt("editor_split_h", 0.5, 0.5)), "a", is_panel, true),
             DropResolution::Float
         );
-        // Over the dragged panel's OWN slot → SnapBack (no-op), not a dock nor float.
+        // Over the dragged panel's OWN slot → SnapBack, never a dock nor float. R1164
+        // CARRIES the banded self-slot zone so the tab caller need not re-classify:
+        // the centre self-slot is a stay-put `Center`, an edge self-slot is the tab
+        // undock-split direction (`Left` here). preview / release read this `zone`.
         assert_eq!(
             resolve_drop(Some(&pt("a", 0.5, 0.5)), "a", is_panel, true),
-            DropResolution::SnapBack
+            DropResolution::SnapBack {
+                zone: DockDropZone::Center
+            }
+        );
+        assert_eq!(
+            resolve_drop(Some(&pt("a", 0.08, 0.5)), "a", is_panel, true),
+            DropResolution::SnapBack {
+                zone: DockDropZone::Left
+            },
+            "an edge self-slot carries the undock-split edge (R1164 — no caller re-classify)",
         );
         // An edge band → Dock (split).
         assert_eq!(
