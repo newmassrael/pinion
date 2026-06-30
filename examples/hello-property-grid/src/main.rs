@@ -148,7 +148,10 @@ use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::{Color, Command, DirEntry, Frame, Modifiers, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::barrier::dismiss_barrier;
-use pinion_widget_paint::button::{ButtonColors, ButtonStyle, button_a11y_state, button_scene};
+use pinion_widget_paint::button::{
+    ButtonColors, ButtonStyle, button_a11y_state, button_scene, read_button_focused,
+    read_button_state,
+};
 use pinion_widget_paint::checkbox::{CheckboxStyle, view_checkbox_box};
 use pinion_widget_paint::dialog::{DialogContent, DialogStyle, view_dialog};
 use pinion_widget_paint::file_browser::{FileBrowserMetrics, file_browser_pane};
@@ -304,6 +307,13 @@ const ASSET_DIR_TAG: &str = "asset_fb";
 /// through [`PropertyGridView::update`]).
 const ASSET_OK_TAG: &str = "asset_ok";
 const ASSET_CANCEL_TAG: &str = "asset_cancel";
+/// R1177 — the action buttons' `<tag>.click` intent tags, built via the
+/// drift-safe `intent_tag!` macro (the `EDIT_TF_BLUR_INTENT_TAG` convention)
+/// rather than hand-spelled `"asset_ok.click"` literals in [`PropertyGridView::update`].
+/// A pin test (`r1177_asset_click_intents_match_tags`) asserts they stay
+/// `<ASSET_OK_TAG>.click` / `<ASSET_CANCEL_TAG>.click`.
+const ASSET_OK_CLICK: &str = pinion_core::intent_tag!("asset_ok", "click");
+const ASSET_CANCEL_CLICK: &str = pinion_core::intent_tag!("asset_cancel", "click");
 /// R1176 — the modal scrim / panel paint tags + the file-list scroll key + the
 /// modal-open introspection node tag (a query-only `open` bool).
 const ASSET_SCRIM_TAG: &str = "asset_scrim";
@@ -383,16 +393,22 @@ fn seed_asset_directory() -> Rc<dyn Directory> {
     Rc::new(d)
 }
 
-/// R1176 — open the embedded file picker targeting flat-model slot `slot`:
-/// reset the browser to its root with no selection (a file dialog opens at a
-/// default location), stash the target slot, and install the modal trap. Called
-/// only in an Owner scope (the GUI / `scene/click` activation path, gated in
-/// [`begin_edit`](PropertyGridExternal::begin_edit)). Returns `true`.
-fn open_asset_dialog(slot: usize) -> bool {
-    asset_directory().open_dir(ASSET_ROOT_DIR);
-    use_asset_target().set(Some(slot));
-    asset_modal().open(asset_dialog_members());
-    true
+/// R1177 — the property-value write funnel: clamp a ranged scalar to its
+/// interval ([`clamp_to_range`]) then write the flat-model slot. The ONE SSOT
+/// the scrub / inline-edit commit / RPC `value.<i>` intervene (via
+/// [`PropertyGridExternal::set_value`]) and the asset picker ([`confirm_asset`])
+/// all converge on, so the picked path is clamped + written through identical
+/// machinery — no second copy of the clamp + `set_with` body (the R1176
+/// `confirm_asset` "mirror of set_value" was that duplicate; R1177 lifts it).
+fn write_property_value(model: &Signal<Vec<CellValue>>, slot: usize, value: CellValue) {
+    let value = clamp_to_range(slot, value);
+    model.set_with(|prev| {
+        let mut next = prev.clone();
+        if let Some(cell) = next.get_mut(slot) {
+            *cell = value;
+        }
+        next
+    });
 }
 
 /// R1176 — dismiss the picker without choosing (the Cancel / Escape path): drop
@@ -402,12 +418,12 @@ fn close_asset_dialog() {
     asset_modal().close();
 }
 
-/// R1176 — confirm the picked asset: write the file the browser has selected
-/// into the target slot through the grid's [`set_value`](PropertyGridExternal::set_value)
-/// SSOT (so the write is RPC-visible via `value.<i>` and reset-tracked like any
-/// edit), then close the modal. A no-op when nothing is selected (the OK gate)
-/// or the target slot was lost. The write + close [`batch`] so the view
-/// re-renders once.
+/// R1176/R1177 — confirm the picked asset: write the selected file into the
+/// target slot through the [`write_property_value`] SSOT (the same funnel
+/// `set_value` uses, so the write is clamped + RPC-visible via `value.<i>` +
+/// reset-tracked like any edit), then close the modal. A no-op when nothing is
+/// selected (the OK gate) or the target slot was lost. The write + close
+/// [`batch`] so the view re-renders once.
 fn confirm_asset() {
     let Some(path) = asset_directory().selected() else {
         return;
@@ -416,19 +432,8 @@ fn confirm_asset() {
         return;
     };
     let picker = asset_modal();
-    let cells = use_property_model();
     batch(|| {
-        // Mirror `set_value`'s funnel (clamp + `set_with`) on the shared model
-        // `Signal` — the same SSOT the RPC `value.<i>` intervene and reset read,
-        // so the picked path journals like any other edit (clamp is a no-op for
-        // a `Text` value).
-        cells.set_with(|prev| {
-            let mut next = prev.clone();
-            if let Some(cell) = next.get_mut(slot) {
-                *cell = clamp_to_range(slot, CellValue::Text(path.clone()));
-            }
-            next
-        });
+        write_property_value(&use_property_model(), slot, CellValue::Text(path));
         use_asset_target().set(None);
         picker.close();
     });
@@ -1323,6 +1328,15 @@ struct PropertyGridExternal {
     editor: Rc<TextEditState>,
     popup_cursor: Rc<Signal<Option<usize>>>,
     popup_hover: Rc<Signal<Option<usize>>>,
+    /// R1177 — the embedded asset picker's state, captured as `Rc`s (the
+    /// `model` / `search` pattern) so [`open_asset_dialog`](Self::open_asset_dialog)
+    /// is a method over captured state with NO `use_*` hooks. It opens Owner-free,
+    /// so the picker is RPC-openable via `invoke begin <asset_slot>` exactly like
+    /// the choice / colour popups (the R1176 free-fn-with-hooks shape no-op'd a
+    /// direct RPC `begin` on the RPC thread — the §2 #2 asymmetry this clears).
+    asset_modal: Rc<ModalState>,
+    asset_dir: Rc<DirectoryState>,
+    asset_target: Rc<Signal<Option<usize>>>,
     /// R875 / R931 — the numeric leaf armed by a `PointerDown` over a numeric
     /// row, before the first `pointer_move` calibrates the drag. `None` for a
     /// press on a non-numeric row (which never scrubs). A [`ValueRef`] so a
@@ -1363,6 +1377,14 @@ impl PropertyGridExternal {
             editor,
             popup_cursor,
             popup_hover,
+            // R1177 — resolved via their hooks (like `defaults` / `search`), the
+            // same cached `Rc`s the view / access_node / reducer read (Owner::cache
+            // dedup). Captured so `open_asset_dialog` opens the picker Owner-free.
+            asset_modal: use_modal(ASSET_MODAL_KEY),
+            asset_dir: use_directory_state(ASSET_DIR_TAG, seed_asset_directory, || {
+                ASSET_ROOT_DIR.to_string()
+            }),
+            asset_target: use_asset_target(),
             scrub_armed: Cell::new(None),
             scrub_cal: DragCalibration::new(),
         }
@@ -1555,24 +1577,13 @@ impl PropertyGridExternal {
     }
 
     /// Write a typed value into the model slot — the scrub's live commit. It
-    /// writes the same shared model `Signal` the inline editor (`commit_edit`)
-    /// and the RPC `value.<i>` intervene also write — each through its own path,
-    /// converging on one source of truth. R964 — a ranged scalar's Float write
-    /// is clamped to its interval here ([`clamp_to_range`]), so this is the one
-    /// funnel that bounds every writer (the data-grid `set_cell` clamp pattern).
+    /// writes the same shared model `Signal` the inline editor (`commit_edit`),
+    /// the RPC `value.<i>` intervene, and the asset picker ([`confirm_asset`])
+    /// also write, converging on one source of truth via [`write_property_value`]
+    /// (R964 — a ranged scalar's Float write is clamped to its interval there, so
+    /// that one funnel bounds every writer — the data-grid `set_cell` pattern).
     fn set_value(&self, source: usize, value: CellValue) {
-        // R964 — bound a ranged scalar's Float write to its interval. The one
-        // clamp funnel: the scrub, the inline-edit commit, and the RPC
-        // `value.<i>` intervene all converge here (the data-grid `set_cell`
-        // clamp this doc once noted was absent).
-        let value = clamp_to_range(source, value);
-        self.model.set_with(|prev| {
-            let mut next = prev.clone();
-            if let Some(slot) = next.get_mut(source) {
-                *slot = value;
-            }
-            next
-        });
+        write_property_value(&self.model, source, value);
     }
 
     /// R931 — the array sub-model length (the element count). The SSOT for the
@@ -1842,14 +1853,13 @@ impl PropertyGridExternal {
         };
         // R1176 — an asset-path leaf opens the embedded file picker instead of
         // the inline text editor (the Choice / Colour precedent: a non-text
-        // editing surface). The picker is a GUI / Owner-scope affordance: a
-        // direct RPC `begin` (no Owner scope) is a no-op — an AI sets the path
-        // with `intervene value.<i>` — while the GUI / `scene/click` activation
-        // runs in the shell Owner scope, where the picker's reactive state
-        // (modal / directory / target slot) resolves.
+        // editing surface). R1177 — `open_asset_dialog` is a method over captured
+        // `Rc`s (no hooks), so it opens Owner-free: a direct RPC `invoke begin`
+        // opens the picker for an AI to drive, exactly like the choice / colour
+        // popups (no more GUI-only asymmetry).
         if let ValueRef::Scalar(i) = row {
             if is_asset_slot(i) {
-                return Owner::current().is_some() && open_asset_dialog(i);
+                return self.open_asset_dialog(i);
             }
         }
         // Choice / Colour are scalar-only (an array element is a `Float`); their
@@ -1932,6 +1942,19 @@ impl PropertyGridExternal {
         self.popup_cursor.set(Some(cursor));
         self.popup_hover.set(None);
         self.editor.seed(c.to_hex());
+        true
+    }
+
+    /// R1176/R1177 — open the embedded file picker targeting flat-model slot
+    /// `slot`: reset the browser to its root with no selection (a file dialog
+    /// opens at a default location), stash the target slot, and install the modal
+    /// trap. A method over captured `Rc`s (the `open_choice` / `open_color`
+    /// shape — no `use_*` hooks), so it opens Owner-free and is RPC-openable via
+    /// `invoke begin <asset_slot>`. Returns `true`.
+    fn open_asset_dialog(&self, slot: usize) -> bool {
+        self.asset_dir.open_dir(ASSET_ROOT_DIR);
+        self.asset_target.set(Some(slot));
+        self.asset_modal.open(asset_dialog_members());
         true
     }
 
@@ -3718,26 +3741,22 @@ fn asset_dialog_style() -> DialogStyle {
     }
 }
 
-/// R1176 — one dialog action button. Painted with a **static** posture (Idle, or
-/// Disabled for the OK selection gate): the button is fully functional — a
-/// pointer click emits its `<tag>.click` intent and `apply_aria_activate` drives
-/// keyboard Enter / Space — so only its hover / press / focus state-layer is a
-/// follow-up (it carries no scene-read posture, leaving `RootState` unchanged).
+/// R1176/R1177 — one dialog action button, painted with the **live** posture
+/// (`state` + keyboard `focused`) the caller read from the scene via `read_state`
+/// — so the painted hover / press / focus ring matches the a11y tree's reported
+/// posture (one source, no paint↔a11y divergence). The OK selection gate is
+/// applied by the caller (passing `ButtonState::Disabled`).
 fn asset_action_button(
     tag: &'static str,
     label: &str,
-    disabled: bool,
+    state: ButtonState,
+    focused: bool,
     colors: &ButtonColors,
 ) -> Scene {
-    let state = if disabled {
-        ButtonState::Disabled
-    } else {
-        ButtonState::Idle
-    };
     button_scene(
         label,
         state,
-        false,
+        focused,
         tag,
         colors,
         &ButtonStyle::m3_default(tag)
@@ -3753,13 +3772,14 @@ fn asset_action_button(
 /// (read reactively from the shared [`DirectoryState`]). The property grid is
 /// the Nth consumer of each substrate (modal / directory / dialog chrome /
 /// browser pane), the 1st to embed the picker in a host widget.
-fn view_asset_dialog(theme: &Theme) -> Vec<Scene> {
+fn view_asset_dialog(theme: &Theme, buttons: AssetButtons) -> Vec<Scene> {
     if !asset_modal().is_open() {
         return Vec::new();
     }
     let dir = asset_directory();
     let scroll = use_scroll_state(ASSET_SCROLL_KEY);
     let has_selection = dir.selected().is_some();
+    let (ok_state, cancel_state, ok_focused, cancel_focused) = buttons;
     let pane = file_browser_pane(
         ASSET_DIR_TAG,
         &dir,
@@ -3778,13 +3798,22 @@ fn view_asset_dialog(theme: &Theme) -> Vec<Scene> {
     let cancel = asset_action_button(
         ASSET_CANCEL_TAG,
         "Cancel",
-        false,
+        cancel_state,
+        cancel_focused,
         &ButtonColors::filled_tonal(theme),
     );
+    // OK gated disabled until a file is selected (the gate overrides the read
+    // posture; same gate the a11y tree applies, so paint + a11y agree).
+    let ok_posture = if has_selection {
+        ok_state
+    } else {
+        ButtonState::Disabled
+    };
     let ok = asset_action_button(
         ASSET_OK_TAG,
         "Open",
-        !has_selection,
+        ok_posture,
+        ok_focused,
         &ButtonColors::accent(theme),
     );
     vec![view_dialog(
@@ -3806,7 +3835,7 @@ fn view_asset_dialog(theme: &Theme) -> Vec<Scene> {
 /// closed): an aria-modal `Dialog` owning the file `list` (the lifted
 /// windowed-list SSOT) + the two action buttons, OK aria-disabled until a file
 /// is selected. A free helper so `access_node` stays under the line cap.
-fn asset_dialog_access_nodes(focused: Option<&str>) -> Vec<AccessNode> {
+fn asset_dialog_access_nodes(buttons: AssetButtons) -> Vec<AccessNode> {
     if !asset_modal().is_open() {
         return Vec::new();
     }
@@ -3820,6 +3849,10 @@ fn asset_dialog_access_nodes(focused: Option<&str>) -> Vec<AccessNode> {
         ASSET_ROW_PITCH,
         ASSET_OVERSCAN,
     );
+    // R1177 — the SAME live postures the paint reads (`read_state`), with the
+    // SAME OK selection gate, so the AT tree never advertises a posture the
+    // painted button contradicts.
+    let (ok_state, cancel_state, ok_focused, cancel_focused) = buttons;
     let mut nodes = vec![
         AccessNode::new(ASSET_PANEL_TAG, AriaRole::Dialog)
             .with_modal()
@@ -3836,21 +3869,18 @@ fn asset_dialog_access_nodes(focused: Option<&str>) -> Vec<AccessNode> {
     ));
     nodes.push(
         AccessNode::new(ASSET_CANCEL_TAG, AriaRole::Button)
-            .with_state(button_a11y_state(
-                ButtonState::Idle,
-                focused == Some(ASSET_CANCEL_TAG),
-            ))
+            .with_state(button_a11y_state(cancel_state, cancel_focused))
             .with_position_in_set(1)
             .with_size_of_set(2),
     );
-    let ok_state = if dir.selected().is_some() {
-        ButtonState::Idle
+    let ok_posture = if dir.selected().is_some() {
+        ok_state
     } else {
         ButtonState::Disabled
     };
     nodes.push(
         AccessNode::new(ASSET_OK_TAG, AriaRole::Button)
-            .with_state(button_a11y_state(ok_state, focused == Some(ASSET_OK_TAG)))
+            .with_state(button_a11y_state(ok_posture, ok_focused))
             .with_position_in_set(2)
             .with_size_of_set(2),
     );
@@ -3897,7 +3927,7 @@ fn view_title(search_state: TextFieldState, search_caret: u32, theme: &Theme) ->
 // R1026 — rustfmt's reflow pushed this example view past too_many_lines (100).
 #[allow(clippy::trivially_copy_pass_by_ref, clippy::too_many_lines)]
 fn view(state: RootState, _frame: &Frame) -> Scene {
-    let ((edit_state, edit_caret), (search_state, search_caret)) = state;
+    let ((edit_state, edit_caret), (search_state, search_caret), asset_buttons) = state;
     let theme = use_theme(THEME_TAG).theme_animated();
     let model = use_property_model().get();
     // R919 — the class-default baseline, to paint a reset arrow on any row whose
@@ -4027,7 +4057,7 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
     ));
     // R1176 — the embedded asset file picker floats over everything when open
     // (the R788 modal scrim + centred panel + the lifted file_browser_pane).
-    children.extend(view_asset_dialog(&theme));
+    children.extend(view_asset_dialog(&theme, asset_buttons));
 
     Scene::Container(
         ContainerNode::new(children)
@@ -4045,12 +4075,20 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
 
 // ─── WidgetCore impl ──────────────────────────────────────────────
 
+/// R1177 — the two asset-dialog action buttons' live posture read from the
+/// painted scene — `(ok_state, cancel_state, ok_focused, cancel_focused)`. So
+/// the dialog buttons' PAINT and a11y read one source (the R1176 static-posture
+/// cut painted `focused = false` while a11y reported live focus — a paint↔a11y
+/// divergence; this threads the live posture to both).
+type AssetButtons = (ButtonState, ButtonState, bool, bool);
+
 /// Cached paint posture for the two text fields — `(inline-cell-editor,
-/// search-box)`, each `(interaction-state, caret)`. The model / cursor /
-/// edit-mode / filter query are read reactively in the view fn (the todomvc
-/// shape: read_state carries the field postures, hooks carry the reactive
+/// search-box)`, each `(interaction-state, caret)` — plus the asset dialog's
+/// action-button postures ([`AssetButtons`]). The model / cursor / edit-mode /
+/// filter query are read reactively in the view fn (the todomvc shape:
+/// read_state carries the field + button postures, hooks carry the reactive
 /// model + the search text).
-type RootState = ((TextFieldState, u32), (TextFieldState, u32));
+type RootState = ((TextFieldState, u32), (TextFieldState, u32), AssetButtons);
 
 struct PropertyGridView;
 
@@ -4153,6 +4191,14 @@ impl WidgetCore for PropertyGridView {
         (
             tf_paint::read_text_field_state(scene, EDIT_TF_TAG),
             tf_paint::read_text_field_state(scene, SEARCH_TF_TAG),
+            // R1177 — the asset dialog buttons' live posture (state + focus), so
+            // paint reads the same source a11y does (no static-`false` divergence).
+            (
+                read_button_state(scene, ASSET_OK_TAG),
+                read_button_state(scene, ASSET_CANCEL_TAG),
+                read_button_focused(scene, ASSET_OK_TAG),
+                read_button_focused(scene, ASSET_CANCEL_TAG),
+            ),
         )
     }
 
@@ -4187,8 +4233,8 @@ impl WidgetCore for PropertyGridView {
         // lifecycle (the `<tag>.click` intent the `ButtonExternal`s emit). The
         // browser's row clicks route to the `DirectoryExternal` directly.
         match intent.tag_str() {
-            "asset_ok.click" => confirm_asset(),
-            "asset_cancel.click" => close_asset_dialog(),
+            t if t == ASSET_OK_CLICK => confirm_asset(),
+            t if t == ASSET_CANCEL_CLICK => close_asset_dialog(),
             _ => {}
         }
         Vec::new()
@@ -4413,7 +4459,7 @@ impl WidgetA11y for PropertyGridView {
         // R873 — the live search box is a Tab stop; emit its textbox node (the
         // lifted `text_field_a11y_node` SSOT) so an AT user who tabs into it
         // hears a named `textbox` with the current query, not a silent node.
-        let ((_, _), (search_posture, _)) = *state;
+        let ((_, _), (search_posture, _), _) = *state;
         nodes.push(
             tf_paint::text_field_a11y_node(
                 SEARCH_TF_TAG,
@@ -4438,7 +4484,7 @@ impl WidgetA11y for PropertyGridView {
         // never advertises an unpainted popup — R873).
         nodes.extend(popup_listbox_nodes(&model));
         // R1176 — when the asset picker is open, append its modal dialog tree.
-        nodes.extend(asset_dialog_access_nodes(focused));
+        nodes.extend(asset_dialog_access_nodes(state.2));
         nodes
     }
 
@@ -6272,6 +6318,15 @@ mod tests {
     }
 
     #[test]
+    fn r1177_asset_click_intents_match_tags() {
+        // Drift guard (F4): the `<tag>.click` intent consts the reducer matches
+        // must track the button tags — rename a tag and this fails before the
+        // button silently stops working.
+        assert_eq!(ASSET_OK_CLICK, format!("{ASSET_OK_TAG}.click"));
+        assert_eq!(ASSET_CANCEL_CLICK, format!("{ASSET_CANCEL_TAG}.click"));
+    }
+
+    #[test]
     fn r1176_mesh_cell_opens_picker_navigates_and_writes_path() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
@@ -6550,18 +6605,12 @@ mod tests {
         Owner::new().run(|| {
             let mut scene = boot_scene();
             // Closed: no popup paint, no listbox a11y.
-            let closed = view(
-                ((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)),
-                &Frame::new(),
-            );
+            let closed = view(idle_state(), &Frame::new());
             assert!(
                 !closed.contains_tag(CHOICE_POPUP_TAG),
                 "no panel when closed"
             );
-            let closed_nodes = PropertyGridView::access_node(
-                &((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)),
-                Some(GRID_TAG),
-            );
+            let closed_nodes = PropertyGridView::access_node(&idle_state(), Some(GRID_TAG));
             assert!(
                 !closed_nodes
                     .iter()
@@ -6570,10 +6619,7 @@ mod tests {
             );
             // Open the Blend popup.
             open_choice(&mut scene, BLEND_ROW);
-            let open = view(
-                ((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)),
-                &Frame::new(),
-            );
+            let open = view(idle_state(), &Frame::new());
             assert!(
                 open.contains_tag(CHOICE_POPUP_TAG),
                 "panel painted when open"
@@ -6590,10 +6636,7 @@ mod tests {
                 open.contains_tag(&format!("{GRID_TAG}#opt3")),
                 "option 3 painted"
             );
-            let nodes = PropertyGridView::access_node(
-                &((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)),
-                Some(GRID_TAG),
-            );
+            let nodes = PropertyGridView::access_node(&idle_state(), Some(GRID_TAG));
             let listbox = nodes
                 .iter()
                 .find(|n| n.role == pinion_a11y::AriaRole::Listbox)
@@ -6746,19 +6789,13 @@ mod tests {
     fn r869_view_and_a11y_expose_the_open_color_popup() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            let closed = view(
-                ((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)),
-                &Frame::new(),
-            );
+            let closed = view(idle_state(), &Frame::new());
             assert!(
                 !closed.contains_tag(COLOR_POPUP_TAG),
                 "no colour panel when closed"
             );
             open_choice(&mut scene, TINT_ROW);
-            let open = view(
-                ((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)),
-                &Frame::new(),
-            );
+            let open = view(idle_state(), &Frame::new());
             assert!(
                 open.contains_tag(COLOR_POPUP_TAG),
                 "colour panel painted when open"
@@ -6775,10 +6812,7 @@ mod tests {
                 open.contains_tag(&format!("{GRID_TAG}#sw7")),
                 "swatch 7 painted"
             );
-            let nodes = PropertyGridView::access_node(
-                &((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)),
-                Some(GRID_TAG),
-            );
+            let nodes = PropertyGridView::access_node(&idle_state(), Some(GRID_TAG));
             let listbox = nodes
                 .iter()
                 .find(|n| n.role == pinion_a11y::AriaRole::Listbox)
@@ -6830,31 +6864,22 @@ mod tests {
             );
             // Choice popup open -> the active option (Blend cursor boots 0).
             open_choice(&mut scene, BLEND_ROW);
-            let f = PropertyGridView::access_focus_target(
-                &((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)),
-                Some(GRID_TAG),
-            )
-            .expect("composite");
+            let f = PropertyGridView::access_focus_target(&idle_state(), Some(GRID_TAG))
+                .expect("composite");
             assert_eq!(
                 f.active_descendant.as_deref(),
                 Some(format!("{GRID_TAG}#opt0").as_str())
             );
             // Colour popup open -> the active swatch (Tint boots Blue=4).
             open_choice(&mut scene, TINT_ROW);
-            let f = PropertyGridView::access_focus_target(
-                &((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)),
-                Some(GRID_TAG),
-            )
-            .expect("composite");
+            let f = PropertyGridView::access_focus_target(&idle_state(), Some(GRID_TAG))
+                .expect("composite");
             assert_eq!(
                 f.active_descendant.as_deref(),
                 Some(format!("{GRID_TAG}#sw4").as_str())
             );
             // Focus elsewhere -> atomic, no active descendant.
-            let other = PropertyGridView::access_focus_target(
-                &((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)),
-                Some(EDIT_TF_TAG),
-            );
+            let other = PropertyGridView::access_focus_target(&idle_state(), Some(EDIT_TF_TAG));
             assert!(other.expect("atomic").active_descendant.is_none());
         });
     }
@@ -6870,10 +6895,7 @@ mod tests {
                 "hex field seeded Blue"
             );
             // The popup paints the hex field (the shared EDIT_TF).
-            let painted = view(
-                ((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)),
-                &Frame::new(),
-            );
+            let painted = view(idle_state(), &Frame::new());
             assert!(
                 painted.contains_tag(EDIT_TF_TAG),
                 "hex field painted in the colour popup"
@@ -6908,10 +6930,7 @@ mod tests {
     fn r836_view_carries_grid_and_row_tags() {
         Owner::new().run(|| {
             let _ = boot_scene();
-            let scene = view(
-                ((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)),
-                &Frame::new(),
-            );
+            let scene = view(idle_state(), &Frame::new());
             assert!(scene.contains_tag(GRID_TAG), "grid root painted");
             assert!(
                 scene.contains_tag(&format!("{GRID_TAG}#0")),
@@ -6989,19 +7008,13 @@ mod tests {
     fn r836_view_paints_inline_field_only_while_editing() {
         Owner::new().run(|| {
             let _ = boot_scene();
-            let before = view(
-                ((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)),
-                &Frame::new(),
-            );
+            let before = view(idle_state(), &Frame::new());
             assert!(
                 !before.contains_tag(EDIT_TF_TAG),
                 "no inline field when not editing"
             );
             use_editing_row().set(Some(ValueRef::Scalar(0)));
-            let during = view(
-                ((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)),
-                &Frame::new(),
-            );
+            let during = view(idle_state(), &Frame::new());
             assert!(
                 during.contains_tag(EDIT_TF_TAG),
                 "inline field painted in the editing row"
@@ -7012,7 +7025,7 @@ mod tests {
     #[test]
     fn r836_view_contains_paint_tag() {
         pinion_core::test_fixtures::assert_widget_view_carries_tag::<PropertyGridView>(
-            ((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)),
+            idle_state(),
             &Frame::default(),
         );
     }
@@ -7067,10 +7080,7 @@ mod tests {
     fn r872_search_field_painted_and_escape_clears() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            let painted = view(
-                ((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)),
-                &Frame::new(),
-            );
+            let painted = view(idle_state(), &Frame::new());
             assert!(
                 painted.contains_tag(SEARCH_TF_TAG),
                 "search box painted in the title band"
@@ -7093,9 +7103,14 @@ mod tests {
 
     // ----- R873 audit remediation (a11y) -----
 
-    /// A neutral RootState (both fields idle) for a11y assertions.
+    /// A neutral RootState (both text fields + both dialog buttons idle, no
+    /// focus) for view / a11y assertions.
     fn idle_state() -> RootState {
-        ((TextFieldState::Idle, 0), (TextFieldState::Idle, 0))
+        (
+            (TextFieldState::Idle, 0),
+            (TextFieldState::Idle, 0),
+            (ButtonState::Idle, ButtonState::Idle, false, false),
+        )
     }
 
     #[test]

@@ -20070,6 +20070,50 @@
         "a 2nd dialog-in-host consumer would justify lifting an embeddable file-dialog component (not yet)"
       ]
     },
+    "R1177": {
+      "decision_summary": "R1177 §5.38 audit-clearance of R1176 picker smells: now RPC-openable (captured Rcs->method, no Owner-guard) like choice/color; confirm routes the set_value funnel SSOT; dialog buttons paint+a11y one posture.",
+      "changes_bullets": [
+        "F1: asset Rcs = struct fields -> open_asset_dialog a method -> picker RPC-openable (no Owner-guard)",
+        "F2: write_property_value funnel SSOT — set_value + confirm_asset both route it (no clamp+set copy)",
+        "F3: button posture (state+focused) via RootState -> paint + a11y read one source (no divergence)",
+        "F4: ASSET_*_CLICK = intent_tag! consts + drift pin test (was hand-spelled .click literals)"
+      ],
+      "verification_bullets": [
+        "RPC-open proven: demo opens the picker via invoke begin (the path R1176's Owner-guard no-op'd)",
+        "81 unit tests (R1176 4 + R1177 pin); workspace 198 ok 0-fail; clippy -D pedantic +vello + fmt",
+        "independent reviewer flagged F1(BLOCKER §2#2)/F2/F3/F4; all cleared this round"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.15",
+        "5.39"
+      ],
+      "carry_forward_bullets": [
+        "R1176 F5 (slot-1 Tag->Mesh, asset filed under Identity category) = NIT, illustrative, left as-is",
+        "dialog-in-host still 1st consumer; a 2nd would justify lifting an embeddable file-dialog (unchanged)"
+      ],
+      "publishable_decision_summary": "R1177 §5.38 audit-clearance of R1176 picker smells: now RPC-openable (captured Rcs->method, no Owner-guard) like choice/color; confirm routes the set_value funnel SSOT; dialog buttons paint+a11y one posture.",
+      "publishable_changes_bullets": [
+        "F1: asset Rcs = struct fields -> open_asset_dialog a method -> picker RPC-openable (no Owner-guard)",
+        "F2: write_property_value funnel SSOT — set_value + confirm_asset both route it (no clamp+set copy)",
+        "F3: button posture (state+focused) via RootState -> paint + a11y read one source (no divergence)",
+        "F4: ASSET_*_CLICK = intent_tag! consts + drift pin test (was hand-spelled .click literals)"
+      ],
+      "publishable_verification_bullets": [
+        "RPC-open proven: demo opens the picker via invoke begin (the path R1176's Owner-guard no-op'd)",
+        "81 unit tests (R1176 4 + R1177 pin); workspace 198 ok 0-fail; clippy -D pedantic +vello + fmt",
+        "independent reviewer flagged F1(BLOCKER §2#2)/F2/F3/F4; all cleared this round"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.15",
+        "5.39"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R1176 F5 (slot-1 Tag->Mesh, asset filed under Identity category) = NIT, illustrative, left as-is",
+        "dialog-in-host still 1st consumer; a 2nd would justify lifting an embeddable file-dialog (unchanged)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

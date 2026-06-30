@@ -66,16 +66,12 @@ def mesh(tf) -> str:
 
 
 def open_picker(tf) -> None:
-    """Activate the Mesh row from the keyboard (the shell Owner-scope path that
-    opens the embedded picker — a direct RPC `begin` is a no-op by design)."""
-    tf.request("focus/set", {"tag": GRID})
-    wait_until(
-        lambda: tf.request("focus/get").result.get("focused") == GRID,
-        desc="grid focused",
-    )
-    tf.intervene("/external/cursor", str(MESH))
-    tf.key(path=GRID, name="Enter")
-    wait_until(lambda: modal_open(tf), timeout=4.0, desc="the picker opened")
+    """Open the embedded picker by activating the Mesh leaf over RPC —
+    `invoke begin <mesh_slot>` (R1177: the picker is RPC-openable like the choice
+    / colour popups, so an AI drives the whole open->browse->confirm round-trip;
+    before R1177 this direct RPC begin no-op'd and the picker was GUI-only)."""
+    tf.invoke("/external/begin", MESH)
+    wait_until(lambda: modal_open(tf), timeout=4.0, desc="the picker opened over RPC")
 
 
 def body() -> None:
@@ -84,9 +80,9 @@ def body() -> None:
         assert_eq(mesh(tf), "/proj/meshes/hero.fbx", "Mesh boots at the seeded path")
         assert_eq(modal_open(tf), False, "the picker is shut at boot")
 
-        # ── (B) open the picker by activating the Mesh row ───────────
+        # ── (B) open the picker over RPC (invoke begin — AI-driveable) ─
         open_picker(tf)
-        assert_eq(modal_open(tf), True, "activating Mesh opened the modal")
+        assert_eq(modal_open(tf), True, "invoke begin on the Mesh slot opened the modal")
         assert_eq(tf.query(dpath("cwd")), "/proj", "the browser opens at /proj")
         assert_eq(tf.query(dpath("selected")), None, "nothing selected on open")
         assert_eq(tf.query(dpath("count")), 3, "/proj has 3 entries")
