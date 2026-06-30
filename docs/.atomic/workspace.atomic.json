@@ -19180,6 +19180,56 @@
         "Next-next: tab-well vs single-panel UI consistency (chrome when tabbed vs a lone panel)."
       ]
     },
+    "R1159": {
+      "decision_summary": "R1159 §5.51 — discrete-target drop-resolution SSOT (B model): resolve_drop -> Dock|OuterDock|Float with a banded dead-zone, so a tab tears off inside a maximized window; route the tab through it.",
+      "changes_bullets": [
+        "Introduced the discrete-target drop-resolution model (B): a single resolve_drop(over, is_panel, tabbing) -> DropResolution{Dock|OuterDock|Float} SSOT replacing the scattered over.is_none() float decision.",
+        "Added a banded zone classifier (dock_drop_zone_banded) with a FLOAT dead-zone ring: edge bands split, the centre square tabifies, the ring between FLOATS. So a tab tears off INSIDE the window — the structural fix for \"탭이 창 밖으로 안 빠져\" (the continuous model could only float by leaving the window, impossible when maximized).",
+        "resolve_drop validates the target is a dockable panel (DockReorganizer::is_panel), so a release over a splitter/container floats instead of no-op'ing (the R1158 live bug).",
+        "Routed the TAB drag (preview + release) through resolve_drop; the preview is DERIVED from the resolver so preview == result. Extracted dock_panel_at_resolved_zone (apply-only) so the banded geometry applies without re-classifying via the legacy continuous one.",
+        "Design doc docs/dock-drop-resolution.md captures the model + the round plan (panel-header R1160, guides-always-on R1161, cross-window/outer R1162).",
+        "Removed the diagnostic eprintln scaffolding once the resolver was unit-tested + XTEST-verified (pinion prefers §2#7 introspection / outcome observation)."
+      ],
+      "verification_bullets": [
+        "3 R1159 units (resolve_drop classifies dock/outer/float; a panel dead-zone floats; a splitter target floats not no-ops) + the 5 R1158 tab tests still green.",
+        "Demo tools/demos/r1159_dock_drop_resolution.py (31 assertions): an EDGE drop docks (split, no floater); a DEAD-ZONE drop FLOATS a torn window from INSIDE the window; a CENTRE drop tabifies.",
+        "Live XTEST on :0 (real winit pointer events, not the RPC path the R1149 divergence bypasses): a tab dragged into the body over a splitter now FLOATS (was a silent no-op); onto a panel it docks; fully out it floats.",
+        "workspace 0 fail / clippy -D pedantic / rustfmt clean; r1158/r1156/r1145/r1096/r1102/r1124 dock demos PASS on the rebuilt release binary."
+      ],
+      "impact_refs": [
+        "5.51"
+      ],
+      "carry_forward_bullets": [
+        "R1160: route the panel-header drag (DockPanelExternal) through resolve_drop — clears the temporary tab-vs-panel geometry divergence (the panel still uses the legacy continuous classifier this round).",
+        "R1161: turn dock-zone guides on for same-window drags so the discrete targets are discoverable.",
+        "R1162: audit cross-window + outer through resolve_drop; retire the legacy continuous dock_drop_zone_normalized once its last consumer migrates.",
+        "Band geometry constants (split 0.22 / centre 0.18) are a first cut; tune to feel on :0."
+      ],
+      "publishable_decision_summary": "R1159 §5.51 — discrete-target drop-resolution SSOT (B model): resolve_drop -> Dock|OuterDock|Float with a banded dead-zone, so a tab tears off inside a maximized window; route the tab through it.",
+      "publishable_changes_bullets": [
+        "Introduced the discrete-target drop-resolution model (B): a single resolve_drop(over, is_panel, tabbing) -> DropResolution{Dock|OuterDock|Float} SSOT replacing the scattered over.is_none() float decision.",
+        "Added a banded zone classifier (dock_drop_zone_banded) with a FLOAT dead-zone ring: edge bands split, the centre square tabifies, the ring between FLOATS. So a tab tears off INSIDE the window — the structural fix for \"탭이 창 밖으로 안 빠져\" (the continuous model could only float by leaving the window, impossible when maximized).",
+        "resolve_drop validates the target is a dockable panel (DockReorganizer::is_panel), so a release over a splitter/container floats instead of no-op'ing (the R1158 live bug).",
+        "Routed the TAB drag (preview + release) through resolve_drop; the preview is DERIVED from the resolver so preview == result. Extracted dock_panel_at_resolved_zone (apply-only) so the banded geometry applies without re-classifying via the legacy continuous one.",
+        "Design doc docs/dock-drop-resolution.md captures the model + the round plan (panel-header R1160, guides-always-on R1161, cross-window/outer R1162).",
+        "Removed the diagnostic eprintln scaffolding once the resolver was unit-tested + XTEST-verified (pinion prefers §2#7 introspection / outcome observation)."
+      ],
+      "publishable_verification_bullets": [
+        "3 R1159 units (resolve_drop classifies dock/outer/float; a panel dead-zone floats; a splitter target floats not no-ops) + the 5 R1158 tab tests still green.",
+        "Demo tools/demos/r1159_dock_drop_resolution.py (31 assertions): an EDGE drop docks (split, no floater); a DEAD-ZONE drop FLOATS a torn window from INSIDE the window; a CENTRE drop tabifies.",
+        "Live XTEST on :0 (real winit pointer events, not the RPC path the R1149 divergence bypasses): a tab dragged into the body over a splitter now FLOATS (was a silent no-op); onto a panel it docks; fully out it floats.",
+        "workspace 0 fail / clippy -D pedantic / rustfmt clean; r1158/r1156/r1145/r1096/r1102/r1124 dock demos PASS on the rebuilt release binary."
+      ],
+      "publishable_impact_refs": [
+        "5.51"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R1160: route the panel-header drag (DockPanelExternal) through resolve_drop — clears the temporary tab-vs-panel geometry divergence (the panel still uses the legacy continuous classifier this round).",
+        "R1161: turn dock-zone guides on for same-window drags so the discrete targets are discoverable.",
+        "R1162: audit cross-window + outer through resolve_drop; retire the legacy continuous dock_drop_zone_normalized once its last consumer migrates.",
+        "Band geometry constants (split 0.22 / centre 0.18) are a first cut; tune to feel on :0."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
