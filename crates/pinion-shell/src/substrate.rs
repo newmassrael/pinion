@@ -3853,13 +3853,7 @@ impl<V: WidgetView> ShellCore<V> {
         // from the single `window_chrome_for` resolution (no `DEFAULT_WINDOW`
         // fallback that could diverge from it).
         match self.window_chrome_for(window_id) {
-            // (R1170) A controls-only window (a torn-off dock panel: buttons but no
-            // grip/frame) does NOT get the resize border — its top edge is the
-            // panel header's redock drag handle, and a thin north resize strip would
-            // steal those presses; resize is a separate future ask for a floater.
-            Some((spec_id, _, style))
-                if !style.controls_only && !self.maximized_for_window(&spec_id) =>
-            {
+            Some((spec_id, _, _)) if !self.maximized_for_window(&spec_id) => {
                 pinion_overlay::inject_resize_border(scene, Some((w, h)))
             }
             _ => scene,
@@ -3899,11 +3893,6 @@ impl<V: WidgetView> ShellCore<V> {
     /// duplicated at both).
     fn chrome_inset_height(&self, window_id: Option<&str>) -> Option<u32> {
         self.window_chrome_for(window_id)
-            // (R1170) CONTROLS-ONLY chrome OVERLAYS the content (the buttons sit on
-            // top of the binding's own title bar — a dock panel header), so it does
-            // NOT inset: insetting would leave a `height_px` gap above the header.
-            // The full strip (grip + title) still insets so it never covers content.
-            .filter(|(_, _, style)| !style.controls_only)
             .map(|(_, _, style)| style.height_px)
     }
 
@@ -3939,13 +3928,7 @@ impl<V: WidgetView> ShellCore<V> {
             None => specs.into_iter().next()?,
             Some(id) => specs.into_iter().find(|s| s.id.as_ref() == id)?,
         };
-        // R1170 §5.16 — run the hook inside the reactive owner so a binding may read
-        // its theme (a controls-only floater themes its glyph / bg to its surface so
-        // the controls read against the panel header). Read-only; mirrors the
-        // `windows_signal` wrap above + the R1163b overlay-hook-in-owner pattern.
-        let style = core
-            .root_owner()
-            .run(|| V::window_chrome(spec.id.as_ref()))?;
+        let style = V::window_chrome(spec.id.as_ref())?;
         Some((spec.id.to_string(), spec.title.to_string(), style))
     }
 
@@ -7435,16 +7418,6 @@ mod r1121_window_chrome_tests {
         Some(WindowChromeStyle::default()),
         "Panel"
     );
-    // (R1170) CONTROLS-ONLY chrome: buttons but no grip / title, and NO content
-    // inset — a torn-off dock panel whose own header is the redock drag handle, so
-    // the buttons OVERLAY the header instead of pushing it down.
-    chrome_fixture!(
-        ControlsOnly,
-        "main",
-        false,
-        Some(WindowChromeStyle::new().with_controls_only()),
-        "Controls Only"
-    );
 
     fn rect_of(scene: &Scene, tag: &str) -> Option<Rect> {
         scene.rect_for_tag_absolute(tag)
@@ -7507,32 +7480,6 @@ mod r1121_window_chrome_tests {
             "decorated content is not inset (byte-identical)"
         );
         assert_eq!(content.h, 300, "decorated content fills the full height");
-    }
-
-    #[test]
-    fn controls_only_window_paints_buttons_no_grip_and_does_not_inset() {
-        // R1170 §5.16 — a controls-only window paints the three control buttons but
-        // NO grip (its own header owns the drag), and does NOT inset its content
-        // (the buttons OVERLAY the header rather than pushing it down).
-        let mut sc = ShellCore::<ControlsOnly>::new();
-        let scene = sc.compute_paint_scene(400, 300);
-        for tag in [
-            pinion_overlay::WINDOW_CHROME_CLOSE_TAG,
-            pinion_overlay::WINDOW_CHROME_MINIMIZE_TAG,
-            pinion_overlay::WINDOW_CHROME_MAXIMIZE_TAG,
-        ] {
-            assert!(has_tag(&scene, tag), "controls-only paints {tag}");
-        }
-        assert!(
-            !has_tag(&scene, pinion_overlay::WINDOW_CHROME_GRIP_TAG),
-            "controls-only paints NO grip (the panel header owns the drag)",
-        );
-        let content = rect_of(&scene, CONTENT_TAG).expect("content laid out");
-        assert_eq!(
-            content.y, 0,
-            "★controls-only does NOT inset — the buttons overlay the header",
-        );
-        assert_eq!(content.h, 300, "content fills the full height (no inset)");
     }
 
     #[test]

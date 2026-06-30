@@ -34,6 +34,23 @@ pub const SORT_ASCENDING: &str = "\u{25B2}";
 /// Descending column-sort arrow — `U+25BC` BLACK DOWN-POINTING TRIANGLE.
 pub const SORT_DESCENDING: &str = "\u{25BC}";
 
+// (R1171 §5.16) Window-control glyphs for a floating dock panel's HEADER controls
+// (minimize / maximize / close). Text glyphs — the widget-layer convention (like
+// the disclosure twisty above) — so they lay out with the header font + flex and
+// auto-size to the header height, NOT a fixed-pixel shell overlay the binding has
+// to dimension-match (the R1170 smell the controls-in-header redesign cleared).
+// Chosen from blocks the bundled fonts cover (the geometric-shapes `U+25A1` pairs
+// with the disclosure triangles already in use; `U+2212` / `U+00D7` are basic math).
+
+/// Minimize control — `U+2212` MINUS SIGN (a centred bar reads as minimize).
+pub const WINDOW_MINIMIZE: &str = "\u{2212}";
+
+/// Maximize / restore control — `U+25A1` WHITE SQUARE.
+pub const WINDOW_MAXIMIZE: &str = "\u{25A1}";
+
+/// Close control — `U+00D7` MULTIPLICATION SIGN.
+pub const WINDOW_CLOSE: &str = "\u{00D7}";
+
 /// R886.1 §5.50 — the sort-direction → glyph mapping every column header
 /// paints: `Some(true)` → [`SORT_ASCENDING`], `Some(false)` →
 /// [`SORT_DESCENDING`], `None` (not the active sort column) → `None` so

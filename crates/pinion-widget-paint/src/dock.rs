@@ -4450,6 +4450,28 @@ pub fn view_dock_panel(
     style: &DockPanelStyle,
     active_drop_zone: Option<DockDropZone>,
 ) -> Scene {
+    view_dock_panel_with_actions(title, content, theme, style, active_drop_zone, None)
+}
+
+/// (R1171 §5.16) [`view_dock_panel`] plus an optional HEADER-TRAILING slot —
+/// `header_trailing` is laid out RIGHT-ALIGNED in the title bar (a
+/// [`JustifyContent::SpaceBetween`] flex sibling of the title), so it auto-sizes
+/// to the header by composition (its intrinsic size + the header's
+/// `AlignItems::Center`), NOT a binding-supplied dimension. The window controls of
+/// a torn-off floating panel (min / max / close) live here — the controls-in-header
+/// design that replaced the R1170 shell-overlay (whose fixed-pixel height the
+/// binding had to dimension-match, the [[reactive-patching-of-live-complaints-accretes-smells]]
+/// smell): one title bar, layout-sized. A panel menu / actions could use it too.
+/// `None` is byte-identical to [`view_dock_panel`].
+#[must_use]
+pub fn view_dock_panel_with_actions(
+    title: &str,
+    content: Scene,
+    theme: &Theme,
+    style: &DockPanelStyle,
+    active_drop_zone: Option<DockDropZone>,
+    header_trailing: Option<Scene>,
+) -> Scene {
     let header_tag = composite_tag(&style.tag, HEADER_TAG_SUFFIX);
     let content_tag = composite_tag(&style.tag, CONTENT_TAG_SUFFIX);
     let header_title = Scene::Text(TextNode::styled(
@@ -4487,17 +4509,28 @@ pub fn view_dock_panel(
     // fixed-height header invariant. The R684 splitter atomic 2
     // is the canonical [[r684-flex-basis-substrate]] consumer; the
     // dock header strip is a cross-axis-stretch fix only.
+    // (R1171 §5.16) An optional header-TRAILING slot (e.g. a floating panel's
+    // window controls) lays out right-aligned via `SpaceBetween`: the title sits
+    // left, the trailing right, each vertically centred in the header — so the
+    // trailing auto-sizes by composition (its intrinsic size + the header's
+    // `AlignItems::Center`), no dimension matching. No trailing = `Start` (the
+    // pre-R1171 left-aligned title), byte-identical.
+    let (header_children, header_justify) = match header_trailing {
+        Some(trailing) => (vec![header_title, trailing], JustifyContent::SpaceBetween),
+        None => (vec![header_title], JustifyContent::Start),
+    };
     let header = Scene::Container(
-        ContainerNode::new(vec![header_title])
+        ContainerNode::new(header_children)
             .with_tag(header_tag)
             .with_style(BoxStyle::filled(
                 theme.resolve(ColorRole::SurfaceContainerHigh),
             ))
             .with_layout(
                 LayoutStyle::new()
+                    .flex(FlexDirection::Row)
                     .with_size(Size::height_px(style.header_height_px))
                     .with_align_items(AlignItems::Center)
-                    .with_justify(JustifyContent::Start)
+                    .with_justify(header_justify)
                     .with_padding(Rect::new(8, 0, 8, 0)),
             ),
     );

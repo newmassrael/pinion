@@ -56,8 +56,8 @@ use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
 use pinion_core::{Frame, Owner, Scene, Signal, WidgetCore};
 use pinion_shell::{
-    SizeStrategy, WidgetView, WindowChromeStyle, WindowSpec, desktop_position_from,
-    vello_renderer_impl, window_exists,
+    SizeStrategy, WINDOW_CHROME_CLOSE_TAG, WINDOW_CHROME_MAXIMIZE_TAG, WINDOW_CHROME_MINIMIZE_TAG,
+    WidgetView, WindowSpec, desktop_position_from, vello_renderer_impl, window_exists,
 };
 use pinion_widget_paint::button::{ButtonColors, ButtonStyle, view_button};
 use pinion_widget_paint::dock::{
@@ -67,9 +67,10 @@ use pinion_widget_paint::dock::{
     TEAR_OFF_REDOCK_AT_EVENT, TEAR_OFF_REDOCK_EVENT, TabWellExternal, WINDOW_MOVE_EVENT,
     dock_drop_preview_overlay, dock_outer_preview_overlay, dock_outer_zone_highlight,
     dock_redock_preview_tint, dock_tablist_access_nodes,
-    floating_window_id as dock_floating_window_id, resolve_drop, view_dock_panel,
+    floating_window_id as dock_floating_window_id, resolve_drop, view_dock_panel_with_actions,
     view_dock_surface, view_floating_placeholder,
 };
+use pinion_widget_paint::glyph;
 use pinion_widget_paint::splitter::SplitterExternal;
 use std::borrow::Cow;
 use std::rc::Rc;
@@ -991,7 +992,61 @@ fn view_floating_panel(panel_id: &str, state: ButtonState) -> Scene {
     // floating_window`) → `WINDOW_MOVE_EVENT`, NOT by this flag. A drop onto the
     // MAIN dock still redocks cross-window (`over_window`, independent of this).
     let style = DockPanelStyle::m3_default(panel_id.to_string()).with_drop_target(false);
-    view_dock_panel(panel_id, content, &theme, &style, None)
+    // (R1171 §5.16) The window controls (min / max / close) live IN the panel
+    // header (the title bar that is already the redock drag handle) — ONE title
+    // bar, auto-sized by the layout. This replaced the R1170 shell-overlay chrome
+    // (whose fixed pixel height the binding had to dimension-match — the
+    // controls-in-header redesign the user's "치수를 맞춰야 하는 것 자체가 잘못된
+    // 설계" caught). The shell still routes a press on these tags to
+    // `set_minimized` / `set_maximized` / `window_close_requested`.
+    view_dock_panel_with_actions(
+        panel_id,
+        content,
+        &theme,
+        &style,
+        None,
+        Some(view_window_controls(&theme)),
+    )
+}
+
+/// (R1171 §5.16) A floating panel's window CONTROLS — minimize / maximize / close
+/// as a right-anchored row of tagged glyph buttons IN the header. Each button is
+/// intrinsically sized (the glyph font + padding) and centred in the header, so it
+/// composes with any header height (no dimension matching). The tags are the
+/// shell's window-control hit tags, so `try_chrome_press` routes a press to the
+/// matching winit action — close through [`DockPanelsEditorView::window_close_requested`]
+/// (dock-back), min / max to per-window `set_minimized` / `set_maximized`.
+fn view_window_controls(theme: &Theme) -> Scene {
+    let button = |tag: &str, glyph: &str| -> Scene {
+        Scene::Container(
+            ContainerNode::new(vec![Scene::Text(TextNode::styled(
+                glyph,
+                Rect::default(),
+                TextStyle::new()
+                    .with_size_px(PANEL_BODY_FONT_PX)
+                    .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+            ))])
+            .with_tag(tag.to_string())
+            .with_layout(
+                LayoutStyle::new()
+                    .with_align_items(AlignItems::Center)
+                    .with_justify(JustifyContent::Center)
+                    .with_padding(Rect::new(7, 3, 7, 3)),
+            ),
+        )
+    };
+    Scene::Container(
+        ContainerNode::new(vec![
+            button(WINDOW_CHROME_MINIMIZE_TAG, glyph::WINDOW_MINIMIZE),
+            button(WINDOW_CHROME_MAXIMIZE_TAG, glyph::WINDOW_MAXIMIZE),
+            button(WINDOW_CHROME_CLOSE_TAG, glyph::WINDOW_CLOSE),
+        ])
+        .with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Row)
+                .with_align_items(AlignItems::Center),
+        ),
+    )
 }
 
 // ─── trait wiring ─────────────────────────────────────────────────────
@@ -1366,29 +1421,13 @@ impl WidgetView for DockPanelsEditorView {
         }
     }
 
-    /// (R1170 §5.16 §5.39) A torn-off panel's borderless floating window gets
-    /// client-side window CONTROLS — minimize / maximize / close at the top-right.
-    /// `controls_only` (no grip / title): the panel's OWN header is the redock drag
-    /// handle, so the buttons must NOT add an OS-move grip that steals it. The
-    /// close button routes through [`Self::window_close_requested`] (dock-back, not
-    /// app-exit); min / max are the shell's per-window `set_minimized` /
-    /// `set_maximized`. The main window keeps its OS decorations (`None`).
-    fn window_chrome(window_id: &str) -> Option<WindowChromeStyle> {
-        window_id
-            .starts_with(DEFAULT_FLOATING_WINDOW_PREFIX)
-            .then(|| {
-                // The controls cluster sits ON the panel header (SurfaceContainerHigh),
-                // so the default light-on-dark glyph would vanish. Tint the cluster a
-                // step up (SurfaceContainerHighest) with OnSurface glyphs so the buttons
-                // read clearly + distinctly against the header. The shell runs this hook
-                // in the reactive owner (R1170), so `use_theme` resolves here.
-                let theme = use_theme(THEME_TAG).theme_animated();
-                WindowChromeStyle::new()
-                    .with_controls_only()
-                    .with_bg(theme.resolve(ColorRole::SurfaceContainerHighest))
-                    .with_glyph(theme.resolve(ColorRole::OnSurface))
-            })
-    }
+    // (R1171 §5.16 §5.39) The editor no longer overrides `window_chrome`: a torn-off
+    // panel's window controls (min / max / close) are rendered IN the panel HEADER
+    // (`view_window_controls` → `view_dock_panel_with_actions`), one title bar that
+    // is also the redock drag handle — NOT a separate shell-overlay the binding has
+    // to dimension-match (the retired R1170 `controls_only` chrome). The shell still
+    // routes a press on the control tags via `try_chrome_press` + the
+    // `window_close_requested` seam below.
 
     /// (R1125/R1163b §5.51 §2 #7 PR-33) Render the cross-window dock drop-zone
     /// PREVIEW. The shell does the widget-agnostic half (resolves the incoming
@@ -1547,29 +1586,32 @@ mod tests {
     }
 
     #[test]
-    fn r1170_torn_window_gets_controls_only_chrome_and_close_docks_back() {
-        // R1170 §5.16 — a torn-off panel's floating window gets controls-only
-        // chrome (min/max/close, no grip), and its close docks the panel BACK
-        // (drops the WindowSpec) instead of quitting the app; the main window keeps
-        // OS decorations (no chrome) and its close falls through to app-exit.
+    fn r1171_floating_panel_header_has_window_controls_and_close_docks_back() {
+        // R1171 §5.16 — a torn-off panel's window controls (min/max/close) are
+        // rendered IN the panel HEADER (controls-in-header, NOT a shell overlay), so
+        // `view_floating_panel`'s scene carries the three control hit tags; and the
+        // close routes through `window_close_requested` to dock the panel BACK
+        // (drop its WindowSpec), only the main window's close exits the app.
         run_in_owner(|| {
-            let torn = floating_window_id("properties");
-            // window_chrome: torn → controls-only; main → None.
-            let chrome = <DockPanelsEditorView as WidgetView>::window_chrome(&torn);
-            assert!(
-                chrome.is_some_and(|c| c.controls_only),
-                "a torn window gets controls-only chrome ({chrome:?})",
-            );
-            assert!(
-                <DockPanelsEditorView as WidgetView>::window_chrome(MAIN_WINDOW_ID).is_none(),
-                "the main window keeps OS decorations (no client chrome)",
-            );
+            // The floating panel's header carries the three window-control tags.
+            let floater = view_floating_panel("properties", ButtonState::Idle);
+            for tag in [
+                WINDOW_CHROME_MINIMIZE_TAG,
+                WINDOW_CHROME_MAXIMIZE_TAG,
+                WINDOW_CHROME_CLOSE_TAG,
+            ] {
+                assert!(
+                    scene_has_tag(&floater, tag),
+                    "the floating panel header carries the {tag} control",
+                );
+            }
             // window_close_requested: float properties, then close its window.
             toggle_panel_floating("properties");
             assert!(
                 is_panel_floating(&use_editor_windows().get(), "properties"),
                 "properties is floating after the tear-off",
             );
+            let torn = floating_window_id("properties");
             let handled = <DockPanelsEditorView as WidgetView>::window_close_requested(&torn);
             assert!(handled, "a torn window's close is HANDLED (no app exit)");
             assert!(
@@ -1582,6 +1624,18 @@ mod tests {
                 "the main window's close is unhandled (the app exits)",
             );
         });
+    }
+
+    /// Depth-first: does `scene` (or a descendant) carry `tag`?
+    fn scene_has_tag(scene: &Scene, tag: &str) -> bool {
+        if scene.tag() == Some(tag) {
+            return true;
+        }
+        match scene {
+            Scene::Container(c) => c.children.iter().any(|ch| scene_has_tag(ch, tag)),
+            Scene::Scroll(s) => scene_has_tag(&s.content, tag),
+            _ => false,
+        }
     }
 
     #[test]

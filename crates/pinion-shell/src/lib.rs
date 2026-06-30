@@ -210,6 +210,14 @@ pub use pinion_overlay::FocusRingStyle;
 // R1121.1 §5.16 §5.39 — same rationale for the `WidgetView::window_chrome`
 // hook: a binding returns a `WindowChromeStyle` without a direct overlay dep.
 pub use pinion_overlay::WindowChromeStyle;
+// R1171 §5.16 §5.39 — the window-control hit tags, so a binding that renders its
+// OWN window controls (a dock floater's HEADER buttons — controls-in-header, not a
+// shell-overlay) tags them with the strings the shell's `try_chrome_press` routes
+// to `set_minimized` / `set_maximized` / `window_close_requested`, without a direct
+// overlay dep.
+pub use pinion_overlay::{
+    WINDOW_CHROME_CLOSE_TAG, WINDOW_CHROME_MAXIMIZE_TAG, WINDOW_CHROME_MINIMIZE_TAG,
+};
 
 // R791.1 §5.13 §5.38 — the per-binding `WidgetView::ime_caret_rect` body
 // (focus-guard + `rect_for_tag` walk + `tf_paint::ime_caret_rect_for`) is
