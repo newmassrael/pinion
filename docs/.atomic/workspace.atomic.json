@@ -19540,6 +19540,60 @@
         "push pending user consent"
       ]
     },
+    "R1167": {
+      "decision_summary": "R1167 dock debt B: make resolve_drop symmetric so a same-window dock-panel drag reaches the full-span OuterDock (resolve_own_outer_dock, dock-kind-gated), with a same-window outer preview; the asymmetry (OuterDock produced cross-window only) was the root of the user's 'console 하단 full-width / properties 우측 컬럼 안 됨'. Outer preview band uses OUTER_DOCK_NEW_PCT so preview==result for both same+cross window. OUTER_DOCK_MARGIN width left at 32 (live-tune, HW-gated; a fixed widen breaks small-window geometry).",
+      "changes_bullets": [
+        "resolve_drop made symmetric: same-window drag reaches OuterDock too",
+        "resolve_own_outer_dock + resolve_drag_own_over: dock-kind-gated override",
+        "outer_edge_distance lifted; shared by cross- and same-window passes",
+        "DOCK_PANEL_DRAG_KIND lifted to pinion-core; widget-paint re-exports",
+        "dock_outer_zone_highlight (Percent) + dock_outer_preview_overlay (px)",
+        "OuterDock preview arms on DockPanelExternal + TabWellExternal drag_to",
+        "editor renders same-window outer band; cross-window outer = 22% band"
+      ],
+      "verification_bullets": [
+        "workspace 7867 pass / 0 fail; clippy -D pedantic; rustfmt clean",
+        "r1167 input unit: dock kind gates; interior + outside are not outer",
+        "r1167 overlay units: Percent + pixel full-span bands at 22 pct",
+        "editor r1167: cross-window outer preview is the thin 22 pct band",
+        "demo r1167_same_window_outer_dock 33 assert (preview + full-span result)"
+      ],
+      "impact_refs": [
+        "5.51"
+      ],
+      "carry_forward_bullets": [
+        "OUTER_DOCK_MARGIN width is a live-tune (HW-gated): 32px reachable now",
+        "a scale-safe widen is a fraction-of-dimension band, per user :0 feel",
+        "debt C next: retire static dock guide, cursor preview = sole affordance",
+        "debt A after C: retire bare dock_drop_zone_normalized/_for orphans"
+      ],
+      "publishable_decision_summary": "R1167 dock debt B: make resolve_drop symmetric so a same-window dock-panel drag reaches the full-span OuterDock (resolve_own_outer_dock, dock-kind-gated), with a same-window outer preview; the asymmetry (OuterDock produced cross-window only) was the root of the user's 'console 하단 full-width / properties 우측 컬럼 안 됨'. Outer preview band uses OUTER_DOCK_NEW_PCT so preview==result for both same+cross window. OUTER_DOCK_MARGIN width left at 32 (live-tune, HW-gated; a fixed widen breaks small-window geometry).",
+      "publishable_changes_bullets": [
+        "resolve_drop made symmetric: same-window drag reaches OuterDock too",
+        "resolve_own_outer_dock + resolve_drag_own_over: dock-kind-gated override",
+        "outer_edge_distance lifted; shared by cross- and same-window passes",
+        "DOCK_PANEL_DRAG_KIND lifted to pinion-core; widget-paint re-exports",
+        "dock_outer_zone_highlight (Percent) + dock_outer_preview_overlay (px)",
+        "OuterDock preview arms on DockPanelExternal + TabWellExternal drag_to",
+        "editor renders same-window outer band; cross-window outer = 22% band"
+      ],
+      "publishable_verification_bullets": [
+        "workspace 7867 pass / 0 fail; clippy -D pedantic; rustfmt clean",
+        "r1167 input unit: dock kind gates; interior + outside are not outer",
+        "r1167 overlay units: Percent + pixel full-span bands at 22 pct",
+        "editor r1167: cross-window outer preview is the thin 22 pct band",
+        "demo r1167_same_window_outer_dock 33 assert (preview + full-span result)"
+      ],
+      "publishable_impact_refs": [
+        "5.51"
+      ],
+      "publishable_carry_forward_bullets": [
+        "OUTER_DOCK_MARGIN width is a live-tune (HW-gated): 32px reachable now",
+        "a scale-safe widen is a fraction-of-dimension band, per user :0 feel",
+        "debt C next: retire static dock guide, cursor preview = sole affordance",
+        "debt A after C: retire bare dock_drop_zone_normalized/_for orphans"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
