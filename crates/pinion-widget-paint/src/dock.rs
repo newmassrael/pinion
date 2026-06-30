@@ -2256,38 +2256,9 @@ fn intent_for_zone(source: &str, target: &str, zone: DockDropZone) -> Option<Doc
     }
 }
 
-/// (R1158 §5.51) Classify a resolved [`DropPoint`] the `source` panel is dragged
-/// over into the [`DockDropPreview`] it implies — the SSOT shared by the
-/// [`DockPanelExternal`] header drag and the [`TabWellExternal`] tab drag, so a
-/// tab dragged over a zone shows the SAME bold cursor-zone affordance a panel
-/// header does ("a tab drag IS a panel drag"). `None` over no panel, over the
-/// SOURCE itself (a self-drop is a no-op), or in a dead zone
-/// ([`DockDropZone::None`]); else `Some(source, target, zone)`. The drop target is
-/// the panel ROOT, but split defensively at `#` in case a future nested target
-/// resolves to a composite `{well}#{i}` tag. `tabbing` is the dock surface's
-/// [`DockReorganizer::tabbing`] policy (a split-only surface never classifies the
-/// centre as a tabify — the nearest edge wins).
-fn resolve_drop_preview(
-    source: &str,
-    over: Option<&DropPoint>,
-    tabbing: bool,
-) -> Option<DockDropPreview> {
-    let over = over?;
-    let target = over.tag.split('#').next().unwrap_or(over.tag.as_str());
-    if target == source {
-        return None;
-    }
-    let zone =
-        dock_drop_zone_normalized_tabbing(f64::from(over.x_rel), f64::from(over.y_rel), tabbing);
-    if zone == DockDropZone::None {
-        return None;
-    }
-    Some(DockDropPreview {
-        source: source.to_string(),
-        target: target.to_string(),
-        zone,
-    })
-}
+// (R1162 §5.51) The legacy continuous `resolve_drop_preview` (R1158) is RETIRED —
+// every drag source now derives its preview from the discrete-target `resolve_drop`
+// SSOT directly, so the preview can never use a different geometry than the result.
 
 /// (R1158 §5.51) Write the shared live drop-preview Signal, deduping against the
 /// current value so a stationary cursor mid-drag does not churn repaints — the
@@ -2343,18 +2314,31 @@ pub enum DropResolution {
     /// dead-zone ring, or over a non-panel (a splitter / container). The dragged
     /// panel floats into its own window.
     Float,
+    /// Release is over the dragged panel's OWN slot (the cursor never left it) —
+    /// a no-move no-op, NOT a dock (you cannot dock a panel onto itself) and NOT a
+    /// float (a tiny in-place drag should not tear the panel off). The gesture
+    /// snaps back; nothing changes. Distinct from [`Self::Float`] so a self-release
+    /// stays put instead of accidentally floating, and so the preview shows nothing
+    /// over the panel's own area (preview == result).
+    SnapBack,
 }
 
-/// (R1159 §5.51) THE drop-resolution SSOT: classify a release at `over` (the
-/// router's hit-test result) into a [`DropResolution`]. `is_panel` validates a
-/// resolved tag is a dockable panel (so a release over a splitter / container
-/// floats, not no-ops — the R1158 live bug); `tabbing` is the surface's
-/// [`DockReorganizer::tabbing`] policy (a split-only surface never tabifies the
-/// centre). The discrete-target geometry ([`dock_drop_zone_banded`]) gives a
-/// FLOAT dead-zone, so this resolver — not `over.is_none()` — owns the
-/// float-vs-dock decision for every drag source.
+/// (R1159 §5.51, R1162 `source`) THE drop-resolution SSOT: classify a release at
+/// `over` (the router's hit-test result) for the dragged `source` panel into a
+/// [`DropResolution`]. EVERY drag source (tab + panel header + cross-window) routes
+/// its PREVIEW and its RESULT through this one function, so preview == result by
+/// construction (a lying preview is structurally impossible). `is_panel` validates
+/// a resolved tag is a dockable panel (a release over a splitter / container floats,
+/// not no-ops — the R1158 live bug); `source` is the dragged panel so a release over
+/// its OWN slot is a [`DropResolution::SnapBack`] no-op (you cannot dock a panel onto
+/// itself, and a self-release must not show a dock preview nor float); `tabbing` is
+/// the surface's [`DockReorganizer::tabbing`] policy (a split-only surface never
+/// tabifies the centre). The discrete-target geometry ([`dock_drop_zone_banded`])
+/// gives a FLOAT dead-zone, so this resolver — not `over.is_none()` — owns the
+/// float-vs-dock decision.
 pub fn resolve_drop(
     over: Option<&DropPoint>,
+    source: &str,
     is_panel: impl Fn(&str) -> bool,
     tabbing: bool,
 ) -> DropResolution {
@@ -2369,6 +2353,12 @@ pub fn resolve_drop(
     }
     // The drop target is the panel ROOT (split a composite `{well}#{i}` at `#`).
     let target = point.tag.split('#').next().unwrap_or(point.tag.as_str());
+    // R1162 — over the dragged panel's OWN slot: a no-move snap-back, never a dock
+    // (a panel cannot dock onto itself) nor a float (a tiny in-place drag must not
+    // tear off). Keeps the preview blank over the panel's own area = the result.
+    if target == source {
+        return DropResolution::SnapBack;
+    }
     // A non-panel target (a splitter / container the router climbed to) is not a
     // dock target → float (the R1158 splitter no-op, structurally retired).
     if !is_panel(target) {
@@ -3983,6 +3973,7 @@ impl External for TabWellExternal {
         let preview = payload.value.as_str().and_then(|panel| {
             match resolve_drop(
                 same_window_over,
+                panel,
                 |t| self.reorganizer.is_panel(t),
                 self.reorganizer.tabbing(),
             ) {
@@ -3991,7 +3982,11 @@ impl External for TabWellExternal {
                     target,
                     zone,
                 }),
-                DropResolution::OuterDock { .. } | DropResolution::Float => None,
+                // OuterDock (cross-window only) / Float / SnapBack paint no
+                // same-window dock highlight.
+                DropResolution::OuterDock { .. }
+                | DropResolution::Float
+                | DropResolution::SnapBack => None,
             }
         });
         write_drop_preview(self.drop_preview.as_ref(), preview);
@@ -4051,6 +4046,7 @@ impl External for TabWellExternal {
         // tab off), and a release over a splitter floats instead of no-op'ing.
         match resolve_drop(
             update.over.as_ref(),
+            panel,
             |t| self.reorganizer.is_panel(t),
             self.reorganizer.tabbing(),
         ) {
@@ -4062,6 +4058,9 @@ impl External for TabWellExternal {
             DropResolution::OuterDock { edge } => {
                 let _ = self.reorganizer.dock_panel_outer(panel, edge);
             }
+            // Over the tab's own slot — a no-move snap-back; the tab stays in its
+            // well, nothing changes.
+            DropResolution::SnapBack => {}
             DropResolution::Float => {
                 // Float the tab out of the well AT THE DROP CURSOR (R1160 fix —
                 // positioned `tear_off_follow`, not the fixed-slot `tear_off`).
@@ -5846,16 +5845,6 @@ impl DockPanelExternal {
             .map_or(FloatPolicy::Placeholder, |r| r.float_policy())
     }
 
-    fn resolve_preview(&self, over: Option<&DropPoint>) -> Option<DockDropPreview> {
-        // R1158 §5.51 — the classify is the shared [`resolve_drop_preview`] SSOT
-        // (the TabWellExternal tab drag is its 2nd consumer); this panel supplies
-        // its own id as the source + its surface tabbing policy (R1112 PR-37: the
-        // pointer preview, the `drop` RPC, and cross-window redock honour ONE
-        // policy; a tear-off-only panel has no coordinator so the default tabbing
-        // is moot).
-        resolve_drop_preview(&self.panel_id, over, self.effective_tabbing())
-    }
-
     /// (R1081 §5.51) Write the shared drop-preview, deduping against the
     /// current value so a stationary cursor mid-drag does not churn
     /// repaints. No-op when no preview signal is wired. (R1158 — the dedup-write
@@ -6008,7 +5997,34 @@ impl External for DockPanelExternal {
     /// over into the shared [`DockDropPreview`] so the target panel paints
     /// the zone affordance. `None` over no actionable panel.
     fn drag_to(&mut self, _payload: &DragPayload, over: Option<DropPoint>) {
-        self.set_drop_preview(self.resolve_preview(over.as_ref()));
+        // (R1162 §5.51) The preview is DERIVED from the same `resolve_drop` SSOT the
+        // release applies (banded geometry, self = SnapBack), so the painted zone is
+        // ALWAYS what a release here would do — a lying preview is impossible. Only a
+        // `Dock` paints a same-window highlight; OuterDock (cross-window) / Float /
+        // SnapBack paint nothing (the blank area reads as "will float / no-op").
+        let preview = self.reorganizer.as_ref().and_then(|reorg| {
+            match resolve_drop(
+                over.as_ref(),
+                &self.panel_id,
+                |t| reorg.is_panel(t),
+                reorg.tabbing(),
+            ) {
+                DropResolution::Dock { target, zone } => Some(DockDropPreview {
+                    source: self.panel_id.to_string(),
+                    target,
+                    zone,
+                }),
+                _ => None,
+            }
+        });
+        tracing::trace!(
+            target: "pinion::dock",
+            panel = %self.panel_id,
+            over = ?over.as_ref().map(|p| p.tag.as_str()),
+            preview_zone = ?preview.as_ref().map(|p| p.zone),
+            "panel drag_to preview",
+        );
+        self.set_drop_preview(preview);
     }
 
     /// (R1081 §5.51) R742 drop commit. Over a *different* panel with a
@@ -6023,123 +6039,92 @@ impl External for DockPanelExternal {
         self.dragging.set(false);
         self.set_drop_preview(None);
         self.is_drag_armed.set(true);
+        // (R1162 §5.51) Route the RESULT through the same `resolve_drop` SSOT the
+        // preview ([`Self::drag_to`]) uses, so preview == result by construction —
+        // the banded geometry (small centre = tabify, edges = split, dead-zone =
+        // float), with self-drop = SnapBack. A tear-off-only panel (no coordinator)
+        // has no topology to resolve against, so it keeps the bare escape/snap
+        // split (`over` None → float, else → snap back).
+        let resolution = match self.reorganizer.as_ref() {
+            Some(reorg) => resolve_drop(
+                over.as_ref(),
+                &self.panel_id,
+                |t| reorg.is_panel(t),
+                reorg.tabbing(),
+            ),
+            None if over.is_none() => DropResolution::Float,
+            None => DropResolution::SnapBack,
+        };
         tracing::debug!(
             target: "pinion::dock",
             panel = %self.panel_id,
             over = ?over.as_ref().map(|p| p.tag.as_str()),
-            resolve_preview = ?self.resolve_preview(over.as_ref()),
-            has_reorg = self.reorganizer.is_some(),
+            ?resolution,
             "panel drag_release",
         );
-        // 1. Dock: a valid drop over another panel, with a coordinator.
-        if let (Some(reorganizer), Some(preview)) = (
-            self.reorganizer.as_ref(),
-            self.resolve_preview(over.as_ref()),
-        ) {
-            self.tear_off_fired.set(false);
-            // R1094/R1129 §5.51.1 — the floater landed back on a dock zone:
-            // drive the lifecycle `dropped` (floating → docked). If the drag had
-            // torn the panel into a live floating follower, remove that window
-            // first so the reorganizer re-places a single panel (redock). The
-            // chart — not the per-gesture `detached` bool — is the IO gate: a drag
-            // that never escaped is still `docked`, so `dropped` is inert and no
-            // redock window-removal fires.
-            let was_floating = self.is_floating();
-            self.send_lifecycle(DockPanelEvent::Dropped);
-            if was_floating {
-                self.enqueue_tear_off_redock();
+        match resolution {
+            // Dock onto another panel's band — split (edge) / tabify (centre), at
+            // the BANDED zone, via the shared resolved-zone applier (the tab's peer,
+            // handles a present OR collapse-removed source). R1129 §5.51.1: drive
+            // the lifecycle `dropped`; if the panel had floated, remove its window
+            // first so the reorganizer re-places one panel.
+            DropResolution::Dock { target, zone } => {
+                if let Some(reorg) = self.reorganizer.as_ref() {
+                    self.tear_off_fired.set(false);
+                    let was_floating = self.is_floating();
+                    self.send_lifecycle(DockPanelEvent::Dropped);
+                    if was_floating {
+                        self.enqueue_tear_off_redock();
+                    }
+                    let _ = reorg.dock_panel_at_resolved_zone(&self.panel_id, &target, zone);
+                    self.detached.set(false);
+                }
             }
-            // `resolve_preview` already rejected the dead zone, so
-            // `intent_for_zone` is `Some`; the `if let` keeps the SSOT
-            // mapping panic-free. Dropping the `Result` is intentional: a
-            // rejected apply (stale id / collision) leaves the topology
-            // unchanged and `apply_intent` itself records `"rejected: …"`
-            // on `last_outcome`, so an AI client observes the failure with
-            // no per-caller bookkeeping here.
-            if let Some(intent) = intent_for_zone(&preview.source, &preview.target, preview.zone) {
-                let outcome = reorganizer.apply_intent(&intent);
-                tracing::debug!(
-                    target: "pinion::dock",
-                    source = %preview.source,
-                    target = %preview.target,
-                    zone = ?preview.zone,
-                    was_floating,
-                    apply = ?outcome,
-                    "panel arm1 dock",
-                );
+            // Full-span outer dock at the area perimeter (R1156).
+            DropResolution::OuterDock { edge } => {
+                if let Some(reorg) = self.reorganizer.as_ref() {
+                    self.tear_off_fired.set(false);
+                    let was_floating = self.is_floating();
+                    self.send_lifecycle(DockPanelEvent::Dropped);
+                    if was_floating {
+                        self.enqueue_tear_off_redock();
+                    }
+                    let _ = reorg.dock_panel_outer(&self.panel_id, edge);
+                    self.detached.set(false);
+                }
             }
-            self.detached.set(false);
-            return;
-        }
-        // 2. Escape-drop → the panel floats. The live follow already
-        // created + positioned the window during the drag; the release
-        // emits a final ensure+position at the release cursor (idempotent)
-        // so a degenerate gesture whose only escaped sample is the release
-        // still floats. Non-toggling — it cannot remove the window the
-        // follow created (the R1071-R1078 double-toggle lesson). The
-        // cursor-less fallback keeps the legacy `tear_off` toggle so an
-        // escape still floats without a forwarded cursor. It runs when no
-        // `_at` ever ran — pre-R1093 unit paths / direct `drag_release`, OR
-        // the genuinely-degenerate router edge of press -> CursorLeft (button
-        // held, zero intervening moves) -> outside release, where the router
-        // has already dropped `cursors[id]`. The toggle is idempotent +
-        // graceful there (it cannot orphan); live pointer use essentially
-        // always has a forwarded cursor and takes the follow arm above.
-        if over.is_none() {
-            tracing::debug!(target: "pinion::dock", panel = %self.panel_id, "panel arm2 escape-float");
-            if let Some(cursor) = self.drag_cursor.get() {
-                // R1107.1 — the final release-follow carries the SAME source
-                // window the gesture's moves recorded (`drag_to_at` /
-                // `drag_release_at` stamp `last_source_window`). `drag_release`
-                // is cursor-less so it cannot read the live `DragUpdate`, but
-                // the recorded source IS the right one (a drag is captured by
-                // one window's router for its whole life). A truly-degenerate
-                // gesture with zero recorded moves leaves it `None` → the
-                // binding's primary window. (R1107 originally hard-coded
-                // `None` here, dropping the source on the release arm — the
-                // R1107.1 review-clearance fix.)
-                let source = self.last_source_window.borrow().clone();
-                self.enqueue_tear_off_follow(cursor, source.as_deref());
-            } else {
-                self.enqueue_tear_off();
+            // Off every dock target (outside / dead-zone / non-panel) → float at the
+            // release cursor. The follow already positioned the window mid-drag; this
+            // final ensure+position is idempotent. The cursor-less fallback keeps the
+            // legacy toggle for a degenerate gesture with no forwarded cursor.
+            DropResolution::Float => {
+                if let Some(cursor) = self.drag_cursor.get() {
+                    let source = self.last_source_window.borrow().clone();
+                    self.enqueue_tear_off_follow(cursor, source.as_deref());
+                } else {
+                    self.enqueue_tear_off();
+                }
+                self.send_lifecycle(DockPanelEvent::Escaped);
+                // R1134 §5.51.1 — settled as floated: under Collapse remove the leaf
+                // now (release-as-floated); no-op under Placeholder.
+                self.collapse_leaf_if_policy();
+                self.detached.set(true);
+                self.tear_off_fired.set(true);
             }
-            // R1129 §5.51.1 — the drag escaped every drop target: drive the
-            // lifecycle `escaped` (docked → floating). Idempotent with the
-            // `drag_to_at` escape — `Escaped` has no transition out of `floating`,
-            // so a gesture that already floated mid-drag is a no-op here.
-            self.send_lifecycle(DockPanelEvent::Escaped);
-            // R1134 §5.51.1 — the gesture SETTLED as floated: under Collapse remove
-            // the leaf now (release-as-floated), so the slot reflows on release, not
-            // mid-drag. No-op under Placeholder (the slot stays).
-            self.collapse_leaf_if_policy();
-            self.detached.set(true);
-            self.tear_off_fired.set(true);
-            return;
+            // Over the panel's OWN slot → snap back home (no move). A drag that had
+            // floated restores (remove its window + re-insert the collapsed leaf);
+            // a never-floated drag is the plain inert snap-back.
+            DropResolution::SnapBack => {
+                let was_floating = self.is_floating();
+                self.send_lifecycle(DockPanelEvent::DockBack);
+                if was_floating {
+                    self.enqueue_tear_off_redock();
+                    self.restore_leaf_home_if_policy();
+                }
+                self.detached.set(false);
+                self.tear_off_fired.set(false);
+            }
         }
-        // 3. Snapped back over a panel / dead zone / no coordinator. A drag
-        // that had floated returns home → `dock_back` (restore): remove the
-        // floating window this gesture created; a drag that never escaped is the
-        // plain snap-back (no commit, today's behaviour). R1129 §5.51.1 — the
-        // chart drives the restore: `dock_back` is inert while `docked`, so the
-        // never-floated snap-back transitions nothing and removes no window.
-        let was_floating = self.is_floating();
-        tracing::debug!(
-            target: "pinion::dock",
-            panel = %self.panel_id,
-            was_floating,
-            "panel arm3 snap-back (no dock at the preview)",
-        );
-        self.send_lifecycle(DockPanelEvent::DockBack);
-        if was_floating {
-            self.enqueue_tear_off_redock();
-            // R1134 §5.51.1 — mirror the window restore on the topology: under
-            // Collapse re-insert the leaf at its home anchor. A no-op when nothing
-            // was stashed (a snap-back's float was the mid-drag follow, which never
-            // removed the leaf under release-as-floated).
-            self.restore_leaf_home_if_policy();
-        }
-        self.detached.set(false);
-        self.tear_off_fired.set(false);
     }
 
     /// (R1093 §5.15 §5.51 §2 #7) Record the absolute window-logical cursor
@@ -6879,15 +6864,23 @@ mod tests {
     #[test]
     fn r1081_drag_to_writes_shared_preview_for_target_panel() {
         let preview = Rc::new(Signal::new(None));
-        let mut ext = DockPanelExternal::new("a").with_drop_preview(Rc::clone(&preview));
+        // (R1162) The preview now derives from `resolve_drop`, which needs the
+        // coordinator's topology to validate a target is a dockable panel; a
+        // tear-off-only panel shows no dock preview (it cannot dock).
+        let reorg = Rc::new(DockReorganizer::new(Rc::new(Signal::new(Some(
+            ab_topology(),
+        )))));
+        let mut ext = DockPanelExternal::new("a")
+            .with_reorganizer(reorg)
+            .with_drop_preview(Rc::clone(&preview));
         let _ = ext.begin_drag();
-        // Cursor over panel "b" near its left edge → Left zone.
+        // Cursor over panel "b" in its left edge band → Left zone (banded).
         ext.drag_to(&dummy_payload(), Some(drop_point("b", 0.1, 0.5)));
         let p = preview.get().expect("preview written");
         assert_eq!(p.source, "a");
         assert_eq!(p.target, "b");
         assert_eq!(p.zone, DockDropZone::Left);
-        // Cursor back over self → preview clears (a self-drop is a no-op).
+        // Cursor back over self → SnapBack, preview clears (a self-drop is a no-op).
         ext.drag_to(&dummy_payload(), Some(drop_point("a", 0.5, 0.5)));
         assert!(preview.get().is_none(), "self-hover clears the preview");
     }
@@ -6923,10 +6916,13 @@ mod tests {
             .with_drop_preview(Rc::clone(&off_prev));
         let _ = off.begin_drag();
         off.drag_to(&dummy_payload(), Some(drop_point("b", 0.5, 0.5)));
-        assert_eq!(
-            off_prev.get().expect("preview written").zone,
-            DockDropZone::Left,
-            "split-only surface: centre resolves to nearest edge (ties Left), never Center",
+        // (R1162) On a split-only surface the banded centre is NOT a tabify, so the
+        // centre falls in the FLOAT dead-zone — no dock preview (a centre release
+        // floats). Aim at an edge band to split. (Pre-R1162 the continuous model
+        // resolved the centre to the nearest edge; the discrete model floats it.)
+        assert!(
+            off_prev.get().is_none(),
+            "split-only surface: a centre drop floats (dead-zone), shows no dock preview",
         );
         // The effective policy is observable (§2 #7) + read-only on the panel.
         assert_eq!(off.query("tabbing"), Some(IntrospectValue::Bool(false)));
@@ -7021,7 +7017,12 @@ mod tests {
     #[test]
     fn r1081_drag_release_clears_the_shared_preview() {
         let preview = Rc::new(Signal::new(None));
-        let mut ext = DockPanelExternal::new("a").with_drop_preview(Rc::clone(&preview));
+        let reorg = Rc::new(DockReorganizer::new(Rc::new(Signal::new(Some(
+            ab_topology(),
+        )))));
+        let mut ext = DockPanelExternal::new("a")
+            .with_reorganizer(reorg)
+            .with_drop_preview(Rc::clone(&preview));
         let _ = ext.begin_drag();
         ext.drag_to(&dummy_payload(), Some(drop_point("b", 0.5, 0.5)));
         assert!(preview.get().is_some());
@@ -8181,7 +8182,12 @@ mod tests {
         // floated even over a zone — the in-dock reorder/split flicker R1110
         // fixes).
         let preview = Rc::new(Signal::new(None));
-        let mut ext = DockPanelExternal::new("a").with_drop_preview(Rc::clone(&preview));
+        let reorg = Rc::new(DockReorganizer::new(Rc::new(Signal::new(Some(
+            ab_topology(),
+        )))));
+        let mut ext = DockPanelExternal::new("a")
+            .with_reorganizer(reorg)
+            .with_drop_preview(Rc::clone(&preview));
         let _ = ext.begin_drag();
         // Grab, then a drag-verdict move whose cursor is over panel "b"'s centre.
         ext.drag_to_at(
@@ -8645,7 +8651,12 @@ mod tests {
     #[test]
     fn r1081_query_drop_preview_reflects_the_live_drag() {
         let preview = Rc::new(Signal::new(None));
-        let mut ext = DockPanelExternal::new("a").with_drop_preview(Rc::clone(&preview));
+        let reorg = Rc::new(DockReorganizer::new(Rc::new(Signal::new(Some(
+            ab_topology(),
+        )))));
+        let mut ext = DockPanelExternal::new("a")
+            .with_reorganizer(reorg)
+            .with_drop_preview(Rc::clone(&preview));
         // No drag → null.
         assert_eq!(ext.query("drop_preview"), Some(IntrospectValue::Null));
         let _ = ext.begin_drag();
@@ -10657,16 +10668,25 @@ mod reorganize_tests {
             y_rel: y,
         };
         let is_panel = |t: &str| t == "a" || t == "c";
+        // The dragged source is "a" throughout.
         // Off every target → Float.
-        assert_eq!(resolve_drop(None, is_panel, true), DropResolution::Float);
+        assert_eq!(
+            resolve_drop(None, "a", is_panel, true),
+            DropResolution::Float
+        );
         // A non-panel target (a splitter the router climbed to) → Float, not no-op.
         assert_eq!(
-            resolve_drop(Some(&pt("editor_split_h", 0.5, 0.5)), is_panel, true),
+            resolve_drop(Some(&pt("editor_split_h", 0.5, 0.5)), "a", is_panel, true),
             DropResolution::Float
+        );
+        // Over the dragged panel's OWN slot → SnapBack (no-op), not a dock nor float.
+        assert_eq!(
+            resolve_drop(Some(&pt("a", 0.5, 0.5)), "a", is_panel, true),
+            DropResolution::SnapBack
         );
         // An edge band → Dock (split).
         assert_eq!(
-            resolve_drop(Some(&pt("c", 0.08, 0.5)), is_panel, true),
+            resolve_drop(Some(&pt("c", 0.08, 0.5)), "a", is_panel, true),
             DropResolution::Dock {
                 target: "c".into(),
                 zone: DockDropZone::Left
@@ -10674,7 +10694,7 @@ mod reorganize_tests {
         );
         // The centre square → Dock (tabify).
         assert_eq!(
-            resolve_drop(Some(&pt("c", 0.5, 0.5)), is_panel, true),
+            resolve_drop(Some(&pt("c", 0.5, 0.5)), "a", is_panel, true),
             DropResolution::Dock {
                 target: "c".into(),
                 zone: DockDropZone::Center
@@ -10683,12 +10703,17 @@ mod reorganize_tests {
         // The dead-zone RING between the edge bands and the centre → Float (the
         // maximized-window tear-off the continuous classifier could not express).
         assert_eq!(
-            resolve_drop(Some(&pt("c", 0.27, 0.5)), is_panel, true),
+            resolve_drop(Some(&pt("c", 0.27, 0.5)), "a", is_panel, true),
             DropResolution::Float
         );
         // The reserved OUTER perimeter sentinel → full-span outer dock.
         assert_eq!(
-            resolve_drop(Some(&pt(OUTER_DOCK_ZONE_TAG, 0.5, 0.02)), is_panel, true),
+            resolve_drop(
+                Some(&pt(OUTER_DOCK_ZONE_TAG, 0.5, 0.02)),
+                "a",
+                is_panel,
+                true
+            ),
             DropResolution::OuterDock {
                 edge: DockDropZone::Top
             }
