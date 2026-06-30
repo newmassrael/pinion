@@ -19688,6 +19688,52 @@
         "OUTER_DOCK_MARGIN width still a live-tune (HW-gated, user feel)"
       ]
     },
+    "R1170": {
+      "decision_summary": "R1170 §5.16 §5.39 — floating dock-panel window controls + per-window close seam (the user: 'why no minimize/maximize/exit on a torn-off panel like VS Code'). R1121 deferred per-window close (every close exited the app) + drew no controls on the borderless floater. R1170: (a) WidgetView::window_close_requested binding seam — a torn-off panel's close docks it BACK (drops its WindowSpec, the reconcile removes the OS window), only the primary window's close exits; the shell routes both the OS CloseRequested and the chrome close button through it. (b) WindowChromeStyle.controls_only — the shell injects only the min/max/close buttons (no grip, no title, no content inset), so the panel's own header stays the redock drag handle (a grip would OS-move and break redock; an inset would gap above the header). The editor's window_chrome(torn-X) returns controls_only; the main window keeps OS decorations. min/max are the shell's existing per-window set_minimized/set_maximized.",
+      "changes_bullets": [
+        "WidgetView::window_close_requested seam: a torn panel closes to dock-back",
+        "WindowChromeStyle.controls_only: buttons-only chrome (no grip/title/inset)",
+        "editor window_chrome(torn-X)=controls-only; close=dock-back, main=app-exit",
+        "shell routes both close paths (CloseRequested + chrome) through the seam"
+      ],
+      "verification_bullets": [
+        "overlay unit: controls_only draws no grip; hit rect spans only the buttons",
+        "shell unit: controls_only does NOT inset content (buttons overlay header)",
+        "editor unit: torn close docks the panel back; main close is unhandled",
+        "demo r1170_floating_window_chrome 32 assert: torn windows get min/max/close",
+        "workspace test + clippy -D pedantic + rustfmt clean"
+      ],
+      "impact_refs": [
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "min/max/close ACTION feel = HW-gated (winit press on the buttons), user :0",
+        "close=dock-back is unit-pinned; the live button press is the user's verify",
+        "a floater is not edge-resizable yet (controls_only skips the resize border)"
+      ],
+      "publishable_decision_summary": "R1170 §5.16 §5.39 — floating dock-panel window controls + per-window close seam (the user: 'why no minimize/maximize/exit on a torn-off panel like VS Code'). R1121 deferred per-window close (every close exited the app) + drew no controls on the borderless floater. R1170: (a) WidgetView::window_close_requested binding seam — a torn-off panel's close docks it BACK (drops its WindowSpec, the reconcile removes the OS window), only the primary window's close exits; the shell routes both the OS CloseRequested and the chrome close button through it. (b) WindowChromeStyle.controls_only — the shell injects only the min/max/close buttons (no grip, no title, no content inset), so the panel's own header stays the redock drag handle (a grip would OS-move and break redock; an inset would gap above the header). The editor's window_chrome(torn-X) returns controls_only; the main window keeps OS decorations. min/max are the shell's existing per-window set_minimized/set_maximized.",
+      "publishable_changes_bullets": [
+        "WidgetView::window_close_requested seam: a torn panel closes to dock-back",
+        "WindowChromeStyle.controls_only: buttons-only chrome (no grip/title/inset)",
+        "editor window_chrome(torn-X)=controls-only; close=dock-back, main=app-exit",
+        "shell routes both close paths (CloseRequested + chrome) through the seam"
+      ],
+      "publishable_verification_bullets": [
+        "overlay unit: controls_only draws no grip; hit rect spans only the buttons",
+        "shell unit: controls_only does NOT inset content (buttons overlay header)",
+        "editor unit: torn close docks the panel back; main close is unhandled",
+        "demo r1170_floating_window_chrome 32 assert: torn windows get min/max/close",
+        "workspace test + clippy -D pedantic + rustfmt clean"
+      ],
+      "publishable_impact_refs": [
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "min/max/close ACTION feel = HW-gated (winit press on the buttons), user :0",
+        "close=dock-back is unit-pinned; the live button press is the user's verify",
+        "a floater is not edge-resizable yet (controls_only skips the resize border)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
