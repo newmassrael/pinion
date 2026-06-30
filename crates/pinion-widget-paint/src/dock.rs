@@ -2304,17 +2304,14 @@ fn write_drop_preview(
     }
 }
 
-/// (R1160 §5.16 §5.51) Structured trace for the live dock-drag paths (the tab
-/// well AND the panel header / cross-window redock) — each release's resolved
-/// `became_drag` / `over` / `over_window` / `source_window` + the branch taken,
-/// so a real `:0` drag pins a live-only divergence the headless `scene/drag` (RPC
-/// inbox) cannot reproduce. Emits through the `tracing` substrate at the
-/// `pinion::dock` target, so it is PERMANENT + level-gated (no eprintln churn):
-/// silent by default, full trace under `PINION_LOG=pinion::dock=debug` (the shell
-/// installs the env-filtered subscriber). [[use-substrate-not-hand-rolled-equivalent]].
-fn dock_drag_trace(msg: &str) {
-    tracing::debug!(target: "pinion::dock", "{msg}");
-}
+// (R1160 §5.16 §5.51) The live dock-drag paths (the tab well + the panel header /
+// cross-window redock) emit `tracing::debug!(target: "pinion::dock", field = …, …)`
+// DIRECTLY at each decision point — structured key-value fields (not a
+// pre-formatted message), so the field expressions are evaluated ONLY when the
+// `pinion::dock` target is enabled (zero-cost when off, no String churn), the
+// event carries the real call-site, and a downstream subscriber can filter /
+// export per field. The shell installs the env-filtered subscriber; full trace
+// under `PINION_LOG=pinion::dock=debug`. [[use-substrate-not-hand-rolled-equivalent]].
 
 /// (R1159 §5.51) What releasing a dock drag at the current cursor does — the
 /// single outcome the discrete-target B model resolves a release into, the SSOT
@@ -4025,14 +4022,15 @@ impl External for TabWellExternal {
     fn drag_release_at(&mut self, payload: &DragPayload, update: &DragUpdate) {
         self.pressed_tab.set(None);
         write_drop_preview(self.drop_preview.as_ref(), None);
-        dock_drag_trace(&format!(
-            "TAB well={} release became_drag={} over={:?} over_window={:?} payload={:?}",
-            self.well_id,
-            update.became_drag,
-            update.over.as_ref().map(|p| p.tag.as_str()),
-            update.over_window,
-            payload.value.as_str(),
-        ));
+        tracing::debug!(
+            target: "pinion::dock",
+            well = %self.well_id,
+            became_drag = update.became_drag,
+            over = ?update.over.as_ref().map(|p| p.tag.as_str()),
+            over_window = ?update.over_window,
+            payload = ?payload.value.as_str(),
+            "tab release",
+        );
         if !update.became_drag {
             return;
         }
@@ -6019,13 +6017,14 @@ impl External for DockPanelExternal {
         self.dragging.set(false);
         self.set_drop_preview(None);
         self.is_drag_armed.set(true);
-        dock_drag_trace(&format!(
-            "  drag_release panel={} over={:?} resolve_preview={:?} has_reorg={}",
-            self.panel_id,
-            over.as_ref().map(|p| p.tag.as_str()),
-            self.resolve_preview(over.as_ref()),
-            self.reorganizer.is_some(),
-        ));
+        tracing::debug!(
+            target: "pinion::dock",
+            panel = %self.panel_id,
+            over = ?over.as_ref().map(|p| p.tag.as_str()),
+            resolve_preview = ?self.resolve_preview(over.as_ref()),
+            has_reorg = self.reorganizer.is_some(),
+            "panel drag_release",
+        );
         // 1. Dock: a valid drop over another panel, with a coordinator.
         if let (Some(reorganizer), Some(preview)) = (
             self.reorganizer.as_ref(),
@@ -6053,10 +6052,15 @@ impl External for DockPanelExternal {
             // no per-caller bookkeeping here.
             if let Some(intent) = intent_for_zone(&preview.source, &preview.target, preview.zone) {
                 let outcome = reorganizer.apply_intent(&intent);
-                dock_drag_trace(&format!(
-                    "  -> ARM1 DOCK {} onto {} ({:?}) was_floating={was_floating} apply={outcome:?}",
-                    preview.source, preview.target, preview.zone
-                ));
+                tracing::debug!(
+                    target: "pinion::dock",
+                    source = %preview.source,
+                    target = %preview.target,
+                    zone = ?preview.zone,
+                    was_floating,
+                    apply = ?outcome,
+                    "panel arm1 dock",
+                );
             }
             self.detached.set(false);
             return;
@@ -6076,7 +6080,7 @@ impl External for DockPanelExternal {
         // graceful there (it cannot orphan); live pointer use essentially
         // always has a forwarded cursor and takes the follow arm above.
         if over.is_none() {
-            dock_drag_trace(&format!("  -> ARM2 ESCAPE-FLOAT panel={}", self.panel_id));
+            tracing::debug!(target: "pinion::dock", panel = %self.panel_id, "panel arm2 escape-float");
             if let Some(cursor) = self.drag_cursor.get() {
                 // R1107.1 — the final release-follow carries the SAME source
                 // window the gesture's moves recorded (`drag_to_at` /
@@ -6113,10 +6117,12 @@ impl External for DockPanelExternal {
         // chart drives the restore: `dock_back` is inert while `docked`, so the
         // never-floated snap-back transitions nothing and removes no window.
         let was_floating = self.is_floating();
-        dock_drag_trace(&format!(
-            "  -> ARM3 SNAP-BACK panel={} was_floating={was_floating} (no dock at the preview)",
-            self.panel_id
-        ));
+        tracing::debug!(
+            target: "pinion::dock",
+            panel = %self.panel_id,
+            was_floating,
+            "panel arm3 snap-back (no dock at the preview)",
+        );
         self.send_lifecycle(DockPanelEvent::DockBack);
         if was_floating {
             self.enqueue_tear_off_redock();
@@ -6256,16 +6262,17 @@ impl External for DockPanelExternal {
     /// gesture so an AI can read where the drop landed.
     fn drag_release_at(&mut self, payload: &DragPayload, update: &DragUpdate) {
         self.drag_cursor.set(Some(update.cursor));
-        dock_drag_trace(&format!(
-            "panel={} release became_drag={} over={:?} over_window={:?} source_window={:?} floating={} floater_move={}",
-            self.panel_id,
-            update.became_drag,
-            update.over.as_ref().map(|p| p.tag.as_str()),
-            update.over_window,
-            update.source_window,
-            self.is_floating(),
-            self.is_floater_window_move(update.source_window),
-        ));
+        tracing::debug!(
+            target: "pinion::dock",
+            panel = %self.panel_id,
+            became_drag = update.became_drag,
+            over = ?update.over.as_ref().map(|p| p.tag.as_str()),
+            over_window = ?update.over_window,
+            source_window = ?update.source_window,
+            floating = self.is_floating(),
+            floater_move = self.is_floater_window_move(update.source_window),
+            "panel release",
+        );
         // R1107.1 — stamp the release's source window so the cursor-less
         // `drag_release` escape-follow below reads it (a degenerate release
         // with no preceding move still names the window it released in).
@@ -6276,7 +6283,7 @@ impl External for DockPanelExternal {
         // this window's topology) — it is the dock-at redock the per-window
         // router could never resolve.
         if let (Some(target_window), Some(point)) = (update.over_window, update.over.as_ref()) {
-            dock_drag_trace("  -> CROSS-WINDOW redock_at");
+            tracing::debug!(target: "pinion::dock", panel = %self.panel_id, window = %target_window, "panel -> cross-window redock_at");
             self.settle_cross_window_redock(target_window, point);
             return;
         }
