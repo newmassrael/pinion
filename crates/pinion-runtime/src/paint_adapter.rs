@@ -1337,6 +1337,108 @@ fn has_glyph_cluster(cell: &TermCell) -> bool {
     cell.width != CellWidth::Trailer && !cell.cluster.trim().is_empty()
 }
 
+/// R1178 §5.41 — geometric synthesis of the **solid** Unicode Block Elements
+/// (`U+2580`–`U+2590`, `U+2594`–`U+259F`). A solid block tiles its cell by an
+/// exact fraction — full / halves / eighths / quadrants — so painting it as a
+/// font glyph leaves the fitted-size + bearing margin that R1002's
+/// `*_loose_for_mismatched_cell` pins, and block art (terminal logos, progress
+/// bars, quadrant mosaics) shows inter-cell gaps. Returning the cell-exact fill
+/// rectangles lets [`paint_text_grid`] fill them in the foreground brush
+/// instead, so adjacent cells abut with no gap.
+///
+/// Returns `Some((rects, count))` — at most four sub-cell rectangles in
+/// absolute device pixels — for a single-char solid block cluster, or `None`
+/// for anything else: the shade blocks `U+2591`–`U+2593` (an alpha pattern, not
+/// a solid fill) and the box-drawing range `U+2500`–`U+257F` both fall through
+/// to the glyph path, as does any multi-char cluster.
+///
+/// Split points are snapped to integer pixels so a quadrant combo's interior
+/// edges (and a full block's cell edges) land on exact pixel boundaries: two
+/// abutting fills then share a crisp edge with no anti-aliasing seam, and a row
+/// of full blocks tiles seamlessly (the R1178 acceptance criterion).
+fn block_element_rects(
+    cluster: &str,
+    cx: f64,
+    cy: f64,
+    cell_w: f64,
+    cell_h: f64,
+) -> Option<([KurboRect; 4], usize)> {
+    // Only a lone-codepoint cluster can be a block element.
+    let mut chars = cluster.chars();
+    let (Some(c), None) = (chars.next(), chars.next()) else {
+        return None;
+    };
+    let x0 = cx;
+    let y0 = cy;
+    let x1 = cx + cell_w;
+    let y1 = cy + cell_h;
+    // Integer-snapped half / eighth split points (so abutting fills share an
+    // exact pixel boundary instead of a sub-pixel AA seam).
+    let xm = cx + (cell_w / 2.0).round();
+    let ym = cy + (cell_h / 2.0).round();
+    let frac_x = |k: f64| cx + (k * cell_w / 8.0).round();
+    let frac_y = |k: f64| cy + (k * cell_h / 8.0).round();
+    let solo = |r: KurboRect| Some(([r, KurboRect::ZERO, KurboRect::ZERO, KurboRect::ZERO], 1));
+    match c {
+        // Full block — the whole cell (exact integer edges => seamless tiling).
+        '\u{2588}' => solo(KurboRect::new(x0, y0, x1, y1)),
+        // Upper blocks (top fraction of the cell).
+        '\u{2580}' => solo(KurboRect::new(x0, y0, x1, ym)), // upper half
+        '\u{2594}' => solo(KurboRect::new(x0, y0, x1, frac_y(1.0))), // upper 1/8
+        // Lower blocks (bottom k/8 of the cell): U+2581..=U+2587.
+        '\u{2581}' => solo(KurboRect::new(x0, frac_y(7.0), x1, y1)),
+        '\u{2582}' => solo(KurboRect::new(x0, frac_y(6.0), x1, y1)),
+        '\u{2583}' => solo(KurboRect::new(x0, frac_y(5.0), x1, y1)),
+        '\u{2584}' => solo(KurboRect::new(x0, ym, x1, y1)), // lower half (4/8)
+        '\u{2585}' => solo(KurboRect::new(x0, frac_y(3.0), x1, y1)),
+        '\u{2586}' => solo(KurboRect::new(x0, frac_y(2.0), x1, y1)),
+        '\u{2587}' => solo(KurboRect::new(x0, frac_y(1.0), x1, y1)),
+        // Left blocks (left k/8 of the cell): U+2589..=U+258F.
+        '\u{2589}' => solo(KurboRect::new(x0, y0, frac_x(7.0), y1)),
+        '\u{258A}' => solo(KurboRect::new(x0, y0, frac_x(6.0), y1)),
+        '\u{258B}' => solo(KurboRect::new(x0, y0, frac_x(5.0), y1)),
+        '\u{258C}' => solo(KurboRect::new(x0, y0, xm, y1)), // left half (4/8)
+        '\u{258D}' => solo(KurboRect::new(x0, y0, frac_x(3.0), y1)),
+        '\u{258E}' => solo(KurboRect::new(x0, y0, frac_x(2.0), y1)),
+        '\u{258F}' => solo(KurboRect::new(x0, y0, frac_x(1.0), y1)),
+        // Right blocks.
+        '\u{2590}' => solo(KurboRect::new(xm, y0, x1, y1)), // right half
+        '\u{2595}' => solo(KurboRect::new(frac_x(7.0), y0, x1, y1)), // right 1/8
+        // Quadrants — the filled subset of {UL, UR, LL, LR} as a bitmask:
+        // bit0 = UL, bit1 = UR, bit2 = LL, bit3 = LR.
+        _ => {
+            let mask: u8 = match c {
+                '\u{2596}' => 0b0100, // LL
+                '\u{2597}' => 0b1000, // LR
+                '\u{2598}' => 0b0001, // UL
+                '\u{2599}' => 0b1101, // UL + LL + LR
+                '\u{259A}' => 0b1001, // UL + LR
+                '\u{259B}' => 0b0111, // UL + UR + LL
+                '\u{259C}' => 0b1011, // UL + UR + LR
+                '\u{259D}' => 0b0010, // UR
+                '\u{259E}' => 0b0110, // UR + LL
+                '\u{259F}' => 0b1110, // UR + LL + LR
+                _ => return None,
+            };
+            let quads = [
+                KurboRect::new(x0, y0, xm, ym), // UL
+                KurboRect::new(xm, y0, x1, ym), // UR
+                KurboRect::new(x0, ym, xm, y1), // LL
+                KurboRect::new(xm, ym, x1, y1), // LR
+            ];
+            let mut rects = [KurboRect::ZERO; 4];
+            let mut n = 0;
+            for (i, quad) in quads.iter().enumerate() {
+                if mask & (1u8 << i) != 0 {
+                    rects[n] = *quad;
+                    n += 1;
+                }
+            }
+            Some((rects, n))
+        }
+    }
+}
+
 /// R991 §5.41 §2 #6 — paint one retained [`Scene::TextGrid`] node: the
 /// cell-native terminal projection's GUI (Vello) glyph rasterisation.
 /// This is the deferred second half of the §5.41 cell-native axis —
@@ -1627,7 +1729,18 @@ fn paint_text_grid(
             // / SGR 3 italic pick the weight / slant — distinct `Layout` cache
             // entries, so the colour-independent glyph cache stays intact (the
             // brush is still applied at draw time).
-            if has_glyph_cluster(cell) {
+            // R1178 §5.41 — a solid Block Element synthesises as cell-exact
+            // filled rectangles in the foreground brush instead of a font
+            // glyph, so block art tiles its cells gap-free (the fitted glyph's
+            // bearing margin left the inter-cell gaps R1002 pins). Shades
+            // (U+2591–2593) and box-drawing (U+2500–257F) return `None` and
+            // fall through to the glyph path unchanged.
+            if let Some((rects, count)) = block_element_rects(&cell.cluster, cx, cy, cell_w, cell_h)
+            {
+                for r in &rects[..count] {
+                    out.fill(Fill::NonZero, origin, fg_brush, None, r);
+                }
+            } else if has_glyph_cluster(cell) {
                 let glyph_transform = origin * Affine::translate((cx, cy));
                 draw_cell_glyph(out, cache, &style, cell, glyph_transform, fg_brush);
             }
@@ -1705,10 +1818,21 @@ fn paint_grid_cursor(
             let rect = KurboRect::new(cx, cy, cx + span_w, cy + cell_h);
             out.fill(Fill::NonZero, origin, cursor_color, None, &rect);
             if let Some(c) = cur_cell {
-                if has_glyph_cluster(c) && !c.attrs.hidden {
+                if !c.attrs.hidden {
                     let bg_brush = to_peniko(palette.resolve(bg_term, ColorTarget::Background));
-                    let glyph_transform = origin * Affine::translate((cx, cy));
-                    draw_cell_glyph(out, cache, style, c, glyph_transform, bg_brush);
+                    // R1178 — a solid block element redraws its geometry (not a
+                    // glyph) in the cell background, so an inverse block cursor
+                    // reads through it exactly as it does a glyph.
+                    if let Some((rects, count)) =
+                        block_element_rects(&c.cluster, cx, cy, cell_w, cell_h)
+                    {
+                        for r in &rects[..count] {
+                            out.fill(Fill::NonZero, origin, bg_brush, None, r);
+                        }
+                    } else if has_glyph_cluster(c) {
+                        let glyph_transform = origin * Affine::translate((cx, cy));
+                        draw_cell_glyph(out, cache, style, c, glyph_transform, bg_brush);
+                    }
                 }
             }
         }
@@ -4298,5 +4422,88 @@ mod tests {
         assert_eq!(fit_font_size_to_cell(f64::NAN, 16), 16);
         assert_eq!(fit_font_size_to_cell(0.0, 16), 16);
         assert!(fit_font_size_to_cell(1_000.0, 16) >= 1);
+    }
+
+    /// R1178 §5.41 — FULL BLOCK fills the whole cell, and two horizontally
+    /// adjacent cells abut on an exact pixel boundary: cell N's right edge
+    /// equals cell N+1's left edge, so a run of `█` tiles with no gap (the
+    /// reported "broken bars" symptom). This is the geometry behind the GPU
+    /// `r1178_block_element_full_block_tiles_without_gap` pixel guard.
+    #[test]
+    fn r1178_full_block_fills_cell_and_tiles_gap_free() {
+        let (a, na) = block_element_rects("\u{2588}", 0.0, 0.0, 10.0, 30.0).expect("full block");
+        assert_eq!(na, 1);
+        assert_eq!((a[0].x0, a[0].y0, a[0].x1, a[0].y1), (0.0, 0.0, 10.0, 30.0));
+        // The next cell to the right (cx = 10) starts exactly where this ends.
+        let (b, _) = block_element_rects("\u{2588}", 10.0, 0.0, 10.0, 30.0).expect("full block");
+        assert!(
+            (a[0].x1 - b[0].x0).abs() < f64::EPSILON,
+            "adjacent full blocks must share an edge: {} vs {}",
+            a[0].x1,
+            b[0].x0,
+        );
+    }
+
+    /// R1178 §5.41 — halves split the cell at its integer-snapped midpoint, so
+    /// a half block exactly covers its fraction (no fitted-glyph margin).
+    #[test]
+    fn r1178_half_blocks_cover_exact_fraction() {
+        let cell = |s: &str| {
+            block_element_rects(s, 0.0, 0.0, 10.0, 30.0)
+                .expect("block")
+                .0[0]
+        };
+        // cell_w/2 = 5, cell_h/2 = 15.
+        let upper = cell("\u{2580}"); // upper half
+        assert_eq!((upper.y0, upper.y1), (0.0, 15.0));
+        let lower = cell("\u{2584}"); // lower half
+        assert_eq!((lower.y0, lower.y1), (15.0, 30.0));
+        let left = cell("\u{258C}"); // left half
+        assert_eq!((left.x0, left.x1), (0.0, 5.0));
+        let right = cell("\u{2590}"); // right half
+        assert_eq!((right.x0, right.x1), (5.0, 10.0));
+    }
+
+    /// R1178 §5.41 — quadrant combos emit one fill per filled quadrant, all
+    /// meeting at the integer-snapped cell centre (no interior AA seam).
+    #[test]
+    fn r1178_quadrant_combo_emits_meeting_rects() {
+        // U+2598 ▘ — a single upper-left quadrant.
+        let (ul, n_ul) = block_element_rects("\u{2598}", 0.0, 0.0, 10.0, 30.0).expect("quadrant");
+        assert_eq!(n_ul, 1);
+        assert_eq!(
+            (ul[0].x0, ul[0].y0, ul[0].x1, ul[0].y1),
+            (0.0, 0.0, 5.0, 15.0)
+        );
+        // U+2599 ▙ — upper-left + lower-left + lower-right (three quadrants).
+        let (tri, n_tri) = block_element_rects("\u{2599}", 0.0, 0.0, 10.0, 30.0).expect("quadrant");
+        assert_eq!(n_tri, 3);
+        assert_eq!(
+            (tri[0].x0, tri[0].y0, tri[0].x1, tri[0].y1),
+            (0.0, 0.0, 5.0, 15.0)
+        ); // UL
+        assert_eq!(
+            (tri[1].x0, tri[1].y0, tri[1].x1, tri[1].y1),
+            (0.0, 15.0, 5.0, 30.0)
+        ); // LL
+        assert_eq!(
+            (tri[2].x0, tri[2].y0, tri[2].x1, tri[2].y1),
+            (5.0, 15.0, 10.0, 30.0)
+        ); // LR
+    }
+
+    /// R1178 §5.41 — non-block clusters return `None` and keep the glyph path:
+    /// ordinary text, the shade blocks (an alpha pattern, not a solid fill),
+    /// box-drawing (a deferred follow-up), and any multi-char / empty cluster.
+    #[test]
+    fn r1178_non_solid_block_falls_through_to_glyph() {
+        for s in [
+            "M", " ", "", "\u{2591}", "\u{2592}", "\u{2593}", "\u{2500}", "\u{2502}", "ab",
+        ] {
+            assert!(
+                block_element_rects(s, 0.0, 0.0, 10.0, 30.0).is_none(),
+                "{s:?} must fall through to the glyph path",
+            );
+        }
     }
 }

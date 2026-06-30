@@ -2214,6 +2214,77 @@ mod tests {
         );
     }
 
+    /// R1178 §5.41 — two horizontally adjacent FULL BLOCK (`U+2588`) cells
+    /// render as cell-exact filled rectangles that tile with **no gap**: every
+    /// column across the 2-cell row — including the seam columns either side of
+    /// the cell boundary — inks the foreground. The font-glyph path this
+    /// replaces leaves the fitted-size + bearing margin (the R1002
+    /// `*_loose_for_mismatched_cell` looseness), which read as the "broken
+    /// bars" PR-40 reported on the terminal logo. Font-independent: it asserts
+    /// geometry (solid coverage), not a shaped glyph, so a 10×30 producer-
+    /// picked cell (the reported case) tiles regardless of the resolved face.
+    #[test]
+    #[ignore = "wgpu adapter cold-boot too slow for default test suite; run with --ignored"]
+    fn r1178_block_element_full_block_tiles_without_gap() {
+        use pinion_core::cell_metric::CellMetric;
+        use pinion_core::scene::{Rect, Scene, TextGridNode};
+        use pinion_core::style::Color;
+        use pinion_core::term_grid::{GridBuffer, TermCell, TermColor};
+        use pinion_runtime::paint_adapter::{FragmentCache, to_vello_cached};
+        use pinion_text::LayoutCache;
+
+        const CW: u32 = 10;
+        const CH: u32 = 30;
+        let metric = CellMetric::new(CW, CH).expect("non-zero cell metric");
+        // Distinct, palette-independent fg / bg so a gap (background) is
+        // unambiguously distinguishable from block ink (foreground).
+        let fg = TermColor::Rgb(Color::rgb(255, 128, 0)); // orange logo ink
+        let bg = TermColor::Rgb(Color::rgb(0, 0, 40)); // dark, low red
+        let full = || TermCell::new("\u{2588}".to_owned(), fg, bg);
+        let buffer = GridBuffer::new(2, 1).with_row(0, vec![full(), full()]);
+        let mut node = TextGridNode::new(metric).with_cells(buffer);
+        let w = CW * 2;
+        node.rect = Rect::new(0, 0, w, CH);
+        let scene = Scene::TextGrid(node);
+
+        let mut text_cache = LayoutCache::new();
+        let mut cache = FragmentCache::new();
+        let mut image_cache = pinion_runtime::image_cache::ImageCache::new();
+        let mut vello = VelloScene::new();
+        to_vello_cached(
+            &scene,
+            &|_| None,
+            &mut text_cache,
+            &mut image_cache,
+            &mut cache,
+            &mut vello,
+        );
+        let mut shot = HeadlessScreenshot::new().expect("headless screenshot bootstrap");
+        let rgba8 = shot
+            .render_to_rgba8(&vello, w, CH, vello::peniko::Color::BLACK)
+            .expect("render");
+
+        // The foreground (orange) is high-red; the background is low-red. A
+        // tiled block inks fg on every column at mid-height — a gap would show
+        // the dark background's low red.
+        let y = CH / 2;
+        let is_fg = |x: u32| -> bool {
+            let i = ((y * w + x) * 4) as usize;
+            rgba8[i] > 120
+        };
+        let gaps: Vec<u32> = (0..w).filter(|&x| !is_fg(x)).collect();
+        assert!(
+            gaps.is_empty(),
+            "FULL BLOCK cells must tile with no gap; background columns at y={y}: {gaps:?}",
+        );
+        // Explicitly pin the two seam columns either side of the cell boundary.
+        assert!(
+            is_fg(CW - 1) && is_fg(CW),
+            "the cell-boundary seam (cols {} / {CW}) must be continuous foreground",
+            CW - 1,
+        );
+    }
+
     /// Zero-dimension viewports short-circuit with a typed error
     /// rather than reaching the wgpu validation layer.
     #[test]

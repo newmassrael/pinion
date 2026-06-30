@@ -20114,6 +20114,52 @@
         "dialog-in-host still 1st consumer; a 2nd would justify lifting an embeddable file-dialog (unchanged)"
       ]
     },
+    "R1178": {
+      "decision_summary": "R1178 §5.41 — solid Block Element geometric synthesis in the Vello grid arm (PR-40). paint_text_grid routed every cell through parley glyph shaping; a FULL BLOCK / half / quadrant glyph fits its cell loosely (the R1002 *_loose_for_mismatched_cell margin), so block art (terminal logos, progress bars) showed inter-cell gaps — the 'broken bars' a sprag-session live capture of the claude logo reported. block_element_rects now returns the cell-exact fill rectangles for the SOLID blocks (U+2580-2590, U+2594-259F; integer-snapped splits => seamless tiling) and pass 2 fills them in fg instead of shaping a glyph; the block cursor inverse-redraws the same geometry in bg. Shades (U+2591-2593, an alpha pattern) + box-drawing (U+2500-257F, line geometry) deliberately fall through to the glyph path as deferred (A-shade)/(B-box) slices. Vello-arm-local: data contract + TUI arm + §2 #6 cross-consistency untouched, so sprag change 0. No new spec round (purely additive within §5.41's already-ratified rasterise arm; breaks no §2/§3/§5.15 invariant).",
+      "changes_bullets": [
+        "paint_adapter.rs: new block_element_rects(cluster, cx, cy, cell_w, cell_h) -> Option<([KurboRect;4], usize)> — pure, paint-local classifier returning the cell-exact fill rectangles for a SOLID Unicode Block Element (U+2580-2590, U+2594-259F): full / upper-lower-left-right halves / eighths / quadrant subsets (bitmask UL/UR/LL/LR). Split points integer-snapped so abutting fills share a crisp pixel edge and a row of full blocks tiles seamlessly.",
+        "paint_text_grid pass 2: branch on block_element_rects BEFORE has_glyph_cluster — a solid block fills its sub-rects in fg_brush instead of routing to draw_cell_glyph; shades (U+2591-2593) and box-drawing (U+2500-257F) return None and fall through to the glyph path unchanged.",
+        "paint_grid_cursor Block arm: inverse redraw now fills block geometry in the cell bg (mirrors the glyph inverse-redraw) so a block cursor reads through a block char.",
+        "Scope = (A-solid) ONLY. Shades (alpha pattern) and box-drawing (line geometry) are deferred follow-ups; multi-char clusters never qualify."
+      ],
+      "verification_bullets": [
+        "4 pure-geometry unit tests (CI, no GPU): full-block-fills-cell + adjacent-tiles-gap-free, halves cover exact fraction, quadrant combo emits meeting rects (UL/LL/LR), non-solid (text/shade/box/multi-char/empty) falls through to None.",
+        "GPU pixel guard r1178_block_element_full_block_tiles_without_gap (#[ignore]d, lavapipe): two adjacent U+2588 cells (10x30 producer-picked, the sprag case) render with ZERO background gap columns across the 2-cell row incl. the boundary seam. Discriminating: r1002_*_loose_for_mismatched_cell proves the prior glyph path left a right gutter on the same cell.",
+        "Full pinion-shell --lib --ignored GPU suite (16 tests, lavapipe) green incl. r993 cursor shapes, r995 GUI/TUI cross-consistency (§2 #6), r1013 wide-head draw-order — cursor-arm change non-regressing.",
+        "cargo fmt clean; workspace clippy (--all-targets --features pinion-runtime/vello, pedantic=deny) 0 warnings; pinion-runtime lib 479 + pinion-shell lib 133 green."
+      ],
+      "impact_refs": [
+        "5.41",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "(A-shade) U+2591-2593 LIGHT/MEDIUM/DARK SHADE = alpha-blended fg over bg (25/50/75%), not solid rect — next slice.",
+        "(B-box) U+2500-257F box-drawing line synthesis (light/heavy/double/rounded U+256D-2570/dashed/diagonal U+2571-2573) — bezier+stroke, distinct sub-cases; deferred.",
+        "Data contract (codepoint/width/SGR) unchanged + TUI arm passes char through to host terminal => sprag change 0; re-capture claude logo via scene/screenshot in a sprag session to confirm solid."
+      ],
+      "publishable_decision_summary": "R1178 §5.41 — solid Block Element geometric synthesis in the Vello grid arm (PR-40). paint_text_grid routed every cell through parley glyph shaping; a FULL BLOCK / half / quadrant glyph fits its cell loosely (the R1002 *_loose_for_mismatched_cell margin), so block art (terminal logos, progress bars) showed inter-cell gaps — the 'broken bars' a sprag-session live capture of the claude logo reported. block_element_rects now returns the cell-exact fill rectangles for the SOLID blocks (U+2580-2590, U+2594-259F; integer-snapped splits => seamless tiling) and pass 2 fills them in fg instead of shaping a glyph; the block cursor inverse-redraws the same geometry in bg. Shades (U+2591-2593, an alpha pattern) + box-drawing (U+2500-257F, line geometry) deliberately fall through to the glyph path as deferred (A-shade)/(B-box) slices. Vello-arm-local: data contract + TUI arm + §2 #6 cross-consistency untouched, so sprag change 0. No new spec round (purely additive within §5.41's already-ratified rasterise arm; breaks no §2/§3/§5.15 invariant).",
+      "publishable_changes_bullets": [
+        "paint_adapter.rs: new block_element_rects(cluster, cx, cy, cell_w, cell_h) -> Option<([KurboRect;4], usize)> — pure, paint-local classifier returning the cell-exact fill rectangles for a SOLID Unicode Block Element (U+2580-2590, U+2594-259F): full / upper-lower-left-right halves / eighths / quadrant subsets (bitmask UL/UR/LL/LR). Split points integer-snapped so abutting fills share a crisp pixel edge and a row of full blocks tiles seamlessly.",
+        "paint_text_grid pass 2: branch on block_element_rects BEFORE has_glyph_cluster — a solid block fills its sub-rects in fg_brush instead of routing to draw_cell_glyph; shades (U+2591-2593) and box-drawing (U+2500-257F) return None and fall through to the glyph path unchanged.",
+        "paint_grid_cursor Block arm: inverse redraw now fills block geometry in the cell bg (mirrors the glyph inverse-redraw) so a block cursor reads through a block char.",
+        "Scope = (A-solid) ONLY. Shades (alpha pattern) and box-drawing (line geometry) are deferred follow-ups; multi-char clusters never qualify."
+      ],
+      "publishable_verification_bullets": [
+        "4 pure-geometry unit tests (CI, no GPU): full-block-fills-cell + adjacent-tiles-gap-free, halves cover exact fraction, quadrant combo emits meeting rects (UL/LL/LR), non-solid (text/shade/box/multi-char/empty) falls through to None.",
+        "GPU pixel guard r1178_block_element_full_block_tiles_without_gap (#[ignore]d, lavapipe): two adjacent U+2588 cells (10x30 producer-picked, the sprag case) render with ZERO background gap columns across the 2-cell row incl. the boundary seam. Discriminating: r1002_*_loose_for_mismatched_cell proves the prior glyph path left a right gutter on the same cell.",
+        "Full pinion-shell --lib --ignored GPU suite (16 tests, lavapipe) green incl. r993 cursor shapes, r995 GUI/TUI cross-consistency (§2 #6), r1013 wide-head draw-order — cursor-arm change non-regressing.",
+        "cargo fmt clean; workspace clippy (--all-targets --features pinion-runtime/vello, pedantic=deny) 0 warnings; pinion-runtime lib 479 + pinion-shell lib 133 green."
+      ],
+      "publishable_impact_refs": [
+        "5.41",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "(A-shade) U+2591-2593 LIGHT/MEDIUM/DARK SHADE = alpha-blended fg over bg (25/50/75%), not solid rect — next slice.",
+        "(B-box) U+2500-257F box-drawing line synthesis (light/heavy/double/rounded U+256D-2570/dashed/diagonal U+2571-2573) — bezier+stroke, distinct sub-cases; deferred.",
+        "Data contract (codepoint/width/SGR) unchanged + TUI arm passes char through to host terminal => sprag change 0; re-capture claude logo via scene/screenshot in a sprag session to confirm solid."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
