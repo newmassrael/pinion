@@ -44,7 +44,7 @@
 
 use pinion_a11y::{AccessNode, WidgetA11y};
 use pinion_core::command::Command;
-use pinion_core::external::IntrospectValue;
+use pinion_core::external::{DropPoint, IntrospectValue};
 use pinion_core::intent::Intent;
 use pinion_core::intent_tag;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
@@ -59,14 +59,13 @@ use pinion_shell::{
 };
 use pinion_widget_paint::button::{ButtonColors, ButtonStyle, view_button};
 use pinion_widget_paint::dock::{
-    DEFAULT_FLOATING_WINDOW_PREFIX, DockDropPreview, DockDropZone, DockNode, DockPanelExternal,
-    DockPanelStyle, DockReorganizeExternal, DockReorganizer, DockSplitState, DockTopology,
-    FloatPolicy, FloatingPlaceholderStyle, PLACEHOLDER_TAG_SUFFIX, TEAR_OFF_EVENT,
-    TEAR_OFF_FOLLOW_EVENT, TEAR_OFF_REDOCK_AT_EVENT, TEAR_OFF_REDOCK_EVENT, TabWellExternal,
-    WINDOW_MOVE_EVENT, dock_drop_preview_overlay, dock_drop_zone_normalized,
-    dock_redock_preview_tint, dock_tablist_access_nodes, dock_zone_guide_overlay,
-    floating_window_id as dock_floating_window_id, outer_drop_zone, view_dock_panel,
-    view_dock_surface, view_floating_placeholder,
+    DEFAULT_FLOATING_WINDOW_PREFIX, DockDropPreview, DockNode, DockPanelExternal, DockPanelStyle,
+    DockReorganizeExternal, DockReorganizer, DockSplitState, DockTopology, DropResolution,
+    FloatPolicy, FloatingPlaceholderStyle, TEAR_OFF_EVENT, TEAR_OFF_FOLLOW_EVENT,
+    TEAR_OFF_REDOCK_AT_EVENT, TEAR_OFF_REDOCK_EVENT, TabWellExternal, WINDOW_MOVE_EVENT,
+    dock_drop_preview_overlay, dock_redock_preview_tint, dock_tablist_access_nodes,
+    dock_zone_guide_overlay, floating_window_id as dock_floating_window_id, resolve_drop,
+    view_dock_panel, view_dock_surface, view_floating_placeholder,
 };
 use pinion_widget_paint::splitter::SplitterExternal;
 use std::borrow::Cow;
@@ -467,6 +466,63 @@ fn redock_panel_floating(panel_id: &str) {
     if let Some(idx) = current.iter().position(|w| w.id == target) {
         current.remove(idx);
         signal.set(current);
+    }
+}
+
+/// (R1163b §5.51 §2 #7) Apply a cross-window dock-back drop through the SAME
+/// [`resolve_drop`] SSOT the same-window drag and the on-target preview
+/// ([`DockPanelsEditorView::dock_drop_preview`]) use, so the cross-window RESULT ==
+/// the PREVIEW by construction (R1163b retired the editor's legacy continuous
+/// `dock_panel_at_zone` here — before, the cross-window path classified with the
+/// continuous geometry while the same-window path used the banded `resolve_drop`, a
+/// two-geometry inconsistency). The `{target, x_rel, y_rel}` the shell resolved is
+/// rebuilt into a [`DropPoint`] and resolved against the editor's reorganizer (its
+/// topology = `is_panel`, its `tabbing` policy):
+///
+/// * `Dock` / `OuterDock` — relocate the panel's leaf to that zone, then drop its
+///   floating window so the docked leaf paints content ([`redock_panel_floating`]).
+/// * `Float` — the cursor was in a panel's dead-zone ring (a discrete-target FLOAT,
+///   not a dock); the panel stays FLOATING (no `redock_panel_floating`), matching the
+///   blank preview.
+/// * `SnapBack` — over its own bare slot (a no-move return home). Unreachable in the
+///   cross-window case (a floating panel's home is a placeholder, which `resolve_drop`
+///   folds to `Dock { Center }`), but treated as a home redock for totality.
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "the shell serialised f32 DropPoint coords to JSON f64; reading back to f32 round-trips losslessly"
+)]
+fn redock_cross_window(panel: &str, v: &serde_json::Value) {
+    let Some(target) = v.get("target").and_then(serde_json::Value::as_str) else {
+        return;
+    };
+    let (Some(x_rel), Some(y_rel)) = (
+        v.get("x_rel").and_then(serde_json::Value::as_f64),
+        v.get("y_rel").and_then(serde_json::Value::as_f64),
+    ) else {
+        return;
+    };
+    let reorganizer = use_editor_reorganizer();
+    let point = DropPoint {
+        tag: target.to_string(),
+        x_rel: x_rel as f32,
+        y_rel: y_rel as f32,
+    };
+    match resolve_drop(
+        Some(&point),
+        panel,
+        |t| reorganizer.is_panel(t),
+        reorganizer.tabbing(),
+    ) {
+        DropResolution::Dock { target, zone } => {
+            let _ = reorganizer.dock_panel_at_resolved_zone(panel, &target, zone);
+            redock_panel_floating(panel);
+        }
+        DropResolution::OuterDock { edge } => {
+            let _ = reorganizer.dock_panel_outer(panel, edge);
+            redock_panel_floating(panel);
+        }
+        DropResolution::SnapBack => redock_panel_floating(panel),
+        DropResolution::Float => {}
     }
 }
 
@@ -1184,20 +1240,15 @@ impl WidgetCore for DockPanelsEditorView {
                     }
                     return Vec::new();
                 }
-                // (R1105/R1106/R1128) Cross-window dock-at into the slot-bearing
-                // main window: a floating panel dropped onto main's dock (the
-                // live shell-composed `over_window`, or the AI-primary
-                // `tear_off_redock_at` invoke). Only `MAIN_WINDOW_ID` hosts a
-                // panel (a floater has no slot); a non-main target fires the
-                // intent (the panel's `redock_at` diagnostic records it) but
-                // executes no move. ★ZONE-HONORING relocation: the panel sits in
-                // the topology as a placeholder leaf, so the §5.51.1 total
-                // `reorganizer.dock_panel_at_zone(panel, target, x_rel, y_rel)`
-                // re-places it AT the dropped zone (the same
-                // `dock_drop_zone_normalized` SSOT the in-window drag uses) — then
-                // the floating window drops so the relocated leaf paints content.
-                // A dead-zone / own-slot drop leaves the topology unchanged, so
-                // the window-drop returns the panel home.
+                // (R1105/R1106/R1128/R1163b) Cross-window dock-at into the
+                // slot-bearing main window: a floating panel dropped onto main's
+                // dock (the live shell-composed `over_window`, or the AI-primary
+                // `tear_off_redock_at` invoke). Only `MAIN_WINDOW_ID` hosts a panel
+                // (a floater has no slot); a non-main target fires the intent (the
+                // panel's `redock_at` diagnostic records it) but executes no move.
+                // The drop is resolved through the SAME `resolve_drop` SSOT the
+                // same-window drag + the on-target preview use — see
+                // [`redock_cross_window`].
                 TEAR_OFF_REDOCK_AT_EVENT => {
                     if let IntrospectValue::Json(v) = &intent.payload
                         && let (Some(panel), Some(window)) = (
@@ -1206,23 +1257,7 @@ impl WidgetCore for DockPanelsEditorView {
                         )
                         && window == MAIN_WINDOW_ID
                     {
-                        if let Some(target) = v.get("target").and_then(serde_json::Value::as_str) {
-                            let x_rel = v.get("x_rel").and_then(serde_json::Value::as_f64);
-                            let y_rel = v.get("y_rel").and_then(serde_json::Value::as_f64);
-                            if let (Some(x_rel), Some(y_rel)) = (x_rel, y_rel) {
-                                if let Some(zone) = outer_drop_zone(target, x_rel, y_rel) {
-                                    // (R1156 §5.51) The drop landed in the dock
-                                    // area's OUTER perimeter band → a FULL-SPAN
-                                    // dock (a row/column across every pane), at the
-                                    // edge the area-normalised cursor is nearest.
-                                    let _ = use_editor_reorganizer().dock_panel_outer(panel, zone);
-                                } else {
-                                    let _ = use_editor_reorganizer()
-                                        .dock_panel_at_zone(panel, target, x_rel, y_rel);
-                                }
-                            }
-                        }
-                        redock_panel_floating(panel);
+                        redock_cross_window(panel, v);
                     }
                     return Vec::new();
                 }
@@ -1291,34 +1326,42 @@ impl WidgetView for DockPanelsEditorView {
         Some(use_editor_windows())
     }
 
-    /// (R1125 §5.51 §2 #7 PR-33) Render the cross-window dock drop-zone PREVIEW.
-    /// The shell does the widget-agnostic half (resolves the incoming floater's
-    /// drop onto this window, looks up the target panel's `panel_rect`); this
+    /// (R1125/R1163b §5.51 §2 #7 PR-33) Render the cross-window dock drop-zone
+    /// PREVIEW. The shell does the widget-agnostic half (resolves the incoming
+    /// floater's drop onto this window, looks up the target's `panel_rect`, and runs
+    /// this hook inside `root_owner.run` so the reactive reorganizer resolves); this
     /// supplies the dock-domain strip — the RESULT region of the zone under the
-    /// cursor, in the dock Accent tint — through the SAME `dock_drop_zone_normalized`
-    /// SSOT the in-window drag preview uses, so a floater dragged back over main
-    /// shows exactly where it will land (a one-line opt-in for a dock binding).
+    /// cursor, in the bold redock tint. R1163b DERIVES the zone from the SAME
+    /// [`resolve_drop`] SSOT the [`redock_cross_window`] reducer applies, so the
+    /// cross-window preview == result by construction (was the legacy continuous
+    /// `dock_drop_zone_normalized` + a duplicated `_placeholder` check — a
+    /// two-geometry divergence vs the same-window banded path). The torn-slot
+    /// placeholder fill (R1140) + the OUTER full-span perimeter (R1156) now live in
+    /// `resolve_drop`. A `Dock`/`OuterDock` paints the zone overlay; a `Float` (a
+    /// panel's dead-zone ring — "will float") / `SnapBack` paints nothing.
     fn dock_drop_preview(
+        source_panel: &str,
         target_tag: &str,
         panel_rect: Rect,
         x_rel: f32,
         y_rel: f32,
     ) -> Option<Scene> {
-        // R1140 — a TORN SLOT (placeholder) fills FULL on any drop: you fill the
-        // emptied slot, you do not split it, so a floater dragged back over its
-        // OWN home slot previews the WHOLE slot (Center), matching the dock-back
-        // result. A live panel target keeps the cursor-zone split classification.
-        let zone =
-            if let Some(outer) = outer_drop_zone(target_tag, f64::from(x_rel), f64::from(y_rel)) {
-                // (R1156) OUTER full-span dock: the nearest perimeter edge. The shell
-                // passed the WHOLE window rect, so the overlay fills that edge's
-                // full-span strip (a full-width row / full-height column).
-                outer
-            } else if target_tag.ends_with(PLACEHOLDER_TAG_SUFFIX) {
-                DockDropZone::Center
-            } else {
-                dock_drop_zone_normalized(f64::from(x_rel), f64::from(y_rel))
-            };
+        let reorganizer = use_editor_reorganizer();
+        let point = DropPoint {
+            tag: target_tag.to_string(),
+            x_rel,
+            y_rel,
+        };
+        let zone = match resolve_drop(
+            Some(&point),
+            source_panel,
+            |t| reorganizer.is_panel(t),
+            reorganizer.tabbing(),
+        ) {
+            DropResolution::Dock { zone, .. } => zone,
+            DropResolution::OuterDock { edge } => edge,
+            DropResolution::Float | DropResolution::SnapBack => return None,
+        };
         // R1139 — the bolder cross-window redock tint (over opaque content), not
         // the subtler in-window highlight; the overlay adds an opaque accent
         // border so the result region reads regardless of the content behind it.
@@ -1392,37 +1435,51 @@ mod tests {
 
     use super::*;
     use pinion_core::reactive::Owner;
-    use pinion_widget_paint::dock::{DockReorganizeIntent, DockSplitPosition, FloatPolicy};
+    use pinion_widget_paint::dock::{
+        DockReorganizeIntent, DockSplitPosition, FloatPolicy, PLACEHOLDER_TAG_SUFFIX,
+    };
     use pinion_widget_paint::splitter::SplitterOrientation;
 
     #[test]
     fn r1140_dock_drop_preview_full_for_torn_slot_split_for_live_panel() {
-        // R1140 §5.51 PR-39 — a floater dragged back over its OWN torn slot
-        // (placeholder tag) previews the WHOLE slot (Center / dock-back full),
-        // not a cursor-zone edge split: you fill an emptied slot, you do not
-        // split it. A live-panel target keeps the edge-split classification.
-        let panel = Rect::new(0, 0, 200, 100);
-        let placeholder = format!("properties{PLACEHOLDER_TAG_SUFFIX}");
-        let Some(Scene::Box(full)) =
-            <DockPanelsEditorView as WidgetView>::dock_drop_preview(&placeholder, panel, 0.1, 0.5)
-        else {
-            panic!("a torn slot paints a preview Box");
-        };
-        assert_eq!(
-            full.rect, panel,
-            "a torn slot previews the WHOLE slot (Center), even with an edge x_rel",
-        );
-        let Some(Scene::Box(half)) =
-            <DockPanelsEditorView as WidgetView>::dock_drop_preview("viewport", panel, 0.1, 0.5)
-        else {
-            panic!("a live panel paints a preview Box");
-        };
-        assert!(
-            half.rect.w < panel.w,
-            "a live panel target splits at the cursor edge (w={} < {}), not full",
-            half.rect.w,
-            panel.w,
-        );
+        // R1140/R1163b §5.51 PR-39 — a floater dragged back over its OWN torn slot
+        // (placeholder tag) previews the WHOLE slot (Center / dock-back full), not a
+        // cursor-zone edge split: you fill an emptied slot, you do not split it. A
+        // live-panel target keeps the edge-split classification. R1163b: the hook
+        // resolves through `resolve_drop` reading the owner-scoped editor reorganizer
+        // (is_panel / tabbing), so run it in an owner (as the shell does).
+        run_in_owner(|| {
+            let panel = Rect::new(0, 0, 200, 100);
+            let placeholder = format!("properties{PLACEHOLDER_TAG_SUFFIX}");
+            let Some(Scene::Box(full)) = <DockPanelsEditorView as WidgetView>::dock_drop_preview(
+                "properties",
+                &placeholder,
+                panel,
+                0.1,
+                0.5,
+            ) else {
+                panic!("a torn slot paints a preview Box");
+            };
+            assert_eq!(
+                full.rect, panel,
+                "a torn slot previews the WHOLE slot (Center), even with an edge x_rel",
+            );
+            let Some(Scene::Box(half)) = <DockPanelsEditorView as WidgetView>::dock_drop_preview(
+                "properties",
+                "viewport",
+                panel,
+                0.1,
+                0.5,
+            ) else {
+                panic!("a live panel paints a preview Box");
+            };
+            assert!(
+                half.rect.w < panel.w,
+                "a live panel target splits at the cursor edge (w={} < {}), not full",
+                half.rect.w,
+                panel.w,
+            );
+        });
     }
 
     #[test]
@@ -2613,12 +2670,16 @@ mod tests {
     }
 
     #[test]
-    fn r1107_1_redock_at_with_rejected_relocate_still_redocks_home() {
-        // R1107.1 review-clearance: the `# Errors` contract of dock_panel_at_zone
-        // — an AI-driven `tear_off_redock_at` whose target names NO panel
-        // rejects the relocate (topology unchanged), yet the floating window is
-        // still removed so the panel returns HOME (its original placeholder
-        // leaf). Reachable via `invoke("tear_off_redock_at",{target:"<stale>"})`.
+    fn r1163b_redock_at_with_non_panel_target_stays_floating() {
+        // R1163b — a `tear_off_redock_at` whose target names NO dockable panel
+        // resolves through `resolve_drop` to `Float` (the discrete-target B model:
+        // a release off every panel — incl. a stale / non-panel target — floats,
+        // it does NOT force-redock home). So the panel STAYS FLOATING (no data
+        // loss, the AI can retry with a valid target) and the topology is
+        // unchanged. This SUPERSEDES the pre-B R1107.1 contract (which force-removed
+        // the floating window on any redock_at, returning home even for a stale
+        // target) — the cross-window path now agrees with the same-window banded
+        // resolution. Reachable via `invoke("tear_off_redock_at",{target:"<stale>"})`.
         run_in_owner(|| {
             let windows = use_editor_windows();
             let topo = use_editor_topology();
@@ -2637,14 +2698,91 @@ mod tests {
             };
             let _ = <DockPanelsEditorView as WidgetCore>::update(ButtonState::Idle, &intent);
             assert!(
-                !is_panel_floating(&windows.get(), VIEWPORT_PANEL_TAG),
-                "the floating window is removed (redocked) even when the relocate rejects",
+                is_panel_floating(&windows.get(), VIEWPORT_PANEL_TAG),
+                "a non-panel target resolves to Float — the panel stays floating",
             );
             assert_eq!(
                 topo.get().unwrap(),
                 before,
-                "a rejected relocate leaves the topology UNCHANGED — the panel is \
-                 home in its original slot, not lost, not floating",
+                "Float makes no topology change — the panel is unchanged, not lost",
+            );
+        });
+    }
+
+    /// Fire the cross-window `tear_off_redock_at` reducer for `panel` dropped onto
+    /// main's `target` at the normalised cursor — the same wire shape the live shell
+    /// + the AI `invoke` emit.
+    fn fire_redock_at(panel: &str, target: &str, x_rel: f64, y_rel: f64) {
+        let intent = Intent {
+            tag: tear_off_tag(panel, TEAR_OFF_REDOCK_AT_EVENT),
+            payload: IntrospectValue::Json(serde_json::json!({
+                "panel": panel,
+                "window": MAIN_WINDOW_ID,
+                "target": target,
+                "x_rel": x_rel,
+                "y_rel": y_rel,
+            })),
+        };
+        let _ = <DockPanelsEditorView as WidgetCore>::update(ButtonState::Idle, &intent);
+    }
+
+    #[test]
+    fn r1163b_cross_window_preview_agrees_with_redock_result() {
+        // R1163b — the cross-window PREVIEW (`dock_drop_preview`) and the cross-window
+        // RESULT (`redock_cross_window`, the `tear_off_redock_at` reducer) both flow
+        // from the ONE `resolve_drop` SSOT, so the preview shows an overlay EXACTLY
+        // when the release redocks: a Dock zone previews + docks; a Float dead-zone
+        // previews nothing + leaves the panel floating. Before R1163b the cross-window
+        // path classified with the legacy continuous geometry while the preview used a
+        // separate `_placeholder` + `dock_drop_zone_normalized` path — a two-geometry
+        // divergence where preview could disagree with result. This pins preview ==
+        // result by construction for the cross-window path.
+        let rect = Rect::new(0, 0, 200, 100);
+
+        // CASE 1 — the CENTRE of a live panel = a Dock (tabify) zone: the preview
+        // paints an overlay AND the release redocks (no longer floating).
+        run_in_owner(|| {
+            let windows = use_editor_windows();
+            toggle_panel_floating(PROPERTIES_PANEL_TAG);
+            assert!(is_panel_floating(&windows.get(), PROPERTIES_PANEL_TAG));
+            let preview = <DockPanelsEditorView as WidgetView>::dock_drop_preview(
+                PROPERTIES_PANEL_TAG,
+                VIEWPORT_PANEL_TAG,
+                rect,
+                0.5,
+                0.5,
+            );
+            assert!(
+                preview.is_some(),
+                "a Dock (centre) zone previews an overlay",
+            );
+            fire_redock_at(PROPERTIES_PANEL_TAG, VIEWPORT_PANEL_TAG, 0.5, 0.5);
+            assert!(
+                !is_panel_floating(&windows.get(), PROPERTIES_PANEL_TAG),
+                "preview Some == the release redocks (panel no longer floating)",
+            );
+        });
+
+        // CASE 2 — a panel's dead-zone RING (between the 0.22 edge band and the 0.18
+        // centre square) = Float: the preview paints NOTHING AND the release leaves
+        // the panel floating. This is the unification's teeth — the legacy continuous
+        // classifier had no dead zone, so this point used to dock.
+        run_in_owner(|| {
+            let windows = use_editor_windows();
+            toggle_panel_floating(PROPERTIES_PANEL_TAG);
+            assert!(is_panel_floating(&windows.get(), PROPERTIES_PANEL_TAG));
+            let preview = <DockPanelsEditorView as WidgetView>::dock_drop_preview(
+                PROPERTIES_PANEL_TAG,
+                VIEWPORT_PANEL_TAG,
+                rect,
+                0.30,
+                0.5,
+            );
+            assert!(preview.is_none(), "a Float dead-zone ring previews nothing",);
+            fire_redock_at(PROPERTIES_PANEL_TAG, VIEWPORT_PANEL_TAG, 0.30, 0.5);
+            assert!(
+                is_panel_floating(&windows.get(), PROPERTIES_PANEL_TAG),
+                "preview None == the release leaves the panel floating",
             );
         });
     }

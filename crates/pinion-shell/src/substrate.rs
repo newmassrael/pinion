@@ -3707,7 +3707,7 @@ impl<V: WidgetView> ShellCore<V> {
     /// into `window_id` when a floating panel dragged in ANOTHER window currently
     /// maps onto it. The sibling of [`Self::apply_drag_image`]: the shell — the
     /// sole holder of every window's geometry — resolves the incoming drop via
-    /// [`pinion_runtime::CoreShell::cross_window_drop_into`] and highlights the
+    /// [`pinion_runtime::CoreShell::cross_window_drag_into`] and highlights the
     /// RESULT region of the target panel (the split half the redock would occupy,
     /// or the whole pane for a centre tabify), so the user SEES where the floater
     /// will land before releasing — exactly the same affordance the same-window
@@ -3719,20 +3719,41 @@ impl<V: WidgetView> ShellCore<V> {
     /// strip is stripped by tag), so it follows the cursor live.
     fn apply_cross_window_drop_preview(&self, scene: Scene, window_id: Option<&str>) -> Scene {
         let key = window_id.unwrap_or(pinion_runtime::DEFAULT_WINDOW);
-        let inner = self.core.cross_window_drop_into(key).and_then(|drop| {
-            // GENERIC half: the target panel's window-absolute rect. The
-            // dock-specific zone classification + strip rendering is the binding's
-            // (`V::dock_drop_preview`), so the shell stays widget-agnostic.
-            // (R1156) OUTER full-span dock: the perimeter zone has no panel rect —
-            // hand the binding the WHOLE window content rect so it renders a
-            // full-span strip (a row/column across every pane).
-            let rect = if drop.point.tag == pinion_core::external::OUTER_DOCK_ZONE_TAG {
-                scene.rect()
-            } else {
-                scene.rect_for_tag_absolute(&drop.point.tag)?
-            };
-            V::dock_drop_preview(&drop.point.tag, rect, drop.point.x_rel, drop.point.y_rel)
-        });
+        let inner = self
+            .core
+            .cross_window_drag_into(key)
+            .and_then(|(source, drop)| {
+                // GENERIC half: the target panel's window-absolute rect. The
+                // dock-specific zone classification + strip rendering is the binding's
+                // (`V::dock_drop_preview`), so the shell stays widget-agnostic.
+                // (R1156) OUTER full-span dock: the perimeter zone has no panel rect —
+                // hand the binding the WHOLE window content rect so it renders a
+                // full-span strip (a row/column across every pane).
+                let rect = if drop.point.tag == pinion_core::external::OUTER_DOCK_ZONE_TAG {
+                    scene.rect()
+                } else {
+                    scene.rect_for_tag_absolute(&drop.point.tag)?
+                };
+                // (R1163b) Pass the dragged `source` so the binding resolves through
+                // the SAME `resolve_drop` SSOT the release applies (preview == result).
+                // The hook reads the binding's reactive reorganizer (is_panel /
+                // tabbing) via `use_*` hooks, so run it inside `root_owner.run` —
+                // exactly like `collect_access_emit_inputs` wraps `V::access_node`
+                // (the callback-root-owner-wrap family). This overlay step runs AFTER
+                // the view's `root_owner.run` closed, so without the wrap
+                // `Owner::current()` is `None` and the hook panics. Read-only, so it
+                // re-subscribes nothing it did not already (no re-dirty after the
+                // caller's `clear_dirty`).
+                self.core.root_owner().run(|| {
+                    V::dock_drop_preview(
+                        &source,
+                        &drop.point.tag,
+                        rect,
+                        drop.point.x_rel,
+                        drop.point.y_rel,
+                    )
+                })
+            });
         // Wrap the binding's overlay in a shell-owned, pointer-transparent slot so
         // the strip is stripped + replaced by ONE known tag each paint (idempotent,
         // like every other overlay), independent of the binding node's own tag.
@@ -7045,6 +7066,7 @@ mod r1138_redock_hint_injection_tests {
         // tagged preview node. The shell injects it into the TARGET window at the
         // dock zone (R1150 removed the on-floater variant).
         fn dock_drop_preview(
+            _source_panel: &str,
             _target_tag: &str,
             panel_rect: Rect,
             _x_rel: f32,

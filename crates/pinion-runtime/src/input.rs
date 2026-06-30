@@ -633,7 +633,7 @@ impl InputRouter {
     /// in-flight drag on `id`, if any — the symmetric READ of
     /// [`set_drag_cross_window`](Self::set_drag_cross_window). The shell scans every
     /// window's router with this to find a drag whose drop targets a GIVEN window
-    /// ([`CoreShell::cross_window_drop_into`](crate::CoreShell::cross_window_drop_into)),
+    /// ([`CoreShell::cross_window_drag_into`](crate::CoreShell::cross_window_drag_into)),
     /// so it can paint that window's incoming drop-zone preview. `None` when no
     /// session owns `id` or the cursor is over no other window.
     #[must_use]
@@ -6727,7 +6727,7 @@ mod tests {
     #[test]
     fn r1125_drag_cross_window_getter_round_trips() {
         // R1125 §5.51 PR-33 — the READ peer of `set_drag_cross_window` the shell
-        // scans (via `CoreShell::cross_window_drop_into`) to paint a TARGET window's
+        // scans (via `CoreShell::cross_window_drag_into`) to paint a TARGET window's
         // incoming drop-zone preview. None before any stash / for no session; the
         // stashed drop after; None again once cleared (the cursor left the window).
         let mut router = InputRouter::new();

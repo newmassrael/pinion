@@ -2054,32 +2054,41 @@ impl<V: WidgetCore> CoreShell<V> {
         }
     }
 
-    /// (R1125 §5.51 §2 #7 PR-33) The cross-window drop, if any, of a drag in some
-    /// OTHER window that currently targets `target_window` — found by scanning
-    /// every window's router for an in-flight drag whose shell-stashed
-    /// [`CrossWindowDrop`](crate::input::CrossWindowDrop) names `target_window`.
-    /// The shell paints `target_window`'s incoming drop-zone preview from this
-    /// (the symmetric peer of [`Self::set_drag_cross_window_for_window`]): a
-    /// floater dragged over main resolves main's dock zone, and main highlights
-    /// where the panel would land. `None` when no drag currently maps onto
-    /// `target_window`. The source window itself is never a match — the shell
-    /// excludes it when resolving, so a drag never targets its own window.
+    /// (R1125/R1163b §5.51 §2 #7 PR-33) The cross-window drag, if any, of a drag in
+    /// some OTHER window that currently targets `target_window`: its SOURCE panel
+    /// (the drag-payload label) PLUS the
+    /// [`CrossWindowDrop`](crate::input::CrossWindowDrop) (the target dock zone in
+    /// `target_window`'s local frame). Found by scanning every window's router for an
+    /// in-flight drag whose shell-stashed `CrossWindowDrop` names `target_window`;
+    /// that router's
+    /// [`active_drag_label`](crate::input::InputRouter::active_drag_label) gives the
+    /// source. The shell paints `target_window`'s incoming drop-zone preview from
+    /// this (the symmetric peer of [`Self::set_drag_cross_window_for_window`]): the
+    /// preview resolves the drop through the SAME
+    /// [`resolve_drop`](pinion_widget_paint::dock::resolve_drop) SSOT the release
+    /// applies, so the cross-window preview == result by construction (R1163b unified
+    /// the cross-window path; before, the preview re-classified with the legacy
+    /// continuous geometry). The source window itself is never a match (the shell
+    /// excludes it when resolving). `None` when no drag maps onto `target_window` (or
+    /// it carries no text payload — the source is unknowable, so no preview).
     #[must_use]
-    pub fn cross_window_drop_into(
+    pub fn cross_window_drag_into(
         &self,
         target_window: &str,
-    ) -> Option<crate::input::CrossWindowDrop> {
+    ) -> Option<(String, crate::input::CrossWindowDrop)> {
         self.routers.values().find_map(|router| {
-            router
+            let drop = router
                 .drag_cross_window(PointerId::MOUSE)
                 .filter(|drop| drop.window == target_window)
-                .cloned()
+                .cloned()?;
+            let (source, _press) = router.active_drag_label(PointerId::MOUSE)?;
+            Some((source, drop))
         })
     }
 
     /// (R1137 §5.51 §2 #7 PR-33) The cross-window drop a drag in `source_window`
     /// currently resolves onto ANOTHER window — the SOURCE-side peer of
-    /// [`Self::cross_window_drop_into`]. Reads the shell-stashed
+    /// [`Self::cross_window_drag_into`]. Reads the shell-stashed
     /// [`CrossWindowDrop`](crate::input::CrossWindowDrop) on `source_window`'s OWN
     /// router (the outgoing drop the live floater→main redock resolves each move,
     /// i.e. the floater is `RedockArmed`). The shell paints a "will dock here" hint

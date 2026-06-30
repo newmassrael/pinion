@@ -1276,7 +1276,7 @@ impl DockTopology {
     /// existing panel by removing it first). The explicit fresh verb so a
     /// COLLAPSE-policy redock (the returning floater's leaf was removed on
     /// tear-off, so it is absent) can tabify without a source-removal — mirroring
-    /// [`Self::split_leaf_into`] for edge zones. The [`DockReorganizer::dock_panel_at_zone`]
+    /// [`Self::split_leaf_into`] for edge zones. The [`DockReorganizer::dock_panel_at_resolved_zone`]
     /// coordinator normalises to absence (remove-if-present) THEN calls this, so a
     /// present panel re-tabs via remove+insert and an absent one inserts directly:
     /// ONE zone-honoring redock total over both torn-slot policies.
@@ -2335,7 +2335,9 @@ pub enum DropResolution {
 /// the surface's [`DockReorganizer::tabbing`] policy (a split-only surface never
 /// tabifies the centre). The discrete-target geometry ([`dock_drop_zone_banded`])
 /// gives a FLOAT dead-zone, so this resolver — not `over.is_none()` — owns the
-/// float-vs-dock decision.
+/// float-vs-dock decision. A torn-slot placeholder target (tag `{p}_placeholder`,
+/// R1163b) fills FULL ([`DockDropZone::Center`] over panel `p`), so a floater
+/// dragged back onto a torn slot — same-window or cross-window — agrees.
 pub fn resolve_drop(
     over: Option<&DropPoint>,
     source: &str,
@@ -2353,6 +2355,20 @@ pub fn resolve_drop(
     }
     // The drop target is the panel ROOT (split a composite `{well}#{i}` at `#`).
     let target = point.tag.split('#').next().unwrap_or(point.tag.as_str());
+    // R1163b — a TORN SLOT (placeholder) FILLS FULL: you fill the emptied hole,
+    // you do not split it. The placeholder paints tag `{panel}_placeholder` for the
+    // panel whose leaf is currently floating; dropping ANY panel here docks Center
+    // (its own slot → a home redock no-op in the applier; another panel → a fill /
+    // tabify). Folded into the SSOT so the same-window AND cross-window paths agree
+    // (was a `_placeholder` check duplicated in the editor preview hook). Checked
+    // before the self / `is_panel` arms: the placeholder TAG is neither `source`
+    // (the suffix differs) nor a `panel_ids()` member (the leaf id has no suffix).
+    if let Some(panel) = target.strip_suffix(PLACEHOLDER_TAG_SUFFIX) {
+        return DropResolution::Dock {
+            target: panel.to_string(),
+            zone: DockDropZone::Center,
+        };
+    }
     // R1162 — over the dragged panel's OWN slot: a no-move snap-back, never a dock
     // (a panel cannot dock onto itself) nor a float (a tiny in-place drag must not
     // tear off). Keeps the preview blank over the panel's own area = the result.
@@ -2729,7 +2745,7 @@ pub struct DockReorganizer {
     /// consumer of this surface: the pointer path
     /// ([`DockPanelExternal::resolve_preview`]), the `drop` RPC
     /// ([`resolve_dock_drop`]), and cross-window redock
-    /// ([`DockReorganizer::dock_panel_at_zone`]). A split-only surface never offers
+    /// ([`DockReorganizer::dock_panel_at_resolved_zone`]). A split-only surface never offers
     /// `Center` from any path — a centre cursor resolves to the nearest split
     /// edge. The explicit symbolic `reorganize` invoke (an AI naming a zone,
     /// no classification) is NOT gated — tabbing governs the zone CLASSIFIER,
@@ -2751,7 +2767,7 @@ pub struct DockReorganizer {
     /// id — the collapse-policy "where home is" SSOT. [`Self::float_out_panel`]
     /// stashes a leaf's [`DockLeafAnchor`] before removing it;
     /// [`Self::restore_panel_home`] pops + re-inserts at it; a zone redock
-    /// ([`Self::dock_panel_at_zone`]) clears it (the panel landed somewhere new).
+    /// ([`Self::dock_panel_at_resolved_zone`]) clears it (the panel landed somewhere new).
     /// A root / `Tabs`-member panel has no parent-Split anchor, so its entry is
     /// absent and dock-back falls back to a zone redock.
     home_anchors: RefCell<HashMap<String, DockLeafAnchor>>,
@@ -2985,59 +3001,26 @@ impl DockReorganizer {
         Ok(self.commit(next, summary))
     }
 
-    /// (R1126/R1128 §5.51 §2 #7 PR-33) Return a floating `panel` into the dock at the
-    /// dropped zone — TOTAL over the panel's presence, so ONE redock path serves
-    /// BOTH torn-slot policies:
+    /// (R1159/R1163b §5.51 §2 #7 PR-33) Apply a PRE-CLASSIFIED dock at `zone` — the
+    /// SINGLE application SSOT for returning a floating `panel` into the dock,
+    /// reached from the discrete-target [`resolve_drop`] path (which classifies the
+    /// cursor with the banded geometry, then calls this with the resolved zone — the
+    /// same-window drag AND the cross-window `tear_off_redock_at`). Takes the resolved
+    /// [`DockDropZone`] so the caller owns classification (R1163b retired the legacy
+    /// `dock_panel_at_zone`, which fused the continuous geometry to this applier — the
+    /// last cross-window consumer migrated to `resolve_drop`).
     ///
-    /// * **Placeholder policy** — the panel is still a leaf (its slot was kept as
-    ///   a placeholder on tear-off): this MOVES it to the zone (remove-then-insert).
-    /// * **Collapse policy** — the leaf was removed on tear-off ([`Self::float_out_panel`]),
-    ///   so the panel is absent: this INSERTS a fresh leaf at the zone.
+    /// TOTAL over the panel's presence, so ONE path serves BOTH torn-slot policies:
     ///
-    /// The consumer picks the policy (by whether it floated the leaf out); this
-    /// stays uniform. Normalises to absence (remove-if-present) then inserts fresh
-    /// via [`DockTopology::split_leaf_into`] (edge) / [`DockTopology::tabify_fresh`]
-    /// (centre), classified by the same [`dock_drop_zone_normalized`] SSOT the
-    /// same-window drag uses. `panel == target` (a drop on the panel's own slot) is
-    /// a home no-op — a panel cannot split against itself. A dead zone / empty
-    /// surface is a no-op. The SINGLE redock SSOT (R1128 retired the
-    /// placeholder-only `apply_zone_redock`, which rejected an absent source).
+    /// * **Placeholder policy** — the panel is still a leaf (its slot was kept as a
+    ///   placeholder on tear-off): this MOVES it to the zone (remove-then-insert).
+    /// * **Collapse policy** — the leaf was removed on tear-off
+    ///   ([`Self::float_out_panel`]), so the panel is absent: this INSERTS a fresh
+    ///   leaf at the zone.
     ///
-    /// # Errors
-    ///
-    /// Propagates the [`TopologyError`] from the underlying remove / insert when it
-    /// cannot apply (id collision, stale target); the live topology is unchanged.
-    ///
-    /// # Panics
-    ///
-    /// Never in practice: the edge branch is reached only for a non-`None`,
-    /// non-`Center` zone, and every such zone has [`zone_split_geometry`]; the
-    /// `expect` documents that invariant (mirrors [`Self::tabify`]'s panic note).
-    pub fn dock_panel_at_zone(
-        &self,
-        panel: &str,
-        target: &str,
-        x_rel: f64,
-        y_rel: f64,
-    ) -> Result<String, TopologyError> {
-        // (R1159 §5.51) The cursor → zone classification is the legacy continuous
-        // SSOT ([`dock_drop_zone_normalized_tabbing`]); the application is the
-        // shared [`Self::dock_panel_at_resolved_zone`]. The discrete-target B model
-        // ([`resolve_drop`]) classifies with its OWN banded geometry and calls the
-        // resolved applier directly, so the two geometries never silently mix.
-        let zone = dock_drop_zone_normalized_tabbing(x_rel, y_rel, self.tabbing);
-        self.dock_panel_at_resolved_zone(panel, target, zone)
-    }
-
-    /// (R1159 §5.51) Apply a PRE-CLASSIFIED dock at `zone` — the application SSOT
-    /// shared by the legacy cursor path ([`Self::dock_panel_at_zone`], which
-    /// classifies with the continuous geometry) and the discrete-target
-    /// [`resolve_drop`] path (which classifies with the banded geometry). Takes the
-    /// resolved [`DockDropZone`] so neither path re-classifies the other's
-    /// geometry. `panel == target` (own slot) and a [`DockDropZone::None`] /
-    /// dead-zone are home/no-op; an edge splits, the centre tabifies. TOTAL over
-    /// the panel's presence (placeholder removes-then-inserts, collapse inserts
-    /// fresh), as before.
+    /// `panel == target` (own slot) and a [`DockDropZone::None`] / dead-zone are
+    /// home/no-op; an edge splits ([`DockTopology::split_leaf_into`]), the centre
+    /// tabifies ([`DockTopology::tabify_fresh`]).
     ///
     /// # Errors
     ///
@@ -3110,10 +3093,10 @@ impl DockReorganizer {
     /// [`DockTopology::split_root`]. This is the container-edge / "outer dock
     /// guide" gesture (drop at the dock area's PERIMETER) pro dockers expose, and
     /// the path that restores a full-width toolbar after its slot collapsed: the
-    /// per-leaf [`Self::dock_panel_at_zone`] could only re-dock it INSIDE one pane,
+    /// per-leaf [`Self::dock_panel_at_resolved_zone`] could only re-dock it INSIDE one pane,
     /// never as the full-width top row above every column.
     ///
-    /// TOTAL over the panel's presence like [`Self::dock_panel_at_zone`]: a still-
+    /// TOTAL over the panel's presence like [`Self::dock_panel_at_resolved_zone`]: a still-
     /// present leaf (placeholder policy) is removed first so the insert is uniform;
     /// an absent one (collapse policy / a torn-off floater) inserts directly.
     /// `zone` must be an EDGE ([`DockDropZone::Top`] / `Bottom` / `Left` /
@@ -3170,7 +3153,7 @@ impl DockReorganizer {
     /// (R1145 §5.51) UNDOCK a tabbed `panel` — pull it OUT of its tab well and
     /// re-dock it as a SPLIT sibling beside the well, so two panels merged into
     /// tabs become side by side again. The reverse of a centre-zone tabify. A
-    /// deliberately DOCKED result (a right-edge [`Self::dock_panel_at_zone`], which
+    /// deliberately DOCKED result (a right-edge [`Self::dock_panel_at_resolved_zone`], which
     /// removes `panel` from the well — collapsing a 2-tab well back to the sibling
     /// leaf — then splits it in), NOT a float-out: it needs no floating window, so
     /// it sidesteps the live window-move entirely. No-op when `panel` is not in a
@@ -3248,7 +3231,7 @@ impl DockReorganizer {
     /// (R1126 §5.51 §2 #7 PR-33) Float `panel` OUT of the dock — the COLLAPSE
     /// torn-slot policy: remove its leaf so the sibling reclaims the space (vs the
     /// placeholder policy, which keeps the leaf and paints a placeholder). The
-    /// return into the dock is [`Self::dock_panel_at_zone`], total over the
+    /// return into the dock is [`Self::dock_panel_at_resolved_zone`], total over the
     /// resulting absence. Idempotent: a re-fired tear-off (panel already floated)
     /// or an empty surface is a no-op, so the live-drag's repeated emits are safe.
     ///
@@ -3279,7 +3262,7 @@ impl DockReorganizer {
     }
 
     /// (R1134 §5.51.1) Dock-back a collapsed `panel` to its captured home anchor —
-    /// the HOME inverse of [`Self::float_out_panel`] (vs [`Self::dock_panel_at_zone`],
+    /// the HOME inverse of [`Self::float_out_panel`] (vs [`Self::dock_panel_at_resolved_zone`],
     /// the ZONE inverse). Pops the [`DockLeafAnchor`] this panel's float stashed and
     /// re-inserts the leaf next to its original sibling via
     /// [`DockTopology::insert_leaf_at_anchor`] (the original split id / orientation /
@@ -3927,10 +3910,10 @@ impl TabWellExternal {
 
     /// (R1158 §5.51 §2 #7 PR-33) Enqueue the cross-window dock-at redock for the
     /// dragged tab `panel` released over `target_window`'s dock zone `point` — the
-    /// [`DockPanelExternal::enqueue_tear_off_redock_at`] peer. The reducer's
-    /// `dock_panel_at_zone` removes the tab from its well + re-inserts it at the
-    /// zone (a never-floated tab has no float window to drop, so the redock is just
-    /// the relocation).
+    /// [`DockPanelExternal::enqueue_tear_off_redock_at`] peer. The reducer resolves
+    /// it through `resolve_drop` then `dock_panel_at_resolved_zone` removes the tab
+    /// from its well + re-inserts it at the zone (a never-floated tab has no float
+    /// window to drop, so the redock is just the relocation).
     fn enqueue_tear_off_redock_at(&self, panel: &str, target_window: &str, point: &DropPoint) {
         // R1158 — the wire shape is the shared [`tear_off_redock_at_payload`] SSOT
         // (the same builder the panel-header cross-window redock uses).
@@ -4039,10 +4022,11 @@ impl External for TabWellExternal {
     /// exactly like [`DockPanelExternal::drag_release_at`]:
     ///
     /// 1. **Cross-window** (`over_window` + `over`) → dock the tab into that
-    ///    window's zone ([`TEAR_OFF_REDOCK_AT_EVENT`]); the reducer's
-    ///    `dock_panel_at_zone` removes it from the well + re-inserts at the zone.
+    ///    window's zone ([`TEAR_OFF_REDOCK_AT_EVENT`]); the reducer resolves it
+    ///    through `resolve_drop` then `dock_panel_at_resolved_zone` removes it from
+    ///    the well + re-inserts at the zone.
     /// 2. **Same-window over a panel** → dock the tab at that zone via
-    ///    [`DockReorganizer::dock_panel_at_zone`] (it normalises the tab out of the
+    ///    [`DockReorganizer::dock_panel_at_resolved_zone`] (it normalises the tab out of the
     ///    well then splits / tabifies at the target; a self-drop / dead zone is a
     ///    guarded no-op, leaving the tab in its well).
     /// 3. **Escaped every zone** (dragged OUT of the window) → FLOAT the tab:
@@ -10384,13 +10368,16 @@ mod reorganize_tests {
         false
     }
 
-    // (R1128 §5.51.1) `dock_panel_at_zone` is the SINGLE redock SSOT (retired
-    // `apply_zone_redock`). These migrate the r1106 present-source (move) cases +
-    // ADD the absent-source (insert) path the total primitive enables, and the
-    // forcing consumers for `tabify_fresh` / `float_out_panel`.
+    // (R1128/R1163b §5.51.1) `dock_panel_at_resolved_zone` is the SINGLE redock
+    // application SSOT (R1163b retired the cursor-fused `dock_panel_at_zone`; the
+    // applier now takes a PRE-CLASSIFIED `DockDropZone`). These exercise the r1106
+    // present-source (move) cases + the absent-source (insert) path the total
+    // primitive enables + the forcing consumers for `tabify_fresh` /
+    // `float_out_panel`. The cursor→zone classification is covered separately by the
+    // `dock_drop_zone_normalized` tests.
 
     #[test]
-    fn r1128_dock_panel_at_zone_edge_moves_present_source_beside_target() {
+    fn r1128_dock_panel_at_resolved_zone_edge_moves_present_source_beside_target() {
         // Placeholder policy: a PRESENT panel is MOVED to the dropped edge
         // (remove + re-split) — the r1106 zone-honoring behaviour, now via the SSOT.
         let topology = Rc::new(Signal::new(Some(abc_topology())));
@@ -10404,7 +10391,9 @@ mod reorganize_tests {
             !siblings_in_2leaf_split(before.root(), "a", "c"),
             "before: a not beside c"
         );
-        let outcome = reorganizer.dock_panel_at_zone("a", "c", 0.15, 0.5).unwrap();
+        let outcome = reorganizer
+            .dock_panel_at_resolved_zone("a", "c", DockDropZone::Left)
+            .unwrap();
         assert_eq!(outcome, "a -> c");
         let after = topology.get().unwrap();
         assert!(
@@ -10419,13 +10408,15 @@ mod reorganize_tests {
     }
 
     #[test]
-    fn r1128_dock_panel_at_zone_inserts_absent_source_at_edge() {
+    fn r1128_dock_panel_at_resolved_zone_inserts_absent_source_at_edge() {
         // Collapse policy: a panel ABSENT from the topology (its leaf was floated
         // out) is INSERTED fresh at the dropped edge — no PanelNotFound (the
         // retired apply_zone_redock rejected an absent source). The total path.
         let topology = Rc::new(Signal::new(Some(abc_topology())));
         let reorganizer = DockReorganizer::new(Rc::clone(&topology));
-        let outcome = reorganizer.dock_panel_at_zone("d", "c", 0.15, 0.5).unwrap();
+        let outcome = reorganizer
+            .dock_panel_at_resolved_zone("d", "c", DockDropZone::Left)
+            .unwrap();
         assert_eq!(outcome, "d -> c");
         let after = topology.get().unwrap();
         assert!(
@@ -10443,8 +10434,9 @@ mod reorganize_tests {
     fn r1156_dock_panel_outer_redocks_absent_source_full_span_top() {
         // Collapse policy: a floated-out panel ("d", absent) OUTER-docks as a
         // FULL-SPAN top row via split_root — the new root is a Vertical split with
-        // "d" first (top), the whole abc tree second. A per-leaf dock_panel_at_zone
-        // could only land "d" inside ONE pane; this spans them all.
+        // "d" first (top), the whole abc tree second. A per-leaf
+        // dock_panel_at_resolved_zone could only land "d" inside ONE pane; this
+        // spans them all.
         let topology = Rc::new(Signal::new(Some(abc_topology())));
         let reorganizer = DockReorganizer::new(Rc::clone(&topology));
         let outcome = reorganizer
@@ -10653,8 +10645,9 @@ mod reorganize_tests {
         let (_topology, _reorg, mut well) = r1158_tab_well_fixture();
         let payload = well.begin_drag().expect("re-armed");
         // A real drag whose drop resolved in ANOTHER window's dock zone emits the
-        // cross-window dock-at redock — the reducer's dock_panel_at_zone moves the
-        // tab into that window (the substrate mirror of the panel-header path).
+        // cross-window dock-at redock — the reducer's resolve_drop +
+        // dock_panel_at_resolved_zone moves the tab into that window (the substrate
+        // mirror of the panel-header path).
         let over = DropPoint {
             tag: "c".into(),
             x_rel: 0.15,
@@ -10875,14 +10868,14 @@ mod reorganize_tests {
     }
 
     #[test]
-    fn r1128_dock_panel_at_zone_center_tabifies_present_or_absent_source() {
+    fn r1128_dock_panel_at_resolved_zone_center_tabifies_present_or_absent_source() {
         // Centre = tabify, TOTAL over presence: present "a" re-tabs (move), absent
         // "d" tab-inserts fresh (tabify_fresh). One path, both policies.
         for (source, expect_count) in [("a", 3usize), ("d", 4usize)] {
             let topology = Rc::new(Signal::new(Some(abc_topology())));
             let reorganizer = DockReorganizer::new(Rc::clone(&topology));
             let outcome = reorganizer
-                .dock_panel_at_zone(source, "c", 0.5, 0.5)
+                .dock_panel_at_resolved_zone(source, "c", DockDropZone::Center)
                 .unwrap();
             assert_eq!(outcome, format!("{source} -> c"));
             let after = topology.get().unwrap();
@@ -10900,11 +10893,13 @@ mod reorganize_tests {
     }
 
     #[test]
-    fn r1128_dock_panel_at_zone_own_slot_is_home_noop() {
+    fn r1128_dock_panel_at_resolved_zone_own_slot_is_home_noop() {
         let topology = Rc::new(Signal::new(Some(abc_topology())));
         let reorganizer = DockReorganizer::new(Rc::clone(&topology));
         let before = topology.get().unwrap();
-        let outcome = reorganizer.dock_panel_at_zone("a", "a", 0.15, 0.5).unwrap();
+        let outcome = reorganizer
+            .dock_panel_at_resolved_zone("a", "a", DockDropZone::Left)
+            .unwrap();
         assert!(
             outcome.contains("home redock"),
             "self-drop is a home return: {outcome}"
@@ -10913,11 +10908,13 @@ mod reorganize_tests {
     }
 
     #[test]
-    fn r1128_dock_panel_at_zone_dead_zone_is_noop() {
+    fn r1128_dock_panel_at_resolved_zone_dead_zone_is_noop() {
         let topology = Rc::new(Signal::new(Some(abc_topology())));
         let reorganizer = DockReorganizer::new(Rc::clone(&topology));
         let before = topology.get().unwrap();
-        let outcome = reorganizer.dock_panel_at_zone("a", "c", 1.5, 0.5).unwrap();
+        let outcome = reorganizer
+            .dock_panel_at_resolved_zone("a", "c", DockDropZone::None)
+            .unwrap();
         assert!(
             outcome.contains("no actionable zone"),
             "dead zone is a no-op: {outcome}"
@@ -11070,7 +11067,10 @@ mod reorganize_tests {
         let topology = Rc::new(Signal::new(Some(abc_topology())));
         let reorganizer = DockReorganizer::new(Rc::clone(&topology));
         reorganizer.float_out_panel("b").unwrap(); // stashes b's home anchor
-        reorganizer.dock_panel_at_zone("b", "a", 0.15, 0.5).unwrap(); // lands beside a
+        // lands beside a (the left-edge zone the cursor used to classify)
+        reorganizer
+            .dock_panel_at_resolved_zone("b", "a", DockDropZone::Left)
+            .unwrap();
         assert!(
             siblings_in_2leaf_split(topology.get().unwrap().root(), "b", "a"),
             "b docked beside a (the zone), not home",

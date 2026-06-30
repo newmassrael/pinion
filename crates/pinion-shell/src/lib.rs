@@ -926,11 +926,14 @@ pub trait WidgetView: pinion_a11y::WidgetA11y {
     /// OVER it, showing where the redock would land. The shell stays
     /// widget-library-agnostic, so it does the GENERIC half (resolve the incoming
     /// drop via its own cross-window geometry
-    /// [`CoreShell::cross_window_drop_into`](pinion_runtime::CoreShell::cross_window_drop_into),
+    /// [`CoreShell::cross_window_drag_into`](pinion_runtime::CoreShell::cross_window_drag_into),
     /// then look up the target panel's window-absolute `panel_rect`) and hands the
-    /// dock-specific RENDERING to the binding here: `target_tag` is the resolved
-    /// dock panel, `x_rel`/`y_rel` the normalised cursor over it (the zone the
-    /// binding classifies). The binding returns the overlay [`Scene`] (e.g.
+    /// dock-specific RENDERING to the binding here: `source_panel` is the dragged
+    /// panel (so the binding resolves through the SAME
+    /// [`resolve_drop`](pinion_widget_paint::dock::resolve_drop) SSOT the release
+    /// applies — R1163b unified the cross-window path, so preview == result by
+    /// construction), `target_tag` is the resolved dock target, `x_rel`/`y_rel` the
+    /// normalised cursor over it. The binding returns the overlay [`Scene`] (e.g.
     /// `pinion_widget_paint::dock::dock_drop_preview_overlay`), which the shell
     /// injects as a top-level, pointer-transparent overlay on that window and
     /// re-derives every paint (so it follows the cursor). The sibling of
@@ -941,6 +944,7 @@ pub trait WidgetView: pinion_a11y::WidgetA11y {
     /// - `None` (the default) — no cross-window preview.
     #[must_use]
     fn dock_drop_preview(
+        _source_panel: &str,
         _target_tag: &str,
         _panel_rect: pinion_core::scene::Rect,
         _x_rel: f32,
