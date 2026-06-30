@@ -172,15 +172,18 @@ def body() -> None:
 
         # ── (F) Escape cancels — the value is untouched ─────────────
         _focus_grid(tf)
-        tf.intervene("/external/cursor", str(1))  # Tag (text) = "hero"
+        # R1176 — slot 1 is now the Mesh asset picker (not inline text), so this
+        # inline-edit-and-Escape check uses the Name text leaf (slot 0, already
+        # committed to "Enemy" by the edit above — Escape must leave that intact).
+        tf.intervene("/external/cursor", str(0))  # Name (text) = "Enemy"
         tf.key(path=GRID, name="Enter")
-        wait_until(lambda: tf.query("/external/editing") == "1", timeout=4.0,
-                   interval=0.03, desc="editing the Tag row")
+        wait_until(lambda: tf.query("/external/editing") == "0", timeout=4.0,
+                   interval=0.03, desc="editing the Name row")
         tf.text("ZZZ", path=EDIT)
         tf.key(path=EDIT, name="Escape")
         wait_until(lambda: tf.query("/external/editing") is None, timeout=4.0,
                    interval=0.03, desc="Escape exits edit mode")
-        assert_eq(tf.query("/external/value.1"), "hero", "Escape leaves the value untouched")
+        assert_eq(tf.query("/external/value.0"), "Enemy", "Escape leaves the value untouched")
 
         # ── (G) programmatic typed set (the AI driving path) ─────────
         tf.intervene("/external/value.6", -8.5)  # Pos X (float)

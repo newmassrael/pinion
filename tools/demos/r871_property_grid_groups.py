@@ -88,7 +88,7 @@ def body() -> None:
         # ── (B) RPC collapse / expand a category ─────────────────────
         assert_eq(_expanded(tf, IDENTITY), True, "Identity boots expanded")
         # toggle_branch returns the resulting expanded flag; collapsing Identity
-        # hides its 3 leaves (Name / Tag / Layer).
+        # hides its 3 leaves (Name / Mesh / Layer).
         assert_eq(tf.invoke(f"/{GRID}/external/toggle_branch", IDENTITY), False, "collapse Identity")
         assert_eq(_expanded(tf, IDENTITY), False, "Identity collapsed")
         assert_eq(_expanded(tf, APPEARANCE), True, "Appearance still expanded")
@@ -151,18 +151,20 @@ def body() -> None:
         assert_eq(tf.invoke("/external/toggle", 2), True, "toggle value 2 toggled a bool")
         assert_eq(tf.query("/external/value.2"), False, "Visible toggled to false")
         _focus_grid(tf)
-        tf.intervene("/external/cursor", "1")  # Tag (value 1)
+        # R1176 — slot 1 is now the Mesh asset picker (not inline text); the
+        # edit-a-leaf-inside-a-category check uses the Name text leaf (slot 0).
+        tf.intervene("/external/cursor", "0")  # Name (value 0)
         tf.key(path=GRID, name="Enter")
-        wait_until(lambda: tf.query("/external/editing") == "1", timeout=4.0,
-                   interval=0.03, desc="Enter edits the Tag row inside Identity")
+        wait_until(lambda: tf.query("/external/editing") == "0", timeout=4.0,
+                   interval=0.03, desc="Enter edits the Name row inside Identity")
         wait_until(lambda: tf.request("focus/get").result.get("focused") == EDIT,
                    timeout=4.0, interval=0.03, desc="focus moved into the inline field")
-        for _ in range(4):  # clear "hero"
+        for _ in range(8):  # clear "Player"
             tf.key(path=EDIT, name="Backspace")
         tf.text("boss", path=EDIT)
         tf.key(path=EDIT, name="Enter")
-        wait_until(lambda: tf.query("/external/value.1") == "boss", timeout=4.0,
-                   interval=0.03, desc="commit the edited Tag inside the category")
+        wait_until(lambda: tf.query("/external/value.0") == "boss", timeout=4.0,
+                   interval=0.03, desc="commit the edited Name inside the category")
 
         # ── (G) paint: collapse hides rows, keeps the header ─────────
         expanded = tf.snapshot(source="paint", viewport=VIEWPORT)

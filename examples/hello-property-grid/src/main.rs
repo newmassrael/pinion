@@ -110,25 +110,33 @@ use std::rc::Rc;
 
 use pinion_a11y::{
     AccessAction, AccessFocus, AccessNode, AriaRole, ListOption, WidgetA11y, attach_child_button,
-    listbox_option_nodes, tree_access_nodes, tree_row_tag,
+    listbox_option_nodes, tree_access_nodes, tree_row_tag, windowed_list_nodes_selected,
 };
 use pinion_core::cell_value::{CellKind, CellValue};
 use pinion_core::composite_tag::split_send_payload;
+use pinion_core::directory::{Directory, InMemoryDirectory};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, CaptureNormalize, External, ExternalIntrospect,
     InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
 use pinion_core::input::{DRAG_CLICK_THRESHOLD_PX, DragCalibration};
-use pinion_core::reactive::{Owner, Signal};
+use pinion_core::reactive::{Owner, Signal, batch};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
+use pinion_core::widgets::aria::apply_aria_activate;
+use pinion_core::widgets::button::{ButtonExternal, ButtonState};
 use pinion_core::widgets::caret_blink::use_caret_blink;
 use pinion_core::widgets::checkbox::CheckboxState;
+use pinion_core::widgets::file_browser::{
+    DirectoryExternal, DirectoryState, dir_nav_key_selecting, use_directory_state,
+};
 use pinion_core::widgets::listbox_item::ListboxItemState;
+use pinion_core::widgets::modal::{ModalState, modal_introspection_extra, use_modal};
+use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::slider::SliderState;
 use pinion_core::widgets::text_edit::{TextEditState, use_text_edit_state};
 use pinion_core::widgets::text_field::{TextFieldExternal, TextFieldState};
@@ -136,10 +144,14 @@ use pinion_core::widgets::tree_nav::{
     TreeKey, TreeNode, VisibleRow, find_node, find_node_mut, flat_visible, flat_visible_filtered,
     resolve_tree_key, set_expanded_in, toggle_expanded, tree_view_introspection_extra,
 };
-use pinion_core::{Color, Command, Frame, Modifiers, Scene, WidgetCore};
+use pinion_core::widgets::virtual_list::compute_visible_range;
+use pinion_core::{Color, Command, DirEntry, Frame, Modifiers, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::barrier::dismiss_barrier;
+use pinion_widget_paint::button::{ButtonColors, ButtonStyle, button_a11y_state, button_scene};
 use pinion_widget_paint::checkbox::{CheckboxStyle, view_checkbox_box};
+use pinion_widget_paint::dialog::{DialogContent, DialogStyle, view_dialog};
+use pinion_widget_paint::file_browser::{FileBrowserMetrics, file_browser_pane};
 use pinion_widget_paint::group_header::group_header_row;
 use pinion_widget_paint::listbox::{OptionRow, view_option};
 use pinion_widget_paint::popup::popup_surface;
@@ -259,6 +271,167 @@ fn clamp_to_range(slot: usize, value: CellValue) -> CellValue {
         (Some((lo, hi)), CellValue::Float(f)) => CellValue::Float(f.clamp(lo, hi)),
         (_, other) => other,
     }
+}
+
+// ─── asset-path file picker (R1176) ───────────────────────────────
+
+/// R1176 — the flat-model slot of the `Mesh` leaf, the one **asset-path**
+/// property (a `CellValue::Text` holding a `/`-path to a project asset). Named
+/// so [`is_asset_slot`] and the boot model ([`default_properties`]) agree on
+/// which slot opens the embedded file picker rather than the inline text editor.
+const MESH_SLOT: usize = 1;
+
+/// R1176 — whether a leaf slot is an **asset path** (activation opens the
+/// embedded file picker instead of inline text editing). The editor refinement
+/// of a `Text` leaf, the sibling of [`scalar_range`]'s "ranged `Float`"
+/// refinement: the path stays a plain `CellValue::Text` value — **no new
+/// `CellKind` variant**, since the picker is a host-local affordance and the
+/// property grid is the 1st "dialog-embedded-in-a-host" consumer
+/// ([[abstraction-needs-second-consumer]]) — so the RPC `value.<i>` read /
+/// intervene and undo are unchanged. Only `Mesh` is an asset slot today.
+fn is_asset_slot(slot: usize) -> bool {
+    slot == MESH_SLOT
+}
+
+/// R1176 — the embedded picker's modal-lifecycle key (the R788 lifted
+/// open-lifecycle SSOT, [`use_modal`]). One [`ModalState`] `Rc` across the view,
+/// the reducer, and `access_node`.
+const ASSET_MODAL_KEY: &str = "property_grid.asset_dialog";
+/// R1176 — the [`DirectoryExternal`] / file-list a11y `list` tag; rows are
+/// `asset_fb#<i>`, the breadcrumb `up` row `asset_fb#up`.
+const ASSET_DIR_TAG: &str = "asset_fb";
+/// R1176 — the OK / Cancel action-button tags (their `<tag>.click` intents route
+/// through [`PropertyGridView::update`]).
+const ASSET_OK_TAG: &str = "asset_ok";
+const ASSET_CANCEL_TAG: &str = "asset_cancel";
+/// R1176 — the modal scrim / panel paint tags + the file-list scroll key + the
+/// modal-open introspection node tag (a query-only `open` bool).
+const ASSET_SCRIM_TAG: &str = "asset_scrim";
+const ASSET_PANEL_TAG: &str = "asset_panel";
+const ASSET_SCROLL_KEY: &str = "property_grid.asset_scroll";
+const ASSET_MODAL_STATE_TAG: &str = "asset_modal";
+/// R1176 — the picker's root path + virtualized file-list geometry.
+const ASSET_ROOT_DIR: &str = "/proj";
+const ASSET_LIST_W: u32 = 320;
+const ASSET_LIST_H: u32 = 200;
+const ASSET_ROW_PITCH: u32 = 28;
+const ASSET_OVERSCAN: usize = 4;
+const ASSET_PANEL_W: u32 = 360;
+
+/// R1176 — the shared [`ModalState`] for the asset picker.
+fn asset_modal() -> Rc<ModalState> {
+    use_modal(ASSET_MODAL_KEY)
+}
+
+/// R1176 — the shared [`DirectoryState`] the picker's browser pane reads and the
+/// [`DirectoryExternal`] mutates (one `Rc` via the cache key `ASSET_DIR_TAG`).
+fn asset_directory() -> Rc<DirectoryState> {
+    use_directory_state(ASSET_DIR_TAG, seed_asset_directory, || {
+        ASSET_ROOT_DIR.to_string()
+    })
+}
+
+/// R1176 — the flat-model slot the open picker will write its chosen path into
+/// (set by [`open_asset_dialog`](PropertyGridExternal::open_asset_dialog), read
+/// by [`confirm_asset`]). `None` while the picker is closed.
+fn use_asset_target() -> Rc<Signal<Option<usize>>> {
+    Owner::current()
+        .expect("use_asset_target requires an active Owner scope")
+        .cache("property_grid.asset_target", || Signal::new(None))
+}
+
+/// R1176 — the dialog's focusable controls in Tab order: the file list first
+/// (the R802 native open-panel default — opening auto-focuses the list so arrows
+/// drive selection-follows-focus), then Cancel / Open.
+fn asset_dialog_members() -> Vec<String> {
+    vec![
+        ASSET_DIR_TAG.to_string(),
+        ASSET_CANCEL_TAG.to_string(),
+        ASSET_OK_TAG.to_string(),
+    ]
+}
+
+/// R1176 — seed the synthetic project asset tree the picker walks. A
+/// deterministic [`InMemoryDirectory`] (the `Storage`/`InMemoryStorage`
+/// precedent) so the demo + tests see a fixed tree without touching the real fs;
+/// the real-fs `FsDirectory` is unit-tested in `pinion-platform-storage`.
+fn seed_asset_directory() -> Rc<dyn Directory> {
+    let d = InMemoryDirectory::new();
+    d.insert(
+        "/proj",
+        vec![
+            DirEntry::dir("meshes"),
+            DirEntry::dir("textures"),
+            DirEntry::file("scene.json"),
+        ],
+    );
+    d.insert(
+        "/proj/meshes",
+        vec![
+            DirEntry::file("hero.fbx"),
+            DirEntry::file("enemy.fbx"),
+            DirEntry::file("prop.obj"),
+        ],
+    );
+    d.insert(
+        "/proj/textures",
+        vec![
+            DirEntry::file("hero_diffuse.png"),
+            DirEntry::file("normal.png"),
+        ],
+    );
+    Rc::new(d)
+}
+
+/// R1176 — open the embedded file picker targeting flat-model slot `slot`:
+/// reset the browser to its root with no selection (a file dialog opens at a
+/// default location), stash the target slot, and install the modal trap. Called
+/// only in an Owner scope (the GUI / `scene/click` activation path, gated in
+/// [`begin_edit`](PropertyGridExternal::begin_edit)). Returns `true`.
+fn open_asset_dialog(slot: usize) -> bool {
+    asset_directory().open_dir(ASSET_ROOT_DIR);
+    use_asset_target().set(Some(slot));
+    asset_modal().open(asset_dialog_members());
+    true
+}
+
+/// R1176 — dismiss the picker without choosing (the Cancel / Escape path): drop
+/// the target slot and close the modal, leaving the property value untouched.
+fn close_asset_dialog() {
+    use_asset_target().set(None);
+    asset_modal().close();
+}
+
+/// R1176 — confirm the picked asset: write the file the browser has selected
+/// into the target slot through the grid's [`set_value`](PropertyGridExternal::set_value)
+/// SSOT (so the write is RPC-visible via `value.<i>` and reset-tracked like any
+/// edit), then close the modal. A no-op when nothing is selected (the OK gate)
+/// or the target slot was lost. The write + close [`batch`] so the view
+/// re-renders once.
+fn confirm_asset() {
+    let Some(path) = asset_directory().selected() else {
+        return;
+    };
+    let Some(slot) = use_asset_target().get() else {
+        return;
+    };
+    let picker = asset_modal();
+    let cells = use_property_model();
+    batch(|| {
+        // Mirror `set_value`'s funnel (clamp + `set_with`) on the shared model
+        // `Signal` — the same SSOT the RPC `value.<i>` intervene and reset read,
+        // so the picked path journals like any other edit (clamp is a no-op for
+        // a `Text` value).
+        cells.set_with(|prev| {
+            let mut next = prev.clone();
+            if let Some(cell) = next.get_mut(slot) {
+                *cell = clamp_to_range(slot, CellValue::Text(path.clone()));
+            }
+            next
+        });
+        use_asset_target().set(None);
+        picker.close();
+    });
 }
 
 /// R964 — the bounded-slider value cell for a ranged `Float` leaf: the Unreal
@@ -430,7 +603,7 @@ const VALUE_COUNT: usize = 16;
 /// the [`CellValue`]s mutate, so names live in a `const`.
 const PROPERTY_NAMES: [&str; VALUE_COUNT] = [
     "Name",       // 0  Identity
-    "Tag",        // 1  Identity
+    "Mesh",       // 1  Identity (R1176 asset path)
     "Visible",    // 2  Appearance
     "Locked",     // 3  Physics
     "Layer",      // 4  Identity
@@ -459,15 +632,15 @@ const PROPERTY_NAMES: [&str; VALUE_COUNT] = [
 /// and **Scale** `Vector3` struct fields (12..16).
 fn default_properties() -> Vec<CellValue> {
     vec![
-        CellValue::Text("Player".to_owned()), // 0  Name
-        CellValue::Text("hero".to_owned()),   // 1  Tag
-        CellValue::Bool(true),                // 2  Visible
-        CellValue::Bool(false),               // 3  Locked
-        CellValue::Int(3),                    // 4  Layer
-        CellValue::Int(100),                  // 5  Health
-        CellValue::Float(12.5),               // 6  Position X
-        CellValue::Float(-4.0),               // 7  Position Y
-        CellValue::Float(1.0),                // 8  Opacity
+        CellValue::Text("Player".to_owned()),                // 0  Name
+        CellValue::Text("/proj/meshes/hero.fbx".to_owned()), // 1  Mesh (asset path)
+        CellValue::Bool(true),                               // 2  Visible
+        CellValue::Bool(false),                              // 3  Locked
+        CellValue::Int(3),                                   // 4  Layer
+        CellValue::Int(100),                                 // 5  Health
+        CellValue::Float(12.5),                              // 6  Position X
+        CellValue::Float(-4.0),                              // 7  Position Y
+        CellValue::Float(1.0),                               // 8  Opacity
         // R867 — enum/choice rows (the popup-listbox cell): a render blend
         // mode (4 options) and a collision-body type (3 options, Solid set).
         CellValue::Choice {
@@ -847,7 +1020,7 @@ fn default_tree() -> Vec<PropertyNode> {
             "Identity",
             vec![
                 PropertyNode::leaf(0, "Name"),
-                PropertyNode::leaf(1, "Tag"),
+                PropertyNode::leaf(1, "Mesh"),
                 PropertyNode::leaf(4, "Layer"),
             ],
         ),
@@ -1667,6 +1840,18 @@ impl PropertyGridExternal {
         let Some(value) = self.value_at(row) else {
             return false;
         };
+        // R1176 — an asset-path leaf opens the embedded file picker instead of
+        // the inline text editor (the Choice / Colour precedent: a non-text
+        // editing surface). The picker is a GUI / Owner-scope affordance: a
+        // direct RPC `begin` (no Owner scope) is a no-op — an AI sets the path
+        // with `intervene value.<i>` — while the GUI / `scene/click` activation
+        // runs in the shell Owner scope, where the picker's reactive state
+        // (modal / directory / target slot) resolves.
+        if let ValueRef::Scalar(i) = row {
+            if is_asset_slot(i) {
+                return Owner::current().is_some() && open_asset_dialog(i);
+            }
+        }
         // Choice / Colour are scalar-only (an array element is a `Float`); their
         // popup path addresses the flat model by index, so they only fire on a
         // `Scalar` leaf.
@@ -2646,6 +2831,12 @@ fn activate_source(scene: &mut Scene, row: usize, allow_edit: bool) -> bool {
         return false;
     };
     let arg = IntrospectValue::Int(i64::try_from(row).expect("row index fits in i64"));
+    // R1176 — an asset-path leaf opens the embedded file picker on activation
+    // (Space / Enter / click), the Choice / Colour affordance shape rather than
+    // the text editor (`allow_edit` does not gate it).
+    if is_asset_slot(row) {
+        return intro.invoke("begin", arg).is_ok();
+    }
     match kind {
         CellKind::Bool => intro.invoke("toggle", arg).is_ok(),
         // A choice / colour row opens its popup on both Space and Enter (the
@@ -3514,6 +3705,158 @@ fn view_popup_overlay(
     }
 }
 
+/// R1176 — action-button width / height in the asset dialog.
+const ASSET_ACTION_W: u32 = 88;
+const ASSET_ACTION_H: u32 = 34;
+
+/// R1176 — the asset picker's modal panel style: the M3 default widened to hold
+/// the file browser.
+fn asset_dialog_style() -> DialogStyle {
+    DialogStyle {
+        panel_width: ASSET_PANEL_W,
+        ..DialogStyle::m3_default()
+    }
+}
+
+/// R1176 — one dialog action button. Painted with a **static** posture (Idle, or
+/// Disabled for the OK selection gate): the button is fully functional — a
+/// pointer click emits its `<tag>.click` intent and `apply_aria_activate` drives
+/// keyboard Enter / Space — so only its hover / press / focus state-layer is a
+/// follow-up (it carries no scene-read posture, leaving `RootState` unchanged).
+fn asset_action_button(
+    tag: &'static str,
+    label: &str,
+    disabled: bool,
+    colors: &ButtonColors,
+) -> Scene {
+    let state = if disabled {
+        ButtonState::Disabled
+    } else {
+        ButtonState::Idle
+    };
+    button_scene(
+        label,
+        state,
+        false,
+        tag,
+        colors,
+        &ButtonStyle::m3_default(tag)
+            .with_size(Size::px(ASSET_ACTION_W, ASSET_ACTION_H))
+            .with_label_font_size_px(15),
+    )
+}
+
+/// R1176 — the embedded asset file picker overlay: empty when closed, else the
+/// R788 modal dialog (scrim + centred panel) hosting the lifted
+/// [`file_browser_pane`] in its [`DialogContent::body`] slot, with Cancel / Open
+/// action buttons. The OK button is gated disabled until a file is selected
+/// (read reactively from the shared [`DirectoryState`]). The property grid is
+/// the Nth consumer of each substrate (modal / directory / dialog chrome /
+/// browser pane), the 1st to embed the picker in a host widget.
+fn view_asset_dialog(theme: &Theme) -> Vec<Scene> {
+    if !asset_modal().is_open() {
+        return Vec::new();
+    }
+    let dir = asset_directory();
+    let scroll = use_scroll_state(ASSET_SCROLL_KEY);
+    let has_selection = dir.selected().is_some();
+    let pane = file_browser_pane(
+        ASSET_DIR_TAG,
+        &dir,
+        &scroll,
+        theme,
+        FileBrowserMetrics {
+            list_width: ASSET_LIST_W,
+            list_height: ASSET_LIST_H,
+            row_pitch: ASSET_ROW_PITCH,
+            overscan: ASSET_OVERSCAN,
+            focusable: true,
+        },
+        None,
+    );
+    // Action order matches `asset_dialog_members()` (Cancel, then Open).
+    let cancel = asset_action_button(
+        ASSET_CANCEL_TAG,
+        "Cancel",
+        false,
+        &ButtonColors::filled_tonal(theme),
+    );
+    let ok = asset_action_button(
+        ASSET_OK_TAG,
+        "Open",
+        !has_selection,
+        &ButtonColors::accent(theme),
+    );
+    vec![view_dialog(
+        ASSET_SCRIM_TAG,
+        ASSET_PANEL_TAG,
+        DialogContent {
+            title: "Pick asset",
+            message: "",
+            body: Some(pane),
+        },
+        vec![cancel, ok],
+        (WIN_W, WIN_H),
+        theme,
+        &asset_dialog_style(),
+    )]
+}
+
+/// R1176 — the asset picker's modal dialog a11y subtree when open (empty when
+/// closed): an aria-modal `Dialog` owning the file `list` (the lifted
+/// windowed-list SSOT) + the two action buttons, OK aria-disabled until a file
+/// is selected. A free helper so `access_node` stays under the line cap.
+fn asset_dialog_access_nodes(focused: Option<&str>) -> Vec<AccessNode> {
+    if !asset_modal().is_open() {
+        return Vec::new();
+    }
+    let dir = asset_directory();
+    let scroll = use_scroll_state(ASSET_SCROLL_KEY);
+    let count = dir.entries().len();
+    let window = compute_visible_range(
+        scroll.offset_y(),
+        ASSET_LIST_H,
+        count,
+        ASSET_ROW_PITCH,
+        ASSET_OVERSCAN,
+    );
+    let mut nodes = vec![
+        AccessNode::new(ASSET_PANEL_TAG, AriaRole::Dialog)
+            .with_modal()
+            .with_child(ASSET_DIR_TAG)
+            .with_child(ASSET_CANCEL_TAG)
+            .with_child(ASSET_OK_TAG),
+    ];
+    nodes.extend(windowed_list_nodes_selected(
+        ASSET_DIR_TAG,
+        "Assets",
+        u32::try_from(count).unwrap_or(u32::MAX),
+        &window,
+        dir.selected_index(),
+    ));
+    nodes.push(
+        AccessNode::new(ASSET_CANCEL_TAG, AriaRole::Button)
+            .with_state(button_a11y_state(
+                ButtonState::Idle,
+                focused == Some(ASSET_CANCEL_TAG),
+            ))
+            .with_position_in_set(1)
+            .with_size_of_set(2),
+    );
+    let ok_state = if dir.selected().is_some() {
+        ButtonState::Idle
+    } else {
+        ButtonState::Disabled
+    };
+    nodes.push(
+        AccessNode::new(ASSET_OK_TAG, AriaRole::Button)
+            .with_state(button_a11y_state(ok_state, focused == Some(ASSET_OK_TAG)))
+            .with_position_in_set(2)
+            .with_size_of_set(2),
+    );
+    nodes
+}
+
 /// Fixed-height title band — the "Inspector" label + the live search box
 /// (R872). Fixed height keeps the row → choice-popup anchor math deterministic
 /// (a bare Text node's height is font-metric dependent), and hosting the search
@@ -3682,6 +4025,9 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
         (edit_state, edit_caret),
         &theme,
     ));
+    // R1176 — the embedded asset file picker floats over everything when open
+    // (the R788 modal scrim + centred panel + the lifted file_browser_pane).
+    children.extend(view_asset_dialog(&theme));
 
     Scene::Container(
         ContainerNode::new(children)
@@ -3787,6 +4133,19 @@ impl WidgetCore for PropertyGridView {
                         .attach_blink(search_blink),
                 ),
             ),
+            // R1176 — the embedded asset file picker: the `DirectoryExternal`
+            // over the shared `DirectoryState` (so `asset_fb#<i>` row clicks +
+            // `asset_fb#up` route to its `send`, and `navigate`/`select`/`cwd`/
+            // `selected` are RPC-introspectable), the two action `ButtonExternal`s
+            // (their `.click` intents drive `confirm_asset`/close), and the
+            // modal-open introspection node (a query-only `open` bool).
+            ExtraExternal::new(
+                ASSET_DIR_TAG,
+                Box::new(DirectoryExternal::new(asset_directory())),
+            ),
+            ExtraExternal::new(ASSET_OK_TAG, Box::new(ButtonExternal::new())),
+            ExtraExternal::new(ASSET_CANCEL_TAG, Box::new(ButtonExternal::new())),
+            modal_introspection_extra(ASSET_MODAL_STATE_TAG, asset_modal()),
         ]
     }
 
@@ -3824,6 +4183,14 @@ impl WidgetCore for PropertyGridView {
         if intent.tag_str() == EDIT_TF_BLUR_INTENT_TAG && editing_text {
             commit_edit(false);
         }
+        // R1176 — bridge the asset dialog's action buttons into the modal
+        // lifecycle (the `<tag>.click` intent the `ButtonExternal`s emit). The
+        // browser's row clicks route to the `DirectoryExternal` directly.
+        match intent.tag_str() {
+            "asset_ok.click" => confirm_asset(),
+            "asset_cancel.click" => close_asset_dialog(),
+            _ => {}
+        }
         Vec::new()
     }
 
@@ -3833,6 +4200,38 @@ impl WidgetCore for PropertyGridView {
         key: &str,
         modifiers: Modifiers,
     ) -> bool {
+        // R1176 — while the asset picker is open, the modal trap owns the keys.
+        // Escape cancels; the file list (the first member) drives
+        // selection-follows-focus arrow nav, with Enter on a *file* confirming
+        // and Enter on a *directory* descending; Enter / Space on an action
+        // button activates it (emitting its `.click` intent).
+        if asset_modal().is_open() {
+            if key == "Escape" {
+                close_asset_dialog();
+                return true;
+            }
+            if focused == Some(ASSET_DIR_TAG) {
+                let dir = asset_directory();
+                if key == "Enter" {
+                    if let Some(idx) = dir.cursor() {
+                        if dir.entries().get(idx).is_some_and(|e| !e.is_dir) {
+                            confirm_asset();
+                            return true;
+                        }
+                    }
+                }
+                return dir_nav_key_selecting(
+                    &dir,
+                    &use_scroll_state(ASSET_SCROLL_KEY),
+                    focused,
+                    ASSET_DIR_TAG,
+                    key,
+                    ASSET_ROW_PITCH,
+                );
+            }
+            return apply_aria_activate(scene, focused, key, ASSET_OK_TAG)
+                || apply_aria_activate(scene, focused, key, ASSET_CANCEL_TAG);
+        }
         match focused {
             Some(GRID_TAG) => apply_key_grid(scene, key),
             Some(EDIT_TF_TAG) => apply_key_edit(scene, key, modifiers),
@@ -4038,6 +4437,8 @@ impl WidgetA11y for PropertyGridView {
         // `popup_view_pos` visibility predicate the paint uses, so the AT tree
         // never advertises an unpainted popup — R873).
         nodes.extend(popup_listbox_nodes(&model));
+        // R1176 — when the asset picker is open, append its modal dialog tree.
+        nodes.extend(asset_dialog_access_nodes(focused));
         nodes
     }
 
@@ -4049,6 +4450,17 @@ impl WidgetA11y for PropertyGridView {
     /// redundant marker the AT layer does not lower) — the combobox / tree
     /// pattern, previously missing here.
     fn access_focus_target(_state: &RootState, focused: Option<&str>) -> Option<AccessFocus> {
+        // R1176 — while the asset picker's file list holds focus, the ring
+        // follows the directory's roving cursor (the R802 file-open-dialog shape):
+        // ring the cursor row's composite tag, not the whole list container.
+        if focused == Some(ASSET_DIR_TAG) && asset_modal().is_open() {
+            if let Some(cursor) = asset_directory().cursor() {
+                return Some(AccessFocus::composite(
+                    ASSET_DIR_TAG,
+                    format!("{ASSET_DIR_TAG}#{cursor}"),
+                ));
+            }
+        }
         // A different element (the search box / inline editor) owns focus → ring
         // it atomically (the `grouped_focus_target` non-owner arm).
         if focused != Some(GRID_TAG) {
@@ -5848,6 +6260,95 @@ mod tests {
             .find_external_with_tag_mut(GRID_TAG)
             .and_then(|n| n.handle.introspect_mut())
             .map(|i| i.invoke("begin", IntrospectValue::Int(i64::try_from(row).unwrap())));
+    }
+
+    #[test]
+    fn r1176_asset_slot_predicate() {
+        // Only the Mesh leaf (slot 1) opens the file picker; scalars / other text
+        // leaves keep their inline / popup editors.
+        assert!(is_asset_slot(MESH_SLOT));
+        assert!(!is_asset_slot(0)); // Name (inline text)
+        assert!(!is_asset_slot(8)); // Opacity (ranged slider)
+    }
+
+    #[test]
+    fn r1176_mesh_cell_opens_picker_navigates_and_writes_path() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            // Boot: the Mesh leaf holds the seeded asset path; the picker is shut.
+            assert_eq!(
+                grid_intro(&scene).query("value.1"),
+                Some(IntrospectValue::Text("/proj/meshes/hero.fbx".to_owned())),
+            );
+            assert!(!asset_modal().is_open());
+
+            // Activating the Mesh row opens the embedded picker (the Choice /
+            // Colour activation shape), targeting slot 1, the browser at root.
+            open_choice(&mut scene, 1);
+            assert!(
+                asset_modal().is_open(),
+                "activating the Mesh row opens the picker"
+            );
+            assert_eq!(use_asset_target().get(), Some(1));
+            assert_eq!(asset_directory().cwd(), "/proj");
+
+            // Navigate into meshes/ and select a different asset.
+            assert_eq!(asset_directory().navigate("meshes"), "/proj/meshes");
+            assert_eq!(
+                asset_directory().select("enemy.fbx").as_deref(),
+                Some("/proj/meshes/enemy.fbx"),
+            );
+
+            // Confirm writes the chosen path through the value SSOT, then closes.
+            confirm_asset();
+            assert!(!asset_modal().is_open(), "confirm closes the picker");
+            assert_eq!(use_asset_target().get(), None);
+            assert_eq!(
+                grid_intro(&scene).query("value.1"),
+                Some(IntrospectValue::Text("/proj/meshes/enemy.fbx".to_owned())),
+                "the picked path is written into the Mesh slot",
+            );
+        });
+    }
+
+    #[test]
+    fn r1176_cancel_leaves_the_path_untouched() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            open_choice(&mut scene, 1);
+            assert!(asset_modal().is_open());
+            // Select a different file, then cancel (close without confirming).
+            assert_eq!(asset_directory().navigate("textures"), "/proj/textures");
+            let _ = asset_directory().select("normal.png");
+            asset_modal().close();
+            assert!(!asset_modal().is_open());
+            // Only confirm writes — a cancel leaves the Mesh value as it was.
+            assert_eq!(
+                grid_intro(&scene).query("value.1"),
+                Some(IntrospectValue::Text("/proj/meshes/hero.fbx".to_owned())),
+                "cancel leaves the path untouched",
+            );
+        });
+    }
+
+    #[test]
+    fn r1176_open_picker_lowers_to_an_aria_modal_dialog() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            // Closed: no Dialog node in the inspector a11y tree.
+            assert!(
+                !PropertyGridView::access_node(&PropertyGridView::read_state(&scene), None)
+                    .iter()
+                    .any(|n| n.role == AriaRole::Dialog),
+                "no dialog node while the picker is shut",
+            );
+            open_choice(&mut scene, 1);
+            let nodes = PropertyGridView::access_node(&PropertyGridView::read_state(&scene), None);
+            assert!(
+                nodes.iter().any(|n| n.role == AriaRole::Dialog),
+                "the open picker lowers to an aria-modal Dialog",
+            );
+        });
     }
 
     #[test]
