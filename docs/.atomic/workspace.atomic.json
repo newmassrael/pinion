@@ -19082,6 +19082,54 @@
         "push pending user consent"
       ]
     },
+    "R1157": {
+      "decision_summary": "R1157 R1156 cleanup + tab drag-undock v1: outer_drop_zone SSOT helper + outer guides + thin outer ratio + dock==window doc (YAGNI); the tab bar becomes a drag source (drag undocks, click activates)",
+      "changes_bullets": [
+        "① outer_drop_zone SSOT helper: the sentinel-tag recognition (was repeated 2x in the editor) in ONE place",
+        "② apply_dock_zone_guides draws the 4 outer-perimeter guide strips so the full-span zones are visible (drag)",
+        "③ resolve_outer_dock_zone documents the dock==window assumption (YAGNI: a non-filling consumer is the gate)",
+        "④ dock_panel_outer uses a thin OUTER_DOCK_NEW_FRAC (0.22), not the 50/50 inner ratio (the half-window row)",
+        "tab drag-undock v1: TabWellExternal is a drag source (begin_drag/drag_release_at), undock_tab on a real drag"
+      ],
+      "verification_bullets": [
+        "workspace test 0 fail; clippy -D pedantic + rustfmt clean; 12 r1156 unit tests incl. tab-drag click-vs-drag",
+        "r1156_outer_dock demo PASS (after ① helper + ④ thin ratio); r1124/r1102/r1106 redock regression PASS",
+        "self-audit correction: ① was over-stated (sentinel-tag is wire-natural; real fix = SSOT recognition helper)"
+      ],
+      "impact_refs": [
+        "5.51",
+        "5.16",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "tab drag-undock v1 does split-sibling; NEXT(R1158) = float-on-drag-out (drag tab OUT -> tear-off/float)",
+        "③ dock==window + ④ exact home-ratio restore are documented YAGNI/future-refinements, not bugs today",
+        "push pending user consent (now 24 commits ahead of origin/main)"
+      ],
+      "publishable_decision_summary": "R1157 R1156 cleanup + tab drag-undock v1: outer_drop_zone SSOT helper + outer guides + thin outer ratio + dock==window doc (YAGNI); the tab bar becomes a drag source (drag undocks, click activates)",
+      "publishable_changes_bullets": [
+        "① outer_drop_zone SSOT helper: the sentinel-tag recognition (was repeated 2x in the editor) in ONE place",
+        "② apply_dock_zone_guides draws the 4 outer-perimeter guide strips so the full-span zones are visible (drag)",
+        "③ resolve_outer_dock_zone documents the dock==window assumption (YAGNI: a non-filling consumer is the gate)",
+        "④ dock_panel_outer uses a thin OUTER_DOCK_NEW_FRAC (0.22), not the 50/50 inner ratio (the half-window row)",
+        "tab drag-undock v1: TabWellExternal is a drag source (begin_drag/drag_release_at), undock_tab on a real drag"
+      ],
+      "publishable_verification_bullets": [
+        "workspace test 0 fail; clippy -D pedantic + rustfmt clean; 12 r1156 unit tests incl. tab-drag click-vs-drag",
+        "r1156_outer_dock demo PASS (after ① helper + ④ thin ratio); r1124/r1102/r1106 redock regression PASS",
+        "self-audit correction: ① was over-stated (sentinel-tag is wire-natural; real fix = SSOT recognition helper)"
+      ],
+      "publishable_impact_refs": [
+        "5.51",
+        "5.16",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "tab drag-undock v1 does split-sibling; NEXT(R1158) = float-on-drag-out (drag tab OUT -> tear-off/float)",
+        "③ dock==window + ④ exact home-ratio restore are documented YAGNI/future-refinements, not bugs today",
+        "push pending user consent (now 24 commits ahead of origin/main)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
