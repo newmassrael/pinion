@@ -2206,6 +2206,54 @@ fn intent_for_zone(source: &str, target: &str, zone: DockDropZone) -> Option<Doc
     }
 }
 
+/// (R1158 §5.51) Classify a resolved [`DropPoint`] the `source` panel is dragged
+/// over into the [`DockDropPreview`] it implies — the SSOT shared by the
+/// [`DockPanelExternal`] header drag and the [`TabWellExternal`] tab drag, so a
+/// tab dragged over a zone shows the SAME bold cursor-zone affordance a panel
+/// header does ("a tab drag IS a panel drag"). `None` over no panel, over the
+/// SOURCE itself (a self-drop is a no-op), or in a dead zone
+/// ([`DockDropZone::None`]); else `Some(source, target, zone)`. The drop target is
+/// the panel ROOT, but split defensively at `#` in case a future nested target
+/// resolves to a composite `{well}#{i}` tag. `tabbing` is the dock surface's
+/// [`DockReorganizer::tabbing`] policy (a split-only surface never classifies the
+/// centre as a tabify — the nearest edge wins).
+fn resolve_drop_preview(
+    source: &str,
+    over: Option<&DropPoint>,
+    tabbing: bool,
+) -> Option<DockDropPreview> {
+    let over = over?;
+    let target = over.tag.split('#').next().unwrap_or(over.tag.as_str());
+    if target == source {
+        return None;
+    }
+    let zone =
+        dock_drop_zone_normalized_tabbing(f64::from(over.x_rel), f64::from(over.y_rel), tabbing);
+    if zone == DockDropZone::None {
+        return None;
+    }
+    Some(DockDropPreview {
+        source: source.to_string(),
+        target: target.to_string(),
+        zone,
+    })
+}
+
+/// (R1158 §5.51) Write the shared live drop-preview Signal, deduping against the
+/// current value so a stationary cursor mid-drag does not churn repaints — the
+/// SSOT both the [`DockPanelExternal`] and [`TabWellExternal`] drag sources call.
+/// No-op when no preview signal is wired.
+fn write_drop_preview(
+    sig: Option<&Rc<Signal<Option<DockDropPreview>>>>,
+    preview: Option<DockDropPreview>,
+) {
+    if let Some(sig) = sig
+        && sig.get() != preview
+    {
+        sig.set(preview);
+    }
+}
+
 /// (R686 §5.16 §5.45) Parse the wire string a reorganize gesture
 /// payload carries (`"Center"` / `"Left"` / `"Right"` / `"Top"` /
 /// `"Bottom"`) into a [`DockDropZone`]. `"None"` and any unrecognised
@@ -3623,6 +3671,20 @@ pub struct TabWellExternal {
     /// out (drag-to-undock). `None` between gestures / after a release. Interior-
     /// mutable so the `&self` `begin_drag` + the `&mut self` `send`/release share it.
     pressed_tab: Cell<Option<usize>>,
+    /// (R1158 §5.51) Pending intents waiting for the framework's
+    /// [`External::drain_intents`] poll — the SAME `tear_off` / `tear_off_redock_at`
+    /// wire the [`DockPanelExternal`] emits, so the binding's existing reducer (it
+    /// dispatches on the event SUFFIX + the panel-id payload, not the registration
+    /// prefix) floats / cross-window-redocks a dragged-out tab with no new arm. A
+    /// drag emits exactly one per gesture, so the queue depth is `≤ 1`.
+    pending_intents: RefCell<VecDeque<Intent>>,
+    /// (R1158 §5.51) The shared live drop-preview — the SAME `Signal` every
+    /// [`DockPanelExternal`] writes — so a tab dragged over a dock zone paints the
+    /// bold cursor-zone affordance identically to a panel header drag ("a tab drag
+    /// IS a panel drag"). `None` = no preview binding (the tab still docks / floats,
+    /// just without the live paint); the editor wires it via
+    /// [`Self::with_drop_preview`].
+    drop_preview: Option<Rc<Signal<Option<DockDropPreview>>>>,
 }
 
 impl TabWellExternal {
@@ -3635,7 +3697,46 @@ impl TabWellExternal {
             well_id: well_id.into(),
             reorganizer,
             pressed_tab: Cell::new(None),
+            pending_intents: RefCell::new(VecDeque::new()),
+            drop_preview: None,
         }
+    }
+
+    /// (R1158 §5.51) Share the editor's live drop-preview Signal so a tab drag
+    /// paints the same cursor-zone affordance the panel-header drags do (the
+    /// [`DockPanelExternal::with_drop_preview`] peer). Omit (the default `None`)
+    /// for a tab well whose binding wires no preview overlay.
+    #[must_use]
+    pub fn with_drop_preview(mut self, preview: Rc<Signal<Option<DockDropPreview>>>) -> Self {
+        self.drop_preview = Some(preview);
+        self
+    }
+
+    /// (R1158 §5.51) Enqueue the bare `tear_off` float intent for `panel` (the
+    /// dragged tab) — the binding's reducer turns it into a floating `WindowSpec`.
+    /// The payload is the panel id (the SSOT for which panel floated); the
+    /// drain prefixes the tag with this well's registration tag, but the reducer
+    /// keys on the event suffix + payload so the well prefix is harmless.
+    fn enqueue_tear_off(&self, panel: &str) {
+        self.pending_intents.borrow_mut().push_back(Intent {
+            tag: Cow::Borrowed(TEAR_OFF_EVENT),
+            payload: IntrospectValue::Text(panel.to_string()),
+        });
+    }
+
+    /// (R1158 §5.51 §2 #7 PR-33) Enqueue the cross-window dock-at redock for the
+    /// dragged tab `panel` released over `target_window`'s dock zone `point` — the
+    /// [`DockPanelExternal::enqueue_tear_off_redock_at`] peer. The reducer's
+    /// `dock_panel_at_zone` removes the tab from its well + re-inserts it at the
+    /// zone (a never-floated tab has no float window to drop, so the redock is just
+    /// the relocation).
+    fn enqueue_tear_off_redock_at(&self, panel: &str, target_window: &str, point: &DropPoint) {
+        // R1158 — the wire shape is the shared [`tear_off_redock_at_payload`] SSOT
+        // (the same builder the panel-header cross-window redock uses).
+        self.pending_intents.borrow_mut().push_back(Intent {
+            tag: Cow::Borrowed(TEAR_OFF_REDOCK_AT_EVENT),
+            payload: IntrospectValue::Json(tear_off_redock_at_payload(panel, target_window, point)),
+        });
     }
 }
 
@@ -3676,19 +3777,92 @@ impl External for TabWellExternal {
         })
     }
 
-    /// (R1156 §5.51) Drag-to-undock RELEASE: a real DRAG of a tab (the router's
-    /// `became_drag` verdict) tears it OUT of the well via the shared
-    /// [`DockReorganizer::undock_tab`] (split it out beside its sibling — the same
-    /// op the R1145 button drives, now gesture-driven). A click
-    /// (`became_drag == false`) is a no-op here — the trailing `PointerUp` `send`
-    /// activates the tab instead. Either way the pressed-tab latch clears.
+    /// (R1158 §5.51) Live preview during a tab drag — paint the bold cursor-zone
+    /// affordance for the dragged tab `payload` over a same-window panel, the SAME
+    /// [`resolve_drop_preview`] the panel-header drag writes, so "a tab drag IS a
+    /// panel drag" holds for the FEEDBACK too. A cross-window `over` (the target
+    /// window's own overlay) and an escaped cursor (off every zone) both clear it.
+    fn drag_to_at(&mut self, payload: &DragPayload, update: &DragUpdate) {
+        // A cross-window `over` names ANOTHER window's zone (its own overlay paints
+        // it); only a same-window `over` drives THIS window's preview.
+        let same_window_over = if update.over_window.is_some() {
+            None
+        } else {
+            update.over.as_ref()
+        };
+        let preview = payload.value.as_str().and_then(|panel| {
+            resolve_drop_preview(panel, same_window_over, self.reorganizer.tabbing())
+        });
+        write_drop_preview(self.drop_preview.as_ref(), preview);
+    }
+
+    /// (R1158 §5.51) Drag-a-tab RELEASE — a tab drag IS a panel-header drag, so a
+    /// real DRAG (the router's `became_drag` verdict) branches on WHERE it lands,
+    /// exactly like [`DockPanelExternal::drag_release_at`]:
+    ///
+    /// 1. **Cross-window** (`over_window` + `over`) → dock the tab into that
+    ///    window's zone ([`TEAR_OFF_REDOCK_AT_EVENT`]); the reducer's
+    ///    `dock_panel_at_zone` removes it from the well + re-inserts at the zone.
+    /// 2. **Same-window over a panel** → dock the tab at that zone via
+    ///    [`DockReorganizer::dock_panel_at_zone`] (it normalises the tab out of the
+    ///    well then splits / tabifies at the target; a self-drop / dead zone is a
+    ///    guarded no-op, leaving the tab in its well).
+    /// 3. **Escaped every zone** (dragged OUT of the window) → FLOAT the tab:
+    ///    [`DockReorganizer::float_out_panel`] removes it from the well (a tab is
+    ///    ALWAYS collapse-style — a placeholder TAB makes no sense, unlike a
+    ///    policy-gated panel slot) + a `tear_off` intent adds its floating window.
+    ///
+    /// This replaces the R1156 v1, which blindly `undock_tab`'d (split beside the
+    /// sibling) regardless of the drop position — so dragging a tab OUT split it to
+    /// the side instead of floating (the live-test bug). A click
+    /// (`became_drag == false`) is still a no-op here (the trailing `PointerUp`
+    /// `send` activates the tab). The pressed-tab latch + live preview clear either
+    /// way.
     fn drag_release_at(&mut self, payload: &DragPayload, update: &DragUpdate) {
         self.pressed_tab.set(None);
+        write_drop_preview(self.drop_preview.as_ref(), None);
         if !update.became_drag {
             return;
         }
-        if let Some(panel) = payload.value.as_str() {
-            let _ = self.reorganizer.undock_tab(panel);
+        let Some(panel) = payload.value.as_str() else {
+            return;
+        };
+        // (1) Cross-window: dropped onto ANOTHER window's dock zone.
+        if let (Some(target_window), Some(point)) = (update.over_window, update.over.as_ref()) {
+            self.enqueue_tear_off_redock_at(panel, target_window, point);
+            return;
+        }
+        // (2) Same-window: dropped over a panel's dock zone → dock there. The
+        // target is the panel ROOT (split a composite `{well}#{i}` at `#`).
+        if let Some(point) = update.over.as_ref() {
+            let target = point.tag.split('#').next().unwrap_or(point.tag.as_str());
+            let _ = self.reorganizer.dock_panel_at_zone(
+                panel,
+                target,
+                f64::from(point.x_rel),
+                f64::from(point.y_rel),
+            );
+            return;
+        }
+        // (3) Escaped every zone → float the tab out of the well. Enqueue the
+        // window-add intent FIRST (the `DockPanelExternal` Collapse convention):
+        // both this enqueue and the topology mutation land before the shell's
+        // `tail` drains this still-alive state-scene external, but enqueue-first
+        // keeps the intent safe even if `float_out_panel` ever drove a reconcile.
+        // A tab always has a well sibling, so `float_out_panel` never hits the
+        // sole-panel error — it always removes the leaf (no placeholder tab).
+        self.enqueue_tear_off(panel);
+        let _ = self.reorganizer.float_out_panel(panel);
+    }
+
+    fn is_dirty(&self) -> bool {
+        !self.pending_intents.borrow().is_empty()
+    }
+
+    fn drain_intents(&mut self, sink: &mut dyn FnMut(Intent)) {
+        let mut queue = self.pending_intents.borrow_mut();
+        while let Some(intent) = queue.pop_front() {
+            sink(intent);
         }
     }
 }
@@ -4948,6 +5122,23 @@ fn window_move_payload(panel_id: &str, delta: (f64, f64)) -> IntrospectValue {
     }))
 }
 
+/// (R1158 §5.51 §2 #7 PR-33) Build the [`TEAR_OFF_REDOCK_AT_EVENT`] wire payload —
+/// `{panel, window, target, x_rel, y_rel}` — the cross-window dock-at the binding
+/// reducer keys on. The SSOT shared by the [`DockPanelExternal`] header-drag and
+/// the [`TabWellExternal`] tab-drag cross-window arms so the two sources cannot
+/// drift the wire shape. Returns the raw [`serde_json::Value`] (the panel external
+/// also clones it into its `query("redock_at")` diagnostic); the caller wraps it
+/// in [`IntrospectValue::Json`] for the intent.
+fn tear_off_redock_at_payload(panel: &str, window: &str, point: &DropPoint) -> serde_json::Value {
+    serde_json::json!({
+        "panel": panel,
+        "window": window,
+        "target": point.tag,
+        "x_rel": point.x_rel,
+        "y_rel": point.y_rel,
+    })
+}
+
 /// R1103 §5.51 §2 #7 — read a normalised drop-zone cursor fraction from a
 /// JSON redock-at payload, defaulting to the zone centre (`0.5`) when the
 /// caller omits it. The `f64 → f32` narrowing is the documented `DropPoint`
@@ -5427,45 +5618,21 @@ impl DockPanelExternal {
     }
 
     fn resolve_preview(&self, over: Option<&DropPoint>) -> Option<DockDropPreview> {
-        let over = over?;
-        // The drop target is the panel ROOT (R1080 marks only the root
-        // `.drop_target`), but split defensively at `#` in case a future
-        // nested target resolves to a composite tag.
-        let target = over.tag.split('#').next().unwrap_or(over.tag.as_str());
-        if target == self.panel_id.as_ref() {
-            return None;
-        }
-        // R1112 PR-37 — the tab-docking policy is the dock SURFACE's
-        // ([`DockReorganizer::tabbing`]), read through this panel's shared
-        // coordinator so the pointer preview, the `drop` RPC, and cross-window
-        // redock all honour ONE policy. A split-only surface never classifies
-        // the centre as a tabify — the nearest edge wins. A tear-off-only
-        // panel (no coordinator) cannot reorganize at all, so the default
-        // (tabbing) is moot.
-        let zone = dock_drop_zone_normalized_tabbing(
-            f64::from(over.x_rel),
-            f64::from(over.y_rel),
-            self.effective_tabbing(),
-        );
-        if zone == DockDropZone::None {
-            return None;
-        }
-        Some(DockDropPreview {
-            source: self.panel_id.to_string(),
-            target: target.to_string(),
-            zone,
-        })
+        // R1158 §5.51 — the classify is the shared [`resolve_drop_preview`] SSOT
+        // (the TabWellExternal tab drag is its 2nd consumer); this panel supplies
+        // its own id as the source + its surface tabbing policy (R1112 PR-37: the
+        // pointer preview, the `drop` RPC, and cross-window redock honour ONE
+        // policy; a tear-off-only panel has no coordinator so the default tabbing
+        // is moot).
+        resolve_drop_preview(&self.panel_id, over, self.effective_tabbing())
     }
 
     /// (R1081 §5.51) Write the shared drop-preview, deduping against the
     /// current value so a stationary cursor mid-drag does not churn
-    /// repaints. No-op when no preview signal is wired.
+    /// repaints. No-op when no preview signal is wired. (R1158 — the dedup-write
+    /// is the shared [`write_drop_preview`] SSOT.)
     fn set_drop_preview(&self, preview: Option<DockDropPreview>) {
-        if let Some(sig) = &self.drop_preview {
-            if sig.get() != preview {
-                sig.set(preview);
-            }
-        }
+        write_drop_preview(self.drop_preview.as_ref(), preview);
     }
 
     /// Enqueue the `tear_off` intent — the binding's reducer turns it
@@ -5526,13 +5693,9 @@ impl DockPanelExternal {
     /// demo lacks). Distinct from [`Self::enqueue_tear_off_redock`]
     /// (remove-only restore) — see [`TEAR_OFF_REDOCK_AT_EVENT`].
     fn enqueue_tear_off_redock_at(&self, target_window: &str, point: &DropPoint) {
-        let payload = serde_json::json!({
-            "panel": self.panel_id.as_ref(),
-            "window": target_window,
-            "target": point.tag,
-            "x_rel": point.x_rel,
-            "y_rel": point.y_rel,
-        });
+        // R1158 — the wire shape is the shared [`tear_off_redock_at_payload`] SSOT
+        // (the TabWellExternal tab drag is its 2nd consumer).
+        let payload = tear_off_redock_at_payload(&self.panel_id, target_window, point);
         // R1102 §2 #7 — persist the cross-window redock for `query("redock_at")`;
         // the emitted intent itself is transient (drained into the reducer).
         *self.last_redock_at.borrow_mut() = Some(payload.clone());
@@ -9772,8 +9935,9 @@ mod reorganize_tests {
 
     use super::{
         DockDropPreview, DockDropZone, DockNode, DockReorganizeExternal, DockReorganizeIntent,
-        DockReorganizer, DockSplitPosition, DockTopology, FloatPolicy, TabWellExternal,
-        TopologyError, outer_zone_for, resolve_dock_drop,
+        DockReorganizer, DockSplitPosition, DockTopology, FloatPolicy, TEAR_OFF_EVENT,
+        TEAR_OFF_REDOCK_AT_EVENT, TabWellExternal, TopologyError, outer_zone_for,
+        resolve_dock_drop,
     };
     use crate::splitter::SplitterOrientation as Orient;
     use pinion_core::external::{ExternalIntrospect, InterveneError, IntrospectValue, InvokeError};
@@ -10019,11 +10183,16 @@ mod reorganize_tests {
         assert_eq!(outer_zone_for(0.4, -0.01), DockDropZone::Top);
     }
 
-    #[test]
-    fn r1156_tab_drag_undocks_the_tab_but_a_click_does_not() {
-        use pinion_core::external::{DragUpdate, External, IntrospectValue};
+    /// (R1158) A 2-tab well "w" [a, b] beside a leaf "c". Returns the live
+    /// topology Signal + a wired tab-well external (pressed on tab 0 = panel "a",
+    /// so `begin_drag` arms "a").
+    fn r1158_tab_well_fixture() -> (
+        Rc<Signal<Option<DockTopology>>>,
+        Rc<DockReorganizer>,
+        TabWellExternal,
+    ) {
+        use pinion_core::external::IntrospectValue;
         use std::borrow::Cow;
-        // Topology: a 2-tab well "w" [a, b] beside a leaf "c".
         let topo = DockTopology::new(DockNode::split_horizontal(
             "s",
             0.5,
@@ -10033,34 +10202,175 @@ mod reorganize_tests {
         let topology = Rc::new(Signal::new(Some(topo)));
         let reorganizer = Rc::new(DockReorganizer::new(Rc::clone(&topology)));
         let mut well = TabWellExternal::new("w", Rc::clone(&reorganizer));
-        let mk = |became_drag: bool| DragUpdate {
-            over: None,
+        // Press tab 0 (panel "a") so begin_drag arms a drag for "a".
+        well.invoke("send", IntrospectValue::Text("0:PointerDown".into()))
+            .unwrap();
+        (topology, reorganizer, well)
+    }
+
+    /// (R1158) A `DragUpdate` for a tab drag, parameterised on the landing.
+    fn tab_drag_update(
+        became_drag: bool,
+        over: Option<super::DropPoint>,
+        over_window: Option<&str>,
+    ) -> super::DragUpdate<'_> {
+        super::DragUpdate {
+            over,
             cursor: (0.0, 0.0),
-            over_window: None,
+            over_window,
             source_window: None,
             became_drag,
             press_cursor: (0.0, 0.0),
-        };
-        // Press tab 0 (panel "a") -> begin_drag arms a drag for "a".
-        well.invoke("send", IntrospectValue::Text("0:PointerDown".into()))
-            .unwrap();
+        }
+    }
+
+    fn drain(well: &mut TabWellExternal) -> Vec<super::Intent> {
+        use pinion_core::external::External;
+        let mut out = Vec::new();
+        well.drain_intents(&mut |i| out.push(i));
+        out
+    }
+
+    #[test]
+    fn r1158_tab_click_does_not_undock() {
+        use pinion_core::external::External;
+        let (topology, _reorg, mut well) = r1158_tab_well_fixture();
         let payload = well.begin_drag().expect("a pressed tab arms a drag");
         assert_eq!(payload.value.as_str(), Some("a"), "the pressed tab's panel");
-        // A CLICK (no drag motion) does NOT undock — "a" stays in the well.
-        well.drag_release_at(&payload, &mk(false));
+        // A CLICK (no drag motion) leaves the tab in its well — the trailing
+        // PointerUp activates it instead. No intent is queued.
+        well.drag_release_at(&payload, &tab_drag_update(false, None, None));
         assert!(
             topology.get().unwrap().tab_well_sibling("a").is_some(),
-            "a click leaves the tab in its well (the trailing PointerUp activates instead)"
+            "a click leaves the tab in its well"
         );
-        // A real DRAG undocks: "a" is torn out of the well (no longer tabbed).
-        well.invoke("send", IntrospectValue::Text("0:PointerDown".into()))
-            .unwrap();
-        let payload = well.begin_drag().expect("re-armed");
-        well.drag_release_at(&payload, &mk(true));
         assert!(
-            topology.get().unwrap().tab_well_sibling("a").is_none(),
-            "a real drag tears the tab out of the well"
+            drain(&mut well).is_empty(),
+            "a click queues no float intent"
         );
+    }
+
+    #[test]
+    fn r1158_tab_drag_out_floats_the_tab() {
+        use pinion_core::external::{External, IntrospectValue};
+        let (topology, _reorg, mut well) = r1158_tab_well_fixture();
+        let payload = well.begin_drag().expect("re-armed");
+        // A real drag that ESCAPED every zone (over = None) FLOATS the tab: it
+        // leaves the well (float_out_panel) AND a `tear_off` intent adds its window.
+        well.drag_release_at(&payload, &tab_drag_update(true, None, None));
+        let after = topology.get().unwrap();
+        assert!(
+            !after.panel_ids().contains(&"a"),
+            "the tab floated OUT of the dock (the leaf is gone), not split beside its sibling"
+        );
+        assert!(
+            after.panel_ids().contains(&"b") && after.panel_ids().contains(&"c"),
+            "the other panels survive"
+        );
+        let intents = drain(&mut well);
+        assert_eq!(intents.len(), 1, "exactly one float intent");
+        assert_eq!(intents[0].tag.as_ref(), TEAR_OFF_EVENT, "it is a tear_off");
+        assert!(
+            matches!(&intents[0].payload, IntrospectValue::Text(p) if p == "a"),
+            "the payload names the floated panel"
+        );
+    }
+
+    #[test]
+    fn r1158_tab_drag_over_a_panel_docks_at_that_zone() {
+        use pinion_core::external::{DropPoint, External};
+        let (topology, _reorg, mut well) = r1158_tab_well_fixture();
+        let payload = well.begin_drag().expect("re-armed");
+        // A real drag released over panel "c"'s LEFT edge docks the tab THERE
+        // (split), not blindly beside its old well sibling. The tab leaves the
+        // well; no float intent fires (it docked, it did not escape).
+        let over = DropPoint {
+            tag: "c".into(),
+            x_rel: 0.15,
+            y_rel: 0.5,
+        };
+        well.drag_release_at(&payload, &tab_drag_update(true, Some(over), None));
+        let after = topology.get().unwrap();
+        assert!(
+            after.tab_well_sibling("a").is_none(),
+            "the tab left its well"
+        );
+        assert!(
+            after.panel_ids().contains(&"a"),
+            "the tab is still docked (it relocated, did not float)"
+        );
+        assert!(
+            drain(&mut well).is_empty(),
+            "a dock-at-zone queues no float intent"
+        );
+    }
+
+    #[test]
+    fn r1158_tab_drag_cross_window_emits_redock_at() {
+        use pinion_core::external::{DropPoint, External, IntrospectValue};
+        let (_topology, _reorg, mut well) = r1158_tab_well_fixture();
+        let payload = well.begin_drag().expect("re-armed");
+        // A real drag whose drop resolved in ANOTHER window's dock zone emits the
+        // cross-window dock-at redock — the reducer's dock_panel_at_zone moves the
+        // tab into that window (the substrate mirror of the panel-header path).
+        let over = DropPoint {
+            tag: "c".into(),
+            x_rel: 0.15,
+            y_rel: 0.5,
+        };
+        well.drag_release_at(&payload, &tab_drag_update(true, Some(over), Some("other")));
+        let intents = drain(&mut well);
+        assert_eq!(intents.len(), 1, "one cross-window redock intent");
+        assert_eq!(
+            intents[0].tag.as_ref(),
+            TEAR_OFF_REDOCK_AT_EVENT,
+            "it is a tear_off_redock_at"
+        );
+        let IntrospectValue::Json(v) = &intents[0].payload else {
+            panic!("redock-at payload is JSON");
+        };
+        assert_eq!(v.get("panel").and_then(|p| p.as_str()), Some("a"), "panel");
+        assert_eq!(
+            v.get("window").and_then(|w| w.as_str()),
+            Some("other"),
+            "target window"
+        );
+        assert_eq!(
+            v.get("target").and_then(|t| t.as_str()),
+            Some("c"),
+            "zone target"
+        );
+    }
+
+    #[test]
+    fn r1158_tab_drag_writes_and_clears_the_drop_preview() {
+        use pinion_core::external::{DropPoint, External};
+        let (_topology, reorganizer, _well) = r1158_tab_well_fixture();
+        // A wired preview Signal: the tab drag paints the same cursor-zone preview
+        // a panel-header drag does.
+        let preview = Rc::new(Signal::new(None));
+        let mut well = TabWellExternal::new("w", Rc::clone(&reorganizer))
+            .with_drop_preview(Rc::clone(&preview));
+        well.invoke(
+            "send",
+            pinion_core::external::IntrospectValue::Text("0:PointerDown".into()),
+        )
+        .unwrap();
+        let payload = well.begin_drag().expect("armed");
+        // Dragging the tab over panel "c"'s LEFT edge writes a Left-zone preview.
+        let over = DropPoint {
+            tag: "c".into(),
+            x_rel: 0.15,
+            y_rel: 0.5,
+        };
+        well.drag_to_at(&payload, &tab_drag_update(true, Some(over), None));
+        let shown = preview.get().expect("the tab drag paints a preview");
+        assert_eq!(shown.source, "a", "the dragged tab is the source");
+        assert_eq!(shown.target, "c", "the target panel");
+        assert_eq!(shown.zone, DockDropZone::Left, "the left-edge split zone");
+        // Releasing clears the live preview.
+        well.drag_release_at(&payload, &tab_drag_update(true, None, None));
+        assert!(preview.get().is_none(), "release clears the preview");
     }
 
     #[test]

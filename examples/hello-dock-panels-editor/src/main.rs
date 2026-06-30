@@ -1041,7 +1041,11 @@ impl WidgetCore for DockPanelsEditorView {
             // freshly-tabified `reorg-tabs-{seq}` well wires automatically:
             // this factory re-runs on every topology change (R688).
             topology.for_each_tabs_well(|well_id, _active, _panels| {
-                let well = TabWellExternal::new(well_id.to_string(), Rc::clone(&reorganizer));
+                // (R1158 §5.51) Share the live drop-preview so a tab dragged over a
+                // dock zone paints the same bold cursor-zone affordance a panel
+                // header drag does — a tab drag IS a panel drag (preview + result).
+                let well = TabWellExternal::new(well_id.to_string(), Rc::clone(&reorganizer))
+                    .with_drop_preview(Rc::clone(&preview));
                 externals.push(ExtraExternal::new(well_id.to_string(), Box::new(well)));
             });
         }
