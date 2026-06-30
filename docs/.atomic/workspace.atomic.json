@@ -19376,6 +19376,54 @@
         "R1163b: the cross-window floater preview (editor dock_drop_preview hook) + tear_off_redock_at reducer still use the continuous classifier; audit onto resolve_drop / banded."
       ]
     },
+    "R1163b": {
+      "decision_summary": "R1163b §5.51 — unify the cross-window dock drop onto the resolve_drop SSOT, retire dock_panel_at_zone",
+      "changes_bullets": [
+        "editor cross-window redock + drop preview now route through resolve_drop, not the continuous classifier",
+        "resolve_drop folds the torn-slot placeholder into a Center fill (was a duplicated editor _placeholder check)",
+        "dock_drop_preview hook gains source_panel; shell runs it in root_owner.run via cross_window_drag_into",
+        "retired DockReorganizer::dock_panel_at_zone (superseded by resolve_drop + dock_panel_at_resolved_zone)",
+        "cross-window dead-zone now FLOATS (B-model); a stale redock target no longer force-redocks home",
+        "removed orphaned cross_window_drop_into; refs repointed to cross_window_drag_into"
+      ],
+      "verification_bullets": [
+        "workspace cargo test 0 failed; clippy -D pedantic + rustfmt clean",
+        "new unit: preview Some==docks; preview None==stays floating (dead-zone) — preview==result",
+        "demo r1163b_cross_window_unified_resolution PASS (dead-zone floats); r1106 regression PASS"
+      ],
+      "impact_refs": [
+        "5.51"
+      ],
+      "carry_forward_bullets": [
+        "R1164: resolve_drop returns the self zone so the tab caller stops re-classifying the banded zone",
+        "cross_window_drop_from is now caller-less (dead since R1150) — retire in a sweep",
+        "shell eprintln -> tracing migration; >2-tab undock precision against the well node",
+        "push pending user consent (commits ahead of origin/main)"
+      ],
+      "publishable_decision_summary": "R1163b §5.51 — unify the cross-window dock drop onto the resolve_drop SSOT, retire dock_panel_at_zone",
+      "publishable_changes_bullets": [
+        "editor cross-window redock + drop preview now route through resolve_drop, not the continuous classifier",
+        "resolve_drop folds the torn-slot placeholder into a Center fill (was a duplicated editor _placeholder check)",
+        "dock_drop_preview hook gains source_panel; shell runs it in root_owner.run via cross_window_drag_into",
+        "retired DockReorganizer::dock_panel_at_zone (superseded by resolve_drop + dock_panel_at_resolved_zone)",
+        "cross-window dead-zone now FLOATS (B-model); a stale redock target no longer force-redocks home",
+        "removed orphaned cross_window_drop_into; refs repointed to cross_window_drag_into"
+      ],
+      "publishable_verification_bullets": [
+        "workspace cargo test 0 failed; clippy -D pedantic + rustfmt clean",
+        "new unit: preview Some==docks; preview None==stays floating (dead-zone) — preview==result",
+        "demo r1163b_cross_window_unified_resolution PASS (dead-zone floats); r1106 regression PASS"
+      ],
+      "publishable_impact_refs": [
+        "5.51"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R1164: resolve_drop returns the self zone so the tab caller stops re-classifying the banded zone",
+        "cross_window_drop_from is now caller-less (dead since R1150) — retire in a sweep",
+        "shell eprintln -> tracing migration; >2-tab undock precision against the well node",
+        "push pending user consent (commits ahead of origin/main)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
