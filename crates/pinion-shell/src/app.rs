@@ -3967,6 +3967,22 @@ mod r1073_dispatch_gate_vocabulary_tests {
     }
 }
 
+/// (R1160 §5.16) Install the global `tracing` subscriber once, env-filtered by
+/// `PINION_LOG` (per-target levels: `PINION_LOG=pinion::dock=debug` traces the
+/// dock-drag decisions; default `warn` is quiet). Idempotent via `try_init` — a
+/// second shell instance / a test that already set a subscriber is a no-op, not a
+/// panic. Writes to stderr so it never corrupts the stdout JSON-RPC stream. The
+/// permanent home for first-party diagnostics
+/// ([[use-substrate-not-hand-rolled-equivalent]]) — no eprintln add/remove churn.
+fn init_tracing() {
+    use tracing_subscriber::{EnvFilter, fmt};
+    let filter = EnvFilter::try_from_env("PINION_LOG").unwrap_or_else(|_| EnvFilter::new("warn"));
+    let _ = fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        .try_init();
+}
+
 /// Run the visual binary end-to-end: build the winit event loop with
 /// the [`AppEvent`] user-event slot, spawn the stdin RPC reader, run
 /// the [`AppShell<V>`] until quit. The single line every shell
@@ -3985,6 +4001,7 @@ mod r1073_dispatch_gate_vocabulary_tests {
 /// pinion supports), so this is treated as an unrecoverable setup
 /// fault rather than a propagated error.
 pub fn run<V: WidgetView>() {
+    init_tracing();
     // R637 §5.16 §5.7 — `PINION_SCREENSHOT=<path>` env hook. When
     // set, the binary bypasses winit entirely: build the initial
     // paint scene through the same `ShellCore` substrate the live
@@ -4029,6 +4046,7 @@ pub fn run<V: WidgetView>() {
 /// thread (the OS-level thread-spawn failure that
 /// [`TokioExecutor::new`](crate::TokioExecutor) wraps).
 pub fn run_with_handlers<V: WidgetView>(registry: HandlerRegistry) {
+    init_tracing();
     // R637 §5.16 §5.7 — see `run::<V>` for the headless screenshot
     // env contract; the handler-installing variant respects the
     // same hook so design-parity verification works for command-

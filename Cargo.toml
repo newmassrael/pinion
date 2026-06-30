@@ -192,6 +192,16 @@ sce-build = { git = "https://github.com/newmassrael/scxml-core-engine.git", rev 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# (R1160 §5.16) Structured, level-gated logging substrate. `tracing` is the
+# Rust-standard facade ([[use-substrate-not-hand-rolled-equivalent]] — do NOT
+# hand-roll an eprintln logger); `tracing-subscriber`'s `env-filter` gives
+# per-target level control so any live issue is analysable immediately via
+# `PINION_LOG=pinion::dock=debug` with no code churn. Span support is the forward
+# path for game-loop / frame-timing profiling (Phase C). Already transitive
+# (winit / wgpu); promoted to a direct dep for first-party instrumentation.
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
 # R634 §5.7 — pinion-cli developer command framework. clap is the
 # de-facto Rust CLI standard; the `derive` feature avoids the
 # stringly-typed builder API in favour of #[derive(Parser)] +

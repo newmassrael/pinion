@@ -2304,6 +2304,18 @@ fn write_drop_preview(
     }
 }
 
+/// (R1160 §5.16 §5.51) Structured trace for the live dock-drag paths (the tab
+/// well AND the panel header / cross-window redock) — each release's resolved
+/// `became_drag` / `over` / `over_window` / `source_window` + the branch taken,
+/// so a real `:0` drag pins a live-only divergence the headless `scene/drag` (RPC
+/// inbox) cannot reproduce. Emits through the `tracing` substrate at the
+/// `pinion::dock` target, so it is PERMANENT + level-gated (no eprintln churn):
+/// silent by default, full trace under `PINION_LOG=pinion::dock=debug` (the shell
+/// installs the env-filtered subscriber). [[use-substrate-not-hand-rolled-equivalent]].
+fn dock_drag_trace(msg: &str) {
+    tracing::debug!(target: "pinion::dock", "{msg}");
+}
+
 /// (R1159 §5.51) What releasing a dock drag at the current cursor does — the
 /// single outcome the discrete-target B model resolves a release into, the SSOT
 /// every drag source ([`TabWellExternal`] now; [`DockPanelExternal`] +
@@ -3877,15 +3889,25 @@ impl TabWellExternal {
         self
     }
 
-    /// (R1158 §5.51) Enqueue the bare `tear_off` float intent for `panel` (the
-    /// dragged tab) — the binding's reducer turns it into a floating `WindowSpec`.
-    /// The payload is the panel id (the SSOT for which panel floated); the
-    /// drain prefixes the tag with this well's registration tag, but the reducer
-    /// keys on the event suffix + payload so the well prefix is harmless.
-    fn enqueue_tear_off(&self, panel: &str) {
+    /// (R1160 §5.51) Enqueue the POSITIONED float intent for the dragged tab
+    /// `panel` at the release `cursor` (window-logical, in `source_window`'s
+    /// frame) — the same `tear_off_follow` the panel-header escape-float emits, so
+    /// the floating window appears WHERE the tab was dropped, not at a fixed slot.
+    /// R1158 emitted the bare `tear_off` (no position) → the reducer placed the
+    /// window at a fixed `floating_window_position`, the "매번 같은 자리" bug. The
+    /// wire shape is the shared [`tear_off_follow_payload`] SSOT (the binding's
+    /// `follow_panel_floating` reducer desktop-converts the cursor via the right
+    /// window origin); the drain prefixes the well tag, but the reducer keys on the
+    /// event suffix + payload so the prefix is harmless.
+    fn enqueue_tear_off_follow(
+        &self,
+        panel: &str,
+        cursor: (f64, f64),
+        source_window: Option<&str>,
+    ) {
         self.pending_intents.borrow_mut().push_back(Intent {
-            tag: Cow::Borrowed(TEAR_OFF_EVENT),
-            payload: IntrospectValue::Text(panel.to_string()),
+            tag: Cow::Borrowed(TEAR_OFF_FOLLOW_EVENT),
+            payload: tear_off_follow_payload(panel, cursor, source_window),
         });
     }
 
@@ -4003,6 +4025,14 @@ impl External for TabWellExternal {
     fn drag_release_at(&mut self, payload: &DragPayload, update: &DragUpdate) {
         self.pressed_tab.set(None);
         write_drop_preview(self.drop_preview.as_ref(), None);
+        dock_drag_trace(&format!(
+            "TAB well={} release became_drag={} over={:?} over_window={:?} payload={:?}",
+            self.well_id,
+            update.became_drag,
+            update.over.as_ref().map(|p| p.tag.as_str()),
+            update.over_window,
+            payload.value.as_str(),
+        ));
         if !update.became_drag {
             return;
         }
@@ -4035,14 +4065,16 @@ impl External for TabWellExternal {
                 let _ = self.reorganizer.dock_panel_outer(panel, edge);
             }
             DropResolution::Float => {
-                // Float the tab out of the well. Enqueue the window-add intent FIRST
-                // (the `DockPanelExternal` Collapse convention): both this enqueue
-                // and the topology mutation land before the shell's `tail` drains
-                // this still-alive state-scene external, but enqueue-first keeps the
-                // intent safe even if `float_out_panel` ever drove a reconcile. A tab
-                // always has a well sibling, so `float_out_panel` never hits the
-                // sole-panel error — it always removes the leaf (no placeholder tab).
-                self.enqueue_tear_off(panel);
+                // Float the tab out of the well AT THE DROP CURSOR (R1160 fix —
+                // positioned `tear_off_follow`, not the fixed-slot `tear_off`).
+                // Enqueue the window intent FIRST (the `DockPanelExternal` Collapse
+                // convention): both this enqueue and the topology mutation land
+                // before the shell's `tail` drains this still-alive state-scene
+                // external, but enqueue-first keeps the intent safe even if
+                // `float_out_panel` ever drove a reconcile. A tab always has a well
+                // sibling, so `float_out_panel` never hits the sole-panel error — it
+                // always removes the leaf (no placeholder tab).
+                self.enqueue_tear_off_follow(panel, update.cursor, update.source_window);
                 let _ = self.reorganizer.float_out_panel(panel);
             }
         }
@@ -5987,6 +6019,13 @@ impl External for DockPanelExternal {
         self.dragging.set(false);
         self.set_drop_preview(None);
         self.is_drag_armed.set(true);
+        dock_drag_trace(&format!(
+            "  drag_release panel={} over={:?} resolve_preview={:?} has_reorg={}",
+            self.panel_id,
+            over.as_ref().map(|p| p.tag.as_str()),
+            self.resolve_preview(over.as_ref()),
+            self.reorganizer.is_some(),
+        ));
         // 1. Dock: a valid drop over another panel, with a coordinator.
         if let (Some(reorganizer), Some(preview)) = (
             self.reorganizer.as_ref(),
@@ -6013,7 +6052,11 @@ impl External for DockPanelExternal {
             // on `last_outcome`, so an AI client observes the failure with
             // no per-caller bookkeeping here.
             if let Some(intent) = intent_for_zone(&preview.source, &preview.target, preview.zone) {
-                let _ = reorganizer.apply_intent(&intent);
+                let outcome = reorganizer.apply_intent(&intent);
+                dock_drag_trace(&format!(
+                    "  -> ARM1 DOCK {} onto {} ({:?}) was_floating={was_floating} apply={outcome:?}",
+                    preview.source, preview.target, preview.zone
+                ));
             }
             self.detached.set(false);
             return;
@@ -6033,6 +6076,7 @@ impl External for DockPanelExternal {
         // graceful there (it cannot orphan); live pointer use essentially
         // always has a forwarded cursor and takes the follow arm above.
         if over.is_none() {
+            dock_drag_trace(&format!("  -> ARM2 ESCAPE-FLOAT panel={}", self.panel_id));
             if let Some(cursor) = self.drag_cursor.get() {
                 // R1107.1 — the final release-follow carries the SAME source
                 // window the gesture's moves recorded (`drag_to_at` /
@@ -6069,6 +6113,10 @@ impl External for DockPanelExternal {
         // chart drives the restore: `dock_back` is inert while `docked`, so the
         // never-floated snap-back transitions nothing and removes no window.
         let was_floating = self.is_floating();
+        dock_drag_trace(&format!(
+            "  -> ARM3 SNAP-BACK panel={} was_floating={was_floating} (no dock at the preview)",
+            self.panel_id
+        ));
         self.send_lifecycle(DockPanelEvent::DockBack);
         if was_floating {
             self.enqueue_tear_off_redock();
@@ -6208,6 +6256,16 @@ impl External for DockPanelExternal {
     /// gesture so an AI can read where the drop landed.
     fn drag_release_at(&mut self, payload: &DragPayload, update: &DragUpdate) {
         self.drag_cursor.set(Some(update.cursor));
+        dock_drag_trace(&format!(
+            "panel={} release became_drag={} over={:?} over_window={:?} source_window={:?} floating={} floater_move={}",
+            self.panel_id,
+            update.became_drag,
+            update.over.as_ref().map(|p| p.tag.as_str()),
+            update.over_window,
+            update.source_window,
+            self.is_floating(),
+            self.is_floater_window_move(update.source_window),
+        ));
         // R1107.1 — stamp the release's source window so the cursor-less
         // `drag_release` escape-follow below reads it (a degenerate release
         // with no preceding move still names the window it released in).
@@ -6218,6 +6276,7 @@ impl External for DockPanelExternal {
         // this window's topology) — it is the dock-at redock the per-window
         // router could never resolve.
         if let (Some(target_window), Some(point)) = (update.over_window, update.over.as_ref()) {
+            dock_drag_trace("  -> CROSS-WINDOW redock_at");
             self.settle_cross_window_redock(target_window, point);
             return;
         }
@@ -10129,8 +10188,8 @@ mod reorganize_tests {
     use super::{
         DockDropPreview, DockDropZone, DockNode, DockReorganizeExternal, DockReorganizeIntent,
         DockReorganizer, DockSplitPosition, DockTopology, DropResolution, FloatPolicy,
-        TEAR_OFF_EVENT, TEAR_OFF_REDOCK_AT_EVENT, TabWellExternal, TopologyError, outer_zone_for,
-        resolve_dock_drop, resolve_drop,
+        TEAR_OFF_FOLLOW_EVENT, TEAR_OFF_REDOCK_AT_EVENT, TabWellExternal, TopologyError,
+        outer_zone_for, resolve_dock_drop, resolve_drop,
     };
     use crate::splitter::SplitterOrientation as Orient;
     use pinion_core::external::{ExternalIntrospect, InterveneError, IntrospectValue, InvokeError};
@@ -10462,10 +10521,20 @@ mod reorganize_tests {
         );
         let intents = drain(&mut well);
         assert_eq!(intents.len(), 1, "exactly one float intent");
-        assert_eq!(intents[0].tag.as_ref(), TEAR_OFF_EVENT, "it is a tear_off");
-        assert!(
-            matches!(&intents[0].payload, IntrospectValue::Text(p) if p == "a"),
-            "the payload names the floated panel"
+        // R1160 — the float is POSITIONED (`tear_off_follow` at the drop cursor),
+        // not the fixed-slot `tear_off`. Payload is the follow JSON `{panel,x,y,…}`.
+        assert_eq!(
+            intents[0].tag.as_ref(),
+            TEAR_OFF_FOLLOW_EVENT,
+            "it is a positioned tear_off_follow"
+        );
+        let IntrospectValue::Json(v) = &intents[0].payload else {
+            panic!("follow payload is JSON");
+        };
+        assert_eq!(
+            v.get("panel").and_then(|p| p.as_str()),
+            Some("a"),
+            "the float names the dragged tab"
         );
     }
 
@@ -10633,11 +10702,13 @@ mod reorganize_tests {
         );
         let intents = drain(&mut well);
         assert_eq!(intents.len(), 1, "one float intent");
+        // R1160 — positioned float at the drop cursor (`tear_off_follow`).
+        assert_eq!(intents[0].tag.as_ref(), TEAR_OFF_FOLLOW_EVENT);
         assert!(
-            matches!(&intents[0].payload, IntrospectValue::Text(p) if p == "a"),
+            matches!(&intents[0].payload, IntrospectValue::Json(v)
+                if v.get("panel").and_then(|p| p.as_str()) == Some("a")),
             "the float names the dragged tab"
         );
-        assert_eq!(intents[0].tag.as_ref(), TEAR_OFF_EVENT);
     }
 
     #[test]

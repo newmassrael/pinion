@@ -13,6 +13,13 @@ description = "R51.30 §5.16/§5.20/§5.35 paint-side AppShell — winit lifecyc
 
 [dependencies]
 pinion-core = { path = "../pinion-core", version = "0.0.1" }
+# (R1160 §5.16) The shell owns the process entry (`run::<V>()`), so it installs
+# the global tracing subscriber once — env-filtered by `PINION_LOG` (per-target
+# levels: `PINION_LOG=pinion::dock=debug`) so any live issue is analysable
+# immediately, no eprintln churn. The facade (`tracing`) is emitted from the
+# widget crates; `tracing-subscriber` (env-filter) is the install half.
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 # §5.16 paint_adapter Scene -> vello::Scene walk + InputRouter + IntentQueue
 # + compute_layout — all of AppShell's substrate calls live in pinion-runtime
 # (vello feature for the paint_adapter half).

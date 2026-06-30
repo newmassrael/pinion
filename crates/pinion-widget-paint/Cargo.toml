@@ -38,6 +38,11 @@ serde = { workspace = true }
 # surface, not just a test assertion, so the dependency is no longer
 # dev-gated.
 serde_json = { workspace = true }
+# (R1160 §5.16) Level-gated dock-drag tracing (`tracing::debug!(target:
+# "pinion::dock", …)`) — replaces the ad-hoc gated eprintln so a live drag is
+# analysable via `PINION_LOG=pinion::dock=debug` with no code churn. The shell
+# installs the subscriber; this crate only emits through the facade.
+tracing = { workspace = true }
 
 [dev-dependencies]
 # (R684 §5.21 §5.16) Test-only dependency on pinion-runtime so the
