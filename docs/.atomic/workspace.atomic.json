@@ -19594,6 +19594,54 @@
         "debt A after C: retire bare dock_drop_zone_normalized/_for orphans"
       ]
     },
+    "R1168": {
+      "decision_summary": "R1168 dock debt C: retire the static dock-zone guide so the cursor preview (derived from the one resolve_drop SSOT) is the SOLE drop affordance. The guide outlined whole panel rects independent of resolve_drop, so it diverged from the actual preview/result — the user's '선≠preview' divergence (R1163b 'preview==result by construction' had ignored the guide as a 3rd geometry). Removed apply_dock_zone_guides + DOCK_ZONE_GUIDES_TAG + any_window_dragging + the WidgetView::dock_zone_guide hook + dock_zone_guide_overlay + its consts + the editor override + Scene::collect_drop_target_tags + the drag-end every-other-window guide-strip repaint backstop (the cross-window preview clears via its own per-target repaint). No orphan consumers remain.",
+      "changes_bullets": [
+        "retire the static dock-zone guide: cursor preview is the sole affordance",
+        "removed apply_dock_zone_guides + DOCK_ZONE_GUIDES_TAG + any_window_dragging",
+        "removed WidgetView::dock_zone_guide hook + dock_zone_guide_overlay + consts",
+        "removed editor dock_zone_guide override + Scene::collect_drop_target_tags",
+        "removed the drag-end every-other-window guide-strip repaint backstop"
+      ],
+      "verification_bullets": [
+        "guide outlined whole panel rects independent of resolve_drop (선≠preview)",
+        "cross-window preview clears via its per-target repaint, not the backstop",
+        "removed r1141/r1142 guide tests; no orphan consumers remain (grep clean)",
+        "dock demos r1167/r1106/r1097 green: drag to dock still works, guide-free",
+        "workspace test + clippy -D pedantic + rustfmt clean"
+      ],
+      "impact_refs": [
+        "5.51"
+      ],
+      "carry_forward_bullets": [
+        "debt A next: retire bare dock_drop_zone_normalized/_for test-only orphans",
+        "collect_drop_target_tags re-add if an AI drop-zone introspection needs it",
+        "live FEEL (guide-free drag is clearer) = HW-gated, user :0 confirm"
+      ],
+      "publishable_decision_summary": "R1168 dock debt C: retire the static dock-zone guide so the cursor preview (derived from the one resolve_drop SSOT) is the SOLE drop affordance. The guide outlined whole panel rects independent of resolve_drop, so it diverged from the actual preview/result — the user's '선≠preview' divergence (R1163b 'preview==result by construction' had ignored the guide as a 3rd geometry). Removed apply_dock_zone_guides + DOCK_ZONE_GUIDES_TAG + any_window_dragging + the WidgetView::dock_zone_guide hook + dock_zone_guide_overlay + its consts + the editor override + Scene::collect_drop_target_tags + the drag-end every-other-window guide-strip repaint backstop (the cross-window preview clears via its own per-target repaint). No orphan consumers remain.",
+      "publishable_changes_bullets": [
+        "retire the static dock-zone guide: cursor preview is the sole affordance",
+        "removed apply_dock_zone_guides + DOCK_ZONE_GUIDES_TAG + any_window_dragging",
+        "removed WidgetView::dock_zone_guide hook + dock_zone_guide_overlay + consts",
+        "removed editor dock_zone_guide override + Scene::collect_drop_target_tags",
+        "removed the drag-end every-other-window guide-strip repaint backstop"
+      ],
+      "publishable_verification_bullets": [
+        "guide outlined whole panel rects independent of resolve_drop (선≠preview)",
+        "cross-window preview clears via its per-target repaint, not the backstop",
+        "removed r1141/r1142 guide tests; no orphan consumers remain (grep clean)",
+        "dock demos r1167/r1106/r1097 green: drag to dock still works, guide-free",
+        "workspace test + clippy -D pedantic + rustfmt clean"
+      ],
+      "publishable_impact_refs": [
+        "5.51"
+      ],
+      "publishable_carry_forward_bullets": [
+        "debt A next: retire bare dock_drop_zone_normalized/_for test-only orphans",
+        "collect_drop_target_tags re-add if an AI drop-zone introspection needs it",
+        "live FEEL (guide-free drag is clearer) = HW-gated, user :0 confirm"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
