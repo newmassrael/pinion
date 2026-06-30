@@ -19304,6 +19304,44 @@
         "B-campaign R1162 (route the panel-header drag through resolve_drop) still pending — this round was a focused tab-well layout bug fix found by live testing."
       ]
     },
+    "R1162": {
+      "decision_summary": "R1162 §5.51 — route the panel-header drag (preview + result) through the resolve_drop SSOT, so preview == result by construction (lying-preview bug fixed) + split is the default (banded centre); +SnapBack/source for self-drop.",
+      "changes_bullets": [
+        "Routed the panel-header drag's PREVIEW and RESULT through the one resolve_drop SSOT (the tab's peer), so preview == result by construction — the lying-preview bug (preview showed a half-split, the drop tabified the whole panel) is now structurally impossible. The panel uses the same banded geometry as the tab: small centre = tabify, edges = split, dead-zone ring = float.",
+        "Added DropResolution::SnapBack + a `source` param to resolve_drop: a release over the dragged panel's OWN slot is a no-move no-op (not a dock onto itself, not an accidental float), so the preview shows nothing over the panel's own area = the result.",
+        "This also fixes the centre-too-big complaint: the continuous classifier's centre was the central 50% (so most drops tabified); the banded centre is small, so SPLIT is the default at the edges.",
+        "Retired the legacy continuous resolve_drop_preview + DockPanelExternal::resolve_preview — every drag source now derives its preview from resolve_drop directly, so the preview can never use a different geometry than the result."
+      ],
+      "verification_bullets": [
+        "Live XTEST on :0 (per-move preview at trace level + result at debug): centre -> preview Center == Dock{Center} (tabify); right edge -> preview Right == Dock{Right} (SPLIT, was tabify under the old big centre); dead-zone 0.27 -> preview None == Float (torn-properties window). Preview matches result in every case.",
+        "659 dock units (5 updated to the banded model — a tear-off-only panel now shows no dock preview, a split-only centre floats) + r1158/r1159/r1096/r1145/r686/r1124 demos PASS; workspace 0 fail / clippy -D pedantic / rustfmt clean."
+      ],
+      "impact_refs": [
+        "5.51"
+      ],
+      "carry_forward_bullets": [
+        "R1163: the CROSS-window floater preview (editor dock_drop_preview hook) + the tear_off_redock_at reducer still use the legacy continuous classifier; audit them onto resolve_drop / banded so a true cross-window (over_window=Some) floater preview also matches its result. The same-window-resolved floater redock is already unified this round.",
+        "Chose A for the dead-zone question: the panel = the tab model (a dead-zone release floats)."
+      ],
+      "publishable_decision_summary": "R1162 §5.51 — route the panel-header drag (preview + result) through the resolve_drop SSOT, so preview == result by construction (lying-preview bug fixed) + split is the default (banded centre); +SnapBack/source for self-drop.",
+      "publishable_changes_bullets": [
+        "Routed the panel-header drag's PREVIEW and RESULT through the one resolve_drop SSOT (the tab's peer), so preview == result by construction — the lying-preview bug (preview showed a half-split, the drop tabified the whole panel) is now structurally impossible. The panel uses the same banded geometry as the tab: small centre = tabify, edges = split, dead-zone ring = float.",
+        "Added DropResolution::SnapBack + a `source` param to resolve_drop: a release over the dragged panel's OWN slot is a no-move no-op (not a dock onto itself, not an accidental float), so the preview shows nothing over the panel's own area = the result.",
+        "This also fixes the centre-too-big complaint: the continuous classifier's centre was the central 50% (so most drops tabified); the banded centre is small, so SPLIT is the default at the edges.",
+        "Retired the legacy continuous resolve_drop_preview + DockPanelExternal::resolve_preview — every drag source now derives its preview from resolve_drop directly, so the preview can never use a different geometry than the result."
+      ],
+      "publishable_verification_bullets": [
+        "Live XTEST on :0 (per-move preview at trace level + result at debug): centre -> preview Center == Dock{Center} (tabify); right edge -> preview Right == Dock{Right} (SPLIT, was tabify under the old big centre); dead-zone 0.27 -> preview None == Float (torn-properties window). Preview matches result in every case.",
+        "659 dock units (5 updated to the banded model — a tear-off-only panel now shows no dock preview, a split-only centre floats) + r1158/r1159/r1096/r1145/r686/r1124 demos PASS; workspace 0 fail / clippy -D pedantic / rustfmt clean."
+      ],
+      "publishable_impact_refs": [
+        "5.51"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R1163: the CROSS-window floater preview (editor dock_drop_preview hook) + the tear_off_redock_at reducer still use the legacy continuous classifier; audit them onto resolve_drop / banded so a true cross-window (over_window=Some) floater preview also matches its result. The same-window-resolved floater redock is already unified this round.",
+        "Chose A for the dead-zone question: the panel = the tab model (a dead-zone release floats)."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
