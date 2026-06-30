@@ -902,6 +902,26 @@ impl DockTopology {
         find(&self.root, panel)
     }
 
+    /// (R1156 §5.51) The panel id at tab `index` of the [`DockNode::Tabs`] well
+    /// `well_id`, or `None` when the well / index is absent. The drag-to-undock
+    /// source ([`TabWellExternal`]) resolves the PRESSED tab's panel through this
+    /// before tearing it out of the well.
+    #[must_use]
+    pub fn tab_well_panel_at(&self, well_id: &str, index: usize) -> Option<String> {
+        fn find(node: &DockNode, well_id: &str, index: usize) -> Option<String> {
+            match node {
+                DockNode::Tabs { id, panels, .. } if id.as_ref() == well_id => {
+                    panels.get(index).map(ToString::to_string)
+                }
+                DockNode::Split { first, second, .. } => {
+                    find(first, well_id, index).or_else(|| find(second, well_id, index))
+                }
+                _ => None,
+            }
+        }
+        find(&self.root, well_id, index)
+    }
+
     /// (R1145 §5.51) The ACTIVE panel of the FIRST [`DockNode::Tabs`] well in the
     /// tree (depth-first), or `None` when nothing is tabbed. The editor's
     /// human-facing "undock tab" button targets this — undocking the tab the user
@@ -2080,6 +2100,14 @@ fn dock_drop_zone_normalized_tabbing(x_rel: f64, y_rel: f64, tabbing: bool) -> D
 /// splitter afterward to rebalance.
 pub const DEFAULT_REORGANIZE_RATIO: f32 = 0.5;
 
+/// (R1156.1 §5.51) Span fraction the NEW panel takes in an OUTER full-span dock
+/// ([`DockReorganizer::dock_panel_outer`]). Outer docks are accessory bands
+/// (toolbar / status bar / sidebar), so a thin slice reads right where the inner
+/// 50/50 [`DEFAULT_REORGANIZE_RATIO`] made an oversized half-window row. The user
+/// drags the splitter to rebalance; restoring a panel's exact original size is a
+/// home-ratio follow-up (the home anchor does not yet carry the ratio).
+const OUTER_DOCK_NEW_FRAC: f32 = 0.22;
+
 /// (R686 §5.16 §5.45) Prefix for the stable split ids the
 /// [`DockReorganizeExternal`] mints when a `SplitInsert` gesture
 /// creates a new divider (`reorg-split-{seq}`). Distinct from any
@@ -2130,6 +2158,17 @@ pub fn outer_zone_for(x_rel: f64, y_rel: f64) -> DockDropZone {
         .into_iter()
         .reduce(|best, c| if c.0 < best.0 { c } else { best })
         .map_or(DockDropZone::Top, |(_, z)| z)
+}
+
+/// (R1156.1 §5.51) The SSOT for recognising an OUTER full-span dock from a
+/// resolved drop's tag + area-normalised cursor: `Some(edge zone)` when `tag` is
+/// the reserved [`OUTER_DOCK_ZONE_TAG`](pinion_core::external::OUTER_DOCK_ZONE_TAG)
+/// the perimeter resolution returns, else `None` (an inner panel drop). Pairs
+/// [`outer_zone_for`] with the sentinel check so the redock reducer + the preview
+/// never re-compare the reserved tag — one place owns the protocol recognition.
+#[must_use]
+pub fn outer_drop_zone(tag: &str, x_rel: f64, y_rel: f64) -> Option<DockDropZone> {
+    (tag == pinion_core::external::OUTER_DOCK_ZONE_TAG).then(|| outer_zone_for(x_rel, y_rel))
 }
 
 /// (R1081 §5.51) Map a classified drop — the dragged `source` panel, the
@@ -2908,13 +2947,17 @@ impl DockReorganizer {
             current
         };
         let id = format!("{REORG_SPLIT_ID_PREFIX}{}", self.split_seq.get());
-        let next = base.split_root(
-            panel.to_string(),
-            id,
-            orientation,
-            self.reorganize_ratio,
-            position,
-        )?;
+        // (R1156.1) An outer dock is an ACCESSORY band (toolbar / status / sidebar),
+        // not an equal split — give the new panel a thin OUTER_DOCK_NEW_FRAC of the
+        // span (the inner `reorganize_ratio` 0.5 made a HALF-window row, the
+        // user-found "반쪽"). `split_root`'s ratio is the FIRST child's fraction, so a
+        // First edge (top/left) new panel sets it directly; a Second edge
+        // (bottom/right) new panel takes the complement.
+        let ratio = match position {
+            DockSplitPosition::First => OUTER_DOCK_NEW_FRAC,
+            DockSplitPosition::Second => 1.0 - OUTER_DOCK_NEW_FRAC,
+        };
+        let next = base.split_root(panel.to_string(), id, orientation, ratio, position)?;
         self.split_seq.set(self.split_seq.get() + 1);
         // (R1134 §5.51.1) Landed at an outer edge, not its captured home — drop any
         // stale collapse home anchor so a later home-restore does not resurrect the
@@ -3102,6 +3145,16 @@ impl DockReorganizer {
     #[must_use]
     pub fn tab_well_active(&self, well_id: &str) -> Option<usize> {
         self.topology.get().and_then(|t| t.tab_well_active(well_id))
+    }
+
+    /// (R1156 §5.51) The panel id at tab `index` of the well `well_id`, or `None`.
+    /// The drag-to-undock source ([`TabWellExternal::begin_drag`]) resolves the
+    /// PRESSED tab's panel through this before tearing it out.
+    #[must_use]
+    pub fn tab_well_panel_at(&self, well_id: &str, index: usize) -> Option<String> {
+        self.topology
+            .get()
+            .and_then(|t| t.tab_well_panel_at(well_id, index))
     }
 
     /// (R1085 §5.51) The single topology-commit funnel — the **sole
@@ -3565,17 +3618,23 @@ pub struct TabWellExternal {
     /// (one `split_seq` / `tabs_seq` / undo stack across every dock
     /// gesture). `activate_tab` navigates through its commit funnel.
     reorganizer: Rc<DockReorganizer>,
+    /// (R1156 §5.51) The tab index of the most recent `PointerDown` on a
+    /// `{well_id}#{i}` tab, so [`Self::begin_drag`] knows WHICH tab a drag pulls
+    /// out (drag-to-undock). `None` between gestures / after a release. Interior-
+    /// mutable so the `&self` `begin_drag` + the `&mut self` `send`/release share it.
+    pressed_tab: Cell<Option<usize>>,
 }
 
 impl TabWellExternal {
-    /// Construct a click-to-switch adapter for the tab well `well_id`,
-    /// driving the shared `reorganizer`. The binding registers it at the
-    /// `well_id` tag (= the painted [`view_tabs`] strip tag).
+    /// Construct a click-to-switch + drag-to-undock adapter for the tab well
+    /// `well_id`, driving the shared `reorganizer`. The binding registers it at
+    /// the `well_id` tag (= the painted [`view_tabs`] strip tag).
     #[must_use]
     pub fn new(well_id: impl Into<Cow<'static, str>>, reorganizer: Rc<DockReorganizer>) -> Self {
         Self {
             well_id: well_id.into(),
             reorganizer,
+            pressed_tab: Cell::new(None),
         }
     }
 }
@@ -3599,6 +3658,38 @@ impl External for TabWellExternal {
 
     fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
         Some(self)
+    }
+
+    /// (R1156 §5.51) Drag-to-undock SOURCE: a press on a tab arms a drag for THAT
+    /// tab's panel (the `pressed_tab` index recorded by the `PointerDown` send),
+    /// so dragging the tab out tears it from the well — the gesture replacement
+    /// for the R1145 "undock tab" button. `None` when no tab was pressed (a strip-
+    /// background press) or the well/index is gone. A click (no drag motion) still
+    /// activates via `send`; the router's click-vs-drag verdict
+    /// ([`DragUpdate::became_drag`]) picks between them at release.
+    fn begin_drag(&self) -> Option<DragPayload> {
+        let index = self.pressed_tab.get()?;
+        let panel = self.reorganizer.tab_well_panel_at(&self.well_id, index)?;
+        Some(DragPayload {
+            kind: Cow::Borrowed(DOCK_PANEL_DRAG_KIND),
+            value: IntrospectValue::Text(panel),
+        })
+    }
+
+    /// (R1156 §5.51) Drag-to-undock RELEASE: a real DRAG of a tab (the router's
+    /// `became_drag` verdict) tears it OUT of the well via the shared
+    /// [`DockReorganizer::undock_tab`] (split it out beside its sibling — the same
+    /// op the R1145 button drives, now gesture-driven). A click
+    /// (`became_drag == false`) is a no-op here — the trailing `PointerUp` `send`
+    /// activates the tab instead. Either way the pressed-tab latch clears.
+    fn drag_release_at(&mut self, payload: &DragPayload, update: &DragUpdate) {
+        self.pressed_tab.set(None);
+        if !update.became_drag {
+            return;
+        }
+        if let Some(panel) = payload.value.as_str() {
+            let _ = self.reorganizer.undock_tab(panel);
+        }
     }
 }
 
@@ -3672,8 +3763,19 @@ impl ExternalIntrospect for TabWellExternal {
             Some((sub, ev, _mods)) => (Some(sub), ev),
             None => (None, raw),
         };
+        let parsed_index = sub_index.and_then(|s| s.parse::<usize>().ok());
+        // (R1156 §5.51) Record the pressed tab so `begin_drag` can pull THAT tab
+        // out (drag-to-undock). The press itself switches nothing — only a release
+        // activates, only a drag undocks.
+        if matches!(
+            PointerWireEvent::from_wire_name(event_name),
+            Some(PointerWireEvent::Down)
+        ) {
+            self.pressed_tab.set(parsed_index);
+            return Ok(IntrospectValue::Null);
+        }
         // Only the release edge activates a tab; every other pointer
-        // transition (hover / press / cancel) is an accepted no-op.
+        // transition (hover / cancel) is an accepted no-op.
         if !matches!(
             PointerWireEvent::from_wire_name(event_name),
             Some(PointerWireEvent::Up)
@@ -3682,7 +3784,7 @@ impl ExternalIntrospect for TabWellExternal {
         }
         // A bare `PointerUp` (no `#` sub-index — the strip background) or a
         // non-numeric sub-index (no painted tab carries it) switches nothing.
-        let Some(index) = sub_index.and_then(|s| s.parse::<usize>().ok()) else {
+        let Some(index) = parsed_index else {
             return Ok(IntrospectValue::Null);
         };
         // Skip the already-active tab — a click on the visible tab is a no-op
@@ -9915,6 +10017,50 @@ mod reorganize_tests {
         assert_eq!(outer_zone_for(0.05, 0.03), DockDropZone::Top);
         // A negative/over-1 normalised coord (cursor just outside) still classifies.
         assert_eq!(outer_zone_for(0.4, -0.01), DockDropZone::Top);
+    }
+
+    #[test]
+    fn r1156_tab_drag_undocks_the_tab_but_a_click_does_not() {
+        use pinion_core::external::{DragUpdate, External, IntrospectValue};
+        use std::borrow::Cow;
+        // Topology: a 2-tab well "w" [a, b] beside a leaf "c".
+        let topo = DockTopology::new(DockNode::split_horizontal(
+            "s",
+            0.5,
+            DockNode::tabs("w", [Cow::from("a"), Cow::from("b")], 0),
+            DockNode::leaf("c"),
+        ));
+        let topology = Rc::new(Signal::new(Some(topo)));
+        let reorganizer = Rc::new(DockReorganizer::new(Rc::clone(&topology)));
+        let mut well = TabWellExternal::new("w", Rc::clone(&reorganizer));
+        let mk = |became_drag: bool| DragUpdate {
+            over: None,
+            cursor: (0.0, 0.0),
+            over_window: None,
+            source_window: None,
+            became_drag,
+            press_cursor: (0.0, 0.0),
+        };
+        // Press tab 0 (panel "a") -> begin_drag arms a drag for "a".
+        well.invoke("send", IntrospectValue::Text("0:PointerDown".into()))
+            .unwrap();
+        let payload = well.begin_drag().expect("a pressed tab arms a drag");
+        assert_eq!(payload.value.as_str(), Some("a"), "the pressed tab's panel");
+        // A CLICK (no drag motion) does NOT undock — "a" stays in the well.
+        well.drag_release_at(&payload, &mk(false));
+        assert!(
+            topology.get().unwrap().tab_well_sibling("a").is_some(),
+            "a click leaves the tab in its well (the trailing PointerUp activates instead)"
+        );
+        // A real DRAG undocks: "a" is torn out of the well (no longer tabbed).
+        well.invoke("send", IntrospectValue::Text("0:PointerDown".into()))
+            .unwrap();
+        let payload = well.begin_drag().expect("re-armed");
+        well.drag_release_at(&payload, &mk(true));
+        assert!(
+            topology.get().unwrap().tab_well_sibling("a").is_none(),
+            "a real drag tears the tab out of the well"
+        );
     }
 
     #[test]

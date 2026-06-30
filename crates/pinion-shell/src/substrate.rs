@@ -3786,7 +3786,7 @@ impl<V: WidgetView> ShellCore<V> {
         if !self.any_window_dragging(PointerId::MOUSE) {
             return pinion_overlay::inject_overlay_node(scene, DOCK_ZONE_GUIDES_TAG, None);
         }
-        let guides: Vec<Scene> = scene
+        let mut guides: Vec<Scene> = scene
             .collect_drop_target_tags()
             .into_iter()
             .filter_map(|tag| {
@@ -3794,6 +3794,46 @@ impl<V: WidgetView> ShellCore<V> {
                 V::dock_zone_guide(&tag, rect)
             })
             .collect();
+        // (R1156.1 §5.51) OUTER full-span dock guides: outline the 4 perimeter
+        // bands of the dock area (== the window content rect, the
+        // `resolve_outer_dock_zone` assumption) so the user SEES the full-span drop
+        // zones BEFORE the cursor reaches one — the discoverability companion to the
+        // inner panel guides above (a drop in a band spans every pane). Re-uses the
+        // binding's `dock_zone_guide` outline; the strips sit at the edges, visually
+        // distinct from the inner panel outlines.
+        let root = scene.rect();
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "OUTER_DOCK_MARGIN is a small positive logical-px const; u32 is exact"
+        )]
+        let margin = pinion_core::external::OUTER_DOCK_MARGIN as u32;
+        if root.w > 2 * margin && root.h > 2 * margin {
+            use pinion_core::scene::Rect;
+            let strips = [
+                (
+                    "\u{0}outer-guide-top",
+                    Rect::new(root.x, root.y, root.w, margin),
+                ),
+                (
+                    "\u{0}outer-guide-bottom",
+                    Rect::new(root.x, root.y + root.h - margin, root.w, margin),
+                ),
+                (
+                    "\u{0}outer-guide-left",
+                    Rect::new(root.x, root.y, margin, root.h),
+                ),
+                (
+                    "\u{0}outer-guide-right",
+                    Rect::new(root.x + root.w - margin, root.y, margin, root.h),
+                ),
+            ];
+            for (tag, rect) in strips {
+                if let Some(g) = V::dock_zone_guide(tag, rect) {
+                    guides.push(g);
+                }
+            }
+        }
         let slot = if guides.is_empty() {
             None
         } else {

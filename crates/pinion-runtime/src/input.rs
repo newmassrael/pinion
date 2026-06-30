@@ -2292,6 +2292,15 @@ where
 /// over the WHOLE window (the dock consumer derives the edge from `x_rel`/`y_rel`).
 /// `None` when the cursor is in no host's perimeter band (the interior, where the
 /// inner passes apply, or far outside any window).
+///
+/// ASSUMPTION (R1156.1): the dock area == the window content rect ([`Scene::rect`]).
+/// True for the current consumer (the editor's dock fills the window). A consumer
+/// whose dock does NOT fill the window (chrome / a status bar / toolbars OUTSIDE
+/// the dock — which the self-hosted-editor north star will have) would need the
+/// reorganizer-root container's rect instead, threaded in as a parameter. Deferred
+/// until such a 2nd consumer exists (YAGNI / the 2nd-consumer gate) rather than
+/// generalising speculatively — a known, bounded limitation, not a latent bug for
+/// today's dock-fills-window case.
 fn resolve_outer_dock_zone(
     windows: &[(&str, &Scene, (f64, f64))],
     abs_cursor: (f64, f64),
