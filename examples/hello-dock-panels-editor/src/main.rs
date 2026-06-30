@@ -1376,7 +1376,18 @@ impl WidgetView for DockPanelsEditorView {
     fn window_chrome(window_id: &str) -> Option<WindowChromeStyle> {
         window_id
             .starts_with(DEFAULT_FLOATING_WINDOW_PREFIX)
-            .then(|| WindowChromeStyle::new().with_controls_only())
+            .then(|| {
+                // The controls cluster sits ON the panel header (SurfaceContainerHigh),
+                // so the default light-on-dark glyph would vanish. Tint the cluster a
+                // step up (SurfaceContainerHighest) with OnSurface glyphs so the buttons
+                // read clearly + distinctly against the header. The shell runs this hook
+                // in the reactive owner (R1170), so `use_theme` resolves here.
+                let theme = use_theme(THEME_TAG).theme_animated();
+                WindowChromeStyle::new()
+                    .with_controls_only()
+                    .with_bg(theme.resolve(ColorRole::SurfaceContainerHighest))
+                    .with_glyph(theme.resolve(ColorRole::OnSurface))
+            })
     }
 
     /// (R1125/R1163b §5.51 §2 #7 PR-33) Render the cross-window dock drop-zone

@@ -3939,7 +3939,13 @@ impl<V: WidgetView> ShellCore<V> {
             None => specs.into_iter().next()?,
             Some(id) => specs.into_iter().find(|s| s.id.as_ref() == id)?,
         };
-        let style = V::window_chrome(spec.id.as_ref())?;
+        // R1170 §5.16 — run the hook inside the reactive owner so a binding may read
+        // its theme (a controls-only floater themes its glyph / bg to its surface so
+        // the controls read against the panel header). Read-only; mirrors the
+        // `windows_signal` wrap above + the R1163b overlay-hook-in-owner pattern.
+        let style = core
+            .root_owner()
+            .run(|| V::window_chrome(spec.id.as_ref()))?;
         Some((spec.id.to_string(), spec.title.to_string(), style))
     }
 

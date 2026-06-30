@@ -169,6 +169,25 @@ impl WindowChromeStyle {
         self.controls_only = true;
         self
     }
+
+    /// (R1170 §5.16 §5.39) Override the button glyph stroke colour ([`Self::glyph`]).
+    /// A controls-only cluster sits on the binding's OWN (often light) title bar,
+    /// so the default light-on-dark glyph vanishes — a binding themes this to its
+    /// `OnSurface` so the glyphs read against its surface.
+    #[must_use]
+    pub const fn with_glyph(mut self, glyph: Color) -> Self {
+        self.glyph = glyph;
+        self
+    }
+
+    /// (R1170 §5.16 §5.39) Override the strip / button-cluster background fill
+    /// ([`Self::bg`]) so a binding can tint the controls to match its theme (the
+    /// companion to [`Self::with_glyph`] — the two set the cluster's contrast pair).
+    #[must_use]
+    pub const fn with_bg(mut self, bg: Color) -> Self {
+        self.bg = bg;
+        self
+    }
 }
 
 impl Default for WindowChromeStyle {
@@ -314,7 +333,26 @@ fn build_chrome_strip(
     // header) supplies its own draggable title bar, so the strip adds ONLY the
     // buttons and a press that misses a button falls THROUGH to that header
     // (the redock drag), not an OS-move grip.
-    if !style.controls_only {
+    if style.controls_only {
+        // (R1170) A background behind ONLY the buttons cluster (not a full-width
+        // grip): restores the strip↔glyph contrast so the controls read against the
+        // content's OWN title bar (a dock panel header), without an OS-move grip
+        // that would steal the redock drag. The cluster spans the `shown` buttons,
+        // right-anchored. Pointer-transparent — purely the visual backplate; the
+        // tagged button hit boxes (drawn on top) own the clicks.
+        let shown = u32::from(style.show_minimize)
+            + u32::from(style.show_maximize)
+            + u32::from(style.show_close);
+        let cluster_w = shown * style.button_width_px;
+        let cluster_x = width.saturating_sub(cluster_w);
+        children.push(Scene::Box(
+            BoxNode::new(
+                Rect::new(cluster_x, 0, cluster_w, h),
+                BoxStyle::filled(style.bg),
+            )
+            .with_layout(LayoutStyle::new().with_pointer_transparent(true)),
+        ));
+    } else {
         // Background == the draggable grip. Hit-testable (not pointer-
         // transparent): a press anywhere on the strip that misses a button
         // begins a window move.
@@ -595,6 +633,17 @@ mod tests {
             "hit rect starts at the leftmost button"
         );
         assert_eq!(c.rect.w, 3 * 46, "hit rect spans only the 3 buttons");
+        // (R1170.1) the cluster has a FILLED backplate (an untagged opaque Box) —
+        // the contrast fix: without it the glyphs vanish on the content's own
+        // (often light) title bar. The button hit boxes are transparent + tagged,
+        // so the backplate is the untagged non-transparent one.
+        let has_backplate = c.children.iter().any(|ch| {
+            matches!(ch, Scene::Box(b) if b.tag.is_none() && b.style.fill != Color::TRANSPARENT)
+        });
+        assert!(
+            has_backplate,
+            "controls-only draws a filled backplate behind the buttons (contrast)",
+        );
     }
 
     #[test]
