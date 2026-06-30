@@ -5732,6 +5732,21 @@ pub struct DockPanelExternal {
     /// pre-R1116). The binding passes its own window-naming SSOT, so the widget
     /// hardcodes no convention.
     floating_window: Option<String>,
+    /// (R1172 §5.16) Panel MOVE policy. `false` LOCKS the panel in place — a
+    /// header press starts no drag ([`begin_drag`](External::begin_drag) returns
+    /// `None`), so it cannot be reordered, docked elsewhere, or torn off. The fixed
+    /// toolbar / status-bar of a pro dock (Qt ADS "non-movable", VS Code's locked
+    /// panels). `true` (the default) is the freely-draggable panel. Pairs with
+    /// [`DockPanelStyle::drop_target`] `false` (cannot RECEIVE a dock) for a fully
+    /// locked region: this gates moving OUT, that gates docking IN.
+    movable: bool,
+    /// (R1172 §5.16) Panel FLOAT policy. `false` lets the panel be dragged + docked
+    /// elsewhere but NEVER torn off into a floating window — a drag that escapes
+    /// every dock zone (a [`DropResolution::Float`]) SNAPS BACK instead. The
+    /// dock-only panel of a pro tool. `true` (the default) floats on escape. Only
+    /// meaningful when [`movable`](Self::movable) is `true` (a non-movable panel
+    /// never drags, so it never floats either).
+    floatable: bool,
 }
 
 impl core::fmt::Debug for DockPanelExternal {
@@ -5780,7 +5795,30 @@ impl DockPanelExternal {
             reorganizer: None,
             drop_preview: None,
             floating_window: None,
+            // R1172 §5.16 — freely draggable + floatable by default; a binding
+            // LOCKS a fixed toolbar / status bar via `with_movable(false)`.
+            movable: true,
+            floatable: true,
         }
+    }
+
+    /// (R1172 §5.16) Set the panel MOVE policy — `false` LOCKS the panel
+    /// (a header press starts no drag, so it cannot be reordered / docked / torn
+    /// off). The fixed toolbar / status bar of a pro dock. Default `true`.
+    #[must_use]
+    pub const fn with_movable(mut self, movable: bool) -> Self {
+        self.movable = movable;
+        self
+    }
+
+    /// (R1172 §5.16) Set the panel FLOAT policy — `false` makes a drag that escapes
+    /// every dock zone SNAP BACK instead of floating (dock-only, never torn off).
+    /// Default `true`. Only meaningful when [`with_movable`](Self::with_movable) is
+    /// `true`.
+    #[must_use]
+    pub const fn with_floatable(mut self, floatable: bool) -> Self {
+        self.floatable = floatable;
+        self
     }
 
     /// (R1116 §5.51 PR-38) Declare the id of this panel's own floating window so
@@ -6119,6 +6157,11 @@ impl External for DockPanelExternal {
     /// — the [`dragging`](Self::dragging) / [`tear_off_fired`](Self::tear_off_fired)
     /// diagnostics are interior-mutable.
     fn begin_drag(&self) -> Option<DragPayload> {
+        // R1172 §5.16 — a LOCKED panel (a fixed toolbar / status bar) starts no
+        // drag: it cannot be reordered, docked elsewhere, or torn off.
+        if !self.movable {
+            return None;
+        }
         if !self.is_drag_armed.get() {
             return None;
         }
@@ -6218,6 +6261,19 @@ impl External for DockPanelExternal {
             None => DropResolution::SnapBack {
                 zone: DockDropZone::None,
             },
+        };
+        // R1172 §5.16 — a non-floatable panel NEVER tears off: an escaped drag (a
+        // `Float` outcome — off every dock zone) snaps it back to its slot instead.
+        // It can still reorder / dock onto another panel (the `Dock` arm); only the
+        // float-out is denied. A non-floatable panel never detaches mid-drag either
+        // (the `drag_to_at` detach is `floatable`-gated), so `SnapBack` here is the
+        // inert never-floated reset.
+        let resolution = if !self.floatable && matches!(resolution, DropResolution::Float) {
+            DropResolution::SnapBack {
+                zone: DockDropZone::None,
+            }
+        } else {
+            resolution
         };
         tracing::debug!(
             target: "pinion::dock",
@@ -6380,7 +6436,10 @@ impl External for DockPanelExternal {
         // (follow + preview coexist) rather than re-docking mid-drag. Consuming
         // the router's verdict (rather than re-deriving distance) stays
         // single-SSOT: the router measures from the real press point.
-        if update.became_drag && same_window_over.is_none() {
+        // R1172 §5.16 — a non-floatable panel never detaches: it shows the dock
+        // reorder preview while over a zone and simply snaps back off every zone (no
+        // float ghost, no Escaped chart transition). Only `floatable` panels detach.
+        if update.became_drag && same_window_over.is_none() && self.floatable {
             // R1129 §5.51.1 — drive the lifecycle `escaped` (docked → floating)
             // on the RISING edge of the detach latch, so the chart transitions
             // exactly once per tear-off rather than on every escaped move
@@ -6535,6 +6594,11 @@ impl ExternalIntrospect for DockPanelExternal {
             // R1134 §5.51.1 §2 #7 — the torn-slot policy (`"placeholder"` /
             // `"collapse"`) this panel's float follows.
             ("float_policy", "string"),
+            // R1172 §5.16 §2 #7 — the panel MOVE / FLOAT policy: `movable` false =
+            // a LOCKED panel (no drag at all — a fixed toolbar); `floatable` false =
+            // dock-only (drags + reorders, but an escaped drag snaps back).
+            ("movable", "bool"),
+            ("floatable", "bool"),
             ("dragging", "bool"),
             ("tear_off_fired", "bool"),
             // R1081 §5.51 — the live drop the in-flight drag is over
@@ -6586,6 +6650,9 @@ impl ExternalIntrospect for DockPanelExternal {
             "float_policy" => Some(IntrospectValue::Text(
                 self.effective_float_policy().as_str().to_string(),
             )),
+            // R1172 §5.16 §2 #7 — the panel move / float policy.
+            "movable" => Some(IntrospectValue::Bool(self.movable)),
+            "floatable" => Some(IntrospectValue::Bool(self.floatable)),
             "dragging" => Some(IntrospectValue::Bool(self.is_dragging())),
             "tear_off_fired" => Some(IntrospectValue::Bool(self.tear_off_fired())),
             // R1081 §5.51 — the shared live preview (any panel's external
@@ -7024,6 +7091,60 @@ mod tests {
         assert!(
             ext2.begin_drag().is_none(),
             "content press must not start a drag",
+        );
+    }
+
+    #[test]
+    fn r1172_non_movable_starts_no_drag_and_non_floatable_snaps_back() {
+        // R1172 §5.16 — a non-MOVABLE panel (a locked toolbar) starts no drag at
+        // all; a non-FLOATABLE panel drags + docks but an escaped drag SNAPS BACK
+        // instead of tearing off. Both policies are §2 #7 introspectable.
+        // movable=false → begin_drag is None (no session opens).
+        let locked = DockPanelExternal::new("toolbar").with_movable(false);
+        assert!(
+            locked.begin_drag().is_none(),
+            "★a non-movable panel starts no drag",
+        );
+        assert!(!locked.is_dragging(), "no session means not dragging");
+        assert_eq!(locked.query("movable"), Some(IntrospectValue::Bool(false)));
+        // Default → freely movable + floatable.
+        let free = DockPanelExternal::new("a");
+        assert!(free.begin_drag().is_some(), "a default panel drags");
+        assert_eq!(free.query("movable"), Some(IntrospectValue::Bool(true)));
+        assert_eq!(free.query("floatable"), Some(IntrospectValue::Bool(true)));
+        // floatable=false → an escaped drag (`over` None → Float) snaps back: NO
+        // tear-off intent is enqueued.
+        let reorg = Rc::new(DockReorganizer::new(Rc::new(Signal::new(Some(
+            ab_topology(),
+        )))));
+        let mut dock_only = DockPanelExternal::new("a")
+            .with_reorganizer(reorg)
+            .with_floatable(false);
+        assert_eq!(
+            dock_only.query("floatable"),
+            Some(IntrospectValue::Bool(false))
+        );
+        let _ = dock_only.begin_drag();
+        dock_only.drag_release(&dummy_payload(), None);
+        assert!(
+            !dock_only.is_dirty(),
+            "★a non-floatable panel enqueues NO tear-off (it snaps back)",
+        );
+        assert!(
+            !dock_only.tear_off_fired(),
+            "the non-floatable panel did not tear off"
+        );
+        // Control (non-tautological): a FLOATABLE panel DOES tear off on the same
+        // escaped drag — so the snap-back above is the policy's doing, not a no-op.
+        let reorg2 = Rc::new(DockReorganizer::new(Rc::new(Signal::new(Some(
+            ab_topology(),
+        )))));
+        let mut floater = DockPanelExternal::new("a").with_reorganizer(reorg2);
+        let _ = floater.begin_drag();
+        floater.drag_release(&dummy_payload(), None);
+        assert!(
+            floater.is_dirty(),
+            "control: a floatable panel DOES enqueue a tear-off on an escaped drag",
         );
     }
 

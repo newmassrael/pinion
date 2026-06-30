@@ -1161,6 +1161,11 @@ impl WidgetCore for DockPanelsEditorView {
                     // (grab-offset), not a dock tear-off. The id is the same
                     // `floating_window_id` SSOT the tear-off reducer + view use.
                     .with_floating_window(floating_window_id(panel_id))
+                    // (R1172 §5.16) LOCK the toolbar: a fixed top strip is not
+                    // movable — its header starts no drag, so it can never be
+                    // reordered, docked elsewhere, or torn off (a pro dock's
+                    // non-movable toolbar). Every other panel stays freely movable.
+                    .with_movable(panel_id != TOOLBAR_PANEL_TAG)
                     // (R1133 §5.51.1) Re-hydrate the lifecycle chart from the live
                     // float truth so a reconstruct (any topology change) does not
                     // reset a floating panel's chart to Docked.
