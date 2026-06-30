@@ -110,13 +110,11 @@
 //!   beside the pin (a wired port hides it; the value is retained); it is
 //!   AI-read/write (`query`/`intervene node.<id>.input_default.<port>`, typed —
 //!   a colour takes a `#RRGGBB[AA]` hex, the write journals an undoable
-//!   [`SetPortDefaultCmd`]). The painted default is *read-only on the canvas*
-//!   for now (AI-settable via `intervene`); **inline keyboard editing** is the
-//!   immediate next step — a **double-click** on the default opens the inline
+//!   [`SetPortDefaultCmd`]). The painted default is **inline-editable on the
+//!   canvas** (R901): a **double-click** on the default opens the shared inline
 //!   field (the same affordance the title rename uses, R878), while the input
-//!   port's *single*-click stays edge-connect (R742). (An earlier note framed
-//!   this as needing a "separate hit target"; that overstated a blocker — the
-//!   double-click disambiguates exactly as it does for the title.)
+//!   port's *single*-click stays edge-connect (R742); the AI path is the
+//!   `intervene node.<id>.input_default.<port>` write above.
 //!   Genuinely-separate axes still deferred: dataflow **evaluation** (a Phase-C
 //!   *runtime* concern — this is the *authoring* substrate, not the compute
 //!   engine) and the typed ports' AT enrichment (the a11y name keeps the arity
@@ -169,10 +167,11 @@
 //!   `intervene node.<id>.title` / `node.<id>.input_default.<port>` write-twins
 //!   drive (`query editing` is the in-flight read; `query renaming` survives as
 //!   its title-only projection).
-//! - Multi-select marquee — the *gesture* is the remaining piece (LMB
-//!   background-drag stays reserved, R877; it needs the router to expose a
-//!   became-drag edge for background presses). The selection *model* it
-//!   writes into landed in R879 (`Selection::Nodes` + `selected_ids`).
+//! - **Multi-select marquee** (R879 model / R880 gesture) — an LMB background-
+//!   drag rubber-bands a rect (`MarqueeStart` + the `DragLatch` click-vs-drag
+//!   dead zone); on release every intersected node joins the set via
+//!   `apply_marquee`, with `Ctrl`/`Shift` extending. The selection model is
+//!   `Selection::Nodes` + `selected_ids`.
 //! - **Align / distribute** (R948): `invoke align_{left,center_h,right,top,
 //!   center_v,bottom}` snaps the selected nodes to one edge / centre of their
 //!   bounding box; `invoke distribute_{h,v}` spaces their centres evenly

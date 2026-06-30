@@ -33,10 +33,11 @@
 //!   `invoke "add_row"` / `"remove_row"` grow / shrink the table at runtime
 //!   and the very next paint re-derives the sort / filter / group order over
 //!   the longer-or-shorter model (the model is the one SSOT — no separate
-//!   row-count to keep in sync; a grid keeps >= 1 row). **Not undoable yet** —
-//!   this grid has no undo stack (cell edits are direct too), so `remove_row`
-//!   is a genuine destructive gap, unlike the node-graph's journaled
-//!   add/remove; grid-wide undo is a separate axis, deliberately deferred.
+//!   row-count to keep in sync; a grid keeps >= 1 row). R932 — every edit is
+//!   **undoable** on a shared `UndoStack`: cell value edits (`SetCellEdit`) and
+//!   row add/remove (`RowEdit`) / row move (`MoveRowEdit`) as granular
+//!   reversible commands, the AI-first `UndoStackExternal` and the keyboard
+//!   `Ctrl+Z` driving one timeline (the node-graph's journaled-edit shape at 2-D).
 //!   Exposes the whole grid
 //!   for AI-first introspection: `query value.<r>.<c>` / `col_name.<c>` / `col_kind.<c>` /
 //!   `focused_row` / `focused_col` / `editing_row` / `editing_col`,

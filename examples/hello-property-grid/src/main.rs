@@ -96,11 +96,14 @@
 //!   role, and the inline editor is a plain `textbox`. A per-cell-role grid a11y axis
 //!   is additive and deferred until the self-hosted editor (2nd consumer)
 //!   pins the exact shape (`[[abstraction-needs-second-consumer]]`).
-//! - **Per-property validation / clamp ranges.** Numeric rows accept any
-//!   parseable value; a malformed commit reverts to the prior value (no data
-//!   loss) rather than clamping into a per-property `[min, max]`. Range
-//!   metadata is an additive model field (the `hello-number-input`
-//!   `parse_clamp` shape) deferred to the same 2nd-consumer round.
+//! - **Per-property clamp ranges** (R964): a ranged scalar leaf (today only
+//!   `Opacity`, a normalised `0..1` factor) carries a `[min, max]`
+//!   (`scalar_range`) and clamps every write through the one `clamp_to_range` /
+//!   `set_value` funnel (the data-grid R894 `ColRange` sibling), painting an
+//!   in-cell slider gauge; an out-of-range write reads back as the clamped
+//!   bound. Unranged leaves still accept any parseable value (a malformed commit
+//!   reverts, no data loss) — a general per-property validation / range UI is
+//!   the additive 2nd-consumer axis.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -398,8 +401,9 @@ const SWATCH_GAP: u32 = 6;
 const HEX_FIELD_H: u32 = 28;
 
 /// The preset colour palette the popup offers (name = the AT label). An
-/// arbitrary colour is set through `intervene value.<i>` with a hex string —
-/// the AI-first path; a GUI hex-entry field is a documented follow-up.
+/// arbitrary colour is set either through the popup's GUI hex-entry field
+/// (R869/R870 — the shared `EDIT_TF`, Tab/click to focus, Enter commits via
+/// `Color::from_hex`) or `intervene value.<i>` with a hex string (the AI path).
 const COLOR_SWATCHES: [(Color, &str); 8] = [
     (Color::rgb(0xff, 0xff, 0xff), "White"),
     (Color::rgb(0x21, 0x21, 0x21), "Black"),
