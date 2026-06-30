@@ -19464,6 +19464,44 @@
         "push pending user consent"
       ]
     },
+    "R1165": {
+      "decision_summary": "R1165 §5.51 — retire dead cross_window_drop_from + refute the >2-tab undock concern with a regression test",
+      "changes_bullets": [
+        "remove CoreShell::cross_window_drop_from (caller-less since R1150 deleted the on-floater hint)",
+        "add r1165 unit: undock from a 3-tab well leaves the remaining well intact (split_leaf_rec splits the whole well)",
+        "audit-first refuted the carried >2-tab-undock-imprecise suspicion — no fix needed"
+      ],
+      "verification_bullets": [
+        "workspace cargo test 0 failed; clippy -D pedantic + rustfmt clean",
+        "r1165 unit: 3-tab undock -> a beside the intact {b,c} well, no panel lost"
+      ],
+      "impact_refs": [
+        "5.51"
+      ],
+      "carry_forward_bullets": [
+        "R1166 = shell eprintln -> tracing (~20 sites; keep PINION_SCREENSHOT CLI output)",
+        ">2-tab undock CONFIRMED correct (was a false carry); the regression test pins it",
+        "push pending user consent"
+      ],
+      "publishable_decision_summary": "R1165 §5.51 — retire dead cross_window_drop_from + refute the >2-tab undock concern with a regression test",
+      "publishable_changes_bullets": [
+        "remove CoreShell::cross_window_drop_from (caller-less since R1150 deleted the on-floater hint)",
+        "add r1165 unit: undock from a 3-tab well leaves the remaining well intact (split_leaf_rec splits the whole well)",
+        "audit-first refuted the carried >2-tab-undock-imprecise suspicion — no fix needed"
+      ],
+      "publishable_verification_bullets": [
+        "workspace cargo test 0 failed; clippy -D pedantic + rustfmt clean",
+        "r1165 unit: 3-tab undock -> a beside the intact {b,c} well, no panel lost"
+      ],
+      "publishable_impact_refs": [
+        "5.51"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R1166 = shell eprintln -> tracing (~20 sites; keep PINION_SCREENSHOT CLI output)",
+        ">2-tab undock CONFIRMED correct (was a false carry); the regression test pins it",
+        "push pending user consent"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
