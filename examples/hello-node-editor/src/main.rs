@@ -21,11 +21,14 @@
 //!   stable pixel reference, exactly as R786 column-resize normalises against
 //!   the grid viewport, [[capture-drag-stable-pixel-reference]]). A live drag
 //!   and the AI-first `intervene node.<i>.x` path are one source of truth.
-//! * **Edge connect** — the R742 drag substrate
+//! * **Edge connect / reconnect** — the R742 drag substrate
 //!   ([`External::begin_drag`] from an output port →
 //!   [`External::drag_release`] over an input port). `drag_release`'s `over`
 //!   carries the dropped-on tag, so the target input port falls straight out
-//!   of the router's hit-test — no per-binding drop resolver.
+//!   of the router's hit-test — no per-binding drop resolver. R1174 — grabbing
+//!   a *wired* input port instead arms a **reconnect** drag through the same two
+//!   methods (the loose end is the existing edge's source output), committing
+//!   via `reconnect_edge`.
 //! * **Edge paint** — [`Scene::Path`] cubic beziers (the R721 vector-path
 //!   substrate; commands are absolute device pixels untouched by the flex
 //!   pass, so a single window coordinate space aligns nodes and wires).
@@ -53,20 +56,20 @@
 //! `reconnect_edge` / `delete_node` / `delete_selected` / `nudge` / the
 //! pointer `send` wire.
 //!
-//! R929 — **`invoke reconnect_edge "edge,to_node,to_port"`** re-wires an
-//! existing edge's *target* input (keeping its source output): the canonical
-//! "grab a wired input and drop it elsewhere" graph edit, as one atomic
-//! [`UndoStack`] step (remove old + add new in a single `Ctrl+Z`), validated
-//! through the same [`NodeGraphExternal::validate_connection`] SSOT as
-//! `add_edge` (self-loop / typed-port / single-wire-into-input). Only the §2
-//! AI-first **verb** (the automation / introspection path) ships this round.
-//! The live drag-to-reconnect **gesture** — the human-editor half, which this
-//! widget pairs with the verb for every other edit (node move + edge connect
-//! are each "a live drag *and* the AI path are one source of truth", above) —
-//! is **deferred, not done**: it is a small extension of the existing R742
-//! drag substrate (an input-port `PendingPress` branch reusing `begin_drag` /
-//! `drag_release`), and reconnect is the first graph edit to ship verb-first
-//! without its gesture. Honest gap, not a completed feature.
+//! R929 / R1174 — **reconnect** re-wires an existing edge's *target* input
+//! (keeping its source output): the canonical "grab a wired input and drop it
+//! elsewhere" graph edit, as one atomic [`UndoStack`] step (remove old + add new
+//! in a single `Ctrl+Z`), validated through the same
+//! [`NodeGraphExternal::validate_connection`] SSOT as `add_edge` (self-loop /
+//! typed-port / single-wire-into-input). Both halves now share that one verb:
+//! the §2 AI-first path is `invoke reconnect_edge "edge,to_node,to_port"`
+//! (R929), and the human-editor **gesture** is grabbing a wired input port and
+//! dragging it loose onto another input (R1174). The gesture is the small R742
+//! drag-substrate extension R929 flagged — an input-port [`PendingPress`] arm
+//! that reuses `begin_drag` / `drag_release`, with the grabbed edge id riding in
+//! the [`Preview`] so the loose end commits through `reconnect_edge`. So, like
+//! node move and edge connect, reconnect is now "a live drag *and* the AI path
+//! are one source of truth"; R929's honest verb-first gap is closed.
 //!
 //! ## Keyboard (single Tab stop, the graph)
 //!
@@ -642,13 +645,21 @@ struct Edge {
     to_port: usize,
 }
 
-/// Live drag preview while a wire is being pulled from an output port.
+/// Live drag preview while a wire is being pulled — from an output port (a
+/// fresh connection), or, during an R1174 *reconnect*, from an existing edge's
+/// SOURCE output (a wired input was grabbed and pulled loose). Either way the
+/// anchored end is an output and the loose end snaps to the hovered input.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct Preview {
     from_node: NodeId,
     from_port: usize,
     /// Currently-hovered input port the wire would snap to, if any.
     to: Option<(NodeId, usize)>,
+    /// R1174 — set when this drag *reconnects* an existing edge (a wired input
+    /// pulled loose): the edge whose target moves on release, committed through
+    /// [`NodeGraphExternal::reconnect_edge`]. `None` for a fresh connect drag
+    /// from an output port (the loose end becomes a brand-new edge instead).
+    reconnect: Option<EdgeId>,
 }
 
 /// What is selected — a set of nodes, an edge, or nothing. A sum type so
@@ -1171,6 +1182,16 @@ fn parse_oport_sub(sub: &str) -> Option<(NodeId, usize)> {
     split_node_port(sub.strip_prefix("oport_")?)
 }
 
+/// R1174 — `iport_<id>_<i>` → (node id, input port): the bare send-wire peer of
+/// [`parse_input_port_tag`] (which first strips the `node_graph#` drop-tag
+/// prefix). A press on an input port square delivers this sub on the `send`
+/// wire; a *wired* input arms the reconnect drag in
+/// [`begin_drag`](NodeGraphExternal::begin_drag). The [`parse_oport_sub`] peer
+/// over the `iport_` prefix.
+fn parse_iport_sub(sub: &str) -> Option<(NodeId, usize)> {
+    split_node_port(sub.strip_prefix("iport_")?)
+}
+
 /// R901 — `idefault_<id>_<i>` → (node id, input port): the pin-default label's
 /// composite sub-tag (the [`view_input_default`] hit target). Double-clicking
 /// it opens the inline default editor (the [`parse_oport_sub`] peer over the
@@ -1313,18 +1334,32 @@ enum PendingPress {
     None,
     NodeBody,
     OutputPort(NodeId, usize),
-    InputPort,
-    /// R850 — a press on an add-node palette card. Like [`InputPort`](Self::InputPort)
+    /// R1174 — a press on an input port square, carrying the pressed
+    /// `(node, port)`. A *wired* input arms a reconnect drag in
+    /// [`begin_drag`](NodeGraphExternal::begin_drag) (the existing edge's target
+    /// is pulled loose, committed through `reconnect_edge` on release); an
+    /// unwired input has no edge to grab, so it stays a non-drag press that only
+    /// suppresses the background edge-probe. Before R1174 this was a unit variant
+    /// that discarded the identity — the missing half that left reconnect
+    /// verb-only.
+    InputPort(NodeId, usize),
+    /// R850 — a press on an add-node palette card. Like [`Inert`](Self::Inert)
     /// it is a non-drag press that must suppress the background edge-probe, but
-    /// it is recorded as its own variant rather than borrowing `InputPort`'s
-    /// name so a future input-port-specific branch can never misread a palette
-    /// press as a real input-port press.
+    /// it is recorded as its own variant rather than a bare inert press because
+    /// its release has a specific action (it creates a node), so a future branch
+    /// can never misread a palette press as an inert one.
     Palette,
     /// R918 — a press on a Details-panel property row. A non-drag press whose
     /// inline-editor activation runs on the matching `PointerUp` (the palette
     /// precedent); recorded as its own variant so it is never mistaken for an
-    /// input-port or empty-canvas press.
+    /// inert or empty-canvas press.
     DetailRow,
+    /// A non-drag press on an in-card target that is neither draggable nor has a
+    /// release action — currently an unwired pin's default-value label. It only
+    /// needs to suppress the background edge-probe (a press inside a node is not
+    /// an empty-canvas click), so it carries no identity. Distinct from the named
+    /// variants above, which each have specific drag / release behaviour.
+    Inert,
 }
 
 // ─── reversible structural edit (the UndoCommand) ──────────────────
@@ -2985,10 +3020,17 @@ impl NodeGraphExternal {
                     // R918 — a Details-panel row press: like a palette press, the
                     // inline-editor open runs on the matching PointerUp.
                     self.pending_press.set(PendingPress::DetailRow);
+                } else if let Some((n, i)) = parse_iport_sub(s) {
+                    // R1174 — an input-port press, recorded with its identity so
+                    // a wired input can arm a reconnect drag in `begin_drag`.
+                    // Distinct from a background press, so it never triggers the
+                    // edge-click probe.
+                    self.pending_press.set(PendingPress::InputPort(n, i));
                 } else {
-                    // An input-port press — distinct from a background press so
-                    // it never triggers the edge-click probe.
-                    self.pending_press.set(PendingPress::InputPort);
+                    // Any other in-card press (e.g. an unwired pin's default
+                    // label): inert, but still suppresses the edge-click probe
+                    // (a press inside a node is not an empty-canvas click).
+                    self.pending_press.set(PendingPress::Inert);
                 }
             }
             (Some(s), "PointerUp") => {
@@ -3341,18 +3383,36 @@ impl External for NodeGraphExternal {
     /// payload carries the source `(node, port)`; `None` for any other press,
     /// so a node-body press falls through to the capture-drag move path.
     fn begin_drag(&self) -> Option<DragPayload> {
-        if let PendingPress::OutputPort(n, j) = self.pending_press.get() {
-            self.preview.set(Some(Preview {
-                from_node: n,
-                from_port: j,
-                to: None,
-            }));
-            return Some(DragPayload {
-                kind: Cow::Borrowed("node-edge"),
-                value: IntrospectValue::Text(format!("{n}_{j}")),
-            });
-        }
-        None
+        let (from_node, from_port, reconnect) = match self.pending_press.get() {
+            // A fresh wire pulled from an output port (the R742/R838 connect).
+            PendingPress::OutputPort(n, j) => (n, j, None),
+            // R1174 — grab a *wired* input and pull it loose: a reconnect drag.
+            // The loose end follows from the existing edge's source output (the
+            // same anchored-output shape as a connect), so the preview / payload
+            // substrate is reused verbatim; the edge id rides in `reconnect` so
+            // `drag_release` commits through `reconnect_edge`, not `add_edge`.
+            // An *unwired* input has no edge to grab — `find` yields `None` and
+            // the press stays a non-drag (it never reaches the connect path).
+            PendingPress::InputPort(n, i) => {
+                let edge = self
+                    .edges
+                    .get()
+                    .into_iter()
+                    .find(|e| e.to_node == n && e.to_port == i)?;
+                (edge.from_node, edge.from_port, Some(edge.id))
+            }
+            _ => return None,
+        };
+        self.preview.set(Some(Preview {
+            from_node,
+            from_port,
+            to: None,
+            reconnect,
+        }));
+        Some(DragPayload {
+            kind: Cow::Borrowed("node-edge"),
+            value: IntrospectValue::Text(format!("{from_node}_{from_port}")),
+        })
     }
 
     /// Live preview: snap the dragged wire's loose end to the hovered input
@@ -3363,14 +3423,22 @@ impl External for NodeGraphExternal {
             .set_with(|prev| (*prev).map(|p| Preview { to: target, ..p }));
     }
 
-    /// Commit the edge if the drop landed on an input port.
+    /// Commit the drag if it landed on an input port: a reconnect drag (R1174 —
+    /// a wired input pulled loose) moves the grabbed edge's target through the
+    /// [`reconnect_edge`](Self::reconnect_edge) SSOT; a fresh connect drag mints
+    /// a new edge through [`add_edge`](Self::add_edge). A drop off any input port
+    /// is a no-op — the original wiring is left untouched (the connect gesture's
+    /// "release in empty space cancels" behaviour, shared by both).
     fn drag_release(&mut self, payload: &DragPayload, over: Option<DropPoint>) {
-        if let (IntrospectValue::Text(src), Some((to_node, to_port))) = (
-            &payload.value,
-            over.as_ref().and_then(|dp| parse_input_port_tag(&dp.tag)),
-        ) {
-            if let Some((from_node, from_port)) = split_node_port(src) {
-                self.add_edge(from_node, from_port, to_node, to_port);
+        let reconnect = self.preview.get().and_then(|p| p.reconnect);
+        if let Some((to_node, to_port)) = over.as_ref().and_then(|dp| parse_input_port_tag(&dp.tag))
+        {
+            if let Some(edge) = reconnect {
+                self.reconnect_edge(edge, to_node, to_port);
+            } else if let IntrospectValue::Text(src) = &payload.value {
+                if let Some((from_node, from_port)) = split_node_port(src) {
+                    self.add_edge(from_node, from_port, to_node, to_port);
+                }
             }
         }
         self.preview.set(None);
@@ -5200,6 +5268,17 @@ mod tests {
         }
     }
 
+    /// The `edge.<id>` read (`"<from>:<port>-><to>:<port>"`), or `None` when no
+    /// edge carries that id — the gesture tests assert a reconnected edge's new
+    /// wiring and that the grabbed edge's old id is retired.
+    fn edge_str(scene: &Scene, id: u32) -> Option<String> {
+        match graph_intro(scene).query(&format!("edge.{id}")) {
+            Some(IntrospectValue::Text(s)) => Some(s),
+            None => None,
+            other => panic!("expected Text or None at edge.{id}, got {other:?}"),
+        }
+    }
+
     /// Send a pointer wire event through the coordinator (a borrow-scoped
     /// helper so the `&mut scene` borrow ends before the next read).
     fn send(scene: &mut Scene, wire: &str) {
@@ -6735,6 +6814,137 @@ mod tests {
                 node.handle.drag_release(&payload, Some(drop));
             }
             assert_eq!(query_int(&scene, "edge_count"), 3);
+        });
+    }
+
+    #[test]
+    fn r1174_drag_reconnects_wired_input() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            // Free Multiply's input 1 so the reconnect target is unwired — a
+            // clean target move, no single-wire displacement (that path is
+            // r929's verb test). Edges left: 0 (Texture.0 -> Multiply.in0),
+            // 2 (Multiply.0 -> Output.in0).
+            {
+                let node = scene
+                    .find_external_with_tag_mut(GRAPH_TAG)
+                    .expect("present");
+                let intro = node.handle.introspect_mut().expect("introspectable");
+                let _ = intro.invoke("remove_edge", IntrospectValue::Int(1));
+            }
+            assert_eq!(query_int(&scene, "edge_count"), 2);
+            assert_eq!(
+                edge_str(&scene, 0).as_deref(),
+                Some("0:0->2:0"),
+                "edge 0 wires Texture.0 -> Multiply.in0",
+            );
+            // Grab Multiply's WIRED input 0 (edge 0) and pull it loose: the press
+            // records the input's identity, and begin_drag arms a reconnect.
+            send(&mut scene, "iport_2_0:PointerDown");
+            {
+                let node = scene
+                    .find_external_with_tag_mut(GRAPH_TAG)
+                    .expect("present");
+                let payload = node
+                    .handle
+                    .begin_drag()
+                    .expect("a wired-input press arms a reconnect drag");
+                assert_eq!(payload.kind.as_ref(), "node-edge");
+                // The loose end anchors at the grabbed edge's SOURCE output.
+                assert!(
+                    matches!(&payload.value, IntrospectValue::Text(s) if s.as_str() == "0_0"),
+                    "the reconnect drag anchors at the grabbed edge's source (0_0), got {:?}",
+                    payload.value,
+                );
+                // Drop onto Multiply's now-free input 1.
+                let drop = DropPoint {
+                    tag: format!("{GRAPH_TAG}#iport_2_1"),
+                    x_rel: 0.5,
+                    y_rel: 0.5,
+                };
+                node.handle.drag_release(&payload, Some(drop));
+            }
+            // A rewire keeps the edge count (remove old + add new).
+            assert_eq!(query_int(&scene, "edge_count"), 2);
+            // The grabbed edge's old id is retired; a fresh edge keeps the same
+            // source and moves the target to in1 (the remove+add reconnect model).
+            assert_eq!(
+                edge_str(&scene, 0),
+                None,
+                "the grabbed edge's old id is retired"
+            );
+            assert_eq!(
+                edge_str(&scene, 3).as_deref(),
+                Some("0:0->2:1"),
+                "the reconnected wire keeps the source, moves the target to in1",
+            );
+            // The gesture journals the same atomic Reconnect step the verb does:
+            // one Ctrl+Z restores the original wiring (old id + old target).
+            assert_eq!(use_undo().undo_label().as_deref(), Some("Reconnect"));
+            assert!(use_undo().undo(), "undo the reconnect");
+            assert_eq!(
+                edge_str(&scene, 0).as_deref(),
+                Some("0:0->2:0"),
+                "undo restores the original edge in one step",
+            );
+        });
+    }
+
+    #[test]
+    fn r1174_unwired_input_press_arms_no_drag() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            // Free Multiply's input 1 (now unwired), then press it: there is no
+            // edge to grab, so begin_drag arms nothing — the press is inert, not
+            // a reconnect (and not an empty-canvas marquee either).
+            {
+                let node = scene
+                    .find_external_with_tag_mut(GRAPH_TAG)
+                    .expect("present");
+                let intro = node.handle.introspect_mut().expect("introspectable");
+                let _ = intro.invoke("remove_edge", IntrospectValue::Int(1));
+            }
+            send(&mut scene, "iport_2_1:PointerDown");
+            let node = scene
+                .find_external_with_tag_mut(GRAPH_TAG)
+                .expect("present");
+            assert!(
+                node.handle.begin_drag().is_none(),
+                "an unwired input has no edge to grab — no reconnect drag",
+            );
+        });
+    }
+
+    #[test]
+    fn r1174_reconnect_drop_off_input_is_a_noop() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            // Grab Multiply's wired input 0 (edge 0) and release in empty space
+            // (no input port under the drop): the original wiring is untouched —
+            // the connect gesture's "release nowhere cancels", shared by both.
+            send(&mut scene, "iport_2_0:PointerDown");
+            {
+                let node = scene
+                    .find_external_with_tag_mut(GRAPH_TAG)
+                    .expect("present");
+                let payload = node.handle.begin_drag().expect("wired input arms a drag");
+                node.handle.drag_release(&payload, None);
+            }
+            assert_eq!(
+                query_int(&scene, "edge_count"),
+                3,
+                "no edge added or removed"
+            );
+            assert_eq!(
+                edge_str(&scene, 0).as_deref(),
+                Some("0:0->2:0"),
+                "the grabbed edge is left exactly as it was",
+            );
+            assert_eq!(
+                use_undo().undo_label(),
+                None,
+                "a cancelled reconnect journals nothing",
+            );
         });
     }
 

@@ -19916,6 +19916,60 @@
         "live drag feel = HW-gated (user :0)"
       ]
     },
+    "R1174": {
+      "decision_summary": "R1174 §5.38 — node-graph drag-to-reconnect gesture closes R929's verb-only gap: a wired-input press arms a reconnect drag reusing begin_drag/drag_release, committing via the reconnect_edge SSOT.",
+      "changes_bullets": [
+        "PendingPress::InputPort carries (NodeId, usize); new Inert variant takes the old catch-all role",
+        "begin_drag arms a reconnect on a wired input: loose end = edge source, id rides in Preview",
+        "Preview gains reconnect: Option<EdgeId>; drag_release routes via reconnect_edge, else add_edge",
+        "parse_iport_sub added: the bare send-wire iport_ peer of parse_input_port_tag (parser family)",
+        "unwired-input press arms no drag; a drop off any input port cancels (connect gesture's release rule)",
+        "module doc retires R929's deferred-gesture prose; reconnect now a live drag AND the AI path SSOT"
+      ],
+      "verification_bullets": [
+        "3 unit tests: gesture+undo, unwired-press inert, drop-off-port no-op; all 140 node-editor tests pass",
+        "r1174_node_reconnect_gesture.py: ~40 assertions over scene/drag, PASS on the release binary",
+        "cargo test --workspace -j2 green (0 fail, 198 ok); clippy -D pedantic +vello clean; rustfmt clean",
+        "gesture journals one Reconnect undo step identical to the R929 verb (demo D + unit undo)"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.49",
+        "5.52"
+      ],
+      "carry_forward_bullets": [
+        "node-editor doc ~L110 still calls inline pin-default editing a future step; R901 shipped it (stale)",
+        "reconnect/connect preview snaps to an input only; loose end does not track the raw cursor (shared gap)",
+        "drag-off-to-detach (release in empty space removes the wire) deferred: no consumer; today = cancel",
+        "data-grid header Not undoable yet doc is stale (R932 journals row add/remove); doc-hygiene sweep due"
+      ],
+      "publishable_decision_summary": "R1174 §5.38 — node-graph drag-to-reconnect gesture closes R929's verb-only gap: a wired-input press arms a reconnect drag reusing begin_drag/drag_release, committing via the reconnect_edge SSOT.",
+      "publishable_changes_bullets": [
+        "PendingPress::InputPort carries (NodeId, usize); new Inert variant takes the old catch-all role",
+        "begin_drag arms a reconnect on a wired input: loose end = edge source, id rides in Preview",
+        "Preview gains reconnect: Option<EdgeId>; drag_release routes via reconnect_edge, else add_edge",
+        "parse_iport_sub added: the bare send-wire iport_ peer of parse_input_port_tag (parser family)",
+        "unwired-input press arms no drag; a drop off any input port cancels (connect gesture's release rule)",
+        "module doc retires R929's deferred-gesture prose; reconnect now a live drag AND the AI path SSOT"
+      ],
+      "publishable_verification_bullets": [
+        "3 unit tests: gesture+undo, unwired-press inert, drop-off-port no-op; all 140 node-editor tests pass",
+        "r1174_node_reconnect_gesture.py: ~40 assertions over scene/drag, PASS on the release binary",
+        "cargo test --workspace -j2 green (0 fail, 198 ok); clippy -D pedantic +vello clean; rustfmt clean",
+        "gesture journals one Reconnect undo step identical to the R929 verb (demo D + unit undo)"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.49",
+        "5.52"
+      ],
+      "publishable_carry_forward_bullets": [
+        "node-editor doc ~L110 still calls inline pin-default editing a future step; R901 shipped it (stale)",
+        "reconnect/connect preview snaps to an input only; loose end does not track the raw cursor (shared gap)",
+        "drag-off-to-detach (release in empty space removes the wire) deferred: no consumer; today = cancel",
+        "data-grid header Not undoable yet doc is stale (R932 journals row add/remove); doc-hygiene sweep due"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
