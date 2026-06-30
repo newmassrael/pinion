@@ -3181,13 +3181,40 @@ impl DockReorganizer {
     /// Propagates a [`TopologyError`] from the underlying re-dock (none expected:
     /// the sibling is a present, distinct panel).
     pub fn undock_tab(&self, panel: &str) -> Result<String, TopologyError> {
+        // The R1145 button / AI path defaults to the Right edge (split out beside
+        // the sibling); the R1163 drag path passes the aimed edge.
+        self.undock_tab_to_zone(panel, DockDropZone::Right)
+    }
+
+    /// (R1163 §5.51) Undock a tabbed `panel` into a SPLIT at the given edge `zone`
+    /// — the drag-to-own-well-edge gesture (VS Code / Qt ADS: drag a tab to its own
+    /// group's edge to split it out; the centre stays a tab). Removes `panel` from
+    /// its well and splits it at `zone` relative to the well's sibling, so the two
+    /// end up side by side on the chosen side. A `Center` / non-edge `zone` is a
+    /// no-op (a centre drop on the own well stays a tab); a `panel` not in a well is
+    /// the "nothing to undock" no-op. The zone-aware peer of [`Self::undock_tab`].
+    ///
+    /// # Errors
+    ///
+    /// Propagates the [`TopologyError`] from the underlying split; the live topology
+    /// is unchanged on error.
+    pub fn undock_tab_to_zone(
+        &self,
+        panel: &str,
+        zone: DockDropZone,
+    ) -> Result<String, TopologyError> {
+        if zone_split_geometry(zone).is_none() {
+            let outcome = format!("{panel}: undock needs an edge zone — stays a tab");
+            self.note_outcome(&outcome);
+            return Ok(outcome);
+        }
         let Some(sibling) = self.topology.get().and_then(|t| t.tab_well_sibling(panel)) else {
             let outcome = format!("{panel}: not in a tab well — nothing to undock");
             self.note_outcome(&outcome);
             return Ok(outcome);
         };
-        // Right edge → split `panel` out next to its (now-collapsed) well sibling.
-        self.dock_panel_at_zone(panel, &sibling, 0.9, 0.5)
+        // Split `panel` out at the aimed edge, next to its (now-collapsed) sibling.
+        self.dock_panel_at_resolved_zone(panel, &sibling, zone)
     }
 
     /// (R1145 §5.51) Undock the ACTIVE tab of the first tab well — the human
@@ -3982,11 +4009,26 @@ impl External for TabWellExternal {
                     target,
                     zone,
                 }),
-                // OuterDock (cross-window only) / Float / SnapBack paint no
-                // same-window dock highlight.
-                DropResolution::OuterDock { .. }
-                | DropResolution::Float
-                | DropResolution::SnapBack => None,
+                // (R1163) Over the tab's OWN well: an EDGE previews the undock-split
+                // direction (the release undocks it there); the centre / dead-zone
+                // shows nothing (it stays a tab). preview == result.
+                DropResolution::SnapBack => same_window_over.and_then(|p| {
+                    let zone = dock_drop_zone_banded(
+                        f64::from(p.x_rel),
+                        f64::from(p.y_rel),
+                        self.reorganizer.tabbing(),
+                    );
+                    zone_split_geometry(zone)
+                        .is_some()
+                        .then(|| DockDropPreview {
+                            source: panel.to_string(),
+                            target: panel.to_string(),
+                            zone,
+                        })
+                }),
+                // OuterDock (cross-window only) / Float paint no same-window
+                // highlight.
+                DropResolution::OuterDock { .. } | DropResolution::Float => None,
             }
         });
         write_drop_preview(self.drop_preview.as_ref(), preview);
@@ -4058,9 +4100,23 @@ impl External for TabWellExternal {
             DropResolution::OuterDock { edge } => {
                 let _ = self.reorganizer.dock_panel_outer(panel, edge);
             }
-            // Over the tab's own slot — a no-move snap-back; the tab stays in its
-            // well, nothing changes.
-            DropResolution::SnapBack => {}
+            // (R1163) Over the tab's OWN well: an EDGE undocks it into a split at
+            // that edge (drag a tab to its own group's edge to split out — the VS
+            // Code / Qt ADS gesture); the CENTRE / dead-zone stays a tab (no move).
+            // `resolve_drop` collapsed the self case to SnapBack before the banded
+            // classify, so re-derive the edge here from the same SSOT classifier.
+            DropResolution::SnapBack => {
+                if let Some(point) = update.over.as_ref() {
+                    let zone = dock_drop_zone_banded(
+                        f64::from(point.x_rel),
+                        f64::from(point.y_rel),
+                        self.reorganizer.tabbing(),
+                    );
+                    if zone_split_geometry(zone).is_some() {
+                        let _ = self.reorganizer.undock_tab_to_zone(panel, zone);
+                    }
+                }
+            }
             DropResolution::Float => {
                 // Float the tab out of the well AT THE DROP CURSOR (R1160 fix —
                 // positioned `tear_off_follow`, not the fixed-slot `tear_off`).
@@ -10767,6 +10823,55 @@ mod reorganize_tests {
             "a release over a splitter floats the tab (not a silent no-op)"
         );
         assert_eq!(drain(&mut well).len(), 1, "the float intent fired");
+    }
+
+    #[test]
+    fn r1163_tab_drag_to_own_well_edge_undocks_to_split() {
+        use pinion_core::external::{DropPoint, External};
+        let (topology, _reorg, mut well) = r1158_tab_well_fixture();
+        let payload = well.begin_drag().expect("armed"); // tab 0 = "a"
+        // Release over "a" (the dragged tab IS the well's content = self) at its LEFT
+        // edge → undock "a" OUT of the well into a split (the VS Code / Qt gesture),
+        // NOT a self-drop no-op. The well collapses to its "b" sibling.
+        let over = DropPoint {
+            tag: "a".into(),
+            x_rel: 0.08,
+            y_rel: 0.5,
+        };
+        well.drag_release_at(&payload, &tab_drag_update(true, Some(over), None));
+        let after = topology.get().unwrap();
+        assert!(
+            after.tab_well_sibling("a").is_none(),
+            "a left the well — undocked to a split, no longer tabbed"
+        );
+        assert!(
+            after.panel_ids().contains(&"a") && after.panel_ids().contains(&"b"),
+            "both panels stay docked (a relocated, did not float)"
+        );
+        assert_eq!(
+            drain(&mut well).len(),
+            0,
+            "an undock-split is a topology move, no float intent"
+        );
+    }
+
+    #[test]
+    fn r1163_tab_drag_to_own_well_centre_stays_a_tab() {
+        use pinion_core::external::{DropPoint, External};
+        let (topology, _reorg, mut well) = r1158_tab_well_fixture();
+        let payload = well.begin_drag().expect("armed");
+        // The CENTRE of the own well → stay (it is already a tab here), no move.
+        let over = DropPoint {
+            tag: "a".into(),
+            x_rel: 0.5,
+            y_rel: 0.5,
+        };
+        well.drag_release_at(&payload, &tab_drag_update(true, Some(over), None));
+        assert!(
+            topology.get().unwrap().tab_well_sibling("a").is_some(),
+            "a stays in its well (a centre self-drop is a no-op)"
+        );
+        assert_eq!(drain(&mut well).len(), 0, "no intent on a stay");
     }
 
     #[test]
