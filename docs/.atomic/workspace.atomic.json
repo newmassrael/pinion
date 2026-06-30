@@ -19502,6 +19502,44 @@
         "push pending user consent"
       ]
     },
+    "R1166": {
+      "decision_summary": "R1166 §5.16 — migrate the shell's ad-hoc diagnostic eprintlns to tracing (pinion::shell); KEEP the tested dogfood stderr trace",
+      "changes_bullets": [
+        "12 shell diagnostics (window/renderer/vello/drag-preview/accesskit/decorations/font) -> tracing::* pinion::shell",
+        "KEEP the dogfood stderr trace (initial/intent/state/final) as eprintln — ~8 demos parse shell: intent",
+        "structured tracing fields (window/error/init_w) not formatted strings (R1160.1 production-level)"
+      ],
+      "verification_bullets": [
+        "workspace cargo test 0 failed; clippy -D pedantic + rustfmt clean",
+        "PINION_LOG=pinion::shell=debug emits the gated structured line; r691 intent-trace demo PASS (contract held)"
+      ],
+      "impact_refs": [
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "dock has no code carry left; the next gate is the user's live :0 feel check (HW-gated)",
+        "a full dogfood-trace -> tracing move is a §7-API change (migrate the ~8 demos' stderr-scrape too)",
+        "push pending user consent"
+      ],
+      "publishable_decision_summary": "R1166 §5.16 — migrate the shell's ad-hoc diagnostic eprintlns to tracing (pinion::shell); KEEP the tested dogfood stderr trace",
+      "publishable_changes_bullets": [
+        "12 shell diagnostics (window/renderer/vello/drag-preview/accesskit/decorations/font) -> tracing::* pinion::shell",
+        "KEEP the dogfood stderr trace (initial/intent/state/final) as eprintln — ~8 demos parse shell: intent",
+        "structured tracing fields (window/error/init_w) not formatted strings (R1160.1 production-level)"
+      ],
+      "publishable_verification_bullets": [
+        "workspace cargo test 0 failed; clippy -D pedantic + rustfmt clean",
+        "PINION_LOG=pinion::shell=debug emits the gated structured line; r691 intent-trace demo PASS (contract held)"
+      ],
+      "publishable_impact_refs": [
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "dock has no code carry left; the next gate is the user's live :0 feel check (HW-gated)",
+        "a full dogfood-trace -> tracing move is a §7-API change (migrate the ~8 demos' stderr-scrape too)",
+        "push pending user consent"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
