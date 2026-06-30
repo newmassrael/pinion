@@ -809,7 +809,7 @@ fn build_text_engine_from_env() -> Option<SelfHostedTextEngine> {
     match SelfHostedTextEngine::from_system_font() {
         Ok(engine) => Some(engine),
         Err(e) => {
-            eprintln!("shell: PINION_TEXT_ENGINE set but no usable system font: {e}");
+            tracing::warn!(target: "pinion::shell", error = %e, "PINION_TEXT_ENGINE set but no usable system font");
             None
         }
     }
@@ -5128,6 +5128,14 @@ impl<V: WidgetView> ShellCore<V> {
     /// Unhandled kinds are logged so a missing handler is observable.
     fn handle_tail(&mut self, tail: &DispatchTail<V::State>) {
         for intent in &tail.intents {
+            // (R1166) KEEP as `eprintln!` — the `shell: initial state` / `intent` /
+            // `state ->` / `final state` lines are a DELIBERATE, STABLE dogfood
+            // stderr trace, NOT ad-hoc diagnostics: ~8 demos assert on
+            // `shell: intent <tag> payload=...` (r691/r692/r715/r772/r805/r887/r986/
+            // r988). R1166 migrated the ad-hoc shell diagnostics (window/renderer/
+            // vello/etc.) to `tracing::*` but left this trace family on stderr so the
+            // demo contract holds. A future move to `tracing` must also migrate those
+            // demos' stderr-scrape (an RPC-surface change), not a logging tweak.
             eprintln!(
                 "shell: intent {} payload={:?}",
                 intent.tag_str(),

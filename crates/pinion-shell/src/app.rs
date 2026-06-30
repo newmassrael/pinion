@@ -636,7 +636,7 @@ impl<V: WidgetView> AppShell<V> {
         let window = match event_loop.create_window(attrs) {
             Ok(w) => Arc::new(w),
             Err(e) => {
-                eprintln!("shell: drag-preview window create failed: {e}");
+                tracing::warn!(target: "pinion::shell", error = %e, "drag-preview window create failed");
                 return;
             }
         };
@@ -644,7 +644,7 @@ impl<V: WidgetView> AppShell<V> {
         let renderer = match Self::build_renderer(&window) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("shell: drag-preview renderer init failed: {e}");
+                tracing::warn!(target: "pinion::shell", error = %e, "drag-preview renderer init failed");
                 return;
             }
         };
@@ -1877,7 +1877,7 @@ impl<V: WidgetView> AppShell<V> {
                 self.core.handle_action_request(&req);
             }
             AccessEvent::AccessibilityDeactivated => {
-                eprintln!("shell: accesskit deactivated");
+                tracing::debug!(target: "pinion::shell", "accesskit deactivated");
             }
         }
     }
@@ -2055,7 +2055,7 @@ impl<V: WidgetView> AppShell<V> {
                 // binding-wide anchor and tearing it down would
                 // orphan every `Owner::cache` slot on root_owner).
                 let _ = self.core.remove_window(&spec_id);
-                eprintln!("shell: closed window {spec_id}");
+                tracing::debug!(target: "pinion::shell", window = %spec_id, "closed window");
             }
         }
         // Add pass: in new, not in old. `resume_spec` creates one
@@ -2111,10 +2111,12 @@ impl<V: WidgetView> AppShell<V> {
         for spec in &new_specs {
             if let Some(old) = old_specs.iter().find(|o| o.id == spec.id) {
                 if old.decorations != spec.decorations {
-                    eprintln!(
-                        "shell: window {} decorations change ({} -> {}) ignored — \
-                         decorations is create-time-only; recreate the window to change chrome",
-                        spec.id, old.decorations, spec.decorations,
+                    tracing::warn!(
+                        target: "pinion::shell",
+                        window = %spec.id,
+                        from = old.decorations,
+                        to = spec.decorations,
+                        "decorations change ignored — create-time-only; recreate the window to change chrome",
                     );
                 }
             }
@@ -2221,7 +2223,7 @@ impl<V: WidgetView> AppShell<V> {
             match event_loop.create_window(attrs) {
                 Ok(w) => Arc::new(w),
                 Err(e) => {
-                    eprintln!("shell: window create ({}) failed: {e}", &spec.id);
+                    tracing::error!(target: "pinion::shell", window = %spec.id, error = %e, "window create failed");
                     event_loop.exit();
                     return;
                 }
@@ -2271,7 +2273,7 @@ impl<V: WidgetView> AppShell<V> {
         let renderer = match Self::build_renderer(&window) {
             Ok(r) => *r,
             Err(e) => {
-                eprintln!("shell: renderer init ({}) failed: {e}", &spec.id);
+                tracing::error!(target: "pinion::shell", window = %spec.id, error = %e, "renderer init failed");
                 // Cache the window for a subsequent retry; renderer
                 // init failed but the OS window survives.
                 let window_id = window.id();
@@ -2328,9 +2330,13 @@ impl<V: WidgetView> AppShell<V> {
         if make_primary {
             self.primary_window_id = Some(window_id);
         }
-        eprintln!(
-            "shell: {} resumed (window {}; initial size {}x{})",
-            spec.title, &spec.id, init_w, init_h,
+        tracing::debug!(
+            target: "pinion::shell",
+            window = %spec.id,
+            title = %spec.title,
+            init_w,
+            init_h,
+            "window resumed",
         );
     }
 
@@ -2487,7 +2493,7 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
             None => V::windows(),
         };
         if specs.is_empty() {
-            eprintln!("shell: V::windows() returned empty list; nothing to create",);
+            tracing::warn!(target: "pinion::shell", "V::windows() returned empty list; nothing to create");
             event_loop.exit();
             return;
         }
@@ -3094,7 +3100,7 @@ fn submit_frame<R: VelloRenderer>(
         match renderer.capture_rgba8(target, base) {
             Ok(frame) => (true, Some(frame)),
             Err(e) => {
-                eprintln!("shell: vello capture: {e}");
+                tracing::warn!(target: "pinion::shell", error = %e, "vello capture failed");
                 (false, None)
             }
         }
@@ -3102,7 +3108,7 @@ fn submit_frame<R: VelloRenderer>(
         let ok = match renderer.render(target, VelloContext { base_color: base }) {
             Ok(()) => true,
             Err(e) => {
-                eprintln!("shell: vello render: {e}");
+                tracing::warn!(target: "pinion::shell", error = %e, "vello render failed");
                 false
             }
         };
