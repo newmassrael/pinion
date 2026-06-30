@@ -65,7 +65,7 @@ use pinion_widget_paint::dock::{
     FloatPolicy, FloatingPlaceholderStyle, TEAR_OFF_EVENT, TEAR_OFF_FOLLOW_EVENT,
     TEAR_OFF_REDOCK_AT_EVENT, TEAR_OFF_REDOCK_EVENT, TabWellExternal, WINDOW_MOVE_EVENT,
     dock_drop_preview_overlay, dock_outer_preview_overlay, dock_outer_zone_highlight,
-    dock_redock_preview_tint, dock_tablist_access_nodes, dock_zone_guide_overlay,
+    dock_redock_preview_tint, dock_tablist_access_nodes,
     floating_window_id as dock_floating_window_id, resolve_drop, view_dock_panel,
     view_dock_surface, view_floating_placeholder,
 };
@@ -1397,13 +1397,8 @@ impl WidgetView for DockPanelsEditorView {
         }
     }
 
-    /// (R1141 §5.51 PR-39) Outline every dockable zone (panels + torn slots)
-    /// while a floater drag is in flight over main, so the user sees the targets
-    /// before aiming — the discoverability companion to the bold cursor-zone
-    /// `dock_drop_preview` above. One line per the shell-enumerated zone.
-    fn dock_zone_guide(_target_tag: &str, rect: Rect) -> Option<Scene> {
-        Some(dock_zone_guide_overlay(rect, &Theme::default()))
-    }
+    // (R1168 dropped the `dock_zone_guide` override — the static guide is retired;
+    // the cursor-driven `dock_drop_preview` is the sole drop affordance.)
 
     /// (R1105 §5.51 §5.16 PR-31) Per-window paint dispatch. The main window
     /// paints the dock layout; a floating window (id prefix `torn-`) paints
@@ -1552,22 +1547,6 @@ mod tests {
         });
     }
 
-    #[test]
-    fn r1141_dock_zone_guide_outlines_the_zone_pointer_transparent() {
-        // R1141 §5.51 PR-39 — every dockable zone gets a guide outline during a
-        // floater drag (the shell enumerates them; the binding renders each).
-        let rect = Rect::new(5, 10, 120, 60);
-        let Some(Scene::Box(b)) =
-            <DockPanelsEditorView as WidgetView>::dock_zone_guide("viewport", rect)
-        else {
-            panic!("a dockable zone gets a guide");
-        };
-        assert_eq!(b.rect, rect, "the guide outlines the zone rect");
-        assert!(
-            b.layout.pointer_transparent,
-            "the guide never grabs the drag"
-        );
-    }
     use std::borrow::Cow;
 
     fn run_in_owner<R>(f: impl FnOnce() -> R) -> R {
