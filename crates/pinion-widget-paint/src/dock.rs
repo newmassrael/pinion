@@ -5125,22 +5125,28 @@ where
             let active_panel_id = panels[*active].as_ref();
             let style =
                 DockPanelStyle::m3_default(active_panel_id.to_string()).with_show_header(false);
-            let active_view = view_dock_panel(
+            // (R1161 §5.51) The active tab's panel must FILL the well cell below
+            // the fixed strip — give its OWN container `flex_grow(1.0)` so it claims
+            // the Column's leftover height (the well's `align_items: Stretch` fills
+            // the width), exactly how a splitter sizes a `Leaf` panel. Pre-R1161 it
+            // was wrapped in a grow CONTAINER that grew while the panel inside
+            // stayed at its natural content height (~113px in a ~580px cell), so the
+            // panel + its drop-zone preview overlay were a short band with empty
+            // space below — the "preview가 가운데에서 일부만 나와" bug. `map_layout`
+            // augments the panel's existing `Column`/`Stretch`/`drop_target` layout
+            // rather than replacing it.
+            let active_view = match view_dock_panel(
                 active_panel_id,
                 panel_content(active_panel_id),
                 theme,
                 &style,
                 drop_zone(active_panel_id),
-            );
-            // The strip is fixed-height; the active panel grows to fill the
-            // remaining pane height (it has no intrinsic flex-grow, so wrap
-            // it in a grow container).
-            let active_grow = Scene::Container(
-                ContainerNode::new(vec![active_view])
-                    .with_layout(LayoutStyle::new().with_flex_grow(1.0)),
-            );
+            ) {
+                Scene::Container(c) => Scene::Container(c.map_layout(|l| l.with_flex_grow(1.0))),
+                other => other,
+            };
             Scene::Container(
-                ContainerNode::new(vec![strip, active_grow]).with_layout(
+                ContainerNode::new(vec![strip, active_view]).with_layout(
                     LayoutStyle::new()
                         .flex(FlexDirection::Column)
                         .with_align_items(AlignItems::Stretch),
