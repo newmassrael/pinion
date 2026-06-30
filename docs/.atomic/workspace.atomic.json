@@ -19230,6 +19230,46 @@
         "Band geometry constants (split 0.22 / centre 0.18) are a first cut; tune to feel on :0."
       ]
     },
+    "R1160": {
+      "decision_summary": "R1160 §5.16 — adopt tracing (level-gated PINION_LOG) as the permanent logging substrate for the dock-drag traces, and fix the tab float window POSITION (positioned tear_off_follow at the drop cursor, not a fixed slot).",
+      "changes_bullets": [
+        "Adopted tracing + tracing-subscriber (env-filter) as the logging substrate instead of ad-hoc eprintln (use-substrate-not-hand-rolled). The shell installs the global subscriber once in run/run_with_handlers, env-filtered by PINION_LOG (per-target levels), default warn = quiet, writing to stderr so it never corrupts the stdout JSON-RPC stream.",
+        "The dock-drag traces (tab well + panel header / cross-window redock) now emit tracing::debug!(target: \"pinion::dock\", ...) — PERMANENT + level-gated, so any live drag is analysable via PINION_LOG=pinion::dock=debug with NO eprintln add/remove churn (the user's directive after R1159's remove-then-re-add).",
+        "Fixed the tab float WINDOW POSITION: R1158's float emitted the bare tear_off (no position) so the editor placed the floating window at a FIXED per-panel slot (floating_window_position) — the \"매번 같은 자리\" bug. It now emits the positioned tear_off_follow (the panel-header escape-float convention) at the release cursor, so the window appears WHERE the tab was dropped."
+      ],
+      "verification_bullets": [
+        "Live XTEST on :0: a tab floated in outliner's dead-zone -> torn-properties window at the drop location ([70,371] for a drop at (58,371)), not the old fixed slot (292,252).",
+        "PINION_LOG=pinion::dock=debug prints the structured pinion::dock trace on a live drag; a default run (no PINION_LOG) is silent (0 dock-trace lines).",
+        "8 dock unit tests (r1158/r1159, the float ones updated to assert the positioned tear_off_follow JSON payload) + r1158/r1159 demos PASS; workspace 0 fail / clippy -D pedantic / rustfmt clean."
+      ],
+      "impact_refs": [
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "R1161: route the panel-header drag (DockPanelExternal::drag_release) through resolve_drop — the deferred B-campaign unification; the panel-path tracing added this round aids its live verification.",
+        "Migrate the remaining always-on shell: eprintlns to the tracing facade incrementally (they still print; not yet gated).",
+        "Float anchor: the window top-left lands at the drop cursor; a grab-offset refinement (grab point under the cursor) is a follow-up — the fixed-slot bug itself is gone."
+      ],
+      "publishable_decision_summary": "R1160 §5.16 — adopt tracing (level-gated PINION_LOG) as the permanent logging substrate for the dock-drag traces, and fix the tab float window POSITION (positioned tear_off_follow at the drop cursor, not a fixed slot).",
+      "publishable_changes_bullets": [
+        "Adopted tracing + tracing-subscriber (env-filter) as the logging substrate instead of ad-hoc eprintln (use-substrate-not-hand-rolled). The shell installs the global subscriber once in run/run_with_handlers, env-filtered by PINION_LOG (per-target levels), default warn = quiet, writing to stderr so it never corrupts the stdout JSON-RPC stream.",
+        "The dock-drag traces (tab well + panel header / cross-window redock) now emit tracing::debug!(target: \"pinion::dock\", ...) — PERMANENT + level-gated, so any live drag is analysable via PINION_LOG=pinion::dock=debug with NO eprintln add/remove churn (the user's directive after R1159's remove-then-re-add).",
+        "Fixed the tab float WINDOW POSITION: R1158's float emitted the bare tear_off (no position) so the editor placed the floating window at a FIXED per-panel slot (floating_window_position) — the \"매번 같은 자리\" bug. It now emits the positioned tear_off_follow (the panel-header escape-float convention) at the release cursor, so the window appears WHERE the tab was dropped."
+      ],
+      "publishable_verification_bullets": [
+        "Live XTEST on :0: a tab floated in outliner's dead-zone -> torn-properties window at the drop location ([70,371] for a drop at (58,371)), not the old fixed slot (292,252).",
+        "PINION_LOG=pinion::dock=debug prints the structured pinion::dock trace on a live drag; a default run (no PINION_LOG) is silent (0 dock-trace lines).",
+        "8 dock unit tests (r1158/r1159, the float ones updated to assert the positioned tear_off_follow JSON payload) + r1158/r1159 demos PASS; workspace 0 fail / clippy -D pedantic / rustfmt clean."
+      ],
+      "publishable_impact_refs": [
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R1161: route the panel-header drag (DockPanelExternal::drag_release) through resolve_drop — the deferred B-campaign unification; the panel-path tracing added this round aids its live verification.",
+        "Migrate the remaining always-on shell: eprintlns to the tracing facade incrementally (they still print; not yet gated).",
+        "Float anchor: the window top-left lands at the drop cursor; a grab-offset refinement (grab point under the cursor) is a follow-up — the fixed-slot bug itself is gone."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
