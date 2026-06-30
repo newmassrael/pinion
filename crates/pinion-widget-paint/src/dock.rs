@@ -1985,32 +1985,24 @@ pub enum DockDropZone {
     Center,
 }
 
-/// (R686 §5.16 §5.45) Pure classification of a cursor position over a
-/// panel rect into a [`DockDropZone`]. No allocation, no `Owner`, no
-/// `Scene` — a deterministic geometry helper the drag-over External
-/// (R686 atomic 2) and the demo / test harness share.
+/// (R686 §5.16 §5.45; R1112 PR-37 tabbing) Pure classification of a cursor
+/// position over a panel rect into a [`DockDropZone`]. No allocation, no `Owner`,
+/// no `Scene` — a deterministic geometry helper the drag-over External (R686
+/// atomic 2) and the `drop` RPC share.
 ///
-/// `panel_rect` is the panel's paint-side rect (integer logical pixels,
-/// as `scene/layout` reports). `cursor_x` / `cursor_y` are the live
-/// pointer position in the same coordinate space (f64, as the
-/// `InputRouter` carries them). Containment is **half-open** — the
-/// right / bottom edges are exclusive — to mirror
-/// [`pinion_core::scene`]'s `rect_contains`, so adjacent panels tile
-/// without a one-pixel double-claim seam.
+/// `panel_rect` is the panel's paint-side rect (integer logical pixels, as
+/// `scene/layout` reports). `cursor_x` / `cursor_y` are the live pointer position
+/// in the same coordinate space (f64, as the `InputRouter` carries them).
+/// Containment is **half-open** — the right / bottom edges are exclusive — to
+/// mirror [`pinion_core::scene`]'s `rect_contains`, so adjacent panels tile
+/// without a one-pixel double-claim seam. Returns [`DockDropZone::None`] for a
+/// degenerate rect (`w == 0` or `h == 0`) or a cursor outside the rect.
 ///
-/// Returns [`DockDropZone::None`] for a degenerate rect (`w == 0` or
-/// `h == 0`) or a cursor outside the rect.
-#[must_use]
-pub fn dock_drop_zone_for(panel_rect: Rect, cursor_x: f64, cursor_y: f64) -> DockDropZone {
-    dock_drop_zone_for_tabbing(panel_rect, cursor_x, cursor_y, true)
-}
-
-/// (R1112 §5.51 PR-37) [`dock_drop_zone_for`] with the surface's tab-docking
-/// policy explicit — `tabbing == false` (a split-only dock) suppresses the
-/// centre zone so an absolute cursor over a pane's centre classifies to the
-/// nearest split edge, never [`DockDropZone::Center`]. The bare
-/// [`dock_drop_zone_for`] keeps the tabbing default for every existing caller;
-/// the `drop` RPC threads the [`DockReorganizer::tabbing`] flag here.
+/// `tabbing == false` (a split-only dock) suppresses the centre zone so a cursor
+/// over a pane's centre classifies to the nearest split edge, never
+/// [`DockDropZone::Center`]; the `drop` RPC threads the
+/// [`DockReorganizer::tabbing`] flag here. (R1168 retired the bare
+/// `tabbing`-defaults-to-true wrapper — callers pass the flag explicitly.)
 #[must_use]
 pub fn dock_drop_zone_for_tabbing(
     panel_rect: Rect,
@@ -2034,34 +2026,24 @@ pub fn dock_drop_zone_for_tabbing(
     dock_drop_zone_normalized_tabbing((cursor_x - x0) / w, (cursor_y - y0) / h, tabbing)
 }
 
-/// (R1080 §5.51) Classify a cursor already normalised over a panel rect
-/// (`x_rel` / `y_rel` in `[0.0, 1.0)`, left / top = `0.0`) into a
+/// (R1080 §5.51; R1111 PR-37 tabbing) Classify a cursor already normalised over a
+/// panel rect (`x_rel` / `y_rel` in `[0.0, 1.0)`, left / top = `0.0`) into a
 /// [`DockDropZone`] — the SSOT zone geometry shared by
-/// [`dock_drop_zone_for`] (which normalises an absolute cursor first) and the
-/// §5.51 R742 pointer drag coordinator (which receives a pre-normalised
-/// [`DropPoint`](pinion_core::external::DropPoint) over the drop-target
-/// panel). One classifier, two callers — the edge-band fraction
-/// ([`DOCK_EDGE_ZONE_FRAC`]) and the Left → Right → Top → Bottom tie order
-/// cannot drift between the absolute and pointer-normalised paths.
+/// [`dock_drop_zone_for_tabbing`] (which normalises an absolute cursor first) and
+/// the §5.51 R742 pointer drag coordinator (which receives a pre-normalised
+/// [`DropPoint`](pinion_core::external::DropPoint) over the drop-target panel). One
+/// classifier, two callers — the edge-band fraction ([`DOCK_EDGE_ZONE_FRAC`]) and
+/// the Left → Right → Top → Bottom tie order cannot drift between the absolute and
+/// pointer-normalised paths.
 ///
-/// Containment is **half-open**: a coordinate `< 0.0` or `>= 1.0` on either
-/// axis is outside the panel and yields [`DockDropZone::None`], mirroring
-/// [`dock_drop_zone_for`]'s `rect_contains` semantics so adjacent panels tile
-/// without a one-pixel double-claim seam.
-#[must_use]
-pub fn dock_drop_zone_normalized(x_rel: f64, y_rel: f64) -> DockDropZone {
-    dock_drop_zone_normalized_tabbing(x_rel, y_rel, true)
-}
-
-/// (R1111 §5.51 PR-37) [`dock_drop_zone_normalized`] with the tab-docking
-/// policy explicit. `tabbing == true` (the default classification) keeps the
-/// centre square as [`DockDropZone::Center`] (→ [`DockReorganizeIntent::Tabify`]);
-/// `tabbing == false` (a split-only consumer, e.g. a terminal multiplexer)
-/// suppresses it — the centre falls through to the nearest split edge, so the
-/// whole panel resolves to an edge and a centre drop can never tabify (no dead
-/// centre). [`DockPanelExternal::with_tabbing`] wires the consumer's choice
-/// into the pointer path; the bare [`dock_drop_zone_normalized`] keeps the
-/// tabbing default for every existing caller.
+/// Containment is **half-open**: a coordinate `< 0.0` or `>= 1.0` on either axis is
+/// outside the panel and yields [`DockDropZone::None`] so adjacent panels tile
+/// without a one-pixel double-claim seam. `tabbing == true` keeps the centre square
+/// as [`DockDropZone::Center`] (→ [`DockReorganizeIntent::Tabify`]); `tabbing ==
+/// false` (a split-only consumer, e.g. a terminal multiplexer) suppresses it — the
+/// centre falls through to the nearest split edge, so a centre drop can never
+/// tabify. [`DockPanelExternal::with_tabbing`] wires the consumer's choice into the
+/// pointer path. (R1168 retired the bare `tabbing`-defaults-to-true wrapper.)
 fn dock_drop_zone_normalized_tabbing(x_rel: f64, y_rel: f64, tabbing: bool) -> DockDropZone {
     // Half-open [0.0, 1.0): outside the panel on either axis → no zone.
     if !(0.0..1.0).contains(&x_rel) || !(0.0..1.0).contains(&y_rel) {
@@ -2812,7 +2794,7 @@ pub struct DockReorganizer {
 ///
 /// This external is the **symbolic / RPC** drive of dock reorganize: an
 /// AI client reading `scene/layout` classifies a drop with
-/// [`resolve_dock_drop`] / [`dock_drop_zone_for`] and applies it through
+/// [`resolve_dock_drop`] / [`dock_drop_zone_for_tabbing`] and applies it through
 /// `invoke("drop" | "reorganize")` — the §2 #2 RPC-as-primary-path
 /// contract. R1081 §5.51 added the **pointer** drive
 /// ([`DockPanelExternal`]'s R742 mouse gesture); both share one
@@ -3624,7 +3606,7 @@ impl ExternalIntrospect for DockReorganizeExternal {
     ///   "panels": [{"tag": "<panel>", "rect": {"x","y","w","h"}}, …]}`.
     ///   The caller hands the observed `scene/layout` rects + the
     ///   release cursor; the **substrate** classifies the drop zone
-    ///   ([`dock_drop_zone_for`]) and resolves the gesture
+    ///   ([`dock_drop_zone_for_tabbing`]) and resolves the gesture
     ///   ([`resolve_dock_drop`]) — no client re-implements the zone
     ///   geometry (the Rust helper is the single source of truth). A
     ///   drop over empty space / the source itself is a well-defined
@@ -10193,7 +10175,10 @@ mod drop_zone_tests {
     //! tiebreak precedence, half-open containment, and degenerate-rect
     //! handling.
 
-    use super::{DOCK_EDGE_ZONE_FRAC, DockDropZone, dock_drop_zone_for, dock_drop_zone_normalized};
+    use super::{
+        DOCK_EDGE_ZONE_FRAC, DockDropZone, dock_drop_zone_for_tabbing,
+        dock_drop_zone_normalized_tabbing,
+    };
     use pinion_core::scene::Rect;
 
     /// Canonical 400×400 panel at offset (100, 100). With
@@ -10207,7 +10192,7 @@ mod drop_zone_tests {
     fn r686_drop_zone_center_is_center() {
         // Dead centre — far from every edge.
         assert_eq!(
-            dock_drop_zone_for(panel(), 300.0, 300.0),
+            dock_drop_zone_for_tabbing(panel(), 300.0, 300.0, true),
             DockDropZone::Center
         );
     }
@@ -10216,7 +10201,7 @@ mod drop_zone_tests {
     fn r686_drop_zone_left_edge() {
         // 50 px in from the left → from_left = 0.125 < 0.25.
         assert_eq!(
-            dock_drop_zone_for(panel(), 150.0, 300.0),
+            dock_drop_zone_for_tabbing(panel(), 150.0, 300.0, true),
             DockDropZone::Left
         );
     }
@@ -10224,20 +10209,23 @@ mod drop_zone_tests {
     #[test]
     fn r686_drop_zone_right_edge() {
         assert_eq!(
-            dock_drop_zone_for(panel(), 450.0, 300.0),
+            dock_drop_zone_for_tabbing(panel(), 450.0, 300.0, true),
             DockDropZone::Right
         );
     }
 
     #[test]
     fn r686_drop_zone_top_edge() {
-        assert_eq!(dock_drop_zone_for(panel(), 300.0, 150.0), DockDropZone::Top);
+        assert_eq!(
+            dock_drop_zone_for_tabbing(panel(), 300.0, 150.0, true),
+            DockDropZone::Top
+        );
     }
 
     #[test]
     fn r686_drop_zone_bottom_edge() {
         assert_eq!(
-            dock_drop_zone_for(panel(), 300.0, 450.0),
+            dock_drop_zone_for_tabbing(panel(), 300.0, 450.0, true),
             DockDropZone::Bottom
         );
     }
@@ -10248,13 +10236,13 @@ mod drop_zone_tests {
         // Declaration-order precedence (Left → Right → Top → Bottom)
         // resolves the corner to Left.
         assert_eq!(
-            dock_drop_zone_for(panel(), 150.0, 150.0),
+            dock_drop_zone_for_tabbing(panel(), 150.0, 150.0, true),
             DockDropZone::Left
         );
         // Bottom-right corner: from_right == from_bottom tie → Right wins
         // over Bottom by precedence.
         assert_eq!(
-            dock_drop_zone_for(panel(), 450.0, 450.0),
+            dock_drop_zone_for_tabbing(panel(), 450.0, 450.0, true),
             DockDropZone::Right
         );
     }
@@ -10267,7 +10255,7 @@ mod drop_zone_tests {
         // Center, not Left.
         let on_boundary = 100.0 + DOCK_EDGE_ZONE_FRAC * 400.0;
         assert_eq!(
-            dock_drop_zone_for(panel(), on_boundary, 300.0),
+            dock_drop_zone_for_tabbing(panel(), on_boundary, 300.0, true),
             DockDropZone::Center,
         );
     }
@@ -10275,20 +10263,26 @@ mod drop_zone_tests {
     #[test]
     fn r686_drop_zone_outside_is_none() {
         // Left / above of the rect.
-        assert_eq!(dock_drop_zone_for(panel(), 50.0, 300.0), DockDropZone::None);
-        assert_eq!(dock_drop_zone_for(panel(), 300.0, 50.0), DockDropZone::None);
+        assert_eq!(
+            dock_drop_zone_for_tabbing(panel(), 50.0, 300.0, true),
+            DockDropZone::None
+        );
+        assert_eq!(
+            dock_drop_zone_for_tabbing(panel(), 300.0, 50.0, true),
+            DockDropZone::None
+        );
     }
 
     #[test]
     fn r686_drop_zone_right_bottom_edges_are_half_open() {
         // x = 100 + 400 = 500 is the exclusive right edge → None.
         assert_eq!(
-            dock_drop_zone_for(panel(), 500.0, 300.0),
+            dock_drop_zone_for_tabbing(panel(), 500.0, 300.0, true),
             DockDropZone::None
         );
         // y = 100 + 400 = 500 is the exclusive bottom edge → None.
         assert_eq!(
-            dock_drop_zone_for(panel(), 300.0, 500.0),
+            dock_drop_zone_for_tabbing(panel(), 300.0, 500.0, true),
             DockDropZone::None
         );
     }
@@ -10297,11 +10291,11 @@ mod drop_zone_tests {
     fn r686_drop_zone_degenerate_rect_is_none() {
         // Zero width / zero height carry no pixels → never a target.
         assert_eq!(
-            dock_drop_zone_for(Rect::new(0, 0, 0, 100), 0.0, 50.0),
+            dock_drop_zone_for_tabbing(Rect::new(0, 0, 0, 100), 0.0, 50.0, true),
             DockDropZone::None
         );
         assert_eq!(
-            dock_drop_zone_for(Rect::new(0, 0, 100, 0), 50.0, 0.0),
+            dock_drop_zone_for_tabbing(Rect::new(0, 0, 100, 0), 50.0, 0.0, true),
             DockDropZone::None
         );
     }
@@ -10310,7 +10304,10 @@ mod drop_zone_tests {
     fn r1111_tabbing_off_suppresses_center_to_nearest_edge() {
         use super::dock_drop_zone_normalized_tabbing;
         // R1111 PR-37 — with tabbing on, the centre square is Center (tabify).
-        assert_eq!(dock_drop_zone_normalized(0.5, 0.5), DockDropZone::Center);
+        assert_eq!(
+            dock_drop_zone_normalized_tabbing(0.5, 0.5, true),
+            DockDropZone::Center
+        );
         assert_eq!(
             dock_drop_zone_normalized_tabbing(0.5, 0.5, true),
             DockDropZone::Center,
@@ -10353,34 +10350,70 @@ mod drop_zone_tests {
     #[test]
     fn r1080_drop_zone_normalized_classifies_center_and_edges() {
         // Dead centre (0.5, 0.5): nearest edge 0.5 >= 0.25 → Center.
-        assert_eq!(dock_drop_zone_normalized(0.5, 0.5), DockDropZone::Center);
+        assert_eq!(
+            dock_drop_zone_normalized_tabbing(0.5, 0.5, true),
+            DockDropZone::Center
+        );
         // 0.125 in from each edge (< 0.25 band) on the mid-axis.
-        assert_eq!(dock_drop_zone_normalized(0.125, 0.5), DockDropZone::Left);
-        assert_eq!(dock_drop_zone_normalized(0.875, 0.5), DockDropZone::Right);
-        assert_eq!(dock_drop_zone_normalized(0.5, 0.125), DockDropZone::Top);
-        assert_eq!(dock_drop_zone_normalized(0.5, 0.875), DockDropZone::Bottom);
+        assert_eq!(
+            dock_drop_zone_normalized_tabbing(0.125, 0.5, true),
+            DockDropZone::Left
+        );
+        assert_eq!(
+            dock_drop_zone_normalized_tabbing(0.875, 0.5, true),
+            DockDropZone::Right
+        );
+        assert_eq!(
+            dock_drop_zone_normalized_tabbing(0.5, 0.125, true),
+            DockDropZone::Top
+        );
+        assert_eq!(
+            dock_drop_zone_normalized_tabbing(0.5, 0.875, true),
+            DockDropZone::Bottom
+        );
     }
 
     #[test]
     fn r1080_drop_zone_normalized_is_half_open_outside_is_none() {
         // Half-open [0.0, 1.0): below 0 or at/above 1 on either axis → None.
-        assert_eq!(dock_drop_zone_normalized(-0.01, 0.5), DockDropZone::None);
-        assert_eq!(dock_drop_zone_normalized(0.5, -0.01), DockDropZone::None);
-        assert_eq!(dock_drop_zone_normalized(1.0, 0.5), DockDropZone::None);
-        assert_eq!(dock_drop_zone_normalized(0.5, 1.0), DockDropZone::None);
+        assert_eq!(
+            dock_drop_zone_normalized_tabbing(-0.01, 0.5, true),
+            DockDropZone::None
+        );
+        assert_eq!(
+            dock_drop_zone_normalized_tabbing(0.5, -0.01, true),
+            DockDropZone::None
+        );
+        assert_eq!(
+            dock_drop_zone_normalized_tabbing(1.0, 0.5, true),
+            DockDropZone::None
+        );
+        assert_eq!(
+            dock_drop_zone_normalized_tabbing(0.5, 1.0, true),
+            DockDropZone::None
+        );
         // 0.0 (left / top edge) is inside; just inside the right edge too.
-        assert_eq!(dock_drop_zone_normalized(0.0, 0.5), DockDropZone::Left);
+        assert_eq!(
+            dock_drop_zone_normalized_tabbing(0.0, 0.5, true),
+            DockDropZone::Left
+        );
     }
 
     #[test]
     fn r1080_drop_zone_normalized_corner_tiebreak_is_left_then_right() {
         // Top-left corner tie (from_left == from_top) → Left precedence.
-        assert_eq!(dock_drop_zone_normalized(0.1, 0.1), DockDropZone::Left);
+        assert_eq!(
+            dock_drop_zone_normalized_tabbing(0.1, 0.1, true),
+            DockDropZone::Left
+        );
         // Bottom-right corner tie (from_right == from_bottom) → Right.
-        assert_eq!(dock_drop_zone_normalized(0.9, 0.9), DockDropZone::Right);
+        assert_eq!(
+            dock_drop_zone_normalized_tabbing(0.9, 0.9, true),
+            DockDropZone::Right
+        );
         // Band inner boundary is Center (half-open >= frac).
         assert_eq!(
-            dock_drop_zone_normalized(DOCK_EDGE_ZONE_FRAC, 0.5),
+            dock_drop_zone_normalized_tabbing(DOCK_EDGE_ZONE_FRAC, 0.5, true),
             DockDropZone::Center
         );
     }
@@ -10400,8 +10433,8 @@ mod drop_zone_tests {
             for yi in (80..=520).step_by(20) {
                 let (cx, cy) = (f64::from(xi), f64::from(yi));
                 assert_eq!(
-                    dock_drop_zone_for(rect, cx, cy),
-                    dock_drop_zone_normalized((cx - x0) / width, (cy - y0) / height),
+                    dock_drop_zone_for_tabbing(rect, cx, cy, true),
+                    dock_drop_zone_normalized_tabbing((cx - x0) / width, (cy - y0) / height, true),
                     "absolute and normalised disagree at ({cx}, {cy})"
                 );
             }
