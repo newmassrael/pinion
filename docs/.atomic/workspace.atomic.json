@@ -19270,6 +19270,40 @@
         "Float anchor: the window top-left lands at the drop cursor; a grab-offset refinement (grab point under the cursor) is a follow-up — the fixed-slot bug itself is gone."
       ]
     },
+    "R1161": {
+      "decision_summary": "R1161 §5.51 — the tabbed well's active panel now fills its cell (flex_grow on the panel itself), fixing the short preview band (preview가 가운데 일부만).",
+      "changes_bullets": [
+        "Fixed the tabbed well's active panel not filling its cell. The walker wrapped the active panel in a flex-grow CONTAINER that grew while the panel INSIDE stayed at its natural content height (~113px in a ~580px cell), so the panel + its drop-zone preview overlay were a short band with empty space below — the \"preview가 가운데에서 일부만 나와\" bug the user reported.",
+        "Now the active panel's OWN container gets flex_grow(1.0) (via ContainerNode::map_layout, augmenting its existing Column/Stretch/drop_target layout, not replacing it) so it claims the well Column's leftover height below the fixed strip — exactly how a splitter sizes a Leaf panel. The redundant grow-wrapper container is removed."
+      ],
+      "verification_bullets": [
+        "viewport panel after tabify: h 113 -> 532 (fills the cell below the 48px strip; 580 boot - 48 strip = 532), measured via scene/snapshot rects.",
+        "The drop-zone preview overlay (dock_drop_zone_highlight, Center = 100%x100% of the panel) now covers the full active-panel content, not a short band.",
+        "659 dock units + r690_tabs / r1096_dock_tab_click / r1159_dock_drop_resolution demos PASS; clippy -D pedantic / rustfmt clean."
+      ],
+      "impact_refs": [
+        "5.51"
+      ],
+      "carry_forward_bullets": [
+        "B-campaign R1162 (route the panel-header drag through resolve_drop) still pending — this round was a focused tab-well layout bug fix found by live testing."
+      ],
+      "publishable_decision_summary": "R1161 §5.51 — the tabbed well's active panel now fills its cell (flex_grow on the panel itself), fixing the short preview band (preview가 가운데 일부만).",
+      "publishable_changes_bullets": [
+        "Fixed the tabbed well's active panel not filling its cell. The walker wrapped the active panel in a flex-grow CONTAINER that grew while the panel INSIDE stayed at its natural content height (~113px in a ~580px cell), so the panel + its drop-zone preview overlay were a short band with empty space below — the \"preview가 가운데에서 일부만 나와\" bug the user reported.",
+        "Now the active panel's OWN container gets flex_grow(1.0) (via ContainerNode::map_layout, augmenting its existing Column/Stretch/drop_target layout, not replacing it) so it claims the well Column's leftover height below the fixed strip — exactly how a splitter sizes a Leaf panel. The redundant grow-wrapper container is removed."
+      ],
+      "publishable_verification_bullets": [
+        "viewport panel after tabify: h 113 -> 532 (fills the cell below the 48px strip; 580 boot - 48 strip = 532), measured via scene/snapshot rects.",
+        "The drop-zone preview overlay (dock_drop_zone_highlight, Center = 100%x100% of the panel) now covers the full active-panel content, not a short band.",
+        "659 dock units + r690_tabs / r1096_dock_tab_click / r1159_dock_drop_resolution demos PASS; clippy -D pedantic / rustfmt clean."
+      ],
+      "publishable_impact_refs": [
+        "5.51"
+      ],
+      "publishable_carry_forward_bullets": [
+        "B-campaign R1162 (route the panel-header drag through resolve_drop) still pending — this round was a focused tab-well layout bug fix found by live testing."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
