@@ -2086,25 +2086,12 @@ impl<V: WidgetCore> CoreShell<V> {
         })
     }
 
-    /// (R1137 §5.51 §2 #7 PR-33) The cross-window drop a drag in `source_window`
-    /// currently resolves onto ANOTHER window — the SOURCE-side peer of
-    /// [`Self::cross_window_drag_into`]. Reads the shell-stashed
-    /// [`CrossWindowDrop`](crate::input::CrossWindowDrop) on `source_window`'s OWN
-    /// router (the outgoing drop the live floater→main redock resolves each move,
-    /// i.e. the floater is `RedockArmed`). The shell paints a "will dock here" hint
-    /// INTO the dragged floater (topmost, so always visible) from this — the
-    /// visibility companion to the target-side preview the opaque floater occludes.
-    /// `None` when that window has no in-flight drag over another window.
-    #[must_use]
-    pub fn cross_window_drop_from(
-        &self,
-        source_window: &str,
-    ) -> Option<crate::input::CrossWindowDrop> {
-        self.routers
-            .get(source_window)
-            .and_then(|router| router.drag_cross_window(PointerId::MOUSE))
-            .cloned()
-    }
+    // (R1137 → R1165) `cross_window_drop_from` (the SOURCE-side outgoing-drop peer)
+    // was REMOVED: it fed the R1137 on-floater redock hint, which R1150 deleted
+    // (the static floater's hint sat at the wrong spot once R1146 made the floater
+    // stay put), leaving this caller-less since. The on-TARGET preview
+    // (`cross_window_drag_into` + `apply_cross_window_drop_preview`) is the correctly
+    // placed affordance.
 
     /// R1147 §5.51 §5.16 — flag the cross-desktop drag PREVIEW window as
     /// currently showing (or not) the active drag. When set, `apply_drag_image`

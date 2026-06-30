@@ -10885,6 +10885,43 @@ mod reorganize_tests {
     }
 
     #[test]
+    fn r1165_undock_from_a_three_tab_well_keeps_the_remaining_well_intact() {
+        use std::borrow::Cow;
+        // A 3-tab well {a,b,c} beside a leaf "d". Undock "a" at the Right edge.
+        let topo = DockTopology::new(DockNode::split_horizontal(
+            "s",
+            0.5,
+            DockNode::tabs("w", [Cow::from("a"), Cow::from("b"), Cow::from("c")], 0),
+            DockNode::leaf("d"),
+        ));
+        let topology = Rc::new(Signal::new(Some(topo)));
+        let reorg = DockReorganizer::new(Rc::clone(&topology));
+        reorg
+            .undock_tab_to_zone("a", DockDropZone::Right)
+            .expect("undock");
+        let after = topology.get().unwrap();
+        // "a" left the well; "b" and "c" stay TABBED TOGETHER as one intact well —
+        // `split_leaf_rec`'s Tabs arm splits the WHOLE well (the stacked panels stay
+        // together as one child), so undock is correct for 3+ tabs, not just 2. This
+        // REFUTES the carried ">2-tab undock imprecise" suspicion (audit-first).
+        assert!(
+            after.tab_well_sibling("a").is_none(),
+            "a undocked out of every well"
+        );
+        assert_eq!(
+            after.tab_well_sibling("b").as_deref(),
+            Some("c"),
+            "b and c stay tabbed together (the well survived the undock)"
+        );
+        assert_eq!(
+            after.tabs_well_count(),
+            1,
+            "exactly one well remains — the intact {{b,c}}"
+        );
+        assert_eq!(after.panel_ids().len(), 4, "no panel lost in the undock");
+    }
+
+    #[test]
     fn r1128_dock_panel_at_resolved_zone_center_tabifies_present_or_absent_source() {
         // Centre = tabify, TOTAL over presence: present "a" re-tabs (move), absent
         // "d" tab-inserts fresh (tabify_fresh). One path, both policies.
