@@ -83,8 +83,8 @@ use std::time::Instant;
 use pinion_core::composite_tag::{compose_send_payload, split_subindex};
 use pinion_core::event::WheelDelta;
 use pinion_core::external::{
-    CaptureNormalize, DragPayload, DragUpdate, DropPoint, IntrospectValue, OUTER_DOCK_MARGIN,
-    OUTER_DOCK_ZONE_TAG,
+    CaptureNormalize, DOCK_PANEL_DRAG_KIND, DragPayload, DragUpdate, DropPoint, IntrospectValue,
+    OUTER_DOCK_MARGIN, OUTER_DOCK_ZONE_TAG,
 };
 use pinion_core::input::PointerWireEvent;
 use pinion_core::scene::{ExternalNode, Rect, Scene};
@@ -1421,7 +1421,10 @@ impl InputRouter {
         if let Some(session) = self.drag_sessions.remove(&id) {
             self.captured_targets.remove(&id);
             let cursor = self.cursors.get(&id).copied();
-            let own_over = cursor.and_then(|(x, y)| self.resolve_drop_point(x, y));
+            // R1167 §5.51 — same-window OUTER-dock override (dock-panel drag only),
+            // shared with the move path so preview (`update_drag`) == result here.
+            let own_over =
+                cursor.and_then(|(x, y)| self.resolve_drag_own_over(&session.payload, x, y));
             // R1124 §5.51 PR-33 — a SELF-DROP (the own hit is the dragged panel's
             // own header / content) must not mask the cross-window redock below: a
             // floater being dragged onto another window has the cursor over its OWN
@@ -1887,7 +1890,11 @@ impl InputRouter {
         // node / subtree) yields to the cross-window redock here too, so a floater
         // dragged over another window resolves that window mid-drag, not its own
         // content. Same-window reorganize + plain own hits are unaffected.
-        let own_over = self.resolve_drop_point(x, y);
+        // R1167 §5.51 — own-window resolution applies the same-window OUTER-dock
+        // override for a dock-panel drag (a cursor in this window's outer band →
+        // full-span outer dock), so a docked panel reaches the window-edge full-span
+        // dock without leaving its window. Non-dock drags keep the plain hit-test.
+        let own_over = self.resolve_drag_own_over(&payload, x, y);
         let own_is_self_drop = own_over
             .as_ref()
             .is_some_and(|p| self.own_drop_is_self(p, &source));
@@ -1951,6 +1958,67 @@ impl InputRouter {
         let rect = rect_for_tag(paint, &tag)?;
         let (x_rel, y_rel) = normalize_cursor(rect, x, y);
         Some(DropPoint { tag, x_rel, y_rel })
+    }
+
+    /// (R1167 §5.51) The SAME-window analog of [`resolve_outer_dock_zone`]: a
+    /// window-local cursor `(x, y)` INSIDE this window within [`OUTER_DOCK_MARGIN`]
+    /// of an edge is a FULL-SPAN outer dock at the nearest edge (a row / column
+    /// across every pane), tagged [`OUTER_DOCK_ZONE_TAG`] with the cursor normalised
+    /// over the WHOLE window — exactly what the cross-window perimeter pass produces
+    /// for a floater, but for a drag that never left its own window (the user's
+    /// "console 하단 full-width / properties 우측 컬럼"). `None` in the interior (the
+    /// inner panel hit-test applies) — that asymmetry is what made same-window outer
+    /// docking unreachable before R1167 (`resolve_drop` handled `OuterDock` but no
+    /// same-window INPUT produced the sentinel).
+    ///
+    /// The band is INSIDE-only (the cursor must be within the window bounds), unlike
+    /// the cross-window STRADDLE band: a same-window drag drives toward the edge from
+    /// inside, and crossing the edge OUTWARD is an ESCAPE (the panel floats), so the
+    /// outer band must not extend outside or it would swallow the drag-out-to-float
+    /// gesture. The caller gates this on the dock-panel kind
+    /// ([`Self::resolve_drag_own_over`]) so a non-dock drag (the outliner tree
+    /// reparent) near the window edge keeps the plain `resolve_drop_point` hit-test.
+    fn resolve_own_outer_dock(&self, x: f64, y: f64) -> Option<DropPoint> {
+        let paint = self.last_paint_scene.as_ref()?;
+        let root = paint.rect();
+        let (rx, ry) = (f64::from(root.x), f64::from(root.y));
+        let (rw, rh) = (f64::from(root.w), f64::from(root.h));
+        if rw <= 0.0 || rh <= 0.0 {
+            return None;
+        }
+        // INSIDE-only: a cursor that has crossed the window edge is escaping (→
+        // float via the empty `resolve_drop_point`), not docking outer.
+        if x < rx || x > rx + rw || y < ry || y > ry + rh {
+            return None;
+        }
+        if outer_edge_distance(root, x, y) > OUTER_DOCK_MARGIN {
+            return None;
+        }
+        let (x_rel, y_rel) = normalize_cursor(root, x, y);
+        Some(DropPoint {
+            tag: OUTER_DOCK_ZONE_TAG.to_string(),
+            x_rel,
+            y_rel,
+        })
+    }
+
+    /// (R1167 §5.51) Resolve the own-window drop point for an in-flight drag,
+    /// applying the same-window OUTER-perimeter override for a DOCK-PANEL drag (the
+    /// [`DOCK_PANEL_DRAG_KIND`] `payload.kind`): a cursor in this window's outer band
+    /// is a full-span outer dock ([`Self::resolve_own_outer_dock`]), else the plain
+    /// hit-test ([`Self::resolve_drop_point`]). The override is gated on the dock
+    /// kind so a non-dock drag (the outliner tree reparent) near the window edge does
+    /// NOT pick up the dock sentinel. The single home for the override so the move
+    /// ([`Self::update_drag`]) and the release (the `pointer_up` drag branch) cannot
+    /// diverge on it — the [[verify-seed-claims-audit-first]] / debt-D lesson: a
+    /// resolver that handles a case the input cannot produce is an SSOT hole.
+    fn resolve_drag_own_over(&self, payload: &DragPayload, x: f64, y: f64) -> Option<DropPoint> {
+        if payload.kind == DOCK_PANEL_DRAG_KIND {
+            if let Some(outer) = self.resolve_own_outer_dock(x, y) {
+                return Some(outer);
+            }
+        }
+        self.resolve_drop_point(x, y)
     }
 
     /// (R1124 §5.51 PR-33) Whether the own-window drop `own` is a SELF-DROP for a
@@ -2315,7 +2383,9 @@ fn resolve_outer_dock_zone(
             continue;
         }
         // The cursor must be AT this window — inside, or within the margin just
-        // outside it — not far off to the side.
+        // outside it — not far off to the side. A cross-window floater approaches
+        // the host edge from OUTSIDE, so the band STRADDLES the perimeter (unlike
+        // the same-window inside-only band — see `resolve_own_outer_dock`).
         if lx < rx - OUTER_DOCK_MARGIN
             || lx > rx + rw + OUTER_DOCK_MARGIN
             || ly < ry - OUTER_DOCK_MARGIN
@@ -2323,12 +2393,7 @@ fn resolve_outer_dock_zone(
         {
             continue;
         }
-        // Perpendicular distance to the nearest of the four edges.
-        let dist = (ly - ry)
-            .abs()
-            .min((ly - (ry + rh)).abs())
-            .min((lx - rx).abs())
-            .min((lx - (rx + rw)).abs());
+        let dist = outer_edge_distance(root, lx, ly);
         if dist <= OUTER_DOCK_MARGIN && best.as_ref().is_none_or(|(d, ..)| dist < *d) {
             best = Some((dist, spec_id.to_string(), (lx, ly), root));
         }
@@ -2343,6 +2408,24 @@ fn resolve_outer_dock_zone(
             y_rel,
         },
     })
+}
+
+/// (R1167 §5.51) Perpendicular distance from a window-local cursor `(lx, ly)` to
+/// the nearest of the four edges of `root` (the window content rect) — the OUTER
+/// full-span dock metric shared by the cross-window
+/// ([`resolve_outer_dock_zone`]) and same-window
+/// ([`InputRouter::resolve_own_outer_dock`]) perimeter passes (the one SSOT for
+/// "how close to a window edge is this cursor", so the two paths classify the
+/// outer band identically — the band MEMBERSHIP test differs [straddle vs inside],
+/// but the distance metric does not).
+fn outer_edge_distance(root: Rect, lx: f64, ly: f64) -> f64 {
+    let (rx, ry) = (f64::from(root.x), f64::from(root.y));
+    let (rw, rh) = (f64::from(root.w), f64::from(root.h));
+    (ly - ry)
+        .abs()
+        .min((ly - (ry + rh)).abs())
+        .min((lx - rx).abs())
+        .min((lx - (rx + rw)).abs())
 }
 
 /// R1102 §5.51 PR-33 — the own-window-first precedence mapping a per-window own
@@ -6262,6 +6345,95 @@ mod tests {
         assert!(
             router.resolve_drop_point(200.0, -50.0).is_none(),
             "a cursor above the window has no own-window drop target",
+        );
+    }
+
+    /// R1167 §5.51 — the same-window OUTER dock override (debt B): a DOCK-PANEL
+    /// drag whose cursor is in this window's outer band resolves to the full-span
+    /// OUTER sentinel (so `resolve_drop` → `OuterDock` → `dock_panel_outer`),
+    /// reaching the window-edge full-span dock WITHOUT leaving the window — the
+    /// asymmetry that made same-window outer docking unreachable before. The
+    /// interior keeps the inner panel hit-test; a non-dock kind (the outliner tree
+    /// reparent) keeps the plain hit-test near the edge too (the dock-kind gate);
+    /// a cursor OUTSIDE the window is an escape (→ float), not an outer dock.
+    /// Non-tautological: the SAME edge cursor returns the inner panel under a
+    /// non-dock kind but the OUTER sentinel under the dock kind.
+    #[test]
+    fn r1167_same_window_outer_dock_override_for_dock_panel_drag() {
+        use pinion_core::scene::{BoxNode, ContainerNode};
+        use pinion_core::style::{Color, LayoutStyle};
+        use std::borrow::Cow;
+
+        let content = Scene::Box(
+            BoxNode::filled(Rect::new(0, 0, 400, 400), Color::default()).with_tag("panel#content"),
+        );
+        let mut panel = ContainerNode::new(vec![content])
+            .with_tag("panel")
+            .with_layout(LayoutStyle::new().with_drop_target(true));
+        panel.rect = Rect::new(0, 0, 400, 400);
+        let scene = Scene::Container(panel);
+        let mut router = InputRouter::new();
+        let (mut state_scene, _) = state_with_button();
+        router.update_paint_scene(scene, &mut state_scene);
+
+        let dock = DragPayload {
+            kind: Cow::Borrowed(DOCK_PANEL_DRAG_KIND),
+            value: IntrospectValue::Text("panel".into()),
+        };
+        let tree = DragPayload {
+            kind: Cow::Borrowed("tree-node"),
+            value: IntrospectValue::Text("n".into()),
+        };
+
+        // A cursor within OUTER_DOCK_MARGIN of the LEFT edge → the full-span OUTER
+        // sentinel (normalised over the WHOLE window: 10/400, 200/400).
+        let outer = router
+            .resolve_own_outer_dock(10.0, 200.0)
+            .expect("left band is outer");
+        assert_eq!(outer.tag, OUTER_DOCK_ZONE_TAG);
+        assert!((outer.x_rel - 0.025).abs() < 1e-4 && (outer.y_rel - 0.5).abs() < 1e-4);
+
+        // The override fires for a dock-panel drag near the edge...
+        assert_eq!(
+            router
+                .resolve_drag_own_over(&dock, 10.0, 200.0)
+                .expect("dock outer")
+                .tag,
+            OUTER_DOCK_ZONE_TAG,
+            "a dock-panel drag near the edge gets the full-span outer sentinel",
+        );
+        // ...but NOT for a non-dock drag (the gate): the inner hit-test wins.
+        assert_eq!(
+            router
+                .resolve_drag_own_over(&tree, 10.0, 200.0)
+                .expect("tree inner")
+                .tag,
+            "panel",
+            "a non-dock drag near the edge keeps the inner hit-test (no dock sentinel)",
+        );
+
+        // The window INTERIOR is not outer (the inner panel hit-test applies).
+        assert!(
+            router.resolve_own_outer_dock(200.0, 200.0).is_none(),
+            "the centre is interior, not an outer dock",
+        );
+        assert_eq!(
+            router
+                .resolve_drag_own_over(&dock, 200.0, 200.0)
+                .expect("inner")
+                .tag,
+            "panel",
+        );
+
+        // A cursor OUTSIDE the window is an ESCAPE (→ float via the empty own-over),
+        // not an outer dock — the inside-only band preserves drag-out-to-float.
+        assert!(
+            router.resolve_own_outer_dock(-10.0, 200.0).is_none(),
+            "left of the window is an escape, not an outer dock",
+        );
+        assert!(
+            router.resolve_own_outer_dock(410.0, 200.0).is_none(),
+            "right of the window is an escape, not an outer dock",
         );
     }
 

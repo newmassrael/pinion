@@ -2158,6 +2158,15 @@ pub const DEFAULT_REORGANIZE_RATIO: f32 = 0.5;
 /// home-ratio follow-up (the home anchor does not yet carry the ratio).
 const OUTER_DOCK_NEW_FRAC: f32 = 0.22;
 
+/// (R1167 §5.51) The integer-percent peer of [`OUTER_DOCK_NEW_FRAC`] — the OUTER
+/// dock preview band thickness ([`dock_outer_zone_highlight`] /
+/// [`dock_outer_preview_overlay`]), so the previewed full-span band == what
+/// [`DockReorganizer::dock_panel_outer`] actually docks at (preview == result for
+/// the outer dock, the [[verify-seed-claims-audit-first]] fidelity the inner
+/// [`DOCK_SPLIT_RESULT_PCT`] gives the inner split). Kept in sync with the
+/// fraction by `dock_outer_new_pct_matches_frac`.
+const OUTER_DOCK_NEW_PCT: u8 = 22;
+
 /// (R686 §5.16 §5.45) Prefix for the stable split ids the
 /// [`DockReorganizeExternal`] mints when a `SplitInsert` gesture
 /// creates a new divider (`reorg-split-{seq}`). Distinct from any
@@ -4014,9 +4023,17 @@ impl External for TabWellExternal {
                             zone,
                         })
                 }
-                // OuterDock (cross-window only) / Float paint no same-window
-                // highlight.
-                DropResolution::OuterDock { .. } | DropResolution::Float => None,
+                // (R1167 §5.51) A same-window OUTER dock (the cursor entered the
+                // window's outer band) previews a FULL-SPAN band — the sentinel
+                // `target` overlays the WHOLE surface at `edge`; preview == result
+                // (the release `dock_panel_outer` docks full-span). Float (dead-zone
+                // / non-panel / off-target) paints nothing.
+                DropResolution::OuterDock { edge } => Some(DockDropPreview {
+                    source: panel.to_string(),
+                    target: pinion_core::external::OUTER_DOCK_ZONE_TAG.to_string(),
+                    zone: edge,
+                }),
+                DropResolution::Float => None,
             }
         });
         write_drop_preview(self.drop_preview.as_ref(), preview);
@@ -4818,6 +4835,108 @@ pub fn dock_drop_zone_highlight(zone: DockDropZone, theme: &Theme) -> Scene {
     )
 }
 
+/// (R1167 §5.51) The SAME-window OUTER full-span dock preview — a Percent-sized,
+/// absolutely-positioned, pointer-transparent band spanning the WHOLE dock surface
+/// cross-axis at `edge`, of thickness [`OUTER_DOCK_NEW_PCT`] (what
+/// [`DockReorganizer::dock_panel_outer`] docks at, so the previewed band == the
+/// landed band — preview == result). The outer-perimeter peer of
+/// [`dock_drop_zone_highlight`] (which previews an inner panel split): a dock
+/// consumer renders it over the whole surface when a same-window drag resolves to
+/// [`DropResolution::OuterDock`] (a [`DockDropPreview`] whose `target` is the
+/// reserved [`OUTER_DOCK_ZONE_TAG`](pinion_core::external::OUTER_DOCK_ZONE_TAG)).
+/// Only edge zones — an outer dock is never a centre tabify, so
+/// [`DockDropZone::Center`] / [`DockDropZone::None`] paint an empty overlay.
+#[must_use]
+pub fn dock_outer_zone_highlight(edge: DockDropZone, theme: &Theme) -> Scene {
+    let overlay_layout = || {
+        LayoutStyle::new()
+            .with_absolute_position(0, 0)
+            .with_size(
+                Size::auto()
+                    .with_width(SizeValue::Percent(100))
+                    .with_height(SizeValue::Percent(100)),
+            )
+            .with_pointer_transparent(true)
+    };
+    let band = OUTER_DOCK_NEW_PCT;
+    let (dir, justify, w, h) = match edge {
+        DockDropZone::Left => (FlexDirection::Row, JustifyContent::Start, band, 100),
+        DockDropZone::Right => (FlexDirection::Row, JustifyContent::End, band, 100),
+        DockDropZone::Top => (FlexDirection::Column, JustifyContent::Start, 100, band),
+        DockDropZone::Bottom => (FlexDirection::Column, JustifyContent::End, 100, band),
+        DockDropZone::Center | DockDropZone::None => {
+            return Scene::Container(ContainerNode::new(vec![]).with_layout(overlay_layout()));
+        }
+    };
+    let tint = dock_drop_highlight_tint(theme);
+    let strip = Scene::Container(
+        ContainerNode::new(vec![])
+            .with_style(BoxStyle::filled(tint))
+            .with_layout(
+                LayoutStyle::new().with_size(
+                    Size::auto()
+                        .with_width(SizeValue::Percent(w))
+                        .with_height(SizeValue::Percent(h)),
+                ),
+            ),
+    );
+    Scene::Container(
+        ContainerNode::new(vec![strip]).with_layout(
+            overlay_layout()
+                .flex(dir)
+                .with_justify(justify)
+                .with_align_items(AlignItems::Stretch),
+        ),
+    )
+}
+
+/// (R1167 §5.51) The OUTER full-span dock preview as an absolutely-positioned
+/// (post-layout pixel-rect) [`Scene::Box`], for the CROSS-window path (the shell
+/// injects it over the target window after layout). Spans the whole `window_rect`
+/// cross-axis at `edge`, of thickness [`OUTER_DOCK_NEW_PCT`] (== the
+/// [`DockReorganizer::dock_panel_outer`] ratio, so preview == result — replacing
+/// the pre-R1167 reuse of [`dock_drop_preview_overlay`], which drew the inner
+/// 50% split band for an outer dock that lands at 22%). The pixel-rect peer of
+/// [`dock_outer_zone_highlight`] (Percent, same-window), exactly as
+/// [`dock_drop_preview_overlay`] (pixel) peers [`dock_drop_zone_highlight`]
+/// (Percent) for an inner split. `None` for a non-edge zone (an outer dock needs
+/// an edge); `tint` is the binding's resolved colour + an opaque accent border
+/// (the [`dock_drop_preview_overlay`] convention so the band reads over content).
+#[must_use]
+pub fn dock_outer_preview_overlay(
+    window_rect: Rect,
+    edge: DockDropZone,
+    tint: Color,
+) -> Option<Scene> {
+    let band_w = window_rect.w * u32::from(OUTER_DOCK_NEW_PCT) / 100;
+    let band_h = window_rect.h * u32::from(OUTER_DOCK_NEW_PCT) / 100;
+    let (x, y, w, h) = match edge {
+        DockDropZone::Left => (window_rect.x, window_rect.y, band_w, window_rect.h),
+        DockDropZone::Right => (
+            window_rect.x + window_rect.w - band_w,
+            window_rect.y,
+            band_w,
+            window_rect.h,
+        ),
+        DockDropZone::Top => (window_rect.x, window_rect.y, window_rect.w, band_h),
+        DockDropZone::Bottom => (
+            window_rect.x,
+            window_rect.y + window_rect.h - band_h,
+            window_rect.w,
+            band_h,
+        ),
+        DockDropZone::Center | DockDropZone::None => return None,
+    };
+    let border = Border::new(tint.with_alpha(0xFF), DOCK_REDOCK_PREVIEW_BORDER_PX);
+    let mut node = BoxNode::new(
+        Rect::new(x, y, w, h),
+        BoxStyle::filled(tint).with_border(border),
+    );
+    node.tag = Some(DOCK_DROP_PREVIEW_TAG.into());
+    node.layout = node.layout.with_pointer_transparent(true);
+    Some(Scene::Box(node))
+}
+
 // ─────────────────────────────────────────────────────────────────────
 // R685 §5.16 §5.49 — Floating-panel placeholder paint helper.
 //
@@ -5420,10 +5539,13 @@ fn json_rel(obj: &serde_json::Value, key: &str) -> f32 {
         .unwrap_or(0.5) as f32
 }
 
-/// (R1081 §5.51) The `DragPayload::kind` discriminator a dock-panel drag
-/// carries, so a future cross-widget drop target can match dock panels
-/// before reading the payload value (the panel id).
-pub const DOCK_PANEL_DRAG_KIND: &str = "dock-panel";
+/// (R1081 §5.51; R1167 SSOT-lift) The `DragPayload::kind` discriminator a
+/// dock-panel drag carries, so a future cross-widget drop target can match dock
+/// panels before reading the payload value (the panel id). R1167 lifted the canon
+/// to [`pinion_core::external::DOCK_PANEL_DRAG_KIND`] so the runtime router can gate
+/// its same-window OUTER-dock override on the same string; re-exported here for the
+/// established `pinion_widget_paint::dock::DOCK_PANEL_DRAG_KIND` API.
+pub use pinion_core::external::DOCK_PANEL_DRAG_KIND;
 
 /// (R683.B §5.16 → R1081 §5.51) Drag-to-dock / drag-to-tear-off
 /// [`External`] for the [`view_dock_panel`] header strip. Registered by
@@ -6052,7 +6174,17 @@ impl External for DockPanelExternal {
                     target,
                     zone,
                 }),
-                _ => None,
+                // (R1167 §5.51) A same-window OUTER dock (the cursor entered the
+                // window's outer band) previews a FULL-SPAN band: the sentinel
+                // `target` tells the binding to overlay the WHOLE surface at `edge`
+                // (not a panel rect). preview == result — the `drag_release`
+                // OuterDock arm docks full-span via `dock_panel_outer`.
+                DropResolution::OuterDock { edge } => Some(DockDropPreview {
+                    source: self.panel_id.to_string(),
+                    target: pinion_core::external::OUTER_DOCK_ZONE_TAG.to_string(),
+                    zone: edge,
+                }),
+                DropResolution::Float | DropResolution::SnapBack { .. } => None,
             }
         });
         tracing::trace!(
@@ -9098,6 +9230,91 @@ mod tests {
                 .abs()
                 < f32::EPSILON,
         );
+    }
+
+    #[test]
+    fn dock_outer_new_pct_matches_frac() {
+        // R1167 §5.51 — the OUTER preview band percent must mirror the fraction
+        // `dock_panel_outer` docks the new panel at, so the previewed full-span
+        // band and the landed band cannot drift (preview == result for outer dock).
+        assert!(
+            (f32::from(super::OUTER_DOCK_NEW_PCT) / 100.0 - super::OUTER_DOCK_NEW_FRAC).abs()
+                < f32::EPSILON,
+        );
+    }
+
+    #[test]
+    fn r1167_dock_outer_zone_highlight_is_a_full_span_edge_band() {
+        // R1167 §5.51 — the same-window OUTER preview spans the WHOLE surface
+        // cross-axis at the edge (a row/column over every pane), at the
+        // OUTER_DOCK_NEW_PCT band, pointer-transparent (it never grabs the drag).
+        // Percent-sized (resolved by the layout pass over the surface), so this
+        // asserts the structure: an absolute overlay holding one band strip.
+        use pinion_core::style::SizeValue::Percent;
+        let theme = Theme::light();
+        let band_of = |edge| {
+            let Scene::Container(overlay) = super::dock_outer_zone_highlight(edge, &theme) else {
+                panic!("overlay is a Container");
+            };
+            assert!(
+                overlay.layout.pointer_transparent,
+                "the outer preview never grabs the drag",
+            );
+            let Some(Scene::Container(strip)) = overlay.children.first() else {
+                panic!("{edge:?}: a band strip");
+            };
+            (strip.layout.size.width, strip.layout.size.height)
+        };
+        let band = Percent(super::OUTER_DOCK_NEW_PCT);
+        let full = Percent(100);
+        // A left/right band is the full HEIGHT, a thin WIDTH; top/bottom the reverse.
+        assert_eq!(band_of(DockDropZone::Left), (band, full));
+        assert_eq!(band_of(DockDropZone::Right), (band, full));
+        assert_eq!(band_of(DockDropZone::Top), (full, band));
+        assert_eq!(band_of(DockDropZone::Bottom), (full, band));
+        // An outer dock is never a centre tabify → an empty overlay (no band).
+        let Scene::Container(center) =
+            super::dock_outer_zone_highlight(DockDropZone::Center, &theme)
+        else {
+            panic!("a Container");
+        };
+        assert!(
+            center.children.is_empty(),
+            "centre is not an outer dock — no band",
+        );
+    }
+
+    #[test]
+    fn r1167_dock_outer_preview_overlay_is_a_full_span_pixel_band() {
+        use pinion_core::style::Color;
+        // R1167 §5.51 — the cross-window OUTER preview is a pixel-rect band of
+        // OUTER_DOCK_NEW_PCT thickness spanning the whole window cross-axis at the
+        // edge (== where dock_panel_outer lands: preview == result). 1000×800
+        // window → band_w = 1000*22/100 = 220, band_h = 800*22/100 = 176.
+        let win = Rect::new(0, 0, 1000, 800);
+        let tint = Color::rgba(0x1a, 0x73, 0xe8, 0x66);
+        let rect_of = |edge| match super::dock_outer_preview_overlay(win, edge, tint) {
+            Some(Scene::Box(b)) => {
+                assert!(b.layout.pointer_transparent, "preview never grabs input");
+                assert_eq!(b.tag.as_deref(), Some(DOCK_DROP_PREVIEW_TAG));
+                assert_eq!(b.style.border.expect("opaque border").color.a, 0xff);
+                Some(b.rect)
+            }
+            Some(_) => panic!("a Box"),
+            None => None,
+        };
+        assert_eq!(rect_of(DockDropZone::Left), Some(Rect::new(0, 0, 220, 800)));
+        assert_eq!(
+            rect_of(DockDropZone::Right),
+            Some(Rect::new(780, 0, 220, 800)),
+        );
+        assert_eq!(rect_of(DockDropZone::Top), Some(Rect::new(0, 0, 1000, 176)));
+        assert_eq!(
+            rect_of(DockDropZone::Bottom),
+            Some(Rect::new(0, 624, 1000, 176)),
+        );
+        assert_eq!(rect_of(DockDropZone::Center), None, "outer needs an edge");
+        assert_eq!(rect_of(DockDropZone::None), None);
     }
 
     // ─────────────────────────────────────────────────────────────────

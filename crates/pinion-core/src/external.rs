@@ -328,7 +328,25 @@ pub const OUTER_DOCK_ZONE_TAG: &str = "\u{0}outer-dock-zone";
 /// outermost band of this width maps to the container edge; the interior past it
 /// maps to per-panel inner zones — so a drop at the very top of the dock area is a
 /// full-width row, while a drop between two panels splits just those panels.
+///
+/// ★LIVE-TUNE (R1167, HW-gated): this is a fixed absolute band. The user found it
+/// "too thin" cross-window; the R1167 same-window outer dock
+/// ([`InputRouter::resolve_own_outer_dock`]) reaches it from inside, so it is now
+/// reachable at this width, but the FEEL of the width is the user's `:0` call. A
+/// fixed widen is NOT scale-safe (a band wider than a small floater's half makes
+/// its whole area outer), so a future tune is likely a fraction-of-dimension band
+/// (`min(MARGIN, frac * dim)`), not a bigger constant — deferred to live feedback.
 pub const OUTER_DOCK_MARGIN: f64 = 32.0;
+
+/// (R1081 §5.51; R1167 SSOT-lift to core) The [`DragPayload::kind`] discriminator a
+/// dock-panel drag (a panel header OR a tab) carries. Lives in core so BOTH the
+/// producing widget (`pinion_widget_paint::dock`, which re-exports it) AND the
+/// consuming runtime router (which gates the same-window OUTER-dock override on it
+/// — a non-dock drag like the outliner tree reparent must NOT get the dock
+/// sentinel) name the one string. The drag-kind is wire vocabulary shared across
+/// the producer/consumer boundary, so its canon home is the shared crate
+/// (the [[wire-vocab-canon-pin-not-fold]] pattern), like [`OUTER_DOCK_ZONE_TAG`].
+pub const DOCK_PANEL_DRAG_KIND: &str = "dock-panel";
 
 /// Failure modes for [`ExternalIntrospect::intervene`].
 #[non_exhaustive]

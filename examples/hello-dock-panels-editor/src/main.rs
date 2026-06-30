@@ -44,6 +44,7 @@
 
 use pinion_a11y::{AccessNode, WidgetA11y};
 use pinion_core::command::Command;
+use pinion_core::external::OUTER_DOCK_ZONE_TAG;
 use pinion_core::external::{DropPoint, IntrospectValue};
 use pinion_core::intent::Intent;
 use pinion_core::intent_tag;
@@ -63,9 +64,10 @@ use pinion_widget_paint::dock::{
     DockReorganizeExternal, DockReorganizer, DockSplitState, DockTopology, DropResolution,
     FloatPolicy, FloatingPlaceholderStyle, TEAR_OFF_EVENT, TEAR_OFF_FOLLOW_EVENT,
     TEAR_OFF_REDOCK_AT_EVENT, TEAR_OFF_REDOCK_EVENT, TabWellExternal, WINDOW_MOVE_EVENT,
-    dock_drop_preview_overlay, dock_redock_preview_tint, dock_tablist_access_nodes,
-    dock_zone_guide_overlay, floating_window_id as dock_floating_window_id, resolve_drop,
-    view_dock_panel, view_dock_surface, view_floating_placeholder,
+    dock_drop_preview_overlay, dock_outer_preview_overlay, dock_outer_zone_highlight,
+    dock_redock_preview_tint, dock_tablist_access_nodes, dock_zone_guide_overlay,
+    floating_window_id as dock_floating_window_id, resolve_drop, view_dock_panel,
+    view_dock_surface, view_floating_placeholder,
 };
 use pinion_widget_paint::splitter::SplitterExternal;
 use std::borrow::Cow;
@@ -916,7 +918,7 @@ fn view_main_dock(state: ButtonState) -> Scene {
     // The editor seeds `Some` and never empties, but the view honours the
     // universal Option (the R685.B SSOT walker auto-builds DockPanelStyle /
     // SplitterStyle from the topology + threads its declared initial_ratio).
-    match topology {
+    let surface = match topology {
         Some(topology) => view_dock_surface(
             &topology,
             |panel_id| {
@@ -944,6 +946,27 @@ fn view_main_dock(state: ButtonState) -> Scene {
             &theme,
         ),
         None => Scene::Container(ContainerNode::new(vec![])),
+    };
+    // (R1167 §5.51) Same-window OUTER full-span preview: a dock-panel drag whose
+    // cursor entered the window's outer band resolves to a full-span outer dock —
+    // the preview's `target` is the OUTER_DOCK_ZONE_TAG sentinel (no panel matches
+    // the per-panel `preview_zone` callback above, so the inner panels stay
+    // un-highlighted). Overlay a full-span band across the WHOLE surface (a
+    // row/column over every pane) at the previewed edge, of the thickness
+    // `dock_panel_outer` lands at — preview == result, the same affordance the
+    // cross-window floater preview shows. Appended as an absolute (out-of-flow)
+    // child of the surface root, exactly as a panel appends its inner-zone
+    // highlight, so the dock layout is undisturbed.
+    match preview.as_ref().filter(|p| p.target == OUTER_DOCK_ZONE_TAG) {
+        Some(p) => match surface {
+            Scene::Container(mut root) => {
+                root.children
+                    .push(dock_outer_zone_highlight(p.zone, &theme));
+                Scene::Container(root)
+            }
+            other => other,
+        },
+        None => surface,
     }
 }
 
@@ -1352,21 +1375,26 @@ impl WidgetView for DockPanelsEditorView {
             x_rel,
             y_rel,
         };
-        let zone = match resolve_drop(
+        // R1139 — the bolder cross-window redock tint (over opaque content), not
+        // the subtler in-window highlight; the overlay adds an opaque accent
+        // border so the result region reads regardless of the content behind it.
+        let tint = dock_redock_preview_tint(&Theme::default());
+        match resolve_drop(
             Some(&point),
             source_panel,
             |t| reorganizer.is_panel(t),
             reorganizer.tabbing(),
         ) {
-            DropResolution::Dock { zone, .. } => zone,
-            DropResolution::OuterDock { edge } => edge,
-            DropResolution::Float | DropResolution::SnapBack { .. } => return None,
-        };
-        // R1139 — the bolder cross-window redock tint (over opaque content), not
-        // the subtler in-window highlight; the overlay adds an opaque accent
-        // border so the result region reads regardless of the content behind it.
-        let tint = dock_redock_preview_tint(&Theme::default());
-        dock_drop_preview_overlay(panel_rect, zone, tint)
+            // (R1167 §5.51) A full-span OUTER dock previews the thin perimeter band
+            // `dock_panel_outer` actually lands at (`panel_rect` is the WHOLE window
+            // here), so the cross-window outer preview == result — the inner 50%
+            // `dock_drop_preview_overlay` over-showed it pre-R1167.
+            DropResolution::OuterDock { edge } => {
+                dock_outer_preview_overlay(panel_rect, edge, tint)
+            }
+            DropResolution::Dock { zone, .. } => dock_drop_preview_overlay(panel_rect, zone, tint),
+            DropResolution::Float | DropResolution::SnapBack { .. } => None,
+        }
     }
 
     /// (R1141 §5.51 PR-39) Outline every dockable zone (panels + torn slots)
@@ -1478,6 +1506,48 @@ mod tests {
                 "a live panel target splits at the cursor edge (w={} < {}), not full",
                 half.rect.w,
                 panel.w,
+            );
+        });
+    }
+
+    #[test]
+    fn r1167_dock_drop_preview_outer_is_a_thin_full_span_band() {
+        // R1167 §5.51 — a cross-window OUTER dock (target == the OUTER sentinel,
+        // `panel_rect` == the WHOLE window) previews the THIN full-span band
+        // `dock_panel_outer` lands at (22%), NOT the inner 50% split — preview ==
+        // result for the outer dock (pre-R1167 the outer case reused the 50%
+        // `dock_drop_preview_overlay`). Resolved through `resolve_drop` in an owner,
+        // exactly like the inner case (r1140).
+        run_in_owner(|| {
+            let win = Rect::new(0, 0, 1000, 800);
+            // x_rel/y_rel near the BOTTOM edge → `outer_zone_for` picks Bottom.
+            let Some(Scene::Box(band)) = <DockPanelsEditorView as WidgetView>::dock_drop_preview(
+                "properties",
+                OUTER_DOCK_ZONE_TAG,
+                win,
+                0.5,
+                0.95,
+            ) else {
+                panic!("an outer dock paints a preview Box");
+            };
+            assert_eq!(
+                band.rect.w, win.w,
+                "the outer band spans the full window width"
+            );
+            assert_eq!(
+                band.rect.h,
+                win.h * 22 / 100,
+                "a thin 22% band (== dock_panel_outer's ratio), not the inner 50%",
+            );
+            assert_eq!(
+                band.rect.y,
+                win.h - band.rect.h,
+                "the band is flush to the bottom edge",
+            );
+            assert!(
+                band.rect.h < win.h / 2,
+                "an outer band is thinner than an inner 50% split (h={})",
+                band.rect.h,
             );
         });
     }
