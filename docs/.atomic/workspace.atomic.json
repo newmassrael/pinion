@@ -19776,6 +19776,54 @@
         "floater edge-resize still deferred (controls_only skips the resize border)"
       ]
     },
+    "R1171": {
+      "decision_summary": "R1171 §5.16 — controls-in-header redesign (the user caught the smell: 'having to dimension-match the chrome to the header is itself a wrong design'). R1170 rendered a torn-off panel's window controls as a SHELL chrome overlay sized to fixed pixels, which the binding had to manually match to the panel's own header (height, then colour) — two independent layers reconciled by hand, the reactive-patching smell. Root cause: the floater already has a title bar (its panel header = the redock drag handle), so a second shell chrome bar was redundant. R1171: the controls (min/max/close) are rendered IN the panel header via view_dock_panel_with_actions' header-trailing slot — one title bar, auto-sized by the layout (intrinsic glyph+padding, header-centred, no dimension match); text glyphs from glyph.rs (the widget-layer convention). Retired WindowChromeStyle.controls_only (the wrong shell-overlay middle-ground) + the editor window_chrome override + the shell inset/resize branches + the owner-wrap. KEPT the framework-correct part R1170 got right: the WidgetView::window_close_requested seam + the shell's tag routing (try_chrome_press) — the editor tags its header buttons with the re-exported chrome control tags so a press routes to set_minimized/set_maximized/window_close_requested.",
+      "changes_bullets": [
+        "redesign: window controls live IN the panel header, not a shell overlay",
+        "view_dock_panel_with_actions header_trailing slot (right-aligned, layout-sized)",
+        "editor view_window_controls (min/max/close tagged glyph buttons) + glyph consts",
+        "retire WindowChromeStyle.controls_only; shell re-exports the control tags"
+      ],
+      "verification_bullets": [
+        "user caught the smell: matching the overlay height to the header by hand",
+        "controls auto-size by composition (glyph+padding, header-centered), no match",
+        "editor unit: floating panel header carries the 3 control tags; close docks back",
+        "demo r1171 31 assert: controls are header DESCENDANTS, ordered, NO shell strip",
+        "window_close_requested seam + try_chrome_press routing kept; workspace + clippy clean"
+      ],
+      "impact_refs": [
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "min/max/close press feel + glyph appearance = HW-gated (user :0)",
+        "floater edge-resize still deferred (no consumer yet)",
+        "the close SEAM is the framework-correct part R1170 got right; only the",
+        "rendering layer moved (shell overlay -> widget header)"
+      ],
+      "publishable_decision_summary": "R1171 §5.16 — controls-in-header redesign (the user caught the smell: 'having to dimension-match the chrome to the header is itself a wrong design'). R1170 rendered a torn-off panel's window controls as a SHELL chrome overlay sized to fixed pixels, which the binding had to manually match to the panel's own header (height, then colour) — two independent layers reconciled by hand, the reactive-patching smell. Root cause: the floater already has a title bar (its panel header = the redock drag handle), so a second shell chrome bar was redundant. R1171: the controls (min/max/close) are rendered IN the panel header via view_dock_panel_with_actions' header-trailing slot — one title bar, auto-sized by the layout (intrinsic glyph+padding, header-centred, no dimension match); text glyphs from glyph.rs (the widget-layer convention). Retired WindowChromeStyle.controls_only (the wrong shell-overlay middle-ground) + the editor window_chrome override + the shell inset/resize branches + the owner-wrap. KEPT the framework-correct part R1170 got right: the WidgetView::window_close_requested seam + the shell's tag routing (try_chrome_press) — the editor tags its header buttons with the re-exported chrome control tags so a press routes to set_minimized/set_maximized/window_close_requested.",
+      "publishable_changes_bullets": [
+        "redesign: window controls live IN the panel header, not a shell overlay",
+        "view_dock_panel_with_actions header_trailing slot (right-aligned, layout-sized)",
+        "editor view_window_controls (min/max/close tagged glyph buttons) + glyph consts",
+        "retire WindowChromeStyle.controls_only; shell re-exports the control tags"
+      ],
+      "publishable_verification_bullets": [
+        "user caught the smell: matching the overlay height to the header by hand",
+        "controls auto-size by composition (glyph+padding, header-centered), no match",
+        "editor unit: floating panel header carries the 3 control tags; close docks back",
+        "demo r1171 31 assert: controls are header DESCENDANTS, ordered, NO shell strip",
+        "window_close_requested seam + try_chrome_press routing kept; workspace + clippy clean"
+      ],
+      "publishable_impact_refs": [
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "min/max/close press feel + glyph appearance = HW-gated (user :0)",
+        "floater edge-resize still deferred (no consumer yet)",
+        "the close SEAM is the framework-correct part R1170 got right; only the",
+        "rendering layer moved (shell overlay -> widget header)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
