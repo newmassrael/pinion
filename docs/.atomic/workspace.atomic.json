@@ -19130,6 +19130,56 @@
         "push pending user consent (now 24 commits ahead of origin/main)"
       ]
     },
+    "R1158": {
+      "decision_summary": "R1158 §5.51 — a tab drag IS a panel-header drag: drag a tab OUT floats it (float_out + tear_off), over a zone docks it, cross-window redocks; shared preview + lifted SSOT free fns.",
+      "changes_bullets": [
+        "TabWellExternal drag-release now branches on the DROP POSITION like a panel-header drag, replacing the R1156 v1 that blindly undock_tab'd (split beside the sibling) regardless of where the tab was dropped.",
+        "A tab dragged OUT of every dock zone now FLOATS: float_out_panel removes it from the well (a tab is always collapse-style, a placeholder TAB makes no sense) + a tear_off intent adds its floating window. This is the live-test bug fix (drag-out used to split to the side).",
+        "A tab dragged over a same-window panel zone docks there (dock_panel_at_zone); a cross-window drop emits tear_off_redock_at (substrate mirror, unit-tested).",
+        "TabWellExternal gains a pending-intent queue + drain_intents + a shared drop_preview, so a tab drag paints the same bold cursor-zone affordance a panel-header drag does (preview + result: a tab drag IS a panel drag).",
+        "Lifted resolve_drop_preview / write_drop_preview / tear_off_redock_at_payload to shared free fns (TabWell = the 2nd consumer); DockPanelExternal delegates, no behaviour change.",
+        "The editor wires the TabWellExternal drop_preview to the same shared Signal the panels write."
+      ],
+      "verification_bullets": [
+        "5 unit tests: drag-out floats / drag-over-zone docks / click activates (no undock) / cross-window emits redock_at / preview writes then clears.",
+        "Demo tools/demos/r1158_tab_drag_float.py (35 assertions): dragging tab 0 to (2000,400) past the window edge floats it (torn-properties window appears, the well collapses); dragging a tab over viewport docks it (no new floating window).",
+        "cargo test --workspace = 0 fail across 198 suites; clippy -D pedantic clean; rustfmt clean.",
+        "Regression: r1096_dock_tab_click / r1145_undock_tab / r1156_outer_dock / r1124_floater_drag_back_redock / r1102_cross_window_redock all PASS on the rebuilt release binary."
+      ],
+      "impact_refs": [
+        "5.51"
+      ],
+      "carry_forward_bullets": [
+        "LIVE feel HW-gated: the user verifies on :0 that a hand-drag of a tab OUT floats it and the cursor-zone preview paints during the drag.",
+        "R1145 undock button (split-beside) kept as a distinct gesture from drag-out (float); its deletion stays a UX call pending the live confirmation.",
+        "Cross-window tab redock branch is substrate-correct but unreachable in the single-dock-window editor (unit-tested only).",
+        "Next-next: tab-well vs single-panel UI consistency (chrome when tabbed vs a lone panel)."
+      ],
+      "publishable_decision_summary": "R1158 §5.51 — a tab drag IS a panel-header drag: drag a tab OUT floats it (float_out + tear_off), over a zone docks it, cross-window redocks; shared preview + lifted SSOT free fns.",
+      "publishable_changes_bullets": [
+        "TabWellExternal drag-release now branches on the DROP POSITION like a panel-header drag, replacing the R1156 v1 that blindly undock_tab'd (split beside the sibling) regardless of where the tab was dropped.",
+        "A tab dragged OUT of every dock zone now FLOATS: float_out_panel removes it from the well (a tab is always collapse-style, a placeholder TAB makes no sense) + a tear_off intent adds its floating window. This is the live-test bug fix (drag-out used to split to the side).",
+        "A tab dragged over a same-window panel zone docks there (dock_panel_at_zone); a cross-window drop emits tear_off_redock_at (substrate mirror, unit-tested).",
+        "TabWellExternal gains a pending-intent queue + drain_intents + a shared drop_preview, so a tab drag paints the same bold cursor-zone affordance a panel-header drag does (preview + result: a tab drag IS a panel drag).",
+        "Lifted resolve_drop_preview / write_drop_preview / tear_off_redock_at_payload to shared free fns (TabWell = the 2nd consumer); DockPanelExternal delegates, no behaviour change.",
+        "The editor wires the TabWellExternal drop_preview to the same shared Signal the panels write."
+      ],
+      "publishable_verification_bullets": [
+        "5 unit tests: drag-out floats / drag-over-zone docks / click activates (no undock) / cross-window emits redock_at / preview writes then clears.",
+        "Demo tools/demos/r1158_tab_drag_float.py (35 assertions): dragging tab 0 to (2000,400) past the window edge floats it (torn-properties window appears, the well collapses); dragging a tab over viewport docks it (no new floating window).",
+        "cargo test --workspace = 0 fail across 198 suites; clippy -D pedantic clean; rustfmt clean.",
+        "Regression: r1096_dock_tab_click / r1145_undock_tab / r1156_outer_dock / r1124_floater_drag_back_redock / r1102_cross_window_redock all PASS on the rebuilt release binary."
+      ],
+      "publishable_impact_refs": [
+        "5.51"
+      ],
+      "publishable_carry_forward_bullets": [
+        "LIVE feel HW-gated: the user verifies on :0 that a hand-drag of a tab OUT floats it and the cursor-zone preview paints during the drag.",
+        "R1145 undock button (split-beside) kept as a distinct gesture from drag-out (float); its deletion stays a UX call pending the live confirmation.",
+        "Cross-window tab redock branch is substrate-correct but unreachable in the single-dock-window editor (unit-tested only).",
+        "Next-next: tab-well vs single-panel UI consistency (chrome when tabbed vs a lone panel)."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
