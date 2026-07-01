@@ -244,6 +244,47 @@ const RESIZE_CORNER_PX: u32 = 12;
 /// [`WINDOW_RESIZE_TAG_PREFIX`]) is stripped before the fresh set is appended.
 #[must_use]
 pub fn inject_resize_border(scene: Scene, viewport: Option<(u32, u32)>) -> Scene {
+    inject_resize_regions(scene, viewport, true)
+}
+
+/// (R1186 §5.16 §5.39) Resize border for a window whose TOP EDGE is owned by a
+/// CONTENT title bar — a dock panel HEADER that hosts the window controls
+/// (min / max / close) and is itself the move handle (the R1171
+/// controls-in-header design, `window_chrome == None`). The north edge and the
+/// two TOP corners are OMITTED, so the header keeps its full width — including
+/// the right-anchored close button — unshadowed; the window resizes from the
+/// sides, the bottom, and the two BOTTOM corners.
+///
+/// ## Contract for the header's controls
+///
+/// Dropping the north edge + top corners clears the header top. The west / east
+/// edges still span the FULL height (their top `RESIZE_EDGE_PX` overlaps the
+/// header's left / right border), so a binding hosting controls in this header
+/// must keep them at least `RESIZE_EDGE_PX` (6 px) from the left / right window
+/// edge — the standard title-bar side padding every real CSD app uses, e.g. the R1171
+/// header's 8 px side padding clears the 6 px edge. (This is the same property
+/// the side edges have in every window: content flush to a side edge is a resize
+/// grab, so controls are never placed flush to it.)
+///
+/// Contrast [`inject_resize_border`] (all eight regions), used when a SHELL
+/// chrome strip is layered ON TOP of the border and reclaims the top edge
+/// itself — there the north regions are dead under the strip, so keeping them is
+/// harmless. A content header cannot be layered over the border (it is painted
+/// BEFORE the shell overlays, so `hit_test`'s last-child-wins would let the top
+/// resize regions shadow the close button at the very corner a user reaches for
+/// to close). Dropping the top regions is the same "the top edge is owned by the
+/// title bar" CSD trade-off (GTK / Win11 caption windows, VS Code / Blender
+/// floating panels) the chrome case achieves by layering — a title-bar window is
+/// MOVED from its top, not resized.
+#[must_use]
+pub fn inject_resize_border_below_titlebar(scene: Scene, viewport: Option<(u32, u32)>) -> Scene {
+    inject_resize_regions(scene, viewport, false)
+}
+
+/// Shared implementation of the two resize-border variants. `include_top` gates
+/// the north edge + the two top corners (kept for a chrome-covered top, dropped
+/// for a content-header-owned top — see [`inject_resize_border_below_titlebar`]).
+fn inject_resize_regions(scene: Scene, viewport: Option<(u32, u32)>, include_top: bool) -> Scene {
     let Some((w, h)) = viewport else {
         return scene;
     };
@@ -253,18 +294,25 @@ pub fn inject_resize_border(scene: Scene, viewport: Option<(u32, u32)>) -> Scene
     let e = RESIZE_EDGE_PX;
     let c = RESIZE_CORNER_PX;
 
-    // Edges first (each spans the full side); corners after so they win in
-    // the overlap. Region order within the vec mirrors that priority.
-    let regions = [
-        (Rect::new(0, 0, w, e), WINDOW_RESIZE_NORTH_TAG),
-        (Rect::new(0, h - e, w, e), WINDOW_RESIZE_SOUTH_TAG),
-        (Rect::new(0, 0, e, h), WINDOW_RESIZE_WEST_TAG),
-        (Rect::new(w - e, 0, e, h), WINDOW_RESIZE_EAST_TAG),
-        (Rect::new(0, 0, c, c), WINDOW_RESIZE_NORTH_WEST_TAG),
-        (Rect::new(w - c, 0, c, c), WINDOW_RESIZE_NORTH_EAST_TAG),
-        (Rect::new(0, h - c, c, c), WINDOW_RESIZE_SOUTH_WEST_TAG),
-        (Rect::new(w - c, h - c, c, c), WINDOW_RESIZE_SOUTH_EAST_TAG),
-    ];
+    // Edges first (each spans the full side); corners after so they win in the
+    // overlap. The north edge + the two top corners are gated on `include_top`:
+    // a content-header title bar owns the top (R1186), a shell chrome strip
+    // covers it. The side edges span the full height either way — their top
+    // `RESIZE_EDGE_PX` sit over the header's left / right PADDING (controls are
+    // kept clear of it, per this fn's rustdoc contract), never over a control.
+    let mut regions: Vec<(Rect, &'static str)> = Vec::with_capacity(8);
+    if include_top {
+        regions.push((Rect::new(0, 0, w, e), WINDOW_RESIZE_NORTH_TAG));
+    }
+    regions.push((Rect::new(0, h - e, w, e), WINDOW_RESIZE_SOUTH_TAG));
+    regions.push((Rect::new(0, 0, e, h), WINDOW_RESIZE_WEST_TAG));
+    regions.push((Rect::new(w - e, 0, e, h), WINDOW_RESIZE_EAST_TAG));
+    if include_top {
+        regions.push((Rect::new(0, 0, c, c), WINDOW_RESIZE_NORTH_WEST_TAG));
+        regions.push((Rect::new(w - c, 0, c, c), WINDOW_RESIZE_NORTH_EAST_TAG));
+    }
+    regions.push((Rect::new(0, h - c, c, c), WINDOW_RESIZE_SOUTH_WEST_TAG));
+    regions.push((Rect::new(w - c, h - c, c, c), WINDOW_RESIZE_SOUTH_EAST_TAG));
 
     let mut wrapped = wrap_into_container(scene);
     strip_children_with_prefix(&mut wrapped, WINDOW_RESIZE_TAG_PREFIX);
@@ -603,6 +651,30 @@ mod tests {
                 tag.starts_with(WINDOW_RESIZE_TAG_PREFIX),
                 "{tag} carries the resize family prefix",
             );
+        }
+    }
+
+    #[test]
+    fn below_titlebar_omits_north_regions_keeps_sides_and_bottom() {
+        // R1186 — the content-header variant drops the north edge + the two top
+        // corners (the dock header owns the top: move handle + close button), and
+        // keeps the south / west / east edges + the two bottom corners.
+        let out = inject_resize_border_below_titlebar(empty(), Some((800, 600)));
+        for tag in [
+            WINDOW_RESIZE_SOUTH_TAG,
+            WINDOW_RESIZE_WEST_TAG,
+            WINDOW_RESIZE_EAST_TAG,
+            WINDOW_RESIZE_SOUTH_WEST_TAG,
+            WINDOW_RESIZE_SOUTH_EAST_TAG,
+        ] {
+            assert!(find_tag(&out, tag).is_some(), "below-titlebar keeps {tag}");
+        }
+        for tag in [
+            WINDOW_RESIZE_NORTH_TAG,
+            WINDOW_RESIZE_NORTH_WEST_TAG,
+            WINDOW_RESIZE_NORTH_EAST_TAG,
+        ] {
+            assert!(find_tag(&out, tag).is_none(), "below-titlebar omits {tag}");
         }
     }
 

@@ -1438,6 +1438,20 @@ impl WidgetView for DockPanelsEditorView {
         }
     }
 
+    /// (R1186 §5.16 §5.39) A torn-off panel's floating window IS resizable even
+    /// though it draws NO shell chrome (`window_chrome == None` — its title bar is
+    /// the dock HEADER, R1171). Pre-R1186 the resize border rode the chrome gate, so
+    /// a controls-in-header floater had no edge / corner resize; this decouples them.
+    /// The floating spec's `decorations:false` removed the OS frame, so this
+    /// client-side border is the sole resize affordance. The main window returns
+    /// `None` (derive from chrome) → it is OS-decorated, so the OS frame resizes it
+    /// and no client border is drawn.
+    fn window_resizable(window_id: &str) -> Option<bool> {
+        window_id
+            .strip_prefix(DEFAULT_FLOATING_WINDOW_PREFIX)
+            .map(|_| true)
+    }
+
     // (R1171 §5.16 §5.39) The editor no longer overrides `window_chrome`: a torn-off
     // panel's window controls (min / max / close) are rendered IN the panel HEADER
     // (`view_window_controls` → `view_dock_panel_with_actions`), one title bar that
@@ -1641,6 +1655,36 @@ mod tests {
                 "the main window's close is unhandled (the app exits)",
             );
         });
+    }
+
+    #[test]
+    fn r1186_floating_window_is_chromeless_yet_resizable() {
+        // R1186 §5.16 §5.39 (PR-43) — a torn-off panel's floating window is the
+        // controls-in-header shape: it draws NO shell chrome (`window_chrome ==
+        // None` — its title bar is the dock HEADER, R1171) YET is client-side
+        // resizable (`window_resizable == Some(true)`), the two decoupled. The
+        // shell's `chromeless_resizable_window_omits_top_but_keeps_sides_and_bottom`
+        // test proves
+        // that exact shape (chrome None + resizable Some(true)) gets the resize
+        // border injected; this asserts the editor's torn window IS that shape.
+        let torn = floating_window_id("properties");
+        assert_eq!(
+            <DockPanelsEditorView as WidgetView>::window_chrome(&torn),
+            None,
+            "the floater's title bar is its dock header — no separate shell chrome",
+        );
+        assert_eq!(
+            <DockPanelsEditorView as WidgetView>::window_resizable(&torn),
+            Some(true),
+            "★a torn-off floating window is client-side resizable despite no chrome",
+        );
+        // The main window derives resize from chrome (None) — it is OS-decorated,
+        // so the OS frame resizes it and the shell draws no client resize border.
+        assert_eq!(
+            <DockPanelsEditorView as WidgetView>::window_resizable(MAIN_WINDOW_ID),
+            None,
+            "the main window derives resize from chrome (OS frame resizes it)",
+        );
     }
 
     /// Depth-first: does `scene` (or a descendant) carry `tag`?

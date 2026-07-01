@@ -907,6 +907,30 @@ pub trait WidgetView: pinion_a11y::WidgetA11y {
         None
     }
 
+    /// (R1186 §5.16 §5.39) Whether this window carries a CLIENT-SIDE resize border
+    /// (the eight edge / corner drag-resize hit regions), DECOUPLED from
+    /// [`Self::window_chrome`].
+    ///
+    /// `None` (the default) derives the answer from chrome presence — resize iff
+    /// [`window_chrome`](Self::window_chrome) returned `Some` — the pre-R1186
+    /// coupling ("resize travels with chrome"), so every existing binding is
+    /// unchanged. `Some(true)` forces the resize border even for a **chrome-less**
+    /// borderless window; `Some(false)` suppresses it even for a chromed one.
+    ///
+    /// The motivating case is a torn-off dock panel whose title bar is its own
+    /// DOCK HEADER (the R1171 controls-in-header design: min / max / close live in
+    /// `view_dock_panel_with_actions`'s header-trailing slot, so the window draws
+    /// ONE strip and returns `window_chrome == None`). Without this hook that
+    /// window would be un-resizable, because the resize border used to ride on the
+    /// chrome gate. A binding returns `Some(true)` for such a window's id (paired
+    /// with `decorations:false`, so the OS frame is gone and the client border is
+    /// the only resize affordance). `window_id` is the canonical
+    /// [`WindowSpec::id`]; mirrors the [`Self::window_chrome`] hook shape.
+    #[must_use]
+    fn window_resizable(_window_id: &str) -> Option<bool> {
+        None
+    }
+
     /// (R1170 §5.16 §5.39) Per-window CLOSE seam. The shell calls this when a
     /// window close is requested — the OS close button on a decorated window
     /// (`WindowEvent::CloseRequested`, also Alt+F4) OR a client-side chrome close
