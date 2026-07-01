@@ -150,8 +150,14 @@
 //!   [`External::wheel`] forwarding leg), `Shift`+wheel pans horizontally,
 //!   `Ctrl`+`=`/`-`/`0` step/reset, `f` frames the graph. AI-first:
 //!   `query`/`intervene viewport.{x,y,zoom}` (pan in zoom-independent graph
-//!   units) + `invoke frame_all`. Drag-to-pan (Space/middle-drag) and
-//!   edge-drag auto-pan are documented follow-ups.
+//!   units) + `invoke frame_all`. Drag-to-pan already works through the shared
+//!   R881 / R882 router pan channel (middle-drag + `Space`+left-drag over the
+//!   world `ScrollNode`; zero canvas code). **Edge-drag auto-pan** (R1182): a
+//!   node held against the canvas rim auto-scrolls the viewport toward that
+//!   edge every frame (the [`AutoPan`] [`Tickable`], [`use_autopan`]) and the
+//!   dragged nodes stay pinned under the cursor — the DCC / Unreal
+//!   drag-past-the-edge convention. Wire-connect auto-pan (the `begin_drag`
+//!   DnD path) stays a documented follow-up.
 //! - **Inline edit** (R878 title / R901 port default): double-click a node
 //!   card (or `F2` on the selection, or `invoke begin_rename`) edits the
 //!   title; double-click a pin's default label (or `invoke
@@ -189,6 +195,7 @@ use std::rc::Rc;
 use pinion_a11y::{
     AccessNode, AccessState, AriaRole, ToolbarControl, WidgetA11y, toolbar_button_nodes,
 };
+use pinion_core::animation::Tickable;
 use pinion_core::cell_value::{CellKind, CellValue};
 use pinion_core::composite_tag::{split_send_payload, split_subindex};
 use pinion_core::event::LINE_HEIGHT_PX;
@@ -369,6 +376,18 @@ const ZOOM_MAX: f64 = 4.0;
 const ZOOM_STEP: f64 = 1.2;
 /// R877 — margin (screen px) `frame_all` keeps around the node bbox.
 const FRAME_MARGIN: i32 = 24;
+
+/// R1182 — edge-drag auto-pan hot zone: the fraction of the canvas, measured
+/// in from each edge, within which a live node drag auto-scrolls the viewport
+/// toward that edge (the DCC / Unreal convention — a node dragged to the rim
+/// keeps going without releasing). 0.12 of the 640×420 canvas ≈ a 77 px / 50 px
+/// rim.
+const AUTOPAN_MARGIN: f64 = 0.12;
+/// R1182 — auto-pan speed at full rim penetration, in world px per second (the
+/// [`ScrollState`] offset basis). Scaled by the frame `dt` and the linear
+/// penetration depth, so the pan eases in from the margin line (0) to full
+/// speed at the very rim (1).
+const AUTOPAN_SPEED: f64 = 900.0;
 
 const EDGE_W: u32 = 3;
 const SELECTED_EDGE_W: u32 = 5;
@@ -1109,6 +1128,108 @@ fn use_canvas_scroll() -> Rc<ScrollState> {
     owner.cache("node_graph.scroll", ScrollState::new)
 }
 
+/// R1182 — the node-drag latch (members + dead-zone [`DragLatch`]), shared as an
+/// `Rc` so the [`AutoPan`] tick reads the SAME authoritative drag state the
+/// coordinator writes (one source of truth, no per-frame copy). The coordinator
+/// takes this holder through [`GraphServices`]; the auto-pan driver clones it.
+fn use_node_drag() -> Rc<RefCell<Option<NodeDragStart>>> {
+    let owner = Owner::current().expect("use_node_drag requires an active Owner scope");
+    owner.cache("node_graph.node_drag", || RefCell::new(None))
+}
+
+/// R1182 — the last canvas cursor fraction of a live node drag (the auto-pan
+/// tick's rim probe). `pointer_move` writes it each latched frame; `reset_gesture`
+/// clears it to `None` so the driver goes at-rest when the drag ends.
+fn use_autopan_cursor() -> Rc<Cell<Option<(f64, f64)>>> {
+    let owner = Owner::current().expect("use_autopan_cursor requires an active Owner scope");
+    owner.cache("node_graph.autopan_cursor", || Cell::new(None))
+}
+
+/// R1182 — register the edge-drag auto-pan driver on the owner's animation clock
+/// (idempotent; the [`use_caret_blink`] register-once precedent). Called from the
+/// view setup so it ticks on every paint cycle, self-gating via
+/// [`AutoPan::is_at_rest`] — the backend keeps requesting frames only while a
+/// node drag is held against the rim.
+fn use_autopan() {
+    let owner = Owner::current().expect("use_autopan requires an active Owner scope");
+    let nodes = use_nodes();
+    let scroll = use_canvas_scroll();
+    let zoom = use_zoom();
+    let node_drag = use_node_drag();
+    let cursor = use_autopan_cursor();
+    let _: Rc<AutoPan> = owner.register_animation_once("node_graph.autopan", move || AutoPan {
+        nodes,
+        scroll,
+        zoom,
+        node_drag,
+        cursor,
+    });
+}
+
+/// R1182 — edge-drag auto-pan: while a node drag is held against the canvas rim,
+/// scroll the viewport toward that edge each frame and keep the dragged nodes
+/// pinned under the cursor. Registered as a framework [`Tickable`]
+/// ([`use_autopan`]) so it runs on the shell's paint clock exactly like the
+/// caret blink. Shares the authoritative drag state (`node_drag`) and the last
+/// cursor fraction (`cursor`) with the coordinator, so there is one source of
+/// truth for "which nodes, gripped where, under the cursor now".
+struct AutoPan {
+    nodes: Rc<Signal<Vec<GraphNode>>>,
+    scroll: Rc<ScrollState>,
+    zoom: Rc<Signal<f64>>,
+    node_drag: Rc<RefCell<Option<NodeDragStart>>>,
+    cursor: Rc<Cell<Option<(f64, f64)>>>,
+}
+
+impl AutoPan {
+    /// `(x_rel, y_rel, push_x, push_y)` when a live *latched* node drag sits in
+    /// the rim, else `None` — a marquee / dead-zone press / centred drag / idle
+    /// canvas never auto-pans. The one gate `tick` and `is_at_rest` share.
+    fn active(&self) -> Option<(f64, f64, f64, f64)> {
+        let (x_rel, y_rel) = self.cursor.get()?;
+        let live = self
+            .node_drag
+            .borrow()
+            .as_ref()
+            .is_some_and(|start| start.latch.live());
+        if !live {
+            return None;
+        }
+        let (px, py) = (autopan_push(x_rel), autopan_push(y_rel));
+        let in_rim = px.abs() > f64::EPSILON || py.abs() > f64::EPSILON;
+        in_rim.then_some((x_rel, y_rel, px, py))
+    }
+}
+
+impl Tickable for AutoPan {
+    fn tick(&self, dt: f32) {
+        let Some((x_rel, y_rel, px, py)) = self.active() else {
+            return;
+        };
+        let dt = f64::from(dt);
+        // Scroll the viewport toward the rim (the `ScrollState` clamps to the
+        // world extent — a rim already at the world edge simply stops).
+        self.scroll.scroll_by(
+            round_i32(px * AUTOPAN_SPEED * dt),
+            round_i32(py * AUTOPAN_SPEED * dt),
+        );
+        // Keep the dragged nodes pinned under the (still) cursor against the new
+        // viewport — the same re-derivation `pointer_move` runs on cursor
+        // motion, here driven by the viewport moving under a stationary cursor.
+        let (gx, gy) = cursor_graph_at(&self.scroll, self.zoom.get(), x_rel, y_rel);
+        if let Some(start) = self.node_drag.borrow().as_ref() {
+            follow_members(&self.nodes, &start.members, gx, gy);
+        }
+    }
+
+    fn is_at_rest(&self, _epsilon: f32) -> bool {
+        // At rest unless a live node drag is currently pushing against the rim.
+        // The backend's `request_redraw` loop honours this: an auto-pan in
+        // flight keeps requesting frames, a released / centred drag releases.
+        self.active().is_none()
+    }
+}
+
 /// R851 — the shared [`UndoStack`] for this editor scope. Reached identically
 /// by the coordinator (which records [`GraphEdit`]s in its mutation methods),
 /// the keyboard `Ctrl+Z` path, the status-line `undo_label` read, and the
@@ -1806,6 +1927,51 @@ fn set_pos_clamped(
     result
 }
 
+/// R877 / R1182 — the graph-space point under a canvas cursor fraction, given
+/// the raw viewport holders (un-normalise to canvas px → add the pan offset in
+/// world px → divide by zoom). The projection SSOT the coordinator's
+/// [`NodeGraphExternal::cursor_graph`] method and the auto-pan tick share, so a
+/// node re-derived by the tick and by a `pointer_move` land on the same math.
+fn cursor_graph_at(scroll: &ScrollState, zoom: f64, x_rel: f64, y_rel: f64) -> (f64, f64) {
+    let (ox, oy) = scroll.offset();
+    (
+        (f64::from(ox) + x_rel * f64::from(WIN_W)) / zoom,
+        (f64::from(oy) + y_rel * f64::from(WIN_H)) / zoom,
+    )
+}
+
+/// R1182 — re-derive every dragged member's position from the cursor's
+/// graph-space point `(gx, gy)` and its own grab anchor. The shared node-follow
+/// kernel: `pointer_move`'s live preview and the auto-pan tick both call it so a
+/// node stays pinned under the cursor whether the cursor moved or the viewport
+/// scrolled beneath it. The caller owns the reactive [`batch`] (one cascade per
+/// frame).
+fn follow_members(
+    nodes: &Rc<Signal<Vec<GraphNode>>>,
+    members: &[(NodeId, f64, f64, i32, i32)],
+    gx: f64,
+    gy: f64,
+) {
+    for &(id, grab_dx, grab_dy, _, _) in members {
+        set_pos_clamped(nodes, id, round_i32(gx + grab_dx), round_i32(gy + grab_dy));
+    }
+}
+
+/// R1182 — the auto-pan push along one axis for a canvas cursor fraction
+/// `frac` (0 = the low edge, 1 = the high edge). `0` in the dead centre,
+/// ramping linearly to `-1` at/over the low rim and `+1` at/over the high rim
+/// (a node dragged past the canvas edge under the capture lock — `frac`
+/// outside `[0, 1]` — saturates at full push rather than reversing).
+fn autopan_push(frac: f64) -> f64 {
+    if frac < AUTOPAN_MARGIN {
+        ((frac / AUTOPAN_MARGIN) - 1.0).max(-1.0)
+    } else if frac > 1.0 - AUTOPAN_MARGIN {
+        ((frac - (1.0 - AUTOPAN_MARGIN)) / AUTOPAN_MARGIN).min(1.0)
+    } else {
+        0.0
+    }
+}
+
 /// R918 — commit node `id`'s position to a clamped `(x, y)` and journal it as
 /// one *coalescable* [`MoveNodesCmd`], so a Details-panel `x` edit then `y` edit
 /// (or an arrow-nudge burst) fold into a single undo step. An unchanged position
@@ -1936,6 +2102,12 @@ struct GraphServices {
     /// R880 — the live marquee rect (shared with the view fn's rubber-band
     /// paint; [`use_marquee_rect`]).
     marquee_rect: Rc<Signal<Option<MarqueeRect>>>,
+    /// R1182 — the node-drag latch, shared with the [`AutoPan`] driver
+    /// ([`use_node_drag`]) so both read one authoritative drag state.
+    node_drag: Rc<RefCell<Option<NodeDragStart>>>,
+    /// R1182 — the auto-pan cursor probe ([`use_autopan_cursor`]); the
+    /// coordinator writes the live drag's canvas fraction, the driver reads it.
+    autopan_cursor: Rc<Cell<Option<(f64, f64)>>>,
 }
 
 /// The node-graph coordinator. Holds `Rc` clones of the reactive holders
@@ -1972,7 +2144,12 @@ struct NodeGraphExternal {
     edit_buffer: Rc<TextEditState>,
     /// Node grabbed for a capture-drag move (set on a node-body `PointerDown`).
     grabbed_node: Cell<Option<NodeId>>,
-    node_drag: RefCell<Option<NodeDragStart>>,
+    /// R1182 — shared with the [`AutoPan`] driver (was a plain `RefCell`): the
+    /// tick reads the same latch + members the coordinator writes.
+    node_drag: Rc<RefCell<Option<NodeDragStart>>>,
+    /// R1182 — the last canvas cursor fraction of a live node drag, the
+    /// auto-pan rim probe (`None` when no drag is following the cursor).
+    autopan_cursor: Rc<Cell<Option<(f64, f64)>>>,
     pending_press: Cell<PendingPress>,
     /// Edge under the most recent background press (the capture-seed
     /// `pointer_move` records it; a background `PointerUp` consumes it).
@@ -2011,7 +2188,8 @@ impl NodeGraphExternal {
             edit_buffer: services.edit_buffer,
             marquee_rect: services.marquee_rect,
             grabbed_node: Cell::new(None),
-            node_drag: RefCell::new(None),
+            node_drag: services.node_drag,
+            autopan_cursor: services.autopan_cursor,
             pending_press: Cell::new(PendingPress::None),
             pending_edge_hit: Cell::new(None),
             marquee: RefCell::new(None),
@@ -2041,15 +2219,10 @@ impl NodeGraphExternal {
     // ── R877 viewport (pan = scroll offset, zoom = shared Signal) ──
 
     /// The graph-space point under a canvas-relative cursor fraction
-    /// (the `pointer_move` / `wheel` coordinate basis): un-normalise to
-    /// canvas px, add the pan offset (world px), divide by zoom.
+    /// (the `pointer_move` / `wheel` coordinate basis): delegates to the
+    /// [`cursor_graph_at`] projection SSOT the auto-pan tick also uses.
     fn cursor_graph(&self, x_rel: f64, y_rel: f64) -> (f64, f64) {
-        let (ox, oy) = self.scroll.offset();
-        let zoom = self.zoom.get();
-        (
-            (f64::from(ox) + x_rel * f64::from(WIN_W)) / zoom,
-            (f64::from(oy) + y_rel * f64::from(WIN_H)) / zoom,
-        )
+        cursor_graph_at(&self.scroll, self.zoom.get(), x_rel, y_rel)
     }
 
     /// Set the zoom, keeping the graph point under the canvas-px anchor
@@ -3187,6 +3360,9 @@ impl NodeGraphExternal {
     fn reset_gesture(&self) {
         self.grabbed_node.set(None);
         *self.node_drag.borrow_mut() = None;
+        // R1182 — the drag is over; drop the auto-pan rim probe so the driver
+        // goes at-rest (the backend stops requesting frames for it).
+        self.autopan_cursor.set(None);
         self.pending_press.set(PendingPress::None);
         self.pending_edge_hit.set(None);
         // R880 — drop the marquee anchor + rubber-band paint (equality-skip
@@ -3333,14 +3509,16 @@ impl External for NodeGraphExternal {
         }
         let start = self.node_drag.borrow();
         if let Some(start) = start.as_ref() {
+            // R1182 — record the cursor fraction so the auto-pan driver can
+            // keep scrolling toward the rim once the cursor is pinned at the
+            // window edge and no further `pointer_move` fires.
+            self.autopan_cursor
+                .set(Some((f64::from(x_rel), f64::from(y_rel))));
             // Live preview: every member re-derives from the *current*
             // cursor + its own grab anchor (zoom/pan-robust, R877); the
-            // per-frame writes batch into one atomic group move.
-            batch(|| {
-                for &(id, grab_dx, grab_dy, _, _) in &start.members {
-                    self.set_node_pos(id, round_i32(gx + grab_dx), round_i32(gy + grab_dy));
-                }
-            });
+            // per-frame writes batch into one atomic group move (the shared
+            // [`follow_members`] kernel the auto-pan tick also runs).
+            batch(|| follow_members(&self.nodes, &start.members, gx, gy));
         }
     }
 
@@ -4796,6 +4974,9 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
     // the ScrollNode's own substrate concern).
     let zoom = use_zoom().get();
     let canvas_scroll = use_canvas_scroll();
+    // R1182 — register the edge-drag auto-pan driver on the animation clock
+    // (idempotent register-once; ticks only while a node drag hugs the rim).
+    use_autopan();
 
     let mut world_children: Vec<Scene> = Vec::new();
 
@@ -4955,6 +5136,8 @@ impl WidgetCore for NodeEditorView {
                 editing: use_active_edit(),
                 edit_buffer: use_text_edit_state(EDIT_TF_TAG),
                 marquee_rect: use_marquee_rect(),
+                node_drag: use_node_drag(),
+                autopan_cursor: use_autopan_cursor(),
             },
         ))
     }
@@ -7054,6 +7237,8 @@ mod tests {
                 editing: use_active_edit(),
                 edit_buffer: use_text_edit_state(EDIT_TF_TAG),
                 marquee_rect: use_marquee_rect(),
+                node_drag: use_node_drag(),
+                autopan_cursor: use_autopan_cursor(),
             },
         )
     }
@@ -8833,6 +9018,52 @@ mod tests {
                 Err(InterveneError::TypeMismatch),
             );
         });
+    }
+
+    #[test]
+    fn r1182_autopan_push_ramps_and_clamps_per_rim() {
+        let approx = |a: f64, b: f64| (a - b).abs() < 1e-9;
+        // Dead centre: no push anywhere outside the two margins.
+        assert!(approx(autopan_push(0.5), 0.0), "centre = no push");
+        assert!(
+            approx(autopan_push(AUTOPAN_MARGIN), 0.0),
+            "the low margin line is the zero point"
+        );
+        assert!(
+            approx(autopan_push(1.0 - AUTOPAN_MARGIN), 0.0),
+            "the high margin line is the zero point"
+        );
+        // Low rim: ramps 0 -> -1 as the cursor nears (and passes) the edge.
+        assert!(
+            autopan_push(AUTOPAN_MARGIN / 2.0) < 0.0,
+            "inside the low margin pushes -"
+        );
+        assert!(
+            approx(autopan_push(0.0), -1.0),
+            "the low edge is full negative push"
+        );
+        assert!(
+            approx(autopan_push(-0.5), -1.0),
+            "past the low edge saturates at -1 (no reversal)"
+        );
+        // High rim: ramps 0 -> +1 symmetrically.
+        assert!(
+            autopan_push(1.0 - AUTOPAN_MARGIN / 2.0) > 0.0,
+            "inside the high margin pushes +"
+        );
+        assert!(
+            approx(autopan_push(1.0), 1.0),
+            "the high edge is full positive push"
+        );
+        assert!(
+            approx(autopan_push(1.5), 1.0),
+            "past the high edge saturates at +1"
+        );
+        // The ramp is monotone within a margin (deeper = stronger).
+        assert!(
+            autopan_push(0.02) < autopan_push(0.08),
+            "a deeper low-rim cursor pushes harder (more negative)"
+        );
     }
 
     #[test]

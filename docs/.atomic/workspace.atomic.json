@@ -20290,6 +20290,38 @@
         "Layering stays paint-local (YAGNI): the box arm-weight table is the only backend-agnostic datum; lift to pinion-core only if a 2nd geometry consumer (SVG/PDF export) appears."
       ]
     },
+    "R1182": {
+      "decision_summary": "R1182 node-editor edge-drag auto-pan: a node held against the canvas rim auto-scrolls the viewport toward that edge via an AutoPan Tickable while the dragged nodes stay pinned under the cursor.",
+      "changes_bullets": [
+        "examples/hello-node-editor: AutoPan Tickable + use_autopan register-once (the CaretBlink precedent) scrolls the world ScrollState toward the rim each frame while a live node drag hugs it; autopan_push gives the 0.12 rim margin a linear edge-saturating ramp at 900 world-px/s, node clamps at the world extent.",
+        "node_drag lifted RefCell -> Rc<RefCell> + a new autopan_cursor Cell (use_node_drag / use_autopan_cursor holders) give the tick one authoritative drag state; the follow_members node-follow kernel + the cursor_graph_at projection are the shared SSOT that pointer_move and the tick both run.",
+        "Stale module doc corrected: middle-drag and Space+left-drag drag-to-pan already work via the R881/R882 router pan channel (empirically confirmed); only edge-auto-pan (node-move) was missing. Wire-connect (begin_drag DnD) auto-pan left as a documented follow-up."
+      ],
+      "verification_bullets": [
+        "tools/demos/r1182_node_edge_autopan.py (35 assertions): each rim direction pans the correct axis, the node rides the viewport 1:1 (offset invariant across ticks), centre/idle/marquee never auto-pan, 2x zoom still follows, the world edge clamps, release goes at-rest; the base middle + Space drag-to-pan foundation reconfirmed.",
+        "r1182_autopan_push unit test pins the ramp/clamp/margin boundaries; 141 hello-node-editor tests + cargo test --workspace pass; clippy -D pedantic (with pinion-runtime/vello) + rustfmt clean."
+      ],
+      "carry_forward_bullets": [
+        "Wire-connect auto-pan (dragging a wire via the begin_drag DnD path near the rim) stays a documented follow-up - no consumer yet; node-move auto-pan landed.",
+        "AutoPan is node-editor-local (1st consumer); a 2nd canvas/timeline consumer would justify lifting it to a router-level generic auto-pan (abstraction-needs-second-consumer).",
+        "Live continuous auto-pan smoothness is HW-gated (:0/real-GPU); the tick logic is headlessly verified via the animation clock (tf.tick), the CaretBlink continuous-repaint precedent proving live frames keep coming while not-at-rest."
+      ],
+      "publishable_decision_summary": "R1182 node-editor edge-drag auto-pan: a node held against the canvas rim auto-scrolls the viewport toward that edge via an AutoPan Tickable while the dragged nodes stay pinned under the cursor.",
+      "publishable_changes_bullets": [
+        "examples/hello-node-editor: AutoPan Tickable + use_autopan register-once (the CaretBlink precedent) scrolls the world ScrollState toward the rim each frame while a live node drag hugs it; autopan_push gives the 0.12 rim margin a linear edge-saturating ramp at 900 world-px/s, node clamps at the world extent.",
+        "node_drag lifted RefCell -> Rc<RefCell> + a new autopan_cursor Cell (use_node_drag / use_autopan_cursor holders) give the tick one authoritative drag state; the follow_members node-follow kernel + the cursor_graph_at projection are the shared SSOT that pointer_move and the tick both run.",
+        "Stale module doc corrected: middle-drag and Space+left-drag drag-to-pan already work via the R881/R882 router pan channel (empirically confirmed); only edge-auto-pan (node-move) was missing. Wire-connect (begin_drag DnD) auto-pan left as a documented follow-up."
+      ],
+      "publishable_verification_bullets": [
+        "tools/demos/r1182_node_edge_autopan.py (35 assertions): each rim direction pans the correct axis, the node rides the viewport 1:1 (offset invariant across ticks), centre/idle/marquee never auto-pan, 2x zoom still follows, the world edge clamps, release goes at-rest; the base middle + Space drag-to-pan foundation reconfirmed.",
+        "r1182_autopan_push unit test pins the ramp/clamp/margin boundaries; 141 hello-node-editor tests + cargo test --workspace pass; clippy -D pedantic (with pinion-runtime/vello) + rustfmt clean."
+      ],
+      "publishable_carry_forward_bullets": [
+        "Wire-connect auto-pan (dragging a wire via the begin_drag DnD path near the rim) stays a documented follow-up - no consumer yet; node-move auto-pan landed.",
+        "AutoPan is node-editor-local (1st consumer); a 2nd canvas/timeline consumer would justify lifting it to a router-level generic auto-pan (abstraction-needs-second-consumer).",
+        "Live continuous auto-pan smoothness is HW-gated (:0/real-GPU); the tick logic is headlessly verified via the animation clock (tf.tick), the CaretBlink continuous-repaint precedent proving live frames keep coming while not-at-rest."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
