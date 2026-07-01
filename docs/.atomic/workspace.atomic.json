@@ -20322,6 +20322,38 @@
         "Live continuous auto-pan smoothness is HW-gated (:0/real-GPU); the tick logic is headlessly verified via the animation clock (tf.tick), the CaretBlink continuous-repaint precedent proving live frames keep coming while not-at-rest."
       ]
     },
+    "R1183": {
+      "decision_summary": "R1183 audit-clearance of R1182 auto-pan: fix the world-clamp frame-burn (Tickable is_at_rest contract), complete the inverse-projection SSOT, and co-locate the cursor probe inside NodeDragStart.",
+      "changes_bullets": [
+        "SMELL-1 (Tickable contract): AutoPan::active() now gates on scroll headroom (new pure autopan_axis_can_move over ScrollState offset/max), so is_at_rest is true once the viewport can no longer scroll in the push direction - a node pinned at the world edge no longer spins the redraw loop. R1182 wrongly modeled auto-pan on the inherently-periodic CaretBlink; it is progress-bounded.",
+        "SMELL-2 (SSOT overclaim): the inverse projection canvas-px -> graph is now ONE primitive canvas_to_graph that cursor_graph_at, the coordinator's cursor_graph, set_zoom_anchored's anchor solve, and the viewport.{x,y} query all route through (was 3 hand-inlined copies of the same affine). The forward twin graph -> offset (wpx + apply_viewport anchor solve) is left as a pre-existing separate follow-up.",
+        "NIT-1: the auto-pan rim-probe cursor moved into NodeDragStart (co-located Cell) so its lifecycle tracks the drag by construction; removed the separate autopan_cursor holder + use_autopan_cursor hook + GraphServices field + reset_gesture clear (which had been cleared at only 1 of 3 node_drag=None sites - harmless but fragile)."
+      ],
+      "verification_bullets": [
+        "New unit tests: r1183_autopan_axis_can_move_headroom (boundary of the headroom predicate) + r1183_autopan_rests_at_clamp_and_in_dead_zone (builds an AutoPan; asserts at-rest at the +x world clamp AND for an unlatched dead-zone press, active with headroom - the two gates R1182 left untested). Demo gains the zoom!=1 1:1 ride invariant (37 assertions).",
+        "143 hello-node-editor tests + cargo test --workspace (198 result-ok, 0 failed) pass; clippy -D pedantic (pinion-runtime/vello) + rustfmt clean."
+      ],
+      "carry_forward_bullets": [
+        "Forward viewport projection (graph -> offset: wpx + apply_viewport anchor solve, ~4 sites) is NOT consolidated - pre-existing, deserves its own Viewport-value-type round (not an R1182/R1183 regression).",
+        "Wire-connect auto-pan (begin_drag DnD path) + a router-level generic auto-pan lift remain deferred pending a genuine 2nd consumer (carried from R1182).",
+        "Process lesson (recurring): my R1182 '35 assertions, textbook' self-report missed SMELL-1, a real contract bug - a fresh post-round 'textbook' claim is the biased one. An independent adversarial reviewer + own SSOT grep caught it; run the audit BEFORE claiming done (verify-seed-claims-audit-first)."
+      ],
+      "publishable_decision_summary": "R1183 audit-clearance of R1182 auto-pan: fix the world-clamp frame-burn (Tickable is_at_rest contract), complete the inverse-projection SSOT, and co-locate the cursor probe inside NodeDragStart.",
+      "publishable_changes_bullets": [
+        "SMELL-1 (Tickable contract): AutoPan::active() now gates on scroll headroom (new pure autopan_axis_can_move over ScrollState offset/max), so is_at_rest is true once the viewport can no longer scroll in the push direction - a node pinned at the world edge no longer spins the redraw loop. R1182 wrongly modeled auto-pan on the inherently-periodic CaretBlink; it is progress-bounded.",
+        "SMELL-2 (SSOT overclaim): the inverse projection canvas-px -> graph is now ONE primitive canvas_to_graph that cursor_graph_at, the coordinator's cursor_graph, set_zoom_anchored's anchor solve, and the viewport.{x,y} query all route through (was 3 hand-inlined copies of the same affine). The forward twin graph -> offset (wpx + apply_viewport anchor solve) is left as a pre-existing separate follow-up.",
+        "NIT-1: the auto-pan rim-probe cursor moved into NodeDragStart (co-located Cell) so its lifecycle tracks the drag by construction; removed the separate autopan_cursor holder + use_autopan_cursor hook + GraphServices field + reset_gesture clear (which had been cleared at only 1 of 3 node_drag=None sites - harmless but fragile)."
+      ],
+      "publishable_verification_bullets": [
+        "New unit tests: r1183_autopan_axis_can_move_headroom (boundary of the headroom predicate) + r1183_autopan_rests_at_clamp_and_in_dead_zone (builds an AutoPan; asserts at-rest at the +x world clamp AND for an unlatched dead-zone press, active with headroom - the two gates R1182 left untested). Demo gains the zoom!=1 1:1 ride invariant (37 assertions).",
+        "143 hello-node-editor tests + cargo test --workspace (198 result-ok, 0 failed) pass; clippy -D pedantic (pinion-runtime/vello) + rustfmt clean."
+      ],
+      "publishable_carry_forward_bullets": [
+        "Forward viewport projection (graph -> offset: wpx + apply_viewport anchor solve, ~4 sites) is NOT consolidated - pre-existing, deserves its own Viewport-value-type round (not an R1182/R1183 regression).",
+        "Wire-connect auto-pan (begin_drag DnD path) + a router-level generic auto-pan lift remain deferred pending a genuine 2nd consumer (carried from R1182).",
+        "Process lesson (recurring): my R1182 '35 assertions, textbook' self-report missed SMELL-1, a real contract bug - a fresh post-round 'textbook' claim is the biased one. An independent adversarial reviewer + own SSOT grep caught it; run the audit BEFORE claiming done (verify-seed-claims-audit-first)."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

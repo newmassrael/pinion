@@ -222,11 +222,16 @@ def body() -> None:
         tf.intervene("/external/node.0.x", 80)
         tf.intervene("/external/node.0.y", 90)
         grab_to(tf, RIGHT_RIM)
-        n_i0 = nx(tf, 0)
+        vx_i0, n_i0 = vq(tf, "x"), nx(tf, 0)   # atomic snapshot (no mutation between)
+        ride_i0 = n_i0 - vx_i0
         tf.tick(0.1)
-        assert vq(tf, "x") > 0.0, "I.1 auto-pan pans at 2x zoom"
-        assert nx(tf, 0) > n_i0, "I.2 the node still follows at 2x zoom"
-        assert_eq(vq(tf, "zoom"), 2.0, "I.3 the zoom is unchanged by the pan")
+        vx_i1, n_i1 = vq(tf, "x"), nx(tf, 0)
+        assert vx_i1 > vx_i0, "I.1 auto-pan pans at 2x zoom"
+        assert n_i1 > n_i0, "I.2 the node still follows at 2x zoom"
+        # The 1:1 ride holds at zoom != 1 too (viewport.x is graph units, so the
+        # divide-by-zoom that matters for staying-under-cursor is exercised).
+        assert abs((n_i1 - vx_i1) - ride_i0) <= 2, "I.3 node rides 1:1 in graph units at 2x"
+        assert_eq(vq(tf, "zoom"), 2.0, "I.4 the zoom is unchanged by the pan")
         release(tf, RIGHT_RIM)
 
         # ── (J) the auto-pan clamps at the world edge ────────────────
