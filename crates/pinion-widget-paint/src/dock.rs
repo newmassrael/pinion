@@ -4594,6 +4594,78 @@ pub fn view_dock_panel_with_actions(
     )
 }
 
+/// (R1187 §5.16 §5.39) The three window-control hit tags
+/// [`view_window_controls`] tags its buttons with. A binding supplies the shell's
+/// routing tags (`pinion_overlay::WINDOW_CHROME_{MINIMIZE,MAXIMIZE,CLOSE}_TAG`,
+/// re-exported by pinion-shell) so the composition here stays independent of the
+/// GUI-overlay crate — see [`view_window_controls`] for why the tags are passed
+/// IN rather than hardcoded.
+#[derive(Debug, Clone, Copy)]
+pub struct WindowControlTags<'a> {
+    /// Hit tag for the minimize button.
+    pub minimize: &'a str,
+    /// Hit tag for the maximize / restore button.
+    pub maximize: &'a str,
+    /// Hit tag for the close button.
+    pub close: &'a str,
+}
+
+/// (R1187 §5.16 §5.39) The window CONTROLS a floating dock panel hosts in its
+/// header — minimize / maximize / close as a flex row of tagged glyph buttons,
+/// for the [`view_dock_panel_with_actions`] `header_trailing` slot (the R1171
+/// controls-in-header design, so a torn-off floater draws ONE strip). Each button
+/// is a `Scene::Text` glyph (the `glyph::WINDOW_*` set — a text glyph, not a
+/// vector `Scene::Path`, so it lays out with the header font + flex and auto-sizes
+/// to any header height, no dimension matching) wrapped in a padded, tagged
+/// `Scene::Container` hit region and centred.
+///
+/// The routing `tags` are supplied by the BINDING, not hardcoded:
+/// pinion-widget-paint is backend-agnostic and does NOT depend on the GUI-overlay
+/// crate that owns the shell's window-control hit tags. A binding passes those
+/// (`pinion_overlay::WINDOW_CHROME_*_TAG`, re-exported by pinion-shell) so the
+/// shell's `try_chrome_press` routes a press to `set_minimized` / `set_maximized`
+/// / `window_close_requested`. This keeps the visual composition (glyphs +
+/// layout) here as one SSOT while the routing wiring stays with the binding that
+/// owns the window lifecycle. First consumer: `hello-dock-panels-editor`; second:
+/// sprag's torn-off terminal panels.
+#[must_use]
+pub fn view_window_controls(
+    theme: &Theme,
+    font_size_px: u32,
+    tags: WindowControlTags<'_>,
+) -> Scene {
+    let button = |tag: &str, glyph: &str| -> Scene {
+        Scene::Container(
+            ContainerNode::new(vec![Scene::Text(TextNode::styled(
+                glyph.to_string(),
+                Rect::default(),
+                TextStyle::new()
+                    .with_size_px(font_size_px)
+                    .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+            ))])
+            .with_tag(tag.to_string())
+            .with_layout(
+                LayoutStyle::new()
+                    .with_align_items(AlignItems::Center)
+                    .with_justify(JustifyContent::Center)
+                    .with_padding(Rect::new(7, 3, 7, 3)),
+            ),
+        )
+    };
+    Scene::Container(
+        ContainerNode::new(vec![
+            button(tags.minimize, crate::glyph::WINDOW_MINIMIZE),
+            button(tags.maximize, crate::glyph::WINDOW_MAXIMIZE),
+            button(tags.close, crate::glyph::WINDOW_CLOSE),
+        ])
+        .with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Row)
+                .with_align_items(AlignItems::Center),
+        ),
+    )
+}
+
 fn composite_tag(panel_tag: &str, suffix: &'static str) -> String {
     format!("{panel_tag}#{suffix}")
 }
@@ -7423,6 +7495,44 @@ mod tests {
             dock_movable(&core, "terminal-1"),
             Some(IntrospectValue::Bool(true))
         );
+    }
+
+    #[test]
+    fn r1187_view_window_controls_tags_three_flex_buttons() {
+        // R1187 §5.16 — the lifted controls-in-header builder: three glyph buttons
+        // (min / max / close) in a flex Row, each a tagged hit container carrying
+        // the BINDING-supplied routing tag (widget-paint stays overlay-independent,
+        // so the tags are passed in). The editor + sprag share this composition SSOT.
+        let controls = super::view_window_controls(
+            &theme_light(),
+            13,
+            super::WindowControlTags {
+                minimize: "min-tag",
+                maximize: "max-tag",
+                close: "close-tag",
+            },
+        );
+        let Scene::Container(row) = &controls else {
+            panic!("controls is a flex Row container");
+        };
+        assert_eq!(row.children.len(), 3, "min / max / close");
+        let tags: Vec<Option<&str>> = row.children.iter().map(|c| c.tag()).collect();
+        assert_eq!(
+            tags,
+            vec![Some("min-tag"), Some("max-tag"), Some("close-tag")],
+            "each button carries the binding-supplied routing tag, in order",
+        );
+        // Each button wraps a Text glyph (a text glyph, not a vector Path — so it
+        // lays out with the header font + flex, no dimension matching).
+        for child in &row.children {
+            let Scene::Container(btn) = child else {
+                panic!("each control is a tagged container");
+            };
+            assert!(
+                matches!(btn.children.first(), Some(Scene::Text(_))),
+                "the glyph is a Scene::Text (flex-layoutable)",
+            );
+        }
     }
 
     #[test]

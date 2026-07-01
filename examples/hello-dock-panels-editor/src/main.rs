@@ -65,12 +65,11 @@ use pinion_widget_paint::dock::{
     DockReorganizeExternal, DockReorganizer, DockSplitState, DockTopology, DropResolution,
     FloatPolicy, FloatingPlaceholderStyle, TEAR_OFF_EVENT, TEAR_OFF_FOLLOW_EVENT,
     TEAR_OFF_REDOCK_AT_EVENT, TEAR_OFF_REDOCK_EVENT, TabWellExternal, WINDOW_MOVE_EVENT,
-    dock_drop_preview_overlay, dock_outer_preview_overlay, dock_outer_zone_highlight,
-    dock_redock_preview_tint, dock_tablist_access_nodes,
+    WindowControlTags, dock_drop_preview_overlay, dock_outer_preview_overlay,
+    dock_outer_zone_highlight, dock_redock_preview_tint, dock_tablist_access_nodes,
     floating_window_id as dock_floating_window_id, resolve_drop, view_dock_panel_with_actions,
-    view_dock_surface_styled, view_floating_placeholder,
+    view_dock_surface_styled, view_floating_placeholder, view_window_controls,
 };
-use pinion_widget_paint::glyph;
 use pinion_widget_paint::splitter::SplitterExternal;
 use std::borrow::Cow;
 use std::rc::Rc;
@@ -1017,47 +1016,22 @@ fn view_floating_panel(panel_id: &str, state: ButtonState) -> Scene {
         &theme,
         &style,
         None,
-        Some(view_window_controls(&theme)),
-    )
-}
-
-/// (R1171 §5.16) A floating panel's window CONTROLS — minimize / maximize / close
-/// as a right-anchored row of tagged glyph buttons IN the header. Each button is
-/// intrinsically sized (the glyph font + padding) and centred in the header, so it
-/// composes with any header height (no dimension matching). The tags are the
-/// shell's window-control hit tags, so `try_chrome_press` routes a press to the
-/// matching winit action — close through [`DockPanelsEditorView::window_close_requested`]
-/// (dock-back), min / max to per-window `set_minimized` / `set_maximized`.
-fn view_window_controls(theme: &Theme) -> Scene {
-    let button = |tag: &str, glyph: &str| -> Scene {
-        Scene::Container(
-            ContainerNode::new(vec![Scene::Text(TextNode::styled(
-                glyph,
-                Rect::default(),
-                TextStyle::new()
-                    .with_size_px(PANEL_BODY_FONT_PX)
-                    .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
-            ))])
-            .with_tag(tag.to_string())
-            .with_layout(
-                LayoutStyle::new()
-                    .with_align_items(AlignItems::Center)
-                    .with_justify(JustifyContent::Center)
-                    .with_padding(Rect::new(7, 3, 7, 3)),
-            ),
-        )
-    };
-    Scene::Container(
-        ContainerNode::new(vec![
-            button(WINDOW_CHROME_MINIMIZE_TAG, glyph::WINDOW_MINIMIZE),
-            button(WINDOW_CHROME_MAXIMIZE_TAG, glyph::WINDOW_MAXIMIZE),
-            button(WINDOW_CHROME_CLOSE_TAG, glyph::WINDOW_CLOSE),
-        ])
-        .with_layout(
-            LayoutStyle::new()
-                .flex(FlexDirection::Row)
-                .with_align_items(AlignItems::Center),
-        ),
+        // (R1187 §5.16) The window controls (min / max / close) IN the header —
+        // now the lifted `pinion_widget_paint::view_window_controls` (R1171 was a
+        // binding-local copy; sprag is the 2nd consumer, so the composition SSOT
+        // moved to the widget crate). The BINDING supplies the shell's routing
+        // tags (widget-paint stays overlay-independent) so `try_chrome_press`
+        // routes close → `window_close_requested` (dock-back), min / max → the
+        // per-window `set_minimized` / `set_maximized`.
+        Some(view_window_controls(
+            &theme,
+            PANEL_BODY_FONT_PX,
+            WindowControlTags {
+                minimize: WINDOW_CHROME_MINIMIZE_TAG,
+                maximize: WINDOW_CHROME_MAXIMIZE_TAG,
+                close: WINDOW_CHROME_CLOSE_TAG,
+            },
+        )),
     )
 }
 
