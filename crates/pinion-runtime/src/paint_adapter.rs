@@ -1347,27 +1347,18 @@ fn has_glyph_cluster(cell: &TermCell) -> bool {
 /// instead, so adjacent cells abut with no gap.
 ///
 /// Returns `Some((rects, count))` — at most four sub-cell rectangles in
-/// absolute device pixels — for a single-char solid block cluster, or `None`
-/// for anything else: the shade blocks `U+2591`–`U+2593` (an alpha pattern, not
-/// a solid fill) and the box-drawing range `U+2500`–`U+257F` both fall through
-/// to the glyph path, as does any multi-char cluster.
+/// absolute device pixels — for a solid block codepoint `c`, or `None` for
+/// anything else: the shade blocks `U+2591`–`U+2593` (an alpha pattern, not a
+/// solid fill) and the box-drawing range `U+2500`–`U+257F` both return `None`
+/// so the caller falls through to shade / box / glyph. The lone-codepoint /
+/// range gate is the caller's ([`synthesizable_char`]).
 ///
 /// Split points are snapped to integer pixels so a quadrant combo's interior
 /// edges (and a full block's cell edges) land on exact pixel boundaries: two
 /// abutting fills then share a crisp edge with no anti-aliasing seam, and a row
 /// of full blocks tiles seamlessly (the R1178 acceptance criterion).
-fn block_element_rects(
-    cluster: &str,
-    cx: f64,
-    cy: f64,
-    cell_w: f64,
-    cell_h: f64,
-) -> Option<([KurboRect; 4], usize)> {
-    // Only a lone-codepoint cluster can be a block element.
-    let mut chars = cluster.chars();
-    let (Some(c), None) = (chars.next(), chars.next()) else {
-        return None;
-    };
+fn block_element_rects(c: char, cell: KurboRect) -> Option<([KurboRect; 4], usize)> {
+    let (cx, cy, cell_w, cell_h) = (cell.x0, cell.y0, cell.width(), cell.height());
     let x0 = cx;
     let y0 = cy;
     let x1 = cx + cell_w;
@@ -1446,11 +1437,7 @@ fn block_element_rects(
 /// 25 / 50 / 75 %, which an alpha fill reproduces exactly (no sub-pixel pattern
 /// needed). `None` for anything else (the caller falls through to solid-block,
 /// box-drawing, then the glyph path).
-fn shade_block_fraction(cluster: &str) -> Option<(u16, u16)> {
-    let mut chars = cluster.chars();
-    let (Some(c), None) = (chars.next(), chars.next()) else {
-        return None;
-    };
+fn shade_block_fraction(c: char) -> Option<(u16, u16)> {
     match c {
         '\u{2591}' => Some((1, 4)), // LIGHT SHADE  — 25%
         '\u{2592}' => Some((1, 2)), // MEDIUM SHADE — 50%
@@ -1655,6 +1642,16 @@ fn box_drawing(c: char) -> Option<BoxGlyph> {
 /// `(xm, ym)`, light / heavy line thickness `(lw, hw)`, and the double-line
 /// rail half-separation `d`. Thickness derives from the smaller cell dimension
 /// so a line reads the same weight whether horizontal or vertical.
+/// R1181 §5.41 — box-drawing dash duty cycle: each dash covers this fraction of
+/// its slot; the remainder is the inter-dash gap (so a triple-dash splits the
+/// run into three inked segments with two gaps).
+const BOX_DASH_DUTY: f64 = 0.7;
+
+/// R1181 §5.41 — rounded-corner arc radius as a fraction of the smaller cell
+/// dimension: a soft quarter-bend that still leaves a short straight stub to
+/// each present arm, so the corner reads as an arc rather than a chamfer.
+const BOX_ARC_RADIUS_FRACTION: f64 = 0.4;
+
 fn box_line_metrics(cell: KurboRect) -> (f64, f64, f64, f64, f64) {
     let unit = cell.width().min(cell.height());
     let lw = (unit / 8.0).round().max(1.0);
@@ -1671,6 +1668,11 @@ fn box_line_metrics(cell: KurboRect) -> (f64, f64, f64, f64, f64) {
 /// overshoots the centre by the rail half-separation so the central rail box
 /// stays connected, and double arms draw two parallel rails. Integer-snapped
 /// bands keep abutting cells gap-free.
+///
+/// R1181 — returns a stack `([KurboRect; 8], count)` (zero heap allocation in
+/// the per-frame paint loop, matching the [`block_element_rects`] sibling). The
+/// `8` cap is exact: the densest glyph `╬` (all four arms double) emits two
+/// rails × four arms, and a dashed glyph emits at most four segments.
 fn box_arm_rects(
     up: u8,
     down: u8,
@@ -1678,69 +1680,77 @@ fn box_arm_rects(
     right: u8,
     dash: u8,
     cell: KurboRect,
-) -> Vec<KurboRect> {
+) -> ([KurboRect; 8], usize) {
     let (xm, ym, lw, hw, d) = box_line_metrics(cell);
     let (x0, y0, x1, y1) = (cell.x0, cell.y0, cell.x1, cell.y1);
-    let mut rects: Vec<KurboRect> = Vec::new();
+    let mut rects = [KurboRect::ZERO; 8];
+    let mut n = 0usize;
 
     if dash != 0 {
-        // The dashed glyphs are pure single-axis: split the full extent into
-        // `dash` dashes, each covering ~70% of its slot.
+        // Each dash covers `BOX_DASH_DUTY` of its slot, centred — the rest is
+        // the inter-dash gap. The dashed glyphs are pure single-axis.
+        let margin = (1.0 - BOX_DASH_DUTY) / 2.0;
         let t = if up.max(down).max(left).max(right) == 2 {
             hw
         } else {
             lw
         };
-        let n = u32::from(dash);
+        let count = u32::from(dash);
         if left > 0 || right > 0 {
             let yt = (ym - t / 2.0).round();
-            let seg = cell.width() / f64::from(n);
-            for i in 0..n {
+            let seg = cell.width() / f64::from(count);
+            for i in 0..count {
                 let sx = x0 + f64::from(i) * seg;
-                rects.push(KurboRect::new(sx + seg * 0.15, yt, sx + seg * 0.85, yt + t));
+                rects[n] = KurboRect::new(sx + seg * margin, yt, sx + seg * (1.0 - margin), yt + t);
+                n += 1;
             }
         } else {
             let xt = (xm - t / 2.0).round();
-            let seg = cell.height() / f64::from(n);
-            for i in 0..n {
+            let seg = cell.height() / f64::from(count);
+            for i in 0..count {
                 let sy = y0 + f64::from(i) * seg;
-                rects.push(KurboRect::new(xt, sy + seg * 0.15, xt + t, sy + seg * 0.85));
+                rects[n] = KurboRect::new(xt, sy + seg * margin, xt + t, sy + seg * (1.0 - margin));
+                n += 1;
             }
         }
-        return rects;
+        return (rects, n);
     }
 
     let any_double = up == 3 || down == 3 || left == 3 || right == 3;
     let over = if any_double { d } else { 0.0 };
-    let push_h = |rects: &mut Vec<KurboRect>, xa: f64, xb: f64, w: u8| {
+    let push_h = |rects: &mut [KurboRect; 8], n: &mut usize, xa: f64, xb: f64, w: u8| {
         if w == 3 {
             for off in [-d, d] {
                 let yt = (ym + off - lw / 2.0).round();
-                rects.push(KurboRect::new(xa, yt, xb, yt + lw));
+                rects[*n] = KurboRect::new(xa, yt, xb, yt + lw);
+                *n += 1;
             }
         } else if w > 0 {
             let t = if w == 2 { hw } else { lw };
             let yt = (ym - t / 2.0).round();
-            rects.push(KurboRect::new(xa, yt, xb, yt + t));
+            rects[*n] = KurboRect::new(xa, yt, xb, yt + t);
+            *n += 1;
         }
     };
-    let push_v = |rects: &mut Vec<KurboRect>, ya: f64, yb: f64, w: u8| {
+    let push_v = |rects: &mut [KurboRect; 8], n: &mut usize, ya: f64, yb: f64, w: u8| {
         if w == 3 {
             for off in [-d, d] {
                 let xt = (xm + off - lw / 2.0).round();
-                rects.push(KurboRect::new(xt, ya, xt + lw, yb));
+                rects[*n] = KurboRect::new(xt, ya, xt + lw, yb);
+                *n += 1;
             }
         } else if w > 0 {
             let t = if w == 2 { hw } else { lw };
             let xt = (xm - t / 2.0).round();
-            rects.push(KurboRect::new(xt, ya, xt + t, yb));
+            rects[*n] = KurboRect::new(xt, ya, xt + t, yb);
+            *n += 1;
         }
     };
-    push_h(&mut rects, x0, xm + over, left);
-    push_h(&mut rects, xm - over, x1, right);
-    push_v(&mut rects, y0, ym + over, up);
-    push_v(&mut rects, ym - over, y1, down);
-    rects
+    push_h(&mut rects, &mut n, x0, xm + over, left);
+    push_h(&mut rects, &mut n, xm - over, x1, right);
+    push_v(&mut rects, &mut n, y0, ym + over, up);
+    push_v(&mut rects, &mut n, ym - over, y1, down);
+    (rects, n)
 }
 
 /// R1180 §5.41 — paint a [`BoxGlyph`] in `brush`: straight/junction families as
@@ -1753,7 +1763,6 @@ fn paint_box_drawing(
     glyph: BoxGlyph,
     cell: KurboRect,
 ) {
-    let (xm, ym, lw, _hw, _d) = box_line_metrics(cell);
     match glyph {
         BoxGlyph::Arms {
             up,
@@ -1762,12 +1771,14 @@ fn paint_box_drawing(
             right,
             dash,
         } => {
-            for r in &box_arm_rects(up, down, left, right, dash, cell) {
+            let (rects, count) = box_arm_rects(up, down, left, right, dash, cell);
+            for r in &rects[..count] {
                 out.fill(Fill::NonZero, origin, brush, None, r);
             }
         }
         BoxGlyph::Arc { down, right } => {
-            let r = (cell.width().min(cell.height()) * 0.4).max(1.0);
+            let (xm, ym, lw, ..) = box_line_metrics(cell);
+            let r = (cell.width().min(cell.height()) * BOX_ARC_RADIUS_FRACTION).max(1.0);
             let hx_edge = if right { cell.x1 } else { cell.x0 };
             let hx_inner = if right { xm + r } else { xm - r };
             let vy_edge = if down { cell.y1 } else { cell.y0 };
@@ -1781,6 +1792,7 @@ fn paint_box_drawing(
             out.stroke(&Stroke::new(lw), origin, brush, None, &path);
         }
         BoxGlyph::Diagonal { slash, backslash } => {
+            let (.., lw, _, _) = box_line_metrics(cell);
             let stroke = Stroke::new(lw);
             if slash {
                 // bottom-left to top-right
@@ -1795,15 +1807,19 @@ fn paint_box_drawing(
     }
 }
 
-/// R1180 §5.41 — the single codepoint of a lone-char `cluster`, or `None` for
-/// an empty or multi-char cluster (only a lone codepoint can be a box-drawing
-/// glyph).
-fn lone_char(cluster: &str) -> Option<char> {
+/// R1181 §5.41 — the **single source of truth** for "is this cell painted as
+/// synthesised geometry, not a font glyph". Returns the lone codepoint of
+/// `cluster` when it is a single char in the contiguous synthesisable range
+/// `U+2500`–`U+259F` — box-drawing (`2500`–`257F`) plus block elements & shades
+/// (`2580`–`259F`) — else `None`. This one range check fast-rejects ordinary
+/// text / spaces / CJK before any per-classifier work, and gives the three
+/// classifiers a `char` so none of them re-extract the cluster.
+fn synthesizable_char(cluster: &str) -> Option<char> {
     let mut chars = cluster.chars();
-    match (chars.next(), chars.next()) {
-        (Some(c), None) => Some(c),
-        _ => None,
-    }
+    let (Some(c), None) = (chars.next(), chars.next()) else {
+        return None;
+    };
+    ('\u{2500}'..='\u{259F}').contains(&c).then_some(c)
 }
 
 /// R1179 §5.41 — paint a synthesised cell graphic for `cluster` in `ink`,
@@ -1812,8 +1828,9 @@ fn lone_char(cluster: &str) -> Option<char> {
 /// main grid pass, or the background for the inverse block-cursor redraw — the
 /// one routine serves both, keeping the two emit sites in lock-step.
 ///
-/// Dispatch order: solid Block Element (cell-exact fill) -> shade block
-/// (alpha fill) -> [R1180 box-drawing]. The cell background (pass 1) is already
+/// The lone-codepoint / range gate is [`synthesizable_char`] (one SSOT); the
+/// `char` then dispatches solid Block Element (cell-exact fill) -> shade block
+/// (alpha fill) -> box-drawing (R1180). The cell background (pass 1) is already
 /// laid, so a shade composites over it as the conventional blend.
 fn paint_cell_synthesis(
     out: &mut VelloScene,
@@ -1822,15 +1839,17 @@ fn paint_cell_synthesis(
     cluster: &str,
     cell: KurboRect,
 ) -> bool {
-    let (cx, cy, cell_w, cell_h) = (cell.x0, cell.y0, cell.width(), cell.height());
-    if let Some((rects, count)) = block_element_rects(cluster, cx, cy, cell_w, cell_h) {
+    let Some(c) = synthesizable_char(cluster) else {
+        return false;
+    };
+    if let Some((rects, count)) = block_element_rects(c, cell) {
         let brush = to_peniko(ink);
         for r in &rects[..count] {
             out.fill(Fill::NonZero, origin, brush, None, r);
         }
         return true;
     }
-    if let Some((num, den)) = shade_block_fraction(cluster) {
+    if let Some((num, den)) = shade_block_fraction(c) {
         // Ink at `num/den` of its own alpha, filling the whole cell over the
         // already-painted background — the terminal stipple as an alpha blend.
         let a = u8::try_from(u16::from(ink.a) * num / den).unwrap_or(u8::MAX);
@@ -1838,7 +1857,7 @@ fn paint_cell_synthesis(
         out.fill(Fill::NonZero, origin, brush, None, &cell);
         return true;
     }
-    if let Some(glyph) = lone_char(cluster).and_then(box_drawing) {
+    if let Some(glyph) = box_drawing(c) {
         paint_box_drawing(out, origin, to_peniko(ink), glyph, cell);
         return true;
     }
@@ -4832,11 +4851,13 @@ mod tests {
     /// `r1178_block_element_full_block_tiles_without_gap` pixel guard.
     #[test]
     fn r1178_full_block_fills_cell_and_tiles_gap_free() {
-        let (a, na) = block_element_rects("\u{2588}", 0.0, 0.0, 10.0, 30.0).expect("full block");
+        let (a, na) =
+            block_element_rects('\u{2588}', KurboRect::new(0.0, 0.0, 10.0, 30.0)).expect("block");
         assert_eq!(na, 1);
         assert_eq!((a[0].x0, a[0].y0, a[0].x1, a[0].y1), (0.0, 0.0, 10.0, 30.0));
         // The next cell to the right (cx = 10) starts exactly where this ends.
-        let (b, _) = block_element_rects("\u{2588}", 10.0, 0.0, 10.0, 30.0).expect("full block");
+        let (b, _) =
+            block_element_rects('\u{2588}', KurboRect::new(10.0, 0.0, 20.0, 30.0)).expect("block");
         assert!(
             (a[0].x1 - b[0].x0).abs() < f64::EPSILON,
             "adjacent full blocks must share an edge: {} vs {}",
@@ -4849,19 +4870,19 @@ mod tests {
     /// a half block exactly covers its fraction (no fitted-glyph margin).
     #[test]
     fn r1178_half_blocks_cover_exact_fraction() {
-        let cell = |s: &str| {
-            block_element_rects(s, 0.0, 0.0, 10.0, 30.0)
+        let cell = |c: char| {
+            block_element_rects(c, KurboRect::new(0.0, 0.0, 10.0, 30.0))
                 .expect("block")
                 .0[0]
         };
         // cell_w/2 = 5, cell_h/2 = 15.
-        let upper = cell("\u{2580}"); // upper half
+        let upper = cell('\u{2580}'); // upper half
         assert_eq!((upper.y0, upper.y1), (0.0, 15.0));
-        let lower = cell("\u{2584}"); // lower half
+        let lower = cell('\u{2584}'); // lower half
         assert_eq!((lower.y0, lower.y1), (15.0, 30.0));
-        let left = cell("\u{258C}"); // left half
+        let left = cell('\u{258C}'); // left half
         assert_eq!((left.x0, left.x1), (0.0, 5.0));
-        let right = cell("\u{2590}"); // right half
+        let right = cell('\u{2590}'); // right half
         assert_eq!((right.x0, right.x1), (5.0, 10.0));
     }
 
@@ -4869,15 +4890,16 @@ mod tests {
     /// meeting at the integer-snapped cell centre (no interior AA seam).
     #[test]
     fn r1178_quadrant_combo_emits_meeting_rects() {
+        let cell = KurboRect::new(0.0, 0.0, 10.0, 30.0);
         // U+2598 ▘ — a single upper-left quadrant.
-        let (ul, n_ul) = block_element_rects("\u{2598}", 0.0, 0.0, 10.0, 30.0).expect("quadrant");
+        let (ul, n_ul) = block_element_rects('\u{2598}', cell).expect("quadrant");
         assert_eq!(n_ul, 1);
         assert_eq!(
             (ul[0].x0, ul[0].y0, ul[0].x1, ul[0].y1),
             (0.0, 0.0, 5.0, 15.0)
         );
         // U+2599 ▙ — upper-left + lower-left + lower-right (three quadrants).
-        let (tri, n_tri) = block_element_rects("\u{2599}", 0.0, 0.0, 10.0, 30.0).expect("quadrant");
+        let (tri, n_tri) = block_element_rects('\u{2599}', cell).expect("quadrant");
         assert_eq!(n_tri, 3);
         assert_eq!(
             (tri[0].x0, tri[0].y0, tri[0].x1, tri[0].y1),
@@ -4893,18 +4915,43 @@ mod tests {
         ); // LR
     }
 
-    /// R1178 §5.41 — non-block clusters return `None` and keep the glyph path:
-    /// ordinary text, the shade blocks (an alpha pattern, not a solid fill),
-    /// box-drawing (a deferred follow-up), and any multi-char / empty cluster.
+    /// R1178 §5.41 — non-block codepoints return `None` and keep the glyph
+    /// path: ordinary text, the shade blocks (an alpha pattern, not a solid
+    /// fill), and box-drawing.
     #[test]
     fn r1178_non_solid_block_falls_through_to_glyph() {
-        for s in [
-            "M", " ", "", "\u{2591}", "\u{2592}", "\u{2593}", "\u{2500}", "\u{2502}", "ab",
+        let cell = KurboRect::new(0.0, 0.0, 10.0, 30.0);
+        for c in [
+            'M', ' ', '\u{2591}', '\u{2592}', '\u{2593}', '\u{2500}', '\u{2502}',
         ] {
             assert!(
-                block_element_rects(s, 0.0, 0.0, 10.0, 30.0).is_none(),
-                "{s:?} must fall through to the glyph path",
+                block_element_rects(c, cell).is_none(),
+                "{c:?} must fall through to the glyph path",
             );
+        }
+    }
+
+    /// R1181 §5.41 — the SSOT gate: a lone codepoint in `U+2500`–`U+259F` is
+    /// synthesizable; out-of-range, multi-char, and empty clusters are not.
+    #[test]
+    fn r1181_synthesizable_char_gate() {
+        // box / block / shade boundaries are all in range.
+        for s in [
+            "\u{2500}", "\u{257F}", "\u{2580}", "\u{2588}", "\u{2591}", "\u{259F}",
+        ] {
+            assert!(synthesizable_char(s).is_some(), "{s:?} is in range");
+        }
+        // just below / just above the range, plain text, multi-char, empty.
+        for s in [
+            "\u{24FF}",
+            "\u{25A0}",
+            "M",
+            " ",
+            "",
+            "ab",
+            "\u{2588}\u{2588}",
+        ] {
+            assert_eq!(synthesizable_char(s), None, "{s:?} is not synthesizable");
         }
     }
 
@@ -4912,11 +4959,11 @@ mod tests {
     /// everything else (solid blocks, text, box-drawing) is not a shade.
     #[test]
     fn r1179_shade_block_fractions() {
-        assert_eq!(shade_block_fraction("\u{2591}"), Some((1, 4)));
-        assert_eq!(shade_block_fraction("\u{2592}"), Some((1, 2)));
-        assert_eq!(shade_block_fraction("\u{2593}"), Some((3, 4)));
-        for s in ["\u{2588}", "\u{2500}", "M", "", "ab"] {
-            assert_eq!(shade_block_fraction(s), None, "{s:?} is not a shade");
+        assert_eq!(shade_block_fraction('\u{2591}'), Some((1, 4)));
+        assert_eq!(shade_block_fraction('\u{2592}'), Some((1, 2)));
+        assert_eq!(shade_block_fraction('\u{2593}'), Some((3, 4)));
+        for c in ['\u{2588}', '\u{2500}', 'M'] {
+            assert_eq!(shade_block_fraction(c), None, "{c:?} is not a shade");
         }
     }
 
@@ -4974,41 +5021,46 @@ mod tests {
             let hi = rs.iter().map(|r| r.y1).fold(f64::NEG_INFINITY, f64::max);
             (lo, hi)
         };
+        let count =
+            |up, down, left, right, dash| box_arm_rects(up, down, left, right, dash, cell).1;
         // ─ light horizontal: left + right half-arms abutting at the centre,
         // together spanning the full width at mid-height.
-        let h = box_arm_rects(0, 0, 1, 1, 0, cell);
-        assert_eq!(h.len(), 2);
+        let (hr, hn) = box_arm_rects(0, 0, 1, 1, 0, cell);
+        let h = &hr[..hn];
+        assert_eq!(hn, 2);
         assert!(
             (h[0].x1 - h[1].x0).abs() < 1e-9,
             "halves abut at the centre"
         );
-        let (lo, hi) = span_x(&h);
+        let (lo, hi) = span_x(h);
         assert!(
             (lo - 0.0).abs() < 1e-9 && (hi - 16.0).abs() < 1e-9,
             "spans full width"
         );
         assert!(h[0].y0 < 8.0 && h[0].y1 > 8.0, "band straddles centre y");
         // │ light vertical: up + down half-arms spanning the full height.
-        let v = box_arm_rects(1, 1, 0, 0, 0, cell);
-        assert_eq!(v.len(), 2);
-        let (lo, hi) = span_y(&v);
+        let (vr, vn) = box_arm_rects(1, 1, 0, 0, 0, cell);
+        assert_eq!(vn, 2);
+        let (lo, hi) = span_y(&vr[..vn]);
         assert!(
             (lo - 0.0).abs() < 1e-9 && (hi - 16.0).abs() < 1e-9,
             "spans full height"
         );
         // ┌ (down+right): the two arms both cover the centre — a connected corner.
-        let corner = box_arm_rects(0, 1, 0, 1, 0, cell);
-        assert_eq!(corner.len(), 2);
+        let (cr, cn) = box_arm_rects(0, 1, 0, 1, 0, cell);
+        assert_eq!(cn, 2);
         let covers =
             |r: &KurboRect, x: f64, y: f64| r.x0 <= x && x <= r.x1 && r.y0 <= y && y <= r.y1;
         assert_eq!(
-            corner.iter().filter(|r| covers(r, 8.0, 8.0)).count(),
+            cr[..cn].iter().filter(|r| covers(r, 8.0, 8.0)).count(),
             2,
             "both arms must meet at the cell centre",
         );
         // ═ double: two parallel rails per horizontal arm (left + right) => 4.
-        assert_eq!(box_arm_rects(0, 0, 3, 3, 0, cell).len(), 4);
+        assert_eq!(count(0, 0, 3, 3, 0), 4);
+        // ╬ all-arms double: 2 rails × 4 arms = the 8-rect maximum.
+        assert_eq!(count(3, 3, 3, 3, 0), 8);
         // ┄ triple dash: three dash segments.
-        assert_eq!(box_arm_rects(0, 0, 1, 1, 3, cell).len(), 3);
+        assert_eq!(count(0, 0, 1, 1, 3), 3);
     }
 }

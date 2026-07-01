@@ -642,7 +642,10 @@ pub fn expected_text_grid_cell_facts(buf: &GridBuffer, col: u16, row: u16) -> Te
 ///   distinct ANSI-blue bg; `(1, 1)` is its trailer (carrying the head bg
 ///   across both columns).
 /// - **hidden / blank / whitespace** — `(2, 1)` conceals a white "E";
-///   `(1, 2)` is a lone space; `(3, 1)` / `(3, 2)` are blanks — none ink.
+///   `(1, 2)` is a lone space; `(3, 1)` is a blank — none ink.
+/// - **synthesised glyph class (R1181)** — `(3, 2)` is a box-drawing cross
+///   `┼`; it inks in the model, so it pins the R1180 GUI-geometry / TUI-symbol
+///   dual across §2 #6 (the GPU ink probe stays valid — its corner is bg).
 /// - **cursor** — a visible [`CursorShape::Block`] cursor sits on `(0, 2)`.
 ///
 /// `(0, 0)` is a high-contrast white-on-black "A" and `(2, 1)` a concealed
@@ -695,7 +698,13 @@ pub fn text_grid_consistency_buffer() -> GridBuffer {
                 // A lone space — present, but inks nothing.
                 TermCell::new(" ", TermColor::Default, TermColor::Indexed(6)),
                 TermCell::new("G", TermColor::Default, TermColor::Default),
-                TermCell::blank(),
+                // R1181 §2 #6 — a box-drawing cross. It inks_glyph in the model
+                // (a lone non-blank codepoint), so both backends must render it:
+                // the TUI writes the symbol, and the Vello arm synthesises the
+                // R1180 line geometry. Pins the new synthesis class across the
+                // GUI / TUI dual (the GPU `inks` probe stays valid — the cell
+                // corner is background, only the centre cross inks).
+                TermCell::new("\u{253C}", TermColor::Default, TermColor::Default),
             ],
         )
         .with_cursor(GridCursor::new(0, 2, CursorShape::Block, true))
@@ -826,6 +835,9 @@ mod r995_text_grid_facts_tests {
         assert!(facts(2, 2).inks_glyph, "(2,2) 'G' inks");
         assert!(!facts(3, 1).inks_glyph, "(3,1) blank does not ink");
         assert!(!facts(1, 2).inks_glyph, "(1,2) lone space does not ink");
+        // R1181 — the box-drawing cross is a synthesised glyph class that must
+        // ink in both backends (Vello geometry / TUI symbol).
+        assert!(facts(3, 2).inks_glyph, "(3,2) box-drawing cross inks");
         // The wide head carries a glyph; its trailer does not.
         assert!(facts(0, 1).inks_glyph, "(0,1) wide head inks");
         assert!(!facts(1, 1).inks_glyph, "(1,1) trailer carries no glyph");

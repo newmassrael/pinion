@@ -20244,6 +20244,52 @@
         "Block/box render family (A-solid R1178 / A-shade R1179 / B-box R1180) now COMPLETE for U+2500-259F. sprag change 0 (data contract/TUI/sec2#6 unchanged); re-capture sprag claude logo + any box UI via scene/screenshot to confirm."
       ]
     },
+    "R1181": {
+      "decision_summary": "R1181 §5.41 — textbook cleanup of the R1178-1180 block/box synthesis from an independent adversarial audit (no correctness bug; the arm table + quadrant bitmasks verified correct). Fixes the real structural/perf/SSOT smells: (1) synthesizable_char is now the single SSOT gate (lone codepoint in U+2500-259F) and all three classifiers take a char extracted once - killing the triplicated lone-char extraction and the &str/char signature mismatch; (2) box_arm_rects returns a stack [KurboRect;8]+count instead of a per-frame heap Vec, matching its block_element_rects sibling (8 = exact all-double max); (3) box_line_metrics computed once (dead recompute removed); (4) magic numbers (arc 0.4, dash 0.7 duty) lifted to named consts; (5) §2 #6 is now test-pinned for the synthesis class via a box cross in text_grid_consistency_buffer (was reasoned-only) - r995 GUI+TUI green. Remaining items (arc/diagonal sub-pixel AA at junctions; mixed single/double junction not pixel-canonical) are audit-judged acceptable, documented.",
+      "changes_bullets": [
+        "synthesizable_char(cluster) -> Option<char>: ONE SSOT gate for \"painted as geometry not a glyph\" — lone codepoint in the contiguous U+2500-259F range (box + block + shade). Fast-rejects ordinary text/spaces with a single range check before any classifier.",
+        "All three classifiers now take char (not &str): removed the triplicated lone-char extraction; block_element_rects + box_drawing + shade_block_fraction dispatch a char from paint_cell_synthesis (extracted once). block_element_rects also takes cell:KurboRect (param-convention parity with the box fns).",
+        "box_arm_rects returns stack ([KurboRect;8], count) instead of a per-frame heap Vec, matching its block_element_rects sibling; 8 is the exact max (all-double ChevronCross = 2 rails x 4 arms). Removes allocator churn on box-heavy screens (the pro-tool-perf axis).",
+        "box_line_metrics computed once: removed the dead top-level recompute in paint_box_drawing (Arms uses box_arm_rects' own; only Arc/Diagonal need it).",
+        "Magic numbers -> named module consts: BOX_DASH_DUTY (0.7), BOX_ARC_RADIUS_FRACTION (0.4).",
+        "§2 #6: added a box-drawing cross (3,2) to text_grid_consistency_buffer so the GUI/TUI structural dual is test-pinned for the new synthesis class (was reasoned-only)."
+      ],
+      "verification_bullets": [
+        "New unit r1181_synthesizable_char_gate (in-range/out-of-range/multi-char/empty) + the box 8-rect max (all-double) the audit flagged as untested; all R1178-1180 unit tests migrated to char/array signatures and green (8 unit).",
+        "r995_text_grid_cross_consistency_vello (GPU, lavapipe) + _tui (exact-buffer) GREEN with the new box cell -> §2#6 pinned for box-drawing across both backends; r1178/r1179/r1180 GPU guards green.",
+        "pinion-core fixture structural tests green; workspace clippy (--all-targets --features pinion-runtime/vello, pedantic=deny) 0 warnings; fmt clean; runtime 483 + shell 133 lib green.",
+        "Source of fixes: independent adversarial audit of R1178-1180 (no correctness bug found; table + bitmasks verified correct; fixes are structural/perf/SSOT)."
+      ],
+      "impact_refs": [
+        "5.41"
+      ],
+      "carry_forward_bullets": [
+        "Remaining (audit-judged acceptable, low/cosmetic): (a) arc/diagonal are exact-centre strokes while straight arms are integer-snapped fills, so an arc-meets-straight junction can show sub-pixel AA (no gap) - inherent to mixing stroked curves with snapped fills; (b) mixed single/double junctions (BoxDouble tees/crosses) connect but are not pixel-canonical (pure-double boxes + straights + simple corners are clean). Refine only if a consumer needs exact double junctions.",
+        "Layering stays paint-local (YAGNI): the box arm-weight table is the only backend-agnostic datum; lift to pinion-core only if a 2nd geometry consumer (SVG/PDF export) appears."
+      ],
+      "publishable_decision_summary": "R1181 §5.41 — textbook cleanup of the R1178-1180 block/box synthesis from an independent adversarial audit (no correctness bug; the arm table + quadrant bitmasks verified correct). Fixes the real structural/perf/SSOT smells: (1) synthesizable_char is now the single SSOT gate (lone codepoint in U+2500-259F) and all three classifiers take a char extracted once - killing the triplicated lone-char extraction and the &str/char signature mismatch; (2) box_arm_rects returns a stack [KurboRect;8]+count instead of a per-frame heap Vec, matching its block_element_rects sibling (8 = exact all-double max); (3) box_line_metrics computed once (dead recompute removed); (4) magic numbers (arc 0.4, dash 0.7 duty) lifted to named consts; (5) §2 #6 is now test-pinned for the synthesis class via a box cross in text_grid_consistency_buffer (was reasoned-only) - r995 GUI+TUI green. Remaining items (arc/diagonal sub-pixel AA at junctions; mixed single/double junction not pixel-canonical) are audit-judged acceptable, documented.",
+      "publishable_changes_bullets": [
+        "synthesizable_char(cluster) -> Option<char>: ONE SSOT gate for \"painted as geometry not a glyph\" — lone codepoint in the contiguous U+2500-259F range (box + block + shade). Fast-rejects ordinary text/spaces with a single range check before any classifier.",
+        "All three classifiers now take char (not &str): removed the triplicated lone-char extraction; block_element_rects + box_drawing + shade_block_fraction dispatch a char from paint_cell_synthesis (extracted once). block_element_rects also takes cell:KurboRect (param-convention parity with the box fns).",
+        "box_arm_rects returns stack ([KurboRect;8], count) instead of a per-frame heap Vec, matching its block_element_rects sibling; 8 is the exact max (all-double ChevronCross = 2 rails x 4 arms). Removes allocator churn on box-heavy screens (the pro-tool-perf axis).",
+        "box_line_metrics computed once: removed the dead top-level recompute in paint_box_drawing (Arms uses box_arm_rects' own; only Arc/Diagonal need it).",
+        "Magic numbers -> named module consts: BOX_DASH_DUTY (0.7), BOX_ARC_RADIUS_FRACTION (0.4).",
+        "§2 #6: added a box-drawing cross (3,2) to text_grid_consistency_buffer so the GUI/TUI structural dual is test-pinned for the new synthesis class (was reasoned-only)."
+      ],
+      "publishable_verification_bullets": [
+        "New unit r1181_synthesizable_char_gate (in-range/out-of-range/multi-char/empty) + the box 8-rect max (all-double) the audit flagged as untested; all R1178-1180 unit tests migrated to char/array signatures and green (8 unit).",
+        "r995_text_grid_cross_consistency_vello (GPU, lavapipe) + _tui (exact-buffer) GREEN with the new box cell -> §2#6 pinned for box-drawing across both backends; r1178/r1179/r1180 GPU guards green.",
+        "pinion-core fixture structural tests green; workspace clippy (--all-targets --features pinion-runtime/vello, pedantic=deny) 0 warnings; fmt clean; runtime 483 + shell 133 lib green.",
+        "Source of fixes: independent adversarial audit of R1178-1180 (no correctness bug found; table + bitmasks verified correct; fixes are structural/perf/SSOT)."
+      ],
+      "publishable_impact_refs": [
+        "5.41"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Remaining (audit-judged acceptable, low/cosmetic): (a) arc/diagonal are exact-centre strokes while straight arms are integer-snapped fills, so an arc-meets-straight junction can show sub-pixel AA (no gap) - inherent to mixing stroked curves with snapped fills; (b) mixed single/double junctions (BoxDouble tees/crosses) connect but are not pixel-canonical (pure-double boxes + straights + simple corners are clean). Refine only if a consumer needs exact double junctions.",
+        "Layering stays paint-local (YAGNI): the box arm-weight table is the only backend-agnostic datum; lift to pinion-core only if a 2nd geometry consumer (SVG/PDF export) appears."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
