@@ -20354,6 +20354,52 @@
         "Process lesson (recurring): my R1182 '35 assertions, textbook' self-report missed SMELL-1, a real contract bug - a fresh post-round 'textbook' claim is the biased one. An independent adversarial reviewer + own SSOT grep caught it; run the audit BEFORE claiming done (verify-seed-claims-audit-first)."
       ]
     },
+    "R1184": {
+      "decision_summary": "R1184 §5.49 §5.39 — scene/type {text, at|path}: a single RPC that types a whole string, fanning text into one DeferredInput::CharacterKey per Unicode scalar (atomic Press) via the scene/key character path. Pure-text scope (A); declined A.1 (\\n->Enter / \\t->Tab control-char mapping) and A.2 (whole-string modifiers) — \\n is a literal scalar, a client submits via an explicit scene/key {Enter}, keeping the text vocabulary separate from the named-key vocabulary on the wire. Unroll-at-dispatch (NOT a DeferredInput::TypeText batch) is faithful to the real input stream: a physical keyboard has no type-a-whole-string event, so N independent keystrokes is exactly what real input produces; scene/drag differs (keeps its batch intact to the drain) because a drag holds correlated cross-event state (button held + R51.34 capture lock) across its moves. Consumer-forced by sprag R88 PR41; sprag change 0.",
+      "changes_bullets": [
+        "scene/type {text, at|path} added to pinion-rpc: fans text out to one DeferredInput::CharacterKey per Unicode scalar (text.chars()), atomic KeyWireState::Press, reusing the scene/key character-key path (drain -> handle_character_key -> V::keybinding then apply_key). Zero new input pipeline; commit f4a2f771.",
+        "Pure-text scope (A) decided; A.1 (\\n->Enter, \\t->Tab control-char mapping) and A.2 (whole-string modifiers) declined. \\n is a literal U+000A scalar, not an Enter edge; a client submits via an explicit scene/key {Enter} (7 RPC -> 2). Keeps the text vocabulary and the named-key vocabulary separate on the wire, mirroring scene/drag's separation from scene/click.",
+        "Unroll-at-dispatch (not a DeferredInput::TypeText batch variant) is faithful to the real input stream: a physical keyboard has no \"type a whole string\" event, so N independent CharacterKey entries is what a real keyboard produces; scene/drag differs (keeps DeferredInput::Drag intact to the drain) because a real drag carries correlated held-button state across moves.",
+        "RPC_METHODS catalog entry (\"scene/type\", MethodOcc::Read) — deferred input does not bump the OCC revision synchronously, matching scene/key; guarded by the catalog_matches_dispatch_match_arms cross-check. 7 dispatch tests incl. a non-tautological newline scope-lock (fails if \\n->Enter is ever added)."
+      ],
+      "verification_bullets": [
+        "pinion-rpc lib tests: 886 passed (7 new scene_type_* + catalog_matches_dispatch_match_arms + occ_is_honest).",
+        "cargo fmt --all --check: clean. cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean.",
+        "cargo test --workspace: exit 0, 0 failures. mnemosyne-cli validate-workspace: T1 orphan total=0, no new T1/T2.",
+        "Independent adversarial review of commit f4a2f771 (unroll-vs-batch, per-codepoint cursor_moved, SSOT duplication, edge cases)."
+      ],
+      "impact_refs": [
+        "5.49",
+        "5.39"
+      ],
+      "carry_forward_bullets": [
+        "A.1 (\\n->Enter, \\t->Tab) and A.2 (whole-string modifiers) remain declined; if a sprag consumer later needs \\n to submit, that is the A.1 fork — re-decide on framework principle, do not import the consumer shape.",
+        "Per-codepoint cursor_moved is re-issued N times to the same point (keys route by focus, not cursor); idempotent, judged acceptable. A DeferredInput::TypeText batch variant (cursor_moved once, then N character keys) is the only alternative that removes it — not pursued (marginal, adds wire surface, no fidelity gain).",
+        "scene/type carries at|path for window-select + hover only; the text lands on the FOCUSED widget (inherited scene/key behaviour), so a driver focuses the target first (scene/click / focus/set) then types."
+      ],
+      "publishable_decision_summary": "R1184 §5.49 §5.39 — scene/type {text, at|path}: a single RPC that types a whole string, fanning text into one DeferredInput::CharacterKey per Unicode scalar (atomic Press) via the scene/key character path. Pure-text scope (A); declined A.1 (\\n->Enter / \\t->Tab control-char mapping) and A.2 (whole-string modifiers) — \\n is a literal scalar, a client submits via an explicit scene/key {Enter}, keeping the text vocabulary separate from the named-key vocabulary on the wire. Unroll-at-dispatch (NOT a DeferredInput::TypeText batch) is faithful to the real input stream: a physical keyboard has no type-a-whole-string event, so N independent keystrokes is exactly what real input produces; scene/drag differs (keeps its batch intact to the drain) because a drag holds correlated cross-event state (button held + R51.34 capture lock) across its moves. Consumer-forced by sprag R88 PR41; sprag change 0.",
+      "publishable_changes_bullets": [
+        "scene/type {text, at|path} added to pinion-rpc: fans text out to one DeferredInput::CharacterKey per Unicode scalar (text.chars()), atomic KeyWireState::Press, reusing the scene/key character-key path (drain -> handle_character_key -> V::keybinding then apply_key). Zero new input pipeline; commit f4a2f771.",
+        "Pure-text scope (A) decided; A.1 (\\n->Enter, \\t->Tab control-char mapping) and A.2 (whole-string modifiers) declined. \\n is a literal U+000A scalar, not an Enter edge; a client submits via an explicit scene/key {Enter} (7 RPC -> 2). Keeps the text vocabulary and the named-key vocabulary separate on the wire, mirroring scene/drag's separation from scene/click.",
+        "Unroll-at-dispatch (not a DeferredInput::TypeText batch variant) is faithful to the real input stream: a physical keyboard has no \"type a whole string\" event, so N independent CharacterKey entries is what a real keyboard produces; scene/drag differs (keeps DeferredInput::Drag intact to the drain) because a real drag carries correlated held-button state across moves.",
+        "RPC_METHODS catalog entry (\"scene/type\", MethodOcc::Read) — deferred input does not bump the OCC revision synchronously, matching scene/key; guarded by the catalog_matches_dispatch_match_arms cross-check. 7 dispatch tests incl. a non-tautological newline scope-lock (fails if \\n->Enter is ever added)."
+      ],
+      "publishable_verification_bullets": [
+        "pinion-rpc lib tests: 886 passed (7 new scene_type_* + catalog_matches_dispatch_match_arms + occ_is_honest).",
+        "cargo fmt --all --check: clean. cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean.",
+        "cargo test --workspace: exit 0, 0 failures. mnemosyne-cli validate-workspace: T1 orphan total=0, no new T1/T2.",
+        "Independent adversarial review of commit f4a2f771 (unroll-vs-batch, per-codepoint cursor_moved, SSOT duplication, edge cases)."
+      ],
+      "publishable_impact_refs": [
+        "5.49",
+        "5.39"
+      ],
+      "publishable_carry_forward_bullets": [
+        "A.1 (\\n->Enter, \\t->Tab) and A.2 (whole-string modifiers) remain declined; if a sprag consumer later needs \\n to submit, that is the A.1 fork — re-decide on framework principle, do not import the consumer shape.",
+        "Per-codepoint cursor_moved is re-issued N times to the same point (keys route by focus, not cursor); idempotent, judged acceptable. A DeferredInput::TypeText batch variant (cursor_moved once, then N character keys) is the only alternative that removes it — not pursued (marginal, adds wire surface, no fidelity gain).",
+        "scene/type carries at|path for window-select + hover only; the text lands on the FOCUSED widget (inherited scene/key behaviour), so a driver focuses the target first (scene/click / focus/set) then types."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

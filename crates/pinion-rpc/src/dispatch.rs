@@ -3316,15 +3316,24 @@ where
     Ok(Value::Null)
 }
 
-/// §5.49 §5.39 — `scene/type` batch text-injection handler: the keyboard
-/// sibling of [`handle_scene_drag`]'s batched pointer gesture. Fans the
-/// `text` string out into one [`DeferredInput::CharacterKey`] per Unicode
-/// scalar, in order, so an AI drives a whole string in a single RPC the
-/// way a human types it — instead of one `scene/key` per codepoint
-/// (`"claude"` was 6 calls). Every codepoint takes the exact character-key
-/// path `scene/key` uses (drain → `handle_character_key` → `V::keybinding`
-/// typed-event then `apply_key` fallback), so the synthesised keystrokes
-/// are indistinguishable from real ones at the input boundary: terminals,
+/// §5.49 §5.39 — `scene/type` text-injection handler: a single RPC that
+/// types a whole string, so an AI drives text the way a human does instead
+/// of one `scene/key` per codepoint (`"claude"` was 6 calls). The batch is
+/// only in the *RPC call*: it fans `text` out into one
+/// [`DeferredInput::CharacterKey`] per Unicode scalar, in order, at dispatch
+/// time. This is deliberately the OPPOSITE of [`handle_scene_drag`], which
+/// keeps its gesture intact as one [`DeferredInput::Drag`] for the drain to
+/// unroll — a drag has cross-event state (the button stays held, and the
+/// R51.34 pointer capture is locked, ACROSS the intermediate moves), so it
+/// cannot be represented as independent entries. Keystrokes carry no such
+/// correlated state: each character is an atomic, self-contained press, and
+/// a physical keyboard has no "type a whole string" event — winit delivers N
+/// independent `KeyboardInput`s. So unrolling at dispatch is what keeps the
+/// injection indistinguishable from real input (§2 #2): every codepoint
+/// takes the exact character-key path `scene/key` uses (drain →
+/// `handle_character_key` → `V::keybinding` typed-event then `apply_key`
+/// fallback), giving identical undo / keybinding / IME-fallthrough behaviour
+/// to a human typing — a single-insert batch variant would not. Terminals,
 /// text fields, and code editors all receive the text "as typed".
 ///
 /// Pure text only (scope decision): `text` is injected verbatim,
