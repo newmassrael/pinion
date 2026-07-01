@@ -872,8 +872,13 @@ impl<V: WidgetCore> CoreShell<V> {
     /// `use_split_ratio` etc. — resolve the same memoised reactive
     /// state the view fn sees). The result's tag list is compared to
     /// the current state-scene External children; **if unchanged the
-    /// scene is left untouched** (steady-state no-op — the freshly
-    /// built descriptors are simply dropped). This is deliberately
+    /// scene shape is left untouched** (steady-state — no rebuild). The
+    /// freshly built descriptors are then dropped, but not before each
+    /// surviving surface adopts its descriptor's *declarative policy* via
+    /// [`External::reconcile_from`](pinion_core::external::External::reconcile_from)
+    /// (R1185 — see "Declarative-policy re-projection" below), so a
+    /// reactive per-panel flag is not frozen
+    /// at first construction. This is deliberately
     /// *not* an `Effect` subscription: an `Effect` rerun pushes only
     /// the subscriber stack, not `CURRENT_OWNER_HANDLE`, so
     /// `Owner::cache` inside the factory would fail unless the trigger
@@ -893,6 +898,22 @@ impl<V: WidgetCore> CoreShell<V> {
     /// external state — a `SplitterExternal`'s drag capture, a
     /// `DockReorganizeExternal`'s id-minting counter — that a blind
     /// rebuild would reset. Removed tags' nodes drop here.
+    ///
+    /// ## Declarative-policy re-projection (R1185 §5.16)
+    ///
+    /// Preserving the live node is right for **in-flight** state but would
+    /// freeze any **declarative policy** the factory computes as a reactive
+    /// projection of binding state — a dock panel's `movable` / `floatable`
+    /// lock that flips when the last docked pane may no longer tear off.
+    /// The factory recomputes such a flag on every reconcile, but the fresh
+    /// value never reaches a preserved node. So on BOTH paths — the
+    /// steady-state no-op and the preserve-by-tag rebuild — each surviving
+    /// live handle is handed its freshly built descriptor via
+    /// [`External::reconcile_from`](pinion_core::external::External::reconcile_from),
+    /// which copies the declarative fields across while leaving in-flight
+    /// state untouched. The default
+    /// `reconcile_from` is a no-op, so an External with no reactive policy
+    /// (and every pre-R1185 binding) is unaffected.
     ///
     /// Backends call this at a safe point each frame / RPC dispatch
     /// (after the dispatch borrow of the scene is released): the GUI
@@ -925,6 +946,25 @@ impl<V: WidgetCore> CoreShell<V> {
             _ => Vec::new(),
         };
         if new_tags == current_tags {
+            // (R1185 §5.16) Tags unchanged — no scene rebuild, but re-project
+            // each surviving surface's declarative policy from its freshly
+            // rebuilt descriptor so a reactive per-panel flag (a dock panel's
+            // movable / floatable lock) tracks binding state. In-flight
+            // gesture state stays on the preserved live node; `reconcile_from`
+            // copies only declarative fields (default no-op for externals with
+            // no reactive policy). `new_tags == current_tags` guarantees the
+            // External children (skip the index-0 primary) pair positionally
+            // with `new_extras` by tag.
+            if let Scene::Container(c) = &mut self.scene {
+                let mut fresh = new_extras.iter();
+                for child in c.children.iter_mut().skip(1) {
+                    if let Scene::External(node) = child
+                        && let Some(extra) = fresh.next()
+                    {
+                        node.handle.reconcile_from(&*extra.handle);
+                    }
+                }
+            }
             return;
         }
         // Tag set changed — rebuild, preserving existing instances.
@@ -966,7 +1006,14 @@ impl<V: WidgetCore> CoreShell<V> {
         let extra_children: Vec<Scene> = new_extras
             .into_iter()
             .map(|extra| {
-                if let Some(node) = existing.remove(extra.tag.as_ref()) {
+                if let Some(mut node) = existing.remove(extra.tag.as_ref()) {
+                    // (R1185 §5.16) Surviving tag keeps its live node — and the
+                    // in-flight state on it — but adopts the freshly rebuilt
+                    // descriptor's declarative policy so a per-panel flag is not
+                    // frozen at first construction.
+                    if let Scene::External(ref mut ext) = node {
+                        ext.handle.reconcile_from(&*extra.handle);
+                    }
                     node
                 } else {
                     Scene::External(ExternalNode::new(extra.handle).with_tag(extra.tag))
@@ -5370,5 +5417,226 @@ mod tests {
         );
         // The scene is also untouched (the boot-time 2 extras stay).
         assert_eq!(recon_extra_tags(core.scene()), vec!["a", "b"]);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R1185 §5.16 §5.35 — reconcile_from declarative-policy re-projection.
+    //
+    // A fixture External with two slots: `seq` (a monotonic construction
+    // id, the IN-FLIGHT-state proxy the reconcile must PRESERVE on the live
+    // node) and `policy` (a DECLARATIVE value the factory recomputes each
+    // reconcile, which `reconcile_from` RE-PROJECTS onto the preserved
+    // node). Together they prove the reconcile keeps node identity while
+    // tracking reactive policy, on BOTH the steady-state and preserve-by-
+    // tag paths — the framework analogue of a dock panel's movable lock.
+    // ─────────────────────────────────────────────────────────────────
+
+    use pinion_core::external::{
+        Backend, BackendFallback, BackendSupport, ExternalIntrospect, InterveneError,
+        IntrospectSchema, RepaintOwner, ThreadOwnership,
+    };
+
+    thread_local! {
+        static RECON_POLICY: Cell<i64> = const { Cell::new(0) };
+    }
+
+    fn recon_set_policy(policy: i64) {
+        RECON_POLICY.with(|p| p.set(policy));
+    }
+
+    #[derive(Debug)]
+    struct PolicyExternal {
+        seq: i64,
+        policy: i64,
+    }
+
+    impl External for PolicyExternal {
+        fn backends(&self) -> BackendSupport {
+            BackendSupport::new(&[Backend::Gui, Backend::Rpc], BackendFallback::Skip)
+        }
+
+        fn repaint_ownership(&self) -> RepaintOwner {
+            RepaintOwner::Framework
+        }
+
+        fn thread_ownership(&self) -> ThreadOwnership {
+            ThreadOwnership::UiThreadSync
+        }
+
+        fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
+            Some(self)
+        }
+
+        fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
+            Some(self)
+        }
+
+        fn reconcile_from(&mut self, fresh: &dyn External) {
+            // Adopt only the declarative `policy`; never `seq` (the in-flight
+            // identity the preserve keeps). Reads through the introspection
+            // channel, exactly like `DockPanelExternal` reads movable / floatable.
+            if let Some(intro) = fresh.introspect()
+                && let Some(IntrospectValue::Int(p)) = intro.query("policy")
+            {
+                self.policy = p;
+            }
+        }
+    }
+
+    impl ExternalIntrospect for PolicyExternal {
+        fn schema(&self) -> IntrospectSchema {
+            IntrospectSchema::new(&[("seq", "int"), ("policy", "int")])
+        }
+
+        fn query(&self, path: &str) -> Option<IntrospectValue> {
+            match path {
+                "seq" => Some(IntrospectValue::Int(self.seq)),
+                "policy" => Some(IntrospectValue::Int(self.policy)),
+                _ => None,
+            }
+        }
+
+        fn intervene(&mut self, path: &str, _value: IntrospectValue) -> Result<(), InterveneError> {
+            // Both slots are framework-owned in this fixture; the reconcile drives
+            // `policy` through `reconcile_from`, not through intervene.
+            match path {
+                "seq" | "policy" => Err(InterveneError::ReadOnly),
+                _ => Err(InterveneError::UnknownPath),
+            }
+        }
+    }
+
+    struct PolicyReconcileFixture;
+
+    impl WidgetCore for PolicyReconcileFixture {
+        type State = ButtonState;
+        type Event = ButtonEvent;
+
+        fn create_external() -> Box<dyn pinion_core::external::External> {
+            <TestButton as WidgetCore>::create_external()
+        }
+
+        fn create_extra_externals() -> Vec<ExtraExternal> {
+            let policy = RECON_POLICY.with(Cell::get);
+            RECON_TAGS.with(|tags| {
+                tags.borrow()
+                    .iter()
+                    .map(|&tag| {
+                        let seq = RECON_CTR.with(|c| {
+                            let v = c.get();
+                            c.set(v + 1);
+                            v
+                        });
+                        ExtraExternal::new(tag, Box::new(PolicyExternal { seq, policy }))
+                    })
+                    .collect()
+            })
+        }
+
+        fn external_set_is_dynamic() -> bool {
+            true
+        }
+
+        fn tag() -> &'static str {
+            "test_btn"
+        }
+
+        fn read_state(_scene: &Scene) -> Self::State {
+            ButtonState::Idle
+        }
+
+        fn view(state: Self::State, frame: &Frame) -> Scene {
+            <TestButton as WidgetCore>::view(state, frame)
+        }
+
+        fn event_name(event: Self::Event) -> &'static str {
+            <TestButton as WidgetCore>::event_name(event)
+        }
+
+        fn title() -> &'static str {
+            "PolicyReconcile"
+        }
+    }
+
+    fn recon_slot(scene: &Scene, tag: &str, slot: &str) -> Option<i64> {
+        match scene
+            .find_external_with_tag(tag)?
+            .handle
+            .introspect()?
+            .query(slot)?
+        {
+            IntrospectValue::Int(n) => Some(n),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn r1185_reconcile_reprojects_policy_on_unchanged_tags() {
+        // The steady-state path (and the acceptance criterion): the tag set is
+        // UNCHANGED, so no rebuild happens, yet a per-surface declarative flag the
+        // factory recomputes must reach the preserved live node.
+        recon_reset(&["a", "b"]);
+        recon_set_policy(10);
+        let mut core: CoreShell<PolicyReconcileFixture> = CoreShell::new();
+        // Boot: a = seq0 / policy10, b = seq1 / policy10.
+        assert_eq!(recon_slot(core.scene(), "a", "seq"), Some(0));
+        assert_eq!(recon_slot(core.scene(), "a", "policy"), Some(10));
+
+        // The binding recomputes the policy (e.g. the last docked pane locks) with
+        // the SAME tag set — the steady-state early-return path.
+        recon_set_policy(20);
+        core.reconcile_externals();
+
+        // Node identity is PRESERVED (seq unchanged — the throwaway rebuild's fresh
+        // seq is NOT adopted)...
+        assert_eq!(
+            recon_slot(core.scene(), "a", "seq"),
+            Some(0),
+            "surviving tag keeps its live instance (in-flight state)",
+        );
+        // ...while the DECLARATIVE policy is RE-PROJECTED from the fresh descriptor.
+        assert_eq!(
+            recon_slot(core.scene(), "a", "policy"),
+            Some(20),
+            "★declarative policy tracks binding state across a preserve reconcile",
+        );
+        assert_eq!(
+            recon_slot(core.scene(), "b", "policy"),
+            Some(20),
+            "b re-projected too",
+        );
+    }
+
+    #[test]
+    fn r1185_reconcile_reprojects_policy_on_surviving_tag_when_set_changes() {
+        // The preserve-by-tag path: the tag set CHANGES (a new surface appears), and
+        // a surviving tag must ALSO adopt the fresh policy, not just keep its node.
+        recon_reset(&["a", "b"]);
+        recon_set_policy(10);
+        let mut core: CoreShell<PolicyReconcileFixture> = CoreShell::new();
+        assert_eq!(recon_slot(core.scene(), "a", "seq"), Some(0));
+        assert_eq!(recon_slot(core.scene(), "a", "policy"), Some(10));
+
+        recon_set_policy(30);
+        recon_set_tags(&["a", "b", "c"]);
+        core.reconcile_externals();
+
+        // a survives: node preserved (seq 0) AND policy re-projected (30).
+        assert_eq!(
+            recon_slot(core.scene(), "a", "seq"),
+            Some(0),
+            "a's node preserved",
+        );
+        assert_eq!(
+            recon_slot(core.scene(), "a", "policy"),
+            Some(30),
+            "★surviving tag re-projects policy on a tag-set change too",
+        );
+        // c is genuinely new: it carries the fresh policy natively.
+        assert_eq!(
+            recon_slot(core.scene(), "c", "policy"),
+            Some(30),
+            "new tag c built fresh",
+        );
     }
 }

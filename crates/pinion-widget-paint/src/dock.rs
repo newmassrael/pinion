@@ -6215,6 +6215,33 @@ impl External for DockPanelExternal {
         ThreadOwnership::UiThreadSync
     }
 
+    /// R1185 §5.16 §5.35 — adopt the declarative MOVE / FLOAT policy from a
+    /// freshly rebuilt descriptor when an external-set reconcile preserves
+    /// THIS live panel (see [`External::reconcile_from`]).
+    ///
+    /// A `DockPanelExternal` is rebuilt on every reconcile so its
+    /// [`with_movable`](Self::with_movable) / [`with_floatable`](Self::with_floatable)
+    /// locks track binding state (the last docked pane becoming non-movable
+    /// when a sibling floats), but the reconcile keeps the live node to
+    /// preserve the in-flight drag / lifecycle state. Re-project just the two
+    /// policy scalars — read from the fresh handle through the introspection
+    /// channel (no downcast) — leaving every in-flight field (`dragging`, the
+    /// lifecycle chart, `redock_pending`, …) untouched. The `drop_target`
+    /// receive-lock is NOT here: it lives on [`DockPanelStyle`] (paint side,
+    /// re-projected every frame by the R1173 dock-surface style walker), so it
+    /// is already dynamic.
+    fn reconcile_from(&mut self, fresh: &dyn External) {
+        let Some(intro) = fresh.introspect() else {
+            return;
+        };
+        if let Some(IntrospectValue::Bool(movable)) = intro.query("movable") {
+            self.movable = movable;
+        }
+        if let Some(IntrospectValue::Bool(floatable)) = intro.query("floatable") {
+            self.floatable = floatable;
+        }
+    }
+
     /// (R1081 §5.51) R742 drag-source arm. The `InputRouter` calls this
     /// right after the `PointerDown` dispatch (which set
     /// [`is_drag_armed`](Self::is_drag_armed) via `invoke("send", …)`),
@@ -7214,6 +7241,187 @@ mod tests {
         assert!(
             floater.is_dirty(),
             "control: a floatable panel DOES enqueue a tear-off on an escaped drag",
+        );
+    }
+
+    #[test]
+    fn r1185_reconcile_from_reprojects_policy_keeping_in_flight_state() {
+        // R1185 §5.16 — an external-set reconcile that PRESERVES this live panel
+        // (its tag survived) must still track the binding's per-panel MOVE / FLOAT
+        // policy: `reconcile_from` adopts the freshly rebuilt descriptor's
+        // movable / floatable while leaving the in-flight gesture state untouched.
+        // This is the fix for the sole-docked-pane lock that was frozen at first
+        // construction (the factory recomputed it, but the value never reached the
+        // preserved live node).
+
+        // Live panel booted freely movable + floatable, and is mid-gesture.
+        let mut live = DockPanelExternal::new("terminal-0");
+        assert!(live.begin_drag().is_some(), "precondition: a drag opened");
+        assert!(live.is_dragging(), "precondition: the session is in flight");
+        assert_eq!(live.query("movable"), Some(IntrospectValue::Bool(true)));
+
+        // The factory recomputed this surface as the SOLE docked pane → LOCKED.
+        let fresh = DockPanelExternal::new("terminal-0")
+            .with_movable(false)
+            .with_floatable(false);
+        live.reconcile_from(&fresh);
+
+        // The declarative lock the factory computed now reaches the preserved node,
+        // WITHOUT disturbing the in-flight gesture the reconcile kept it alive for.
+        assert_eq!(
+            live.query("movable"),
+            Some(IntrospectValue::Bool(false)),
+            "★the factory's movable=false reaches the preserved live panel",
+        );
+        assert_eq!(live.query("floatable"), Some(IntrospectValue::Bool(false)));
+        assert!(
+            live.is_dragging(),
+            "★reconcile_from copies declarative policy only — in-flight drag survives",
+        );
+        // Acceptance criterion: the sole docked pane now starts NO drag (the movable
+        // gate is begin_drag's first check), so the live drag would show no chip / no
+        // drop preview.
+        assert!(
+            live.begin_drag().is_none(),
+            "★a re-projected non-movable panel starts no drag",
+        );
+
+        // Control (non-tautological): the DEFAULT reconcile_from is a no-op, so a
+        // fresh carrying the SAME (default) policy leaves a movable panel movable —
+        // the re-projection above is the policy's doing, not a blanket reset.
+        let mut still_free = DockPanelExternal::new("terminal-1");
+        still_free.reconcile_from(&DockPanelExternal::new("terminal-1"));
+        assert_eq!(
+            still_free.query("movable"),
+            Some(IntrospectValue::Bool(true)),
+            "an unchanged policy leaves a two-pane-docked panel freely movable",
+        );
+    }
+
+    // ── R1185 §5.16 end-to-end: a REAL DockPanelExternal, reactively re-locked by
+    // a REAL dynamic-set WidgetCore factory, re-projected through the REAL
+    // CoreShell::reconcile_externals. This asserts the handoff's dynamic-set
+    // headless acceptance criterion directly, rather than inferring it from the
+    // framework-seam test (shell calls reconcile_from) composed with the widget
+    // unit test (dock's reconcile_from is correct). It is also the in-repo forcing
+    // consumer for the reactive per-panel lock. ──
+
+    use pinion_core::Frame;
+    use pinion_core::external::StubExternal;
+    use pinion_core::scene::ExternalNode;
+    use pinion_core::widget_core::ExtraExternal;
+    use pinion_runtime::CoreShell;
+    use std::cell::Cell;
+
+    thread_local! {
+        // true = only one pane remains docked, so the sole survivor must lock (the
+        // "last docked pane can't tear off" policy the factory recomputes each frame).
+        static SOLE_DOCKED: Cell<bool> = const { Cell::new(false) };
+    }
+
+    struct DockReconcileFixture;
+
+    impl pinion_core::WidgetCore for DockReconcileFixture {
+        type State = ();
+        type Event = ();
+
+        fn create_external() -> Box<dyn External> {
+            Box::new(StubExternal::new())
+        }
+
+        fn create_extra_externals() -> Vec<ExtraExternal> {
+            // Both panes are ALWAYS registered (R70: a panel keeps its external even
+            // while floating), so the tag set never changes — this is the
+            // steady-state reconcile path the frozen-lock bug lived on. Only the MOVE
+            // policy is reactive: the sole docked pane locks.
+            let sole = SOLE_DOCKED.with(Cell::get);
+            vec![
+                ExtraExternal::new(
+                    "terminal-0",
+                    Box::new(DockPanelExternal::new("terminal-0").with_movable(!sole)),
+                ),
+                ExtraExternal::new("terminal-1", Box::new(DockPanelExternal::new("terminal-1"))),
+            ]
+        }
+
+        fn external_set_is_dynamic() -> bool {
+            true
+        }
+
+        fn tag() -> &'static str {
+            "dock_host"
+        }
+
+        fn read_state(_scene: &Scene) -> Self::State {}
+
+        fn view((): Self::State, _frame: &Frame) -> Scene {
+            Scene::External(ExternalNode::new(Box::new(StubExternal::new())).with_tag("dock_host"))
+        }
+
+        fn event_name((): Self::Event) -> &'static str {
+            "__none__"
+        }
+
+        fn title() -> &'static str {
+            "DockReconcile"
+        }
+    }
+
+    fn dock_movable(core: &CoreShell<DockReconcileFixture>, tag: &str) -> Option<IntrospectValue> {
+        core.scene()
+            .find_external_with_tag(tag)?
+            .handle
+            .introspect()?
+            .query("movable")
+    }
+
+    #[test]
+    fn r1185_real_dock_panel_relocks_live_through_core_shell_reconcile() {
+        SOLE_DOCKED.with(|s| s.set(false));
+        let mut core: CoreShell<DockReconcileFixture> = CoreShell::new();
+
+        // Boot: two panes docked → terminal-0 is freely movable, so it drags.
+        assert_eq!(
+            dock_movable(&core, "terminal-0"),
+            Some(IntrospectValue::Bool(true))
+        );
+        assert!(
+            core.scene()
+                .find_external_with_tag("terminal-0")
+                .unwrap()
+                .handle
+                .begin_drag()
+                .is_some(),
+            "a movable pane starts a drag",
+        );
+
+        // terminal-1 floats away → terminal-0 is now the SOLE docked pane. The tag
+        // set is UNCHANGED (both stay registered), so this exercises the
+        // steady-state reconcile path; only the factory's movable recompute flips.
+        SOLE_DOCKED.with(|s| s.set(true));
+        core.reconcile_externals();
+
+        // ★The live lock reaches the preserved node through the real shell...
+        assert_eq!(
+            dock_movable(&core, "terminal-0"),
+            Some(IntrospectValue::Bool(false)),
+            "★the sole docked pane locks live via reconcile_externals",
+        );
+        // ...so a drag no longer starts → no drag chip / no drop preview (the exact
+        // user-visible symptom PR-42 reported).
+        assert!(
+            core.scene()
+                .find_external_with_tag("terminal-0")
+                .unwrap()
+                .handle
+                .begin_drag()
+                .is_none(),
+            "★the re-locked sole pane starts no drag",
+        );
+        // Control (per-panel policy): terminal-1 stays movable.
+        assert_eq!(
+            dock_movable(&core, "terminal-1"),
+            Some(IntrospectValue::Bool(true))
         );
     }
 

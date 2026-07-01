@@ -577,6 +577,39 @@ pub trait External: core::fmt::Debug {
     fn on_visibility_change(&mut self, _visible: bool) {}
     fn on_focus_change(&mut self, _focused: bool) {}
 
+    /// R1185 §5.16 §5.35 — re-project declarative policy from a freshly
+    /// rebuilt descriptor onto this preserved live handle during an
+    /// external-set reconcile.
+    ///
+    /// [`CoreShell::reconcile_externals`](../../pinion_runtime/core_shell/struct.CoreShell.html#method.reconcile_externals)
+    /// keeps the LIVE `External` node for every surviving tag — preserving
+    /// the in-flight gesture / session state (a drag capture, an id-minting
+    /// counter, a lifecycle chart) that a blind rebuild would reset — and
+    /// drops the freshly built handle. That is right for in-flight state,
+    /// but it also freezes any **declarative policy** the factory computes
+    /// as a reactive projection of binding state: a dock panel's
+    /// `movable` / `floatable` lock that must flip when the last docked
+    /// pane may no longer tear off is recomputed by the factory on every
+    /// reconcile, yet the fresh value never reaches the live node, so the
+    /// flag stays frozen at first construction. The reconcile hands the
+    /// live handle the `fresh` descriptor here so a widget can copy its
+    /// reactive-but-declarative fields across while retaining its own
+    /// in-flight state.
+    ///
+    /// `fresh` is the just-built handle for the SAME tag (the same concrete
+    /// type as this `&mut self`). Read its declared policy through the
+    /// introspection channel already provided for exactly this cross-`dyn`
+    /// read ([`introspect`](Self::introspect) +
+    /// [`ExternalIntrospect::query`]) — no downcast required. Called on
+    /// every reconcile pass for every surviving surface, so keep it to a
+    /// few field copies, and do NOT touch in-flight state (that is the
+    /// state the reconcile preserved this live node to keep).
+    ///
+    /// Default: ignore `fresh`, keep every field as-is — the pre-R1185
+    /// behaviour, so an `External` with no reactive policy (and every
+    /// existing impl) is unaffected.
+    fn reconcile_from(&mut self, _fresh: &dyn External) {}
+
     // --- 5. Input forwarding policy ---
 
     /// Return `true` to claim the event (framework does *not* forward
