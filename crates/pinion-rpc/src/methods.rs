@@ -147,6 +147,7 @@ pub const RPC_METHODS: &[(&str, MethodOcc)] = &[
     ("scene/text_state", MethodOcc::Read),
     ("scene/theme_tokens", MethodOcc::Read),
     ("scene/tick", MethodOcc::Mutate),
+    ("scene/type", MethodOcc::Read),
     ("scene/waitFor", MethodOcc::Read),
     ("scene/wheel", MethodOcc::Read),
     ("scene/window_move", MethodOcc::Read),

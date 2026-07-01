@@ -1981,6 +1981,25 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                 HandlerKind::Read,
             )
         }
+        "scene/type" => {
+            #[allow(
+                clippy::option_as_ref_deref,
+                reason = "Vec is not DerefMut; manual reborrow required"
+            )]
+            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+            #[allow(
+                clippy::option_as_ref_deref,
+                reason = "dyn FnMut is not DerefMut; manual reborrow required"
+            )]
+            let producer = paint_producer.as_mut().map(|p| &mut **p);
+            (
+                handle_scene_type(inbox, producer, last_paint_scene, request.params.as_ref()),
+                // Batch text injection — one deferred CharacterKey per
+                // codepoint; the mutation lands next dispatch cycle, no
+                // immediate OCC bump (mirrors scene/key).
+                HandlerKind::Read,
+            )
+        }
         "scene/wheel" => {
             #[allow(
                 clippy::option_as_ref_deref,
@@ -3292,6 +3311,73 @@ where
             y,
             key: key.to_owned(),
             state,
+        });
+    }
+    Ok(Value::Null)
+}
+
+/// §5.49 §5.39 — `scene/type` batch text-injection handler: the keyboard
+/// sibling of [`handle_scene_drag`]'s batched pointer gesture. Fans the
+/// `text` string out into one [`DeferredInput::CharacterKey`] per Unicode
+/// scalar, in order, so an AI drives a whole string in a single RPC the
+/// way a human types it — instead of one `scene/key` per codepoint
+/// (`"claude"` was 6 calls). Every codepoint takes the exact character-key
+/// path `scene/key` uses (drain → `handle_character_key` → `V::keybinding`
+/// typed-event then `apply_key` fallback), so the synthesised keystrokes
+/// are indistinguishable from real ones at the input boundary: terminals,
+/// text fields, and code editors all receive the text "as typed".
+///
+/// Pure text only (scope decision): `text` is injected verbatim,
+/// codepoint by codepoint. Control characters are NOT mapped to named-key
+/// edges — a `"\n"` in `text` is the literal newline scalar, not an Enter
+/// key. A client that wants to submit composes an explicit
+/// `scene/key {key: "Enter"}` after the `scene/type`, keeping the text
+/// vocabulary and the named-key vocabulary separate on the wire (the same
+/// separation `scene/drag` keeps from `scene/click`).
+///
+/// `at` / `path` resolve the focus target exactly as [`handle_scene_key`]
+/// does (exactly one required); every enqueued codepoint carries the same
+/// resolved coordinate, so the drain's leading `cursor_moved` re-targets
+/// the same focused point idempotently. All N codepoints enqueue within
+/// this one call, so the embedder drains them in order in a single cycle.
+/// Returns `null` on success (mirrors every deferred-input sibling —
+/// `scene/key` / `scene/drag` / `scene/wheel`); the client follows up with
+/// `scene/snapshot` to observe the typed result.
+fn handle_scene_type<F>(
+    inbox: Option<&mut Vec<DeferredInput>>,
+    paint_producer: Option<&mut F>,
+    last_paint_scene: Option<&Scene>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError>
+where
+    F: FnMut(u32, u32) -> Scene + ?Sized,
+{
+    let Some(inbox) = inbox else {
+        return Err(RpcError::invalid_params("InputInjectionUnavailable"));
+    };
+    let params = require_params(params)?;
+    let text = params
+        .get("text")
+        .and_then(Value::as_str)
+        .ok_or_else(|| RpcError::invalid_params("params.text missing or not a string"))?;
+    if text.is_empty() {
+        return Err(RpcError::invalid_params("params.text must not be empty"));
+    }
+    // Resolve the target once — the same focused point re-targets every
+    // codepoint (the drain's `cursor_moved` to an unchanged point is a
+    // no-op). Exactly one of `at` / `path` is required, as with `scene/key`.
+    let (x, y) = resolve_at_or_path(params, paint_producer, last_paint_scene)?;
+    // Fan out: each Unicode scalar becomes one atomic character keypress
+    // (`KeyWireState::Press` — the same edge `scene/key` uses when no
+    // `state` is given). CharacterKey routes through `V::keybinding` then
+    // `apply_key`, so a printable scalar is deposited as typed text and a
+    // non-printable one falls through the same predicate `scene/key` does.
+    for character in text.chars() {
+        inbox.push(DeferredInput::CharacterKey {
+            x,
+            y,
+            character: character.to_string(),
+            state: KeyWireState::Press,
         });
     }
     Ok(Value::Null)

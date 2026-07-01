@@ -874,6 +874,161 @@ fn r666_scene_key_space_codepoint_routes_as_character_key() {
     assert_eq!(character, " ");
 }
 
+// ---- §5.49 §5.39 — scene/type batch text injection ----
+
+#[test]
+fn scene_type_fans_out_each_codepoint_in_order() {
+    // A single `scene/type {text}` enqueues one CharacterKey per Unicode
+    // scalar, in order, each carrying the resolved target and the atomic
+    // `Press` edge — the keyboard sibling of scene/drag's batched pointer
+    // gesture (one RPC where per-char scene/key was N).
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut inbox: Vec<DeferredInput> = Vec::new();
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/type","params":{"at":{"x":10.0,"y":20.0},"text":"hi!"},"id":500}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(resp.error.is_none(), "{:?}", resp.error);
+    assert_eq!(resp.result, Some(Value::Null));
+    let mut chars: Vec<String> = Vec::new();
+    for ev in &inbox {
+        let DeferredInput::CharacterKey {
+            x,
+            y,
+            character,
+            state,
+        } = ev
+        else {
+            panic!("expected CharacterKey, got {ev:?}");
+        };
+        assert!((*x - 10.0).abs() < f64::EPSILON);
+        assert!((*y - 20.0).abs() < f64::EPSILON);
+        assert_eq!(*state, KeyWireState::Press);
+        chars.push(character.clone());
+    }
+    assert_eq!(chars, ["h", "i", "!"]);
+}
+
+#[test]
+fn scene_type_fans_out_per_unicode_scalar_not_byte() {
+    // "안녕" is two scalars but six UTF-8 bytes; the fan-out is per
+    // scalar, so each CharacterKey carries a whole syllable, never a
+    // partial-byte fragment.
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut inbox: Vec<DeferredInput> = Vec::new();
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/type","params":{"at":{"x":5.0,"y":5.0},"text":"안녕"},"id":501}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(resp.error.is_none(), "{:?}", resp.error);
+    let chars: Vec<&str> = inbox
+        .iter()
+        .map(|ev| {
+            let DeferredInput::CharacterKey { character, .. } = ev else {
+                panic!("expected CharacterKey, got {ev:?}");
+            };
+            character.as_str()
+        })
+        .collect();
+    assert_eq!(chars, ["안", "녕"]);
+}
+
+#[test]
+fn scene_type_newline_is_literal_scalar_not_enter() {
+    // Scope lock (pure text — no control-char → named-key mapping): a
+    // JSON `"\n"` in `text` decodes to the literal U+000A scalar and is
+    // injected as a CharacterKey `"\n"`, NOT a named `"Enter"` edge. A
+    // client that wants to submit sends an explicit `scene/key {Enter}`.
+    // This test FAILS if a future change smuggles \n→Enter magic in.
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut inbox: Vec<DeferredInput> = Vec::new();
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/type","params":{"at":{"x":0.0,"y":0.0},"text":"a\nb"},"id":502}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(resp.error.is_none(), "{:?}", resp.error);
+    assert_eq!(inbox.len(), 3);
+    // Every entry is a CharacterKey — no Named `Key` edge is synthesised.
+    for ev in &inbox {
+        assert!(
+            matches!(ev, DeferredInput::CharacterKey { .. }),
+            "scene/type must not synthesise a named-key edge, got {ev:?}"
+        );
+    }
+    let DeferredInput::CharacterKey { ref character, .. } = inbox[1] else {
+        unreachable!();
+    };
+    assert_eq!(character, "\n");
+}
+
+#[test]
+fn scene_type_without_inbox_is_unavailable() {
+    let mut scene = counted_scene(0);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/type","params":{"at":{"x":0.0,"y":0.0},"text":"hi"},"id":503}"#;
+    let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+    let err = resp.error.unwrap();
+    assert_eq!(err.code, -32602);
+    let data = err.data.as_ref().and_then(Value::as_str).unwrap_or("");
+    assert!(data.contains("InputInjectionUnavailable"), "data: {data:?}");
+}
+
+#[test]
+fn scene_type_empty_text_is_invalid() {
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut inbox: Vec<DeferredInput> = Vec::new();
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/type","params":{"at":{"x":0.0,"y":0.0},"text":""},"id":504}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    let err = resp.error.unwrap();
+    assert_eq!(err.code, -32602);
+    let data = err.data.as_ref().and_then(Value::as_str).unwrap_or("");
+    assert!(data.contains("empty"), "data: {data:?}");
+    assert!(inbox.is_empty());
+}
+
+#[test]
+fn scene_type_missing_text_is_invalid() {
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut inbox: Vec<DeferredInput> = Vec::new();
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/type","params":{"at":{"x":0.0,"y":0.0}},"id":505}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    let err = resp.error.unwrap();
+    assert_eq!(err.code, -32602);
+    let data = err.data.as_ref().and_then(Value::as_str).unwrap_or("");
+    assert!(data.contains("text"), "data: {data:?}");
+    assert!(inbox.is_empty());
+}
+
+#[test]
+fn scene_type_requires_at_or_path() {
+    // Target resolution mirrors scene/key: exactly one of `at` / `path`.
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut inbox: Vec<DeferredInput> = Vec::new();
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/type","params":{"text":"hi"},"id":506}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    let err = resp.error.unwrap();
+    assert_eq!(err.code, -32602);
+    assert!(inbox.is_empty());
+}
+
 // ---- R882 §5.49 §5.39 — scene/key state ("down" / "up") edges ----
 
 #[test]
