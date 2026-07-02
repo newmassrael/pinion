@@ -49,7 +49,7 @@ use pinion_core::scene::{
 use pinion_core::style::{BoxStyle, Color, LayoutStyle, PathStyle, Stroke, TextStyle};
 
 use crate::highlight::{
-    push_top_level, strip_children_with_prefix, strip_tag, wrap_into_container,
+    has_top_level_tag, push_top_level, strip_children_with_prefix, strip_tag, wrap_into_container,
 };
 
 /// Tag carried by the injected chrome strip container. Shares the
@@ -344,9 +344,14 @@ const RESIZE_CORNER_PX: u32 = 12;
 ///
 /// The caller injects the resize border BEFORE [`inject_window_chrome`], so
 /// the chrome strip's controls and drag grip sit on top of the north edge /
-/// top corners and keep receiving clicks. The window therefore resizes from
-/// its sides, bottom, and bottom corners; the top edge is owned by the title
-/// bar (the conventional CSD trade-off, e.g. GTK / Win11 caption windows).
+/// top corners and keep receiving clicks. The window resizes from its sides,
+/// bottom, and bottom corners; the two TOP corners stay owned by the strip
+/// (their diagonal resize yields to the corner controls). The NORTH edge,
+/// however, is lifted back ON TOP by [`raise_top_resize_edge`] (R1195) so the
+/// outermost `RESIZE_EDGE_PX` of the title bar still resize the window
+/// vertically — the VS Code / Win11 / GTK behaviour (a title bar is moved from
+/// its bulk, resized from its very top edge), NOT the "top owned by the title
+/// bar" trade-off the pre-R1195 layering left.
 ///
 /// Idempotent: any pre-existing resize region (tag prefixed
 /// [`WINDOW_RESIZE_TAG_PREFIX`]) is stripped before the fresh set is appended.
@@ -430,6 +435,61 @@ fn inject_resize_regions(scene: Scene, viewport: Option<(u32, u32)>, include_top
             Scene::Box(BoxNode::new(rect, BoxStyle::filled(Color::TRANSPARENT)).with_tag(tag)),
         );
     }
+    wrapped
+}
+
+/// (R1195 §5.16 §5.39) Re-layer the north resize edge ON TOP of a shell chrome
+/// strip so a chromed window's TOP EDGE stays a live resize band.
+///
+/// [`inject_resize_border`] injects all eight regions UNDER the strip (border
+/// first, strip next), so the strip's grip shadows the north band and the top
+/// edge cannot resize. That was documented as "the conventional CSD trade-off"
+/// — but it is not: VS Code, Win11, GTK, and macOS all keep the outermost
+/// `RESIZE_EDGE_PX` of a custom title bar a resize grab (a title bar is MOVED
+/// from its bulk, RESIZED from its very edge). This lifts JUST the north edge
+/// back above the strip, so the top `RESIZE_EDGE_PX` resize the window — even
+/// over the controls, exactly as VS Code — while the rest of the strip still
+/// moves it. The existing R1189 hover-cursor mapping (`WINDOW_RESIZE_NORTH_TAG`
+/// → `NsResize`) and the R1122 press routing (`drag_resize_window(North)`) light
+/// up for free once the band is hit-reachable, so no new cursor / press wiring.
+///
+/// The top corners (NW / NE) are deliberately NOT raised: the NE corner would
+/// shadow the close button at the very corner a user reaches for (the R1186
+/// concern), so the top edge resizes vertically only — the two top corners keep
+/// diagonal resize off, matching the "title bar owns the corner controls" shape.
+///
+/// **Self-gating:** a `WINDOW_RESIZE_NORTH_TAG` band exists iff the window is a
+/// resizable, non-maximized, chromed window (the only branch
+/// [`inject_resize_border`] injects it), so this is a pure no-op for every other
+/// window — no window-policy re-resolution needed. Idempotent: the existing
+/// north band is stripped and re-pushed as the topmost child. Returns the scene
+/// unchanged for a `None` / degenerate viewport, mirroring the sibling injectors.
+#[must_use]
+pub fn raise_top_resize_edge(scene: Scene, viewport: Option<(u32, u32)>) -> Scene {
+    let Some((w, h)) = viewport else {
+        return scene;
+    };
+    if w < RESIZE_CORNER_PX || h < RESIZE_CORNER_PX {
+        return scene;
+    }
+    // Only a resizable chromed window has a north band under its strip; every
+    // other window is left untouched (no top resize band is conjured for a
+    // non-resizable / chrome-less / maximized window).
+    if !has_top_level_tag(&scene, WINDOW_RESIZE_NORTH_TAG) {
+        return scene;
+    }
+    let mut wrapped = wrap_into_container(scene);
+    strip_tag(&mut wrapped, WINDOW_RESIZE_NORTH_TAG);
+    push_top_level(
+        &mut wrapped,
+        Scene::Box(
+            BoxNode::new(
+                Rect::new(0, 0, w, RESIZE_EDGE_PX),
+                BoxStyle::filled(Color::TRANSPARENT),
+            )
+            .with_tag(WINDOW_RESIZE_NORTH_TAG),
+        ),
+    );
     wrapped
 }
 
@@ -760,6 +820,101 @@ mod tests {
                 "{tag} carries the resize family prefix",
             );
         }
+    }
+
+    // ---- R1195 raise_top_resize_edge (VS Code / Win11 top-edge resize band) ----
+
+    fn last_top_level_tag(scene: &Scene) -> Option<&str> {
+        match scene {
+            Scene::Container(c) => c.children.last().and_then(pinion_core::Scene::tag),
+            _ => None,
+        }
+    }
+
+    /// A resizable chromed window: resize border (north UNDER) then the strip
+    /// (layered OVER), matching the shell's `apply_resize_border` +
+    /// `apply_window_chrome` order.
+    fn chromed_resizable(w: u32, h: u32) -> Scene {
+        inject_window_chrome(
+            inject_resize_border(empty(), Some((w, h))),
+            "t",
+            false,
+            Some((w, h)),
+            WindowChromeStyle::default(),
+        )
+    }
+
+    #[test]
+    fn raise_lifts_the_north_band_above_the_chrome_strip() {
+        let chromed = chromed_resizable(800, 600);
+        // Before: the strip is the topmost (last) child, shadowing the north band.
+        assert_eq!(last_top_level_tag(&chromed), Some(WINDOW_CHROME_TAG));
+        let raised = raise_top_resize_edge(chromed, Some((800, 600)));
+        // After: the north band is the topmost child → it wins the top edge in
+        // `hit_test`'s last-child-wins.
+        assert_eq!(last_top_level_tag(&raised), Some(WINDOW_RESIZE_NORTH_TAG));
+        // Exactly one north band survives (moved, not duplicated).
+        assert_eq!(count_tag(&raised, WINDOW_RESIZE_NORTH_TAG), 1);
+        // It spans the full width at the very top, `RESIZE_EDGE_PX` tall.
+        let r = rect_of(find_tag(&raised, WINDOW_RESIZE_NORTH_TAG).unwrap());
+        assert_eq!((r.x, r.y, r.w, r.h), (0, 0, 800, RESIZE_EDGE_PX));
+        // The strip and every other resize region survive the raise.
+        assert_eq!(count_tag(&raised, WINDOW_CHROME_TAG), 1);
+        for tag in ALL_RESIZE_TAGS {
+            assert!(find_tag(&raised, tag).is_some(), "{tag} survives the raise");
+        }
+    }
+
+    #[test]
+    fn raise_is_idempotent() {
+        let once = raise_top_resize_edge(chromed_resizable(640, 480), Some((640, 480)));
+        let twice = raise_top_resize_edge(once, Some((640, 480)));
+        assert_eq!(
+            count_tag(&twice, WINDOW_RESIZE_NORTH_TAG),
+            1,
+            "still exactly one north band after a second raise",
+        );
+        assert_eq!(last_top_level_tag(&twice), Some(WINDOW_RESIZE_NORTH_TAG));
+    }
+
+    #[test]
+    fn raise_is_a_noop_without_a_north_band() {
+        // A chrome-less resizable window uses the below-titlebar border (no
+        // north), so there is nothing to raise — untouched.
+        let below = inject_resize_border_below_titlebar(empty(), Some((800, 600)));
+        assert!(find_tag(&below, WINDOW_RESIZE_NORTH_TAG).is_none());
+        let raised = raise_top_resize_edge(below, Some((800, 600)));
+        assert!(
+            find_tag(&raised, WINDOW_RESIZE_NORTH_TAG).is_none(),
+            "no north band is conjured for a chrome-less window",
+        );
+        // A bare scene (a non-resizable window has no border at all) is likewise
+        // untouched.
+        assert_eq!(
+            count_tag(
+                &raise_top_resize_edge(empty(), Some((800, 600))),
+                WINDOW_RESIZE_NORTH_TAG
+            ),
+            0,
+        );
+    }
+
+    #[test]
+    fn raise_unknown_or_degenerate_viewport_returns_scene_unchanged() {
+        // None / degenerate viewport is a pure no-op: the north band stays under
+        // the strip (strip remains the topmost child).
+        let none = raise_top_resize_edge(chromed_resizable(640, 480), None);
+        assert_eq!(
+            last_top_level_tag(&none),
+            Some(WINDOW_CHROME_TAG),
+            "None = no-op"
+        );
+        let tiny = raise_top_resize_edge(chromed_resizable(640, 480), Some((4, 4)));
+        assert_eq!(
+            last_top_level_tag(&tiny),
+            Some(WINDOW_CHROME_TAG),
+            "tiny = no-op"
+        );
     }
 
     #[test]

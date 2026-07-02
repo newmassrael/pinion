@@ -20868,6 +20868,54 @@
         "The CLAUDE.md tray correction is doc-only; the Linux tray headless test-watcher harness (docs/cross-platform-native-strategy.md step 1) remains a real OS-native gap, unblocked and next-actionable."
       ]
     },
+    "R1195": {
+      "decision_summary": "R1195 chrome window top-edge resize band: a chromed window's outermost RESIZE_EDGE_PX top edge is now a live NORTH resize band (VS Code / Win11 / GTK parity), lifted back on top of the chrome strip by the new overlay raise_top_resize_edge after apply_window_chrome. Corrects the pre-R1195 'top owned by the title bar' layering (the north band was dead under the strip); reuses R1189's hover-cursor mapping and R1122's press routing, so no new cursor or press wiring.",
+      "changes_bullets": [
+        "pinion-overlay window_chrome.rs: new raise_top_resize_edge(scene, viewport) strips the north resize band inject_resize_border put UNDER the chrome strip and re-pushes it as the TOPMOST child, so the outermost RESIZE_EDGE_PX (6px) of a chromed title bar resize the window (even over the controls, as VS Code) — self-gating on the band's presence (no-op unless a resizable, non-maximized, chromed window), idempotent.",
+        "pinion-overlay highlight.rs: new has_top_level_tag(scene, tag) helper to gate the re-layer on the node's presence.",
+        "pinion-shell substrate.rs: apply_window_overlays calls raise_top_resize_edge after apply_window_chrome (shared by the live paint and the pure introspection mirror); corrected the apply_resize_border + inject_resize_border rustdoc that claimed the top edge was owned by the title bar.",
+        "examples/hello-window-chrome: doc note that the top edge now resizes the window (VS Code / Win11).",
+        "Renamed the shell test chrome_strip_wins_over_resize_border_at_the_top to top_edge_is_a_resize_band_over_strip and updated the reachability probes for the corrected behavior."
+      ],
+      "verification_bullets": [
+        "cargo test --workspace 0-fail: 4 new pinion-overlay units (north band raised above the strip and topmost / idempotent second raise / no-op without a band [chrome-less + bare scene] / degenerate viewport no-op) + updated shell hit-test tests that drive the real router: the top 6px at (150,3) and over the close button at (394,3) resolve to WINDOW_RESIZE_NORTH_TAG, while the close button (394,16) and the move grip (150,16) are reachable below the band.",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic); cargo fmt --check clean; cargo doc broken-intra-doc-links clean for the changed files.",
+        "The live top-edge drag-resize is HW-gated (:0 / a real window), verified in the consumer session like R1189's hover cursor; the headless witness is the router hit-test resolution plus the unchanged R1189 chrome_action_for_tag(North) -> NsResize and R1122 drag_resize_window(North) paths, which now become reachable once the band is on top."
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.39"
+      ],
+      "carry_forward_bullets": [
+        "The two TOP corners (NW / NE) deliberately stay under the strip (diagonal resize from the top off), so the NE corner cannot shadow the close button a user reaches for (the R1186 concern); the top edge resizes vertically only.",
+        "The top RESIZE_EDGE_PX (6px) shadows the very top of the controls, exactly as VS Code: a control is clicked from a few px below its top edge. Standard and acceptable.",
+        "Live top-edge drag-resize and the NsResize cursor are HW-gated (:0), like R1189's hover cursor; headlessly the router hit-test resolution is the witness.",
+        "PR-46 gap (1) — the splitter divider hover cursor (the generic pinion-owned CursorHint seam, LayoutStyle interaction attribute + shell winit mapping) — remains for R1196, independent of this top-edge fix."
+      ],
+      "publishable_decision_summary": "R1195 chrome window top-edge resize band: a chromed window's outermost RESIZE_EDGE_PX top edge is now a live NORTH resize band (VS Code / Win11 / GTK parity), lifted back on top of the chrome strip by the new overlay raise_top_resize_edge after apply_window_chrome. Corrects the pre-R1195 'top owned by the title bar' layering (the north band was dead under the strip); reuses R1189's hover-cursor mapping and R1122's press routing, so no new cursor or press wiring.",
+      "publishable_changes_bullets": [
+        "pinion-overlay window_chrome.rs: new raise_top_resize_edge(scene, viewport) strips the north resize band inject_resize_border put UNDER the chrome strip and re-pushes it as the TOPMOST child, so the outermost RESIZE_EDGE_PX (6px) of a chromed title bar resize the window (even over the controls, as VS Code) — self-gating on the band's presence (no-op unless a resizable, non-maximized, chromed window), idempotent.",
+        "pinion-overlay highlight.rs: new has_top_level_tag(scene, tag) helper to gate the re-layer on the node's presence.",
+        "pinion-shell substrate.rs: apply_window_overlays calls raise_top_resize_edge after apply_window_chrome (shared by the live paint and the pure introspection mirror); corrected the apply_resize_border + inject_resize_border rustdoc that claimed the top edge was owned by the title bar.",
+        "examples/hello-window-chrome: doc note that the top edge now resizes the window (VS Code / Win11).",
+        "Renamed the shell test chrome_strip_wins_over_resize_border_at_the_top to top_edge_is_a_resize_band_over_strip and updated the reachability probes for the corrected behavior."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace 0-fail: 4 new pinion-overlay units (north band raised above the strip and topmost / idempotent second raise / no-op without a band [chrome-less + bare scene] / degenerate viewport no-op) + updated shell hit-test tests that drive the real router: the top 6px at (150,3) and over the close button at (394,3) resolve to WINDOW_RESIZE_NORTH_TAG, while the close button (394,16) and the move grip (150,16) are reachable below the band.",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic); cargo fmt --check clean; cargo doc broken-intra-doc-links clean for the changed files.",
+        "The live top-edge drag-resize is HW-gated (:0 / a real window), verified in the consumer session like R1189's hover cursor; the headless witness is the router hit-test resolution plus the unchanged R1189 chrome_action_for_tag(North) -> NsResize and R1122 drag_resize_window(North) paths, which now become reachable once the band is on top."
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.39"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The two TOP corners (NW / NE) deliberately stay under the strip (diagonal resize from the top off), so the NE corner cannot shadow the close button a user reaches for (the R1186 concern); the top edge resizes vertically only.",
+        "The top RESIZE_EDGE_PX (6px) shadows the very top of the controls, exactly as VS Code: a control is clicked from a few px below its top edge. Standard and acceptable.",
+        "Live top-edge drag-resize and the NsResize cursor are HW-gated (:0), like R1189's hover cursor; headlessly the router hit-test resolution is the witness.",
+        "PR-46 gap (1) — the splitter divider hover cursor (the generic pinion-owned CursorHint seam, LayoutStyle interaction attribute + shell winit mapping) — remains for R1196, independent of this top-edge fix."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

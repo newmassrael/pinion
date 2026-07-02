@@ -204,6 +204,13 @@ pub(crate) fn strip_tag(scene: &mut Scene, tag: &str) {
     }
 }
 
+/// Whether `scene` is a container with a direct (top-level) child tagged
+/// `tag`. Used to gate an idempotent re-layer on the presence of the node it
+/// would move (so the operation is a pure no-op when the node is absent).
+pub(crate) fn has_top_level_tag(scene: &Scene, tag: &str) -> bool {
+    matches!(scene, Scene::Container(c) if c.children.iter().any(|ch| ch.tag() == Some(tag)))
+}
+
 /// Strip every top-level child whose tag starts with `prefix`. The
 /// [`crate::window_chrome`] resize border (R1122) injects its eight edge /
 /// corner hit regions as FLAT siblings of the content rather than in one

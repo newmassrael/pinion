@@ -3757,6 +3757,14 @@ impl<V: WidgetView> ShellCore<V> {
         // whose `window_policy().chrome` is `None` is a no-op (byte-identical
         // to pre-R1121).
         let chromed = self.apply_window_chrome(resizable, w, h, window_id);
+        // R1195 §5.16 §5.39 — VS Code / Win11 / GTK parity: keep a chromed
+        // window's TOP EDGE a live resize band. `apply_window_chrome` layered
+        // the strip over the north resize region (killing top-edge resize);
+        // raise the north band back on top so the outermost `RESIZE_EDGE_PX`
+        // resize the window (the R1189 hover cursor + R1122 press routing light
+        // up for free). Self-gating on the band's presence: a no-op unless the
+        // window is a resizable, non-maximized, chromed one.
+        let chromed = pinion_overlay::raise_top_resize_edge(chromed, Some((w, h)));
         let ringed = self.apply_focus_ring(chromed, w, h);
         // R1125 §5.51 PR-33 — the incoming cross-window dock drop-zone preview,
         // drawn at the dock zone in the TARGET (host) window where the panel will
@@ -3834,8 +3842,11 @@ impl<V: WidgetView> ShellCore<V> {
     ///
     /// R1186 — the border VARIANT depends on who owns the top edge. A CHROMED
     /// window layers its chrome strip ON TOP of the border, so all eight regions
-    /// are injected (the north ones are dead under the strip). A CHROME-LESS
-    /// resizable window (`chrome: None`) draws its title bar as a CONTENT
+    /// are injected; the north EDGE is then raised back above the strip by
+    /// [`pinion_overlay::raise_top_resize_edge`] (R1195) so the top edge stays a
+    /// live resize band (VS Code / Win11), while the two top CORNERS stay under
+    /// the strip (their diagonal resize yields to the corner controls). A
+    /// CHROME-LESS resizable window (`chrome: None`) draws its title bar as a CONTENT
     /// dock header (R1171 controls-in-header) that cannot be layered over the
     /// border; injecting the north regions would let them shadow the header's
     /// close button at the very corner a user reaches to close, so the top edge +
@@ -7773,7 +7784,7 @@ mod r1121_window_chrome_tests {
     #[test]
     fn chromeless_resizable_top_right_falls_through_to_content() {
         // R1186 — the header-control-reachability guard (the chrome case's analog is
-        // `chrome_strip_wins_over_resize_border_at_the_top`). Because the north edge
+        // `top_edge_is_a_resize_band_over_strip`). Because the north edge
         // + top corners are omitted, a press at the top-right (where a real binding
         // paints its close button, and where a user reaches to close) falls THROUGH
         // to the content beneath — it does NOT resolve to a resize region. The
@@ -8070,10 +8081,14 @@ mod r1121_window_chrome_tests {
         let boot = sc.compute_paint_scene(400, 300);
         sc.finalize_frame(boot);
 
-        // Each probe: (x, y, expected resize tag). The south / left / right
-        // (below the strip) edges and the bottom corners are reachable; the
-        // north edge + top corners are owned by the chrome strip (next test).
+        // Each probe: (x, y, expected resize tag). All four edges reach: the
+        // NORTH edge is raised back ON TOP of the chrome strip (R1195, VS Code /
+        // Win11 parity — the top `RESIZE_EDGE_PX` resize the window), and the
+        // south / west / east edges + bottom corners are reachable as before.
+        // The two TOP corners stay owned by the strip (diagonal resize off — the
+        // corner controls win there; see `top_edge_is_a_resize_band_over_strip`).
         let probes = [
+            (150.0, 3.0, pinion_overlay::WINDOW_RESIZE_NORTH_TAG),
             (200.0, 297.0, pinion_overlay::WINDOW_RESIZE_SOUTH_TAG),
             (3.0, 150.0, pinion_overlay::WINDOW_RESIZE_WEST_TAG),
             (397.0, 150.0, pinion_overlay::WINDOW_RESIZE_EAST_TAG),
@@ -8091,30 +8106,45 @@ mod r1121_window_chrome_tests {
     }
 
     #[test]
-    fn chrome_strip_wins_over_resize_border_at_the_top() {
-        // The layering invariant: resize is injected UNDER the chrome strip, so
-        // the top edge / top corners do NOT shadow the title bar. The close
-        // button (top-right) and the grip (top) must still resolve to chrome.
+    fn top_edge_is_a_resize_band_over_strip() {
+        // R1195 §5.16 §5.39 — VS Code / Win11 / GTK parity: the outermost
+        // `RESIZE_EDGE_PX` (6 px) of a chromed title bar is a live NORTH resize
+        // band, layered back ON TOP of the strip — even over the controls, as VS
+        // Code does. Below the band the strip owns move + controls as before.
         use pinion_runtime::PointerId;
         let mut sc = ShellCore::<Borderless>::new();
         let boot = sc.compute_paint_scene(400, 300);
         sc.finalize_frame(boot);
 
-        // (394, 3) is inside BOTH the close button (x>=354) and the north-east
-        // resize corner (x>=388, y<12) — the genuine overlap. Chrome wins.
+        // Top 6 px, over the close button (x>=354): the resize band wins (the
+        // top edge resizes the window from anywhere along it, including the
+        // controls — you drop a few px to click the control).
         sc.cursor_moved(PointerId::MOUSE, 394.0, 3.0);
         assert_eq!(
             sc.hover_target(PointerId::MOUSE),
-            Some(pinion_overlay::WINDOW_CHROME_CLOSE_TAG),
-            "the close button is not shadowed by the north-east resize corner",
+            Some(pinion_overlay::WINDOW_RESIZE_NORTH_TAG),
+            "the top edge over the close button is the north resize band",
         );
-        // Top edge over the strip background resolves to the move grip, not
-        // the north resize edge.
+        // Just below the band, the close button is a normal target.
+        sc.cursor_moved(PointerId::MOUSE, 394.0, 16.0);
+        assert_eq!(
+            sc.hover_target(PointerId::MOUSE),
+            Some(pinion_overlay::WINDOW_CHROME_CLOSE_TAG),
+            "the close button is reachable below the top resize band",
+        );
+        // Top 6 px over the strip background is the north resize band.
         sc.cursor_moved(PointerId::MOUSE, 150.0, 3.0);
         assert_eq!(
             sc.hover_target(PointerId::MOUSE),
+            Some(pinion_overlay::WINDOW_RESIZE_NORTH_TAG),
+            "the top edge over the title bar is the north resize band",
+        );
+        // Below the band, the title-bar grip moves the window.
+        sc.cursor_moved(PointerId::MOUSE, 150.0, 16.0);
+        assert_eq!(
+            sc.hover_target(PointerId::MOUSE),
             Some(pinion_overlay::WINDOW_CHROME_GRIP_TAG),
-            "the title-bar grip is not shadowed by the north resize edge",
+            "below the band the grip moves the window",
         );
     }
 

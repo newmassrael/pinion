@@ -11,8 +11,10 @@
 //! Run it (visible window): `cargo run -p hello-window-chrome`. Drag the dark
 //! bar to move the window; the buttons at the top-right minimize / maximize /
 //! close it. R1122: drag the window's side / bottom edges or bottom corners to
-//! resize it (the chrome restores the drag-resize the OS frame would provide;
-//! the top edge is owned by the title bar). R1123: the maximize button switches
+//! resize it (the chrome restores the drag-resize the OS frame would provide).
+//! R1195: the outermost 6 px of the top edge also resize the window (VS Code /
+//! Win11 — a title bar is moved from its bulk, resized from its very edge).
+//! R1123: the maximize button switches
 //! to the "restore" (two-square) glyph while maximized, and the resize border
 //! is dropped — a maximized window fills the work area, so edge-resize is off.
 
