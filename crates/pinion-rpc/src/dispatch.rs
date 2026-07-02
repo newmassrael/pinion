@@ -5448,6 +5448,19 @@ fn introspect_error_to_rpc(err: &SubstrateIntrospectError) -> RpcError {
     }
 }
 
+/// `scene/locate` — point-query against the **authoritative STATE scene**
+/// (the R795 two-scene split: the boot composition of externals, NOT the
+/// `V::view` paint scene). R1188 doc-honesty: a view-fn binding's state scene
+/// carries no laid-out geometry — its rects stay at the `Rect::default()`
+/// zero — so on every modern binding this answers `OutOfBounds` for any
+/// coordinate, live AND headless alike (the PR-44 secondary finding; not a
+/// live-only "mirror viewport" defect). It stays meaningful only for a
+/// binding whose state scene itself carries geometry (the Phase-A
+/// single-External shape). For painted-frame geometry use `scene/layout`
+/// (`viewport: null` projects the addressed window's STORED paint layout,
+/// R890) or `scene/snapshot {from: "paint"}`; a paint-scene point-query
+/// sibling is a candidate future method — a deliberate spec fork not taken
+/// in R1188.
 fn handle_scene_locate(scene: &Scene, params: Option<&Value>) -> Result<Value, RpcError> {
     let params = require_params(params)?;
     let Some(x) = params.get("x").and_then(Value::as_u64) else {
@@ -5535,6 +5548,11 @@ fn locate_error_to_rpc(err: LocateError) -> RpcError {
     RpcError::invalid_params(variant)
 }
 
+/// `scene/bbox` — path-rect query against the **authoritative STATE scene**,
+/// same R795 two-scene basis (and the same R1188 doc-honesty caveat) as
+/// [`handle_scene_locate`]: a view-fn binding's state scene is geometry-less,
+/// so this answers the zero rect on every modern binding; painted-frame
+/// geometry lives on `scene/layout` / `scene/snapshot {from: "paint"}`.
 fn handle_scene_bbox(scene: &Scene, params: Option<&Value>) -> Result<Value, RpcError> {
     let params = require_params(params)?;
     let Some(path) = params.get("path").and_then(Value::as_str) else {

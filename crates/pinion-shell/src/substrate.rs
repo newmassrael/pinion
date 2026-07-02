@@ -565,6 +565,24 @@ pub struct ShellCore<V: WidgetView> {
     /// Out-of-band shell state alongside [`Self::os_focused_window`]; never
     /// scene data (§2 #7 unaffected).
     key_press_owner: HashMap<String, String>,
+    /// (R1188 §5.16 §5.49 §2 #2) Window-control presses the RPC click drain
+    /// detected — `(canonical spec id, control)` per hit, in arrival order.
+    ///
+    /// The RPC `scene/click` drain runs inside `ShellCore` (headless, no winit
+    /// handles), while executing a control (`set_minimized` / `set_maximized` /
+    /// the close seam + app-exit fallback) needs `AppShell`'s winit `Window` +
+    /// `ActiveEventLoop`. So the drain QUEUES the detected control here and the
+    /// windowed shell drains it right after `dispatch_rpc` returns, executing
+    /// through the same `apply_window_control` the winit pointer path
+    /// (`try_chrome_press`) uses — one detection vocabulary
+    /// ([`pinion_overlay::window_control_for_tag`]) and one execution arm for
+    /// both input paths. Pre-R1188 the RPC click hit the control tag and then
+    /// fell into ordinary widget routing (a no-op — no widget carries the
+    /// overlay tag), so the R1121 "an AI observes AND DRIVES the controls"
+    /// contract held only for observation. Headless tests observe this queue
+    /// directly via [`Self::take_pending_window_controls`] (there is no winit
+    /// arm to fire in a headless harness — the queue IS the routing decision).
+    pending_window_controls: Vec<(String, pinion_overlay::WindowControl)>,
 }
 
 /// R763 §5.36 §5.22 — shell-owned state of an active pointer text
@@ -700,6 +718,7 @@ impl<V: WidgetView> ShellCore<V> {
             text_select_drag: None,
             os_focused_window: None,
             key_press_owner: HashMap::new(),
+            pending_window_controls: Vec::new(),
         };
         // (R1020 §5.39) Seed the focus enumeration from the binding's first
         // view — the scene-derived source the per-frame paint refresh uses —
@@ -741,6 +760,24 @@ impl<V: WidgetView> ShellCore<V> {
     #[must_use]
     pub fn hover_target(&self, pid: PointerId) -> Option<&str> {
         self.core.hover_target(pid)
+    }
+
+    /// (R1188 §5.16 §5.49 §2 #2) Drain the window-control presses the RPC
+    /// click drain detected this dispatch — `(canonical spec id, control)` in
+    /// arrival order; the queue is left empty.
+    ///
+    /// The windowed shell calls this right after `dispatch_rpc` returns and
+    /// executes each entry through the same arm the winit pointer path uses
+    /// (`AppShell::apply_window_control` — `set_minimized` / `set_maximized` /
+    /// the [`WidgetView::window_close_requested`](crate::WidgetView::window_close_requested)
+    /// close seam), so an RPC `scene/click` on a control tag and a physical
+    /// left-press on the same tag take one execution path. Headless harnesses
+    /// (no winit) assert the returned entries directly: the queue IS the
+    /// routing decision, and the winit execution arm is the thin
+    /// already-covered remainder.
+    #[must_use]
+    pub fn take_pending_window_controls(&mut self) -> Vec<(String, pinion_overlay::WindowControl)> {
+        std::mem::take(&mut self.pending_window_controls)
     }
 
     /// R1025 §5.35 — read the pointer-capture lock on the addressed window
@@ -2504,11 +2541,20 @@ impl<V: WidgetView> ShellCore<V> {
     /// state. Pre-R672 every drained replay went through the
     /// binding-wide router → `scene/click` against a non-last-painted
     /// window had a race condition on `last_paint_scene`.
+    ///
+    /// R1188 §5.16 §5.49 §2 #2 — `scope` is the dispatch's ORIGINAL window
+    /// scope (`None` = the unscoped single-window entry), threaded alongside
+    /// the derived router key so a window-control hit resolves the canonical
+    /// spec id through the same [`Self::resolve_window_spec`] every per-window
+    /// lookup uses (the R1123.1 rule — never re-derive identity from the
+    /// `DEFAULT_WINDOW` fallback string, which collapses "unscoped primary"
+    /// with "a window literally named main").
     // R1026 — rustfmt's reflow pushed this 1 line over the workspace
     // too_many_lines (100) ceiling it was kept just under; the body is a flat
     // per-input dispatch, not bloat. Extraction is deferred to the owner.
     #[allow(clippy::too_many_lines)]
-    fn drain_deferred_inputs_for_window(&mut self, window_id: &str, inputs: &[DeferredInput]) {
+    fn drain_deferred_inputs_for_window(&mut self, scope: Option<&str>, inputs: &[DeferredInput]) {
+        let window_id = scope.unwrap_or(pinion_runtime::DEFAULT_WINDOW);
         // `DeferredInput` is `non_exhaustive`; the wildcard arm
         // covers future variants (key, cursor_only, etc.) silently
         // no-op against this drain until a follow-up round extends
@@ -2521,8 +2567,42 @@ impl<V: WidgetView> ShellCore<V> {
                 }
                 DeferredInput::Click { x, y } => {
                     self.cursor_moved_for_window(window_id, PointerId::MOUSE, x, y);
-                    self.mouse_pressed_for_window(window_id, PointerId::MOUSE);
-                    self.mouse_released_for_window(window_id, PointerId::MOUSE);
+                    // R1188 §5.16 §5.49 §2 #2 — window-control drive parity.
+                    // The winit pointer path consumes a left-press on a discrete
+                    // window-control tag BEFORE widget routing
+                    // (`AppShell::try_chrome_press`); pre-R1188 this RPC replay
+                    // skipped that interception, so `scene/click` on a control
+                    // tag fell into widget routing and no-opped (no widget
+                    // carries the overlay tag) — the R1121 "AI drives the
+                    // controls" contract held for observation only. Mirror the
+                    // interception here: resolve the hover the cursor seed just
+                    // set, and on a control hit queue `(spec, control)` for the
+                    // windowed shell to execute post-dispatch (winit handles are
+                    // AppShell's; headless harnesses assert the queue itself).
+                    // Grip / resize tags are NOT intercepted — pointer-session
+                    // gestures whose RPC peers are `scene/window_move` /
+                    // `scene/resize` — so those clicks keep today's fall-through.
+                    let control = self
+                        .hover_target_for_window(window_id, PointerId::MOUSE)
+                        .and_then(pinion_overlay::window_control_for_tag);
+                    let consumed = match control {
+                        Some(control) => match self.resolve_window_spec(scope) {
+                            Some((spec_id, _)) => {
+                                self.pending_window_controls.push((spec_id, control));
+                                true
+                            }
+                            // No declared window resolves (a binding with an
+                            // empty `windows()` list) — leave the click on the
+                            // pre-R1188 widget-routing path rather than dropping
+                            // it silently.
+                            None => false,
+                        },
+                        None => false,
+                    };
+                    if !consumed {
+                        self.mouse_pressed_for_window(window_id, PointerId::MOUSE);
+                        self.mouse_released_for_window(window_id, PointerId::MOUSE);
+                    }
                 }
                 // R887 §5.49 §5.53 — `scene/click {button: "right"}`
                 // mirror: seed the router's cursor cache, then take the
@@ -4918,9 +4998,10 @@ impl<V: WidgetView> ShellCore<V> {
         // against the named window's last paint scene. The single-
         // window path passes `None` + falls back to the
         // [`pinion_runtime::DEFAULT_WINDOW`] router exactly like
-        // pre-R672 callers.
-        let drain_window = window_id.unwrap_or(pinion_runtime::DEFAULT_WINDOW);
-        self.drain_deferred_inputs_for_window(drain_window, &deferred_inputs);
+        // pre-R672 callers. (R1188 — the drain now receives the
+        // ORIGINAL scope and derives the router-key fallback itself,
+        // so a window-control hit resolves the canonical spec id.)
+        self.drain_deferred_inputs_for_window(window_id, &deferred_inputs);
         let tail = self.core.tail();
         self.handle_tail(&tail);
         // R688 §5.16 §5.35 — reconcile the external set after the
@@ -6539,7 +6620,7 @@ mod r1113_drag_image_producer_tests {
         // A `begin` drag: press over the source at (10, 10), march well past
         // the click→drag threshold to (120, 90), then HOLD (no release).
         sc.drain_deferred_inputs_for_window(
-            DEFAULT_WINDOW,
+            Some(DEFAULT_WINDOW),
             &[DeferredInput::Drag {
                 from_x: 10.0,
                 from_y: 10.0,
@@ -6562,7 +6643,7 @@ mod r1113_drag_image_producer_tests {
 
         // A `move` slice re-aims the held drag without releasing it.
         sc.drain_deferred_inputs_for_window(
-            DEFAULT_WINDOW,
+            Some(DEFAULT_WINDOW),
             &[DeferredInput::Drag {
                 from_x: 120.0,
                 from_y: 90.0,
@@ -6583,7 +6664,7 @@ mod r1113_drag_image_producer_tests {
 
         // An `end` slice (no press) releases → the session ends, follower gone.
         sc.drain_deferred_inputs_for_window(
-            DEFAULT_WINDOW,
+            Some(DEFAULT_WINDOW),
             &[DeferredInput::Drag {
                 from_x: 60.0,
                 from_y: 150.0,
@@ -7357,11 +7438,11 @@ mod r1121_window_chrome_tests {
     use crate::{ShellCore, SizeStrategy, WidgetView, WindowSpec};
     use pinion_a11y::WidgetA11y;
     use pinion_core::external::{External, StubExternal};
-    use pinion_core::scene::{ContainerNode, Rect, Scene};
-    use pinion_core::style::{LayoutStyle, Size, SizeValue};
+    use pinion_core::scene::{BoxNode, ContainerNode, Rect, Scene};
+    use pinion_core::style::{BoxStyle, Color, LayoutStyle, Size, SizeValue};
     use pinion_core::widgets::button::{ButtonEvent, ButtonState};
     use pinion_core::{Frame, WidgetCore};
-    use pinion_overlay::WindowChromeStyle;
+    use pinion_overlay::{WindowChromeStyle, WindowControl};
 
     const CONTENT_TAG: &str = "r1121-content";
     const CHROME_H: u32 = 32; // WindowChromeStyle::default().height_px
@@ -7794,6 +7875,201 @@ mod r1121_window_chrome_tests {
                 "window_resizable=Some(false) suppresses resize region {tag} despite chrome",
             );
         }
+    }
+
+    // ---- R1188 §5.16 §5.49 §2 #2 — RPC window-control drive parity ----
+    //
+    // A `scene/click` on a discrete window-control tag must take the same
+    // routing a physical left-press takes (`AppShell::try_chrome_press`), not
+    // fall into widget routing (the pre-R1188 no-op that left the R1121 "an AI
+    // observes AND DRIVES the controls" contract observation-only). ShellCore
+    // is headless (no winit), so the observable is the pending-control queue
+    // the windowed shell executes right after `dispatch_rpc`.
+
+    /// Drive one `scene/click {at:{x,y}}` through the REAL headless dispatch —
+    /// the identical entry the stdin RPC reader feeds — so the test exercises
+    /// the full parse → deferred-inbox → drain → control-detection pipeline.
+    fn rpc_click<V: WidgetView>(sc: &mut ShellCore<V>, x: u32, y: u32) {
+        let req = format!(
+            r#"{{"jsonrpc":"2.0","method":"scene/click","params":{{"at":{{"x":{x},"y":{y}}}}},"id":1}}"#
+        );
+        let _ = sc.dispatch_rpc(&req, &mut |_, _| {});
+    }
+
+    #[test]
+    fn rpc_click_on_chrome_controls_queues_the_window_control() {
+        let mut sc = ShellCore::<Borderless>::new();
+        let boot = sc.compute_paint_scene(400, 300);
+        sc.finalize_frame(boot);
+        // 400-wide strip, 46px buttons right-to-left: close [354,400] /
+        // maximize [308,354] / minimize [262,308]; strip is 32px tall.
+        rpc_click(&mut sc, 377, 16);
+        assert_eq!(
+            sc.take_pending_window_controls(),
+            vec![("main".to_owned(), WindowControl::Close)],
+            "★an RPC click on the close tag queues the control (drive parity)",
+        );
+        rpc_click(&mut sc, 331, 16);
+        rpc_click(&mut sc, 285, 16);
+        assert_eq!(
+            sc.take_pending_window_controls(),
+            vec![
+                ("main".to_owned(), WindowControl::Maximize),
+                ("main".to_owned(), WindowControl::Minimize),
+            ],
+            "maximize / minimize queue in arrival order",
+        );
+        // `take` semantics: the queue drains empty.
+        assert!(sc.take_pending_window_controls().is_empty());
+    }
+
+    #[test]
+    fn rpc_click_on_content_or_grip_queues_nothing() {
+        let mut sc = ShellCore::<Borderless>::new();
+        let boot = sc.compute_paint_scene(400, 300);
+        sc.finalize_frame(boot);
+        // Content center — ordinary widget routing, no control detection.
+        rpc_click(&mut sc, 200, 200);
+        // The grip is NOT a discrete control (a pointer-session window-move
+        // gesture whose RPC peer is `scene/window_move`) — it keeps the
+        // pre-R1188 fall-through.
+        rpc_click(&mut sc, 150, 16);
+        assert!(
+            sc.take_pending_window_controls().is_empty(),
+            "neither a content click nor the grip queues a window control",
+        );
+    }
+
+    #[test]
+    fn rpc_click_resolves_the_canonical_spec_not_the_router_fallback() {
+        // R1123.1 rule — an UNSCOPED dispatch drains via the DEFAULT_WINDOW
+        // router key ("main"), but the queued control must carry the resolved
+        // canonical spec id. `BorderlessPanel`'s only window is named "panel",
+        // so a "main" entry here would be the fallback-string bug.
+        let mut sc = ShellCore::<BorderlessPanel>::new();
+        let boot = sc.compute_paint_scene(400, 300);
+        sc.finalize_frame(boot);
+        rpc_click(&mut sc, 377, 16);
+        assert_eq!(
+            sc.take_pending_window_controls(),
+            vec![("panel".to_owned(), WindowControl::Close)],
+            "★the queue carries the canonical spec id, not the router fallback",
+        );
+    }
+
+    /// The R1187 controls-in-header shape (the sprag floater): the control tag
+    /// lives in CONTENT (the dock header hosts min/max/close), the window draws
+    /// NO chrome strip at all. The 40×28 close hit-box lays out at the
+    /// top-left of the full-window content container.
+    struct HeaderControls;
+    impl WidgetCore for HeaderControls {
+        type State = ButtonState;
+        type Event = ButtonEvent;
+        fn create_external() -> Box<dyn External> {
+            Box::new(StubExternal)
+        }
+        fn tag() -> &'static str {
+            CONTENT_TAG
+        }
+        fn read_state(_: &Scene) -> Self::State {
+            ButtonState::Idle
+        }
+        fn view(_: Self::State, _: &Frame) -> Scene {
+            // A Column: a 28-tall header hosting the close control, then a
+            // FOCUSABLE body that fills the rest — so a click on the body
+            // exercises the fall-through (widget routing → click-to-focus)
+            // the interception must NOT swallow, while the close click is
+            // intercepted.
+            let close = Scene::Box(
+                BoxNode::new(Rect::default(), BoxStyle::filled(Color::TRANSPARENT))
+                    .with_tag(pinion_overlay::WINDOW_CHROME_CLOSE_TAG)
+                    .with_layout(LayoutStyle::new().with_size(Size::px(40, 28))),
+            );
+            let body = Scene::Box(
+                BoxNode::new(Rect::default(), BoxStyle::filled(Color::TRANSPARENT))
+                    .with_tag("body")
+                    .with_layout(
+                        LayoutStyle::new()
+                            .with_size(Size::px(400, 272))
+                            .with_focusable(true),
+                    ),
+            );
+            let mut c = ContainerNode::new(vec![close, body]);
+            c.tag = Some(std::borrow::Cow::Borrowed(CONTENT_TAG));
+            c.layout = LayoutStyle::new()
+                .flex(pinion_core::style::FlexDirection::Column)
+                .with_size(
+                    Size::auto()
+                        .with_width(SizeValue::Percent(100))
+                        .with_height(SizeValue::Percent(100)),
+                );
+            Scene::Container(c)
+        }
+        fn event_name(_: Self::Event) -> &'static str {
+            "__internal__"
+        }
+        fn title() -> &'static str {
+            "HeaderControls"
+        }
+    }
+    impl WidgetA11y for HeaderControls {}
+    impl WidgetView for HeaderControls {
+        type Renderer = TestRenderer;
+        fn initial_size_strategy() -> SizeStrategy {
+            SizeStrategy::Fixed {
+                width: 400,
+                height: 300,
+            }
+        }
+        fn windows() -> Vec<WindowSpec> {
+            vec![
+                WindowSpec::new(
+                    "main",
+                    "HeaderControls",
+                    SizeStrategy::Fixed {
+                        width: 400,
+                        height: 300,
+                    },
+                )
+                .with_decorations(false),
+            ]
+        }
+        fn window_resizable(_window_id: &str) -> Option<bool> {
+            Some(true)
+        }
+    }
+
+    #[test]
+    fn rpc_click_drives_content_hosted_header_controls_too() {
+        // The PR-44 sprag shape: `window_chrome == None`, the close button is a
+        // CONTENT node carrying the shared control tag (R1171/R1187
+        // controls-in-header). The detection is tag-driven — same as the winit
+        // path — so it must fire for header-hosted controls, not only for the
+        // shell-injected chrome strip.
+        let mut sc = ShellCore::<HeaderControls>::new();
+        let boot = sc.compute_paint_scene(400, 300);
+        sc.finalize_frame(boot);
+        rpc_click(&mut sc, 20, 14);
+        assert_eq!(
+            sc.take_pending_window_controls(),
+            vec![("main".to_owned(), WindowControl::Close)],
+            "★a content-hosted (dock-header) close control queues via RPC click",
+        );
+        // Fall-through regression guard: a click on the focusable BODY (a
+        // non-control content node) must NOT be intercepted — it reaches widget
+        // routing (click-to-focus focuses the body). If the interception ever
+        // over-fired for non-control tags, ordinary clicks would stop working;
+        // this is the observable that would catch it.
+        rpc_click(&mut sc, 200, 150);
+        assert_eq!(
+            sc.focus().focused(),
+            Some("body"),
+            "★a non-control content click falls through to widget routing (focus set)",
+        );
+        assert!(
+            sc.take_pending_window_controls().is_empty(),
+            "the body click queued no window control",
+        );
     }
 
     #[test]

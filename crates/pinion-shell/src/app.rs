@@ -76,14 +76,17 @@ use crate::{
 /// (R1121 §5.16 §5.39) A client-side window-chrome control a left-press
 /// resolved to (a borderless window's title-bar buttons / drag grip). Mapped
 /// from the [`pinion_overlay`] chrome control tag in [`AppShell::try_chrome_press`].
+///
+/// R1188 §5.16 §5.49 §2 #2 — the three discrete button actions collapsed into
+/// [`Control`](Self::Control) (`pinion_overlay::WindowControl`), the vocabulary
+/// the headless RPC click drain shares: both input paths detect through the one
+/// `window_control_for_tag` mapping and execute through the one
+/// [`AppShell::apply_window_control`] arm. `Move` / `Resize` stay winit-local —
+/// pointer-session gestures with no RPC-click semantic.
 #[derive(Clone, Copy)]
 enum ChromeAction {
-    /// Close the window (routes to `event_loop.exit()`, the `CloseRequested` path).
-    Close,
-    /// `Window::set_minimized(true)`.
-    Minimize,
-    /// `Window::set_maximized(toggle)`.
-    Maximize,
+    /// A discrete control button — minimize / maximize-toggle / close.
+    Control(pinion_overlay::WindowControl),
     /// `Window::drag_window()` — OS-driven interactive move from the grip.
     Move,
     /// `Window::drag_resize_window(dir)` — OS-driven interactive resize from a
@@ -95,12 +98,14 @@ enum ChromeAction {
 /// (R1121 §5.16 §5.39) Map a hit-test tag to the window-chrome control it
 /// names, or `None` when the tag is not a chrome control. Pure (uses only the
 /// `ResizeDirection` enum value, no live winit `Window` / `self`) so the
-/// tag→action contract is unit-tested without a live window.
+/// tag→action contract is unit-tested without a live window. R1188 — the three
+/// discrete buttons delegate to [`pinion_overlay::window_control_for_tag`],
+/// the mapping SSOT the RPC click drain also resolves through.
 fn chrome_action_for_tag(tag: &str) -> Option<ChromeAction> {
+    if let Some(control) = pinion_overlay::window_control_for_tag(tag) {
+        return Some(ChromeAction::Control(control));
+    }
     match tag {
-        pinion_overlay::WINDOW_CHROME_CLOSE_TAG => Some(ChromeAction::Close),
-        pinion_overlay::WINDOW_CHROME_MINIMIZE_TAG => Some(ChromeAction::Minimize),
-        pinion_overlay::WINDOW_CHROME_MAXIMIZE_TAG => Some(ChromeAction::Maximize),
         pinion_overlay::WINDOW_CHROME_GRIP_TAG => Some(ChromeAction::Move),
         // R1122 — the eight resize edges / corners.
         pinion_overlay::WINDOW_RESIZE_NORTH_TAG => {
@@ -933,6 +938,15 @@ impl<V: WidgetView> AppShell<V> {
     /// live winit `Window` and writes the JSON-RPC response to
     /// stdout. Headless tests call `ShellCore::dispatch_rpc` directly
     /// with a no-op closure.
+    ///
+    /// R1188 §5.16 §5.49 §2 #2 — a `scene/click` on a window-control tag queues
+    /// a control on `ShellCore` (winit handles + the event-loop exit live HERE,
+    /// not in the headless core). The SOLE caller ([`Self::user_event`]) drains
+    /// [`ShellCore::take_pending_window_controls`] with the `ActiveEventLoop`
+    /// immediately after this returns. Any FUTURE caller of this method MUST do
+    /// the same, or an RPC-clicked control silently no-ops (and the queue leaks
+    /// into the next dispatch) — the drain is coupled to the call site because
+    /// this wrapper has no `ActiveEventLoop` to execute the close/app-exit with.
     fn dispatch_rpc(&mut self, request: &str) {
         // R671 §5.7 §5.16 — single-parse per-window RPC dispatch.
         // Pre-R671 (R670.B) AppShell parsed the JSON-RPC envelope
@@ -1826,40 +1840,75 @@ impl<V: WidgetView> AppShell<V> {
         else {
             return false;
         };
-        if matches!(action, ChromeAction::Close) {
-            // R1170 §5.16 §5.39 — per-window close: offer it to the binding (a
-            // torn-off panel docks back); only an unhandled close exits the app.
-            if !self
-                .core
-                .root_owner()
-                .run(|| V::window_close_requested(spec_id))
-            {
-                eprintln!(
-                    "shell: final state = {}",
-                    V::fmt_state_log(self.core.cached_state()),
-                );
-                event_loop.exit();
+        match action {
+            // R1188 — the discrete buttons execute through the arm the RPC
+            // click drain also reaches (one execution path for both inputs).
+            ChromeAction::Control(control) => {
+                self.apply_window_control(spec_id, control, event_loop);
             }
-            return true;
-        }
-        if let Some(window) = self.window_arc_for_spec(spec_id) {
-            match action {
-                ChromeAction::Minimize => window.set_minimized(true),
-                ChromeAction::Maximize => window.set_maximized(!window.is_maximized()),
-                ChromeAction::Move => {
-                    // OS-driven interactive move; a borderless window has no OS
-                    // title bar, so the chrome grip is the move handle.
+            ChromeAction::Move => {
+                // OS-driven interactive move; a borderless window has no OS
+                // title bar, so the chrome grip is the move handle.
+                if let Some(window) = self.window_arc_for_spec(spec_id) {
                     let _ = window.drag_window();
                 }
-                ChromeAction::Resize(direction) => {
-                    // OS-driven interactive resize; a borderless window has no OS
-                    // frame, so a chrome resize edge / corner is the grab handle.
+            }
+            ChromeAction::Resize(direction) => {
+                // OS-driven interactive resize; a borderless window has no OS
+                // frame, so a chrome resize edge / corner is the grab handle.
+                if let Some(window) = self.window_arc_for_spec(spec_id) {
                     let _ = window.drag_resize_window(direction);
                 }
-                ChromeAction::Close => {}
             }
         }
         true
+    }
+
+    /// (R1188 §5.16 §5.49 §2 #2) Execute one discrete window control against
+    /// `spec_id`'s window — the ONE execution arm both input paths share: the
+    /// winit pointer path ([`Self::try_chrome_press`], a physical left-press on
+    /// the control tag) and the RPC path (a `scene/click` the `ShellCore` drain
+    /// detected and queued, drained in [`AppShell::user_event`] right after
+    /// `dispatch_rpc`). Extracted from `try_chrome_press` so the two paths
+    /// cannot drift.
+    ///
+    /// * `Close` — R1170 §5.16 §5.39 per-window close: offered to the binding
+    ///   first (a torn-off panel docks back via
+    ///   [`WidgetView::window_close_requested`]); only an unhandled close exits
+    ///   the app (the `CloseRequested` convention).
+    /// * `Minimize` / `Maximize` — straight to the winit `Window` (pinion owns
+    ///   the handle); a missing render slot (window already closing) is a no-op.
+    fn apply_window_control(
+        &mut self,
+        spec_id: &str,
+        control: pinion_overlay::WindowControl,
+        event_loop: &ActiveEventLoop,
+    ) {
+        match control {
+            pinion_overlay::WindowControl::Close => {
+                if !self
+                    .core
+                    .root_owner()
+                    .run(|| V::window_close_requested(spec_id))
+                {
+                    eprintln!(
+                        "shell: final state = {}",
+                        V::fmt_state_log(self.core.cached_state()),
+                    );
+                    event_loop.exit();
+                }
+            }
+            pinion_overlay::WindowControl::Minimize => {
+                if let Some(window) = self.window_arc_for_spec(spec_id) {
+                    window.set_minimized(true);
+                }
+            }
+            pinion_overlay::WindowControl::Maximize => {
+                if let Some(window) = self.window_arc_for_spec(spec_id) {
+                    window.set_maximized(!window.is_maximized());
+                }
+            }
+        }
     }
 
     /// R51.62 §5.40 — dispatch one AT-side event reported by
@@ -2816,7 +2865,19 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: AppEvent) {
         match event {
-            AppEvent::RpcRequest(json) => self.dispatch_rpc(&json),
+            AppEvent::RpcRequest(json) => {
+                self.dispatch_rpc(&json);
+                // R1188 §5.16 §5.49 §2 #2 — execute the window-control presses
+                // the RPC click drain detected during this dispatch (`ShellCore`
+                // is headless, so it queued them; the winit handles + the
+                // event-loop exit live here). Same execution arm as a physical
+                // press on the same tag (`try_chrome_press` →
+                // `apply_window_control`), completing the R1121 "an AI observes
+                // AND DRIVES the window controls" contract's drive half.
+                for (spec_id, control) in self.core.take_pending_window_controls() {
+                    self.apply_window_control(&spec_id, control, event_loop);
+                }
+            }
             AppEvent::AccessKit(ak) => self.handle_accesskit_event(ak),
             // R51.159 §5.23 — re-feed an Intent produced by a resolved
             // Command future back into the SCXML `send` channel via
@@ -4413,17 +4474,24 @@ mod r1121_chrome_action_tests {
 
     #[test]
     fn maps_every_chrome_control_tag() {
+        // R1188 — the three discrete buttons resolve through the shared
+        // `window_control_for_tag` SSOT (the same mapping the RPC click drain
+        // uses), wrapped as `ChromeAction::Control`.
         assert!(matches!(
             chrome_action_for_tag(pinion_overlay::WINDOW_CHROME_CLOSE_TAG),
-            Some(ChromeAction::Close)
+            Some(ChromeAction::Control(pinion_overlay::WindowControl::Close))
         ));
         assert!(matches!(
             chrome_action_for_tag(pinion_overlay::WINDOW_CHROME_MINIMIZE_TAG),
-            Some(ChromeAction::Minimize)
+            Some(ChromeAction::Control(
+                pinion_overlay::WindowControl::Minimize
+            ))
         ));
         assert!(matches!(
             chrome_action_for_tag(pinion_overlay::WINDOW_CHROME_MAXIMIZE_TAG),
-            Some(ChromeAction::Maximize)
+            Some(ChromeAction::Control(
+                pinion_overlay::WindowControl::Maximize
+            ))
         ));
         assert!(matches!(
             chrome_action_for_tag(pinion_overlay::WINDOW_CHROME_GRIP_TAG),

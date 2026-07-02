@@ -62,6 +62,7 @@ pub use window_chrome::{
     WINDOW_CHROME_MINIMIZE_TAG, WINDOW_CHROME_TAG, WINDOW_RESIZE_EAST_TAG,
     WINDOW_RESIZE_NORTH_EAST_TAG, WINDOW_RESIZE_NORTH_TAG, WINDOW_RESIZE_NORTH_WEST_TAG,
     WINDOW_RESIZE_SOUTH_EAST_TAG, WINDOW_RESIZE_SOUTH_TAG, WINDOW_RESIZE_SOUTH_WEST_TAG,
-    WINDOW_RESIZE_TAG_PREFIX, WINDOW_RESIZE_WEST_TAG, WindowChromeStyle, inject_resize_border,
-    inject_resize_border_below_titlebar, inject_window_chrome,
+    WINDOW_RESIZE_TAG_PREFIX, WINDOW_RESIZE_WEST_TAG, WindowChromeStyle, WindowControl,
+    inject_resize_border, inject_resize_border_below_titlebar, inject_window_chrome,
+    window_control_for_tag,
 };

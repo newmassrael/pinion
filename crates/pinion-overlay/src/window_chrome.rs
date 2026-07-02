@@ -76,6 +76,45 @@ pub const WINDOW_CHROME_MAXIMIZE_TAG: &str = "ai-overlay/window-chrome#maximize"
 /// window move (the R1116 borderless-floater title-bar move).
 pub const WINDOW_CHROME_GRIP_TAG: &str = "ai-overlay/window-chrome#grip";
 
+/// (R1188 §5.16 §5.49 §2 #2) The three DISCRETE window-control actions a click
+/// on a control tag requests — minimize / maximize-toggle / close.
+///
+/// Shell-neutral vocabulary (no winit types), so BOTH press paths speak it:
+/// the winit pointer path (`AppShell::try_chrome_press`) and the headless RPC
+/// click drain (`ShellCore`), which detects a control hit and queues it for the
+/// windowed shell to execute — the §2 #2 drive-parity leg of the R1121 chrome
+/// contract ("an AI agent observes AND DRIVES via a click on the control tag").
+/// Deliberately excludes the grip / resize regions: those are pointer-session
+/// gestures (an OS-interactive `drag_window` / `drag_resize_window` needs a live
+/// pointer), whose RPC peers are the dedicated `scene/window_move` /
+/// `scene/resize` methods, not a click.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowControl {
+    /// `Window::set_minimized(true)`.
+    Minimize,
+    /// `Window::set_maximized(toggle)`.
+    Maximize,
+    /// The per-window close seam (`WidgetView::window_close_requested`,
+    /// app-exit fallback when unhandled).
+    Close,
+}
+
+/// (R1188 §5.16 §5.49) Map a hit-test tag to the discrete [`WindowControl`] it
+/// requests, or `None` for every non-control tag (including the grip / resize
+/// regions — see the enum doc). Lives beside the tag constants so the
+/// tag-to-control vocabulary cannot drift from the tags themselves; both the
+/// winit chrome-press mapping and the RPC click drain resolve through this one
+/// function.
+#[must_use]
+pub fn window_control_for_tag(tag: &str) -> Option<WindowControl> {
+    match tag {
+        WINDOW_CHROME_MINIMIZE_TAG => Some(WindowControl::Minimize),
+        WINDOW_CHROME_MAXIMIZE_TAG => Some(WindowControl::Maximize),
+        WINDOW_CHROME_CLOSE_TAG => Some(WindowControl::Close),
+        _ => None,
+    }
+}
+
 /// (R1122) Shared tag prefix of the eight window-resize hit regions. All
 /// edge / corner tags start with this, so the idempotent strip-before-inject
 /// removes the whole resize border by prefix (the regions are flat siblings,
@@ -652,6 +691,30 @@ mod tests {
                 "{tag} carries the resize family prefix",
             );
         }
+    }
+
+    #[test]
+    fn window_control_mapping_covers_exactly_the_three_discrete_controls() {
+        // R1188 — the shared tag→control vocabulary: the three discrete control
+        // tags map, and every pointer-session tag (grip / resize) maps to None
+        // (their RPC peers are scene/window_move / scene/resize, not a click).
+        assert_eq!(
+            window_control_for_tag(WINDOW_CHROME_MINIMIZE_TAG),
+            Some(WindowControl::Minimize)
+        );
+        assert_eq!(
+            window_control_for_tag(WINDOW_CHROME_MAXIMIZE_TAG),
+            Some(WindowControl::Maximize)
+        );
+        assert_eq!(
+            window_control_for_tag(WINDOW_CHROME_CLOSE_TAG),
+            Some(WindowControl::Close)
+        );
+        assert_eq!(window_control_for_tag(WINDOW_CHROME_GRIP_TAG), None);
+        for tag in ALL_RESIZE_TAGS {
+            assert_eq!(window_control_for_tag(tag), None, "{tag} is not discrete");
+        }
+        assert_eq!(window_control_for_tag("some-widget"), None);
     }
 
     #[test]

@@ -218,6 +218,10 @@ pub use pinion_overlay::WindowChromeStyle;
 pub use pinion_overlay::{
     WINDOW_CHROME_CLOSE_TAG, WINDOW_CHROME_MAXIMIZE_TAG, WINDOW_CHROME_MINIMIZE_TAG,
 };
+// R1188 §5.16 §5.49 §2 #2 — the discrete window-control vocabulary + tag mapping,
+// so a binding (or test harness) that reads [`ShellCore::take_pending_window_controls`]
+// names the actions without a direct overlay dep.
+pub use pinion_overlay::{WindowControl, window_control_for_tag};
 
 // R791.1 §5.13 §5.38 — the per-binding `WidgetView::ime_caret_rect` body
 // (focus-guard + `rect_for_tag` walk + `tf_paint::ime_caret_rect_for`) is
