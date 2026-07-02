@@ -204,6 +204,9 @@ pub fn view_measured_list(
         compute_visible_range_variable(scroll.offset_y(), viewport.h, &offsets, overscan);
     let total_h = offsets.total_height();
 
+    // R1199 — scope each row-slot tag under the scroll's own tag so two measured
+    // lists in one window do not collide in the `scene/snapshot` namespace.
+    let scroll_tag = scroll.tag();
     let mut slots: Vec<Scene> = Vec::with_capacity(window.count);
     for index in window.indices() {
         let row = build_row(index);
@@ -211,6 +214,7 @@ pub fn view_measured_list(
             row,
             viewport.w,
             offsets.row_top(index),
+            scroll_tag,
             index,
         ));
     }
@@ -340,10 +344,16 @@ pub(crate) fn positioned_slot(row: Scene, width: u32, top: u32, height: u32) -> 
 /// which fixes *both* dimensions: a fixed-height slot would clamp the row and
 /// the harvest could only ever read back the height it was handed, so a
 /// measured row must be free to size to content.
-fn measured_slot(row: Scene, width: u32, top: u32, index: usize) -> Scene {
+fn measured_slot(
+    row: Scene,
+    width: u32,
+    top: u32,
+    scroll_tag: Option<&str>,
+    index: usize,
+) -> Scene {
     Scene::Container(
         ContainerNode::new(vec![row])
-            .with_tag(measured_row_tag(index))
+            .with_tag(measured_row_tag(scroll_tag, index))
             .with_layout(
                 LayoutStyle::new()
                     .with_absolute_position(0, top)
@@ -548,7 +558,10 @@ mod tests {
         let Scene::Container(first) = &sizer.children[0] else {
             panic!("slot must be a Container");
         };
-        assert_eq!(first.tag.as_deref(), Some(measured_row_tag(18).as_str()));
+        assert_eq!(
+            first.tag.as_deref(),
+            Some(measured_row_tag(None, 18).as_str())
+        );
         assert_eq!(
             first.layout.size,
             Size::width_px(200),

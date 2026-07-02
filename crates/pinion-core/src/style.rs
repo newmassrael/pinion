@@ -2727,8 +2727,11 @@ pub struct LayoutStyle {
     /// Like [`Self::pointer_transparent`] / [`Self::focusable`] /
     /// [`Self::drop_target`], this is a router-input flag, NOT serialised into
     /// `scene/snapshot` (which carries the visual [`BoxStyle`], not the layout
-    /// sidecar). What an agent observes is its EFFECT — the resolved cursor —
-    /// via the shell's dedicated hover-cursor introspection.
+    /// sidecar). The cursor is a live winit affordance, not `scene/snapshot`
+    /// data; its resolved value is read back through a shell-side accessor
+    /// (`ShellCore::cursor_hint`, a Rust / test witness — there is no
+    /// `scene/cursor_hint` RPC method), the same posture R1189's chrome-resize
+    /// cursor takes.
     pub cursor: Option<CursorHint>,
 }
 

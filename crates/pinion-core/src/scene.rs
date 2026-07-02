@@ -870,54 +870,32 @@ impl Scene {
         })
     }
 
-    /// (R1196 §5.16 §5.39) The hover [`CursorHint`] for the pointer at
-    /// `(x, y)`: the hint of the DEEPEST node under the pointer that declares
+    /// (R1196 §5.16 §5.39; R1199 SSOT) The hover [`CursorHint`] for the pointer
+    /// at `(x, y)`: the hint of the DEEPEST node under the pointer that declares
     /// one, falling back to a hinted ancestor, or `None` if nothing on the hit
     /// path declares a cursor.
     ///
-    /// Mirrors [`Self::hit_test`]'s descent — the topmost (last) hitting child,
-    /// offset-translated through a [`Scene::Scroll`], pointer-transparent
-    /// overlays skipped — but resolves a cursor attribute instead of a tag path:
-    /// the cursor is a property of the painted region, independent of tags and
-    /// input routing (a splitter handle is untagged yet declares a resize
-    /// cursor). The shell reads this for the hovered pointer and maps the hint
-    /// to a backend `CursorIcon`.
+    /// Resolved by REUSING [`Self::hit_test`]'s single tree descent — the same
+    /// pattern `pinion_runtime`'s `resolve_hover_tag` (tag) and
+    /// `resolve_drop_target_tag` (drop-target) use for their positional
+    /// attributes: one `hit_test`, then walk the returned [`HitPath`]
+    /// deepest-first via [`Self::lookup_path_ref`], returning the first node with
+    /// a [`Self::cursor_hint`]. This shares [`Self::hit_test`]'s descent SSOT
+    /// (transparent skip, Scroll offset translation, topmost-child selection)
+    /// rather than re-walking the tree. The cursor is a property of the painted
+    /// region, independent of tags and input routing (a splitter handle is
+    /// untagged yet declares a resize cursor — [`Self::hit_test`] includes
+    /// untagged nodes by index, so [`Self::lookup_path_ref`] still reaches it).
     #[must_use]
     pub fn cursor_hint_at(&self, x: u32, y: u32) -> Option<CursorHint> {
-        if matches!(self, Scene::Effect(_)) {
-            return None;
-        }
-        if !rect_contains(self.rect(), x, y) {
-            return None;
-        }
-        // Descend into the topmost non-transparent child containing the point —
-        // the same child `hit_test` commits to — and prefer its hint; fall back
-        // to this node's own hint (a hinted region whose child declares none).
-        let from_child = match self {
-            Scene::Container(c) => c
-                .children
-                .iter()
-                .rev()
-                .find(|child| !child.is_pointer_transparent() && rect_contains(child.rect(), x, y))
-                .and_then(|child| child.cursor_hint_at(x, y)),
-            Scene::Scroll(s) => {
-                let vx = x.saturating_sub(s.viewport.x);
-                let vy = y.saturating_sub(s.viewport.y);
-                let cx = i64::from(vx).checked_add(i64::from(s.offset_x));
-                let cy = i64::from(vy).checked_add(i64::from(s.offset_y));
-                match (cx, cy) {
-                    (Some(cx), Some(cy)) if cx >= 0 && cy >= 0 => {
-                        match (u32::try_from(cx), u32::try_from(cy)) {
-                            (Ok(cx), Ok(cy)) => s.content.cursor_hint_at(cx, cy),
-                            _ => None,
-                        }
-                    }
-                    _ => None,
-                }
-            }
-            _ => None,
-        };
-        from_child.or_else(|| self.cursor_hint())
+        let hit = self.hit_test(x, y)?;
+        // Deepest-first: the nearest hint wins; a hinted ancestor applies when a
+        // child declares none. `segments[..len]` is the deepest hit node,
+        // `segments[..0]` the root.
+        (0..=hit.segments.len()).rev().find_map(|k| {
+            self.lookup_path_ref(&hit.segments[..k])
+                .and_then(Scene::cursor_hint)
+        })
     }
 
     /// (§5.32 R39.2 v0) Collect every primitive whose rect intersects

@@ -51,19 +51,30 @@ use crate::widgets::virtual_list::{
 /// encode/decode divergence would be a measurement bug, not a style choice.
 pub const MEASURED_ROW_TAG_PREFIX: &str = "measured-row:";
 
-/// Build the tag for the windowed measured-list row at `index`
-/// (`measured-row:<index>`). Paired with [`measured_row_index`].
+/// Build the tag for the windowed measured-list row at `index`, scoped under
+/// the owning scroll's `scroll_tag` so two measured lists in one window never
+/// collide in the flat `scene/snapshot` tag namespace (§2 #7): a tagged list
+/// emits `<scroll_tag>/measured-row:<index>`, an untagged one (rare — test
+/// fixtures) the bare `measured-row:<index>`. Paired with [`measured_row_index`],
+/// which parses the index from either form. (R1199 — R1196 emitted only the bare
+/// index-scoped tag, so a second list's `measured-row:0` shadowed the first's.)
 #[must_use]
-pub fn measured_row_tag(index: usize) -> String {
-    format!("{MEASURED_ROW_TAG_PREFIX}{index}")
+pub fn measured_row_tag(scroll_tag: Option<&str>, index: usize) -> String {
+    match scroll_tag {
+        Some(tag) => format!("{tag}/{MEASURED_ROW_TAG_PREFIX}{index}"),
+        None => format!("{MEASURED_ROW_TAG_PREFIX}{index}"),
+    }
 }
 
-/// Parse a measured-list row-slot tag back to its row index, or `None` if
-/// `tag` is not a `measured-row:<index>` tag. Paired with
-/// [`measured_row_tag`].
+/// Parse a measured-list row-slot tag back to its row index, or `None` if `tag`
+/// carries no `measured-row:<index>` segment. Accepts both the scroll-scoped
+/// (`<scroll_tag>/measured-row:<index>`) and bare (`measured-row:<index>`)
+/// forms. Paired with [`measured_row_tag`]; the layout-pass harvest only needs
+/// the index (it is already subtree-scoped to one scroll's content), so parsing
+/// past any scope prefix is sufficient.
 #[must_use]
 pub fn measured_row_index(tag: &str) -> Option<usize> {
-    tag.strip_prefix(MEASURED_ROW_TAG_PREFIX)?.parse().ok()
+    tag.rsplit_once(MEASURED_ROW_TAG_PREFIX)?.1.parse().ok()
 }
 
 /// R1194 §5.27 — reactive store of progressively-measured row heights for
@@ -92,6 +103,13 @@ pub struct MeasuredRowState {
     /// equality-skip is moot because it only ever increases when something
     /// actually changed.
     generation: Signal<u64>,
+    /// (R1199) The prefix-sum table memoized by the [`generation`](Self::generation)
+    /// it was built at. [`Self::offsets`] rebuilds only when the generation has
+    /// advanced (a harvested remeasure / a `set_count`); a plain scroll frame —
+    /// which moves the *offset* Signal, not the generation — returns the cached
+    /// `Rc` in O(1), so windowing a settled list never re-walks the O(n) table.
+    /// `Rc` so the return is a cheap handle clone, not an O(n) copy.
+    cached: RefCell<Option<(u64, Rc<RowOffsets>)>>,
     /// Canonical input-router / introspection tag, set by
     /// [`use_measured_rows`] from the `Owner::cache` key (the paired
     /// `ScrollState` derives the matching `ScrollNode` tag from the same
@@ -107,6 +125,7 @@ impl MeasuredRowState {
         Self {
             heights: RefCell::new(MeasuredHeights::new(item_count, estimated)),
             generation: Signal::new(0),
+            cached: RefCell::new(None),
             tag: None,
         }
     }
@@ -127,15 +146,31 @@ impl MeasuredRowState {
         self.tag
     }
 
-    /// Current prefix-sum [`RowOffsets`] for the measured-or-estimated
-    /// heights. **Subscribes** the calling view fn to the measurement
-    /// generation, so a harvested remeasure re-runs the view against the
-    /// refined table.
+    /// Current prefix-sum [`RowOffsets`] for the measured-or-estimated heights,
+    /// as a shared handle. **Subscribes** the calling view fn to the measurement
+    /// generation, so a harvested remeasure re-runs the view against the refined
+    /// table.
+    ///
+    /// (R1199) Memoized by [`generation`](Self::generation): the O(n) table is
+    /// rebuilt only when a measurement (or a `set_count`) advanced the
+    /// generation; a plain scroll frame returns the cached `Rc` in O(1). This
+    /// restores the "built once, reused across frames" contract `RowOffsets`
+    /// documents (a scroll moves the offset Signal, not the generation).
     #[must_use]
-    pub fn offsets(&self) -> RowOffsets {
-        // Subscribe the caller to the measurement generation.
-        let _ = self.generation.get();
-        self.heights.borrow().offsets()
+    pub fn offsets(&self) -> Rc<RowOffsets> {
+        // Subscribe the caller to the measurement generation AND read its value.
+        let generation = self.generation.get();
+        {
+            let cached = self.cached.borrow();
+            if let Some((cached_generation, offsets)) = cached.as_ref() {
+                if *cached_generation == generation {
+                    return Rc::clone(offsets);
+                }
+            }
+        }
+        let offsets = Rc::new(self.heights.borrow().offsets());
+        *self.cached.borrow_mut() = Some((generation, Rc::clone(&offsets)));
+        offsets
     }
 
     /// Total dataset size (does not subscribe — the count is caller-owned,
@@ -309,6 +344,28 @@ mod tests {
     }
 
     #[test]
+    fn offsets_are_memoized_by_generation() {
+        let s = state();
+        let a = s.offsets();
+        let b = s.offsets();
+        assert!(
+            Rc::ptr_eq(&a, &b),
+            "unchanged generation returns the cached Rc — no O(n) rebuild per scroll frame",
+        );
+        // A harvested remeasure advances the generation → rebuild → new Rc.
+        let scroll = ScrollState::new();
+        s.harvest(&scroll, VH, [(0, 99)]);
+        let c = s.offsets();
+        assert!(!Rc::ptr_eq(&b, &c), "a remeasure rebuilds the table");
+        assert_eq!(
+            c.row_height(0),
+            99,
+            "the rebuilt table reflects the measurement"
+        );
+        assert!(Rc::ptr_eq(&c, &s.offsets()), "settled again → cached");
+    }
+
+    #[test]
     fn harvest_records_heights_and_reports_change() {
         let s = state();
         let scroll = ScrollState::new();
@@ -401,13 +458,24 @@ mod tests {
     }
 
     #[test]
-    fn row_tag_round_trips_and_rejects_foreign_tags() {
+    fn row_tag_round_trips_scoped_and_bare_and_rejects_foreign() {
         for i in [0usize, 1, 37, 999_999] {
-            assert_eq!(measured_row_index(&measured_row_tag(i)), Some(i));
+            // Bare (untagged scroll) and scroll-scoped both parse to the index.
+            assert_eq!(measured_row_index(&measured_row_tag(None, i)), Some(i));
+            assert_eq!(
+                measured_row_index(&measured_row_tag(Some("list_a"), i)),
+                Some(i)
+            );
         }
+        // Two lists produce DISTINCT tags for the same index (no §2 #7 collision).
+        assert_ne!(
+            measured_row_tag(Some("a"), 0),
+            measured_row_tag(Some("b"), 0)
+        );
+        // Foreign / malformed tags reject.
         assert_eq!(measured_row_index("row:5"), None);
         assert_eq!(measured_row_index("measured-row:"), None);
-        assert_eq!(measured_row_index("measured-row:x"), None);
+        assert_eq!(measured_row_index("list/measured-row:x"), None);
     }
 
     #[test]

@@ -572,13 +572,22 @@ fn harvest_measured_rows(scene: &Scene) -> bool {
         }
         Scene::Scroll(s) => {
             let mut dirty = false;
-            // Both the measured-row state (target) and the scroll state
-            // (anchor + offset) are required; a measured list always wires
-            // both (`with_state` + `with_measured_rows`).
-            if let (Some(measured), Some(scroll)) = (s.measured_rows.as_ref(), s.state.as_ref()) {
-                let mut rows = Vec::new();
-                collect_measured_rows(s.content.as_ref(), &mut rows);
-                dirty = measured.harvest(scroll, s.viewport.h, rows);
+            // A measured list wires BOTH the measured-row state (harvest target)
+            // and the scroll state (anchor + offset); `view_measured_list` always
+            // does. Fail fast (debug) on a hand-built node that wired only
+            // `measured_rows` — otherwise it would silently render on the
+            // estimate forever (R1199 audit: fail-fast principle).
+            if let Some(measured) = s.measured_rows.as_ref() {
+                debug_assert!(
+                    s.state.is_some(),
+                    "a ScrollNode with measured_rows must also carry a ScrollState \
+                     (the harvest needs it for the anchor + offset)",
+                );
+                if let Some(scroll) = s.state.as_ref() {
+                    let mut rows = Vec::new();
+                    collect_measured_rows(s.content.as_ref(), &mut rows);
+                    dirty = measured.harvest(scroll, s.viewport.h, rows);
+                }
             }
             // Recurse into content so a measured list nested inside another
             // scroll still harvests.
@@ -907,6 +916,70 @@ mod tests {
         };
         assert_eq!(c.rect.w, 320);
         assert_eq!(c.rect.h, 200);
+    }
+
+    #[test]
+    fn harvest_measures_laid_out_row_heights_through_the_real_layout_pass() {
+        // R1199 — the crux integration test the R1194 round lacked: drive the
+        // ACTUAL layout pass over a measured-list-shaped scene and assert the
+        // harvest read each row's taffy-laid-out `rect.h` back into the
+        // MeasuredRowState (not fed directly, as the unit tests do). Three rows
+        // whose fixed-height content forces distinct natural heights 30/40/50;
+        // width-fixed / height-auto slots tagged `measured-row:<i>`, inside a
+        // ScrollNode wired with BOTH a ScrollState and a MeasuredRowState.
+        use pinion_core::scene::ScrollNode;
+        use pinion_core::widgets::measured_rows::{MeasuredRowState, measured_row_tag};
+        use pinion_core::widgets::scroll::ScrollState;
+        use std::rc::Rc;
+
+        let measured = Rc::new(MeasuredRowState::new(3, 20)); // estimate 20/row
+        let scroll = Rc::new(ScrollState::new());
+        let row_heights = [30u32, 40, 50];
+        let slots: Vec<Scene> = row_heights
+            .iter()
+            .enumerate()
+            .map(|(i, &h)| {
+                // Row content: a fixed-height box → the height-auto slot resolves
+                // its own height to `h` (the natural-content-height the harvest reads).
+                let row = Scene::Box(
+                    BoxNode::filled(Rect::default(), Color::default())
+                        .with_layout(LayoutStyle::new().with_size(Size::px(100, h))),
+                );
+                Scene::Container(
+                    ContainerNode::new(vec![row])
+                        .with_tag(measured_row_tag(None, i))
+                        .with_layout(
+                            LayoutStyle::new()
+                                .with_absolute_position(0, 0)
+                                .with_size(Size::width_px(200)),
+                        ),
+                )
+            })
+            .collect();
+        let sizer = Scene::Container(
+            ContainerNode::new(slots).with_layout(LayoutStyle::new().with_size(Size::px(200, 300))),
+        );
+        let content = Scene::Container(ContainerNode::new(vec![sizer]));
+        let mut scene = Scene::Scroll(
+            ScrollNode::from_state(Rc::clone(&scroll), Rect::new(0, 0, 200, 150), content)
+                .with_measured_rows(Rc::clone(&measured)),
+        );
+
+        assert_eq!(
+            measured.measured_count(),
+            0,
+            "nothing measured before layout"
+        );
+        compute_layout(&mut scene, &mut cache(), 200, 150);
+        // The harvest read each slot's laid-out rect.h back into the state.
+        assert_eq!(
+            measured.measured_count(),
+            3,
+            "the layout pass measured all three rows via the harvest round-trip",
+        );
+        assert_eq!(measured.measured_height(0), Some(30));
+        assert_eq!(measured.measured_height(1), Some(40));
+        assert_eq!(measured.measured_height(2), Some(50));
     }
 
     #[test]
