@@ -20676,6 +20676,50 @@
         "ShellCommand enum stream for the pending-control queue; cursor_for_hover generalization beyond resize regions."
       ]
     },
+    "R1191": {
+      "decision_summary": "R1191 node-editor viewport forward-projection SSOT: graph_anchor_offset consolidates 3 inline anchor-solve duplicates as the symmetric twin of R1183's canvas_to_graph inverse (behavior-preserving refactor).",
+      "changes_bullets": [
+        "hello-node-editor: new pure fn graph_anchor_offset(gx,gy,zoom,cx,cy) = (gx*zoom - cx, gy*zoom - cy) — the forward twin of canvas_to_graph (the R1183 inverse SSOT); the pan offset that pins a graph point under a canvas px. Closes the pre-existing forward-projection follow-up the R1183 rustdoc flagged.",
+        "Migrated 3 consumers to it, bit-for-bit identical arithmetic: NodeGraphExternal::set_zoom_anchored (cursor-anchored zoom), frame_all (centre-anchored fit), and the RPC intervene viewport.x/.y pan write (canvas-0 anchor = v*zoom, symmetric with the viewport.x query's cursor_graph(0,0) inverse read).",
+        "frame_all's bbox-centre local rebound to a `centre` tuple so it reads distinctly from the helper's canvas-px anchor args (independent-review clarity note); wpx stays the rounded graph->world-px extent scaler, a distinct role."
+      ],
+      "verification_bullets": [
+        "New unit test r1191_graph_anchor_offset_is_the_forward_inverse: proves forward then inverse = identity, composed via the REAL canvas_to_graph SSOT through a ScrollState (integer-clean offsets within set_max, so no clamp/rounding masks the round-trip).",
+        "cargo test --workspace: 198 targets ok / 0 failed (7916 assertions); node-editor 144 tests ok; clippy --features pinion-runtime/vello + fmt clean.",
+        "RPC demos both PASS: r877_node_canvas_viewport (24 asserts: cursor-anchored zoom keeps graph point put, viewport.x/y round-trip, frame_all fits bbox) + r1182_node_edge_autopan (39 asserts, zoom-!=1 viewport ride).",
+        "Independent adversarial drift review: bit-for-bit no-op confirmed for all 3 consumers (arg order correct, round_i32 timing unchanged, degenerate 0.0-arg case exact), 0 new broken doc-links."
+      ],
+      "impact_refs": [
+        "5.15",
+        "5.45",
+        "5.49"
+      ],
+      "carry_forward_bullets": [
+        "node-editor viewport is now projection-symmetric (inverse R1183 + forward R1191); remaining node-editor DCC follow-ups (non-blocking, consumer-0): wire-connect auto-pan + begin_drag DnD path.",
+        "graph_anchor_offset / canvas_to_graph / AutoPan stay node-editor-local; a router-level generic viewport/auto-pan lift is justified only on a 2nd canvas/timeline consumer (abstraction-needs-second-consumer)."
+      ],
+      "publishable_decision_summary": "R1191 node-editor viewport forward-projection SSOT: graph_anchor_offset consolidates 3 inline anchor-solve duplicates as the symmetric twin of R1183's canvas_to_graph inverse (behavior-preserving refactor).",
+      "publishable_changes_bullets": [
+        "hello-node-editor: new pure fn graph_anchor_offset(gx,gy,zoom,cx,cy) = (gx*zoom - cx, gy*zoom - cy) — the forward twin of canvas_to_graph (the R1183 inverse SSOT); the pan offset that pins a graph point under a canvas px. Closes the pre-existing forward-projection follow-up the R1183 rustdoc flagged.",
+        "Migrated 3 consumers to it, bit-for-bit identical arithmetic: NodeGraphExternal::set_zoom_anchored (cursor-anchored zoom), frame_all (centre-anchored fit), and the RPC intervene viewport.x/.y pan write (canvas-0 anchor = v*zoom, symmetric with the viewport.x query's cursor_graph(0,0) inverse read).",
+        "frame_all's bbox-centre local rebound to a `centre` tuple so it reads distinctly from the helper's canvas-px anchor args (independent-review clarity note); wpx stays the rounded graph->world-px extent scaler, a distinct role."
+      ],
+      "publishable_verification_bullets": [
+        "New unit test r1191_graph_anchor_offset_is_the_forward_inverse: proves forward then inverse = identity, composed via the REAL canvas_to_graph SSOT through a ScrollState (integer-clean offsets within set_max, so no clamp/rounding masks the round-trip).",
+        "cargo test --workspace: 198 targets ok / 0 failed (7916 assertions); node-editor 144 tests ok; clippy --features pinion-runtime/vello + fmt clean.",
+        "RPC demos both PASS: r877_node_canvas_viewport (24 asserts: cursor-anchored zoom keeps graph point put, viewport.x/y round-trip, frame_all fits bbox) + r1182_node_edge_autopan (39 asserts, zoom-!=1 viewport ride).",
+        "Independent adversarial drift review: bit-for-bit no-op confirmed for all 3 consumers (arg order correct, round_i32 timing unchanged, degenerate 0.0-arg case exact), 0 new broken doc-links."
+      ],
+      "publishable_impact_refs": [
+        "5.15",
+        "5.45",
+        "5.49"
+      ],
+      "publishable_carry_forward_bullets": [
+        "node-editor viewport is now projection-symmetric (inverse R1183 + forward R1191); remaining node-editor DCC follow-ups (non-blocking, consumer-0): wire-connect auto-pan + begin_drag DnD path.",
+        "graph_anchor_offset / canvas_to_graph / AutoPan stay node-editor-local; a router-level generic viewport/auto-pan lift is justified only on a 2nd canvas/timeline consumer (abstraction-needs-second-consumer)."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

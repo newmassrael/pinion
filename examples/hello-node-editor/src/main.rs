@@ -1941,11 +1941,24 @@ fn set_pos_clamped(
 /// coordinator's [`NodeGraphExternal::cursor_graph`] / `viewport.{x,y}` query,
 /// the auto-pan tick, and the cursor-anchored zoom
 /// ([`NodeGraphExternal::set_zoom_anchored`]) — so a basis change touches one
-/// site. (The forward twin `graph → offset` — `wpx`, `apply_viewport`'s anchor
-/// solve — is a separate consolidation, a pre-existing follow-up.)
+/// site. Its forward twin — the pan offset that places a graph point under a
+/// canvas px — is [`graph_anchor_offset`] (R1191 closed this follow-up).
 fn canvas_to_graph(scroll: &ScrollState, zoom: f64, cx: f64, cy: f64) -> (f64, f64) {
     let (ox, oy) = scroll.offset();
     ((f64::from(ox) + cx) / zoom, (f64::from(oy) + cy) / zoom)
+}
+
+/// R1191 — the forward twin of [`canvas_to_graph`]: the pan **offset** (world
+/// px) that places graph point `(gx, gy)` under canvas px `(cx, cy)`. Solves the
+/// same affine (`canvas = graph·zoom − offset`) for the offset instead of the
+/// graph point, so the cursor-anchored zoom
+/// ([`NodeGraphExternal::set_zoom_anchored`]), [`NodeGraphExternal::frame_all`],
+/// and the `viewport.{x,y}` RPC pan write share ONE forward-projection site —
+/// closing the asymmetry the R1183 [`canvas_to_graph`] rustdoc flagged as a
+/// pre-existing follow-up. ([`wpx`] stays the rounded graph→world-px scaler for
+/// the world content extent — a distinct role, not a projection.)
+fn graph_anchor_offset(gx: f64, gy: f64, zoom: f64, cx: f64, cy: f64) -> (f64, f64) {
+    (gx * zoom - cx, gy * zoom - cy)
 }
 
 /// R877 / R1182 — the graph-space point under a canvas cursor **fraction**
@@ -2256,9 +2269,11 @@ impl NodeGraphExternal {
             return false;
         }
         // R1183 — the graph point under the anchor px, via the inverse SSOT
-        // (was an inline copy of `canvas_to_graph`'s affine).
+        // (was an inline copy of `canvas_to_graph`'s affine). R1191 — the offset
+        // that re-pins it under the anchor at the new zoom, via the forward SSOT.
         let (gx, gy) = canvas_to_graph(&self.scroll, old, sx, sy);
-        self.apply_viewport(zoom, gx * zoom - sx, gy * zoom - sy);
+        let (ox, oy) = graph_anchor_offset(gx, gy, zoom, sx, sy);
+        self.apply_viewport(zoom, ox, oy);
         true
     }
 
@@ -2302,15 +2317,22 @@ impl NodeGraphExternal {
         let fit_w = f64::from(i32::try_from(WIN_W).unwrap_or(0) - 2 * FRAME_MARGIN) / bw;
         let fit_h = f64::from(i32::try_from(WIN_H).unwrap_or(0) - 2 * FRAME_MARGIN) / bh;
         let zoom = fit_w.min(fit_h).clamp(ZOOM_MIN, ZOOM_MAX);
-        let (cx, cy) = (
+        // The bbox centre in GRAPH space (a tuple, so it reads distinctly from
+        // the forward projection's canvas-px anchor args below).
+        let centre = (
             f64::from(min_x + max_x) / 2.0,
             f64::from(min_y + max_y) / 2.0,
         );
-        self.apply_viewport(
+        // R1191 — the offset that pins the bbox graph centre at the canvas
+        // centre, via the forward-projection SSOT.
+        let (ox, oy) = graph_anchor_offset(
+            centre.0,
+            centre.1,
             zoom,
-            cx * zoom - f64::from(WIN_W) / 2.0,
-            cy * zoom - f64::from(WIN_H) / 2.0,
+            f64::from(WIN_W) / 2.0,
+            f64::from(WIN_H) / 2.0,
         );
+        self.apply_viewport(zoom, ox, oy);
         true
     }
 
@@ -3859,12 +3881,17 @@ impl ExternalIntrospect for NodeGraphExternal {
             match axis {
                 "x" => {
                     let oy = self.scroll.offset().1;
-                    self.scroll.scroll_to(round_i32(v * zoom), oy);
+                    // R1191 — offset that pins graph `v` at canvas x=0, via the
+                    // forward SSOT (the twin of the `viewport.x` query's
+                    // `cursor_graph(0,0)` inverse read).
+                    let (ox, _) = graph_anchor_offset(v, 0.0, zoom, 0.0, 0.0);
+                    self.scroll.scroll_to(round_i32(ox), oy);
                     return Ok(());
                 }
                 "y" => {
                     let ox = self.scroll.offset().0;
-                    self.scroll.scroll_to(ox, round_i32(v * zoom));
+                    let (_, oy) = graph_anchor_offset(0.0, v, zoom, 0.0, 0.0);
+                    self.scroll.scroll_to(ox, round_i32(oy));
                     return Ok(());
                 }
                 "zoom" => {
@@ -9037,6 +9064,38 @@ mod tests {
                 Err(InterveneError::TypeMismatch),
             );
         });
+    }
+
+    #[test]
+    fn r1191_graph_anchor_offset_is_the_forward_inverse() {
+        // R1191 — the forward twin computes the pan offset that places graph
+        // (gx,gy) under canvas (cx,cy); it is the exact algebraic inverse of
+        // canvas_to_graph's affine (canvas = graph·zoom − offset).
+        let approx = |a: f64, b: f64| (a - b).abs() < 1e-9;
+        let (zoom, gx, gy, cx, cy) = (1.5, 400.0, 300.0, 100.0, 50.0);
+        let (ox, oy) = graph_anchor_offset(gx, gy, zoom, cx, cy);
+        assert!(approx(ox, gx * zoom - cx), "x offset = gx*zoom - cx");
+        assert!(approx(oy, gy * zoom - cy), "y offset = gy*zoom - cy");
+        // forward then the manual inverse affine = identity at the anchor px.
+        assert!(approx((ox + cx) / zoom, gx), "x round-trips to gx");
+        assert!(approx((oy + cy) / zoom, gy), "y round-trips to gy");
+        // Compose with the REAL inverse SSOT via a ScrollState (integer-clean
+        // offsets, so no scroll rounding) — the two projection SSOTs are
+        // provably inverse, not just the hand-written affine.
+        let scroll = ScrollState::new();
+        scroll.set_max(10_000, 10_000);
+        scroll.scroll_to(round_i32(ox), round_i32(oy));
+        let back = canvas_to_graph(&scroll, zoom, cx, cy);
+        assert!(
+            approx(back.0, gx) && approx(back.1, gy),
+            "SSOTs compose to identity"
+        );
+        // The RPC-pan degenerate case (anchor at canvas 0) = pure graph->world,
+        // matching the `viewport.x` pan write's v*zoom.
+        assert!(
+            approx(graph_anchor_offset(gx, 0.0, zoom, 0.0, 0.0).0, gx * zoom),
+            "canvas-0 anchor = graph*zoom (the viewport.x pan write)"
+        );
     }
 
     #[test]
