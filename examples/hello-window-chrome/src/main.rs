@@ -24,7 +24,9 @@ use pinion_core::style::{
 };
 use pinion_core::widgets::button::{ButtonEvent, ButtonState};
 use pinion_core::{Frame, WidgetCore};
-use pinion_shell::{SizeStrategy, WidgetView, WindowChromeStyle, WindowSpec, vello_renderer_impl};
+use pinion_shell::{
+    SizeStrategy, WidgetView, WindowChromeStyle, WindowPolicy, WindowSpec, vello_renderer_impl,
+};
 
 // pinion-forge codegen output: `pub struct WindowChromeRenderer` + error +
 // async `new` + sync `render` / `resize`.
@@ -128,8 +130,8 @@ impl WidgetView for ChromeDemo {
             .with_decorations(false),
         ]
     }
-    fn window_chrome(_window_id: &str) -> Option<WindowChromeStyle> {
-        Some(WindowChromeStyle::default())
+    fn window_policy(_window_id: &str) -> WindowPolicy {
+        WindowPolicy::new().with_chrome(WindowChromeStyle::default())
     }
 }
 

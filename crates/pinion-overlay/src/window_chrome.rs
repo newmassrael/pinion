@@ -99,18 +99,87 @@ pub enum WindowControl {
     Close,
 }
 
+/// (R1190 §5.16 §5.39 §5.49) A window's eight resize edges / corners as a
+/// SHELL-NEUTRAL enum — the winit-free peer of `winit::window::ResizeDirection`,
+/// so pinion-overlay (which cannot name a winit type — it deps only pinion-core)
+/// owns the tag→edge mapping and the shell does only the trivial edge→winit
+/// conversion. Before R1190 the tag→direction half lived in the shell's
+/// `chrome_action_for_tag`, splitting the meaning of the `WINDOW_RESIZE_*`
+/// constants (defined HERE) across two crates with only tests guarding
+/// cross-crate exhaustiveness; folding it into [`ChromeTag`] makes overlay the
+/// single tag→semantic source (the session-audit structural fix).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowResizeEdge {
+    /// Top edge.
+    North,
+    /// Bottom edge.
+    South,
+    /// Left edge.
+    West,
+    /// Right edge.
+    East,
+    /// Top-left corner.
+    NorthWest,
+    /// Top-right corner.
+    NorthEast,
+    /// Bottom-left corner.
+    SouthWest,
+    /// Bottom-right corner.
+    SouthEast,
+}
+
+/// (R1190 §5.16 §5.39 §5.49) The complete SHELL-NEUTRAL meaning of a window-chrome
+/// hit-test tag — the SINGLE source of truth for "what does this tag mean," owned
+/// by pinion-overlay (which defines the tag constants). The shell's
+/// `chrome_action_for_tag` and the RPC click drain both resolve through
+/// [`chrome_tag_semantic`] and then apply only the winit-typed conversions they
+/// need (`WindowResizeEdge`→`ResizeDirection`, `WindowControl` execution), so the
+/// tag vocabulary can never drift across the crate boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChromeTag {
+    /// A discrete control button — minimize / maximize-toggle / close.
+    Control(WindowControl),
+    /// A resize edge / corner.
+    Resize(WindowResizeEdge),
+    /// The draggable title-bar grip (window move).
+    MoveGrip,
+}
+
+/// (R1190 §5.16 §5.39 §5.49) Map a hit-test tag to its SHELL-NEUTRAL
+/// [`ChromeTag`] meaning, or `None` for every non-chrome tag. The single
+/// tag→semantic source of truth (overlay owns the constants AND their meaning);
+/// the shell adds only winit-type conversions on top. Adding a ninth region now
+/// means a new [`ChromeTag`] arm HERE, and the shell's exhaustive `match` on
+/// `ChromeTag` then fails to compile until it is handled — cross-crate
+/// exhaustiveness enforced by the type system, not just tests.
+#[must_use]
+pub fn chrome_tag_semantic(tag: &str) -> Option<ChromeTag> {
+    match tag {
+        WINDOW_CHROME_MINIMIZE_TAG => Some(ChromeTag::Control(WindowControl::Minimize)),
+        WINDOW_CHROME_MAXIMIZE_TAG => Some(ChromeTag::Control(WindowControl::Maximize)),
+        WINDOW_CHROME_CLOSE_TAG => Some(ChromeTag::Control(WindowControl::Close)),
+        WINDOW_CHROME_GRIP_TAG => Some(ChromeTag::MoveGrip),
+        WINDOW_RESIZE_NORTH_TAG => Some(ChromeTag::Resize(WindowResizeEdge::North)),
+        WINDOW_RESIZE_SOUTH_TAG => Some(ChromeTag::Resize(WindowResizeEdge::South)),
+        WINDOW_RESIZE_WEST_TAG => Some(ChromeTag::Resize(WindowResizeEdge::West)),
+        WINDOW_RESIZE_EAST_TAG => Some(ChromeTag::Resize(WindowResizeEdge::East)),
+        WINDOW_RESIZE_NORTH_WEST_TAG => Some(ChromeTag::Resize(WindowResizeEdge::NorthWest)),
+        WINDOW_RESIZE_NORTH_EAST_TAG => Some(ChromeTag::Resize(WindowResizeEdge::NorthEast)),
+        WINDOW_RESIZE_SOUTH_WEST_TAG => Some(ChromeTag::Resize(WindowResizeEdge::SouthWest)),
+        WINDOW_RESIZE_SOUTH_EAST_TAG => Some(ChromeTag::Resize(WindowResizeEdge::SouthEast)),
+        _ => None,
+    }
+}
+
 /// (R1188 §5.16 §5.49) Map a hit-test tag to the discrete [`WindowControl`] it
-/// requests, or `None` for every non-control tag (including the grip / resize
-/// regions — see the enum doc). Lives beside the tag constants so the
-/// tag-to-control vocabulary cannot drift from the tags themselves; both the
-/// winit chrome-press mapping and the RPC click drain resolve through this one
-/// function.
+/// requests, or `None` for every non-control tag. A thin projection of the
+/// [`chrome_tag_semantic`] SSOT for the RPC click drain, which cares only about
+/// the discrete controls (grip / resize are pointer-session gestures whose RPC
+/// peers are `scene/window_move` / `scene/resize`).
 #[must_use]
 pub fn window_control_for_tag(tag: &str) -> Option<WindowControl> {
-    match tag {
-        WINDOW_CHROME_MINIMIZE_TAG => Some(WindowControl::Minimize),
-        WINDOW_CHROME_MAXIMIZE_TAG => Some(WindowControl::Maximize),
-        WINDOW_CHROME_CLOSE_TAG => Some(WindowControl::Close),
+    match chrome_tag_semantic(tag) {
+        Some(ChromeTag::Control(control)) => Some(control),
         _ => None,
     }
 }
@@ -715,6 +784,47 @@ mod tests {
             assert_eq!(window_control_for_tag(tag), None, "{tag} is not discrete");
         }
         assert_eq!(window_control_for_tag("some-widget"), None);
+    }
+
+    #[test]
+    fn chrome_tag_semantic_is_the_full_tag_to_meaning_ssot() {
+        // R1190 — the single tag→semantic source: every chrome tag (controls,
+        // grip, all 8 resize edges/corners) maps to its shell-neutral ChromeTag,
+        // and non-chrome tags to None. The shell's exhaustive match on ChromeTag
+        // + the type system then enforce cross-crate coverage.
+        assert_eq!(
+            chrome_tag_semantic(WINDOW_CHROME_MINIMIZE_TAG),
+            Some(ChromeTag::Control(WindowControl::Minimize)),
+        );
+        assert_eq!(
+            chrome_tag_semantic(WINDOW_CHROME_CLOSE_TAG),
+            Some(ChromeTag::Control(WindowControl::Close)),
+        );
+        assert_eq!(
+            chrome_tag_semantic(WINDOW_CHROME_GRIP_TAG),
+            Some(ChromeTag::MoveGrip),
+        );
+        let resize_cases = [
+            (WINDOW_RESIZE_NORTH_TAG, WindowResizeEdge::North),
+            (WINDOW_RESIZE_SOUTH_TAG, WindowResizeEdge::South),
+            (WINDOW_RESIZE_WEST_TAG, WindowResizeEdge::West),
+            (WINDOW_RESIZE_EAST_TAG, WindowResizeEdge::East),
+            (WINDOW_RESIZE_NORTH_WEST_TAG, WindowResizeEdge::NorthWest),
+            (WINDOW_RESIZE_NORTH_EAST_TAG, WindowResizeEdge::NorthEast),
+            (WINDOW_RESIZE_SOUTH_WEST_TAG, WindowResizeEdge::SouthWest),
+            (WINDOW_RESIZE_SOUTH_EAST_TAG, WindowResizeEdge::SouthEast),
+        ];
+        for (tag, edge) in resize_cases {
+            assert_eq!(
+                chrome_tag_semantic(tag),
+                Some(ChromeTag::Resize(edge)),
+                "{tag}"
+            );
+        }
+        // The strip container + resize family prefix are NOT themselves tags.
+        assert_eq!(chrome_tag_semantic(WINDOW_CHROME_TAG), None);
+        assert_eq!(chrome_tag_semantic(WINDOW_RESIZE_TAG_PREFIX), None);
+        assert_eq!(chrome_tag_semantic("some-widget"), None);
     }
 
     #[test]

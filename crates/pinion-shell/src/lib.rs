@@ -223,6 +223,57 @@ pub use pinion_overlay::{
 // names the actions without a direct overlay dep.
 pub use pinion_overlay::{WindowControl, window_control_for_tag};
 
+/// (R1190 §5.16 §5.39) The declarative per-window chrome / frame policy a binding
+/// returns from [`WidgetView::window_policy`] — the cohesive value-type that
+/// supersedes the separate `window_chrome` + `window_resizable` getters.
+///
+/// The R1186 rustdoc noting that `resizable` could NOT fold into
+/// [`WindowChromeStyle`] (a chrome-less window has no style struct to carry the
+/// field) was the signal that THIS value-type — not the style struct, and not one
+/// more `WidgetView` hook per axis — is the right home for per-window frame
+/// policy. Future axes (min / max size, always-on-top, opacity, skip-taskbar) add
+/// a field HERE, not a trait method; `#[non_exhaustive]` keeps that additive for
+/// out-of-crate bindings, which construct via [`Self::new`] + the `with_*`
+/// builders. The close SEAM stays a separate `WidgetView::window_close_requested`
+/// hook — it is a callback, not a declarative getter.
+#[non_exhaustive]
+#[derive(Debug, Clone, Default)]
+pub struct WindowPolicy {
+    /// Client-side chrome strip style, or `None` for OS-decorated / naked
+    /// borderless. (Superseded `WidgetView::window_chrome`; ORTHOGONAL to
+    /// [`WindowSpec::decorations`] — see [`WidgetView::window_policy`]'s matrix.)
+    pub chrome: Option<WindowChromeStyle>,
+    /// Client-side resize border: `None` derives from chrome presence (resize iff
+    /// chrome — the pre-R1186 coupling), `Some(true)` forces it on a chrome-less
+    /// controls-in-header floater, `Some(false)` off. (Superseded
+    /// `WidgetView::window_resizable`.)
+    pub resizable: Option<bool>,
+}
+
+impl WindowPolicy {
+    /// The OS-default policy: no client-side chrome, resize derived from chrome
+    /// (so: none). Identical to [`WindowPolicy::default`].
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the client-side chrome strip style (a CSD title bar + controls).
+    #[must_use]
+    pub fn with_chrome(mut self, chrome: WindowChromeStyle) -> Self {
+        self.chrome = Some(chrome);
+        self
+    }
+
+    /// Force the client-side resize border on / off, overriding the
+    /// chrome-derived default (the R1186 decoupling).
+    #[must_use]
+    pub fn with_resizable(mut self, resizable: bool) -> Self {
+        self.resizable = Some(resizable);
+        self
+    }
+}
+
 // R791.1 §5.13 §5.38 — the per-binding `WidgetView::ime_caret_rect` body
 // (focus-guard + `rect_for_tag` walk + `tf_paint::ime_caret_rect_for`) is
 // NOT lifted here, by deliberate dep-graph design: `pinion-widget-paint`
@@ -882,57 +933,36 @@ pub trait WidgetView: pinion_a11y::WidgetA11y {
         Some(pinion_overlay::FocusRingStyle::default())
     }
 
-    /// R1121.1 §5.16 §5.39 — binding-controlled client-side window chrome.
-    /// When a window draws its OWN chrome (title bar + minimize / maximize /
-    /// close + drag grip) instead of the OS frame, the binding returns
-    /// `Some(style)` for that window's id; the shell injects the chrome strip
-    /// and insets the window content below it. `None` (the default) draws no
-    /// chrome.
+    /// R1190 §5.16 §5.39 — binding-controlled declarative per-window chrome /
+    /// frame policy: the client-side chrome strip style and the resize-border
+    /// decision, as one cohesive [`WindowPolicy`] value. Supersedes the R1121.1
+    /// `window_chrome` + R1186 `window_resizable` getters (folded here so future
+    /// per-window frame axes add a `WindowPolicy` field, not a `WidgetView`
+    /// method). [`WindowPolicy::default`] (both fields `None`) is the OS-decorated,
+    /// non-client-resizable default — every pre-R1190 binding that overrode
+    /// neither getter is byte-unchanged. `window_id` is the canonical
+    /// [`WindowSpec::id`], so a multi-window binding chromes its floating panels
+    /// while leaving its main canvas OS-decorated.
     ///
-    /// This is ORTHOGONAL to [`WindowSpec::decorations`] — the two were coupled
-    /// at R1121 (`decorations:false ⇒ chrome`) and decoupled here because that
-    /// coupling could not express a **naked borderless** window (`decorations:
-    /// false` + no chrome) — the fullscreen-game surface the Phase-C/D northern
-    /// star needs. The honest matrix:
+    /// [`WindowPolicy::chrome`] is ORTHOGONAL to [`WindowSpec::decorations`] — the
+    /// honest matrix:
+    /// - `decorations:true`  + `chrome:None`        — OS-drawn title bar (default).
+    /// - `decorations:false` + `chrome:Some(style)` — pinion-drawn chrome (CSD:
+    ///   an editor panel / torn-off dock window — Blender / Unreal / VS Code).
+    /// - `decorations:false` + `chrome:None`        — naked borderless (a splash
+    ///   or a fullscreen game viewport — the Phase-C/D surface).
     ///
-    /// - `decorations:true`  + `None`        — OS-drawn title bar (the default).
-    /// - `decorations:false` + `Some(style)` — pinion-drawn chrome (CSD: an
-    ///   editor panel / torn-off dock window — Blender / Unreal / VS Code).
-    /// - `decorations:false` + `None`        — naked borderless (a splash or a
-    ///   fullscreen game viewport — no chrome at all).
-    /// - `decorations:true`  + `Some(style)` — possible but redundant (two bars);
-    ///   a binding that wants CSD also sets `decorations:false`.
+    /// [`WindowPolicy::resizable`] decouples the resize border from chrome:
+    /// `None` derives it from chrome presence (resize iff chrome — the pre-R1186
+    /// coupling); `Some(true)` forces it on a **chrome-less** controls-in-header
+    /// floater (R1171 dock header owns the title bar); `Some(false)` off.
     ///
-    /// `window_id` is the canonical [`WindowSpec::id`] so a multi-window binding
-    /// chromes its floating panels while leaving its main canvas OS-decorated
-    /// (or naked). Mirrors the [`Self::focus_ring_style`] hook shape.
+    /// `window_close_requested` stays a SEPARATE hook, NOT a `WindowPolicy` field:
+    /// it is a CALLBACK (returns whether the binding handled the close, with side
+    /// effects), a category distinct from these declarative getters.
     #[must_use]
-    fn window_chrome(_window_id: &str) -> Option<pinion_overlay::WindowChromeStyle> {
-        None
-    }
-
-    /// (R1186 §5.16 §5.39) Whether this window carries a CLIENT-SIDE resize border
-    /// (the eight edge / corner drag-resize hit regions), DECOUPLED from
-    /// [`Self::window_chrome`].
-    ///
-    /// `None` (the default) derives the answer from chrome presence — resize iff
-    /// [`window_chrome`](Self::window_chrome) returned `Some` — the pre-R1186
-    /// coupling ("resize travels with chrome"), so every existing binding is
-    /// unchanged. `Some(true)` forces the resize border even for a **chrome-less**
-    /// borderless window; `Some(false)` suppresses it even for a chromed one.
-    ///
-    /// The motivating case is a torn-off dock panel whose title bar is its own
-    /// DOCK HEADER (the R1171 controls-in-header design: min / max / close live in
-    /// `view_dock_panel_with_actions`'s header-trailing slot, so the window draws
-    /// ONE strip and returns `window_chrome == None`). Without this hook that
-    /// window would be un-resizable, because the resize border used to ride on the
-    /// chrome gate. A binding returns `Some(true)` for such a window's id (paired
-    /// with `decorations:false`, so the OS frame is gone and the client border is
-    /// the only resize affordance). `window_id` is the canonical
-    /// [`WindowSpec::id`]; mirrors the [`Self::window_chrome`] hook shape.
-    #[must_use]
-    fn window_resizable(_window_id: &str) -> Option<bool> {
-        None
+    fn window_policy(_window_id: &str) -> WindowPolicy {
+        WindowPolicy::default()
     }
 
     /// (R1170 §5.16 §5.39) Per-window CLOSE seam. The shell calls this when a
@@ -1311,6 +1341,58 @@ pub enum RenderState<R: VelloRenderer> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // R1190 §5.16 §5.39 — [`WindowPolicy`] is the cohesive per-window frame
+    // policy value-type that superseded the `window_chrome` + `window_resizable`
+    // getters. These pin the builder contract directly (independent of any
+    // `WidgetView` consumer): the default is both-`None` (== the old dual getter
+    // defaults, so every pre-R1190 binding is byte-unchanged), `new` == default,
+    // and each `with_*` builder sets ONLY its own axis — the orthogonality the
+    // R1186 decoupling depends on.
+
+    #[test]
+    fn r1190_window_policy_default_and_new_are_both_none() {
+        let d = WindowPolicy::default();
+        assert!(d.chrome.is_none());
+        assert!(d.resizable.is_none());
+        let n = WindowPolicy::new();
+        assert!(n.chrome.is_none());
+        assert!(n.resizable.is_none());
+    }
+
+    #[test]
+    fn r1190_with_chrome_sets_only_chrome() {
+        let p = WindowPolicy::new().with_chrome(WindowChromeStyle::default());
+        assert!(p.chrome.is_some());
+        assert!(
+            p.resizable.is_none(),
+            "with_chrome must not touch the resizable axis (orthogonal builders)",
+        );
+    }
+
+    #[test]
+    fn r1190_with_resizable_sets_only_resizable() {
+        let p = WindowPolicy::new().with_resizable(true);
+        assert_eq!(p.resizable, Some(true));
+        assert!(
+            p.chrome.is_none(),
+            "with_resizable must not touch the chrome axis (orthogonal builders)",
+        );
+        // `Some(false)` is distinct from the derive-from-chrome default `None`.
+        assert_eq!(
+            WindowPolicy::new().with_resizable(false).resizable,
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn r1190_builders_compose_both_axes() {
+        let p = WindowPolicy::new()
+            .with_chrome(WindowChromeStyle::default())
+            .with_resizable(true);
+        assert!(p.chrome.is_some());
+        assert_eq!(p.resizable, Some(true));
+    }
 
     // R668 §5.16 — [`SizeStrategy`] pins the canonical contract:
     // `Fixed` rounds-trip width/height through `initial_logical_size`;

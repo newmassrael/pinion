@@ -3947,13 +3947,16 @@ impl<V: WidgetView> ShellCore<V> {
     /// sides + bottom, exactly like the chromed case does functionally.
     fn apply_resize_border(&self, scene: Scene, w: u32, h: u32, window_id: Option<&str>) -> Scene {
         // R1186 — resolve identity WITHOUT requiring chrome, then gate on the
-        // decoupled `window_resizable` hook (default derives from chrome presence).
+        // decoupled `resizable` policy (default derives from chrome presence).
         // R1123.1 — the maximized-check keys off the same single spec resolution.
+        // R1190 — read the whole `WindowPolicy` ONCE (chrome + resizable), instead
+        // of two `V::window_chrome`/`window_resizable` calls.
         let Some((spec_id, _)) = self.resolve_window_spec(window_id) else {
             return scene;
         };
-        let has_chrome = V::window_chrome(&spec_id).is_some();
-        let resizable = V::window_resizable(&spec_id).unwrap_or(has_chrome);
+        let policy = V::window_policy(&spec_id);
+        let has_chrome = policy.chrome.is_some();
+        let resizable = policy.resizable.unwrap_or(has_chrome);
         if !resizable || self.maximized_for_window(&spec_id) {
             return scene;
         }
@@ -4027,7 +4030,7 @@ impl<V: WidgetView> ShellCore<V> {
         window_id: Option<&str>,
     ) -> Option<(String, String, pinion_overlay::WindowChromeStyle)> {
         let (id, title) = self.resolve_window_spec(window_id)?;
-        let style = V::window_chrome(&id)?;
+        let style = V::window_policy(&id).chrome?;
         Some((id, title, style))
     }
 
@@ -7510,11 +7513,11 @@ mod r1121_window_chrome_tests {
                         .with_decorations($decorations),
                     ]
                 }
-                fn window_chrome(_window_id: &str) -> Option<WindowChromeStyle> {
-                    $chrome
-                }
-                fn window_resizable(_window_id: &str) -> Option<bool> {
-                    $resizable
+                fn window_policy(_window_id: &str) -> crate::WindowPolicy {
+                    crate::WindowPolicy {
+                        chrome: $chrome,
+                        resizable: $resizable,
+                    }
                 }
             }
         };
@@ -8034,8 +8037,8 @@ mod r1121_window_chrome_tests {
                 .with_decorations(false),
             ]
         }
-        fn window_resizable(_window_id: &str) -> Option<bool> {
-            Some(true)
+        fn window_policy(_window_id: &str) -> crate::WindowPolicy {
+            crate::WindowPolicy::new().with_resizable(true)
         }
     }
 

@@ -57,7 +57,8 @@ use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
 use pinion_core::{Frame, Owner, Scene, Signal, WidgetCore};
 use pinion_shell::{
     SizeStrategy, WINDOW_CHROME_CLOSE_TAG, WINDOW_CHROME_MAXIMIZE_TAG, WINDOW_CHROME_MINIMIZE_TAG,
-    WidgetView, WindowSpec, desktop_position_from, vello_renderer_impl, window_exists,
+    WidgetView, WindowPolicy, WindowSpec, desktop_position_from, vello_renderer_impl,
+    window_exists,
 };
 use pinion_widget_paint::button::{ButtonColors, ButtonStyle, view_button};
 use pinion_widget_paint::dock::{
@@ -1412,18 +1413,20 @@ impl WidgetView for DockPanelsEditorView {
         }
     }
 
-    /// (R1186 §5.16 §5.39) A torn-off panel's floating window IS resizable even
-    /// though it draws NO shell chrome (`window_chrome == None` — its title bar is
-    /// the dock HEADER, R1171). Pre-R1186 the resize border rode the chrome gate, so
-    /// a controls-in-header floater had no edge / corner resize; this decouples them.
-    /// The floating spec's `decorations:false` removed the OS frame, so this
-    /// client-side border is the sole resize affordance. The main window returns
-    /// `None` (derive from chrome) → it is OS-decorated, so the OS frame resizes it
-    /// and no client border is drawn.
-    fn window_resizable(window_id: &str) -> Option<bool> {
-        window_id
-            .strip_prefix(DEFAULT_FLOATING_WINDOW_PREFIX)
-            .map(|_| true)
+    /// (R1186/R1190 §5.16 §5.39) A torn-off panel's floating window IS resizable
+    /// even though it draws NO shell chrome (its title bar is the dock HEADER,
+    /// R1171). Pre-R1186 the resize border rode the chrome gate, so a
+    /// controls-in-header floater had no edge / corner resize; the `resizable`
+    /// policy decouples them. The floating spec's `decorations:false` removed the
+    /// OS frame, so this client-side border is the sole resize affordance. The main
+    /// window returns the default policy (chrome `None`, resizable `None` = derive)
+    /// → it is OS-decorated, so the OS frame resizes it and no client border draws.
+    fn window_policy(window_id: &str) -> WindowPolicy {
+        if window_id.starts_with(DEFAULT_FLOATING_WINDOW_PREFIX) {
+            WindowPolicy::new().with_resizable(true)
+        } else {
+            WindowPolicy::default()
+        }
     }
 
     // (R1171 §5.16 §5.39) The editor no longer overrides `window_chrome`: a torn-off
@@ -1642,23 +1645,24 @@ mod tests {
         // that exact shape (chrome None + resizable Some(true)) gets the resize
         // border injected; this asserts the editor's torn window IS that shape.
         let torn = floating_window_id("properties");
-        assert_eq!(
-            <DockPanelsEditorView as WidgetView>::window_chrome(&torn),
-            None,
+        let torn_policy = <DockPanelsEditorView as WidgetView>::window_policy(&torn);
+        assert!(
+            torn_policy.chrome.is_none(),
             "the floater's title bar is its dock header — no separate shell chrome",
         );
         assert_eq!(
-            <DockPanelsEditorView as WidgetView>::window_resizable(&torn),
+            torn_policy.resizable,
             Some(true),
             "★a torn-off floating window is client-side resizable despite no chrome",
         );
         // The main window derives resize from chrome (None) — it is OS-decorated,
         // so the OS frame resizes it and the shell draws no client resize border.
+        let main_policy = <DockPanelsEditorView as WidgetView>::window_policy(MAIN_WINDOW_ID);
         assert_eq!(
-            <DockPanelsEditorView as WidgetView>::window_resizable(MAIN_WINDOW_ID),
-            None,
+            main_policy.resizable, None,
             "the main window derives resize from chrome (OS frame resizes it)",
         );
+        assert!(main_policy.chrome.is_none(), "main window is OS-decorated");
     }
 
     /// Depth-first: does `scene` (or a descendant) carry `tag`?

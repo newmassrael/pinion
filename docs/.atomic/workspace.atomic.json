@@ -20626,6 +20626,56 @@
         "Review carry (practically unreachable, not fixed): (#2a) suspend/resume with a cached-window reuse could leave the OS cursor attribute stale vs the rebuilt slot's None latch — but resize cursors are desktop-mouse-only while suspend/resume is a mobile lifecycle (no cursor), and resume_spec rebuilds the slot (latch re-inits None); (#2b) an RPC/keyboard maximize under a stationary cursor over a resize edge strands the resize cursor until the next motion (border leaves the scene, no CursorMoved) — self-heals on move. Both need a non-pointer state change with a stationary cursor over a region; low severity, carry only."
       ]
     },
+    "R1190": {
+      "decision_summary": "R1190 session-audit structural hardening: overlay owns the tag-to-semantic SSOT, dispatch_rpc drain is compiler-enforced, and a WindowPolicy value-type supersedes the window_chrome + window_resizable getters (behavior-preserving).",
+      "changes_bullets": [
+        "pinion-overlay: new shell-neutral WindowResizeEdge + ChromeTag enums + chrome_tag_semantic() as the single tag-to-meaning SSOT; window_control_for_tag now delegates to it (grip/resize -> None unchanged).",
+        "pinion-shell app.rs: chrome_action_for_tag consumes ChromeTag via an exhaustive match (no catch-all) + new resize_edge_to_direction, the sole place the winit ResizeDirection is introduced -> cross-crate resize-region exhaustiveness is now type-enforced (a 9th edge fails shell compile), not test-only.",
+        "pinion-shell app.rs: AppShell::dispatch_rpc now takes event_loop and drains ShellCore::take_pending_window_controls itself, after the response write, executing via the shared apply_window_control arm; user_event no longer drains -> the R1188 caller-remembered drain becomes compiler-enforced.",
+        "pinion-shell lib.rs: new #[non_exhaustive] WindowPolicy { chrome, resizable } value-type + new/with_chrome/with_resizable builders replace WidgetView::window_chrome + window_resizable getters; window_close_requested stays a separate callback hook; substrate.rs apply_resize_border reads the whole policy ONCE.",
+        "Migrated 4 impls (chrome_fixture test macro, r1121 resizable test view, hello-dock-panels-editor, hello-window-chrome) to window_policy; trait default = WindowPolicy::default() = both-None == prior dual getter defaults (byte-unchanged)."
+      ],
+      "verification_bullets": [
+        "cargo test --workspace: 198/198 test targets ok, 0 failed (7911 assertions, 53 ignored); real exit 0 (re-run without pipe per pipe-masks-exit-code lesson).",
+        "Added 4 WindowPolicy builder unit tests (default==new both-None, with_chrome/with_resizable orthogonality, compose) + 1 chrome_tag_semantic full-SSOT test (all 13 tags + non-chrome None).",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello and cargo fmt --check both clean.",
+        "Independent adversarial review: 0 real defects; behavior-preserving verified across all 13 tag cases and the resizable.unwrap_or(has_chrome) semantics; cargo doc error-set identical with/without R1190 (no new dangling links)."
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.39",
+        "5.49"
+      ],
+      "carry_forward_bullets": [
+        "Deferred audit items (not R1190, non-blocking): reconcile_from re-projects only surviving live nodes, not the primary/factory node.",
+        "per-window WindowState consolidation (~20 parallel per-window HashMaps into one struct).",
+        "ShellCommand enum stream for the pending-control queue; cursor_for_hover generalization beyond resize regions."
+      ],
+      "publishable_decision_summary": "R1190 session-audit structural hardening: overlay owns the tag-to-semantic SSOT, dispatch_rpc drain is compiler-enforced, and a WindowPolicy value-type supersedes the window_chrome + window_resizable getters (behavior-preserving).",
+      "publishable_changes_bullets": [
+        "pinion-overlay: new shell-neutral WindowResizeEdge + ChromeTag enums + chrome_tag_semantic() as the single tag-to-meaning SSOT; window_control_for_tag now delegates to it (grip/resize -> None unchanged).",
+        "pinion-shell app.rs: chrome_action_for_tag consumes ChromeTag via an exhaustive match (no catch-all) + new resize_edge_to_direction, the sole place the winit ResizeDirection is introduced -> cross-crate resize-region exhaustiveness is now type-enforced (a 9th edge fails shell compile), not test-only.",
+        "pinion-shell app.rs: AppShell::dispatch_rpc now takes event_loop and drains ShellCore::take_pending_window_controls itself, after the response write, executing via the shared apply_window_control arm; user_event no longer drains -> the R1188 caller-remembered drain becomes compiler-enforced.",
+        "pinion-shell lib.rs: new #[non_exhaustive] WindowPolicy { chrome, resizable } value-type + new/with_chrome/with_resizable builders replace WidgetView::window_chrome + window_resizable getters; window_close_requested stays a separate callback hook; substrate.rs apply_resize_border reads the whole policy ONCE.",
+        "Migrated 4 impls (chrome_fixture test macro, r1121 resizable test view, hello-dock-panels-editor, hello-window-chrome) to window_policy; trait default = WindowPolicy::default() = both-None == prior dual getter defaults (byte-unchanged)."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace: 198/198 test targets ok, 0 failed (7911 assertions, 53 ignored); real exit 0 (re-run without pipe per pipe-masks-exit-code lesson).",
+        "Added 4 WindowPolicy builder unit tests (default==new both-None, with_chrome/with_resizable orthogonality, compose) + 1 chrome_tag_semantic full-SSOT test (all 13 tags + non-chrome None).",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello and cargo fmt --check both clean.",
+        "Independent adversarial review: 0 real defects; behavior-preserving verified across all 13 tag cases and the resizable.unwrap_or(has_chrome) semantics; cargo doc error-set identical with/without R1190 (no new dangling links)."
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.39",
+        "5.49"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Deferred audit items (not R1190, non-blocking): reconcile_from re-projects only surviving live nodes, not the primary/factory node.",
+        "per-window WindowState consolidation (~20 parallel per-window HashMaps into one struct).",
+        "ShellCommand enum stream for the pending-control queue; cursor_for_hover generalization beyond resize regions."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

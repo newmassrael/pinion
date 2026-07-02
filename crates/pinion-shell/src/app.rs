@@ -95,40 +95,39 @@ enum ChromeAction {
     Resize(ResizeDirection),
 }
 
-/// (R1121 §5.16 §5.39) Map a hit-test tag to the window-chrome control it
-/// names, or `None` when the tag is not a chrome control. Pure (uses only the
-/// `ResizeDirection` enum value, no live winit `Window` / `self`) so the
-/// tag→action contract is unit-tested without a live window. R1188 — the three
-/// discrete buttons delegate to [`pinion_overlay::window_control_for_tag`],
-/// the mapping SSOT the RPC click drain also resolves through.
+/// (R1121 §5.16 §5.39) Map a hit-test tag to the window-chrome action it names,
+/// or `None` when the tag is not a chrome tag. R1190 — the tag→semantic decision
+/// is the overlay [`chrome_tag_semantic`](pinion_overlay::chrome_tag_semantic)
+/// SSOT; this fn only lifts that shell-neutral meaning into the winit-typed
+/// [`ChromeAction`] (`WindowResizeEdge`→[`ResizeDirection`] here, the sole place
+/// the winit resize type is introduced). The `ChromeTag` match is exhaustive, so
+/// a new overlay chrome-tag meaning fails to compile until this handles it —
+/// cross-crate exhaustiveness by the type system. Pure (no `self` / live
+/// `Window`), so unit-tested without a window.
 fn chrome_action_for_tag(tag: &str) -> Option<ChromeAction> {
-    if let Some(control) = pinion_overlay::window_control_for_tag(tag) {
-        return Some(ChromeAction::Control(control));
-    }
-    match tag {
-        pinion_overlay::WINDOW_CHROME_GRIP_TAG => Some(ChromeAction::Move),
-        // R1122 — the eight resize edges / corners.
-        pinion_overlay::WINDOW_RESIZE_NORTH_TAG => {
-            Some(ChromeAction::Resize(ResizeDirection::North))
-        }
-        pinion_overlay::WINDOW_RESIZE_SOUTH_TAG => {
-            Some(ChromeAction::Resize(ResizeDirection::South))
-        }
-        pinion_overlay::WINDOW_RESIZE_WEST_TAG => Some(ChromeAction::Resize(ResizeDirection::West)),
-        pinion_overlay::WINDOW_RESIZE_EAST_TAG => Some(ChromeAction::Resize(ResizeDirection::East)),
-        pinion_overlay::WINDOW_RESIZE_NORTH_WEST_TAG => {
-            Some(ChromeAction::Resize(ResizeDirection::NorthWest))
-        }
-        pinion_overlay::WINDOW_RESIZE_NORTH_EAST_TAG => {
-            Some(ChromeAction::Resize(ResizeDirection::NorthEast))
-        }
-        pinion_overlay::WINDOW_RESIZE_SOUTH_WEST_TAG => {
-            Some(ChromeAction::Resize(ResizeDirection::SouthWest))
-        }
-        pinion_overlay::WINDOW_RESIZE_SOUTH_EAST_TAG => {
-            Some(ChromeAction::Resize(ResizeDirection::SouthEast))
-        }
-        _ => None,
+    use pinion_overlay::ChromeTag;
+    Some(match pinion_overlay::chrome_tag_semantic(tag)? {
+        ChromeTag::Control(control) => ChromeAction::Control(control),
+        ChromeTag::MoveGrip => ChromeAction::Move,
+        ChromeTag::Resize(edge) => ChromeAction::Resize(resize_edge_to_direction(edge)),
+    })
+}
+
+/// (R1190 §5.16 §5.39) The trivial 1:1 lift of the overlay's shell-neutral
+/// [`WindowResizeEdge`](pinion_overlay::WindowResizeEdge) to the winit
+/// [`ResizeDirection`] `drag_resize_window` needs — the ONE place the winit
+/// resize type is named. Exhaustive, so an added edge fails to compile here.
+fn resize_edge_to_direction(edge: pinion_overlay::WindowResizeEdge) -> ResizeDirection {
+    use pinion_overlay::WindowResizeEdge as E;
+    match edge {
+        E::North => ResizeDirection::North,
+        E::South => ResizeDirection::South,
+        E::West => ResizeDirection::West,
+        E::East => ResizeDirection::East,
+        E::NorthWest => ResizeDirection::NorthWest,
+        E::NorthEast => ResizeDirection::NorthEast,
+        E::SouthWest => ResizeDirection::SouthWest,
+        E::SouthEast => ResizeDirection::SouthEast,
     }
 }
 
@@ -1027,13 +1026,16 @@ impl<V: WidgetView> AppShell<V> {
     ///
     /// R1188 §5.16 §5.49 §2 #2 — a `scene/click` on a window-control tag queues
     /// a control on `ShellCore` (winit handles + the event-loop exit live HERE,
-    /// not in the headless core). The SOLE caller ([`Self::user_event`]) drains
-    /// [`ShellCore::take_pending_window_controls`] with the `ActiveEventLoop`
-    /// immediately after this returns. Any FUTURE caller of this method MUST do
-    /// the same, or an RPC-clicked control silently no-ops (and the queue leaks
-    /// into the next dispatch) — the drain is coupled to the call site because
-    /// this wrapper has no `ActiveEventLoop` to execute the close/app-exit with.
-    fn dispatch_rpc(&mut self, request: &str) {
+    /// not in the headless core). R1190 §5.16 §5.49 — this method now DRAINS
+    /// [`ShellCore::take_pending_window_controls`] itself (below, after the
+    /// response write), executing each queued control through
+    /// [`Self::apply_window_control`] with the `event_loop` parameter. R1188
+    /// left the drain to the caller with a "future callers MUST drain" rustdoc
+    /// contract; the session audit flagged that comment-enforced coupling — so
+    /// the drain is now INSIDE the one method that owns the window-control RPC
+    /// path, and taking `event_loop` makes the requirement compiler-enforced
+    /// (a caller cannot invoke this without the handle the close/app-exit needs).
+    fn dispatch_rpc(&mut self, request: &str, event_loop: &ActiveEventLoop) {
         // R671 §5.7 §5.16 — single-parse per-window RPC dispatch.
         // Pre-R671 (R670.B) AppShell parsed the JSON-RPC envelope
         // *twice*: once to sniff `params.window` (the per-window
@@ -1128,6 +1130,15 @@ impl<V: WidgetView> AppShell<V> {
                 // stdout closed (downstream consumer gone) — silently
                 // skip; do not abort the GUI loop on a broken pipe.
             }
+        }
+        // R1190 §5.16 §5.49 §2 #2 — execute the window-control presses the RPC
+        // click drain queued during this dispatch (`ShellCore` is headless, so
+        // it queued them; the winit handles + the event-loop exit live here).
+        // AFTER the response write, so a `scene/click {close}` client sees its
+        // `result` before the window closes. Same execution arm as a physical
+        // press on the same tag (`try_chrome_press` → `apply_window_control`).
+        for (spec_id, control) in self.core.take_pending_window_controls() {
+            self.apply_window_control(&spec_id, control, event_loop);
         }
     }
 
@@ -2959,19 +2970,10 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: AppEvent) {
         match event {
-            AppEvent::RpcRequest(json) => {
-                self.dispatch_rpc(&json);
-                // R1188 §5.16 §5.49 §2 #2 — execute the window-control presses
-                // the RPC click drain detected during this dispatch (`ShellCore`
-                // is headless, so it queued them; the winit handles + the
-                // event-loop exit live here). Same execution arm as a physical
-                // press on the same tag (`try_chrome_press` →
-                // `apply_window_control`), completing the R1121 "an AI observes
-                // AND DRIVES the window controls" contract's drive half.
-                for (spec_id, control) in self.core.take_pending_window_controls() {
-                    self.apply_window_control(&spec_id, control, event_loop);
-                }
-            }
+            // R1190 §5.16 §5.49 §2 #2 — `dispatch_rpc` now drains the window-control
+            // queue itself (it takes `event_loop`), so the drive-half is
+            // compiler-enforced, not a caller-remembered step.
+            AppEvent::RpcRequest(json) => self.dispatch_rpc(&json, event_loop),
             AppEvent::AccessKit(ak) => self.handle_accesskit_event(ak),
             // R51.159 §5.23 — re-feed an Intent produced by a resolved
             // Command future back into the SCXML `send` channel via

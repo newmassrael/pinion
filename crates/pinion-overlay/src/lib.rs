@@ -58,11 +58,11 @@ pub use highlight::{
     HIGHLIGHT_TAG_PREFIX, HighlightStyle, clear_highlights, inject_highlight, inject_overlay_node,
 };
 pub use window_chrome::{
-    WINDOW_CHROME_CLOSE_TAG, WINDOW_CHROME_GRIP_TAG, WINDOW_CHROME_MAXIMIZE_TAG,
+    ChromeTag, WINDOW_CHROME_CLOSE_TAG, WINDOW_CHROME_GRIP_TAG, WINDOW_CHROME_MAXIMIZE_TAG,
     WINDOW_CHROME_MINIMIZE_TAG, WINDOW_CHROME_TAG, WINDOW_RESIZE_EAST_TAG,
     WINDOW_RESIZE_NORTH_EAST_TAG, WINDOW_RESIZE_NORTH_TAG, WINDOW_RESIZE_NORTH_WEST_TAG,
     WINDOW_RESIZE_SOUTH_EAST_TAG, WINDOW_RESIZE_SOUTH_TAG, WINDOW_RESIZE_SOUTH_WEST_TAG,
     WINDOW_RESIZE_TAG_PREFIX, WINDOW_RESIZE_WEST_TAG, WindowChromeStyle, WindowControl,
-    inject_resize_border, inject_resize_border_below_titlebar, inject_window_chrome,
-    window_control_for_tag,
+    WindowResizeEdge, chrome_tag_semantic, inject_resize_border,
+    inject_resize_border_below_titlebar, inject_window_chrome, window_control_for_tag,
 };
