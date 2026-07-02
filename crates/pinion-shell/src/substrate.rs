@@ -3870,13 +3870,16 @@ impl<V: WidgetView> ShellCore<V> {
     /// live resize band (VS Code / Win11), while the two top CORNERS stay under
     /// the strip (their diagonal resize yields to the corner controls). A
     /// CHROME-LESS resizable window (`chrome: None`) draws its title bar as a CONTENT
-    /// dock header (R1171 controls-in-header) that cannot be layered over the
-    /// border; injecting the north regions would let them shadow the header's
-    /// close button at the very corner a user reaches to close, so the top edge +
-    /// top corners are OMITTED
-    /// ([`inject_resize_border_below_titlebar`](pinion_overlay::inject_resize_border_below_titlebar)):
-    /// the header owns the top (move + controls) and the window resizes from the
-    /// sides + bottom, exactly like the chromed case does functionally.
+    /// dock header (R1171 controls-in-header). R1197 — it resizes from the top
+    /// EDGE + top-LEFT corner too (VS Code parity for a floating panel), via
+    /// [`inject_resize_border_content_header`](pinion_overlay::inject_resize_border_content_header),
+    /// which OMITS only the top-RIGHT corner so it cannot shadow the header's
+    /// close button (the header keeps its controls ≥ `RESIZE_EDGE_PX` from the top
+    /// edge). These regions are already the topmost siblings over the content, so
+    /// the north edge is NOT re-raised (that would lift it above the top-left
+    /// corner and lose that corner's diagonal resize — hence
+    /// [`raise_top_resize_edge`](pinion_overlay::raise_top_resize_edge) gates on
+    /// the chrome strip's presence).
     fn apply_resize_border(&self, scene: Scene, w: u32, h: u32, window_id: Option<&str>) -> Scene {
         // R1186 — resolve identity WITHOUT requiring chrome, then gate on the
         // decoupled `resizable` policy (default derives from chrome presence).
@@ -3893,12 +3896,18 @@ impl<V: WidgetView> ShellCore<V> {
             return scene;
         }
         if has_chrome {
-            // The chrome strip (injected next, over this border) reclaims the top.
+            // The chrome strip (injected next, over this border) reclaims the
+            // top; R1195's `raise_top_resize_edge` then lifts the north edge back
+            // above the strip so the top edge still resizes.
             pinion_overlay::inject_resize_border(scene, Some((w, h)))
         } else {
-            // The content dock header owns the top — omit the north regions so
-            // they cannot shadow its close button (R1186).
-            pinion_overlay::inject_resize_border_below_titlebar(scene, Some((w, h)))
+            // R1197 — a content dock header owns the top and hosts the window
+            // controls at its top-RIGHT. Resize from the top EDGE + top-LEFT
+            // corner (VS Code parity for a floating panel), but omit the
+            // top-right corner so it cannot shadow the header's close button
+            // (the R1186 concern). The header keeps its controls >= RESIZE_EDGE_PX
+            // from the top edge (a vertically-centred control strip satisfies it).
+            pinion_overlay::inject_resize_border_content_header(scene, Some((w, h)))
         }
     }
 
@@ -7766,24 +7775,13 @@ mod r1121_window_chrome_tests {
         pinion_overlay::WINDOW_RESIZE_SOUTH_WEST_TAG,
         pinion_overlay::WINDOW_RESIZE_SOUTH_EAST_TAG,
     ];
-    const TOP_RESIZE_TAGS: [&str; 3] = [
-        pinion_overlay::WINDOW_RESIZE_NORTH_TAG,
-        pinion_overlay::WINDOW_RESIZE_NORTH_WEST_TAG,
-        pinion_overlay::WINDOW_RESIZE_NORTH_EAST_TAG,
-    ];
-
     #[test]
-    fn chromeless_resizable_window_omits_top_but_keeps_sides_and_bottom() {
-        // R1186 §5.16 §5.39 (PR-43) — the resize border is DECOUPLED from chrome.
-        // A controls-in-header floater draws its title bar as the dock HEADER, so
-        // `policy.chrome == None` (ONE strip, no separate chrome bar), yet
-        // `policy.resizable == Some(true)` keeps its client-side resize border.
-        // Pre-R1186 this window would have been un-resizable (resize rode the chrome
-        // gate). The header (content) OWNS the top — it hosts the close button and
-        // is the move handle — and cannot be layered over the border the way a
-        // chrome strip is, so the north edge + top corners are OMITTED; the window
-        // resizes from the sides + bottom + bottom corners (parity with how the
-        // chromed case functionally resizes).
+    fn content_header_floater_resizes_top_edge_and_left_not_close_corner() {
+        // R1197 §5.16 §5.39 — a controls-in-header floater (chrome: None,
+        // resizable) resizes from its TOP EDGE + top-LEFT corner (VS Code parity
+        // for a floating panel), while the top-RIGHT corner stays OMITTED so it
+        // cannot shadow the header's close button (the R1186 concern). Sides +
+        // bottom + bottom corners are present as always.
         let mut sc = ShellCore::<ResizableChromeless>::new();
         let scene = sc.compute_paint_scene(400, 300);
         assert!(
@@ -7796,34 +7794,51 @@ mod r1121_window_chrome_tests {
                 "★a chrome-less resizable window paints side/bottom resize region {tag}",
             );
         }
-        for tag in TOP_RESIZE_TAGS {
-            assert!(
-                !has_tag(&scene, tag),
-                "★the top resize region {tag} is omitted — the dock header owns the top",
-            );
-        }
+        assert!(
+            has_tag(&scene, pinion_overlay::WINDOW_RESIZE_NORTH_TAG),
+            "★the top edge resizes (R1197)",
+        );
+        assert!(
+            has_tag(&scene, pinion_overlay::WINDOW_RESIZE_NORTH_WEST_TAG),
+            "★the top-left corner resizes (R1197)",
+        );
+        assert!(
+            !has_tag(&scene, pinion_overlay::WINDOW_RESIZE_NORTH_EAST_TAG),
+            "★the top-right corner is omitted — the header's close button owns it",
+        );
     }
 
     #[test]
-    fn chromeless_resizable_top_right_falls_through_to_content() {
-        // R1186 — the header-control-reachability guard (the chrome case's analog is
-        // `top_edge_is_a_resize_band_over_strip`). Because the north edge
-        // + top corners are omitted, a press at the top-right (where a real binding
-        // paints its close button, and where a user reaches to close) falls THROUGH
-        // to the content beneath — it does NOT resolve to a resize region. The
-        // bottom-right corner still resizes (the border is retained there).
+    fn content_header_floater_top_edge_resizes_close_reachable_below() {
+        // R1197 — the top edge resizes even over the close-button area: its
+        // outermost `RESIZE_EDGE_PX` (6px) is the north resize band, and the close
+        // button is reachable just below it (the top analogue of R1186's
+        // side-padding contract). The top-LEFT corner resizes diagonally; the
+        // top-RIGHT corner stays the close button's.
         use pinion_runtime::PointerId;
         let mut sc = ShellCore::<ResizableChromeless>::new();
         let boot = sc.compute_paint_scene(400, 300);
         sc.finalize_frame(boot);
-        // (385, 3): inside where the close button sits (left of the 6px east edge at
-        // x>=394), at the very top — an all-8 border's north edge / NE corner would
-        // shadow it here. Omitted ⇒ it reaches content.
+        // Top 6px over the close-button area → the north resize band.
         sc.cursor_moved(PointerId::MOUSE, 385.0, 3.0);
         assert_eq!(
             sc.hover_target(PointerId::MOUSE),
+            Some(pinion_overlay::WINDOW_RESIZE_NORTH_TAG),
+            "★the top edge over the close-button area is the north resize band",
+        );
+        // Below the band, the close-button area reaches content (button clickable).
+        sc.cursor_moved(PointerId::MOUSE, 385.0, 16.0);
+        assert_eq!(
+            sc.hover_target(PointerId::MOUSE),
             Some(CONTENT_TAG),
-            "★the top-right (close-button area) falls through to content, not resize",
+            "below the band the close-button area reaches content",
+        );
+        // The top-LEFT corner resizes diagonally (no controls there).
+        sc.cursor_moved(PointerId::MOUSE, 3.0, 3.0);
+        assert_eq!(
+            sc.hover_target(PointerId::MOUSE),
+            Some(pinion_overlay::WINDOW_RESIZE_NORTH_WEST_TAG),
+            "the top-left corner resizes diagonally",
         );
         // The bottom-right corner IS a resize handle (sides + bottom retained).
         sc.cursor_moved(PointerId::MOUSE, 395.0, 295.0);
@@ -7853,18 +7868,25 @@ mod r1121_window_chrome_tests {
                 "maximized chromeless mirror drops {tag}"
             );
         }
-        // Restoring brings the (top-omitting) border back.
+        // Restoring brings the border back — now including the top edge +
+        // top-left corner (R1197), still without the top-right (close) corner.
         sc.set_maximized_for_window(pinion_runtime::DEFAULT_WINDOW, false);
         let restored = sc.compute_paint_scene(400, 300);
         for tag in SIDE_BOTTOM_RESIZE_TAGS {
             assert!(has_tag(&restored, tag), "restored chromeless regains {tag}");
         }
-        for tag in TOP_RESIZE_TAGS {
-            assert!(
-                !has_tag(&restored, tag),
-                "restored chromeless still omits top {tag}"
-            );
-        }
+        assert!(
+            has_tag(&restored, pinion_overlay::WINDOW_RESIZE_NORTH_TAG),
+            "restored regains the top edge",
+        );
+        assert!(
+            has_tag(&restored, pinion_overlay::WINDOW_RESIZE_NORTH_WEST_TAG),
+            "restored regains the top-left corner",
+        );
+        assert!(
+            !has_tag(&restored, pinion_overlay::WINDOW_RESIZE_NORTH_EAST_TAG),
+            "restored still omits the top-right (close) corner",
+        );
     }
 
     #[test]

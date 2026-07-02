@@ -20962,6 +20962,50 @@
         "PR-46 is complete: gap (2) chrome top-edge resize band = R1195, gap (1) splitter divider cursor = R1196. A consumer (sprag) picks up both with zero change after a pinion bump; the live :0 verification runs in the consumer session."
       ]
     },
+    "R1197": {
+      "decision_summary": "R1197 extend top-edge resize to the controls-in-header floater (PR-46 follow-up the user found live): a chrome-less resizable floating panel (chrome: None, resizable — the R1171 controls-in-header floater) now resizes from its TOP EDGE + top-LEFT corner (VS Code parity for a floating panel), via the new inject_resize_border_content_header which adds the north edge + NW corner but OMITS the top-RIGHT corner so it cannot shadow the header's close button. R1186 previously omitted the whole top. Reuses R1189's cursor + R1122's press routing, no new wiring.",
+      "changes_bullets": [
+        "pinion-overlay window_chrome.rs: new inject_resize_border_content_header — north edge + top-LEFT corner + sides/bottom/bottom-corners, with the top-RIGHT corner OMITTED (the header's close button owns it); refactored inject_resize_regions to a TopResize {Omit, EdgeAndLeftCorner, Full} enum (below_titlebar=Omit, content_header=EdgeAndLeftCorner, chrome=Full).",
+        "pinion-overlay: raise_top_resize_edge now gates on the chrome strip's presence too, so a content-header floater's north band is NOT re-raised (which would lift it above the top-left corner and lose that corner's diagonal resize) — its regions are already the topmost siblings over the content.",
+        "pinion-shell substrate.rs: apply_resize_border's chrome-less resizable branch uses inject_resize_border_content_header (was inject_resize_border_below_titlebar); rustdoc corrected.",
+        "Reuses R1189's hover cursor (North->NsResize, NorthWest->NwseResize) + R1122's press routing (drag_resize_window) — the regions just become hit-reachable, no new cursor or press wiring."
+      ],
+      "verification_bullets": [
+        "cargo test --workspace 0-fail: 2 new pinion-overlay units (content_header adds the north edge + top-left corner but not the top-right / raise_top_resize_edge is a no-op for a content-header floater that has no chrome strip) + 3 updated pinion-shell hit-test tests (the floater's top edge over the close-button area resolves to the north resize band, the close button is reachable below it, the top-left corner resizes diagonally, the top-right stays the close button's; a maximized-then-restored floater regains the north edge + top-left corner but not the top-right).",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic); cargo fmt --check clean; cargo doc broken-intra-doc-links clean for the changed files.",
+        "Live: hello-dock-panels-editor rebuilt and relaunched on :0 for the user; an undocked floater resizes from its top edge + top-left corner while the close button stays clickable (HW-gated live, like R1189's hover cursor)."
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.39"
+      ],
+      "carry_forward_bullets": [
+        "The floater's top-RIGHT corner is not a diagonal-resize handle (it stays the close button's); the top edge there resizes horizontally via the east edge — the deliberate trade-off that protects the close button, the top analogue of R1186's side-edge contract.",
+        "The header must keep its controls at least RESIZE_EDGE_PX (6px) from the top edge; a vertically-centred control strip in a header taller than 2*RESIZE_EDGE_PX satisfies it (the editor's 28px header centring its controls does).",
+        "Deferred (unchanged from R1196): fold R1189's chrome-resize cursor into the generic node-hints for a single cursor SSOT (kept separate so a recently-touched path is not refactored in the same round)."
+      ],
+      "publishable_decision_summary": "R1197 extend top-edge resize to the controls-in-header floater (PR-46 follow-up the user found live): a chrome-less resizable floating panel (chrome: None, resizable — the R1171 controls-in-header floater) now resizes from its TOP EDGE + top-LEFT corner (VS Code parity for a floating panel), via the new inject_resize_border_content_header which adds the north edge + NW corner but OMITS the top-RIGHT corner so it cannot shadow the header's close button. R1186 previously omitted the whole top. Reuses R1189's cursor + R1122's press routing, no new wiring.",
+      "publishable_changes_bullets": [
+        "pinion-overlay window_chrome.rs: new inject_resize_border_content_header — north edge + top-LEFT corner + sides/bottom/bottom-corners, with the top-RIGHT corner OMITTED (the header's close button owns it); refactored inject_resize_regions to a TopResize {Omit, EdgeAndLeftCorner, Full} enum (below_titlebar=Omit, content_header=EdgeAndLeftCorner, chrome=Full).",
+        "pinion-overlay: raise_top_resize_edge now gates on the chrome strip's presence too, so a content-header floater's north band is NOT re-raised (which would lift it above the top-left corner and lose that corner's diagonal resize) — its regions are already the topmost siblings over the content.",
+        "pinion-shell substrate.rs: apply_resize_border's chrome-less resizable branch uses inject_resize_border_content_header (was inject_resize_border_below_titlebar); rustdoc corrected.",
+        "Reuses R1189's hover cursor (North->NsResize, NorthWest->NwseResize) + R1122's press routing (drag_resize_window) — the regions just become hit-reachable, no new cursor or press wiring."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace 0-fail: 2 new pinion-overlay units (content_header adds the north edge + top-left corner but not the top-right / raise_top_resize_edge is a no-op for a content-header floater that has no chrome strip) + 3 updated pinion-shell hit-test tests (the floater's top edge over the close-button area resolves to the north resize band, the close button is reachable below it, the top-left corner resizes diagonally, the top-right stays the close button's; a maximized-then-restored floater regains the north edge + top-left corner but not the top-right).",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic); cargo fmt --check clean; cargo doc broken-intra-doc-links clean for the changed files.",
+        "Live: hello-dock-panels-editor rebuilt and relaunched on :0 for the user; an undocked floater resizes from its top edge + top-left corner while the close button stays clickable (HW-gated live, like R1189's hover cursor)."
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.39"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The floater's top-RIGHT corner is not a diagonal-resize handle (it stays the close button's); the top edge there resizes horizontally via the east edge — the deliberate trade-off that protects the close button, the top analogue of R1186's side-edge contract.",
+        "The header must keep its controls at least RESIZE_EDGE_PX (6px) from the top edge; a vertically-centred control strip in a header taller than 2*RESIZE_EDGE_PX satisfies it (the editor's 28px header centring its controls does).",
+        "Deferred (unchanged from R1196): fold R1189's chrome-resize cursor into the generic node-hints for a single cursor SSOT (kept separate so a recently-touched path is not refactored in the same round)."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

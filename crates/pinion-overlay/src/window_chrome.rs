@@ -357,7 +357,7 @@ const RESIZE_CORNER_PX: u32 = 12;
 /// [`WINDOW_RESIZE_TAG_PREFIX`]) is stripped before the fresh set is appended.
 #[must_use]
 pub fn inject_resize_border(scene: Scene, viewport: Option<(u32, u32)>) -> Scene {
-    inject_resize_regions(scene, viewport, true)
+    inject_resize_regions(scene, viewport, TopResize::Full)
 }
 
 /// (R1186 §5.16 §5.39) Resize border for a window whose TOP EDGE is owned by a
@@ -391,13 +391,52 @@ pub fn inject_resize_border(scene: Scene, viewport: Option<(u32, u32)>) -> Scene
 /// MOVED from its top, not resized.
 #[must_use]
 pub fn inject_resize_border_below_titlebar(scene: Scene, viewport: Option<(u32, u32)>) -> Scene {
-    inject_resize_regions(scene, viewport, false)
+    inject_resize_regions(scene, viewport, TopResize::Omit)
 }
 
-/// Shared implementation of the two resize-border variants. `include_top` gates
-/// the north edge + the two top corners (kept for a chrome-covered top, dropped
-/// for a content-header-owned top — see [`inject_resize_border_below_titlebar`]).
-fn inject_resize_regions(scene: Scene, viewport: Option<(u32, u32)>, include_top: bool) -> Scene {
+/// (R1197 §5.16 §5.39) Resize border for a chrome-less window whose top edge is
+/// owned by a CONTENT header hosting the window controls at its TOP-RIGHT (the
+/// R1171 controls-in-header floater) — but which should still RESIZE from its
+/// top edge (VS Code / Win11 / GTK: a floating panel resizes from every edge).
+///
+/// The peer of [`inject_resize_border_below_titlebar`]: it adds the north edge +
+/// the top-LEFT corner back (the top edge resizes vertically, the top-left
+/// corner diagonally) while keeping the top-RIGHT corner OMITTED, so the close
+/// button at the very top-right is not shadowed by a diagonal corner region (the
+/// R1186 concern). The north edge's outermost `RESIZE_EDGE_PX` still overlaps
+/// the header's top; the contract is the top analogue of the side-edge one — the
+/// header must keep its controls at least `RESIZE_EDGE_PX` from the TOP edge (a
+/// vertically-centred control strip in a header taller than `2·RESIZE_EDGE_PX`
+/// satisfies it), so the outermost few px resize while the control stays clicked
+/// from just below. Unlike the chrome-strip case ([`inject_resize_border`] +
+/// [`raise_top_resize_edge`]), the regions here are already the topmost siblings
+/// over the content, so the north edge is NOT re-raised (that would lift it above
+/// the top-left corner and lose the corner's diagonal resize).
+#[must_use]
+pub fn inject_resize_border_content_header(scene: Scene, viewport: Option<(u32, u32)>) -> Scene {
+    inject_resize_regions(scene, viewport, TopResize::EdgeAndLeftCorner)
+}
+
+/// Which TOP resize regions a resize border includes (the north edge + the two
+/// top corners). The sides, bottom, and bottom corners are always present.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TopResize {
+    /// No north edge or top corners — a content title bar fully owns the top
+    /// (no top-edge resize; the pre-R1197 chrome-less default, R1186).
+    Omit,
+    /// North edge + the top-LEFT corner, but NOT the top-right corner — a
+    /// content header whose top-RIGHT hosts the window controls (R1171 /
+    /// R1197). The top edge + top-left corner resize; the top-right stays the
+    /// close button's.
+    EdgeAndLeftCorner,
+    /// All top regions (north edge + both top corners) — a shell chrome strip
+    /// is layered over them, so keeping them under it is harmless.
+    Full,
+}
+
+/// Shared implementation of the resize-border variants. `top` selects which
+/// north edge / top corner regions to include (see [`TopResize`]).
+fn inject_resize_regions(scene: Scene, viewport: Option<(u32, u32)>, top: TopResize) -> Scene {
     let Some((w, h)) = viewport else {
         return scene;
     };
@@ -408,20 +447,23 @@ fn inject_resize_regions(scene: Scene, viewport: Option<(u32, u32)>, include_top
     let c = RESIZE_CORNER_PX;
 
     // Edges first (each spans the full side); corners after so they win in the
-    // overlap. The north edge + the two top corners are gated on `include_top`:
-    // a content-header title bar owns the top (R1186), a shell chrome strip
-    // covers it. The side edges span the full height either way — their top
-    // `RESIZE_EDGE_PX` sit over the header's left / right PADDING (controls are
-    // kept clear of it, per this fn's rustdoc contract), never over a control.
+    // overlap. The north edge is present unless the top is fully omitted; the
+    // top-left corner (NW) rides with it; the top-right corner (NE) only for a
+    // chrome-strip-covered top (`Full`) — a content header's top-right is owned
+    // by its controls (`EdgeAndLeftCorner` drops it). The side edges span the
+    // full height either way — their top `RESIZE_EDGE_PX` sit over the header's
+    // left / right PADDING (controls kept clear of it), never over a control.
     let mut regions: Vec<(Rect, &'static str)> = Vec::with_capacity(8);
-    if include_top {
+    if top != TopResize::Omit {
         regions.push((Rect::new(0, 0, w, e), WINDOW_RESIZE_NORTH_TAG));
     }
     regions.push((Rect::new(0, h - e, w, e), WINDOW_RESIZE_SOUTH_TAG));
     regions.push((Rect::new(0, 0, e, h), WINDOW_RESIZE_WEST_TAG));
     regions.push((Rect::new(w - e, 0, e, h), WINDOW_RESIZE_EAST_TAG));
-    if include_top {
+    if top != TopResize::Omit {
         regions.push((Rect::new(0, 0, c, c), WINDOW_RESIZE_NORTH_WEST_TAG));
+    }
+    if top == TopResize::Full {
         regions.push((Rect::new(w - c, 0, c, c), WINDOW_RESIZE_NORTH_EAST_TAG));
     }
     regions.push((Rect::new(0, h - c, c, c), WINDOW_RESIZE_SOUTH_WEST_TAG));
@@ -472,10 +514,15 @@ pub fn raise_top_resize_edge(scene: Scene, viewport: Option<(u32, u32)>) -> Scen
     if w < RESIZE_CORNER_PX || h < RESIZE_CORNER_PX {
         return scene;
     }
-    // Only a resizable chromed window has a north band under its strip; every
-    // other window is left untouched (no top resize band is conjured for a
-    // non-resizable / chrome-less / maximized window).
-    if !has_top_level_tag(&scene, WINDOW_RESIZE_NORTH_TAG) {
+    // Only act when BOTH a north band AND a chrome strip are present — i.e. a
+    // resizable window whose SHELL chrome strip was layered over the north band.
+    // A content-header floater (R1197) also has a north band, but no strip: its
+    // regions are already the topmost siblings over the content, and re-raising
+    // the north edge would lift it ABOVE the top-left corner and lose that
+    // corner's diagonal resize. Every other window is left untouched.
+    if !has_top_level_tag(&scene, WINDOW_RESIZE_NORTH_TAG)
+        || !has_top_level_tag(&scene, WINDOW_CHROME_TAG)
+    {
         return scene;
     }
     let mut wrapped = wrap_into_container(scene);
@@ -914,6 +961,61 @@ mod tests {
             last_top_level_tag(&tiny),
             Some(WINDOW_CHROME_TAG),
             "tiny = no-op"
+        );
+    }
+
+    // ---- R1197 content-header floater (top-edge resize, no close corner) ----
+
+    #[test]
+    fn content_header_adds_top_edge_and_left_corner_not_right() {
+        let out = inject_resize_border_content_header(empty(), Some((800, 600)));
+        // North edge + top-LEFT corner present (top edge + top-left resize).
+        assert!(
+            find_tag(&out, WINDOW_RESIZE_NORTH_TAG).is_some(),
+            "north edge present (top edge resizes)",
+        );
+        assert!(
+            find_tag(&out, WINDOW_RESIZE_NORTH_WEST_TAG).is_some(),
+            "top-left corner present (diagonal resize)",
+        );
+        // Top-RIGHT corner OMITTED — the header's close button owns it.
+        assert!(
+            find_tag(&out, WINDOW_RESIZE_NORTH_EAST_TAG).is_none(),
+            "top-right corner omitted so it cannot shadow the close button",
+        );
+        // Sides + bottom + bottom corners present as always.
+        for tag in [
+            WINDOW_RESIZE_SOUTH_TAG,
+            WINDOW_RESIZE_WEST_TAG,
+            WINDOW_RESIZE_EAST_TAG,
+            WINDOW_RESIZE_SOUTH_WEST_TAG,
+            WINDOW_RESIZE_SOUTH_EAST_TAG,
+        ] {
+            assert!(find_tag(&out, tag).is_some(), "{tag} present");
+        }
+        // The north band spans the full width at the very top.
+        let r = rect_of(find_tag(&out, WINDOW_RESIZE_NORTH_TAG).unwrap());
+        assert_eq!((r.x, r.y, r.w, r.h), (0, 0, 800, RESIZE_EDGE_PX));
+    }
+
+    #[test]
+    fn raise_is_a_noop_for_a_content_header_floater() {
+        // A content-header floater has a north band but NO chrome strip. The
+        // raise must NOT re-order it (lifting N above the top-left corner would
+        // lose that corner's diagonal resize) — the north band stays where
+        // `inject` placed it (before the corners), not at the top.
+        let floater = inject_resize_border_content_header(empty(), Some((800, 600)));
+        assert!(find_tag(&floater, WINDOW_RESIZE_NORTH_TAG).is_some());
+        let raised = raise_top_resize_edge(floater, Some((800, 600)));
+        assert_ne!(
+            last_top_level_tag(&raised),
+            Some(WINDOW_RESIZE_NORTH_TAG),
+            "no chrome strip → the north band is NOT raised to the top",
+        );
+        assert_eq!(
+            count_tag(&raised, WINDOW_RESIZE_NORTH_TAG),
+            1,
+            "the north band is not duplicated",
         );
     }
 
