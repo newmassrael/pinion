@@ -30,6 +30,7 @@ members = [
     "examples/hello-file-browser",
     "examples/hello-tab-reorder",
     "examples/hello-virtual-list",
+    "examples/hello-measured-list",
     "examples/hello-lazy-list",
     "examples/hello-streaming-log",
     "examples/hello-paged-stream",

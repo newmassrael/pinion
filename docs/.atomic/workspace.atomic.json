@@ -20814,6 +20814,60 @@
         "WindowState::is_empty treats an explicit-false bool as empty (documented): only theoretically observable via remove_window's return if a FUTURE clear_target_fps caller omits the request_redraw the sole current caller pairs it with — currently unreachable."
       ]
     },
+    "R1194": {
+      "decision_summary": "R1194 measured variable-height list virtualization: view_measured_list windows against a MeasuredHeights table that starts from an estimate and is refined each frame by a layout-pass harvest reading every rendered row's laid-out height, keeping the scroll anchored (no jump) as rows resolve estimate->measured — the render-then-measure round-trip the RowOffsets scope note reserved, closing the last deferred Model/View windowing mode.",
+      "changes_bullets": [
+        "pinion-core virtual_list.rs: new MeasuredHeights (estimated fallback + sparse measured map -> RowOffsets), scroll_anchor / anchor_preserving_offset (the measured list no-jump correction), and a shared RowOffsets::row_at row-at-pixel kernel lifted from compute_visible_range_variable's window edges.",
+        "pinion-core measured_rows.rs: new MeasuredRowState (RefCell<MeasuredHeights> behind a generation Signal) + use_measured_rows Owner-cached hook + harvest(scroll, viewport_h, rows) that records heights, grows the bound, and anchor-corrects the offset; MEASURED_ROW_TAG_PREFIX / measured_row_tag / measured_row_index tag SSOT.",
+        "pinion-core scene.rs: ScrollNode gains an optional measured_rows: Option<Rc<MeasuredRowState>> field + with_measured_rows builder (peer of state; None for every ordinary scroll, a pure opt-in).",
+        "pinion-runtime layout.rs: new post-layout harvest_measured_rows reducer (sibling of update_scroll_state_bounds) collects each windowed row's laid-out rect.h by tag and feeds MeasuredRowState::harvest; folded into the frame dirty bit for the measure-then-settle warmup.",
+        "pinion-widget-paint virtual_list.rs: new view_measured_list assembly + measured_slot (width-fixed / height-auto so the harvest reads natural content height, tagged measured-row:<index>).",
+        "examples/hello-measured-list + tools/demos/r1194_measured_list.py: forcing consumer (120 rows of lines(i) fixed-height strips; queryable MeasuredListExternal exposing measured_count / total_height / is_fully_measured / exact_total).",
+        "CLAUDE.md: corrected the stale \"tray 0%\" tally (the SNI substrate + real D-Bus bridge shipped R949/R950; only the headless session-bus test-watcher harness is outstanding)."
+      ],
+      "verification_bullets": [
+        "cargo test --workspace: all targets ok, 0 failed; adds MeasuredHeights + scroll-anchor units, 8 MeasuredRowState units, 2 view_measured_list shape units, 4 hello-measured-list units, and the existing compute_visible_range_variable suite guards the row_at SSOT refactor.",
+        "tools/demos/r1194_measured_list.py PASS (>=30 assertions): boot window small; each rendered measured-row slot height == modeled height (the harvest read real content height, not the estimate); scrolling the whole list grows measured_count monotonically and converges total_height from the 5760 estimate baseline to the exact 7920 sum with is_fully_measured true; offset clamps to exact_total - viewport.",
+        "Anchor no-jump proven headlessly in MeasuredRowState::harvest units (real ScrollState + real offsets): 400px of growth in rows above the viewport moves the offset to keep the viewport-top row pinned; measuring at or below the anchor leaves the offset untouched.",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic); cargo fmt --check clean; cargo doc broken-intra-doc-links clean for the new code."
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.45"
+      ],
+      "carry_forward_bullets": [
+        "Measured windowing builds an O(n) RowOffsets per reflow (like RowOffsets), fine for the variable-content scale (thousands of rows); the million-row path stays uniform/paged (deliberate).",
+        "use_measured_rows seeds item_count at first construction; a growable/streaming measured list syncs via MeasuredRowState::set_count from a reconcile_frame hook (not the view fn) — auto-sync stays a 2nd-consumer gate.",
+        "Anchor correction is proven at the substrate level and exercised end-to-end by the demo's full traversal; the isolated jump-scroll-then-up render-pixel path has no separate live witness (substrate-tested instead).",
+        "The CLAUDE.md tray correction is doc-only; the Linux tray headless test-watcher harness (docs/cross-platform-native-strategy.md step 1) remains a real OS-native gap, unblocked and next-actionable."
+      ],
+      "publishable_decision_summary": "R1194 measured variable-height list virtualization: view_measured_list windows against a MeasuredHeights table that starts from an estimate and is refined each frame by a layout-pass harvest reading every rendered row's laid-out height, keeping the scroll anchored (no jump) as rows resolve estimate->measured — the render-then-measure round-trip the RowOffsets scope note reserved, closing the last deferred Model/View windowing mode.",
+      "publishable_changes_bullets": [
+        "pinion-core virtual_list.rs: new MeasuredHeights (estimated fallback + sparse measured map -> RowOffsets), scroll_anchor / anchor_preserving_offset (the measured list no-jump correction), and a shared RowOffsets::row_at row-at-pixel kernel lifted from compute_visible_range_variable's window edges.",
+        "pinion-core measured_rows.rs: new MeasuredRowState (RefCell<MeasuredHeights> behind a generation Signal) + use_measured_rows Owner-cached hook + harvest(scroll, viewport_h, rows) that records heights, grows the bound, and anchor-corrects the offset; MEASURED_ROW_TAG_PREFIX / measured_row_tag / measured_row_index tag SSOT.",
+        "pinion-core scene.rs: ScrollNode gains an optional measured_rows: Option<Rc<MeasuredRowState>> field + with_measured_rows builder (peer of state; None for every ordinary scroll, a pure opt-in).",
+        "pinion-runtime layout.rs: new post-layout harvest_measured_rows reducer (sibling of update_scroll_state_bounds) collects each windowed row's laid-out rect.h by tag and feeds MeasuredRowState::harvest; folded into the frame dirty bit for the measure-then-settle warmup.",
+        "pinion-widget-paint virtual_list.rs: new view_measured_list assembly + measured_slot (width-fixed / height-auto so the harvest reads natural content height, tagged measured-row:<index>).",
+        "examples/hello-measured-list + tools/demos/r1194_measured_list.py: forcing consumer (120 rows of lines(i) fixed-height strips; queryable MeasuredListExternal exposing measured_count / total_height / is_fully_measured / exact_total).",
+        "CLAUDE.md: corrected the stale \"tray 0%\" tally (the SNI substrate + real D-Bus bridge shipped R949/R950; only the headless session-bus test-watcher harness is outstanding)."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace: all targets ok, 0 failed; adds MeasuredHeights + scroll-anchor units, 8 MeasuredRowState units, 2 view_measured_list shape units, 4 hello-measured-list units, and the existing compute_visible_range_variable suite guards the row_at SSOT refactor.",
+        "tools/demos/r1194_measured_list.py PASS (>=30 assertions): boot window small; each rendered measured-row slot height == modeled height (the harvest read real content height, not the estimate); scrolling the whole list grows measured_count monotonically and converges total_height from the 5760 estimate baseline to the exact 7920 sum with is_fully_measured true; offset clamps to exact_total - viewport.",
+        "Anchor no-jump proven headlessly in MeasuredRowState::harvest units (real ScrollState + real offsets): 400px of growth in rows above the viewport moves the offset to keep the viewport-top row pinned; measuring at or below the anchor leaves the offset untouched.",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic); cargo fmt --check clean; cargo doc broken-intra-doc-links clean for the new code."
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.45"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Measured windowing builds an O(n) RowOffsets per reflow (like RowOffsets), fine for the variable-content scale (thousands of rows); the million-row path stays uniform/paged (deliberate).",
+        "use_measured_rows seeds item_count at first construction; a growable/streaming measured list syncs via MeasuredRowState::set_count from a reconcile_frame hook (not the view fn) — auto-sync stays a 2nd-consumer gate.",
+        "Anchor correction is proven at the substrate level and exercised end-to-end by the demo's full traversal; the isolated jump-scroll-then-up render-pixel path has no separate live witness (substrate-tested instead).",
+        "The CLAUDE.md tray correction is doc-only; the Linux tray headless test-watcher harness (docs/cross-platform-native-strategy.md step 1) remains a real OS-native gap, unblocked and next-actionable."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

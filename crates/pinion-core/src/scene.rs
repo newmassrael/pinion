@@ -31,6 +31,7 @@ use crate::cell_metric::CellMetric;
 use crate::external::ExternalIntrospect;
 use crate::style::{Align, BoxStyle, Color, ImageStyle, LayoutStyle, PathStyle, Size, TextStyle};
 use crate::term_grid::{GridBuffer, Palette};
+use crate::widgets::measured_rows::MeasuredRowState;
 use crate::widgets::scroll::ScrollState;
 
 /// Closed scene primitive set (§5.2). Two opaque escape variants
@@ -2426,6 +2427,24 @@ pub struct ScrollNode {
     /// `viewport` / `offset_*` / `tag` fields. The state link is a
     /// substrate-internal detail.
     pub state: Option<Rc<ScrollState>>,
+    /// R1194 §5.27 — optional reactive
+    /// [`MeasuredRowState`](crate::widgets::measured_rows::MeasuredRowState)
+    /// for a **measured variable-height** virtualized list. The peer of
+    /// [`state`](Self::state): where `state` owns the scroll offset,
+    /// `measured_rows` owns the progressively-discovered per-row heights.
+    /// Set via [`Self::with_measured_rows`] when the content is a windowed
+    /// list whose rows size to their content (each windowed row tagged
+    /// `measured-row:<index>`); the runtime layout pass harvests each
+    /// rendered row's laid-out height into this state after layout
+    /// ([`MeasuredRowState::harvest`](crate::widgets::measured_rows::MeasuredRowState::harvest)),
+    /// then the next view re-run windows against the refined heights.
+    ///
+    /// `None` for every ordinary scroll container (fixed-pitch or
+    /// caller-supplied variable heights), so the field is a pure opt-in —
+    /// the harvest pass is a no-op unless it is `Some`. Like
+    /// [`state`](Self::state) the `Rc` link is substrate-internal and not
+    /// serialised by `scene/query`.
+    pub measured_rows: Option<Rc<MeasuredRowState>>,
     /// R55.G.4 §5.45 — layout sidecar mirroring the
     /// `{Box,Text,Path,Image,Container,External}Node` shape. Drives
     /// the §5.21 R23 taffy pass: how this scroll participates in
@@ -2456,6 +2475,7 @@ impl ScrollNode {
             offset_y: 0,
             tag: None,
             state: None,
+            measured_rows: None,
             // R55.G.4 §5.45 — default the layout size to the clip-window
             // dimensions so taffy treats Scroll as a fixed-size leaf
             // unless the caller chains `with_layout(...)` to opt into
@@ -2557,6 +2577,19 @@ impl ScrollNode {
     #[must_use]
     pub fn with_state(mut self, state: Rc<ScrollState>) -> Self {
         self.state = Some(state);
+        self
+    }
+
+    /// R1194 §5.27 — attach the reactive
+    /// [`MeasuredRowState`](crate::widgets::measured_rows::MeasuredRowState)
+    /// for a measured variable-height list (see [`Self::measured_rows`]).
+    /// Pairs with [`Self::with_state`]: the offset lives in the
+    /// `ScrollState`, the per-row heights in the `MeasuredRowState`. The
+    /// runtime layout pass harvests each windowed row's laid-out height into
+    /// this state after layout; a scroll node without it is never harvested.
+    #[must_use]
+    pub fn with_measured_rows(mut self, measured: Rc<MeasuredRowState>) -> Self {
+        self.measured_rows = Some(measured);
         self
     }
 

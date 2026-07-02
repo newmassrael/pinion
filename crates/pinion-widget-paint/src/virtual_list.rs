@@ -66,6 +66,7 @@ use std::rc::Rc;
 use pinion_core::Scene;
 use pinion_core::scene::{ContainerNode, Rect, ScrollNode};
 use pinion_core::style::{LayoutStyle, Size};
+use pinion_core::widgets::measured_rows::{MeasuredRowState, measured_row_tag};
 use pinion_core::widgets::scroll::ScrollState;
 use pinion_core::widgets::virtual_list::{
     RowOffsets, VisibleWindow, compute_visible_range, compute_visible_range_variable,
@@ -157,6 +158,67 @@ pub fn view_variable_virtual_list(
     }
 
     assemble_windowed(scroll, viewport, total_h, slots)
+}
+
+/// R1194 §5.27 — assemble a **measured** variable-height virtualized
+/// vertical list as a [`ScrollNode`].
+///
+/// The peer of [`view_variable_virtual_list`] for content whose per-row
+/// height is *not known up-front* but discovered by laying the row out
+/// (wrapped log/packet rows, variable document paragraphs, differently
+/// sized asset thumbnails). Where the variable-pitch path takes a
+/// caller-supplied [`RowOffsets`], this reads the progressively-measured
+/// heights from `measured`
+/// ([`MeasuredRowState`](pinion_core::widgets::measured_rows::MeasuredRowState)):
+/// the estimate on the first frame, refined as the runtime layout pass
+/// harvests each rendered row's laid-out height back into `measured` (the
+/// "measurement round-trip" — see the
+/// [`measured_rows`](pinion_core::widgets::measured_rows) module docs).
+///
+/// Each windowed row slot is laid out **width-fixed, height-auto** (the row
+/// wraps to `viewport.w` and resolves its own height) and tagged
+/// `measured-row:<index>` so the harvest keys the laid-out height by row.
+/// The enclosing [`ScrollNode`] carries both the scroll state (offset) and
+/// `measured` (heights) so the layout pass finds the harvest target.
+///
+/// # Parameters
+///
+/// - `scroll` — the reactive [`ScrollState`] (offset + scroll bound).
+/// - `measured` — the reactive `MeasuredRowState` (per-row heights + anchor
+///   correction), resolved via
+///   [`use_measured_rows`](pinion_core::widgets::measured_rows::use_measured_rows).
+/// - `viewport` — the clip window rect (`w` frames + wraps each row; `h`
+///   feeds the windowing math).
+/// - `overscan` — rows rendered beyond the strict window on each side.
+/// - `build_row` — row builder invoked once per visible index; the row must
+///   size to its content (no fixed height) so its measured height is real.
+pub fn view_measured_list(
+    scroll: &Rc<ScrollState>,
+    measured: &Rc<MeasuredRowState>,
+    viewport: Rect,
+    overscan: usize,
+    mut build_row: impl FnMut(usize) -> Scene,
+) -> Scene {
+    let offsets = measured.offsets();
+    let window: VisibleWindow =
+        compute_visible_range_variable(scroll.offset_y(), viewport.h, &offsets, overscan);
+    let total_h = offsets.total_height();
+
+    let mut slots: Vec<Scene> = Vec::with_capacity(window.count);
+    for index in window.indices() {
+        let row = build_row(index);
+        slots.push(measured_slot(
+            row,
+            viewport.w,
+            offsets.row_top(index),
+            index,
+        ));
+    }
+
+    let content = windowed_content(viewport.w, total_h, slots);
+    let node = ScrollNode::from_state(Rc::clone(scroll), viewport, content)
+        .with_measured_rows(Rc::clone(measured));
+    Scene::Scroll(node)
 }
 
 /// R774 §5.27 — assemble a **flex-viewport** (`AutoSizer`) virtualized
@@ -263,6 +325,30 @@ pub(crate) fn positioned_slot(row: Scene, width: u32, top: u32, height: u32) -> 
                 .with_absolute_position(0, top)
                 .with_size(Size::px(width, height)),
         ),
+    )
+}
+
+/// R1194 §5.27 — lift a built measured-list `row` into an
+/// absolutely-positioned slot at `(0, top)` that is **width-fixed /
+/// height-auto**: the row wraps to `width` and resolves its own height, so
+/// the slot's laid-out `rect.h` is the row's *natural* content height for
+/// the layout-pass harvest.
+///
+/// Tagged `measured-row:<index>` (the
+/// [`measured_row_tag`](pinion_core::widgets::measured_rows::measured_row_tag)
+/// SSOT) so the harvest keys the height by row. Contrast [`positioned_slot`],
+/// which fixes *both* dimensions: a fixed-height slot would clamp the row and
+/// the harvest could only ever read back the height it was handed, so a
+/// measured row must be free to size to content.
+fn measured_slot(row: Scene, width: u32, top: u32, index: usize) -> Scene {
+    Scene::Container(
+        ContainerNode::new(vec![row])
+            .with_tag(measured_row_tag(index))
+            .with_layout(
+                LayoutStyle::new()
+                    .with_absolute_position(0, top)
+                    .with_size(Size::width_px(width)),
+            ),
     )
 }
 
@@ -429,6 +515,70 @@ mod tests {
         };
         assert_eq!(s.viewport, VIEWPORT);
         assert!(s.state.is_some(), "ScrollNode must carry the state Rc");
+    }
+
+    // ── R1194 view_measured_list (measured variable-height windowing) ──
+
+    #[test]
+    fn measured_list_windows_and_tags_rows_by_index() {
+        // 100 rows estimated at 20 px, 200-px viewport (10 rows), overscan 2.
+        let scroll = Rc::new(ScrollState::new());
+        let measured = Rc::new(MeasuredRowState::new(100, 20));
+        scroll.set_max(0, 100 * 20);
+        scroll.scroll_to(0, 400); // row 20 down at the estimate
+        let scene = Owner::new().run(|| {
+            view_measured_list(&scroll, &measured, Rect::new(0, 0, 200, 200), 2, build_row)
+        });
+        // The root Scroll carries BOTH the offset state and the harvest
+        // target (`measured_rows`), so the layout pass can harvest it.
+        let Scene::Scroll(s) = &scene else {
+            panic!("root is a Scroll");
+        };
+        assert!(s.state.is_some());
+        assert!(
+            s.measured_rows.is_some(),
+            "a measured list wires the harvest target",
+        );
+        // Sizer height = 100 · 20 (all estimated) so the bound sees the
+        // total extent even though only the window exists.
+        let sizer = unwrap_sizer(&scene);
+        assert_eq!(sizer.layout.size, Size::px(200, 2000));
+        // Window at offset 400 (row 20) + overscan 2 starts at row 18. Every
+        // slot is width-fixed / height-auto and tagged by its row index.
+        let Scene::Container(first) = &sizer.children[0] else {
+            panic!("slot must be a Container");
+        };
+        assert_eq!(first.tag.as_deref(), Some(measured_row_tag(18).as_str()));
+        assert_eq!(
+            first.layout.size,
+            Size::width_px(200),
+            "width fixed, height auto so the harvest reads natural content height",
+        );
+        assert_eq!(first.layout.absolute_position, Some((0, 18 * 20)));
+    }
+
+    #[test]
+    fn measured_list_positions_and_sizes_follow_measured_heights() {
+        // Rows 0,1 already harvested at 50 px; rows 2..10 still estimated 20.
+        let scroll = Rc::new(ScrollState::new());
+        let measured = Rc::new(MeasuredRowState::new(10, 20));
+        measured.harvest(&scroll, 200, [(0, 50), (1, 50)]);
+        let scene = Owner::new().run(|| {
+            view_measured_list(&scroll, &measured, Rect::new(0, 0, 200, 200), 0, build_row)
+        });
+        let sizer = unwrap_sizer(&scene);
+        // Total = 50 + 50 + 8·20 = 260 (measured where known, estimated else).
+        assert_eq!(sizer.layout.size, Size::px(200, 260));
+        // Row 2's slot top = 50 + 50 = 100 (reads off the refined table).
+        let two = sizer
+            .children
+            .iter()
+            .find_map(|c| {
+                let Scene::Container(cn) = c else { return None };
+                (cn.tag.as_deref() == Some("measured-row:2")).then_some(cn)
+            })
+            .expect("row 2 is in the window");
+        assert_eq!(two.layout.absolute_position, Some((0, 100)));
     }
 
     #[test]

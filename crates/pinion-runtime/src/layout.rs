@@ -419,7 +419,15 @@ fn compute_layout_inner(
     // uses this to detect the first-paint chicken-and-egg case and
     // schedule a same-frame re-pass so the scrollbar widget never
     // paints a stale full-track thumb to the user.
-    update_scroll_state_bounds(scene)
+    let bounds_dirty = update_scroll_state_bounds(scene);
+    // R1194 §5.27 — measured variable-height list feedback. Run *after*
+    // the bounds pass so the harvest's grow-then-pin (which writes the
+    // bound from the refined total) is the last word on `max`. Folds its
+    // own dirty bit into the same first-paint / re-pass machinery: a frame
+    // that changes a measured height re-runs the view against the refined
+    // table (the measure→settle warmup).
+    let harvest_dirty = harvest_measured_rows(scene);
+    bounds_dirty || harvest_dirty
 }
 
 /// R55.G.2 §5.45 — walks the scene and lays out each `Scene::Scroll`
@@ -537,6 +545,72 @@ fn update_scroll_state_bounds(scene: &Scene) -> bool {
             dirty || update_scroll_state_bounds(s.content.as_ref())
         }
         _ => false,
+    }
+}
+
+/// R1194 §5.27 — walks the scene and, for every `Scene::Scroll` carrying a
+/// [`MeasuredRowState`](pinion_core::widgets::measured_rows::MeasuredRowState),
+/// harvests each windowed row's laid-out height into that state and keeps
+/// the scroll anchored (the "layout-pass measurement round-trip" a measured
+/// variable-height list needs).
+///
+/// Called after [`lay_out_scroll_contents`] so each row's `rect` is
+/// authoritative. A scroll without `measured_rows` (every fixed-pitch or
+/// caller-supplied-height list, i.e. the overwhelming majority) is a pure
+/// no-op, so this is opt-in. Returns whether any measurement changed a
+/// height — folded into the frame dirty bit so the view re-runs against the
+/// refined table (the two-frame measure→settle warmup, identical to the
+/// `update_scroll_state_bounds` first-paint re-pass).
+fn harvest_measured_rows(scene: &Scene) -> bool {
+    match scene {
+        Scene::Container(c) => {
+            let mut dirty = false;
+            for child in &c.children {
+                dirty |= harvest_measured_rows(child);
+            }
+            dirty
+        }
+        Scene::Scroll(s) => {
+            let mut dirty = false;
+            // Both the measured-row state (target) and the scroll state
+            // (anchor + offset) are required; a measured list always wires
+            // both (`with_state` + `with_measured_rows`).
+            if let (Some(measured), Some(scroll)) = (s.measured_rows.as_ref(), s.state.as_ref()) {
+                let mut rows = Vec::new();
+                collect_measured_rows(s.content.as_ref(), &mut rows);
+                dirty = measured.harvest(scroll, s.viewport.h, rows);
+            }
+            // Recurse into content so a measured list nested inside another
+            // scroll still harvests.
+            dirty || harvest_measured_rows(s.content.as_ref())
+        }
+        _ => false,
+    }
+}
+
+/// R1194 §5.27 — collect `(row_index, laid_out_height)` for every node in a
+/// measured list's content tagged `measured-row:<index>` (the tag
+/// `view_measured_list` stamps on each windowed row slot). The slot is laid
+/// out width-fixed / height-auto, so its `rect().h` is the row's natural
+/// content height — exactly the value the measurement table wants. A
+/// measured-row slot's own subtree is the row content (no nested measured
+/// rows), so the walk does not descend into a matched slot.
+fn collect_measured_rows(scene: &Scene, out: &mut Vec<(usize, u32)>) {
+    if let Some(index) = scene
+        .tag()
+        .and_then(pinion_core::widgets::measured_rows::measured_row_index)
+    {
+        out.push((index, scene.rect().h));
+        return;
+    }
+    match scene {
+        Scene::Container(c) => {
+            for child in &c.children {
+                collect_measured_rows(child, out);
+            }
+        }
+        Scene::Scroll(s) => collect_measured_rows(s.content.as_ref(), out),
+        _ => {}
     }
 }
 

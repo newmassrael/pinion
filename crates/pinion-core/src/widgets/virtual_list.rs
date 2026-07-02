@@ -500,6 +500,34 @@ impl RowOffsets {
         };
         u32::try_from(bottom - top).unwrap_or(u32::MAX)
     }
+
+    /// Index of the row whose slot contains vertical `pixel` (`row_top ≤
+    /// pixel < row_bottom`), clamped to the last row; `0` for an empty
+    /// table. The prefix-sum analogue of `floor(pixel / pitch)` — because
+    /// the cumulative tops are monotone, the containing row is
+    /// `partition_point(|t| t ≤ pixel) − 1`.
+    ///
+    /// The shared kernel behind both [`compute_visible_range_variable`]'s
+    /// window edges and [`scroll_anchor`]'s anchor row, so the
+    /// row-at-pixel search lives once (divergence-is-a-bug).
+    #[must_use]
+    pub fn row_at(&self, pixel: u32) -> usize {
+        self.row_at_px(u64::from(pixel))
+    }
+
+    /// `u64`-pixel variant of [`Self::row_at`] for the windowing math,
+    /// whose viewport-bottom edge (`offset + viewport_h`) can exceed
+    /// `u32::MAX` before the row clamp. Private: the public API is the
+    /// `u32`-pixel [`Self::row_at`] (a scroll offset derives from an
+    /// `i32`).
+    #[must_use]
+    fn row_at_px(&self, pixel: u64) -> usize {
+        let max_index = self.item_count().saturating_sub(1);
+        self.offsets
+            .partition_point(|&t| t <= pixel)
+            .saturating_sub(1)
+            .min(max_index)
+    }
 }
 
 /// R745 §5.27 — compute the visible window for a **variable-height** list
@@ -542,23 +570,13 @@ pub fn compute_visible_range_variable(
     let bottom = offset + u64::from(viewport_h);
     let max_index = item_count - 1;
 
-    // `tops` = `offsets.offsets`, the sorted cumulative tops including the
-    // one-past total at the end. `partition_point(|t| t <= x)` returns the
-    // count of tops `<= x`; subtracting one gives the index of the row
-    // *containing* pixel `x` (mirrors `floor(x / pitch)` in the uniform
-    // path), clamped to the last real row.
-    let tops = &offsets.offsets;
-    let first_visible = tops
-        .partition_point(|&t| t <= offset)
-        .saturating_sub(1)
-        .min(max_index);
-    // The last row inside the viewport is the one whose top is strictly
-    // above `bottom` (`t < bottom` ⟺ `t <= bottom - 1`, the last visible
-    // pixel — written as `< bottom` so the count never needs `bottom - 1`).
-    let last_visible = tops
-        .partition_point(|&t| t < bottom)
-        .saturating_sub(1)
-        .min(max_index);
+    // The row containing the viewport-top pixel, and the row containing
+    // the last visible pixel (`bottom - 1`; `bottom >= 1` after the guard).
+    // Both go through the [`RowOffsets::row_at`] prefix-sum kernel — the
+    // variable-pitch analogue of `floor(x / pitch)` — so the row-at-pixel
+    // search lives once (shared with [`scroll_anchor`]).
+    let first_visible = offsets.row_at_px(offset);
+    let last_visible = offsets.row_at_px(bottom - 1);
 
     let first = first_visible.saturating_sub(overscan);
     let last = last_visible.saturating_add(overscan).min(max_index);
@@ -566,6 +584,195 @@ pub fn compute_visible_range_variable(
         first,
         count: last - first + 1,
     }
+}
+
+/// R1194 §5.27 — progressively-**measured** row heights with an estimated
+/// fallback for not-yet-rendered rows.
+///
+/// The *measured* peer of [`RowOffsets`]. Where `RowOffsets` needs every
+/// height up-front (the caller already knows them), a measured list starts
+/// from a single `estimated` height for every row and **refines each row
+/// as it is rendered**: the layout pass measures the row's laid-out height
+/// and feeds it back via [`Self::measure`] (the "layout-pass measurement
+/// round-trip" the `RowOffsets` scope note reserves). This is the
+/// substrate for content whose height cannot be known without laying it
+/// out — wrapped log/packet rows, variable-height document paragraphs, an
+/// asset browser's differently-sized thumbnails — the
+/// `react-virtualized` `CellMeasurer` / `TanStack Virtual`
+/// `measureElement` / Qt `QAbstractItemView::ResizeToContents` capability.
+///
+/// A row's height is its measured value once known, else `estimated`, so
+/// [`Self::offsets`] always yields a complete [`RowOffsets`] table — the
+/// window is correct from the first frame (against the estimate) and the
+/// total content height *refines toward the exact sum* as rows scroll into
+/// view. `estimated` is clamped to `≥ 1`: a zero estimate would give a
+/// zero-height list that renders no rows, so no row is ever measured — a
+/// deadlock this guard removes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MeasuredHeights {
+    /// Fallback height for a row whose real height has not been measured
+    /// yet. Clamped to `≥ 1` on construction (see the type docs).
+    estimated: u32,
+    /// `measured[i] == Some(h)` once row `i` has been laid out and
+    /// harvested; `None` while it still falls back to `estimated`.
+    measured: Vec<Option<u32>>,
+}
+
+impl MeasuredHeights {
+    /// A table of `item_count` rows, every row initially unmeasured (using
+    /// `estimated`). `estimated` is clamped to `≥ 1` (see the type docs).
+    #[must_use]
+    pub fn new(item_count: usize, estimated: u32) -> Self {
+        Self {
+            estimated: estimated.max(1),
+            measured: vec![None; item_count],
+        }
+    }
+
+    /// Number of rows.
+    #[must_use]
+    pub fn item_count(&self) -> usize {
+        self.measured.len()
+    }
+
+    /// Whether the table has no rows.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.measured.is_empty()
+    }
+
+    /// The estimated fallback height (always `≥ 1`).
+    #[must_use]
+    pub fn estimated(&self) -> u32 {
+        self.estimated
+    }
+
+    /// Resize to `n` rows, **preserving** measured heights for rows that
+    /// stay in range; rows beyond `n` are dropped and new rows start
+    /// unmeasured. The growable/streaming path (a live log gaining lines).
+    pub fn set_count(&mut self, n: usize) {
+        self.measured.resize(n, None);
+    }
+
+    /// Height of row `index`: its measured height if known, else
+    /// `estimated`. An out-of-range index reports `estimated` (defensive —
+    /// the offset table never indexes out of range).
+    #[must_use]
+    pub fn height(&self, index: usize) -> u32 {
+        self.measured
+            .get(index)
+            .copied()
+            .flatten()
+            .unwrap_or(self.estimated)
+    }
+
+    /// Record row `index`'s laid-out height. Returns `true` iff this
+    /// **changed** the stored value (first measurement of the row, or a
+    /// remeasure to a different height) — the harvest uses the bit to
+    /// decide whether to reflow and anchor-correct the scroll. An
+    /// out-of-range index is ignored and returns `false`.
+    pub fn measure(&mut self, index: usize, height: u32) -> bool {
+        match self.measured.get_mut(index) {
+            Some(slot) if *slot != Some(height) => {
+                *slot = Some(height);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// The measured height of row `index`, or `None` if it still uses the
+    /// estimate. Distinguishes a measured row from an estimated one — unlike
+    /// [`Self::height`], which returns the estimate for both.
+    #[must_use]
+    pub fn measured_height(&self, index: usize) -> Option<u32> {
+        self.measured.get(index).copied().flatten()
+    }
+
+    /// How many rows have a measured height.
+    #[must_use]
+    pub fn measured_count(&self) -> usize {
+        self.measured.iter().filter(|h| h.is_some()).count()
+    }
+
+    /// Whether every row has been measured — the table is now the exact
+    /// content height, no estimate remaining. `false` for an empty table.
+    #[must_use]
+    pub fn is_fully_measured(&self) -> bool {
+        !self.measured.is_empty() && self.measured.iter().all(Option::is_some)
+    }
+
+    /// Build the prefix-sum [`RowOffsets`] table for the current
+    /// measured-or-estimated heights, for windowing
+    /// ([`compute_visible_range_variable`]) and anchor math
+    /// ([`scroll_anchor`]). O(n) per call, like `RowOffsets::from_heights`;
+    /// the reactive wrapper rebuilds it once per measurement generation, so
+    /// steady-state frames reuse the cached table. Measured lists target
+    /// the variable-content scale (thousands of rows); the million-row
+    /// path stays uniform/paged.
+    #[must_use]
+    pub fn offsets(&self) -> RowOffsets {
+        let heights: Vec<u32> = (0..self.item_count()).map(|i| self.height(i)).collect();
+        RowOffsets::from_heights(&heights)
+    }
+
+    /// Total content height for the current heights (measured where known,
+    /// estimated elsewhere), saturated to `u32` — the sizer extent, which
+    /// refines toward the exact sum as rows are measured. Convenience for
+    /// callers that need only the total; a caller that also needs the
+    /// per-row geometry should build [`Self::offsets`] once and read
+    /// [`RowOffsets::total_height`] off it.
+    #[must_use]
+    pub fn total_height(&self) -> u32 {
+        let total: u64 = (0..self.item_count())
+            .map(|i| u64::from(self.height(i)))
+            .sum();
+        u32::try_from(total).unwrap_or(u32::MAX)
+    }
+}
+
+/// R1194 §5.27 — the scroll **anchor** for a variable-height list: the row
+/// at the top of the viewport, and how many pixels of it are scrolled
+/// above the top edge — `(row_index, pixels_into_row)`.
+///
+/// The stable reference point for the measured list's "no-jump"
+/// correction. When rows above the viewport resolve from `estimated` to
+/// their measured height the whole column below them shifts; capturing the
+/// anchor *before* the heights change and restoring the offset *after*
+/// ([`anchor_preserving_offset`]) keeps the visible content pinned. This
+/// is `TanStack Virtual`'s measure-then-restore and `react-virtualized`
+/// `CellMeasurer` scroll compensation.
+///
+/// The anchor row is the one *containing* the viewport-top pixel
+/// (`offset_y`, via [`RowOffsets::row_at`]) and `pixels_into_row =
+/// offset_y − row_top(anchor)`. An empty table anchors at `(0, 0)`.
+#[must_use]
+pub fn scroll_anchor(offset_y: i32, offsets: &RowOffsets) -> (usize, u32) {
+    if offsets.is_empty() {
+        return (0, 0);
+    }
+    let offset = offset_y.max(0).unsigned_abs();
+    let anchor = offsets.row_at(offset);
+    // `row_at` returns the row containing `offset`, so its top is ≤ offset.
+    let sub = offset.saturating_sub(offsets.row_top(anchor));
+    (anchor, sub)
+}
+
+/// R1194 §5.27 — the scroll offset that keeps `anchor` (from
+/// [`scroll_anchor`]) at the same screen position against a possibly
+/// changed heights table: the anchor row's *new* top plus the same
+/// `pixels_into_row`.
+///
+/// Saturates into `i32`; the caller hands the result to
+/// [`ScrollState::scroll_to`](crate::widgets::scroll::ScrollState::scroll_to),
+/// which clamps to `[0, max_y]`. Applied only when a measurement actually
+/// changed a height (otherwise the offset is already correct), so a
+/// steady-state frame is untouched.
+#[must_use]
+pub fn anchor_preserving_offset(anchor: (usize, u32), offsets: &RowOffsets) -> i32 {
+    let (index, sub) = anchor;
+    let top = u64::from(offsets.row_top(index));
+    i32::try_from(top.saturating_add(u64::from(sub))).unwrap_or(i32::MAX)
 }
 
 #[cfg(test)]
@@ -1069,5 +1276,206 @@ mod tests {
         let w = compute_visible_range_variable(0, VP, &o, 0);
         assert_eq!(w.first, 0);
         assert!(w.count >= 1);
+    }
+
+    // ── R744.1/R1194 row_at (shared row-at-pixel kernel) ─────────────
+
+    #[test]
+    fn row_at_finds_the_containing_row() {
+        // Tops 0,20,80,100,160,... A pixel inside a row's slot resolves to
+        // that row; a pixel exactly on a top belongs to the row it opens.
+        let o = RowOffsets::from_heights(&var_heights(1000));
+        assert_eq!(o.row_at(0), 0); // top of row 0
+        assert_eq!(o.row_at(19), 0); // last px of row 0 (h 20)
+        assert_eq!(o.row_at(20), 1); // top of row 1
+        assert_eq!(o.row_at(79), 1); // last px of row 1 (h 60)
+        assert_eq!(o.row_at(80), 2); // top of row 2
+        // Past the end clamps to the last row.
+        assert_eq!(o.row_at(u32::MAX), 999);
+    }
+
+    #[test]
+    fn row_at_empty_table_is_zero() {
+        let o = RowOffsets::from_heights(&[]);
+        assert_eq!(o.row_at(0), 0);
+        assert_eq!(o.row_at(500), 0);
+    }
+
+    // ── R1194 MeasuredHeights (estimated fallback + refinement) ──────
+
+    #[test]
+    fn measured_heights_start_all_estimated() {
+        let m = MeasuredHeights::new(100, 24);
+        assert_eq!(m.item_count(), 100);
+        assert!(!m.is_empty());
+        assert_eq!(m.estimated(), 24);
+        assert_eq!(m.measured_count(), 0);
+        assert!(!m.is_fully_measured());
+        // Every row reports the estimate; total = count · estimate.
+        assert_eq!(m.height(0), 24);
+        assert_eq!(m.height(99), 24);
+        assert_eq!(m.total_height(), 2400);
+    }
+
+    #[test]
+    fn measured_heights_clamp_a_zero_estimate_to_one() {
+        // A zero estimate would render a zero-height list (no rows → never
+        // measured → deadlock); the guard makes it ≥ 1.
+        let m = MeasuredHeights::new(10, 0);
+        assert_eq!(m.estimated(), 1);
+        assert_eq!(m.total_height(), 10);
+    }
+
+    #[test]
+    fn measure_records_and_reports_change() {
+        let mut m = MeasuredHeights::new(5, 20);
+        // First measurement of a row changes the value.
+        assert!(m.measure(2, 55));
+        assert_eq!(m.height(2), 55);
+        assert_eq!(m.measured_count(), 1);
+        // Re-measuring to the same height is a no-op (no reflow needed).
+        assert!(!m.measure(2, 55));
+        // Re-measuring to a different height changes it (content reflowed).
+        assert!(m.measure(2, 40));
+        assert_eq!(m.height(2), 40);
+        assert_eq!(m.measured_count(), 1);
+        // `measured_height` distinguishes measured from estimated.
+        assert_eq!(m.measured_height(2), Some(40));
+        assert_eq!(m.measured_height(0), None, "unmeasured row reports None");
+        // Out-of-range measure is ignored.
+        assert!(!m.measure(99, 100));
+        assert_eq!(m.height(99), 20, "out-of-range reports the estimate");
+        assert_eq!(m.measured_height(99), None, "out-of-range reports None");
+    }
+
+    #[test]
+    fn total_height_refines_toward_the_exact_sum() {
+        let mut m = MeasuredHeights::new(4, 20); // est total 80
+        assert_eq!(m.total_height(), 80);
+        m.measure(0, 60);
+        m.measure(1, 10);
+        // Rows 0,1 measured (60+10), rows 2,3 estimated (20+20) → 110.
+        assert_eq!(m.total_height(), 110);
+        m.measure(2, 30);
+        m.measure(3, 30);
+        assert!(m.is_fully_measured());
+        assert_eq!(m.total_height(), 130, "exact sum once fully measured");
+    }
+
+    #[test]
+    fn offsets_uses_measured_where_known_estimated_elsewhere() {
+        let mut m = MeasuredHeights::new(4, 20);
+        m.measure(1, 60); // heights: 20, 60, 20, 20
+        let o = m.offsets();
+        assert_eq!(o.row_top(0), 0);
+        assert_eq!(o.row_top(1), 20);
+        assert_eq!(o.row_top(2), 80);
+        assert_eq!(o.row_top(3), 100);
+        assert_eq!(o.total_height(), 120);
+        assert_eq!(o.row_height(1), 60);
+    }
+
+    #[test]
+    fn set_count_preserves_measured_and_drops_removed() {
+        let mut m = MeasuredHeights::new(3, 20);
+        m.measure(0, 50);
+        m.measure(2, 70);
+        // Grow: existing measurements survive, the new row is unmeasured.
+        m.set_count(5);
+        assert_eq!(m.item_count(), 5);
+        assert_eq!(m.height(0), 50);
+        assert_eq!(m.height(2), 70);
+        assert_eq!(m.height(4), 20, "new row estimated");
+        assert_eq!(m.measured_count(), 2);
+        // Shrink below a measured row drops it.
+        m.set_count(1);
+        assert_eq!(m.item_count(), 1);
+        assert_eq!(m.height(0), 50);
+        assert_eq!(m.measured_count(), 1);
+    }
+
+    #[test]
+    fn empty_measured_heights_is_never_fully_measured() {
+        let m = MeasuredHeights::new(0, 20);
+        assert!(m.is_empty());
+        assert_eq!(m.item_count(), 0);
+        assert!(!m.is_fully_measured());
+        assert_eq!(m.total_height(), 0);
+    }
+
+    // ── R1194 scroll anchor (the measured list's no-jump correction) ──
+
+    #[test]
+    fn scroll_anchor_at_top_is_row_zero() {
+        let o = MeasuredHeights::new(100, 20).offsets();
+        assert_eq!(scroll_anchor(0, &o), (0, 0));
+        // Negative programmatic offset reads as the top.
+        assert_eq!(scroll_anchor(-40, &o), (0, 0));
+    }
+
+    #[test]
+    fn scroll_anchor_reports_row_and_pixels_into_it() {
+        // Uniform 20-px rows: offset 510 sits 10 px into row 25 (top 500).
+        let o = MeasuredHeights::new(100, 20).offsets();
+        assert_eq!(scroll_anchor(510, &o), (25, 10));
+        // Exactly on a row top: zero pixels in.
+        assert_eq!(scroll_anchor(500, &o), (25, 0));
+    }
+
+    #[test]
+    fn scroll_anchor_empty_table_is_origin() {
+        let o = MeasuredHeights::new(0, 20).offsets();
+        assert_eq!(scroll_anchor(300, &o), (0, 0));
+    }
+
+    #[test]
+    fn anchor_round_trips_when_the_table_is_unchanged() {
+        // Capturing then restoring against the same table returns the same
+        // offset (a steady-state frame moves nothing).
+        let o = MeasuredHeights::new(100, 20).offsets();
+        for off in [0, 137, 500, 510, 1999] {
+            let a = scroll_anchor(off, &o);
+            assert_eq!(anchor_preserving_offset(a, &o), off, "round-trip at {off}");
+        }
+    }
+
+    #[test]
+    fn anchor_preserving_offset_absorbs_growth_above_the_viewport() {
+        // The headline no-jump property. 100 rows estimated at 20px; the
+        // viewport top sits exactly on row 25 (offset 500).
+        let mut m = MeasuredHeights::new(100, 20);
+        let before = m.offsets();
+        let anchor = scroll_anchor(500, &before);
+        assert_eq!(anchor, (25, 0));
+
+        // Rows 0..10 turn out to be 60px (measured, 40px taller each): the
+        // 400px of new height all lies *above* the anchor row.
+        for i in 0..10 {
+            m.measure(i, 60);
+        }
+        let after = m.offsets();
+        // Without correction the offset would still be 500 and row 25 would
+        // jump up 400px. The correction moves it to row 25's new top so the
+        // same content stays under the viewport top.
+        assert_eq!(after.row_top(25), 900);
+        assert_eq!(anchor_preserving_offset(anchor, &after), 900);
+    }
+
+    #[test]
+    fn anchor_preserving_offset_keeps_sub_row_position() {
+        // A non-zero pixels-into-row is preserved across a height change
+        // above the anchor.
+        let mut m = MeasuredHeights::new(50, 20);
+        let before = m.offsets();
+        let anchor = scroll_anchor(207, &before); // row 10 (top 200) + 7 px
+        assert_eq!(anchor, (10, 7));
+        m.measure(0, 120); // +100 px above the anchor row
+        let after = m.offsets();
+        assert_eq!(after.row_top(10), 300); // 120 + 9·20
+        assert_eq!(
+            anchor_preserving_offset(anchor, &after),
+            307,
+            "row 10's new top (300) + the same 7 px in",
+        );
     }
 }
