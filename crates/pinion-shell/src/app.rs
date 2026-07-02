@@ -43,7 +43,7 @@ use winit::dpi::{LogicalPosition, LogicalSize, PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::{Key, NamedKey};
-use winit::window::{ResizeDirection, Window, WindowId, WindowLevel};
+use winit::window::{CursorIcon, ResizeDirection, Window, WindowId, WindowLevel};
 
 use crate::executor::build_executor_and_sink;
 use crate::substrate::ShellCore;
@@ -130,6 +130,43 @@ fn chrome_action_for_tag(tag: &str) -> Option<ChromeAction> {
         }
         _ => None,
     }
+}
+
+/// (R1189 §5.16 §5.39) The hover CURSOR a client-side chrome control requests, or
+/// `None` when it commands no special cursor (the OS default arrow).
+///
+/// Pure (maps the `ResizeDirection` the [`chrome_action_for_tag`] SSOT already
+/// resolved from the hovered tag to the matching CSS-standard resize cursor), so
+/// the hover→cursor contract is unit-tested without a live window — the read side
+/// of the same tag vocabulary the press side drives through `drag_resize_window`.
+/// Only the eight resize regions map: a `Move` grip keeps the default arrow (the
+/// GTK / Win11 caption convention — a title bar is dragged, not shown a move
+/// cursor), and a `Control` button is a normal click target.
+fn resize_cursor_for_action(action: ChromeAction) -> Option<CursorIcon> {
+    let ChromeAction::Resize(direction) = action else {
+        return None;
+    };
+    Some(match direction {
+        ResizeDirection::North | ResizeDirection::South => CursorIcon::NsResize,
+        ResizeDirection::West | ResizeDirection::East => CursorIcon::EwResize,
+        ResizeDirection::NorthWest | ResizeDirection::SouthEast => CursorIcon::NwseResize,
+        ResizeDirection::NorthEast | ResizeDirection::SouthWest => CursorIcon::NeswResize,
+    })
+}
+
+/// (R1189 §5.16 §5.39) The min-change LATCH decision for a window's hover cursor:
+/// given the icon currently commanded (`last`, `None` = the OS default arrow) and
+/// the newly `desired` one, return `Some(icon)` to command winit with — the
+/// desired resize icon, or the default arrow when LEAVING a region — or `None`
+/// when `desired` already matches what is shown (no winit call). Pure, so the
+/// redundant-suppression + the region→default reset (fired once on the
+/// region→non-region transition, incl. the `CursorLeft` arm's explicit `None`)
+/// are unit-tested without a live `Window`.
+fn next_cursor_command(
+    last: Option<CursorIcon>,
+    desired: Option<CursorIcon>,
+) -> Option<CursorIcon> {
+    (last != desired).then(|| desired.unwrap_or(CursorIcon::Default))
 }
 
 struct WindowSlot<R: VelloRenderer> {
@@ -265,6 +302,19 @@ struct WindowSlot<R: VelloRenderer> {
     /// consumed, or when the shell has commanded no position (every
     /// WM-placed window — the typical `"main"`).
     last_commanded_position: Option<(i32, i32)>,
+    /// (R1189 §5.16 §5.39) The client-side resize cursor currently commanded for
+    /// this window, or `None` when the pointer is over no resize region (the OS
+    /// default arrow). A borderless (CSD) window owns its hover affordance — the
+    /// OS gives a decorated window a resize cursor over its frame for free, but a
+    /// borderless one has no frame, so [`AppShell::command_resize_cursor`] maps a
+    /// hover over a `WINDOW_RESIZE_*` region to the matching `CursorIcon`. This is
+    /// the min-change LATCH (like [`Self::last_commanded_position`]): winit's
+    /// `set_cursor` is called only when the desired icon actually changes, so the
+    /// per-`CursorMoved` hot path stays a hover-target read + an equality compare.
+    /// A window that never enters a resize region keeps this `None` and is never
+    /// commanded a cursor at all (so a decorated window's client area is
+    /// untouched — the OS keeps managing it).
+    last_resize_cursor: Option<CursorIcon>,
 }
 
 impl<R: VelloRenderer> WindowSlot<R> {
@@ -296,6 +346,7 @@ impl<R: VelloRenderer> WindowSlot<R> {
             pending_capture: false,
             last_capture: None,
             last_commanded_position: None,
+            last_resize_cursor: None,
         }
     }
 }
@@ -851,9 +902,44 @@ impl<V: WidgetView> AppShell<V> {
             .map_or(pinion_runtime::DEFAULT_WINDOW, |s| &*s.spec_id);
         self.core
             .cursor_moved_for_window(spec_id, PointerId::MOUSE, lx, ly);
+        // R1189 §5.16 §5.39 — resize-border hover affordance: the cursor_moved
+        // above just re-resolved this window's hover target, so read it and, if it
+        // is a client-side resize region, command the matching resize cursor (a
+        // borderless CSD window has no OS frame to give it for free). Reuses the
+        // press-side `chrome_action_for_tag` tag→direction SSOT; `spec_id`'s borrow
+        // (self.windows) + the self.core read both end here before the latch's
+        // `get_mut`.
+        let desired_cursor = self
+            .core
+            .hover_target_for_window(spec_id, PointerId::MOUSE)
+            .and_then(chrome_action_for_tag)
+            .and_then(resize_cursor_for_action);
+        self.command_resize_cursor(window_id, desired_cursor);
         // R1147 §5.51 — drive the cross-desktop drag preview window (a no-op
         // unless a preview-eligible drag is in flight in live mode).
         self.update_drag_preview(window_id, (lx, ly), event_loop);
+    }
+
+    /// (R1189 §5.16 §5.39) Command `window_id`'s live cursor to `desired` (a
+    /// resize icon, or `None` = the OS default arrow), through the min-change
+    /// latch [`WindowSlot::last_resize_cursor`]: winit's `set_cursor` is called
+    /// ONLY when the desired icon differs from what is already shown, so the
+    /// per-`CursorMoved` cost is a hover read + an equality compare, and a window
+    /// that never enters a resize region is never commanded a cursor at all (its
+    /// client area stays OS-managed — the decorated-window case). The reset to
+    /// the default arrow on leaving a region is itself latched: it fires once, on
+    /// the region→non-region transition, not on every subsequent move.
+    fn command_resize_cursor(&mut self, window_id: WindowId, desired: Option<CursorIcon>) {
+        let Some(slot) = self.windows.get_mut(&window_id) else {
+            return;
+        };
+        let Some(icon) = next_cursor_command(slot.last_resize_cursor, desired) else {
+            return;
+        };
+        slot.last_resize_cursor = desired;
+        if let Some(window) = Self::slot_window(&*slot) {
+            window.set_cursor(icon);
+        }
     }
 
     /// R51.76 §5.40 — drain the [`ShellCore::redraw_requested`] flag
@@ -2696,6 +2782,14 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
             }
             WindowEvent::CursorLeft { .. } => {
                 self.core.cursor_left_for_window(spec_id, PointerId::MOUSE);
+                // R1189 §5.16 §5.39 — reset the resize cursor on leave. winit
+                // stores the cursor per-window, so a pointer that leaves over a
+                // resize edge would otherwise strand the resize icon on the
+                // window's OS attribute (and the latch), showing it again on
+                // re-entry before the first `CursorMoved` corrects it. Commanding
+                // `None` resets both the latch and the OS attribute to the default
+                // arrow (a no-op via the latch when the pointer left over content).
+                self.command_resize_cursor(window_id, None);
             }
             // R770 §5.15 — OS file drag-drop (winit normalises the
             // platform file-DnD into three window-scoped events). One
@@ -4554,5 +4648,85 @@ mod r1121_chrome_action_tests {
         // The resize family PREFIX is not itself a control (the suffixed
         // edge / corner tags are).
         assert!(chrome_action_for_tag(pinion_overlay::WINDOW_RESIZE_TAG_PREFIX).is_none());
+    }
+
+    #[test]
+    fn r1189_resize_hover_maps_each_region_to_its_cursor() {
+        // R1189 §5.16 §5.39 — the hover→cursor mapping `handle_cursor_moved`
+        // drives (tag → chrome_action_for_tag → resize_cursor_for_action). The
+        // four CSS-standard resize axes: N/S = NsResize, W/E = EwResize, the two
+        // main-diagonal corners = NwseResize, the two anti-diagonal = NeswResize.
+        use super::resize_cursor_for_action;
+        use winit::window::CursorIcon;
+        let cursor_for = |tag: &str| chrome_action_for_tag(tag).and_then(resize_cursor_for_action);
+        let cases = [
+            (
+                pinion_overlay::WINDOW_RESIZE_NORTH_TAG,
+                CursorIcon::NsResize,
+            ),
+            (
+                pinion_overlay::WINDOW_RESIZE_SOUTH_TAG,
+                CursorIcon::NsResize,
+            ),
+            (pinion_overlay::WINDOW_RESIZE_WEST_TAG, CursorIcon::EwResize),
+            (pinion_overlay::WINDOW_RESIZE_EAST_TAG, CursorIcon::EwResize),
+            (
+                pinion_overlay::WINDOW_RESIZE_NORTH_WEST_TAG,
+                CursorIcon::NwseResize,
+            ),
+            (
+                pinion_overlay::WINDOW_RESIZE_SOUTH_EAST_TAG,
+                CursorIcon::NwseResize,
+            ),
+            (
+                pinion_overlay::WINDOW_RESIZE_NORTH_EAST_TAG,
+                CursorIcon::NeswResize,
+            ),
+            (
+                pinion_overlay::WINDOW_RESIZE_SOUTH_WEST_TAG,
+                CursorIcon::NeswResize,
+            ),
+        ];
+        for (tag, want) in cases {
+            assert_eq!(cursor_for(tag), Some(want), "{tag} hover cursor");
+        }
+        // Non-resize chrome + ordinary tags command NO special cursor (the grip
+        // keeps the default arrow — a title bar is dragged, not shown a move
+        // cursor; a control button is a normal click target).
+        assert_eq!(cursor_for(pinion_overlay::WINDOW_CHROME_GRIP_TAG), None);
+        assert_eq!(cursor_for(pinion_overlay::WINDOW_CHROME_CLOSE_TAG), None);
+        assert_eq!(cursor_for(pinion_overlay::WINDOW_CHROME_MINIMIZE_TAG), None);
+        assert_eq!(cursor_for("some-widget"), None);
+    }
+
+    #[test]
+    fn r1189_cursor_latch_only_commands_on_change() {
+        // R1189 §5.16 §5.39 — the min-change latch decision `command_resize_cursor`
+        // drives. `Some(icon)` = call winit set_cursor; `None` = suppress.
+        use super::next_cursor_command;
+        use winit::window::CursorIcon;
+        // Enter a region from the default arrow → command the resize icon.
+        assert_eq!(
+            next_cursor_command(None, Some(CursorIcon::NsResize)),
+            Some(CursorIcon::NsResize),
+        );
+        // Same region on the next move → suppress (the hot-path no-op).
+        assert_eq!(
+            next_cursor_command(Some(CursorIcon::NsResize), Some(CursorIcon::NsResize)),
+            None,
+        );
+        // Region → different region → command the new icon.
+        assert_eq!(
+            next_cursor_command(Some(CursorIcon::NsResize), Some(CursorIcon::EwResize)),
+            Some(CursorIcon::EwResize),
+        );
+        // Region → content / leave (desired None) → command the default arrow ONCE.
+        assert_eq!(
+            next_cursor_command(Some(CursorIcon::NsResize), None),
+            Some(CursorIcon::Default),
+        );
+        // Content → content (never in a region) → suppress: a window that never
+        // enters a resize region is never commanded a cursor at all.
+        assert_eq!(next_cursor_command(None, None), None);
     }
 }
