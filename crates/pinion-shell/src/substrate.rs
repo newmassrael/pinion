@@ -126,6 +126,90 @@ struct WindowScopedRpcReads {
 /// field below is genuinely private to `substrate.rs` and the
 /// surface module (`AppShell` in `lib.rs`) can only reach the
 /// dispatch path through the `pub` methods on this `impl` block.
+/// (R1193 §5.16 §5.28 §5.39) The per-window shell-side state for ONE window,
+/// keyed by canonical [`WindowSpec`](crate::WindowSpec) id in
+/// [`ShellCore::window_states`]. R1193 consolidated 11 parallel
+/// `*_per_window: HashMap<String, T>` fields (redraw / paint-clock / pacing /
+/// profiling / chrome / focus) — which were inserted and, in
+/// [`ShellCore::remove_window`], removed in LOCKSTEP per window — into one map of
+/// this struct, so a window's teardown drops ONE entry. That retires the exact
+/// R1123.1/R681 leak class `remove_window` documented ("drop the maximized /
+/// immediate cache too, else a reused id inherits stale state"): a new per-window
+/// axis is now a field HERE, cleared by the single entry removal, not another map
+/// a future round must remember to add to the teardown. `AppShell` already holds
+/// its per-window state in a `WindowSlot`; this makes `ShellCore` symmetric.
+///
+/// Presence-meaningful axes are `Option<T>` (absent ≡ "never set for THIS
+/// window", distinct from a default value) so an entry created for one axis never
+/// makes another read as present — the pre-R1193 independent-`get` semantics are
+/// preserved field-by-field. Natural-default flags stay plain (`false` ≡ absent).
+#[derive(Debug, Default)]
+struct WindowState {
+    /// R680 atomic 2 — pending per-window redraw request, drained by
+    /// [`ShellCore::take_redraw_request_for_window`]. `false` ≡ absent.
+    redraw_requested: bool,
+    /// R51.143 / R680 atomic 1 — wall-clock of this window's previous paint;
+    /// `None` (never painted) → the next paint feeds `dt = 0.0`.
+    last_paint_instant: Option<Instant>,
+    /// R681 atomic 3 — per-window target-fps override; `None` = default policy.
+    target_fps: Option<u32>,
+    /// R681 — did this window's last painted scene carry an immediate-mode
+    /// subtree (a pacing input). `false` ≡ absent (retained-tree default).
+    immediate_subtree: bool,
+    /// R829 — pending injected immediate-mode `dt` (a `scene/tick`), consumed
+    /// (`take`) by the next paint; `None` = live wall-clock advance.
+    pending_immediate_dt: Option<f32>,
+    /// R831 — fixed-timestep accumulator for the immediate-mode game loop;
+    /// `None` until the window's first paint lazily inserts it.
+    sim_accumulator: Option<pinion_runtime::FixedTimestep>,
+    /// R682 atomic 3 — last published fragment-cache observability snapshot;
+    /// `None` before the first publish (presence gates
+    /// [`ShellCore::fragment_cache_stat_windows`]).
+    fragment_cache_stats: Option<FragmentCacheStats>,
+    /// R907 — rolling frame-timing profiler ring; `None` until the first
+    /// recorded frame (the bootstrap `FrameTimingsUnavailable`).
+    frame_timings: Option<FrameTimingStats>,
+    /// R1036 — last presented-frame render-fidelity record (PR-17); `None`
+    /// before the first present.
+    render_fidelity: Option<pinion_runtime::RenderFidelity>,
+    /// R1123 — winit-reported maximized state for the client-side chrome glyph +
+    /// resize-border suppression. `false` ≡ absent (not maximized).
+    maximized: bool,
+    /// R25.1 — the focusable tags THIS window painted (its slice of the union
+    /// Tab order); `None` ≡ never painted focusables (presence gates the
+    /// [`ShellCore::union_focusable_tags`] window set).
+    focusable_tags: Option<Vec<String>>,
+}
+
+impl WindowState {
+    /// R1193 — true when every axis is at its absent-default, so the entry
+    /// carries no information and may be pruned. Keeps
+    /// [`ShellCore::remove_window`]'s "carried an entry" return exact after
+    /// [`ShellCore::clear_target_fps_for_window`] empties the last axis.
+    ///
+    /// For the three plain-`bool` axes, "empty" means `false` — which IS their
+    /// absent state (a drained `redraw_requested`, a `false` `immediate_subtree`
+    /// / `maximized` are observationally identical to never-set, since every
+    /// reader defaults absent to `false`). The only place the pre-R1193 design
+    /// distinguished a present-`false` key was `remove_window`'s return count,
+    /// and the sole `clear_target_fps` caller re-creates the entry
+    /// (`request_redraw`) before any `remove_window`, so the prune never sees a
+    /// bool-`false`-only entry in practice.
+    fn is_empty(&self) -> bool {
+        !self.redraw_requested
+            && self.last_paint_instant.is_none()
+            && self.target_fps.is_none()
+            && !self.immediate_subtree
+            && self.pending_immediate_dt.is_none()
+            && self.sim_accumulator.is_none()
+            && self.fragment_cache_stats.is_none()
+            && self.frame_timings.is_none()
+            && self.render_fidelity.is_none()
+            && !self.maximized
+            && self.focusable_tags.is_none()
+    }
+}
+
 pub struct ShellCore<V: WidgetView> {
     /// R51.123 §5.41 — backend-agnostic dispatch substrate.
     ///
@@ -267,49 +351,20 @@ pub struct ShellCore<V: WidgetView> {
     /// [`Self::request_redraw`].
     redraw_requested: bool,
 
-    /// R680 atomic 2 §5.16 §5.41 — per-window redraw flag map.
-    ///
-    /// Keyed by canonical `WindowSpec::id`; an entry of `true` means
-    /// "paint the next event-loop iteration for THIS window only".
-    /// Set via [`Self::request_redraw_for_window`]; drained via
-    /// [`Self::take_redraw_request_for_window`]. [`crate::AppShell`]
-    /// drains EACH window's flag during
-    /// [`crate::AppShell::drain_redraw_to_winit`] and calls
-    /// `Window::request_redraw` only on the slots whose flag was
-    /// set.
-    ///
-    /// ## Coexistence with `redraw_requested`
-    ///
-    /// The pre-R680 binding-wide [`Self::redraw_requested`] flag
-    /// keeps the canonical "fan out to every window" semantic
-    /// because most current state mutations (`Signal::set` in
-    /// `V::update`, the `any_animation_active` check after a
-    /// per-window tick) cannot reliably attribute themselves to a
-    /// single window: the `Signal` might be read by view fns from
-    /// multiple windows; an animation registered on `root_owner`
-    /// could appear in any window's paint. The fan-out is the
-    /// safe default.
-    ///
-    /// The per-window flag is the OPT-IN surface for callers that
-    /// know exactly which window a wake-up should target —
-    /// future R680 atomic 3 RPC dispatch context (per-window
-    /// scoped `scene/invoke` follow-up redraws), R681 immediate-
-    /// mode game-loop nodes (only the window holding the immediate
-    /// subtree should poll at frame rate), R683 dock-panel
-    /// resize / tear-off (only the active dock panel's window
-    /// reacts to layout change). Pre-R680 callers continue using
-    /// `request_redraw()` + bit-identical fan-out behaviour.
-    ///
-    /// ## Allocation profile
-    ///
-    /// Lazy-creates entries on first `request_redraw_for_window`
-    /// call per `window_id` (one String allocation per first
-    /// touch). Hot-path drains read the existing entry without
-    /// reallocation. Mirrors the
-    /// [`Self::last_paint_instants`] field shape so the two
-    /// per-window state stores share the same `&str → owned key`
-    /// convention.
-    redraw_requested_per_window: HashMap<String, bool>,
+    /// (R1193 §5.16 §5.28 §5.39) The per-window shell-side state store — one
+    /// [`WindowState`] per window, keyed by canonical
+    /// [`WindowSpec`](crate::WindowSpec) id. R1193 consolidated the 11
+    /// formerly-parallel `*_per_window` maps (redraw / last-paint / target-fps /
+    /// immediate-subtree / pending-dt / sim-accumulator / fragment-cache-stats /
+    /// frame-timings / render-fidelity / maximized / focusable-tags) into this one
+    /// map, so a window's teardown drops ONE entry (see [`WindowState`] for the
+    /// leak class this retires and the per-field presence rationale). Read via
+    /// [`Self::window_state`] (never creates an entry — preserves each axis's
+    /// pre-R1193 `get()` "absent" semantics); written via
+    /// [`Self::window_state_mut`] (the lazy `entry().or_default()` write path).
+    /// Coexists with the binding-wide [`Self::redraw_requested`] fan-out flag
+    /// above (the per-window redraw request is now `WindowState::redraw_requested`).
+    window_states: HashMap<String, WindowState>,
 
     /// (R1125 §5.51 §2 #7 PR-33) The window a live cross-window drag currently
     /// targets (its incoming dock drop-zone preview is painted). Tracked so a move
@@ -320,171 +375,6 @@ pub struct ShellCore<V: WidgetView> {
     /// [`Self::cursor_moved_for_window`]; the strip itself is injected by
     /// [`Self::apply_cross_window_drop_preview`] from the same resolution.
     cross_preview_target: Option<String>,
-
-    /// R51.143 §5.28 §5.16 §5.41 — per-window paint-clock store.
-    ///
-    /// Keyed by canonical `WindowSpec::id` (`"main"` for the primary
-    /// window; secondary windows pick their own non-conflicting
-    /// names). Each entry records the wall-clock timestamp of the
-    /// previous [`Self::compute_paint_scene_internal`] call for THAT
-    /// window. Missing entry (never painted) → next paint feeds
-    /// `dt = 0.0`, which leaves at-rest animations untouched and
-    /// starts each spring solver from its construction baseline —
-    /// same shape any synthetic flush hits, so no special-case
-    /// branching is needed elsewhere.
-    ///
-    /// ## Why `HashMap` (R680 atomic 1)
-    ///
-    /// Pre-R680 this was a single `Option<Instant>` field. Multi-
-    /// window paint cycles (R670.B `hello-multi-window` + R672
-    /// per-window `InputRouter` foundation + R675-R679 `DevTools`
-    /// cascade) all wrote into one slot — whichever window painted
-    /// most recently set the next paint's "prev" timestamp, so
-    /// window A's dt was measured against window B's last paint
-    /// when the two windows alternated. The compounding made spring
-    /// solvers tick by ~2× their per-window paint rate (the R670.B
-    /// honest 9-round carry).
-    ///
-    /// R680 atomic 1 lifts the field per-window: each entry tracks
-    /// only ITS window's paint cadence. Two windows painting in the
-    /// same event-loop turn each measure `dt` against their own
-    /// previous paint, never each other's, so the spring solver
-    /// receives exactly one tick per per-window paint cycle.
-    /// [`CoreShell::tick_animations_for_window`](pinion_runtime::CoreShell::tick_animations_for_window)
-    /// then walks ONLY that window's owner scope (R680 atomic 0
-    /// `window_owners` substrate) so the per-window owner's
-    /// `owned_animations` list advances exactly once.
-    ///
-    /// Per §5.28 R33 the spring solver is deterministic given
-    /// `(current, velocity, target, dt, config)` — driving it from a
-    /// real measured delta is what turns the synthetic substrate
-    /// (which always passed `dt=0`) into a real per-frame animation
-    /// pump. Per-window storage is what makes that real delta
-    /// per-window instead of binding-wide.
-    last_paint_instants: HashMap<String, Instant>,
-    /// R681 §2 #4 atomic 3 §5.16 §5.28 — per-window target fps
-    /// override map. `&'static str` window id → desired `fps`.
-    /// Bindings populate via
-    /// [`Self::set_target_fps_for_window`]; the surface's
-    /// `about_to_wait` consults
-    /// [`pinion_runtime::frame_pacing::frame_budget_for_window`]
-    /// with this lookup result so per-window pacing overrides the
-    /// 60fps immediate-mode default.
-    ///
-    /// Absent entry → use
-    /// [`pinion_runtime::frame_pacing::default_window_frame_policy`]
-    /// derived from [`Self::immediate_subtree_for_window`].
-    target_fps_per_window: HashMap<String, u32>,
-    /// R681 §2 #4 §5.16 — per-window "did the last painted scene carry a
-    /// [`pinion_core::scene::Scene::ImmediateModeNode`]?" flag, the
-    /// single home for the pacing input both the render loop's
-    /// `about_to_wait` and the §5.16 jank profiler
-    /// ([`Self::frame_timings_for_window`]) read. `AppShell::render_window`
-    /// publishes it every paint via [`Self::set_immediate_subtree_for_window`]
-    /// — the peer of [`Self::target_fps_per_window`] (a pacing input that
-    /// also lives here, not on the slot), so the two pacing inputs share
-    /// one lookup and pacing vs observability cannot derive different
-    /// budgets. Absent entry → `false` (retained-tree default).
-    immediate_subtree_per_window: HashMap<String, bool>,
-    /// R829 §2 #4 §5.28 — per-window pending injected immediate-mode `dt`
-    /// (seconds). A `scene/tick` ([`pinion_rpc::DeferredInput::Tick`])
-    /// accumulates its delta here; the next per-window paint
-    /// ([`Self::compute_paint_scene_internal`]) advances that window's
-    /// [`pinion_core::scene::ImmediateMode`] drivers by exactly this
-    /// amount (substepped) INSTEAD of the wall-clock delta, then clears
-    /// the entry. Lets an AI client frame-step the §2 #4 game loop
-    /// deterministically — pair with `scene/set_fps 0` to pause the
-    /// continuous loop so wall-clock paints do not also advance it.
-    /// Absent entry → live wall-clock advance (the R827 default).
-    pending_immediate_dt_per_window: HashMap<String, f32>,
-    /// R831 §2 #4 §5.28 — per-window fixed-timestep accumulator for the
-    /// immediate-mode game loop. Every per-window paint feeds this
-    /// window's elapsed simulation time (the clamped wall-clock delta, OR
-    /// the injected `scene/tick` delta from
-    /// [`Self::pending_immediate_dt_per_window`]) into one
-    /// [`pinion_runtime::FixedTimestep`], which advances the
-    /// [`pinion_core::scene::ImmediateMode`] drivers in EXACTLY
-    /// fixed-timestep increments and carries the sub-step remainder
-    /// across frames (Glenn Fiedler, "Fix Your Timestep!"). Routing live
-    /// AND injected time through the SAME accumulator is what makes the
-    /// loop frame-rate-independent and makes `scene/tick` reproduce live
-    /// behaviour deterministically (the pre-R831 split: live ran one
-    /// variable wall-clock step, `scene/tick` ran the
-    /// [`pinion_runtime::substep`] splitter — two time bases that could
-    /// not reproduce each other). Reset to a zero phase on pause
-    /// (`scene/set_fps 0`, [`Self::set_target_fps_for_window`]) so an AI
-    /// client frame-steps from a known fixed-step boundary. Absent entry
-    /// → a fresh zero-phase accumulator (lazy-inserted on first paint).
-    sim_accumulator_per_window: HashMap<String, pinion_runtime::FixedTimestep>,
-    /// R682 §5.16 atomic 3 — per-window fragment cache observability
-    /// snapshot. The surface-side `AppShell::render_window` calls
-    /// [`Self::publish_fragment_cache_stats`] after each paint cycle
-    /// to publish hits / misses / damage-region read off the
-    /// per-`WindowSlot` `paint_adapter::FragmentCache`. AI-first RPC
-    /// consumers, R682 demo assertions, and the upcoming `pinion-tui`
-    /// test harness read via
-    /// [`Self::fragment_cache_stats_for_window`] without crossing the
-    /// substrate ↔ vello boundary (the stats struct is GUI-agnostic).
-    fragment_cache_stats_per_window: HashMap<String, FragmentCacheStats>,
-    /// R907 §5.16 §5.7 — per-window frame-timing profiler accumulator.
-    /// The surface-side `AppShell::render_window` brackets each paint's
-    /// build / encode / render phases with [`std::time::Instant`] spans
-    /// and calls [`Self::record_frame_timing`] to feed the rolling
-    /// window. Unlike the `Copy` [`FragmentCacheStats`] (published
-    /// every frame), the non-`Copy`
-    /// [`pinion_runtime::FrameTimingStats`] ring is the SSOT here and
-    /// the `Copy` [`FrameTimingsSnapshot`] is projected at the AI-paced
-    /// `scene/frame_timings` read ([`Self::frame_timings_for_window`]),
-    /// so the O(window) fold never touches the 60–144fps paint path
-    /// (the R890 "store the source, project on read" rule).
-    frame_timings_per_window: HashMap<String, FrameTimingStats>,
-
-    /// R1036 §5.16 §5.7 §2 #7 — per-window render-fidelity record (PR-17).
-    /// `AppShell::render_window` writes the encoded frame's fingerprint here
-    /// after `renderer.render`, on the winit paint path ONLY — never by an RPC
-    /// recompute, so it stays the uncontaminated "what is actually displayed"
-    /// SSOT that `scene/render_fidelity`
-    /// ([`Self::render_fidelity_for_window`]) projects and compares against a
-    /// fresh recompute of current state (the `last_paint_scene` it does NOT
-    /// share is overwritten by the R684 post-dispatch finalize, hiding exactly
-    /// the divergence this record exposes).
-    render_fidelity_per_window: HashMap<String, pinion_runtime::RenderFidelity>,
-
-    /// R1123 §5.16 §5.39 — per-window maximized flag for the client-side
-    /// window chrome. `AppShell::note_window_resized` writes winit's actual
-    /// `Window::is_maximized()` here on every resize (a borderless window's
-    /// only maximize trigger is the chrome button, but a tiling WM can also
-    /// maximize it, so winit's report is the truth). Both the live paint
-    /// ([`Self::apply_window_chrome`] picks the maximize-vs-restore glyph,
-    /// [`Self::apply_resize_border`] drops the resize border when maximized)
-    /// AND the pure introspection mirror read THIS cache rather than the live
-    /// winit `Window`, so `scene/snapshot` matches the painted glyph (§2 #7).
-    /// Absent entry = not maximized (the create-time default).
-    maximized_per_window: HashMap<String, bool>,
-
-    /// R25.1 §5.39 §5.16 — per-window keyboard-focus enumeration. Each painted
-    /// window stores the focusable tags IT draws (its
-    /// [`Scene::collect_focusable_tags`] walk); the binding-wide
-    /// [`FocusManager`] `tab_order` is the UNION of these
-    /// ([`Self::union_focusable_tags`]), refreshed by every window's paint
-    /// ([`Self::refresh_window_focusables`]) — no longer
-    /// [`pinion_runtime::DEFAULT_WINDOW`]-gated.
-    ///
-    /// Pre-R25.1 the enumeration was primary-only, so a focusable widget drawn
-    /// solely in a secondary window (a torn-off / undock pane in its own
-    /// `pane-{i}` window) was absent from the focus set: clicking it resolved to
-    /// no focusable tag, so keyboard input never routed to its `External`
-    /// (sprag undock, "the detached terminal eats no input"). Keying per window
-    /// — the R1021 [`pinion_runtime::CoreShell::publish_pane_viewports`]
-    /// precedent — lets a secondary window's pane JOIN the Tab order / click-
-    /// focus set without REPLACING the primary's enumeration (a naive whole-
-    /// `tab_order` replace from each window would clobber the primary's docked
-    /// panes, the exact hazard the pre-R25.1 gate guarded against). A single-
-    /// window binding holds one entry, so the union equals that window's tags
-    /// verbatim — byte-identical to the pre-R25.1 primary-only enumeration. The
-    /// matching removal edge is [`Self::remove_window`], which drops the entry
-    /// and re-folds so a closed window's tags leave the union.
-    focusable_tags_per_window: HashMap<String, Vec<String>>,
 
     /// R763 §5.36 §5.22 — in-progress pointer-driven text selection.
     ///
@@ -703,18 +593,8 @@ impl<V: WidgetView> ShellCore<V> {
             access_emit_initial: true,
             last_access_focus: None,
             redraw_requested: false,
-            redraw_requested_per_window: HashMap::new(),
+            window_states: HashMap::new(),
             cross_preview_target: None,
-            last_paint_instants: HashMap::new(),
-            target_fps_per_window: HashMap::new(),
-            immediate_subtree_per_window: HashMap::new(),
-            pending_immediate_dt_per_window: HashMap::new(),
-            sim_accumulator_per_window: HashMap::new(),
-            fragment_cache_stats_per_window: HashMap::new(),
-            frame_timings_per_window: HashMap::new(),
-            render_fidelity_per_window: HashMap::new(),
-            maximized_per_window: HashMap::new(),
-            focusable_tags_per_window: HashMap::new(),
             text_select_drag: None,
             os_focused_window: None,
             key_press_owner: HashMap::new(),
@@ -1134,10 +1014,36 @@ impl<V: WidgetView> ShellCore<V> {
         self.redraw_requested = true;
     }
 
+    /// R1193 §5.16 §5.28 §5.39 — read-only access to a window's consolidated
+    /// [`WindowState`], or `None` when the window has no entry yet. NEVER creates
+    /// an entry, so every per-axis read preserves its pre-R1193 `HashMap::get()`
+    /// "absent" semantics (a missing entry ≡ every axis at its absent-default).
+    fn window_state(&self, window_id: &str) -> Option<&WindowState> {
+        self.window_states.get(window_id)
+    }
+
+    /// R1193 §5.16 §5.28 §5.39 — mutable access to a window's consolidated
+    /// [`WindowState`], lazily inserting a default entry on first touch (the
+    /// pre-R1193 `entry().or_default()` / `insert()` write path). Use only on the
+    /// write side; reads go through [`Self::window_state`] so a read never mints
+    /// an entry.
+    fn window_state_mut(&mut self, window_id: &str) -> &mut WindowState {
+        self.window_states.entry(window_id.to_owned()).or_default()
+    }
+
+    /// R1193 §5.28 — take (and clear) a window's pending injected immediate-mode
+    /// `dt` (the `scene/tick` one-shot), or `None` if none is queued. Never
+    /// creates an entry. Extracted so `compute_paint_scene_internal` consumes the
+    /// injection in one line (the pre-R1193 `HashMap::remove` call shape).
+    fn take_pending_immediate_dt(&mut self, window_id: &str) -> Option<f32> {
+        self.window_states
+            .get_mut(window_id)
+            .and_then(|s| s.pending_immediate_dt.take())
+    }
+
     /// R680 atomic 2 §5.16 §5.41 — per-window redraw wake-up.
     ///
-    /// Sets the per-window flag in
-    /// [`Self::redraw_requested_per_window`] for the named
+    /// Sets [`WindowState::redraw_requested`] for the named
     /// `window_id`. [`crate::AppShell::drain_redraw_to_winit`]
     /// drains the flag and calls
     /// `Window::request_redraw` on ONLY that window's slot.
@@ -1154,8 +1060,7 @@ impl<V: WidgetView> ShellCore<V> {
     /// `Window::request_redraw` per drain (idempotent on the
     /// `bool` field).
     pub fn request_redraw_for_window(&mut self, window_id: &str) {
-        self.redraw_requested_per_window
-            .insert(window_id.to_owned(), true);
+        self.window_state_mut(window_id).redraw_requested = true;
     }
 
     /// R680 atomic 2 §5.16 §5.41 — drain a single window's redraw
@@ -1169,9 +1074,9 @@ impl<V: WidgetView> ShellCore<V> {
     /// every active window slot to determine the per-window
     /// `Window::request_redraw` dispatch.
     pub fn take_redraw_request_for_window(&mut self, window_id: &str) -> bool {
-        self.redraw_requested_per_window
+        self.window_states
             .get_mut(window_id)
-            .is_some_and(std::mem::take)
+            .is_some_and(|s| std::mem::take(&mut s.redraw_requested))
     }
 
     /// R680 atomic 2 §5.16 §5.41 — peek-only probe for the
@@ -1182,10 +1087,8 @@ impl<V: WidgetView> ShellCore<V> {
     /// caller targeted window X" without consuming the signal.
     #[must_use]
     pub fn redraw_requested_for_window(&self, window_id: &str) -> bool {
-        self.redraw_requested_per_window
-            .get(window_id)
-            .copied()
-            .unwrap_or(false)
+        self.window_state(window_id)
+            .is_some_and(|s| s.redraw_requested)
     }
 
     /// R681 §2 #4 atomic 2 §5.16 §5.28 — per-window last paint
@@ -1201,7 +1104,8 @@ impl<V: WidgetView> ShellCore<V> {
     /// "paint ASAP" and dispatches an immediate redraw).
     #[must_use]
     pub fn last_paint_instant_for_window(&self, window_id: &str) -> Option<Instant> {
-        self.last_paint_instants.get(window_id).copied()
+        self.window_state(window_id)
+            .and_then(|s| s.last_paint_instant)
     }
 
     /// R681 §2 #4 atomic 3 §5.16 §5.28 — per-window target fps
@@ -1218,7 +1122,7 @@ impl<V: WidgetView> ShellCore<V> {
     /// re-calling this method with a different `fps` is the
     /// canonical "change pacing on the fly" surface.
     pub fn set_target_fps_for_window(&mut self, window_id: &str, fps: u32) {
-        self.target_fps_per_window.insert(window_id.to_owned(), fps);
+        self.window_state_mut(window_id).target_fps = Some(fps);
         // R831 §2 #4 §5.28 — pausing (`fps == 0`) snaps the immediate-mode
         // accumulator back to a zero phase, so an AI client that then
         // frame-steps via `scene/tick` advances from a known fixed-step
@@ -1228,7 +1132,11 @@ impl<V: WidgetView> ShellCore<V> {
         // the post-pause accumulator (fresh zero phase) so live wall-clock
         // restarts cleanly.
         if fps == 0 {
-            if let Some(acc) = self.sim_accumulator_per_window.get_mut(window_id) {
+            if let Some(acc) = self
+                .window_states
+                .get_mut(window_id)
+                .and_then(|s| s.sim_accumulator.as_mut())
+            {
                 acc.reset();
             }
         }
@@ -1245,7 +1153,15 @@ impl<V: WidgetView> ShellCore<V> {
     /// pause edge (the R831 zero-phase snap is the `fps == 0` arm's
     /// frame-step contract).
     pub fn clear_target_fps_for_window(&mut self, window_id: &str) {
-        self.target_fps_per_window.remove(window_id);
+        if let Some(state) = self.window_states.get_mut(window_id) {
+            state.target_fps = None;
+            // R1193 — prune an entry emptied by clearing its last axis, so
+            // `remove_window`'s "carried an entry" return stays exact (the
+            // pre-R1193 per-map `remove` left no lingering key).
+            if state.is_empty() {
+                self.window_states.remove(window_id);
+            }
+        }
     }
 
     /// R885 / R888 §5.49 — pre-resolve the per-window out-of-band READ
@@ -1307,7 +1223,7 @@ impl<V: WidgetView> ShellCore<V> {
     /// [`pinion_runtime::frame_pacing::default_window_frame_policy`]).
     #[must_use]
     pub fn target_fps_for_window(&self, window_id: &str) -> Option<u32> {
-        self.target_fps_per_window.get(window_id).copied()
+        self.window_state(window_id).and_then(|s| s.target_fps)
     }
 
     /// R681 §2 #4 §5.16 — publish whether `window_id`'s most recently
@@ -1317,8 +1233,7 @@ impl<V: WidgetView> ShellCore<V> {
     /// read), keeping the immediate-mode flag in the same home as the
     /// `target_fps` override so the two pacing inputs never drift.
     pub fn set_immediate_subtree_for_window(&mut self, window_id: &str, has_immediate: bool) {
-        self.immediate_subtree_per_window
-            .insert(window_id.to_owned(), has_immediate);
+        self.window_state_mut(window_id).immediate_subtree = has_immediate;
     }
 
     /// R681 §2 #4 §5.16 — whether `window_id`'s last painted scene
@@ -1329,10 +1244,8 @@ impl<V: WidgetView> ShellCore<V> {
     /// [`pinion_runtime::frame_pacing::frame_budget_for_window`].
     #[must_use]
     pub fn immediate_subtree_for_window(&self, window_id: &str) -> bool {
-        self.immediate_subtree_per_window
-            .get(window_id)
-            .copied()
-            .unwrap_or(false)
+        self.window_state(window_id)
+            .is_some_and(|s| s.immediate_subtree)
     }
 
     /// R682 §5.16 atomic 3 — publish a [`FragmentCacheStats`]
@@ -1341,8 +1254,7 @@ impl<V: WidgetView> ShellCore<V> {
     /// the GUI-agnostic substrate can surface cache observability to
     /// RPC / tests without exposing `vello::Scene` references.
     pub fn publish_fragment_cache_stats(&mut self, window_id: &str, stats: FragmentCacheStats) {
-        self.fragment_cache_stats_per_window
-            .insert(window_id.to_owned(), stats);
+        self.window_state_mut(window_id).fragment_cache_stats = Some(stats);
     }
 
     /// R907 §5.16 §5.7 — record one painted frame's phase breakdown
@@ -1350,11 +1262,11 @@ impl<V: WidgetView> ShellCore<V> {
     /// surface-side `AppShell::render_window` calls this after each
     /// paint cycle with the measured build / encode / render / total
     /// microseconds. Lazily inserts a fresh accumulator on the
-    /// window's first paint (the `sim_accumulator_per_window` pattern).
+    /// window's first paint (the `sim_accumulator` pattern).
     pub fn record_frame_timing(&mut self, window_id: &str, timing: FrameTiming) {
-        self.frame_timings_per_window
-            .entry(window_id.to_owned())
-            .or_default()
+        self.window_state_mut(window_id)
+            .frame_timings
+            .get_or_insert_with(FrameTimingStats::default)
             .record(timing);
     }
 
@@ -1378,32 +1290,25 @@ impl<V: WidgetView> ShellCore<V> {
         scene: &pinion_core::Scene,
     ) {
         let paint_seq = self
-            .render_fidelity_per_window
-            .get(window_id)
+            .window_state(window_id)
+            .and_then(|s| s.render_fidelity.as_ref())
             .map_or(1, |prev| prev.paint_seq.wrapping_add(1));
-        self.render_fidelity_per_window.insert(
-            window_id.to_owned(),
-            pinion_runtime::RenderFidelity {
-                paint_seq,
-                presented_at_ms: pinion_runtime::render_fidelity::elapsed_ms(),
-                present_ok,
-                viewport_w: viewport.0,
-                viewport_h: viewport.1,
-                grids: pinion_runtime::render_fidelity::grid_fidelity(scene),
-            },
-        );
+        self.window_state_mut(window_id).render_fidelity = Some(pinion_runtime::RenderFidelity {
+            paint_seq,
+            presented_at_ms: pinion_runtime::render_fidelity::elapsed_ms(),
+            present_ok,
+            viewport_w: viewport.0,
+            viewport_h: viewport.1,
+            grids: pinion_runtime::render_fidelity::grid_fidelity(scene),
+        });
     }
 
     /// R683 §5.16 §5.41 — drop every shell-side per-window state
     /// entry for `window_id`.
     ///
-    /// Walks the per-window `HashMap`s lifted onto `ShellCore` since
-    /// R680 atomic 2 / R681 atomic 3 / R682 atomic 3 / R829 / R831 / R25.1
-    /// (`redraw_requested_per_window`, `last_paint_instants`,
-    /// `target_fps_per_window`, `fragment_cache_stats_per_window`,
-    /// `frame_timings_per_window`, `pending_immediate_dt_per_window`,
-    /// `sim_accumulator_per_window`, `focusable_tags_per_window`) and drops the
-    /// entry keyed by `window_id`. Then forwards into
+    /// Drops this window's consolidated [`WindowState`] entry (R1193 — ONE
+    /// removal for every per-window axis: redraw / paint-clock / pacing /
+    /// profiling / chrome / focus), then forwards into
     /// [`pinion_runtime::CoreShell::remove_window`] which drains the
     /// runtime-side per-window state (`routers`, `window_owners`).
     ///
@@ -1432,28 +1337,14 @@ impl<V: WidgetView> ShellCore<V> {
         if window_id == pinion_runtime::DEFAULT_WINDOW {
             return false;
         }
-        let shell_side = self.redraw_requested_per_window.remove(window_id).is_some()
-            | self.last_paint_instants.remove(window_id).is_some()
-            | self.target_fps_per_window.remove(window_id).is_some()
-            | self
-                .pending_immediate_dt_per_window
-                .remove(window_id)
-                .is_some()
-            | self.sim_accumulator_per_window.remove(window_id).is_some()
-            | self
-                .fragment_cache_stats_per_window
-                .remove(window_id)
-                .is_some()
-            | self.frame_timings_per_window.remove(window_id).is_some()
-            | self.render_fidelity_per_window.remove(window_id).is_some()
-            // R1123.1 — drop the maximized cache too, else a closed window's
-            // entry leaks and a reused id (torn-off panels mint runtime ids)
-            // would inherit stale maximized state (wrong chrome glyph). The
-            // immediate-subtree pacing flag had the same pre-existing omission
-            // (R681) — cleared here as the matching removal edge for both.
-            | self.maximized_per_window.remove(window_id).is_some()
-            | self.immediate_subtree_per_window.remove(window_id).is_some()
-            | self.focusable_tags_per_window.remove(window_id).is_some();
+        // R1193 — ONE removal drops every per-window axis at once, the payoff of
+        // the `WindowState` consolidation. The pre-R1193 body OR-ed 11 separate
+        // `*_per_window.remove(...)` calls, and the R1123.1 / R681 leak class was
+        // exactly "a new per-window map was added but not listed here, so a reused
+        // window id inherited its stale entry (wrong maximized glyph / pacing)." A
+        // new per-window axis is now a `WindowState` field, cleared by this single
+        // entry removal — teardown can no longer fall out of sync with storage.
+        let shell_side = self.window_states.remove(window_id).is_some();
         // R25.1 §5.39 — re-fold the focus enumeration without the closed
         // window's tags. Idempotent when the window held no focusables (the
         // union is unchanged and `update_focusable_tags` re-finds the focused
@@ -1519,7 +1410,8 @@ impl<V: WidgetView> ShellCore<V> {
     /// or human visual review.
     #[must_use]
     pub fn fragment_cache_stats_for_window(&self, window_id: &str) -> Option<FragmentCacheStats> {
-        self.fragment_cache_stats_per_window.get(window_id).copied()
+        self.window_state(window_id)
+            .and_then(|s| s.fragment_cache_stats)
     }
 
     /// R907 §5.16 §5.7 — project the window's rolling
@@ -1537,8 +1429,8 @@ impl<V: WidgetView> ShellCore<V> {
     #[must_use]
     pub fn frame_timings_for_window(&self, window_id: &str) -> Option<FrameTimingsSnapshot> {
         let budget_us = self.jank_budget_us_for_window(window_id);
-        self.frame_timings_per_window
-            .get(window_id)
+        self.window_state(window_id)
+            .and_then(|s| s.frame_timings.as_ref())
             .and_then(|stats| stats.snapshot(budget_us))
     }
 
@@ -1552,7 +1444,8 @@ impl<V: WidgetView> ShellCore<V> {
         &self,
         window_id: &str,
     ) -> Option<pinion_runtime::RenderFidelity> {
-        self.render_fidelity_per_window.get(window_id).cloned()
+        self.window_state(window_id)
+            .and_then(|s| s.render_fidelity.clone())
     }
 
     /// R925 §5.16 §5.7 — the per-frame budget (µs) the window's frame
@@ -1591,9 +1484,13 @@ impl<V: WidgetView> ShellCore<V> {
     /// harness consume this to verify per-window publish wiring
     /// without invoking `WidgetView::windows()`.
     pub fn fragment_cache_stat_windows(&self) -> impl Iterator<Item = &str> + '_ {
-        self.fragment_cache_stats_per_window
-            .keys()
-            .map(String::as_str)
+        // R1193 — filter by the field's presence, NOT all `window_states` keys: a
+        // window may hold a `WindowState` for another axis (e.g. maximized) with
+        // no published fragment stats, and must not be reported here.
+        self.window_states
+            .iter()
+            .filter(|(_, s)| s.fragment_cache_stats.is_some())
+            .map(|(k, _)| k.as_str())
     }
 
     /// R51.83 §5.40 / R1072 §5.37 — the §5.36 [`LayoutCache`] (mutable) and the
@@ -2682,9 +2579,9 @@ impl<V: WidgetView> ShellCore<V> {
                     // a needless repaint.
                     if dt > 0.0 {
                         *self
-                            .pending_immediate_dt_per_window
-                            .entry(window_id.to_owned())
-                            .or_insert(0.0) += dt;
+                            .window_state_mut(window_id)
+                            .pending_immediate_dt
+                            .get_or_insert(0.0) += dt;
                         self.request_redraw_for_window(window_id);
                     }
                 }
@@ -3315,10 +3212,10 @@ impl<V: WidgetView> ShellCore<V> {
         let window_key = window_id.unwrap_or(pinion_runtime::DEFAULT_WINDOW);
         let now = Instant::now();
         let raw_dt = self
-            .last_paint_instants
-            .get(window_key)
-            .map_or(0.0_f32, |prev| now.duration_since(*prev).as_secs_f32());
-        self.last_paint_instants.insert(window_key.to_owned(), now);
+            .window_state(window_key)
+            .and_then(|s| s.last_paint_instant)
+            .map_or(0.0_f32, |prev| now.duration_since(prev).as_secs_f32());
+        self.window_state_mut(window_key).last_paint_instant = Some(now);
         // R51.145 §5.28 — clamp before reaching the spring solver +
         // the view fn so background-resume / debugger-pause does not
         // destabilize the semi-implicit Euler integrator. Healthy
@@ -3570,8 +3467,7 @@ impl<V: WidgetView> ShellCore<V> {
         //     repaint (a click forwarding `on_pointer_down`, a focus-ring
         //     redraw, a resize) does NOT fast-forward a long-paused game;
         //   - the clamped wall-clock delta otherwise (the live loop).
-        let sim_dt = if let Some(injected) = self.pending_immediate_dt_per_window.remove(window_key)
-        {
+        let sim_dt = if let Some(injected) = self.take_pending_immediate_dt(window_key) {
             injected
         } else if paused {
             0.0
@@ -3585,9 +3481,9 @@ impl<V: WidgetView> ShellCore<V> {
         // fires. A frame whose accumulated time is still sub-fixed (or a
         // frozen/paused frame) runs zero steps and leaves the drivers
         // untouched.
-        self.sim_accumulator_per_window
-            .entry(window_key.to_owned())
-            .or_default()
+        self.window_state_mut(window_key)
+            .sim_accumulator
+            .get_or_insert_with(pinion_runtime::FixedTimestep::default)
             .advance(sim_dt, |fixed| {
                 paint_scene.tick_immediate_mode(Duration::from_secs_f32(fixed));
             });
@@ -3981,10 +3877,7 @@ impl<V: WidgetView> ShellCore<V> {
     /// ([`Self::target_fps_for_window`] / [`Self::immediate_subtree_for_window`]).
     #[must_use]
     pub fn maximized_for_window(&self, window_id: &str) -> bool {
-        self.maximized_per_window
-            .get(window_id)
-            .copied()
-            .unwrap_or(false)
+        self.window_state(window_id).is_some_and(|s| s.maximized)
     }
 
     /// (R1123 §5.16 §5.39) Record `window_id`'s maximized state. Called by
@@ -3993,8 +3886,7 @@ impl<V: WidgetView> ShellCore<V> {
     /// button is the usual trigger, but a tiling WM can maximize it too). The
     /// scene producer reads it back via [`Self::maximized_for_window`].
     pub fn set_maximized_for_window(&mut self, window_id: &str, maximized: bool) {
-        self.maximized_per_window
-            .insert(window_id.to_owned(), maximized);
+        self.window_state_mut(window_id).maximized = maximized;
     }
 
     /// (R1121 §5.16 §5.21) Logical-pixel height the window content is inset by
@@ -5291,8 +5183,7 @@ impl<V: WidgetView> ShellCore<V> {
     /// so the union equals that window's tags verbatim: byte-identical to the
     /// pre-R25.1 primary-only enumeration.
     fn refresh_window_focusables(&mut self, window_key: &str, tags: Vec<String>) {
-        self.focusable_tags_per_window
-            .insert(window_key.to_owned(), tags);
+        self.window_state_mut(window_key).focusable_tags = Some(tags);
         let union = self.union_focusable_tags();
         self.focus.update_focusable_tags(union);
     }
@@ -5305,8 +5196,8 @@ impl<V: WidgetView> ShellCore<V> {
     /// joins the order once, at its earliest window).
     ///
     /// R26 §5.39 §5.16 — the window set is the union of the *painted* windows
-    /// ([`Self::focusable_tags_per_window`]) AND the windows the binding
-    /// currently *declares* via [`WidgetView::windows_signal`]. A window the
+    /// (those whose [`WindowState::focusable_tags`] is set) AND the windows the
+    /// binding currently *declares* via [`WidgetView::windows_signal`]. A window the
     /// binding has just declared — a torn-off undock pane pushed into the signal
     /// — but whose OS window has not first-painted yet still contributes, via
     /// [`Self::window_focusables`] deriving its focusables from the pure
@@ -5328,9 +5219,10 @@ impl<V: WidgetView> ShellCore<V> {
     fn union_focusable_tags(&self) -> Vec<String> {
         let declared = self.declared_window_ids();
         let mut others: Vec<&str> = self
-            .focusable_tags_per_window
-            .keys()
-            .map(String::as_str)
+            .window_states
+            .iter()
+            .filter(|(_, s)| s.focusable_tags.is_some())
+            .map(|(k, _)| k.as_str())
             .chain(declared.iter().map(String::as_str))
             .filter(|k| *k != pinion_runtime::DEFAULT_WINDOW)
             .collect();
@@ -5381,7 +5273,10 @@ impl<V: WidgetView> ShellCore<V> {
     /// ([`Self::refresh_focusable_from_view`]) already depends on, now exercised
     /// for secondary windows too. No layout / viewport pass is needed.
     fn window_focusables(&self, window_id: &str) -> Vec<String> {
-        if let Some(tags) = self.focusable_tags_per_window.get(window_id) {
+        if let Some(tags) = self
+            .window_state(window_id)
+            .and_then(|s| s.focusable_tags.as_ref())
+        {
             return tags.clone();
         }
         let cached_state = *self.core.cached_state();
@@ -6082,17 +5977,20 @@ mod r25_focus_union_tests {
         // `new()` boot-seeds the primary (`DEFAULT_WINDOW`) enumeration; a
         // secondary window has contributed nothing yet.
         assert!(
-            !sc.focusable_tags_per_window.contains_key("pane-0"),
+            sc.window_state("pane-0")
+                .and_then(|s| s.focusable_tags.as_ref())
+                .is_none(),
             "boot: the secondary window has no focus contribution",
         );
 
         // Paint the secondary (undock) window. Pre-R25.1 the `DEFAULT_WINDOW`
         // gate dropped this enumeration entirely; now the paint records the
-        // window's focusable contribution into the per-window map.
+        // window's focusable contribution into its `WindowState`.
         let _ = sc.compute_paint_scene_for_window("pane-0", 64, 48);
 
         assert_eq!(
-            sc.focusable_tags_per_window.get("pane-0"),
+            sc.window_state("pane-0")
+                .and_then(|s| s.focusable_tags.as_ref()),
             Some(&vec![FIXTURE_TAG.to_owned()]),
             "the secondary-window paint records its focusables (no primary gate)",
         );
@@ -6128,7 +6026,9 @@ mod r25_focus_union_tests {
         // record a per-window focus contribution (the R1006 contract).
         let _ = sc.compute_paint_scene_pure_for_window("pane-0", 64, 48);
         assert!(
-            !sc.focusable_tags_per_window.contains_key("pane-0"),
+            sc.window_state("pane-0")
+                .and_then(|s| s.focusable_tags.as_ref())
+                .is_none(),
             "the pure paint mirror must not enumerate focus (R1006 contract)",
         );
     }
@@ -7430,6 +7330,76 @@ mod r863_bounds_union_tests {
             nodes[0].bounds,
             Some(scrolled_rect),
             "single-fragment node = its own tag"
+        );
+    }
+}
+
+#[cfg(test)]
+mod r1193_window_state_tests {
+    //! R1193 §5.16 §5.28 §5.39 — the per-window `WindowState` consolidation: 11
+    //! formerly-parallel `*_per_window` maps became one
+    //! `HashMap<String, WindowState>`. These pin, through the PUBLIC accessors,
+    //! the invariants the consolidation must preserve — per-axis presence
+    //! isolation, one-shot teardown, and the empty-entry prune.
+    use crate::ShellCore;
+    use pinion_core::test_fixtures::EchoButtonFixture;
+
+    /// Setting ONE axis for a window must not make another axis's presence-gated
+    /// view include it — the crux of the consolidation (an entry created for one
+    /// axis must not read as present for the others).
+    #[test]
+    fn r1193_per_window_axes_are_presence_isolated() {
+        let mut sc = ShellCore::<EchoButtonFixture>::new();
+        sc.set_maximized_for_window("pane-9", true);
+        assert!(
+            sc.maximized_for_window("pane-9"),
+            "the axis we set reads back"
+        );
+        // The fragment-stats window set filters by fragment presence, NOT by
+        // "has any WindowState" — a maximized-only window must be excluded.
+        assert!(
+            !sc.fragment_cache_stat_windows().any(|w| w == "pane-9"),
+            "a maximized-only window is not a fragment-stats window",
+        );
+        // ...and its never-touched axes read their absent-defaults.
+        assert_eq!(sc.fragment_cache_stats_for_window("pane-9"), None);
+        assert_eq!(sc.target_fps_for_window("pane-9"), None);
+        assert!(!sc.immediate_subtree_for_window("pane-9"));
+        assert!(!sc.redraw_requested_for_window("pane-9"));
+    }
+
+    /// `remove_window` drops EVERY axis in one call (the payoff: no per-window
+    /// map can be forgotten in teardown) and reports whether state was carried.
+    #[test]
+    fn r1193_remove_window_drops_every_axis_at_once() {
+        let mut sc = ShellCore::<EchoButtonFixture>::new();
+        sc.set_maximized_for_window("pane-9", true);
+        sc.set_target_fps_for_window("pane-9", 30);
+        sc.request_redraw_for_window("pane-9");
+        assert!(
+            sc.remove_window("pane-9"),
+            "remove reports the carried state"
+        );
+        assert!(!sc.maximized_for_window("pane-9"));
+        assert_eq!(sc.target_fps_for_window("pane-9"), None);
+        assert!(!sc.redraw_requested_for_window("pane-9"));
+        assert!(
+            !sc.remove_window("pane-9"),
+            "a re-remove finds nothing (every axis was dropped)",
+        );
+    }
+
+    /// Clearing a window's SOLE axis prunes the entry, so `remove_window`'s
+    /// "carried an entry" return matches the pre-R1193 per-map behavior (no
+    /// lingering all-default `WindowState`).
+    #[test]
+    fn r1193_clearing_the_sole_axis_prunes_the_entry() {
+        let mut sc = ShellCore::<EchoButtonFixture>::new();
+        sc.set_target_fps_for_window("pane-9", 30);
+        sc.clear_target_fps_for_window("pane-9");
+        assert!(
+            !sc.remove_window("pane-9"),
+            "clearing the only axis leaves no stale entry",
         );
     }
 }

@@ -20768,6 +20768,52 @@
         "mnemosyne upstream: add a pre-freeze existence check for changelog impact_refs section ids (typo -> orphan -> frozen, unamendable)."
       ]
     },
+    "R1193": {
+      "decision_summary": "R1193 per-window WindowState consolidation: ShellCore's 11 lockstep *_per_window HashMaps become one HashMap<String, WindowState>, so a window's teardown drops ONE entry (retires the R1123.1/R681 add-a-map-then-forget-to-clear leak class). Behavior-preserving; the audit's charter-accretion fix.",
+      "changes_bullets": [
+        "pinion-shell substrate.rs: new WindowState struct (11 axes) + window_state / window_state_mut accessors replace 11 parallel *_per_window: HashMap<String,T> fields. Presence-meaningful axes are Option<T> (absent = never-set for THAT axis, distinct from a default value) so an entry created for one axis never reads as present for another; natural-default flags (redraw_requested / immediate_subtree / maximized) stay plain bool.",
+        "remove_window collapses 11 OR-ed .remove() calls into one window_states.remove(id).is_some() — the payoff: a new per-window axis is now a WindowState field cleared by the single removal, not another map a future round must remember to add to teardown (the exact leak class the old body's R1123.1/R681 comment documented).",
+        "presence-gated views (fragment_cache_stat_windows, union_focusable_tags) filter by the field's .is_some(), NOT all window_states keys; clear_target_fps_for_window prunes an emptied entry (WindowState::is_empty) so remove_window's return stays exact; take_pending_immediate_dt helper keeps compute_paint_scene_internal within the 100-line budget.",
+        "AppShell already consolidated its per-window state into WindowSlot; this makes ShellCore symmetric (the R1192-re-labeled risk-gated charter accretion, now paid)."
+      ],
+      "verification_bullets": [
+        "cargo test --workspace: 198 targets ok / 0 failed (7919 assertions), incl. all per-window families that exercise the presence semantics at risk: R683 remove-drain, R907 timing-entry-drop, R1123.1 maximized-leak, R25 focus-union, pacing/fps, immediate-mode.",
+        "3 new invariant tests pin the crux: per-axis presence isolation (a maximized-only window is excluded from the fragment-stats + focus-union window sets), remove_window drops every axis at once + reports carried state, clearing the sole axis prunes the entry.",
+        "Independent adversarial review (per-field presence-semantics lens): EXACTLY behavior-preserving, 0 defects across all 40 access sites + 7 hazard classes — verified reads never mint entries, both presence-gated views filter by field presence, all Option-vs-bool categorizations correct, remove_window / is_empty / consume paths byte-equivalent.",
+        "clippy --workspace --all-targets --features pinion-runtime/vello + fmt clean; cargo doc: new WindowState intra-doc links resolve, no new broken links."
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.28",
+        "5.39"
+      ],
+      "carry_forward_bullets": [
+        "L2 residual (pre-R1193, unchanged): WindowPolicy is resolved twice per paint (apply_resize_border + window_chrome_for) — minor, resolve-once threading touches the hot paint path.",
+        "WindowState::is_empty treats an explicit-false bool as empty (documented): only theoretically observable via remove_window's return if a FUTURE clear_target_fps caller omits the request_redraw the sole current caller pairs it with — currently unreachable."
+      ],
+      "publishable_decision_summary": "R1193 per-window WindowState consolidation: ShellCore's 11 lockstep *_per_window HashMaps become one HashMap<String, WindowState>, so a window's teardown drops ONE entry (retires the R1123.1/R681 add-a-map-then-forget-to-clear leak class). Behavior-preserving; the audit's charter-accretion fix.",
+      "publishable_changes_bullets": [
+        "pinion-shell substrate.rs: new WindowState struct (11 axes) + window_state / window_state_mut accessors replace 11 parallel *_per_window: HashMap<String,T> fields. Presence-meaningful axes are Option<T> (absent = never-set for THAT axis, distinct from a default value) so an entry created for one axis never reads as present for another; natural-default flags (redraw_requested / immediate_subtree / maximized) stay plain bool.",
+        "remove_window collapses 11 OR-ed .remove() calls into one window_states.remove(id).is_some() — the payoff: a new per-window axis is now a WindowState field cleared by the single removal, not another map a future round must remember to add to teardown (the exact leak class the old body's R1123.1/R681 comment documented).",
+        "presence-gated views (fragment_cache_stat_windows, union_focusable_tags) filter by the field's .is_some(), NOT all window_states keys; clear_target_fps_for_window prunes an emptied entry (WindowState::is_empty) so remove_window's return stays exact; take_pending_immediate_dt helper keeps compute_paint_scene_internal within the 100-line budget.",
+        "AppShell already consolidated its per-window state into WindowSlot; this makes ShellCore symmetric (the R1192-re-labeled risk-gated charter accretion, now paid)."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace: 198 targets ok / 0 failed (7919 assertions), incl. all per-window families that exercise the presence semantics at risk: R683 remove-drain, R907 timing-entry-drop, R1123.1 maximized-leak, R25 focus-union, pacing/fps, immediate-mode.",
+        "3 new invariant tests pin the crux: per-axis presence isolation (a maximized-only window is excluded from the fragment-stats + focus-union window sets), remove_window drops every axis at once + reports carried state, clearing the sole axis prunes the entry.",
+        "Independent adversarial review (per-field presence-semantics lens): EXACTLY behavior-preserving, 0 defects across all 40 access sites + 7 hazard classes — verified reads never mint entries, both presence-gated views filter by field presence, all Option-vs-bool categorizations correct, remove_window / is_empty / consume paths byte-equivalent.",
+        "clippy --workspace --all-targets --features pinion-runtime/vello + fmt clean; cargo doc: new WindowState intra-doc links resolve, no new broken links."
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.28",
+        "5.39"
+      ],
+      "publishable_carry_forward_bullets": [
+        "L2 residual (pre-R1193, unchanged): WindowPolicy is resolved twice per paint (apply_resize_border + window_chrome_for) — minor, resolve-once threading touches the hot paint path.",
+        "WindowState::is_empty treats an explicit-false bool as empty (documented): only theoretically observable via remove_window's return if a FUTURE clear_target_fps caller omits the request_redraw the sole current caller pairs it with — currently unreachable."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
