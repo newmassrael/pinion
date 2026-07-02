@@ -35,6 +35,7 @@ use pinion_core::reactive::{Effect, Signal};
 use pinion_a11y::AccessTreeBuilder;
 use pinion_core::event::WheelDelta;
 use pinion_core::scene::BoxNode;
+use pinion_core::style::CursorHint;
 use pinion_runtime::{CommandExecutor, HandlerRegistry, PointerId, image_cache, paint_adapter};
 use vello::Scene as VelloScene;
 use vello::kurbo::Affine;
@@ -151,6 +152,22 @@ fn resize_cursor_for_action(action: ChromeAction) -> Option<CursorIcon> {
         ResizeDirection::NorthWest | ResizeDirection::SouthEast => CursorIcon::NwseResize,
         ResizeDirection::NorthEast | ResizeDirection::SouthWest => CursorIcon::NeswResize,
     })
+}
+
+/// (R1196 §5.16 §5.39) Map a shell-neutral [`CursorHint`] a scene node declared
+/// (via [`LayoutStyle::cursor`](pinion_core::style::LayoutStyle::cursor)) to the
+/// winit [`CursorIcon`] — the ONE place a node's cursor hint meets winit, the
+/// generic peer of [`resize_cursor_for_action`]'s chrome-tag→cursor role. The
+/// generic node-hint path (a splitter divider, any future hinted widget) and the
+/// R1189 chrome-resize path are two producers of the same hover cursor; this
+/// maps the node-hint half. Exhaustive, so a new `CursorHint` variant fails to
+/// compile until it is handled here — cross-crate exhaustiveness by the type
+/// system (the R1190 pattern). Pure, unit-tested without a live window.
+fn cursor_icon_for_hint(hint: CursorHint) -> CursorIcon {
+    match hint {
+        CursorHint::ColResize => CursorIcon::EwResize,
+        CursorHint::RowResize => CursorIcon::NsResize,
+    }
 }
 
 /// (R1189 §5.16 §5.39) The min-change LATCH decision for a window's hover cursor:
@@ -901,18 +918,26 @@ impl<V: WidgetView> AppShell<V> {
             .map_or(pinion_runtime::DEFAULT_WINDOW, |s| &*s.spec_id);
         self.core
             .cursor_moved_for_window(spec_id, PointerId::MOUSE, lx, ly);
-        // R1189 §5.16 §5.39 — resize-border hover affordance: the cursor_moved
-        // above just re-resolved this window's hover target, so read it and, if it
-        // is a client-side resize region, command the matching resize cursor (a
-        // borderless CSD window has no OS frame to give it for free). Reuses the
-        // press-side `chrome_action_for_tag` tag→direction SSOT; `spec_id`'s borrow
-        // (self.windows) + the self.core read both end here before the latch's
-        // `get_mut`.
+        // R1196 §5.16 §5.39 — hover cursor affordance, two producers resolved in
+        // precedence: (1) the generic node-hint path — the deepest scene node
+        // under the pointer that declares a `LayoutStyle::cursor` (a splitter
+        // divider, any future hinted widget), mapped by `cursor_icon_for_hint`;
+        // else (2) the R1189 chrome-resize path — a client-side window resize
+        // region, via the press-side `chrome_action_for_tag` SSOT. The two never
+        // overlap in practice (a resize region carries no cursor hint, a hinted
+        // widget is not a `WINDOW_RESIZE_*` tag), so the order only sets the
+        // tie-break. `spec_id`'s borrow (self.windows) + the self.core reads all
+        // end here before the latch's `get_mut`.
         let desired_cursor = self
             .core
-            .hover_target_for_window(spec_id, PointerId::MOUSE)
-            .and_then(chrome_action_for_tag)
-            .and_then(resize_cursor_for_action);
+            .cursor_hint_for_window(spec_id, PointerId::MOUSE)
+            .map(cursor_icon_for_hint)
+            .or_else(|| {
+                self.core
+                    .hover_target_for_window(spec_id, PointerId::MOUSE)
+                    .and_then(chrome_action_for_tag)
+                    .and_then(resize_cursor_for_action)
+            });
         self.command_resize_cursor(window_id, desired_cursor);
         // R1147 §5.51 — drive the cross-desktop drag preview window (a no-op
         // unless a preview-eligible drag is in flight in live mode).
@@ -4699,6 +4724,25 @@ mod r1121_chrome_action_tests {
         assert_eq!(cursor_for(pinion_overlay::WINDOW_CHROME_CLOSE_TAG), None);
         assert_eq!(cursor_for(pinion_overlay::WINDOW_CHROME_MINIMIZE_TAG), None);
         assert_eq!(cursor_for("some-widget"), None);
+    }
+
+    #[test]
+    fn r1196_cursor_icon_for_hint_maps_resize_hints() {
+        use super::cursor_icon_for_hint;
+        use pinion_core::style::CursorHint;
+        use winit::window::CursorIcon;
+        // The generic node-hint → winit cursor map (the splitter divider path):
+        // a left-right col-resize is EwResize, an up-down row-resize NsResize —
+        // the same icons a W/E and N/S chrome edge command, so a divider and a
+        // window edge read identically.
+        assert_eq!(
+            cursor_icon_for_hint(CursorHint::ColResize),
+            CursorIcon::EwResize
+        );
+        assert_eq!(
+            cursor_icon_for_hint(CursorHint::RowResize),
+            CursorIcon::NsResize
+        );
     }
 
     #[test]

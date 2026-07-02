@@ -642,6 +642,29 @@ impl<V: WidgetView> ShellCore<V> {
         self.core.hover_target(pid)
     }
 
+    /// (R1196 §5.16 §5.39) Per-window read of the hover [`CursorHint`] the
+    /// deepest hinted node under the pointer requests — the cursor-axis sibling
+    /// of [`Self::hover_target_for_window`], grounding cursor-affordance tests in
+    /// data (the resolved hint) rather than a live winit cursor. `None` when the
+    /// pointer is over no hinted region.
+    #[must_use]
+    pub fn cursor_hint_for_window(
+        &self,
+        window_id: &str,
+        pid: PointerId,
+    ) -> Option<pinion_core::style::CursorHint> {
+        self.core.cursor_hint_for_window(window_id, pid)
+    }
+
+    /// (R1196 §5.16 §5.39) Single-window [`Self::cursor_hint_for_window`] (the
+    /// [`pinion_runtime::DEFAULT_WINDOW`] router), symmetric with
+    /// [`Self::hover_target`].
+    #[must_use]
+    pub fn cursor_hint(&self, pid: PointerId) -> Option<pinion_core::style::CursorHint> {
+        self.core
+            .cursor_hint_for_window(pinion_runtime::DEFAULT_WINDOW, pid)
+    }
+
     /// (R1188 §5.16 §5.49 §2 #2) Drain the window-control presses the RPC
     /// click drain detected this dispatch — `(canonical spec id, control)` in
     /// arrival order; the queue is left empty.

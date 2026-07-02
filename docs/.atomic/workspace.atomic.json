@@ -20916,6 +20916,52 @@
         "PR-46 gap (1) — the splitter divider hover cursor (the generic pinion-owned CursorHint seam, LayoutStyle interaction attribute + shell winit mapping) — remains for R1196, independent of this top-edge fix."
       ]
     },
+    "R1196": {
+      "decision_summary": "R1196 generic hover-cursor seam (PR-46 gap 1): a scene node declares a hover cursor via the new LayoutStyle.cursor interaction attribute (a shell-neutral CursorHint); the shell resolves the deepest hinted node under the pointer (Scene::cursor_hint_at) and maps it to a winit CursorIcon. view_splitter's divider handle now declares a col/row-resize cursor per orientation, so a splitter divider shows the resize cursor every IDE gives — the untagged handle keeps its drag routing. Runs parallel to R1189's chrome-resize cursor path (node-hint first, chrome-tag fallback); the two are mutually exclusive in practice.",
+      "changes_bullets": [
+        "pinion-core style.rs: new CursorHint {ColResize, RowResize} (shell-neutral, exhaustive) + LayoutStyle.cursor: Option<CursorHint> interaction attribute (sibling of focusable / drop_target, NOT snapshot-serialised) + with_cursor builder.",
+        "pinion-core scene.rs: Scene::cursor_hint() (per-node read) + Scene::cursor_hint_at(x, y) that mirrors hit_test's descent (topmost hitting child, scroll-offset translation, pointer-transparent skip) to resolve the deepest hinted node's cursor — orthogonal to tags and input routing.",
+        "pinion-runtime: InputRouter::cursor_hint(id) resolves the hint at cursor_position over last_paint_scene + ShellCore::cursor_hint_for_window — the cursor-axis sibling of hover_target.",
+        "pinion-shell: cursor_icon_for_hint(hint) -> winit CursorIcon (exhaustive) + handle_cursor_moved resolves the node-hint first, the R1189 chrome-tag path as fallback; ShellCore<V>::cursor_hint / cursor_hint_for_window read accessors (the AI-first introspection witness).",
+        "pinion-widget-paint splitter.rs: view_splitter's handle declares with_cursor(ColResize for Horizontal side-by-side / RowResize for Vertical stacked); the handle stays untagged (drag routing unchanged) so a consumer wires nothing new."
+      ],
+      "verification_bullets": [
+        "cargo test --workspace 0-fail: 4 pinion-core cursor_hint_at units (hinted-node resolution / deepest-wins with ancestor fallback / pointer-transparent skip / scroll-offset translation) + a pinion-runtime router cursor_hint end-to-end test (cursor over the divider resolves ColResize, off it resolves None, through the real router hit-test) + a pinion-widget-paint test that view_splitter's handle declares the orientation cursor + a pinion-shell cursor_icon_for_hint map test.",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic); cargo fmt --check clean; cargo doc broken-intra-doc-links clean for the new code.",
+        "The live splitter resize cursor is HW-gated (:0 / a real window), verified in the consumer session like R1189's hover cursor; the headless witness is the router cursor_hint accessor — the deepest-hinted-node resolution driven through the real router hit-test."
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.39"
+      ],
+      "carry_forward_bullets": [
+        "The R1189 chrome-resize cursor path stays tag-based (a parallel producer, node-hint-first / chrome-tag-fallback); folding it into node-hints (the overlay stamping a CursorHint on the eight resize-border nodes and retiring resize_cursor_for_action for a single cursor SSOT) is the deferred unification, kept separate so a path just touched in R1189 / R1195 is not refactored in the same round.",
+        "CursorHint is intentionally minimal (ColResize / RowResize, the splitter's two); it grows a variant per real consumer — the exhaustive shell match forces handling — not speculatively (a text I-beam / grab hand waits for a genuine consumer).",
+        "PR-46 is complete: gap (2) chrome top-edge resize band = R1195, gap (1) splitter divider cursor = R1196. A consumer (sprag) picks up both with zero change after a pinion bump; the live :0 verification runs in the consumer session."
+      ],
+      "publishable_decision_summary": "R1196 generic hover-cursor seam (PR-46 gap 1): a scene node declares a hover cursor via the new LayoutStyle.cursor interaction attribute (a shell-neutral CursorHint); the shell resolves the deepest hinted node under the pointer (Scene::cursor_hint_at) and maps it to a winit CursorIcon. view_splitter's divider handle now declares a col/row-resize cursor per orientation, so a splitter divider shows the resize cursor every IDE gives — the untagged handle keeps its drag routing. Runs parallel to R1189's chrome-resize cursor path (node-hint first, chrome-tag fallback); the two are mutually exclusive in practice.",
+      "publishable_changes_bullets": [
+        "pinion-core style.rs: new CursorHint {ColResize, RowResize} (shell-neutral, exhaustive) + LayoutStyle.cursor: Option<CursorHint> interaction attribute (sibling of focusable / drop_target, NOT snapshot-serialised) + with_cursor builder.",
+        "pinion-core scene.rs: Scene::cursor_hint() (per-node read) + Scene::cursor_hint_at(x, y) that mirrors hit_test's descent (topmost hitting child, scroll-offset translation, pointer-transparent skip) to resolve the deepest hinted node's cursor — orthogonal to tags and input routing.",
+        "pinion-runtime: InputRouter::cursor_hint(id) resolves the hint at cursor_position over last_paint_scene + ShellCore::cursor_hint_for_window — the cursor-axis sibling of hover_target.",
+        "pinion-shell: cursor_icon_for_hint(hint) -> winit CursorIcon (exhaustive) + handle_cursor_moved resolves the node-hint first, the R1189 chrome-tag path as fallback; ShellCore<V>::cursor_hint / cursor_hint_for_window read accessors (the AI-first introspection witness).",
+        "pinion-widget-paint splitter.rs: view_splitter's handle declares with_cursor(ColResize for Horizontal side-by-side / RowResize for Vertical stacked); the handle stays untagged (drag routing unchanged) so a consumer wires nothing new."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace 0-fail: 4 pinion-core cursor_hint_at units (hinted-node resolution / deepest-wins with ancestor fallback / pointer-transparent skip / scroll-offset translation) + a pinion-runtime router cursor_hint end-to-end test (cursor over the divider resolves ColResize, off it resolves None, through the real router hit-test) + a pinion-widget-paint test that view_splitter's handle declares the orientation cursor + a pinion-shell cursor_icon_for_hint map test.",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic); cargo fmt --check clean; cargo doc broken-intra-doc-links clean for the new code.",
+        "The live splitter resize cursor is HW-gated (:0 / a real window), verified in the consumer session like R1189's hover cursor; the headless witness is the router cursor_hint accessor — the deepest-hinted-node resolution driven through the real router hit-test."
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.39"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The R1189 chrome-resize cursor path stays tag-based (a parallel producer, node-hint-first / chrome-tag-fallback); folding it into node-hints (the overlay stamping a CursorHint on the eight resize-border nodes and retiring resize_cursor_for_action for a single cursor SSOT) is the deferred unification, kept separate so a path just touched in R1189 / R1195 is not refactored in the same round.",
+        "CursorHint is intentionally minimal (ColResize / RowResize, the splitter's two); it grows a variant per real consumer — the exhaustive shell match forces handling — not speculatively (a text I-beam / grab hand waits for a genuine consumer).",
+        "PR-46 is complete: gap (2) chrome top-edge resize band = R1195, gap (1) splitter divider cursor = R1196. A consumer (sprag) picks up both with zero change after a pinion bump; the live :0 verification runs in the consumer session."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

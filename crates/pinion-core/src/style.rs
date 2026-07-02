@@ -2709,6 +2709,48 @@ pub struct LayoutStyle {
     ///
     /// [`DropPoint`]: crate::external::DropPoint
     pub drop_target: bool,
+    /// (R1196 §5.16 §5.39) The hover mouse **cursor** this node requests when
+    /// the pointer is over it — a [`CursorHint`], or `None` (the default) for
+    /// the OS default arrow. The shell resolves the deepest hinted node under
+    /// the pointer ([`Scene::cursor_hint_at`](crate::Scene::cursor_hint_at)) and
+    /// maps the hint to a winit `CursorIcon`; pinion-core stays backend-agnostic
+    /// (the hint is a shell-neutral vocabulary, like the resize-edge / chrome
+    /// enums, with the winit mapping owned by the shell).
+    ///
+    /// The cursor is a property of the painted REGION, resolved by pointer
+    /// position — orthogonal to the node's [`tag`](crate::Scene::tag) and its
+    /// input routing. A splitter handle, for instance, is deliberately untagged
+    /// (its drag routes to the splitter's primary tag) yet still declares a
+    /// resize cursor here, so the affordance appears over the handle strip alone
+    /// without disturbing the drag-coordinate frame.
+    ///
+    /// Like [`Self::pointer_transparent`] / [`Self::focusable`] /
+    /// [`Self::drop_target`], this is a router-input flag, NOT serialised into
+    /// `scene/snapshot` (which carries the visual [`BoxStyle`], not the layout
+    /// sidecar). What an agent observes is its EFFECT — the resolved cursor —
+    /// via the shell's dedicated hover-cursor introspection.
+    pub cursor: Option<CursorHint>,
+}
+
+/// (R1196 §5.16 §5.39) A shell-neutral mouse-cursor request a scene node
+/// declares via [`LayoutStyle::cursor`], mapped to a backend `CursorIcon` by
+/// the shell (pinion-core names no winit type — the same layering the
+/// resize-edge / chrome vocabularies use).
+///
+/// Deliberately a small, closed set: adding a variant forces the shell's
+/// exhaustive `match` to handle it (a compile error until it does — cross-crate
+/// exhaustiveness by the type system, the R1190 pattern), so the cursor
+/// vocabulary cannot silently drift. Grows a variant per real consumer, not
+/// speculatively.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CursorHint {
+    /// A horizontal (left-right, `↔`) resize affordance — a vertical divider
+    /// between side-by-side panes. Maps to the CSS `col-resize` / winit
+    /// `EwResize`.
+    ColResize,
+    /// A vertical (up-down, `↕`) resize affordance — a horizontal divider
+    /// between stacked panes. Maps to the CSS `row-resize` / winit `NsResize`.
+    RowResize,
 }
 
 impl LayoutStyle {
@@ -2743,6 +2785,8 @@ impl LayoutStyle {
             // (R1080 §5.51) `false` = deepest-tagged drop resolution, the
             // pre-R1080 default.
             drop_target: false,
+            // (R1196 §5.16 §5.39) `None` = the OS default arrow cursor.
+            cursor: None,
         }
     }
 
@@ -2796,6 +2840,16 @@ impl LayoutStyle {
     #[must_use]
     pub const fn with_drop_target(mut self, drop_target: bool) -> Self {
         self.drop_target = drop_target;
+        self
+    }
+
+    /// (R1196 §5.16 §5.39) Builder: declare the hover [`CursorHint`] this node
+    /// requests (see [`Self::cursor`]). The shell shows it when the pointer is
+    /// over this node (or a descendant with no hint of its own). `None` is the
+    /// default (the OS arrow); this sets `Some(hint)`.
+    #[must_use]
+    pub const fn with_cursor(mut self, hint: CursorHint) -> Self {
+        self.cursor = Some(hint);
         self
     }
 

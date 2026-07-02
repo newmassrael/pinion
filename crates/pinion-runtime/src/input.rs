@@ -578,6 +578,19 @@ impl InputRouter {
         self.cursors.get(&id).copied()
     }
 
+    /// (R1196 §5.16 §5.39) The hover [`CursorHint`] the deepest hinted node
+    /// under pointer `id` declares, resolved against the last painted scene
+    /// ([`Scene::cursor_hint_at`]). `None` when the pointer is over no hinted
+    /// region, no move has been reported, or nothing has been painted. The
+    /// cursor-axis sibling of [`Self::hover_target`]: the shell reads it every
+    /// `cursor_moved` and maps the hint to a backend `CursorIcon`.
+    #[must_use]
+    pub fn cursor_hint(&self, id: PointerId) -> Option<pinion_core::style::CursorHint> {
+        let (x, y) = self.cursor_position(id)?;
+        self.last_paint_scene()?
+            .cursor_hint_at(floor_clamp_u32(x), floor_clamp_u32(y))
+    }
+
     /// R1102 §5.51 PR-33 — whether a drag session this router owns is in flight
     /// for `id`. The shell reads this to gate the (otherwise per-move) cross-
     /// window resolution: only an active drag needs a cross-window drop
@@ -3066,6 +3079,36 @@ mod tests {
             vec!["PointerEnter".to_string(), "PointerLeave".into()],
         );
         assert_eq!(router.hover_target(PointerId::MOUSE), None);
+    }
+
+    #[test]
+    fn r1196_cursor_hint_resolves_the_hinted_node_under_the_pointer() {
+        use pinion_core::scene::{BoxNode, ContainerNode, Rect};
+        use pinion_core::style::{Color, CursorHint, LayoutStyle};
+        let mut router = InputRouter::new();
+        // Paint scene: a hinted 4-px divider (x 98..102) in a 200x100 container,
+        // the splitter shape — the handle carries the cursor, the panels do not.
+        let handle = Scene::Box({
+            let mut b = BoxNode::filled(Rect::new(98, 0, 4, 100), Color::default());
+            b.layout = LayoutStyle::new().with_cursor(CursorHint::ColResize);
+            b
+        });
+        let mut root = ContainerNode::new(vec![handle]);
+        root.rect = Rect::new(0, 0, 200, 100);
+        let mut state = Scene::Container(ContainerNode::new(vec![]));
+        router.update_paint_scene(Scene::Container(root), &mut state);
+        // No move reported yet → no cursor known → no hint.
+        assert_eq!(router.cursor_hint(PointerId::MOUSE), None);
+        // Cursor on the divider → col-resize (end-to-end through the router:
+        // cursor_position + last_paint_scene + cursor_hint_at).
+        router.cursor_moved(PointerId::MOUSE, 100.0, 50.0, &mut state);
+        assert_eq!(
+            router.cursor_hint(PointerId::MOUSE),
+            Some(CursorHint::ColResize),
+        );
+        // Cursor off the divider (over a bare panel region) → no hint.
+        router.cursor_moved(PointerId::MOUSE, 40.0, 50.0, &mut state);
+        assert_eq!(router.cursor_hint(PointerId::MOUSE), None);
     }
 
     #[test]

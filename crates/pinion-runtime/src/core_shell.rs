@@ -1605,6 +1605,20 @@ impl<V: WidgetCore> CoreShell<V> {
             .and_then(|r| r.hover_target(pid))
     }
 
+    /// (R1196 §5.16 §5.39) Per-window read of the [`InputRouter::cursor_hint`]
+    /// for the named window — the hover cursor the deepest hinted node under the
+    /// pointer requests. `None` when the window has no router yet or the pointer
+    /// is over no hinted region. The cursor-axis sibling of
+    /// [`Self::hover_target_for_window`].
+    #[must_use]
+    pub fn cursor_hint_for_window(
+        &self,
+        window_id: &str,
+        pid: PointerId,
+    ) -> Option<pinion_core::style::CursorHint> {
+        self.routers.get(window_id).and_then(|r| r.cursor_hint(pid))
+    }
+
     /// R1025 §5.35 — single-window read of the pointer-capture lock
     /// (the [`DEFAULT_WINDOW`] router). Multi-window callers use
     /// [`Self::captured_target_for_window`]. Capture sibling of

@@ -29,7 +29,9 @@ use std::time::Duration;
 
 use crate::cell_metric::CellMetric;
 use crate::external::ExternalIntrospect;
-use crate::style::{Align, BoxStyle, Color, ImageStyle, LayoutStyle, PathStyle, Size, TextStyle};
+use crate::style::{
+    Align, BoxStyle, Color, CursorHint, ImageStyle, LayoutStyle, PathStyle, Size, TextStyle,
+};
 use crate::term_grid::{GridBuffer, Palette};
 use crate::widgets::measured_rows::MeasuredRowState;
 use crate::widgets::scroll::ScrollState;
@@ -168,6 +170,26 @@ impl Scene {
             Scene::ImmediateModeNode(n) => n.layout.pointer_transparent,
             Scene::TextGrid(n) => n.layout.pointer_transparent,
             Scene::Effect(_) => false,
+        }
+    }
+
+    /// (R1196 §5.16 §5.39) The hover [`CursorHint`] this node declares via
+    /// [`LayoutStyle::cursor`](crate::style::LayoutStyle::cursor), or `None`.
+    /// The per-node read behind [`Self::cursor_hint_at`]; [`Scene::Effect`]
+    /// carries no layout sidecar and never declares a cursor.
+    #[must_use]
+    pub fn cursor_hint(&self) -> Option<CursorHint> {
+        match self {
+            Scene::Box(n) => n.layout.cursor,
+            Scene::Text(n) => n.layout.cursor,
+            Scene::Path(n) => n.layout.cursor,
+            Scene::Image(n) => n.layout.cursor,
+            Scene::Container(n) => n.layout.cursor,
+            Scene::External(n) => n.layout.cursor,
+            Scene::Scroll(n) => n.layout.cursor,
+            Scene::ImmediateModeNode(n) => n.layout.cursor,
+            Scene::TextGrid(n) => n.layout.cursor,
+            Scene::Effect(_) => None,
         }
     }
 
@@ -846,6 +868,56 @@ impl Scene {
             segments: Vec::new(),
             bbox: self.rect(),
         })
+    }
+
+    /// (R1196 §5.16 §5.39) The hover [`CursorHint`] for the pointer at
+    /// `(x, y)`: the hint of the DEEPEST node under the pointer that declares
+    /// one, falling back to a hinted ancestor, or `None` if nothing on the hit
+    /// path declares a cursor.
+    ///
+    /// Mirrors [`Self::hit_test`]'s descent — the topmost (last) hitting child,
+    /// offset-translated through a [`Scene::Scroll`], pointer-transparent
+    /// overlays skipped — but resolves a cursor attribute instead of a tag path:
+    /// the cursor is a property of the painted region, independent of tags and
+    /// input routing (a splitter handle is untagged yet declares a resize
+    /// cursor). The shell reads this for the hovered pointer and maps the hint
+    /// to a backend `CursorIcon`.
+    #[must_use]
+    pub fn cursor_hint_at(&self, x: u32, y: u32) -> Option<CursorHint> {
+        if matches!(self, Scene::Effect(_)) {
+            return None;
+        }
+        if !rect_contains(self.rect(), x, y) {
+            return None;
+        }
+        // Descend into the topmost non-transparent child containing the point —
+        // the same child `hit_test` commits to — and prefer its hint; fall back
+        // to this node's own hint (a hinted region whose child declares none).
+        let from_child = match self {
+            Scene::Container(c) => c
+                .children
+                .iter()
+                .rev()
+                .find(|child| !child.is_pointer_transparent() && rect_contains(child.rect(), x, y))
+                .and_then(|child| child.cursor_hint_at(x, y)),
+            Scene::Scroll(s) => {
+                let vx = x.saturating_sub(s.viewport.x);
+                let vy = y.saturating_sub(s.viewport.y);
+                let cx = i64::from(vx).checked_add(i64::from(s.offset_x));
+                let cy = i64::from(vy).checked_add(i64::from(s.offset_y));
+                match (cx, cy) {
+                    (Some(cx), Some(cy)) if cx >= 0 && cy >= 0 => {
+                        match (u32::try_from(cx), u32::try_from(cy)) {
+                            (Ok(cx), Ok(cy)) => s.content.cursor_hint_at(cx, cy),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        from_child.or_else(|| self.cursor_hint())
     }
 
     /// (§5.32 R39.2 v0) Collect every primitive whose rect intersects
@@ -3718,6 +3790,100 @@ mod tests {
             hit.segments.is_empty(),
             "ring skipped → container is the hit"
         );
+    }
+
+    // ---- R1196 cursor_hint_at (hover cursor resolution) ----
+
+    fn hinted_box_at(x: u32, y: u32, w: u32, h: u32, hint: CursorHint) -> Scene {
+        let mut node = BoxNode::filled(Rect::new(x, y, w, h), Color::default());
+        node.layout = node.layout.with_cursor(hint);
+        Scene::Box(node)
+    }
+
+    #[test]
+    fn cursor_hint_at_resolves_the_hinted_node_under_the_pointer() {
+        // A splitter-like layout: a hintless container with a hinted 4-px handle
+        // strip between two panels.
+        let s = container_at(
+            0,
+            0,
+            200,
+            100,
+            vec![
+                box_at(0, 0, 98, 100),
+                hinted_box_at(98, 0, 4, 100, CursorHint::ColResize),
+                box_at(102, 0, 98, 100),
+            ],
+        );
+        // Over the handle strip → its resize hint.
+        assert_eq!(s.cursor_hint_at(100, 50), Some(CursorHint::ColResize));
+        // Over the panels (no hint on them or the container) → None.
+        assert_eq!(s.cursor_hint_at(40, 50), None);
+        assert_eq!(s.cursor_hint_at(150, 50), None);
+        // Outside the whole scene → None.
+        assert_eq!(s.cursor_hint_at(300, 50), None);
+    }
+
+    #[test]
+    fn cursor_hint_at_deepest_hint_wins_over_ancestor() {
+        // A hinted container; a hintless child inherits it (ancestor fallback),
+        // a hinted child overrides it (deepest wins).
+        let mut inherit = ContainerNode::new(vec![box_at(10, 10, 30, 30)]);
+        inherit.rect = Rect::new(0, 0, 100, 100);
+        inherit.layout = inherit.layout.with_cursor(CursorHint::RowResize);
+        let inherit = Scene::Container(inherit);
+        assert_eq!(inherit.cursor_hint_at(20, 20), Some(CursorHint::RowResize));
+        assert_eq!(inherit.cursor_hint_at(80, 80), Some(CursorHint::RowResize));
+
+        let mut override_c =
+            ContainerNode::new(vec![hinted_box_at(10, 10, 30, 30, CursorHint::ColResize)]);
+        override_c.rect = Rect::new(0, 0, 100, 100);
+        override_c.layout = override_c.layout.with_cursor(CursorHint::RowResize);
+        let override_c = Scene::Container(override_c);
+        // Over the hinted child → the child's hint, not the container's.
+        assert_eq!(
+            override_c.cursor_hint_at(20, 20),
+            Some(CursorHint::ColResize)
+        );
+        // Elsewhere in the container → the container's hint.
+        assert_eq!(
+            override_c.cursor_hint_at(80, 80),
+            Some(CursorHint::RowResize)
+        );
+    }
+
+    #[test]
+    fn cursor_hint_at_skips_pointer_transparent_hinted_overlay() {
+        // A pointer-transparent overlay carrying a hint must not shadow the
+        // widget beneath (mirrors hit_test's transparency skip).
+        let widget = hinted_box_at(0, 0, 100, 100, CursorHint::ColResize);
+        let mut overlay = BoxNode::filled(Rect::new(0, 0, 100, 100), Color::default());
+        overlay.layout = overlay
+            .layout
+            .with_pointer_transparent(true)
+            .with_cursor(CursorHint::RowResize);
+        let s = container_at(0, 0, 100, 100, vec![widget, Scene::Box(overlay)]);
+        assert_eq!(
+            s.cursor_hint_at(50, 50),
+            Some(CursorHint::ColResize),
+            "the transparent overlay is skipped — the widget's hint wins",
+        );
+    }
+
+    #[test]
+    fn cursor_hint_at_resolves_through_a_scroll_offset() {
+        // A hinted node inside a scrolled container resolves at the offset-
+        // translated coordinate (mirrors hit_test's Scroll translation).
+        let hinted = hinted_box_at(0, 100, 50, 20, CursorHint::RowResize);
+        let mut content = ContainerNode::new(vec![hinted]);
+        content.rect = Rect::new(0, 0, 50, 400);
+        let scroll =
+            ScrollNode::new(Rect::new(0, 0, 50, 50), Scene::Container(content)).with_offset(0, 100);
+        let s = Scene::Scroll(scroll);
+        // Viewport y=5 + offset 100 = content y=105, inside the hinted node.
+        assert_eq!(s.cursor_hint_at(10, 5), Some(CursorHint::RowResize));
+        // Viewport y=45 + offset 100 = content y=145, below the hinted node.
+        assert_eq!(s.cursor_hint_at(10, 45), None);
     }
 
     #[test]

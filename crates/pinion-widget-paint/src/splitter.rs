@@ -82,7 +82,8 @@ use pinion_core::input::{DragCalibration, PointerWireEvent};
 use pinion_core::reactive::Signal;
 use pinion_core::scene::{ContainerNode, Scene};
 use pinion_core::style::{
-    AlignItems, BoxStyle, Color, FlexDirection, JustifyContent, LayoutStyle, Size, SizeValue,
+    AlignItems, BoxStyle, Color, CursorHint, FlexDirection, JustifyContent, LayoutStyle, Size,
+    SizeValue,
 };
 use pinion_core::theme::{ColorRole, Theme};
 
@@ -463,10 +464,26 @@ pub fn view_splitter(
     // (`{from: {x, y}, to: ...}`); the handle's main-axis position is
     // `splitter_extent * ratio`, where `ratio` is queryable through
     // the SplitterExternal's introspect schema (`ratio` slot).
+    // (R1196 §5.16 §5.39) The handle declares its hover resize cursor per
+    // orientation: a Horizontal splitter's handle is a VERTICAL divider between
+    // side-by-side panes, dragged left-right (`↔`, col-resize); a Vertical
+    // splitter's handle is a HORIZONTAL divider between stacked panes, dragged
+    // up-down (`↕`, row-resize). The hint rides the handle's own `LayoutStyle`,
+    // so the shell shows the cursor over the handle strip alone — the handle
+    // stays untagged (its drag routes to the splitter's primary tag, R685), and
+    // the cursor is resolved by pointer position, independent of that routing.
+    let handle_cursor = match style.orientation {
+        SplitterOrientation::Horizontal => CursorHint::ColResize,
+        SplitterOrientation::Vertical => CursorHint::RowResize,
+    };
     let handle = Scene::Container(
         ContainerNode::new(vec![])
             .with_style(BoxStyle::filled(handle_fill_for_dragging(theme, dragging)))
-            .with_layout(LayoutStyle::new().with_size(handle_size)),
+            .with_layout(
+                LayoutStyle::new()
+                    .with_size(handle_size)
+                    .with_cursor(handle_cursor),
+            ),
     );
     // (R685 §5.21 §5.16) Splitter ratio fix — substrate-canonical
     // form lands the flex-item props directly on each child Scene's
@@ -1256,6 +1273,41 @@ mod tests {
             )])
             .with_tag(tag),
         )
+    }
+
+    #[test]
+    fn r1196_view_splitter_handle_declares_orientation_cursor() {
+        use pinion_core::style::CursorHint;
+        run_in_owner(|| {
+            let ratio: Rc<Signal<f32>> = Rc::new(Signal::new(0.5));
+            let handle_cursor = |s: &Scene| -> Option<CursorHint> {
+                let Scene::Container(outer) = s else {
+                    panic!("outer container")
+                };
+                // Handle is the middle child (left/top, HANDLE, right/bottom).
+                outer.children[1].cursor_hint()
+            };
+            // Horizontal (side-by-side panes) → vertical divider → col-resize.
+            let h = view_splitter(
+                empty_panel("left"),
+                empty_panel("right"),
+                &ratio,
+                &theme_light(),
+                &SplitterStyle::m3_default(SplitterOrientation::Horizontal, TEST_TAG),
+                false,
+            );
+            assert_eq!(handle_cursor(&h), Some(CursorHint::ColResize));
+            // Vertical (stacked panes) → horizontal divider → row-resize.
+            let v = view_splitter(
+                empty_panel("top"),
+                empty_panel("bottom"),
+                &ratio,
+                &theme_light(),
+                &SplitterStyle::m3_default(SplitterOrientation::Vertical, TEST_TAG),
+                false,
+            );
+            assert_eq!(handle_cursor(&v), Some(CursorHint::RowResize));
+        });
     }
 
     #[test]
