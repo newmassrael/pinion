@@ -360,35 +360,26 @@ pub fn inject_resize_border(scene: Scene, viewport: Option<(u32, u32)>) -> Scene
     inject_resize_regions(scene, viewport, TopResize::Full)
 }
 
-/// (R1186 §5.16 §5.39) Resize border for a window whose TOP EDGE is owned by a
-/// CONTENT title bar — a dock panel HEADER that hosts the window controls
-/// (min / max / close) and is itself the move handle (the R1171
-/// controls-in-header design, `window_chrome == None`). The north edge and the
-/// two TOP corners are OMITTED, so the header keeps its full width — including
-/// the right-anchored close button — unshadowed; the window resizes from the
-/// sides, the bottom, and the two BOTTOM corners.
+/// (R1186 §5.16 §5.39) Resize border with the north edge + both TOP corners
+/// OMITTED — the window resizes from the sides, the bottom, and the two BOTTOM
+/// corners only; its top edge is owned entirely by whatever occupies it (moved,
+/// never resized).
 ///
-/// ## Contract for the header's controls
+/// **No current consumer (R1200 note).** This was the R1186 variant for a
+/// controls-in-header floater (a dock panel HEADER hosting min / max / close),
+/// on the theory that a top resize band would shadow the header's close button.
+/// R1197 superseded that: [`inject_resize_border_content_header`] gives such a
+/// floater a top-edge + top-corner resize while keeping the close button clickable
+/// (a small edge-sized NE corner + a grazing north band), which is the VS Code /
+/// Win11 behaviour, so the shell no longer selects this variant. It is retained
+/// as the explicit "the header FULLY owns the top, no top-edge resize at all"
+/// option (a GTK / Win11 caption window that is deliberately not top-resizable)
+/// should a window ever want it; today only tests exercise it.
 ///
-/// Dropping the north edge + top corners clears the header top. The west / east
-/// edges still span the FULL height (their top `RESIZE_EDGE_PX` overlaps the
-/// header's left / right border), so a binding hosting controls in this header
-/// must keep them at least `RESIZE_EDGE_PX` (6 px) from the left / right window
-/// edge — the standard title-bar side padding every real CSD app uses, e.g. the R1171
-/// header's 8 px side padding clears the 6 px edge. (This is the same property
-/// the side edges have in every window: content flush to a side edge is a resize
-/// grab, so controls are never placed flush to it.)
-///
-/// Contrast [`inject_resize_border`] (all eight regions), used when a SHELL
-/// chrome strip is layered ON TOP of the border and reclaims the top edge
-/// itself — there the north regions are dead under the strip, so keeping them is
-/// harmless. A content header cannot be layered over the border (it is painted
-/// BEFORE the shell overlays, so `hit_test`'s last-child-wins would let the top
-/// resize regions shadow the close button at the very corner a user reaches for
-/// to close). Dropping the top regions is the same "the top edge is owned by the
-/// title bar" CSD trade-off (GTK / Win11 caption windows, VS Code / Blender
-/// floating panels) the chrome case achieves by layering — a title-bar window is
-/// MOVED from its top, not resized.
+/// The west / east edges still span the FULL height, so a binding must keep its
+/// controls at least `RESIZE_EDGE_PX` (6 px) from the left / right window edge —
+/// the standard title-bar side padding (the R1171 header's 8 px side padding
+/// clears the 6 px edge); content flush to a side edge is a resize grab.
 #[must_use]
 pub fn inject_resize_border_below_titlebar(scene: Scene, viewport: Option<(u32, u32)>) -> Scene {
     inject_resize_regions(scene, viewport, TopResize::Omit)
@@ -409,11 +400,16 @@ pub fn inject_resize_border_below_titlebar(scene: Scene, viewport: Option<(u32, 
 /// edge by the same side contract, stays clickable just inside it — the
 /// Windows / macOS "corner resizes, close button sits just within" shape).
 ///
-/// The north edge's outermost `RESIZE_EDGE_PX` overlaps the header's top; the
-/// contract is the top analogue of the side-edge one — the header keeps its
-/// controls at least `RESIZE_EDGE_PX` from the TOP edge (a vertically-centred
-/// control strip in a header taller than `2·RESIZE_EDGE_PX` satisfies it), so
-/// the outermost few px resize while the control stays clicked from just below.
+/// The north edge's outermost `RESIZE_EDGE_PX` overlaps the header's top, so it
+/// grazes the top of a control that sits near the top edge — the control stays
+/// clickable BELOW the band, not clear of it. (Honest bound, R1200: a
+/// vertically-centred control of height `ch` in an `hh`-tall header has
+/// `(hh − ch) / 2` px of top clearance; the band leaves the control fully
+/// clickable as long as its CENTER is below the band — `ch < hh − 2·edge` — a
+/// much weaker condition than the header merely exceeding `2·edge`. The
+/// flagship 28 px header with ~22 px controls clears the band by only ~3 px, so
+/// the band grazes the top ~3 px of each control; the control is clicked from
+/// its center down. VS Code / macOS behave identically.)
 /// Unlike the chrome-strip case ([`inject_resize_border`] +
 /// [`raise_top_resize_edge`]), the regions here are already the topmost siblings
 /// over the content, so the north edge is NOT re-raised (that would lift it above
@@ -442,6 +438,22 @@ enum TopResize {
     Full,
 }
 
+/// (R1200) The north resize-edge rect for a `w`-wide window — `RESIZE_EDGE_PX`
+/// tall at the very top. The single geometry SSOT shared by
+/// [`inject_resize_regions`] (which injects it under a chrome strip, or as a
+/// content-header floater's top band) and [`raise_top_resize_edge`] (which
+/// re-lifts it above the strip), so the two can never disagree on its shape.
+fn north_band_rect(w: u32) -> Rect {
+    Rect::new(0, 0, w, RESIZE_EDGE_PX)
+}
+
+/// (R1200) A resize hit region: a transparent, tagged [`Scene::Box`] at `rect`.
+/// The one place the "transparent tagged box" idiom lives, shared by every
+/// resize-region injector.
+fn resize_region_box(rect: Rect, tag: &'static str) -> Scene {
+    Scene::Box(BoxNode::new(rect, BoxStyle::filled(Color::TRANSPARENT)).with_tag(tag))
+}
+
 /// Shared implementation of the resize-border variants. `top` selects which
 /// north edge / top corner regions to include (see [`TopResize`]).
 fn inject_resize_regions(scene: Scene, viewport: Option<(u32, u32)>, top: TopResize) -> Scene {
@@ -465,7 +477,7 @@ fn inject_resize_regions(scene: Scene, viewport: Option<(u32, u32)>, top: TopRes
     // header's left / right PADDING (controls kept clear of it).
     let mut regions: Vec<(Rect, &'static str)> = Vec::with_capacity(8);
     if top != TopResize::Omit {
-        regions.push((Rect::new(0, 0, w, e), WINDOW_RESIZE_NORTH_TAG));
+        regions.push((north_band_rect(w), WINDOW_RESIZE_NORTH_TAG));
     }
     regions.push((Rect::new(0, h - e, w, e), WINDOW_RESIZE_SOUTH_TAG));
     regions.push((Rect::new(0, 0, e, h), WINDOW_RESIZE_WEST_TAG));
@@ -490,10 +502,7 @@ fn inject_resize_regions(scene: Scene, viewport: Option<(u32, u32)>, top: TopRes
     let mut wrapped = wrap_into_container(scene);
     strip_children_with_prefix(&mut wrapped, WINDOW_RESIZE_TAG_PREFIX);
     for (rect, tag) in regions {
-        push_top_level(
-            &mut wrapped,
-            Scene::Box(BoxNode::new(rect, BoxStyle::filled(Color::TRANSPARENT)).with_tag(tag)),
-        );
+        push_top_level(&mut wrapped, resize_region_box(rect, tag));
     }
     wrapped
 }
@@ -513,17 +522,21 @@ fn inject_resize_regions(scene: Scene, viewport: Option<(u32, u32)>, top: TopRes
 /// → `NsResize`) and the R1122 press routing (`drag_resize_window(North)`) light
 /// up for free once the band is hit-reachable, so no new cursor / press wiring.
 ///
-/// The top corners (NW / NE) are deliberately NOT raised: the NE corner would
-/// shadow the close button at the very corner a user reaches for (the R1186
-/// concern), so the top edge resizes vertically only — the two top corners keep
-/// diagonal resize off, matching the "title bar owns the corner controls" shape.
+/// Only the NORTH EDGE is raised, not the top corners: for a chrome window the
+/// two top corners stay under the strip (their diagonal resize yields to the
+/// corner controls), matching the "title bar owns the corner controls" shape.
 ///
-/// **Self-gating:** a `WINDOW_RESIZE_NORTH_TAG` band exists iff the window is a
-/// resizable, non-maximized, chromed window (the only branch
-/// [`inject_resize_border`] injects it), so this is a pure no-op for every other
-/// window — no window-policy re-resolution needed. Idempotent: the existing
-/// north band is stripped and re-pushed as the topmost child. Returns the scene
-/// unchanged for a `None` / degenerate viewport, mirroring the sibling injectors.
+/// **Self-gating:** acts only when the scene carries BOTH a north band AND a
+/// chrome strip — i.e. a resizable window whose shell chrome strip was layered
+/// over the north band ([`inject_resize_border`] + [`inject_window_chrome`]). A
+/// content-header floater ([`inject_resize_border_content_header`], R1197) also
+/// has a north band but NO strip; its regions are already the topmost siblings
+/// over the content, and re-raising the north edge would lift it above the
+/// top-left corner and lose that corner's diagonal resize — so the two-tag gate
+/// skips it. Every other window is a pure no-op, no window-policy re-resolution
+/// needed. Idempotent: the existing north band is stripped and re-pushed as the
+/// topmost child. Returns the scene unchanged for a `None` / degenerate viewport,
+/// mirroring the sibling injectors.
 #[must_use]
 pub fn raise_top_resize_edge(scene: Scene, viewport: Option<(u32, u32)>) -> Scene {
     let Some((w, h)) = viewport else {
@@ -547,13 +560,7 @@ pub fn raise_top_resize_edge(scene: Scene, viewport: Option<(u32, u32)>) -> Scen
     strip_tag(&mut wrapped, WINDOW_RESIZE_NORTH_TAG);
     push_top_level(
         &mut wrapped,
-        Scene::Box(
-            BoxNode::new(
-                Rect::new(0, 0, w, RESIZE_EDGE_PX),
-                BoxStyle::filled(Color::TRANSPARENT),
-            )
-            .with_tag(WINDOW_RESIZE_NORTH_TAG),
-        ),
+        resize_region_box(north_band_rect(w), WINDOW_RESIZE_NORTH_TAG),
     );
     wrapped
 }

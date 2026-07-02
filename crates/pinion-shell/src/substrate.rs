@@ -3870,16 +3870,17 @@ impl<V: WidgetView> ShellCore<V> {
     /// live resize band (VS Code / Win11), while the two top CORNERS stay under
     /// the strip (their diagonal resize yields to the corner controls). A
     /// CHROME-LESS resizable window (`chrome: None`) draws its title bar as a CONTENT
-    /// dock header (R1171 controls-in-header). R1197 — it resizes from the top
-    /// EDGE + top-LEFT corner too (VS Code parity for a floating panel), via
-    /// [`inject_resize_border_content_header`](pinion_overlay::inject_resize_border_content_header),
-    /// which OMITS only the top-RIGHT corner so it cannot shadow the header's
-    /// close button (the header keeps its controls ≥ `RESIZE_EDGE_PX` from the top
-    /// edge). These regions are already the topmost siblings over the content, so
-    /// the north edge is NOT re-raised (that would lift it above the top-left
-    /// corner and lose that corner's diagonal resize — hence
-    /// [`raise_top_resize_edge`](pinion_overlay::raise_top_resize_edge) gates on
-    /// the chrome strip's presence).
+    /// dock header (R1171 controls-in-header). R1197 / R1198 — it resizes from the
+    /// top EDGE + BOTH top corners (VS Code parity for a floating panel), via
+    /// [`inject_resize_border_content_header`](pinion_overlay::inject_resize_border_content_header):
+    /// a full top-LEFT corner and a small edge-sized top-RIGHT corner that fits
+    /// inside the header's right padding, so the top-right resizes diagonally
+    /// without shadowing the close button (R1198). The grazing north band clears
+    /// the button's clickable center. These regions are already the topmost
+    /// siblings over the content, so the north edge is NOT re-raised (that would
+    /// lift it above the top-left corner and lose that corner's diagonal resize —
+    /// hence [`raise_top_resize_edge`](pinion_overlay::raise_top_resize_edge)
+    /// gates on the chrome strip's presence).
     fn apply_resize_border(&self, scene: Scene, w: u32, h: u32, window_id: Option<&str>) -> Scene {
         // R1186 — resolve identity WITHOUT requiring chrome, then gate on the
         // decoupled `resizable` policy (default derives from chrome presence).
@@ -3901,12 +3902,12 @@ impl<V: WidgetView> ShellCore<V> {
             // above the strip so the top edge still resizes.
             pinion_overlay::inject_resize_border(scene, Some((w, h)))
         } else {
-            // R1197 — a content dock header owns the top and hosts the window
-            // controls at its top-RIGHT. Resize from the top EDGE + top-LEFT
-            // corner (VS Code parity for a floating panel), but omit the
-            // top-right corner so it cannot shadow the header's close button
-            // (the R1186 concern). The header keeps its controls >= RESIZE_EDGE_PX
-            // from the top edge (a vertically-centred control strip satisfies it).
+            // R1197 / R1198 — a content dock header owns the top and hosts the
+            // window controls at its top-RIGHT. Resize from the top EDGE + BOTH
+            // top corners (VS Code parity for a floating panel); the top-right
+            // corner is a small edge-sized box that fits inside the header's
+            // right padding, so it resizes diagonally without shadowing the
+            // close button (a full corner would — the R1186 concern).
             pinion_overlay::inject_resize_border_content_header(scene, Some((w, h)))
         }
     }
@@ -7766,8 +7767,11 @@ mod r1121_window_chrome_tests {
         }
     }
 
-    /// The five side / bottom regions a chrome-less (header-owned-top) resizable
-    /// window keeps; the three north regions it omits.
+    /// The five side / bottom regions every resizable window keeps regardless of
+    /// its top-edge treatment. (Since R1197/R1198 a chrome-less content-header
+    /// floater ALSO gets a north edge + both top corners — see
+    /// `content_header_floater_resizes_top_edge_and_both_corners`; this const is
+    /// just the always-present side/bottom set.)
     const SIDE_BOTTOM_RESIZE_TAGS: [&str; 5] = [
         pinion_overlay::WINDOW_RESIZE_SOUTH_TAG,
         pinion_overlay::WINDOW_RESIZE_WEST_TAG,
