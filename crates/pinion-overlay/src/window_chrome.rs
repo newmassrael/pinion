@@ -400,21 +400,27 @@ pub fn inject_resize_border_below_titlebar(scene: Scene, viewport: Option<(u32, 
 /// top edge (VS Code / Win11 / GTK: a floating panel resizes from every edge).
 ///
 /// The peer of [`inject_resize_border_below_titlebar`]: it adds the north edge +
-/// the top-LEFT corner back (the top edge resizes vertically, the top-left
-/// corner diagonally) while keeping the top-RIGHT corner OMITTED, so the close
-/// button at the very top-right is not shadowed by a diagonal corner region (the
-/// R1186 concern). The north edge's outermost `RESIZE_EDGE_PX` still overlaps
-/// the header's top; the contract is the top analogue of the side-edge one — the
-/// header must keep its controls at least `RESIZE_EDGE_PX` from the TOP edge (a
-/// vertically-centred control strip in a header taller than `2·RESIZE_EDGE_PX`
-/// satisfies it), so the outermost few px resize while the control stays clicked
-/// from just below. Unlike the chrome-strip case ([`inject_resize_border`] +
+/// a full top-LEFT corner + a small (`RESIZE_EDGE_PX`-sized) top-RIGHT corner
+/// (R1198). The top edge resizes vertically, the top-left corner diagonally, and
+/// the very top-right `RESIZE_EDGE_PX` box diagonally too — sized to fit within
+/// the header's right side padding so it does NOT shadow the close button (a
+/// full-size corner would, the R1186 concern; the small one gives the corner a
+/// diagonal resize while the button, kept `RESIZE_EDGE_PX` clear of the right
+/// edge by the same side contract, stays clickable just inside it — the
+/// Windows / macOS "corner resizes, close button sits just within" shape).
+///
+/// The north edge's outermost `RESIZE_EDGE_PX` overlaps the header's top; the
+/// contract is the top analogue of the side-edge one — the header keeps its
+/// controls at least `RESIZE_EDGE_PX` from the TOP edge (a vertically-centred
+/// control strip in a header taller than `2·RESIZE_EDGE_PX` satisfies it), so
+/// the outermost few px resize while the control stays clicked from just below.
+/// Unlike the chrome-strip case ([`inject_resize_border`] +
 /// [`raise_top_resize_edge`]), the regions here are already the topmost siblings
 /// over the content, so the north edge is NOT re-raised (that would lift it above
-/// the top-left corner and lose the corner's diagonal resize).
+/// the top-left corner and lose that corner's diagonal resize).
 #[must_use]
 pub fn inject_resize_border_content_header(scene: Scene, viewport: Option<(u32, u32)>) -> Scene {
-    inject_resize_regions(scene, viewport, TopResize::EdgeAndLeftCorner)
+    inject_resize_regions(scene, viewport, TopResize::ContentHeader)
 }
 
 /// Which TOP resize regions a resize border includes (the north edge + the two
@@ -424,13 +430,15 @@ enum TopResize {
     /// No north edge or top corners — a content title bar fully owns the top
     /// (no top-edge resize; the pre-R1197 chrome-less default, R1186).
     Omit,
-    /// North edge + the top-LEFT corner, but NOT the top-right corner — a
-    /// content header whose top-RIGHT hosts the window controls (R1171 /
-    /// R1197). The top edge + top-left corner resize; the top-right stays the
-    /// close button's.
-    EdgeAndLeftCorner,
-    /// All top regions (north edge + both top corners) — a shell chrome strip
-    /// is layered over them, so keeping them under it is harmless.
+    /// North edge + a full top-LEFT corner + a small (edge-sized) top-RIGHT
+    /// corner — a content header whose top-RIGHT hosts the window controls
+    /// (R1171 / R1197 / R1198). The top-right corner is only `RESIZE_EDGE_PX`
+    /// wide so it fits within the header's side padding (which already keeps
+    /// the close button `RESIZE_EDGE_PX` clear of the right edge), giving the
+    /// corner a diagonal resize without shadowing the close button.
+    ContentHeader,
+    /// All top regions (north edge + both FULL top corners) — a shell chrome
+    /// strip is layered over them, so keeping them under it is harmless.
     Full,
 }
 
@@ -448,11 +456,13 @@ fn inject_resize_regions(scene: Scene, viewport: Option<(u32, u32)>, top: TopRes
 
     // Edges first (each spans the full side); corners after so they win in the
     // overlap. The north edge is present unless the top is fully omitted; the
-    // top-left corner (NW) rides with it; the top-right corner (NE) only for a
-    // chrome-strip-covered top (`Full`) — a content header's top-right is owned
-    // by its controls (`EdgeAndLeftCorner` drops it). The side edges span the
-    // full height either way — their top `RESIZE_EDGE_PX` sit over the header's
-    // left / right PADDING (controls kept clear of it), never over a control.
+    // top-left corner (NW) rides with it at full size. The top-right corner (NE)
+    // is FULL size for a chrome-strip-covered top (`Full`, corners hide under
+    // the strip) but only edge-sized for a content header (`ContentHeader`), so
+    // it fits the header's right side padding and does not shadow the close
+    // button while still giving the corner a diagonal resize. The side edges
+    // span the full height either way — their top `RESIZE_EDGE_PX` sit over the
+    // header's left / right PADDING (controls kept clear of it).
     let mut regions: Vec<(Rect, &'static str)> = Vec::with_capacity(8);
     if top != TopResize::Omit {
         regions.push((Rect::new(0, 0, w, e), WINDOW_RESIZE_NORTH_TAG));
@@ -463,8 +473,16 @@ fn inject_resize_regions(scene: Scene, viewport: Option<(u32, u32)>, top: TopRes
     if top != TopResize::Omit {
         regions.push((Rect::new(0, 0, c, c), WINDOW_RESIZE_NORTH_WEST_TAG));
     }
-    if top == TopResize::Full {
-        regions.push((Rect::new(w - c, 0, c, c), WINDOW_RESIZE_NORTH_EAST_TAG));
+    match top {
+        TopResize::Full => {
+            regions.push((Rect::new(w - c, 0, c, c), WINDOW_RESIZE_NORTH_EAST_TAG));
+        }
+        TopResize::ContentHeader => {
+            // Edge-sized so it stays inside the header's right padding and the
+            // close button is not shadowed (the top-right `RESIZE_EDGE_PX` box).
+            regions.push((Rect::new(w - e, 0, e, e), WINDOW_RESIZE_NORTH_EAST_TAG));
+        }
+        TopResize::Omit => {}
     }
     regions.push((Rect::new(0, h - c, c, c), WINDOW_RESIZE_SOUTH_WEST_TAG));
     regions.push((Rect::new(w - c, h - c, c, c), WINDOW_RESIZE_SOUTH_EAST_TAG));
@@ -967,9 +985,9 @@ mod tests {
     // ---- R1197 content-header floater (top-edge resize, no close corner) ----
 
     #[test]
-    fn content_header_adds_top_edge_and_left_corner_not_right() {
+    fn content_header_top_edge_full_left_corner_small_right_corner() {
         let out = inject_resize_border_content_header(empty(), Some((800, 600)));
-        // North edge + top-LEFT corner present (top edge + top-left resize).
+        // North edge + both top corners present (top edge + both corners resize).
         assert!(
             find_tag(&out, WINDOW_RESIZE_NORTH_TAG).is_some(),
             "north edge present (top edge resizes)",
@@ -978,10 +996,9 @@ mod tests {
             find_tag(&out, WINDOW_RESIZE_NORTH_WEST_TAG).is_some(),
             "top-left corner present (diagonal resize)",
         );
-        // Top-RIGHT corner OMITTED — the header's close button owns it.
         assert!(
-            find_tag(&out, WINDOW_RESIZE_NORTH_EAST_TAG).is_none(),
-            "top-right corner omitted so it cannot shadow the close button",
+            find_tag(&out, WINDOW_RESIZE_NORTH_EAST_TAG).is_some(),
+            "top-right corner present (R1198 diagonal resize near the close button)",
         );
         // Sides + bottom + bottom corners present as always.
         for tag in [
@@ -994,8 +1011,25 @@ mod tests {
             assert!(find_tag(&out, tag).is_some(), "{tag} present");
         }
         // The north band spans the full width at the very top.
-        let r = rect_of(find_tag(&out, WINDOW_RESIZE_NORTH_TAG).unwrap());
-        assert_eq!((r.x, r.y, r.w, r.h), (0, 0, 800, RESIZE_EDGE_PX));
+        let north = rect_of(find_tag(&out, WINDOW_RESIZE_NORTH_TAG).unwrap());
+        assert_eq!(
+            (north.x, north.y, north.w, north.h),
+            (0, 0, 800, RESIZE_EDGE_PX)
+        );
+        // The top-LEFT corner is a FULL corner; the top-RIGHT corner is edge-
+        // sized (fits the header's right padding, clears the close button).
+        let nw = rect_of(find_tag(&out, WINDOW_RESIZE_NORTH_WEST_TAG).unwrap());
+        assert_eq!(
+            (nw.w, nw.h),
+            (RESIZE_CORNER_PX, RESIZE_CORNER_PX),
+            "NW is a full corner"
+        );
+        let ne = rect_of(find_tag(&out, WINDOW_RESIZE_NORTH_EAST_TAG).unwrap());
+        assert_eq!(
+            (ne.x, ne.y, ne.w, ne.h),
+            (800 - RESIZE_EDGE_PX, 0, RESIZE_EDGE_PX, RESIZE_EDGE_PX),
+            "NE is an edge-sized corner in the very top-right",
+        );
     }
 
     #[test]

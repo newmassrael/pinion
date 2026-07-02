@@ -7776,12 +7776,12 @@ mod r1121_window_chrome_tests {
         pinion_overlay::WINDOW_RESIZE_SOUTH_EAST_TAG,
     ];
     #[test]
-    fn content_header_floater_resizes_top_edge_and_left_not_close_corner() {
-        // R1197 §5.16 §5.39 — a controls-in-header floater (chrome: None,
-        // resizable) resizes from its TOP EDGE + top-LEFT corner (VS Code parity
-        // for a floating panel), while the top-RIGHT corner stays OMITTED so it
-        // cannot shadow the header's close button (the R1186 concern). Sides +
-        // bottom + bottom corners are present as always.
+    fn content_header_floater_resizes_top_edge_and_both_corners() {
+        // R1197 / R1198 §5.16 §5.39 — a controls-in-header floater (chrome: None,
+        // resizable) resizes from its TOP EDGE + BOTH top corners (VS Code parity
+        // for a floating panel). The top-RIGHT corner is a small edge-sized box
+        // (R1198) that clears the inset close button, so it resizes without
+        // shadowing it. Sides + bottom + bottom corners are present as always.
         let mut sc = ShellCore::<ResizableChromeless>::new();
         let scene = sc.compute_paint_scene(400, 300);
         assert!(
@@ -7803,8 +7803,9 @@ mod r1121_window_chrome_tests {
             "★the top-left corner resizes (R1197)",
         );
         assert!(
-            !has_tag(&scene, pinion_overlay::WINDOW_RESIZE_NORTH_EAST_TAG),
-            "★the top-right corner is omitted — the header's close button owns it",
+            has_tag(&scene, pinion_overlay::WINDOW_RESIZE_NORTH_EAST_TAG),
+            "★the top-right corner resizes too (R1198: a small edge-sized corner \
+             that clears the close button)",
         );
     }
 
@@ -7839,6 +7840,14 @@ mod r1121_window_chrome_tests {
             sc.hover_target(PointerId::MOUSE),
             Some(pinion_overlay::WINDOW_RESIZE_NORTH_WEST_TAG),
             "the top-left corner resizes diagonally",
+        );
+        // R1198 — the very top-right corner (the outermost RESIZE_EDGE_PX box,
+        // clear of the inset close button) resizes diagonally too.
+        sc.cursor_moved(PointerId::MOUSE, 397.0, 3.0);
+        assert_eq!(
+            sc.hover_target(PointerId::MOUSE),
+            Some(pinion_overlay::WINDOW_RESIZE_NORTH_EAST_TAG),
+            "the very top-right corner resizes diagonally (near, but clear of, close)",
         );
         // The bottom-right corner IS a resize handle (sides + bottom retained).
         sc.cursor_moved(PointerId::MOUSE, 395.0, 295.0);
@@ -7884,8 +7893,8 @@ mod r1121_window_chrome_tests {
             "restored regains the top-left corner",
         );
         assert!(
-            !has_tag(&restored, pinion_overlay::WINDOW_RESIZE_NORTH_EAST_TAG),
-            "restored still omits the top-right (close) corner",
+            has_tag(&restored, pinion_overlay::WINDOW_RESIZE_NORTH_EAST_TAG),
+            "restored regains the (small) top-right corner too (R1198)",
         );
     }
 

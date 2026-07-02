@@ -21006,6 +21006,48 @@
         "Deferred (unchanged from R1196): fold R1189's chrome-resize cursor into the generic node-hints for a single cursor SSOT (kept separate so a recently-touched path is not refactored in the same round)."
       ]
     },
+    "R1198": {
+      "decision_summary": "R1198 restore a (small) top-right resize corner on the content-header floater (R1197 follow-up the user found live): R1197 omitted the top-right corner entirely to protect the header's close button, which removed the diagonal resize near close. R1198 adds it back as an EDGE-SIZED (RESIZE_EDGE_PX, 6px) corner in the very top-right box, which fits within the header's right side padding so it resizes diagonally WITHOUT shadowing the close button — the Windows / macOS 'corner resizes, close button sits just within' shape. Reuses R1189 cursor + R1122 press, no new wiring.",
+      "changes_bullets": [
+        "pinion-overlay window_chrome.rs: the content-header floater resize border now includes a small TOP-RIGHT corner (WINDOW_RESIZE_NORTH_EAST_TAG at RESIZE_EDGE_PX size, in the very top-right box) in addition to the R1197 north edge + full top-left corner — the TopResize::EdgeAndLeftCorner variant became ContentHeader and inject_resize_regions emits the edge-sized NE corner for it.",
+        "The edge-sized NE corner (6px) fits within the header's right side padding (the same padding the side contract already keeps the close button clear of), so the very top-right corner resizes diagonally WITHOUT shadowing the close button — the Windows / macOS \"corner resizes, close button sits just within\" shape; a full-size (12px) corner would shadow it, which is why R1197 had wrongly omitted it entirely.",
+        "Reuses R1189's cursor (NorthEast -> NeswResize) + R1122's press (drag_resize_window(NorthEast)) — the small corner just becomes hit-reachable, no new wiring."
+      ],
+      "verification_bullets": [
+        "cargo test --workspace 0-fail: the overlay unit now asserts the content-header border has the north edge + a FULL top-left corner + an EDGE-SIZED top-right corner at (w-RESIZE_EDGE_PX, 0, RESIZE_EDGE_PX, RESIZE_EDGE_PX); the shell hit-test tests now resolve the very top-right corner (397,3) to the north-east resize region while the close button stays reachable below the top band, and a maximized-then-restored floater regains the small top-right corner too.",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic); cargo fmt --check clean; cargo doc broken-intra-doc-links clean for the changed files.",
+        "Live: hello-dock-panels-editor rebuilt + relaunched on :0; an undocked floater now shows the diagonal resize cursor at its top-right corner near (but clear of) the close button (HW-gated live, like R1189)."
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.39"
+      ],
+      "carry_forward_bullets": [
+        "The top-right resize corner is edge-sized (RESIZE_EDGE_PX, 6px) rather than the full RESIZE_CORNER_PX (12px) of the other three corners, to fit the header's side padding; if a consumer wants a larger top-right corner it must inset its header controls further (increase the header side padding beyond RESIZE_EDGE_PX), the same class as R1186's side-padding contract.",
+        "Deferred (unchanged from R1196): fold R1189's chrome-resize cursor into the generic node-hints for a single cursor SSOT.",
+        "PR-46 hover-cursor line is now R1195 (chrome top-edge) + R1196 (splitter divider seam) + R1197 (floater top edge + left corner) + R1198 (floater top-right corner), all consumer-forced by live sprag-parity testing; a consumer picks them up with zero change after a pinion bump."
+      ],
+      "publishable_decision_summary": "R1198 restore a (small) top-right resize corner on the content-header floater (R1197 follow-up the user found live): R1197 omitted the top-right corner entirely to protect the header's close button, which removed the diagonal resize near close. R1198 adds it back as an EDGE-SIZED (RESIZE_EDGE_PX, 6px) corner in the very top-right box, which fits within the header's right side padding so it resizes diagonally WITHOUT shadowing the close button — the Windows / macOS 'corner resizes, close button sits just within' shape. Reuses R1189 cursor + R1122 press, no new wiring.",
+      "publishable_changes_bullets": [
+        "pinion-overlay window_chrome.rs: the content-header floater resize border now includes a small TOP-RIGHT corner (WINDOW_RESIZE_NORTH_EAST_TAG at RESIZE_EDGE_PX size, in the very top-right box) in addition to the R1197 north edge + full top-left corner — the TopResize::EdgeAndLeftCorner variant became ContentHeader and inject_resize_regions emits the edge-sized NE corner for it.",
+        "The edge-sized NE corner (6px) fits within the header's right side padding (the same padding the side contract already keeps the close button clear of), so the very top-right corner resizes diagonally WITHOUT shadowing the close button — the Windows / macOS \"corner resizes, close button sits just within\" shape; a full-size (12px) corner would shadow it, which is why R1197 had wrongly omitted it entirely.",
+        "Reuses R1189's cursor (NorthEast -> NeswResize) + R1122's press (drag_resize_window(NorthEast)) — the small corner just becomes hit-reachable, no new wiring."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace 0-fail: the overlay unit now asserts the content-header border has the north edge + a FULL top-left corner + an EDGE-SIZED top-right corner at (w-RESIZE_EDGE_PX, 0, RESIZE_EDGE_PX, RESIZE_EDGE_PX); the shell hit-test tests now resolve the very top-right corner (397,3) to the north-east resize region while the close button stays reachable below the top band, and a maximized-then-restored floater regains the small top-right corner too.",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic); cargo fmt --check clean; cargo doc broken-intra-doc-links clean for the changed files.",
+        "Live: hello-dock-panels-editor rebuilt + relaunched on :0; an undocked floater now shows the diagonal resize cursor at its top-right corner near (but clear of) the close button (HW-gated live, like R1189)."
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.39"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The top-right resize corner is edge-sized (RESIZE_EDGE_PX, 6px) rather than the full RESIZE_CORNER_PX (12px) of the other three corners, to fit the header's side padding; if a consumer wants a larger top-right corner it must inset its header controls further (increase the header side padding beyond RESIZE_EDGE_PX), the same class as R1186's side-padding contract.",
+        "Deferred (unchanged from R1196): fold R1189's chrome-resize cursor into the generic node-hints for a single cursor SSOT.",
+        "PR-46 hover-cursor line is now R1195 (chrome top-edge) + R1196 (splitter divider seam) + R1197 (floater top edge + left corner) + R1198 (floater top-right corner), all consumer-forced by live sprag-parity testing; a consumer picks them up with zero change after a pinion bump."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
