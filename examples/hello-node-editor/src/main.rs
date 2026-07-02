@@ -1955,8 +1955,11 @@ fn canvas_to_graph(scroll: &ScrollState, zoom: f64, cx: f64, cy: f64) -> (f64, f
 /// ([`NodeGraphExternal::set_zoom_anchored`]), [`NodeGraphExternal::frame_all`],
 /// and the `viewport.{x,y}` RPC pan write share ONE forward-projection site —
 /// closing the asymmetry the R1183 [`canvas_to_graph`] rustdoc flagged as a
-/// pre-existing follow-up. ([`wpx`] stays the rounded graph→world-px scaler for
-/// the world content extent — a distinct role, not a projection.)
+/// pre-existing follow-up. This is a DIFFERENT projection from [`wpx`] (the
+/// rounded graph→world-px scaler used for node / edge / port paint positions AND
+/// the world extent): `wpx` maps graph→world-px, this maps graph→pan-offset;
+/// they share only the `·zoom` scaling, and `wpx` stays offset-free because the
+/// scroll container applies the pan offset separately.
 fn graph_anchor_offset(gx: f64, gy: f64, zoom: f64, cx: f64, cy: f64) -> (f64, f64) {
     (gx * zoom - cx, gy * zoom - cy)
 }

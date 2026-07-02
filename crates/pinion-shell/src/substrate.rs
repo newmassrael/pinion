@@ -3858,7 +3858,7 @@ impl<V: WidgetView> ShellCore<V> {
         // R1121 §5.16 §5.39 PR-38 — client-side window chrome (under the
         // transient ring / drag-image), so a chromed window's title bar +
         // controls paint on the strip the content was inset below. A window
-        // whose `window_chrome` hook returns `None` is a no-op (byte-identical
+        // whose `window_policy().chrome` is `None` is a no-op (byte-identical
         // to pre-R1121).
         let chromed = self.apply_window_chrome(resizable, w, h, window_id);
         let ringed = self.apply_focus_ring(chromed, w, h);
@@ -3883,8 +3883,9 @@ impl<V: WidgetView> ShellCore<V> {
 
     /// (R1121 §5.16 §5.39 §2 #7) Inject the client-side window-chrome strip
     /// (title bar + close / minimize / maximize controls) when the binding's
-    /// [`WidgetView::window_chrome`](crate::WidgetView::window_chrome) hook
-    /// returns a style for `window_id`. The buttons are real, introspectable
+    /// [`WidgetView::window_policy`](crate::WidgetView::window_policy) returns a
+    /// [`WindowPolicy`](crate::WindowPolicy) with `chrome: Some(style)` for
+    /// `window_id`. The buttons are real, introspectable
     /// [`Scene`] nodes an AI agent observes and drives via `scene/snapshot` +
     /// a click on the composite control tag — the reason custom chrome beats
     /// OS chrome, whose controls live outside the scene tree. A window whose
@@ -3910,21 +3911,22 @@ impl<V: WidgetView> ShellCore<V> {
 
     /// (R1122 §5.16 §5.39 §2 #7) Inject the eight client-side window-resize
     /// edge / corner hit regions when the window has client-side chrome (the
-    /// same [`WidgetView::window_chrome`](crate::WidgetView::window_chrome)
-    /// gate as [`Self::apply_window_chrome`]): a borderless window that draws
+    /// same [`WindowPolicy::chrome`](crate::WindowPolicy::chrome) gate as
+    /// [`Self::apply_window_chrome`]): a borderless window that draws
     /// its own title bar also needs its own resize border, since the OS frame
     /// that normally provides edge-drag-resize is gone. The regions are
     /// introspectable [`Scene`] nodes (`scene/snapshot`) the shell maps to a
     /// `winit::window::ResizeDirection` in `AppShell::try_chrome_press`. A
     /// window with no client-side chrome is unchanged (OS frame resizes it).
     ///
-    /// R1186 §5.16 §5.39 — DECOUPLED from chrome via the
-    /// [`WidgetView::window_resizable`](crate::WidgetView::window_resizable) hook.
-    /// Pre-R1186 the border rode the chrome gate ("resize travels with chrome"),
-    /// which could not express a **controls-in-header** floating window: a torn-off
-    /// dock panel whose title bar is its own dock header (R1171) returns
-    /// `window_chrome == None` (ONE strip, no separate chrome bar) yet must stay
-    /// resizable. `window_resizable` defaults to `None` = derive from chrome
+    /// R1186 §5.16 §5.39 — DECOUPLED from chrome via
+    /// [`WindowPolicy::resizable`](crate::WindowPolicy::resizable) (R1190 folded
+    /// the former `window_resizable` getter into the policy). Pre-R1186 the border
+    /// rode the chrome gate ("resize travels with chrome"), which could not express
+    /// a **controls-in-header** floating window: a torn-off dock panel whose title
+    /// bar is its own dock header (R1171) has `chrome: None` (ONE strip, no separate
+    /// chrome bar) yet must stay resizable. `resizable` defaults to `None` = derive
+    /// from chrome
     /// presence (the exact pre-R1186 behaviour, so every existing binding is
     /// unchanged); `Some(true)` keeps the border on a chrome-less window;
     /// `Some(false)` drops it on a chromed one.
@@ -3937,7 +3939,7 @@ impl<V: WidgetView> ShellCore<V> {
     /// R1186 — the border VARIANT depends on who owns the top edge. A CHROMED
     /// window layers its chrome strip ON TOP of the border, so all eight regions
     /// are injected (the north ones are dead under the strip). A CHROME-LESS
-    /// resizable window (`window_chrome == None`) draws its title bar as a CONTENT
+    /// resizable window (`chrome: None`) draws its title bar as a CONTENT
     /// dock header (R1171 controls-in-header) that cannot be layered over the
     /// border; injecting the north regions would let them shadow the header's
     /// close button at the very corner a user reaches to close, so the top edge +
@@ -4008,8 +4010,9 @@ impl<V: WidgetView> ShellCore<V> {
 
     /// (R1121.1 §5.16 §2 #7) Resolve client-side chrome for the window being
     /// painted: `Some((spec_id, title, style))` when the binding's
-    /// [`WidgetView::window_chrome`](crate::WidgetView::window_chrome) hook
-    /// returns a style for this window, else `None`. `window_id == None` is the
+    /// [`WidgetView::window_policy`](crate::WidgetView::window_policy) returns a
+    /// [`WindowPolicy`](crate::WindowPolicy) with `chrome: Some(style)` for this
+    /// window, else `None`. `window_id == None` is the
     /// primary window (the first declared spec); `Some(id)` matches by canonical
     /// id. The title is the window's declared title; the chrome decision is the
     /// hook's — ORTHOGONAL to `decorations` (R1121.1 decoupled the two so a
@@ -4039,9 +4042,9 @@ impl<V: WidgetView> ShellCore<V> {
     /// declared spec); `Some(id)` matches by canonical id. Reads the same
     /// `windows_signal` / `windows` SSOT as [`Self::window_chrome_for`] (which now
     /// delegates here) — extracted so the R1186 resize-border decoupling can key
-    /// off the window identity + the `window_resizable` hook WITHOUT requiring the
-    /// window to also carry chrome (a controls-in-header floating window returns
-    /// `window_chrome == None` yet is resizable).
+    /// off the window identity + [`WindowPolicy::resizable`](crate::WindowPolicy::resizable)
+    /// WITHOUT requiring the window to also carry chrome (a controls-in-header
+    /// floating window has `chrome: None` yet is resizable).
     fn resolve_window_spec(&self, window_id: Option<&str>) -> Option<(String, String)> {
         let core = &self.core;
         let specs = core.root_owner().run(|| match V::windows_signal() {
@@ -7549,8 +7552,8 @@ mod r1121_window_chrome_tests {
         "Panel"
     );
     // R1186 §5.16 §5.39 — the controls-in-header floater: no OS frame, NO pinion
-    // chrome (`window_chrome == None`, its title bar is the dock HEADER), yet
-    // `window_resizable == Some(true)` ⇒ the client-side resize border is
+    // chrome (`policy.chrome == None`, its title bar is the dock HEADER), yet
+    // `policy.resizable == Some(true)` ⇒ the client-side resize border is
     // decoupled from chrome and still injected. The PR-43 shape.
     chrome_fixture!(
         ResizableChromeless,
@@ -7638,14 +7641,14 @@ mod r1121_window_chrome_tests {
     #[test]
     fn naked_borderless_window_has_no_chrome_and_no_inset() {
         // R1121.1 decoupling proof: `decorations:false` (no OS frame) WITHOUT a
-        // `window_chrome` style = naked borderless (the fullscreen-game surface).
+        // `chrome: None` = naked borderless (the fullscreen-game surface).
         // R1121's `decorations:false ⇒ chrome` coupling could not express this;
         // the hook can, so chrome is absent and content fills the full window.
         let mut sc = ShellCore::<NakedBorderless>::new();
         let scene = sc.compute_paint_scene(400, 300);
         assert!(
             !has_tag(&scene, pinion_overlay::WINDOW_CHROME_TAG),
-            "a borderless window with no window_chrome hook gets no chrome",
+            "a borderless window with chrome: None gets no chrome",
         );
         let content = rect_of(&scene, CONTENT_TAG).expect("content laid out");
         assert_eq!(content.y, 0, "naked borderless content is not inset");
@@ -7769,8 +7772,8 @@ mod r1121_window_chrome_tests {
     fn chromeless_resizable_window_omits_top_but_keeps_sides_and_bottom() {
         // R1186 §5.16 §5.39 (PR-43) — the resize border is DECOUPLED from chrome.
         // A controls-in-header floater draws its title bar as the dock HEADER, so
-        // `window_chrome == None` (ONE strip, no separate chrome bar), yet
-        // `window_resizable == Some(true)` keeps its client-side resize border.
+        // `policy.chrome == None` (ONE strip, no separate chrome bar), yet
+        // `policy.resizable == Some(true)` keeps its client-side resize border.
         // Pre-R1186 this window would have been un-resizable (resize rode the chrome
         // gate). The header (content) OWNS the top — it hosts the close button and
         // is the move handle — and cannot be layered over the border the way a
@@ -7863,7 +7866,7 @@ mod r1121_window_chrome_tests {
     #[test]
     fn window_resizable_false_suppresses_border_on_chromed_window() {
         // R1186 — the inverse override: a chromed window that returns
-        // `window_resizable == Some(false)` drops the resize border even though it
+        // `policy.resizable == Some(false)` drops the resize border even though it
         // draws chrome (a fixed-size chromed dialog). The chrome strip itself stays;
         // only the resize regions are suppressed — proving the two are decoupled.
         let mut sc = ShellCore::<NonResizableChromed>::new();
@@ -8044,7 +8047,7 @@ mod r1121_window_chrome_tests {
 
     #[test]
     fn rpc_click_drives_content_hosted_header_controls_too() {
-        // The PR-44 sprag shape: `window_chrome == None`, the close button is a
+        // The PR-44 sprag shape: `policy.chrome == None`, the close button is a
         // CONTENT node carrying the shared control tag (R1171/R1187
         // controls-in-header). The detection is tag-driven — same as the winit
         // path — so it must fire for header-hosted controls, not only for the

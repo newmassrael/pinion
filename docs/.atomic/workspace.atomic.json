@@ -20720,6 +20720,54 @@
         "graph_anchor_offset / canvas_to_graph / AutoPan stay node-editor-local; a router-level generic viewport/auto-pan lift is justified only on a 2nd canvas/timeline consumer (abstraction-needs-second-consumer)."
       ]
     },
+    "R1192": {
+      "decision_summary": "R1192 audit-clearance of the R1190/R1191 session review: fix stale rustdoc/comments naming the removed window_chrome/window_resizable getters, correct the wpx doc scope, and honestly re-label the WindowState deferral as risk-gated (not YAGNI).",
+      "changes_bullets": [
+        "pinion-shell substrate.rs: 4 ///-doc intra-doc links + prose updated from the REMOVED WidgetView::window_chrome / window_resizable getters to WindowPolicy (window_policy / .chrome / .resizable) — R1190 removed those methods but left docs presenting them as live API (a maintainer would hunt for methods that no longer exist; slipped the clippy-only gate since cargo doc is not gated).",
+        "hello-node-editor graph_anchor_offset rustdoc corrected: wpx is the graph->world-px projection used for node/edge/port positions AND the world extent (a DIFFERENT projection than the anchor-solve, sharing only the *zoom scaling) — the prior 'world content extent / not a projection' wording was inaccurate.",
+        "examples/hello-dock-panels-editor + shell test comments: same window_chrome/window_resizable -> policy.chrome/.resizable shorthand fixed so no comment names a removed symbol.",
+        "(untracked, recorded here) SEED + memory re-labels: the per-window WindowState consolidation (~13 lockstep ShellCore *_per_window HashMaps; AppShell already uses WindowSlot) is the RISK-gated real charter accretion, NOT a YAGNI/2nd-consumer deferral — re-labeled as an R1193 dedicated-round candidate; ~20 corrected to ~13; SEED obligation #7 fixed (SEED is gitignored -> no meta-commit); mnemosyne pre-freeze section-id validation registered as upstream tooling debt."
+      ],
+      "verification_bullets": [
+        "Driven by 2 independent adversarial session auditors (SSOT/smell + structure/north-star) + own SSOT grep: both confirmed the R1190/R1191 SSOTs are real chokepoints (grep-proven, no bypass) and the refactors bit-identical; only these doc/label debts survived.",
+        "cargo doc -p pinion-shell: the new intra-doc links (WidgetView::window_policy, WindowPolicy::chrome, WindowPolicy::resizable) resolve; no new broken links introduced.",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello + cargo fmt --check clean; changes are doc/comment-only so behavior is unchanged.",
+        "cargo test --workspace: 198 targets ok / 0 failed (comment-only change)."
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.39",
+        "5.45"
+      ],
+      "carry_forward_bullets": [
+        "R1193 strong candidate: per-window WindowState consolidation — ~13 lockstep ShellCore *_per_window HashMaps into one HashMap<String,WindowState> (insert/remove/clear one path, kills stale/leak risk); risk-gated dedicated audited round, the real charter accretion R1190 deferred.",
+        "L2 residual: WindowPolicy resolved twice per paint (apply_resize_border + window_chrome_for); minor — resolve-once threading is a low-value follow-up touching the hot paint path.",
+        "mnemosyne upstream: add a pre-freeze existence check for changelog impact_refs section ids (typo -> orphan -> frozen, unamendable)."
+      ],
+      "publishable_decision_summary": "R1192 audit-clearance of the R1190/R1191 session review: fix stale rustdoc/comments naming the removed window_chrome/window_resizable getters, correct the wpx doc scope, and honestly re-label the WindowState deferral as risk-gated (not YAGNI).",
+      "publishable_changes_bullets": [
+        "pinion-shell substrate.rs: 4 ///-doc intra-doc links + prose updated from the REMOVED WidgetView::window_chrome / window_resizable getters to WindowPolicy (window_policy / .chrome / .resizable) — R1190 removed those methods but left docs presenting them as live API (a maintainer would hunt for methods that no longer exist; slipped the clippy-only gate since cargo doc is not gated).",
+        "hello-node-editor graph_anchor_offset rustdoc corrected: wpx is the graph->world-px projection used for node/edge/port positions AND the world extent (a DIFFERENT projection than the anchor-solve, sharing only the *zoom scaling) — the prior 'world content extent / not a projection' wording was inaccurate.",
+        "examples/hello-dock-panels-editor + shell test comments: same window_chrome/window_resizable -> policy.chrome/.resizable shorthand fixed so no comment names a removed symbol.",
+        "(untracked, recorded here) SEED + memory re-labels: the per-window WindowState consolidation (~13 lockstep ShellCore *_per_window HashMaps; AppShell already uses WindowSlot) is the RISK-gated real charter accretion, NOT a YAGNI/2nd-consumer deferral — re-labeled as an R1193 dedicated-round candidate; ~20 corrected to ~13; SEED obligation #7 fixed (SEED is gitignored -> no meta-commit); mnemosyne pre-freeze section-id validation registered as upstream tooling debt."
+      ],
+      "publishable_verification_bullets": [
+        "Driven by 2 independent adversarial session auditors (SSOT/smell + structure/north-star) + own SSOT grep: both confirmed the R1190/R1191 SSOTs are real chokepoints (grep-proven, no bypass) and the refactors bit-identical; only these doc/label debts survived.",
+        "cargo doc -p pinion-shell: the new intra-doc links (WidgetView::window_policy, WindowPolicy::chrome, WindowPolicy::resizable) resolve; no new broken links introduced.",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello + cargo fmt --check clean; changes are doc/comment-only so behavior is unchanged.",
+        "cargo test --workspace: 198 targets ok / 0 failed (comment-only change)."
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.39",
+        "5.45"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R1193 strong candidate: per-window WindowState consolidation — ~13 lockstep ShellCore *_per_window HashMaps into one HashMap<String,WindowState> (insert/remove/clear one path, kills stale/leak risk); risk-gated dedicated audited round, the real charter accretion R1190 deferred.",
+        "L2 residual: WindowPolicy resolved twice per paint (apply_resize_border + window_chrome_for); minor — resolve-once threading is a low-value follow-up touching the hot paint path.",
+        "mnemosyne upstream: add a pre-freeze existence check for changelog impact_refs section ids (typo -> orphan -> frozen, unamendable)."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

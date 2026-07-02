@@ -1429,7 +1429,7 @@ impl WidgetView for DockPanelsEditorView {
         }
     }
 
-    // (R1171 §5.16 §5.39) The editor no longer overrides `window_chrome`: a torn-off
+    // (R1171 §5.16 §5.39) The editor's `window_policy` leaves `chrome: None`: a torn-off
     // panel's window controls (min / max / close) are rendered IN the panel HEADER
     // (`view_window_controls` → `view_dock_panel_with_actions`), one title bar that
     // is also the redock drag handle — NOT a separate shell-overlay the binding has
@@ -1637,9 +1637,9 @@ mod tests {
     #[test]
     fn r1186_floating_window_is_chromeless_yet_resizable() {
         // R1186 §5.16 §5.39 (PR-43) — a torn-off panel's floating window is the
-        // controls-in-header shape: it draws NO shell chrome (`window_chrome ==
+        // controls-in-header shape: it draws NO shell chrome (`policy.chrome ==
         // None` — its title bar is the dock HEADER, R1171) YET is client-side
-        // resizable (`window_resizable == Some(true)`), the two decoupled. The
+        // resizable (`policy.resizable == Some(true)`), the two decoupled. The
         // shell's `chromeless_resizable_window_omits_top_but_keeps_sides_and_bottom`
         // test proves
         // that exact shape (chrome None + resizable Some(true)) gets the resize
