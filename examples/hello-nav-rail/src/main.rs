@@ -230,8 +230,8 @@ impl WidgetCore for NavRailView {
 }
 
 impl WidgetA11y for NavRailView {
-    /// §5.40 — a [`AriaRole::Navigation`] landmark whose children are the
-    /// destination [`AriaRole::Link`] nodes; the active destination
+    /// §5.40 — a `AriaRole::Navigation` landmark whose children are the
+    /// destination `AriaRole::Link` nodes; the active destination
     /// (selected) carries `aria-current="page"`. Link names come from
     /// [`DESTINATIONS`].
     fn access_node(state: &RailState, focused: Option<&str>) -> Vec<AccessNode> {

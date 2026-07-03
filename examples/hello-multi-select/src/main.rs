@@ -20,9 +20,9 @@
 //!   rest of the set intact.
 //!
 //! Everything else is the unchanged R774 composition: the windowing is
-//! [`view_flex_virtual_list`], the offset is the [`ScrollState`], and a
+//! [`view_flex_virtual_list`], the offset is the `ScrollState`, and a
 //! navigated row scrolls into view by index even when it was never
-//! materialized ([`scroll_offset_to_reveal`], reached through
+//! materialized (`scroll_offset_to_reveal`, reached through
 //! `nav_select_key`).
 //!
 //! The coordinator holds the selection as a `BTreeSet` of **data indices**

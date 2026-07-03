@@ -22,7 +22,7 @@
 //! - **Extra** [`GroupOrderExternal`] at [`GROUP_TAG`] — groups the upstream's
 //!   `order()` (via [`GroupOrderState::with_order_source`]); a clicked group
 //!   header (`ggroup#<group>`) toggles collapse.
-//! - **Extra** [`ScrollBarExternal`] at [`SCROLLBAR_TAG`].
+//! - **Extra** `ScrollBarExternal` at [`SCROLLBAR_TAG`].
 //!
 //! ## The witness (§2 #7 scene-as-data)
 //!
@@ -345,7 +345,7 @@ impl WidgetA11y for GroupedSortView {
     /// data row a `TreeItem` at `aria-level = 2` with `aria-selected`.
     ///
     /// Hand-rolled rather than reusing
-    /// [`pinion_a11y::tree_access_nodes`](pinion_a11y::tree_access_nodes) for
+    /// [`pinion_a11y::tree_access_nodes`] for
     /// the same reason as `hello-grouped-list`: that builder uses one
     /// `row_prefix`, but a grouped list carries two composite namespaces
     /// (`ggroup#` headers route to collapse, `glist#` data rows to selection),

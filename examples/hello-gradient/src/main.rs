@@ -12,7 +12,7 @@
 //!   rainbow, the direct precursor of the R709 `ColorPicker` hue bar;
 //! * a **demo swatch** (`tag = "demo_swatch"`) that the Toggle switches
 //!   between a vertical *linear* gradient (Off) and a *radial* gradient
-//!   (On), exercising both [`GradientKind`] arms and proving the §5.16
+//!   (On), exercising both `GradientKind` arms and proving the §5.16
 //!   R682 paint-cache re-keys when a gradient changes (the manual
 //!   `Hash for BoxStyle` folds the gradient in);
 //! * a rounded gradient panel behind the swatch.
@@ -20,7 +20,7 @@
 //! ## Why a Toggle
 //!
 //! A gradient gallery is intrinsically stateless, but the `AppShell`
-//! drives a [`WidgetView`] with a statechart `External`. Rather than
+//! drives a `WidgetView` with a statechart `External`. Rather than
 //! invent a one-off widget ([[abstraction-needs-second-consumer]]), the
 //! binding reuses the §5.38 [`ToggleExternal`] purely as the *mode bit*:
 //! the Off/On sidecar selects linear vs radial for the demo swatch. The

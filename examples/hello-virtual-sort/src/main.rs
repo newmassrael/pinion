@@ -16,7 +16,7 @@
 //!   windowed `vlist#<source>` rows route clicks here; selection is the
 //!   **source** index, never the visual position.
 //! - **Extra** `ViewSortFilterExternal` at [`SORT_TAG`] — holds the
-//!   `(sort, filter)` and derives the visual→source [`order`] permutation;
+//!   `(sort, filter)` and derives the visual→source `order` permutation;
 //!   the clicked sort header routes here (`vsort#cycle`), filter is driven
 //!   by the AI-first `invoke "set_filter"`.
 //! - **Extra** `ScrollBarExternal` at [`SCROLLBAR_TAG`] — shares the list's
@@ -34,11 +34,11 @@
 //! The whole proof is data (see `tools/demos/r747_virtual_sort.py`).
 //!
 //! The order is recomputed in the view (memoized on `(sort, filter)` via
-//! [`Owner::cache`]) from the same deterministic row keys the proxy holds,
+//! `Owner::cache`) from the same deterministic row keys the proxy holds,
 //! so the view's window and the proxy's `query("order")` agree by
 //! construction — the table reads its order back through introspect, but a
 //! 10,000-row order is too large to project, so the view recomputes through
-//! the shared [`compute_order`] SSOT instead.
+//! the shared `compute_order` SSOT instead.
 
 use std::rc::Rc;
 

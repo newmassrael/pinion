@@ -319,7 +319,7 @@ const EDIT_TF_TAG: &str = "node_edit";
 const EDIT_TF_BLUR_INTENT_TAG: &str = pinion_core::intent_tag!("node_edit", "blur");
 
 /// R852 — the per-OS data dir name for the file-backed graph store
-/// ([`open_app_storage`]); the `Owner::cache` key for the shared storage hook.
+/// (`open_app_storage`); the `Owner::cache` key for the shared storage hook.
 const STORAGE_APP_NAME: &str = "pinion-node-editor";
 const STORAGE_CACHE_KEY: &str = "node_graph.storage";
 /// R852 — the single [`Storage`] key the whole graph snapshot is written under
@@ -637,8 +637,8 @@ impl GraphNode {
 
 /// R948 — the union bounding box `(left, top, right, bottom)` in graph units
 /// of a node set (each node spans `x..right()` × `y..bottom()`), or `None`
-/// for an empty set. The one home for the min/max fold that [`frame_all`] (all
-/// nodes) and [`align_selected`] (the selection) both need — a divergent fold
+/// for an empty set. The one home for the min/max fold that `frame_all` (all
+/// nodes) and `align_selected` (the selection) both need — a divergent fold
 /// would let the two read a node's extent differently ([[ssot-lift-grep-repo-wide-cross-enum]]).
 fn node_bounds<'a>(nodes: impl Iterator<Item = &'a GraphNode>) -> Option<(i32, i32, i32, i32)> {
     let mut bounds: Option<(i32, i32, i32, i32)> = None;
@@ -1910,7 +1910,7 @@ fn apply_set_default(
 
 /// R853 / R918 — clamp `(x, y)` into the world bounds and write node `id`'s
 /// position, returning `(before, after)` window positions (`None` for an absent
-/// id). The non-journaling reposition primitive shared by [`set_node_pos`]
+/// id). The non-journaling reposition primitive shared by `set_node_pos`
 /// (the capture drag, called once per frame) and [`apply_set_pos`] (the
 /// journaling single-move funnel) — the ONE place a node's position is clamped
 /// and written.
@@ -2458,7 +2458,7 @@ impl NodeGraphExternal {
     /// capture drag, the arrow nudge, and the `intervene node.<id>.{x,y}` path.
     /// It does *not* journal (a drag calls it many times per gesture); R853 — the
     /// callers (`end_gesture` / `nudge_selected` / the `x`,`y` intervene arm)
-    /// record the [`MoveNodeCmd`] once the gesture / keystroke settles.
+    /// record the `MoveNodeCmd` once the gesture / keystroke settles.
     fn set_node_pos(&self, id: NodeId, x: i32, y: i32) -> bool {
         set_pos_clamped(&self.nodes, id, x, y).is_some()
     }
@@ -2466,7 +2466,7 @@ impl NodeGraphExternal {
     /// R849 — create a new node of [`PALETTE`] kind `kind` at the next cascade
     /// position, minting a fresh stable [`NodeId`] (monotonic, never reused),
     /// and select it. Returns the new id, or `None` for an out-of-range kind.
-    /// The single mutation behind both a palette card click ([`handle_send`])
+    /// The single mutation behind both a palette card click (`handle_send`)
     /// and the `add_node` RPC verb — the graph can finally *grow*, not only be
     /// rearranged. A new node has no edges, so no edge / selection bookkeeping
     /// is needed (the stable-id model: adding is purely additive).
@@ -2828,7 +2828,7 @@ impl NodeGraphExternal {
 
     /// R948 — the selection move-loop SSOT behind nudge / align / distribute:
     /// map `target(n)` onto every node in `sel` through the clamped
-    /// [`set_node_pos`], inside one reactive [`batch`] (so subscribers see one
+    /// `set_node_pos`, inside one reactive [`batch`] (so subscribers see one
     /// atomic group move), and journal the net displacement as ONE
     /// [`MoveNodesCmd`]. `coalescable` folds a contiguous same-member run — true
     /// for an arrow-nudge burst, false for a discrete align / distribute
@@ -2859,7 +2859,7 @@ impl NodeGraphExternal {
 
     /// The selected nodes, snapshotted by value in id order — the shared
     /// preamble for the move commands (so the bbox / sort math reads a stable
-    /// set while [`apply_node_moves`] mutates the live signal).
+    /// set while `apply_node_moves` mutates the live signal).
     fn selected_nodes(&self) -> Vec<GraphNode> {
         let members = self.selection.get().nodes();
         let nodes = self.nodes.get();
@@ -3344,7 +3344,7 @@ impl NodeGraphExternal {
     /// nodes cannot have moved without it, and a release after it must not
     /// select). Distinguishes a click (select on release) from a drag
     /// (selection untouched) on the capture path, where the release always
-    /// reaches [`handle_send`]; measured by the framework [`DragLatch`]
+    /// reaches `handle_send`; measured by the framework [`DragLatch`]
     /// contract predicate, so this binding and the router can never
     /// disagree on what a click is.
     fn gesture_moved(&self) -> bool {

@@ -51,7 +51,7 @@
 //!
 //! ## Anchored positioning (flip + clamp)
 //!
-//! [`anchor_position`] places each tooltip flush against its control,
+//! `anchor_position` places each tooltip flush against its control,
 //! flipping above when below would overflow the window and clamping
 //! horizontally so it never paints off-screen. `autosave` sits high
 //! (tooltip opens below); `offline` sits low at the right edge so its

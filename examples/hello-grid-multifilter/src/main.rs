@@ -6,7 +6,7 @@
 //! predicates with comparison operators — *Name contains "Alpha" AND Score ≥
 //! 500 AND Status = Active*. This binding closes that Model/View-at-scale
 //! campaign slice: the R783 `GridFilter` is now a list of
-//! [`ColumnFacet`]s (col + [`FilterOp`] + value) combined with logical AND, and the
+//! `ColumnFacet`s (col + `FilterOp` + value) combined with logical AND, and the
 //! AI-first wire carries the whole conjunction in one string —
 //! `set_filter "0~Alpha&1>=500&2=Active"`:
 //!

@@ -39,7 +39,7 @@
 //! virtualized list: the rendered subset is announced with its absolute
 //! position in the full set. The list itself is not a tab stop and rows
 //! are display-only this slice (selection is a later mini-series round),
-//! so [`StubExternal`](pinion_core::external::StubExternal) is the
+//! so [`StubExternal`] is the
 //! addressable list anchor and the only interactive peer is the
 //! scrollbar.
 
@@ -64,7 +64,7 @@ vello_renderer_impl!(HelloVirtualListRenderer, HelloVirtualListRendererError);
 
 const WIN_W: u32 = 360;
 const WIN_H: u32 = 460;
-/// Shared [`ThemeProvider`] cache key (the `"app"` convention shared
+/// Shared [`ThemeProvider`](pinion_core::theme::ThemeProvider) cache key (the `"app"` convention shared
 /// across the catalogue).
 const THEME_TAG: &str = "app";
 /// Total dataset size — the whole point is that this is large while the
@@ -210,7 +210,7 @@ impl WidgetCore for VirtualListView {
     type Event = ();
 
     /// The list has no per-item or aggregate widget statechart — the
-    /// scroll position lives in [`ScrollState`] and the only interactive
+    /// scroll position lives in `ScrollState` and the only interactive
     /// peer is the scrollbar (an extra External). The primary External is
     /// the no-op [`StubExternal`] anchor, addressable at [`LIST_TAG`] for
     /// the input router and the a11y `list` bounds.

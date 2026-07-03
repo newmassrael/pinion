@@ -40,7 +40,7 @@ vello_renderer_impl!(HelloDisclosureRenderer, HelloDisclosureRendererError);
 
 const WIN_W: u32 = 420;
 const WIN_H: u32 = 320;
-/// [`ThemeProvider`] cache key — matches the `"app"` convention shared
+/// [`ThemeProvider`](pinion_core::theme::ThemeProvider) cache key — matches the `"app"` convention shared
 /// across the example gallery.
 const THEME_TAG: &str = "app";
 const SUMMARY: &str = "Advanced settings";

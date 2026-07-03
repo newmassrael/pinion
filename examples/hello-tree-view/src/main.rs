@@ -49,7 +49,7 @@
 //!   on leaves).
 //! - A printable character — **type-ahead** to the next visible row
 //!   whose label matches, via the
-//!   [`pinion_shell::typeahead`](pinion_shell::typeahead) substrate
+//!   [`pinion_shell::typeahead`] substrate
 //!   (this binding is the `TreeView` consumer that substrate's module
 //!   doc named as a future taker). Single-char taps cycle; multi-char
 //!   within [`TYPEAHEAD_TIMEOUT`](pinion_shell::typeahead::TYPEAHEAD_TIMEOUT)
@@ -119,7 +119,7 @@ const WIN_H: u32 = 400;
 /// lands on the first / last visible row.
 const NAV_PAGE: usize = 7;
 
-/// R674 §5.20 — dotted wire-form intent tag the [`WidgetView::update`]
+/// R674 §5.20 — dotted wire-form intent tag the `WidgetView::update`
 /// reducer matches against for click-driven row toggles. Compile-time
 /// concat of [`TREE_TAG`] and the substrate's `"click"` event name
 /// via the [`intent_tag!`] macro so the literal stays in lockstep
@@ -138,7 +138,7 @@ const FOOTER_TOP_GAP: u32 = 8;
 
 /// R673 §5.50 — sample tree data. Three top-level branches (`src`,
 /// `tests`, `docs`) each carrying a small child tree. The data lives
-/// in a `Signal<Vec<FileNode>>` so [`apply_key`] mutations
+/// in a `Signal<Vec<FileNode>>` so `apply_key` mutations
 /// (expand/collapse toggles) re-run the view fn deterministically.
 /// `serde::Serialize` / `Deserialize` derive is required because
 /// `pinion_core::Signal<T>` carries the §5.22 introspect bound on T;
@@ -482,7 +482,7 @@ impl WidgetCore for TreeViewBinding {
         apply_key_impl(key)
     }
 
-    /// R674 §5.23 R27 — bridge [`FileTreeRowExternal`]'s `click`
+    /// R674 §5.23 R27 — bridge `FileTreeRowExternal`'s `click`
     /// intent into the lifted [`toggle_expanded`] sink (R820).
     /// Side-effect-only ([[scxml-as-model-update-transient]]) — empty
     /// `Vec<Command>` return; the `Signal::set` write inside
@@ -506,7 +506,7 @@ impl WidgetCore for TreeViewBinding {
 impl WidgetA11y for TreeViewBinding {
     /// R674 §5.40 / R812 §5.40 §5.50 — the WAI-ARIA `tree` + per-row
     /// `treeitem` semantic tree, built through the lifted
-    /// [`tree_access_nodes`](pinion_a11y::tree_access_nodes) substrate
+    /// [`tree_access_nodes`] substrate
     /// (R812 — `hello-tree-view` is its first consumer; the
     /// `hello-dock-panels` inspector is the second). The root advertises
     /// the `Tree` role on the focusable [`ROOT_BTN_TAG`] External and

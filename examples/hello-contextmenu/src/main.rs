@@ -294,8 +294,8 @@ impl WidgetCore for ContextMenuView {
 impl WidgetA11y for ContextMenuView {
     /// R772 §5.40 — WAI-ARIA 1.2 §3.5 menu / menuitem tree. The menu is a
     /// transient popup: while closed it contributes nothing; while open it
-    /// emits an [`AriaRole::Menu`] root (tag `ctx`) plus one
-    /// [`AriaRole::MenuItem`] per command, the active one carrying the AT
+    /// emits an `AriaRole::Menu` root (tag `ctx`) plus one
+    /// `AriaRole::MenuItem` per command, the active one carrying the AT
     /// focus flag. Per-item names are derived by `enrich_names_from_scene`
     /// from each label `TextNode`; the menu container name has no single
     /// paint equivalent so it stays an explicit override.

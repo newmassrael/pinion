@@ -3,8 +3,8 @@
 //!
 //! A pagination control is a single-select group of numbered page links
 //! (exactly one page is *current*) plus previous / next stepping. The page
-//! cells reuse the [`RadioGroupExternal`] machinery verbatim — through the
-//! [`PaginationExternal`](pinion_core::widgets::pagination::PaginationExternal)
+//! cells reuse the `RadioGroupExternal` machinery verbatim — through the
+//! [`PaginationExternal`]
 //! coordinator, which wraps the group and adds clamping prev / next — so
 //! per-cell interaction state, 1-of-N exclusion, the §5.20 `"selected"`
 //! intent and the roving keyboard model all come for free.
@@ -49,7 +49,7 @@ vello_renderer_impl!(HelloPaginationRenderer, HelloPaginationRendererError);
 
 const WIN_W: u32 = 460;
 const WIN_H: u32 = 120;
-/// [`ThemeProvider`] cache key — the `"app"` convention shared across the
+/// [`ThemeProvider`](pinion_core::theme::ThemeProvider) cache key — the `"app"` convention shared across the
 /// example gallery.
 const THEME_TAG: &str = "app";
 

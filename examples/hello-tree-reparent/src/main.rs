@@ -12,7 +12,7 @@
 //! navigation surface — needs the *hierarchical* move: drag a node **onto**
 //! another to make it that node's child (reparent), or **between** two siblings
 //! to reorder. This is the third consumer of the R742 drag-session
-//! [`External`](pinion_core::external::External) hooks (`begin_drag` /
+//! [`External`] hooks (`begin_drag` /
 //! `drag_to` / `drag_release`) and the second consumer of the
 //! [`tree_nav`](pinion_core::widgets::tree_nav) structural-mutation ops
 //! ([`remove_subtree`] / [`insert_subtree`]) — lifted from `hello-tree-grid`
@@ -44,7 +44,7 @@
 //! ## State & reactivity
 //!
 //! The retained tree, the keyboard cursor, the armed drag source, and the live
-//! drop preview are reactive [`Signal`](pinion_core::reactive::Signal)s in
+//! drop preview are reactive [`Signal`]s in
 //! [`Owner::cache`](pinion_core::reactive::Owner::cache) (`use_outliner`), so
 //! the view, the a11y tree, and the drag-hook `External` all share one
 //! instance — the `hello-tree-grid` pattern. `WidgetCore::State` is `()`; the
@@ -749,7 +749,7 @@ impl WidgetCore for TreeReparentView {
 
 impl WidgetA11y for TreeReparentView {
     /// WAI-ARIA tree via the shared
-    /// [`tree_access_nodes`](pinion_a11y::tree_access_nodes) builder (the same
+    /// [`tree_access_nodes`] builder (the same
     /// SSOT `hello-tree-view` feeds): a `tree` root over one `treeitem` per
     /// visible row, each with `aria-level` / `aria-posinset` / `aria-setsize`
     /// and `aria-expanded` on branches. No selection model (`selected_id =

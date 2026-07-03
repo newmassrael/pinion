@@ -45,7 +45,7 @@ vello_renderer_impl!(HelloProgressRenderer, HelloProgressRendererError);
 
 const WIN_W: u32 = 360;
 const WIN_H: u32 = 160;
-/// [`ThemeProvider`] cache key — matches the `"app"` convention shared
+/// [`ThemeProvider`](pinion_core::theme::ThemeProvider) cache key — matches the `"app"` convention shared
 /// across the example gallery.
 const THEME_TAG: &str = "app";
 /// The track row's hit-test + a11y tag; also the root `External` tag
@@ -144,7 +144,7 @@ fn indeterminate_track(phase: f32, theme: &pinion_core::theme::Theme) -> Scene {
 /// view-fn (§6.3): pure sync mapping `(fraction, indeterminate) ->
 /// Scene`. Determinate: `[filled | unfilled]` fraction track + percent
 /// readout. Indeterminate: a looping sweep segment (driven by the
-/// §5.28 [`IndeterminateSweep`] Tickable) + a "Working…" readout, with
+/// §5.28 `IndeterminateSweep` Tickable) + a "Working…" readout, with
 /// no fraction (WAI-ARIA "completion unknown").
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: (f32, bool), _frame: &Frame) -> Scene {

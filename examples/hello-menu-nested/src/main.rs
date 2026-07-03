@@ -11,7 +11,7 @@
 //! `aria-expanded` and (when open) owns the nested [`AriaRole::Menu`].
 //!
 //! Everything drives the one
-//! [`MenuBarExternal`](pinion_core::widgets::menu::MenuBarExternal):
+//! [`MenuBarExternal`]:
 //!
 //! * `invoke("send", "t<m>:PointerUp")` toggles a top title.
 //! * `invoke("send", "i<path>:PointerUp")` activates an item by its

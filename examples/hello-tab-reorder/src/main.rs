@@ -5,7 +5,7 @@
 
 //! `hello-tab-reorder` — R743 §5.51 — **second consumer** of the generic
 //! drag-and-drop substrate (the R742 additive
-//! [`External`](pinion_core::external::External) hooks `begin_drag` /
+//! [`External`] hooks `begin_drag` /
 //! `drag_to` / `drag_release` plus the `InputRouter` drag session).
 //!
 //! ## Why this binding exists
@@ -721,10 +721,10 @@ impl WidgetCore for TabReorderView {
 
 impl WidgetA11y for TabReorderView {
     /// WAI-ARIA 1.2 §3.6 tablist/tab/tabpanel tree. Emits N+2 nodes: a
-    /// [`AriaRole::TabList`] parent claiming each tab in *visual* order, a
-    /// [`AriaRole::Tab`] per visual position (named by the tab now at
+    /// `AriaRole::TabList` parent claiming each tab in *visual* order, a
+    /// `AriaRole::Tab` per visual position (named by the tab now at
     /// that position, `aria-selected` when its id is selected,
-    /// `aria-posinset`/`setsize`), and a [`AriaRole::TabPanel`] for the
+    /// `aria-posinset`/`setsize`), and a `AriaRole::TabPanel` for the
     /// active tab's body.
     fn access_node(state: &TabsState, focused: Option<&str>) -> Vec<AccessNode> {
         // R815 §5.40 — lifted `tablist_tab_nodes` builder. Tabs are

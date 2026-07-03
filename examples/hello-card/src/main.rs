@@ -19,7 +19,7 @@
 //! target. Its pointer interaction — `enter → Hover`, `down → Pressed`,
 //! `up-on-target → click → Hover`, `leave → Idle` — is **byte-identical**
 //! to a button's, so the clickable card reuses
-//! [`ButtonExternal`](pinion_core::widgets::button::ButtonExternal)
+//! [`ButtonExternal`]
 //! rather than declaring a second, identical SCXML statechart
 //! ([[command-intent-wire-form-mirror]] / the R738 "same statechart ⇒
 //! reuse the policy" rule). The card's distinct identity lives entirely
@@ -45,8 +45,8 @@
 //! the R753 filter-chip / R756 input-chip precedent), the
 //! [`card_surface_style`] skin is built **here**, in the single first
 //! consumer, not pre-lifted into `pinion-widget-paint`. It composes the
-//! already-shared SSOTs — the [`elevation`](pinion_widget_paint::elevation)
-//! shadow ramp (R711) and the [`state_layer`](pinion_widget_paint::state_layer)
+//! already-shared SSOTs — the [`elevation`]
+//! shadow ramp (R711) and the [`state_layer`]
 //! overlay (R752) — so the only genuinely new code is the variant →
 //! `(base tone, shadow, border)` choice. When a 2nd card-surface consumer
 //! appears the shared core lifts to `pinion_widget_paint::card`, exactly
@@ -81,7 +81,7 @@ vello_renderer_impl!(HelloCardRenderer, HelloCardRendererError);
 
 const WIN_W: u32 = 560;
 const WIN_H: u32 = 220;
-/// [`ThemeProvider`] cache key — the `"app"` convention shared across
+/// [`ThemeProvider`](pinion_core::theme::ThemeProvider) cache key — the `"app"` convention shared across
 /// the example gallery.
 const THEME_TAG: &str = "app";
 
@@ -148,7 +148,7 @@ type CardStates = [ButtonState; N];
 /// interaction state: resting / pressed / disabled at Level 1, bumping
 /// to Level 2 while hovered (the MD3 elevated-card hover lift). The
 /// level → shadow mapping itself is the shared
-/// [`elevation`](pinion_widget_paint::elevation) ramp — this fn only
+/// [`elevation`] ramp — this fn only
 /// picks the level.
 const fn elevated_level(state: ButtonState) -> u8 {
     match state {
@@ -159,7 +159,7 @@ const fn elevated_level(state: ButtonState) -> u8 {
 
 /// R757 §5.38 — the inline M3 card surface skin (1st card-paint
 /// consumer). Builds the variant's resting `BoxStyle` and tints it
-/// through the shared [`state_layer`](pinion_widget_paint::state_layer)
+/// through the shared [`state_layer`]
 /// overlay for the current interaction `state`, so no card variant
 /// re-derives the raw M3 state-layer opacity literals:
 ///
@@ -170,7 +170,7 @@ const fn elevated_level(state: ButtonState) -> u8 {
 ///
 /// The elevation ramp is the shared *Material-style* approximation, not
 /// a claim of bit-exact MD3 dp values (see
-/// [`elevation`](pinion_widget_paint::elevation)).
+/// [`elevation`]).
 fn card_surface_style(variant: CardVariant, state: ButtonState, theme: &Theme) -> BoxStyle {
     let base = match variant {
         CardVariant::Filled => theme.resolve(ColorRole::SurfaceContainerHighest),

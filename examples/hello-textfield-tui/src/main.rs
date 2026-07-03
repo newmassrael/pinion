@@ -6,7 +6,7 @@
 //! [`§2 invariant #6`](https://pinion.dev/spec#invariants) — GUI / TUI
 //! dual rendering from one canonical scene structure. The §5.38
 //! `TextField` widget composes identically across both backends:
-//! the SCXML statechart (R56.1.a) + reactive [`TextEditState`]
+//! the SCXML statechart (R56.1.a) + reactive `TextEditState`
 //! (R56.1.b) + W3C keystroke surface (R56.1.d) live in `pinion-core`,
 //! shared verbatim between the Vello `hello-textfield` and this
 //! `hello-textfield-tui`. Only the rendering shell + the visible
@@ -15,7 +15,7 @@
 //! ## What's different from the Vello sibling
 //!
 //! - **Caret blink**: the terminal native cursor blinks by itself
-//!   (xterm `vt220` mode etc.), and the R56.1.c [`CaretBlink`] /
+//!   (xterm `vt220` mode etc.), and the R56.1.c `CaretBlink` /
 //!   R56.1.h `attach_blink` substrate adds animation infrastructure
 //!   that the TUI shell does not yet consume. This binding omits the
 //!   blink attach and paints a solid block-cursor at the byte offset
@@ -25,14 +25,14 @@
 //!   coords through the R968 `CellMetric` (8 px wide / 16 px tall),
 //!   so the caret column is `byte_offset` cells (1 ASCII byte
 //!   per cell — matches every realistic TUI input). The parley
-//!   [`caret_rect_for_byte_offset`] (§5.36) helper is not used here
+//!   `caret_rect_for_byte_offset` (§5.36) helper is not used here
 //!   because TUI runs without a font shaping layer.
 //! - **Focus**: the TUI shell passes `Some(V::tag())` unconditionally
 //!   (single-focusable-binding model — [[substrate-incompleteness-
-//!   signal]] defers the TUI [`FocusManager`] axis until a second
+//!   signal]] defers the TUI `FocusManager` axis until a second
 //!   focusable TUI binding lands). So the field acts as if it is
 //!   permanently focused; `apply_key` still routes through
-//!   [`TextFieldExternal::invoke`]`("key", ...)` for the canonical
+//!   `TextFieldExternal::invoke``("key", ...)` for the canonical
 //!   keystroke surface.
 //!
 //! ## Try it
@@ -227,7 +227,7 @@ impl WidgetCore for HelloTextFieldTui {
     /// State shape: `(TextFieldState, u32)` — identical to the
     /// Vello sibling. The substrate's `read_state` lifts both
     /// fields through the §5.15 introspect channel each frame; the
-    /// text content itself lives on the reactive [`TextEditState`]
+    /// text content itself lives on the reactive `TextEditState`
     /// the view fn reaches via [`use_text_edit_state`].
     type State = (TextFieldState, u32);
 
@@ -512,11 +512,11 @@ impl WidgetCore for HelloTextFieldTui {
     }
 
     /// R56.1.d §5.38 §5.22 — delegate W3C UI Events keystroke to
-    /// [`TextFieldExternal::invoke`]`("key", Text(key))`. Identical
+    /// `TextFieldExternal::invoke``("key", Text(key))`. Identical
     /// to the Vello sibling, including the focus-tag short-circuit
     /// (the TUI shell passes `Some(V::tag())` unconditionally, so
     /// the gate is currently a no-op but stays in place for the
-    /// future TUI [`FocusManager`] axis).
+    /// future TUI `FocusManager` axis).
     fn apply_key(
         scene: &mut Scene,
         focused: Option<&str>,

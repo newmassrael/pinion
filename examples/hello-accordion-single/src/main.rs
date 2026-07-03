@@ -1,13 +1,13 @@
 //! `hello-accordion-single` — R701 §5.38 **single-open** WAI-ARIA APG
-//! accordion: the GUI consumer of the R700 [`DisclosureGroup`]
+//! accordion: the GUI consumer of the R700 `DisclosureGroup`
 //! single-expand coordinator.
 //!
-//! An accordion is a vertically stacked set of [`Disclosure`] sections,
+//! An accordion is a vertically stacked set of `Disclosure` sections,
 //! each a header `button` carrying `aria-expanded` that reveals its own
 //! content panel. The WAI-ARIA APG "Accordion" pattern defines two
 //! variants: **multi-open** (more than one panel open at once — the
 //! default, shipped as `examples/hello-accordion` over N independent
-//! [`DisclosureExternal`]s) and **single-open** (at most one panel
+//! `DisclosureExternal`s) and **single-open** (at most one panel
 //! open; opening one collapses whichever was open). That single-open
 //! exclusion is *cross-section coordination*, so — like a
 //! `RadioGroup`'s sibling-deselect (R51.15) — it is framework-owned,
@@ -17,13 +17,13 @@
 //!
 //! ## Composition — one composite External, not N
 //!
-//! Unlike multi-open `hello-accordion` (one [`DisclosureExternal`] per
+//! Unlike multi-open `hello-accordion` (one `DisclosureExternal` per
 //! section through `create_extra_externals`), the single-open accordion
 //! holds **one** [`DisclosureGroupExternal`] at the
 //! [`PRIMARY_TAG`] composite paint root — mirroring `hello-radio-group`
-//! over [`RadioGroupExternal`]. Each section header row is tagged
+//! over `RadioGroupExternal`. Each section header row is tagged
 //! `"accordion_single#<i>"` (the R51.41 composite paint convention), so
-//! the [`InputRouter`](pinion_runtime::input::InputRouter) R51.42
+//! the `InputRouter` R51.42
 //! `'#'`-split routes a cursor on header `i` to
 //! `invoke("send", Text("<i>:<EventName>"))` against the single
 //! coordinator. The coordinator enforces "at most one expanded" on the
@@ -85,7 +85,7 @@ vello_renderer_impl!(
 
 const WIN_W: u32 = 420;
 const WIN_H: u32 = 440;
-/// [`ThemeProvider`] cache key — the `"app"` convention shared across
+/// [`ThemeProvider`](pinion_core::theme::ThemeProvider) cache key — the `"app"` convention shared across
 /// the example gallery.
 const THEME_TAG: &str = "app";
 

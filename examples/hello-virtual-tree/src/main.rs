@@ -35,7 +35,7 @@
 //! ## Interaction
 //!
 //! Click a section row to expand / collapse it (the R674
-//! [`TreeRowClickExternal`] composite-tag click path, routed into the
+//! `TreeRowClickExternal` composite-tag click path, routed into the
 //! shared [`toggle_expanded`] sink). Keyboard roving + scroll-into-view
 //! over the windowed rows is a later additive axis — this slice is
 //! pointer + RPC + AT, the R730 / `hello-virtual-select` windowed-widget
@@ -74,7 +74,7 @@ const WIN_W: u32 = 480;
 const WIN_H: u32 = 520;
 const THEME_TAG: &str = "app";
 /// Composite-tag prefix the windowed rows carry (`{TREE_TAG}#{id}`) and
-/// the [`TreeRowClickExternal`] anchor clicks route to.
+/// the `TreeRowClickExternal` anchor clicks route to.
 const TREE_TAG: &str = "vtree";
 /// R824 §5.50 §5.12 — query-only tree-state introspection External
 /// ([`tree_view_introspection_extra`]). For a *virtualized* tree this is
@@ -114,9 +114,9 @@ const NAV_PAGE: usize = 10;
 /// caller-side per the `tree_nav` purity boundary (R811).
 const TYPEAHEAD_KEY: &str = "hello_virtual_tree::typeahead";
 
-/// The dotted wire form of the [`TreeRowClickExternal`] row-click intent,
+/// The dotted wire form of the `TreeRowClickExternal` row-click intent,
 /// composed via [`intent_tag!`] so the literal stays in lockstep with the
-/// substrate's bare `"click"` event name (pinned in [`tests`]).
+/// substrate's bare `"click"` event name (pinned in `tests`).
 const CLICK_INTENT_TAG: &str = intent_tag!("vtree", "click");
 
 /// One tree node. Carries its own `expanded` flag (the retained
@@ -400,8 +400,8 @@ impl WidgetCore for VirtualTreeView {
     }
 
     /// R820 §5.27 §5.50 — WAI-ARIA APG 6.13 tree keyboard over the windowed
-    /// rows: the lifted [`apply_tree_key`] resolve → flag-store bridge +
-    /// caller-side type-ahead, then [`reveal_cursor`] scrolls the new cursor
+    /// rows: the lifted `apply_tree_key` resolve → flag-store bridge +
+    /// caller-side type-ahead, then `reveal_cursor` scrolls the new cursor
     /// into the window (so navigating to an off-window row scrolls there and
     /// materializes it — keyboard ⊥ virtualization).
     ///

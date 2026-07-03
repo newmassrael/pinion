@@ -54,7 +54,7 @@ vello_renderer_impl!(HelloVirtualTableRenderer, HelloVirtualTableRendererError);
 /// horizontal scroll.
 const WIN_W: u32 = 400;
 const WIN_H: u32 = 480;
-/// Shared [`ThemeProvider`] cache key.
+/// Shared [`ThemeProvider`](pinion_core::theme::ThemeProvider) cache key.
 const THEME_TAG: &str = "app";
 /// Total data-row count — large while the rendered node count stays small
 /// and tracks the window height.
@@ -182,7 +182,7 @@ impl WidgetCore for VirtualTableView {
 }
 
 impl WidgetA11y for VirtualTableView {
-    /// WAI-ARIA virtualized `grid`: one [`AriaRole::Grid`] claiming the
+    /// WAI-ARIA virtualized `grid`: one `AriaRole::Grid` claiming the
     /// header `row` + the windowed data `row` tags; per-column
     /// `columnheader`; each windowed data row a `row` with its absolute
     /// `aria-posinset` + `aria-setsize = N` and one `gridcell` per column.

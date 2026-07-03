@@ -102,7 +102,7 @@ const LIST_TAG: &str = "todo_list";
 /// (R655 §5.16) [`Owner::cache`] key for the reactive
 /// `Signal<Vec<TodoItem>>` carrying the todo entries. Symmetric with
 /// the [`TF_TAG`] / [`use_text_edit_state`] convention — the
-/// [`apply_key`] handler, the view fn, and [`TodoDeleteExternal`]
+/// `apply_key` handler, the view fn, and [`TodoDeleteExternal`]
 /// (R656) all resolve through this key, so the same
 /// `Rc<Signal<Vec<TodoItem>>>` instance is shared and reactive
 /// subscriptions land in the same store. R656 swapped the inner
@@ -122,9 +122,9 @@ const NEXT_ID_KEY: &str = "todomvc.next_id";
 /// button handler. The paint scene emits one
 /// `Scene::Container { tag: "todo_delete#<id>" }` per todo entry,
 /// and the state scene holds exactly one [`TodoDeleteExternal`]
-/// registered via [`create_extra_externals`] under the primary tag
+/// registered via `create_extra_externals` under the primary tag
 /// `"todo_delete"`. The R51.42 §5.35 composite-tag wire splits the
-/// paint tag on `#` so the [`InputRouter`] resolves the primary
+/// paint tag on `#` so the `InputRouter` resolves the primary
 /// against the state scene and forwards the sub-index `<id>` to
 /// the External through the `invoke("send", "{id}:{Event}")`
 /// channel — the canonical pinion-native pattern
@@ -142,7 +142,7 @@ const ITEM_TAG_PREFIX: &str = "todo_item";
 
 /// (R656 §5.16) Per-item delete-button paint tag prefix. Full
 /// per-item tag is `"todo_delete#<id>"`; the `#` separator triggers
-/// the R51.42 composite-tag split so the [`InputRouter`] routes the
+/// the R51.42 composite-tag split so the `InputRouter` routes the
 /// click into [`TodoDeleteExternal`] (registered under primary tag
 /// [`DELETE_TAG`]).
 const DELETE_TAG_PREFIX: &str = "todo_delete";
@@ -152,7 +152,7 @@ const DELETE_TAG_PREFIX: &str = "todo_delete";
 /// [`WidgetCore::create_extra_externals`] as the 2nd sibling
 /// [`ExtraExternal`] under primary tag `"todo_toggle"`. The
 /// per-row paint tag is `"todo_toggle#<id>"`; the R51.42 §5.35
-/// composite-tag wire splits on `#` so the [`InputRouter`] resolves
+/// composite-tag wire splits on `#` so the `InputRouter` resolves
 /// the primary against [`TodoToggleExternal`] and forwards the
 /// sub-index `<id>` as part of `invoke("send", "{id}:{Event}")`.
 /// 2nd consumer of the multi-External `create_extra_externals`
@@ -215,9 +215,9 @@ const EDIT_TF_BLUR_INTENT_TAG: &str = pinion_core::intent_tag!("todo_edit", "blu
 
 /// (R664 §5.16 §5.38) Per-row in-place edit affordance — shared
 /// `TextField` tag for the *single* row in edit mode. Only one row is
-/// editable at a time ([`TasteJS`] `TodoMVC` canonical), so a single
+/// editable at a time (`TasteJS` `TodoMVC` canonical), so a single
 /// [`Owner::cache`] slot keyed by this static tag carries the editor's
-/// [`TextEditState`] / [`CaretBlink`] pair — the row swap moves the
+/// `TextEditState` / `CaretBlink` pair — the row swap moves the
 /// editor instance instead of allocating one per row. Mirror of
 /// [`TF_TAG`] for the main "add todo" field above; the editor is a
 /// distinct `TextField` so the two fields' caret + blink + selection
@@ -240,7 +240,7 @@ const ITEM_TAG: &str = "todo_item";
 /// in edit mode* (`None` = no row editing). The
 /// [`build_todos_list`] swap, the [`TodoEditExternal::invoke`]
 /// activation arm, the [`apply_key_edit`] commit / cancel handlers,
-/// and the [`access_node`] AT-side mode reporting all resolve
+/// and the `access_node` AT-side mode reporting all resolve
 /// through this signal — single source of truth, equality-skip
 /// suppresses no-op writes (a `set(Some(7))` while already editing
 /// row 7 does not re-render).
@@ -282,7 +282,7 @@ const STORAGE_STATE_KEY: &str = "todomvc.state";
 /// fragment storage + mark-and-sweep eviction + damage region
 /// propagation). The 2nd-consumer trigger per
 /// [[abstraction-needs-second-consumer]] ratifies the
-/// [`pinion_runtime::FragmentCacheStats`] observability surface
+/// `pinion_runtime::FragmentCacheStats` observability surface
 /// landed in R682.A.
 const SEED_N_ENV: &str = "PINION_TODOMVC_SEED_N";
 
@@ -466,7 +466,7 @@ fn apply_key_filter(scene: &mut Scene, key: &str) -> bool {
 /// | key      | action                                                      |
 /// |----------|-------------------------------------------------------------|
 /// | `Enter`  | Commit the editor text to the matching `TodoItem` row, clear `editing_id`, restore focus to [`TF_TAG`]. Empty / blank text deletes the row (`TasteJS` convention — the user erased everything). |
-/// | `Escape` | Cancel — clear `editing_id` without mutating the row, restore focus to [`TF_TAG`]. The editor's [`TextEditState`] is reset so the next edit starts blank. |
+/// | `Escape` | Cancel — clear `editing_id` without mutating the row, restore focus to [`TF_TAG`]. The editor's `TextEditState` is reset so the next edit starts blank. |
 /// | other    | Delegate to [`TextFieldExternal::invoke`]`("key", …)` so the embedded `TextField` SCXML drives caret motion, character insertion, selection extension, clipboard, IME — the canonical R56.1 keymap reused unchanged. |
 ///
 /// Focus restoration uses [`pinion_core::focus_request`] so the
@@ -550,8 +550,8 @@ fn cancel_edit() {
     end_edit_mode(true);
 }
 
-/// (R664 §5.16 / R793) Shared finish-edit teardown — clears [`editing_id`]
-/// and wipes the editor's [`TextEditState`] so the next edit starts blank.
+/// (R664 §5.16 / R793) Shared finish-edit teardown — clears `editing_id`
+/// and wipes the editor's `TextEditState` so the next edit starts blank.
 /// When `restore_focus` is set (the `Enter` commit / `Escape` cancel
 /// keyboard paths) it queues a focus return to [`TF_TAG`]; the R793
 /// commit-on-blur path passes `false` so it leaves focus where the click
@@ -621,12 +621,12 @@ pub fn use_filter() -> Rc<Signal<FilterMode>> {
 /// - [`TodoEditExternal`] activation arm — sets `Some(id)` on
 ///   double-click;
 /// - [`build_todos_list`] — swaps the matching row's text label for
-///   an inline [`view_field`] editor when the signal equals the row's
+///   an inline `view_field` editor when the signal equals the row's
 ///   id;
 /// - [`apply_key_edit`] — commits (`Enter`), cancels (`Escape`), or
 ///   delegates to [`TextFieldExternal`] (typing / arrow keys) when
 ///   `Some(_)`;
-/// - [`access_node`] — surfaces the edit-mode row through the W3C
+/// - `access_node` — surfaces the edit-mode row through the W3C
 ///   ARIA `aria-multiline=false` text-input role so AT clients see
 ///   the editor announce as a labelled field.
 ///
@@ -640,11 +640,11 @@ pub fn use_editing_id() -> Rc<Signal<Option<u64>>> {
         .cache(EDITING_ID_KEY, || Signal::new(None::<u64>))
 }
 
-/// (R658 §5.16) [`Owner::cache`] key for the reactive [`ScrollState`]
+/// (R658 §5.16) [`Owner::cache`] key for the reactive `ScrollState`
 /// owning the todo list's vertical scroll offset + max-y bound.
 /// Mirror of `hello-listbox`'s `SCROLL_KEY = "main_list_scroll"`
 /// shape — the [`use_scroll_state`] hook resolves through this key
-/// inside the view fn, and the runtime's [`compute_layout`] pass
+/// inside the view fn, and the runtime's `compute_layout` pass
 /// writes the laid-out max-y back through the same `Rc<ScrollState>`
 /// on the next frame.
 const LIST_SCROLL_KEY: &str = "todomvc.list_scroll";
@@ -709,7 +709,7 @@ const WIN_W: u32 = 480;
 // LIST_VIEWPORT_H + padding` rather than an unbounded growth budget.
 const WIN_H: u32 = 480;
 
-/// (R57.X.textfield §5.50) [`ThemeProvider`] cache key. Matches the
+/// (R57.X.textfield §5.50) [`ThemeProvider`](pinion_core::theme::ThemeProvider) cache key. Matches the
 /// `"app"` convention shared with `hello-toggle` / `hello-theme` /
 /// `hello-listbox` so the example gallery shares one provider when a
 /// host binds them together.
@@ -767,8 +767,8 @@ pub struct TodoItem {
 /// with [`use_text_edit_state`] / [`use_caret_blink`] hook shape —
 /// the [`Owner::cache`] dedup guarantees one `Rc` across the view fn
 /// (subscribes via `.get()` to re-run paint on submit/delete),
-/// [`apply_key`] (mutates via `.set_with(|v| v.push(...))` on
-/// Enter), [`create_extra_externals`] (constructs the singleton
+/// `apply_key` (mutates via `.set_with(|v| v.push(...))` on
+/// Enter), `create_extra_externals` (constructs the singleton
 /// [`TodoDeleteExternal`] with a clone of this `Rc`), and the
 /// `access_node` hook (walks the current snapshot to emit one
 /// `AccessNode` per item under the list root). Single-source-of-
@@ -890,7 +890,7 @@ fn use_storage() -> Rc<AppStorage> {
 }
 
 /// (R665 §3 §5.15) Dehydrated todomvc state. Single blob written to
-/// [`STORAGE_STATE_KEY`] so the [`FileStorage`] tempfile + rename
+/// [`STORAGE_STATE_KEY`] so the `FileStorage` tempfile + rename
 /// guarantees cover the whole persistence transaction (no torn read
 /// where `todos` survived but `next_id` reverted).
 ///
@@ -1642,15 +1642,15 @@ impl ExternalIntrospect for TodoToggleExternal {
 /// (R664 §5.16 §5.49) Per-row edit-in-place activation handler — 5th
 /// `ExtraExternal`. Listens on the [`ITEM_TAG`] primary tag for
 /// composite-tag `"<id>:DoubleClick"` payloads dispatched by the
-/// framework's W3C [`DOUBLE_CLICK_TIME_MS`](pinion_runtime::input)
+/// framework's W3C `DOUBLE_CLICK_TIME_MS`
 /// double-click detection (native winit path) or by the
 /// `scene/double_click` RPC drain (AI-introspection path, R663). On
 /// activation:
 /// 1. Mark this row as the active editor via
 ///    [`use_editing_id`]`().set(Some(id))` — the
 ///    [`build_todos_list`] swap observes the signal and renders an
-///    inline [`view_field`] in place of the row's text.
-/// 2. Seed the editor's [`TextEditState`] with the current item
+///    inline `view_field` in place of the row's text.
+/// 2. Seed the editor's `TextEditState` with the current item
 ///    text so the editor starts pre-filled (`TasteJS` `TodoMVC`
 ///    canonical: double-click reveals the current text, ready to
 ///    edit, caret at the end).
@@ -1678,9 +1678,9 @@ impl ExternalIntrospect for TodoToggleExternal {
 pub struct TodoEditExternal {
     todos: Rc<Signal<Vec<TodoItem>>>,
     /// `Rc<Signal<Option<u64>>>` shared with [`use_editing_id`].
-    /// Cached at construction so [`begin_edit`] does not call
+    /// Cached at construction so `begin_edit` does not call
     /// `Owner::current()` from the dispatch path (the
-    /// [`InputRouter`](pinion_runtime::InputRouter) calls
+    /// `InputRouter` calls
     /// `external.invoke(...)` outside any `Owner::run(...)` wrap).
     editing_id: Rc<Signal<Option<u64>>>,
     /// `Rc<TextEditState>` shared with [`use_text_edit_state`]`(EDIT_TF_TAG)`
@@ -1695,7 +1695,7 @@ impl TodoEditExternal {
     /// [`Owner::run`] scope (the substrate wraps `create_extra_externals`
     /// in `root_owner.run(...)` by contract per R51.146-152
     /// `[[callback-root-owner-wrap]]` family). Cached `Rc`s let
-    /// [`begin_edit`] run from the dispatch path (which is
+    /// `begin_edit` run from the dispatch path (which is
     /// `Owner`-less) without panicking.
     #[must_use]
     pub fn new(todos: Rc<Signal<Vec<TodoItem>>>) -> Self {
@@ -1828,7 +1828,7 @@ impl ExternalIntrospect for TodoEditExternal {
     }
 }
 
-/// Build the todo list section: tagged `Scene::Container`(`LIST_TAG`)
+/// Build the todo list section: tagged `Scene::Container` (`LIST_TAG`)
 /// holding a header label + one row per entry. Empty store renders
 /// the "type and press Enter" hint. Header shape is filter-aware
 /// (three orthogonal cases below). Lifted from view fn so the
@@ -2099,7 +2099,7 @@ impl WidgetCore for TodoMvcView {
     /// - [`EDIT_TF_TAG`] / [`TextFieldExternal`] — the inline editor's
     ///   own `TextField` SCXML, wired through the dedicated
     ///   [`use_text_edit_state`] / [`use_caret_blink`] /
-    ///   [`use_clipboard`] cache slots so the editor + main field
+    ///   `use_clipboard` cache slots so the editor + main field
     ///   keep independent text + caret + clipboard state across the
     ///   focus transitions.
     fn create_extra_externals() -> Vec<ExtraExternal> {
@@ -2557,7 +2557,7 @@ fn filter_at_action(scene: &mut Scene, sub_tag: &str, action: AccessAction) -> b
 }
 
 /// (R664 §5.40) Generic per-item AT-action helper —
-/// `Click`/`Default` invokes `external_tag`.`method`(Int(id)) on the
+/// `Click`/`Default` invokes `external_tag`.`method` (Int(id)) on the
 /// External registered under `external_tag` (delete / toggle / edit).
 /// Sub-tag must parse as `u64` (the stable per-item id). Used by
 /// the AT bridge for the `todo_delete` / `todo_toggle` / `todo_item`

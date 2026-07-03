@@ -16,7 +16,7 @@
 //! **Rename** (or `F2`) puts the selected row into edit mode: its
 //! [`file_row`](pinion_widget_paint::file_browser::file_row) is replaced by a
 //! `TextField` (the R789.1 [`file_browser_pane`]'s new
-//! [`EditingRow`](pinion_widget_paint::file_browser::EditingRow) hook),
+//! [`EditingRow`] hook),
 //! pre-filled with the current name and focused. `Enter` commits the rename
 //! ([`DirectoryState::rename_selected`] → [`Directory::rename`]); `Escape`
 //! cancels. The in-place editor is the same extra-external `TextField`

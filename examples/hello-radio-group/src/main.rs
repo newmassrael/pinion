@@ -1,10 +1,10 @@
 //! `hello-radio-group` — R51.44 §5.38 composite hit-target first-
 //! client. N=3 [`RadioGroup`](pinion_core::widgets::radio_group::RadioGroup)
-//! rendered as a vertical column of three [`Radio`]-style rows, each
+//! rendered as a vertical column of three `Radio`-style rows, each
 //! row tagged with the paint convention `"main_group#<index>"` from
 //! the R51.41 RFC. The state scene carries one composite
 //! [`RadioGroupExternal`] tagged `"main_group"`; the
-//! [`InputRouter`](pinion_runtime::input::InputRouter) splits the
+//! `InputRouter` splits the
 //! `'#'` suffix (R51.42) so a cursor on row `i` drives
 //! `invoke("send", Text("<i>:<EventName>"))` against the single
 //! composite handle. Framework-owned mutual exclusion (R51.15) snaps
@@ -56,7 +56,7 @@ vello_renderer_impl!(HelloRadioGroupRenderer, HelloRadioGroupRendererError);
 
 const WIN_W: u32 = 360;
 const WIN_H: u32 = 280;
-/// (R57.X.radio §5.50) [`ThemeProvider`] cache key — matches the
+/// (R57.X.radio §5.50) [`ThemeProvider`](pinion_core::theme::ThemeProvider) cache key — matches the
 /// `"app"` convention shared across the example gallery.
 const THEME_TAG: &str = "app";
 const N: usize = 3;

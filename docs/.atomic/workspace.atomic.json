@@ -21836,6 +21836,46 @@
         "R1213/R1214 renumber: prior carry said R1212 examples / R1213 gate, but R1212 became the remaining-libs round (undercount fix), so examples=R1213, gate=R1214."
       ]
     },
+    "R1213": {
+      "decision_summary": "R1213 doc-hygiene campaign round 7: all example binaries made cargo-doc-clean; the ENTIRE workspace doc now builds with zero errors.",
+      "changes_bullets": [
+        "Example bins: ~390 broken intra-doc links -> 0 across 108 example files (true count was ~390, not the ~150 estimate -- abort-at-first-crate masked most until --keep-going). ThemeProvider (42 files) -> working links [`ThemeProvider`](pinion_core::theme::ThemeProvider); InputRouter (32 files, unreachable -- examples don't dep pinion-runtime) -> code spans; 235 other unresolved -> spans, 60 redundant-explicit -> shortcuts (location-anchored to rustdoc's file:line:col, not a blind regex).",
+        "Stale-API catches: ThemeProvider::set_theme does not exist (real API set_mode/set_light_palette/...) -> spanned; WidgetView::initial_size -> real initial_size_strategy -> relinked. 3 unclosed-HTML-tag prose fragments backticked.",
+        "Delegated to one subagent; doc comments only, no code/Cargo.toml/lints."
+      ],
+      "verification_bullets": [
+        "THE GOAL: cargo doc --workspace --no-deps = EXIT 0, 0 errors, 0 could-not-document (was exit 101 since ~R683).",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = exit 0 (doc_markdown clean across all examples).",
+        "Independently verified: no doubled-target `](x)(x)` and no dangling `` `id`( `` artifacts in examples/; only doc-comment lines changed (108 files); spot-checked scripted edits -- clean (spans for unreachable, working links for ThemeProvider)."
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "DOC-HYGIENE CAMPAIGN ([[doc-hygiene-campaign]]) content DONE (R1207-R1213): whole workspace `cargo doc --workspace --no-deps` now exit 0 (~800->~1000+ real fixes; was a ~30x undercount of R1206's '26'). ONE round left: R1214 = add `cargo doc --workspace --no-deps` to .githooks pre-commit + pre-push (and CI ci.yml) so the doc build can never regress -- the whole reason the debt accreted invisibly since ~R683 (cargo doc was never gated). Use `RUSTDOCFLAGS='-D warnings'` implicitly via the existing warnings=deny, or add an explicit doc step.",
+        "SEMANTIC flags for a maintainer (out of doc-hygiene scope, left as spans): ThemeProvider::set_theme (prose may mean set_mode); runtime SpringState::tick (lives on Tween); rpc ExternalHandle::introspect (type doesn't exist, real trait External)."
+      ],
+      "publishable_decision_summary": "R1213 doc-hygiene campaign round 7: all example binaries made cargo-doc-clean; the ENTIRE workspace doc now builds with zero errors.",
+      "publishable_changes_bullets": [
+        "Example bins: ~390 broken intra-doc links -> 0 across 108 example files (true count was ~390, not the ~150 estimate -- abort-at-first-crate masked most until --keep-going). ThemeProvider (42 files) -> working links [`ThemeProvider`](pinion_core::theme::ThemeProvider); InputRouter (32 files, unreachable -- examples don't dep pinion-runtime) -> code spans; 235 other unresolved -> spans, 60 redundant-explicit -> shortcuts (location-anchored to rustdoc's file:line:col, not a blind regex).",
+        "Stale-API catches: ThemeProvider::set_theme does not exist (real API set_mode/set_light_palette/...) -> spanned; WidgetView::initial_size -> real initial_size_strategy -> relinked. 3 unclosed-HTML-tag prose fragments backticked.",
+        "Delegated to one subagent; doc comments only, no code/Cargo.toml/lints."
+      ],
+      "publishable_verification_bullets": [
+        "THE GOAL: cargo doc --workspace --no-deps = EXIT 0, 0 errors, 0 could-not-document (was exit 101 since ~R683).",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = exit 0 (doc_markdown clean across all examples).",
+        "Independently verified: no doubled-target `](x)(x)` and no dangling `` `id`( `` artifacts in examples/; only doc-comment lines changed (108 files); spot-checked scripted edits -- clean (spans for unreachable, working links for ThemeProvider)."
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "DOC-HYGIENE CAMPAIGN ([[doc-hygiene-campaign]]) content DONE (R1207-R1213): whole workspace `cargo doc --workspace --no-deps` now exit 0 (~800->~1000+ real fixes; was a ~30x undercount of R1206's '26'). ONE round left: R1214 = add `cargo doc --workspace --no-deps` to .githooks pre-commit + pre-push (and CI ci.yml) so the doc build can never regress -- the whole reason the debt accreted invisibly since ~R683 (cargo doc was never gated). Use `RUSTDOCFLAGS='-D warnings'` implicitly via the existing warnings=deny, or add an explicit doc step.",
+        "SEMANTIC flags for a maintainer (out of doc-hygiene scope, left as spans): ThemeProvider::set_theme (prose may mean set_mode); runtime SpringState::tick (lives on Tween); rpc ExternalHandle::introspect (type doesn't exist, real trait External)."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

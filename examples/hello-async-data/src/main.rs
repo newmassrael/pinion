@@ -165,7 +165,7 @@ fn row_tag(global_index: usize) -> String {
 /// the requested page is ever materialised — pages 2..N are not resident
 /// until fetched (the out-of-memory contract). `ERROR_PAGE` is
 /// scripted-unavailable. The latency carrier is the shared
-/// [`DeferredReady`](pinion_core::DeferredReady) SSOT (the same deterministic
+/// [`DeferredReady`] SSOT (the same deterministic
 /// `Pending`-countdown future the scripted file dialog uses, R923 lift), so
 /// the source has no hand-rolled equivalent of its own.
 fn fetch_page(page: usize) -> DeferredReady<Result<Vec<AssetRow>, String>> {

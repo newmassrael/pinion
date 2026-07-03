@@ -7,7 +7,7 @@
 //! A data table presents tabular data as a grid (the WAI-ARIA `grid`
 //! role with `row` / `columnheader` / `gridcell` children — the
 //! **second consumer** of the R704 grid-role family, and the first to
-//! exercise the [`AriaRole::Row`] role, which the date picker's flat
+//! exercise the `AriaRole::Row` role, which the date picker's flat
 //! calendar grid does not). Exactly one row may be selected; activating
 //! any cell in a row selects that row (single-row exclusion —
 //! framework-owned in the coordinator, like a `RadioGroup`'s
@@ -20,7 +20,7 @@
 //! [`DatePickerExternal`](pinion_core::widgets::datepicker::DatePickerExternal)).
 //! Each cell is tagged `"table#<row>_<col>"` (the R51.41 composite paint
 //! convention), so the
-//! [`InputRouter`](pinion_runtime::input::InputRouter) R51.42 `'#'`-split
+//! `InputRouter` R51.42 `'#'`-split
 //! routes a click on cell `(r, c)` to
 //! `invoke("send", Text("<r>_<c>:<EventName>"))` against the single
 //! coordinator, which enforces single-row exclusion on the activate edge
@@ -86,7 +86,7 @@ vello_renderer_impl!(HelloTableRenderer, HelloTableRendererError);
 
 const WIN_W: u32 = 540;
 const WIN_H: u32 = 360;
-/// [`ThemeProvider`] cache key — the `"app"` convention shared across
+/// [`ThemeProvider`](pinion_core::theme::ThemeProvider) cache key — the `"app"` convention shared across
 /// the example gallery.
 const THEME_TAG: &str = "app";
 

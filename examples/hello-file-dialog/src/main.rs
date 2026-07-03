@@ -1,13 +1,13 @@
 //! `hello-file-dialog` — R761 §3 §5.15 consumer of the
-//! [`FileDialog`](pinion_core::FileDialog) capability + the first
-//! production consumer of the §5.22 [`Resource`](pinion_core::Resource)
+//! [`FileDialog`] capability + the first
+//! production consumer of the §5.22 [`Resource`]
 //! async-reactive carrier.
 //!
 //! ## What this demonstrates
 //!
 //! Three buttons — **Open**, **Save**, **Pick folder** — each launch a
 //! file dialog through the `FileDialog` trait. The binding drives the
-//! deterministic [`ScriptedFileDialog`](pinion_core::ScriptedFileDialog)
+//! deterministic [`ScriptedFileDialog`]
 //! mock (a native OS dialog cannot run headless — that trait-split *is*
 //! the verification discipline + AI-first channel; the real
 //! `RfdFileDialog` lives in `pinion-platform-file-dialog`). The chosen

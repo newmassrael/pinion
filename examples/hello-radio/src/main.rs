@@ -13,8 +13,8 @@
 //! `selected = true` a centred 12×12 filled dot child (Material /
 //! `SwiftUI` / Qt convention) marks the chosen radio. The dot is a
 //! `Scene::Box` with `corner_radius = 6` — same flex-centred Container
-//! technique [`crate::widgets::Toggle`]'s knob and
-//! [`crate::widgets::Checkbox`]'s glyph already use. A right-of label
+//! technique `crate::widgets::Toggle`'s knob and
+//! `crate::widgets::Checkbox`'s glyph already use. A right-of label
 //! ("Premium tier") makes the picker semantic without `Group` /
 //! sibling Radio context (hello-radio demonstrates one Radio in
 //! isolation; `RadioGroup` multi-tag routing lands in a later round).
@@ -46,7 +46,7 @@ vello_renderer_impl!(HelloRadioRenderer, HelloRadioRendererError);
 
 const WIN_W: u32 = 360;
 const WIN_H: u32 = 180;
-/// (R57.X.radio §5.50) [`ThemeProvider`] cache key. Matches the
+/// (R57.X.radio §5.50) [`ThemeProvider`](pinion_core::theme::ThemeProvider) cache key. Matches the
 /// `"app"` convention shared with `hello-toggle` / `hello-theme` /
 /// `hello-listbox` / `hello-textfield` / `hello-button` so the
 /// example gallery shares one provider when a host binds them

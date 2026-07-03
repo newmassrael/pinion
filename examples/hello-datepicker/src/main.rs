@@ -19,7 +19,7 @@
 //! over [`RadioGroupExternal`](pinion_core::widgets::radio_group::RadioGroupExternal)).
 //! Each day cell is tagged `"datepicker#<day>"` (the R51.41 composite
 //! paint convention), so the
-//! [`InputRouter`](pinion_runtime::input::InputRouter) R51.42 `'#'`-split
+//! `InputRouter` R51.42 `'#'`-split
 //! routes a click on day `d` to
 //! `invoke("send", Text("<d>:<EventName>"))` against the single
 //! coordinator, which enforces single-day exclusion on the activate edge
@@ -80,7 +80,7 @@ vello_renderer_impl!(HelloDatePickerRenderer, HelloDatePickerRendererError);
 
 const WIN_W: u32 = 360;
 const WIN_H: u32 = 420;
-/// [`ThemeProvider`] cache key — the `"app"` convention shared across
+/// [`ThemeProvider`](pinion_core::theme::ThemeProvider) cache key — the `"app"` convention shared across
 /// the example gallery.
 const THEME_TAG: &str = "app";
 

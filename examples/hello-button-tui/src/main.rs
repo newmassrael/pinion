@@ -100,7 +100,7 @@ impl WidgetCore for HelloButtonTui {
     /// The shell drives typed events through
     /// [`WidgetCore::keybinding`]; this binding's `d` / `e`
     /// shortcuts produce raw `ButtonEvent` variants, while
-    /// `Space` / `Enter` go through [`apply_key`] (the W3C-named
+    /// `Space` / `Enter` go through `apply_key` (the W3C-named
     /// keyboard activation path).
     type Event = pinion_core::widgets::button::ButtonEvent;
 

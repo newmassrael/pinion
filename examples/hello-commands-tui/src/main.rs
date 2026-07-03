@@ -27,8 +27,8 @@
 //!
 //! §2 invariant #6 (GUI/TUI dual: one scene, two render dispatch
 //! paths). The Vello sibling exercises the
-//! [`pinion_shell::run_with_handlers`] +
-//! [`pinion_shell::ProxyIntentSink`] path; this binary exercises the
+//! `pinion_shell::run_with_handlers` +
+//! `pinion_shell::ProxyIntentSink` path; this binary exercises the
 //! [`pinion_tui::run_with_handlers`] +
 //! [`pinion_tui::MpscIntentSink`] path. Both backends route the same
 //! [`Command`] through the same registry-based dispatch surface, with

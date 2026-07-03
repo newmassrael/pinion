@@ -5,7 +5,7 @@
 //! dogfood), differing only in:
 //!
 //! * the cached state shape is `(ToggleState, bool)` — interaction
-//!   state plus the Off/On value sidecar [`Toggle::is_on`];
+//!   state plus the Off/On value sidecar `Toggle::is_on`;
 //! * the widget External is [`ToggleExternal`], introspect-exposing
 //!   both `state` (string) and `value` (bool);
 //! * the view fn draws a 64×32 rounded-pill track with the inner
@@ -16,7 +16,7 @@
 //! [`pinion_core::theme`] substrate (R57.0 §5.50). Every visible color
 //! now resolves through a [`ColorRole`] against the active
 //! [`use_theme("app")`](pinion_core::use_theme) palette; flipping the
-//! Off/On sidecar drives a [`ThemeProvider::set_theme`] swap so the
+//! Off/On sidecar drives a `ThemeProvider::set_theme` swap so the
 //! demo's "Dark mode" label becomes semantically accurate — On really
 //! is dark mode. The Material 3 Switch role mapping is the canonical
 //! source:
@@ -105,14 +105,14 @@ const PRESSED_OVERLAY_T: f32 = 0.12;
 /// comparable "washed out" tone in both palettes.
 const DISABLED_OVERLAY_T: f32 = 0.50;
 
-/// Root-owner cache key for this binary's [`ThemeProvider`]. Shared
+/// Root-owner cache key for this binary's [`ThemeProvider`](pinion_core::theme::ThemeProvider). Shared
 /// between the [`view`] fn (reactive read) and
 /// [`ToggleView::update`] (palette swap on `"toggle"` intent) so both
 /// halves resolve the same typed [`use_theme`] slot without repeating
 /// the literal.
 const THEME_TAG: &str = "app";
 
-/// Fully-prefixed wire tag for the [`Toggle`] widget's `"toggle"`
+/// Fully-prefixed wire tag for the `Toggle` widget's `"toggle"`
 /// intent, built via `pinion_core::intent_tag!`. See that macro's
 /// doc-comment for the §5.20 R22 wire-form contract — here we just
 /// bind the compile-time concatenation result for `V::update` to
@@ -129,7 +129,7 @@ const TOGGLE_INTENT_TAG_FULL: &str = pinion_core::intent_tag!("main_toggle", "to
 ///
 /// Reads the active palette via [`use_theme(THEME_TAG)`] so the
 /// reactive subscription captures palette swaps automatically — the
-/// next [`ThemeProvider::set_theme`] re-runs the view without any
+/// next `ThemeProvider::set_theme` re-runs the view without any
 /// view-fn branch on the mode.
 ///
 /// Layout (top-to-bottom, centered):
@@ -267,7 +267,7 @@ fn view(state: ToggleState, on: bool, _frame: &Frame) -> Scene {
 /// elem ([[r653-state-flags-bool-field]]), `access_value =
 /// bool_field(1)` adds the `.with_value(AccessValue::Bool(state.1))`
 /// chain the Switch role needs, and the `update` flag forwards the
-/// R27 reducer that swaps the [`ThemeProvider`] palette on the
+/// R27 reducer that swaps the [`ThemeProvider`](pinion_core::theme::ThemeProvider) palette on the
 /// `"toggle"` intent. The binding still owns the methods the macro
 /// cannot derive: `view` (calls the free [`view`] fn), `read_state`
 /// (tuple state reads two introspect fields per [[r645-tuple-state-state-flags]]
@@ -279,7 +279,7 @@ fn view(state: ToggleState, on: bool, _frame: &Frame) -> Scene {
 /// [`WidgetCore`]: pinion_core::WidgetCore
 /// [`WidgetA11y`]: pinion_a11y::WidgetA11y
 /// [`WidgetView`]: pinion_shell::WidgetView
-/// [`ThemeProvider`]: pinion_core::ThemeProvider
+/// [`ThemeProvider`]: pinion_core::theme::ThemeProvider
 #[widget(
     tag = "main_toggle",
     state = (ToggleState, bool),
@@ -363,7 +363,7 @@ impl ToggleView {
     }
 
     /// R57.X.toggle — reducer side-effect: on the [`Toggle`]'s
-    /// `"toggle"` intent, swap the active [`ThemeProvider`] palette to
+    /// `"toggle"` intent, swap the active [`ThemeProvider`](pinion_core::theme::ThemeProvider) palette to
     /// mirror the post-flip On/Off value so the demo's "Dark mode"
     /// label tracks the actual palette.
     ///
@@ -379,7 +379,7 @@ impl ToggleView {
     /// substrate demo.
     ///
     /// [`read_state`]: ToggleView::read_state
-    /// [`ThemeProvider`]: pinion_core::ThemeProvider
+    /// [`ThemeProvider`]: pinion_core::theme::ThemeProvider
     /// [`Toggle`]: pinion_core::widgets::toggle::Toggle
     fn update(_state: (ToggleState, bool), intent: &Intent) -> Vec<Command> {
         if intent.tag.as_ref() == TOGGLE_INTENT_TAG_FULL {

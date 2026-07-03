@@ -32,12 +32,12 @@
 //!   describing the work, which the framework runs through the
 //!   registered handler.
 //! - [`pinion_shell::run_with_handlers`] installs a tokio runtime +
-//!   `EventLoopProxy`-backed [`IntentSink`] so the Handler's future
+//!   `EventLoopProxy`-backed `IntentSink` so the Handler's future
 //!   resolves on a worker thread and the resolved [`Intent`] reaches
-//!   the UI thread via [`AppEvent::IntentArrived`].
+//!   the UI thread via `AppEvent::IntentArrived`.
 //! - The `demo.echo` Handler echoes its payload back as
 //!   `Intent("echo.demo.echo", payload)`. The Vello shell's
-//!   [`ShellCore::dispatch_intent`] then `invoke("send", tag)`s the
+//!   `ShellCore::dispatch_intent` then `invoke("send", tag)`s the
 //!   tag through the SCXML — Button rejects unknown event names, so
 //!   the visible widget state stays at Idle, but the stderr trace
 //!   shows the full Command → Intent round-trip.
@@ -45,9 +45,9 @@
 //! ## Why this is the textbook dogfood
 //!
 //! Pre-R51.170 this binary leaned on a view-fn one-shot HACK
-//! ([`Owner::cache`] + `Cell<bool>` guard) to pre-queue the demo
+//! (`Owner::cache` + `Cell<bool>` guard) to pre-queue the demo
 //! command before any input arrived. That side-stepped the §5.23 R27
-//! "Update(&mut Model, Intent) -> Vec<Command>" contract — the
+//! "Update(&mut Model, Intent) -> `Vec<Command>`" contract — the
 //! framework's `WidgetCore::update` reducer surface didn't exist
 //! yet, so the example faked it from inside the view fn. With the
 //! reducer substrate (R51.166-169) in place, the example replays the

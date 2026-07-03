@@ -8,7 +8,7 @@
 //! pointer-selection (R763) stack. The same [`TextFieldExternal`] +
 //! [`TextEditState`](pinion_core::widgets::text_edit::TextEditState) +
 //! [`tf_paint`] substrate drives both — a textarea is a `TextField`
-//! whose content carries `\n` and whose [`TextFieldStyle::m3_multiline`]
+//! whose content carries `\n` and whose `TextFieldStyle::m3_multiline`
 //! style top-aligns a `rows`-tall box. The pieces R764 adds:
 //!
 //! - **Per-line selection bands** — [`tf_paint::view_field`] decomposes
@@ -26,7 +26,7 @@
 //!   the geometry-free `TextEditState` path the horizontal arrows use.
 //! - **`Enter` inserts a newline** — the one binding-level divergence
 //!   from a single-line field (where `Enter` would submit / be ignored).
-//! - **Soft-wrap at width** (R765) — [`TextFieldStyle::m3_multiline`]
+//! - **Soft-wrap at width** (R765) — `TextFieldStyle::m3_multiline`
 //!   sets `soft_wrap = true`, so a long line with no `\n` breaks onto
 //!   additional *visual* lines at the box's inner width. This needed no
 //!   binding change: the `field_shaping` SSOT threads the wrap width to
@@ -45,7 +45,7 @@
 //! (with `Ctrl+Home` / `Ctrl+End` for the document boundaries).
 //!
 //! R767 adds **rich-text editing**: the textarea seeds three colour
-//! [`StyleRun`](pinion_core::scene::StyleRun) spans (the leading word of
+//! [`StyleRun`] spans (the leading word of
 //! each line) into
 //! [`TextEditState::set_style_runs`](pinion_core::widgets::text_edit::TextEditState::set_style_runs).
 //! The runs ride along through edits (insert shifts them, deleting a
@@ -175,11 +175,11 @@ const GUTTER_CURRENT_TAG: &str = "ta_gutter_current";
 /// R957 — alpha of the current-line gutter band (a faint Accent tint, the
 /// caret / selection hue, so a palette swap restains it coherently).
 const GUTTER_CURRENT_ALPHA: u8 = 0x33;
-/// R962 — alpha of the *body* current-line band ([`TextFieldStyle::current_line_alpha`]).
+/// R962 — alpha of the *body* current-line band (`TextFieldStyle::current_line_alpha`).
 /// Fainter than the gutter band: it washes a whole editor-width row, so a
 /// stronger tint would swamp the glyphs. The VS Code current-line weight.
 const BODY_CURRENT_ALPHA: u8 = 0x14;
-/// Shared [`ThemeProvider`] cache key (matches the gallery `"app"`
+/// Shared [`ThemeProvider`](pinion_core::theme::ThemeProvider) cache key (matches the gallery `"app"`
 /// convention so a host binding shares one provider).
 const THEME_TAG: &str = "app";
 /// Visible rows for the textarea box.
@@ -240,7 +240,7 @@ const SWATCH_SIZE: u32 = 28;
 const SWATCH_GAP: u32 = 10;
 
 /// R764 §5.22 — single source of truth for the textarea's
-/// [`TextFieldStyle`]. The view fn, the pointer hooks, and the
+/// `TextFieldStyle`. The view fn, the pointer hooks, and the
 /// vertical-nav `apply_key` arm all shape against this *identical*
 /// style so the painted Layout and the hit-tested / line-moved Layout
 /// stay one cache entry (the R762.1 `field_shaping` SSOT discipline).
@@ -266,7 +266,7 @@ fn swatch_text_style(rgb: Rgb) -> TextStyle {
 }
 
 /// R769 §5.36 / R770.1 — the field's default char format: the base style
-/// unstyled text paints with. Passed to [`TextEditState::merge_style_run`]
+/// unstyled text paints with. Passed to `TextEditState::merge_style_run`
 /// so a bold/italic toggle over *unstyled* bytes resolves their colour
 /// from the field's real base. R770.1 — reuse `tf_paint::field_text_style`
 /// (the SSOT `field_shaping` itself shapes against) instead of re-guessing
@@ -384,7 +384,7 @@ fn toolbar(theme: &pinion_core::theme::Theme, bold_active: bool, italic_active: 
 /// toolbar External emits its `"command"` intent (so the *router*, not the
 /// binding, decides which control was hit). *Policy* lives here (a
 /// toggle's direction is read from the selection start via
-/// [`TextEditState::style_at`]); the substrate owns the *mechanics*. No-op
+/// `TextEditState::style_at`); the substrate owns the *mechanics*. No-op
 /// when nothing is selected — formatting needs a range.
 fn apply_format(index: usize, interaction: TextFieldState) {
     let edit = use_text_edit_state(TA_TAG);
@@ -903,7 +903,7 @@ impl WidgetCore for TextAreaView {
 
 impl WidgetA11y for TextAreaView {
     /// R764 §5.40 — ARIA `textbox` carrying the live multi-line text as
-    /// [`AccessValue::Text`]. (The multi-line `aria-multiline` refinement
+    /// `AccessValue::Text`. (The multi-line `aria-multiline` refinement
     /// is an additive a11y axis — deferred until a 2nd textarea consumer
     /// per [[abstraction-needs-second-consumer]].)
     fn access_node(state: &(TextFieldState, u32), focused: Option<&str>) -> Vec<AccessNode> {

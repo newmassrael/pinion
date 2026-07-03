@@ -49,7 +49,7 @@
 //! `aria-valuemax = high`, the high thumb reports `aria-valuemin = low`),
 //! so an assistive client always hears a consistent, non-crossing pair.
 //! The slider value lowers through the same
-//! [`AccessValue::Float`](pinion_a11y::AccessValue::Float)
+//! [`AccessValue::Float`]
 //! `aria-valuenow` path the single slider uses — no new a11y axis, only
 //! the `Group` role + two cross-constrained `Slider` children.
 

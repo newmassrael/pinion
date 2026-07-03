@@ -1,14 +1,14 @@
 //! `hello-theme` — R57.0 §5.50 visible substrate demo.
 //!
 //! Wires the new [`pinion_core::theme`] substrate
-//! ([`ThemeProvider`] / [`ColorRole`] / [`use_theme`]) end-to-end:
+//! ([`ThemeProvider`](pinion_core::theme::ThemeProvider) / [`ColorRole`] / [`use_theme`]) end-to-end:
 //!
 //! - [`WidgetCore::view`] calls [`use_theme`] to resolve the active
-//!   [`ThemeProvider`] from the root owner's typed cache slot and
-//!   reads [`ThemeProvider::theme`] inside the view-fn so the
+//!   [`ThemeProvider`](pinion_core::theme::ThemeProvider) from the root owner's typed cache slot and
+//!   reads [`ThemeProvider::theme`](pinion_core::theme::ThemeProvider::theme) inside the view-fn so the
 //!   reactive subscription captures palette swaps automatically.
 //! - [`WidgetCore::update`] listens for the Toggle widget's
-//!   `"toggle"` intent and calls [`ThemeProvider::set_theme`] with
+//!   `"toggle"` intent and calls `ThemeProvider::set_theme` with
 //!   [`Theme::dark`] when the toggle flips on, [`Theme::light`] when
 //!   it flips off. The signal write notifies the view's subscriber,
 //!   the shell schedules a repaint, and the panel re-renders against
@@ -75,7 +75,7 @@ const ACCENT_PAD: u32 = 8;
 const OUTLINE_W: u32 = 220;
 const OUTLINE_H: u32 = 1;
 
-/// Root owner cache key for this app's [`ThemeProvider`]. Exposed as
+/// Root owner cache key for this app's [`ThemeProvider`](pinion_core::theme::ThemeProvider). Exposed as
 /// a `&'static str` so the `view` + `update` halves agree on the
 /// same typed [`use_theme`] slot without repeating the literal.
 const THEME_TAG: &str = "app";
@@ -171,7 +171,7 @@ const TOGGLE_INTENT_TAG_FULL: &str = pinion_core::intent_tag!("theme_toggle", "t
 /// 2. **Mode toggle** — the Tier-1 `Toggle` widget. Tag matches
 ///    [`TOGGLE_TAG`] so the input router resolves middle-click and
 ///    pointer events to this node and forwards `"toggle"` intents
-///    to `update` for the [`ThemeProvider::set_theme`] swap.
+///    to `update` for the `ThemeProvider::set_theme` swap.
 /// 3. **Status caption** — "Light mode" / "Dark mode", 12 px,
 ///    [`ColorRole::OnSurfaceMuted`].
 /// 4. **Accent banner** — 160×32 rounded rect filled with
@@ -465,7 +465,7 @@ impl HelloThemeView {
     /// swaps the palette.
     ///
     /// (R594 §5.50) Extra shortcut `"r"` — first consumer of the
-    /// R593 [`ThemeProvider::set_palettes`] atomic batch primitive.
+    /// R593 [`ThemeProvider::set_palettes`](pinion_core::theme::ThemeProvider::set_palettes) atomic batch primitive.
     /// Cycles the light + dark palette pair through three M3 dynamic-
     /// color seeds (Blue / Green / Magenta) so the demo can show how
     /// a single user action atomically retones both sides without
@@ -485,8 +485,8 @@ impl HelloThemeView {
         pinion_core::widgets::aria::apply_aria_activate(scene, focused, key, Self::tag())
     }
 
-    /// R57.0 §5.50 — reducer side-effect: on the [`Toggle`]'s
-    /// `"toggle"` intent, swap the active [`ThemeProvider`] palette
+    /// R57.0 §5.50 — reducer side-effect: on the `Toggle`'s
+    /// `"toggle"` intent, swap the active [`ThemeProvider`](pinion_core::theme::ThemeProvider) palette
     /// to mirror the post-flip on/off value.
     ///
     /// **Authority source = `intent.payload`, not `state`.** The

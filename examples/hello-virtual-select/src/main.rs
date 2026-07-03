@@ -235,9 +235,9 @@ impl WidgetCore for VirtualSelectView {
 }
 
 impl WidgetA11y for VirtualSelectView {
-    /// Single-select WAI-ARIA virtualized `list`: one [`AriaRole::List`]
+    /// Single-select WAI-ARIA virtualized `list`: one `AriaRole::List`
     /// parent (`aria-setsize = N`, no `aria-multiselectable`) over the
-    /// rendered window; each visible row is an [`AriaRole::ListItem`] with
+    /// rendered window; each visible row is an `AriaRole::ListItem` with
     /// `aria-posinset` and `aria-selected = (index == selected)`. Built by
     /// the shared `pinion_a11y::windowed_list_nodes_selected` (R776 lift —
     /// the decorated peer of the display-only `windowed_list_nodes`),

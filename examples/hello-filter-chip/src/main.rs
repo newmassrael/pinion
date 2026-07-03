@@ -60,7 +60,7 @@ vello_renderer_impl!(HelloFilterChipRenderer, HelloFilterChipRendererError);
 
 const WIN_W: u32 = 480;
 const WIN_H: u32 = 120;
-/// [`ThemeProvider`] cache key — the `"app"` convention shared across the
+/// [`ThemeProvider`](pinion_core::theme::ThemeProvider) cache key — the `"app"` convention shared across the
 /// example gallery.
 const THEME_TAG: &str = "app";
 

@@ -119,7 +119,7 @@ vello_renderer_impl!(HelloTreeGridRenderer, HelloTreeGridRendererError);
 /// stays pinned.
 const WIN_W: u32 = 480;
 const WIN_H: u32 = 460;
-/// Shared [`ThemeProvider`] cache key.
+/// Shared [`ThemeProvider`](pinion_core::theme::ThemeProvider) cache key.
 const THEME_TAG: &str = "app";
 /// Composite-tag prefix the name cells carry (`{TREE_TAG}#{id}`) and the
 /// [`TreeRowClickExternal`] anchor clicks route to.
@@ -147,7 +147,7 @@ const CELLS_TAG: &str = "tgrid_cells";
 /// `invoke` ops (`select` / `toggle` / `extend_to` / `select_all` / `clear`)
 /// drive the same funnel the keyboard does, so RPC and keyboard multi-select
 /// are one SSOT. Binding-local: the stable-id `BTreeSet<String>` selection is a
-/// 1st consumer (the flat-index [`VirtualSelectExternal`] cannot be reused — a
+/// 1st consumer (the flat-index `VirtualSelectExternal` cannot be reused — a
 /// tree row's flat index shifts on every expand / collapse), so the model stays
 /// in the example until a 2nd tree-multi-select consumer surfaces it
 /// ([[abstraction-needs-second-consumer]]).
@@ -183,8 +183,8 @@ const OBJECTS_PER: usize = 12;
 const EXPANDED_AT_BOOT: usize = 3;
 /// Uniform per-row vertical slot pitch. Must equal
 /// [`TreeViewStyle::row_height`] (`view_virtual_treegrid` derives its slot
-/// pitch from the style); asserted in [`tests`] and used by the keyboard
-/// scroll-into-view ([`reveal_cursor`]).
+/// pitch from the style); asserted in `tests` and used by the keyboard
+/// scroll-into-view (`reveal_cursor`).
 const ROW_PITCH: u32 = 48;
 /// Page Up / Down jump in rows (a viewport-ful, clamped via `clamp_nav`).
 const NAV_PAGE: usize = 10;
@@ -1182,8 +1182,8 @@ impl WidgetCore for TreeGridView {
     }
 
     /// R864 §5.27 §5.50 — WAI-ARIA APG tree keyboard over the windowed rows:
-    /// the lifted [`apply_tree_key`] resolve → flag-store bridge + caller-side
-    /// type-ahead, then [`reveal_cursor`] scrolls the new cursor into the body
+    /// the lifted `apply_tree_key` resolve → flag-store bridge + caller-side
+    /// type-ahead, then `reveal_cursor` scrolls the new cursor into the body
     /// window (keyboard ⊥ virtualization). Single tab stop: keys apply only
     /// while the treegrid root [`ROOT_TAG`] is focused — an ungated outliner
     /// would steal keys from sibling panels in the eventual self-hosted editor

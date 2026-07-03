@@ -10,7 +10,7 @@
 //! filter axis (`hello-grid-filter`), which removes the rows it rejects.
 //!
 //! The decisive reuse: a search query **is** the R997
-//! [`GridFilter`](pinion_core::widgets::grid_sort::GridFilter) — the same
+//! [`GridFilter`] — the same
 //! multi-facet predicate the grid's filter axis carries and the R998 coloring
 //! engine matches against. Search is the **third** consumer of that match
 //! vocabulary (filter removes, coloring tints, search navigates): an AI client

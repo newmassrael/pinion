@@ -17,7 +17,7 @@
 //! The genuinely new substrate is
 //! [`dissect_row`](pinion_core::widgets::row_dissect::dissect_row): it
 //! transduces a row's [`serde_json::Value`] payload into a
-//! [`DissectNode`](pinion_core::widgets::row_dissect::DissectNode) tree — one
+//! [`DissectNode`] tree — one
 //! branch per object field, one per array element, a leaf per scalar — the peer
 //! of `scene_to_tree_item` for the Model/View data domain. Everything
 //! downstream is mature substrate reused verbatim: the

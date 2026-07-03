@@ -18,7 +18,7 @@
 //! The state scene holds **one** [`TableExternal`] at the [`PRIMARY_TAG`]
 //! composite paint root (identical wiring to `hello-table`). Each cell is
 //! tagged `"table#<row>_<col>"`; the
-//! [`InputRouter`](pinion_runtime::input::InputRouter) R51.42 `'#'`-split
+//! `InputRouter` R51.42 `'#'`-split
 //! routes a click on cell `(r, c)` to
 //! `invoke("send", Text("<r>_<c>:<EventName>"))` against the coordinator,
 //! whose activate edge **toggles** row `r` (multi-mode) and emits a
@@ -76,7 +76,7 @@ vello_renderer_impl!(HelloTableMultiRenderer, HelloTableMultiRendererError);
 
 const WIN_W: u32 = 540;
 const WIN_H: u32 = 360;
-/// [`ThemeProvider`] cache key — the `"app"` convention shared across
+/// [`ThemeProvider`](pinion_core::theme::ThemeProvider) cache key — the `"app"` convention shared across
 /// the example gallery.
 const THEME_TAG: &str = "app";
 

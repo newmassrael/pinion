@@ -45,7 +45,7 @@ const DROP_KEY: &str = "filedrop";
 /// Paint tag for the drop-zone container (the demo reads its fill +
 /// dropped-path `Text` children via `scene/snapshot`).
 const DROP_ZONE_TAG: &str = "drop_zone";
-/// Shared [`ThemeProvider`] cache key.
+/// Shared [`ThemeProvider`](pinion_core::theme::ThemeProvider) cache key.
 const THEME_TAG: &str = "app";
 
 const WIN_W: u32 = 480;

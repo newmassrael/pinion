@@ -20,7 +20,7 @@
 //! no `aria-selected` / `aria-checked`, and activating it fires a
 //! command + dismisses the menu. So the binding drives selection-free
 //! state through a command-class
-//! [`MenuBarExternal`](pinion_core::widgets::menu::MenuBarExternal) —
+//! [`MenuBarExternal`] —
 //! **not** the [`RadioGroupExternal`](pinion_core::widgets::radio_group::RadioGroupExternal)
 //! the R690 Tabs widget reuses (a tab strip *is* "select 1 of N", a
 //! menubar is not). Item activation emits a `"command"` intent whose

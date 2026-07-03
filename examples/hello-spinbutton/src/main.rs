@@ -5,8 +5,8 @@
 //! A spin button is a single focusable numeric control the user steps
 //! through a bounded `[min, max]` range. The interaction substrate is the
 //! R734 [`SpinButtonExternal`] — a plain value holder (no interaction
-//! statechart, mirroring [`ProgressBarExternal`]), distinct from
-//! [`SliderExternal`] (a *continuous* normalized drag): a spin button
+//! statechart, mirroring `ProgressBarExternal`), distinct from
+//! `SliderExternal` (a *continuous* normalized drag): a spin button
 //! holds a value in **domain units** with an explicit `step`, stepped
 //! discretely. That domain difference is why it is its own widget, not a
 //! slider re-skin (the "similar-grammar-is-not-a-shared-statechart"

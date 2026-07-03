@@ -1277,7 +1277,7 @@ fn clear_popup(
 /// The property-grid coordinator. Holds `Rc` clones of the reactive holders
 /// (resolved through the `use_*` hooks at construction, so they are the same
 /// instances the view fn reads) + the shared editor's [`TextEditState`] so
-/// [`Self::begin_edit`] can seed it. Mutations write the Signals directly —
+/// `Self::begin_edit` can seed it. Mutations write the Signals directly —
 /// no hooks at invoke time, so the External is self-contained on any thread
 /// (the todomvc `TodoEditExternal` shape).
 /// R875 / R914 — the per-drag payload the numeric scrub's [`DragCalibration`]

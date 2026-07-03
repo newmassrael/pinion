@@ -20,7 +20,7 @@
 //! composite paint root (the same single-coordinator shape as `hello-table`),
 //! constructed with the R954 [`SelectItems`](pinion_core::widgets::table::SelectionBehavior::SelectItems)
 //! behavior. Each cell is tagged `"grid#<row>_<col>"` (the R51.41 composite
-//! paint convention); the [`InputRouter`](pinion_runtime::input::InputRouter)
+//! paint convention); the `InputRouter`
 //! R51.42 `'#'`-split routes a click on cell `(r, c)` to the coordinator,
 //! whose `SelectItems` behavior selects that **cell** (a plain click
 //! collapses, a `Shift`+click extends the rectangle) rather than washing the
@@ -92,7 +92,7 @@ vello_renderer_impl!(HelloCellSelectRenderer, HelloCellSelectRendererError);
 
 const WIN_W: u32 = 540;
 const WIN_H: u32 = 360;
-/// [`ThemeProvider`] cache key — the `"app"` convention shared across
+/// [`ThemeProvider`](pinion_core::theme::ThemeProvider) cache key — the `"app"` convention shared across
 /// the example gallery.
 const THEME_TAG: &str = "app";
 

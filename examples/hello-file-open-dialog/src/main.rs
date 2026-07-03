@@ -259,7 +259,7 @@ fn confirm() {
 }
 
 /// The browser pane that fills the dialog body: the lifted R789.1
-/// [`file_browser_pane`] (breadcrumb + virtualized [`file_row`] list) sized
+/// [`file_browser_pane`] (breadcrumb + virtualized `file_row` list) sized
 /// to the dialog. Reads the shared [`DirectoryState`] so a navigate /
 /// select repaints.
 fn browser_pane(

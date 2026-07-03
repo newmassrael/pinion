@@ -24,16 +24,16 @@
 //!
 //! ## Architecture (unidirectional, Effect-driven prefetch)
 //!
-//! - A per-page `Resource` cache — the [`ResourceCache`](pinion_core::ResourceCache)
+//! - A per-page `Resource` cache — the [`ResourceCache`]
 //!   keyed-async-carrier substrate, here built **bounded** via
 //!   [`with_capacity`](pinion_core::ResourceCache::with_capacity) — in
 //!   `Owner::cache`. A page is materialised only when it first scrolls into
 //!   view; resident pages are capped at [`CACHE_PAGES`], the least-recently-used
 //!   being evicted when a new page is fetched past the cap.
-//! - An [`Effect`] subscribed to the **scroll offset** [`Signal`] computes the
-//!   visible page range and kicks off a [`Resource::fetch_with`] for every page
+//! - An [`Effect`] subscribed to the **scroll offset** `Signal` computes the
+//!   visible page range and kicks off a `Resource::fetch_with` for every page
 //!   not yet in the cache, through the shell-polled
-//!   [`LocalTaskPump`](pinion_core::LocalTaskPump). Re-running it on every
+//!   [`LocalTaskPump`]. Re-running it on every
 //!   scroll also promotes the visible pages (ensure-on-hit), keeping them hot.
 //! - The view is **pure** (§6.3): it reads `scroll.offset_y()` + each visible
 //!   page's `resource.state()` (which promotes them) and maps `(loaded rows |

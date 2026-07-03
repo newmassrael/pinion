@@ -16,7 +16,7 @@
 //! ## What this proves (and what it defers)
 //!
 //! The first two grids stay **empty geometry scaffolds**: each carries a
-//! node-local [`CellMetric`] plus its layout-resolved pixel [`Rect`] and
+//! node-local [`CellMetric`] plus its layout-resolved pixel `Rect` and
 //! derives its `(cols, rows)` from that rect via the metric — the R969
 //! one-directional `(rows, cols)` SSOT (layout → dims, never fed back).
 //!
@@ -41,7 +41,7 @@
 //! default (hidden, home, block) cursor.
 //!
 //! R976 adds a sixth grid, **`htg_wide`**, carrying wide-cluster cells
-//! ([`CellWidth`]): each CJK ideograph (世界) and fullwidth Latin form (Ａ)
+//! (`CellWidth`): each CJK ideograph (世界) and fullwidth Latin form (Ａ)
 //! occupies two columns — a head cell ([`TermCell::wide`]) plus a
 //! continuation trailer ([`TermCell::trailer`]) that carries no glyph. The
 //! snapshot's row text holds each wide glyph once even though it spans two
@@ -118,7 +118,7 @@ vello_renderer_impl!(HelloTextGridRenderer, HelloTextGridRendererError);
 /// Window size — large enough to hold both grids with a margin.
 const WIN_W: u32 = 680;
 const WIN_H: u32 = 840;
-/// Shared [`ThemeProvider`] cache key.
+/// Shared [`ThemeProvider`](pinion_core::theme::ThemeProvider) cache key.
 const THEME_TAG: &str = "app";
 /// Paint-root + [`StubExternal`] anchor tag (the `V::tag()` the composite
 /// paint-root convention attaches to the root container).

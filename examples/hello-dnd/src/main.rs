@@ -1,6 +1,6 @@
 //! `hello-dnd` — R742 §5.51 — first consumer of the generic
 //! **drag-and-drop substrate**: the three additive
-//! [`External`](pinion_core::external::External) hooks `begin_drag` /
+//! [`External`] hooks `begin_drag` /
 //! `drag_to` / `drag_release` plus the `InputRouter` drag session that
 //! resolves the drop location under the *absolute* cursor (the
 //! pointer-driven generalisation of the invoke-driven dock
@@ -480,7 +480,7 @@ impl WidgetCore for DndView {
     /// through plain `scene/key` (the RPC key channel carries no
     /// modifiers) and reads naturally to a screen reader:
     ///
-    /// * `Arrow`(Down/Right / Up/Left) — when *not* grabbing, move the
+    /// * `Arrow` (Down/Right / Up/Left) — when *not* grabbing, move the
     ///   cursor one row (clamped at the ends). When grabbing, move the
     ///   picked-up row one slot, the cursor following.
     /// * `Home` / `End` — cursor to first / last (or, while grabbing,

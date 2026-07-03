@@ -174,7 +174,7 @@ fn parse_clamp(text: &str) -> f32 {
 
 /// The committed numeric value = `parse_clamp` of the live field text.
 /// Requires an active Owner scope (the hook resolves the cached
-/// [`TextEditState`]); the reducer / `apply_key` / view paths are all
+/// `TextEditState`); the reducer / `apply_key` / view paths are all
 /// owner-wrapped.
 fn current_value() -> f32 {
     parse_clamp(&use_text_edit_state(INPUT_TAG).text())

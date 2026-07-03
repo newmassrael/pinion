@@ -18,7 +18,7 @@
 //!
 //! "Select 1 of N" is exactly [`RadioGroup`] semantics, so the tab
 //! selection runs on a reused
-//! [`RadioGroupExternal`](pinion_core::widgets::radio_group::RadioGroupExternal)
+//! [`RadioGroupExternal`]
 //! — no new SCXML statechart (per [[abstraction-needs-second-consumer]];
 //! the settings-panel nav rail set the same precedent). The composite
 //! tags `tabs#<i>` route cursor hits through the input router's `#`
@@ -284,10 +284,10 @@ impl WidgetCore for TabsView {
 
 impl WidgetA11y for TabsView {
     /// R690 §5.40 — WAI-ARIA 1.2 §3.6 tablist/tab/tabpanel tree.
-    /// Emits N+2 nodes: one [`AriaRole::TabList`] parent claiming each
-    /// tab as a child, one [`AriaRole::Tab`] per index carrying
+    /// Emits N+2 nodes: one `AriaRole::TabList` parent claiming each
+    /// tab as a child, one `AriaRole::Tab` per index carrying
     /// `aria-selected` + `aria-posinset`/`aria-setsize`, and one
-    /// [`AriaRole::TabPanel`] for the active tab's content region.
+    /// `AriaRole::TabPanel` for the active tab's content region.
     ///
     /// Per-tab accessible names are derived by `enrich_names_from_scene`
     /// from each tab's label `TextNode`. The TabList name and the

@@ -70,7 +70,7 @@ vello_renderer_impl!(HelloGridFrozenColRenderer, HelloGridFrozenColRendererError
 /// scrolling columns are on-screen at rest.
 const WIN_W: u32 = 560;
 const WIN_H: u32 = 440;
-/// Shared [`ThemeProvider`] cache key.
+/// Shared [`ThemeProvider`](pinion_core::theme::ThemeProvider) cache key.
 const THEME_TAG: &str = "app";
 /// Total data-row count — large while the rendered node count stays small.
 const N: usize = 10_000;

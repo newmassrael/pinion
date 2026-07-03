@@ -8,8 +8,8 @@
 //! Before R740, `Scene::Image` was a paint no-op — the data model,
 //! layout, hashing and `scene/snapshot` were all complete, only the
 //! rasterizer arm was missing. R740 adds the decode substrate
-//! ([`pinion_asset`]), a decode-once cache
-//! ([`pinion_runtime::image_cache`]), and the `paint_image` arm in both
+//! (`pinion_asset`), a decode-once cache
+//! (`pinion_runtime::image_cache`), and the `paint_image` arm in both
 //! paint walkers. This binding bundles a 16x16 four-quadrant PNG (red /
 //! green / blue / white) and draws it four times so each [`Fit`] reads
 //! differently *because the cells are non-square* (a square source in a
@@ -68,7 +68,7 @@ const CELL_H: u32 = 80;
 const GAP: u32 = 12;
 
 /// The bundled icon, written to a temp file once at startup so the
-/// path-based [`pinion_runtime::image_cache`] can read it. `None` until
+/// path-based `pinion_runtime::image_cache` can read it. `None` until
 /// `main` runs (view/a11y unit tests then paint an empty source, which
 /// the cache skips gracefully).
 static ICON_PATH: OnceLock<String> = OnceLock::new();

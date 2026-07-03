@@ -17,7 +17,7 @@
 //! ## Why a Toggle
 //!
 //! The export is intrinsically stateless, but the `AppShell` drives a
-//! [`WidgetView`] with a statechart `External`. Rather than invent a
+//! `WidgetView` with a statechart `External`. Rather than invent a
 //! one-off widget ([[abstraction-needs-second-consumer]]), the binding
 //! reuses the Toggle purely as the *RPC-drivable repaint trigger* (the
 //! hello-frame-profiler / hello-elevation Toggle-as-bit pattern). Each

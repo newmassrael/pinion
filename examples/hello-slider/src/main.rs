@@ -2,9 +2,9 @@
 //! pinion-shell substrate (R51.30), the first visual demo that
 //! consumes the R51.34 §5.15 + §5.35 pointer-capture + `pointer_move`
 //! forward substrate, and the first client of the R51.37 §5.35
-//! [`WidgetView::apply_key`] hook (W3C/ARIA Slider keyboard
+//! `WidgetView::apply_key` hook (W3C/ARIA Slider keyboard
 //! accessibility). The widget body has no drag-specific code — the
-//! framework's [`InputRouter`](pinion_runtime::InputRouter) routes
+//! framework's `InputRouter` routes
 //! the cursor X through `External::pointer_move` and the
 //! `SliderExternal` impl rewrites the value sidecar on every
 //! effective change. Click-to-position (Material precedent) is free
@@ -29,7 +29,7 @@
 //! * Disabled: muted brown-grey thumb + muted brown-grey filled
 //!
 //! Keybindings (typed-event channel): `d` / `e` Disable / Enable —
-//! routed through [`WidgetView::keybinding`] because both map to
+//! routed through `WidgetView::keybinding` because both map to
 //! existing `SliderEvent` variants.
 //!
 //! Keybindings (R51.37 §5.35 `apply_key` channel, W3C/ARIA Slider
@@ -70,7 +70,7 @@ vello_renderer_impl!(HelloSliderRenderer, HelloSliderRendererError);
 
 const WIN_W: u32 = 360;
 const WIN_H: u32 = 220;
-/// (R57.X.slider §5.50) [`ThemeProvider`] cache key — matches the
+/// (R57.X.slider §5.50) [`ThemeProvider`](pinion_core::theme::ThemeProvider) cache key — matches the
 /// `"app"` convention shared across the example gallery.
 const THEME_TAG: &str = "app";
 

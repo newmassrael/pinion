@@ -72,7 +72,7 @@ vello_renderer_impl!(HelloRatingRenderer, HelloRatingRendererError);
 
 const WIN_W: u32 = 320;
 const WIN_H: u32 = 140;
-/// [`ThemeProvider`] cache key — the `"app"` convention shared across the
+/// [`ThemeProvider`](pinion_core::theme::ThemeProvider) cache key — the `"app"` convention shared across the
 /// example gallery.
 const THEME_TAG: &str = "app";
 /// Star count — a 5-star rating, the near-universal scale.
@@ -295,8 +295,8 @@ impl WidgetCore for RatingView {
 }
 
 impl WidgetA11y for RatingView {
-    /// §5.40 composite AccessKit tree: one [`AriaRole::RadioGroup`] parent
-    /// ("Rating") + one [`AriaRole::RadioButton`] per star, named "N
+    /// §5.40 composite AccessKit tree: one `AriaRole::RadioGroup` parent
+    /// ("Rating") + one `AriaRole::RadioButton` per star, named "N
     /// Stars" so the screen-reader announces the value choice rather than
     /// the decorative glyph. Explicit names survive
     /// `enrich_names_from_scene`, so the `Presentational` star glyph can

@@ -69,7 +69,7 @@
 //! ## Column sort (R886 — the editable fold)
 //!
 //! A clicked column header cycles unsorted → asc → desc → unsorted through
-//! the [`cycle_col_sort`] / [`grid_order_by`] / [`cell_cmp`] SSOT every
+//! the [`cycle_col_sort`] / [`grid_order_by`] / `cell_cmp` SSOT every
 //! read-only grid sorts by; the wire speaks the cross-grid
 //! [`grid_sort_str`] vocabulary (`query "sort"` / `intervene "sort"` /
 //! `invoke "cycle_sort"` / `query "source_at.<pos>"`). The fold's one design
@@ -79,7 +79,7 @@
 //! committed edit that changes the active sort key moves its row on the
 //! very next paint while the cursor and the in-flight editor follow the
 //! source row (the Excel / Qt `QSortFilterProxyModel` behaviour). The
-//! [`GridSortState`] coordinator is deliberately NOT reused here: it owns a
+//! `GridSortState` coordinator is deliberately NOT reused here: it owns a
 //! static materialized `String` dataset (right for its read-only 10k-row
 //! consumers), while this grid's typed `Signal` model is the SSOT — per the
 //! R778 family ruling the shared parts are exactly the free-fn SSOT +
@@ -272,7 +272,7 @@ const UNDO_KEY: &str = "hello_data_grid::undo";
 /// R896 — the horizontal `ScrollState` cache key shared by the header + rows:
 /// `scene/set_scroll_offset` on this tag slides the columns sideways once
 /// their total width outgrows the grid viewport (the R784 single-axis scroll,
-/// the read-only grids' [`h_scrolled_column`] wrap reused on the editable grid).
+/// the read-only grids' `h_scrolled_column` wrap reused on the editable grid).
 const H_SCROLL_KEY: &str = "data_grid_hscroll";
 /// R896.1 / R897 — the vertical body `ScrollState` cache key. The rows window
 /// against this state's measured viewport and scroll under the pinned header;
@@ -380,7 +380,7 @@ const TYPE_OPTIONS: [&str; 5] = ["sprite", "mesh", "material", "audio", "script"
 /// Per-column paint width (logical px). Text columns are wider. R896 — the
 /// columns are deliberately wider than the grid viewport ([`GRID_VIEWPORT_W`])
 /// so their `690 px` total outgrows the visible band and the R784 horizontal
-/// scroll ([`h_scrolled_column`]) engages — the "wide asset table" a DCC
+/// scroll (`h_scrolled_column`) engages — the "wide asset table" a DCC
 /// browser scrolls sideways.
 const COL_W: [u32; NCOLS] = [160, 110, 100, 100, 100, 120];
 
@@ -456,7 +456,7 @@ fn cell_tag(row: usize, col: usize) -> String {
 
 /// R960 — a cell's reset-dot click target — `data_grid#reset<row>_<col>`
 /// ([`RESET_PREFIX`] + the same [`GridSendKey::Cell`] `<row>_<col>` grammar, so
-/// the cell address is not re-derived). The decoder ([`dispatch_send`]) strips
+/// the cell address is not re-derived). The decoder (`dispatch_send`) strips
 /// `reset` and reuses [`GridSendKey::parse`] on the remainder.
 fn reset_cell_tag(row: usize, col: usize) -> String {
     format!(
@@ -551,7 +551,7 @@ fn parse_handle_sub(sub: &str) -> Option<usize> {
 // ─── column sort (R886 — the editable fold of the sort axis) ──────
 
 /// R886 / R891 §5.40 — the visual → source row permutation for the live
-/// typed model. The editable grid's peer of [`GridSortState::order`]: that
+/// typed model. The editable grid's peer of `GridSortState::order`: that
 /// proxy owns a *static* materialized `String` dataset (its read-only
 /// consumers never mutate), while here the typed [`Signal`] model IS the SSOT
 /// and a committed edit must re-order / re-filter the very next paint — so the
@@ -1179,7 +1179,7 @@ impl UndoCommand for RowEdit {
 /// R937 — move the `NCOLS`-cell block at row `from` to rest at row `to` (both
 /// PHYSICAL row indices in the post-removal `Vec`, so a redo and its undo are
 /// perfectly symmetric — just swap `from` / `to`). A no-op when `from == to`.
-/// The flat-model peer of [`ReorderModel::apply_move`], block-wide because a grid
+/// The flat-model peer of `ReorderModel::apply_move`, block-wide because a grid
 /// row is `NCOLS` contiguous cells (the array's single-element move would lose
 /// the column grouping).
 fn move_block(cells: &mut Vec<CellValue>, from: usize, to: usize) {
@@ -1469,7 +1469,7 @@ impl DataGridExternal {
     /// R891 — apply a column filter (`None` clears) and re-anchor the cursor
     /// into the resulting view. R997 — facets on an out-of-range column are
     /// dropped, and a conjunction left empty clamps to unfiltered (mirrors
-    /// [`GridSortState::set_filter`]). Returns the resulting
+    /// `GridSortState::set_filter`). Returns the resulting
     /// [`view_len`](Self::view_len). The one mutation path the wire's
     /// `intervene "filter"` and `invoke "set_filter"` share.
     fn set_filter(&self, filter: Option<GridFilter>) -> usize {
@@ -1692,7 +1692,7 @@ impl DataGridExternal {
     /// visual row g") becomes the moved row's resting index once `from` is
     /// removed — `g - 1` when the gap is past `from` (removal shifted everything
     /// after it down one), else `g`. The flat-model peer of the off-by-one in
-    /// [`ReorderModel::apply_move`] (gap → resting index).
+    /// `ReorderModel::apply_move` (gap → resting index).
     fn gap_to_index(from: usize, gap: usize) -> usize {
         if gap > from { gap - 1 } else { gap }
     }
@@ -1857,7 +1857,7 @@ impl DataGridExternal {
     /// bulk-reset behind the Qt / Excel "reset this row" — exposed here as the
     /// `reset_row` RPC verb; a header / context-menu control is a follow-up,
     /// R965.1 honesty), returning the count cleared. A no-op (0) for an
-    /// out-of-range row. One batched pass via [`reset_cells`].
+    /// out-of-range row. One batched pass via `reset_cells`.
     fn reset_row(&self, row: usize) -> usize {
         if row >= self.nrows() {
             return 0;
@@ -1868,7 +1868,7 @@ impl DataGridExternal {
     /// R965 — reset every modified cell in `col` (all rows) to its column default
     /// (the "reset this column" bulk-reset, exposed as the `reset_col` RPC verb;
     /// a header control is a follow-up), returning the count cleared. A no-op (0)
-    /// for an out-of-range column. One batched pass via [`reset_cells`].
+    /// for an out-of-range column. One batched pass via `reset_cells`.
     fn reset_col(&self, col: usize) -> usize {
         if col >= NCOLS {
             return 0;
@@ -2274,7 +2274,7 @@ impl DataGridExternal {
 
     /// R940 — commit option `i` into the open choice cell, then close the popup.
     /// The pointer (option click), keyboard (`Enter` / `Space`), and RPC
-    /// (`choose`) commit path. Writes through the JOURNALED [`edit_cell`] (the
+    /// (`choose`) commit path. Writes through the JOURNALED `edit_cell` (the
     /// VALUE-level [`CellValue::with_intervene`] — one undo step, byte-identical
     /// to the RPC `intervene value` path), so a dropdown pick re-anchors + undoes
     /// like every other cell edit. `false` when no popup is open, the editing
@@ -2331,7 +2331,7 @@ impl DataGridExternal {
 
     /// R943 — commit preset swatch `i` into the open colour cell, then close the
     /// popup (the swatch click + RPC `pick_color` + keyboard path). Writes the
-    /// preset colour through the JOURNALED [`edit_cell`] (one undo step, the same
+    /// preset colour through the JOURNALED `edit_cell` (one undo step, the same
     /// path the dropdown pick and every cell edit take), so a swatch pick
     /// re-anchors and undoes like any other edit. `false` when no popup is open,
     /// the editing cell is not a colour, or `i` is out of the palette range (the

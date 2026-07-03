@@ -23,7 +23,7 @@
 //! ## Why a Toggle
 //!
 //! Rich text is intrinsically a display widget, but `AppShell` drives a
-//! [`WidgetView`] with a statechart `External`. Rather than invent a
+//! `WidgetView` with a statechart `External`. Rather than invent a
 //! one-off control ([[abstraction-needs-second-consumer]]), the binding
 //! reuses the §5.38 [`ToggleExternal`] purely as the *fox-emphasis bit*:
 //! Off/On flips the `"fox"` run's colour + weight. The Toggle is the

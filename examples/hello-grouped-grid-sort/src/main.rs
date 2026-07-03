@@ -24,12 +24,12 @@
 //!   with a lexicographic fallback, so Name sorts lexically, Size numerically).
 //! - **Extra** [`GroupOrderExternal`] at [`GROUP_TAG`] — groups the *sorted*
 //!   order by asset type; a clicked group header toggles collapse.
-//! - **Extra** [`ScrollBarExternal`].
+//! - **Extra** `ScrollBarExternal`.
 //!
 //! ## a11y
 //!
 //! WAI-ARIA `treegrid` via the
-//! [`grouped_grid_access_nodes`](pinion_a11y::grouped_grid_access_nodes) SSOT
+//! [`grouped_grid_access_nodes`] SSOT
 //! builder (R847; R874 lowers the hierarchical-with-columns grid to a
 //! `treegrid`): the header row's `columnheader`s carry `aria-sort` on the
 //! active sort column (passed in the [`GridColumn`] slice), group headers are
@@ -482,7 +482,7 @@ impl WidgetCore for GroupedGridSortView {
 }
 
 impl WidgetA11y for GroupedGridSortView {
-    /// WAI-ARIA `treegrid` via [`grouped_grid_access_nodes`](pinion_a11y::grouped_grid_access_nodes):
+    /// WAI-ARIA `treegrid` via [`grouped_grid_access_nodes`]:
     /// the active sort column's `aria-sort` is the one datum that differs from
     /// the static `hello-grouped-grid`, carried in the [`GridColumn`] slice.
     fn access_node(selected: &Option<usize>, _focused: Option<&str>) -> Vec<AccessNode> {

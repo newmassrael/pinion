@@ -8,7 +8,7 @@
 //! [[ai-first-rpc-introspection-obligation]] reactive substrate
 //! `hello-button` (R51.30 §5.16) has shipped for over a hundred rounds:
 //!
-//! - [`read_state`] queries the wrapped `ButtonExternal`'s SCXML state
+//! - `read_state` queries the wrapped `ButtonExternal`'s SCXML state
 //!   via `External::introspect().query("state")`. The shell's
 //!   `InputRouter` already routes the four pointer events (`PointerEnter`
 //!   / `PointerLeave` / `PointerDown` / `PointerUp`) plus
@@ -16,8 +16,8 @@
 //!   1:1 with the SCXML transition names is the only widget-side step.
 //! - The [`view`] fn lerps the Figma `#675AA4` fill toward the Material
 //!   3 hover / pressed / disabled state-layer overlays. The hover
-//!   transition is spring-driven via the same [`Owner::cache`] +
-//!   [`Animation`] shape `hello-button` carries (R51.150 §5.22 +
+//!   transition is spring-driven via the same `Owner::cache` +
+//!   `Animation` shape `hello-button` carries (R51.150 §5.22 +
 //!   R51.147 §5.28) — same per-binding owner-scoped cache, same
 //!   `SpringConfig::default()` timing, no thread-local global.
 //!
@@ -53,7 +53,7 @@
 //! | Disabled  | `lerp(fill, canvas, 0.38)` (fade)      |
 //!
 //! The Idle ↔ Hover lerp is spring-driven by a `[0.0, 1.0]` progress
-//! animation [`drive_hover_progress`] owns; Pressed and Disabled are
+//! animation `drive_hover_progress` owns; Pressed and Disabled are
 //! direct (snap) transitions — Material 3's hover-only spring is
 //! consistent with `hello-button`'s pattern and with the Material
 //! Components Android reference.
@@ -185,7 +185,7 @@ const HOVER_ANIM_KEY: &str = "figma_button_m3::hover_progress";
 ///
 /// Demonstrates the substrate's hard-coded-token path —
 /// [`ButtonColors::new`] takes explicit [`Color`]s rather than
-/// resolving from a [`Theme`], so the Figma spec is reproduced
+/// resolving from a `Theme`, so the Figma spec is reproduced
 /// verbatim while the M3 overlay matrix lives in the substrate.
 fn figma_button_colors() -> ButtonColors {
     ButtonColors::new(
@@ -223,7 +223,7 @@ fn button_fill_for(state: ButtonState) -> Color {
 /// state. Pure sync `(state, frame) -> Scene` per §6.3.
 ///
 /// `_frame` is unused at R640 — the view fn does not advance simulation
-/// time on its own; the [`Animation`] cached inside [`drive_hover_progress`]
+/// time on its own; the `Animation` cached inside `drive_hover_progress`
 /// owns the spring tick. [`Frame`] is `Copy`, so the free fn takes it
 /// by value per the workspace `clippy::pedantic` `trivially_copy_pass_by_ref`
 /// rule; the `WidgetCore::view` trait shim below dereferences the
@@ -273,7 +273,7 @@ fn view(state: ButtonState, _frame: Frame) -> Scene {
 /// without holding a value of this type.
 ///
 /// [`create_external`]: pinion_core::WidgetCore::create_external
-/// [`initial_size`]: pinion_shell::WidgetView::initial_size
+/// [`initial_size`]: pinion_shell::WidgetView::initial_size_strategy
 /// [`view`]: pinion_core::WidgetCore::view
 /// [`read_state`]: pinion_core::WidgetCore::read_state
 /// [`event_name`]: pinion_core::WidgetCore::event_name
@@ -296,7 +296,7 @@ fn view(state: ButtonState, _frame: Frame) -> Scene {
 struct FigmaButtonView;
 
 impl FigmaButtonView {
-    /// R642 inherent forward for [`WidgetCore::view`]. The macro emits
+    /// R642 inherent forward for `WidgetCore::view`. The macro emits
     /// the trait method as `<FigmaButtonView>::view(state, *frame)` —
     /// the free `view(...)` fn below already takes `Frame` by value, so
     /// this stub is a 1:1 passthrough.

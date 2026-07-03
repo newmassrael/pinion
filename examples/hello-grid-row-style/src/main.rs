@@ -7,7 +7,7 @@
 //! rows, with the **first** matching rule winning (Wireshark precedence).
 //!
 //! The decisive reuse: a rule's predicate **is** the R997
-//! [`GridFilter`](pinion_core::widgets::grid_sort::GridFilter) conjunction — the
+//! [`GridFilter`] conjunction — the
 //! same multi-facet filter the grid's filter axis carries. Coloring and
 //! filtering speak the same wire vocab; an AI client adds a rule with
 //! `invoke "add_rule" "2=Done;#c82828;#ffffff"` (Status=Done rows paint

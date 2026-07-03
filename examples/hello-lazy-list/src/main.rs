@@ -15,7 +15,7 @@
 //!
 //! ## Architecture (unidirectional, Effect-driven prefetch)
 //!
-//! - A per-page `Resource` cache — the [`ResourceCache`](pinion_core::ResourceCache)
+//! - A per-page `Resource` cache — the [`ResourceCache`]
 //!   keyed-async-carrier substrate (keyed by page index here; R927's asset
 //!   browser is the second consumer, keyed by the full sort/filter/page query)
 //!   in `Owner::cache`. A page is materialised only when it first scrolls into
@@ -23,10 +23,10 @@
 //!   the app lifetime: bounded here (100 pages), but a truly unbounded source
 //!   would add LRU eviction of far-away pages (a deliberate follow-up, not
 //!   wired this slice).
-//! - An [`Effect`] subscribed to the **scroll offset** [`Signal`] computes the
+//! - An [`Effect`] subscribed to the **scroll offset** `Signal` computes the
 //!   visible page range (`compute_visible_range`) and kicks off a
-//!   [`Resource::fetch_with`] for every page not yet in the cache, through the
-//!   shell-polled [`LocalTaskPump`](pinion_core::LocalTaskPump). Boot loads the
+//!   `Resource::fetch_with` for every page not yet in the cache, through the
+//!   shell-polled [`LocalTaskPump`]. Boot loads the
 //!   first visible pages via the Effect's eager run; scrolling re-runs it.
 //! - The view is **pure** (§6.3): it reads `scroll.offset_y()` + each visible
 //!   page's `resource.state()` and maps `(loaded rows | skeletons)` into the

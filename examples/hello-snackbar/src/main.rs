@@ -11,7 +11,7 @@
 //! no consumer" carry.
 //!
 //! The snackbar **auto-dismisses after 4 s** via the §5.28
-//! [`SnackbarTimer`](pinion_core::widgets::snackbar::SnackbarTimer)
+//! [`SnackbarTimer`]
 //! `Tickable` (the [`CaretBlink`] one-shot-countdown sibling). Because
 //! the dismissal rides the animation driver, it is **deterministically
 //! drivable** by the R724 `scene/tick` RPC: a client shows the

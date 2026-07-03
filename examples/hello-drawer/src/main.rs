@@ -5,7 +5,7 @@
 
 //! `hello-drawer` — R702 §5.16 §5.39 §5.40 §5.50 modal **navigation
 //! drawer** (side sheet): the 2nd consumer of the R693 modal
-//! focus-trap substrate ([`pinion_runtime::FocusManager`]
+//! focus-trap substrate (`pinion_runtime::FocusManager`
 //! `push_modal_scope` / `pop_modal_scope`, driven through
 //! [`pinion_core::modal_scope_request`]) and the
 //! [`pinion_widget_paint::drawer`] chrome.
@@ -112,7 +112,7 @@ const NAV_TAGS: [&str; NAV_N] = ["drawer_item_0", "drawer_item_1", "drawer_item_
 
 /// Destination labels — double as each item's AT accessible name
 /// (name-from-contents enrichment of the button label) and the status
-/// line's "Current: <name>" copy.
+/// line's "Current: `<name>`" copy.
 const DESTINATIONS: [&str; NAV_N] = ["Home", "Search", "Settings"];
 
 /// `Owner::cache` key for the shared [`ModalState`] open-lifecycle.

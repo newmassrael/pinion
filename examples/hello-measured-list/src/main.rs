@@ -2,12 +2,12 @@
 //! virtualization consumer**.
 //!
 //! The R745 sibling [`hello-variable-list`] virtualizes rows whose heights
-//! the caller already knows (a prefix-sum [`RowOffsets`] table built from an
+//! the caller already knows (a prefix-sum `RowOffsets` table built from an
 //! explicit height slice). Real data rarely offers that: a wrapped log line,
 //! a variable document paragraph, an asset thumbnail — their height is only
 //! known *after* the row is laid out. R1194 adds that missing mode: a
 //! **measured** list windows against a
-//! [`MeasuredRowState`](pinion_core::widgets::measured_rows::MeasuredRowState)
+//! [`MeasuredRowState`]
 //! that starts from a single `EST` estimate and refines each row as the
 //! runtime layout pass harvests its laid-out height back in — the
 //! "layout-pass measurement round-trip"
@@ -62,7 +62,7 @@ vello_renderer_impl!(HelloMeasuredListRenderer, HelloMeasuredListRendererError);
 
 const WIN_W: u32 = 360;
 const WIN_H: u32 = 520;
-/// Shared [`ThemeProvider`] cache key.
+/// Shared [`ThemeProvider`](pinion_core::theme::ThemeProvider) cache key.
 const THEME_TAG: &str = "app";
 /// Total dataset size. Small enough that the demo can scroll through the
 /// whole list and witness convergence to the exact content height, while

@@ -16,7 +16,7 @@
 //!   (WAI-ARIA / Qt `QItemSelectionModel` `SelectRows`; the column is
 //!   irrelevant to a row selection).
 //! * windowed body + frozen header — the R775
-//!   [`view_virtual_table`](pinion_widget_paint::table::view_virtual_table),
+//!   [`view_virtual_table`],
 //!   now forwarding a `selected` row so the selected strip paints accent.
 //! * scroll-into-view — the R776
 //!   [`scroll_offset_to_reveal`](pinion_core::widgets::virtual_list::scroll_offset_to_reveal),

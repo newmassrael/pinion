@@ -175,7 +175,7 @@ const NOTIF_INSTANCE_TAGS: [&str; NOTIFICATION_COUNT] = [
 /// notifications cluster is the realised 4th).
 const NOTIF_SCROLLBAR_TAG: &str = "notifications_scrollbar";
 
-/// Root owner cache key for the [`ThemeProvider`]. `"app"` matches
+/// Root owner cache key for the [`ThemeProvider`](pinion_core::theme::ThemeProvider). `"app"` matches
 /// the convention shared with `hello-toggle` / `hello-theme` /
 /// `todomvc` so a future host binding can share one provider across
 /// the example gallery.

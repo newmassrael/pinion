@@ -14,7 +14,7 @@
 //! viewer exercises the R933 fold *substrate* with a cursor on top.
 //!
 //! The fold set + caret live on the reactive
-//! [`TextEditState`](pinion_core::widgets::text_edit::TextEditState) (which
+//! [`TextEditState`] (which
 //! *is* fully editable, and tracks folds across edits — see its unit tests).
 //! Both paths drive the same state: an AI agent folds / unfolds / moves the
 //! caret purely over the wire (`toggle-fold` / `fold-all` / `unfold-all` /
@@ -101,7 +101,7 @@ const TF_TAG: &str = "code_editor";
 /// as scene-as-data (`find_by_tag`).
 const STATUS_TAG: &str = "fold_status";
 
-/// [`ThemeProvider`] cache key — the `"app"` gallery convention.
+/// [`ThemeProvider`](pinion_core::theme::ThemeProvider) cache key — the `"app"` gallery convention.
 const THEME_TAG: &str = "app";
 
 const WIN_W: u32 = 520;

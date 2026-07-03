@@ -29,14 +29,14 @@
 //! not duplication).
 //!
 //! **`aria-pressed`.** A multi-select segment is a *toggle button*: it
-//! lowers to AccessKit [`AriaRole::Button`] carrying
+//! lowers to AccessKit `AriaRole::Button` carrying
 //! [`AccessState::checked`](pinion_a11y::AccessState::checked) = `Some(on)`.
 //! A `button` role with a toggled state reflects **`aria-pressed`**
 //! ("pressed" / "not pressed"), distinct from the `aria-checked` a checkbox
 //! / switch / radio reflects — even though both lower through the same
 //! AccessKit `set_toggled` call (the split is a function of the role,
 //! exactly as WAI-ARIA defines). The segments sit under an
-//! [`AriaRole::Group`] parent (WAI-ARIA §3.6 `group`), a labelled passive
+//! `AriaRole::Group` parent (WAI-ARIA §3.6 `group`), a labelled passive
 //! container — distinct from `RadioGroup` (single-select `radio` /
 //! `aria-checked` children) and `Toolbar` (roving-tabindex).
 //!
@@ -86,7 +86,7 @@ vello_renderer_impl!(
 
 const WIN_W: u32 = 420;
 const WIN_H: u32 = 160;
-/// [`ThemeProvider`] cache key — the `"app"` convention shared across the
+/// [`ThemeProvider`](pinion_core::theme::ThemeProvider) cache key — the `"app"` convention shared across the
 /// example gallery.
 const THEME_TAG: &str = "app";
 
@@ -346,8 +346,8 @@ impl WidgetCore for SegmentedMultiView {
 }
 
 impl WidgetA11y for SegmentedMultiView {
-    /// R733 §5.40 — one [`AriaRole::Group`] parent (`"Show"`) + one
-    /// [`AriaRole::Button`] per segment carrying **`aria-pressed`**, built
+    /// R733 §5.40 — one `AriaRole::Group` parent (`"Show"`) + one
+    /// `AriaRole::Button` per segment carrying **`aria-pressed`**, built
     /// by the shared [`toggle_button_group_nodes`] substrate from this
     /// binding's `(state, on)` rows and [`LABELS`].
     fn access_node(state: &GroupState, focused: Option<&str>) -> Vec<AccessNode> {

@@ -19,7 +19,7 @@
 //!   collapse set and flattens the grouped rows; a clicked group header routes
 //!   here (`ggroup#<group>`), collapse/expand is driven by the AI-first
 //!   `invoke "toggle_group"` / `"collapse_all"` / `"expand_all"`.
-//! - **Extra** [`ScrollBarExternal`] at [`SCROLLBAR_TAG`] — shares the list's
+//! - **Extra** `ScrollBarExternal` at [`SCROLLBAR_TAG`] — shares the list's
 //!   `ScrollState` (R659 lift).
 //!
 //! ## The witness (§2 #7 scene-as-data)
@@ -361,7 +361,7 @@ impl WidgetCore for GroupedListView {
 impl WidgetA11y for GroupedListView {
     /// WAI-ARIA `tree` over the *flattened* grouped view (a grouped collapsible
     /// list is a one-level tree to AT), via the
-    /// [`grouped_tree_access_nodes`](pinion_a11y::grouped_tree_access_nodes) SSOT
+    /// [`grouped_tree_access_nodes`] SSOT
     /// builder (R847): group headers are `treeitem`s at `aria-level = 1` with
     /// `aria-expanded`, data rows are `treeitem`s at `aria-level = 2` with
     /// `aria-selected`. The two composite namespaces — group headers route to the

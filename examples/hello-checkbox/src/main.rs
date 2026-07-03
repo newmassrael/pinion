@@ -34,7 +34,7 @@ vello_renderer_impl!(HelloCheckboxRenderer, HelloCheckboxRendererError);
 
 const WIN_W: u32 = 360;
 const WIN_H: u32 = 180;
-/// (R57.X.checkbox §5.50) [`ThemeProvider`] cache key — matches the
+/// (R57.X.checkbox §5.50) [`ThemeProvider`](pinion_core::theme::ThemeProvider) cache key — matches the
 /// `"app"` convention shared across the example gallery.
 const THEME_TAG: &str = "app";
 

@@ -64,7 +64,7 @@ vello_renderer_impl!(
 /// `scene/resize`), and the list re-windows on every `Resized` event.
 const WIN_W: u32 = 380;
 const WIN_H: u32 = 480;
-/// Shared [`ThemeProvider`] cache key (the `"app"` convention shared
+/// Shared [`ThemeProvider`](pinion_core::theme::ThemeProvider) cache key (the `"app"` convention shared
 /// across the catalogue).
 const THEME_TAG: &str = "app";
 /// Total dataset size — large while the rendered node count stays small

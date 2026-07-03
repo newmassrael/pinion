@@ -42,7 +42,7 @@
 //! ## Why a Toggle
 //!
 //! A vector-graphic gallery is intrinsically stateless, but the
-//! `AppShell` drives a [`WidgetView`] with a statechart `External`.
+//! `AppShell` drives a `WidgetView` with a statechart `External`.
 //! Rather than invent a one-off widget ([[abstraction-needs-second-
 //! consumer]]), the binding reuses the §5.38 [`ToggleExternal`] purely
 //! as the *mode bit*: the Off/On sidecar selects fill-only vs

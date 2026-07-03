@@ -8,11 +8,11 @@
 //! visual binary to its widget-specific diff:
 //!
 //! * the [`view`] fn (pure sync §6.3, `(state, frame) -> Scene`),
-//! * the [`ButtonView`] [`WidgetView`] impl (state shape, event enum,
+//! * the [`ButtonView`] `WidgetView` impl (state shape, event enum,
 //!   `Scene::External` factory, introspect parser, keybindings),
 //! * the [`vello_renderer_impl!`] macro bridging the
 //!   pinion-forge-emitted [`HelloButtonRenderer`] to the shell's
-//!   [`VelloRenderer`] trait,
+//!   `VelloRenderer` trait,
 //! * one-line [`main`] calling `pinion_shell::run::<ButtonView>()`.
 //!
 //! Architecture (R17 bidirectional RPC live dogfood) — unchanged
@@ -71,7 +71,7 @@ vello_renderer_impl!(HelloButtonRenderer, HelloButtonRendererError);
 
 const WIN_W: u32 = 320;
 const WIN_H: u32 = 200;
-/// (R57.X.button §5.50) [`ThemeProvider`] cache key. Matches the
+/// (R57.X.button §5.50) [`ThemeProvider`](pinion_core::theme::ThemeProvider) cache key. Matches the
 /// `"app"` convention shared with `hello-toggle` / `hello-theme` /
 /// `hello-listbox` / `hello-textfield` so the example gallery shares
 /// one provider when a host binds them together.
@@ -156,7 +156,7 @@ fn view(state: ButtonState, _frame: &Frame) -> Scene {
 }
 
 /// `WidgetView` binding for the Button widget. R641 §5.16 lifted the
-/// mechanical [`WidgetCore`] / [`WidgetA11y`] / [`WidgetView`] trait
+/// mechanical [`WidgetCore`] / [`WidgetA11y`](pinion_a11y::WidgetA11y) / [`WidgetView`](pinion_shell::WidgetView) trait
 /// wiring into the [`#[widget]`](pinion_derive::widget) attribute;
 /// R642 §5.16 added the declarative `role = Button` +
 /// `state_flags(...)` derive that emits the single-node
@@ -171,7 +171,7 @@ fn view(state: ButtonState, _frame: &Frame) -> Scene {
 /// of this type.
 ///
 /// [`create_external`]: pinion_core::WidgetCore::create_external
-/// [`initial_size`]: pinion_shell::WidgetView::initial_size
+/// [`initial_size`]: pinion_shell::WidgetView::initial_size_strategy
 /// [`view`]: pinion_core::WidgetCore::view
 /// [`read_state`]: pinion_core::WidgetCore::read_state
 /// [`event_name`]: pinion_core::WidgetCore::event_name

@@ -57,7 +57,7 @@ vello_renderer_impl!(HelloGridHscrollRenderer, HelloGridHscrollRendererError);
 /// columns overflow and the grid scrolls horizontally.
 const WIN_W: u32 = 520;
 const WIN_H: u32 = 440;
-/// Shared [`ThemeProvider`] cache key.
+/// Shared [`ThemeProvider`](pinion_core::theme::ThemeProvider) cache key.
 const THEME_TAG: &str = "app";
 /// Total data-row count — large while the rendered node count stays small.
 const N: usize = 10_000;
@@ -82,7 +82,7 @@ const SCROLL_KEY: &str = "ghs_scroll";
 /// `ScrollState`. `scene/set_scroll_offset` on this tag slides the grid
 /// sideways; the header and body move together.
 const H_SCROLL_KEY: &str = "ghs_hscroll";
-/// R785 — cache key for the shared [`ColumnWidths`] model, and the tag of
+/// R785 — cache key for the shared `ColumnWidths` model, and the tag of
 /// the [`ColumnWidthExternal`] that drives it. `invoke set_col_width` on this
 /// tag resizes a column; widening past the window grows the R784 horizontal
 /// scroll extent.
@@ -187,7 +187,7 @@ impl WidgetCore for GridHscrollView {
     }
 
     /// R785 / R786 — the column-width axis surfaces, all over the **same**
-    /// shared [`ColumnWidths`] the view reads via [`use_column_widths`]:
+    /// shared `ColumnWidths` the view reads via [`use_column_widths`]:
     ///
     /// * The [`ColumnWidthExternal`] at [`COLS_KEY`] — the AI-first RPC path
     ///   (`invoke set_col_width "<col>=<width>"` widens a column).

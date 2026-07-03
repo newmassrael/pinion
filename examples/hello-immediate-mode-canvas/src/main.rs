@@ -1,6 +1,6 @@
 //! `hello-immediate-mode-canvas` — R681 §2 #4 first real consumer
-//! of [`Scene::ImmediateModeNode`](pinion_core::scene::Scene::ImmediateModeNode)
-//! and the [`ImmediateMode`](pinion_core::scene::ImmediateMode) trait.
+//! of [`Scene::ImmediateModeNode`]
+//! and the [`ImmediateMode`] trait.
 //!
 //! ## Why this binding exists
 //!
@@ -51,7 +51,7 @@
 //!   frame and clones it into the `Scene::ImmediateModeNode`; the
 //!   substrate tick walker borrows it mutably for one `tick(dt)`
 //!   call per paint cycle, then the paint adapter calls
-//!   [`ImmediateMode::paint`](pinion_core::scene::ImmediateMode::paint)
+//!   [`ImmediateMode::paint`]
 //!   to encode the triangle into vello.
 
 use std::cell::RefCell;

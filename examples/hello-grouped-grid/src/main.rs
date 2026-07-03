@@ -20,12 +20,12 @@
 //! - **Extra** [`GroupOrderExternal`] at [`GROUP_TAG`] — the group-by proxy
 //!   (group id = the row's asset type); a clicked group header (`ggrp#<group>`)
 //!   toggles collapse.
-//! - **Extra** [`ScrollBarExternal`].
+//! - **Extra** `ScrollBarExternal`.
 //!
 //! ## a11y (WAI-ARIA `treegrid`)
 //!
 //! Built by the
-//! [`grouped_grid_access_nodes`](pinion_a11y::grouped_grid_access_nodes) SSOT
+//! [`grouped_grid_access_nodes`] SSOT
 //! (R847) — a `treegrid` root, a `columnheader` per column, a spanning
 //! `aria-level = 1` `row` + `aria-expanded` per group header, and an
 //! `aria-level = 2` `row` (`aria-selected`) + `gridcell` children per data row.
@@ -393,7 +393,7 @@ impl WidgetCore for GroupedGridView {
 
 impl WidgetA11y for GroupedGridView {
     /// WAI-ARIA `treegrid` via the
-    /// [`grouped_grid_access_nodes`](pinion_a11y::grouped_grid_access_nodes) SSOT
+    /// [`grouped_grid_access_nodes`] SSOT
     /// builder (R847): a `treegrid` root over the header row + windowed rows, a
     /// `columnheader` per column, a spanning level-1 `row` + `aria-expanded` per
     /// group header, and a level-2 `row` (`aria-selected`) + `gridcell` children

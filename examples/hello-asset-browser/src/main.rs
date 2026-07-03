@@ -37,7 +37,7 @@
 //! 2. **page loader** — subscribed to `sort`, `filter`, the scroll offset *and*
 //!    the count `Resource`'s state: once the count is `Ready(n)`, it computes
 //!    the visible window over `n` and ensures every visible `(sort, filter,
-//!    page)` page is fetched into a [`ResourceCache`](pinion_core::ResourceCache)
+//!    page)` page is fetched into a [`ResourceCache`]
 //!    — the keyed-async-carrier substrate lifted at R927 (lazy-list is its
 //!    first consumer, this its second).
 //!

@@ -73,7 +73,7 @@ vello_renderer_impl!(HelloBadgeRenderer, HelloBadgeRendererError);
 
 const WIN_W: u32 = 360;
 const WIN_H: u32 = 200;
-/// [`ThemeProvider`] cache key — the `"app"` convention shared across the
+/// [`ThemeProvider`](pinion_core::theme::ThemeProvider) cache key — the `"app"` convention shared across the
 /// example gallery.
 const THEME_TAG: &str = "app";
 

@@ -19,7 +19,7 @@
 //! composition: the selection model is the unchanged R746
 //! [`VirtualSelectExternal`], the windowing is the unchanged R774
 //! [`view_flex_virtual_list`], and the scroll offset is the unchanged
-//! [`ScrollState`].
+//! `ScrollState`.
 //!
 //! ## Keyboard model (single-select, selection-follows-focus)
 //!

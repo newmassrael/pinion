@@ -2,13 +2,13 @@
 //! R51.191 §5.45 R55.G first `ScrollNode` consumer.
 //!
 //! N=12 [`ListBox`](pinion_core::widgets::listbox::ListBox) rendered
-//! inside a 5-row [`ScrollNode`](pinion_core::scene::ScrollNode)
+//! inside a 5-row [`ScrollNode`]
 //! viewport, each row tagged with the paint convention
 //! `"main_list#<index>"` from the R51.41 RFC. The
 //! state scene carries one composite
-//! [`ListBoxExternal`](pinion_core::widgets::listbox::ListBoxExternal)
+//! [`ListBoxExternal`]
 //! tagged `"main_list"`; the
-//! [`InputRouter`](pinion_runtime::InputRouter) splits the `'#'`
+//! `InputRouter` splits the `'#'`
 //! suffix (R51.42) so a cursor on row `i` drives
 //! `invoke("send", Text("<i>:<EventName>"))` against the single
 //! composite handle. Framework-owned mutual exclusion (R51.96) snaps
@@ -23,7 +23,7 @@
 //!   select pattern says Arrow keys move the AT-side active
 //!   descendant without committing the selection. `Home` / `End`
 //!   jump to the first / last option, also focus-only. Pinion's
-//!   [`ListBox::set_focused_index`] is the framework primitive for
+//!   `ListBox::set_focused_index` is the framework primitive for
 //!   this navigation cursor.
 //! * **`Space` / `Enter` commits the focused row.** The activation
 //!   runs the full `PointerEnter → Down → Up → Leave` cycle on the
@@ -55,7 +55,7 @@
 //! routes `Pressed → Idle` via `PointerCancel` without firing
 //! `"selected"`. Inherited from the [`ListBoxItem`] template via
 //! R51.93; verified in
-//! [`pinion_core::widgets::listbox::tests::r51_93_pointer_cancel_does_not_select`].
+//! `pinion_core::widgets::listbox::tests::r51_93_pointer_cancel_does_not_select`.
 //!
 //! [`hello-radio-group`]: ../../hello-radio-group/index.html
 //! [`RadioGroup`]: pinion_core::widgets::radio_group::RadioGroup
@@ -103,7 +103,7 @@ vello_renderer_impl!(HelloListboxRenderer, HelloListboxRendererError);
 
 const WIN_W: u32 = 360;
 const WIN_H: u32 = 320;
-/// (R57.X.listbox §5.50) [`ThemeProvider`] cache key. Matches the
+/// (R57.X.listbox §5.50) [`ThemeProvider`](pinion_core::theme::ThemeProvider) cache key. Matches the
 /// `"app"` convention shared with `hello-toggle` + `hello-theme` so
 /// future cross-widget retrofits resolve the same provider; widgets
 /// embedded inside a host application would receive the host's tag.
@@ -115,7 +115,7 @@ const THEME_TAG: &str = "app";
 const N: usize = 12;
 const PRIMARY_TAG: &str = "main_list";
 /// (R51.191 §5.45 R55.G) Cache key for the scroll container's
-/// reactive [`ScrollState`]. Resolves via
+/// reactive `ScrollState`. Resolves via
 /// [`use_scroll_state`] in `view` so the offset survives view
 /// re-runs. Distinct from [`PRIMARY_TAG`] — the listbox composite
 /// state machine and the scroll input-router live on independent
@@ -479,7 +479,7 @@ impl WidgetCore for ListBoxView {
     /// First multi-External binding in the example catalogue. Drag
     /// the visible R55.D.4 scrollbar peer on the right of the listbox
     /// → the cursor stays captured under the framework's
-    /// [`InputRouter`] R51.34 capture lock → `pointer_move` flows
+    /// `InputRouter` R51.34 capture lock → `pointer_move` flows
     /// through the framework into `ScrollBarExternal::pointer_move`
     /// → `ScrollState::scroll_to` clamps and writes; the next paint
     /// re-runs the view fn against the new offset.

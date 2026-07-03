@@ -32,7 +32,7 @@
 //! ## Tear-off / dock-back
 //!
 //! Each panel's header is a draggable handle wired to a
-//! [`DockPanelExternal`](pinion_widget_paint::dock::DockPanelExternal)
+//! [`DockPanelExternal`]
 //! registered at the composite tag `{panel_tag}#header`. Dragging the
 //! header past the M3-canonical 0.5 threshold fraction emits a
 //! `tear_off` intent carrying the panel id; the binding reducer
@@ -40,7 +40,7 @@
 //!
 //! * **Tear-off**: if no floating window exists for the panel,
 //!   `Signal::set` pushes a new [`WindowSpec`] onto the reactive
-//!   `Signal<Vec<WindowSpec>>` returned by [`Self::windows_signal`].
+//!   `Signal<Vec<WindowSpec>>` returned by `Self::windows_signal`.
 //!   The shell's R683.A reconcile-diff Effect spawns a new winit
 //!   window with the floating panel content via
 //!   [`view_floating_panel`].
@@ -58,7 +58,7 @@
 //!
 //! ## Cross-panel selection (R679 closure)
 //!
-//! The viewport panel hosts a [`ClickRouter`](pinion_widget_paint::devtools::ClickRouter)
+//! The viewport panel hosts a [`ClickRouter`]
 //! (the **2nd** `ClickRouter` consumer — `hello-multi-window` was the
 //! 1st, R683.C closes the [[abstraction-needs-second-consumer]]
 //! Rule-of-Three gate). AI clients drive `scene/invoke
@@ -143,7 +143,7 @@ const FLOATING_H: u32 = 360;
 
 const THEME_TAG: &str = "app";
 
-/// Paint-side tag the [`InputRouter`](pinion_runtime::InputRouter)
+/// Paint-side tag the `InputRouter`
 /// hit-tests against for the viewport Button. Routes pointer events
 /// to the primary [`ButtonExternal`].
 const VIEWPORT_BTN_TAG: &str = "viewport_btn";
@@ -294,7 +294,7 @@ const MAIN_SPLIT_RATIO_DEFAULT: f32 = 0.32;
 const LEFT_SPLIT_RATIO_DEFAULT: f32 = 0.55;
 
 /// Viewport header label rendered above the viewport Button. Static
-/// text so the inspector tree has a stable Text[0] leaf.
+/// text so the inspector tree has a stable Text`0` leaf.
 const VIEWPORT_HEADER_TEXT: &str = "Viewport";
 /// Viewport button label.
 const VIEWPORT_BTN_LABEL: &str = "Click me (viewport)";
@@ -514,7 +514,7 @@ fn floating_window_title(panel_id: &str) -> String {
 /// [`WindowSpec::with_position`] — it proves the position flows the binding
 /// → `windows_signal` → `reconcile_windows` → real window arc, and keeps a
 /// multi-tear-off cascade from stacking exactly. R1094's drag-follow
-/// ([`follow_desktop_position`]) now COEXISTS with this: the AI `tear_off`
+/// (`follow_desktop_position`) now COEXISTS with this: the AI `tear_off`
 /// toggle (+ the cursor-less escape fallback) opens at this deterministic
 /// cascade, a live header drag opens at the cursor — two policies over the
 /// one SSOT seam (a position on the spec the shell reconciles).
@@ -1173,7 +1173,7 @@ impl WidgetCore for DockPanelsView {
     /// the tree previews the corresponding scene node. Expand / collapse
     /// / toggle write the [`use_collapsed_paths`] overlay; an
     /// unrecognised printable key falls through to
-    /// [`inspector_typeahead`].
+    /// `inspector_typeahead`.
     fn apply_key(
         scene: &mut Scene,
         focused: Option<&str>,
@@ -1268,11 +1268,11 @@ impl WidgetView for DockPanelsView {
 
     /// R812 §5.40 §5.50 §5.27 / R813 §5.40 §5.16 — the `DevTools`
     /// inspector tree's WAI-ARIA `tree` + `treeitem` semantic tree, built
-    /// through the lifted [`tree_access_nodes`](pinion_a11y::tree_access_nodes)
+    /// through the lifted [`tree_access_nodes`]
     /// substrate (the second consumer; `hello-tree-view` is the first).
     /// Clears the R811 inspector "AT-tree nodes 0" carry: the R811
     /// keyboard nav now has an AT counterpart, so a screen reader
-    /// announces "tree item, <label>, level N, M of K, expanded" as the
+    /// announces "tree item, `<label>`, level N, M of K, expanded" as the
     /// cursor moves. The selection-follows-focus row ([`use_selected_path`])
     /// carries `aria-selected`; the expand state rides the same
     /// [`flat_visible`] SSOT the painted glyph and keyboard model read, so

@@ -1,11 +1,11 @@
 //! `hello-elevation` — R710 §5.50 consumer of the drop-shadow
-//! rendering substrate (the first [`BoxShadow`] paint).
+//! rendering substrate (the first `BoxShadow` paint).
 //!
 //! ## What this demonstrates
 //!
 //! `BoxStyle::shadows` (R710) carries a `Vec<BoxShadow>` painted behind
 //! a box — the CSS `box-shadow` / Flutter `List<BoxShadow>` model. Each
-//! [`BoxShadow`] (colour, offset, blur, spread) lowers to Vello's
+//! `BoxShadow` (colour, offset, blur, spread) lowers to Vello's
 //! native `Scene::draw_blurred_rounded_rect`. This binding paints a
 //! **Material-style elevation gallery**:
 //!
@@ -22,13 +22,13 @@
 //! The elevation ramp (`pinion_widget_paint::elevation`, R711 lift) is a
 //! *Material-style* key + ambient model parameterised by level — a
 //! design choice, not a claim of bit-exact MD3 dp tokens; the substrate
-//! under test is the generic [`BoxShadow`] primitive (cf. R708:
+//! under test is the generic `BoxShadow` primitive (cf. R708:
 //! `Gradient` is the substrate, the hue ramp is the consumer's choice).
 //!
 //! ## Why a Toggle
 //!
 //! An elevation gallery is intrinsically stateless, but the `AppShell`
-//! drives a [`WidgetView`] with a statechart `External`. Rather than
+//! drives a `WidgetView` with a statechart `External`. Rather than
 //! invent a one-off widget ([[abstraction-needs-second-consumer]]), the
 //! binding reuses the §5.38 [`ToggleExternal`] purely as the
 //! *rest/raised bit*. The Toggle is the RPC-drivable, AT-exposed

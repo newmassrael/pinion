@@ -7,7 +7,7 @@
 //! ## 2nd consumer of the R737 step substrate
 //!
 //! Like `hello-slider-discrete`, the value snaps to the nearest of five
-//! stops through the single [`Slider::set_value`] funnel
+//! stops through the single `Slider::set_value` funnel
 //! ([`SliderExternal::with_step`]) — drag, keyboard, `intervene`, and RPC
 //! all land on a tick with no per-binding snap code. `STEP = 0.25` gives
 //! the stops `0.0 / 0.25 / 0.5 / 0.75 / 1.0`.
@@ -22,7 +22,7 @@
 //! value *alongside* the numeric range from [`AccessValue::Float`], so the
 //! node still carries `valuenow/min/max` for context.
 //!
-//! [`LABEL_FOR`]-style mapping is a single source of truth: [`label_for`]
+//! `LABEL_FOR`-style mapping is a single source of truth: [`label_for`]
 //! is called once for the prominent on-screen readout *and* for the a11y
 //! `value_text`, so the visible label and the announced label can never
 //! diverge. The per-stop label row under the track visualises every named

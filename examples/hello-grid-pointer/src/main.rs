@@ -16,7 +16,7 @@
 //!
 //! ## Why the window is the grid
 //!
-//! The [`InputRouter`](pinion_core) hands a pointer hook a `(x_rel, y_rel)`
+//! The `InputRouter` hands a pointer hook a `(x_rel, y_rel)`
 //! **fraction** normalised over the hit widget's rect, not absolute pixels. The
 //! single full-window grid makes the primary external's rect equal the grid
 //! rect, so the binding reconstructs grid-relative pixels by `x_rel ·

@@ -14,11 +14,11 @@
 //! 3. `.attach_blink(use_caret_blink(TF_TAG))` (R56.1.h)
 //!
 //! Three builder calls. The view fn's caret rect derivation (one
-//! `LayoutCache::layout` call + one [`caret_rect_for_byte_offset`]
+//! `LayoutCache::layout` call + one `caret_rect_for_byte_offset`
 //! call) is paint code, not composition — the substrate carries the
 //! whole interaction-state machine through the typed `TextFieldEvent`
 //! surface and the W3C `KeyboardEvent.key` mapping inside
-//! [`TextFieldExternal::invoke`]`("key", Text)`. The two R56.1.b.1
+//! `TextFieldExternal::invoke``("key", Text)`. The two R56.1.b.1
 //! substrate fixes that landed alongside this binding
 //! (`root_owner.run` wraps around `V::create_external` /
 //! `V::access_node` in `core_shell.rs` / `substrate.rs`) close the
@@ -29,17 +29,17 @@
 //!
 //! - State shape: `(TextFieldState, u32)` — interaction state +
 //!   caret byte offset. Text content lives on the reactive
-//!   [`TextEditState`] reached via `use_text_edit_state(TF_TAG)`
-//!   ([`Owner::cache`]-keyed hook, shared between
+//!   `TextEditState` reached via `use_text_edit_state(TF_TAG)`
+//!   (`Owner::cache`-keyed hook, shared between
 //!   [`TextFieldExternal::attach_state`] in `create_external` and
 //!   the view fn's text read — same cache key → same `Rc`).
 //! - Visible value: 360×40 input box, white text on dark grey
 //!   background, blinking caret on focus, ARIA `textbox` role.
 //! - Input wire: [`apply_key`](WidgetCore::apply_key) delegates to
-//!   [`TextFieldExternal::invoke`]`("key", Text)` (R56.1.d). The
+//!   `TextFieldExternal::invoke``("key", Text)` (R56.1.d). The
 //!   shell's `notify_focus_change` (R56.1.h) drives `Focus` / `Blur`
 //!   events to the External, which then gates the blink animation
-//!   via [`TextField::sync_blink`].
+//!   via `TextField::sync_blink`.
 //!
 //! ## Try it
 //!
@@ -92,7 +92,7 @@ const TF_TAG: &str = "main_textfield";
 const WIN_W: u32 = 480;
 const WIN_H: u32 = 200;
 
-/// (R57.X.textfield §5.50) [`ThemeProvider`] cache key. Matches the
+/// (R57.X.textfield §5.50) [`ThemeProvider`](pinion_core::theme::ThemeProvider) cache key. Matches the
 /// `"app"` convention shared with `hello-toggle` / `hello-theme` /
 /// `hello-listbox` so the example gallery shares one provider when a
 /// host binds them together.
@@ -232,7 +232,7 @@ fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
     )
 }
 
-/// `WidgetView` binding for the [`TextField`] widget.
+/// `WidgetView` binding for the `TextField` widget.
 ///
 /// State shape: `(TextFieldState, u32)` — the SCXML interaction state
 /// plus the caret byte offset. The text content itself is reactive
@@ -326,7 +326,7 @@ impl WidgetCore for TextFieldView {
     }
 
     /// R56.1.d §5.38 §5.22 — delegate W3C UI Events keystroke to
-    /// [`TextFieldExternal::invoke`]`("key", Text(key))`. Returns
+    /// `TextFieldExternal::invoke``("key", Text(key))`. Returns
     /// `true` when the External reports the key as recognized
     /// (matches the W3C `defaultPrevented` semantic — the framework
     /// then swallows the key from the focus / shortcut chain).
@@ -354,9 +354,9 @@ impl WidgetCore for TextFieldView {
     }
 
     /// R56.2.a §5.13 §5.38 — delegate platform IME composition events
-    /// to [`TextFieldExternal::invoke`]`("composition", Json{action,
+    /// to `TextFieldExternal::invoke``("composition", Json{action,
     /// data?})`. The pinion-shell `WindowEvent::Ime` arm converts
-    /// winit's cross-platform [`Ime`](winit::event::Ime) enum into
+    /// winit's cross-platform `Ime` enum into
     /// pinion-native [`pinion_core::CompositionEvent`] (R56.2.a
     /// substrate) and routes here through `ShellCore::apply_composition`
     /// → `CoreShell::apply_composition` → `V::apply_composition`.
@@ -446,7 +446,7 @@ impl WidgetCore for TextFieldView {
 
 impl WidgetA11y for TextFieldView {
     /// R56.1.b.1 §5.40 — ARIA `textbox` role node carrying the live
-    /// text content as [`AccessValue::Text`]. The
+    /// text content as `AccessValue::Text`. The
     /// (R56.1.b.1 substrate) `root_owner.run` wrap around
     /// `V::access_node` in `collect_access_emit_inputs` lets this hook
     /// reach the same `Rc<TextEditState>` the view fn resolves through
@@ -506,7 +506,7 @@ impl WidgetView for TextFieldView {
     ///    substrate cursor).
     ///
     /// Sum (1) + (2) + (3) → window-coord caret rect; the shell
-    /// hands it to [`Window::set_ime_cursor_area`].
+    /// hands it to `Window::set_ime_cursor_area`.
     ///
     /// Width is the caret pixel width (`CARET_WIDTH = 2px`); some
     /// IMEs use this as the popup anchor width. Height carries the

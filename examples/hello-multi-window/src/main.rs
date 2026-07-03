@@ -155,7 +155,7 @@ const INSPECTOR_CLICK_INTENT_TAG: &str = intent_tag!("inspector_tree", "click");
 const INSPECTOR_HOVER_INTENT_TAG: &str = intent_tag!("inspector_tree", "hover");
 
 /// R679 §5.16 §5.49 — paint-side tag of the main window's
-/// [`MainWindowClickRouter`] External. Registered as a 2nd
+/// `MainWindowClickRouter` External. Registered as a 2nd
 /// `ExtraExternal` next to the inspector window's
 /// [`TreeRowClickExternal`]. The state scene now carries three
 /// `ExternalNode` slots (ButtonExternal at [`MAIN_BTN_TAG`],
@@ -180,7 +180,7 @@ const INSPECTOR_HOVER_INTENT_TAG: &str = intent_tag!("inspector_tree", "hover");
 const MAIN_CLICK_ROUTER_TAG: &str = "main_click_router";
 
 /// R679 §5.16 §5.20 §5.49 — dotted-form intent tag the
-/// [`MainWindowClickRouter`] under [`MAIN_CLICK_ROUTER_TAG`] emits
+/// `MainWindowClickRouter` under [`MAIN_CLICK_ROUTER_TAG`] emits
 /// when AI invokes the typed `click` shortcut. The runtime
 /// intent-queue walker prefixes the substrate's bare event name
 /// (`"click"`) with the producing External's tag, so the reducer
@@ -527,7 +527,7 @@ fn inspector_tree_items(state: ButtonState) -> Vec<TreeItem> {
 /// state-debug `TextNode` to a `TreeView` mirror of the main window's
 /// live paint scene. Builds `view_main(state)` internally each paint
 /// cycle, walks the resulting `Scene` tree into a [`TreeItem`] model,
-/// and renders through [`view_tree`]. Same `ShellCore` underlies both
+/// and renders through `view_tree`. Same `ShellCore` underlies both
 /// windows so the inspector's tree refreshes whenever the main
 /// window's state changes (the next inspector paint observes the
 /// updated `cached_state` and rebuilds the tree).
@@ -742,7 +742,7 @@ fn format_size(size: pinion_core::style::Size) -> String {
     )
 }
 
-/// R677 §5.16 §5.49 — format a [`SizeValue`] as a short CSS-mirror
+/// R677 §5.16 §5.49 — format a `SizeValue` as a short CSS-mirror
 /// string: `Auto` → `"auto"`, `Px(n)` → `"<n>px"`, `Percent(n)` →
 /// `"<n>%"`. Mirrors CSS shorthand exactly — readers familiar with
 /// CSS read the value at a glance.
@@ -1041,7 +1041,7 @@ impl WidgetView for MultiWindowView {
 
     /// R813 §5.40 §5.16 — per-window AT nodes: the inspector window gets
     /// the WAI-ARIA `tree` + `treeitem` semantic tree (the 3rd consumer
-    /// of the lifted [`tree_access_nodes`](pinion_a11y::tree_access_nodes)
+    /// of the lifted [`tree_access_nodes`]
     /// builder, unblocked by R813's per-window `access_node`). The main
     /// window contributes none (its single Button keeps the pre-existing
     /// default-empty AT surface). Before R813 the shell's global

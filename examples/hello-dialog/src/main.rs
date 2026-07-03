@@ -4,7 +4,7 @@
 #![allow(clippy::doc_markdown)]
 
 //! `hello-dialog` — R693 §5.16 §5.39 §5.40 §5.50 first consumer of the
-//! modal-focus-trap substrate ([`pinion_runtime::FocusManager`]
+//! modal-focus-trap substrate (`pinion_runtime::FocusManager`
 //! `push_modal_scope` / `pop_modal_scope`, driven through
 //! [`pinion_core::modal_scope_request`]) and the
 //! [`pinion_widget_paint::dialog`] chrome.
@@ -36,7 +36,7 @@
 //! Opening the dialog calls
 //! [`modal_scope_request::open`](pinion_core::modal_scope_request::open)
 //! with the action-button tags. The shell drains it in `handle_tail`
-//! and pushes a [`FocusManager`](pinion_runtime::FocusManager) modal
+//! and pushes a `FocusManager` modal
 //! scope: focus moves into the dialog (auto-focus `dialog_cancel`, the
 //! safe default for a destructive prompt), Tab / Shift+Tab are confined
 //! to `[dialog_cancel, dialog_ok]` (the trigger behind the scrim is

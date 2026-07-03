@@ -25,7 +25,7 @@
 //! ## Why a Toggle
 //!
 //! A profiler readout is intrinsically stateless, but the `AppShell`
-//! drives a [`WidgetView`] with a statechart `External`. Rather than
+//! drives a `WidgetView` with a statechart `External`. Rather than
 //! invent a one-off widget ([[abstraction-needs-second-consumer]]), the
 //! binding reuses the Toggle purely as the *RPC-drivable repaint
 //! trigger* — the hello-elevation pattern (Toggle-as-bit). The frames

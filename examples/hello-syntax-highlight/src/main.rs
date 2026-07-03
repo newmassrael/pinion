@@ -23,7 +23,7 @@
 //! ## Architecture
 //!
 //! - State shape: `(TextFieldState, u32)` — interaction state + caret byte
-//!   offset. Text + the highlighter live on the reactive [`TextEditState`]
+//!   offset. Text + the highlighter live on the reactive `TextEditState`
 //!   reached via `use_text_edit_state(TF_TAG)`.
 //! - Plain editing (type, Backspace, Arrow, Ctrl+Z) reuses the R56 substrate
 //!   unchanged; only the derived colouring is new. Typing a keyword re-colours
@@ -77,7 +77,7 @@ const TF_TAG: &str = "code_editor";
 const WIN_W: u32 = 480;
 const WIN_H: u32 = 200;
 
-/// (R57.X.textfield §5.50) [`ThemeProvider`] cache key. Matches the
+/// (R57.X.textfield §5.50) [`ThemeProvider`](pinion_core::theme::ThemeProvider) cache key. Matches the
 /// `"app"` convention shared with `hello-toggle` / `hello-theme` /
 /// `hello-listbox` so the example gallery shares one provider when a
 /// host binds them together.
@@ -219,7 +219,7 @@ fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
     )
 }
 
-/// `WidgetView` binding for the [`TextField`] widget.
+/// `WidgetView` binding for the `TextField` widget.
 ///
 /// State shape: `(TextFieldState, u32)` — the SCXML interaction state
 /// plus the caret byte offset. The text content itself is reactive
@@ -342,7 +342,7 @@ impl WidgetCore for SyntaxView {
     }
 
     /// R56.1.d §5.38 §5.22 — delegate W3C UI Events keystroke to
-    /// [`TextFieldExternal::invoke`]`("key", Text(key))`. Returns
+    /// `TextFieldExternal::invoke``("key", Text(key))`. Returns
     /// `true` when the External reports the key as recognized
     /// (matches the W3C `defaultPrevented` semantic — the framework
     /// then swallows the key from the focus / shortcut chain).
@@ -370,9 +370,9 @@ impl WidgetCore for SyntaxView {
     }
 
     /// R56.2.a §5.13 §5.38 — delegate platform IME composition events
-    /// to [`TextFieldExternal::invoke`]`("composition", Json{action,
+    /// to `TextFieldExternal::invoke``("composition", Json{action,
     /// data?})`. The pinion-shell `WindowEvent::Ime` arm converts
-    /// winit's cross-platform [`Ime`](winit::event::Ime) enum into
+    /// winit's cross-platform `Ime` enum into
     /// pinion-native [`pinion_core::CompositionEvent`] (R56.2.a
     /// substrate) and routes here through `ShellCore::apply_composition`
     /// → `CoreShell::apply_composition` → `V::apply_composition`.
@@ -462,7 +462,7 @@ impl WidgetCore for SyntaxView {
 
 impl WidgetA11y for SyntaxView {
     /// R56.1.b.1 §5.40 — ARIA `textbox` role node carrying the live
-    /// text content as [`AccessValue::Text`]. The
+    /// text content as `AccessValue::Text`. The
     /// (R56.1.b.1 substrate) `root_owner.run` wrap around
     /// `V::access_node` in `collect_access_emit_inputs` lets this hook
     /// reach the same `Rc<TextEditState>` the view fn resolves through
@@ -522,7 +522,7 @@ impl WidgetView for SyntaxView {
     ///    substrate cursor).
     ///
     /// Sum (1) + (2) + (3) → window-coord caret rect; the shell
-    /// hands it to [`Window::set_ime_cursor_area`].
+    /// hands it to `Window::set_ime_cursor_area`.
     ///
     /// Width is the caret pixel width (`CARET_WIDTH = 2px`); some
     /// IMEs use this as the popup anchor width. Height carries the

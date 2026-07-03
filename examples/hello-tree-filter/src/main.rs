@@ -16,7 +16,7 @@
 //! ## What it demonstrates
 //!
 //! - **Recursive path-to-match filtering**
-//!   ([`flat_visible_filtered`](pinion_core::widgets::tree_nav::flat_visible_filtered),
+//!   ([`flat_visible_filtered`],
 //!   the SSOT decision). The filtered visible-row sequence drops into
 //!   [`view_virtual_tree`] and
 //!   [`tree_access_nodes`](pinion_a11y::tree_access_nodes) with **no** change
@@ -27,7 +27,7 @@
 //!   `Group09 → Node09_*` regardless of the collapsed flag (the filter
 //!   ignores expand state along match paths).
 //! - **AI-first**: the primary path is RPC —
-//!   [`TreeFilterExternal`](pinion_core::widgets::tree_filter::TreeFilterExternal)
+//!   [`TreeFilterExternal`]
 //!   `invoke "set_filter"` / `query "visible_count"` / `query
 //!   "visible_at.<pos>"`. Keyboard type-to-filter is the GUI peer (an
 //!   alphanumeric char appends, Backspace pops, Escape clears).
@@ -124,7 +124,7 @@ const NAV_PAGE: usize = 9;
 
 /// The dotted wire form of the [`TreeRowClickExternal`] row-click intent,
 /// composed via [`intent_tag!`] so the literal stays in lockstep with the
-/// substrate's bare `"click"` event name (pinned in [`tests`]).
+/// substrate's bare `"click"` event name (pinned in `tests`).
 const CLICK_INTENT_TAG: &str = intent_tag!("sgtree", "click");
 
 /// One scene-graph node. Carries its own `expanded` flag (the retained
@@ -683,7 +683,7 @@ impl WidgetA11y for SceneGraphFilter {
     /// `AriaRole::TreeItem` per rendered row carrying its (renumbered, over
     /// the filtered sibling group) `aria-level` / `aria-posinset` /
     /// `aria-setsize` / `aria-expanded`. Built through the same
-    /// [`tree_access_nodes`] (R812) the unfiltered virtual tree uses — the
+    /// `tree_access_nodes` (R812) the unfiltered virtual tree uses — the
     /// filtered flattening is just another `VisibleRow` slice, so the AT tree
     /// and the painted tree never diverge. The keyboard cursor row carries
     /// `aria-selected` (selection-follows-focus / `aria-activedescendant`).

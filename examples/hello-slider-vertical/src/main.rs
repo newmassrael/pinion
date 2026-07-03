@@ -51,7 +51,7 @@ vello_renderer_impl!(
 
 const WIN_W: u32 = 220;
 const WIN_H: u32 = 360;
-/// (R57.X.slider §5.50) [`ThemeProvider`] cache key — matches the
+/// (R57.X.slider §5.50) [`ThemeProvider`](pinion_core::theme::ThemeProvider) cache key — matches the
 /// `"app"` convention shared across the example gallery.
 const THEME_TAG: &str = "app";
 

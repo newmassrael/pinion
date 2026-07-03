@@ -17,7 +17,7 @@
 //!
 //! ## Architecture (unidirectional, Effect-driven fetch-on-expand)
 //!
-//! - A per-node child cache — [`ResourceCache`](pinion_core::ResourceCache)
+//! - A per-node child cache — [`ResourceCache`]
 //!   keyed by node id; only expanded branches are ever fetched, and each
 //!   branch's children carry their own reactive [`ResourceState`].
 //! - The expand set is a `Signal<BTreeSet<String>>`. Clicking a branch row
@@ -26,7 +26,7 @@
 //!   every change (and its eager boot run), calls
 //!   [`ResourceCache::ensure`] for the root plus each expanded branch not yet
 //!   cached, through the shell-polled
-//!   [`LocalTaskPump`](pinion_core::LocalTaskPump). The fetch never runs in
+//!   [`LocalTaskPump`]. The fetch never runs in
 //!   the view, so view-fn purity holds (§6.3).
 //! - The view snapshots the root + every expanded branch's child state and
 //!   *flattens* the visible tree: a `Ready` branch contributes its children

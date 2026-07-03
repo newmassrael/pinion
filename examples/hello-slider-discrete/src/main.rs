@@ -7,7 +7,7 @@
 //!
 //! R737 added an optional discrete-snap increment to the core
 //! [`Slider`](pinion_core::widgets::slider) — [`SliderExternal::with_step`].
-//! The snap lives inside [`Slider::set_value`], so **one funnel** snaps
+//! The snap lives inside `Slider::set_value`, so **one funnel** snaps
 //! every value path identically: a pointer drag (`pointer_move`), a
 //! keyboard arrow, an `intervene`, and an RPC write all land on the
 //! nearest tick. There is no per-binding snap code — the binding just

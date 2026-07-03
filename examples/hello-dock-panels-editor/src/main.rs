@@ -26,7 +26,7 @@
 //! [`pinion_widget_paint::dock::DockTopology`] — a recursive binary
 //! split tree built from `DockNode::split_vertical` /
 //! `DockNode::split_horizontal` / `DockNode::leaf`. The R685 atomic 1
-//! walker [`view_dock_surface`] lowers the topology into a nested
+//! walker `view_dock_surface` lowers the topology into a nested
 //! Splitter + DockPanel scene each paint, threading per-Split
 //! [`Signal<f32>`] ratios + per-panel [`Scene`] content through
 //! binding-supplied closures.
@@ -131,7 +131,7 @@ const POLICY_BTN_TAG: &str = "float_policy_btn";
 const UNDOCK_BTN_TAG: &str = "undock_tab_btn";
 
 /// Splitter paint-side tags. THREE splits in depth-first pre-order per R685
-/// [`view_dock_surface`]'s threading scheme (R1206 took the toolbar out of the
+/// `view_dock_surface`'s threading scheme (R1206 took the toolbar out of the
 /// topology, retiring the outer V split that used to hold `toolbar | rest`):
 /// idx 0 → inner V root (middle | console), idx 1 → middle H (outliner | rest),
 /// idx 2 → inner H (viewport | properties).
@@ -591,7 +591,7 @@ fn move_floating_window(panel_id: &str, delta: (f64, f64)) {
 /// view-fn paint (the topology is data; the per-split ratios live
 /// in separate `Rc<Signal<f32>>` handles the view fn re-reads each
 /// paint). Each Split carries its stable `id` — the
-/// [`view_dock_surface`] walker dispatches `split_handle` by that
+/// `view_dock_surface` walker dispatches `split_handle` by that
 /// id, so binding state stays bound to the right Split across any
 /// future topology mutation.
 fn build_editor_topology() -> DockTopology {
@@ -1050,7 +1050,7 @@ fn view_main_dock(state: ButtonState) -> Scene {
 }
 
 /// (R1105 §5.51 §5.16 §5.45 PR-31) A torn-off panel's floating-window paint.
-/// Wraps the panel's content in a [`view_dock_panel`] so the floating window
+/// Wraps the panel's content in a `view_dock_panel` so the floating window
 /// carries a draggable header. The same [`DockPanelExternal`] registered at
 /// `panel_id` services both the docked placeholder header AND the floating
 /// header (1 External per panel, shared across windows; each per-window

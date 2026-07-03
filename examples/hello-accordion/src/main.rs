@@ -1,7 +1,7 @@
 //! `hello-accordion` — R697 §5.38 §5.50 multi-open WAI-ARIA APG
 //! **accordion** on the pinion-shell substrate.
 //!
-//! An accordion is a vertically stacked set of [`Disclosure`] sections:
+//! An accordion is a vertically stacked set of `Disclosure` sections:
 //! each section is a header `button` carrying `aria-expanded` that
 //! reveals or hides its own content panel. Per the WAI-ARIA APG
 //! "Accordion" pattern the default is **multi-open** — more than one
@@ -57,7 +57,7 @@ vello_renderer_impl!(HelloAccordionRenderer, HelloAccordionRendererError);
 
 const WIN_W: u32 = 420;
 const WIN_H: u32 = 440;
-/// [`ThemeProvider`] cache key — the `"app"` convention shared across
+/// [`ThemeProvider`](pinion_core::theme::ThemeProvider) cache key — the `"app"` convention shared across
 /// the example gallery.
 const THEME_TAG: &str = "app";
 

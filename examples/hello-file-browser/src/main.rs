@@ -108,7 +108,7 @@ fn seed_directory() -> Rc<dyn Directory> {
 }
 
 /// view-fn (§6.3): pure sync `() -> Scene`. Reads the shared
-/// [`DirectoryState`] (the same `Rc` the [`DirectoryExternal`] mutates) so
+/// `DirectoryState` (the same `Rc` the [`DirectoryExternal`] mutates) so
 /// a navigate / select repaints; the listing is virtualized over the
 /// current directory's entries.
 #[allow(clippy::trivially_copy_pass_by_ref)]
@@ -167,12 +167,12 @@ impl WidgetCore for FileBrowserView {
     /// Display-driven: the addressable anchor is the no-op
     /// [`StubExternal`] at [`ROOT_TAG`]. The browse / select logic lives
     /// in the [`DirectoryExternal`] extra (rows route to it); repaints flow
-    /// from the [`DirectoryState`] reactive `Signal`s the view reads.
+    /// from the `DirectoryState` reactive `Signal`s the view reads.
     fn create_external() -> Box<dyn External> {
         Box::new(StubExternal::new())
     }
 
-    /// The [`DirectoryExternal`] over the **same** shared [`DirectoryState`]
+    /// The [`DirectoryExternal`] over the **same** shared `DirectoryState`
     /// the view reads via [`use_directory_state`]. Registered at [`DIR_TAG`]
     /// so the `fb_dir#<i>` row clicks + `fb_dir#up` parent affordance route
     /// to its `send` handler (navigate / select), and `scene/invoke

@@ -29,7 +29,7 @@
 //!
 //! Building the prefix sum is O(n); doing it every frame would defeat the
 //! point. [`list_offsets`] memoizes the [`RowOffsets`] in the reactive
-//! [`Owner`](pinion_core::Owner) cache, so it is constructed once and every
+//! [`Owner`] cache, so it is constructed once and every
 //! frame's windowing is the O(log n) binary search alone.
 //!
 //! ## a11y (WAI-ARIA virtualized list)
@@ -64,7 +64,7 @@ vello_renderer_impl!(HelloVariableListRenderer, HelloVariableListRendererError);
 
 const WIN_W: u32 = 360;
 const WIN_H: u32 = 520;
-/// Shared [`ThemeProvider`] cache key (the `"app"` convention shared
+/// Shared [`ThemeProvider`](pinion_core::theme::ThemeProvider) cache key (the `"app"` convention shared
 /// across the catalogue).
 const THEME_TAG: &str = "app";
 /// Total dataset size — large while the rendered node count stays small.
@@ -229,7 +229,7 @@ impl WidgetCore for VariableListView {
     type Event = ();
 
     /// No per-item or aggregate widget statechart — the scroll position
-    /// lives in [`ScrollState`] and the only interactive peer is the
+    /// lives in `ScrollState` and the only interactive peer is the
     /// scrollbar. The primary External is the no-op [`StubExternal`]
     /// anchor, addressable at [`LIST_TAG`].
     fn create_external() -> Box<dyn External> {

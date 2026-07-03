@@ -121,7 +121,7 @@ const TRIGGER_TAG: &str = "save_file";
 /// The [`DirectoryExternal`] / a11y `list` tag. Rows are `fb_dir#<i>`, the
 /// parent affordance is `fb_dir#up` — all route here (R51.42 composite).
 const DIR_TAG: &str = "fb_dir";
-/// The filename [`TextField`] — an extra external + modal member.
+/// The filename `TextField` — an extra external + modal member.
 const FILENAME_TAG: &str = "savefile_name";
 /// Affirmative action button — extra external. Writes the file.
 const SAVE_TAG: &str = "savefile_save";
@@ -345,7 +345,7 @@ fn browser_pane(
 }
 
 /// The lower dialog body: a `"Save as:"` label over the filename
-/// [`TextField`] (the R56.1 [`tf_paint::view_field`] substrate, sized to
+/// `TextField` (the R56.1 [`tf_paint::view_field`] substrate, sized to
 /// span the pane). The field carries `FILENAME_TAG`, so the input router,
 /// the IME caret-rect walk, and the focus ring all resolve it.
 fn filename_section(interaction: TextFieldState, caret_byte: u32, theme: &Theme) -> Scene {

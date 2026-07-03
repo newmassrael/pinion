@@ -14,11 +14,11 @@
 //! consumers of the same container skin is the
 //! [[abstraction-needs-second-consumer]] gate firing, so R756 lifted the
 //! shared core into [`pinion_widget_paint::chip`]
-//! ([`chip::chip_style`](pinion_widget_paint::chip::chip_style) /
-//! [`chip::chip_layout`](pinion_widget_paint::chip::chip_layout) + the
-//! [`CHIP_HEIGHT`](pinion_widget_paint::chip::CHIP_HEIGHT) /
+//! ([`chip::chip_style`] /
+//! [`chip::chip_layout`] + the
+//! [`CHIP_HEIGHT`] /
 //! [`CHIP_RADIUS`](pinion_widget_paint::chip::CHIP_RADIUS) /
-//! [`OUTLINE_W`](pinion_widget_paint::chip::OUTLINE_W) tokens); both this
+//! [`OUTLINE_W`] tokens); both this
 //! binding and the retrofitted filter chip now consume it.
 //!
 //! ## Delete machinery (mirrors `todomvc`)

@@ -1,5 +1,5 @@
 //! `hello-live-data` — R1000 §5.23: the first framework consumer of the
-//! **off-thread external-async-data → repaint seam** ([`RepaintSink`]).
+//! **off-thread external-async-data → repaint seam** (`RepaintSink`).
 //!
 //! ## Why this exists (the sprag PR-3 reference consumer)
 //!
@@ -9,7 +9,7 @@
 //! PTY from a **separate OS thread**, and the binding must (a) read that
 //! producer-authoritative `Send` data in `view` each frame and (b) repaint
 //! when it changes, *without* owning the event loop. R999 added the one
-//! missing edge — [`RepaintSink`] (obtained via [`use_repaint_sink`]) — on top
+//! missing edge — `RepaintSink` (obtained via [`use_repaint_sink`]) — on top
 //! of the existing `Owner::cache` data substrate. This is the in-repo
 //! reference consumer proving that seam end to end through a real binding.
 //!
@@ -17,7 +17,7 @@
 //!
 //! A live event log. A background producer thread (the PTY-reader analog) owns
 //! a `Send` shared buffer (`Arc<Mutex<Vec<String>>>`); each time it is poked it
-//! appends a line and calls [`RepaintSink::request_repaint`]. The **Tick**
+//! appends a line and calls `RepaintSink::request_repaint`. The **Tick**
 //! button pokes the producer (the stdin → child analog). `view` reads the
 //! shared buffer directly each frame (like a producer-authoritative grid),
 //! renders the lines as a WAI-ARIA `list`, and shows the count in a

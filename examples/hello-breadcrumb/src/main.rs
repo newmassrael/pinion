@@ -11,8 +11,8 @@
 //! (selected index = current location) with **no new interaction
 //! substrate** — the 3rd standalone consumer after `hello-radio-group`
 //! and `hello-segmented-button`. What R731 *adds* is three foundational
-//! a11y primitives the catalog lacked: [`AriaRole::Navigation`] (the
-//! landmark), [`AriaRole::Link`] (each crumb), and the [`AriaCurrent`]
+//! a11y primitives the catalog lacked: `AriaRole::Navigation` (the
+//! landmark), `AriaRole::Link` (each crumb), and the `AriaCurrent`
 //! axis (`aria-current="page"` on the current crumb).
 //!
 //! ## Keyboard model (honest carry)
@@ -226,8 +226,8 @@ impl WidgetCore for BreadcrumbView {
 }
 
 impl WidgetA11y for BreadcrumbView {
-    /// §5.40 — a [`AriaRole::Navigation`] landmark whose children are the
-    /// crumb [`AriaRole::Link`] nodes; the current crumb (selected)
+    /// §5.40 — a `AriaRole::Navigation` landmark whose children are the
+    /// crumb `AriaRole::Link` nodes; the current crumb (selected)
     /// carries `aria-current="page"`. Link names come from [`CRUMBS`].
     fn access_node(state: &TrailState, focused: Option<&str>) -> Vec<AccessNode> {
         let nav_focused = focused == Some(<Self as WidgetCore>::tag());
