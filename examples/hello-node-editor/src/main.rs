@@ -193,7 +193,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 use pinion_a11y::{
-    AccessNode, AccessState, AriaRole, ToolbarControl, WidgetA11y, toolbar_button_nodes,
+    AccessNode, AccessState, AriaRole, MenuItemCell, ToolbarControl, WidgetA11y, menu_item_nodes,
+    toolbar_button_nodes,
 };
 use pinion_core::animation::Tickable;
 use pinion_core::cell_value::{CellKind, CellValue};
@@ -283,6 +284,13 @@ const PALETTE_W: u32 = 132;
 /// R849 — the palette container tag (a11y `toolbar` root; routes no pointer
 /// events itself — only its `node_graph#palette_<idx>` item cards do).
 const PALETTE_TAG: &str = "node_palette";
+/// R1220 — the pin-drop create menu width (canvas px).
+const PIN_CREATE_MENU_W: u32 = 150;
+/// R1220 — the create menu container's composite sub (`node_graph#pin_menu`):
+/// a press on the menu's own chrome (header / padding) carries this sub, so the
+/// click-away dismiss guard leaves the menu open (only a press *outside* it, or
+/// on a `create_<idx>` card, is actioned).
+const PIN_MENU_SUB: &str = "pin_menu";
 /// R849 — the editor a11y root wrapping the palette + the canvas.
 const ROOT_TAG: &str = "node_editor";
 /// R916 — the Details panel (right sidebar) width + container tag. The panel
@@ -338,6 +346,9 @@ const PERSISTED_SCHEMA_VERSION: u32 = 3;
 const SPAWN_X: i32 = 300;
 const SPAWN_Y: i32 = 44;
 const SPAWN_STEP: i32 = 26;
+/// R1220 — the gap (graph units) placing an `open_pin_create` RPC-spawned node
+/// to the right of its source (the live gesture uses the drop point instead).
+const PIN_CREATE_GAP: i32 = 40;
 
 const TITLE_PX: u32 = 20;
 const NODE_TITLE_PX: u32 = 14;
@@ -542,6 +553,34 @@ impl PortType {
     }
 }
 
+/// R1220 — the first input port index of [`PALETTE`] kind `kind` an output of
+/// type `from` may feed (the auto-wire target when a pin-drop creates that
+/// node). `None` when the kind has no input assignable from `from` — the exact
+/// gate [`pin_create_candidates`] filters on, so a returned candidate always
+/// resolves a wire target here.
+fn first_compatible_input(kind: usize, from: PortType) -> Option<usize> {
+    let &(_, input_ports, _) = PALETTE.get(kind)?;
+    input_ports.iter().position(|&t| from.is_assignable_to(t))
+}
+
+/// R1220 — the [`PALETTE`] kinds a pin-drop from an output of type `from` may
+/// create, in palette order: a kind qualifies iff it has at least one input
+/// port assignable from `from` (so the new node can be auto-wired —
+/// [`first_compatible_input`] is guaranteed `Some`), and, when `filter` is
+/// non-empty, its title contains `filter` (case-insensitive) — the type-to-narrow
+/// search the Unreal / Blender pin-drop menu offers. A pure fn over `(from,
+/// filter)` so both the coordinator (menu candidates + commit gate) and the tests
+/// read one SSOT.
+fn pin_create_candidates(from: PortType, filter: &str) -> Vec<usize> {
+    let needle = filter.trim().to_ascii_lowercase();
+    (0..PALETTE.len())
+        .filter(|&k| first_compatible_input(k, from).is_some())
+        .filter(|&k| {
+            needle.is_empty() || PALETTE[k].0.to_ascii_lowercase().contains(needle.as_str())
+        })
+        .collect()
+}
+
 /// One node: a titled card with typed input ports (left edge) and typed
 /// output ports (right edge), placed at canvas `(x, y)`. Carries a stable
 /// [`NodeId`]. R898 — the ports are [`PortType`]-typed sockets; the arity
@@ -678,6 +717,26 @@ struct Preview {
     /// [`NodeGraphExternal::reconnect_edge`]. `None` for a fresh connect drag
     /// from an output port (the loose end becomes a brand-new edge instead).
     reconnect: Option<EdgeId>,
+}
+
+/// R1220 — the state of an open pin-drop create menu. `from_node` / `from_port`
+/// are the output pin the wire was pulled from (its [`PortType`] gates the
+/// type-filtered candidates + names the auto-wire source); `at_graph` is where
+/// the created node lands (graph units, snapshotted at open so a later pan / zoom
+/// does not move it); `at_screen` is the menu overlay's top-left in canvas px (it
+/// paints OUTSIDE the world scroll, like the chrome). `filter` is the
+/// type-to-narrow search text, `highlight` the roving active item **into the
+/// filtered candidate list** (the Enter / arrow-key target).
+// `Serialize`/`Deserialize`: satisfies the §2 #7 scene-as-data bound like
+// [`Preview`] (transient UI state, never actually persisted).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct PinCreate {
+    from_node: NodeId,
+    from_port: usize,
+    at_graph: (i32, i32),
+    at_screen: (u32, u32),
+    filter: String,
+    highlight: usize,
 }
 
 /// What is selected — a set of nodes, an edge, or nothing. A sum type so
@@ -999,6 +1058,21 @@ fn use_preview() -> Rc<Signal<Option<Preview>>> {
     owner.cache("node_graph.preview", || Signal::new(None))
 }
 
+/// R1220 — the in-flight pin-drop create menu (`None` when closed): the
+/// signature Unreal / Blender authoring gesture — drag a wire off an output pin,
+/// release on empty canvas, and a type-filtered menu of the nodes that output can
+/// feed opens; pick one and it is created at the drop point AND auto-wired in one
+/// undo step. Written by the coordinator (the live [`NodeGraphExternal::drag_release`]
+/// empty-canvas branch and the `open_pin_create` RPC verb), read by the view fn
+/// (which paints the floating menu — reading it subscribes the paint Effect, so
+/// open / filter / highlight changes repaint) and the keyboard path. Transient UI
+/// state, like [`use_preview`] / [`use_marquee_rect`].
+#[must_use]
+fn use_pin_create() -> Rc<Signal<Option<PinCreate>>> {
+    let owner = Owner::current().expect("use_pin_create requires an active Owner scope");
+    owner.cache("node_graph.pin_create", || Signal::new(None))
+}
+
 /// R880 — the live marquee rectangle in graph units, as normalised corners
 /// `(x0, y0, x1, y1)` (`None` while no marquee is in flight). Written by the
 /// coordinator's background-drag path once the press latches past the
@@ -1261,6 +1335,15 @@ fn parse_palette_sub(sub: &str) -> Option<usize> {
     sub.strip_prefix("palette_")?.parse().ok()
 }
 
+/// R1220 — `node_graph#create_<idx>` → the [`PALETTE`] index of a pin-drop
+/// create-menu item. The [`parse_palette_sub`] peer over the `create_` prefix:
+/// a menu-card click routes to `handle_send`, which commits that kind through
+/// [`NodeGraphExternal::commit_pin_create_kind`] (the auto-wire path), never the
+/// bare [`NodeGraphExternal::add_node`] a palette card runs.
+fn parse_create_sub(sub: &str) -> Option<usize> {
+    sub.strip_prefix("create_")?.parse().ok()
+}
+
 /// R918 — `node_graph#detail_<field>` → the Details-panel property key (`title`,
 /// `x`, `y`, `in_<port>`). A click on a panel row routes to the coordinator (the
 /// palette precedent — a view sibling tagged with the primary's prefix), which
@@ -1481,6 +1564,11 @@ enum PendingPress {
     /// precedent); recorded as its own variant so it is never mistaken for an
     /// inert or empty-canvas press.
     DetailRow,
+    /// R1220 — a press on a pin-drop create-menu card. Like [`Palette`](Self::Palette)
+    /// it is a non-drag press with a specific `PointerUp` action (it commits that
+    /// kind through the auto-wire path, not the bare `add_node` a palette card
+    /// runs), recorded as its own variant so the release never misreads it.
+    CreateMenu,
     /// A non-drag press on an in-card target that is neither draggable nor has a
     /// release action — currently an unwired pin's default-value label. It only
     /// needs to suppress the background edge-probe (a press inside a node is not
@@ -1964,6 +2052,19 @@ fn graph_anchor_offset(gx: f64, gy: f64, zoom: f64, cx: f64, cy: f64) -> (f64, f
     (gx * zoom - cx, gy * zoom - cy)
 }
 
+/// R1220 — the canvas **pixel** a graph point `(gx, gy)` paints at: the exact
+/// inverse of [`canvas_to_graph`] (`canvas = graph·zoom − offset`), so a
+/// screen-space overlay OUTSIDE the world scroll (the pin-drop menu, placed like
+/// the title / status chrome) can sit over the graph point it targets. Distinct
+/// from [`graph_anchor_offset`] (which solves the same affine for the *pan
+/// offset* an anchored zoom writes) and from [`wpx`] (the offset-free graph→world
+/// scaler the scrolled node paint uses): this one folds the current pan offset in,
+/// because the overlay is not inside the scroll that would apply it.
+fn graph_to_canvas(scroll: &ScrollState, zoom: f64, gx: f64, gy: f64) -> (f64, f64) {
+    let (ox, oy) = scroll.offset();
+    (gx * zoom - f64::from(ox), gy * zoom - f64::from(oy))
+}
+
 /// R877 / R1182 — the graph-space point under a canvas cursor **fraction**
 /// (the `pointer_move` / `wheel` / tick basis): un-normalise the fraction to
 /// canvas px, then delegate to the [`canvas_to_graph`] inverse-projection SSOT.
@@ -2142,6 +2243,9 @@ struct GraphServices {
     /// ([`use_node_drag`]) so both read one authoritative drag state (the
     /// drag's rim-probe cursor rides inside it, [`NodeDragStart::cursor`]).
     node_drag: Rc<RefCell<Option<NodeDragStart>>>,
+    /// R1220 — the open pin-drop create menu, shared with the view fn's
+    /// floating-menu paint ([`use_pin_create`]).
+    pin_create: Rc<Signal<Option<PinCreate>>>,
 }
 
 /// The node-graph coordinator. Holds `Rc` clones of the reactive holders
@@ -2193,6 +2297,9 @@ struct NodeGraphExternal {
     /// [`use_marquee_rect`] hands the view fn). `Some` exactly while the
     /// gesture's `live` latch is set.
     marquee_rect: Rc<Signal<Option<MarqueeRect>>>,
+    /// R1220 — the open pin-drop create menu (`None` when closed); the same
+    /// Signal [`use_pin_create`] hands the view fn's floating-menu paint.
+    pin_create: Rc<Signal<Option<PinCreate>>>,
 }
 
 impl NodeGraphExternal {
@@ -2221,6 +2328,7 @@ impl NodeGraphExternal {
             marquee_rect: services.marquee_rect,
             grabbed_node: Cell::new(None),
             node_drag: services.node_drag,
+            pin_create: services.pin_create,
             pending_press: Cell::new(PendingPress::None),
             pending_edge_hit: Cell::new(None),
             marquee: RefCell::new(None),
@@ -2510,6 +2618,183 @@ impl NodeGraphExternal {
             Selection::single(id),
         );
         Some(id)
+    }
+
+    // ── R1220 pin-drop create menu (drag off a pin → typed menu → auto-wire) ──
+
+    /// The source output's [`PortType`] + the current candidate [`PALETTE`]
+    /// indices for the open menu `pc` (its `filter` applied). `None` if the
+    /// source pin has gone invalid (an undo removed its node while the menu was
+    /// open) — every menu path re-derives from here, so a mid-menu delete never
+    /// commits against a stale pin.
+    fn pin_candidates(&self, pc: &PinCreate) -> Option<(PortType, Vec<usize>)> {
+        let node = self.node_by_id(pc.from_node)?;
+        let from_ty = node.output_type(pc.from_port)?;
+        Some((from_ty, pin_create_candidates(from_ty, &pc.filter)))
+    }
+
+    /// Open the pin-drop create menu for output `(from_node, from_port)`, placing
+    /// the created node at `at_graph` and the floating menu at canvas px
+    /// `at_screen`. `false` (no menu) when the pin is invalid OR nothing can
+    /// consume its type — preserving the pre-R1220 "release in empty space
+    /// cancels" behaviour for an output with no compatible target kind. The one
+    /// entry point behind the live [`drag_release`](Self::drag_release) empty-canvas
+    /// branch and the `open_pin_create` RPC verb.
+    fn open_pin_create(
+        &self,
+        from_node: NodeId,
+        from_port: usize,
+        at_graph: (i32, i32),
+        at_screen: (u32, u32),
+    ) -> bool {
+        let Some(node) = self.node_by_id(from_node) else {
+            return false;
+        };
+        let Some(from_ty) = node.output_type(from_port) else {
+            return false;
+        };
+        if pin_create_candidates(from_ty, "").is_empty() {
+            return false;
+        }
+        self.pin_create.set(Some(PinCreate {
+            from_node,
+            from_port,
+            at_graph: (clamp_node_x(at_graph.0), clamp_node_y(at_graph.1)),
+            at_screen,
+            filter: String::new(),
+            highlight: 0,
+        }));
+        true
+    }
+
+    /// Set the type-to-narrow filter text, clamping the roving highlight into the
+    /// re-filtered list. `false` when no menu is open.
+    fn set_pin_filter(&self, text: &str) -> bool {
+        let Some(mut pc) = self.pin_create.get() else {
+            return false;
+        };
+        text.clone_into(&mut pc.filter);
+        let n = self.pin_candidates(&pc).map_or(0, |(_, c)| c.len());
+        pc.highlight = pc.highlight.min(n.saturating_sub(1));
+        self.pin_create.set(Some(pc));
+        true
+    }
+
+    /// Move the roving highlight by `delta` (wrapping — arrow past an end returns
+    /// to the other, the menu-roving convention). `false` when no menu is open or
+    /// the filtered list is empty.
+    fn move_pin_highlight(&self, delta: i32) -> bool {
+        let Some(mut pc) = self.pin_create.get() else {
+            return false;
+        };
+        let Some((_, cands)) = self.pin_candidates(&pc) else {
+            return false;
+        };
+        let Ok(len) = i32::try_from(cands.len()) else {
+            return false;
+        };
+        if len == 0 {
+            return false;
+        }
+        let cur = i32::try_from(pc.highlight).unwrap_or(0);
+        pc.highlight = usize::try_from((cur + delta).rem_euclid(len)).unwrap_or(0);
+        self.pin_create.set(Some(pc));
+        true
+    }
+
+    /// Commit [`PALETTE`] kind `kind`: mint the node at the drop point AND the
+    /// auto-wire edge `(from_node, from_port) → (new node, first compatible
+    /// input)`, recorded as ONE [`GraphEdit`] so a single Ctrl+Z removes both
+    /// (create-and-wire is atomic — the whole point of the gesture). Only a
+    /// *current candidate* commits: a stale / ill-typed kind is rejected, leaving
+    /// the menu open (the RPC gate — the GUI only ever sends candidates). Returns
+    /// the new node's id, selects it, and closes the menu.
+    fn commit_pin_create_kind(&self, kind: usize) -> Option<NodeId> {
+        let pc = self.pin_create.get()?;
+        let (from_ty, cands) = self.pin_candidates(&pc)?;
+        if !cands.contains(&kind) {
+            return None;
+        }
+        let target_port = first_compatible_input(kind, from_ty)?;
+        let &(title, input_ports, output_ports) = PALETTE.get(kind)?;
+        let raw = self.next_node_id.get();
+        self.next_node_id.set(raw + 1);
+        let node_id = NodeId(raw);
+        let node = GraphNode {
+            id: node_id,
+            title: title.to_owned(),
+            x: pc.at_graph.0,
+            y: pc.at_graph.1,
+            input_ports: input_ports.to_vec(),
+            output_ports: output_ports.to_vec(),
+            input_defaults: input_ports.iter().map(|t| t.default_value()).collect(),
+        };
+        let edge_id = EdgeId(self.next_edge_id.get());
+        self.next_edge_id.set(edge_id.raw() + 1);
+        let edge = Edge {
+            id: edge_id,
+            from_node: pc.from_node,
+            from_port: pc.from_port,
+            to_node: node_id,
+            to_port: target_port,
+        };
+        let sel_before = self.selection.get();
+        self.record_edit(
+            format!("Add {title} + wire"),
+            GraphDelta {
+                added_nodes: vec![node],
+                added_edges: vec![edge],
+                ..GraphDelta::default()
+            },
+            sel_before,
+            Selection::single(node_id),
+        );
+        self.pin_create.set(None);
+        Some(node_id)
+    }
+
+    /// Commit the highlighted candidate (the Enter / click-the-focused-item
+    /// path). `None` (menu unchanged) when no menu is open or the filter left the
+    /// list empty.
+    fn commit_pin_create_highlighted(&self) -> Option<NodeId> {
+        let pc = self.pin_create.get()?;
+        let (_, cands) = self.pin_candidates(&pc)?;
+        let kind = *cands.get(pc.highlight)?;
+        self.commit_pin_create_kind(kind)
+    }
+
+    /// Close the menu without creating anything (Escape / click-away / the
+    /// `cancel_pin_create` verb). `false` when no menu was open.
+    fn cancel_pin_create(&self) -> bool {
+        if self.pin_create.get().is_some() {
+            self.pin_create.set(None);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// R1220 — the open menu as an AI-first JSON snapshot (the `query pin_create`
+    /// read; `Null` when closed): `{ from_node, from_port, at:{x,y} (graph units
+    /// where the node lands), filter, candidates:[kind names in menu order],
+    /// highlight }`. The introspection twin of the painted floating menu — same
+    /// candidate list, same highlight — so an AI reads exactly what a user sees.
+    fn pin_create_introspect(&self) -> IntrospectValue {
+        let Some(pc) = self.pin_create.get() else {
+            return IntrospectValue::Null;
+        };
+        let candidates: Vec<&str> = self
+            .pin_candidates(&pc)
+            .map(|(_, cands)| cands.into_iter().map(|k| PALETTE[k].0).collect())
+            .unwrap_or_default();
+        IntrospectValue::Json(serde_json::json!({
+            "from_node": pc.from_node.raw(),
+            "from_port": pc.from_port,
+            "at": { "x": pc.at_graph.0, "y": pc.at_graph.1 },
+            "filter": pc.filter,
+            "candidates": candidates,
+            "highlight": pc.highlight,
+        }))
     }
 
     /// Add an edge output `(from_node, from_port)` → input `(to_node,
@@ -3217,6 +3502,12 @@ impl NodeGraphExternal {
         };
         match (sub, event) {
             (Some(s), "PointerDown") => {
+                // R1220 — a press OUTSIDE the create menu dismisses it
+                // (click-away); a press on a `create_<idx>` card (commit) or the
+                // menu's own chrome (`pin_menu`) leaves it open.
+                if parse_create_sub(s).is_none() && s != PIN_MENU_SUB {
+                    self.cancel_pin_create();
+                }
                 if parse_node_sub(s).is_some() {
                     self.grabbed_node.set(parse_node_sub(s));
                     *self.node_drag.borrow_mut() = None;
@@ -3229,6 +3520,11 @@ impl NodeGraphExternal {
                     // edge-probe is suppressed without lying about what was
                     // pressed (the activation runs on the matching PointerUp).
                     self.pending_press.set(PendingPress::Palette);
+                } else if parse_create_sub(s).is_some() {
+                    // R1220 — a pin-drop create-menu card press: like a palette
+                    // press, its commit (the auto-wire) runs on the matching
+                    // PointerUp; its own variant so the release never misreads it.
+                    self.pending_press.set(PendingPress::CreateMenu);
                 } else if parse_detail_sub(s).is_some() {
                     // R918 — a Details-panel row press: like a palette press, the
                     // inline-editor open runs on the matching PointerUp.
@@ -3253,6 +3549,10 @@ impl NodeGraphExternal {
                 // gesture is reset by `end_gesture` after this branch.)
                 if let Some(kind) = parse_palette_sub(s) {
                     self.add_node(kind);
+                } else if let Some(kind) = parse_create_sub(s) {
+                    // R1220 — a create-menu card release commits that kind
+                    // through the auto-wire path (node + edge, one undo step).
+                    self.commit_pin_create_kind(kind);
                 } else if let Some(field) = parse_detail_sub(s) {
                     // R918 — a Details-panel row release opens the inline editor
                     // on the selected node's matching property (surface = Panel).
@@ -3295,6 +3595,9 @@ impl NodeGraphExternal {
                 self.end_gesture();
             }
             (None, "PointerDown") => {
+                // R1220 — a background press on empty canvas dismisses an open
+                // create menu (click-away), then starts a clean gesture.
+                self.cancel_pin_create();
                 // R880.1 — a fresh background press starts from a clean
                 // slate via the FULL gesture reset (defensive: a leaked
                 // anchor / grabbed node / painted band from a lost release
@@ -3646,9 +3949,13 @@ impl External for NodeGraphExternal {
     /// Commit the drag if it landed on an input port: a reconnect drag (R1174 —
     /// a wired input pulled loose) moves the grabbed edge's target through the
     /// [`reconnect_edge`](Self::reconnect_edge) SSOT; a fresh connect drag mints
-    /// a new edge through [`add_edge`](Self::add_edge). A drop off any input port
-    /// is a no-op — the original wiring is left untouched (the connect gesture's
-    /// "release in empty space cancels" behaviour, shared by both).
+    /// a new edge through [`add_edge`](Self::add_edge). R1220 — a fresh connect
+    /// released on the empty canvas (tag == [`GRAPH_TAG`], not over a port / node)
+    /// instead opens the pin-drop create menu at the drop point
+    /// ([`open_pin_create`](Self::open_pin_create)). Any other drop (off a port, on
+    /// a node body, outside the window) is a no-op — the original wiring is left
+    /// untouched (the connect gesture's "release in empty space cancels" behaviour,
+    /// which a *reconnect* still gets since it opens no menu).
     fn drag_release(&mut self, payload: &DragPayload, over: Option<DropPoint>) {
         let reconnect = self.preview.get().and_then(|p| p.reconnect);
         if let Some((to_node, to_port)) = over.as_ref().and_then(|dp| parse_input_port_tag(&dp.tag))
@@ -3658,6 +3965,34 @@ impl External for NodeGraphExternal {
             } else if let IntrospectValue::Text(src) = &payload.value {
                 if let Some((from_node, from_port)) = split_node_port(src) {
                     self.add_edge(from_node, from_port, to_node, to_port);
+                }
+            }
+        } else if reconnect.is_none() {
+            // R1220 — a fresh wire dropped on the empty canvas: open the create
+            // menu at the drop point. `dp.tag == GRAPH_TAG` (the deepest tag over
+            // empty space) → the fraction projects cleanly to a graph point; a
+            // release over a node body / outside falls through to a plain cancel.
+            if let (Some(dp), IntrospectValue::Text(src)) = (
+                over.as_ref().filter(|dp| dp.tag == GRAPH_TAG),
+                &payload.value,
+            ) {
+                if let Some((from_node, from_port)) = split_node_port(src) {
+                    let (gx, gy) = cursor_graph_at(
+                        &self.scroll,
+                        self.zoom.get(),
+                        f64::from(dp.x_rel),
+                        f64::from(dp.y_rel),
+                    );
+                    let at_screen = (
+                        upx(round_i32(f64::from(dp.x_rel) * f64::from(WIN_W))),
+                        upx(round_i32(f64::from(dp.y_rel) * f64::from(WIN_H))),
+                    );
+                    self.open_pin_create(
+                        from_node,
+                        from_port,
+                        (round_i32(gx), round_i32(gy)),
+                        at_screen,
+                    );
                 }
             }
         }
@@ -3744,6 +4079,16 @@ impl ExternalIntrospect for NodeGraphExternal {
             ("set_graph", "string"),
             ("save", "json"),
             ("load", "json"),
+            // R1220 — the pin-drop create menu (drag off a pin → typed menu →
+            // auto-wire). `pin_create` reads the open menu (Null when closed);
+            // the verbs open / filter / rove / commit / cancel it — the AI-first
+            // peer of the live gesture, funnelling through the same coordinator.
+            ("pin_create", "json"),
+            ("open_pin_create", "string"),
+            ("pin_create_filter", "string"),
+            ("pin_create_highlight", "string"),
+            ("commit_pin_create", "string"),
+            ("cancel_pin_create", "json"),
         ])
     }
 
@@ -3802,6 +4147,9 @@ impl ExternalIntrospect for NodeGraphExternal {
             // R852 — the whole graph as one JSON blob (the AI-first read; its
             // write-twin is `invoke set_graph`).
             "serialized" => Some(IntrospectValue::Text(self.serialized_json())),
+            // R1220 — the open pin-drop create menu as JSON (Null when closed):
+            // the introspection twin of the painted floating menu.
+            "pin_create" => Some(self.pin_create_introspect()),
             // R877 — the viewport, in zoom-independent graph units (pan) +
             // the zoom factor. Write-twins: `intervene viewport.{x,y,zoom}`.
             // R1183 — the pan in graph units is the graph point under the
@@ -4127,13 +4475,14 @@ impl ExternalIntrospect for NodeGraphExternal {
             // returns false (graph unchanged) when nothing is stored yet.
             "save" => Ok(IntrospectValue::Bool(self.save())),
             "load" => Ok(IntrospectValue::Bool(self.load())),
-            // R948 — the no-arg align / distribute verbs live in their own
-            // dispatch (keeps `invoke` under the line budget); `None` falls
-            // through to UnknownPath.
-            _ => match self.invoke_layout(path) {
-                Some(changed) => Ok(IntrospectValue::Bool(changed)),
-                None => Err(InvokeError::UnknownPath),
-            },
+            // R948 / R1220 — align/distribute + pin-drop create verbs dispatch
+            // separately (line budget); a non-match falls through to UnknownPath.
+            _ => self.invoke_pin_create(path, args).unwrap_or_else(|| {
+                match self.invoke_layout(path) {
+                    Some(changed) => Ok(IntrospectValue::Bool(changed)),
+                    None => Err(InvokeError::UnknownPath),
+                }
+            }),
         }
     }
 }
@@ -4153,6 +4502,84 @@ impl NodeGraphExternal {
             "align_bottom" => self.align_selected(AlignSpec::Bottom),
             "distribute_h" => self.distribute_selected(DistributeAxis::Horizontal),
             "distribute_v" => self.distribute_selected(DistributeAxis::Vertical),
+            _ => return None,
+        })
+    }
+
+    /// R1220 — the pin-drop create-menu verbs, split out of the main `invoke`
+    /// match (keeps it under the line budget, the [`invoke_layout`](Self::invoke_layout)
+    /// precedent). `Some(result)` for a create verb, `None` for anything else (so
+    /// the caller falls through to `invoke_layout` / `UnknownPath`).
+    fn invoke_pin_create(
+        &self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Option<Result<IntrospectValue, InvokeError>> {
+        Some(match path {
+            // Open the menu for output `"<node>.<port>"` (the AI-first twin of
+            // dragging a wire off that pin into empty space). The node lands to
+            // the right of its source; `false` (no menu) on an invalid pin or an
+            // output nothing can consume.
+            "open_pin_create" => match args {
+                IntrospectValue::Text(s) => {
+                    let Some((from_node, from_port)) = parse_node_port(&s) else {
+                        return Some(Err(InvokeError::Rejected));
+                    };
+                    let Some(src) = self.node_by_id(from_node) else {
+                        return Some(Ok(IntrospectValue::Bool(false)));
+                    };
+                    let at_graph = (src.x + NODE_W + PIN_CREATE_GAP, src.y);
+                    let (cx, cy) = graph_to_canvas(
+                        &self.scroll,
+                        self.zoom.get(),
+                        f64::from(at_graph.0),
+                        f64::from(at_graph.1),
+                    );
+                    Ok(IntrospectValue::Bool(self.open_pin_create(
+                        from_node,
+                        from_port,
+                        at_graph,
+                        (upx(round_i32(cx)), upx(round_i32(cy))),
+                    )))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            // Set the type-to-narrow filter text (the keyboard type-ahead funnels
+            // here too). `false` when no menu is open.
+            "pin_create_filter" => match args {
+                IntrospectValue::Text(s) => Ok(IntrospectValue::Bool(self.set_pin_filter(&s))),
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            // Move the roving highlight by a signed delta (the arrow-key twin;
+            // wraps). `false` when no menu / empty filtered list.
+            "pin_create_highlight" => match args {
+                IntrospectValue::Text(s) => match s.trim().parse::<i32>() {
+                    Ok(delta) => Ok(IntrospectValue::Bool(self.move_pin_highlight(delta))),
+                    Err(_) => Err(InvokeError::Rejected),
+                },
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            // Commit a create: `Text` names the kind (must be a current
+            // candidate), `Null` commits the highlighted item (the Enter twin).
+            // Returns the new node's id, or Rejected (menu left open).
+            "commit_pin_create" => {
+                let committed = match args {
+                    IntrospectValue::Text(s) => {
+                        match PALETTE.iter().position(|&(name, _, _)| name == s) {
+                            Some(kind) => self.commit_pin_create_kind(kind),
+                            None => return Some(Err(InvokeError::Rejected)),
+                        }
+                    }
+                    IntrospectValue::Null => self.commit_pin_create_highlighted(),
+                    _ => return Some(Err(InvokeError::TypeMismatch)),
+                };
+                committed
+                    .map(|id| IntrospectValue::Int(i64::from(id.raw())))
+                    .ok_or(InvokeError::Rejected)
+            }
+            // Close the menu without creating (the Escape / click-away twin).
+            // `false` when no menu was open.
+            "cancel_pin_create" => Ok(IntrospectValue::Bool(self.cancel_pin_create())),
             _ => return None,
         })
     }
@@ -4311,7 +4738,78 @@ fn active_edit_introspect(active: ActiveEdit) -> IntrospectValue {
     IntrospectValue::Json(obj)
 }
 
+/// R1220 — a single printable (alphanumeric) key, for the create menu's
+/// type-to-narrow filter; `None` for a named key ("Escape", "ArrowUp", …) or a
+/// multi-char string, so those stay swallowed by the modal menu.
+fn single_printable(key: &str) -> Option<char> {
+    let mut chars = key.chars();
+    let c = chars.next()?;
+    (chars.next().is_none() && c.is_alphanumeric()).then_some(c)
+}
+
+/// R1220 — drive the open pin-drop create menu from the keyboard, funnelling
+/// through the SAME invoke verbs the RPC path uses (the invoke-funnel discipline
+/// — shell keys and AI client share one wire). The menu is modal: Escape cancels,
+/// Enter commits the highlighted item, arrows rove, Backspace / a printable char
+/// edit the filter, and every other key is swallowed (returns `true`) so a graph
+/// shortcut never leaks through an open menu. `menu` is the `query pin_create`
+/// JSON (its `filter` seeds the type-ahead edit).
+fn pin_create_key(intro: &mut dyn ExternalIntrospect, menu: &serde_json::Value, key: &str) -> bool {
+    let mut set_filter = |filter: String| {
+        let _ = intro.invoke("pin_create_filter", IntrospectValue::Text(filter));
+    };
+    let filter_of = || {
+        menu.get("filter")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+            .to_owned()
+    };
+    match key {
+        "Escape" => {
+            let _ = intro.invoke("cancel_pin_create", IntrospectValue::Null);
+        }
+        "Enter" => {
+            let _ = intro.invoke("commit_pin_create", IntrospectValue::Null);
+        }
+        "ArrowDown" => {
+            let _ = intro.invoke(
+                "pin_create_highlight",
+                IntrospectValue::Text("1".to_owned()),
+            );
+        }
+        "ArrowUp" => {
+            let _ = intro.invoke(
+                "pin_create_highlight",
+                IntrospectValue::Text("-1".to_owned()),
+            );
+        }
+        "Backspace" => {
+            let mut filter = filter_of();
+            filter.pop();
+            set_filter(filter);
+        }
+        _ => {
+            if let Some(ch) = single_printable(key) {
+                let mut filter = filter_of();
+                filter.push(ch);
+                set_filter(filter);
+            }
+        }
+    }
+    true
+}
+
 fn apply_key_graph(scene: &mut Scene, key: &str, modifiers: Modifiers) -> bool {
+    // R1220 — while the pin-drop create menu is open it is modal: menu keys win
+    // over every graph shortcut (undo / zoom / nudge / …). Scoped borrow so the
+    // `invoke_undo(scene, …)` re-borrow below still type-checks when idle.
+    if let Some(node) = scene.find_external_with_tag_mut(GRAPH_TAG) {
+        if let Some(intro) = node.handle.introspect_mut() {
+            if let Some(IntrospectValue::Json(menu)) = intro.query("pin_create") {
+                return pin_create_key(intro, &menu, key);
+            }
+        }
+    }
     if let Some(verb) = undo_redo_verb(key, modifiers) {
         return invoke_undo(scene, verb);
     }
@@ -4767,6 +5265,93 @@ fn view_palette(theme: &Theme) -> Scene {
     )
 }
 
+/// R1220 — the floating pin-drop create menu: a search header (source type +
+/// the current type-to-narrow filter) over the type-compatible candidate cards,
+/// each a `node_graph#create_<idx>` composite (a click commits that kind through
+/// the auto-wire path). The highlighted (roving) card carries an [`ColorRole::Accent`]
+/// border — the selected-node idiom. Positioned at the drop point in canvas px
+/// (absolute, OUTSIDE the world scroll, like the title / status chrome), so it
+/// stays put while it is open. `None` when the source pin has gone invalid (an
+/// undo removed its node), matching the coordinator's own re-derivation gate.
+fn view_pin_create_menu(pc: &PinCreate, nodes: &[GraphNode], theme: &Theme) -> Option<Scene> {
+    let from_ty = node_ref(nodes, pc.from_node)?.output_type(pc.from_port)?;
+    let candidates = pin_create_candidates(from_ty, &pc.filter);
+    let mut items: Vec<Scene> = Vec::with_capacity(candidates.len() + 1);
+    let header = if pc.filter.is_empty() {
+        format!("{} \u{25b8}", from_ty.name())
+    } else {
+        format!("{} \u{25b8} {}", from_ty.name(), pc.filter)
+    };
+    items.push(Scene::Text(
+        TextNode::styled(
+            header,
+            Rect::default(),
+            TextStyle::new()
+                .with_size_px(12)
+                .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+        )
+        .with_layout(LayoutStyle::new().with_padding(Rect::new(10, 8, 10, 4))),
+    ));
+    if candidates.is_empty() {
+        items.push(Scene::Text(
+            TextNode::styled(
+                "no match",
+                Rect::default(),
+                TextStyle::new()
+                    .with_size_px(13)
+                    .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+            )
+            .with_layout(LayoutStyle::new().with_padding(Rect::new(10, 4, 10, 8))),
+        ));
+    }
+    for (row, &kind) in candidates.iter().enumerate() {
+        let &(title, input_ports, output_ports) = &PALETTE[kind];
+        let label = Scene::Text(TextNode::styled(
+            format!("{title} ({}/{})", input_ports.len(), output_ports.len()),
+            Rect::default(),
+            TextStyle::new()
+                .with_size_px(13)
+                .with_fg(theme.resolve(ColorRole::OnSurface)),
+        ));
+        let mut style = BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh));
+        if row == pc.highlight {
+            style = style.with_border(Border::new(theme.resolve(ColorRole::Accent), 2));
+        }
+        items.push(Scene::Container(
+            ContainerNode::new(vec![label])
+                .with_tag(format!("{GRAPH_TAG}#create_{kind}"))
+                .with_style(style)
+                .with_layout(
+                    LayoutStyle::new()
+                        .flex(FlexDirection::Row)
+                        .with_align_items(AlignItems::Center)
+                        .with_size(Size::px(PIN_CREATE_MENU_W - 8, 26))
+                        .with_padding(Rect::new(10, 0, 8, 0)),
+                ),
+        ));
+    }
+    // Fixed height from the row count (a flex column clips an over-tall child,
+    // so the container must span its items): header + one row per candidate
+    // (min one for the "no match" line) + top/bottom padding.
+    let rows = u32::try_from(candidates.len().max(1)).unwrap_or(1);
+    let menu_h = 30 + rows * 30;
+    Some(Scene::Container(
+        ContainerNode::new(items)
+            .with_tag(format!("{GRAPH_TAG}#{PIN_MENU_SUB}"))
+            .with_style(
+                BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHighest))
+                    .with_border(Border::new(theme.resolve(ColorRole::Outline), 1)),
+            )
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Column)
+                    .with_gap(2)
+                    .with_size(Size::px(PIN_CREATE_MENU_W, menu_h))
+                    .with_absolute_position(pc.at_screen.0, pc.at_screen.1),
+            ),
+    ))
+}
+
 /// R916 / R918 — one Details-panel property row: a left-aligned `label` over the
 /// property's current `value`. Tagged `node_graph#detail_<key>` so a click routes
 /// to the coordinator (the palette precedent — a view sibling carrying the
@@ -5125,6 +5710,15 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
         ),
     ));
 
+    // R1220 — the pin-drop create menu floats topmost over the canvas (last
+    // child = on top), OUTSIDE the world scroll so it stays put. Reading the
+    // Signal subscribes the paint Effect, so open / filter / rove repaints.
+    if let Some(pc) = use_pin_create().get() {
+        if let Some(menu) = view_pin_create_menu(&pc, &nodes, &theme) {
+            children.push(menu);
+        }
+    }
+
     let canvas = Scene::Container(
         ContainerNode::new(children)
             .with_tag(GRAPH_TAG)
@@ -5184,6 +5778,7 @@ impl WidgetCore for NodeEditorView {
                 edit_buffer: use_text_edit_state(EDIT_TF_TAG),
                 marquee_rect: use_marquee_rect(),
                 node_drag: use_node_drag(),
+                pin_create: use_pin_create(),
             },
         ))
     }
@@ -5388,6 +5983,14 @@ impl WidgetA11y for NodeEditorView {
             &controls,
             None,
         ));
+        // R1220 — the open pin-drop create menu, computed once (its source pin
+        // must still be valid) for both the group-child link below and the
+        // trailing `menu` subtree, so the AT tree advertises it exactly when it
+        // paints. Carries `(highlight, candidate kind indices)`.
+        let pin_menu = use_pin_create().get().and_then(|pc| {
+            let from_ty = node_ref(&nodes, pc.from_node)?.output_type(pc.from_port)?;
+            Some((pc.highlight, pin_create_candidates(from_ty, &pc.filter)))
+        });
         // R879 — the canvas owns a multi-selection set; announce it
         // (`aria-multiselectable`) so per-node `aria-selected` flags read
         // as set membership, not a single highlight.
@@ -5400,6 +6003,11 @@ impl WidgetA11y for NodeEditorView {
             });
         for node in &nodes {
             group = group.with_child(format!("{GRAPH_TAG}#node_{}", node.id));
+        }
+        // R1220 — link the open create menu into the canvas group so its
+        // `menu` subtree is reachable (not an orphan in the AT tree).
+        if pin_menu.is_some() {
+            group = group.with_child(format!("{GRAPH_TAG}#{PIN_MENU_SUB}"));
         }
         out.push(group);
         for node in &nodes {
@@ -5442,8 +6050,40 @@ impl WidgetA11y for NodeEditorView {
         out.extend(details_access_nodes(
             &nodes, &selection, active, state.0, focused,
         ));
+        // R1220 — the open create menu's `menu` + `menuitem` subtree.
+        if let Some((highlight, candidates)) = pin_menu {
+            out.extend(pin_create_access_nodes(highlight, &candidates));
+        }
         out
     }
+}
+
+/// R1220 — the pin-drop create menu as an ARIA `menu` of `menuitem`s (the
+/// [`menu_item_nodes`] SSOT), each item byte-matching its painted
+/// `node_graph#create_<idx>` card so the AT tree advertises the menu exactly when
+/// and where it paints; the highlighted row (`highlight`, into `candidates`) is
+/// the roving `focused` item. Split out of the `access_node` builder to keep it
+/// under the line budget.
+fn pin_create_access_nodes(highlight: usize, candidates: &[usize]) -> Vec<AccessNode> {
+    let tags: Vec<String> = candidates
+        .iter()
+        .map(|&k| format!("{GRAPH_TAG}#create_{k}"))
+        .collect();
+    let cells: Vec<MenuItemCell> = candidates
+        .iter()
+        .enumerate()
+        .map(|(row, &k)| MenuItemCell {
+            tag: tags[row].as_str(),
+            label: Some(PALETTE[k].0),
+            focused: row == highlight,
+            ..MenuItemCell::default()
+        })
+        .collect();
+    menu_item_nodes(
+        &format!("{GRAPH_TAG}#{PIN_MENU_SUB}"),
+        "Create node",
+        &cells,
+    )
 }
 
 impl WidgetView for NodeEditorView {
@@ -7284,8 +7924,358 @@ mod tests {
                 edit_buffer: use_text_edit_state(EDIT_TF_TAG),
                 marquee_rect: use_marquee_rect(),
                 node_drag: use_node_drag(),
+                pin_create: use_pin_create(),
             },
         )
+    }
+
+    // ── R1220 pin-drop create menu (drag off a pin → typed menu → auto-wire) ──
+
+    /// The `query pin_create` JSON `candidates` array as owned strings.
+    fn menu_candidates(coord: &NodeGraphExternal) -> Vec<String> {
+        match coord.query("pin_create") {
+            Some(IntrospectValue::Json(v)) => v["candidates"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(str::to_owned))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            other => panic!("expected Json at pin_create, got {other:?}"),
+        }
+    }
+
+    fn names(cands: &[usize]) -> Vec<&'static str> {
+        cands.iter().map(|&k| PALETTE[k].0).collect()
+    }
+
+    #[test]
+    fn r1220_candidates_are_type_filtered_and_wire_target_exists() {
+        // A Vector source feeds every input-bearing kind (all take a Vector); the
+        // sourceless kinds (Texture/Color/Scalar) are excluded — nothing to wire.
+        assert_eq!(
+            names(&pin_create_candidates(PortType::Vector, "")),
+            ["Multiply", "Add", "Output", "Lerp"],
+            "input-bearing kinds only, in palette order"
+        );
+        // Every candidate resolves an auto-wire target (the open/commit gate).
+        for &k in &pin_create_candidates(PortType::Vector, "") {
+            assert!(
+                first_compatible_input(k, PortType::Vector).is_some(),
+                "candidate {k} has a compatible input"
+            );
+        }
+        // A sourceless kind is never a candidate (a dangling wire is impossible).
+        assert!(
+            first_compatible_input(0, PortType::Vector).is_none(),
+            "Texture: no input"
+        );
+        // The type-to-narrow filter: case-insensitive substring on the title.
+        assert_eq!(
+            names(&pin_create_candidates(PortType::Vector, "add")),
+            ["Add"]
+        );
+        assert_eq!(
+            names(&pin_create_candidates(PortType::Vector, "M")),
+            ["Multiply"]
+        );
+        assert!(
+            pin_create_candidates(PortType::Vector, "zzz").is_empty(),
+            "no title matches -> empty"
+        );
+        // A Float source broadcasts into a Vector input, so it too reaches the
+        // Vector-input kinds (the first compatible input is that Vector socket).
+        assert_eq!(
+            first_compatible_input(6, PortType::Float),
+            Some(0),
+            "Lerp: Float->Vector[0] broadcast"
+        );
+    }
+
+    #[test]
+    fn r1220_graph_to_canvas_is_the_inverse_of_canvas_to_graph() {
+        let scroll = ScrollState::new();
+        scroll.set_max(1000, 1000);
+        scroll.scroll_to(37, 84);
+        // Round-trips every projection: canvas px -> graph -> canvas px.
+        for &(cx, cy, zoom) in &[(120.0, 66.0, 1.0), (300.0, 210.0, 1.5), (10.0, 400.0, 0.75)] {
+            let (gx, gy) = canvas_to_graph(&scroll, zoom, cx, cy);
+            let (bx, by) = graph_to_canvas(&scroll, zoom, gx, gy);
+            assert!(
+                (bx - cx).abs() < 1e-6 && (by - cy).abs() < 1e-6,
+                "round-trip at zoom {zoom}"
+            );
+        }
+    }
+
+    #[test]
+    fn r1220_open_commit_autowires_in_one_undo_step() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            let stack = use_undo();
+            let nodes0 = coord.nodes.get().len();
+            let edges0 = coord.edges.get().len();
+            // Open from Texture(0) output 0 (Vector).
+            assert!(coord.open_pin_create(NodeId(0), 0, (500, 300), (500, 300)));
+            assert!(use_pin_create().get().is_some(), "menu open");
+            assert_eq!(
+                menu_candidates(&coord),
+                ["Multiply", "Add", "Output", "Lerp"]
+            );
+            // Commit "Multiply" (kind 2): a node + an auto-wire edge, ONE step.
+            let new_id = coord.commit_pin_create_kind(2).expect("commit a candidate");
+            assert!(use_pin_create().get().is_none(), "menu closed on commit");
+            assert_eq!(coord.nodes.get().len(), nodes0 + 1, "node added");
+            assert_eq!(coord.edges.get().len(), edges0 + 1, "edge auto-wired");
+            let e = coord
+                .edges
+                .get()
+                .into_iter()
+                .find(|e| e.to_node == new_id)
+                .expect("a wire into the new node");
+            assert_eq!(
+                (e.from_node, e.from_port, e.to_port),
+                (NodeId(0), 0, 0),
+                "auto-wired source(0,0) -> new node's first compatible input"
+            );
+            assert_eq!(
+                coord.selection.get().node(),
+                Some(new_id),
+                "new node selected"
+            );
+            assert_eq!(
+                stack.undo_label().as_deref(),
+                Some("Add Multiply + wire"),
+                "one labelled undo step"
+            );
+            // One Ctrl+Z removes BOTH the node and its wire (atomic create+wire).
+            assert!(stack.undo(), "undo the create");
+            assert_eq!(coord.nodes.get().len(), nodes0, "undo removes the node");
+            assert_eq!(
+                coord.edges.get().len(),
+                edges0,
+                "... and its wire, in the same step"
+            );
+        });
+    }
+
+    #[test]
+    fn r1220_wire_dropped_on_empty_canvas_opens_menu_at_drop_point() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let mut coord = coordinator();
+            // Press an output port, arm the drag, release on empty canvas.
+            coord.handle_send("oport_0_0:PointerDown");
+            let payload = coord.begin_drag().expect("drag armed from an output port");
+            coord.drag_release(
+                &payload,
+                Some(DropPoint {
+                    tag: GRAPH_TAG.to_owned(),
+                    x_rel: 0.75,
+                    y_rel: 0.5,
+                }),
+            );
+            let menu = use_pin_create()
+                .get()
+                .expect("empty-canvas drop opened the menu");
+            assert_eq!((menu.from_node, menu.from_port), (NodeId(0), 0));
+            // 0.75*640=480 px, 0.5*420=210 px; zoom 1, no pan -> graph (480, 210).
+            assert_eq!(menu.at_graph, (480, 210), "node lands at the drop point");
+        });
+    }
+
+    #[test]
+    fn r1220_port_drop_connects_and_reconnect_drop_never_opens_menu() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let mut coord = coordinator();
+            // A fresh connect dropped ON an (unwired) input port connects (no
+            // menu). Add an Output node so its lone Vector input starts unwired.
+            let sink = coord.add_node(4).expect("Output node");
+            coord.handle_send("oport_1_0:PointerDown");
+            let payload = coord.begin_drag().expect("armed from Color output");
+            let before = coord.edges.get().len();
+            coord.drag_release(
+                &payload,
+                Some(DropPoint {
+                    tag: format!("node_graph#iport_{}_0", sink.raw()),
+                    x_rel: 0.5,
+                    y_rel: 0.5,
+                }),
+            );
+            assert!(
+                use_pin_create().get().is_none(),
+                "a port drop opens no menu"
+            );
+            assert_eq!(coord.edges.get().len(), before + 1, "it connects instead");
+            // A reconnect drag (a wired input pulled loose) dropped on empty canvas
+            // cancels — it must NOT open a create menu (reconnect has no source pin
+            // to spawn from). Input 2.0 is wired by default_edges (0 -> 2.0).
+            coord.handle_send("iport_2_0:PointerDown");
+            let payload = coord
+                .begin_drag()
+                .expect("reconnect drag armed from a wired input");
+            coord.drag_release(
+                &payload,
+                Some(DropPoint {
+                    tag: GRAPH_TAG.to_owned(),
+                    x_rel: 0.9,
+                    y_rel: 0.2,
+                }),
+            );
+            assert!(
+                use_pin_create().get().is_none(),
+                "a reconnect dropped in empty space cancels, no menu"
+            );
+        });
+    }
+
+    #[test]
+    fn r1220_filter_narrows_and_highlight_roves_wrapping() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            assert!(coord.open_pin_create(NodeId(0), 0, (500, 300), (500, 300)));
+            // Filter "add" narrows to a single candidate and clamps the highlight.
+            assert!(coord.set_pin_filter("add"));
+            assert_eq!(menu_candidates(&coord), ["Add"]);
+            assert_eq!(
+                coord
+                    .commit_pin_create_highlighted()
+                    .and_then(|id| coord.node_by_id(id))
+                    .map(|n| n.title),
+                Some("Add".to_owned()),
+                "Enter commits the sole filtered candidate"
+            );
+            // Re-open and rove the highlight: wraps at the ends.
+            assert!(coord.open_pin_create(NodeId(0), 0, (500, 300), (500, 300)));
+            assert!(coord.move_pin_highlight(-1), "up from 0 wraps to the last");
+            let last = pin_create_candidates(PortType::Vector, "").len() - 1;
+            match coord.query("pin_create") {
+                Some(IntrospectValue::Json(v)) => {
+                    assert_eq!(
+                        v["highlight"].as_u64(),
+                        Some(last as u64),
+                        "wrapped to last"
+                    );
+                }
+                other => panic!("expected Json, got {other:?}"),
+            }
+        });
+    }
+
+    #[test]
+    fn r1220_cancel_and_clickaway_close_the_menu() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let mut coord = coordinator();
+            assert!(coord.open_pin_create(NodeId(0), 0, (500, 300), (500, 300)));
+            assert!(coord.cancel_pin_create(), "cancel closes");
+            assert!(use_pin_create().get().is_none());
+            assert!(!coord.cancel_pin_create(), "cancel with no menu is false");
+            // A background press (empty-canvas click) dismisses an open menu.
+            assert!(coord.open_pin_create(NodeId(0), 0, (500, 300), (500, 300)));
+            coord.handle_send(":PointerDown");
+            assert!(
+                use_pin_create().get().is_none(),
+                "click-away on empty canvas dismisses"
+            );
+            // A press on a node also dismisses (click-away), before selecting it.
+            assert!(coord.open_pin_create(NodeId(0), 0, (500, 300), (500, 300)));
+            coord.handle_send("node_3:PointerDown");
+            assert!(
+                use_pin_create().get().is_none(),
+                "click-away on a node dismisses"
+            );
+        });
+    }
+
+    #[test]
+    fn r1220_rpc_surface_open_filter_commit_cancel_and_schema() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let mut coord = coordinator();
+            // The verbs are all schema-declared.
+            let fields: Vec<&str> = coord.schema().fields.iter().map(|(p, _)| *p).collect();
+            for v in [
+                "pin_create",
+                "open_pin_create",
+                "pin_create_filter",
+                "pin_create_highlight",
+                "commit_pin_create",
+                "cancel_pin_create",
+            ] {
+                assert!(fields.contains(&v), "{v} must be schema-declared");
+            }
+            assert_eq!(
+                coord.query("pin_create"),
+                Some(IntrospectValue::Null),
+                "closed = Null"
+            );
+            // Open for Texture(0) output 0 via the RPC verb.
+            assert_eq!(
+                coord.invoke("open_pin_create", IntrospectValue::Text("0.0".to_owned())),
+                Ok(IntrospectValue::Bool(true)),
+            );
+            assert_eq!(
+                menu_candidates(&coord),
+                ["Multiply", "Add", "Output", "Lerp"]
+            );
+            // Filter, then commit a named candidate: returns the new node's id.
+            assert_eq!(
+                coord.invoke("pin_create_filter", IntrospectValue::Text("out".to_owned())),
+                Ok(IntrospectValue::Bool(true)),
+            );
+            assert_eq!(menu_candidates(&coord), ["Output"]);
+            let edges0 = coord.edges.get().len();
+            let Ok(IntrospectValue::Int(id)) = coord.invoke(
+                "commit_pin_create",
+                IntrospectValue::Text("Output".to_owned()),
+            ) else {
+                panic!("commit returns the new node id");
+            };
+            assert!(
+                coord
+                    .node_by_id(NodeId(u32::try_from(id).unwrap()))
+                    .is_some(),
+                "node created"
+            );
+            assert_eq!(coord.edges.get().len(), edges0 + 1, "auto-wired");
+            assert_eq!(
+                coord.query("pin_create"),
+                Some(IntrospectValue::Null),
+                "closed after commit"
+            );
+            // cancel with no menu open is a benign false.
+            assert_eq!(
+                coord.invoke("cancel_pin_create", IntrospectValue::Null),
+                Ok(IntrospectValue::Bool(false)),
+            );
+        });
+    }
+
+    #[test]
+    fn r1220_noncandidate_commit_is_rejected_and_menu_stays_open() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            assert!(coord.open_pin_create(NodeId(0), 0, (500, 300), (500, 300)));
+            let nodes0 = coord.nodes.get().len();
+            // Kind 0 (Texture) has no input — it is not a candidate for any source,
+            // so committing it is rejected and the menu stays open (the RPC gate).
+            assert_eq!(
+                coord.commit_pin_create_kind(0),
+                None,
+                "sourceless kind rejected"
+            );
+            assert!(
+                use_pin_create().get().is_some(),
+                "menu stays open on a rejected commit"
+            );
+            assert_eq!(coord.nodes.get().len(), nodes0, "graph unchanged");
+        });
     }
 
     #[test]
